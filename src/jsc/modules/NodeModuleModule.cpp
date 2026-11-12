@@ -31,6 +31,15 @@
 #include "GeneratedResolverJsc.h"
 #include "GeneratedSourcemap.h"
 
+// Resolves from the file name alone. A CommonJS request that has a parent goes through Bun::resolveForRequire().
+extern "C" JSC::EncodedJSValue Bun__resolveSync(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm, bool isUserRequireResolve);
+// Resolves a CommonJS request in the `paths` of its parent. The entries from `aboveImporterStart` up to `aboveImporterEnd` are what
+// Module._nodeModulePaths() lists for the directory of `from`.
+// `*reachedInvalidEntry`: the search came to the entry that is not a string, and nothing was thrown.
+extern "C" JSC::EncodedJSValue Bun__resolveSyncFromLookupPaths(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool isUserRequireResolve, const BunString* paths, size_t paths_len, size_t aboveImporterStart, size_t aboveImporterEnd, bool endsAtInvalidEntry, bool* reachedInvalidEntry);
+// Where among `paths` the list of Module._nodeModulePaths() for the directory of `filename` stands, whole and in order. `false`: nowhere.
+extern "C" bool Resolver__nodeModulePathsRun(const BunString* filename, const BunString* paths, size_t paths_len, size_t* start, size_t* end);
+
 namespace Bun {
 
 using namespace JSC;
@@ -281,6 +290,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
         RETURN_IF_EXCEPTION(scope, {});
         Bun::didCreateRequire(vm, callFrame, require);
     }
+    RETURN_IF_EXCEPTION(scope, {});
+    // Node gives the module behind the function its `paths` here, from Module._nodeModulePaths as it stands.
+    auto* bound = dynamicDowncast<JSC::JSBoundFunction>(require);
+    if (auto* module = bound ? dynamicDowncast<Bun::JSCommonJSModule>(bound->boundThis()) : nullptr) {
+        Bun::setModulePathsFromReplacedNodeModulePaths(defaultGlobalObject(globalObject), module);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     RELEASE_AND_RETURN(scope, JSValue::encode(require));
 }
 
@@ -299,7 +315,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
     }
     default: {
         JSC::JSValue moduleName = callFrame->argument(0);
-        JSC::JSValue fromValue = callFrame->argument(1);
+        JSC::JSValue parentValue = callFrame->argument(1);
+        JSC::JSValue fromValue = parentValue;
         JSC::JSValue optionsValue = callFrame->argument(3); // 4th argument is options
         auto& names = builtinNames(vm);
 
@@ -387,7 +404,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
                 return {};
             }
 
-            result = Bun__resolveSyncWithPaths(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true, paths.begin(), paths.size());
+            if (Bun::isNodeModulePathsReplaced(defaultGlobalObject(globalObject))) [[unlikely]]
+                result = Bun::resolveFromPathsOption(globalObject, moduleName, fromValue, paths.span(), true);
+            else
+                result = Bun__resolveSyncWithPaths(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true, paths.begin(), paths.size());
 
             // Clean up BunStrings to avoid leaking
             for (auto& path : paths) {
@@ -404,8 +424,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
             return result;
         }
 
-        // No paths provided, use regular resolution
-        result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true);
+        // No paths provided: the `paths` of the parent, or the directories above its file.
+        result = Bun::resolveForRequire(globalObject, moduleName, parentValue, fromValue, true);
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!JSC::JSValue::decode(result).isString()) {
@@ -424,7 +444,7 @@ JSC_DEFINE_CUSTOM_GETTER(nodeModuleResolveFilename,
         PropertyName propertyName))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    if (globalObject->hasOverriddenModuleResolveFilenameFunction) [[unlikely]] {
+    if (globalObject->hasOverriddenModuleResolveFilenameFunction()) [[unlikely]] {
         return JSValue::encode(globalObject->m_moduleResolveFilenameOverride.get());
     }
     return JSValue::encode(
@@ -455,15 +475,239 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleResolveFilename,
     RETURN_IF_EXCEPTION(scope, false);
 
     if (isOriginal) {
-        globalObject->hasOverriddenModuleResolveFilenameFunction = false;
+        globalObject->commonJSResolveFlags &= ~Zig::GlobalObject::ModuleResolveFilenameReplaced;
         globalObject->m_moduleResolveFilenameOverride.clear();
     } else {
         globalObject->m_moduleResolveFilenameOverride.set(
             lexicalGlobalObject->vm(), globalObject, value);
-        globalObject->hasOverriddenModuleResolveFilenameFunction = true;
+        globalObject->commonJSResolveFlags |= Zig::GlobalObject::ModuleResolveFilenameReplaced;
     }
 
     return true;
+}
+
+bool isNodeModulePathsReplaced(Zig::GlobalObject* globalObject)
+{
+    // Nobody has loaded node:module, so nobody has written to it.
+    if (!globalObject->m_nodeModuleConstructor.isInitialized())
+        return false;
+    // The function lies in the static table of the class. It becomes a property of the object when script writes one there or lists the properties.
+    JSValue stored = globalObject->m_nodeModuleConstructor.get(globalObject)->getDirect(JSC::getVM(globalObject), globalObject->nodeModulePathsName);
+    if (!stored)
+        return false;
+    JSC::CallData callData = JSC::getCallData(stored);
+    return callData.type != JSC::CallData::Type::Native || callData.native.function.untaggedPtr() != &Bun::Bindgen::Generated::ResolverJsc::jsNodeModulePaths;
+}
+
+// Module._nodeModulePaths(from), as the program has replaced it.
+static JSValue callReplacedNodeModulePaths(Zig::GlobalObject* globalObject, JSValue from)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+    JSValue function = constructor->get(globalObject, globalObject->nodeModulePathsName);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::CallData callData = JSC::getCallData(function);
+    if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
+        throwTypeError(globalObject, scope, "Module._nodeModulePaths is not a function"_s);
+        return {};
+    }
+    MarkedArgumentBuffer args;
+    args.append(from);
+    RELEASE_AND_RETURN(scope, JSC::profiledCall(globalObject, ProfilingReason::API, function, callData, constructor, args));
+}
+
+void setModulePathsFromReplacedNodeModulePaths(Zig::GlobalObject* globalObject, JSCommonJSModule* module)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (module->m_paths || !isNodeModulePathsReplaced(globalObject))
+        return;
+    JSValue paths = callReplacedNodeModulePaths(globalObject, module->m_dirname.get());
+    RETURN_IF_EXCEPTION(scope, );
+    module->m_paths.set(vm, module, paths);
+    globalObject->commonJSResolveFlags |= Zig::GlobalObject::ModulePathsSeenByScript;
+}
+
+// What Node makes of the `paths` of a module.
+struct LookupPathsOfParent {
+    WTF::Vector<BunString, 16> directories;
+    // The list goes on with an entry that is not a string: Node's Module._findPath throws for it once the search gets there.
+    bool endsAtInvalidEntry { false };
+    // `paths` is a string, which has a length and is no list: Node throws a TypeError.
+    bool isText { false };
+    // The part of `directories` that Module._nodeModulePaths() lists for the directory of the parent's file.
+    size_t aboveImporterStart { 0 };
+    size_t aboveImporterEnd { 0 };
+
+    ~LookupPathsOfParent()
+    {
+        for (auto& directory : directories)
+            directory.deref();
+    }
+
+    void findDirectoriesAboveImporter(const String& filename)
+    {
+        BunString filenameString = Bun::toString(filename);
+        if (!Resolver__nodeModulePathsRun(&filenameString, directories.begin(), directories.size(), &aboveImporterStart, &aboveImporterEnd))
+            aboveImporterStart = aboveImporterEnd = 0;
+    }
+
+    // Script has left the list as Module._nodeModulePaths() made it.
+    bool isUnchanged() const { return !isText && !endsAtInvalidEntry && !aboveImporterStart && aboveImporterEnd && aboveImporterEnd == directories.size(); }
+};
+
+// Appends the directories of `list`, the `paths` of a module, up to the first entry that is not a string. `false`: an exception was thrown.
+static bool appendLookupPaths(JSGlobalObject* globalObject, JSValue list, LookupPathsOfParent& paths, bool skipsListed = false)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& directories = paths.directories;
+    JSObject* object = list.getObject();
+    if (!object) {
+        // Node reads `paths.length`. Any value but a string has none: no directory is listed.
+        paths.isText = list.isString() && asString(list)->length();
+        return true;
+    }
+    auto* array = dynamicDowncast<JSArray>(object);
+    uint64_t length;
+    if (array) {
+        length = array->length();
+    } else {
+        JSValue lengthValue = object->get(globalObject, vm.propertyNames->length);
+        RETURN_IF_EXCEPTION(scope, false);
+        length = lengthValue.toLength(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    for (uint64_t i = 0; i < length; i++) {
+        JSValue entry = array ? array->tryGetIndexQuickly(i) : JSValue();
+        if (!entry) [[unlikely]] {
+            entry = object->get(globalObject, i);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        if (!entry.isString()) {
+            paths.endsAtInvalidEntry = true;
+            return true;
+        }
+        String directory = asString(entry)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (skipsListed && directories.containsIf([&](const BunString& listed) { return listed.toWTFString(BunString::ZeroCopy) == directory; }))
+            continue;
+        BunString directoryRef = Bun::toStringRef(directory);
+        if (!Bun::tryAppendWithinLimit(directories, directoryRef)) [[unlikely]] {
+            directoryRef.deref();
+            throwOutOfMemoryError(globalObject, scope);
+            return false;
+        }
+    }
+    return true;
+}
+
+static JSC::EncodedJSValue resolveFromLookupPaths(JSGlobalObject* globalObject, JSValue request, JSValue from, JSValue list, LookupPathsOfParent& paths, bool isRequireResolve)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    if (paths.isText) {
+        throwTypeError(globalObject, scope, "The \"paths\" of a module must be an array of strings"_s);
+        return {};
+    }
+    bool reachedInvalidEntry = false;
+    JSC::EncodedJSValue result = Bun__resolveSyncFromLookupPaths(globalObject, JSValue::encode(request), JSValue::encode(from), isRequireResolve, paths.directories.begin(), paths.directories.size(), paths.aboveImporterStart, paths.aboveImporterEnd, paths.endsAtInvalidEntry, &reachedInvalidEntry);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (reachedInvalidEntry) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "paths"_s, "array of strings"_s, list);
+    RELEASE_AND_RETURN(scope, result);
+}
+
+// Node looks a request up in the `paths` of the parent unless it is a relative path (Module._resolveLookupPaths) or a whole one (Module._findPath).
+static bool isLookedUpInPaths(StringView request)
+{
+    if (request.isEmpty() || request[0] == '/')
+        return false;
+    if (request[0] == '.') {
+        if (request.length() == 1 || request[1] == '.' || request[1] == '/')
+            return false;
+#if OS(WINDOWS)
+        if (request[1] == '\\')
+            return false;
+#endif
+    }
+#if OS(WINDOWS)
+    if (request[0] == '\\' || (request.length() > 2 && request[1] == ':' && (request[2] == '/' || request[2] == '\\')))
+        return false;
+#endif
+    return true;
+}
+
+JSC::EncodedJSValue resolveForRequire(JSC::JSGlobalObject* globalObject, JSC::JSValue request, JSC::JSValue parent, JSC::JSValue from, bool isRequireResolve)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* module = dynamicDowncast<JSCommonJSModule>(parent);
+    // A module looks in the directories above its file until script reads or writes its `paths`.
+    bool mayHaveOwnList = module ? !!module->m_paths : parent.isObject();
+    JSValue list;
+    if (mayHaveOwnList && request.isString()) {
+        auto view = asString(request)->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (isLookedUpInPaths(view)) {
+            list = module ? module->m_paths.get() : asObject(parent)->get(globalObject, builtinNames(vm).pathsPublicName());
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+    // So does a parent without `paths`.
+    if (!list || list.isUndefinedOrNull())
+        RELEASE_AND_RETURN(scope, Bun__resolveSync(globalObject, JSValue::encode(request), JSValue::encode(from), false, isRequireResolve));
+
+    LookupPathsOfParent paths;
+    appendLookupPaths(globalObject, list, paths);
+    RETURN_IF_EXCEPTION(scope, {});
+    String filename = from.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    paths.findDirectoriesAboveImporter(filename);
+    // So does a parent whose `paths` are the `node_modules` directories above its file, as they are until script changes them.
+    if (paths.isUnchanged())
+        RELEASE_AND_RETURN(scope, Bun__resolveSync(globalObject, JSValue::encode(request), JSValue::encode(from), false, isRequireResolve));
+
+    // Node's require() asks its `relativeResolveCache` before it reads `paths`. An onResolve plugin is asked on every call.
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    if (!isRequireResolve && module && zigGlobalObject->onResolvePlugins.isEmpty()) {
+        JSValue loaded = loadedModuleForRequest(zigGlobalObject, module, asString(request));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (loaded)
+            return JSValue::encode(loaded);
+    }
+    RELEASE_AND_RETURN(scope, resolveFromLookupPaths(globalObject, request, from, list, paths, isRequireResolve));
+}
+
+JSC::EncodedJSValue resolveFromPathsOption(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue request, JSC::JSValue from, std::span<const BunString> paths, bool isRequireResolve)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (request.isString()) {
+        auto text = asString(request)->value(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        // Node looks for a relative request in each of `paths` itself, and answers for a builtin before it reads them.
+        if (!isLookedUpInPaths(text.data) || Bun::isBuiltinModule(text.data))
+            RELEASE_AND_RETURN(scope, Bun__resolveSyncWithPaths(lexicalGlobalObject, JSValue::encode(request), JSValue::encode(from), false, isRequireResolve, paths.data(), paths.size()));
+    }
+
+    LookupPathsOfParent lookup;
+    JSValue list;
+    for (auto& path : paths) {
+        list = callReplacedNodeModulePaths(globalObject, jsString(vm, path.toWTFString(BunString::ZeroCopy)));
+        RETURN_IF_EXCEPTION(scope, {});
+        appendLookupPaths(globalObject, list, lookup, true);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (lookup.endsAtInvalidEntry || lookup.isText)
+            break;
+    }
+    String filename = from.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    lookup.findDirectoriesAboveImporter(filename);
+    RELEASE_AND_RETURN(scope, resolveFromLookupPaths(lexicalGlobalObject, request, from, list, lookup, isRequireResolve));
 }
 
 PathResolveModule getParent(VM& vm, JSGlobalObject* global, JSValue maybe_parent)
@@ -1163,6 +1407,7 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
         [](const Zig::GlobalObject::Initializer<JSObject>& init) {
             JSObject* moduleConstructor = JSModuleConstructor::create(
                 init.vm, static_cast<Zig::GlobalObject*>(init.owner));
+            static_cast<Zig::GlobalObject*>(init.owner)->nodeModulePathsName = Identifier::fromString(init.vm, "_nodeModulePaths"_s);
             init.set(moduleConstructor);
             if (init.vm.hasCompiledCode()) [[unlikely]]
                 JSC::AOT::hostDidCreateNodeModule(init.owner, moduleConstructor);
@@ -1225,7 +1470,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled,
 {
     return JSValue::encode(
         jsBoolean(defaultGlobalObject(globalObject)
-                ->hasOverriddenModuleResolveFilenameFunction));
+                ->hasOverriddenModuleResolveFilenameFunction()));
 }
 
 extern "C" bool Bun__streamIterEnabled();

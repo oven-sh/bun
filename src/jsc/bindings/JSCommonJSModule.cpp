@@ -66,6 +66,7 @@
 #include <JavaScriptCore/Completion.h>
 #include "ModuleLoader.h"
 #include <JavaScriptCore/JSMap.h>
+#include <JavaScriptCore/JSMapIterator.h>
 
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/GetterSetter.h>
@@ -483,7 +484,9 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
         RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyArray(globalObject, nullptr, 0)));
     }
     RETURN_IF_EXCEPTION(scope, {});
-    Bun::PathResolveModule parent = { .paths = nullptr, .filename = filename, .pathsArrayLazy = true };
+    // The list that script has read or written is the one require() looks in.
+    JSArray* paths = boundModule->m_paths ? dynamicDowncast<JSArray>(boundModule->m_paths.get()) : nullptr;
+    Bun::PathResolveModule parent = { .paths = paths, .filename = filename, .pathsArrayLazy = true };
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::resolveLookupPaths(globalObject, requestStr, parent)));
 }
 
@@ -739,6 +742,8 @@ JSC_DEFINE_CUSTOM_GETTER(getterPaths, (JSC::JSGlobalObject * globalObject, JSC::
         JSValue paths = JSValue::decode(Resolver__nodeModulePathsJSValue(&filenameStr, globalObject, true));
         RETURN_IF_EXCEPTION(scope, {});
         thisObject->m_paths.set(globalObject->vm(), thisObject, paths);
+        // require() reads the array from now on: script can change it in place.
+        defaultGlobalObject(globalObject)->commonJSResolveFlags |= Zig::GlobalObject::ModulePathsSeenByScript;
         return JSValue::encode(paths);
     }
 
@@ -842,6 +847,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterPaths,
         return false;
 
     thisObject->m_paths.set(globalObject->vm(), thisObject, JSValue::decode(value));
+    defaultGlobalObject(globalObject)->commonJSResolveFlags |= Zig::GlobalObject::ModulePathsSeenByScript;
     return true;
 }
 
@@ -1079,9 +1085,68 @@ JSCommonJSModule* JSCommonJSModule::create(
     return cell;
 }
 
+// The modules that require() has created, by the directory of the module that asked and by what it asked for.
+static void addLoadedModuleForRequest(Zig::GlobalObject* globalObject, JSMap* byDirectory, JSCommonJSModule* requirer, JSString* request, JSValue key)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* directory = requirer->m_dirname.get();
+    JSValue byRequest = byDirectory->get(globalObject, directory);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!byRequest.isCell()) {
+        byRequest = JSMap::create(vm, globalObject->mapStructure());
+        byDirectory->set(globalObject, directory, byRequest);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    RELEASE_AND_RETURN(scope, uncheckedDowncast<JSMap>(byRequest)->set(globalObject, request, key));
+}
+
+JSValue loadedModuleForRequest(Zig::GlobalObject* globalObject, JSCommonJSModule* requirer, JSString* request)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // A Bun.ModuleGraph has a require cache of its own.
+    if (requirer->moduleGraph())
+        return {};
+    JSMap* requireMap = globalObject->requireMap();
+    JSMap* byDirectory = globalObject->m_loadedModulesByRequest.get();
+    if (!byDirectory) {
+        // Nothing read the requests until now. From here on jsFunctionCreateCommonJSModule() adds what require() creates.
+        byDirectory = JSMap::create(vm, globalObject->mapStructure());
+        auto* entries = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), requireMap, JSC::IterationKind::Entries);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue key, value;
+        while (entries->nextKeyValue(globalObject, key, value)) {
+            auto* loaded = dynamicDowncast<JSCommonJSModule>(value);
+            auto* creator = loaded && loaded->m_creatingRequest ? loaded->m_parent.get() : nullptr;
+            if (!creator || creator->moduleGraph())
+                continue;
+            addLoadedModuleForRequest(globalObject, byDirectory, creator, loaded->m_creatingRequest.get(), key);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        RETURN_IF_EXCEPTION(scope, {});
+        globalObject->m_loadedModulesByRequest.set(vm, globalObject, byDirectory);
+    }
+    JSValue byRequest = byDirectory->get(globalObject, requirer->m_dirname.get());
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!byRequest.isCell())
+        return {};
+    JSValue key = uncheckedDowncast<JSMap>(byRequest)->get(globalObject, request);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!key.isString())
+        return {};
+    bool isLoaded = requireMap->has(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (isLoaded)
+        return key;
+    uncheckedDowncast<JSMap>(byRequest)->remove(globalObject, request);
+    RETURN_IF_EXCEPTION(scope, {});
+    return {};
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
-    RELEASE_ASSERT(callframe->argumentCount() == 4);
+    RELEASE_ASSERT(callframe->argumentCount() >= 4);
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
 
     auto id = callframe->uncheckedArgument(0).toString(globalObject);
@@ -1098,6 +1163,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateCommonJSModule, (JSGlobalObject * globa
     // The require cache holds a module that requires another. What stands in for a file of the executable is in no cache, so the module that has it for a parent holds it.
     if (parent != requirer)
         module->m_overriddenParent.set(JSC::getVM(globalObject), module, parent);
+    // require() passes what it was asked for, and then loads the file into the module.
+    if (JSValue request = callframe->argument(4); request.isString()) {
+        auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+        module->m_creatingRequest.set(JSC::getVM(globalObject), module, asString(request));
+        Bun::setModulePathsFromReplacedNodeModulePaths(global, module);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (JSMap* byDirectory = global->m_loadedModulesByRequest.get()) [[unlikely]] {
+            if (auto* creator = dynamicDowncast<JSCommonJSModule>(requirer); creator && !creator->moduleGraph()) {
+                addLoadedModuleForRequest(global, byDirectory, creator, asString(request), id);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+        }
+    }
     return JSValue::encode(module);
 }
 
@@ -1440,6 +1518,7 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_filename);
     visitor.appendHidden(thisObject->m_dirname);
     visitor.appendHidden(thisObject->m_paths);
+    visitor.appendHidden(thisObject->m_creatingRequest);
     visitor.appendHidden(thisObject->m_overriddenParent);
     visitor.appendHidden(thisObject->m_overriddenCompile);
     visitor.appendHidden(thisObject->m_childrenValue);
@@ -1839,12 +1918,15 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
                         if (!moduleObject->hasEvaluated) {
-                            evaluateCommonJSModuleOnce(
-                                vm,
-                                globalObject,
-                                moduleObject,
-                                moduleObject->m_dirname.get(),
-                                moduleObject->m_filename.get());
+                            Bun::setModulePathsFromReplacedNodeModulePaths(globalObject, moduleObject);
+                            if (!scope.exception()) [[likely]] {
+                                evaluateCommonJSModuleOnce(
+                                    vm,
+                                    globalObject,
+                                    moduleObject,
+                                    moduleObject->m_dirname.get(),
+                                    moduleObject->m_filename.get());
+                            }
                             if (auto exception = scope.exception()) {
                                 if (vm.hasPendingTerminationException()) [[unlikely]]
                                     return;

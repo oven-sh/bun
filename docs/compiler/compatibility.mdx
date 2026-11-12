@@ -186,6 +186,8 @@ Every `import`, and every `require()` of a constant path, is resolved at build t
 | ---------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | `Module._resolveFilename = hook`                                 | Called for dynamic paths only. The build warns (`TS100080`)                 |
 | `Module._extensions[".js"] = loader`                             | Called for dynamic paths only                                               |
+| `module.paths.push(dir)`                                         | Searched for dynamic paths only                                             |
+| `Module._nodeModulePaths = hook`                                 | Called for `createRequire()` and for files loaded from disk only            |
 | `delete require.cache[path]`, `require.cache[path] = entry`      | Do nothing. A module runs once. The build warns (`TS100091`, `TS100092`)    |
 | `Object.keys(require.cache)`                                     | Doesn't list compiled modules                                               |
 | `Bun.plugin()` at run time                                       | Asked about dynamic paths only. It can't replace a module that was compiled |
@@ -211,7 +213,7 @@ Every compiled file has a path under `/$bunfs/root`, laid out like your sources.
 
 A comparison of `__filename` with another path of the same file, like `process.argv[1] === __filename`, gives what it gives under `bun run`. It may go through variables, `path.resolve()`, `path.dirname()`, `fs.realpathSync()`, `fileURLToPath()`, `pathToFileURL()` and `replace()`. The two strings stay different: `[__filename].includes(process.argv[1])` is `false`.
 
-`require.main === module`, `import.meta.main`, `module.paths`, `module.parent` and `createRequire(import.meta.url)` work as under `bun run`.
+`require.main === module`, `import.meta.main`, `module.paths`, `module.parent` and `createRequire(import.meta.url)` work as under `bun run`. A directory that you add to `module.paths` is searched for a `require()` of a dynamic path. A constant path is resolved at build time, before your program changes the list.
 
 An executable runs your entry point by itself, so a program that starts a copy of itself must not pass the file. Write `spawn(process.execPath, ["child"])`. After `spawn(process.execPath, [process.argv[1], "child"])` or `fork(__filename, ["child"])`, the child finds the path in `process.argv[2]` and `"child"` in `process.argv[3]`.
 

@@ -16,6 +16,7 @@
 #include "JSMockFunction.h"
 #include "ModuleGraph.h"
 #include "ModuleLoader.h"
+#include "NodeModuleModule.h"
 #include "PathInlines.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSBuiltins.h"
@@ -1782,7 +1783,7 @@ static JSValue resolveSpecifier(JSGlobalObject* realm, JSObject* holder, JSValue
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSValue from = holder->get(realm, WebCore::builtinNames(vm).filenamePublicName());
         RETURN_IF_EXCEPTION(scope, {});
-        JSValue resolved = JSValue::decode(Bun__resolveSync(realm, JSValue::encode(specifier), JSValue::encode(from), false, false));
+        JSValue resolved = JSValue::decode(resolveForRequire(realm, specifier, holder, from, false));
         RETURN_IF_EXCEPTION(scope, {});
         if (!resolved.isString()) {
             throwException(realm, scope, resolved);

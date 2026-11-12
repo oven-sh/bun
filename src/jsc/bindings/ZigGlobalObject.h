@@ -410,6 +410,8 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_moduleResolveFilenameFunction)                       \
     /* The user-assigned Module._resolveFilename value; require() throws if it is not callable. */           \
     V(public, WriteBarrier<JSC::Unknown>, m_moduleResolveFilenameOverride)                                   \
+    /* Bun::loadedModuleForRequest(). Made when a module with `paths` of its own first requires. */          \
+    V(public, WriteBarrier<JSC::JSMap>, m_loadedModulesByRequest)                                            \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleRunMainFunction)                                   \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_modulePrototypeUnderscoreCompileFunction)            \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_commonJSRequireESMFromHijackedExtensionFunction)     \
@@ -679,8 +681,21 @@ private:
     RefPtr<WebCore::Performance> m_performance { nullptr };
 
 public:
-    // De-optimization once `require("module")._resolveFilename` is written to
-    bool hasOverriddenModuleResolveFilenameFunction = false;
+    // "_nodeModulePaths", from the first use of node:module on: Bun::isNodeModulePathsReplaced() looks the name up for
+    // every module that is loaded, and an identifier made there would be allocated every time.
+    JSC::Identifier nodeModulePathsName;
+
+    // De-optimizations of CommonJS resolution. require() tests the whole byte: a program that did
+    // none of these takes one branch.
+    enum CommonJSResolveFlag : uint8_t {
+        // `require("module")._resolveFilename` was written to
+        ModuleResolveFilenameReplaced = 1 << 0,
+        // A module has `paths` that script has read or written, or that a replaced `Module._nodeModulePaths` gave it:
+        // require() reads them. Stays set.
+        ModulePathsSeenByScript = 1 << 1,
+    };
+    uint8_t commonJSResolveFlags = 0;
+    bool hasOverriddenModuleResolveFilenameFunction() const { return commonJSResolveFlags & ModuleResolveFilenameReplaced; }
     // De-optimization once `require("module").wrapper` or `require("module").wrap` is written to
     bool hasOverriddenModuleWrapper = false;
     // De-optimization once `require("module").runMain` is written to

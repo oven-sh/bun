@@ -4316,6 +4316,63 @@ impl ResolveMode {
     }
 }
 
+/// Where `VirtualMachine::_resolve` has the resolver look for a package.
+pub(crate) trait PackageSearch: Copy {
+    fn resolve<'r>(
+        self,
+        resolver: &mut bun_resolver::Resolver<'_>,
+        source_dir: &[u8],
+        specifier: &'r [u8],
+        kind: bun_ast::ImportKind,
+        global_cache: bun_resolver::GlobalCache,
+    ) -> bun_resolver::ResultUnion<'r>;
+
+    /// Forgets the cached listings of the directories that the search names itself.
+    /// `true`: one was cached, so a second search can find what the first did not.
+    fn bust_dir_cache(self, resolver: &mut bun_resolver::Resolver<'_>, specifier: &[u8]) -> bool;
+}
+
+/// The `node_modules` directories above the importer, then `NODE_PATH` and auto-install.
+#[derive(Clone, Copy)]
+pub(crate) struct AboveImporter;
+
+impl PackageSearch for AboveImporter {
+    #[inline(always)]
+    fn resolve<'r>(
+        self,
+        resolver: &mut bun_resolver::Resolver<'_>,
+        source_dir: &[u8],
+        specifier: &'r [u8],
+        kind: bun_ast::ImportKind,
+        global_cache: bun_resolver::GlobalCache,
+    ) -> bun_resolver::ResultUnion<'r> {
+        resolver.resolve_and_auto_install(source_dir, specifier, kind, global_cache)
+    }
+
+    #[inline(always)]
+    fn bust_dir_cache(self, _: &mut bun_resolver::Resolver<'_>, _: &[u8]) -> bool {
+        false
+    }
+}
+
+/// The `paths` of the CommonJS module that requires.
+impl PackageSearch for &bun_resolver::RequireLookupPaths<'_> {
+    fn resolve<'r>(
+        self,
+        resolver: &mut bun_resolver::Resolver<'_>,
+        source_dir: &[u8],
+        specifier: &'r [u8],
+        kind: bun_ast::ImportKind,
+        global_cache: bun_resolver::GlobalCache,
+    ) -> bun_resolver::ResultUnion<'r> {
+        resolver.resolve_require_from_lookup_paths(source_dir, specifier, kind, global_cache, self)
+    }
+
+    fn bust_dir_cache(self, resolver: &mut bun_resolver::Resolver<'_>, specifier: &[u8]) -> bool {
+        resolver.bust_dir_cache_of_lookup_paths(self, specifier)
+    }
+}
+
 /// Output slot for module resolution: the resolved path and query string.
 #[derive(Default)]
 pub struct ResolveFunctionResult<'r> {
@@ -5496,7 +5553,7 @@ impl VirtualMachine {
 
     /// Note: `is_a_file_path` is a runtime
     /// arg to avoid duplicating the body for both monomorphizations.
-    pub(crate) fn _resolve<'r>(
+    pub(crate) fn _resolve<'r, S: PackageSearch>(
         &mut self,
         ret: &mut ResolveFunctionResult<'r>,
         specifier: &'r [u8],
@@ -5504,6 +5561,7 @@ impl VirtualMachine {
         is_esm: bool,
         is_a_file_path: bool,
         global_cache: bun_resolver::GlobalCache,
+        search: S,
     ) -> crate::CrateResult<()> {
         use bun_js_parser::Macro;
         use bun_resolver::{ResultUnion, node_fallbacks};
@@ -5578,7 +5636,8 @@ impl VirtualMachine {
             } else {
                 bun_ast::ImportKind::Require
             };
-            match self.transpiler.resolver.resolve_and_auto_install(
+            match search.resolve(
+                &mut self.transpiler.resolver,
                 source_to_use,
                 normalized_specifier,
                 import_kind,
@@ -5602,6 +5661,8 @@ impl VirtualMachine {
                         return Err(crate::CrateError::ModuleNotFound);
                     }
                     retry_on_not_found = false;
+                    let busted_searched = search
+                        .bust_dir_cache(&mut self.transpiler.resolver, normalized_specifier);
 
                     // SAFETY: thread-local heap allocation; sole `&mut` on the JS
                     // thread for the duration of the bust below.
@@ -5688,6 +5749,7 @@ impl VirtualMachine {
                         bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
                     ) || busted_as_spelled
                         || busted_working_directory
+                        || busted_searched
                     {
                         continue;
                     }
@@ -5774,13 +5836,45 @@ impl VirtualMachine {
         )? {
             return Ok(resolved);
         }
-        Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
+        Self::resolve_without_on_resolve::<IS_A_FILE_PATH, _>(
             global,
             specifier,
             source,
             query_string,
             mode,
             global.bun_vm().transpiler.resolver.opts.global_cache,
+            AboveImporter,
+        )
+    }
+
+    /// `require()`, `require.resolve()` and `Module._resolveFilename()` from a CommonJS module whose
+    /// `paths` are `lookup`.
+    pub fn resolve_require_from_lookup_paths(
+        global: &JSGlobalObject,
+        specifier: &bun_core::String,
+        source: &bun_core::String,
+        mut query_string: Option<&mut bun_core::String>,
+        mode: ResolveMode,
+        lookup: &bun_resolver::RequireLookupPaths<'_>,
+    ) -> JsResult<Result<bun_core::String, JSValue>> {
+        if let Some(resolved) = Self::resolve_with_on_resolve::<true>(
+            global,
+            specifier,
+            source,
+            query_string.as_deref_mut(),
+            mode,
+            false,
+        )? {
+            return Ok(resolved);
+        }
+        Self::resolve_without_on_resolve::<true, _>(
+            global,
+            specifier,
+            source,
+            query_string,
+            mode,
+            global.bun_vm().transpiler.resolver.opts.global_cache,
+            lookup,
         )
     }
 
@@ -5823,13 +5917,14 @@ impl VirtualMachine {
         } else {
             global.bun_vm().transpiler.resolver.opts.global_cache
         };
-        let resolved = Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
+        let resolved = Self::resolve_without_on_resolve::<IS_A_FILE_PATH, _>(
             global,
             &answer,
             source,
             query_string,
             mode,
             global_cache,
+            AboveImporter,
         )?;
         // Not on disk: either an `onLoad` serves it, or nothing is loaded and the callback's absolute path stands, like the answer of a resolve hook in Node.js.
         if resolved.is_err() {
@@ -5841,13 +5936,14 @@ impl VirtualMachine {
         Ok(Some(resolved))
     }
 
-    fn resolve_without_on_resolve<const IS_A_FILE_PATH: bool>(
+    fn resolve_without_on_resolve<const IS_A_FILE_PATH: bool, S: PackageSearch>(
         global: &JSGlobalObject,
         specifier: &bun_core::String,
         source: &bun_core::String,
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
         global_cache: bun_resolver::GlobalCache,
+        search: S,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         // `data:` URLs carry the module source inline and never touch the
@@ -5997,6 +6093,7 @@ impl VirtualMachine {
             mode.is_esm(),
             IS_A_FILE_PATH,
             global_cache,
+            search,
         );
         if mode == ResolveMode::Esm {
             jsc_vm.transpiler.resolver.resolves_for_code_from_disk = false;

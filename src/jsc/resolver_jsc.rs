@@ -34,12 +34,26 @@ extern "C" fn node_module_paths_js_value(
 
 fn node_module_paths_list(in_str: &BunString, use_dirname: bool) -> Vec<BunString> {
     let mut list: Vec<bun_core::String> = Vec::new();
-
     let utf8 = in_str.to_utf8();
+    let (full_path, root_index) = resolved_directory(utf8.slice(), use_dirname);
+    for_each_directory_above(full_path, root_index, |directory| {
+        list.push(BunString::create_format(format_args!(
+            "{}{}node_modules",
+            BStr::new(directory),
+            SEP_STR,
+        )));
+        true
+    });
+    list
+}
+
+/// Node's `path.resolve(from)`, or that of the directory of `from`, and the length of its root.
+/// The path lies in the buffer of `join_abs_string`.
+fn resolved_directory(from: &[u8], use_dirname: bool) -> (&'static [u8], usize) {
     let base_path: &[u8] = if use_dirname {
-        resolve_path::dirname::<bun_paths::platform::Auto>(utf8.slice())
+        resolve_path::dirname::<bun_paths::platform::Auto>(from)
     } else {
-        utf8.slice()
+        from
     };
     // Like Node's `_nodeModulePaths`, this is pure string manipulation, so there's no length limit.
     let mut full_path: &[u8] = resolve_path::join_abs_string::<bun_paths::platform::Auto>(
@@ -62,6 +76,17 @@ fn node_module_paths_list(in_str: &BunString, use_dirname: bool) -> Vec<BunStrin
     {
         full_path = &full_path[..full_path.len() - 1];
     }
+    (full_path, root_index)
+}
+
+/// Calls `visit` with each directory whose `node_modules` Node's `Module._nodeModulePaths` lists
+/// for `full_path`, nearest first, until it answers `false`. A directory comes without a trailing
+/// separator, so the root of a POSIX filesystem is the empty string.
+fn for_each_directory_above(
+    full_path: &[u8],
+    root_index: usize,
+    mut visit: impl FnMut(&[u8]) -> bool,
+) {
     let mut root_path: &[u8] = &full_path[0..root_index];
     if full_path.len() > root_path.len() {
         // Manual backwards-split iteration: we need both the remaining buffer
@@ -90,12 +115,9 @@ fn node_module_paths_list(in_str: &BunString, use_dirname: bool) -> Vec<BunStrin
                 None => 0,
             } + part.len();
 
-            list.push(BunString::create_format(format_args!(
-                "{}{}{}node_modules",
-                BStr::new(root_path),
-                BStr::new(&suffix[..prefix_len]),
-                SEP_STR,
-            )));
+            if !visit(&full_path[..root_index + prefix_len]) {
+                return;
+            }
         }
     }
 
@@ -103,11 +125,70 @@ fn node_module_paths_list(in_str: &BunString, use_dirname: bool) -> Vec<BunStrin
         root_path = &root_path[..root_path.len() - 1];
     }
 
-    list.push(BunString::create_format(format_args!(
-        "{}{}node_modules",
-        BStr::new(root_path),
-        SEP_STR,
-    )));
+    visit(root_path);
+}
 
-    list
+/// For NodeModuleModule.cpp: `node_module_paths_run` over the `len` strings at `directories`.
+///
+/// # Safety
+/// `directories` must be null or point to `len` initialized `BunString`s that remain valid for
+/// the duration of this call.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Resolver__nodeModulePathsRun(
+    filename: &BunString,
+    directories: *const BunString,
+    len: usize,
+    start: &mut usize,
+    end: &mut usize,
+) -> bool {
+    let directories: &[BunString] = if len == 0 {
+        &[]
+    } else {
+        // SAFETY: the C++ caller passes `len` initialized `BunString`s that outlive this call; `len > 0` here.
+        unsafe { core::slice::from_raw_parts(directories, len) }
+    };
+    let Some(run) = node_module_paths_run(filename.to_utf8().slice(), directories) else {
+        return false;
+    };
+    *start = run.start;
+    *end = run.end;
+    true
+}
+
+/// Where in `directories` the list that `Module._nodeModulePaths` gives for the directory of
+/// `filename` stands, whole and in order. That list is the `paths` of a CommonJS module at
+/// `filename` until script changes them.
+pub fn node_module_paths_run(
+    filename: &[u8],
+    directories: &[BunString],
+) -> Option<core::ops::Range<usize>> {
+    const NODE_MODULES: &[u8] = b"node_modules";
+    let (full_path, root_index) = resolved_directory(filename, true);
+    // An ASCII path is compared in the encoding that `listed` has. Any other goes through UTF-8.
+    let is_ascii = strings::is_all_ascii(full_path);
+    let names = |listed: &BunString, directory: &[u8]| {
+        if is_ascii {
+            let listed = listed.to_encoded_slice();
+            return listed.len == directory.len() + 1 + NODE_MODULES.len()
+                && listed.starts_with_ascii(directory)
+                && listed.char_at(directory.len()) == u16::from(SEP)
+                && listed.substring(directory.len() + 1).eq_ascii(NODE_MODULES);
+        }
+        let listed = listed.to_utf8();
+        let listed = listed.slice();
+        listed.len() == directory.len() + 1 + NODE_MODULES.len()
+            && listed.starts_with(directory)
+            && listed[directory.len()] == SEP
+            && listed.ends_with(NODE_MODULES)
+    };
+    (0..directories.len()).find_map(|start| {
+        // `None`: an entry is another directory, or `directories` ended before the list did.
+        let mut end = Some(start);
+        for_each_directory_above(full_path, root_index, |directory| {
+            end = end.filter(|&at| (directories.get(at)).is_some_and(|it| names(it, directory)));
+            end = end.map(|at| at + 1);
+            end.is_some()
+        });
+        end.map(|end| start..end)
+    })
 }

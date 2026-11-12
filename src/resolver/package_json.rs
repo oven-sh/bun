@@ -1567,6 +1567,8 @@ impl<'a> Package<'a> {
         None
     }
 
+    // Each instance of `Resolver::load_node_modules_in` keeps its own copy, as when there was one.
+    #[inline(always)]
     pub(crate) fn parse(specifier: &'a [u8], subpath_buf: &'a mut [u8]) -> Option<Package<'a>> {
         if specifier.is_empty() {
             return None;

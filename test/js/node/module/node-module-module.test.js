@@ -1128,6 +1128,361 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   });
 
+  // Node's require() looks for a package in the `paths` of the module that requires, and each module gets its `paths` from
+  // Module._nodeModulePaths when it is loaded. The answers below are those of Node 26.
+  describe("the `paths` of the module that requires", () => {
+    const from = place => `exports.from = ${JSON.stringify(place)};`;
+    const packages = {
+      "node_modules/installed/index.js": from("node_modules"),
+      "node_modules/both/index.js": from("node_modules"),
+      "extra/only/index.js": from("extra"),
+      "extra/both/index.js": from("extra"),
+      "extra/with-exports/package.json": JSON.stringify({
+        name: "with-exports",
+        exports: { ".": "./main.js", "./feature": "./lib/feature.js" },
+      }),
+      "extra/with-exports/main.js": from("main"),
+      "extra/with-exports/lib/feature.js": from("feature"),
+      "extra/with-exports/lib/hidden.js": from("hidden"),
+      "extra/own-name/index.js": from("extra"),
+      "global/from-node-path/index.js": from("global"),
+      "global/from-node-path-exports/package.json": JSON.stringify({
+        name: "from-node-path-exports",
+        exports: "./entry.js",
+      }),
+      "global/from-node-path-exports/entry.js": from("global exports"),
+      "own-name/package.json": JSON.stringify({ name: "own-name", exports: "./main.cjs" }),
+      "own-name/main.cjs": from("own package"),
+      "own-name/asks.cjs": `module.paths.unshift(require("node:path").join(__dirname, "..", "extra"));\nmodule.exports = require("own-name").from;`,
+      "late/keep.txt": "",
+    };
+    // A case that asks twice has a package of its own: Node remembers a loaded module for the file that loaded it first.
+    for (const name of ["in-front", "left-out", "under-text", "for-a-peer"]) {
+      packages[`node_modules/${name}/index.js`] = from("node_modules");
+      packages[`extra/${name}/index.js`] = from("extra");
+    }
+
+    // Each case is the body of a module of its own, in a directory of its own: [what it does, what it answers in Node].
+    const cases = {
+      "push": [`module.paths.push(extra); return from("only");`, "extra"],
+      "push, require.resolve": [
+        `module.paths.push(extra); return where(require.resolve("only"));`,
+        "extra/only/index.js",
+      ],
+      "push, module.require": [`module.paths.push(extra); return module.require("only").from;`, "extra"],
+      "push, Module.prototype.require": [
+        `module.paths.push(extra); return Module.prototype.require.call(module, "only").from;`,
+        "extra",
+      ],
+      "push, a file of the package": [`module.paths.push(extra); return from("only/index.js");`, "extra"],
+      "push leaves the nearer copy in front": [`module.paths.push(extra); return from("both");`, "node_modules"],
+      "unshift puts the listed copy in front": [`module.paths.unshift(extra); return from("both");`, "extra"],
+      "a new list is the whole search": [
+        `module.paths = [extra]; return [from("only"), from("installed")];`,
+        ["extra", "MODULE_NOT_FOUND"],
+      ],
+      "an empty list": [`module.paths = []; return from("installed");`, "MODULE_NOT_FOUND"],
+      "an entry relative to the working directory": [`module.paths = ["extra"]; return from("only");`, "extra"],
+      "an entry with a trailing separator and dot segments": [
+        `module.paths = [path.join(extra, "..", "extra") + path.sep]; return from("only");`,
+        "extra",
+      ],
+      "a path and a builtin are found without the list": [
+        `module.paths = []; return [require("../../extra/only").from, require(path.join(extra, "only")).from, typeof require("fs").readFileSync];`,
+        ["extra", "extra", "function"],
+      ],
+      "a list that was only read": [
+        `void module.paths; return [from("installed"), from("only")];`,
+        ["node_modules", "MODULE_NOT_FOUND"],
+      ],
+      "a copy of the list assigned back": [
+        `module.paths = module.paths.slice(); return [from("installed"), from("only")];`,
+        ["node_modules", "MODULE_NOT_FOUND"],
+      ],
+      "a list without its last entry": [
+        `module.paths.pop(); return [from("installed"), from("only")];`,
+        ["node_modules", "MODULE_NOT_FOUND"],
+      ],
+      "an entry that is written in place": [
+        `module.paths[0] = extra; return [from("only"), from("installed")];`,
+        ["extra", "node_modules"],
+      ],
+      "a list that is cut to no entry": [`module.paths.length = 0; return from("installed");`, "MODULE_NOT_FOUND"],
+      "a list that was read before the module got another file name": [
+        `void module.paths; module.filename = path.join(path.parse(root).root, "no-such-directory", "file.cjs"); return from("installed");`,
+        "node_modules",
+      ],
+      "a text is no list": [
+        `module.paths = "text"; try { require("only"); } catch (e) { return [e.name, e.code ?? null]; }`,
+        ["TypeError", null],
+      ],
+      "a number lists nothing": [`module.paths = 5; return from("installed");`, "MODULE_NOT_FOUND"],
+      "an object with a length": [`module.paths = { length: 1, 0: extra }; return from("only");`, "extra"],
+      "an entry that is no string, before the package": [
+        `module.paths = [1, extra]; return from("only");`,
+        "ERR_INVALID_ARG_TYPE",
+      ],
+      "an entry that is no string, after the package": [`module.paths = [extra, 1]; return from("only");`, "extra"],
+      "package.json exports in a listed directory": [
+        `module.paths.push(extra); return [from("with-exports"), from("with-exports/feature"), from("with-exports/lib/hidden.js") === "hidden"];`,
+        ["main", "feature", false],
+      ],
+      "NODE_PATH after the list": [
+        `module.paths = [extra]; return [from("from-node-path"), from("from-node-path-exports")];`,
+        ["global", "global exports"],
+      ],
+      "NODE_PATH after an empty list": [`module.paths = []; return from("from-node-path");`, "global"],
+      "require.resolve.paths": [
+        `module.paths = [extra]; return [require.resolve.paths("only")[0] === extra, require.resolve.paths("./only")[0] === __dirname];`,
+        [true, true],
+      ],
+      "Module._resolveFilename with a module": [
+        `module.paths.push(extra); return where(Module._resolveFilename("only", module));`,
+        "extra/only/index.js",
+      ],
+      "Module._resolveFilename with an object that has paths": [
+        `return [where(Module._resolveFilename("only", { paths: [extra] })), where(Module._resolveFilename("only", { id: __filename, filename: __filename, paths: [extra] }))];`,
+        ["extra/only/index.js", "extra/only/index.js"],
+      ],
+      "Module._resolveFilename with the paths of Module._nodeModulePaths": [
+        `return where(Module._resolveFilename("installed", { id: __filename, filename: __filename, paths: Module._nodeModulePaths(__dirname) }));`,
+        "node_modules/installed/index.js",
+      ],
+      "Module.prototype.require with an object that has paths": [
+        `return Module.prototype.require.call({ paths: [extra] }, "only").from;`,
+        "extra",
+      ],
+      "options.paths, not the list of the module": [
+        `module.paths = [extra]; return [where(require.resolve("installed", { paths: [root] })), where(Module._resolveFilename("installed", module, false, { paths: [root] }))];`,
+        ["node_modules/installed/index.js", "node_modules/installed/index.js"],
+      ],
+      "the package of the file itself comes before the list": [
+        `return require("../../own-name/asks.cjs");`,
+        "own package",
+      ],
+      "a loaded module is answered again, in front of a changed list": [
+        `const loaded = require("in-front"); module.paths.unshift(extra); return [loaded.from, require("in-front") === loaded, module.require("in-front") === loaded, from("in-front/index.js"), where(require.resolve("in-front"))];`,
+        ["node_modules", true, true, "extra", "extra/in-front/index.js"],
+      ],
+      "a loaded module is answered again, without a list that has it": [
+        `const loaded = require("left-out"); module.paths = []; const again = require("left-out") === loaded; delete require.cache[require.resolve("left-out", { paths: [root] })]; return [again, from("left-out")];`,
+        [true, "MODULE_NOT_FOUND"],
+      ],
+      "a loaded module is answered again, with a text for a list": [
+        `const loaded = require("under-text"); module.paths = "text"; return require("under-text") === loaded;`,
+        true,
+      ],
+      "a loaded module is answered again, to another file of the directory": [
+        `const loaded = require("for-a-peer"); return [loaded.from, require("./peer.cjs") === loaded];`,
+        ["node_modules", true],
+        {
+          "peer.cjs": `module.paths.unshift(require("node:path").join(__dirname, "..", "..", "extra"));\nmodule.exports = require("for-a-peer");`,
+        },
+      ],
+      "a package that is created after a miss": [
+        `const late = path.join(root, "late"); module.paths.push(late); const first = from("made-late"); fs.mkdirSync(path.join(late, "made-late")); fs.writeFileSync(path.join(late, "made-late", "index.js"), 'exports.from = "late";'); return [first, from("made-late")];`,
+        ["MODULE_NOT_FOUND", "late"],
+      ],
+      "import() does not read the list": [
+        `module.paths.push(extra); return import("only").then(() => "loaded", e => e.code);`,
+        "ERR_MODULE_NOT_FOUND",
+      ],
+      // The file that starts the program then asks for the file by its name.
+      "require.main.paths": [
+        `require.main.paths.push(path.join(extra, "with-exports", "lib")); return "hidden";`,
+        "hidden",
+      ],
+    };
+
+    test("is where require() and require.resolve() look for a package", async () => {
+      const names = Object.keys(cases);
+      const files = { ...packages };
+      names.forEach((name, index) => {
+        const [body, , beside = {}] = cases[name];
+        files[`cases/${index}/case.cjs`] = `
+          const path = require("node:path"), fs = require("node:fs"), Module = require("node:module");
+          const root = path.join(__dirname, "..", "..");
+          const extra = path.join(root, "extra");
+          const where = found => path.relative(root, found).split(path.sep).join("/");
+          const from = id => { try { return require(id).from; } catch (e) { return e.code ?? e.name; } };
+          module.exports = (() => { ${body} })();
+        `;
+        for (const [file, text] of Object.entries(beside)) files[`cases/${index}/${file}`] = text;
+      });
+      files["main.cjs"] = `
+        const names = ${JSON.stringify(names)};
+        const results = {};
+        (async () => {
+          for (let index = 0; index < names.length; index++) {
+            try {
+              results[names[index]] = await require("./cases/" + index + "/case.cjs");
+            } catch (e) {
+              results[names[index]] = "threw " + (e.code ?? e.name);
+            }
+          }
+          try {
+            results["require.main.paths"] = require("hidden.js").from;
+          } catch (e) {
+            results["require.main.paths"] = e.code;
+          }
+          console.log(JSON.stringify(results));
+        })();
+      `;
+      using dir = tempDir("module-paths", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.cjs"],
+        env: { ...bunEnv, NODE_PATH: path.join(String(dir), "global") },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(Object.fromEntries(names.map(name => [name, cases[name][1]])));
+      expect(exitCode).toBe(0);
+    });
+
+    const askers = {
+      "loaded/first.cjs": `module.exports = { paths: module.paths.slice(), from: (() => { try { return require("only").from; } catch (e) { return e.code; } })() };`,
+      "loaded/second.cjs": `module.exports = "second";`,
+      "loaded/by-import.cjs": `module.exports = { listed: module.paths.some(entry => entry.endsWith("extra")), from: (() => { try { return require("only").from; } catch (e) { return e.code; } })() };`,
+      "loaded-before/before.cjs": `module.exports = () => { try { return require("only").from; } catch (e) { return e.code; } };`,
+      "loaded-after/third.cjs": `module.exports = { paths: module.paths.slice(), from: (() => { try { return require("only").from; } catch (e) { return e.code; } })() };`,
+    };
+
+    async function run(files, ...args) {
+      using dir = tempDir("module-paths", { ...packages, ...askers, ...files });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const said = JSON.parse(stdout);
+      expect(exitCode).toBe(0);
+      return said;
+    }
+
+    test("comes from Module._nodeModulePaths as the program has replaced it", async () => {
+      const said = await run(
+        {
+          "main.cjs": `
+            const path = require("node:path"), Module = require("node:module");
+            const extra = path.join(__dirname, "extra");
+            const original = Module._nodeModulePaths;
+            const calls = [];
+            const take = () => calls.splice(0);
+            const where = found => path.relative(__dirname, found).split(path.sep).join("/");
+            const results = {};
+            const before = require("./loaded-before/before.cjs");
+            const listsExtra = function (from) {
+              calls.push([this === Module, where(from)]);
+              return original.call(this, from).concat([extra]);
+            };
+            Module._nodeModulePaths = listsExtra;
+            results["the property"] = [Object.keys(Object.getOwnPropertyDescriptor(Module, "_nodeModulePaths")).sort().join(), Module._nodeModulePaths === listsExtra];
+            const first = require("./loaded/first.cjs");
+            results["a module that is loaded"] = [first.paths.includes(extra), first.from, take()];
+            results["a module that is loaded already"] = [require("./loaded/first.cjs") === first, take()];
+            results["require.resolve"] = [where(require.resolve("./loaded/second.cjs")), take()];
+            results["createRequire"] = [where(Module.createRequire(path.join(__dirname, "late", "none.js")).resolve("only")), take()];
+            results["options.paths"] = [where(require.resolve("only", { paths: [path.join(__dirname, "loaded"), path.join(__dirname, "late")] })), take()];
+            results["options.paths, a relative request"] = [where(require.resolve("./second.cjs", { paths: [path.join(__dirname, "loaded")] })), take()];
+            results["a module that was loaded before"] = [before(), module.paths.includes(extra), take()];
+            class Sub extends Module {}
+            Sub._nodeModulePaths = () => [];
+            results["a write to a subclass"] = [Module._nodeModulePaths === listsExtra, Object.hasOwn(Sub, "_nodeModulePaths")];
+            Module._nodeModulePaths = original;
+            const third = require("./loaded-after/third.cjs");
+            results["the first function written back"] = [third.paths.includes(extra), third.from, take()];
+            Module._nodeModulePaths = () => { throw new Error("from the replaced function"); };
+            delete require.cache[require.resolve("./loaded/second.cjs")];
+            try { require("./loaded/second.cjs"); } catch (e) { results["a function that throws"] = [e.message, require.resolve("./loaded/second.cjs") in require.cache]; }
+            Module._nodeModulePaths = original;
+            // module-alias replaces Module._resolveFilename too, with a function that calls the one it found.
+            const resolveFilename = Module._resolveFilename;
+            let resolved = 0;
+            Module._resolveFilename = function (...given) { resolved++; return resolveFilename.apply(this, given); };
+            module.paths.push(extra);
+            results["a Module._resolveFilename that calls the first"] = [require("only").from, resolved];
+            Module._resolveFilename = resolveFilename;
+            console.log(JSON.stringify(results));
+          `,
+        },
+        "main.cjs",
+      );
+      expect(said).toEqual({
+        "the property": ["configurable,enumerable,value,writable", true],
+        // Node calls the function once for each module that it loads, with the directory of the file.
+        "a module that is loaded": [
+          true,
+          "extra",
+          [
+            [true, "loaded"],
+            [true, "extra/only"],
+          ],
+        ],
+        "a module that is loaded already": [true, []],
+        "require.resolve": ["loaded/second.cjs", []],
+        "createRequire": ["extra/only/index.js", [[true, "late"]]],
+        "options.paths": [
+          "extra/only/index.js",
+          [
+            [true, "loaded"],
+            [true, "late"],
+          ],
+        ],
+        "options.paths, a relative request": ["loaded/second.cjs", []],
+        "a module that was loaded before": ["MODULE_NOT_FOUND", false, []],
+        "a write to a subclass": [true, true],
+        "the first function written back": [false, "MODULE_NOT_FOUND", []],
+        "a function that throws": ["from the replaced function", false],
+        "a Module._resolveFilename that calls the first": ["extra", 1],
+      });
+    });
+
+    test("comes from the replaced Module._nodeModulePaths for a CommonJS file that import() loads", async () => {
+      const said = await run(
+        {
+          "main.mjs": `
+            import Module from "node:module";
+            import path from "node:path";
+            const extra = path.join(import.meta.dirname, "extra");
+            const original = Module._nodeModulePaths;
+            let calls = 0;
+            Module._nodeModulePaths = function (from) { calls++; return original.call(this, from).concat([extra]); };
+            const loaded = await import("./loaded/by-import.cjs");
+            console.log(JSON.stringify([loaded.default, calls]));
+          `,
+        },
+        "main.mjs",
+      );
+      expect(said).toEqual([{ listed: true, from: "extra" }, 2]);
+    });
+
+    test("is read in a Worker", async () => {
+      const said = await run(
+        {
+          "worker.cjs": `
+            const { parentPort } = require("node:worker_threads");
+            module.paths.push(require("node:path").join(__dirname, "extra"));
+            let from; try { from = require("only").from; } catch (e) { from = e.code; }
+            parentPort.postMessage(from);
+          `,
+          "main.cjs": `
+            const { Worker } = require("node:worker_threads");
+            new Worker(require("node:path").join(__dirname, "worker.cjs")).once("message", from => console.log(JSON.stringify(from)));
+          `,
+        },
+        "main.cjs",
+      );
+      expect(said).toBe("extra");
+    });
+  });
+
   test.each([
     "/file/name/goes/here.js",
     "file/here.js",

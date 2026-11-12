@@ -4122,6 +4122,7 @@ void GlobalObject::clearModuleRegistry()
 {
     this->moduleLoader()->clearAll(); // takes the loader's cellLock itself (visitChildren iterates the maps under it)
     this->requireMap()->clear(this);
+    this->m_loadedModulesByRequest.clear();
 }
 
 void GlobalObject::reload()

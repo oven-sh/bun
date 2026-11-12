@@ -53,10 +53,14 @@
 #include "wtf/text/StringView.h"
 
 #include "isBuiltinModule.h"
+#include "NodeModuleModule.h"
 #include "VectorSizeLimit.h"
 #include "WebCoreJSBuiltins.h"
 
 extern "C" bool isBunTest;
+// Resolves from the file name alone: `import.meta.resolveSync()`, and a require() in a program that has touched nothing that
+// Bun::resolveForRequire() reads.
+extern "C" JSC::EncodedJSValue Bun__resolveSync(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm, bool isUserRequireResolve);
 
 namespace Bun {
 JSC::JSObject* createImportMetaEnvForTests(Zig::GlobalObject*);
@@ -260,9 +264,12 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     JSValue resolveFilenameOptions = callFrame->argument(6);
 
     // require() / require.resolve() from a disposed Bun.ModuleGraph's module throws.
-    if (auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(parentModule)) {
+    if (auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(parentModule)) [[likely]] {
         Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, requirer->moduleGraph());
         RETURN_IF_EXCEPTION(scope, {});
+    } else if (parentModule.isObject() && globalObject) {
+        // `Module.prototype.require.call({ paths }, id)`: the `paths` of any object are read, as in Node.
+        globalObject->commonJSResolveFlags |= Zig::GlobalObject::ModulePathsSeenByScript;
     }
 
     if (!isRequireDotResolve) {
@@ -296,48 +303,56 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         }
     }
 
+    JSC::EncodedJSValue result;
     if (!isESM) {
         if (globalObject) [[likely]] {
-            if (globalObject->hasOverriddenModuleResolveFilenameFunction) [[unlikely]] {
-                JSValue overrideHandler = globalObject->m_moduleResolveFilenameOverride.get();
-                JSC::CallData overrideCallData = JSC::getCallData(overrideHandler);
-                if (overrideCallData.type == JSC::CallData::Type::None) [[unlikely]] {
-                    return JSC::throwVMTypeError(lexicalGlobalObject, scope, "Module._resolveFilename is not a function"_s);
-                }
+            if (globalObject->commonJSResolveFlags) [[unlikely]] {
+                if (globalObject->hasOverriddenModuleResolveFilenameFunction()) {
+                    JSValue overrideHandler = globalObject->m_moduleResolveFilenameOverride.get();
+                    JSC::CallData overrideCallData = JSC::getCallData(overrideHandler);
+                    if (overrideCallData.type == JSC::CallData::Type::None) [[unlikely]] {
+                        return JSC::throwVMTypeError(lexicalGlobalObject, scope, "Module._resolveFilename is not a function"_s);
+                    }
 
-                MarkedArgumentBuffer args;
-                args.append(moduleName);
-                args.append(parentModule);
-                args.append(jsBoolean(false));
-                args.append(resolveFilenameOptions);
+                    MarkedArgumentBuffer args;
+                    args.append(moduleName);
+                    args.append(parentModule);
+                    args.append(jsBoolean(false));
+                    args.append(resolveFilenameOptions);
 
-                JSValue thisValue = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
-                JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, overrideCallData, thisValue, args);
-                RETURN_IF_EXCEPTION(scope, {});
-                if (!isRequireDotResolve) {
-                    JSString* string = result.toString(globalObject);
+                    JSValue thisValue = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+                    JSValue answer = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, overrideCallData, thisValue, args);
                     RETURN_IF_EXCEPTION(scope, {});
-                    auto str = string->value(globalObject);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    // The override bypasses the resolver, which is what normally rejects null bytes.
-                    if (str->contains('\0')) [[unlikely]] {
-                        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "path"_s, string, "must be a string, Uint8Array, or URL without null bytes"_s);
-                        return {};
+                    if (!isRequireDotResolve) {
+                        JSString* string = answer.toString(globalObject);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        auto str = string->value(globalObject);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        // The override bypasses the resolver, which is what normally rejects null bytes.
+                        if (str->contains('\0')) [[unlikely]] {
+                            Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "path"_s, string, "must be a string, Uint8Array, or URL without null bytes"_s);
+                            return {};
+                        }
+                        WTF::String prefixed = Bun::isUnprefixedNodeBuiltin(str);
+                        if (!prefixed.isNull()) {
+                            return JSValue::encode(jsString(vm, prefixed));
+                        }
+                        // In an ahead-of-time executable Module._resolveFilename() answers, as require.resolve() does, with where the file lay when the program was built.
+                        if (Bun::hasCompiledModules()) [[unlikely]] {
+                            if (WTF::String known = Bun::pathInExecutable(str.data); !known.isNull() && Bun::compiledModuleForPath(known))
+                                string = jsString(vm, known);
+                        }
+                        throwIfResolvedFileIsRefused(lexicalGlobalObject, string, moduleName, from);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        return JSC::JSValue::encode(string);
                     }
-                    WTF::String prefixed = Bun::isUnprefixedNodeBuiltin(str);
-                    if (!prefixed.isNull()) {
-                        return JSValue::encode(jsString(vm, prefixed));
-                    }
-                    // In an ahead-of-time executable Module._resolveFilename() answers, as require.resolve() does, with where the file lay when the program was built.
-                    if (Bun::hasCompiledModules()) [[unlikely]] {
-                        if (WTF::String known = Bun::pathInExecutable(str.data); !known.isNull() && Bun::compiledModuleForPath(known))
-                            string = jsString(vm, known);
-                    }
-                    throwIfResolvedFileIsRefused(lexicalGlobalObject, string, moduleName, from);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    return JSC::JSValue::encode(string);
+                    return JSC::JSValue::encode(answer);
                 }
-                return JSC::JSValue::encode(result);
+                // A parent that has `paths` looks in them. Node does not read them when it is given `options.paths`.
+                if (userPathList.isUndefinedOrNull() && moduleName.isString()) {
+                    result = Bun::resolveForRequire(lexicalGlobalObject, moduleName, parentModule, from, isRequireDotResolve);
+                    goto resolved;
+                }
             }
         }
 
@@ -359,7 +374,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     return {};
                 }
 
-                JSC::EncodedJSValue result = {};
+                result = {};
                 WTF::Vector<BunString> paths;
                 for (size_t i = 0; i < userPathListArray->length(); ++i) {
                     JSValue path = userPathListArray->getIndex(globalObject, i);
@@ -380,7 +395,10 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     }
                 }
 
-                result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.begin(), paths.size());
+                if (Bun::isNodeModulePathsReplaced(globalObject)) [[unlikely]]
+                    result = Bun::resolveFromPathsOption(lexicalGlobalObject, moduleName, from, paths.span(), isRequireDotResolve);
+                else
+                    result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.begin(), paths.size());
                 if (scope.exception()) [[unlikely]]
                     goto cleanup;
 
@@ -415,7 +433,8 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         return {};
     }
 
-    auto result = Bun__resolveSync(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve);
+    result = Bun__resolveSync(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve);
+resolved:
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!JSC::JSValue::decode(result).isString()) {

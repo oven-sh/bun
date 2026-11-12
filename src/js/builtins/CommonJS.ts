@@ -74,7 +74,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   // match the native-addon extension against the path portion only.
   const queryIndex = id.indexOf("?");
   if (queryIndex === -1 ? id.endsWith(".node") : id.endsWith(".node", queryIndex)) {
-    return $internalRequire(id, this, requireMap);
+    return $internalRequire(id, this, requireMap, originalId);
   }
 
   if (id === "bun:test") {
@@ -88,7 +88,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 
   // To handle import/export cycles, we need to create a module object and put
   // it into the map before we import it.
-  const mod = $createCommonJSModule(id, {}, false, this);
+  const mod = $createCommonJSModule(id, {}, false, this, originalId);
   requireMap.$set(id, mod);
 
   var out: JSCommonJSModule | RequiredESMNamespace | -1;
@@ -172,7 +172,7 @@ export function requireResolve(this: JSCommonJSModule, id: string, options: { pa
 }
 
 $visibility = "Private";
-export function internalRequire(id: string, parent: JSCommonJSModule, requireMap: RequireMap) {
+export function internalRequire(id: string, parent: JSCommonJSModule, requireMap: RequireMap, request: string) {
   // A native addon is loaded once per process: its one module object is the global cache's,
   // which a Bun.ModuleGraph's cache then also points at.
   const loaded = $requireMap.$get(id);
@@ -187,7 +187,7 @@ export function internalRequire(id: string, parent: JSCommonJSModule, requireMap
   const filename = queryIndex === -1 ? id : id.substring(0, queryIndex);
   $assert(filename.endsWith(".node"));
 
-  const module = $createCommonJSModule(id, {}, true, requireMap === $requireMap ? parent : undefined);
+  const module = $createCommonJSModule(id, {}, true, requireMap === $requireMap ? parent : undefined, request);
   process.dlopen(module, filename);
   $requireMap.$set(id, module);
   if (requireMap !== $requireMap) requireMap.$set(id, module);

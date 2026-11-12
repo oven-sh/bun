@@ -410,7 +410,7 @@ declare function $host(): TODO;
 declare function $hostname(): TODO;
 declare function $ignoreBOM(): TODO;
 declare function $importer(): TODO;
-declare function $internalRequire(id: string, parent: JSCommonJSModule, requireMap: RequireMap): TODO;
+declare function $internalRequire(id: string, parent: JSCommonJSModule, requireMap: RequireMap, request: string): any;
 declare function $isAbortSignal(signal: unknown): signal is AbortSignal;
 declare function $isAbsolute(): TODO;
 declare function $join(): TODO;
@@ -469,6 +469,8 @@ declare function $createCommonJSModule(
   exports: any,
   hasEvaluated: boolean,
   parent: JSCommonJSModule | undefined,
+  /** What the `require()` that loads a file into the module was asked for. */
+  request?: string,
 ): JSCommonJSModule;
 declare function $evaluateCommonJSModule(
   moduleToEvaluate: JSCommonJSModule,

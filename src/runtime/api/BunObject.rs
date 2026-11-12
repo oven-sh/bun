@@ -988,6 +988,110 @@ pub(crate) fn bun_resolve_sync_with_paths(
     })
 }
 
+// HOST_EXPORT(Bun__resolveSyncFromLookupPaths, c)
+/// A CommonJS request from a module whose `paths` are the `paths_len` strings at `paths_ptr`.
+/// The entries from `above_importer_start` up to `above_importer_end` are the `node_modules`
+/// directories above the module, all of them in order.
+/// `ends_at_invalid_entry`: `paths` went on with an entry that is not a string. When the search
+/// comes to that entry, nothing is thrown, `*reached_invalid_entry` is set and the caller throws.
+///
+/// # Safety
+/// `paths_ptr` must be null or point to `paths_len` initialized `BunString`s that remain valid
+/// for the duration of this call, and `reached_invalid_entry` must be valid for a write.
+// FFI entry point exported via HOST_EXPORT and called only from C++
+// (NodeModuleModule.cpp), which upholds the contract above.
+pub(crate) fn bun_resolve_sync_from_lookup_paths(
+    global: &JSGlobalObject,
+    specifier: JSValue,
+    source: JSValue,
+    is_user_require_resolve: bool,
+    paths_ptr: *const BunString,
+    paths_len: usize,
+    above_importer_start: usize,
+    above_importer_end: usize,
+    ends_at_invalid_entry: bool,
+    reached_invalid_entry: *mut bool,
+) -> JSValue {
+    let directories: &[BunString] = if paths_len == 0 {
+        &[]
+    } else {
+        // SAFETY: C++ caller guarantees `paths_ptr` points to `paths_len`
+        // initialized `BunString`s that outlive this call; `paths_len > 0` here.
+        unsafe { core::slice::from_raw_parts(paths_ptr, paths_len) }
+    };
+
+    let Ok(specifier_str) = specifier.to_bun_string(global) else {
+        return JSValue::ZERO;
+    };
+
+    if specifier_str.length() == 0 {
+        let _ = global
+            .err(
+                jsc::ErrCode::INVALID_ARG_VALUE,
+                format_args!("The argument 'id' must be a non-empty string. Received ''"),
+            )
+            .throw();
+        return JSValue::ZERO;
+    }
+
+    let Ok(source_str) = source.to_bun_string(global) else {
+        return JSValue::ZERO;
+    };
+
+    let mode = ResolveMode::from_ffi_bools(false, is_user_require_resolve);
+    let above_importer = above_importer_start..above_importer_end.min(directories.len());
+    let lookup = bun_resolver::RequireLookupPaths {
+        directories,
+        above_importer: (!above_importer.is_empty()).then_some(above_importer),
+        ends_at_invalid_entry,
+        reached_invalid_entry: core::cell::Cell::new(false),
+        searches_global_folders: true,
+    };
+    // Node reads `paths` for a request that names a package.
+    let names_package = !specifier_str.starts_with_ascii(b"file://")
+        && bun_paths::is_package_path(specifier_str.to_utf8().slice());
+    if !names_package {
+        return jsc::to_js_host_call(global, || {
+            do_resolve_with_args::<true>(global, &specifier_str, &source_str, mode)?
+                .into_js(global)
+        });
+    }
+
+    let resolved = jsc::to_js_host_call(global, || {
+        let mut query_string = BunString::EMPTY;
+        let found = VirtualMachine::resolve_require_from_lookup_paths(
+            global,
+            &specifier_str,
+            &source_str,
+            Some(&mut query_string),
+            mode,
+            &lookup,
+        )?;
+        let found = match found {
+            Ok(path) => path,
+            Err(_) if lookup.reached_invalid_entry.get() => return Ok(JSValue::UNDEFINED),
+            Err(err) => return Err(global.throw_value(err)),
+        };
+        let found = if query_string.is_empty() {
+            found
+        } else {
+            let mut joined: Vec<u8> = Vec::new();
+            // Vec<u8> writes are infallible.
+            let _ = write!(&mut joined, "{}{}", found, query_string);
+            BunString::clone_utf8(&joined)
+        };
+        if mode == ResolveMode::RequireResolve {
+            return find_source_path_of_compiled_file(&specifier_str, &found)
+                .unwrap_or(found)
+                .into_js(global);
+        }
+        found.into_js(global)
+    });
+    // SAFETY: the caller passes a pointer to a `bool` of its own.
+    unsafe { *reached_invalid_entry = lookup.reached_invalid_entry.get() };
+    resolved
+}
+
 /// Resolves `specifier` relative to `source`. A specifier the resolver cannot resolve (the
 /// `ResolveMessage` case, e.g. "Cannot find module") yields `undefined` instead of throwing;
 /// everything else — an `onResolve` plugin throwing or returning an invalid result, a specifier

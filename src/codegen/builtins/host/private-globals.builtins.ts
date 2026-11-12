@@ -129,7 +129,12 @@ const requireMap = b.instance("Map").holding({ key: b.any, value: b.any });
 // The run time refuses there what the executable does not hold. These say what native code does with the operands and what it answers.
 
 // ImportMetaObject.cpp functionImportMeta__resolveSyncPrivate. A Module._resolveFilename that the program has replaced gets the name, the module object and the options.
+// Without one, Bun::resolveForRequire() in NodeModuleModule.cpp reads the `paths` of the module object, or of whatever object stands in its place, and the directories that they list.
 // require() leaves the fourth operand undefined and gets the answer of that function as a string. require.resolve() passes true and gets it as it is.
+const readsPathsOfParent = [
+  ...retainedByNativeCode,
+  b.runsTransitively("OwnValues", "PrototypeChain", b.named("paths")),
+];
 const resolvesName = [
   {
     args: { name: b.any, from: b.any, isESM: b.any, isRequireResolve: b.undefined, operands: b.any.rest },
@@ -140,11 +145,11 @@ const resolvesName = [
       name: retainedByNativeCode,
       from: retainedByNativeCode,
       isESM: b.inspected,
-      operands: retainedByNativeCode,
+      operands: readsPathsOfParent,
     },
     implementation: b.hostCall,
   },
-  changesNothing(b.any),
+  { ...changesNothing(b.any), uses: { operands: readsPathsOfParent } },
 ] satisfies b.FunctionField[];
 
 // JSCommonJSModule.cpp jsFunctionEvaluateCommonJSModule. Once script has read or stored `children` of the module that asks, the answer is what stands there, and the library appends to it.
@@ -157,9 +162,10 @@ const evaluatesModule = {
   implementation: b.hostCall,
 } satisfies b.FunctionField;
 
-// jsFunctionCreateCommonJSModule.
+// jsFunctionCreateCommonJSModule. require() passes what it was asked for, which the module object keeps. A Module._nodeModulePaths that the program has replaced is then
+// called with the directory of the file, and the module object keeps its answer as `paths`.
 const createsModuleObject = {
-  args: { id: b.any, exports: b.any, hasEvaluated: b.any, requirer: b.any },
+  args: { id: b.any, exports: b.any, hasEvaluated: b.any, requirer: b.any, request: b.any.optional },
   returns: b.builtin("%ModuleObject%"),
   capability: "js",
   throws: true,
@@ -168,6 +174,7 @@ const createsModuleObject = {
     exports: retainedByNativeCode,
     hasEvaluated: b.inspected,
     requirer: retainedByNativeCode,
+    request: retainedByNativeCode,
   },
   implementation: b.hostCall,
 } satisfies b.FunctionField;

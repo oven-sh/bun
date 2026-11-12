@@ -1801,35 +1801,9 @@ impl<'a> Resolver<'a> {
 
         let ret = match tmp {
             ResultUnion::Success(mut result) => {
-                if result.path_pair.primary.namespace() != b"node"
-                    && !result.flags.is_standalone_module()
-                {
-                    if let Err(err) = self.finalize_result(&mut result, kind) {
-                        self.extension_order = original_order;
-                        return ResultUnion::Failure(err);
-                    }
-                    // The name of a package leads to a file on disk. Where that file was compiled, the module of the executable answers.
-                    let is_left_to_disk = self.standalone_module_graph.is_some_and(|graph| {
-                        let public_root = graph.base_public_path_with_default_suffix();
-                        graph.compiled_program().is_some_and(|program| {
-                            program.leaves_package_to_disk(public_root, source_dir, import_path)
-                        })
-                    });
-                    let found = result.path().map(|path| path.text());
-                    let is_second_instance = found.is_some_and(|path| {
-                        self.finds_second_instance(source_dir, import_path, path)
-                    });
-                    let found = found
-                        .filter(|_| !is_left_to_disk && !is_second_instance)
-                        .and_then(|path| self.resolve_embedded_module(b"", path, kind));
-                    if let Some(module) = found {
-                        result.path_pair = PathPair {
-                            primary: Path::init(module),
-                            secondary: None,
-                        };
-                        result.module_type = options::ModuleType::Esm;
-                        result.flags |= ResultFlags::IS_STANDALONE_MODULE;
-                    }
+                if let Err(err) = self.finish_found(&mut result, source_dir, import_path, kind) {
+                    self.extension_order = original_order;
+                    return ResultUnion::Failure(err);
                 }
 
                 let _ = self.flush_debug_logs(FlushMode::Success);
@@ -1878,6 +1852,270 @@ impl<'a> Resolver<'a> {
         // (tracing `elapsed` accumulation handled by `_elapsed_guard` above on all paths)
         self.extension_order = original_order;
         ret
+    }
+
+    /// What a file found on disk still needs: the path a link leads to, the package.json and
+    /// tsconfig.json that apply to it, and the module of the executable that was compiled from it.
+    #[inline(always)]
+    fn finish_found(
+        &mut self,
+        result: &mut Result<'_>,
+        source_dir: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> crate::CrateResult<()> {
+        if result.path_pair.primary.namespace() != b"node" && !result.flags.is_standalone_module()
+        {
+            self.finalize_result(result, kind)?;
+            // The name of a package leads to a file on disk. Where that file was compiled, the module of the executable answers.
+            let is_left_to_disk = self.standalone_module_graph.is_some_and(|graph| {
+                let public_root = graph.base_public_path_with_default_suffix();
+                graph.compiled_program().is_some_and(|program| {
+                    program.leaves_package_to_disk(public_root, source_dir, import_path)
+                })
+            });
+            let found = result.path().map(|path| path.text());
+            let is_second_instance = found
+                .is_some_and(|path| self.finds_second_instance(source_dir, import_path, path));
+            let found = found
+                .filter(|_| !is_left_to_disk && !is_second_instance)
+                .and_then(|path| self.resolve_embedded_module(b"", path, kind));
+            if let Some(module) = found {
+                result.path_pair = PathPair {
+                    primary: Path::init(module),
+                    secondary: None,
+                };
+                result.module_type = options::ModuleType::Esm;
+                result.flags |= ResultFlags::IS_STANDALONE_MODULE;
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether `resolve_and_auto_install` comes to look for `import_path` in directories of
+    /// packages. What it answers before that (a URL, a path, a name that is marked external) is
+    /// not a question for the `paths` of a CommonJS module.
+    fn is_looked_up_in_package_directories(&self, import_path: &[u8]) -> bool {
+        !import_path.is_empty()
+            && is_package_path(import_path)
+            && strings::index_of_char(import_path, 0).is_none()
+            && !self.opts.mark_builtins_as_external
+            && self.opts.packages != options::Packages::External
+            && !self.opts.polyfill_node_globals
+            && !self.care_about_browser_field
+            && self.opts.external.node_modules.count() == 0
+            && !self.matches_user_external_pattern(import_path)
+            && !import_path.starts_with(b"http://")
+            && !import_path.starts_with(b"https://")
+            && !import_path.starts_with(b"data:")
+    }
+
+    /// `require()`, `require.resolve()` and `Module._resolveFilename()` from a CommonJS module whose
+    /// `paths` are `lookup`. A request for a package is looked up in those directories and nothing
+    /// is installed. Every other request is answered as `resolve_and_auto_install` answers it.
+    pub fn resolve_require_from_lookup_paths<'r>(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &'r [u8],
+        kind: ast::ImportKind,
+        global_cache: GlobalCache,
+        lookup: &RequireLookupPaths<'_>,
+    ) -> ResultUnion<'r> {
+        lookup.reached_invalid_entry.set(false);
+        if !self.is_looked_up_in_package_directories(import_path) {
+            return self.resolve_and_auto_install(source_dir, import_path, kind, global_cache);
+        }
+        if self.standalone_module_graph.is_some() {
+            return self.resolve_require_from_lookup_paths_of_executable(
+                source_dir,
+                import_path,
+                kind,
+                lookup,
+            );
+        }
+        self.resolve_package_from_lookup_paths(source_dir, import_path, kind, lookup)
+    }
+
+    /// `resolve_and_auto_install` for a package request, with `lookup` in place of the
+    /// `node_modules` directories above `source_dir`.
+    fn resolve_package_from_lookup_paths<'r>(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &'r [u8],
+        kind: ast::ImportKind,
+        lookup: &RequireLookupPaths<'_>,
+    ) -> ResultUnion<'r> {
+        let _tracer = ::bun_perf::trace(::bun_perf::PerfEvent::ModuleResolverResolve);
+
+        let original_order = self.extension_order;
+        self.extension_order = if !self.opts.extension_order.required_by_package.is_empty()
+            && strings::path_contains_node_modules_folder(source_dir)
+        {
+            options::ExtOrder::RequiredByPackage
+        } else {
+            options::ExtOrder::DefaultDefault
+        };
+
+        if self.log_ref().level == bun_ast::Level::Verbose {
+            self.debug_logs = Some(DebugLogs::init().expect("unreachable"));
+        }
+
+        let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
+        let source_dir_normalized: &[u8] =
+            if source_dir.is_empty() || !bun_paths::is_absolute(source_dir) {
+                Fs::FileSystem::get().top_level_dir()
+            } else {
+                match source_dir_resolver.resolve_cwd(source_dir) {
+                    Ok(dir) => dir,
+                    Err(_) => {
+                        let _ = self.flush_debug_logs(FlushMode::Fail);
+                        self.extension_order = original_order;
+                        return ResultUnion::NotFound;
+                    }
+                }
+            };
+
+        let ret = match self.check_package_path_in(
+            source_dir_normalized,
+            import_path,
+            kind,
+            GlobalCache::disable,
+            lookup,
+        ) {
+            ResultUnion::Success(mut result) => {
+                match self.finish_found(&mut result, source_dir, import_path, kind) {
+                    Ok(()) => {
+                        let _ = self.flush_debug_logs(FlushMode::Success);
+                        result.import_kind = kind;
+                        ResultUnion::Success(result)
+                    }
+                    Err(err) => ResultUnion::Failure(err),
+                }
+            }
+            not_found => {
+                let _ = self.flush_debug_logs(FlushMode::Fail);
+                not_found
+            }
+        };
+        self.extension_order = original_order;
+        ret
+    }
+
+    /// In an executable a listed directory can be a folder of the executable or a folder on disk,
+    /// as a folder that `require.resolve(name, { paths })` is given can. The `node_modules`
+    /// directories above the importer are asked for as `resolve_and_auto_install` asks, which
+    /// looks into the executable first.
+    fn resolve_require_from_lookup_paths_of_executable<'r>(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &'r [u8],
+        kind: ast::ImportKind,
+        lookup: &RequireLookupPaths<'_>,
+    ) -> ResultUnion<'r> {
+        let mut looked_above_importer = false;
+        let mut index = 0;
+        while let Some(directory) = lookup.directories.get(index) {
+            if let Some(above_importer) = lookup.above_importer.as_ref()
+                && above_importer.start == index
+            {
+                looked_above_importer = true;
+                match self.resolve_and_auto_install(
+                    source_dir,
+                    import_path,
+                    kind,
+                    GlobalCache::disable,
+                ) {
+                    ResultUnion::NotFound => {}
+                    answer => return answer,
+                }
+                index = above_importer.end;
+                continue;
+            }
+            index += 1;
+
+            let given = directory.to_utf8();
+            let given = given.slice();
+            let is_of_executable =
+                ::bun_options_types::standalone_path::is_bun_standalone_file_path(given);
+            if is_of_executable
+                && let Some(answer) =
+                    self.look_in_executable_from_given_folder(given, import_path, kind)
+            {
+                return answer;
+            }
+            let on_disk = self.folder_on_disk_of_given_folder(given);
+            let on_disk = bun_core::StringView::from_bytes(&on_disk);
+            let one = RequireLookupPaths {
+                directories: bun_core::StringView::as_strings(core::slice::from_ref(&on_disk)),
+                above_importer: None,
+                ends_at_invalid_entry: false,
+                reached_invalid_entry: core::cell::Cell::new(false),
+                searches_global_folders: false,
+            };
+            match self.resolve_package_from_lookup_paths(source_dir, import_path, kind, &one) {
+                ResultUnion::NotFound => {}
+                answer => return answer,
+            }
+            if !is_of_executable
+                && let Some(answer) =
+                    self.look_in_executable_from_given_folder(given, import_path, kind)
+            {
+                return answer;
+            }
+        }
+
+        if lookup.ends_at_invalid_entry {
+            lookup.reached_invalid_entry.set(true);
+            return ResultUnion::NotFound;
+        }
+        if looked_above_importer || !lookup.searches_global_folders {
+            return ResultUnion::NotFound;
+        }
+        let global_folders = RequireLookupPaths {
+            directories: &[],
+            above_importer: None,
+            ends_at_invalid_entry: false,
+            reached_invalid_entry: core::cell::Cell::new(false),
+            searches_global_folders: true,
+        };
+        self.resolve_package_from_lookup_paths(source_dir, import_path, kind, &global_folders)
+    }
+
+    /// Forgets what is cached of each directory that `lookup` names and of every directory on the
+    /// way from there to `import_path`, so that the next lookup reads them again.
+    /// `true`: something was cached.
+    pub fn bust_dir_cache_of_lookup_paths(
+        &mut self,
+        lookup: &RequireLookupPaths<'_>,
+        import_path: &[u8],
+    ) -> bool {
+        let mut busted = false;
+        for (index, directory) in lookup.directories.iter().enumerate() {
+            if (lookup.above_importer.as_ref()).is_some_and(|run| run.contains(&index)) {
+                continue;
+            }
+            let directory = directory.to_utf8();
+            let top_level_dir = self.fs_ref().top_level_dir();
+            let mut buf = bun_paths::path_buffer_pool::get();
+            // The directory itself, then `<directory>/<name>`, `<directory>/<name>/<subpath>` and so on.
+            let mut end = 0;
+            loop {
+                if let Some(joined) = bun_paths::join_abs_string_buf_checked(
+                    top_level_dir,
+                    &mut buf[..],
+                    &[directory.slice(), &import_path[..end]],
+                    bun_paths::Platform::AUTO,
+                ) {
+                    busted |= self.bust_dir_cache(joined);
+                }
+                if end == import_path.len() {
+                    break;
+                }
+                end = strings::index_of_char_usize(&import_path[end + 1..], b'/')
+                    .map_or(import_path.len(), |slash| end + 1 + slash);
+            }
+        }
+        busted
     }
 
     pub fn resolve<'r>(
@@ -2613,12 +2851,30 @@ impl<'a> Resolver<'a> {
         ret
     }
 
+    #[inline(always)]
     pub(crate) fn check_package_path<'r>(
         &mut self,
         source_dir: &[u8],
         unremapped_import_path: &'r [u8],
         kind: ast::ImportKind,
         global_cache: GlobalCache,
+    ) -> ResultUnion<'r> {
+        self.check_package_path_in(
+            source_dir,
+            unremapped_import_path,
+            kind,
+            global_cache,
+            NodeModulesAboveImporter,
+        )
+    }
+
+    fn check_package_path_in<'r, 'l, D: PackageDirectories<'l>>(
+        &mut self,
+        source_dir: &[u8],
+        unremapped_import_path: &'r [u8],
+        kind: ast::ImportKind,
+        global_cache: GlobalCache,
+        directories: D,
     ) -> ResultUnion<'r> {
         let mut import_path = unremapped_import_path;
         let mut source_dir_info: DirInfoRef = match self.dir_info_cached(source_dir) {
@@ -2727,11 +2983,12 @@ impl<'a> Resolver<'a> {
         }
 
         let mut res = MatchResult::default();
-        match self.resolve_without_remapping(
+        match self.resolve_without_remapping_in(
             source_dir_info,
             import_path,
             kind,
             global_cache,
+            directories,
             &mut res,
         ) {
             MatchStatus::Success => {
@@ -2920,7 +3177,410 @@ impl<'a> Resolver<'a> {
         a || b
     }
 
+    /// Looks for `import_path` in one directory of packages: the `node_modules` of `dir_info`, the
+    /// importer's own package `dir_info` when the request names it (`is_self_reference`), or `listed`,
+    /// a directory that the `paths` of a CommonJS module name.
+    /// `None`: the directory does not answer, and the search goes on.
+    #[inline(always)]
+    fn load_package_in_directory(
+        &mut self,
+        import_path: &[u8],
+        kind: ast::ImportKind,
+        esm_: Option<&crate::package_json::Package<'_>>,
+        dir_info: DirInfoRef,
+        is_self_reference: bool,
+        listed: Option<&[u8]>,
+        out: &mut MatchResult,
+    ) -> Option<MatchStatus> {
+        let abs_path: &[u8] = if let Some(directory) = listed {
+            self.fs_ref()
+                .abs_buf_checked(&[directory, import_path], bufs!(node_modules_check))?
+        } else if is_self_reference {
+            dir_info.abs_path
+        } else {
+            self.fs_ref().abs_buf_checked(
+                &[dir_info.abs_path, b"node_modules", import_path],
+                bufs!(node_modules_check),
+            )?
+        };
+        if let Some(debug) = self.debug_logs.as_mut() {
+            debug.add_note_fmt(format_args!(
+                "Checking for a package in the directory \"{}\"",
+                bstr::BStr::new(abs_path)
+            ));
+        }
+
+        let prev_extension_order = self.extension_order;
+        // NOTE: defer restore reshaped — restored at end of block
+
+        if let Some(esm) = esm_ {
+            // This join can fail even though `abs_path` fit, because `<name>/..` normalizes to a shorter path.
+            let abs_package_path: Option<&[u8]> = if let Some(directory) = listed {
+                self.fs_ref().abs_buf_checked(
+                    &[directory, esm.name],
+                    bufs!(esm_absolute_package_path),
+                )
+            } else if is_self_reference {
+                Some(dir_info.abs_path)
+            } else {
+                let parts = [dir_info.abs_path, b"node_modules".as_slice(), esm.name];
+                self.fs_ref()
+                    .abs_buf_checked(&parts, bufs!(esm_absolute_package_path))
+            };
+
+            if let Some(abs_package_path) = abs_package_path
+                && let Ok(Some(pkg_dir_info)) = self.dir_info_cached(abs_package_path)
+            {
+                self.extension_order = match kind {
+                    ast::ImportKind::Url
+                    | ast::ImportKind::AtConditional
+                    | ast::ImportKind::At => options::ExtOrder::Css,
+                    _ => self.opts.extension_order.kind(kind, true),
+                };
+
+                if let Some(package_json) = pkg_dir_info.package_json() {
+                    if let Some(exports_map) = package_json.exports.as_ref() {
+                        // The condition set is determined by the kind of import
+                        // NOTE: keeping a single
+                        // `ESModule` (which holds `&mut self.debug_logs`) alive across a
+                        // `&mut self` call is aliased-&mut UB. Build a fresh short-lived
+                        // `ESModule` per `resolve` call so its borrow ends before
+                        // `self.handle_esm_resolution` re-borrows `self`.
+                        // Resolve against the path "/", then join it with the absolute
+                        // directory path. This is done because ESM package resolution uses
+                        // URLs while our path resolution uses file system paths. We don't
+                        // want problems due to Windows paths, which are very unlike URL
+                        // paths. We also want to avoid any "%" characters in the absolute
+                        // directory path accidentally being interpreted as URL escapes.
+                        {
+                            let esm_resolution = ESModule {
+                                conditions: match kind {
+                                    ast::ImportKind::Require
+                                    | ast::ImportKind::RequireResolve => {
+                                        &self.opts.conditions.require
+                                    }
+                                    ast::ImportKind::At
+                                    | ast::ImportKind::AtConditional => {
+                                        &self.opts.conditions.style
+                                    }
+                                    _ => &self.opts.conditions.import,
+                                },
+                                debug_logs: self.debug_logs.as_mut(),
+                                stack_check: StackCheck::init(),
+                            }
+                            .resolve(b"/", esm.subpath, &exports_map.root);
+                            // ESModule temporary dropped here; `self` is unborrowed.
+
+                            if self
+                                .handle_esm_resolution(
+                                    esm_resolution,
+                                    abs_package_path,
+                                    kind,
+                                    package_json,
+                                    esm.subpath,
+                                    out,
+                                )
+                                .is_success()
+                            {
+                                out.is_node_module = true;
+                                self.extension_order = prev_extension_order;
+                                if let Some(d) = self.debug_logs.as_mut() {
+                                    d.decrease_indent();
+                                }
+                                return Some(MatchStatus::Success);
+                            }
+                        }
+
+                        // Some popular packages forget to include the extension in their
+                        // exports map, so we try again without the extension.
+                        //
+                        // This is useful for browser-like environments
+                        // where you want a file extension in the URL
+                        // pathname by convention. Vite does this.
+                        //
+                        // React is an example of a package that doesn't include file extensions.
+                        // {
+                        //     "exports": {
+                        //         ".": "./index.js",
+                        //         "./jsx-runtime": "./jsx-runtime.js",
+                        //     }
+                        // }
+                        //
+                        // We limit this behavior just to ".js" files.
+                        let extname = bun_paths::extension(esm.subpath);
+                        if extname == b".js" && esm.subpath.len() > 3 {
+                            let esm_resolution = ESModule {
+                                conditions: match kind {
+                                    ast::ImportKind::Require
+                                    | ast::ImportKind::RequireResolve => {
+                                        &self.opts.conditions.require
+                                    }
+                                    ast::ImportKind::At
+                                    | ast::ImportKind::AtConditional => {
+                                        &self.opts.conditions.style
+                                    }
+                                    _ => &self.opts.conditions.import,
+                                },
+                                debug_logs: self.debug_logs.as_mut(),
+                                stack_check: StackCheck::init(),
+                            }
+                            .resolve(
+                                b"/",
+                                &esm.subpath[0..esm.subpath.len() - 3],
+                                &exports_map.root,
+                            );
+                            if self
+                                .handle_esm_resolution(
+                                    esm_resolution,
+                                    abs_package_path,
+                                    kind,
+                                    package_json,
+                                    esm.subpath,
+                                    out,
+                                )
+                                .is_success()
+                            {
+                                out.is_node_module = true;
+                                self.extension_order = prev_extension_order;
+                                if let Some(d) = self.debug_logs.as_mut() {
+                                    d.decrease_indent();
+                                }
+                                return Some(MatchStatus::Success);
+                            }
+                        }
+
+                        // if they hid "package.json" from "exports", still allow importing it.
+                        if esm.subpath == b"./package.json" {
+                            self.extension_order = prev_extension_order;
+                            if let Some(d) = self.debug_logs.as_mut() {
+                                d.decrease_indent();
+                            }
+                            *out = MatchResult {
+                                // NOTE: PackageJSON.source.path is bun_paths::fs::Path<'static>; convert
+                                // to the resolver's interned crate::fs::Path<'static> via its text.
+                                path_pair: PathPair {
+                                    primary: Path::init(package_json.source.path.text),
+                                    secondary: None,
+                                },
+                                dirname_fd: pkg_dir_info.get_file_descriptor(),
+                                file_fd: FD::INVALID,
+                                // `Path.isNodeModule()` checks
+                                // `lastIndexOf(name.dir, SEP++"node_modules"++SEP)`, i.e. a
+                                // separator-bounded directory component on `name.dir` (not a
+                                // bare substring of the full text). `bun_paths::fs::Path<'static>`
+                                // doesn't carry that method, so re-derive via the resolver's
+                                // `Path` (already done one line up for `path_pair.primary`).
+                                is_node_module: Path::init(
+                                    package_json.source.path.text,
+                                )
+                                .is_node_module(),
+                                package_json: Some(package_json),
+                                dir_info: listed.is_none().then_some(dir_info),
+                                ..Default::default()
+                            };
+                            return Some(MatchStatus::Success);
+                        }
+
+                        self.extension_order = prev_extension_order;
+                        if let Some(d) = self.debug_logs.as_mut() {
+                            d.decrease_indent();
+                        }
+                        return Some(MatchStatus::NotFound);
+                    }
+                }
+            }
+        }
+
+        if self
+            .load_as_file_or_directory(abs_path, kind, out)
+            .is_success()
+        {
+            self.extension_order = prev_extension_order;
+            if let Some(d) = self.debug_logs.as_mut() {
+                d.decrease_indent();
+            }
+            return Some(MatchStatus::Success);
+        }
+        self.extension_order = prev_extension_order;
+        None
+    }
+
+    /// Looks in the `node_modules` of `dir_info` and of each directory above it, nearest first.
+    #[inline(always)]
+    fn load_from_node_modules_above(
+        &mut self,
+        import_path: &[u8],
+        kind: ast::ImportKind,
+        esm_: Option<&crate::package_json::Package<'_>>,
+        mut dir_info: DirInfoRef,
+        is_self_reference: bool,
+        any_node_modules_folder: &mut bool,
+        out: &mut MatchResult,
+    ) -> Option<MatchStatus> {
+        loop {
+            // Skip directories that are themselves called "node_modules", since we
+            // don't ever want to search for "node_modules/node_modules"
+            if dir_info.has_node_modules() || is_self_reference {
+                *any_node_modules_folder = true;
+                if let Some(status) = self.load_package_in_directory(
+                    import_path,
+                    kind,
+                    esm_,
+                    dir_info,
+                    is_self_reference,
+                    None,
+                    out,
+                ) {
+                    return Some(status);
+                }
+            }
+
+            match dir_info.get_parent() {
+                Some(p) => dir_info = p,
+                None => break,
+            }
+        }
+
+        // The walk ended at a package in the global cache, which has no parent directory info.
+        // Any `node_modules` seen on the way came in its tarball, so auto-install stays on.
+        if dir_info.package_json().is_some_and(|package_json| {
+            package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID
+        }) {
+            *any_node_modules_folder = false;
+        }
+        None
+    }
+
+    /// The lookup of a bare CommonJS request in the `paths` of the module that requires: the
+    /// directories in order, as Node's `Module._findPath` reads them, then the `NODE_PATH` directories.
+    /// Nothing is installed.
+    fn load_from_lookup_paths(
+        &mut self,
+        lookup: &RequireLookupPaths<'_>,
+        import_path: &[u8],
+        kind: ast::ImportKind,
+        esm_: Option<&crate::package_json::Package<'_>>,
+        dir_info: DirInfoRef,
+        is_self_reference: bool,
+        out: &mut MatchResult,
+    ) -> MatchStatus {
+        let mut any_node_modules_folder = false;
+        // Node answers a request for the importer's own package before it reads `paths`.
+        if is_self_reference {
+            if let Some(status) = self.load_from_node_modules_above(
+                import_path,
+                kind,
+                esm_,
+                dir_info,
+                true,
+                &mut any_node_modules_folder,
+                out,
+            ) {
+                return status;
+            }
+            if let Some(d) = self.debug_logs.as_mut() {
+                d.decrease_indent();
+            }
+            return MatchStatus::NotFound;
+        }
+
+        let mut index = 0;
+        while let Some(directory) = lookup.directories.get(index) {
+            if let Some(above_importer) = lookup.above_importer.as_ref()
+                && above_importer.start == index
+            {
+                if let Some(status) = self.load_from_node_modules_above(
+                    import_path,
+                    kind,
+                    esm_,
+                    dir_info,
+                    false,
+                    &mut any_node_modules_folder,
+                    out,
+                ) {
+                    return status;
+                }
+                index = above_importer.end;
+                continue;
+            }
+            let directory = directory.to_utf8();
+            if let Some(status) = self.load_package_in_listed_directory(
+                import_path,
+                kind,
+                esm_,
+                dir_info,
+                directory.slice(),
+                out,
+            ) {
+                return status;
+            }
+            index += 1;
+        }
+
+        if lookup.ends_at_invalid_entry {
+            lookup.reached_invalid_entry.set(true);
+        } else if lookup.searches_global_folders {
+            let node_path: &[u8] = self
+                .env_loader()
+                .and_then(|env| env.get(b"NODE_PATH"))
+                .unwrap_or(b"");
+            let delim = if cfg!(windows) { b';' } else { b':' };
+            for directory in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {
+                if let Some(status) = self.load_package_in_listed_directory(
+                    import_path,
+                    kind,
+                    esm_,
+                    dir_info,
+                    directory,
+                    out,
+                ) {
+                    return status;
+                }
+            }
+        }
+
+        if let Some(d) = self.debug_logs.as_mut() {
+            d.decrease_indent();
+        }
+        MatchStatus::NotFound
+    }
+
+    fn load_package_in_listed_directory(
+        &mut self,
+        import_path: &[u8],
+        kind: ast::ImportKind,
+        esm_: Option<&crate::package_json::Package<'_>>,
+        dir_info: DirInfoRef,
+        directory: &[u8],
+        out: &mut MatchResult,
+    ) -> Option<MatchStatus> {
+        self.load_package_in_directory(import_path, kind, esm_, dir_info, false, Some(directory), out)
+    }
+
+    #[inline(always)]
     pub(crate) fn load_node_modules(
+        &mut self,
+        import_path: &[u8],
+        kind: ast::ImportKind,
+        dir_info: DirInfoRef,
+        global_cache: GlobalCache,
+        forbid_imports: bool,
+        out: &mut MatchResult,
+    ) -> MatchStatus {
+        self.load_node_modules_in(
+            import_path,
+            kind,
+            dir_info,
+            global_cache,
+            forbid_imports,
+            NodeModulesAboveImporter,
+            out,
+        )
+    }
+
+    /// `directories`: where a package is looked for once tsconfig `paths`, package.json `imports`
+    /// and the importer's own package have not answered.
+    fn load_node_modules_in<'l, D: PackageDirectories<'l>>(
         &mut self,
         import_path: &[u8],
         kind: ast::ImportKind,
@@ -2933,6 +3593,7 @@ impl<'a> Resolver<'a> {
         _dir_info: DirInfoRef,
         global_cache: GlobalCache,
         forbid_imports: bool,
+        directories: D,
         out: &mut MatchResult,
     ) -> MatchStatus {
         let mut dir_info: DirInfoRef = _dir_info;
@@ -3026,241 +3687,36 @@ impl<'a> Resolver<'a> {
 
         let esm_ = crate::package_json::Package::parse(import_path, bufs!(esm_subpath));
 
+        if let Some(lookup) = directories.listed() {
+            return self.load_from_lookup_paths(
+                lookup,
+                import_path,
+                kind,
+                esm_.as_ref(),
+                dir_info,
+                is_self_reference,
+                out,
+            );
+        }
+
         let source_dir_info = dir_info;
         let mut any_node_modules_folder = false;
         let use_node_module_resolver = global_cache != GlobalCache::force;
 
         // Then check for the package in any enclosing "node_modules" directories
         // or in the package root directory if it's a self-reference
-        if use_node_module_resolver {
-            loop {
-                // Skip directories that are themselves called "node_modules", since we
-                // don't ever want to search for "node_modules/node_modules"
-                'node_modules: {
-                    if !(dir_info.has_node_modules() || is_self_reference) {
-                        break 'node_modules;
-                    }
-                    any_node_modules_folder = true;
-                    let abs_path: &[u8] = if is_self_reference {
-                        dir_info.abs_path
-                    } else {
-                        match self.fs_ref().abs_buf_checked(
-                            &[dir_info.abs_path, b"node_modules", import_path],
-                            bufs!(node_modules_check),
-                        ) {
-                            Some(p) => p,
-                            None => break 'node_modules,
-                        }
-                    };
-                    if let Some(debug) = self.debug_logs.as_mut() {
-                        debug.add_note_fmt(format_args!(
-                            "Checking for a package in the directory \"{}\"",
-                            bstr::BStr::new(abs_path)
-                        ));
-                    }
-
-                    let prev_extension_order = self.extension_order;
-                    // NOTE: defer restore reshaped — restored at end of block
-
-                    if let Some(ref esm) = esm_ {
-                        // This join can fail even though `abs_path` fit, because `<name>/..` normalizes to a shorter path.
-                        let abs_package_path: Option<&[u8]> = if is_self_reference {
-                            Some(dir_info.abs_path)
-                        } else {
-                            let parts = [dir_info.abs_path, b"node_modules".as_slice(), esm.name];
-                            self.fs_ref()
-                                .abs_buf_checked(&parts, bufs!(esm_absolute_package_path))
-                        };
-
-                        if let Some(abs_package_path) = abs_package_path
-                            && let Ok(Some(pkg_dir_info)) = self.dir_info_cached(abs_package_path)
-                        {
-                            self.extension_order = match kind {
-                                ast::ImportKind::Url
-                                | ast::ImportKind::AtConditional
-                                | ast::ImportKind::At => options::ExtOrder::Css,
-                                _ => self.opts.extension_order.kind(kind, true),
-                            };
-
-                            if let Some(package_json) = pkg_dir_info.package_json() {
-                                if let Some(exports_map) = package_json.exports.as_ref() {
-                                    // The condition set is determined by the kind of import
-                                    // NOTE: keeping a single
-                                    // `ESModule` (which holds `&mut self.debug_logs`) alive across a
-                                    // `&mut self` call is aliased-&mut UB. Build a fresh short-lived
-                                    // `ESModule` per `resolve` call so its borrow ends before
-                                    // `self.handle_esm_resolution` re-borrows `self`.
-                                    // Resolve against the path "/", then join it with the absolute
-                                    // directory path. This is done because ESM package resolution uses
-                                    // URLs while our path resolution uses file system paths. We don't
-                                    // want problems due to Windows paths, which are very unlike URL
-                                    // paths. We also want to avoid any "%" characters in the absolute
-                                    // directory path accidentally being interpreted as URL escapes.
-                                    {
-                                        let esm_resolution = ESModule {
-                                            conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
-                                                    &self.opts.conditions.require
-                                                }
-                                                ast::ImportKind::At
-                                                | ast::ImportKind::AtConditional => {
-                                                    &self.opts.conditions.style
-                                                }
-                                                _ => &self.opts.conditions.import,
-                                            },
-                                            debug_logs: self.debug_logs.as_mut(),
-                                            stack_check: StackCheck::init(),
-                                        }
-                                        .resolve(b"/", esm.subpath, &exports_map.root);
-                                        // ESModule temporary dropped here; `self` is unborrowed.
-
-                                        if self
-                                            .handle_esm_resolution(
-                                                esm_resolution,
-                                                abs_package_path,
-                                                kind,
-                                                package_json,
-                                                esm.subpath,
-                                                out,
-                                            )
-                                            .is_success()
-                                        {
-                                            out.is_node_module = true;
-                                            self.extension_order = prev_extension_order;
-                                            if let Some(d) = self.debug_logs.as_mut() {
-                                                d.decrease_indent();
-                                            }
-                                            return MatchStatus::Success;
-                                        }
-                                    }
-
-                                    // Some popular packages forget to include the extension in their
-                                    // exports map, so we try again without the extension.
-                                    //
-                                    // This is useful for browser-like environments
-                                    // where you want a file extension in the URL
-                                    // pathname by convention. Vite does this.
-                                    //
-                                    // React is an example of a package that doesn't include file extensions.
-                                    // {
-                                    //     "exports": {
-                                    //         ".": "./index.js",
-                                    //         "./jsx-runtime": "./jsx-runtime.js",
-                                    //     }
-                                    // }
-                                    //
-                                    // We limit this behavior just to ".js" files.
-                                    let extname = bun_paths::extension(esm.subpath);
-                                    if extname == b".js" && esm.subpath.len() > 3 {
-                                        let esm_resolution = ESModule {
-                                            conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
-                                                    &self.opts.conditions.require
-                                                }
-                                                ast::ImportKind::At
-                                                | ast::ImportKind::AtConditional => {
-                                                    &self.opts.conditions.style
-                                                }
-                                                _ => &self.opts.conditions.import,
-                                            },
-                                            debug_logs: self.debug_logs.as_mut(),
-                                            stack_check: StackCheck::init(),
-                                        }
-                                        .resolve(
-                                            b"/",
-                                            &esm.subpath[0..esm.subpath.len() - 3],
-                                            &exports_map.root,
-                                        );
-                                        if self
-                                            .handle_esm_resolution(
-                                                esm_resolution,
-                                                abs_package_path,
-                                                kind,
-                                                package_json,
-                                                esm.subpath,
-                                                out,
-                                            )
-                                            .is_success()
-                                        {
-                                            out.is_node_module = true;
-                                            self.extension_order = prev_extension_order;
-                                            if let Some(d) = self.debug_logs.as_mut() {
-                                                d.decrease_indent();
-                                            }
-                                            return MatchStatus::Success;
-                                        }
-                                    }
-
-                                    // if they hid "package.json" from "exports", still allow importing it.
-                                    if esm.subpath == b"./package.json" {
-                                        self.extension_order = prev_extension_order;
-                                        if let Some(d) = self.debug_logs.as_mut() {
-                                            d.decrease_indent();
-                                        }
-                                        *out = MatchResult {
-                                            // NOTE: PackageJSON.source.path is bun_paths::fs::Path<'static>; convert
-                                            // to the resolver's interned crate::fs::Path<'static> via its text.
-                                            path_pair: PathPair {
-                                                primary: Path::init(package_json.source.path.text),
-                                                secondary: None,
-                                            },
-                                            dirname_fd: pkg_dir_info.get_file_descriptor(),
-                                            file_fd: FD::INVALID,
-                                            // `Path.isNodeModule()` checks
-                                            // `lastIndexOf(name.dir, SEP++"node_modules"++SEP)`, i.e. a
-                                            // separator-bounded directory component on `name.dir` (not a
-                                            // bare substring of the full text). `bun_paths::fs::Path<'static>`
-                                            // doesn't carry that method, so re-derive via the resolver's
-                                            // `Path` (already done one line up for `path_pair.primary`).
-                                            is_node_module: Path::init(
-                                                package_json.source.path.text,
-                                            )
-                                            .is_node_module(),
-                                            package_json: Some(package_json),
-                                            dir_info: Some(dir_info),
-                                            ..Default::default()
-                                        };
-                                        return MatchStatus::Success;
-                                    }
-
-                                    self.extension_order = prev_extension_order;
-                                    if let Some(d) = self.debug_logs.as_mut() {
-                                        d.decrease_indent();
-                                    }
-                                    return MatchStatus::NotFound;
-                                }
-                            }
-                        }
-                    }
-
-                    if self
-                        .load_as_file_or_directory(abs_path, kind, out)
-                        .is_success()
-                    {
-                        self.extension_order = prev_extension_order;
-                        if let Some(d) = self.debug_logs.as_mut() {
-                            d.decrease_indent();
-                        }
-                        return MatchStatus::Success;
-                    }
-                    self.extension_order = prev_extension_order;
-                }
-
-                match dir_info.get_parent() {
-                    Some(p) => dir_info = p,
-                    None => break,
-                }
-            }
-
-            // The walk ended at a package in the global cache, which has no parent directory info.
-            // Any `node_modules` seen on the way came in its tarball, so auto-install stays on.
-            if dir_info.package_json().is_some_and(|package_json| {
-                package_json.package_manager_package_id != Install::INVALID_PACKAGE_ID
-            }) {
-                any_node_modules_folder = false;
-            }
+        if use_node_module_resolver
+            && let Some(status) = self.load_from_node_modules_above(
+                import_path,
+                kind,
+                esm_.as_ref(),
+                dir_info,
+                is_self_reference,
+                &mut any_node_modules_folder,
+                out,
+            )
+        {
+            return status;
         }
 
         // try resolve from `NODE_PATH`
@@ -4424,7 +4880,26 @@ impl<'a> Resolver<'a> {
         true
     }
 
+    #[inline(always)]
     pub(crate) fn resolve_without_remapping(
+        &mut self,
+        source_dir_info: DirInfoRef,
+        import_path: &[u8],
+        kind: ast::ImportKind,
+        global_cache: GlobalCache,
+        out: &mut MatchResult,
+    ) -> MatchStatus {
+        self.resolve_without_remapping_in(
+            source_dir_info,
+            import_path,
+            kind,
+            global_cache,
+            NodeModulesAboveImporter,
+            out,
+        )
+    }
+
+    fn resolve_without_remapping_in<'l, D: PackageDirectories<'l>>(
         &mut self,
         // NOTE: `DirInfoRef` (not `&mut`) — forwards into `load_node_modules`
         // which re-enters `dir_cache` and may re-derive the same DirInfo slot.
@@ -4432,10 +4907,19 @@ impl<'a> Resolver<'a> {
         import_path: &[u8],
         kind: ast::ImportKind,
         global_cache: GlobalCache,
+        directories: D,
         out: &mut MatchResult,
     ) -> MatchStatus {
         if is_package_path(import_path) {
-            self.load_node_modules(import_path, kind, source_dir_info, global_cache, false, out)
+            self.load_node_modules_in(
+                import_path,
+                kind,
+                source_dir_info,
+                global_cache,
+                false,
+                directories,
+                out,
+            )
         } else {
             let Some(resolved) = self.fs_ref().abs_buf_checked(
                 &[source_dir_info.abs_path, import_path],
@@ -7078,6 +7562,46 @@ enum DependencyToResolve {
     NotFound,
     Pending(Box<PendingResolution>),
     Resolution(Resolution),
+}
+
+/// The `paths` of the CommonJS module that requires, where they are not the `node_modules`
+/// directories above that module: the directories that Node's `Module._findPath` looks in, in order.
+pub struct RequireLookupPaths<'a> {
+    pub directories: &'a [bun_core::String],
+    /// The part of `directories` that holds the `node_modules` directory of every directory above
+    /// the importer, in the order of `Module._nodeModulePaths`. The walk up from the importer's
+    /// directory looks there.
+    pub above_importer: Option<core::ops::Range<usize>>,
+    /// After `directories` the list went on with an entry that is not a string. Node throws for it
+    /// once the search gets there.
+    pub ends_at_invalid_entry: bool,
+    /// The last search has come to that entry.
+    pub reached_invalid_entry: core::cell::Cell<bool>,
+    /// The `NODE_PATH` directories follow the list.
+    pub searches_global_folders: bool,
+}
+
+/// The directories that `Resolver::load_node_modules_in` looks for a package in.
+pub(crate) trait PackageDirectories<'l>: Copy {
+    /// `None`: the `node_modules` directory of every directory above the importer.
+    fn listed(self) -> Option<&'l RequireLookupPaths<'l>>;
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct NodeModulesAboveImporter;
+
+impl<'l> PackageDirectories<'l> for NodeModulesAboveImporter {
+    #[inline(always)]
+    fn listed(self) -> Option<&'l RequireLookupPaths<'l>> {
+        None
+    }
+}
+
+impl<'l> PackageDirectories<'l> for &'l RequireLookupPaths<'l> {
+    #[inline(always)]
+    fn listed(self) -> Option<&'l RequireLookupPaths<'l>> {
+        Some(self)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]

@@ -268,6 +268,13 @@ NODE_PATH=./packages:./lib bun run src/index.js  # Unix/macOS
 NODE_PATH="./packages;./lib" bun run src/index.js  # Windows
 ```
 
+A CommonJS module can also add a directory while it runs. As in Node.js, `require()` looks in the directories of `module.paths`, in order, before it looks in `NODE_PATH`:
+
+```js
+module.paths.push(path.join(__dirname, "packages"));
+const { hello } = require("foo");
+```
+
 ### Custom conditions
 
 The `--conditions` flag specifies the conditions to use when resolving packages from `package.json` `"exports"`.

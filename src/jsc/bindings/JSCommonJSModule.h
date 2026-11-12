@@ -53,6 +53,9 @@ public:
     mutable JSC::WriteBarrier<JSString> m_dirname;
     // Initialized lazily; can be overridden.
     mutable JSC::WriteBarrier<Unknown> m_paths;
+    // What the require() that created the module was asked for. With the directory of the module that asked, it names this
+    // module for as long as it is loaded: Node's `relativeResolveCache`. See Bun::loadedModuleForRequest().
+    JSC::WriteBarrier<JSString> m_creatingRequest;
     // Children must always be tracked in case the script decides to access
     // `module.children`. In that case, all children may also need their
     // children fields to exist, recursively. To avoid allocating a *JSArray for
@@ -188,6 +191,11 @@ public:
 
 JSC::Structure* createCommonJSModuleStructure(
     Zig::GlobalObject* globalObject);
+
+// Node's `relativeResolveCache`: the key in the require cache of the module that a require() of `request` from the directory of
+// `requirer` has created, while that module is loaded. Node answers such a require() with it and does not read `paths` again.
+// Empty: none, and the request is resolved.
+JSC::JSValue loadedModuleForRequest(Zig::GlobalObject*, JSCommonJSModule* requirer, JSC::JSString* request);
 
 // A `require.cache` object over `requireMap`: the global one, or a Bun.ModuleGraph's
 // together with one of the graph's modules (whose loader's ES modules it also lists).

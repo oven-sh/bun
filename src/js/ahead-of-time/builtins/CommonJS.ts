@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/CommonJS.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 95ac8d6909365c4356d91fe384a398c9b82408b51da163daaf336ff302afc74f.
+// Written against that file with the SHA-256 0954045714ad929a9ed57f6dda552cb8dc5868b132d1fb2ee437db9ce664e348.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // This file contains functions used for the CommonJS module loader
@@ -79,7 +79,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   // An addon that was compiled into an executable is a module of it, loaded like its other modules: the body of that module calls `process.dlopen`.
   const queryIndex = id.indexOf("?");
   if ((queryIndex === -1 ? id.endsWith(".node") : id.endsWith(".node", queryIndex)) && !$isHiddenFromRequireCache(id)) {
-    return $internalRequire(id, this, requireMap);
+    return $internalRequire(id, this, requireMap, originalId);
   }
 
   if (id === "bun:test") {
@@ -94,7 +94,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
 
   // To handle import/export cycles, we need to create a module object and put
   // it into the map before we import it.
-  const mod = $createCommonJSModule(id, {}, false, this);
+  const mod = $createCommonJSModule(id, {}, false, this, originalId);
   requireMap.$set(id, mod);
 
   var out: JSCommonJSModule | RequiredESMNamespace | -1;
@@ -178,7 +178,7 @@ export function requireResolve(this: JSCommonJSModule, id: string, options: { pa
 }
 
 $visibility = "Private";
-export function internalRequire(id: string, parent: JSCommonJSModule, requireMap: RequireMap) {
+export function internalRequire(id: string, parent: JSCommonJSModule, requireMap: RequireMap, request: string) {
   // A native addon is loaded once per process: its one module object is the global cache's,
   // which a Bun.ModuleGraph's cache then also points at.
   const loaded = $requireMap.$get(id);
@@ -193,7 +193,7 @@ export function internalRequire(id: string, parent: JSCommonJSModule, requireMap
   const filename = queryIndex === -1 ? id : id.substring(0, queryIndex);
   $assert(filename.endsWith(".node"));
 
-  const module = $createCommonJSModule(id, {}, true, requireMap === $requireMap ? parent : undefined);
+  const module = $createCommonJSModule(id, {}, true, requireMap === $requireMap ? parent : undefined, request);
   // Resolving the name has thrown in an executable that refuses native addons, unless the file lies in the executable. Where the build has not seen that it does, nothing is loaded, aloud.
   if (!CAN_LOAD_ADDONS_AT_RUN_TIME)
     throw new TypeError(

@@ -361,8 +361,7 @@ mod _impl {
                 continue;
             }
 
-            // A flag that takes its value from the next argument keeps it out of the script name:
-            // `--config x`, `-c x`, `-bc x`. As `node`, `-c` is `--check`, which takes none.
+            // `--config x`, `-bc x`: the value of a flag is not the script name.
             if let Some(p) = prev {
                 use crate::cli::command::Tag;
                 let as_node =

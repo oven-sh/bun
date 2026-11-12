@@ -290,8 +290,7 @@ for (const path of ["the listener of the server", "emit('connection')"]) {
       events: ["prefinish"],
       finished: true,
       writableEnded: true,
-      // Since v26.7.0 node's says whether 'finish' was emitted. Bun's still says that nothing is left to write.
-      writableFinished: typeof Bun !== "undefined",
+      writableFinished: false,
     });
   });
 }
@@ -329,6 +328,28 @@ describe("a connection given to the server with emit('connection')", () => {
     });
     assert.deepStrictEqual(events, ["end", "close"]);
   });
+
+  // Node's _send(): a head that leaves with a string body takes that body's encoding.
+  for (const [encoding, header] of [
+    ["latin1", "\xe9"],
+    ["utf8", "\xc3\xa9"],
+  ] as const) {
+    test(`the bytes of a header value beyond ASCII, ahead of a ${encoding} string`, async () => {
+      const { promise: closed, resolve: onClose, reject } = Promise.withResolvers<void>();
+      const server = http.createServer((req, res) => {
+        res.setHeader("X-Name", "\xe9");
+        res.end("ok", encoding);
+      });
+      let received = "";
+      await withForwarder(server, async port => {
+        const socket = send(port, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n", reject);
+        socket.on("data", chunk => (received += chunk.toString("latin1")));
+        socket.on("close", () => onClose());
+        await closed;
+      });
+      assert.strictEqual(/^X-Name: (.*)\r$/m.exec(received)?.[1], header);
+    });
+  }
 
   test("a body that the listener reads is complete when the response ends first", async () => {
     const { promise: responded, resolve: onResponse } = Promise.withResolvers<void>();

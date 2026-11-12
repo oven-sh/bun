@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_outgoing.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 7eb68379dcc85e37da343c90d1da52f21b0bd91937cea041c06b56a6db7551fc.
+// Written against that file with the SHA-256 b12f72c805926d61330c5378181d203a8c6444af67effad558a24c37b013fac4.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_outgoing"
@@ -17,13 +17,16 @@ const { isUint8Array } = require("node:util/types");
 const { deprecate } = require("internal/util/deprecate");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
 const http = require("internal/http");
-const { utcDate } = http;
+const { queueEndCallback, onFinish, utcDate } = http;
 // A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
 const kOutHeaders: typeof http.kOutHeaders = http.kOutHeaders;
 const kNeedDrain: typeof http.kNeedDrain = http.kNeedDrain;
 const kErrored: typeof http.kErrored = http.kErrored;
 const kHighWaterMark: typeof http.kHighWaterMark = http.kHighWaterMark;
 const kSocket: typeof http.kSocket = http.kSocket;
+const kWritableFinished: typeof http.kWritableFinished = http.kWritableFinished;
+const kEndCallbacks: typeof http.kEndCallbacks = http.kEndCallbacks;
+const kFlushError: typeof http.kFlushError = http.kFlushError;
 const kRejectNonStandardBodyWrites: typeof http.kRejectNonStandardBodyWrites = http.kRejectNonStandardBodyWrites;
 const kUniqueHeaders: typeof http.kUniqueHeaders = http.kUniqueHeaders;
 const {
@@ -326,6 +329,9 @@ function OutgoingMessage(this: $Node.OutgoingMessage, options?: $Node.OutgoingMe
   this._onPendingData = nop;
 
   this[kErrored] = null;
+  this[kWritableFinished] = false;
+  this[kEndCallbacks] = null;
+  this[kFlushError] = null;
   this[kHighWaterMark] = options?.highWaterMark ?? getDefaultHighWaterMark();
   this[kRejectNonStandardBodyWrites] = options?.rejectNonStandardBodyWrites ?? false;
   // Declared here so the memoizing _isLenientHeaderValidation never
@@ -394,7 +400,7 @@ ObjectDefineProperty(OutgoingMessage.prototype, "closed", {
 ObjectDefineProperty(OutgoingMessage.prototype, "writableFinished", {
   __proto__: null,
   get(this: $Node.OutgoingMessage) {
-    return this.finished && this.outputSize === 0 && (!this[kSocket] || this[kSocket].writableLength === 0);
+    return this[kWritableFinished];
   },
 });
 
@@ -984,7 +990,6 @@ interface Exchange {
   isReplaying: boolean;
   response: $Node.ServerResponse;
   connection: $Node.HttpServerSocket | null;
-  endCallback: $Node.HttpWriteCallback | null;
   queuedTick: import("internal/process/tick_ring").Tick | null;
   events: ResponseEvents;
   holdsNumber: boolean;
@@ -1035,7 +1040,6 @@ function makeExchange(
     isReplaying: false,
     response,
     connection,
-    endCallback: null,
     queuedTick: null,
     events,
     holdsNumber: false,
@@ -2093,6 +2097,26 @@ function write_(
   return ret;
 }
 
+// If this last write can be delivered immediately as the final chunk, this
+// prepares to do so, and then returns true. If not, it returns false and
+// a separate _send call and tick will be required to finish up.
+function maybePrepareFinalChunk(
+  msg: $Node.OutgoingMessage,
+  chunk: $Node.HttpChunk,
+  encoding: string | null | undefined,
+) {
+  if (typeof chunk !== "string" && !isUint8Array(chunk)) return false;
+
+  if (msg.destroyed || msg.strictContentLength) return false;
+
+  if (!msg._header) {
+    msg._contentLength = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.byteLength;
+    msg._implicitHeader();
+  }
+
+  return !!msg._header && msg._hasBody && !msg.chunkedEncoding;
+}
+
 function connectionCorkNT(conn: $Node.HttpSocket) {
   conn.uncork();
 }
@@ -2142,11 +2166,6 @@ OutgoingMessage.prototype.addTrailers = function addTrailers(
   }
 };
 
-function onFinish(outmsg: $Node.OutgoingMessage) {
-  if (outmsg?.socket?._hadError) return;
-  outmsg.emit("finish");
-}
-
 OutgoingMessage.prototype.end = function end(
   this: $Node.OutgoingMessage,
   chunk?: $Node.HttpChunk | null | $Node.HttpWriteCallback,
@@ -2162,6 +2181,8 @@ OutgoingMessage.prototype.end = function end(
     encoding = null;
   }
 
+  let finishCallback: $Node.HttpWriteCallback | null = null;
+
   if (chunk) {
     if (this.finished) {
       onError(this, $ERR_STREAM_WRITE_AFTER_END(), typeof callback !== "function" ? nop : callback);
@@ -2172,14 +2193,21 @@ OutgoingMessage.prototype.end = function end(
       this[kSocket].cork();
     }
 
-    write_(this, chunk, encoding, null, true);
+    if (maybePrepareFinalChunk(this, chunk, encoding)) {
+      // If just one final write is required, with nothing to follow, we
+      // attach finish to the write to avoid a separate send() & tick step
+      // later on - this is purely a performance optimization.
+      if (typeof callback === "function") {
+        queueEndCallback(this, callback);
+        callback = undefined;
+      }
+      finishCallback = onFinish.bind(undefined, this);
+    }
+
+    write_(this, chunk, encoding, finishCallback, true);
   } else if (this.finished) {
     if (typeof callback === "function") {
-      if (!this.writableFinished) {
-        this.on("finish", callback);
-      } else {
-        callback($ERR_STREAM_ALREADY_FINISHED("end"));
-      }
+      queueEndCallback(this, callback);
     }
     return this;
   } else if (!this._header) {
@@ -2191,21 +2219,24 @@ OutgoingMessage.prototype.end = function end(
     this._implicitHeader();
   }
 
-  if (typeof callback === "function") this.once("finish", callback);
+  if (typeof callback === "function") queueEndCallback(this, callback);
 
   let contentLength;
   if (strictContentLength(this) && this[kBytesWritten] !== (contentLength = this._contentLength)) {
     throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(this[kBytesWritten], contentLength);
   }
 
-  const finish = onFinish.bind(undefined, this);
+  if (finishCallback === null) {
+    // If we didn't early finish, send the last data and schedule 'finish' now:
+    const finish = onFinish.bind(undefined, this);
 
-  if (this._hasBody && this.chunkedEncoding) {
-    this._send("0\r\n" + this._trailer + "\r\n", "latin1", finish);
-  } else if (!this._headerSent || this.writableLength || chunk) {
-    this._send("", "latin1", finish);
-  } else {
-    process.nextTick(finish);
+    if (this._hasBody && this.chunkedEncoding) {
+      this._send("0\r\n" + this._trailer + "\r\n", "latin1", finish);
+    } else if (!this._headerSent || this.writableLength || chunk) {
+      this._send("", "latin1", finish);
+    } else {
+      process.nextTick(finish);
+    }
   }
 
   if (this[kSocket]) {

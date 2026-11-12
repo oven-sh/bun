@@ -13,13 +13,19 @@ interface Observation {
 }
 
 const observations: Observation[] = [];
-const frameOf = (name: string) => new Error().stack!.split("\n").find(line => line.includes(`at ${name} `)) ?? "unknown";
+const frameOf = (name: string) =>
+  new Error().stack!.split("\n").find(line => line.includes(`at ${name} `)) ?? "unknown";
 
 function observing(listener: RequestListener): RequestListener {
   return (req, res) => {
-    const observation = { route: `${req.method} ${req.url}`, dispatcher: frameOf("onNodeHTTPRequest"), closesInTheTickOfFinish: false, res };
+    const observation = {
+      route: `${req.method} ${req.url}`,
+      dispatcher: frameOf("onNodeHTTPRequest"),
+      closesInTheTickOfFinish: false,
+      res,
+    };
     observations.push(observation);
-    res.on("close", () => void (observation.closesInTheTickOfFinish = frameOf("emitResponseFinished") !== "unknown"));
+    res.on("close", () => void (observation.closesInTheTickOfFinish = frameOf("finishResponse") !== "unknown"));
     listener(req, res);
   };
 }

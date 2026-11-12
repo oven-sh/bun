@@ -10,6 +10,7 @@ import net from "node:net";
 import { join } from "node:path";
 import { pipeline } from "node:stream";
 import tls from "node:tls";
+import { Worker } from "node:worker_threads";
 
 function listen(server: http.Server): Promise<number> {
   const { promise, resolve, reject } = Promise.withResolvers<number>();
@@ -561,3 +562,47 @@ test.skipIf(!isLinux)("every request of one read is dispatched when the client l
   await new Promise<void>(resolve => server.close(() => resolve()));
   expect({ requests, closed }).toEqual({ requests: 20, closed: 20 });
 });
+
+// The teardown of a VM closes the connections it still has. A TLS one was reset, which drops what the kernel has
+// not delivered yet. The client reads nothing until the worker is gone, so most of the response is still in the
+// server's send queue then. Linux only: the kernel has to take the whole body from a socket that nobody reads.
+test.skipIf(!isLinux)(
+  "a response that was written is delivered although its Worker exits with the connection open",
+  async () => {
+    const size = 512 * 1024;
+    const worker = new Worker(
+      `
+      const { parentPort, workerData } = require("node:worker_threads");
+      const server = require("node:https").createServer(workerData.options, (req, res) => {
+        res.end(Buffer.alloc(workerData.size, "a"), () => process.exit(0));
+      });
+      server.listen(0, "127.0.0.1", () => parentPort.postMessage(server.address().port));
+    `,
+      { eval: true, workerData: { options: { key: validCert.key, cert: validCert.cert }, size } },
+    );
+    const exited = once(worker, "exit");
+    const [port] = await once(worker, "message");
+    const socket = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    try {
+      await once(socket, "secureConnect");
+      socket.pause();
+      socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await exited;
+
+      const chunks: Buffer[] = [];
+      let error: string | undefined;
+      socket.on("data", chunk => chunks.push(chunk));
+      socket.on("error", (err: NodeJS.ErrnoException) => (error = err.code));
+      socket.resume();
+      await once(socket, "close");
+      const received = Buffer.concat(chunks);
+      expect({ body: received.length - received.indexOf("\r\n\r\n") - 4, error }).toEqual({
+        body: size,
+        error: undefined,
+      });
+    } finally {
+      socket.destroy();
+      await worker.terminate();
+    }
+  },
+);

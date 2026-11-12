@@ -224,8 +224,8 @@ socket close, heard through an heir
 == freeze response after
 0: 200 0 first last
 1: 200 1 first last
-2: 200 2 first last
-3: 200 3 first last
+2: 200 null 
+3: 200 2 first last
 response 0 finish 
 response 0 close 
 request 0 end 
@@ -235,18 +235,15 @@ nobody caught TypeError Attempted to assign to readonly property.
 nobody caught TypeError Attempted to assign to readonly property.
 nobody caught TypeError Attempting to define property on object that is not extensible.
 nobody caught TypeError Attempted to assign to readonly property.
-nobody caught TypeError Attempted to assign to readonly property.
 request 1 end 
 request 1 close 
+nobody caught Error ServerResponse has an already assigned socket
+nobody caught TypeError Attempted to assign to readonly property.
 response 2 finish 
 response 2 close 
 request 2 end 
 request 2 close 
-response 3 finish 
-response 3 close 
-request 3 end 
-request 3 close 
-connections 1
+connections 2
 socket close 
 socket close, heard through an heir
 == freeze socket before

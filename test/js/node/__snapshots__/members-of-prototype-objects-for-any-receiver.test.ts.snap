@@ -2315,10 +2315,14 @@ node:http.ServerResponse.prototype write("a", 1)
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:http.ServerResponse.prototype _callPendingCallbacks()
-  throws TypeError: undefined is not an object <- every object, a number, a string, undefined
+  throws TypeError: undefined is not an object, stores [kNeedDrain] <- every object
+  throws TypeError: Attempted to assign to readonly property. <- a number, a string
+  throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:http.ServerResponse.prototype _callPendingCallbacks("a", 1)
-  throws TypeError: undefined is not an object <- every object, a number, a string, undefined
+  throws TypeError: undefined is not an object, stores [kNeedDrain] <- every object
+  throws TypeError: Attempted to assign to readonly property. <- a number, a string
+  throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:http.ServerResponse.prototype _finish()
   throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
@@ -2357,10 +2361,6 @@ node:http.ServerResponse.prototype _implicitHeader("a", 1)
 node:http.ServerResponse.prototype writableNeedDrain, read
   false <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
   false, stores [fakeSocket] <- an heir of the prototype object, a proxy of such an heir, the prototype object
-  throws TypeError: undefined is not an object <- undefined
-  throws TypeError: null is not an object <- null
-node:http.ServerResponse.prototype writableFinished, read
-  false <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:http.ServerResponse.prototype writableLength, read

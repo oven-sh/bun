@@ -18,7 +18,7 @@ before getHeaders: string {}
 end: object ServerResponse
 after headersSent: boolean true
 after writableNeedDrain: boolean false
-after writableFinished: boolean true
+after writableFinished: boolean false
 after writableCorked: number 0
 after writableEnded: boolean true
 after finished: undefined undefined
@@ -75,7 +75,7 @@ write with a callback: boolean true
 end: object ServerResponse
 after headersSent: boolean true
 after writableNeedDrain: boolean false
-after writableFinished: boolean true
+after writableFinished: boolean false
 after writableCorked: number 0
 after writableEnded: boolean true
 after finished: undefined undefined

@@ -1135,20 +1135,14 @@ describe.concurrent("a child's stdout whose 'data' listener threw, with no 'unca
       startedByListener ? `` : `poll();`,
     ].join(" ");
 
-  test("a setImmediate loop that is running when the listener throws sees the child's 'close'", async () => {
-    expect(await run("bun -e", pollsForClose(false))).toEqual({
+  // An immediate turns the loop once more, unhandled error or not, and the stream goes on with it. A loop of them
+  // that waits for the child's 'close' would otherwise spin for good.
+  test.each([
+    ["is running when the listener throws", false],
+    ["starts in a tick the listener queued before it threw", true],
+  ] as const)("a setImmediate loop that %s sees the child's 'close'", async (_, startedByListener) => {
+    expect(await run("bun -e", pollsForClose(startedByListener))).toEqual({
       stdout: '{"code":1,"calls":1,"closed":true}\n',
-      errors: ["error: boom"],
-      exitCode: 1,
-      signalCode: null,
-    });
-  });
-
-  // The error has ended the run by then, and the stream with it. The loop must not keep the process alive: nothing
-  // is left that would stop it.
-  test("a setImmediate loop that starts after the listener threw ends with the run", async () => {
-    expect(await run("bun -e", pollsForClose(true))).toEqual({
-      stdout: '{"code":1,"calls":1,"closed":false}\n',
       errors: ["error: boom"],
       exitCode: 1,
       signalCode: null,

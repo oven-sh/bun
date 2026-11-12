@@ -319,10 +319,8 @@ enum EnterJs<'a> {
 /// What became of the call [`EventLoop::run_callback_then`] was asked to make.
 pub enum CallbackOutcome {
     Returned(JSValue),
-    /// Reported as uncaught. `handled`: what [`VirtualMachine::uncaught_exception`] answered.
-    Threw {
-        handled: bool,
-    },
+    /// Reported as uncaught.
+    Threw,
     /// Not called (an exception is pending, or `JSValue::call` answered `undefined` and the VM is stopping, the entered context is stopped or the callback is of a retired test realm), or the VM's termination landed in the call. Not seen, and so `Returned(undefined)`: a call dropped only because the callback's own async context names a disposed `Bun.ModuleGraph`.
     Stopped,
 }
@@ -664,8 +662,8 @@ impl EventLoop {
                 CallbackOutcome::Stopped
             }
             Ok(value) => CallbackOutcome::Returned(value),
-            Err(err) => match crate::task::report_error_or_terminate_handled(global_object, err) {
-                Ok(handled) => CallbackOutcome::Threw { handled },
+            Err(err) => match crate::task::report_error_or_terminate(global_object, err) {
+                Ok(()) => CallbackOutcome::Threw,
                 Err(Stopped) => CallbackOutcome::Stopped,
             },
         };

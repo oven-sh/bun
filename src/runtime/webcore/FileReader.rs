@@ -67,6 +67,8 @@ pub struct FileReader {
     pub(crate) read_start_queued: Cell<bool>,
     /// Handle mode is arming the poll with a chunk in hand: a failure it reports now is delivered after that chunk.
     pub(crate) arming: Cell<bool>,
+    /// Handle mode: the read callback threw on this turn of the event loop. See `wait_for_next_turn`.
+    pub(crate) waits_for_next_turn: Cell<bool>,
 }
 
 impl Default for FileReader {
@@ -93,6 +95,7 @@ impl Default for FileReader {
             read_callback: Cell::new(false),
             read_start_queued: Cell::new(false),
             arming: Cell::new(false),
+            waits_for_next_turn: Cell::new(false),
         }
     }
 }
@@ -802,7 +805,7 @@ impl FileReader {
         reads_on_the_loop && !reader.is_done() && reader.buffer().is_empty()
     }
 
-    /// `on_start`'s setup without its read, then the first read start. Node asks for that one when it builds the stream (`this.read(0)` in `net.Socket`'s constructor, https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L491-L502): what the child writes is in the stream's buffer, up to its `highWaterMark`, before anything reads the stream, and a `read()` in the child's 'exit' returns it. As there, the reader holds the process while it waits for the child, whether or not anything reads the stream: `unref()` lets go.
+    /// `on_start`'s setup without its read, then the first read start. Node asks for that one when it builds the stream (`this.read(0)` in `net.Socket`'s constructor, https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L491-L502): what the child writes is read before anything reads the stream, up to its `highWaterMark`, and a `read()` in the child's 'exit' returns it. Whether the reader holds the process meanwhile is the stream's to say (`update_ref`).
     fn enter_handle_mode(&self) {
         self.read_callback.set(true);
         self.flowing.set(false);
@@ -818,32 +821,49 @@ impl FileReader {
         self.set_flowing(true);
     }
 
-    /// Handle mode's read start. `set_flowing(true)` has JS on the stack, so a task starts the reader: what the pipe holds by then comes on the next turn of the event loop, ahead of what the loop polls for, the child's exit included.
-    fn queue_read_start(&self) {
+    /// Handle mode's read start. `set_flowing(true)` has JS on the stack, so a task starts the reader: what the pipe holds by then comes on the next turn of the event loop, ahead of what the loop polls for, the child's exit included. `after_yield`: not in this turn's drain of the task queue, but once the loop has polled again (`EventLoop::yield_tasks`).
+    fn queue_read_start(&self, after_yield: bool) {
         if self.read_start_queued.replace(true) {
             return;
         }
         // SAFETY: see `parent()`. The task owns the ref.
         let source = unsafe { RefPtr::init_ref(self.parent()) }.into_raw();
-        self.parent_const()
-            .global_this()
-            .bun_vm()
-            .event_loop_mut()
-            .enqueue_task(bun_event_loop::Task::init(source));
+        let task = bun_event_loop::Task::init(source);
+        let event_loop = self.parent_const().global_this().bun_vm().event_loop_mut();
+        if after_yield {
+            event_loop.enqueue_task_after_yield(task);
+        } else {
+            event_loop.enqueue_task(task);
+        }
+    }
+
+    /// The read callback threw, and the exception is reported. Node runs nothing more if that was fatal. Here the loop then stops turning, unless something else keeps it going (`--hot`, an immediate, a pending top-level `await`, `bun test`). So the source delivers nothing more on this turn and goes on at the loop's next one: a run that ends calls no listener again and reports no end, and one that goes on loses nothing.
+    fn wait_for_next_turn(&self) {
+        // The call for the end or for an error threw: nothing is left to deliver.
+        if !self.read_callback.get() {
+            return;
+        }
+        self.waits_for_next_turn.set(true);
+        self.reader().pause();
+        self.queue_read_start(true);
     }
 
     /// The task of `queue_read_start`.
     fn start_reader(&self) {
         self.read_start_queued.set(false);
+        let waited = self.waits_for_next_turn.replace(false);
         if !self.read_callback.get() || !self.flowing.get() {
             return;
         }
-        // Held because the callback had the reader stopped. It asks for more only now, as a pull would.
+        // Held because the callback had the reader stopped, or had thrown. It asks for more only now, as a pull would.
         if let Some(err) = self.read_error.replace(None) {
             return self.end_read_callback(Some(err));
         }
-        // Closed with the callback still registered: a tick of the event loop nested in the call for the last chunk ran this before the end, or the failure to arm, was reported. There is no fd left to read.
+        // There is no fd left to read. After a throw this is the end that came on that turn. Otherwise a tick of the event loop nested in the call for the last chunk ran this ahead of the end, or of the failure to arm, which that call's frame reports.
         if self.reader().is_done() {
+            if waited {
+                self.end_read_callback(None);
+            }
             return;
         }
         #[cfg(unix)]
@@ -896,19 +916,17 @@ impl FileReader {
             }
         };
         self.call_read_callback(this_value, callback, &[buffer]);
-        // The failure to arm, after its chunk. A reader the callback stopped keeps it for the next read start.
+        let stopped = !self.flowing.get() || self.waits_for_next_turn.get();
+        // The failure to arm, after its chunk. A reader the callback stopped, or threw in, keeps it for the next read start.
         if let Some(err) = arm_error {
-            if self.flowing.get() {
-                self.end_read_callback(Some(err));
-            } else {
+            if stopped {
                 self.read_error.set(Some(err));
+            } else {
+                self.end_read_callback(Some(err));
             }
         }
-        // `false` from the callback stopped the reader. A `destroy()` in it, or a throw that ends the run, cancelled the source and closed the fd the io caller captured.
-        self.flowing.get()
-            && self.read_callback.get()
-            && !self.done.get()
-            && !self.reader().is_done()
+        // `false` from the callback stopped the reader, and so did a throw. A `destroy()` in it cancelled the source and closed the fd the io caller captured.
+        !stopped && self.read_callback.get() && !self.done.get() && !self.reader().is_done()
     }
 
     /// No `Buffer` could be made for a chunk: out of memory, or the VM is stopping. The source stops: a stream that went on without these bytes would be wrong. Out of memory ends the stream with that error, as it rejects a pull.
@@ -979,10 +997,9 @@ impl FileReader {
                     self.reader().pause();
                 }
                 CallbackOutcome::Returned(_) => {}
-                // A listener threw and the run goes on: the stream reads on, as in Node.
-                CallbackOutcome::Threw { handled } if !vm.uncaught_exception_ends_run(handled) => {}
-                // The report ends the run, or the VM is stopping: nothing more comes out of this source.
-                CallbackOutcome::Threw { .. } | CallbackOutcome::Stopped => parent.cancel(),
+                CallbackOutcome::Threw => self.wait_for_next_turn(),
+                // The VM is stopping: nothing more comes out of this source.
+                CallbackOutcome::Stopped => parent.cancel(),
             },
         );
     }
@@ -1026,7 +1043,10 @@ impl FileReader {
                 sink.end(None);
             }
         } else if self.read_callback.get() {
-            self.end_read_callback(None);
+            // After a throw the end waits for the next turn too: `start_reader` reports it.
+            if !self.waits_for_next_turn.get() {
+                self.end_read_callback(None);
+            }
         } else {
             self.consume_reader_buffer();
             if self.pending.get().state == streams::PendingState::Pending {
@@ -1076,10 +1096,10 @@ impl FileReader {
             self.detach_sink(Some(&err));
             sink.end(Some(err));
         } else if self.read_callback.get() {
-            if self.flowing.get() && !self.arming.get() {
+            if self.flowing.get() && !self.arming.get() && !self.waits_for_next_turn.get() {
                 for_read_callback = Some(err);
             } else {
-                // The callback stopped the reader, or has yet to get the chunk in hand: it is told at the next read start, or after that chunk.
+                // The callback stopped the reader, threw, or has yet to get the chunk in hand: it is told at the next read start, or after that chunk.
                 self.read_error.set(Some(err));
             }
         } else if self.pending.get().state == streams::PendingState::Pending {
@@ -1161,7 +1181,7 @@ impl FileReader {
                 // A read loop that is running goes on and arms the poll itself; the task starts a reader that is idle.
                 #[cfg(unix)]
                 self.reader().unpause();
-                return self.queue_read_start();
+                return self.queue_read_start(false);
             }
             self.reader().unpause();
             if !self.reader().is_done() && !self.reader().has_pending_read() {

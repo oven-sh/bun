@@ -146,13 +146,10 @@ export function getStdinStream(
     }
   }
 
-  // Asked when pause() or destroy() is called, because disown() runs a tick later.
-  const isHeldByAnotherReader = () => !reader && native.locked;
-
-  function disown(wasHeldByAnotherReader = false) {
+  function disown(wasHeldByAnotherReader = !reader && native.locked) {
     $debug("unref();");
 
-    // Only a reader of Bun.stdin.stream() that came after the call keeps the source. Nothing else stops it.
+    // A reader of Bun.stdin.stream() that came after pause() keeps the source.
     if (reader || wasHeldByAnotherReader || !native.locked) source?.setFlowing?.(false);
     if (wasHeldByAnotherReader) source?.updateRef?.(false);
     if (reader) {
@@ -307,7 +304,7 @@ export function getStdinStream(
   stream._readableState.reading = false;
 
   stream.on("pause", () => {
-    const wasHeldByAnotherReader = isHeldByAnotherReader();
+    const wasHeldByAnotherReader = !reader && native.locked;
     process.nextTick(() => {
       // Only disown if the stream is still paused (not resumed in the meantime)
       if (!stream.readableFlowing) {
@@ -328,23 +325,12 @@ export function getStdinStream(
     }
   });
 
-  // 'close' comes a tick or more after the call, and so does _destroy() while the stream isn't constructed yet.
-  let wasHeldWhenDestroyed: boolean | undefined;
-  const originalDestroy = stream.destroy;
-  stream.destroy = function (err, callback) {
-    if (!this.destroyed) wasHeldWhenDestroyed = isHeldByAnotherReader();
-    return originalDestroy.$call(this, err, callback);
-  };
-
   stream.on("close", () => {
     if (!stream_destroyed) {
       stream_destroyed = true;
-      // Readable.prototype.destroy.call(process.stdin) doesn't pass through the function above.
-      const wasHeldByAnotherReader = wasHeldWhenDestroyed ?? isHeldByAnotherReader();
-      wasHeldWhenDestroyed = undefined;
       process.nextTick(() => {
         stream.destroy();
-        disown(wasHeldByAnotherReader);
+        disown();
       });
     }
   });

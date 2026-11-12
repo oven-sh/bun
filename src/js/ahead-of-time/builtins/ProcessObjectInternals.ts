@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 6fec4cb7237967bff661ffd182ab83e75b7e52ab54ee17116b6b405521b947b9.
+// Written against that file with the SHA-256 6366390fff0b38c5f866c0cbf4242859d46a357b0c0d6a1e0da7c524bf04952d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -165,13 +165,10 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     }
   }
 
-  // Asked when pause() or destroy() is called, because disown() runs a tick later.
-  const isHeldByAnotherReader = () => !reader && native.locked;
-
-  function disown(wasHeldByAnotherReader = false) {
+  function disown(wasHeldByAnotherReader = !reader && native.locked) {
     $debug("unref();");
 
-    // Only a reader of Bun.stdin.stream() that came after the call keeps the source. Nothing else stops it.
+    // A reader of Bun.stdin.stream() that came after pause() keeps the source.
     if (reader || wasHeldByAnotherReader || !native.locked) source?.setFlowing?.(false);
     if (wasHeldByAnotherReader) source?.updateRef?.(false);
     if (reader) {
@@ -326,7 +323,7 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   stream._readableState.reading = false;
 
   stream.on("pause", () => {
-    const wasHeldByAnotherReader = isHeldByAnotherReader();
+    const wasHeldByAnotherReader = !reader && native.locked;
     process.nextTick(() => {
       // Only disown if the stream is still paused (not resumed in the meantime)
       if (!stream.readableFlowing) {
@@ -347,23 +344,12 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     }
   });
 
-  // 'close' comes a tick or more after the call, and so does _destroy() while the stream isn't constructed yet.
-  let wasHeldWhenDestroyed: boolean | undefined;
-  const originalDestroy = stream.destroy;
-  stream.destroy = function (err, callback) {
-    if (!this.destroyed) wasHeldWhenDestroyed = isHeldByAnotherReader();
-    return originalDestroy.$call(this, err, callback);
-  };
-
   stream.on("close", () => {
     if (!stream_destroyed) {
       stream_destroyed = true;
-      // Readable.prototype.destroy.call(process.stdin) doesn't pass through the function above.
-      const wasHeldByAnotherReader = wasHeldWhenDestroyed ?? isHeldByAnotherReader();
-      wasHeldWhenDestroyed = undefined;
       process.nextTick(() => {
         stream.destroy();
-        disown(wasHeldByAnotherReader);
+        disown();
       });
     }
   });

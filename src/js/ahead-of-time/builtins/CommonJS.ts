@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/CommonJS.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 95ac8d6909365c4356d91fe384a398c9b82408b51da163daaf336ff302afc74f.
+// Written against that file with the SHA-256 21d018a66e2cec008795322d927c04e3af13cf7b2ee855fc10b8d13c83ff0355.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // This file contains functions used for the CommonJS module loader
@@ -139,9 +139,12 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     const namespace = out;
     // In a require cycle the namespace is live while the module body is still
     // running, so an export named `__esModule` / `module.exports` may be in TDZ.
+    // Each read has its own `try`: one export in TDZ does not hide the other.
     let esModule, moduleExports;
     try {
       esModule = namespace.__esModule;
+    } catch {}
+    try {
       moduleExports = namespace["module.exports"];
     } catch {}
     // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
@@ -239,6 +242,8 @@ export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: stri
   let esModule, moduleExports;
   try {
     esModule = namespace.__esModule;
+  } catch {}
+  try {
     moduleExports = namespace["module.exports"];
   } catch {}
   // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.

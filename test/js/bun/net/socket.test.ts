@@ -8249,12 +8249,18 @@ describe.concurrent("end(data) larger than the send buffer", () => {
   it.skipIf(isWindows).each(["unref", "close"] as const)(
     "the wait for the peer's FIN doesn't keep the process alive after %s()",
     async call => {
+      const accepted = Promise.withResolvers<Socket>();
       const peerEnded = Promise.withResolvers<void>();
       using server = Bun.listen({
         hostname: "127.0.0.1",
         port: 0,
         allowHalfOpen: true,
-        socket: { data() {}, end: () => peerEnded.resolve() },
+        socket: {
+          // A peer that reads as fast as send() copies leaves end() no tail to queue.
+          open: socket => (socket.pause(), accepted.resolve(socket)),
+          data() {},
+          end: () => peerEnded.resolve(),
+        },
       });
       await using proc = Bun.spawn({
         cmd: [
@@ -8267,6 +8273,7 @@ describe.concurrent("end(data) larger than the send buffer", () => {
             socket: { data() {}, close: () => console.log("close") },
           });
           socket.end(Buffer.alloc(16 << 20));
+          process.send("ended");
           await Bun.stdin.text();
           socket.${call}();
           `,
@@ -8275,6 +8282,7 @@ describe.concurrent("end(data) larger than the send buffer", () => {
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
+        ipc: () => void accepted.promise.then(socket => socket.resume()),
       });
       await peerEnded.promise;
       await proc.stdin.end();

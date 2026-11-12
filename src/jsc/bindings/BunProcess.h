@@ -89,7 +89,7 @@ public:
 
     JSObject* ensureOnWarning(Zig::GlobalObject*);
 
-    // Opens the IPC channel ahead of the program. What arrives waits for the program's first listener, as if that had opened it.
+    // Opens the IPC channel ahead of the program, unless a preload did. What arrives waits for the first listener (node:cluster's Worker adds one for 'message'), as if that had opened it.
     void openChannelOfClusterWorker(Zig::GlobalObject*);
     bool holdMessage(JSValue message, JSValue fd);
     bool holdDisconnect() { return m_heldDisconnect = m_holdsChannelEvents; }

@@ -18422,55 +18422,6 @@
     "windows": 51,
     "windows-aarch64": 32
   },
-  "js/node/test/parallel/test-debugger-backtrace.js": {
-    "default": 21,
-    "asan": 44,
-    "musl": 52,
-    "windows": 36,
-    "windows-aarch64": 21
-  },
-  "js/node/test/parallel/test-debugger-exec.js": {
-    "default": 11,
-    "asan": 29,
-    "musl": 23,
-    "windows": 45,
-    "windows-aarch64": 26
-  },
-  "js/node/test/parallel/test-debugger-invalid-json.mjs": {
-    "default": 11,
-    "asan": 117,
-    "musl": 26,
-    "windows": 77,
-    "windows-aarch64": 111
-  },
-  "js/node/test/parallel/test-debugger-low-level.js": {
-    "default": 36,
-    "asan": 165,
-    "musl": 43,
-    "windows": 20,
-    "windows-aarch64": 12
-  },
-  "js/node/test/parallel/test-debugger-preserve-breaks.js": {
-    "default": 21,
-    "asan": 23,
-    "musl": 33,
-    "windows": 50,
-    "windows-aarch64": 65
-  },
-  "js/node/test/parallel/test-debugger-repeat-last.js": {
-    "default": 19,
-    "asan": 18,
-    "musl": 32,
-    "windows": 46,
-    "windows-aarch64": 23
-  },
-  "js/node/test/parallel/test-debugger-restart-message.js": {
-    "default": 30,
-    "asan": 73,
-    "musl": 17,
-    "windows": 63,
-    "windows-aarch64": 79
-  },
   "js/node/test/parallel/test-delayed-require.js": {
     "default": 6,
     "asan": 62,
@@ -40833,13 +40784,6 @@
     "musl": 94,
     "windows": 108,
     "windows-aarch64": 136
-  },
-  "js/node/test/sequential/test-debug-prompt.js": {
-    "default": 36,
-    "asan": 282,
-    "musl": 38,
-    "windows": 57,
-    "windows-aarch64": 79
   },
   "js/node/test/sequential/test-deprecation-flags.js": {
     "default": 68,

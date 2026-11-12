@@ -105,6 +105,53 @@ test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while i
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > and fails to load
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a Vitest test file with no mock call of its own still runs its imports one at a time > the transpiler cache doesn't mix up a file run as a test with the same file imported
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
+# The next 46: under --aot a module still counts as loaded by the test file that first loaded it, so the mock of a later file that imports it still lets it go. The body of a compiled file also runs once. "what a later file reads" holds each cell to what `bun test` reads.
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > CommonJS modules that the file got out of require.cache stay in it
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > CommonJS modules that the file got out of require.cache stay in it after module.children is read
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > a mock of a builtin module, then of its importer
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > a mock of a module, then of its importer, by a module that the file imports
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > a mock of a module, then of its importer, by a module that the file imports first
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > a mock of a module, then of its importer, by jest.doMock()
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > a mock of a module, then of its importer, by jest.mock() in beforeAll()
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > a mock of a module, then of its importer, by mock.module()
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > a mock of a module, then of its importer, by mock.module() in beforeAll()
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > a mock of a module, then of its importer, by vi.mock() in beforeAll()
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > a mock of the module that the file imports itself
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > a module that an earlier test file loaded makes the mocks, and the second one reaches what it imports
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > all of those files after one another, in the written order
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > all of those files after one another, the other way round
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > an importer of a module that the file holds is evaluated with the mock, and linked to that module
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > every run of a file under --rerun-each gets the same ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > every run of a file under --rerun-each gets the same []
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > import() after a mock gives the module that the file is linked to
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > the file has the importer from a module that only this file loads
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > the file has the importer from require()
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > the file imports from vitest
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > the mocks are made in a test
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > the next test file gets the modules that were not mocked
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after a call of a function that requires > a hoisted mock with an export of its own
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after a call of a function that requires > a mock that spreads jest.requireActual() with an export of its own
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after a call of a function that requires > a mock with an export of its own
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after a call of a function that requires > a mock, then a call of a function that requires
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after a call of a function that requires > two mocks behind a static import
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after a call of a function that requires > two mocks behind require()
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after a call of a function that requires > two mocks in a module that the file imports first
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after a call of a function that requires > two mocks in a module that the file imports first, then what a module computed at its load
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after require() > a hoisted mock with an export of its own
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after require() > a mock that spreads jest.requireActual() with an export of its own
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after require() > a mock with an export of its own
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after require() > two mocks behind a static import
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after require() > two mocks behind require()
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after require() > two mocks in a module that the file imports first
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after require() > two mocks in a module that the file imports first, then what a module computed at its load
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after static imports > a hoisted mock with an export of its own
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after static imports > a mock that spreads jest.requireActual() with an export of its own
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after static imports > a mock with an export of its own
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after static imports > two mocks behind a static import
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after static imports > two mocks behind require()
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after static imports > two mocks in a module that the file imports first
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what a later file reads after each kind of earlier file > after static imports > two mocks in a module that the file imports first, then what a module computed at its load
+test/js/bun/test/mock/mock-module.test.ts: a test file that holds modules an earlier test file loaded > what an ES module that the file imports got from require() stays in require.cache
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
 test/js/bun/test/vitest-flavor.test.ts: [test] globals = "vitest" > is part of the transpiler cache key

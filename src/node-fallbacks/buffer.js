@@ -27,8 +27,7 @@ export const kStringMaxLength = 0x1fffffe8;
 // A browser throws "Illegal invocation" when these are called as a method, so the exports do not pass `this`.
 const bufferBtoa = data => globalThis.btoa(data);
 const bufferAtob = data => globalThis.atob(data);
-// No binding has the name of a global: a classic script declares its top-level bindings on the global object,
-// and a `var File` there hides a `File` that the host inherits. README.md has the cases.
+// Not named `File` and `Blob`: see "Names of top-level bindings" in README.md.
 const bufferFile = /* @__PURE__ */ globalThis.File;
 const bufferBlob = /* @__PURE__ */ globalThis.Blob;
 export { bufferBlob as Blob, bufferFile as File, bufferAtob as atob, bufferBtoa as btoa };

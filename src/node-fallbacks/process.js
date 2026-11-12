@@ -49,8 +49,7 @@ export function nextTick(fun, ...args) {
 }
 
 export const title = "browser";
-// Not named `browser`: a content script of an extension is a classic script, which declares its top-level
-// bindings on the global object, and `browser` is the extension API there. README.md has the cases.
+// Not named `browser`: see "Names of top-level bindings" in README.md.
 const processBrowser = true;
 export { processBrowser as browser };
 export const env = {};

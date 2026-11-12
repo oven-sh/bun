@@ -962,7 +962,9 @@ describe("bundler", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The linter reports names, so it exits with 1. Another code is a failure of its own, which stderr describes.
+      expect(exitCode, stderr).toBe(1);
       const notGlobal = new Set([...(stdout + stderr).matchAll(/'([^']+)' is not defined/g)].map(match => match[1]));
       // Every global object inherits the names of Object.prototype, such as `hasOwnProperty`.
       const isGlobal = (name: string) => names.has(name) && (!notGlobal.has(name) || name in Object.prototype);

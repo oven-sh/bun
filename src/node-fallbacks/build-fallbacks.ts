@@ -102,31 +102,27 @@ for (const name of allFiles) {
   // An ES module without a default export gets one that has every named export.
   const named = new Bun.Transpiler().scan(source).exports;
   const needsDefault = format === "esm" && !named.includes("default");
-  // The binding of each export: its own name for a declaration, `local` for `export { local as name }`.
-  const bindings = new Map<string, string>();
-  for (const [, declared] of source.matchAll(
-    /^export\s+(?:async\s+)?(?:const|let|var|function\*?|class)\s+([\w$]+)/gm,
-  )) {
-    bindings.set(declared, declared);
-  }
+  // `export { local as name }` has no binding called `name`, so that default reads `local`.
+  const localOf = new Map<string, string>();
   for (const [, clause] of source.matchAll(/^export\s*\{([^}]*)\}(?!\s*from\b)/gm)) {
     for (const item of clause.split(",")) {
       const [local, exported = local] = item.trim().split(/\s+as\s+/);
-      if (local) bindings.set(exported, local);
+      if (local) localOf.set(exported, local);
     }
   }
-  const defaultExport = () =>
-    `export default { ${named.map(exported => {
-      const local = bindings.get(exported);
-      // A name that comes from another module has no binding here. A default that names it would read a global.
-      if (!local) throw new Error(`${name}: the export \`${exported}\` is not a binding of the file`);
-      return local === exported ? exported : `${exported}: ${local}`;
-    })} };`;
+  // A name that another module exports has no binding here at all. The default would read a global.
+  if (needsDefault && /^export\s*(\*|\{[^}]*\}\s*from\b)/m.test(source)) {
+    throw new Error(`${name} exports names of another module. Write its \`export default\` by hand.`);
+  }
+  const defaultExport = `export default { ${named.map(exported => {
+    const local = localOf.get(exported) ?? exported;
+    return local === exported ? exported : `${exported}: ${local}`;
+  })} };`;
 
   commands.push(
     Bun.build({
       entrypoints: [name],
-      files: needsDefault ? { [path.resolve(name)]: `${source}\n${defaultExport()}` } : {},
+      files: needsDefault ? { [path.resolve(name)]: `${source}\n${defaultExport}` } : {},
       outdir,
       target: "browser",
       format,

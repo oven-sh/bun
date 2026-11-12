@@ -16,7 +16,7 @@ A page can load a bundle as a classic script, and a content script of a browser 
 - It hides a global that the host inherits. In a content script of Firefox, `var URL = globalThis.URL` first declares a `URL` that is `undefined`, and then reads that one.
 - It declares a global on a host that does not have it.
 
-So no top-level binding has the name of a global of a page, a worker or an extension. To export such a name, bind the value under another name and write `export { local as name }`. The test `browser/NodePolyfillsDeclareNoPageGlobal` checks the names that the bundle of each polyfill declares.
+So no top-level binding has the name of a global of a page, a worker or an extension. To export such a name, bind the value under another name and write `export { local as name }`. The export then has the value that the global had when the bundle loaded, also in a classic script. The test `browser/NodePolyfillsDeclareNoPageGlobal` checks the names that the bundle of each polyfill declares.
 
 ## Not used by Bun's runtime
 

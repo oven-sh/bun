@@ -20,8 +20,7 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 "use strict";
-// No binding has the name of a global: a classic script declares its top-level bindings on the global object,
-// and a `var URL` there hides a `URL` that the host inherits. README.md has the cases.
+// Not named `URL` and `URLSearchParams`: see "Names of top-level bindings" in README.md.
 const urlURL = /* @__PURE__ */ globalThis.URL;
 const urlURLSearchParams = /* @__PURE__ */ globalThis.URLSearchParams;
 

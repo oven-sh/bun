@@ -30,19 +30,14 @@ describe.concurrent("WebKit 3722912ff800 upgrade", () => {
     expect(`${a}`).toBe("1,,2");
   });
 
+  // Defines a toJSON that is not enumerable.
+  const withToJSON = <T extends object>(object: T, toJSON: unknown): T =>
+    Object.defineProperty(object, "toJSON", { value: toJSON });
+
   test("JSON.stringify fast path honors a non-enumerable own toJSON (8b9071b24ead, 9f9370cc729f)", () => {
     // SerializeJSONProperty looks toJSON up with GetV, so enumerability is
     // irrelevant. FastStringifier used to skip DontEnum entries before looking
     // for it and serialized the object's own properties instead.
-    function withToJSON<T extends object>(object: T, toJSON: unknown): T {
-      Object.defineProperty(object, "toJSON", {
-        value: toJSON,
-        enumerable: false,
-        writable: false,
-        configurable: false,
-      });
-      return object;
-    }
     const frozen = Object.freeze(
       withToJSON({ uri: "u", cid: "c", text: "t" }, function (this: { uri: string; cid: string }) {
         return { uri: this.uri, cid: this.cid };
@@ -89,15 +84,10 @@ describe.concurrent("WebKit 3722912ff800 upgrade", () => {
     // the replaced prototype was ignored.
     const proto = { __proto__: Array.prototype, toJSON: () => "via prototype" };
     const array = Object.setPrototypeOf([1, 2, 3], proto);
-    const nonEnumerableProto = Object.create(Array.prototype);
-    Object.defineProperty(nonEnumerableProto, "toJSON", {
-      value(this: unknown[]) {
-        return this.length;
-      },
-      enumerable: false,
+    const nonEnumerableProto = withToJSON(Object.create(Array.prototype), function (this: unknown[]) {
+      return this.length;
     });
-    const ownWins = Object.setPrototypeOf([1], proto);
-    Object.defineProperty(ownWins, "toJSON", { value: () => "own", enumerable: false });
+    const ownWins = withToJSON(Object.setPrototypeOf([1], proto), () => "own");
     const restored = Object.setPrototypeOf([1, 2, 3], proto);
     const whileReplaced = JSON.stringify(restored);
     Object.setPrototypeOf(restored, Array.prototype);

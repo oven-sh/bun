@@ -1,4 +1,5 @@
 use crate::bun::react_imports;
+use crate::rules::react_hooks_rules_of_hooks::is_hook_name;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -57,6 +58,34 @@ fn has_directive<'a>(statements: impl IntoIterator<Item = Stmt<'a>>, directives:
 fn is_react_api(callee: Expr<'_>, names: &[&str]) -> bool {
     ast_utils::is_specific_id_with(callee, |it| names.iter().any(|name| name.as_bytes() == it))
         || ast_utils::is_member_access_of_any(callee, names)
+}
+
+/// The name `bun build --react-compiler` gives the callback of a `memo()` or `forwardRef()` that initializes a
+/// variable: the variable's. The port gives it none.
+fn declarator_name_of_callback<'a>(func: Func<'a>) -> Option<Name<'a>> {
+    let Node::Expr(e) = func.owner() else {
+        return None;
+    };
+    let Node::Expr(call_expr) = e.parent() else {
+        return None;
+    };
+    let call = call_expr.as_call()?;
+    if call.args().first() != Some(e) || !is_react_api(call.callee(), &["memo", "forwardRef"]) {
+        return None;
+    }
+    match call_expr.parent() {
+        Node::VarDecl(declaration) if declaration.init() == Some(call_expr) => declaration.pat().as_ident(),
+        _ => None,
+    }
+}
+
+/// True if the build leaves the callback `func` alone under the name it gives it: a component's or a hook's name
+/// brings the checks of one, like the parameters of a component, before the callback counts as one.
+fn build_checks_callback_by_name<'a>(func: Func<'a>) -> bool {
+    declarator_name_of_callback(func).is_some_and(|name| {
+        let is_component_or_hook_name = name.bytes().first().is_some_and(u8::is_ascii_uppercase) || is_hook_name(name.bytes());
+        is_component_or_hook_name && !would_compile(func, Some(name), FLAVOR)
+    })
 }
 
 /// A comment that `bun build --react-compiler` takes for a `react-hooks` suppression. Its lexer looks for
@@ -145,7 +174,10 @@ impl<'a> Found<'a> {
         };
         consumers.sort_unstable();
         let discovered = discover(file, FLAVOR).into_iter().map(|mut it| {
-            it.skipped = it.skipped || !found.build_finds(it.func) || build_skips(it.func, &suppressions, &consumers);
+            it.skipped = it.skipped
+                || !found.build_finds(it.func)
+                || build_checks_callback_by_name(it.func)
+                || build_skips(it.func, &suppressions, &consumers);
             (it.func, it)
         });
         found.discovered = discovered.collect();

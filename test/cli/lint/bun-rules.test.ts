@@ -1003,6 +1003,10 @@ const rules: Record<string, Case[]> = {
       ],
       [`${memo}${row}export default «memo»(Row);`, `${row}export default Row;`],
       [
+        `import { forwardRef, memo } from "react";\nconst Input = forwardRef((props, ref) => <input ref={ref} />);\nexport default «memo»(Input);`,
+        `import { forwardRef } from "react";\nconst Input = forwardRef((props, ref) => <input ref={ref} />);\nexport default Input;`,
+      ],
+      [
         `${memo}export default «memo»(Row);\nfunction Row() {\n  return <li />;\n}`,
         `export default Row;\nfunction Row() {\n  return <li />;\n}`,
       ],
@@ -1211,6 +1215,10 @@ const rules: Record<string, Case[]> = {
     `${useMemo}function Total({ items }) {\n  // was eslint-disable-next-line no-unused-vars, react-hooks/exhaustive-deps\n  const total = useMemo(() => items.length, [items]);\n  return <span>{total}</span>;\n}`,
     `${useMemo}// was eslint-disable-next-line react-hooks/rules-of-hooks\nfunction Total({ a, b }) {\n  return <b>{useMemo(() => a + b, [a, b])}</b>;\n}`,
     `${useMemo}/* was eslint-disable react-hooks/rules-of-hooks */\nfunction Total({ a, b }) {\n  return <b>{useMemo(() => a + b, [a, b])}</b>;\n}`,
+    // The build names the callback of `memo()` or `forwardRef()` after the variable it initializes, and then checks
+    // the parameters of a component.
+    `${memo}const Row = memo((props, context) => <li />);`,
+    `import { forwardRef, memo } from "react";\nconst Input = forwardRef((props, r) => <input ref={r} />);\nexport default memo(Input);`,
     // The build looks for JSX and hook calls in the function itself, not in the methods of an object in it.
     `${memo}function Toolbar({ onSave }) {\n  const actions = {\n    save() {\n      return <Button onClick={onSave} />;\n    },\n  };\n  return render(actions);\n}\nexport default memo(Toolbar);`,
     // The build's lexer is a token ahead of its parser, so a comment right after a function marks that function.

@@ -94,3 +94,34 @@ describe("S3Client instance method argument validation", () => {
     );
   });
 });
+
+test("an S3 client uses the key its buffer held when the argument was parsed", () => {
+  const client = new Bun.S3Client({
+    accessKeyId: "AK",
+    secretAccessKey: "SK",
+    bucket: "b",
+    endpoint: "https://s3.example.com",
+  });
+  // The options are read after the key: a getter that writes another key into the buffer changes nothing.
+  const signed = (sign: (key: Buffer) => string) => new URL(sign(Buffer.from("key-of-the-call"))).pathname;
+  expect({
+    presign: signed(key =>
+      client.presign(key as any, {
+        get expiresIn() {
+          key.write("key-from-getter");
+          return 60;
+        },
+      }),
+    ),
+    file: signed(key =>
+      client
+        .file(key as any, {
+          get type() {
+            key.write("key-from-getter");
+            return "text/plain";
+          },
+        })
+        .presign(),
+    ),
+  }).toEqual({ presign: "/b/key-of-the-call", file: "/b/key-of-the-call" });
+});

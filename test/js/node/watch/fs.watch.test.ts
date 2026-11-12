@@ -291,6 +291,22 @@ describe("fs.watch", () => {
     }
   });
 
+  test("watches the path its buffer named when the argument was parsed", () => {
+    const watched = Buffer.from(path.join(testDir, "watch.txt"));
+    // The options are read after the path: a getter that writes a name that does not exist into the buffer changes nothing.
+    const watcher = fs.watch(watched, {
+      get persistent() {
+        watched.write(path.join(testDir, "nowhere.x"));
+        return false;
+      },
+    });
+    try {
+      expect(watcher.constructor.name).toBe("FSWatcher");
+    } finally {
+      watcher.close();
+    }
+  });
+
   const encodings = ["utf8", "buffer", "hex", "ascii", "base64", "utf16le", "ucs2", "latin1", "binary"] as const;
 
   test(`should work with encodings ${encodings.join(", ")}`, async () => {

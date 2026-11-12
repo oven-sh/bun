@@ -1784,3 +1784,16 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(exitCode).toBe(0);
   });
 });
+
+it("Bun.write writes to the path its buffer named when the argument was parsed", async () => {
+  using dir = tempDir("bun-write-buffer-path", {});
+  const destination = Buffer.from(join(String(dir), "dest-a"));
+  // The options are read after the destination: a getter that writes another name into the buffer changes nothing.
+  await Bun.write(destination, "x", {
+    get createPath() {
+      destination.write(join(String(dir), "dest-b"));
+      return false;
+    },
+  });
+  expect(fs.readdirSync(String(dir))).toEqual(["dest-a"]);
+});

@@ -150,7 +150,7 @@ function defineTests() {
   );
 
   // Each of these makes the buffer, and its row says so. Taken for quiet it has to be caught.
-  test.each(["%TypedArray%.prototype.buffer", "structuredClone", "Bun.file"])(
+  test.each(["%TypedArray%.prototype.buffer", "structuredClone"])(
     "the row of %s, taken for quiet, is caught",
     async path => {
       const pattern = `^${RegExp.escape(path)}$`;

@@ -642,6 +642,8 @@ declare global {
       /** `net.Socket` counts the sockets it accepts and closes for this server. */
       _connections: number;
       _SNICallback?: NetServer["_SNICallback"];
+      _ALPNCallback?: NetServer["_ALPNCallback"];
+      pauseOnConnect?: boolean;
       timeout: number;
       maxRequestsPerSocket: number | null;
       maxHeadersCount: number | null;
@@ -713,26 +715,26 @@ declare global {
     /** What the server keeps on a connection. `node:net` makes the object with the layout of `Socket`, which compiled code tests for: a type of its own would fail every test, and a member that `Socket` lacks has no slot. */
     interface Socket {
       // The client declares narrower types for these two on its own sockets, which has to stay a conversion from `Socket`.
-      parser?: any;
-      _httpMessage?: any;
-      _paused?: boolean;
+      parser: any;
+      _httpMessage: any;
+      _paused: boolean | undefined;
       _SNICallback?: NetServer["_SNICallback"];
       requestsCount?: number;
-      $isPrepared?: boolean;
-      $ownReadableState?: ReadableState;
-      $resumeUnlessFlowing?(asksWhetherReadable: boolean): void;
-      [kHandle]?: NodeHTTPServerSocket;
-      [kCloseCallback]?: (this: HttpSocket) => void;
-      [kHandedOff]?: boolean;
+      $isPrepared: boolean | undefined;
+      $ownReadableState: ReadableState | undefined;
+      $resumeUnlessFlowing: ((asksWhetherReadable: boolean) => void) | undefined;
+      [kHandle]: NodeHTTPServerSocket | undefined;
+      [kCloseCallback]: ((this: HttpSocket) => void) | undefined;
+      [kHandedOff]: boolean | undefined;
       [kUpgradeStream]?: UpgradeStream;
-      [kKeepAliveTimeoutSet]?: boolean;
-      [kDetachedWhileClosing]?: ServerResponse;
-      [kBoundOnAbort]?: (event: number) => void;
-      [kLastResponseWrite]?: number;
+      [kKeepAliveTimeoutSet]: boolean | undefined;
+      [kDetachedWhileClosing]: ServerResponse | undefined;
+      [kBoundOnAbort]: ((event: number) => void) | undefined;
+      [kLastResponseWrite]: number | undefined;
       [kStopParsingOnCloseListener]?: boolean;
-      [kConnectionState]?: Pipeline;
+      [kConnectionState]: Pipeline | undefined;
       [kUpgradeRequest]?: IncomingMessage;
-      [kFinishedAtClose]?: ServerResponse;
+      [kFinishedAtClose]: ServerResponse | undefined;
       [kHandleClosed]?: (this: HttpServerSocket) => void;
     }
 
@@ -2266,7 +2268,7 @@ function detachFromHttp(socket: $Node.HttpServerSocket, req: $Node.IncomingMessa
   if (socket.timeout === 0) socket.setTimeout(0);
   delete (socket as any)._final;
   delete (socket as any)._destroy;
-  const server = socket.server as unknown as $Node.HttpServer;
+  const server = socket.server as $Node.HttpServer;
   server[kTrackedConnections].delete(socket);
   // In Node each socket holds the process itself. Here unref() on the server has always let go of these sockets too.
   server[kHandedOffSockets].add(socket);
@@ -2334,7 +2336,7 @@ function onUpgradeBodyData(this: $Node.IncomingMessage, chunk: Buffer | undefine
 }
 function emitUpgrade(socket: $Node.HttpServerSocket, req: $Node.IncomingMessage, complete: boolean) {
   if (socket.destroyed) return;
-  const server = socket.server as unknown as $Node.HttpServer;
+  const server = socket.server as $Node.HttpServer;
   detachFromHttp(socket, req);
   let stream: $Node.Duplex = socket;
   if (!complete) {
@@ -4214,7 +4216,7 @@ const emitResponseFinish = function emitResponseFinish(this: $Node.ServerRespons
   // Node's clearIncoming: a request that ended before its response did, or that gets no EOF. Any other one is cleared at its EOF.
   const parser = socket?.parser;
   if (parser != null && parser.incoming === req && (req.readableEnded || req.destroyed)) parser.incoming = null;
-  onResponseFinishHandleSocket(socket?.server as unknown as $Node.HttpServer | null | undefined, socket, this);
+  onResponseFinishHandleSocket(socket?.server as $Node.HttpServer | null | undefined, socket, this);
   // The dispatcher detached a response that finished synchronously. Sending the next one again here would skip one.
   if (detachedFrom !== null) return;
   if (socket != null) this.detachSocket(socket);
@@ -4664,7 +4666,7 @@ const finishExchange = function emitResponseFinished(exchange: Exchange): void {
     return finishExchangeInSteps(exchange, flags);
   }
   const inFlight = socket._httpMessage;
-  const server = socket.server as unknown as $Node.HttpServer;
+  const server = socket.server as $Node.HttpServer;
   if (server == null || (inFlight && inFlight !== res)) {
     ("unlikely");
     return finishExchangeInSteps(exchange, flags);

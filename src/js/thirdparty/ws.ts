@@ -272,7 +272,7 @@ interface ClientHandlers extends Omit<ServerHandlers, "close"> {
 interface ServerSocket extends NetSocket {
   authorized?: boolean;
   encrypted?: boolean;
-  _httpMessage?: $Node.ServerResponse | null;
+  _httpMessage: $Node.ServerResponse | null | undefined;
   [kInternalSocketData]?: unknown;
   [kWebSocket]?: WebSocket;
 }

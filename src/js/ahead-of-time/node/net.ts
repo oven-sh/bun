@@ -214,8 +214,8 @@ declare global {
       connecting: boolean;
       timeout: number;
       isServer: boolean;
-      server: NetServer | null | undefined;
-      _server: NetServer | undefined;
+      server: NetServer | HttpServer | null | undefined;
+      _server: NetServer | HttpServer | undefined;
       // `new net.Socket({ handle })` keeps any object, which is why some members are tested for before they are called.
       _handle: SocketHandle<Socket> | null;
       _parent: Socket | null;

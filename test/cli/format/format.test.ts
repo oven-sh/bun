@@ -2459,6 +2459,8 @@ describe.concurrent("bun fmt", () => {
         ["*__a_(_) x*\n", "*__a_(_) x*\n", "_**a*(*) x_\n"],
         // CommonMark pairs `****` and `***` as written. To micromark the `*` left of `***` is 1 against 2.
         ["x****a***b* c\n", "x****a***b* c\n", "x****a**_b_ c\n"],
+        // CommonMark pairs the `*` before `)` with the first `*`, so the emphasis around a kept one keeps its marker.
+        ["*x **a*(*)d*\n", "*x **a*(*)d*\n", "_x **a*(*)d_\n"],
       ])("%j", async (before, after, byPrettier) => {
         expect(after).not.toBe(byPrettier);
         expect(rendered(after)).toBe(rendered(before));

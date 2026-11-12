@@ -1943,11 +1943,23 @@ impl RendererImpl for Builder<'_> {
         let Some(&super::ast::Node {
             kind,
             reference_type,
+            parent,
+            number,
             ..
         }) = self.tree.get(node)
         else {
             return Ok(());
         };
+        // An emphasis around one that keeps its marker keeps its own: CommonMark may pair its runs with the kept ones.
+        if matches!(kind, Kind::Emphasis | Kind::Strong) && number == 1 {
+            if let Some(parent) = self
+                .tree
+                .get_mut(parent)
+                .filter(|it| matches!(it.kind, Kind::Emphasis | Kind::Strong))
+            {
+                parent.number = 1;
+            }
+        }
         if matches!(kind, Kind::Image | Kind::ImageReference) {
             let mut alt = std::mem::take(&mut self.alt);
             // remark-parse 8 uses the source text between the brackets, whatever it is. oxfmt prints that.

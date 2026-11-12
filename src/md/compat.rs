@@ -32,7 +32,7 @@ pub(crate) fn marker_next_to_marker_flanks(flags: &Flags) -> bool {
 }
 
 /// An opener and a closer of which one can do both do not pair if the lengths
-/// of their runs add up to a multiple of 3 and neither is one (the rule of 3).
+/// of their runs add up to a multiple of 3, unless both are (the rule of 3).
 /// To CommonMark, commonmark.js and cmark those are the runs as written. To
 /// micromark they are what is left of the runs after the pairs before them,
 /// and a closer that found no opener does not keep a later one from looking at

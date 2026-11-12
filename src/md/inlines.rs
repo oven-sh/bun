@@ -80,11 +80,10 @@ pub struct EmphDelim {
     pub(crate) emph_char: u8, // * or _
     pub(crate) can_open: bool,
     pub(crate) can_close: bool,
-    // The same to CommonMark, without `compat::marker_next_to_marker_flanks`.
+    // The same without `compat::marker_next_to_marker_flanks`.
     pub(crate) can_open_as_written: bool,
     pub(crate) can_close_as_written: bool,
-    // A pair that uses this run, or one that shares a run with such a pair, is one that CommonMark's rule of 3 does
-    // not make with the runs as written: `compat::rule_of_three_counts_what_is_left`.
+    // `SpanDetail::is_kept_as_written`
     pub(crate) is_kept_as_written: bool,
     pub(crate) remaining: usize,   // chars not yet consumed
     pub(crate) open_count: usize,  // total chars consumed as opener
@@ -1189,7 +1188,7 @@ impl Parser<'_> {
         let mut prev_candidate = core::mem::take(&mut self.prev_candidate);
         prev_candidate.clear();
         prev_candidate.extend((0..len).map(|i| i.wrapping_sub(1)));
-        // The runs that share a pair, as sets: the index of a run that stands for each run's set.
+        // The runs that share a pair or touch: sets, each known by the index of one of its runs.
         let mut set_of = core::mem::take(&mut self.emph_sets);
         set_of.clear();
         if counts_what_is_left {
@@ -1209,17 +1208,16 @@ impl Parser<'_> {
                 *set = b;
             }
         };
-        // Two runs with nothing between them: the marker of one, once printed another way, would join the other.
         for i in 1..len {
+            let (before, run) = (&self.emph_delims[i - 1], &self.emph_delims[i]);
             if counts_what_is_left
-                && self.emph_delims[i - 1].pos + self.emph_delims[i - 1].count
-                    == self.emph_delims[i].pos
+                && before.emph_char != b'~'
+                && run.emph_char != b'~'
+                && before.pos + before.count == run.pos
             {
                 unite(&mut set_of, i - 1, i);
             }
         }
-        // Whether CommonMark pairs the two runs as written: by its own flanking, and by the rule of 3 with the
-        // lengths as written.
         let pairs_as_written = |opener: &EmphDelim, closer: &EmphDelim| -> bool {
             opener.can_open_as_written
                 && closer.can_close_as_written
@@ -1231,6 +1229,8 @@ impl Parser<'_> {
 
         // Process potential closers from left to right
         let mut closer_idx: usize = 0;
+        // The closer is one that has just paired and has a shorter run now: micromark looks at every opener for it.
+        let mut is_shortened = false;
         while closer_idx < len {
             if !self.emph_delims[closer_idx].can_close
                 || self.emph_delims[closer_idx].remaining == 0
@@ -1240,7 +1240,10 @@ impl Parser<'_> {
             }
 
             // Look backward for a matching opener
-            let opener_bottom = openers_bottom[opener_bottom_key(&self.emph_delims[closer_idx])];
+            let opener_bottom = match core::mem::take(&mut is_shortened) && counts_what_is_left {
+                true => 0,
+                false => openers_bottom[opener_bottom_key(&self.emph_delims[closer_idx])],
+            };
             let mut found_match = false;
             if closer_idx > opener_bottom {
                 let mut from = closer_idx;
@@ -1280,7 +1283,6 @@ impl Parser<'_> {
                         && !opener_len.is_multiple_of(3)
                         && !closer_len.is_multiple_of(3)
                     {
-                        // CommonMark makes the pair that micromark refuses here: the runs stay as written.
                         if counts_what_is_left
                             && pairs_as_written(
                                 &self.emph_delims[oi],
@@ -1310,9 +1312,9 @@ impl Parser<'_> {
                     if counts_what_is_left {
                         let (opener, closer) =
                             (&self.emph_delims[oi], &self.emph_delims[closer_idx]);
-                        // The pair is one that CommonMark refuses by the rule of 3 as written. A pair that it
-                        // refuses by its flanking alone is not marked: `compat::marker_next_to_marker_flanks`.
-                        let is_refused_as_written = opener.emph_char != b'~'
+                        // A pair that CommonMark refuses by its flanking alone is not marked.
+                        let is_emphasis = opener.emph_char != b'~';
+                        let is_refused_as_written = is_emphasis
                             && opener.can_open_as_written
                             && closer.can_close_as_written
                             && !pairs_as_written(opener, closer);
@@ -1320,14 +1322,15 @@ impl Parser<'_> {
                             self.emph_delims[oi].is_kept_as_written = true;
                             self.emph_delims[closer_idx].is_kept_as_written = true;
                         }
-                        unite(&mut set_of, oi, closer_idx);
+                        if is_emphasis {
+                            unite(&mut set_of, oi, closer_idx);
+                        }
                     }
 
                     let opener = &mut self.emph_delims[oi];
                     opener.remaining -= use_;
                     opener.open_count += use_;
-                    // A closer that failed against this opener did so at its old length. Let the
-                    // closers of that class that come after look at it again.
+                    // Closers that failed against this opener did so at its old length.
                     if counts_what_is_left && opener.remaining > 0 {
                         for bottom in &mut openers_bottom {
                             *bottom = (*bottom).min(oi);
@@ -1365,6 +1368,7 @@ impl Parser<'_> {
                         // to this same index, allowing another matching attempt with the
                         // remaining delimiter characters
                         closer_idx = closer_idx.wrapping_sub(1);
+                        is_shortened = true;
                     }
                     break;
                 }
@@ -1380,7 +1384,6 @@ impl Parser<'_> {
 
             closer_idx = closer_idx.wrapping_add(1);
         }
-        // What is kept as written is so for every run of its set.
         if counts_what_is_left {
             for i in 0..len {
                 let set = find(&mut set_of, i);

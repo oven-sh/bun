@@ -184,8 +184,8 @@ pub struct SpanDetail<'a> {
     /// Permissive www autolink: prepend "http://" to href
     pub autolink_www: bool,
     pub reference: Reference,
-    /// Em and Strong with `Options::micromark`: a pair that uses one of the span's runs is one that CommonMark's
-    /// rule of 3 does not make with the runs as written. See `compat::rule_of_three_counts_what_is_left`.
+    /// Em and Strong: the runs of the span are ones that CommonMark and micromark pair differently, or are next to
+    /// such runs. See `compat::rule_of_three_counts_what_is_left`.
     pub is_kept_as_written: bool,
 }
 

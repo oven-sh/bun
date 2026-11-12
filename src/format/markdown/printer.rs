@@ -1509,8 +1509,7 @@ impl<'a> Printer<'a, '_> {
     /// True if a `*` delimiter of `node`, an emphasis, touches a literal `*`, and the text around `node` has another
     /// `*` run that the literal one could pair with. In `**a*(*)` the first and last `*` are literal because the run of
     /// two and the run of one add up to three. Printed as `*_a_(*)`, they would pair up. The `*` of an emphasis that
-    /// keeps its marker as written is such a run too: in `**a*(*)**b* x` the star before `b` could pair with the one
-    /// before `)`, which CommonMark reads as text.
+    /// keeps its marker as written is such a run too (`**a*(*)**b* x`).
     fn is_cut_from_longer_run(&self, node: &Node) -> bool {
         let byte_at = |at: usize| self.original.get(at).copied();
         let is_text = |id: NodeId| matches!(self.kind(id), Some(Kind::Sentence | Kind::Text));

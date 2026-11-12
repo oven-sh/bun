@@ -12,7 +12,6 @@ const transferToNativeReadable: (stream: ReadableStream) => void = $newCppFuncti
   1,
 );
 const { errorOrDestroy } = require("internal/streams/destroy");
-const { reportUncaughtException } = require("internal/shared");
 
 const kRefCount = Symbol("refCount");
 const kCloseState = Symbol("closeState");
@@ -222,27 +221,10 @@ function pushEof(stream: NativeReadable) {
 // the consumer paused); stop the native reader so kernel backpressure reaches
 // the writer (readStop, like net.Socket). The next `_read()` re-enables it.
 function pushAndCheck(stream: NativeReadable, chunk: Buffer | ArrayBufferView) {
-  let wantMore: boolean;
-  try {
-    wantMore = stream.push(chunk);
-  } catch (e) {
-    // Readable.fromWeb: the throw rejects the pending pull promise, as in Node.
-    if (!stream[kUncaughtOnListenerThrow]) throw e;
-    wantMore = true;
-    reportUncaughtException(e);
-    // The throw unwound addChunk before maybeReadMore; keep the stream reading.
-    process.nextTick(readAfterListenerThrow, stream);
-  }
-  if (!wantMore) {
+  if (!stream.push(chunk)) {
     const ptr = stream.$bunNativePtr;
     if (ptr) ptr.setFlowing?.(false);
   }
-}
-
-function readAfterListenerThrow(stream: NativeReadable) {
-  // A sync pull from the uncaughtException handler can have closed the stream; its EOF push is already queued.
-  if (stream.destroyed || stream[kCloseState][0]) return;
-  stream.read(0);
 }
 
 function handleNumberResult(stream: NativeReadable, result: number, chunk: Buffer | undefined, isClosed: boolean) {

@@ -6867,7 +6867,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionImportActualModule, (JSC::JSGlobalObject * le
             RELEASE_AND_RETURN(scope, JSValue::encode(original));
         }
 #endif
-        RELEASE_AND_RETURN(scope, JSValue::encode(importOriginalModule(globalObject, mock, true, callerPath(vm, callframe))));
+        JSC::JSPromise* original = importOriginalModule(globalObject, mock, true, callerPath(vm, callframe));
+        RETURN_IF_EXCEPTION(scope, {});
+#if ENABLE(AOT)
+        if (auto file = vm.hasCompiledCode() && Bun::isBunTest && original ? Bun::compiledModuleForPath(specifier.key) : std::nullopt)
+            JSC::AOT::noteHostImportCall(globalObject, *file, original);
+#endif
+        return JSValue::encode(original);
     }
 #if ENABLE(AOT)
     if (JSValue kept = retainedFailureForImports(globalObject, specifier.key))

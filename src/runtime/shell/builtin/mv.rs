@@ -534,7 +534,9 @@ impl ShellMvBatchedTask {
     ) -> Result<(), bun_sys::Error> {
         use bun_sys::E;
 
-        if holds_more_than_disk_at(src_dir, src.as_bytes()) {
+        if holds_more_than_disk_at(src_dir, src.as_bytes())
+            || holds_more_than_disk_at(dst_dir, dst.as_bytes())
+        {
             let error = bun_sys::Error::from_code(E::EROFS, bun_sys::Tag::rename);
             return Err(error.with_path(src.as_bytes()));
         }

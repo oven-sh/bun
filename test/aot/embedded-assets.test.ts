@@ -617,20 +617,17 @@ export const start = async () => {
   const read = async (label, name) => {
     for (const [reader, text] of Object.entries(readers)) said.push(label + " " + reader + " " + (await text(own(name))));
   };
-  const before = Bun.file(own("data/a.txt"));
-  said.push(await before.text());
   for (const name of ["a", "b", "c", "d", "e", "f", "g"]) said.push(fs.readFileSync(own("data/" + name + ".txt"), "utf8"));
   await read("embedded", "data/a.txt");
   fs.writeFileSync(below("data/a.txt"), "written");
   await read("written", "data/a.txt");
-  said.push(await before.text(), before.size);
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "store-"));
   const made = name => (fs.writeFileSync(path.join(temporary, name), name), path.join(temporary, name));
   fs.mkdirSync(below("data"), { recursive: true });
   fs.cpSync(made("cpSync"), below("data/b.txt"));
   await fs.promises.cp(made("cp"), below("data/c.txt"));
   await $\`mv \${made("mv")} \${below("data/d.txt")}\`;
-  await Bun.write(Bun.file(below("data/e.txt")), "Bun.write");
+  await Bun.write(below("data/e.txt"), "Bun.write");
   for (const name of ["b", "c", "d", "e"]) said.push(fs.readFileSync(own("data/" + name + ".txt"), "utf8"));
   fs.rmSync(below("data/a.txt"));
   fs.writeFileSync(below("data/a.txt"), "again");
@@ -648,11 +645,9 @@ export const start = async () => {
     const readers = ["mmap", "the shell", "open", "a file object"];
     expect(plain).toEqual({
       stdout: [
-        ...Array(8).fill("first"),
+        ...Array(7).fill("first"),
         ...readers.map(it => `embedded ${it} first`),
         ...readers.map(it => `written ${it} written`),
-        "written",
-        "7",
         ...["cpSync", "cp", "mv", "Bun.write"],
         ...readers.map(it => `again ${it} again`),
         "",
@@ -661,80 +656,6 @@ export const start = async () => {
       exitCode: 0,
     });
     expect(compiled).toEqual(plain);
-  }, 120_000);
-
-  test("a slice of a file object of a package's file keeps its range behind a write", async () => {
-    const forms = {
-      "a longer range": `Bun.file(P).slice(0, 100)|"x".repeat(300)|slice => slice.text().then(it => it.length)`,
-      "the whole old length": `Bun.file(P).slice(0, 5)|"abcdefghij"|slice => slice.text()`,
-      "behind the old end": `Bun.file(P).slice(8, 13)|"abcdefghijklmnopq"|slice => slice.text()`,
-      "from a place": `Bun.file(P).slice(2)|"abcdefghij"|slice => slice.text()`,
-      "a slice of a slice": `Bun.file(P).slice(0, 100).slice(0, 50)|"x".repeat(300)|slice => slice.text().then(it => it.length)`,
-      "within": `Bun.file(P).slice(1, 4)|"abcdefghij"|slice => slice.text()`,
-      "a shorter file": `Bun.file(P).slice(0, 5)|"ab"|slice => slice.text()`,
-      "a response": `new Response(Bun.file(P).slice(0, 100))|"x".repeat(300)|response => response.text().then(it => it.length)`,
-      "a stream": `Bun.file(P).slice(0, 100)|"x".repeat(300)|slice => new Response(slice.stream()).text().then(it => it.length)`,
-      "the whole file": `Bun.file(P)|"abcdefghij"|file => file.text()`,
-      "read before": `await (async slice => (await slice.text(), slice))(Bun.file(P).slice(0, 100))|"x".repeat(300)|slice => slice.text().then(it => it.length)`,
-      "measured before": `await (async slice => (slice.size, slice))(Bun.file(P).slice(0, 100))|"x".repeat(300)|slice => slice.text().then(it => it.length)`,
-      "made behind": `Bun.file(P)|"abcdefghijklmnopq"|file => file.slice(8, 13).text()`,
-      "a slice of a slice, made behind": `Bun.file(P).slice(0, 100)|"abcdefghijklmnopq"|slice => slice.slice(8, 13).text()`,
-      "a clone": `structuredClone(Bun.file(P).slice(0, 100))|"x".repeat(300)|slice => slice.text().then(it => it.length)`,
-      "a held stream": `Bun.file(P).stream()|"abcdefghij"|async stream => { let text = ""; for await (const chunk of stream) text += Buffer.from(chunk); return text; }`,
-      "a held stream of a slice": `Bun.file(P).slice(2, 100).stream()|"abcdefghij"|async stream => { let text = ""; for await (const chunk of stream) text += Buffer.from(chunk); return text; }`,
-      "a held stream, as a body": `Bun.file(P).slice(2, 100).stream()|"abcdefghij"|stream => new Response(stream).text()`,
-      "branches": `Bun.file(P).stream().tee()|"abcdefghij"|async ([a, b]) => (await new Response(a).text()) + (await new Response(b).text())`,
-      "routes": `await (async server => { for (const at of ["/", "/file", "/slice"]) said.push("a route: " + (await (await fetch(new URL(at, server.url))).text())); return server; })(Bun.serve({ port: 0, routes: { "/": new Response(Bun.file(P)), "/file": Bun.file(P), "/slice": new Response(Bun.file(P).slice(1, 100)) }, fetch: () => new Response("none") }))|"abcdefghij"|async server => { const texts = []; for (const at of ["/", "/file", "/slice"]) texts.push(await (await fetch(new URL(at, server.url))).text()); server.stop(true); return texts.join(); }`,
-    };
-    const names = Object.keys(forms);
-    const at = (index: number) => `path.join(__dirname, "f${index}.txt")`;
-    const run = Object.values(forms).map((form, index) => {
-      const [made, text, use] = form.replaceAll("P", at(index)).split("|");
-      return `  { const made = ${made}; fs.writeFileSync(${at(index)}, ${text}); said.push(${JSON.stringify(names[index])} + ": " + (await (${use})(made))); }`;
-    });
-    using dir = tempDir("aot-slices-of-embedded-files", {
-      "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.cjs" }`,
-      "app/node_modules/store/index.cjs": `const fs = require("node:fs"), path = require("node:path");
-exports.start = async () => {
-  const said = [];
-${run.join("\n")}
-  const descriptor = fs.openSync(${at(names.length)});
-  fs.writeFileSync(path.join(__dirname, "other.txt"), "copied over");
-  fs.copyFileSync(path.join(__dirname, "other.txt"), ${at(names.length)});
-  said.push("open and copied over: " + fs.readFileSync(descriptor, "utf8"));
-  fs.closeSync(descriptor);
-  const letters = Bun.file(path.join(__dirname, "letters.txt"));
-  said.push("letters: " + [await letters.slice(0, 3).text(), await letters.slice(0, 9).text(), await letters.text()].join());
-  said.push("unwritten: " + [await Bun.file(${at(names.length + 1)}).slice(1, 3).text(), Bun.file(${at(names.length + 1)}).slice(1, 3).size, await Bun.file(${at(names.length + 1)}).slice(3).text()].join());
-  return said.join("\\n");
-};
-`,
-      "app/node_modules/store/letters.txt": "abc d\u00e9f",
-      ...Object.fromEntries(
-        Array.from({ length: names.length + 2 }, (_, index) => [`app/node_modules/store/f${index}.txt`, "first"]),
-      ),
-      "app/main.mjs": `import { start } from "store"; console.log(await start());`,
-    });
-    const { plain, compiled } = await plainAfterBuild(String(dir), "node_modules/store");
-    const answers = ["100", "abcde", "ijklm", "cdefghij", "50", "bcd", "ab", "100", "100", "abcdefghij"];
-    answers.push("100", "100", "ijklm", "ijklm", "100", "abcdefghij", "cdefghij", "cdefghij");
-    answers.push("abcdefghijabcdefghij", "abcdefghij,abcdefghij,bcdefghij");
-    expect(plain).toEqual({
-      stdout: [
-        ...names.slice(0, -1).map((name, index) => `${name}: ${answers[index]}`),
-        ...["first", "first", "irst"].map(it => `a route: ${it}`),
-        `routes: ${answers.at(-1)}`,
-        "open and copied over: copied over",
-        "letters: abc,abc d\u00e9f,abc d\u00e9f",
-        "unwritten: ir,2,st",
-        "",
-      ].join("\n"),
-      stderr: "",
-      exitCode: 0,
-    });
-    // On Windows a file that was opened keeps its bytes.
-    const stdout = isWindows ? plain.stdout.replace("over: copied over", "over: first") : plain.stdout;
-    expect(compiled).toEqual({ ...plain, stdout });
   }, 120_000);
 
   test("a data file that a package has written is loaded as it is on the disk", async () => {
@@ -2681,96 +2602,6 @@ a blob third
     },
     120_000,
   );
-
-  test("a file object of an embedded file is of what its path leads to, away from the sources", async () => {
-    const at = (name: string) => `path.join(__dirname, ${JSON.stringify(name)})`;
-    const names = ["written", "large", "copied", "streamed", "removed", "unlinked", "renamed", "replaced"];
-    names.push("appended", "answered", "served", "sliced", "measured", "named", "cloned", "again", "unchanged");
-    using dir = tempDir("aot-file-objects-of-embedded-files", {
-      "app/package.json": `{ "name": "server" }`,
-      "app/main.mjs": `import keeper from "keeper";
-await keeper.run();
-`,
-      "app/node_modules/keeper/package.json": `{ "name": "keeper", "main": "index.cjs" }`,
-      "app/node_modules/keeper/index.cjs": `const fs = require("node:fs"), path = require("node:path");
-const attempt = async run => {
-  try {
-    return await run();
-  } catch (error) {
-    return error.code;
-  }
-};
-const say = async (label, ...runs) => {
-  const answers = [];
-  for (const run of runs) answers.push(await attempt(run));
-  console.log(label, JSON.stringify(answers));
-};
-const longer = "second, which is longer";
-exports.run = async () => {
-  const written = Bun.file(${at("written.txt")}), other = Bun.file(${at("written.txt")});
-  await say("write()", () => written.text(), () => written.write(longer), () => written.text(), () => other.text(), () => other.size);
-  const large = Bun.file(${at("large.txt")});
-  await say("a large one", () => large.write("x".repeat(3_000_000)), async () => (await large.text()).length);
-  const copied = Bun.file(${at("copied.txt")});
-  await say("Bun.write()", () => Bun.write(copied, new Response(longer)), () => copied.text(), () => Bun.write(copied, copied));
-  const streamed = Bun.file(${at("streamed.txt")});
-  fs.writeFileSync(${at("streamed.txt")}, "first");
-  const writer = await attempt(() => streamed.writer());
-  await say("writer()", () => writer.write("AB"), () => writer.end(), () => streamed.text());
-  await say("writer() of what is not there yet", async () => {
-    const writer = Bun.file(path.join(__dirname, "made-" + names.length + ".txt")).writer();
-    writer.write("AB");
-    return await writer.end();
-  }, () => fs.readFileSync(path.join(__dirname, "made-" + names.length + ".txt"), "utf8"));
-  const removed = Bun.file(${at("removed.txt")});
-  fs.writeFileSync(${at("removed.txt")}, "first");
-  await say("delete()", () => removed.text(), () => removed.delete(), () => removed.text(), () => removed.exists(), () => fs.existsSync(${at("removed.txt")}), () => removed.delete());
-  const unlinked = Bun.file(${at("unlinked.txt")});
-  fs.writeFileSync(${at("unlinked.txt")}, "first");
-  await say("behind unlinkSync()", () => fs.unlinkSync(${at("unlinked.txt")}), () => unlinked.text(), () => unlinked.exists());
-  const renamed = Bun.file(${at("renamed.txt")});
-  fs.writeFileSync(${at("renamed.txt")}, "first");
-  await say("behind renameSync()", () => fs.renameSync(${at("renamed.txt")}, ${at("new-name.txt")}), () => renamed.text(), () => Bun.file(${at("new-name.txt")}).text());
-  const replaced = Bun.file(${at("replaced.txt")});
-  await say("behind writeFileSync()", () => replaced.text(), () => fs.writeFileSync(${at("replaced.txt")}, longer), () => replaced.text(), () => replaced.stream().text(), () => replaced.size);
-  const appended = Bun.file(${at("appended.txt")});
-  fs.writeFileSync(${at("appended.txt")}, "first");
-  await say("behind appendFileSync()", () => fs.appendFileSync(${at("appended.txt")}, " and more"), () => appended.text());
-  const answered = new Response(Bun.file(${at("answered.txt")}));
-  await say("a response", () => fs.writeFileSync(${at("answered.txt")}, longer), () => answered.text());
-  const served = Bun.file(${at("served.txt")});
-  using server = Bun.serve({ port: 0, fetch: () => new Response(served) });
-  const get = async () => (await fetch(server.url)).text();
-  await say("a server", get, () => fs.writeFileSync(${at("served.txt")}, longer), get);
-  const sliced = Bun.file(${at("sliced.txt")}), slice = sliced.slice(0, 3);
-  await say("a slice", () => slice.text(), () => fs.writeFileSync(${at("sliced.txt")}, longer), () => slice.text(), () => sliced.slice(8, 13).text());
-  const measured = Bun.file(${at("measured.txt")});
-  await say("stat()", async () => (await measured.stat()).size, () => fs.writeFileSync(${at("measured.txt")}, longer), async () => (await measured.stat()).size);
-  const named = Bun.file(${at("named.txt")});
-  fs.writeFileSync(${at("named.txt")}, "first");
-  await say("its name", () => named.name === ${at("named.txt")}, () => (named.name = "other"), () => named.delete(), () => fs.existsSync(${at("named.txt")}));
-  const cloned = structuredClone(Bun.file(${at("cloned.txt")}));
-  fs.writeFileSync(${at("cloned.txt")}, "first");
-  await say("a clone", () => cloned.text(), () => cloned.delete(), () => fs.existsSync(${at("cloned.txt")}));
-  const again = Bun.file(${at("again.txt")});
-  fs.writeFileSync(${at("again.txt")}, "first");
-  await say("delete() and write()", () => again.delete(), () => again.write(longer), () => again.text(), () => fs.readFileSync(${at("again.txt")}, "utf8"));
-  const unchanged = Bun.file(${at("unchanged.txt")});
-  await say("what nobody changes", () => unchanged.text(), () => unchanged.size, () => unchanged.exists(), () => unchanged.type);
-};
-const names = ${JSON.stringify(names)};
-`,
-      ...Object.fromEntries(names.map(name => [`app/node_modules/keeper/${name}.txt`, "first"])),
-    });
-    const { plain, compiled } = await plainAfterBuild(String(dir), "node_modules/keeper");
-    expect({ ...plain, lines: plain.stdout.split("\n").length }).toEqual({
-      stdout: plain.stdout,
-      stderr: "",
-      exitCode: 0,
-      lines: 19,
-    });
-    expect(compiled).toEqual(plain);
-  }, 120_000);
 
   test.skipIf(!isLinux)(
     "an embedded folder is opened where no temporary folder can be made",

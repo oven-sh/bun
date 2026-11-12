@@ -2628,7 +2628,6 @@ where
                 // Response from `response_weakref`, so no borrow of the Response
                 // (here, `blob`) may still be live across it. Nothing is written
                 // to the socket in between, so the wire output is unchanged.
-                blob.follow_source_path();
                 let blob_size = if shim::blob_is_s3(blob) {
                     // Match the body GET sends (`render_bytes`). `resolve_size()` would set the blob's size to 0.
                     blob.shared_view().len() as BlobSizeType

@@ -1199,8 +1199,10 @@ fn reopen_at(fd: Fd, path: &ZStr, is_meant: impl FnOnce() -> bool) -> Maybe<bool
         // With FD_CLOEXEC from the start, so that a child of that moment has it no longer than it would have.
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
+            // For Android, libc has the number of the call alone.
+            let (from, to) = (opened.native(), fd.native());
             // SAFETY: both are descriptors of this process.
-            let moved = unsafe { libc::dup3(opened.native(), fd.native(), libc::O_CLOEXEC) };
+            let moved = unsafe { libc::syscall(libc::SYS_dup3, from, to, libc::O_CLOEXEC) };
             match moved {
                 -1 => Err(bun_sys::Error::from_code(
                     bun_sys::E::EIO,

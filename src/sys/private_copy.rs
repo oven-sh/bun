@@ -49,8 +49,11 @@ struct Mapping {
 #[cfg(target_os = "linux")]
 fn offset_in_executable(bytes: &[u8]) -> Option<usize> {
     // What an executable embeds lies in one section, so the mapping around the first bytes serves the process.
-    static MAPPING: std::sync::OnceLock<Option<Mapping>> = std::sync::OnceLock::new();
-    let mapping = (*MAPPING.get_or_init(|| find_mapping_around(bytes)))?;
+    static MAPPING: std::sync::OnceLock<Mapping> = std::sync::OnceLock::new();
+    let mapping = MAPPING.get().copied().or_else(|| {
+        let found = find_mapping_around(bytes)?;
+        Some(*MAPPING.get_or_init(|| found))
+    })?;
     let begin = bytes.as_ptr().addr();
     (mapping.low <= begin && begin + bytes.len() <= mapping.high)
         .then(|| mapping.offset + (begin - mapping.low))

@@ -4,7 +4,6 @@ use bun_collections::VecExt;
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult};
 use bun_ptr::RefPtr;
 
-use crate::api::standalone_graph_jsc::is_followed;
 use crate::webcore::blob::store::StoreExt as _;
 use crate::webcore::blob::{self, Blob, BlobExt as _, Store};
 use crate::webcore::readable_stream;
@@ -17,8 +16,6 @@ pub struct ByteBlobLoader {
     pub(crate) chunk_size: blob::SizeType,
     pub(crate) remain: Cell<blob::SizeType>,
     pub(crate) done: Cell<bool>,
-    /// The offset and the size that were asked for, of a file that the program may write, until its first bytes are asked for.
-    asked: Cell<Option<(blob::SizeType, blob::SizeType)>>,
 
     /// https://github.com/oven-sh/bun/issues/14988
     /// Necessary for converting a ByteBlobLoader from a Blob -> back into a Blob
@@ -34,7 +31,6 @@ impl Default for ByteBlobLoader {
             chunk_size: 1024 * 1024 * 2,
             remain: Cell::new(1024 * 1024 * 2),
             done: Cell::new(false),
-            asked: Cell::new(None),
             content_type: JsCell::new(blob::BlobContentType::default()),
         }
     }
@@ -48,9 +44,7 @@ impl readable_stream::SourceContext for ByteBlobLoader {
 
     fn on_start(&self) -> streams::Start {
         // `streams::BlobSizeType` and `blob::SizeType` are both u64 in the Rust port.
-        // 0 would end it.
-        let least = blob::SizeType::from(self.asked.get().is_some());
-        streams::Start::ChunkSize(self.chunk_size.max(least))
+        streams::Start::ChunkSize(self.chunk_size)
     }
 
     fn on_pull(&self, buffer: &mut [u8], array: JSValue) -> streams::Result {
@@ -58,11 +52,6 @@ impl readable_stream::SourceContext for ByteBlobLoader {
         let _keep = bun_jsc::EnsureStillAlive(array);
         if self.store.get().is_none() || self.done.get() {
             return streams::Result::Done;
-        }
-        if let Err(err) = self.follow_source_path() {
-            self.clear_data();
-            self.done.set(true);
-            return streams::Result::Err(streams::StreamError::Error(err));
         }
 
         let rest = self.remaining();
@@ -100,9 +89,6 @@ impl readable_stream::SourceContext for ByteBlobLoader {
     }
 
     fn drain_internal_buffer(&self) -> Vec<u8> {
-        if self.asked.get().is_some() {
-            return Vec::new();
-        }
         let rest = self.remaining();
 
         // A single owning copy (avoids a `ManuallyDrop` borrow dance).
@@ -175,30 +161,8 @@ impl ByteBlobLoader {
             .min(1024 * 1024 * 2),
             remain: Cell::new(size),
             done: Cell::new(false),
-            asked: Cell::new(is_followed(blob).then(|| (blob.offset.get(), blob.size.get()))),
             content_type: JsCell::new(content_type),
         };
-    }
-
-    /// As a stream of a file on the disk, one of a file that the program has written is of what that holds when it is read.
-    fn follow_source_path(&self) -> bun_sys::Result<()> {
-        let Some((offset, size)) = self.asked.take() else {
-            return Ok(());
-        };
-        let blob = Blob::default();
-        blob.store.set(self.store.get().clone());
-        blob.offset.set(offset);
-        blob.size.set(size);
-        if blob.needs_to_read_file() {
-            let path = blob.store_path().unwrap_or_default();
-            let contents = bun_sys::File::read_from(bun_sys::Fd::cwd(), path)?;
-            blob.store.set(Some(Store::init(contents)));
-        }
-        let (offset, size) = blob.resolved_size();
-        self.store.set(blob.take_store());
-        self.offset.set(offset);
-        self.remain.set(size);
-        Ok(())
     }
 
     /// The bytes `drain_internal_buffer` and `on_pull` have yet to hand over.
@@ -214,9 +178,7 @@ impl ByteBlobLoader {
     pub(crate) fn to_any_blob(&self, global: &JSGlobalObject) -> Option<blob::Any> {
         // Take ownership via detach_store() up front.
         let store = self.detach_store()?;
-        let asked = self.asked.take();
-        if asked.is_none()
-            && self.offset.get() == 0
+        if self.offset.get() == 0
             && self.remain.get() == store.size()
             && self.content_type.get().is_empty()
         {
@@ -229,9 +191,8 @@ impl ByteBlobLoader {
         }
 
         let blob = Blob::init_with_store(store, global);
-        let (offset, size) = asked.unwrap_or((self.offset.get(), self.remain.get()));
-        blob.offset.set(offset);
-        blob.size.set(size);
+        blob.offset.set(self.offset.get());
+        blob.size.set(self.remain.get());
 
         // Make sure to preserve the content-type.
         // https://github.com/oven-sh/bun/issues/14988

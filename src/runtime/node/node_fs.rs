@@ -404,7 +404,7 @@ const FLAGS_OF_WRITES: i32 =
     sys::O::WRONLY | sys::O::RDWR | sys::O::CREAT | sys::O::TRUNC | sys::O::APPEND;
 
 /// The program has written `path` on the disk. Under the root of the executable the file is the same.
-pub(crate) fn note_written_file(path: &[u8]) {
+fn note_written_file(path: &[u8]) {
     if let Some(graph) = graph_after_disk(path).filter(|graph| graph.may_answer_for(path)) {
         graph.note_written_file(path);
     }
@@ -586,12 +586,6 @@ pub(crate) fn stat_embedded_shell_operand(cwd: &[u8], operand: &[u8]) -> Option<
     }
     let graph = graph_after_disk(&path).filter(|graph| graph.may_answer_for(&path))?;
     graph.stat(&path)
-}
-
-/// A descriptor of what the program finds in the executable at `path`, for one read.
-pub(crate) fn open_embedded_for_one_read(path: &[u8]) -> Option<Maybe<FD>> {
-    let file = compiled_program_graph()?.find_data(path)?;
-    Some(create_unnamed_file(file.utf8_contents()).map_err(|err| err.with_path(path)))
 }
 
 /// As `note_written_file`, for what the shell's `mv` has moved from `source`, which is still there if it has not.

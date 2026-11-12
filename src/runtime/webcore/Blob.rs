@@ -628,11 +628,7 @@ impl BlobExt for Blob {
         None
     }
     fn on_structured_clone_serialize<W: bun_io::Write>(&self, writer: &mut W) -> crate::Result<()> {
-        self.follow_source_path();
-        // Such a slice is cloned as one of a file on the disk is.
-        let sliced = find_file_of_slice(self);
-        let store = sliced.as_ref().or(self.store.get().as_ref());
-        let is_memory_backed = if let Some(store) = store {
+        let is_memory_backed = if let Some(store) = self.store.get() {
             matches!(store.data, store::Data::Bytes(_))
         } else {
             false
@@ -650,7 +646,7 @@ impl BlobExt for Blob {
         writer.write_all(ct)?;
         writer.write_int_le::<u8>(self.content_type_was_set.get() as u8)?;
 
-        let store_tag: store::SerializeTag = if let Some(store) = store {
+        let store_tag: store::SerializeTag = if let Some(store) = self.store.get() {
             if matches!(store.data, store::Data::File(_)) {
                 store::SerializeTag::File
             } else {
@@ -662,7 +658,7 @@ impl BlobExt for Blob {
 
         writer.write_int_le::<u8>(store_tag as u8)?;
 
-        if let Some(store) = store {
+        if let Some(store) = self.store.get() {
             if let store::Data::Bytes(bytes) = &store.data {
                 let view = self.shared_view();
                 writer.write_int_le::<u32>(view.len() as u32)?;
@@ -676,9 +672,7 @@ impl BlobExt for Blob {
                 // resolve_size() so an unresolved blob stays MAX_SIZE (unknown)
                 // on the wire and the receiver stats it locally, like v3.
                 writer.write_int_le::<u64>(self.size.get())?;
-                if sliced.is_none() {
-                    self.resolve_size();
-                }
+                self.resolve_size();
                 store.serialize(writer)?;
             }
         }
@@ -938,27 +932,18 @@ impl BlobExt for Blob {
                         }
                     }
                 }
-                store::Data::Bytes(_) => match find_source_path(self) {
-                    Some(path) => {
-                        bun_core::write_pretty!(
-                            writer,
-                            ENABLE_ANSI_COLORS,
-                            "<r>FileRef<r> (<green>\"{s}\"<r>)<r>",
-                            bstr::BStr::new(path),
-                        )?;
-                    }
-                    None => write_format_for_size::<W, ENABLE_ANSI_COLORS>(
+                store::Data::Bytes(_) => {
+                    write_format_for_size::<W, ENABLE_ANSI_COLORS>(
                         self.is_jsdom_file.get(),
-                        self.available_size() as usize,
+                        self.size.get() as usize,
                         writer,
-                    )?,
-                },
+                    )?;
+                }
             }
         }
 
         let show_name = (self.is_jsdom_file.get() && self.get_name_string().is_some())
             || (!self.name.get().is_empty()
-                && find_source_path(self).is_none()
                 && self.store.get().is_some()
                 && matches!(
                     self.store().expect("infallible: store present").data,
@@ -1125,7 +1110,6 @@ impl BlobExt for Blob {
     }
 
     fn get_exists_sync(&self) -> JSValue {
-        self.follow_source_path();
         match self.store.get() {
             _ if self.size.get() == MAX_SIZE => self.resolve_size(),
             // A failed stat is not an answer to keep: the file may exist by now.
@@ -1157,9 +1141,6 @@ impl BlobExt for Blob {
         data: JsLocal<'_>,
         options: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        if let Some(file) = find_file_to_write(cx.global(), self) {
-            return file.write(cx, data, options);
-        }
         let cx = cx.js_thread();
         let global_this = cx.global();
         let data = data.to_js();
@@ -1211,9 +1192,6 @@ impl BlobExt for Blob {
     }
 
     fn unlink(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
-        if let Some(file) = find_file_to_write(cx.global(), self) {
-            return file.unlink(cx, options);
-        }
         let cx = cx.js_thread();
 
         validate_writable_blob(cx.global(), self)?;
@@ -1448,9 +1426,6 @@ impl BlobExt for Blob {
     }
 
     fn writer(&self, cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
-        if let Some(file) = find_file_to_write(cx.global(), self) {
-            return file.writer(cx, options);
-        }
         let cx = cx.js_thread();
         let (global_this, context) = (cx.global(), cx.context());
         let options = options.to_js();
@@ -1674,9 +1649,6 @@ impl BlobExt for Blob {
         let blob = self.dupe();
         blob.offset.set(offset);
         blob.size.set(len);
-        if let Some(store) = find_store_of_slice(self) {
-            blob.store.set(Some(store));
-        }
 
         let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
         // infer the content type if it was not specified
@@ -1703,18 +1675,12 @@ impl BlobExt for Blob {
         content_type: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let size = match is_followed_file(self) {
-            true => {
-                self.follow_source_path();
-                MAX_SIZE
-            }
-            false => self.size.get(),
-        };
-        if size == 0 {
+
+        if self.size.get() == 0 {
             return Ok(Blob::init_empty(global_this).into_js(global_this));
         }
 
-        let size_i64 = i64::try_from(size).unwrap_or(i64::MAX);
+        let size_i64 = i64::try_from(self.size.get()).unwrap_or(i64::MAX);
 
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.
         let mut relative_start: i64 = 0;
@@ -1862,7 +1828,6 @@ impl BlobExt for Blob {
     }
 
     fn get_size_for_bindings(&self) -> u64 {
-        self.follow_source_path();
         let has_size = self.size.get() != MAX_SIZE;
         if !has_size {
             self.resolve_size();
@@ -1892,12 +1857,11 @@ impl BlobExt for Blob {
             return u64::MAX;
         }
 
-        self.available_size()
+        self.size.get()
     }
     fn stat(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global_this = cx.global();
-        self.follow_source_path();
         // TODO: make this async for files
         let tag = match self.store.get() {
             None => return Ok(JSValue::UNDEFINED),
@@ -1959,7 +1923,6 @@ impl BlobExt for Blob {
     }
 
     fn get_size(&self) -> f64 {
-        self.follow_source_path();
         if self.size.get() == MAX_SIZE {
             if self.is_s3() {
                 return f64::NAN;
@@ -1977,7 +1940,7 @@ impl BlobExt for Blob {
                 }
             }
         }
-        self.available_size() as f64
+        self.size.get() as f64
     }
 
     fn resolve_size(&self) {
@@ -3143,7 +3106,7 @@ impl BlobExt for Blob {
                 store::Data::Bytes(bytes) => {
                     size += bytes.stored_name.len();
                     size += if self.size.get() != MAX_SIZE {
-                        self.available_size() as usize
+                        self.size.get() as usize
                     } else {
                         bytes.len() as usize
                     };
@@ -3239,7 +3202,7 @@ impl BlobExt for Blob {
                     .and_then(|graph| graph.find_data(path_or_fd.path().slice()))
                 {
                     return named(
-                        file_blob_at(file, path_or_fd.path().slice(), global_this),
+                        crate::api::standalone_graph_jsc::file_blob(file, global_this),
                         written,
                     );
                 }
@@ -3297,10 +3260,6 @@ impl BlobExt for Blob {
 
 use self::write_file::WriteFileWaitFromLockedValueTask;
 use crate::api::archive::Archive;
-use crate::api::standalone_graph_jsc::{
-    blob_on_disk, file_blob_at, find_file_of_slice, find_source_path, find_store_of_clone,
-    find_store_of_slice, is_followed_file, is_source_path_of,
-};
 use crate::image::Image;
 use crate::node;
 use crate::webcore::s3::client as s3_client;
@@ -3460,7 +3419,6 @@ impl<'a> FormDataContext<'a> {
                 joiner.push(content_type);
                 joiner.push_static(b"\r\n\r\n");
 
-                blob.follow_source_path();
                 if blob.store.get().is_some() {
                     if blob.size.get() == MAX_SIZE {
                         blob.resolve_size();
@@ -3622,9 +3580,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 let name_len = reader.read_int_le::<u32>()?;
                 let name = read_slice(reader, name_len as usize)?;
 
-                if let Some(store) = find_store_of_clone(&name, blob.shared_view()) {
-                    blob.store.set(Some(store));
-                } else if let Some(store) = blob.store() {
+                if let Some(store) = blob.store() {
                     if let store::Data::Bytes(bytes_store) = &mut Store::data_mut(store) {
                         // Transfer ownership of the local `name: Vec<u8>` into
                         // `stored_name` (a `Box<[u8]>`); freed by `Bytes::Drop`.
@@ -3718,10 +3674,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
             blob.size.set(size as SizeType);
         }
     }
-    let sliced = find_store_of_slice(&blob).filter(|_| file_size.is_some());
-    if sliced.is_some() {
-        blob.store.set(sliced);
-    } else if let Some(store) = blob.store.get() {
+    if let Some(store) = blob.store.get() {
         let store_size = store.size();
         if store_size != MAX_SIZE {
             blob.offset.set(blob.offset.get().min(store_size));
@@ -4122,14 +4075,6 @@ pub(crate) fn write_file_with_source_destination(
         "Cannot write to a Blob backed by a Buffer or TypedArray. This is a bug in the caller."
     );
 
-    source_blob.follow_source_path();
-    // A file that is written over itself is empty by the time that it is read.
-    if let store::Data::File(file) = &destination_store.data
-        && let PathOrFileDescriptor::Path(path) = &file.pathlike
-        && is_source_path_of(source_blob, path.slice())
-    {
-        source_blob.detach();
-    }
     let Some(source_store) = source_blob.store.get().clone() else {
         return write_file_with_empty_source_to_destination(cx, destination_blob, options);
     };
@@ -4819,13 +4764,6 @@ pub(crate) fn write_file_internal(
     write_file_with_source_destination(cx, &mut *source_blob, &mut destination_blob, &options)
 }
 
-/// Where a write to a file of the executable goes that was asked for by its source path: there.
-fn find_file_to_write(global_this: &JSGlobalObject, blob: &Blob) -> Option<Blob> {
-    blob.follow_source_path();
-    let path = find_source_path(blob)?;
-    Some(blob_on_disk(path, global_this))
-}
-
 fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult<()> {
     let Some(store) = blob.store.get() else {
         return Err(global_this.throw(format_args!("Cannot write to a detached Blob")));
@@ -4846,11 +4784,8 @@ pub(crate) fn write_destination_from_js(
     global_this: &JSGlobalObject,
     args: &mut jsc::ArgumentsSlice,
 ) -> JsResult<PathOrBlob> {
-    let mut path_or_blob = PathOrBlob::from_js_no_copy(global_this, args)?;
-    if let PathOrBlob::Blob(ref mut blob) = path_or_blob {
-        if let Some(file) = find_file_to_write(global_this, blob) {
-            **blob = file;
-        }
+    let path_or_blob = PathOrBlob::from_js_no_copy(global_this, args)?;
+    if let PathOrBlob::Blob(ref blob) = path_or_blob {
         validate_writable_blob(global_this, blob)?;
     }
     Ok(path_or_blob)
@@ -5885,7 +5820,7 @@ impl Any {
     #[inline]
     pub(crate) fn fast_size(&self) -> SizeType {
         match self {
-            Any::Blob(b) => b.available_size(),
+            Any::Blob(b) => b.size.get(),
             Any::WTFStringImpl(s) => s.byte_length() as SizeType,
             Any::InternalBlob(_) => self.slice().len() as SizeType,
         }
@@ -5894,7 +5829,7 @@ impl Any {
     #[inline]
     pub(crate) fn size(&self) -> SizeType {
         match self {
-            Any::Blob(b) => b.available_size(),
+            Any::Blob(b) => b.size.get(),
             Any::WTFStringImpl(s) => s.utf8_byte_length() as SizeType,
             _ => self.slice().len() as SizeType,
         }

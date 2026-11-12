@@ -24,7 +24,6 @@
 #include "internal/fault_inject.h"
 
 #include <limits.h>
-#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -735,68 +734,6 @@ void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
 #endif
 }
 
-#ifdef _WIN32
-/* One bit per socket this process made, on any thread's loop. */
-#define BSD_OWNED_PAGE_BITS (1u << 15)
-/* The key of a handle is its index in the process's handle table, which holds 2^24. A SOCKET past that isn't tracked. */
-#define BSD_OWNED_KEYS (1u << 24)
-#define BSD_OWNED_KEY(fd) ((uintptr_t) (fd) >> 2)
-static _Atomic(void *) bsd_owned_pages;
-
-static void *bsd_owned_level(_Atomic(void *) *slot, size_t size) {
-    void *level = atomic_load(slot);
-    if (UNLIKELY(!level)) {
-        void *fresh = us_calloc(1, size);
-        if (UNLIKELY(!fresh)) {
-            Bun__outOfMemory();
-        }
-        if (atomic_compare_exchange_strong(slot, &level, fresh)) {
-            level = fresh;
-        } else {
-            us_free(fresh);
-        }
-    }
-    return level;
-}
-
-static _Atomic(uint64_t) *bsd_owned_word(unsigned int key) {
-    _Atomic(void *) *pages = bsd_owned_level(&bsd_owned_pages, BSD_OWNED_KEYS / BSD_OWNED_PAGE_BITS * sizeof(void *));
-    _Atomic(uint64_t) *page = bsd_owned_level(&pages[key / BSD_OWNED_PAGE_BITS], BSD_OWNED_PAGE_BITS / 8);
-    return &page[key % BSD_OWNED_PAGE_BITS / 64];
-}
-
-/* Only a socket this process made: another process may hold one that came from elsewhere, and a shutdown() reaches every holder. */
-static void bsd_own_new_socket(SOCKET fd) {
-    uintptr_t key = BSD_OWNED_KEY(fd);
-    if (key < BSD_OWNED_KEYS) {
-        atomic_fetch_or(bsd_owned_word((unsigned int) key), 1ull << (key % 64));
-    }
-}
-
-static void bsd_disown_socket(SOCKET fd) {
-    uintptr_t key = BSD_OWNED_KEY(fd);
-    if (key < BSD_OWNED_KEYS) {
-        atomic_fetch_and(bsd_owned_word((unsigned int) key), ~(1ull << (key % 64)));
-    }
-}
-
-void bsd_shutdown_owned_sockets(void) {
-    _Atomic(void *) *pages = atomic_load(&bsd_owned_pages);
-    for (unsigned int i = 0; pages && i < BSD_OWNED_KEYS / BSD_OWNED_PAGE_BITS; i++) {
-        _Atomic(uint64_t) *page = atomic_load(&pages[i]);
-        for (unsigned int word = 0; page && word < BSD_OWNED_PAGE_BITS / 64; word++) {
-            uint64_t rest;
-            /* Read again for each socket: its thread is running and may have closed it by now. */
-            for (unsigned int bit = 0; bit < 64 && (rest = atomic_load(&page[word]) >> bit); bit++) {
-                if (rest & 1) {
-                    shutdown((SOCKET) ((uintptr_t) (i * BSD_OWNED_PAGE_BITS + word * 64 + bit) << 2), SD_SEND);
-                }
-            }
-        }
-    }
-}
-#endif
-
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err) {
     bsd_winsock_ensure();
     if (err != NULL) {
@@ -832,7 +769,6 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, in
         return LIBUS_SOCKET_ERROR;
     }
 
-    bsd_own_new_socket(created_fd);
     return bsd_set_nonblocking(created_fd);
 #else
     do {
@@ -852,8 +788,6 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, in
 
 void bsd_close_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
 #ifdef _WIN32
-    /* Before the close: the kernel can hand the number to another thread right after it. */
-    bsd_disown_socket(fd);
     closesocket(fd);
 #else
     close(fd);
@@ -1067,7 +1001,6 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
     /* accept() returns an inheritable handle regardless of the listening
      * socket's flags; keep it out of spawned children. */
     SetHandleInformation((HANDLE) accepted_fd, HANDLE_FLAG_INHERIT, 0);
-    bsd_own_new_socket(accepted_fd);
 #endif
 
     internal_finalize_bsd_addr(addr);
@@ -1436,8 +1369,6 @@ int bsd_socket_export(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int target_pid, void 
     if (WSADuplicateSocketW(fd, (DWORD) target_pid, (WSAPROTOCOL_INFOW *) info_out) != 0) {
         return WSAGetLastError();
     }
-    /* The other process holds it too from here on, so the exit of this one leaves it alone. */
-    bsd_disown_socket(fd);
     return 0;
 #else
     (void) fd; (void) target_pid; (void) info_out;

@@ -4535,16 +4535,17 @@ describe.each([
 });
 
 // A Worker that ends closes the sockets it left open, and so does the main thread
-// with BUN_DESTRUCT_VM_ON_EXIT. Otherwise the process ends with them open. fetch()'s
-// pooled connection belongs to the HTTP thread, which outlives a Worker. The relay
-// in front of the server sees the TCP connection: what the client sent after the
-// server's greeting, and how it ended.
+// with BUN_DESTRUCT_VM_ON_EXIT. Otherwise the process ends with them open, and Winsock
+// resets those. fetch()'s pooled connection belongs to the HTTP thread, which outlives
+// both. The relay in front of the server sees the TCP connection: what the client sent
+// after the server's greeting, and how it ended.
 describe.each([
-  ["a worker", "worker", ["tls", "tcp"]],
-  ["a process", "process", ["tls", "tcp", "fetch"]],
-  ["a process that calls process.exit()", "exit", ["tls", "tcp", "fetch"]],
-  ["a process with BUN_DESTRUCT_VM_ON_EXIT", "teardown", ["tls", "tcp", "fetch"]],
-] as const)("when %s exits with a connection open", (_name, kind, protocols) => {
+  ["a worker", "worker", ["tls", "tcp"], []],
+  ["a process", "process", [], ["tls", "tcp", "fetch"]],
+  ["a process that calls process.exit()", "exit", [], ["tls", "tcp", "fetch"]],
+  ["a process with BUN_DESTRUCT_VM_ON_EXIT", "teardown", ["tls", "tcp"], ["fetch"]],
+] as const)("when %s exits with a connection open", (_name, kind, closed, leftOpen) => {
+  const protocols = isWindows ? closed : [...closed, ...leftOpen];
   it.concurrent.each(protocols)("the %s connection ends with a FIN, not a reset", async protocol => {
     let greeted = false;
     const greet = (socket: net.Socket) => {

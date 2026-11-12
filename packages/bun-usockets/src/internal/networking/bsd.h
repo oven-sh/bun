@@ -197,10 +197,6 @@ int bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr *addr, int
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err);
 
-#ifdef _WIN32
-/* Ends the sending side of every socket this process made and shared with no other, on any thread's loop. For the exit of the process, where Winsock resets what is still open. */
-void bsd_shutdown_owned_sockets(void);
-#endif
 void bsd_close_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_shutdown_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_shutdown_socket_read(LIBUS_SOCKET_DESCRIPTOR fd);

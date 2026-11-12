@@ -783,16 +783,25 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(())
     }
 
-    /// The close of a sent socket: the process that took it acked, the channel
-    /// ended, the send failed, or the connection did. Its owner hears of it
-    /// through the write the handle still held. That write failed with the
-    /// error of the connection, or is cancelled by a close of ours (what libuv
-    /// reports for the requests still queued on a handle that closes).
-    fn on_sent_close(
+    /// The two closes that the `close` handler never hears of: one under the
+    /// finalizer, and one of a sent socket (the process that took it acked, the
+    /// channel ended, the send failed, or the connection did). The owner of a
+    /// sent socket hears of it through the write the handle still held. That
+    /// write failed with the error of the connection, or is cancelled by a
+    /// close of ours (what libuv reports for the requests still queued on a
+    /// handle that closes).
+    #[cold]
+    #[inline(never)]
+    fn on_unheard_close(
         this: bun_ptr::ThisPtr<Self>,
         handlers: &Rc<Handlers>,
         err: c_int,
     ) -> JsResult<()> {
+        // Only a plain socket is ever sent (`do_send`).
+        if SSL || this.flags.get().contains(Flags::FINALIZING) {
+            return Ok(());
+        }
+        this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
         let held_write = this.buffered_data_for_node_net.get().len() > 0;
@@ -2261,13 +2270,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             scope
         });
 
-        let flags = this.flags.get();
-        if flags.intersects(Flags::FINALIZING_OR_SENT) {
-            if flags.contains(Flags::FINALIZING) {
-                return Ok(());
-            }
-            this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
-            return Self::on_sent_close(this, &handlers, err);
+        if this.flags.get().intersects(Flags::FINALIZING_OR_SENT) {
+            return Self::on_unheard_close(this, &handlers, err);
         }
 
         this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));

@@ -2666,14 +2666,10 @@ pub mod bv2_impl {
                 ) {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
-                    // SAFETY: see `transpiler` note above.
-                    let path_loader = Fs::Path::init(path_primary.text)
-                        .loader(unsafe { &(*transpiler).options.loaders });
                     let entry = self
                         .graph
                         .build_graphs
-                        .for_import(target, path_loader)
-                        .get_or_put(path_primary.text)
+                        .get_or_put(target, path_primary.text)
                         .expect("oom");
                     if !entry.found_existing {
                         // `enqueue_parse_task` below borrows all of `self`.
@@ -2915,16 +2911,9 @@ pub mod bv2_impl {
             path.assert_pretty_is_valid();
             path.assert_file_path_is_absolute();
 
-            // SAFETY: see `transpiler` note above.
-            let path_loader = path.loader(unsafe { &(*transpiler).options.loaders });
             // borrowck: get-then-put (instead of a single get-or-put) so the map
             // borrow doesn't span `enqueue_parse_task` (which needs `&mut self`).
-            let existing = self
-                .graph
-                .build_graphs
-                .for_import(target, path_loader)
-                .get(path.text);
-            if let Some(existing) = existing {
+            if let Some(existing) = self.graph.build_graphs.get(target, path.text) {
                 out_source_index = Some(Index::init(existing));
             } else {
                 let path = self
@@ -2957,9 +2946,7 @@ pub mod bv2_impl {
                         self.graph.build_graphs.graph(import_record.original_target),
                     )
                     .expect("oom");
-                self.graph
-                    .build_graphs
-                    .for_import(target, path_loader)
+                self.path_to_source_index_map(target)
                     .put(path.text, idx)
                     .expect("oom");
                 out_source_index = Some(Index::init(idx));
@@ -3226,10 +3213,10 @@ pub mod bv2_impl {
             transpiler.resolver.opts.mark_builtins_as_external =
                 transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
 
+            let main_target = transpiler.options.target;
             // SAFETY: `ssr_transpiler` intentionally aliases `transpiler` via a
             // raw `*mut` until bake installs a separate SSR transpiler; all
             // derefs go through the centralized accessors.
-            let main_target = transpiler.options.target;
             let ssr_alias: *mut Transpiler<'a> = std::ptr::from_mut(transpiler);
             let mut this = Box::new(BundleV2 {
                 transpiler,
@@ -5225,12 +5212,10 @@ pub mod bv2_impl {
                         path.namespace = &result.namespace;
                     }
                     if !result.external {
-                        let path_loader = path.loader(&this.transpiler.options.loaders);
                         let existing = this
                             .graph
                             .build_graphs
-                            .for_import(resolve.import_record.original_target, path_loader)
-                            .get_or_put(path.text)
+                            .get_or_put(resolve.import_record.original_target, path.text)
                             .expect("oom");
                         if !existing.found_existing {
                             // We need to parse this
@@ -6718,9 +6703,11 @@ pub mod bv2_impl {
                         });
                         import_record.loader = Some(import_record_loader);
 
-                        if let Some(id) =
-                            self.path_to_source_index_map(target).get(path_primary.text)
-                        {
+                        if let Some(id) = self.graph.find_import(
+                            target,
+                            Some(import_record_loader),
+                            path_primary.text,
+                        ) {
                             import_record.source_index = Index::init(id);
                             continue;
                         }
@@ -7096,12 +7083,10 @@ pub mod bv2_impl {
                     && target.is_server_side()
                     && self.dev_server.is_none();
 
-                let existing = self
-                    .graph
-                    .build_graphs
-                    .for_import(target, Some(import_record_loader))
-                    .get(path.text);
-                if let Some(id) = existing {
+                if let Some(id) =
+                    self.graph
+                        .find_import(target, Some(import_record_loader), path.text)
+                {
                     if self.dev_server.is_some() && loader != Loader::Html {
                         import_record.path =
                             self.graph.input_files.items_source()[id as usize].path;
@@ -7355,12 +7340,10 @@ pub mod bv2_impl {
                 if !only_selected_record(ctx.only_records, i) {
                     continue;
                 }
-                // The `self.graph.build_graphs` field, so borrowck sees it as disjoint from `self.graph.input_files` above.
-                let path_to_source_index_map = self
-                    .graph
-                    .build_graphs
-                    .for_import(ctx.target, record.loader);
-                if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
+                if let Some(source_index) =
+                    self.graph
+                        .find_import(ctx.target, record.loader, record.path.text)
+                {
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()
                     {
@@ -7369,7 +7352,8 @@ pub mod bv2_impl {
 
                     if let Some(compare) = get_redirect_id(ctx.redirect_import_record_index) {
                         if compare == i as u32 {
-                            let _ = path_to_source_index_map.put(ctx.source_path, source_index); // OOM-only Result
+                            let _ = self.graph.build_graphs[ctx.target]
+                                .put(ctx.source_path, source_index); // OOM-only Result
                         }
                     }
                 }
@@ -7458,7 +7442,7 @@ pub mod bv2_impl {
             let _ = self
                 .graph
                 .build_graphs
-                .for_import(target, Some(Loader::Html))
+                .manifests(target)
                 .put(path_text, fake_source_index.0); // OOM-only Result
             self.graph
                 .html_imports

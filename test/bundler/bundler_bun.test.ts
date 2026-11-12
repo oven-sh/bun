@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { basename, join } from "path";
+import { basename, dirname, join, relative } from "path";
 import { itBundled } from "./expectBundled";
 
 const nestedFunctions = /* js */ `
@@ -368,11 +368,12 @@ export const stateOfDependency = state;
     "state.js": `export const state = { from: "state.js" };\n`,
   };
 
-  /** How many times the output of entry.js has `text`. */
+  /** How many times the output of entry.js has `text`. An import that the build left in the output does not count as a copy. */
   async function countInEntryOutput(config: Bun.BuildConfig, text = `from: "state.js"`) {
     const result = await Bun.build(config);
-    const entry = result.outputs.find(output => basename(output.path) === "entry.js")!;
-    return (await entry.text()).split(text).length - 1;
+    const entry = await result.outputs.find(output => basename(output.path) === "entry.js")!.text();
+    expect(entry).not.toMatch(/^import .* from "[./]/m);
+    return entry.split(text).length - 1;
   }
 
   test.each([{}, { target: "node" }, { target: "browser" }, { target: "node", format: "cjs" }] as const)(
@@ -563,6 +564,156 @@ console.log(page === samePage, typeof page.index);
     expect(exitCode).toBe(0);
   });
 
+  // An HTML file that is imported as text is a text module. It has no manifest.
+  const htmlAsText = {
+    "entry.js": `${hashbang}
+import text from "./page.html" with { type: "text" };
+import { textOfDependency } from "./dependency.js";
+export const sameText = text === textOfDependency;
+`,
+    "dependency.js": `import text from "./page.html" with { type: "text" };\nexport const textOfDependency = text;\n`,
+    "page.html": `<!doctype html><title>from page.html</title>`,
+  };
+  const htmlAsTextInMemory = Object.fromEntries(Object.entries(htmlAsText).map(([name, text]) => [`/${name}`, text]));
+  /** An onResolve plugin for page.html that returns nothing, and the number of its calls. */
+  function declinePage() {
+    const calls = { count: 0 };
+    const plugin: Bun.BunPlugin = {
+      name: "decline page.html",
+      setup(build) {
+        build.onResolve({ filter: /page\.html$/ }, () => void calls.count++);
+      },
+    };
+    return { plugin, calls };
+  }
+  test.each([
+    ["no plugin", 0],
+    ["an onResolve plugin that returns nothing", 4],
+  ] as const)("Bun.build with an HTML file as text and %s", async (_, pluginCalls) => {
+    using dir = tempDir("hashbang-entry-html", htmlAsText);
+    const { plugin, calls } = declinePage();
+    const plugins = pluginCalls ? [plugin] : [];
+    const count = (config: Bun.BuildConfig) => countInEntryOutput({ ...config, plugins }, "from page.html");
+    const onDisk = await count({ entrypoints: [join(String(dir), "entry.js")] });
+    const inMemory = await count({ entrypoints: ["/entry.js"], files: htmlAsTextInMemory });
+    expect({ onDisk, inMemory, pluginCalls: calls.count }).toEqual({ onDisk: 1, inMemory: 1, pluginCalls });
+  });
+
+  // The entry point imports one HTML file as a page and as text: the first import wins, as in a build for bun.
+  const asPage = `import page from "./page.html";`;
+  const asText = `import text from "./page.html" with { type: "text" };`;
+  test.each([
+    ["as text, then as a page", [asText, asPage], false, "string string\n"],
+    ["as a page, then as text", [asPage, asText], false, "object object\n"],
+    [
+      "as text, then as a page, and an onResolve plugin that returns nothing",
+      [asText, asPage],
+      true,
+      "string string\n",
+    ],
+  ] as const)("Bun.build with no target and an HTML file %s", async (_, imports, withPlugin, expected) => {
+    using dir = tempDir("hashbang-entry-html", {
+      "entry.js": `${hashbang}\n${imports.join("\n")}\nconsole.log(typeof text, typeof page);\n`,
+      "page.html": page,
+      "client.js": `console.log("client");\n`,
+    });
+    const { plugin, calls } = declinePage();
+    const config = { plugins: withPlugin ? [plugin] : [] };
+    const { outputs, stdout, stderr, exitCode } = await buildAndRun(String(dir), config);
+    const entry = await outputs.find(output => basename(output.path) === "entry.js")!.text();
+    expect(entry).not.toMatch(/^import .* from "[./]/m);
+    expect({ stdout, stderr, pluginCalls: calls.count }).toEqual({
+      stdout: expected,
+      stderr: "",
+      pluginCalls: withPlugin ? 2 : 0,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("Bun.build with no target gives the import of an HTML entry point a manifest", async () => {
+    using dir = tempDir("hashbang-entry-html", {
+      "entry.js": `${hashbang}\n${asPage}\nconsole.log(typeof page.index);\n`,
+      "page.html": page,
+      "client.js": `console.log("client");\n`,
+    });
+    const entrypoints = [join(String(dir), "entry.js"), join(String(dir), "page.html")];
+    const { stdout, stderr, exitCode } = await buildAndRun(String(dir), { entrypoints });
+    expect({ stdout, stderr }).toEqual({ stdout: "string\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // Files in memory have no manifest. The import of the HTML file stays in the output, as in a build for bun.
+  test("Bun.build with files in memory keeps an HTML entry point apart from the import of it", async () => {
+    const result = await Bun.build({
+      entrypoints: ["/entry.js", "/page.html"],
+      files: {
+        "/entry.js": `${hashbang}\n${asPage}\nconsole.log(typeof page);\n`,
+        "/page.html": page,
+        "/client.js": `console.log("client");\n`,
+      },
+      throw: false,
+    });
+    expect({
+      success: result.success,
+      logs: result.logs.map(String),
+      outputs: result.outputs.map(output => basename(output.path).replace(/-[a-z0-9]+\.js$/, "-[hash].js")).sort(),
+    }).toEqual({ success: true, logs: [], outputs: ["chunk-[hash].js", "entry.js", "page.html"] });
+  });
+
+  test("Bun.build with no target leaves the import of an HTML entry point external when a plugin says so", async () => {
+    using dir = tempDir("hashbang-entry-html", { "page.html": page, "client.js": `console.log("client");\n` });
+    const pagePath = join(String(dir), "page.html");
+    await Bun.write(
+      join(String(dir), "entry.js"),
+      `${hashbang}\nimport page from ${JSON.stringify(pagePath)};\nconsole.log(page);\n`,
+    );
+    const plugin: Bun.BunPlugin = {
+      name: "external page.html",
+      setup(build) {
+        // The filter takes the import, which is an absolute path, and not the entry point, which is not.
+        build.onResolve({ filter: /^(\/|[A-Za-z]:).*page\.html$/ }, () => ({
+          path: "https://example.com/page.html",
+          external: true,
+        }));
+      },
+    };
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js"), relative(process.cwd(), pagePath)],
+      plugins: [plugin],
+    });
+    const entry = await result.outputs.find(output => basename(output.path) === "entry.js")!.text();
+    expect(entry).toContain(`import page from "https://example.com/page.html";`);
+  });
+
+  // A plugin that loads an HTML file as a module: the file is a module of the build, like a file with another extension.
+  test("Bun.build with no target and an HTML file that a plugin loads", async () => {
+    using dir = tempDir("hashbang-entry-html", {
+      "entry.js": `${hashbang}
+import view from "./view.html";
+import { viewOfDependency } from "./dependency.js";
+console.log(view === viewOfDependency);
+`,
+      "dependency.js": `import view from "./view.html";\nexport const viewOfDependency = view;\n`,
+      "view.html": `<p>a view</p>`,
+    });
+    const plugin: Bun.BunPlugin = {
+      name: "load views",
+      setup(build) {
+        build.onResolve({ filter: /\.html$/ }, ({ path, importer }) => ({
+          path: join(dirname(importer), path),
+          namespace: "view",
+        }));
+        build.onLoad({ filter: /.*/, namespace: "view" }, async ({ path }) => ({
+          contents: `export default { html: ${JSON.stringify(await Bun.file(path).text())} };`,
+          loader: "js",
+        }));
+      },
+    };
+    const { stdout, stderr, exitCode } = await buildAndRun(String(dir), { plugins: [plugin] });
+    expect({ stdout, stderr }).toEqual({ stdout: "true\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   test("bun build with no target", async () => {
     using dir = tempDir("hashbang-entry-cli", {
       "config.mjs": `export const config = { verbose: false };\n`,
@@ -583,8 +734,13 @@ run();
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited, build.stdout.text()]);
+    const [buildStdout, buildStderr, buildExitCode] = await Promise.all([
+      build.stdout.text(),
+      build.stderr.text(),
+      build.exited,
+    ]);
     expect(buildStderr).toBe("");
+    expect(buildStdout).toStartWith("Bundled 3 modules in ");
     expect(buildExitCode).toBe(0);
 
     await using run = Bun.spawn({
@@ -599,38 +755,35 @@ run();
     expect(exitCode).toBe(0);
   });
 
-  // `bun compile --library` builds for node. It also checks the types of the package, which is slow in a debug build.
-  test.serial(
-    "bun compile --library",
-    async () => {
-      using dir = tempDir("hashbang-entry-library", {
-        "tsconfig.json": JSON.stringify({
-          compilerOptions: { strict: true, module: "esnext", types: [], lib: ["esnext"] },
-        }),
-        "package.json": JSON.stringify({ name: "cli", version: "1.0.0", bin: "./src/cli.ts" }),
-        "src/cli.ts": `${hashbang}
+  // `bun compile --library` builds for node. It also checks the types of the package: "es5" keeps that check short.
+  test("bun compile --library", async () => {
+    using dir = tempDir("hashbang-entry-library", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { strict: true, module: "esnext", types: [], lib: ["es5"] },
+      }),
+      "package.json": JSON.stringify({ name: "cli", version: "1.0.0", bin: "./src/cli.ts" }),
+      "src/cli.ts": `${hashbang}
 import { config } from "./config";
 import { isVerbose } from "./verbose";
 config.verbose = true;
 export const verbose: boolean = isVerbose();
 `,
-        "src/config.ts": `export const config = { verbose: false };\n`,
-        "src/verbose.ts": `import { config } from "./config";\nexport const isVerbose = (): boolean => config.verbose;\n`,
-      });
-      await using build = Bun.spawn({
-        cmd: [bunExe(), "compile", "--library", "src/cli.ts"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited, build.stdout.text()]);
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
-      expect((await Bun.file(join(String(dir), "dist", "cli.js")).text()).split("verbose: false")).toHaveLength(2);
-    },
-    30_000,
-  );
+      "src/config.ts": `export const config = { verbose: false };\n`,
+      "src/verbose.ts": `import { config } from "./config";\nexport const isVerbose = (): boolean => config.verbose;\n`,
+    });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "compile", "--library", "src/cli.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toStartWith("Bundled 3 modules in ");
+    expect(exitCode).toBe(0);
+    expect((await Bun.file(join(String(dir), "dist", "cli.js")).text()).split("verbose: false")).toHaveLength(2);
+  });
 
   itBundled("bun/HashbangEntryExportStar", {
     target: "browser",

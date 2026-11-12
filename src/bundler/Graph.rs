@@ -6,7 +6,7 @@ use bun_collections::MultiArrayList;
 use enum_map::EnumMap;
 
 use crate::IndexStringMap::IndexStringMap;
-use crate::PathToSourceIndexMap::PathToSourceIndexMap;
+use crate::PathToSourceIndexMap::{GetOrPutResult, PathToSourceIndexMap};
 use crate::options;
 use crate::{AdditionalFile, BundleV2, ThreadPool};
 
@@ -221,6 +221,20 @@ impl<'a> Graph<'a> {
     ) -> &mut PathToSourceIndexMap {
         &mut self.build_graphs[target]
     }
+
+    /// `BuildGraphs::get` for a record with `loader`. An HTML import of a server-side file gets a manifest module, not the HTML file of a browser graph.
+    pub(crate) fn find_import(
+        &self,
+        target: options::Target,
+        loader: Option<options::Loader>,
+        path: &[u8],
+    ) -> Option<IndexInt> {
+        let found = self.build_graphs.get(target, path)?;
+        let is_html_file_of_graph = loader.is_none_or(|loader| loader == options::Loader::Html)
+            && self.build_graphs.keeps_manifests_apart(target)
+            && self.input_files.items_loader()[found as usize] == options::Loader::Html;
+        (!is_html_file_of_graph).then_some(found)
+    }
 }
 
 /// One path map per module graph. A `Target` picks its graph as `BundleV2::transpiler_for_target` picks its transpiler.
@@ -247,21 +261,42 @@ impl BuildGraphs {
         }
     }
 
-    /// The map for an import with `loader`. An HTML manifest module has the path of its HTML file, so it stays out of a browser graph.
-    pub(crate) fn for_import(
-        &mut self,
-        target: options::Target,
-        loader: Option<options::Loader>,
-    ) -> &mut PathToSourceIndexMap {
+    /// True if the manifest modules of the files for `target` have a map of their own: a manifest module has the path of its HTML file, and a browser graph has that file.
+    #[inline]
+    fn keeps_manifests_apart(&self, target: options::Target) -> bool {
         let graph = self.graph(target);
-        if loader == Some(options::Loader::Html)
-            && target.is_server_side()
-            && !graph.is_server_side()
-        {
+        graph != target && !graph.is_server_side()
+    }
+
+    /// The map with the manifest modules of the HTML files that the files for `target` import.
+    pub(crate) fn manifests(&mut self, target: options::Target) -> &mut PathToSourceIndexMap {
+        if self.keeps_manifests_apart(target) {
             &mut self.maps[target]
         } else {
-            &mut self.maps[graph]
+            &mut self[target]
         }
+    }
+
+    /// What an import of `path` gets in a file for `target`: the manifest module of an HTML file, else the file of the graph.
+    pub(crate) fn get(&self, target: options::Target, path: &[u8]) -> Option<IndexInt> {
+        if self.keeps_manifests_apart(target)
+            && let Some(manifest) = self.maps[target].get(path)
+        {
+            return Some(manifest);
+        }
+        self[target].get(path)
+    }
+
+    /// `get`, or a new entry for `path` in the graph of `target`.
+    pub(crate) fn get_or_put(
+        &mut self,
+        target: options::Target,
+        path: &[u8],
+    ) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
+        if self.keeps_manifests_apart(target) && self.maps[target].get(path).is_some() {
+            return self.maps[target].get_or_put(path);
+        }
+        self[target].get_or_put(path)
     }
 
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut PathToSourceIndexMap> {

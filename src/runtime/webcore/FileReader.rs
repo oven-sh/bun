@@ -51,7 +51,7 @@ pub struct FileReader {
     pub(crate) event_loop: Cell<EventLoopHandle>,
     pub(crate) lazy: JsCell<Lazy>,
     pub(crate) buffered: JsCell<Vec<u8>>,
-    /// A read error that arrived with no pending pull. The next `on_pull` returns it. In handle mode: one that arrived while the read callback had the reader stopped, for the next read start.
+    /// A read error that arrived with no pending pull. The next `on_pull` returns it. In handle mode: one held for the next read start, because the read callback has the reader stopped. A failure while `arming` is here only until `read_chunk_into_callback` takes it back.
     pub(crate) read_error: JsCell<Option<sys::Error>>,
     /// Read-only after construction.
     pub(crate) highwater_mark: usize,
@@ -832,11 +832,11 @@ impl FileReader {
         if !self.read_callback.get() || !self.flowing.get() {
             return;
         }
-        // A read failed while the reader was stopped. The callback asks for more only now, as a pull would.
+        // Held because the callback had the reader stopped. It asks for more only now, as a pull would.
         if let Some(err) = self.read_error.replace(None) {
             return self.end_read_callback(Some(err));
         }
-        // Closed with the callback still registered: a tick of the event loop nested in the call for the last chunk ran this before the end was reported. There is no fd left to read.
+        // Closed with the callback still registered: a tick of the event loop nested in the call for the last chunk ran this before the end, or the failure to arm, was reported. There is no fd left to read.
         if self.reader().is_done() {
             return;
         }
@@ -868,11 +868,15 @@ impl FileReader {
         let _pin = unsafe { RefPtr::init_ref(self.parent()) };
         // Wait for more before the call, not after the read loop: what the child writes while the listeners run, and its exit after that, then reach the event loop in that order.
         #[cfg(unix)]
-        if !self.reader().has_pending_read() {
+        let arm_error = if self.reader().has_pending_read() {
+            None
+        } else {
             self.arming.set(true);
             self.reader().watch();
             self.arming.set(false);
-        }
+            // Taken back from `read_error` (`on_reader_error` put it there): a read start in a tick of the event loop nested in the call below must not report it before that call returns.
+            self.read_error.replace(None)
+        };
         let parent = self.parent_const();
         let registered =
             parent.this_jsvalue.get().try_get().and_then(|this_value| {
@@ -892,11 +896,14 @@ impl FileReader {
             }
         };
         self.call_read_callback(this_value, callback, &[buffer]);
-        // A reader the callback stopped keeps the failure for the next read start.
-        if self.flowing.get()
-            && let Some(err) = self.read_error.replace(None)
-        {
-            self.end_read_callback(Some(err));
+        // The failure to arm, after its chunk. A reader the callback stopped keeps it for the next read start.
+        #[cfg(unix)]
+        if let Some(err) = arm_error {
+            if self.flowing.get() {
+                self.end_read_callback(Some(err));
+            } else {
+                self.read_error.set(Some(err));
+            }
         }
         // `false` from the callback stopped the reader. A `destroy()` in it, or a throw that ends the run, cancelled the source and closed the fd the io caller captured.
         self.flowing.get()
@@ -942,7 +949,7 @@ impl FileReader {
             this_value,
             args,
             |outcome| match outcome {
-                // `push()` returned false: the reader stops until the next `set_flowing(true)`. The `false` that `on_read_chunk` then returns is not enough: Windows' reader ignores it, and so does a POSIX read loop on a pipe that hung up, which only the pause ends (`PAUSE_ENDS_READ_LOOP`).
+                // `push()` returned false: the reader stops until the next `set_flowing(true)`. The `false` that `on_read_chunk` then returns is not enough: Windows' reader ignores it, and so does a POSIX read loop on a pipe that hung up, unless the reader is paused as well (`PAUSE_ENDS_READ_LOOP`).
                 CallbackOutcome::Returned(more) if more == JSValue::FALSE => {
                     self.flowing.set(false);
                     self.reader().pause();

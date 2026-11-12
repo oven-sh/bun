@@ -305,9 +305,8 @@ fn ssl_ctx_cache_get_or_create(
     opts: &bun_uws::SocketContext::BunSocketContextOptions,
     err: &mut bun_uws::create_bun_socket_error_t,
 ) -> Option<bun_boringssl::c::OwnedSslCtx> {
-    // The WebSocket client and the SQL clients call it.
-    bun_removable_features::removable_definition!(WebSocket, ssl_ctx_cache_get_or_create);
-    bun_removable_features::removable_definition!(Sql, ssl_ctx_cache_get_or_create);
+    bun_removable_features::removable_definition!(Tls, ssl_ctx_cache_get_or_create);
+    bun_removable_features::removable_definition!(HttpClient, ssl_ctx_cache_get_or_create);
     SSLContextCache::get_or_create_for_client(opts, err)
 }
 
@@ -1447,28 +1446,18 @@ fn body_mixin_get_blob(
     value: JSValue,
     global: &JSGlobalObject,
 ) -> bun_jsc::JsResult<Option<JSValue>> {
-    bun_removable_features::call_removable_or!(
-        Bodies,
-        ReturnDefault,
-        { Ok(None) },
-        read_body_as_blob,
-        value,
-        global
-    )
-}
-
-#[inline(never)] // --trim cuts the readers of a body at the call.
-fn read_body_as_blob(
-    value: JSValue,
-    global: &JSGlobalObject,
-) -> bun_jsc::JsResult<Option<JSValue>> {
     use crate::webcore::body::{Action, BodyMixin as _};
+    use bun_removable_features::removable_body_behind_value;
     let cx = global.js_thread_of_caller();
     if let Some(resp) = value.as_class_ref::<crate::webcore::Response>() {
-        return Ok(Some(resp.read_body(&cx, Action::GetBlob)?));
+        return removable_body_behind_value!(Bodies, {
+            resp.read_body(&cx, Action::GetBlob).map(Some)
+        });
     }
     if let Some(req) = value.as_class_ref::<crate::webcore::Request>() {
-        return Ok(Some(req.read_body(&cx, Action::GetBlob)?));
+        return removable_body_behind_value!(Bodies, {
+            req.read_body(&cx, Action::GetBlob).map(Some)
+        });
     }
     Ok(None)
 }

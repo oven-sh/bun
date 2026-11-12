@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tls.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 5e691efcb6bc5b86e5558d7794dfb220225059e2d78d94925d327b82bdc2a242.
+// Written against that file with the SHA-256 48ad7eaf1f0ee526e8a967b7c4fdab68fa903d631b7fc1b1d93dee3d04cf12bf.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:tls"
@@ -672,7 +672,8 @@ const kUpgradeServerTLS: typeof netSymbols.kUpgradeServerTLS = CAN_REPLACE_BUILT
 
 // The default of a server in Node: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1423-L1518
 function defaultSessionIdContext(): string {
-  return StringPrototypeSlice.$call(Bun.SHA1.hash(ArrayPrototypeJoin.$call(process.argv, " "), "hex"), 0, 32);
+  const digest = Bun.CryptoHasher.hash("sha1", ArrayPrototypeJoin.$call(process.argv, " "), "hex");
+  return StringPrototypeSlice.$call(digest, 0, 32);
 }
 
 // `target` is a tls.Server or a server-side TLSSocket: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L929

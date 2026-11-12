@@ -412,6 +412,7 @@ export default b.declarations(
     ["Sockets"],
     "%Listener%",
     ...nativeBindings("Bindgen", "socket_body.bind.ts", "getBytesRead", "hasPendingRead", "isNamedPipeSocket"),
+    ...nativeBindings("Bindgen", "node_http_binding.bind.ts", "httpConnectionOf"),
   ),
 
   extendAll(

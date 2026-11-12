@@ -133,7 +133,6 @@ export default b.declarations(
       "Bindgen",
       "node_http_binding.bind.ts",
       "closedWithAllDataSent",
-      "httpConnectionOf",
       "insecureHTTPParser",
       "getMaxHTTPHeaderSize",
       "sendWebSocketFrame",

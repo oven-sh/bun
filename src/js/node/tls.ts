@@ -526,7 +526,8 @@ const kUpgradeServerTLS = Symbol.for("::bunUpgradeServerTLS::");
 
 // The default of a server in Node: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1423-L1518
 function defaultSessionIdContext() {
-  return StringPrototypeSlice.$call(Bun.SHA1.hash(ArrayPrototypeJoin.$call(process.argv, " "), "hex"), 0, 32);
+  const digest = Bun.CryptoHasher.hash("sha1", ArrayPrototypeJoin.$call(process.argv, " "), "hex");
+  return StringPrototypeSlice.$call(digest, 0, 32);
 }
 
 // `target` is a tls.Server or a server-side TLSSocket: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L929

@@ -712,8 +712,9 @@ void JSNodeHTTPServerSocket::onHandshake(int success, us_bun_verify_error_t veri
     }
 }
 
-extern "C" uint64_t Bun__NodeHTTPServerSocket__bytesRead(us_socket_t* socket, bool ssl)
+extern "C" NEVER_INLINE uint64_t Bun__NodeHTTPServerSocket__bytesRead(us_socket_t* socket, bool ssl)
 {
+    BUN_REMOVABLE_DEFINITION(NodeHttp, Bun__NodeHTTPServerSocket__bytesRead);
     if (ssl) {
         return reinterpret_cast<uWS::HttpResponseData<true, true>*>(us_socket_ext(socket))->bytesRead;
     }
@@ -802,8 +803,9 @@ extern "C" bool Bun__NodeHTTP__startResponse(bool ssl, us_socket_t* socket, JSC:
 }
 
 // The functions below are InternalSocket::UwsHttp in src/uws_sys/socket.rs: what req.socket._handle asks of a connection that uWS owns.
-extern "C" void Bun__NodeHTTPServerSocket__write(us_socket_t* socket, bool ssl, const char* data, size_t length)
+extern "C" NEVER_INLINE void Bun__NodeHTTPServerSocket__write(us_socket_t* socket, bool ssl, const char* data, size_t length)
 {
+    BUN_REMOVABLE_DEFINITION(NodeHttp, Bun__NodeHTTPServerSocket__write);
     auto* serverSocket = openServerSocket(socket, ssl);
     if (!serverSocket || serverSocket->ended) {
         return;
@@ -814,8 +816,9 @@ extern "C" void Bun__NodeHTTPServerSocket__write(us_socket_t* socket, bool ssl, 
     serverSocket->updateParked();
 }
 
-extern "C" void Bun__NodeHTTPServerSocket__shutdown(us_socket_t* socket, bool ssl)
+extern "C" NEVER_INLINE void Bun__NodeHTTPServerSocket__shutdown(us_socket_t* socket, bool ssl)
 {
+    BUN_REMOVABLE_DEFINITION(NodeHttp, Bun__NodeHTTPServerSocket__shutdown);
     auto* serverSocket = openServerSocket(socket, ssl);
     if (!serverSocket) {
         return;
@@ -838,8 +841,9 @@ static bool closeBehindPendingShutdown(us_socket_t* socket)
     return true;
 }
 
-extern "C" void Bun__NodeHTTPServerSocket__close(us_socket_t* socket, bool ssl, int code)
+extern "C" NEVER_INLINE void Bun__NodeHTTPServerSocket__close(us_socket_t* socket, bool ssl, int code)
 {
+    BUN_REMOVABLE_DEFINITION(NodeHttp, Bun__NodeHTTPServerSocket__close);
     auto* serverSocket = openServerSocket(socket, ssl);
     if (!serverSocket) {
         return;
@@ -855,15 +859,17 @@ extern "C" void Bun__NodeHTTPServerSocket__close(us_socket_t* socket, bool ssl, 
     serverSocket->close();
 }
 
-extern "C" uint64_t Bun__NodeHTTPServerSocket__responseBytesWritten(us_socket_t* socket, bool ssl)
+extern "C" NEVER_INLINE uint64_t Bun__NodeHTTPServerSocket__responseBytesWritten(us_socket_t* socket, bool ssl)
 {
+    BUN_REMOVABLE_DEFINITION(NodeHttp, Bun__NodeHTTPServerSocket__responseBytesWritten);
     auto* serverSocket = ssl ? getNodeHTTPServerSocket<true>(socket) : getNodeHTTPServerSocket<false>(socket);
     auto* res = serverSocket ? serverSocket->currentResponse() : nullptr;
     return res ? Bun__NodeHTTPResponse_bytesWritten(res->wrapped()) : 0;
 }
 
-extern "C" uint64_t Bun__NodeHTTPServerSocket__writeQueueSize(us_socket_t* socket, bool ssl)
+extern "C" NEVER_INLINE uint64_t Bun__NodeHTTPServerSocket__writeQueueSize(us_socket_t* socket, bool ssl)
 {
+    BUN_REMOVABLE_DEFINITION(NodeHttp, Bun__NodeHTTPServerSocket__writeQueueSize);
     auto* serverSocket = ssl ? getNodeHTTPServerSocket<true>(socket) : getNodeHTTPServerSocket<false>(socket);
     auto* res = serverSocket ? serverSocket->currentResponse() : nullptr;
     uint64_t buffered = ssl ? reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->getBufferedAmount() : reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->getBufferedAmount();
@@ -872,13 +878,15 @@ extern "C" uint64_t Bun__NodeHTTPServerSocket__writeQueueSize(us_socket_t* socke
     return (ofResponse > buffered ? ofResponse : buffered) + us_socket_ssl_spill_pending(socket);
 }
 
-extern "C" bool Bun__NodeHTTPServerSocket__hasUnsentBytes(us_socket_t* socket, bool ssl)
+extern "C" NEVER_INLINE bool Bun__NodeHTTPServerSocket__hasUnsentBytes(us_socket_t* socket, bool ssl)
 {
+    BUN_REMOVABLE_DEFINITION(NodeHttp, Bun__NodeHTTPServerSocket__hasUnsentBytes);
     return ssl ? !reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->hasFullyDrained() : !reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->hasFullyDrained();
 }
 
-extern "C" void Bun__NodeHTTPServerSocket__setReadsPaused(us_socket_t* socket, bool ssl, bool paused)
+extern "C" NEVER_INLINE void Bun__NodeHTTPServerSocket__setReadsPaused(us_socket_t* socket, bool ssl, bool paused)
 {
+    BUN_REMOVABLE_DEFINITION(NodeHttp, Bun__NodeHTTPServerSocket__setReadsPaused);
     auto* serverSocket = openServerSocket(socket, ssl);
     if (!serverSocket) {
         return;

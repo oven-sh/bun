@@ -156,6 +156,8 @@ public:
         unsigned testFile = 1;
         // The modules that have called mock.module(), vi.mock() and the like since the running test file started, and those whose body was running at such a call.
         WTF::UncheckedKeyHashSet<String> mockingModules = {};
+        // In `bun test`: the CommonJS modules whose body evaluateCommonJSModuleOnce() is calling, the innermost last. The call keeps each of them alive.
+        WTF::Vector<JSC::JSCell*, 4> runningCommonJSBodies = {};
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
         // Data files that a reset has evicted under a mock whose end restores their original, with the test file in which their next load does not show it yet.
         WTF::UncheckedKeyHashMap<String, unsigned> dataFilesResetUnderMocks = {};
@@ -266,9 +268,9 @@ public:
             // The body of the file made the call, not a function of the file that another body called.
             bool isFromOwnBody { false };
             WTF::Vector<JSC::Strong<JSC::Unknown>, 2> arguments;
-            // The other modules whose bodies were running. `bun test` evaluates those again that import the file statically.
+            // The other modules whose bodies were running, where they import the file statically. `bun test` evaluates them again.
             WTF::Vector<uint32_t, 4> importers;
-            // The rest, and those that waited at a top-level import(), are evaluated again only if they installed a mock themselves.
+            // The rest of them, which `bun test` evaluates again as well, and those that waited at a top-level import(), which it evaluates again only if they installed a mock themselves. The replay treats both as the latter.
             WTF::Vector<uint32_t, 2> importersByCall;
             // The call threw. Unless the body caught it, later imports of the body's module fail with the same error.
             bool threw { false };

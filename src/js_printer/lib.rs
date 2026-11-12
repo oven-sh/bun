@@ -1343,6 +1343,8 @@ pub struct Options<'a> {
     pub minify_whitespace: bool,
     pub minify_identifiers: bool,
     pub minify_syntax: bool,
+    /// See `Features::is_library` of the parser.
+    pub is_library: bool,
     pub print_dce_annotations: bool,
     /// Marks the braces of object literals in the source map, see `mark_object_brace`.
     pub code_coverage: bool,
@@ -1419,6 +1421,7 @@ impl<'a> Default for Options<'a> {
             minify_whitespace: false,
             minify_identifiers: false,
             minify_syntax: false,
+            is_library: false,
             print_dce_annotations: true,
             code_coverage: false,
             inline_require_and_import_errors: true,
@@ -2193,8 +2196,10 @@ pub(crate) mod __gated_printer {
 
             // A `using` or `await using` declaration admits only identifier
             // bindings, never a binding pattern.
-            let allow_destructuring =
-                bun_core::FeatureFlags::SAME_TARGET_BECOMES_DESTRUCTURING && !kind.is_using();
+            // In a library each declarator keeps its own type annotation, which a pattern has no place for.
+            let allow_destructuring = bun_core::FeatureFlags::SAME_TARGET_BECOMES_DESTRUCTURING
+                && !kind.is_using()
+                && !self.options.is_library;
 
             let mut needs_comma = false;
             'decls: while !decls.is_empty() {

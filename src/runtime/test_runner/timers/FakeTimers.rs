@@ -1143,13 +1143,14 @@ impl FakeTimers {
     }
 
     /// Swaps any stale fake that was put back on a global for what it had replaced, and any restored spy that `uninstall` put back for what that spy had replaced. Runs no JS.
-    fn take_off_stale_fakes(global: &JSGlobalObject) {
+    pub(crate) fn take_off_stale_fakes(global: &JSGlobalObject) -> bool {
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         let Some(originals) = (unsafe { (*timer_all()).fake_timers.originals.get() }) else {
-            return;
+            return false;
         };
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         let put_back = unsafe { (*timer_all()).fake_timers.restored_put_back.get() };
+        let mut has_swapped = false;
         for api in Api::FUNCTIONS {
             let owner = api.owner(global);
             if !owner.is_object() {
@@ -1177,10 +1178,12 @@ impl FakeTimers {
                 if Bun__FakeTimers__getDirect(global, owner, &name) == installed {
                     break;
                 }
+                has_swapped = true;
             }
         }
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         unsafe { (*timer_all()).fake_timers.restored_put_back.deinit() };
+        has_swapped
     }
 
     // Below, a returned `JSValue` is the exception a timer callback threw, or empty. A `JsError` means the VM is terminating.

@@ -15,6 +15,9 @@ unsafe extern "C" {
     safe fn JSMock__resetAllMocks(global: &JSGlobalObject);
     safe fn JSMock__clearAllMocks(global: &JSGlobalObject);
     safe fn JSMock__didFinishTestFile(global: &JSGlobalObject);
+    safe fn JSMock__hasDisplacedSpies(global: &JSGlobalObject) -> bool;
+    safe fn JSMock__restoreDisplacedSpies(global: &JSGlobalObject) -> bool;
+    safe fn JSMock__forgetDisplacedSpies(global: &JSGlobalObject);
     safe fn JSMock__willRunTest(global: &JSGlobalObject);
 }
 
@@ -82,9 +85,31 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global:
     run(global, ViUtils__unstubAllGlobals);
     // Before the stubs of a preload go back on, so that each saves what the next file is to get from `vi.unstubAllGlobals()`, not a fake.
     super::timers::fake_timers::on_test_file_end(global, || {
-        run(global, ViUtils__stubWhatPreloadStubbed)
+        // With a displaced spy, `on_test_file_undone` does this, once the spy is off the global that a stub would save.
+        if !JSMock__hasDisplacedSpies(global) {
+            run(global, ViUtils__stubWhatPreloadStubbed);
+        }
     });
     ViUtils__forgetDynamicImports(global);
+}
+
+/// Restores the spies that the undos of the file put back. Repeats, because a restore can put a stale fake back.
+pub(crate) fn on_test_file_undone(global: &JSGlobalObject) {
+    if !JSMock__hasDisplacedSpies(global) {
+        return;
+    }
+    while JSMock__hasDisplacedSpies(global) {
+        let restored =
+            bun_jsc::from_js_host_call_generic(global, || JSMock__restoreDisplacedSpies(global));
+        let has_restored = !matches!(restored, Ok(false));
+        crate::dispatch::fold(restored.map(drop));
+        let has_swept = super::timers::fake_timers::FakeTimers::take_off_stale_fakes(global);
+        if !has_restored && !has_swept {
+            run(global, JSMock__forgetDisplacedSpies);
+        }
+    }
+    // Only now, so that a stub of a preload saves what the undos leave, and not a fake or a spy that they take off.
+    run(global, ViUtils__stubWhatPreloadStubbed);
 }
 
 /// Like Vitest's timeouts, anything that isn't a positive finite number becomes 0, which means none.

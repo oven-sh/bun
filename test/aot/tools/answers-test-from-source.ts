@@ -121,7 +121,10 @@ export function numberedByLegend(head: string[], records: string[]) {
   );
 }
 
-/** The whole test, head and records, of a file of ../answers. */
+/**
+ * The whole test, head and records, of a file of ../answers.
+ * `unknownIDs`: the ids in its records that name no record. Each is written with a question mark, `f3?`.
+ */
 export async function testOfStoredProgram(stored: string) {
   const [first, ...rest] = readFileSync(stored, "utf8").trimEnd().split("\n");
   const kind = /^\/\/ answers: (with|without)-library$/.exec(first)?.[1];
@@ -131,10 +134,14 @@ export async function testOfStoredProgram(stored: string) {
   const head = rest.slice(0, lengthOfHead).map(line => line.slice("// ".length));
   using folder = tempDir("aot-answers-test", { [basename(stored)]: rest.slice(lengthOfHead).join("\n") + "\n" });
   // The head says how many answers there are.
-  const { shell, records } = await partsOf(join(String(folder), basename(stored)), kind === "without", false);
+  const { shell, records, unknownIDs } = await partsOf(join(String(folder), basename(stored)), kind === "without", false);
   // A function as the second operand: `$` in the text of a program means nothing to replace().
   const filled = head.map(line => line.replace("$SHELL", () => shell));
-  return [...numberedByLegend(filled, records), "", ...records].join("\n") + "\n";
+  return {
+    text: [...numberedByLegend(filled, records), "", ...records].join("\n") + "\n",
+    // Without the library its records are left out of the text, and what they alone named with them.
+    unknownIDs: [...unknownIDs].filter(id => records.some(line => line.includes(`${id}?`))),
+  };
 }
 
 if (import.meta.main) {
@@ -148,7 +155,7 @@ if (import.meta.main) {
     );
     process.exit(2);
   }
-  if (isStored) process.stdout.write(await testOfStoredProgram(source));
+  if (isStored) process.stdout.write((await testOfStoredProgram(source)).text);
   else {
     const { lines, written, shell, answers, records, unknownIDs } = await partsOf(source, isWithoutLibrary);
     if (operands.includes("--store")) {

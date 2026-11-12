@@ -18,17 +18,10 @@ import { expectEveryTestPasses, skipOrFail, whyNoShell } from "./testaot";
 const moreFlags = (process.env.AOT_ANSWERS_FLAGS ?? "").split(" ").filter(Boolean);
 
 /** The test of a file. `unknownIDs`: the ids in it that name no record. */
-type Tool = (path: string) => Promise<{ text: string; unknownIDs?: string[] }>;
+type Tool = (path: string) => Promise<{ text: string; unknownIDs: string[] }>;
 
 export const answersTests = (part: number, parts: number) =>
-  testsMadeOf(
-    "answers",
-    async path => ({ text: await testOfStoredProgram(path) }),
-    /\.(ts|js|mjs)$/,
-    "programs that tell their answers",
-    part,
-    parts,
-  );
+  testsMadeOf("answers", testOfStoredProgram, /\.(ts|js|mjs)$/, "programs that tell their answers", part, parts);
 
 export const fromSourceTests = (part: number, parts: number) =>
   testsMadeOf("from-source", printedAnew, /\.ir$/, "tests that hold their source", part, parts);
@@ -56,7 +49,7 @@ function testsMadeOf(folderName: string, tool: Tool, isTest: RegExp, title: stri
         slot(async () => {
           try {
             const { text, unknownIDs } = await tool(join(folder, name));
-            if (unknownIDs?.length) throw new Error(`these name no record: ${unknownIDs.join(" ")}`);
+            if (unknownIDs.length) throw new Error(`these name no record: ${unknownIDs.join(" ")}`);
             if (!text.includes("\nmodule ")) throw new Error("what was made has no module");
             const path = name.replace(/\.\w+$/, ".ir");
             mkdirSync(dirname(join(String(made), path)), { recursive: true });

@@ -583,11 +583,12 @@ describe.concurrent("Bun REPL", () => {
     });
 
     // An uncaught error does not end the REPL, so the stream it came from goes on. The child echoes each chunk it
-    // reads and the listener throws on every echo: the child is told to exit only when the third echo arrives.
+    // reads and the listener throws on every echo: the child is told to exit only when the third echo arrives. The
+    // timer ends a REPL whose child never gets there.
     test("a child's stdout goes on after its 'data' listener threw", async () => {
       const echo = `process.stdout.on("error", () => process.exit(2)); process.stdin.on("data", chunk => process.stdout.write(chunk)).on("end", () => process.exit(0));`;
       const { outputs, stderr, exitCode } = await runRepl([
-        `const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(echo)}], { stdio: ["pipe", "pipe", "ignore"] }); let calls = 0; const exited = new Promise(resolve => child.on("exit", resolve)); child.stdout.on("data", () => { if (++calls < 3) child.stdin.write("x"); else child.stdin.end(); throw new Error("boom " + calls); }); child.stdin.write("x"); 0`,
+        `const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(echo)}], { stdio: ["pipe", "pipe", "ignore"] }); let calls = 0; const exited = new Promise(resolve => child.on("exit", resolve)); child.stdout.on("data", () => { if (++calls < 3) child.stdin.write("x"); else child.stdin.end(); throw new Error("boom " + calls); }); setTimeout(() => process.exit(3), 20_000).unref(); child.stdin.write("x"); 0`,
         "await exited; calls",
         ".exit",
       ]);
@@ -1102,6 +1103,8 @@ describe.concurrent("a child's stdout whose 'data' listener threw, with no 'unca
       `process.on("exit", code => console.log(JSON.stringify({ code, calls })));`,
       `child.stdout.on("data", () => { calls++; throw new Error("boom"); });`,
       written ? `${deadline} while (!existsSync("written") && Date.now() < deadline);` : ``,
+      // Ends a run whose 'close' never comes.
+      `setTimeout(() => process.exit(3), 20_000).unref();`,
       `await new Promise(resolve => child.on("close", resolve));`,
       `console.log("closed");`,
     ].join(" ");
@@ -2300,7 +2303,8 @@ describe.concurrent("--interactive", () => {
 
   // node:repl takes an uncaught error for its own when it is reported inside the async context of a line it
   // evaluated, which a child spawned on that line reports in. The child echoes each chunk it reads and the listener
-  // throws on every echo: the child is told to exit only when the third echo arrives.
+  // throws on every echo: the child is told to exit only when the third echo arrives. The timer ends a REPL whose
+  // child never gets there.
   test(
     "a child's stdout goes on after its 'data' listener threw",
     async () => {
@@ -2308,7 +2312,7 @@ describe.concurrent("--interactive", () => {
       const { stdout, stderr, exitCode } = await runInteractive(
         [],
         [
-          `const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(echo)}], { stdio: ["pipe", "pipe", "ignore"] }); let calls = 0; const exited = new Promise(resolve => child.on("exit", resolve)); child.stdout.on("data", () => { if (++calls < 3) child.stdin.write("x"); else child.stdin.end(); throw new Error("boom " + calls); }); child.stdin.write("x"); 0`,
+          `const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(echo)}], { stdio: ["pipe", "pipe", "ignore"] }); let calls = 0; const exited = new Promise(resolve => child.on("exit", resolve)); child.stdout.on("data", () => { if (++calls < 3) child.stdin.write("x"); else child.stdin.end(); throw new Error("boom " + calls); }); setTimeout(() => process.exit(3), 20_000).unref(); child.stdin.write("x"); 0`,
           "await exited; calls",
           "",
         ].join("\n"),

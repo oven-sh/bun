@@ -8,7 +8,9 @@ use bun_sema::check::Requested;
 use bun_sema::check::aot::{DiagnosticClass, DiagnosticSubject, Effect, FileOrigin, effect_of};
 use bun_sema::hir::FileKind;
 use bun_sema::import_sites::ImportSpecifier;
-use bun_sema::program::{CodeAnswer, FileId, FileRole, Files, ReadingNoTrees, Sym};
+use bun_sema::program::{
+    CodeAnswer, ComputedTargets, FileId, FileRole, Files, ReadingNoTrees, Sym,
+};
 use bun_sema::resolve::{CodeHost, Host, is_relative, join};
 
 pub(super) fn compute_origins(
@@ -17,9 +19,50 @@ pub(super) fn compute_origins(
     project_origin: FileOrigin,
 ) -> Vec<FileOrigin> {
     let file_ids = (0..files.modules.len()).map(|index| FileId(index as u32));
-    file_ids
-        .map(|file| origin_of(files, host, file, project_origin))
-        .collect()
+    let mut origins: Vec<FileOrigin> = file_ids
+        .map(|file| origin_of(files, host, file, project_origin, false))
+        .collect();
+    let is_text = |file: &FileId| origins[file.idx()] == FileOrigin::EvaluatedText;
+    let texts: Vec<FileId> = (files.compiled_files().iter().copied())
+        .filter(is_text)
+        .collect();
+    if texts.is_empty() {
+        return origins;
+    }
+    // Text that the program also loads as code counts as code. Files that only text loads are there for its sake.
+    let entry_points = files.entry_points().iter().copied();
+    let entry_points: Vec<FileId> = entry_points.filter(|file| !is_text(file)).collect();
+    let is_loaded_by_program = find_files_loaded_from(files, entry_points);
+    let is_loaded_by_texts = find_files_loaded_from(files, texts);
+    for &file in files.compiled_files() {
+        let at = file.idx();
+        origins[at] = match (is_loaded_by_program[at], is_loaded_by_texts[at]) {
+            (true, true) => origin_of(files, host, file, project_origin, true),
+            (false, true) => FileOrigin::EvaluatedText,
+            (_, false) => continue,
+        };
+    }
+    origins
+}
+
+fn find_files_loaded_from(files: &Files<'_>, mut left: Vec<FileId>) -> Vec<bool> {
+    let mut is_loaded = vec![false; files.modules.len()];
+    while let Some(file) = left.pop() {
+        if std::mem::replace(&mut is_loaded[file.idx()], true) {
+            continue;
+        }
+        let answers = files.compiled(file).map_or(&[][..], |it| it.code_answers);
+        for answer in answers {
+            match *answer {
+                CodeAnswer::File(target) => left.push(target),
+                CodeAnswer::Computed(ComputedTargets::Modules { files, .. }) => {
+                    left.extend_from_slice(files);
+                }
+                _ => {}
+            }
+        }
+    }
+    is_loaded
 }
 
 fn origin_of(
@@ -27,6 +70,7 @@ fn origin_of(
     host: &dyn CodeHost,
     file: FileId,
     project_origin: FileOrigin,
+    is_loaded_by_program_and_text: bool,
 ) -> FileOrigin {
     match project_origin {
         FileOrigin::Runtime => return FileOrigin::Runtime,
@@ -39,7 +83,9 @@ fn origin_of(
         | FileOrigin::Declarations
         | FileOrigin::EvaluatedText => {}
     }
-    if files.is_compiled(file) && host.is_evaluated_text(files.module(file).file_name()) {
+    let name = files.module(file).file_name();
+    let is_text = || files.is_compiled(file) && host.is_evaluated_text(name);
+    if !is_loaded_by_program_and_text && is_text() {
         return FileOrigin::EvaluatedText;
     }
     let is_dependency = files.module(file).is_from_external_library
@@ -98,7 +144,6 @@ const ENDINGS_OF_A_RELATIVE_IMPORT: [&[u8]; 10] = [
     b".json",
 ];
 
-const REFUSED_MERGE_CODES: [u32; 3] = [2300, 2451, 2567];
 const AUGMENTATION_OF_UNKNOWN_MODULE_CODE: u32 = 2664;
 const UMD_GLOBAL_IN_MODULE_CODE: u32 = 2686;
 const THIS_IS_UNDEFINED_CODES: [u32; 2] = [2407, 2532];
@@ -111,7 +156,6 @@ const UNUSED_EXPECT_ERROR_CODE: u32 = 2578;
 const BODY_TOO_LARGE_FOR_FLOW_ANALYSIS_CODE: u32 = 2563;
 
 const EXACT_OPTIONAL_PROPERTY_CODES: [u32; 3] = [2375, 2379, 2412];
-const DEFINED_CLASS_FIELD_CODES: [u32; 2] = [2612, 2729];
 
 const UNKNOWN_MEMBER_CODES: [u32; 6] = [2305, 2339, 2551, 2614, 2694, 2724];
 
@@ -121,6 +165,14 @@ const UNKNOWN_NAME_CODES: [u32; 25] = [
 ];
 
 const DECLARATION_OF_ANOTHER_KIND_CODES: [u32; 2] = [2315, 2749];
+
+/// True if the error says that a name is not found. Which of these codes it has depends on what else is in scope to suggest
+/// ("Did you mean ..") or to advise ("install the types for ..").
+pub fn says_that_name_is_not_found(code: u32) -> bool {
+    // 2550 and 2812 are about a member. 2693 and 2708: the name is only a type or a namespace, not a value.
+    matches!(code, 2693 | 2708)
+        || !matches!(code, 2550 | 2812) && UNKNOWN_NAME_CODES.contains(&code)
+}
 
 fn is_about_exact_optional_property(code: u32, chain: &[MessageChain]) -> bool {
     EXACT_OPTIONAL_PROPERTY_CODES.contains(&code)
@@ -166,21 +218,12 @@ impl ProgramOrigins<'_, '_> {
         if missing.is_some_and(|missing| had_declaration_with_bun_types(missing, diagnostic)) {
             return true;
         }
-        if missing.is_none()
-            && !UNKNOWN_NAME_CODES.contains(&code)
-            && !DECLARATION_OF_ANOTHER_KIND_CODES.contains(&code)
-            && self.rests_on_brought_declaration(diagnostic)
-        {
-            return true;
-        }
         if UNKNOWN_MODULE_CODES.contains(&code) {
             match diagnostic.subject {
                 DiagnosticSubject::ModuleSpecifier(specifier) => {
                     self.is_import_that_the_build_loads(diagnostic.file, specifier)
                 }
-                DiagnosticSubject::None
-                | DiagnosticSubject::MemberContainer(_)
-                | DiagnosticSubject::BroughtDeclaration => false,
+                DiagnosticSubject::None | DiagnosticSubject::MemberContainer(_) => false,
             }
         } else if UNKNOWN_MEMBER_CODES.contains(&code) {
             match (missing, diagnostic.subject) {
@@ -190,37 +233,12 @@ impl ProgramOrigins<'_, '_> {
                         || self.is_declared_for_browsers(container)
                 }
                 (None, DiagnosticSubject::MemberContainer(_))
-                | (
-                    _,
-                    DiagnosticSubject::None
-                    | DiagnosticSubject::ModuleSpecifier(_)
-                    | DiagnosticSubject::BroughtDeclaration,
-                ) => false,
+                | (_, DiagnosticSubject::None | DiagnosticSubject::ModuleSpecifier(_)) => false,
             }
         } else if diagnostic.class == DiagnosticClass::Style {
             !self.has_configuration_file
         } else {
             USES_OF_WHAT_HAS_NO_DECLARATION_CODES.contains(&code)
-        }
-    }
-
-    fn rests_on_brought_declaration(&self, diagnostic: &Diagnostic) -> bool {
-        let is_brought = |other: &Diagnostic| {
-            let file = self.files.zip(other.file);
-            file.is_some_and(|(files, file)| files.is_brought(file))
-        };
-        if REFUSED_MERGE_CODES.contains(&diagnostic.code)
-            && !diagnostic.related.is_empty()
-            && diagnostic.related.iter().all(is_brought)
-        {
-            return true;
-        }
-        match diagnostic.subject {
-            DiagnosticSubject::BroughtDeclaration => true,
-            DiagnosticSubject::MemberContainer(container) => {
-                (self.files).is_some_and(|files| files.is_brought(container.file))
-            }
-            DiagnosticSubject::None | DiagnosticSubject::ModuleSpecifier(_) => false,
         }
     }
 
@@ -245,6 +263,14 @@ impl ProgramOrigins<'_, '_> {
         name != known::export_equals
             && files.export(module, known::export_equals).is_some()
             && files.export(module, name).is_some()
+    }
+
+    fn is_in_known_evaluation(&self, diagnostic: &Diagnostic) -> bool {
+        let (Some(files), Some(file)) = (self.files, diagnostic.file) else {
+            return false;
+        };
+        let hir = files.hir(file);
+        !diagnostic.has_undefined_range && hir.is_in_known_evaluation(diagnostic.start)
     }
 
     fn is_in_jsdoc_comment(&self, diagnostic: &Diagnostic) -> bool {
@@ -276,10 +302,10 @@ impl ProgramOrigins<'_, '_> {
         let options = files.module_options(file);
         !options.exact_optional_property_types
             && is_about_exact_optional_property(diagnostic.code, &diagnostic.message_chain)
-            || options.defines_class_fields_for_build_alone
-                && DEFINED_CLASS_FIELD_CODES.contains(&diagnostic.code)
     }
 
+    // A file without `import` or `export` is a script to `tsc` and a module to a build, which types it as it runs.
+    // What is an error only in a module stops nothing there.
     fn comes_of_running_a_script_as_a_module(&self, diagnostic: &Diagnostic) -> bool {
         let (Some(files), Some(file)) = (self.files, diagnostic.file) else {
             return false;
@@ -302,6 +328,7 @@ impl ProgramOrigins<'_, '_> {
         }
     }
 
+    // A plugin may write a file once every other module is loaded. The folder was listed before that.
     fn is_import_of_file_written_since_the_load(&self, diagnostic: &Diagnostic) -> bool {
         let (Some(files), Some(file), DiagnosticSubject::ModuleSpecifier(specifier)) =
             (self.files, diagnostic.file, diagnostic.subject)
@@ -340,10 +367,23 @@ impl ProgramOrigins<'_, '_> {
         })
     }
 
-    pub(super) fn apply_effects(&self, mut diagnostics: Vec<Diagnostic>) -> Vec<BuildDiagnostic> {
+    pub(super) fn apply_effects(&self, diagnostics: Vec<Diagnostic>) -> Vec<BuildDiagnostic> {
+        self.apply_effects_to_check(diagnostics, false)
+    }
+
+    /// With `keeps_dependency_errors`, a type error in the source of a dependency is returned with `Effect::WithdrawsTrust`.
+    /// It passes the filters that an error in the program's own files passes. Nothing is demoted for it.
+    pub(super) fn apply_effects_to_check(
+        &self,
+        mut diagnostics: Vec<Diagnostic>,
+        keeps_dependency_errors: bool,
+    ) -> Vec<BuildDiagnostic> {
         let _reading = ReadingNoTrees::begin();
         crate::sort_and_deduplicate(&mut diagnostics);
         let with_effects = diagnostics.into_iter().filter_map(|mut diagnostic| {
+            if self.is_in_known_evaluation(&diagnostic) {
+                return None;
+            }
             let origin = self.origin_of(&diagnostic);
             if diagnostic.class == DiagnosticClass::EarlyError {
                 diagnostic.category = Category::Error;
@@ -351,7 +391,16 @@ impl ProgramOrigins<'_, '_> {
             let is_for_lack_of_bun_types = self.is_for_lack_of_bun_types(origin, &diagnostic);
             let names_missing_type_library = !matches!(self.bun_types, BunTypes::Installed)
                 && diagnostic.code == UNKNOWN_TYPE_LIBRARY_CODE;
-            let effect = match effect_of(origin, diagnostic.class, diagnostic.category) {
+            let effect_by_origin = effect_of(origin, diagnostic.class, diagnostic.category);
+            let is_kept_for_dependency = keeps_dependency_errors
+                && origin == FileOrigin::DependencySource
+                && effect_by_origin == Effect::WithdrawsTrust
+                && diagnostic.file.is_some();
+            let effect = match if is_kept_for_dependency {
+                Effect::StopsBuild
+            } else {
+                effect_by_origin
+            } {
                 Effect::Dropped => return None,
                 Effect::StopsBuild | Effect::Warns if self.is_in_jsdoc_comment(&diagnostic) => {
                     return None;
@@ -366,6 +415,7 @@ impl ProgramOrigins<'_, '_> {
                 {
                     return None;
                 }
+                // The checker gave up, but the program has no error: the body keeps its declared types.
                 Effect::StopsBuild | Effect::Warns
                     if diagnostic.code == BODY_TOO_LARGE_FOR_FLOW_ANALYSIS_CODE =>
                 {
@@ -407,6 +457,10 @@ impl ProgramOrigins<'_, '_> {
                 | Effect::Warns
                 | Effect::WithdrawsTrust
                 | Effect::InternalError) => effect,
+            };
+            let effect = match is_kept_for_dependency {
+                true => Effect::WithdrawsTrust,
+                false => effect,
             };
             Some(BuildDiagnostic { diagnostic, effect })
         });

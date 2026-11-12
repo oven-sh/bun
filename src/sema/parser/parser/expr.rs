@@ -2454,7 +2454,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn new_target(&mut self, start: u32) -> ExprId {
         // `checkGrammarMetaProperty`
-        if self.lx.text() != b"target" && !self.lx.has_escape {
+        if self.lx.text() != b"target" {
             let at = (self.lx.start, self.lx.end);
             let args = [self.lx.text(), b"new", b"target"];
             self.flag_early_error(17012, at, &args);

@@ -2,7 +2,7 @@
 // and the name that holds what `require` answered holds that object.
 // RUN(AGAIN): link
 // AGAIN: layout [[exports]] module=[[ledger]] fields=[{key="early"{{*}}{key="late"
-// AGAIN: module [[ledger]] path="{{*}}/ledger.cjs"{{*}}RunsAgain]{{*}}exportsVariable=[[whole]]
+// AGAIN: module [[ledger]] path="{{*}}/ledger.cjs"{{*}}MayBeReevaluated]{{*}}exportsVariable=[[whole]]
 // AGAIN: = NewObject layout=[[exports]]
 // AGAIN: PutModuleVariable {{*}}variable=[[whole]]
 // AGAIN: PropSet {{*}}key="early"

@@ -1,0 +1,5 @@
+// What one member's front has asked of values from in front of the loop must not be believed for what comes from the end of the chain.
+const key: string = JSON.parse('"go"');
+const T: Record<string, (c: any, start: number, limit: number) => string> = { go(c: any, start: number, limit: number): string { let s = 0, kept = 0, under = 0; for (let i = start; i < limit; i++) { if (start >= 0) kept++; if (limit <= c.length) under++; s = s * 2 + c[i]; } return s + " " + kept + " " + under; } };
+const given: any[] = [JSON.parse("[1,2,3,4]"), JSON.parse("[0.5,1.5]"), new Uint8Array([1, 2, 3]), Buffer.from([4, 5, 6]), "abcd", { length: 3, 0: 1, 1: 2, 2: 3, "-1": 9 }, new Float64Array([0.5, 1.5, 2.5]), new Int8Array([1, 2]), [], ["a", "b", "c"], new Proxy([1, 2, 3], {})];
+for (const c of given) for (const [start, limit] of [[0, 2], [-1, 2], [1, 5], [-2, -1], [0, 0], [2, 9]]) for (let turn = 0; turn < 2; turn++) { let said: string; try { said = T[key]!(c, start!, limit!); } catch (e) { said = (e as Error).name; } console.log(said); }

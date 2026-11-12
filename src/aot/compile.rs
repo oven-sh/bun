@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod barrel_tests;
 mod bind_stage;
+mod guessed_workers;
 #[cfg(test)]
 mod imported_constant_tests;
 #[cfg(test)]
@@ -51,7 +52,7 @@ use crate::link::{Leftovers, LinkedFunctions, run_beside, run_one_after_the_othe
 use crate::load::contents::ProgramContents;
 use crate::load::contents::entry_points::{join_below_root, name_from_working_directory};
 use crate::load::contents::worker_entries::{find_file_named_as_in_executable, source_path_of};
-use crate::load::source_provider::SourceProvider;
+use crate::load::source_provider::{PathsOfProgram, SourceProvider};
 use crate::load::{PerProject, ProjectId, Sources, host_platform};
 use crate::module_keys::is_name_of_text;
 use crate::module_list::ModuleList;
@@ -63,7 +64,7 @@ use crate::statistics::{
     log_time_outside_stages,
 };
 use bun_ast::Log;
-use bun_options_types::aot_options::TargetPlatform;
+use bun_options_types::aot_options::{ExplainSet, TargetPlatform};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::BuiltinTypeSymbols;
 use bun_sema::program::FileId;
@@ -118,9 +119,12 @@ pub(crate) struct StartedWorkers {
     pub program_files: Vec<EntryPointPaths>,
     pub code: CodeOfWorkers,
     pub names: Vec<EntryPointPaths>,
+    pub followed_at: Vec<(Vec<u8>, u32)>,
     pub named_at: Vec<(Vec<u8>, u32)>,
     pub names_followed: Vec<FollowedName>,
     pub names_plugin: bool,
+    /// What a warning says of names that lead out of the root directory.
+    pub names_left_out: Vec<u8>,
 }
 
 pub struct BuildFailed {
@@ -158,6 +162,13 @@ pub(crate) struct Build<'a> {
     unreached_runtime_files: Vec<FileId>,
     circular_runtime_files: Vec<(FileId, u32)>,
     written_function_names: Vec<u8>,
+    /// Found while the host of the load is there. Said once it is known which code is left out.
+    resolves_that_miss: Vec<Diagnostic>,
+    missing_node_workers: Vec<Diagnostic>,
+    /// The files that are compiled only because a Worker may start from one of them. Sorted.
+    files_of_guesses: Vec<FileId>,
+    /// Those of them that failed to load, and what failed. Sorted.
+    refused_guessed_files: Vec<(FileId, Vec<u8>)>,
     pub(crate) started_workers: StartedWorkers,
     pub(crate) stays_in_compiled_files: bool,
     keeps_library_code_without_names: bool,
@@ -181,6 +192,7 @@ pub(crate) struct LoadedBuild<'b, 's> {
     pub loads_code_by_unknown_names_alone: bool,
     pub keeps_library_code_without_names: bool,
     pub holds_what_unseen_code_finds: bool,
+    pub holds_it_for_uses_of_files_alone: bool,
     pub finish_asset_reads: &'b dyn Fn(),
     pub known_library_regions: &'b dyn Fn() -> Option<KnownRegions>,
 }
@@ -197,10 +209,10 @@ pub(crate) struct BoundBuild {
     pub projects: PerProject<BoundProject>,
 }
 
-fn put_function_texts_into(program: &mut Program, texts: &SourceTexts) {
+fn fill_function_sources(program: &mut Program, texts: &SourceTexts) {
     for (index, module) in program.modules.iter_mut().enumerate() {
         if let Some(source) = texts.get(ModuleId::new(index)) {
-            module.function_text = source.function_text();
+            module.function_source = source.function_source();
         }
     }
 }
@@ -239,13 +251,12 @@ impl FrontEndOutput {
         statistics: Statistics,
         engine: Option<&EngineResult>,
     ) -> (Program, ProgramSummary) {
-        let bytes_by_module = engine.map_or(&[][..], EngineResult::bytes_by_module);
         let summary = ProgramSummary {
             entry_points: self.entry_points,
             folders: self.folders,
             texts: self.texts,
             statistics,
-            modules: self.modules.map(|modules| modules.finish(bytes_by_module)),
+            modules: self.modules.map(|modules| modules.finish(engine)),
         };
         (self.program, summary)
     }
@@ -283,6 +294,14 @@ pub fn link_program(
     Ok(LinkedProgram { program, summary })
 }
 
+fn is_witness_among(witness: &Witness, places: &[(Vec<u8>, u32)], texts: &SourceTexts) -> bool {
+    position_of(witness.location).is_some_and(|position| {
+        let path = texts.path(position.module);
+        let mut places = places.iter();
+        places.any(|place| place.0 == path && place.1 == position.offset)
+    })
+}
+
 fn starts_workers_out_of_sight(engine: &EngineResult) -> bool {
     let mut causes = engine.unseen_code().iter().map(|record| record.cause);
     causes.any(|cause| {
@@ -298,12 +317,12 @@ fn collect_paths_of_modules_without_bodies(program: &Program) -> Vec<(usize, Vec
         .collect()
 }
 
-fn describe_library_modules_lacked(
+fn describe_missing_library_modules(
     engine: &EngineResult,
     paths_of_modules_without_bodies: &[(usize, Vec<u8>)],
 ) -> Option<String> {
     let mut names: Vec<String> = Vec::new();
-    for record in engine.library_modules_lacked() {
+    for record in engine.missing_library_modules() {
         let module = record.module_id().index();
         let found = paths_of_modules_without_bodies.binary_search_by_key(&module, |entry| entry.0);
         names.push(match found {
@@ -315,7 +334,7 @@ fn describe_library_modules_lacked(
         return None;
     }
     Some(format!(
-        "the program evaluates modules of Bun's library that the load has left out: {}",
+        "the program evaluates built-in modules that the load stage removed: {}",
         names.join(", ")
     ))
 }
@@ -366,6 +385,7 @@ pub fn compile(
         identity: options.executable_identity,
         image_form: options.image_form,
         thread_count: options.thread_count(),
+        lists_inlined_strings: options.lists_modules,
     };
     let mut engine_options = match EngineOptions::new(&request) {
         Ok(engine_options) => engine_options,
@@ -398,6 +418,9 @@ pub fn compile(
         engine_options.refuse_code_outside_image();
     }
     engine_options.limit_threads(build.threads_of_engine(&bytes));
+    if let Err(stage) = build.write_program_file(&bytes, &engine_options) {
+        return Err(build.finish::<()>(Err(stage), log).unwrap_err());
+    }
     let engine = build.run_engine(bytes, &engine_options, &output);
     build.finish_started_workers(&engine, &output);
     let has_errors = build.diagnostics.has_errors();
@@ -405,6 +428,7 @@ pub fn compile(
     #[cfg(not(test))]
     let started_workers = core::mem::take(&mut build.started_workers);
     build.clock.add_to(&mut build.statistics);
+    build.diagnostics.has_run_to_end = !has_errors;
     build.diagnostics.write_to(log);
     let statistics = build.statistics;
     #[cfg(not(test))]
@@ -477,6 +501,10 @@ impl<'a> Build<'a> {
             unreached_runtime_files: Vec::new(),
             circular_runtime_files: Vec::new(),
             written_function_names: Vec::new(),
+            resolves_that_miss: Vec::new(),
+            missing_node_workers: Vec::new(),
+            files_of_guesses: Vec::new(),
+            refused_guessed_files: Vec::new(),
             started_workers: StartedWorkers::default(),
             stays_in_compiled_files: false,
             keeps_library_code_without_names: false,
@@ -523,7 +551,8 @@ impl<'a> Build<'a> {
         if named.any(|function| function.index() >= function_count) {
             self.diagnostics.add_internal_error(InternalError {
                 stage: Stage::LinkAndEmit,
-                message: b"the program names a function that the link has not handed over".to_vec(),
+                message: b"the program refers to a function that the link stage did not pass on"
+                    .to_vec(),
             });
             return Err(Stage::LinkAndEmit);
         }
@@ -544,7 +573,7 @@ impl<'a> Build<'a> {
             },
             || match writes_program_file {
                 true => {
-                    put_function_texts_into(&mut program, texts);
+                    fill_function_sources(&mut program, texts);
                     let functions = functions.into_program_functions(&in_parallel);
                     let functions = LinkedFunctions::of_program_functions(functions);
                     emit_with_bodies_in_bytes(&mut program, functions, &in_parallel)
@@ -560,11 +589,7 @@ impl<'a> Build<'a> {
         drop_thread_caches(self.caches);
         steps.end("what the threads drop behind emit");
         match emitted {
-            Ok(bytes) => {
-                self.write_program_file(&bytes)?;
-                steps.end("write the program to a file, if asked");
-                Ok((bytes, output))
-            }
+            Ok(bytes) => Ok((bytes, output)),
             Err(error) => {
                 self.diagnostics.add_emit_error(error);
                 Err(Stage::LinkAndEmit)
@@ -572,12 +597,20 @@ impl<'a> Build<'a> {
         }
     }
 
-    fn write_program_file(&mut self, bytes: &ProgramBytes) -> Result<(), Stage> {
+    /// The program, and behind it the options that the engine is about to get with it.
+    fn write_program_file(
+        &mut self,
+        bytes: &ProgramBytes,
+        options: &EngineOptions,
+    ) -> Result<(), Stage> {
         let Some(path) = self.options.aot.ir_output_path.as_deref() else {
             return Ok(());
         };
-        let file = File::create(Fd::cwd(), path, true);
-        let Err(error) = file.and_then(|file| file.write_all(bytes.as_slice())) else {
+        let written = File::create(Fd::cwd(), path, true).and_then(|file| {
+            file.write_all(bytes.as_slice())?;
+            file.write_all(&options.record_bytes())
+        });
+        let Err(error) = written else {
             return Ok(());
         };
         let reason = error.to_string();
@@ -611,9 +644,18 @@ impl<'a> Build<'a> {
         let leftovers = core::mem::take(&mut self.leftovers);
         let beside = self.beside_runner();
         let clock = &mut self.clock;
+        let provider = self.provider;
+        let paths = PathsOfProgram {
+            entry_points: &output.entry_points,
+            folders: &output.folders,
+            program_files: &self.started_workers.program_files,
+        };
         let ((), (engine, time_in_engine)) = run_beside(
             &beside,
-            move || drop(leftovers),
+            move || {
+                drop(leftovers);
+                provider.work_beside_engine(&paths);
+            },
             || {
                 clock.stop();
                 let entered = Instant::now();
@@ -632,10 +674,14 @@ impl<'a> Build<'a> {
         );
         crate::test_run_report::say_code_that_build_does_not_see(&engine);
         self.statistics.add_values(engine.statistics());
-        self.diagnostics
-            .add_engine_records(&engine, &output.texts, self.options.aot.runs_tests);
-        self.report_library_functions_lacked(&engine);
-        self.report_library_modules_lacked(&engine);
+        self.diagnostics.add_engine_records(
+            &engine,
+            &output.texts,
+            self.options.aot.runs_tests,
+            self.options.aot.explain.contains(ExplainSet::TEXT),
+        );
+        self.report_missing_library_functions(&engine);
+        self.report_missing_library_modules(&engine);
         if engine_options.makes_image()
             && engine.image().is_none()
             && !self.diagnostics.has_errors()
@@ -648,13 +694,13 @@ impl<'a> Build<'a> {
         engine
     }
 
-    fn report_library_functions_lacked(&mut self, engine: &EngineResult) {
+    fn report_missing_library_functions(&mut self, engine: &EngineResult) {
         if self.options.load.omits_builtin_modules {
             return;
         }
         let platform = self.platform;
         let holds_named_functions_of_host_alone = self.keeps_library_code_without_names;
-        let lacked = engine.library_functions_lacked().iter();
+        let lacked = engine.missing_library_functions().iter();
         let lacked = lacked.map(|record| RuntimeFunction(record.function));
         let names: Vec<String> = lacked
             .filter_map(|function| match table::runtime_function(function) {
@@ -673,7 +719,7 @@ impl<'a> Build<'a> {
             return;
         }
         let message = format!(
-            "the program enters functions of Bun's library that the load has left out: {}",
+            "the program calls built-in functions that the load stage removed: {}",
             names.join(", ")
         );
         self.diagnostics.add_internal_error(InternalError {
@@ -682,12 +728,12 @@ impl<'a> Build<'a> {
         });
     }
 
-    fn report_library_modules_lacked(&mut self, engine: &EngineResult) {
+    fn report_missing_library_modules(&mut self, engine: &EngineResult) {
         if self.options.load.omits_builtin_modules {
             return;
         }
         let paths = &self.paths_of_modules_without_bodies;
-        let Some(message) = describe_library_modules_lacked(engine, paths) else {
+        let Some(message) = describe_missing_library_modules(engine, paths) else {
             return;
         };
         self.diagnostics.add_internal_error(InternalError {
@@ -697,15 +743,16 @@ impl<'a> Build<'a> {
     }
 
     fn is_start_followed_by_load(&self, witness: &Witness, texts: &SourceTexts) -> bool {
-        let Some(position) = position_of(witness.location) else {
-            return false;
-        };
-        if texts.origin(position.module) == ModuleOrigin::Runtime {
-            return true;
-        }
-        let path = texts.path(position.module);
-        let mut named_at = self.started_workers.named_at.iter();
-        named_at.any(|place| place.0 == path && place.1 == position.offset)
+        position_of(witness.location).is_some_and(|position| {
+            texts.origin(position.module) == ModuleOrigin::Runtime
+                || is_witness_among(witness, &self.started_workers.followed_at, texts)
+        })
+    }
+
+    /// A URL that the build doesn't know may name a file on disk.
+    fn may_start_from_disk(&self, witness: &Witness, texts: &SourceTexts) -> bool {
+        self.options.aot.loads_code_from_disk
+            && !is_witness_among(witness, &self.started_workers.named_at, texts)
     }
 
     fn finish_started_workers(&mut self, engine: &EngineResult, output: &FrontEndOutput) {
@@ -721,11 +768,25 @@ impl<'a> Build<'a> {
                 continue;
             }
             self.started_workers.code = CodeOfWorkers::Unseen;
-            self.diagnostics
-                .add_worker_start_without_name(&record.witness, &output.texts);
+            self.diagnostics.add_worker_start_without_name(
+                &record.witness,
+                &self.started_workers.names_left_out,
+                &output.texts,
+            );
         }
         if options.aot.checks_only {
             return;
+        }
+        for record in engine.worker_starts_from_urls() {
+            let is_followed = self.is_start_followed_by_load(&record.witness, &output.texts);
+            if !is_followed && !self.may_start_from_disk(&record.witness, &output.texts) {
+                self.started_workers.code = CodeOfWorkers::Unseen;
+                self.diagnostics.add_worker_start_without_name(
+                    &record.witness,
+                    &self.started_workers.names_left_out,
+                    &output.texts,
+                );
+            }
         }
         for record in engine.worker_entries() {
             let name = engine.text(record.path);

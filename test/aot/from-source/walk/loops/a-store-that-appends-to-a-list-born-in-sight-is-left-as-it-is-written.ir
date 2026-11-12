@@ -1,0 +1,20 @@
+# -- source: main.cjs
+# "use strict";
+# function rows(row, turns) {
+#   for (let i = 1; i <= turns; i++) {
+#     const next = [i];
+#     for (let j = 1; j < row.length; j++) { let m = row[j] + 1; const q = next[j - 1] + 1; if (q < m) m = q; next[j] = m; }
+#     row = next;
+#   }
+#   return row;
+# }
+# const byName = { rows }, key = JSON.parse('"rows"');
+# print(byName[key]([0, 1, 2, 3, 4], 2).join(), byName[key]([0, 5.5, 7.5], 1).join(), byName[key]([0, "a", 2], 1).join());
+# -- end of source
+# `next` is born in sight with one element and the counter begins at one: every store of the inner loop lies behind the length that the list has in front of the loop: it appends. The raw store of the copy for lists of numbers asks
+# for a place below that length: it failed at the first turn, each time the loop was entered, behind a front that had asked the list for its kind and had turned its storage into storage for doubles. Such a store is left as it is written.
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-NOT: ConvertToDoubleStorage
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 2,3,4,5,6 1,2,3 1,a1,3
+# RIGHT-NEXT: exited with 0

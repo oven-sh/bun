@@ -1,0 +1,14 @@
+# -- source: main.ts
+# declare const sink: any;
+# const table: number[] = []; for (let i = 0; i < 256; i++) table.push(Math.imul(i, 0x9e3779b1) >>> 0);
+# const small: number[] = []; for (let i = 0; i < 256; i++) small.push(i & 7);
+# function crc(a: number, b: number): number { let c = table[(a ^ b) & 255]! ^ (a >>> 8); return c; }
+# function low(a: number): number { return small[a & 255]! ^ 1; }
+# declare const numbers: number[];
+# sink(crc(numbers[0]!, numbers[1]!), low(numbers[2]!));
+# -- end of source
+# A list that holds an integer beyond int32 holds doubles: outside loops its element is read as one for a bit operator.
+# RUN(WIDE): walk f1 mechanisms=all
+# WIDE: @OptionalDouble = GetArrayElement
+# RUN(NARROW): walk f2 mechanisms=all
+# NARROW-NOT: @OptionalDouble = GetArrayElement

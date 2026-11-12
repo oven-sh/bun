@@ -40,9 +40,9 @@ pub enum ExecutableFormat {
 }
 
 impl ExecutableFormat {
-    pub(crate) const MAGIC_SIZE: usize = 4;
+    pub const MAGIC_SIZE: usize = 4;
 
-    pub(crate) fn from_magic(magic: &[u8]) -> Option<ExecutableFormat> {
+    pub fn from_magic(magic: &[u8]) -> Option<ExecutableFormat> {
         if magic.starts_with(b"\x7fELF") {
             Some(ExecutableFormat::Elf)
         } else if magic.starts_with(&MH_MAGIC_64.to_le_bytes()) {

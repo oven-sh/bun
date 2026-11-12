@@ -11,10 +11,22 @@ use crate::ir::{
     ValueId,
 };
 use crate::lower::captures;
+use crate::lower::class::Birth;
 use crate::lower::control::ControlState;
 use crate::lower::convert;
 use crate::lower::generator::CoroutineState;
+use crate::lower::object::ListsInside;
 use crate::lower::scope::ScopeState;
+use crate::lower::self_tail_calls::SelfTailLoop;
+
+/// The `require` of a site that a call of createRequire made. It requires the module, not the module object of the file.
+#[derive(Clone, Copy)]
+pub(in crate::lower) enum CreatedRequire {
+    Variable(bun_sema::hir::ExprId),
+    /// The callee makes it. `Value` as soon as the callee is evaluated.
+    Callee,
+    Value(ValueId),
+}
 
 pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(crate) file: &'f mut FileLowering<'a, 'c, 'p, 's>,
@@ -28,8 +40,20 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(in crate::lower) callees_read_on_answers: FxHashMap<ValueId, ValueId>,
     pub(in crate::lower) is_call_in_tail_position: bool,
     pub(in crate::lower) object_created_for_maker: Option<bun_sema::hir::ExprId>,
+    pub(in crate::lower) names_that_maker_stores_under: Vec<bun_sema::atom::Atom>,
+    pub(in crate::lower) only_argument_of_construction: Option<bun_sema::hir::ExprId>,
+    pub(in crate::lower) lists_inside_literals:
+        std::cell::RefCell<FxHashMap<bun_sema::hir::ExprId, ListsInside>>,
+    pub(in crate::lower) birth: Option<Birth>,
+    pub(in crate::lower) statements_lowered_at_super_call:
+        smallvec::SmallVec<[bun_sema::hir::StmtId; 8]>,
     pub(in crate::lower) counted_expression: Option<u32>,
     pub(in crate::lower) does_file_name_library_modules: Option<bool>,
+    pub(in crate::lower) created_require_of_site: Option<CreatedRequire>,
+    pub(in crate::lower) destructured_position: Option<u32>,
+    pub(in crate::lower) step_before_test: Option<bun_sema::hir::ExprId>,
+    pub(in crate::lower) self_tail_loop: Option<SelfTailLoop>,
+    pub(in crate::lower) suspending_arm: Option<super::super::statement::SuspendingArm>,
     handler: Option<Handler>,
     position: u32,
     nesting_depth: u32,
@@ -58,15 +82,24 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
             callees_read_on_answers: FxHashMap::default(),
             is_call_in_tail_position: false,
             object_created_for_maker: None,
+            names_that_maker_stores_under: Vec::new(),
+            only_argument_of_construction: None,
+            lists_inside_literals: Default::default(),
+            birth: None,
+            statements_lowered_at_super_call: smallvec::SmallVec::new(),
             counted_expression: None,
             does_file_name_library_modules: None,
+            created_require_of_site: None,
+            destructured_position: None,
+            step_before_test: None,
+            self_tail_loop: None,
+            suspending_arm: None,
             handler: None,
             position,
             nesting_depth: 0,
             has_reported_nesting: false,
         };
         lowering.builder.set_position(Some(position));
-        lowering.continue_in_new_block();
         captures::unpack_captures(&mut lowering);
         lowering
     }

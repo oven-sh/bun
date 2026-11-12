@@ -135,6 +135,10 @@ const WRITTEN_IN_PLACE_OF: &[(BuiltinId, &[BuiltinId])] = &[
             BuiltinId::CompilerHelpersArrayFromList,
         ],
     ),
+    (
+        BuiltinId::NodeModuleCreateRequire,
+        &[BuiltinId::PrivateGlobalsCreateCommonJSModule],
+    ),
 ];
 
 const DECORATOR_HELPERS: &[BuiltinId] = &[
@@ -153,6 +157,7 @@ const DECORATOR_HELPERS: &[BuiltinId] = &[
     BuiltinId::CompilerHelpersDecorateParameter,
     BuiltinId::CompilerHelpersDecorateProperty,
     BuiltinId::CompilerHelpersDefineMetadata,
+    BuiltinId::CompilerHelpersKeepInitializerLists,
     BuiltinId::CompilerHelpersRunInitializers,
     BuiltinId::CompilerHelpersRunValueInitializers,
     BuiltinId::CompilerHelpersSetDecoratorMetadata,
@@ -723,8 +728,16 @@ pub fn reaches_unknown_module_loader(
             ends.any(reaches_loader)
         })
     };
+    let holds_module_objects = |&id: &BuiltinId| {
+        let id = table::canonical_id(id);
+        matches!(
+            id,
+            BuiltinId::ModuleObjectParent | BuiltinId::ModuleObjectChildren
+        )
+    };
     loaded.iter().chain(called).any(is_loader)
         || called.iter().any(class_reaches_loader)
+        || called.iter().any(holds_module_objects)
         || exposed.iter().any(|&id| reaches_loader(id))
 }
 

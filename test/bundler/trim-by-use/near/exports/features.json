@@ -1,1 +1,1 @@
-{ "features": ["NativeAddons", "Ffi", "Sqlite"], "keptToday": ["NativeAddons", "Ffi", "Sqlite"] }
+{ "features": ["NativeAddons", "Ffi", "Sqlite"] }

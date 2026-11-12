@@ -17,11 +17,10 @@ mod written_members;
 
 pub use self::imports::find_module_export;
 pub use self::module_cache::{KeyOfModuleCache, is_module_cache, is_table_of_loaders};
-pub use self::module_values::{
-    commonjs_variable_builtin, reads_what_wrapper_hands_in, redeclares_what_wrapper_hands_in,
-};
+pub use self::module_values::commonjs_variable_builtin;
 pub use self::resolver::FileFacts;
 pub use self::runtime_dialect::set_natives;
+pub use self::unnamed_uses::can_lay_key_that_native_code_asks_of_process;
 use super::names::BuiltinNames;
 use super::runtime_uses::RuntimeUses;
 use super::table::{
@@ -29,9 +28,10 @@ use super::table::{
 };
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{Binding, Bound, CommonJsVariable, SymbolId};
-use bun_sema::fold::Decisions;
-use bun_sema::hir::{self, Chain, ExprId, ExprKind, MemberKey, NodeData};
+use bun_sema::fold::{Constant, Decisions};
+use bun_sema::hir::{self, Chain, ExprId, ExprKind, Keyword, MemberKey, NodeData, TypeNodeKind};
 use bun_sema::import_sites::ImportSiteKind;
+pub use bun_sema::import_sites::{reads_what_wrapper_hands_in, redeclares_what_wrapper_hands_in};
 use bun_sema::module_format::ModuleFormat;
 use core::ops::Range;
 use smallvec::SmallVec;
@@ -109,8 +109,8 @@ pub enum ModuleObjectUse {
     Parent,
     Children,
     Object,
-    HandedOn,
-    HolderHandedOn,
+    Escaped,
+    HolderEscaped,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -164,6 +164,52 @@ pub const LOADED_BY_WORKER: &[u8] = b"%loaded-by-worker";
 pub const GLOBALS_LEFT_ALONE: &[u8] = b"%globals-left-alone";
 pub const BUN_OF_TEST_FILE: &[u8] = b"%bun";
 
+fn keyword_accepts(keyword: Keyword, constant: Constant) -> bool {
+    match (keyword, constant) {
+        (Keyword::Any | Keyword::Unknown, _)
+        | (_, Constant::Undefined | Constant::Null)
+        | (Keyword::String, Constant::String(_))
+        | (Keyword::Number, Constant::Number(_))
+        | (Keyword::Boolean, Constant::Boolean(_))
+        | (Keyword::BigInt, Constant::BigInt(_)) => true,
+        (
+            Keyword::Never
+            | Keyword::Void
+            | Keyword::Undefined
+            | Keyword::Null
+            | Keyword::String
+            | Keyword::Number
+            | Keyword::Boolean
+            | Keyword::BigInt
+            | Keyword::Symbol
+            | Keyword::Object
+            | Keyword::This
+            | Keyword::Intrinsic,
+            _,
+        ) => false,
+    }
+}
+
+pub fn passes_every_assertion(
+    hir: &hir::File<'_>,
+    expression: ExprId,
+    constant: Option<Constant>,
+) -> bool {
+    let mut current = expression;
+    while let Some(operand) = hir.type_assertion_operand(current) {
+        if let ExprKind::As { ty, .. } = hir[current].kind {
+            let TypeNodeKind::Keyword(keyword) = hir[ty].kind else {
+                return false;
+            };
+            if constant.is_some_and(|constant| !keyword_accepts(keyword, constant)) {
+                return false;
+            }
+        }
+        current = operand;
+    }
+    true
+}
+
 pub struct ResolveInput<'a, 's> {
     pub hir: &'a hir::File<'s>,
     pub bound: &'a Bound<'s>,
@@ -211,10 +257,25 @@ impl CommonJsBuiltins {
     }
 }
 
-struct WhereHooksOfInstanceofExist {
+struct WhereMoreIsHandedOn {
     uses: RuntimeUses,
     loads_unknown_modules: bool,
     hands_on_loader_of_paths: bool,
+}
+
+struct ExposedReceivers {
+    held: WhereMoreIsHandedOn,
+    replaced_members: Box<[BuiltinId]>,
+    opened_holders: Box<[BuiltinId]>,
+    stores_loader_functions: bool,
+}
+
+struct WhereTestsLayNamesAbove {
+    names_asked_for: Box<[(BuiltinId, Atom)]>,
+    held: WhereMoreIsHandedOn,
+    replaced_members: Box<[BuiltinId]>,
+    opened_holders: Box<[BuiltinId]>,
+    stores_loader_functions: bool,
 }
 
 #[derive(Default)]
@@ -223,10 +284,12 @@ pub struct ResolvedBuiltins {
     expr_bits: Box<[u64]>,
     exprs_with_side_effects: Box<[ExprId]>,
     symbols: Box<[(SymbolId, BuiltinPath)]>,
+    names_in_patterns: Box<[(SymbolId, BuiltinPath)]>,
     commonjs: CommonJsBuiltins,
     evaluated_texts: Box<[EvaluatedText]>,
     module_object_mentions: Box<[ModuleObjectMention]>,
     may_store_path_of_main_module: bool,
+    exposes_global_object: bool,
     stores_with_module_exports: Box<[ExprId]>,
     replaced_members: Box<[BuiltinId]>,
     opened_holders: Box<[BuiltinId]>,
@@ -247,10 +310,20 @@ pub struct ResolvedBuiltins {
     uses: RuntimeUses,
     loads_unknown_modules: bool,
     hands_on_loader_of_paths: bool,
-    where_hooks_of_instanceof_exist: Option<Box<WhereHooksOfInstanceofExist>>,
+    where_hooks_of_instanceof_exist: Option<Box<WhereMoreIsHandedOn>>,
     hooks_of_instanceof_may_exist: OnceLock<()>,
+    where_tests_lay_names_above: Option<Box<WhereTestsLayNamesAbove>>,
+    tests_lay_names_above: OnceLock<()>,
+    imported_replacements: Box<[(BuiltinId, ExprId)]>,
+    exposed_receivers: Option<Box<ExposedReceivers>>,
+    are_receivers_exposed: OnceLock<()>,
     can_come_by_hook_of_instanceof: bool,
     keys_taken_out_of_module_cache: Box<[KeyOfModuleCache]>,
+    entries_deleted_from_module_cache: Box<[ExprId]>,
+    entries_stored_in_module_cache: Box<[ExprId]>,
+    places_that_hand_module_cache_on: Box<[ExprId]>,
+    passed_module_caches: Box<[ExprId]>,
+    keys_of_entries_handed_on: Box<[KeyOfModuleCache]>,
     loses_sight_of_module_cache: bool,
     hands_module_cache_on: bool,
     names_plugin: bool,
@@ -278,8 +351,8 @@ impl ResolvedBuiltins {
             Resolved::Builtin(path) | Resolved::DynamicGlobal(path) => Some(path),
             Resolved::Intrinsic(_) => None,
         });
-        let of_symbols = self.symbols.iter().map(|entry| entry.1);
-        for path in of_exprs.chain(of_symbols) {
+        let of_symbols = self.symbols.iter().chain(&self.names_in_patterns);
+        for path in of_exprs.chain(of_symbols.map(|entry| entry.1)) {
             if let Some(builtin) = self.apply_unlocked_list(path).locked_builtin() {
                 take(builtin);
             }
@@ -374,6 +447,12 @@ impl ResolvedBuiltins {
             .map(|at| self.apply_unlocked_list(self.symbols[at].1))
     }
 
+    pub fn of_name_in_pattern(&self, symbol: SymbolId) -> Option<BuiltinPath> {
+        let names = &self.names_in_patterns;
+        let at = names.binary_search_by_key(&symbol, |entry| entry.0);
+        at.ok().map(|at| self.apply_unlocked_list(names[at].1))
+    }
+
     pub fn commonjs_variable(&self, variable: CommonJsVariable) -> Option<BuiltinPath> {
         let path = self.commonjs.get(variable)?;
         Some(self.apply_unlocked_list(path))
@@ -461,6 +540,10 @@ impl ResolvedBuiltins {
         &self.mentioned
     }
 
+    pub fn exposes_global_object(&self) -> bool {
+        self.exposes_global_object
+    }
+
     pub fn mentions_evaluator(&self) -> bool {
         let evaluators =
             table::BuiltinFlags::EVALUATES_TEXT | table::BuiltinFlags::RUNS_UNSEEN_CODE;
@@ -482,7 +565,16 @@ impl ResolvedBuiltins {
         &self.exposed
     }
 
-    fn find_what_holds_where_hooks_exist(&self) -> Option<&WhereHooksOfInstanceofExist> {
+    fn find_what_holds_where_more_is_handed_on(&self) -> Option<&WhereMoreIsHandedOn> {
+        if self.are_receivers_exposed.get().is_some() {
+            return self.exposed_receivers.as_deref().map(|it| &it.held);
+        }
+        if self.tests_lay_names_above.get().is_some() {
+            return self
+                .where_tests_lay_names_above
+                .as_deref()
+                .map(|it| &it.held);
+        }
         self.hooks_of_instanceof_may_exist.get()?;
         self.where_hooks_of_instanceof_exist.as_deref()
     }
@@ -499,8 +591,57 @@ impl ResolvedBuiltins {
         self.hooks_of_instanceof_may_exist.get_or_init(|| ());
     }
 
+    pub fn names_asked_for_that_are_not_listed(&self) -> &[(BuiltinId, Atom)] {
+        match &self.where_tests_lay_names_above {
+            Some(found) => &found.names_asked_for,
+            None => &[],
+        }
+    }
+
+    /// Values of other files that replace members of built-in objects, each with the object.
+    pub fn imported_replacements(&self) -> &[(BuiltinId, ExprId)] {
+        &self.imported_replacements
+    }
+
+    /// Called where one of `imported_replacements` reads `this`. Returns what is replaced, opened and stored then.
+    pub fn expose_receivers(&self) -> (&[BuiltinId], &[BuiltinId], bool) {
+        self.are_receivers_exposed.get_or_init(|| ());
+        match &self.exposed_receivers {
+            Some(exposed) => (
+                &exposed.replaced_members,
+                &exposed.opened_holders,
+                exposed.stores_loader_functions,
+            ),
+            None => (&[], &[], false),
+        }
+    }
+
+    pub fn are_receivers_exposed(&self) -> bool {
+        self.are_receivers_exposed.get().is_some()
+    }
+
+    pub fn note_that_tests_lay_names_above(&self) -> (&[BuiltinId], &[BuiltinId], bool) {
+        self.tests_lay_names_above.get_or_init(|| ());
+        match &self.where_tests_lay_names_above {
+            Some(found) => (
+                &found.replaced_members,
+                &found.opened_holders,
+                found.stores_loader_functions,
+            ),
+            None => (&[], &[], false),
+        }
+    }
+
+    pub fn is_told_that_tests_lay_names_above(&self) -> bool {
+        self.tests_lay_names_above.get().is_some()
+    }
+
+    pub fn is_told_that_hooks_of_instanceof_may_exist(&self) -> bool {
+        self.hooks_of_instanceof_may_exist.get().is_some()
+    }
+
     pub fn uses(&self) -> &RuntimeUses {
-        match self.find_what_holds_where_hooks_exist() {
+        match self.find_what_holds_where_more_is_handed_on() {
             Some(held) => &held.uses,
             None => &self.uses,
         }
@@ -511,21 +652,41 @@ impl ResolvedBuiltins {
     }
 
     pub fn loads_unknown_modules(&self) -> bool {
-        match self.find_what_holds_where_hooks_exist() {
+        match self.find_what_holds_where_more_is_handed_on() {
             Some(held) => held.loads_unknown_modules,
             None => self.loads_unknown_modules,
         }
     }
 
     pub fn hands_on_loader_of_paths(&self) -> bool {
-        match self.find_what_holds_where_hooks_exist() {
+        match self.find_what_holds_where_more_is_handed_on() {
             Some(held) => held.hands_on_loader_of_paths,
             None => self.hands_on_loader_of_paths,
         }
     }
 
+    pub fn keys_of_entries_handed_on(&self) -> &[KeyOfModuleCache] {
+        &self.keys_of_entries_handed_on
+    }
+
     pub fn keys_taken_out_of_module_cache(&self) -> &[KeyOfModuleCache] {
         &self.keys_taken_out_of_module_cache
+    }
+
+    pub fn entries_deleted_from_module_cache(&self) -> &[ExprId] {
+        &self.entries_deleted_from_module_cache
+    }
+
+    pub fn entries_stored_in_module_cache(&self) -> &[ExprId] {
+        &self.entries_stored_in_module_cache
+    }
+
+    pub fn places_that_hand_module_cache_on(&self) -> &[ExprId] {
+        &self.places_that_hand_module_cache_on
+    }
+
+    pub fn passes_module_cache(&self, place: ExprId) -> bool {
+        self.passed_module_caches.contains(&place)
     }
 
     pub fn reaches_module_cache(&self) -> bool {

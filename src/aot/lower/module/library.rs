@@ -67,6 +67,7 @@ struct PendingDirectives {
     is_getter: bool,
     form: LibraryFunctionForm,
     is_link_time_constant: bool,
+    is_always_inlined: bool,
 }
 
 #[derive(PartialEq, Eq, Debug)]
@@ -204,6 +205,9 @@ fn adjust_header(
         return;
     };
     header.enclosing_runtime_function = Some(id);
+    if pending.is_always_inlined {
+        header.flags |= FunctionFlags::IS_ALWAYS_INLINED;
+    }
     let is_async = header.flags.contains(FunctionFlags::IS_ASYNC);
     match pending.compute_visibility(is_async) {
         FunctionVisibility::Public => {}
@@ -274,7 +278,7 @@ impl PendingDirectives {
             Directive::Visibility(visibility) => self.visibility = Some(visibility),
             Directive::OverriddenName(name) => self.overridden_name = Some(name),
             Directive::LinkTimeConstant => self.is_link_time_constant = true,
-            Directive::AlwaysInline => {}
+            Directive::AlwaysInline => self.is_always_inlined = true,
             Directive::Getter => self.is_getter = true,
             Directive::Constructor => self.form = LibraryFunctionForm::Constructor,
             Directive::NakedConstructor => self.form = LibraryFunctionForm::NakedConstructor,

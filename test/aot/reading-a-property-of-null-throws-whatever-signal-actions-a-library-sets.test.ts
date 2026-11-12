@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { locksEnvironment } from "./hardened";
 import { afterAll } from "./harness/default-timeout";
 import { callsItself, compiler, readers, sender } from "./harness/reads-of-null";
+import { hasSmallHeap, saysWhereItIs } from "./harness/where-a-child-is";
 import { withoutCoreDump } from "./harness/without-core-dump";
 import { describe, test } from "./supported";
 
@@ -83,6 +84,10 @@ int blocked_signals(void)
     for (int n = 1; n <= 32; n++) if (sigismember(&set, n) == 1) bits |= 1u << (n - 1);
     return (int)bits;
 }
+static volatile int blocked;
+static void note_blocked_signals(int n) { blocked = blocked_signals(); }
+void sigaction_notes_blocked_signals(int n) { struct sigaction a; memset(&a, 0, sizeof a); a.sa_handler = note_blocked_signals; sigaddset(&a.sa_mask, SIGBUS); sigaddset(&a.sa_mask, SIGUSR2); sigaction(n, &a, 0); }
+int blocked_in_handler(void) { return blocked; }
 void raise_it(int n) { raise(n); }
 void read_address_8(int n) { *(volatile int*)8; }
 `;
@@ -105,6 +110,7 @@ const names = [
   "sighold_blocks",
   "sigblock_blocks",
   "sigsetmask_blocks",
+  "sigaction_notes_blocked_signals",
   "raise_it",
   "read_address_8",
 ];
@@ -114,6 +120,7 @@ const library = dlopen(process.argv[2], {
   handler_calls: { args: [], returns: FFIType.i32 },
   action_in_place: { args: [FFIType.i32], returns: FFIType.i32 },
   blocked_signals: { args: [], returns: FFIType.i32 },
+  blocked_in_handler: { args: [], returns: FFIType.i32 },
 ${names.map(name => `  ${name}: { args: [FFIType.i32], returns: FFIType.void },\n`).join("")}}).symbols as unknown as Record<string, (signal?: number) => number>;
 `;
 
@@ -143,6 +150,11 @@ const aLibraryBlocksSignals = `${open}for (const step of ["sighold_blocks", "sig
     library[step](signal);
     console.log(step, signal, (library.blocked_signals() >> (signal - 1)) & 1);
   }
+`;
+
+const aLibraryHearsSigsegv = `${open}library.sigaction_notes_blocked_signals(11);
+library.raise_it(11);
+for (const signal of [7, 11, 12]) console.log(signal, (library.blocked_in_handler() >> (signal - 1)) & 1);
 `;
 
 const libcByName = `import { dlopen, FFIType } from "bun:ffi";
@@ -248,6 +260,7 @@ async function run(cmd: string[], cwd: string, env: Record<string, string> = {})
     stdout: "pipe",
     stderr: "pipe",
   });
+  using _where = hasSmallHeap({ ...bunEnv, ...env }) ? saysWhereItIs(proc.pid, cmd) : undefined;
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode, signalCode: proc.signalCode };
 }
@@ -397,6 +410,20 @@ describe.skipIf(skipped).concurrent("reading a property of null throws a TypeErr
     },
     120_000,
   );
+
+  test.skipIf(!isLinux)("and a library's handler runs with the signals blocked that it was set to block", async () => {
+    using directory = tempDir("aot-a-library-s-handler-blocks-signals", {
+      "main.ts": aLibraryHearsSigsegv,
+      "library.c": library,
+    });
+    const [executable, path] = await Promise.all([
+      build(String(directory), "main.ts"),
+      buildLibrary(String(directory)),
+    ]);
+    const expected = { stdout: "7 1\n11 1\n12 1\n", stderr: "", exitCode: 0, signalCode: null };
+    expect(await run([executable, path], String(directory))).toEqual(expected);
+    expect(await run([bunExe(), "main.ts", path], String(directory))).toEqual(expected);
+  });
 
   test.skipIf(!isLinux)("and a library blocks every other signal, and without --aot these two as well", async () => {
     using directory = tempDir("aot-a-library-blocks-signals", {

@@ -227,18 +227,21 @@ impl Checker<'_, '_> {
             + self.circular_before_parameter_symbol.len()
     }
 
-    /// Runs every check that queries `file`. Diagnostics it causes in other files, or that other files cause in this
-    /// one, go to the sink.
-    pub fn check_file(&mut self, file: FileId) -> Checked {
-        let _work = current_work::working_on(
-            current_work::Step::Check,
-            self.files().module(file).file_name(),
-        );
+    /// Begins a visit for questions about a file that another task checks.
+    pub fn begin_questions(&mut self, file: FileId) {
+        self.begin_visit(file);
+        self.is_type_checked = true;
+    }
+
+    fn begin_visit(&mut self, file: FileId) {
         if let Some(previous) = self.task.file
             && previous != file
             && self.files().module(previous).is_leaf
         {
             self.forget_nodes_of_leaf(previous);
+        }
+        if self.task.file != Some(file) {
+            self.flow_memo.let_kept_walks_go();
         }
         self.task
             .begin_file(file, !self.files().module(file).is_leaf);
@@ -273,10 +276,20 @@ impl Checker<'_, '_> {
         self.release_provisional_shapes();
         self.is_type_checked = false;
         self.reads_types_alone = self.expected == Requested::All && self.files().is_compile_build();
-        let hir = self.hir(file);
-        if hir.ran_out_of_stack {
+        if self.hir(file).ran_out_of_stack {
             self.ran_out_of_stack.set(true);
         }
+    }
+
+    /// Runs every check that queries `file`. Diagnostics it causes in other files, or that other files cause in this
+    /// one, go to the sink.
+    pub fn check_file(&mut self, file: FileId) -> Checked {
+        let _work = current_work::working_on(
+            current_work::Step::Check,
+            self.files().module(file).file_name(),
+        );
+        self.begin_visit(file);
+        let hir = self.hir(file);
         // `GetSyntacticDiagnostics` and `getBindAndCheckDiagnosticsWithChecker` are separate. Only the second depends
         // on whether the file is checked.
         self.report_hir_diagnostics(file, &[DiagnosticKind::Parse, DiagnosticKind::Js]);
@@ -396,9 +409,6 @@ impl Checker<'_, '_> {
         let semantic = semantic.into_iter();
         let mut semantic: Vec<Reported> =
             (semantic.filter_map(|d| self.settled(d, &mut directives))).collect();
-        for diagnostic in &mut semantic {
-            self.lay_subject_by_what_error_stands_at(diagnostic);
-        }
         let mut expected_errors = self.expected_errors(file);
         self.remove_expected_errors_in_dead_code(
             file,
@@ -454,13 +464,17 @@ impl Checker<'_, '_> {
         for d in syntactic.iter_mut().chain(&mut declaration) {
             self.resolve_span_end(d);
         }
+        let never_checked = self.never_checked.take();
+        if self.files.brings_declarations() {
+            self.never_checked_in_last_file.clone_from(&never_checked);
+        }
         Checked {
             syntactic,
             semantic: None,
             declaration,
             include: Vec::new(),
             expected_errors: Vec::new(),
-            never_checked: self.never_checked.take(),
+            never_checked,
             unused_private_members: std::mem::take(&mut self.unused_private_members),
             declaration_file: self.declaration_file.take(),
         }
@@ -474,6 +488,10 @@ impl Checker<'_, '_> {
             return Some(d);
         }
         let hir = self.hir(d.file);
+        // What a string holds is the run's. The tree may be gone before the build sorts what it reports.
+        if hir.is_in_known_evaluation(d.start) {
+            return None;
+        }
         let is_unconditional = self.is_unconditional_error(&d);
         // `SkipTypeChecking`
         if hir.check_directive == Some(false) && !is_unconditional {
@@ -2709,13 +2727,12 @@ impl Checker<'_, '_> {
         maybe_missing_await: bool,
         code: u32,
         args: &[Arg<'_>],
-    ) -> &mut Reported {
+    ) {
         let did_you_forget = self.new_diagnostic(at, 2773, &[]);
         let diagnostic = self.error_at(at, code, args);
         if maybe_missing_await {
             diagnostic.add_related_info(did_you_forget);
         }
-        diagnostic
     }
 
     /// `reportOperatorErrorUnless`
@@ -2926,10 +2943,7 @@ impl Checker<'_, '_> {
         let maybe_missing_await =
             awaited.is_some_and(|awaited| self.is_assignable(awaited, numeric));
         let at = self.span_of_parenthesized_expr(file, operand);
-        // The message names nothing. It is the type of the operand that it rests on.
-        let subject = self.subject_of_arguments(&[Arg::Type(ty)]);
-        self.error_and_maybe_suggest_await(at, maybe_missing_await, code, &[])
-            .subject = subject;
+        self.error_and_maybe_suggest_await(at, maybe_missing_await, code, &[]);
         false
     }
 
@@ -3080,11 +3094,7 @@ impl Checker<'_, '_> {
             }
             let (at, code, name) = c.object_possibly_null_error(file, node, error);
             let args: Vec<Arg> = name.iter().map(|name| Arg::Bytes(name)).collect();
-            let is_brought = c.is_expression_brought(file, node);
-            let diagnostic = c.error_at(at, code, &args);
-            if is_brought {
-                diagnostic.subject = DiagnosticSubject::BroughtDeclaration;
-            }
+            c.error_at(at, code, &args);
         })
     }
 

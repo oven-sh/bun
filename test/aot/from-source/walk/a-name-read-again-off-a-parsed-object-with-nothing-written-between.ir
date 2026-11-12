@@ -1,0 +1,11 @@
+# -- source: main.mjs
+# const rows = JSON.parse('[{"y":1},{"y":2},{"y":3}]');
+# function run(d) { let sum = 0; for (let i = 0; i < d.length; i++) { const a = d[i]; sum += a.y + a.y * 2 + a.y * 3; } return sum; }
+# sink.kept = run;
+# sink(run(rows));
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = GetValueAtSiteOrAbsent
+# CHECK-NOT: = GetValueAtSiteOrAbsent
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 36

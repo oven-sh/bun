@@ -1,0 +1,18 @@
+# f2 = tripleBoth
+# -- source: call-a-bound-function.ts
+# function scale(factor: number, value: number): number {
+#   return factor * value;
+# }
+# function tripleBoth(first: number, second: number): number {
+#   const triple = scale.bind(null, 3);
+#   return triple(first) + triple(second);
+# }
+# declare const input: any;
+# (globalThis as any).answer = tripleBoth(+input, +input);
+# -- end of source
+# The compiler before this one: 5 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 37, patches 6, moves 16, unlikely or rare 2.
+# RUN(X64): steps most:53 f2 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f2:Body
+# X64-NEXT: steps: at most 53

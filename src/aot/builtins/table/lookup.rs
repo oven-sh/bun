@@ -390,6 +390,10 @@ pub fn is_parser(builtin: BuiltinId) -> bool {
     PARSERS.binary_search(&builtin).is_ok()
 }
 
+pub fn is_name_of_parser(name: BuiltinName) -> bool {
+    PARSERS.iter().any(|&parser| entry(parser).name == name)
+}
+
 pub fn answers_query(builtin: BuiltinId) -> bool {
     QUERY_FUNCTIONS.binary_search(&builtin).is_ok()
 }

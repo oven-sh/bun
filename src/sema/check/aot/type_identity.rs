@@ -17,6 +17,16 @@ impl TypeIdentity {
     ) -> TypeIdentity {
         TypeIdentity(description::describe_untyped_members(members))
     }
+
+    /// Layouts are numbered in the order of their identities, and the number of a file moves with the files that are merely listed. So no hash of it goes in:
+    /// the file breaks ties alone, in the order of the files.
+    pub fn in_file(self, file: FileId) -> TypeIdentity {
+        let TypeIdentity([first, second]) = self;
+        TypeIdentity([
+            first,
+            ((u64::from(file.0) + 1) << 32) | (second & 0xFFFF_FFFF),
+        ])
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]

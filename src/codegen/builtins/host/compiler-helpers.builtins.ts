@@ -15,12 +15,13 @@ const helpersIn = (file: string, usesByHelper: Readonly<Record<string, UsesByPar
         runsUnseenCode: false,
         uses,
         implementation: b.compiled(file, name),
+        ...(name === "applyMethodDecorators" ? { marks: ["AppliesMethodDecorators"] as const } : {}),
       } satisfies b.FunctionField,
     ]),
   );
 
 // A list that the program makes by its length. The length is converted where it is no number, and the mapper gets what lies at each index and the index.
-const newArrayOf = (elements: b.TableType) => b.instance("Array").holding({ element: elements }).fresh.dense;
+const newArrayOf = (elements: b.TableType) => b.instance("Array").exactly.holding({ element: elements }).fresh.dense;
 const lengthOfNewArray = [b.runs("ToPrimitive")];
 const calledForEachIndex = (element: b.PlaceLike, ...others: readonly b.PlaceLike[]) => [
   b.called({
@@ -41,6 +42,19 @@ const arrayMaker = (name: string, returns: b.TableType, uses: UsesByParameter) =
     runsOnlyOperandCode: true,
     runsUnseenCode: false,
     uses,
+    implementation: b.compiled("prelude/written-lists", name),
+  }) satisfies b.FunctionField;
+
+// Math.max(...list) and Math.min(...list) of a list of numbers. Undefined of anything else, which the call as written gets.
+const extremumOfList = (name: string) =>
+  ({
+    args: { list: b.any },
+    returns: b.union(b.f64, b.undefined),
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    runsUnseenCode: false,
+    uses: { list: [b.readsContents()] },
     implementation: b.compiled("prelude/written-lists", name),
   }) satisfies b.FunctionField;
 
@@ -70,6 +84,7 @@ const sortInPlace = (name: string) =>
 
 // A helper calls the functions that a list holds, and defines on a class what they return. No word says either.
 const calledOrChanged = [b.everything];
+const changedOrReturned = [b.everything, b.returned];
 const kept = [b.retained];
 const usedAsKey = [b.retained, b.runs("ToPrimitive")];
 
@@ -282,7 +297,7 @@ export default b.declarations(
       implementation: b.compiled("prelude/test-files", "askRunOfTestFile"),
     },
     ...helpersIn("prelude/decorators", {
-      decorateClass: { decorators: calledOrChanged, target: calledOrChanged },
+      decorateClass: { decorators: calledOrChanged, target: changedOrReturned },
       decorateMethod: { decorators: calledOrChanged, target: calledOrChanged, key: usedAsKey },
       decorateProperty: { decorators: calledOrChanged, target: calledOrChanged, key: usedAsKey },
       decorateParameter: {
@@ -306,7 +321,7 @@ export default b.declarations(
       createPrivateStorage: { test: kept, get: kept, set: kept },
       applyClassDecorators: {
         decorators: calledOrChanged,
-        target: calledOrChanged,
+        target: changedOrReturned,
         name: kept,
         metadata: calledOrChanged,
         initializers: calledOrChanged,
@@ -320,7 +335,7 @@ export default b.declarations(
       },
       applyPrivateMethodDecorators: {
         decorators: calledOrChanged,
-        value: calledOrChanged,
+        value: changedOrReturned,
         element: calledOrChanged,
         test: calledOrChanged,
         metadata: calledOrChanged,
@@ -357,9 +372,12 @@ export default b.declarations(
         valueInitializers: calledOrChanged,
         extraInitializers: calledOrChanged,
       },
+      keepInitializerLists: { lists: calledOrChanged },
       runInitializers: { initializers: calledOrChanged, receiver: calledOrChanged },
-      runValueInitializers: { initializers: calledOrChanged, receiver: calledOrChanged, value: calledOrChanged },
+      runValueInitializers: { initializers: calledOrChanged, receiver: calledOrChanged, value: changedOrReturned },
     }),
+    maxOfList: extremumOfList("maxOfList"),
+    minOfList: extremumOfList("minOfList"),
     checkedArrayLength: arrayMaker("checkedArrayLength", b.operand("length"), { length: [b.returned] }),
     // The front end writes arrayOfUndefined where the mapper is undefined, so this one never gets that.
     arrayFromLength: arrayMaker("arrayFromLength", newArrayOf(b.callbackResult("mapper")), {

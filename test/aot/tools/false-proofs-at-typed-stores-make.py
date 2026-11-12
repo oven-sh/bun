@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""false-proofs-at-typed-stores-make.py <folder>: one-shape programs (TypeScript): A VALUE OF WHICH Link PROVES TOO MUCH COMES TO A TYPED STORE. THE LIE: --aot-testing=UnseenCodeAnswersUndefined: what unseen code gives counts as undefined, so it "fits" every slot that admits undefined,
-and the walk stores it typed with no test, while an object of another class, a text, a fraction .. arrives. Then compiled code reads the slot as what it is held to.
-the road from the false proof to the store x what the slot is held to x what arrives. WITHOUT THE LIE EVERY PROGRAM IS RIGHT. Made-up names.
-FOUR ROADS BITE: behind a test of the type (there the whole test makes the program right), through a result, through a variable of the module, through a slot of another object. ON SIX THE LIE CHANGES NOTHING: straight from the call, through a local, a join, a loop,
-listed by an allocation, in a literal: there the walk sees the call itself, knows nothing of what it gives, and the store tests. TWO ARE STOPPED AT AN ENTRY: through a capture, through a parameter.
-They stay in the family: a road that begins to bite shows here first. Run by ./false-proofs-at-typed-stores.sh."""
+"""false-proofs-at-typed-stores-make.py <folder>: writes TypeScript programs of one shape each, in which a value about which Link proves too much reaches a typed store.
+Fault injection, --aot-testing=AssumeUnknownCallsReturnUndefined: the result of unknown code counts as undefined, so it "fits" every slot that allows undefined.
+The walk then stores it with a typed store and no check, while an object of another class, a string, a fraction and so on arrives.
+After that, compiled code reads the slot as the type that the slot is restricted to.
+The programs are the product of three tables: the path from the false proof to the store (ROADS), the type that the slot is restricted to (SLOTS) and the value that arrives (ARRIVES).
+Without the fault every program is correct. All names are made up.
+The fault takes effect on four paths: behind-a-test-of-the-type (there the whole test makes the program correct), through-a-result,
+through-a-variable-of-the-module and through-a-slot-of-another-object.
+The fault changes nothing on six paths: straight-from-the-call, through-a-local, through-a-join, through-a-loop, listed-by-an-allocation and in-a-literal.
+There the walk sees the call itself, knows nothing about its result, and the store checks the value.
+On two paths the value is caught at an entry: through-a-capture and through-a-parameter.
+Those paths stay in the family, because a path on which the fault starts to take effect shows up here first. ./false-proofs-at-typed-stores.sh runs the programs."""
 import os, sys, itertools
 out = sys.argv[1]; os.makedirs(out, exist_ok=True)
 SLOTS = {   # the written type, a value that fits, how a typed reader uses it

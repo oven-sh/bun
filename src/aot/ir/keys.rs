@@ -10,7 +10,7 @@ use crate::modules::SyntheticExportId;
 pub enum FunctionKey {
     ModuleBody(FileId),
     WrappedModuleBody(FileId),
-    FaceBody(FileId),
+    FacadeBody(FileId),
     CheckBody(FileId),
     Instantiation(FileId),
     Source(FunctionRef),
@@ -46,6 +46,7 @@ pub enum LayoutKey {
         file: FileId,
         environment: u32,
     },
+    ModuleInstance(FileId),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -90,6 +91,13 @@ pub enum VariableKey {
     MockOfRuntimeModule(RuntimeModule),
     RequiresMadeForOwnFile(FileId),
     RequiresMadeForOtherFolders(FileId),
+    /// The requires that the real createRequire() made in the file for a written path other than the file's own.
+    RequiresMadeForPaths(FileId),
+    InstanceOf(FileId),
+    InstanceAllocator(FileId),
+    HasSeveralInstances(FileId),
+    /// `true` as soon as a direct eval of the file has been handed a text.
+    EvaluationMark(FileId),
 }
 
 impl FunctionKey {
@@ -97,7 +105,7 @@ impl FunctionKey {
         match *self {
             FunctionKey::ModuleBody(file)
             | FunctionKey::WrappedModuleBody(file)
-            | FunctionKey::FaceBody(file)
+            | FunctionKey::FacadeBody(file)
             | FunctionKey::CheckBody(file)
             | FunctionKey::Instantiation(file)
             | FunctionKey::AccessorGetter { file, .. }
@@ -123,6 +131,33 @@ impl LayoutKey {
         )
     }
 
+    /// The second word of an identity tells files apart. True if it alone tells these two apart.
+    pub fn differs_in_files_alone(&self, other: &LayoutKey) -> bool {
+        match (*self, *other) {
+            (
+                LayoutKey::ObjectType {
+                    origin: ObjectOrigin::Computed,
+                    instantiation: TypeIdentity([text, _]),
+                },
+                LayoutKey::ObjectType {
+                    origin: ObjectOrigin::Computed,
+                    instantiation: TypeIdentity([other_text, _]),
+                },
+            ) => text == other_text,
+            (
+                LayoutKey::UntypedLiteral {
+                    file,
+                    members: TypeIdentity([text, _]),
+                },
+                LayoutKey::UntypedLiteral {
+                    file: other_file,
+                    members: TypeIdentity([other_text, _]),
+                },
+            ) => file == other_file && text == other_text,
+            _ => false,
+        }
+    }
+
     pub fn home_file(&self) -> Option<FileId> {
         match *self {
             LayoutKey::Class(class) => Some(class.file),
@@ -137,7 +172,8 @@ impl LayoutKey {
             },
             LayoutKey::UntypedLiteral { file, .. }
             | LayoutKey::CreatedObject { file, .. }
-            | LayoutKey::Environment { file, .. } => Some(file),
+            | LayoutKey::Environment { file, .. }
+            | LayoutKey::ModuleInstance(file) => Some(file),
             LayoutKey::Container(symbol) => Some(symbol.file),
         }
     }
@@ -152,9 +188,14 @@ impl VariableKey {
             | VariableKey::ModulePath { file, .. }
             | VariableKey::MockOf(file)
             | VariableKey::InstantiationState(file)
+            | VariableKey::EvaluationMark(file)
             | VariableKey::RequiresMadeForOwnFile(file)
             | VariableKey::RequiresMadeForOtherFolders(file)
-            | VariableKey::EnvironmentMadeAhead(file) => Some(file),
+            | VariableKey::RequiresMadeForPaths(file)
+            | VariableKey::EnvironmentMadeAhead(file)
+            | VariableKey::InstanceOf(file)
+            | VariableKey::InstanceAllocator(file)
+            | VariableKey::HasSeveralInstances(file) => Some(file),
             VariableKey::InnerModuleExports(callback) => Some(callback.file),
             VariableKey::PrivateState { state, .. } => Some(state.file),
             VariableKey::RequiredAnswer(holder) => Some(holder.file),
@@ -193,7 +234,7 @@ mod tests {
         let keys = [
             FunctionKey::ModuleBody(FILE),
             FunctionKey::WrappedModuleBody(FILE),
-            FunctionKey::FaceBody(FILE),
+            FunctionKey::FacadeBody(FILE),
             FunctionKey::CheckBody(FILE),
             FunctionKey::Instantiation(FILE),
             FunctionKey::Source(FUNCTION),
@@ -249,6 +290,7 @@ mod tests {
                 file: FILE,
                 environment: 0,
             },
+            LayoutKey::ModuleInstance(FILE),
         ];
         keys.extend(origins.map(|origin| LayoutKey::ObjectType {
             origin,

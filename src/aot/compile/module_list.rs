@@ -1,5 +1,5 @@
 use super::{BoundBuild, LoadedBuild};
-use crate::engine::ModuleBytesRecord;
+use crate::engine::EngineResult;
 use crate::ir::Id;
 use crate::ir::generated::ModuleRequestKind;
 use crate::link::ProgramModule;
@@ -39,11 +39,16 @@ pub(super) fn collect_module_list(
     let application = loaded.project(ProjectId::Application);
     let files = application.loaded.files();
     let sources = &application.sources;
+    let folders_of_databases = bound.projects.application.graph.folders_of_databases();
     let listed_file = |module: &ProgramModule| match module.file()? {
         ProgramFile {
             project: ProjectId::Application,
             file,
-        } if matches!(sources.kind(file), SourceKind::Program | SourceKind::Data) => Some(file),
+        } if matches!(sources.kind(file), SourceKind::Program | SourceKind::Data)
+            && !folders_of_databases.contains(&file) =>
+        {
+            Some(file)
+        }
         _ => None,
     };
 
@@ -82,6 +87,7 @@ pub(super) fn collect_module_list(
             .collect(),
         entry_point: main.and_then(|file| collector.input_of_file[file.idx()]),
         exports: main.map_or_else(Vec::new, |file| collector.export_names(file)),
+        inlined_strings: Vec::new(),
     };
     ListedModules {
         list,
@@ -90,13 +96,20 @@ pub(super) fn collect_module_list(
 }
 
 impl ListedModules {
-    pub(super) fn finish(mut self, bytes_by_module: &[ModuleBytesRecord]) -> ModuleList {
-        for record in bytes_by_module {
+    pub(super) fn finish(mut self, engine: Option<&EngineResult>) -> ModuleList {
+        let Some(engine) = engine else {
+            return self.list;
+        };
+        for record in engine.bytes_by_module() {
             let module = record.module_id().index();
             if let Some(&Some(input)) = self.input_of_module.get(module) {
                 self.list.inputs[input as usize].code_byte_count += record.code_bytes;
             }
         }
+        let strings = engine.inlined_strings().iter();
+        self.list.inlined_strings = strings
+            .map(|record| engine.text(record.text).to_vec())
+            .collect();
         self.list
     }
 }
@@ -243,7 +256,7 @@ impl Collector<'_, '_> {
         let target = match module {
             ModuleRef::File(target)
             | ModuleRef::Inner { file: target, .. }
-            | ModuleRef::Face(target)
+            | ModuleRef::Facade(target)
             | ModuleRef::Check(target) => target,
             ModuleRef::Runtime(_) | ModuleRef::External { .. } => return None,
         };
@@ -298,6 +311,8 @@ fn import_kind(site: ImportSiteKind) -> Option<ModuleImportKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::testing::ResultRecords;
+    use crate::engine::{InlinedStringRecord, ModuleBytesRecord, TextRange};
 
     fn input_without_code(path: &[u8]) -> ModuleInput {
         ModuleInput {
@@ -315,6 +330,7 @@ mod tests {
                 inputs: vec![input_without_code(b"a.ts"), input_without_code(b"b.cjs")],
                 entry_point: Some(0),
                 exports: Vec::new(),
+                inlined_strings: Vec::new(),
             },
             input_of_module: vec![Some(0), Some(1), Some(1), None],
         }
@@ -342,14 +358,33 @@ mod tests {
             record_of(2, 5),
             record_of(3, 700),
         ];
-        let list = two_files_in_four_modules().finish(&records);
+        let records = ResultRecords {
+            bytes_by_module: &records,
+            ..ResultRecords::default()
+        };
+        let list = records.with_result(|engine| two_files_in_four_modules().finish(Some(engine)));
         assert_eq!(code_byte_counts(&list), [10, 25]);
+        assert!(list.inlined_strings.is_empty());
+    }
+
+    #[test]
+    fn inlined_strings_are_copied() {
+        let string = |offset, length| InlinedStringRecord {
+            text: TextRange { offset, length },
+        };
+        let records = ResultRecords {
+            text: b"firstsecond",
+            inlined_strings: &[string(0, 5), string(5, 6)],
+            ..ResultRecords::default()
+        };
+        let list = records.with_result(|engine| two_files_in_four_modules().finish(Some(engine)));
+        assert_eq!(list.inlined_strings, [&b"first"[..], &b"second"[..]]);
     }
 
     #[test]
     fn build_without_an_image_lists_the_same_inputs() {
         let listed = two_files_in_four_modules();
         let expected = listed.list.clone();
-        assert_eq!(listed.finish(&[]), expected);
+        assert_eq!(listed.finish(None), expected);
     }
 }

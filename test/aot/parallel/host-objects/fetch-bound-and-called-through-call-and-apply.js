@@ -1,5 +1,5 @@
 // As many clients keep it: bound to the global object, or called through call and apply. The function is followed to each call.
-// STATISTIC: ImageFunctionsEmitted <= 80 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
+// STATISTIC: ImageFunctionsEmitted <= 80
 const refused = async call => {
   try {
     await call();

@@ -259,12 +259,14 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
     fn lower(main: &str) -> Vec<LoweredFile> {
         let options = LoweringOptions {
             platform: host_platform(),
-            embeds_function_text: false,
+            embeds_function_source: false,
+            reparses_function_sources: false,
             removable: Default::default(),
             minifies_identifiers: false,
             obfuscates: false,
             counts_executions: false,
             runs_tests: false,
+            divides_small_files: false,
         };
         let lowered = lower_program(&[("main.mjs", main), ("helpers.mjs", HELPERS)], options);
         lowered.into_iter().map(|(_, lowered)| lowered).collect()

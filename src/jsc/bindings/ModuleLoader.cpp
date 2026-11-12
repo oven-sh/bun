@@ -56,6 +56,10 @@ extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunSt
 
 JSC::JSObject* createAsyncModuleRequiredError(JSC::JSGlobalObject* globalObject, const WTF::String& specifier)
 {
+#if ENABLE(AOT)
+    if (globalObject->vm().hasCompiledCode()) [[unlikely]]
+        JSC::AOT::didRejectRequire(globalObject, specifier);
+#endif
     return JSC::createTypeError(globalObject, makeString("require() async module \""_s, specifier, "\" is unsupported. use \"await import()\" instead."_s));
 }
 
@@ -897,8 +901,8 @@ JSValue fetchCommonJSModule(
     RETURN_IF_EXCEPTION(scope, {});
 
     if (Bun::hasCompiledModules() && !target->moduleGraph()) [[unlikely]] {
-        String pathOfAsker = Bun::pathOfRequirer(target, referrer ? referrer->toWTFString(BunString::ZeroCopy) : String());
-        JSC::AOT::AskerOfModule asker(globalObject, pathOfAsker);
+        String requesterPath = Bun::requesterForRequire(target, referrer ? referrer->toWTFString(BunString::ZeroCopy) : String());
+        JSC::AOT::ModuleRequesterScope requesterScope(globalObject, requesterPath);
         bool hasRun = requireCompiledModule(globalObject, target, specifierWtfString, !!typeAttribute);
         RETURN_IF_EXCEPTION(scope, {});
         if (hasRun)

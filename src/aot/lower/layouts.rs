@@ -44,6 +44,7 @@ pub(crate) struct LayoutState {
     literals: FxHashMap<ExprId, LayoutId>,
     written_types_of_literals: FxHashMap<ExprId, (LayoutId, CheckerTypeId)>,
     literals_in_progress: SmallVec<[ExprId; 2]>,
+    literals_opened_at_once: FxHashSet<ExprId>,
     variables_that_leave_whole: Option<Rc<FxHashSet<bun_sema::bind::SymbolId>>>,
     class_types: Vec<(ClassRef, CheckerTypeId)>,
     layouts_seen_as_objects: FxHashSet<LayoutId>,
@@ -216,7 +217,8 @@ impl FileLowering<'_, '_, '_, '_> {
                 | LayoutKey::UntypedLiteral { .. }
                 | LayoutKey::CreatedObject { .. }
                 | LayoutKey::Container(_)
-                | LayoutKey::Environment { .. } => {}
+                | LayoutKey::Environment { .. }
+                | LayoutKey::ModuleInstance(_) => {}
             }
         }
         self.define_object_types();

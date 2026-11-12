@@ -1,7 +1,7 @@
 // Every idiom of ./idioms and ./everyday, compiled ahead of time as TypeScript and as JavaScript, against the same JavaScript under the same binary's JIT.
 //
 //   bun test/aot/perf/idioms-against-the-jit.ts [--bun <path>] [--only <regular expression>] [--jobs 16] [--rows 60]
-//       [--out rows.tsv] [--against rows.tsv] [--write-behind] [--keep <folder>] [--build-flag <flag>].. [--in-a-very-large-program]
+//       [--out rows.tsv] [--against rows.tsv] [--keep <folder>] [--build-flag <flag>].. [--in-a-very-large-program]
 //
 // It prints how many idioms are ahead | level (within 5%) | behind, then every idiom that takes more instructions than the JIT, worst first, then those
 // that collect or hold much more than the JIT does, or hold more the longer they run. Every form must print the same.
@@ -11,29 +11,22 @@
 // process: the same at any load. A cost under half an instruction counts as half. Collections and the most memory resident are those of the long run.
 //
 // --out writes a row an idiom; --against reads such a file of an earlier build and lists what came under the JIT's instructions, what went over them, and what a compiled form gained
-// or lost by over 10% and 3 instructions, and where the JIT's own number moved. --write-behind rewrites ./behind-the-jit.<os>-<arch>.json and ./typed-dearer-than-untyped.<os>-<arch>.json, the idioms that ./idioms-against-the-jit.test.ts lists as todo,
-// and pins in ./everyday-pins.<os>-<arch>.json what each of them takes that has no pin yet.
+// or lost by over 10% and 3 instructions, and where the JIT's own number moved.
 // --keep leaves the programs' sources in the folder. Each --build-flag goes to every `bun build --compile --aot`: with --against, what an option of the compiler is worth.
 // --in-a-very-large-program compiles every idiom as its text would be compiled inside a very large program, where little counts as code that runs often, and lets the loop
 // of an idiom of ./everyday find turn() at run time, under the JIT too: turn() is a function of its own that nothing marks as running often (./everyday-idioms.ts).
-// --write-behind then rewrites ./behind-the-jit-in-a-very-large-program.<os>-<arch>.json alone. --in-a-cold-function-of-a-very-large-program is another spelling of it.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+// --in-a-cold-function-of-a-very-large-program is another spelling of it.
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { parseArgs } from "util";
 import {
-  behindInVeryLargeProgramPath,
-  behindPath as behindByDefaultPath,
   type Cost,
-  dearerPath,
-  everydayPinsPath,
   idiomsAgainstTheJit,
-  isTypedDearer,
   isWhole,
   lineAgainstTheJit,
   ratioOf,
   type Row,
-  typedOverUntyped,
   type WholeRow,
 } from "./measure-idioms";
 
@@ -45,7 +38,6 @@ const { values: options } = parseArgs({
     rows: { type: "string", default: "60" },
     out: { type: "string" },
     against: { type: "string" },
-    "write-behind": { type: "boolean", default: false },
     keep: { type: "string" },
     "build-flag": { type: "string", multiple: true, default: [] },
     "in-a-very-large-program": { type: "boolean", default: false },
@@ -53,7 +45,6 @@ const { values: options } = parseArgs({
   },
 });
 const inVeryLargeProgram = options["in-a-very-large-program"] || options["in-a-cold-function-of-a-very-large-program"];
-const behindPath = inVeryLargeProgram ? behindInVeryLargeProgramPath : behindByDefaultPath;
 const folder = options.keep ? resolve(options.keep) : mkdtempSync(join(tmpdir(), "idioms-against-the-jit-"));
 mkdirSync(folder, { recursive: true });
 const { names: all, measure } = idiomsAgainstTheJit(resolve(options.bun), folder, {
@@ -100,39 +91,6 @@ if (options.out)
       .sort()
       .join("\n") + "\n",
   );
-if (options["write-behind"]) {
-  const measured = new Set(rows.map(row => row.name));
-  const before: Record<string, number> = existsSync(behindPath) ? JSON.parse(readFileSync(behindPath, "utf8")) : {};
-  const behind = [
-    ...Object.entries(before).filter(([name]) => !measured.has(name) && all.includes(name)),
-    ...whole
-      .filter(row => ratioOf(row) > lineAgainstTheJit)
-      .map(row => [row.name, Math.ceil(ratioOf(row) * 100) / 100] as const),
-  ].sort(([a], [b]) => (a < b ? -1 : 1));
-  writeFileSync(behindPath, JSON.stringify(Object.fromEntries(behind), null, 2) + "\n");
-  if (!inVeryLargeProgram) {
-    const dearerBefore: Record<string, number> = existsSync(dearerPath)
-      ? JSON.parse(readFileSync(dearerPath, "utf8"))
-      : {};
-    const dearer = [
-      ...Object.entries(dearerBefore).filter(([name]) => !whole.some(row => row.name === name) && all.includes(name)),
-      ...whole
-        .filter(row => isTypedDearer(row))
-        .map(row => [row.name, Math.round(typedOverUntyped(row) * 100) / 100] as const),
-    ].sort(([a], [b]) => (a < b ? -1 : 1));
-    writeFileSync(dearerPath, JSON.stringify(Object.fromEntries(dearer), null, 2) + "\n");
-    // ./pinned-everyday-idioms.ts holds what a list excuses.
-    const pins: Record<string, { typed: number; untyped: number }> = JSON.parse(readFileSync(everydayPinsPath, "utf8"));
-    const listed = new Set([...behind, ...dearer].map(([name]) => name));
-    const rounded = (count: number) => Math.round(count * 10) / 10;
-    for (const row of whole)
-      if (listed.has(row.name) && row.name.startsWith("everyday-"))
-        pins[row.name] ??= { typed: rounded(row.typed.instructions), untyped: rounded(row.untyped.instructions) };
-    const sorted = Object.fromEntries(Object.entries(pins).sort(([a], [b]) => (a < b ? -1 : 1)));
-    writeFileSync(everydayPinsPath, `{\n${Object.keys(sorted).map(name => `${JSON.stringify(name)}: ${JSON.stringify(sorted[name])}`).join(",\n")}\n}\n`);
-  }
-}
-
 console.log(
   `${names.length} idioms: ${count(ratio => ratio < 0.95)} ahead | ${count(ratio => ratio >= 0.95 && ratio <= 1.05)} level | ${count(ratio => ratio > 1.05)} behind; ` +
     `${count(ratio => ratio > 1.2)} over 1.2 times, ${count(ratio => ratio > 2)} over 2 times`,

@@ -169,7 +169,7 @@ pub(crate) fn compile_programs(ctx: Context<'_>) -> ! {
             path: &program_path,
             text: &File::read_from(Fd::cwd(), &program_path).unwrap_or_default(),
             graph: write_to_unnamed_file(&graph),
-            hides_function_text: std::env::args()
+            hides_function_source: std::env::args()
                 .any(|argument| argument == "--no-compile-function-source"),
             limits: &run_limits,
         }

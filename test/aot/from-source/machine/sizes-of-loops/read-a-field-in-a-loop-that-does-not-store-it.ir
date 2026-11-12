@@ -1,0 +1,18 @@
+# f1 = walk
+# -- source: read-a-field-in-a-loop-that-does-not-store-it.ts
+# type Step = { size: number };
+# function walk(step: Step, count: number): number {
+#   let total = 0;
+#   for (let i = 0; i < count; i++) total += step.size;
+#   return total;
+# }
+# declare const input: any;
+# (globalThis as any).answer = walk({ size: +input }, input | 0);
+# -- end of source
+# The compiler before this one: 3 instructions, 0 of them patches.
+# When the bound was taken: loop: operations 11, patches 0, moves 0, unlikely 6 ; loop: operations 5, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:11,5 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 11
+# X64-NEXT: loop: at most 5

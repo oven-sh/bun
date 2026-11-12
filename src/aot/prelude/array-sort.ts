@@ -1,6 +1,10 @@
 declare function $call<R>(f: unknown, thisArg: unknown, ...args: unknown[]): R;
 declare function $callNoInline<R>(f: unknown, thisArg: unknown, ...args: unknown[]): R;
 declare var $visibility: "Public" | "Private" | "PrivateRecursive";
+declare var $overriddenName: string;
+declare function $typedArrayLength(view: unknown): number;
+declare function $isTypedArrayOutOfBounds(view: unknown): boolean;
+declare function $throwTypeError(message: string): never;
 declare function $arrayStorageKind(a: unknown[]): number;
 declare const $arrayStorageInt32: number;
 declare const $arrayStorageDouble: number;
@@ -21,6 +25,8 @@ declare function $putContiguousIndex(out: unknown[], k: number, value: unknown):
 declare function $tryPutIndex(a: unknown[], k: number, value: unknown): boolean;
 // The first `count` values of `from` into an array that this file made for them, numbers boxed. False where `from` has a hole or undefined among them, or storage of another kind.
 declare function $tryCopyFilledElements(out: unknown[], from: unknown[], count: number): boolean;
+// Sorts a list of numbers by value, downward where `direction` is negative. False, with nothing stored, where the list holds anything else, NaN or -0. The list is writable.
+declare function $sortNumbers(a: unknown[], direction: number): boolean;
 // The first `count` values of an array that this file made into one that the program holds. False, with nothing stored, where that one has no writable storage for them.
 declare function $tryPutElements(a: unknown[], from: unknown[], count: number): boolean;
 
@@ -173,10 +179,8 @@ function reverseValues<T>(from: T[], low: number, high: number): void {
 }
 
 // Makes a run that begins at `begin` and answers where it ends. A list of up to 64 values is one run.
-// The compiler copies this function for a comparator, so it leaves to others what needs none, and the comparator is copied in at one place: where most calls are made.
-// sort() is as hot as its caller only where it has no branch of its own, so this function asks whether there is anything to sort.
-function findValueRun<T>(from: T[] | undefined, begin: number, count: number, comparator: unknown): number {
-  if (from === undefined) return 0;
+// For sortValues() and for the runs behind the first: the first run of sort() is made by insertValues(), which is copied with the comparator.
+function findValueRun<T>(from: T[], begin: number, count: number, comparator: unknown): number {
   const extendRunCutoff = 8;
   const forceRunLength = 64;
   begin = begin | 0;
@@ -290,12 +294,41 @@ function mergeValueRuns<T>(from: T[], to: T[], low: number, middle: number, end:
   for (let k = first; k < high; k = (k + 1) | 0) $putOwnContiguousIndex(from, k, $getOwnContiguousIndex<T>(to, k));
 }
 
-function sortValues<T>(from: T[], count: number, comparator: unknown): void {
-  const end = findValueRun<T>(from, 0, count, comparator) | 0;
-  if (((end + 1) | 0) < count) mergeFurtherValueRuns<T>(from, count, end, comparator);
+// The values of a typed array: the run time merges those without galloping.
+function mergeTypedRuns<T>(from: T[], to: T[], low: number, middle: number, end: number, comparator: unknown): void {
+  let left = low | 0;
+  let right = middle | 0;
+  let target = left;
+  while (left < middle && right <= end) {
+    const leftValue: T = $getOwnContiguousIndex<T>(from, left);
+    const rightValue: T = $getOwnContiguousIndex<T>(from, right);
+    if (isLess($call<unknown>(comparator, undefined, rightValue, leftValue))) {
+      $putOwnContiguousIndex(to, target, rightValue);
+      right = (right + 1) | 0;
+    } else {
+      $putOwnContiguousIndex(to, target, leftValue);
+      left = (left + 1) | 0;
+    }
+    target = (target + 1) | 0;
+  }
+  // What is left of the upper run already lies where it belongs.
+  for (; left < middle; left = (left + 1) | 0, target = (target + 1) | 0)
+    $putOwnContiguousIndex(to, target, $getOwnContiguousIndex<T>(from, left));
+  for (let k = low | 0; k < target; k = (k + 1) | 0) $putOwnContiguousIndex(from, k, $getOwnContiguousIndex<T>(to, k));
 }
 
-function mergeFurtherValueRuns<T>(from: T[], count: number, endOfFirstRun: number, comparator: unknown): void {
+function sortValues<T>(from: T[], count: number, comparator: unknown): void {
+  const end = findValueRun<T>(from, 0, count, comparator) | 0;
+  if (((end + 1) | 0) < count) mergeFurtherRuns<T>(from, count, end, comparator, mergeValueRuns);
+}
+
+function mergeFurtherRuns<T>(
+  from: T[],
+  count: number,
+  endOfFirstRun: number,
+  comparator: unknown,
+  mergeRuns: unknown,
+): void {
   const minGallopThreshold = 7;
   const runStackLength = 72;
   let to: T[] = from;
@@ -314,7 +347,7 @@ function mergeFurtherValueRuns<T>(from: T[], count: number, endOfFirstRun: numbe
       if (powerBelow <= power) break;
       depth = (depth - 1) | 0;
       const low: number = $getOwnContiguousIndex<number>(to, count + depth * 2) | 0;
-      mergeValueRuns<T>(from, to, low, previousBegin, previousEnd, comparator);
+      $call<void>(mergeRuns, undefined, from, to, low, previousBegin, previousEnd, comparator);
       previousBegin = low;
     }
     if (begin >= count) return;
@@ -411,6 +444,9 @@ function sortListOfAnyKind<T>(array: T[], length: number, comparator: unknown): 
 // Any other list is sorted here, and the answer is undefined.
 function takeValuesOrSort<T>(array: T[], comparator: unknown): T[] | undefined {
   if (!isCallable(comparator)) {
+    // Native code would list a frame of its own above the one of sort().
+    if (comparator !== undefined)
+      $throwTypeError("Array.prototype.sort requires the comparator argument to be a function or undefined");
     (array as any).sort(comparator);
     return undefined;
   }
@@ -425,19 +461,123 @@ function takeValuesOrSort<T>(array: T[], comparator: unknown): T[] | undefined {
   return undefined;
 }
 
-function mergeRunsAndPutBack<T>(array: T[], from: T[] | undefined, endOfFirstRun: number, comparator: unknown): void {
-  if (from === undefined) return;
+// How many values at the front are in order, of eight values or more. Few comparisons are made here, so they go by value.
+function countValuesInOrder<T>(from: T[], comparator: unknown): number {
   const count = from.length | 0;
-  if (((endOfFirstRun + 1) | 0) < count) mergeFurtherValueRuns<T>(from, count, endOfFirstRun, comparator);
+  let end = 0;
+  let isFalling = false;
+  for (; ((end + 1) | 0) < count; end = (end + 1) | 0) {
+    const next: T = $getOwnContiguousIndex<T>(from, (end + 1) | 0);
+    const last: T = $getOwnContiguousIndex<T>(from, end);
+    const isNextLess = isLess($callNoInline<unknown>(comparator, undefined, next, last));
+    if (end === 0) isFalling = isNextLess;
+    else if (isNextLess !== isFalling) break;
+  }
+  if (isFalling) reverseValues<T>(from, 0, end);
+  return (end + 1) | 0;
+}
+
+function moveUpAndPut<T>(from: T[], left: number, i: number, inserted: T): void {
+  let j = i;
+  for (; j - 1 > left; j = (j - 2) | 0) {
+    const above: T = $getOwnContiguousIndex<T>(from, j - 1);
+    const below: T = $getOwnContiguousIndex<T>(from, j - 2);
+    $putOwnContiguousIndex(from, j, above);
+    $putOwnContiguousIndex(from, j - 1, below);
+  }
+  if (j > left) $putOwnContiguousIndex(from, j, $getOwnContiguousIndex<T>(from, j - 1));
+  $putOwnContiguousIndex(from, left, inserted);
+}
+
+// Small, so that it is copied with its comparator where sort() is copied: most calls of the comparator are made here.
+function insertValues<T>(from: T[], inOrder: number, limit: number, comparator: unknown): void {
+  for (let i = inOrder | 0; i < limit; i = (i + 1) | 0) {
+    const inserted: T = $getOwnContiguousIndex<T>(from, i);
+    let left = 0;
+    let right = i;
+    while (left < right) {
+      const middle = (left + right) >>> 1;
+      const answer: unknown = $call<unknown>(comparator, undefined, inserted, $getOwnContiguousIndex<T>(from, middle));
+      if (typeof answer === "number" ? answer < 0 : $callNoInline<boolean>(isLessThoughNoNumber, undefined, answer))
+        right = middle;
+      else left = (middle + 1) | 0;
+    }
+    if (left < i) $callNoInline<void>(moveUpAndPut, undefined, from, left, i, inserted);
+  }
+}
+
+function mergeRunsAndPutBack<T>(array: T[], from: T[], endOfRun: number, comparator: unknown): void {
+  const count = from.length | 0;
+  let end = endOfRun | 0;
+  if (((end + 1) | 0) < count) end = extendValueRun<T>(from, end, count, comparator);
+  if (((end + 1) | 0) < count) mergeFurtherRuns<T>(from, count, end, comparator, mergeValueRuns);
   putSortedValues<T>(array, count, from, count, 0);
 }
 
-// Short, so that it is copied into its caller: there the comparator is known, and the run is made by a copy of findValueRun() for it.
+// Short, so that it is copied into its caller: there the comparator is known, and insertValues() is copied with it.
 // No tail calls: a stack trace that the comparator makes has the frame of sort.
 export function sort<T>(this: T[], comparator: unknown): T[] {
   const from = takeValuesOrSort<T>(this, comparator);
-  // Nothing has run since the values were taken, so the list is as long as it was.
-  mergeRunsAndPutBack<T>(this, from, findValueRun<T>(from, 0, this.length | 0, comparator), comparator);
+  if (from === undefined) return this;
+  const count = from.length | 0;
+  const inOrder = count < 8 ? 1 : $callNoInline<number>(countValuesInOrder, undefined, from, comparator) | 0;
+  // A run of more than eight values that were in order is only extended. Else the first run is made by insertion, up to 64 values long.
+  const limit = inOrder > 8 ? inOrder : count < 64 ? count : 64;
+  insertValues<T>(from, inOrder, limit, comparator);
+  $callNoInline<void>(mergeRunsAndPutBack, undefined, this, from, (limit - 1) | 0, comparator);
+  return this;
+}
+
+// Undefined where NaN is among them: which NaN it is would be lost.
+function copyTypedArrayElements(view: any, count: number): number[] | undefined {
+  const from: number[] = $newContiguousArray<number>(count);
+  for (let index = 0; index < count; index = (index + 1) | 0) {
+    const value = view[index];
+    if (value !== value) return undefined;
+    $putOwnContiguousIndex(from, index, value);
+  }
+  return from;
+}
+
+function mergeIntoTypedArray(view: any, from: number[], endOfRun: number, comparator: unknown): void {
+  const count = from.length | 0;
+  let end = endOfRun | 0;
+  if (((end + 1) | 0) < count) end = extendValueRun<number>(from, end, count, comparator);
+  if (((end + 1) | 0) < count) mergeFurtherRuns<number>(from, count, end, comparator, mergeTypedRuns);
+  // The comparator may have made the view shorter: a store behind its end does nothing.
+  for (let index = 0; index < count; index = (index + 1) | 0) view[index] = $getOwnContiguousIndex<number>(from, index);
+}
+
+function sortTypedArrayNatively(view: any, comparator: unknown): void {
+  const sorted = $call<any>(Int32Array.prototype.toSorted, view, comparator);
+  if ($isTypedArrayOutOfBounds(view)) return;
+  const length = $typedArrayLength(view);
+  const kept = length < sorted.length ? $call<any>(Int32Array.prototype.subarray, sorted, 0, length) : sorted;
+  $call<void>(Int32Array.prototype.set, view, kept);
+}
+
+// Of numbers. As in sort(), insertValues() is copied with the comparator.
+$overriddenName = "sort";
+export function sortTypedArray(this: any, comparator: unknown): any {
+  // Behind the values, the scratch array of a merge holds 73 more.
+  const mostValuesInArray = 0x10000000 - 73;
+  if (!isCallable(comparator) && comparator !== undefined)
+    $throwTypeError("TypedArray.prototype.sort requires the comparator argument to be a function or undefined");
+  const length = $typedArrayLength(this);
+  if (length < 2) return this;
+  const from =
+    comparator === undefined || length > mostValuesInArray
+      ? undefined
+      : $callNoInline<number[] | undefined>(copyTypedArrayElements, undefined, this, length | 0);
+  if (from === undefined) {
+    $callNoInline<void>(sortTypedArrayNatively, undefined, this, comparator);
+    return this;
+  }
+  const count = from.length | 0;
+  const inOrder = count < 8 ? 1 : $callNoInline<number>(countValuesInOrder, undefined, from, comparator) | 0;
+  const limit = inOrder > 8 ? inOrder : count < 64 ? count : 64;
+  insertValues<number>(from, inOrder, limit, comparator);
+  $callNoInline<void>(mergeIntoTypedArray, undefined, this, from, (limit - 1) | 0, comparator);
   return this;
 }
 
@@ -451,15 +591,28 @@ function isWritableBehindFirstStore<T>(array: T[], kind: number, count: number, 
   return isStoredNow && $arrayStorageKind(array) === kind && array.length === count;
 }
 
+function trySortManyNumbers<T>(array: T[], kind: number, count: number, direction: number): boolean {
+  if (kind === $arrayStorageDouble) {
+    const first: number = $getOwnDoubleIndex(array, 0);
+    if (first !== first || !isWritableBehindFirstStore<T>(array, kind, count, first)) return false;
+    return $sortNumbers(array, direction);
+  }
+  if (kind !== $arrayStorageInt32 && kind !== $arrayStorageContiguous) return false;
+  if (!$hasContiguousIndex(array, 0)) return false;
+  const first: unknown = $getContiguousIndex<unknown>(array, 0);
+  if (typeof first !== "number" || !isWritableBehindFirstStore<T>(array, kind, count, first)) return false;
+  return $sortNumbers(array, direction);
+}
+
 // A short list of numbers, sorted where it lies. Any stable order of numbers is the order that sort() makes, and nothing watches: no comparator runs.
 // False where it meets something else: a hole, another kind of list, storage that is not writable. Numbers moved in front of a hole are moved as a stable sort moves them, and sort() ends with the same list.
 // Nothing is called behind the first store, so the kind, the length and the right to write are asked once.
 function trySortNumbersInPlace<T>(array: T[], isDescending: boolean): boolean {
   const forceRunLength = 64;
   const count = array.length;
-  // Up to this length sort() sorts by insertion as well.
-  if (count > forceRunLength) return false;
   const kind = $arrayStorageKind(array);
+  // Up to this length sort() sorts by insertion as well.
+  if (count > forceRunLength) return trySortManyNumbers<T>(array, kind, count, isDescending ? -1 : 1);
   if (kind === $arrayStorageDouble) {
     // In this storage NaN means a hole: a list that holds NaN has boxed values, and goes to sort() with nothing moved.
     const first: number = $getOwnDoubleIndex(array, 0);

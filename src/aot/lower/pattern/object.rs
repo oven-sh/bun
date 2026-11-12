@@ -1,7 +1,9 @@
-use bun_sema::hir::PropKey;
+use bun_sema::bind::Binding;
+use bun_sema::hir::{PatKind, PropKey};
 use smallvec::SmallVec;
 
 use super::{DefaultHolder, PatternNode};
+use crate::builtins::table::BuiltinId;
 use crate::ir::generated::RuntimeErrorKind;
 use crate::ir::{LayoutId, ValueId};
 use crate::lower::FunctionLowering;
@@ -17,7 +19,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let object = self.branch_if_nullish(value, nullish);
         let resume = self.builder.current_block();
         self.continue_in(nullish);
+        let position = self.position();
+        self.set_position(self.destructured_position.unwrap_or(position));
         self.emit_throw_runtime_error(RuntimeErrorKind::NotDestructurable, error_name);
+        self.set_position(position);
         self.builder.switch_to(resume);
         let has_rest = properties.iter().any(|property| property.is_rest);
         let mut read_names: SmallVec<[PropertyName; 8]> = SmallVec::new();
@@ -33,7 +38,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 continue;
             }
             let name = match property.key {
-                PropKey::Computed(key) => self.lower_computed_name_read_by_pattern(key),
+                PropKey::Computed(key) => {
+                    let name = self.lower_computed_name_read_by_pattern(key);
+                    self.report_destructuring_after(key);
+                    name
+                }
                 PropKey::None | PropKey::Name(_) | PropKey::Private(_) => {
                     let Some(name) = self.file.property_name(property) else {
                         continue;
@@ -43,7 +52,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             };
             let prepared = self.prepare_target(property.target);
             self.set_position(property.position);
-            let read = self.emit_get(object, name);
+            let read = match self.find_locked_builtin_bound_by(property.target) {
+                Some(builtin) => self.emit_locked_builtin(builtin),
+                None => self.emit_get(object, name),
+            };
             let holder = DefaultHolder::ObjectPattern;
             let read = super::apply_default(self, read, property.default, property.target, holder);
             self.finish_target(property.target, prepared, read);
@@ -51,6 +63,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 read_names.push(name);
             }
         }
+    }
+
+    fn find_locked_builtin_bound_by(&self, target: PatternNode) -> Option<BuiltinId> {
+        let PatternNode::Binding(name) = target else {
+            return None;
+        };
+        let (PatKind::Ident(_), Binding::Symbol(symbol)) = (
+            self.file.hir[name].kind,
+            self.file.bound.initialized_binding(name),
+        ) else {
+            return None;
+        };
+        self.file
+            .builtins
+            .of_name_in_pattern(symbol)?
+            .locked_builtin()
     }
 
     pub(super) fn destructure_exports(&mut self, node: PatternNode, module: ModuleRef) {

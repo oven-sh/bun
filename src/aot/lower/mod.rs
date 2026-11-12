@@ -28,12 +28,14 @@ mod module;
 mod object;
 mod operator;
 mod parameters;
+mod parts;
 mod pattern;
 mod positions;
 mod private_names;
-mod quoted_text;
+mod quoted_source;
 mod said_types;
 mod scope;
+mod self_tail_calls;
 mod statement;
 mod switch;
 mod tables;
@@ -46,7 +48,9 @@ use bun_sema::check::Checker;
 use bun_sema::check::aot::{FunctionRef, Queries, QueryStatistics};
 use bun_sema::hir::{FnId, FnKind};
 use bun_sema::program::{FileId, ReadingTask};
+use bun_sema_driver::PartsOfVisit;
 
+use self::parts::{NotInParts, infer_types_for_all_parts, plan_parts, prepare_parts};
 use self::tables::{put_back_task_state, take_task_state};
 use crate::diagnostics::DiagnosticBuffer;
 use crate::ir::generated::MethodKind;
@@ -65,6 +69,7 @@ pub(crate) use self::context::{FileLowering, FunctionLowering};
 pub(crate) use self::convert::FamilyFacts;
 #[cfg(test)]
 pub(crate) use self::fragment::FragmentBuilder;
+pub(crate) use self::module::{KeptBetweenWays, find_file_that_asks_mock};
 pub(crate) use self::tables::TaskState;
 pub(crate) use bun_sema::types::TypeId as CheckerTypeId;
 
@@ -73,6 +78,7 @@ pub struct LoweredFile {
     pub diagnostics: DiagnosticBuffer,
     pub queries: QueryStatistics,
     pub known_helpers: KnownHelpersLowered,
+    pub function_sources_reparsed: u64,
     pub written_function_names: Vec<u8>,
 }
 
@@ -90,9 +96,17 @@ pub fn lower_file<'s>(
     inputs: &LoweringInputs<'_>,
     checker: &mut Checker<'_, 's>,
     file: FileId,
+    parts: Option<&PartsOfVisit<'_, 's>>,
 ) -> Option<LoweredFile> {
     let mut task = take_task_state(checker);
     let lowered = checker.with_queries(file, &inputs.query_inputs(), |queries| {
+        let in_parts =
+            parts.and_then(|parts| lower_in_parts(inputs, queries, file, &mut task, parts));
+        match in_parts {
+            Some(Ok(lowered)) => return Some(lowered),
+            Some(Err(NotInParts::Discarded)) => return None,
+            Some(Err(NotInParts::Shared)) | None => {}
+        }
         lower_with_queries(
             inputs,
             queries,
@@ -134,12 +148,67 @@ pub(in crate::lower) fn lower_with_queries<'a, 'c, 'p, 's>(
     Some(lowering.finish(module))
 }
 
+/// `None`: the file is lowered as a whole.
+fn lower_in_parts<'s>(
+    inputs: &LoweringInputs<'_>,
+    queries: &mut Queries<'_, '_, 's>,
+    file: FileId,
+    task: &mut TaskState,
+    visit: &PartsOfVisit<'_, 's>,
+) -> Option<Result<LoweredFile, NotInParts>> {
+    let parts = plan_parts(inputs, queries, file)?;
+    if !infer_types_for_all_parts(inputs, queries, &parts) {
+        return None;
+    }
+    let Some((scopes, indexes)) = prepare_parts(inputs, queries, &parts, visit) else {
+        queries.end_sharing_indexes();
+        queries.discard();
+        return Some(Err(NotInParts::Discarded));
+    };
+    let mut lowering = FileLowering::new_sharing(inputs, queries, file, task, scopes, None);
+    lowering.begin_trunk(&parts);
+    lowering.refuse_invalid_regexp_literals();
+    let roots = lowering.declare_module_roots();
+    if !lowering.lower_queued_functions() {
+        lowering.queries.end_sharing_indexes();
+        lowering.abandon();
+        return Some(Err(NotInParts::Discarded));
+    }
+    if let Err(reason) = lowering.lower_parts(visit, &indexes) {
+        lowering.abandon();
+        return Some(Err(reason));
+    }
+    if !lowering.lower_queued_functions() {
+        lowering.abandon();
+        return Some(Err(NotInParts::Discarded));
+    }
+    let module = lowering.finish_module(roots);
+    lowering.define_signatures();
+    Some(Ok(lowering.finish(module)))
+}
+
 impl FileLowering<'_, '_, '_, '_> {
+    /// Returns false if the visit was discarded.
+    fn lower_queued_functions(&mut self) -> bool {
+        loop {
+            self.queries.note_idle();
+            if self.queries.is_discarded() {
+                return false;
+            }
+            let Some(function) = self.take_next_function() else {
+                return true;
+            };
+            // SAFETY: as in `lower_with_queries`.
+            unsafe { ReadingTask::repin() };
+            self.lower_function(function);
+        }
+    }
+
     fn lower_function(&mut self, function: FunctionId) {
         match self.function_key(function) {
             FunctionKey::ModuleBody(_) => self.lower_module_body(function),
             FunctionKey::WrappedModuleBody(_) => self.lower_wrapped_body(function),
-            FunctionKey::FaceBody(_) => self.lower_face_body(function),
+            FunctionKey::FacadeBody(_) => self.lower_facade_body(function),
             FunctionKey::CheckBody(_) => self.lower_check_body(function),
             FunctionKey::Instantiation(_) => self.lower_instantiation(function),
             FunctionKey::Source(source) => lower_source_body(self, function, source.function),

@@ -65,6 +65,22 @@ const ofServers = (member: string, classes: string, text: string[]) =>
   Object.fromEntries([`%HTTPServer%.prototype.${member} > ${classes}`].map(key => [key, text]));
 
 const stats = (bigint: boolean) => `import { statSync } from "node:fs";\nconst stats = statSync(".", { bigint: ${bigint} });`;
+const callsOfFileSystem: Record<string, string[]> = {
+  statSync: [
+    'import { statSync } from "node:fs";\nstatSync(".")',
+    `${stats(false)}\nstats`,
+    `${stats(true)}\nstats`,
+  ],
+  lstatSync: [
+    'import { lstatSync } from "node:fs";\nlstatSync(".")',
+    'import { lstatSync } from "node:fs";\nlstatSync(".", { bigint: true })',
+  ],
+  readdirSync: [
+    'import { readdirSync } from "node:fs";\nreaddirSync("/")',
+    'import { readdirSync } from "node:fs";\nreaddirSync("/", { withFileTypes: true })',
+  ],
+  readFileSync: ['import { readFileSync } from "node:fs";\nreadFileSync("/etc/hostname")'],
+};
 const observed = [
   "const { promise, resolve } = Promise.withResolvers();",
   "const observer = new PerformanceObserver(list => (observer.disconnect(), resolve(list)));",
@@ -78,11 +94,14 @@ export const calls: Record<string, string[]> = {
   // The rows under the names of the classes are the constructors'. What native code makes is judged under the methods of the binding, as node:fs hands it on.
   "%Stats%": [`${stats(false)}\nnew stats.constructor(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)`],
   "%BigIntStats%": [`${stats(true)}\nnew stats.constructor(1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n, 11n, 12n, 13n, 14n)`],
-  "%NodeJSFS%.prototype.statSync": [`${stats(false)}\nstats`, `${stats(true)}\nstats`],
-  "%NodeJSFS%.prototype.lstatSync": ['import { lstatSync } from "node:fs";\nlstatSync(".")', 'import { lstatSync } from "node:fs";\nlstatSync(".", { bigint: true })'],
+  // Only the node:fs of a compiled program holds the functions. A function and the method of its name make what they answer in the same code (node_fs.rs).
+  ...Object.fromEntries(
+    Object.entries(callsOfFileSystem).flatMap(([name, texts]) => [
+      [`%NodeJSFS%.prototype.${name}`, texts],
+      [`native:Bindgen:node_fs_binding.bind.ts:${name}`, texts],
+    ]),
+  ),
   "%NodeJSFS%.prototype.fstatSync": ['import { fstatSync } from "node:fs";\nfstatSync(0)'],
-  "%NodeJSFS%.prototype.readdirSync": ['import { readdirSync } from "node:fs";\nreaddirSync("/")', 'import { readdirSync } from "node:fs";\nreaddirSync("/", { withFileTypes: true })'],
-  "%NodeJSFS%.prototype.readFileSync": ['import { readFileSync } from "node:fs";\nreadFileSync("/etc/hostname")'],
   "%NodeJSFS%.prototype.realpathSync": ['import { realpathSync } from "node:fs";\nrealpathSync("/", "buffer")'],
   ...Object.fromEntries(
     ["atime", "birthtime", "ctime", "mtime"].flatMap(name => [
@@ -186,10 +205,17 @@ export const calls: Record<string, string[]> = {
     'new Response("x").headers',
     'Response.json(1, { headers: { first: "1" } }).headers',
   ],
+  "CompressionStream.prototype.readable > ReadableStream": ['new CompressionStream("gzip").readable'],
+  "CompressionStream.prototype.writable > WritableStream": ['new CompressionStream("gzip").writable'],
+  "DecompressionStream.prototype.readable > ReadableStream": ['new DecompressionStream("gzip").readable'],
+  "DecompressionStream.prototype.writable > WritableStream": ['new DecompressionStream("gzip").writable'],
+  "TextDecoderStream.prototype.readable > ReadableStream": ["new TextDecoderStream().readable"],
+  "TextDecoderStream.prototype.writable > WritableStream": ["new TextDecoderStream().writable"],
   "TextEncoderStream.prototype.readable > ReadableStream": ["new TextEncoderStream().readable"],
   "TextEncoderStream.prototype.writable > WritableStream": ["new TextEncoderStream().writable"],
   "TransformStream.prototype.readable > ReadableStream": ["new TransformStream().readable"],
   "TransformStream.prototype.writable > WritableStream": ["new TransformStream().writable"],
+  "WritableStream.prototype.getWriter": ["new WritableStream().getWriter()"],
   "URL.prototype.searchParams > URLSearchParams": ['new URL("https://example.com/a?first=1").searchParams'],
   "FormData.prototype.entries": [`${form}\nform.entries()`],
   "FormData.prototype.keys": [`${form}\nform.keys()`],
@@ -372,7 +398,6 @@ export const calls: Record<string, string[]> = {
     'import { createZstdCompress } from "node:zlib";\nnew (createZstdCompress()._handle.constructor)(10)',
   ],
   "%SecureContext%": ['import { createSecureContext } from "node:tls";\ncreateSecureContext().context'],
-  "%TypedArray%": ["new Uint8Array(2)"],
   CompressionStream: ['new CompressionStream("gzip")'],
   DecompressionStream: ['new DecompressionStream("gzip")'],
   FinalizationRegistry: ["new FinalizationRegistry(() => {})"],
@@ -562,6 +587,7 @@ export const notCalled: Record<string, string> = {
   "%Expect%": alwaysThrows,
   "%ExpectTypeOf%": alwaysThrows,
   "%ServerWebSocket%": alwaysThrows,
+  "%TypedArray%": alwaysThrows,
   "%LinkTimeConstant:arrayFromFastWithoutMapFn%": ofTheEngine,
   "%LinkTimeConstant:asyncFromSyncIteratorCreate%": ofTheEngine,
   "%AsyncFromSyncIterator%.prototype.next": "the engine alone enters it, behind `for await` and `yield*` over an iterator that is not async: no text gets hold of such an object (ECMA-262 27.1.6)",

@@ -1,0 +1,15 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function distance(x: number, y: number): number { return Math.abs(x - y) + -x; }
+# const given: number[] = JSON.parse("[0.5, 2, -3]");
+# for (const x of given) print(distance(x, 1.25));
+# -- end of source
+# The mask of an absolute value or of a negation is one load off the instruction pointer.
+# REQUIRES: x86_64
+# RUN: bytes f1 mechanisms=all-Inlining
+# CHECK: unit f1:Body
+# CHECK-NEXT: size=136 frame=0@49-63,92-108
+# RUN(SHELL): run-in-shell mechanisms=all-Inlining
+# SHELL: 0.25
+# SHELL-NEXT: -1.25
+# SHELL-NEXT: 7.25

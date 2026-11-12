@@ -1,0 +1,31 @@
+# `list[i] == 100.5` in a loop over what is written number[]. Link has proven of the elements fractions, and objects of which nothing is known: that says nothing, so the guess at an element of numbers opens.
+# The read out of Int32 storage asks nothing of the number that it finds, so it says int32 whatever Link has proven of the list: the way behind its two tests goes on with an int32. It used to end in Unreachable on Link's word alone.
+# Double storage is asked in its turn, and its read gives any number: what may be a fraction without bounds is held to nothing narrower.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: [[int32]]: boolean @Boolean = HasArrayStorage [[list]] arrayStorage=Int32
+# CHECK-NEXT: Branch [[int32]] -> taken [[present]](), notTaken [[other]]()
+# CHECK: [[other]]() isInLoop=true:
+# CHECK-NEXT: [[double]]: boolean @Boolean = HasArrayStorage [[list]] arrayStorage=Double
+# CHECK-NEXT: Branch [[double]] ->
+# CHECK: [[present]]() isInLoop=true:
+# CHECK-NEXT: [[found]]: boolean @Boolean = IsElementPresent [[list]], {{*}}arrayStorage=Int32
+# CHECK-NEXT: Branch [[found]] -> taken [[something]](),
+# CHECK: [[something]]() isInLoop=true:
+# CHECK-NEXT: : i32 @Int32 = GetArrayElement [[list]], {{*}}arrayStorage=Int32
+# CHECK: : number @Double = GetArrayElement [[list]], {{*}}arrayStorage=Double
+# -- source: a-read-out-of-int32-storage-goes-on-with-an-int32-whatever-is-proven-of-the-list-from-source.ts
+# declare function sink(...values: unknown[]): void;
+# function note(value: any): void {}
+# function count(list: number[]): number { let found = 0; for (let i = 0, n = list.length; i < n; i++) { if (list[i] == 100.5) found++; } return found; }
+# const fractions: any = [1.5, 2.5, 100.5];
+# sink(count(fractions));
+# note(fractions);
+# const first = { value: 100 }, second = { other: 1 }, third = { third: "x" }, fourth = { fourth: true }, fifth = { fifth: null };
+# sink(first, second, third, fourth, fifth);
+# note([first]);
+# note([second]);
+# note([third]);
+# note([fourth]);
+# note([fifth]);
+# -- end of source

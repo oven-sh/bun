@@ -280,6 +280,7 @@ pub(super) struct Binder<'f, 's> {
     label_edges: Vec<Label>,
     /// An index in `label_edges` and an antecedent of that label. See `Label::indexed_edges`.
     edges_of_long_labels: crate::util::FxHashSet<(usize, FlowId)>,
+    private_names_of_classes: crate::util::FxHashSet<(ClassId, Atom)>,
     /// `FlowFlagsReferenced`, one bit per flow node.
     referenced: Vec<u64>,
     /// The start flow node for functions without a body, where no outer narrowing applies.
@@ -399,6 +400,7 @@ impl<'f, 's> Binder<'f, 's> {
             is_unchecked: false,
             label_edges: std::mem::take(&mut buffers.label_edges),
             edges_of_long_labels: Default::default(),
+            private_names_of_classes: Default::default(),
             referenced: Vec::new(),
 
             start_of_signatures: FlowId::NONE,
@@ -4101,6 +4103,11 @@ impl<'f, 's> Binder<'f, 's> {
         let c = &self.f[id];
         self.b.class_owner[id.idx()] = owner;
         self.containing_classes.push(id);
+        for member in c.members.iter() {
+            if let PropKey::Private(name) = self.f[member].key {
+                self.private_names_of_classes.insert((id, name));
+            }
+        }
         let in_class_decorator = std::mem::replace(&mut self.is_in_class_decorator, false);
         // `Resolve`, `KindDecorator`: the search only skips the class if it starts in a class
         // declaration's decorator. A class expression's decorator sees its name and type
@@ -4919,10 +4926,7 @@ impl<'f, 's> Binder<'f, 's> {
     /// starts in a class's decorator skips that class.
     fn private_name(&mut self, id: ExprId, name: Atom) {
         let searched = self.containing_classes.len() - usize::from(self.is_in_class_decorator);
-        let declares = |class: &&ClassId| {
-            let mut members = self.f[**class].members.iter();
-            members.any(|m| self.f[m].key == PropKey::Private(name))
-        };
+        let declares = |class: &&ClassId| self.private_names_of_classes.contains(&(**class, name));
         if let Some(&class) = self.containing_classes[..searched]
             .iter()
             .rev()

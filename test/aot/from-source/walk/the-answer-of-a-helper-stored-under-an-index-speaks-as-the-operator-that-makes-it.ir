@@ -1,0 +1,15 @@
+# `mixed[i] = blend(first[i], second[i])`, `blend` a helper of one block whose answer is a sum of products: in the text of the loop what is stored is the answer of a call, which said nothing, so `mixed` was never asked for a list, the store could run other code and the typed copy of the loop was dropped.
+# The answer of a helper without loops speaks as the operator that makes it. A guess: the lists are asked in front of the loop.
+# LIBRARY: own
+# -- source: main.js
+# const first = JSON.parse("[1.5,2.5,3.5,4.5]"), second = JSON.parse("[0.5,0.25,2,4]"), mixed = JSON.parse("[0,0,0,0]");
+# const blend = (c, a) => c * a + a * 0.5;
+# function run(count) { for (let i = 0; i < count; i++) mixed[i] = blend(first[i], second[i]); return mixed.join(); }
+# publish(run);
+# -- end of source
+# RUN(LOOP): walk f1 mechanisms=all
+# LOOP: code f1:Body
+# LOOP: PutContiguousIndex
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run(2)); print(run(4)); };
+# SHELL: 1,0.75,0,0
+# SHELL-NEXT: 1,0.75,8,20

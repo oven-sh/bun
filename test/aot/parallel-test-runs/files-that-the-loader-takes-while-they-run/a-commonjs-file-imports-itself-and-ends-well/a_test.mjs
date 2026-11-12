@@ -1,8 +1,8 @@
 import { test } from "bun:test";
 globalThis.say = (...words) => console.log(...words);
-let settled = 0;
+const settled = Promise.withResolvers();
 globalThis.settle = words => {
-  settled++;
+  settled.resolve();
   say(words);
 };
 try {
@@ -10,7 +10,7 @@ try {
 } catch (error) {
   say("same: require threw", error.message);
 }
-while (settled < 1) await new Promise(resolve => setTimeout(resolve, 1));
+await settled.promise;
 for (const [how, load] of [
   ["require()", () => require("./same/file.cjs")],
   ["import()", () => import("./same/file.cjs")],

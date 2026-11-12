@@ -1,0 +1,25 @@
+# -- source: main.cjs
+# "use strict";
+# function add(a, b) { return (a + b) | 0; }
+# function sub(a, b) { return (a - b) | 0; }
+# const lib = { base: 1 };
+# Object.defineProperty(lib, "add", { configurable: true, get: function () { return add; } });
+# function called(t) { let s = 1; for (let i = 0; i < t; i++) s = lib.add(s, i); return s; }
+# print(called(5));
+# Object.defineProperty(lib, "add", { configurable: true, get: function () { return sub; } });
+# print(called(5));
+# -- end of source
+# The other side of a-getter-that-a-written-descriptor-lays-for-good-is-proven-once-it-is-laid.ir: the form is configurable and a second definition lays another getter: nothing is said of the half in the slot.
+# The record stays with compiled code all the same: both getters are known and flow what they return into the field.
+# RUN(ACCESSORS): link accesses mechanisms=all
+# ACCESSORS-NOT: once-laid
+# RUN(LAYOUT): link layouts mechanisms=all
+# LAYOUT: layout L1 changes=[IsFrozen, GainsProperty, GetsAccessor] stays-with-compiled-code
+# RUN(ANSWER): run-in-shell
+# ANSWER: 11
+# ANSWER-NEXT: -9
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 11
+# CHECKED-NEXT: -9
+# CHECKED-NEXT: exited with 0

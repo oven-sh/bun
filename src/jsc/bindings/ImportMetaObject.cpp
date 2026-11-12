@@ -43,7 +43,9 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include <wtf/Scope.h>
 #include "BunCompiledModules.h"
+#include "CodeGenerationFromStrings.h"
 #include "JSCommonJSModule.h"
 #include "ModuleGraph.h"
 #include <JavaScriptCore/JSPromise.h>
@@ -207,7 +209,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
 }
 
 // require() hands a native addon to process.dlopen without asking the module loader, and it answers a module that has run from its cache.
-static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC::JSValue resolvedPath, JSC::JSValue from)
+static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC::JSValue resolvedPath, JSC::JSValue written, JSC::JSValue from)
 {
     if (!Bun::hasCompiledModules()) [[likely]]
         return;
@@ -215,13 +217,26 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
     auto resolved = resolvedPath.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     if (auto module = Bun::compiledModuleForPath(resolved)) {
-        WTF::String pathOfAsker = from.isString() ? from.toWTFString(globalObject) : WTF::String();
+        if (Bun::isModuleRefusedByName(resolved)) [[unlikely]] {
+            JSC::throwException(globalObject, scope, Bun::createCodeGenerationFromStringsError(globalObject));
+            return;
+        }
+        WTF::String requesterPath = from.isString() ? from.toWTFString(globalObject) : WTF::String();
         RETURN_IF_EXCEPTION(scope, );
-        JSC::AOT::AskerOfModule asker(globalObject, pathOfAsker);
+        // The asker chooses the words of the refusal alone.
+        JSC::AOT::ModuleRequesterScope requesterScope(globalObject, Bun::requesterForImporter(requesterPath));
         scope.release();
-        JSC::AOT::willAnswerWithModule(globalObject, *module);
+        JSC::AOT::checkModuleAccess(globalObject, *module);
         return;
     }
+    // Module._resolveFilename() answers with where the file lay when the program was built.
+    WTF::String known = Bun::pathInExecutable(resolved);
+    WTF::String specifier = written.isString() ? written.toWTFString(globalObject) : resolved;
+    RETURN_IF_EXCEPTION(scope, );
+    WTF::String importer = from.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    Bun::throwIfOnlyTyped(defaultGlobalObject(globalObject), known.isNull() ? resolved : known, specifier, importer, true);
+    RETURN_IF_EXCEPTION(scope, );
     size_t query = resolved.find('?');
     StringView path = query == notFound ? StringView(resolved) : StringView(resolved).left(static_cast<unsigned>(query));
     if (!path.endsWith(".node"_s) || Bun::letsTestRunLoadAddon(globalObject, resolved) || Bun::isFileInExecutable(resolved))
@@ -255,6 +270,14 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         RETURN_IF_EXCEPTION(scope, {});
     }
 
+    std::optional<bool> previousResolution;
+    if (Bun::hasCompiledModules()) [[unlikely]]
+        previousResolution = Bun::willResolveName(lexicalGlobalObject, parentModule);
+    auto restoreResolution = makeScopeExit([&] {
+        if (previousResolution) [[unlikely]]
+            Bun::didResolveName(lexicalGlobalObject, *previousResolution);
+    });
+
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (moduleName.isString()) {
             auto moduleString = moduleName.toWTFString(globalObject);
@@ -263,7 +286,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
             RETURN_IF_EXCEPTION(scope, {});
             if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, fromString)) {
                 if (!isRequireDotResolve)
-                    resolvedString = Bun::keyOfImportByPackage(globalObject, resolvedString.value(), fromString, false);
+                    resolvedString = Bun::packageImportKey(globalObject, resolvedString.value(), fromString, false);
                 if (!isRequireDotResolve && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]]
                     return JSC::JSValue::encode(jsString(vm, Bun::keyOfImportWhileModuleMocksRun(globalObject, resolvedString.value(), fromString, false)));
                 if (moduleString == resolvedString.value())
@@ -310,7 +333,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                         if (WTF::String known = Bun::pathInExecutable(str.data); !known.isNull() && Bun::compiledModuleForPath(known))
                             string = jsString(vm, known);
                     }
-                    throwIfResolvedFileIsRefused(lexicalGlobalObject, string, from);
+                    throwIfResolvedFileIsRefused(lexicalGlobalObject, string, moduleName, from);
                     RETURN_IF_EXCEPTION(scope, {});
                     return JSC::JSValue::encode(string);
                 }
@@ -368,7 +391,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 }
 
                 if (!isRequireDotResolve) {
-                    throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result), from);
+                    throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result), moduleName, from);
                     if (scope.exception()) [[unlikely]]
                         result = {};
                 }
@@ -401,7 +424,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     }
 
     if (!isESM && !isRequireDotResolve) {
-        throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result), from);
+        throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result), moduleName, from);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -410,7 +433,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         RETURN_IF_EXCEPTION(scope, {});
         auto fromString = from.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        String given = Bun::keyOfImportByPackage(globalObject, key, fromString, false);
+        String given = Bun::packageImportKey(globalObject, key, fromString, false);
         if (!globalObject->onLoadPlugins.runningModuleMocks.isEmpty())
             given = Bun::keyOfImportWhileModuleMocksRun(globalObject, given, fromString, false);
         if (given != key)

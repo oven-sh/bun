@@ -13,7 +13,7 @@ use crate::link::{
     self, LinkInput, LinkProject, LinkUnit, Linked, LinkedFunctions, ProgramModule,
     run_steps_beside,
 };
-use crate::load::runtime_roots::builtins_used_at_start;
+use crate::load::runtime_roots::{StartOfRun, builtins_used_at_start};
 use crate::load::{ProgramFile, ProjectId};
 use crate::module_keys::{path_without_form, stamp_of_file};
 use crate::modules::Shape;
@@ -38,8 +38,8 @@ impl Build<'_> {
         mut units: Vec<LinkUnit>,
     ) -> Result<FrontEndOutput, Stage> {
         self.clock.start(Stage::LinkAndEmit);
-        let types_in_function_texts: FxHashMap<ProgramFile, PackedTypeRanges> = (units.iter_mut())
-            .filter_map(LinkUnit::take_types_in_function_text)
+        let erased_ranges_by_file: FxHashMap<ProgramFile, PackedTypeRanges> = (units.iter_mut())
+            .filter_map(LinkUnit::take_erased_type_ranges)
             .collect();
         let in_parallel = self.parallel_runner();
         let beside = self.beside_runner();
@@ -73,14 +73,14 @@ impl Build<'_> {
                 return Err(Stage::LinkAndEmit);
             }
         };
-        let (mut with_names, mut with_value, mut faces) = (0, 0, 0);
+        let (mut with_names, mut with_value, mut facades) = (0, 0, 0);
         for &module in &modules {
             let (project, own) = match module {
                 ProgramModule::File(_) | ProgramModule::Inner { .. } => module
                     .in_own_project()
                     .expect("the module has its text in a file"),
-                ProgramModule::Face(_) => {
-                    faces += 1;
+                ProgramModule::Facade(_) => {
+                    facades += 1;
                     continue;
                 }
                 _ => continue,
@@ -95,7 +95,7 @@ impl Build<'_> {
             .count(StatisticId::ModulesWithNames, with_names);
         self.statistics
             .count(StatisticId::ModulesWithValue, with_value);
-        self.statistics.count(StatisticId::Faces, faces);
+        self.statistics.count(StatisticId::Facades, facades);
         let mut steps = StepClock::new(Stage::LinkAndEmit);
         let views = loaded.projects.as_ref().map(|_, project| project.view());
         let runs_tests = self.options.aot.runs_tests;
@@ -107,7 +107,15 @@ impl Build<'_> {
                 "source texts",
                 "functions without code, what the link stage adds to the program",
             ],
-            || collect_source_texts(&views, &modules, &types_in_function_texts, &in_parallel),
+            || {
+                collect_source_texts(
+                    &views,
+                    &modules,
+                    &erased_ranges_by_file,
+                    runs_tests,
+                    &in_parallel,
+                )
+            },
             || {
                 let mut steps = StepClock::new(Stage::LinkAndEmit);
                 run_steps_beside(
@@ -130,9 +138,9 @@ impl Build<'_> {
                         let application = loaded.project(ProjectId::Application);
                         let left_out = &bound.projects.application.left_out.files;
                         let entry_points = collect_entry_point_paths(application, left_out);
-                        let folders = match entry_points.len() {
-                            0 | 1 => Vec::new(),
-                            _ => collect_folder_paths(application, left_out),
+                        let folders = match entry_points.is_empty() {
+                            true => Vec::new(),
+                            false => collect_folder_paths(application, left_out),
                         };
                         steps.end("link stage: paths of entry points and folders");
                         let replaced = &loaded.contents.replaced_builtins;
@@ -180,7 +188,12 @@ impl Build<'_> {
                                 );
                             }
                         }
-                        let used_at_start = builtins_used_at_start(self.options.aot).into_iter();
+                        let start = StartOfRun {
+                            keeps_code_without_names: loaded.keeps_library_code_without_names,
+                            stays_in_compiled_files: self.stays_in_compiled_files,
+                        };
+                        let used_at_start =
+                            builtins_used_at_start(self.options.aot, start).into_iter();
                         let comes_out = loaded
                             .contents
                             .method_that_hands_out_global_object_may_come_out;

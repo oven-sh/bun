@@ -52,7 +52,7 @@ impl FileLowering<'_, '_, '_, '_> {
     ) -> Option<()> {
         let (hir, bound) = (self.hir, self.bound);
         let data = hir[declaration];
-        if !self.inputs.options.embeds_function_text || members.len() != data.members.len() {
+        if !self.inputs.options.embeds_function_source || members.len() != data.members.len() {
             return None;
         }
         let atoms = &self.queries.files().atoms;
@@ -71,14 +71,14 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut previous = Vec::new();
         for &(id, value) in members {
             let member = hir[id];
-            let key = print_string(atoms.bytes(member.name))?;
+            let key = print_string(atoms.bytes(member.name));
             let slot = [name, b"[", &key, b"]"].concat();
             let stored_both_ways =
                 |value: &[u8]| [name, b"[", &slot, b" = ", value, b"] = ", &key].concat();
             let whole = match value {
                 EnumMemberValue::Number(number) => stored_both_ways(&print_number(number, false)),
                 EnumMemberValue::String(text) => {
-                    [&slot[..], b" = ", &print_string(atoms.bytes(text))?].concat()
+                    [&slot[..], b" = ", &print_string(atoms.bytes(text))].concat()
                 }
                 EnumMemberValue::Missing => stored_both_ways(b"void 0"),
                 EnumMemberValue::PreviousPlusOne => {
@@ -117,7 +117,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(in crate::lower) fn lower_enum(&mut self, declaration: EnumId) {
         let (hir, bound) = (self.file.hir, self.file.bound);
         let data = hir[declaration];
-        if data.flags.contains(Flags::AMBIENT) {
+        if data.flags.contains(Flags::AMBIENT)
+            || self.file.is_const_enum_without_object(declaration)
+        {
             return;
         }
         let container = self.find_container(Decl::Enum(declaration), data.name);

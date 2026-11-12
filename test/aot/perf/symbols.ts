@@ -1,11 +1,11 @@
-// In which functions the instructions of an idiom lie, built by one Bun and by another: for a row of ./pins.<os>-<arch>.json or ./everyday-pins*.<os>-<arch>.json that moved.
+// In which functions the instructions of an idiom lie, built by one Bun and by another: for a row of ./compare-builds.ts that moved.
 // Prints the functions that differ by 3 instructions a turn and by 3% of the turn, the largest difference first: on a machine with three times as many jobs as processors the share
 // of a function moved by up to 2.6% of the turn between two builds that took the same sum. Where all of it lies in functions of Bun, the engine or the C library and the
 // compiled code reads the same, no change of the compiler did it: a change under src/ can make the linker and the compiler lay native code out anew.
 // The names come from the executables, so the Buns that build them must have their symbols: bun-profile.
 //
 //   bun test/aot/perf/symbols.ts <idiom> <a Bun> <another Bun> [untyped] [in-a-very-large-program]      needs perf(1) and a counter of the processor: ./README.md
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "fs";
+import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { writeEverydayIdioms } from "./everyday-idioms";
@@ -27,13 +27,7 @@ writeTypedIdioms(sources.typed);
 writeUntypedIdioms(sources.untyped);
 writeEverydayIdioms(sources.typed, sources.untyped, inVeryLargeProgram);
 
-const pinned = ["pins", `everyday-pins${inVeryLargeProgram ? "-in-a-very-large-program" : ""}`]
-  .map(file => join(import.meta.dir, `${file}.linux-x64.json`))
-  .filter(existsSync)
-  .map(path => JSON.parse(readFileSync(path, "utf8"))[name]?.[form])
-  .find(Boolean);
 const instructionsOfRun = 4e9;
-const turns = Math.round(Math.min(4e6, Math.max(200, instructionsOfRun / (pinned ?? 1000))));
 const instructionsOfSample = 100_003;
 
 function run(cmd: string[], env: Record<string, string> = {}) {
@@ -48,18 +42,23 @@ function run(cmd: string[], env: Record<string, string> = {}) {
   return stdout.toString() + stderr.toString();
 }
 
-function bySymbol(bun: string, index: number) {
+function built(bun: string, index: number) {
   const executable = join(folder, `built-by-${index}`);
   const entryPoint = join(sources[form], name + (form === "typed" ? ".ts" : ".js"));
   run([bun, "build", "--compile", "--aot", entryPoint, "--outfile", executable]);
+  return executable;
+}
+
+const instructionsOf = (executable: string, turns: number) =>
+  Number(/^(\d+),/m.exec(run(["perf", "stat", "-x", ",", "-e", "instructions:u", executable], { AOT_PERF_TURNS: String(turns) }))?.[1]);
+
+function bySymbol(executable: string, turns: number) {
   const data = `${executable}.data`;
   run(["perf", "record", "-q", "-e", "instructions:u", "-c", String(instructionsOfSample), "-o", data, executable], {
     AOT_PERF_TURNS: String(turns),
   });
   // A busy machine loses samples, of every function alike: the sum is counted, and the samples only share it out.
-  const counted = Number(
-    /^(\d+),/m.exec(run(["perf", "stat", "-x", ",", "-e", "instructions:u", executable], { AOT_PERF_TURNS: String(turns) }))?.[1],
-  );
+  const counted = instructionsOf(executable, turns);
   const samplesOf = new Map<string, number>();
   for (const [, samples, symbol] of run(["perf", "report", "-i", data, "--no-children", "--sort", "symbol", "-F", "sample,symbol", "--stdio"]).matchAll(
     /^ +(\d+) +\[.\] (.*)$/gm,
@@ -74,7 +73,11 @@ function bySymbol(bun: string, index: number) {
 }
 
 try {
-  const [one, other] = builders.map(bySymbol);
+  const executables = builders.map(built);
+  // Two short runs of the first executable say what a turn takes.
+  const aTurn = (instructionsOf(executables[0], 5000) - instructionsOf(executables[0], 1000)) / 4000;
+  const turns = Math.round(Math.min(4e6, Math.max(200, instructionsOfRun / Math.max(aTurn, 1))));
+  const [one, other] = executables.map(executable => bySymbol(executable, turns));
   const sum = (aTurn: Map<string, number>) => [...aTurn.values()].reduce((sum, count) => sum + count, 0);
   console.log(`${name}, ${form}, ${turns} turns: ${sum(one).toFixed(1)} > ${sum(other).toFixed(1)} instructions a turn`);
   const rows = [...new Set([...one.keys(), ...other.keys()])]

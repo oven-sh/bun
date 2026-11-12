@@ -21,9 +21,10 @@ use crate::session::Session;
 use crate::types::{Follow, OwnStore, Visitor};
 use crate::util::memory::{Cells, FixedCells, Zeroed};
 use crate::util::{AppendVec, Windowed, WindowedMap, spread_hash, spread_in_window};
-use std::alloc::{Allocator, Global};
+use std::alloc::{Allocator, Global, Layout};
 use std::hash::Hash;
 use std::marker::PhantomData;
+use std::ptr::NonNull;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
@@ -33,12 +34,20 @@ pub trait Alloc: Allocator + Clone + Send + Sync {
     /// A list of numbers, allocated from it, that several tables share.
     type Shared: std::ops::Deref<Target = [u32]> + Clone + Send + Sync;
     fn share(&self, list: &[u32]) -> Self::Shared;
+    /// Frees `block` once no thread reads it, and returns true. Returns false if that cannot be known.
+    ///
+    /// # Safety
+    /// `block` was allocated here with `layout`. From now on no thread finds it anymore.
+    unsafe fn free_when_unread(&self, block: NonNull<u8>, layout: Layout) -> bool;
 }
 
 impl Alloc for Global {
     type Shared = Arc<[u32]>;
     fn share(&self, list: &[u32]) -> Arc<[u32]> {
         list.into()
+    }
+    unsafe fn free_when_unread(&self, _: NonNull<u8>, _: Layout) -> bool {
+        false
     }
 }
 
@@ -48,6 +57,10 @@ impl<'s> Alloc for &'s Session {
     fn share(&self, list: &[u32]) -> &'s [u32] {
         let session: &'s Session = self;
         session.arena().alloc_slice_copy(list)
+    }
+    unsafe fn free_when_unread(&self, block: NonNull<u8>, _: Layout) -> bool {
+        // SAFETY: caller contract.
+        unsafe { Session::free_when_unread(self, block) }
     }
 }
 

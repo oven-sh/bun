@@ -25,7 +25,9 @@ impl FileLowering<'_, '_, '_, '_> {
         lowering.emit_coroutine_start();
         lowering.count_generator_body(source);
         lowering.emit_fast_path(source);
+        lowering.begin_self_tail_loop(source);
         lowering.lower_function_body(source);
+        lowering.end_self_tail_loop();
         lowering.leave_scope(top);
         lowering.finish();
     }
@@ -33,7 +35,7 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(crate) fn lower_left_out_function(&mut self, function: FunctionId) {
         let name = self.function_header(function).name;
         let kind = match self.source.dialect() {
-            SourceDialect::Program => RuntimeErrorKind::LeftOutOfExecutable,
+            SourceDialect::Program => RuntimeErrorKind::OmittedFromExecutable,
             SourceDialect::Runtime => RuntimeErrorKind::FunctionNotCompiled,
         };
         let mut lowering = FunctionLowering::begin(self, function);

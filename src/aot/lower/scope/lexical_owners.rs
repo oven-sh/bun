@@ -13,7 +13,10 @@ pub(super) fn compute_lexical_owners(hir: &hir::File<'_>, bound: &Bound<'_>) -> 
         let unit = bound.code_unit(id);
         let starts_unit = parent.is_none_or(|parent| bound.code_unit(parent) != unit);
         let is_lexical_owner = match unit {
-            CodeUnit::File | CodeUnit::FieldInitializer(_) => starts_unit,
+            CodeUnit::File => starts_unit,
+            CodeUnit::FieldInitializer(member) => {
+                starts_unit && !bound.is_field_assigned_behind_class(member)
+            }
             CodeUnit::Function(function) => starts_unit && hir[function].kind != FnKind::Arrow,
         };
         let inherited = parent.filter(|_| !is_lexical_owner);
@@ -35,7 +38,7 @@ pub(super) fn find_container_binding(
             _ => return None,
         };
         let binding = bound.declared_symbol(declaration).some()?;
-        let names_container = bound.export_symbol_of_value_symbol_if_exported(binding) == container
+        let names_container = bound.exported_value(binding) == container
             || bound.symbol_of_declaration(declaration) == container;
         let parameter = bound.container_parameter(scope).some();
         parameter.filter(|_| names_container)

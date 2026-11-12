@@ -4,7 +4,7 @@ use bun_sema::bind::{
 };
 use bun_sema::check::aot::{FunctionRef, ObjectMemberKind};
 use bun_sema::hir::{
-    self, BinOp, Call, Chain, ExprId, ExprKind, FnBody, FnId, MemberKey, NodeData, PatKind,
+    self, BinOp, Call, Chain, ExprId, ExprKind, FnBody, FnId, FnKind, MemberKey, NodeData, PatKind,
     PropKey, PropKind, StmtId, StmtKind, UnOp,
 };
 use bun_sema::program::FileId;
@@ -18,11 +18,13 @@ use super::scope::{BindingForm, BindingRef, Storage};
 use super::{FileLowering, FunctionLowering, module};
 use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
+use crate::ir::generated::ECMAMode;
 use crate::ir::{BlockId, Edge, FunctionId, FunctionKey, PropertyKeyId, TypeTable, ValueId};
 use crate::known_helpers::{
     HeldFunction, Helper, KnownCallee, KnownReference, PrivateFieldAccess, PrivateMemberKind,
     PrivateStateKind, PrivateStateRole, PrivateStateSite, ResolveInput, ResolvedReference, Shape,
-    resolve_callee, resolve_loaded_reference, resolve_private_field_call, resolve_reference,
+    resolve_callee, resolve_loaded_reference, resolve_private_field_call, resolve_public_field,
+    resolve_reference,
 };
 use crate::load::sources::parsed_source;
 
@@ -90,6 +92,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let (files, modules) = (self.file.queries.files(), self.file.inputs.modules);
         let states = helpers.private_states(files, modules, self.file.file);
         if let Some(state) = states.and_then(|states| states.site(call)) {
+            if self.file.counts_executions() {
+                return None;
+            }
             return match state.role {
                 PrivateStateRole::Definition => {
                     self.lower_private_state_definition(call, site, state)
@@ -99,6 +104,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
             };
         }
+        if let Some(required) = modules
+            .commonjs()
+            .find_require_of_star(self.file.file, call)
+        {
+            self.lower_expression_for_effect(required);
+            return Some(self.builder.undefined());
+        }
         if !is_plain_call(self.file, site) {
             return None;
         }
@@ -106,7 +118,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if !is_lowered(self.file, callee.file) {
             return None;
         }
-        match callee.helper(helpers)? {
+        let helper = callee.helper(helpers)?;
+        // A coverage report counts the functions and the lines of a helper. The exports of a star are linked by the build.
+        let inputs = self.file.inputs;
+        if inputs.options.counts_executions
+            && inputs.sources.is_in_coverage_report(callee.file)
+            && !matches!(helper, Helper::ExportStar)
+        {
+            return None;
+        }
+        match helper {
             Helper::ExportStar => self.lower_export_star(call, site, &callee),
             Helper::CreateClass => self.lower_create_class(call, site, &callee),
             Helper::Typeof => {
@@ -116,6 +137,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 Some(self.builder.type_of(value))
             }
             Helper::ImportDefault => self.lower_import_default(call, site, &callee),
+            Helper::PublicField => self.lower_public_field(call, site),
             Helper::ClassPrivateFieldGet | Helper::ClassPrivateFieldIn => {
                 self.lower_static_member_access(call, site)
             }
@@ -237,6 +259,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let placement = file.scopes.placement(binding);
         match placement.map(|placement| placement.storage) {
             Some(Storage::Variable(_)) => true,
+            Some(Storage::Instance { .. }) => self.reaches_stored(file.instance_slot()),
             Some(Storage::Field { scope, .. }) => {
                 let captured = self.find_captured_value(Capture::Environment(scope));
                 captured.is_some() || self.is_enclosing_scope(scope)
@@ -565,6 +588,77 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let key = self.emit_get(descriptor, key_name);
         let object = self.emit_builtin_itself(BuiltinId::Object);
         super::call::emit_call(self, define, Some(object), &[target, key, descriptor]);
+    }
+
+    fn lower_public_field(&mut self, call: ExprId, site: Call) -> Option<ValueId> {
+        let hir = self.file.hir;
+        let callee = resolve_public_field(&resolve_input(self.file), self.file.file, site.callee)?;
+        let has_value = site.args.len() == 3;
+        if !has_value && site.args.len() != 2 {
+            return None;
+        }
+        let answers_value = callee.shape == Shape::PublicFieldAnswersValue;
+        let written = hir.skip_type_assertions(hir.id_at(site.args, 1));
+        let ExprKind::String(name) = hir[written].kind else {
+            return None;
+        };
+        let is_in_constructor = matches!(
+            self.key,
+            FunctionKey::Source(FunctionRef { function, .. })
+                if hir[function].kind == FnKind::Constructor
+        );
+        let handed = hir.skip_type_assertions(hir.id_at(site.args, 0));
+        let is_this_of_construction =
+            is_in_constructor && matches!(hir[handed].kind, ExprKind::This);
+        if name == known::__proto__ || !is_this_of_construction {
+            return None;
+        }
+        let unwritten = [known::get, known::set];
+        if unwritten
+            .iter()
+            .any(|&word| self.file.is_name_on_object_prototype(word))
+        {
+            return None;
+        }
+        let bound = self.file.queries.files().bound(callee.file);
+        let scope = bound.fns[callee.defines.definition.idx()].scope;
+        let mode = match bound.is_strict_scope(scope) {
+            true => ECMAMode::Strict,
+            false => ECMAMode::Sloppy,
+        };
+        let object = self.lower_expression(hir.id_at(site.args, 0));
+        let value = match has_value {
+            true => self.lower_expression(hir.id_at(site.args, 2)),
+            false => self.builder.undefined(),
+        };
+        self.set_position(hir[call].pos);
+        let key = PropertyName::Constant(self.file.name_key(name));
+        let (is_there, is_not, done) = (
+            self.create_block(),
+            self.create_block(),
+            self.create_block(),
+        );
+        let result = self.builder.create_variable(None);
+        let has = self.emit_has(object, key);
+        self.builder
+            .branch(has, Edge::to(is_there), Edge::to(is_not));
+        self.continue_in(is_there);
+        self.emit_define(object, key, value);
+        self.builder.write_variable(
+            result,
+            match answers_value {
+                true => value,
+                false => object,
+            },
+        );
+        self.jump(done);
+        self.continue_in(is_not);
+        self.emit_set_in_mode(object, key, value, mode);
+        self.builder.write_variable(result, value);
+        self.jump(done);
+        self.continue_in(done);
+        self.file.known_helpers_lowered.calls += 1;
+        Some(self.builder.read_variable(result))
     }
 
     fn lower_import_default(
@@ -928,6 +1022,20 @@ impl FileLowering<'_, '_, '_, '_> {
         let ExprKind::Object(properties) = hir[self.skip_type_syntax(descriptor)].kind else {
             return None;
         };
+        let words = [
+            known::value,
+            known::get,
+            known::set,
+            known::enumerable,
+            known::configurable,
+            known::writable,
+        ];
+        if words
+            .iter()
+            .any(|&word| self.is_name_on_object_prototype(word))
+        {
+            return None;
+        }
         let atoms = &self.queries.files().atoms;
         let mut key = None;
         let mut is_named = [false; 4];
@@ -1309,12 +1417,14 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     fn lower_module_bodies(files: &[(&str, &str)]) -> Vec<Arc<Function>> {
         let options = LoweringOptions {
             platform: host_platform(),
-            embeds_function_text: false,
+            embeds_function_source: false,
+            reparses_function_sources: false,
             removable: Default::default(),
             minifies_identifiers: false,
             obfuscates: false,
             counts_executions: false,
             runs_tests: false,
+            divides_small_files: false,
         };
         let lowered = lower_program(files, options);
         let fragments = lowered.iter().map(|(_, lowered)| &lowered.fragment);

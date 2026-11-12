@@ -1,9 +1,11 @@
 mod declarations;
 mod loops;
+mod suspending_loops;
 
 use bun_sema::bind::ScopeId;
 use bun_sema::hir::{ExprId, ExprKind, IdList, StmtId, StmtKind};
 
+pub(in crate::lower) use self::suspending_loops::{SuspendingArm, SuspendingPart};
 use super::control::BreakTargetKind;
 use super::{FunctionLowering, commonjs, dispose, module, scope};
 use crate::builtins::SourceDialect;
@@ -20,9 +22,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let hir = self.file.hir;
         for index in 0..statements.len {
             let statement = hir.id_at(statements, index as usize);
+            self.enter_suspending_rest(statement);
             self.move_environments_put_off(statements.start + index);
             if self.file.decisions().is_dead_stmt(statement) {
                 self.count_statement(statement);
+                continue;
+            }
+            if self.lower_store_at_birth(statement) {
                 continue;
             }
             if dispose::find_resource_declarations(hir, statement).is_some() {
@@ -156,7 +162,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             StmtKind::ExportAssign(expression) => self.lower_export_assignment(expression),
             StmtKind::ExportDefault(expression) => self.lower_export_default(statement, expression),
             StmtKind::Return(expression) => self.lower_return(expression),
-            StmtKind::If { test, yes, no } => self.lower_if(test, yes, no),
+            StmtKind::If { test, yes, no } => match self.suspending_arm {
+                Some(arm) if arm.part == SuspendingPart::Arm && arm.statement == statement => {
+                    self.lower_suspending_arm(arm, (test, yes, no), behind);
+                }
+                _ => self.lower_if(test, yes, no),
+            },
             StmtKind::For { init, .. } => self.lower_for(statement, init),
             StmtKind::While { test, body } => self.lower_while(statement, test, body),
             StmtKind::DoWhile { body, test } => self.lower_do_while(statement, body, test),
@@ -229,7 +240,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         if holds_nothing(yes)
             && holds_nothing(no)
-            && self.file.reads_only_what_bun_run_leaves_out(test, true)
+            && self
+                .file
+                .reads_only_what_bun_run_leaves_out_of_empty_if(test)
         {
             return;
         }

@@ -636,6 +636,40 @@ test("no assertion failures 2", () => {
   }
 
   {
+    // Four or more frames that an error shares with its cause are printed once, under the cause.
+    const frames = ["one", "two", "three", "four", "five", "six"].map(name => `    at ${name} (file.js:1:1)`);
+    const print = shared => {
+      const cause = new Error("inner");
+      cause.stack = ["Error: inner", "    at inner (file.js:1:1)", ...frames.slice(0, shared)].join("\n");
+      const error = new Error("outer", { cause });
+      error.stack = ["Error: outer", "    at outer (file.js:1:1)", ...frames.slice(0, shared)].join("\n");
+      return util.inspect(error).split("\n");
+    };
+    const underCause = shared => [
+      "  [cause]: Error: inner",
+      "      at inner (file.js:1:1)",
+      ...frames.slice(0, shared).map(frame => "  " + frame),
+      "}",
+    ];
+    assert.deepStrictEqual(print(6), [
+      "Error: outer",
+      "    at outer (file.js:1:1)",
+      frames[0],
+      "    ... 4 lines matching cause stack trace ...",
+      frames[5] + " {",
+      ...underCause(6),
+    ]);
+    assert.deepStrictEqual(print(3), [
+      "Error: outer",
+      "    at outer (file.js:1:1)",
+      frames[0],
+      frames[1],
+      frames[2] + " {",
+      ...underCause(3),
+    ]);
+  }
+
+  {
     const tmp = Error.stackTraceLimit;
     Error.stackTraceLimit = 0;
     const err = new Error("foo");

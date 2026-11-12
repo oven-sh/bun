@@ -13,7 +13,7 @@ use bun_sema::json::Json;
 use bun_sema::program::FileId;
 use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
-use bun_sema::types::{SigId, TypeId};
+use bun_sema::types::TypeId;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 
 struct Source<'a> {
@@ -4358,29 +4358,42 @@ fn target_of_declaration(
     })
 }
 
-fn contextual_signatures(
+fn is_given_by_context(
     services: &mut Services<'_, '_, '_>,
-    file: FileId,
-    function: Node,
-) -> Vec<SigId> {
-    let node = NodeRef {
-        file,
-        node: function,
-    };
-    let Some(context) = services.apparent_type_of_contextual_type(node) else {
-        return Vec::new();
-    };
+    function: NodeRef,
+    context: TypeId,
+    index: usize,
+) -> bool {
+    let strict_null_checks = services.compiler_options().strict_null_checks;
     let parts = match services.type_flags(context).contains(TypeFlags::UNION) {
         true => services.constituents(context),
         false => &[context][..],
     };
-    let mut signatures = Vec::new();
     for &part in parts {
-        signatures.extend_from_slice(services.signatures_of_type(part, SignatureKind::Call));
+        for &signature in services.signatures_of_type(part, SignatureKind::Call) {
+            let signature = services.signature_info(signature);
+            // A call can infer a type argument as the type of the function itself.
+            if signature.declaration == Some(function) {
+                continue;
+            }
+            let is_given = match (signature.parameters.get(index), signature.parameters.last()) {
+                (Some(&at), _) => {
+                    let ty = services.type_of_symbol(at);
+                    !strict_null_checks
+                        || !services.is_related(Relation::Assignable, TypeId::UNDEFINED, ty)
+                }
+                (None, Some(&rest)) => {
+                    let ty = services.type_of_symbol(rest);
+                    services.type_test(TypeTest::ArrayLike, ty)
+                }
+                (None, None) => false,
+            };
+            if is_given {
+                return true;
+            }
+        }
     }
-    // A call can infer a type argument as the type of the function itself.
-    signatures.retain(|&signature| services.signature_info(signature).declaration != Some(node));
-    signatures
+    false
 }
 
 pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<ModuleTypes> {
@@ -4579,39 +4592,29 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
             }
         }
         // TypeScript infers from the annotation of a callback's parameter, where a default value adds no `undefined` and a `?` does.
-        let strict_null_checks = services.compiler_options().strict_null_checks;
         let mut parameters_given_by_context = Vec::new();
         for (function, id) in hir.fns.iter().zip(0u32..) {
             let parameters = function.params.iter().map(|parameter| &hir[parameter]);
             let mut defaulted = (parameters.enumerate())
                 .filter(|(_, parameter)| parameter.default.is_some())
                 .peekable();
-            let signatures = match function.kind {
+            let node = NodeRef {
+                file,
+                node: hir.node(FnId(id)),
+            };
+            let context = match function.kind {
                 FnKind::Expr | FnKind::Arrow if defaulted.peek().is_some() => {
-                    Some(contextual_signatures(services, file, hir.node(FnId(id))))
+                    services.apparent_type_of_contextual_type(node)
                 }
                 FnKind::Method => None,
                 _ => continue,
             };
             for (index, parameter) in defaulted {
-                let is_given = signatures.as_ref().is_none_or(|signatures| {
-                    signatures.iter().any(|&signature| {
-                        let expected = services.signature_info(signature).parameters;
-                        match (expected.get(index), expected.last()) {
-                            (Some(&at), _) => {
-                                let ty = services.type_of_symbol(at);
-                                let undefined = TypeId::UNDEFINED;
-                                !strict_null_checks
-                                    || !services.is_related(Relation::Assignable, undefined, ty)
-                            }
-                            (None, Some(&rest)) => {
-                                let ty = services.type_of_symbol(rest);
-                                services.type_test(TypeTest::ArrayLike, ty)
-                            }
-                            (None, None) => false,
-                        }
-                    })
-                });
+                let is_given = match (function.kind, context) {
+                    (FnKind::Method, _) => true,
+                    (_, Some(context)) => is_given_by_context(services, node, context, index),
+                    (_, None) => false,
+                };
                 if is_given {
                     parameters_given_by_context.push(hir[parameter.pat].pos);
                 }

@@ -29,7 +29,7 @@ else
     for (const file of files) {
       await using child = Bun.spawn({
         cmd: [bunExe(), join(folder, "tools", "update-ir-tests.ts"), "--print-anew", join(folder, file)],
-        env: { ...bunEnv, FRONT_END: bunExe() },
+        env: bunEnv,
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",

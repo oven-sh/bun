@@ -2124,12 +2124,13 @@ fn link(
         // A stated type brings the types that it names with it. A value would come as a twin.
         let stated = module.types.iter().flat_map(|types| &types.stated_members);
         let named = stated.flat_map(|member| member.names.iter());
-        queue.extend(named.filter_map(|name| match &name.1 {
-            Named::Target(target) => place_of(target).filter(|(index, name)| {
-                let found = declared[*index].get(&name[..]);
-                found.is_some_and(|found| found.bindings.is_empty() && !found.is_ambient_value)
-            }),
-            Named::Global | Named::Local(_) => None,
+        queue.extend(named.filter_map(|name| {
+            let Named::Target(Target::Declaration { path, name }) = &name.1 else {
+                return None;
+            };
+            let index = *index_of.get(&path[..])?;
+            let found = declared[index].get(&name[..])?;
+            (found.bindings.is_empty() && !found.is_ambient_value).then(|| (index, name.clone()))
         }));
     }
     let entry = bundle

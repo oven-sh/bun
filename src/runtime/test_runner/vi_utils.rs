@@ -80,7 +80,10 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global:
     run(global, JSMock__didFinishTestFile);
     run(global, ViUtils__unstubAllEnvs);
     run(global, ViUtils__unstubAllGlobals);
-    run(global, ViUtils__stubWhatPreloadStubbed);
+    // Before the stubs of a preload go back on, so that each saves what the next file is to get from `vi.unstubAllGlobals()`, not a fake.
+    super::timers::fake_timers::on_test_file_end(global, || {
+        run(global, ViUtils__stubWhatPreloadStubbed)
+    });
     ViUtils__forgetDynamicImports(global);
 }
 

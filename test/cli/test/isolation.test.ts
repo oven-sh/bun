@@ -1078,6 +1078,13 @@ describe.concurrent("bun test --isolate", () => {
     const context = `globalThis.context = vm.createContext({ kept }); vm.runInContext("1", context);`;
     const bareContext = `globalThis.bareContext = vm.createContext(vm.constants.DONT_CONTEXTIFY); bareContext.kept = kept;`;
     const channel = `new ShadowRealm().evaluate('globalThis.channel = new BroadcastChannel("kept"); channel.onmessage = () => {}; 0');`;
+    const spyUnderFakeTimers = `
+      const spy = vi.spyOn(globalThis, "setInterval");
+      vi.useFakeTimers();
+      spy.mockRestore();
+      vi.useRealTimers();
+      if (setInterval !== spy) throw new Error("useRealTimers() did not put the restored spy back");
+    `;
 
     describe.each([
       ["nothing", ""],
@@ -1086,12 +1093,14 @@ describe.concurrent("bun test --isolate", () => {
       ["a node:vm context without a sandbox", bareContext],
       ["a BroadcastChannel in a ShadowRealm", channel],
       ["all of them", shadowRealm + context + bareContext + channel],
-    ])("that makes %s", (_, make) => {
+      // Fake timers keep a record for the spy and for the spy that went back. Each is in a weak map of the file.
+      ["a restored spy that fake timers put back", spyUnderFakeTimers, ["--globals=vitest"]],
+    ] as [string, string, string[]?][])("that makes %s", (_, make, flags = []) => {
       test.each([3, 12, 48])("%d files", async count => {
         const files: Record<string, string> = {};
         for (let file = 0; file < count; file++) {
           files[`${String(file).padStart(2, "0")}.test.ts`] = `
-            import { test } from "bun:test";
+            import { test, vi } from "bun:test";
             import vm from "node:vm";
             globalThis.kept = Array.from({ length: 100 }, () => new URLSearchParams());
             test("makes it", () => {
@@ -1120,7 +1129,7 @@ describe.concurrent("bun test --isolate", () => {
         using dir = tempDir("isolate-collects-globals", files);
         const { stdout, stderr, exitCode } = await runTests(
           String(dir),
-          ["--isolate"],
+          ["--isolate", ...flags],
           Object.keys(files).map(file => "./" + file),
           // An in-flight JIT compilation roots the code it compiles, which would show up in the snapshot.
           { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },

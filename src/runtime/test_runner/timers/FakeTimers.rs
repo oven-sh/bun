@@ -20,6 +20,25 @@ unsafe extern "C" {
     safe fn JSMock__setOverridenDateNow(global: &JSGlobalObject, value: f64);
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
     safe fn JSMock__isRestoredSpy(value: JSValue) -> bool;
+    /// True for a mock function of `vi.fn()` or `vi.spyOn()`.
+    safe fn JSMock__isOfVitest(value: JSValue) -> bool;
+    /// What the spy `value` replaced on `owner[name]`, as a record. Empty if `value` is no spy on that property.
+    safe fn JSMock__spyRecord(
+        global: &JSGlobalObject,
+        value: JSValue,
+        owner: JSValue,
+        name: &bun_core::String,
+    ) -> JSValue;
+    /// The value in a record for `owner`, or empty if the spy replaced an accessor or no property.
+    safe fn JSMock__valueOfSpyRecord(record: JSValue, owner: JSValue) -> JSValue;
+    /// Puts what a record for `owner` has on `owner[name]`, if `expected` is there now. Runs no JS.
+    safe fn JSMock__putSpyRecord(
+        global: &JSGlobalObject,
+        owner: JSValue,
+        name: &bun_core::String,
+        expected: JSValue,
+        record: JSValue,
+    );
 }
 
 unsafe extern "C" {
@@ -359,6 +378,8 @@ struct Replaced {
     api: Api,
     original: Strong,
     fake: Strong,
+    /// A spy was on the property when `fake` took its place. `spies_under` has what that spy had replaced.
+    over_spy: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -491,6 +512,10 @@ pub(crate) struct FakeTimers {
     replaced: Vec<Replaced>,
     /// JS `WeakMap` from every fake ever created, installed or not, to the function it replaced.
     originals: StrongOptional,
+    /// JS `WeakMap` from a fake that took the place of a spy to the record of what that spy had replaced. Created with the first such fake.
+    spies_under: StrongOptional,
+    /// JS `WeakMap` from a restored spy that `uninstall` put back as Vitest does to its record. The end of the test file takes the spy off again.
+    restored_put_back: StrongOptional,
     reading_globals: bool,
     ticks: VecDeque<Tick>,
     drives: Vec<AsyncDrive>,
@@ -516,6 +541,8 @@ impl Default for FakeTimers {
             loop_limit: 0,
             replaced: Vec::new(),
             originals: StrongOptional::empty(),
+            spies_under: StrongOptional::empty(),
+            restored_put_back: StrongOptional::empty(),
             reading_globals: false,
             ticks: VecDeque::new(),
             drives: Vec::new(),
@@ -767,6 +794,8 @@ impl FakeTimers {
         }
         self.replaced.clear();
         self.originals.deinit();
+        self.spies_under.deinit();
+        self.restored_put_back.deinit();
         self.ticks.clear();
         self.drives.clear();
         self.auto_step_posted = false;
@@ -877,15 +906,47 @@ impl FakeTimers {
                 }
             });
         }
-        for Replaced { api, original, .. } in deactivated.replaced {
-            // Restored while the clock was faked, it has already put back what it replaced.
-            if matches!(api, Api::Date | Api::Performance) && JSMock__isRestoredSpy(original.get())
-            {
+        for Replaced {
+            api,
+            original,
+            fake,
+            over_spy,
+        } in deactivated.replaced
+        {
+            let original = original.get();
+            if over_spy && let Some(record) = Self::spy_record(fake.get()) {
+                Self::uninstall_over_spy(global, api, original, fake.get(), record);
                 continue;
             }
-            api.put(global, original.get());
+            // Restored while the clock was faked, it has already put back what it replaced.
+            if matches!(api, Api::Date | Api::Performance) && JSMock__isRestoredSpy(original) {
+                continue;
+            }
+            api.put(global, original);
         }
         deactivated.drives
+    }
+
+    /// Ends `fake`, which took the place of the spy `original`. `record` is what that spy had replaced.
+    #[cold]
+    fn uninstall_over_spy(
+        global: &JSGlobalObject,
+        api: Api,
+        original: JSValue,
+        fake: JSValue,
+        record: JSValue,
+    ) {
+        if stays_off(global, api, original) {
+            // The restore of the spy put back what the spy had replaced. If the fake is on the property again, the fake gives way to that.
+            Self::put_spy_record(global, api, fake, record);
+            return;
+        }
+        api.put(global, original);
+        if JSMock__isRestoredSpy(original) {
+            // SAFETY: per-thread `timer::All`; the borrow ends with the call.
+            let put_back = unsafe { &mut (*timer_all()).fake_timers.restored_put_back };
+            set_in_weak_map(global, put_back, original, record);
+        }
     }
 
     /// Everything that can throw runs before any state changes. Returns drives to settle, like `uninstall`.
@@ -907,6 +968,7 @@ impl FakeTimers {
             api,
             fake,
             original,
+            ..
         } in &replaced
         {
             api.put(global, fake.get());
@@ -929,6 +991,36 @@ impl FakeTimers {
         originals
     }
 
+    /// The record of the spy that `fake` took the place of, if a spy was on the property then.
+    fn spy_record(fake: JSValue) -> Option<JSValue> {
+        // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
+        let spies_under = unsafe { (*timer_all()).fake_timers.spies_under.get() }?;
+        original_of(spies_under, fake)
+    }
+
+    fn put_spy_record(global: &JSGlobalObject, api: Api, expected: JSValue, record: JSValue) {
+        let owner = api.owner(global);
+        let name = bun_core::String::static_(api.property());
+        crate::dispatch::fold(bun_jsc::from_js_host_call_generic(global, || {
+            JSMock__putSpyRecord(global, owner, &name, expected, record)
+        }));
+    }
+
+    /// The record to keep for a spy whose own record is `record`. If that spy replaced a stale fake over a restored spy, it is the record of the older spy: no record then keeps a fake that nothing else has.
+    fn without_stale_fakes(originals: JSValue, owner: JSValue, mut record: JSValue) -> JSValue {
+        // Each round goes to the record of an older spy, so the rounds end.
+        loop {
+            let value = JSMock__valueOfSpyRecord(record, owner);
+            let Some(under) = original_of(originals, value) else {
+                return record;
+            };
+            match Self::spy_record(value).filter(|_| JSMock__isRestoredSpy(under)) {
+                Some(older) => record = older,
+                None => return record,
+            }
+        }
+    }
+
     /// Each `original` is the value `uninstall(Restore::Always)` will leave on the global, never another fake.
     fn fakes(global: &JSGlobalObject, faked: ApiSet, time_origin: f64) -> JsResult<Vec<Replaced>> {
         let _reading = ReadingGlobals::begin();
@@ -936,21 +1028,40 @@ impl FakeTimers {
         let originals = unsafe { (*timer_all()).fake_timers.originals(global) };
         let mut fakes = Vec::new();
         for api in Api::FUNCTIONS {
-            // A test can take `Date.prototype.constructor` away.
-            if !faked.contains(api) || !api.owner(global).is_object() {
+            if !faked.contains(api) {
+                continue;
+            }
+            // A test can take `Date.prototype.constructor` away. Read once: a getter below can do it too.
+            let owner = api.owner(global);
+            if !owner.is_object() {
                 continue;
             }
             // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
             let replaced_now = unsafe { &(*timer_all()).fake_timers.replaced }
                 .iter()
                 .find(|replaced| replaced.api == api)
-                .map(|replaced| replaced.original.get());
-            let original = match replaced_now {
-                Some(original) => original,
+                .map(|replaced| {
+                    let record = match replaced.over_spy {
+                        true => Self::spy_record(replaced.fake.get()),
+                        false => None,
+                    };
+                    (replaced.original.get(), record)
+                })
+                // Not a spy that was restored under the fake: the property has what that spy had replaced, or what the test put there since.
+                .filter(|&(original, record)| {
+                    !(record.is_some() && stays_off(global, api, original))
+                });
+            let (original, record) = match replaced_now {
+                Some(replaced_now) => replaced_now,
                 None => {
-                    let installed = api.owner(global).get(global, api.property())?;
+                    let installed = owner.get(global, api.property())?;
                     let installed = installed.unwrap_or(JSValue::UNDEFINED);
-                    original_of(originals, installed).unwrap_or(installed)
+                    match original_of(originals, installed) {
+                        Some(original) => {
+                            Self::under(global, api, owner, originals, installed, original)
+                        }
+                        None => (installed, None),
+                    }
                 }
             };
             // Only a DOM library defines these two.
@@ -967,6 +1078,7 @@ impl FakeTimers {
                     api,
                     original: Strong::create(original, global),
                     fake: Strong::create(original, global),
+                    over_spy: false,
                 });
                 continue;
             }
@@ -978,35 +1090,97 @@ impl FakeTimers {
                 _ => bun_jsc::cpp::Bun__FakeTimers__createFunction(global, api as u8)?,
             };
             Bun__FakeTimers__setOriginal(global, originals, fake, original);
+            let mut over_spy = false;
+            if may_be_spy(original) {
+                let record = record.unwrap_or_else(|| {
+                    let name = bun_core::String::static_(api.property());
+                    let record = JSMock__spyRecord(global, original, owner, &name);
+                    Self::without_stale_fakes(originals, owner, record)
+                });
+                if !record.is_empty() {
+                    // SAFETY: per-thread `timer::All`; the borrow ends with the call.
+                    let spies_under = unsafe { &mut (*timer_all()).fake_timers.spies_under };
+                    set_in_weak_map(global, spies_under, fake, record);
+                    over_spy = true;
+                }
+            }
             fakes.push(Replaced {
                 api,
                 original: Strong::create(original, global),
                 fake: Strong::create(fake, global),
+                over_spy,
             });
         }
         Ok(fakes)
     }
 
-    /// Swaps any stale fake that was put back on a global for its original. Runs no JS.
+    /// What a new fake saves when `fake`, which replaced `original`, is on the property: `original`, or what a spy that was restored under `fake` had replaced. The record is the one to keep with the new fake.
+    fn under(
+        global: &JSGlobalObject,
+        api: Api,
+        owner: JSValue,
+        originals: JSValue,
+        mut fake: JSValue,
+        mut original: JSValue,
+    ) -> (JSValue, Option<JSValue>) {
+        // Each round goes to a value that was on the property before `fake` was made, so the rounds end.
+        loop {
+            let record = Self::spy_record(fake);
+            let Some(of_spy) = record.filter(|_| stays_off(global, api, original)) else {
+                return (original, record);
+            };
+            let value = JSMock__valueOfSpyRecord(of_spy, owner);
+            // A fake replaces a value. If the restored spy had replaced an accessor or no property, the new fake takes the place of the old one.
+            if value.is_empty() {
+                return (original, record);
+            }
+            // The spy can have replaced an older stale fake.
+            let Some(under) = original_of(originals, value) else {
+                return (value, None);
+            };
+            (fake, original) = (value, under);
+        }
+    }
+
+    /// Swaps any stale fake that was put back on a global for what it had replaced, and any restored spy that `uninstall` put back for what that spy had replaced. Runs no JS.
     fn take_off_stale_fakes(global: &JSGlobalObject) {
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         let Some(originals) = (unsafe { (*timer_all()).fake_timers.originals.get() }) else {
             return;
         };
+        // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
+        let put_back = unsafe { (*timer_all()).fake_timers.restored_put_back.get() };
         for api in Api::FUNCTIONS {
             let owner = api.owner(global);
             if !owner.is_object() {
                 continue;
             }
             let name = bun_core::String::static_(api.property());
-            let installed = Bun__FakeTimers__getDirect(global, owner, &name);
-            // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
-            if !unsafe { (*timer_all()).fake_timers.is_installed(installed) }
-                && let Some(original) = original_of(originals, installed)
-            {
-                api.put(global, original);
+            // Each round puts back what was on the property before the value that it takes off was made, so the rounds end.
+            loop {
+                let installed = Bun__FakeTimers__getDirect(global, owner, &name);
+                // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
+                let is_stale = !unsafe { (*timer_all()).fake_timers.is_installed(installed) };
+                if let Some(original) = original_of(originals, installed).filter(|_| is_stale) {
+                    // The next test file gets no restored spy, whatever made it.
+                    match Self::spy_record(installed).filter(|_| JSMock__isRestoredSpy(original)) {
+                        Some(record) => Self::put_spy_record(global, api, installed, record),
+                        None => api.put(global, original),
+                    }
+                } else if let Some(record) =
+                    put_back.and_then(|put_back| original_of(put_back, installed))
+                {
+                    Self::put_spy_record(global, api, installed, record);
+                } else {
+                    break;
+                }
+                if Bun__FakeTimers__getDirect(global, owner, &name) == installed {
+                    break;
+                }
             }
         }
+        // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
+        unsafe { (*timer_all()).fake_timers.restored_put_back.deinit() };
     }
 
     // Below, a returned `JSValue` is the exception a timer callback threw, or empty. A `JsError` means the VM is terminating.
@@ -1533,6 +1707,42 @@ fn original_of(originals: JSValue, value: JSValue) -> Option<JSValue> {
     (!original.is_empty()).then_some(original)
 }
 
+/// A mock function is an `InternalFunction`. No timer function is one.
+fn may_be_spy(value: JSValue) -> bool {
+    value.js_type() == bun_jsc::JSType::InternalFunction
+}
+
+/// True for a restored spy that fake timers do not put back. Its restore has put back what it replaced, and one of `jest.spyOn()` or `spyOn()` returns undefined when called. A rule of Bun: Jest and Vitest write over what the restore put back.
+fn stays_off(global: &JSGlobalObject, api: Api, spy: JSValue) -> bool {
+    if !may_be_spy(spy) || !JSMock__isRestoredSpy(spy) {
+        return false;
+    }
+    // No restored spy goes back on the two clocks.
+    if matches!(api, Api::Date | Api::Performance) {
+        return true;
+    }
+    // With `globals = "vitest"`, a restored spy of `vi.spyOn()` goes back, as in Vitest. Only then does no module see `jest`: @testing-library takes a mock function on `setTimeout` for the fake timers of Jest.
+    !(JSMock__isOfVitest(spy) && global.bun_vm().transpiler.options.vitest_globals)
+}
+
+/// Sets `key` in the JS `WeakMap` of `map`. The first call makes the map.
+fn set_in_weak_map(
+    global: &JSGlobalObject,
+    map: &mut StrongOptional,
+    key: JSValue,
+    value: JSValue,
+) {
+    let weak_map = match map.get() {
+        Some(weak_map) => weak_map,
+        None => {
+            let weak_map = Bun__FakeTimers__createOriginals(global);
+            map.set(global, weak_map);
+            weak_map
+        }
+    };
+    Bun__FakeTimers__setOriginal(global, weak_map, key, value);
+}
+
 fn plus(a: Timespec, b: Timespec) -> Timespec {
     const NS_PER_S: i64 = bun_core::time::NS_PER_S as i64;
     let nsec = a.nsec + b.nsec;
@@ -1736,21 +1946,24 @@ fn advance(global: &JSGlobalObject, ms: f64) -> Result<JSValue, Stop> {
     FakeTimers::run_until(global, now.add_ms_float(ms))
 }
 
-pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
+/// `then` puts the stubs of a preload back on. It runs before the microtasks that the end of the fake timers lets run.
+pub(crate) fn on_test_file_end(global: &JSGlobalObject, then: impl FnOnce()) {
     // SAFETY: per-thread `timer::All`; field reads only.
     let (active, from_preload) = unsafe {
         let this = &(*timer_all()).fake_timers;
         (this.active, this.from_preload)
     };
     let mocked = active || !bun_jsc::cpp::Bun__FakeTimers__overriddenDateNow(global).is_nan();
-    if mocked && !from_preload {
+    let entered = (mocked && !from_preload).then(|| {
         // SAFETY: the live event loop of the per-thread VM.
-        let _entered =
-            unsafe { bun_jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+        unsafe { bun_jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) }
+    });
+    if entered.is_some() {
         // Dropping the drives leaves their `…Async` promises pending, like anything else still pending at file end.
         drop(FakeTimers::uninstall(global, Restore::WhereStillInstalled));
     }
     FakeTimers::take_off_stale_fakes(global);
+    then();
 }
 
 pub(crate) fn is_active() -> bool {

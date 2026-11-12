@@ -139,6 +139,8 @@ If a timer callback throws, the function that ran the timer rethrows the error. 
 
 Bun restores the real timers and the real time at the end of each test file.
 
+`useRealTimers()` puts back what the fake timers replaced. If you restore a spy on a function such as `setTimeout` while fake timers are on, `useRealTimers()` leaves what the spy replaced. With [`globals = "vitest"`](/test/configuration#globals), it puts a restored `vi.spyOn()` spy back on a timer function, as Vitest does. To end with the real function there too, call `useRealTimers()` before you restore the spy.
+
 Fake timers or a system time set at the top level of a [preload](/test/configuration#preload-scripts) stay on from file to file. Without `--isolate`, every file shares that one clock. It keeps the time and the pending timers that the previous file left behind, and it lasts until a file calls `useFakeTimers()`, `useRealTimers()` or `setSystemTime()` itself. To start every test with fake timers, call `useFakeTimers()` in a `beforeEach()` in the preload.
 
 ### Timers scheduled after an `await`

@@ -581,6 +581,20 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    // An uncaught error does not end the REPL, so the stream it came from goes on. The child echoes each chunk it
+    // reads and the listener throws on every echo: the child is told to exit only when the third echo arrives.
+    test("a child's stdout goes on after its 'data' listener threw", async () => {
+      const echo = `process.stdout.on("error", () => process.exit(2)); process.stdin.on("data", chunk => process.stdout.write(chunk)).on("end", () => process.exit(0));`;
+      const { outputs, stderr, exitCode } = await runRepl([
+        `const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(echo)}], { stdio: ["pipe", "pipe", "ignore"] }); let calls = 0; const exited = new Promise(resolve => child.on("exit", resolve)); child.stdout.on("data", () => { if (++calls < 3) child.stdin.write("x"); else child.stdin.end(); throw new Error("boom " + calls); }); child.stdin.write("x"); 0`,
+        "await exited; calls",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["0", "3"]);
+      expect(stderr.match(/^error: boom \d/gm)).toEqual(["error: boom 1", "error: boom 2", "error: boom 3"]);
+      expect(exitCode).toBe(1);
+    });
   });
 
   describe("import statements", () => {

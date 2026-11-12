@@ -2651,6 +2651,8 @@ impl Sink for H2FrameParser {
     }
 
     fn on_headers_complete(&self, stream_id: u32, flags: u8) {
+        // Like node, maxSessionRejectedStreams counts rejections in a row.
+        self.rejected_streams.set(0);
         // Materialize the accumulated block in a single native pass: the raw array, the
         // node-shaped headers object, and the sensitive list (a zero-field block yields an
         // empty array + object, matching the legacy decoder's upfront array).

@@ -4416,6 +4416,52 @@ describe("the last stream id of a server's GOAWAY (RFC 9113 §6.8)", () => {
   });
 });
 
+describe("maxSessionRejectedStreams", () => {
+  // A literal "connection: close" field makes the block malformed (RFC 9113 §8.2.2).
+  const CONNECTION = Buffer.concat([Buffer.from([0x00]), hpackLiteral("connection"), hpackLiteral("close")]);
+
+  test("counts the requests a server rejects in a row", async () => {
+    const server = http2.createServer({ maxSessionRejectedStreams: 2 });
+    server.on("stream", stream => stream.respond({ ":status": 204 }));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      const blocks = [CONNECTION, undefined, CONNECTION, undefined, CONNECTION, CONNECTION];
+      c.send(
+        Buffer.concat(
+          blocks.map((extra, i) => encodeFrame(FrameType.HEADERS, 0x5, 1 + 2 * i, requestHeaderBlock("GET", extra))),
+        ),
+      );
+      const goaway = await c.waitForGoaway();
+      expect([goaway.payload.readUInt32BE(0), goawayErrorCode(goaway)]).toEqual([11, ErrorCode.ENHANCE_YOUR_CALM]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  test("doesn't count the responses a client rejects", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`, { maxSessionRejectedStreams: 1 } as any);
+    client.on("error", () => {});
+    try {
+      const req = client.request();
+      await raw.waitFor(f => f.type === FrameType.HEADERS);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.HEADERS, 0x5, 1, Buffer.concat([Buffer.from([0x88]), CONNECTION]));
+      raw.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      expect((await once(req, "error"))[0].code).toBe("ERR_HTTP2_STREAM_ERROR");
+      const answer = await raw.waitFor(f => f.type === FrameType.PING || f.type === FrameType.GOAWAY);
+      expect(answer.type).toBe(FrameType.PING);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+});
+
 describe("ignored frames count against nghttp2's glitch rate limit", () => {
   const BURST = 10_000;
   const originEntry = Buffer.concat([Buffer.from([0, 1]), Buffer.from("x")]);

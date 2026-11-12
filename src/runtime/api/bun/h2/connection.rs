@@ -1188,7 +1188,9 @@ impl Connection {
                 ErrorCode::PROTOCOL_ERROR
             };
             self.reset_stream(sink, target, code);
-            sink.on_stream_rejected();
+            if is_request {
+                sink.on_stream_rejected();
+            }
             return false;
         }
         if let Some(s) = stream.as_ref() {

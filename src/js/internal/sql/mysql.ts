@@ -5,7 +5,8 @@ import type { SQLStatementDescription, TransactionCommands } from "./shared";
 type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
 
 const { SQLResultArray } = require("internal/sql/shared");
-const { BaseSQLAdapter, addResult, onRejectQuery } = require("internal/sql/pool");
+// The cast: the checker reports a class that extends a member of the generic `require` as its own base (TS2506).
+const { BaseSQLAdapter, addResult, onRejectQuery } = require("internal/sql/pool") as typeof import("./pool").default;
 const {
   symbols: { _results, _handle },
 } = require("internal/sql/query");

@@ -1,0 +1,44 @@
+# A list tested in front of a loop gives `undefined` for a hole and for a position past its end alike: nothing above it holds elements. Where the one user of the read is arithmetic with a number, `undefined` is NaN there,
+# and the read may give the number itself. That was said only where the position was shown to lie inside the list; a position under a mask is shown no such thing, so the turn carried `undefined` beside the integer,
+# made an optional double of it, told the mark from a number and cleaned it. Now every position that is an index of a list reads so: past the end and at a hole the read gives NaN.
+# It stays as it was where something can tell NaN from `undefined` (countMissing) and where the position may be no index (sumBelow): a name like "-1" is looked for as a name.
+# No length is written where the compiler sees it: a call with a written length is copied, and its loop is none of these.
+# f1 = sum, f2 = sumOfHalves, f3 = countMissing, f4 = sumBelow, f5 = turns
+# -- source: what-lies-past-the-end-of-a-list-reads-as-nan-for-arithmetic-as-a-hole-does.ts
+# const whole: any = [1, 2, 3, 4, 5, 6, 7, 8];
+# const short: any = [1, 2, 3];
+# const holed: any = [1, 2, , 4, 5, 6, 7, 8];
+# const halves: number[] = [0.5, 1.5, 2.5];
+# let list: any = whole;
+# function sum(n: number): number { const read = list; let s = 0; for (let i = 0; i < n; i++) s += read[i & 7]; return s; }
+# function sumOfHalves(n: number): number { let s = 0; for (let i = 0; i < n; i++) s -= halves[i & 3]; return s; }
+# function countMissing(n: number): number { let missing = 0; let s = 0; for (let i = 0; i < n; i++) { const found = short[i & 7]; if (found === undefined) missing++; else s += found; } return missing * 100 + s; }
+# function sumBelow(n: number): number { let s = 0; for (let i = 0; i < n; i++) s += whole[(i & 7) - 1]; return s; }
+# function turns(n: number): number { return Date.now() > 0 ? n : 0; }
+# print(sum(turns(20)));
+# list = short;
+# print(sum(turns(3)), sum(turns(4)));
+# list = holed;
+# print(sum(turns(2)), sum(turns(3)), sum(turns(20)));
+# print(sumOfHalves(turns(3)), sumOfHalves(turns(4)), countMissing(turns(8)), sumBelow(turns(1)), sumBelow(turns(0)));
+# declare function print(...values: unknown[]): void;
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: @Double = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, readsHoleAsNaN]
+# RUN(HALVES): walk f2 mechanisms=all
+# HALVES-LABEL: code f2:Body
+# HALVES: @Double = GetArrayElement {{*}}arrayStorage=Double level=Proven [keyIsIntegral, readsHoleAsNaN
+# RUN(MISSING): walk f3 mechanisms=all
+# MISSING-LABEL: code f3:Body
+# MISSING: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven
+# MISSING-NOT: readsHoleAsNaN
+# RUN(BELOW): walk f4 mechanisms=all
+# BELOW-LABEL: code f4:Body
+# BELOW: = GetArrayElement {{*}}level=Proven
+# BELOW-NOT: readsHoleAsNaN
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 82
+# ANSWERS: 6 NaN
+# ANSWERS: 3 NaN NaN
+# ANSWERS: -4.5 NaN 506 NaN 0

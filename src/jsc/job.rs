@@ -72,17 +72,11 @@ impl JSGlobalObject {
         }
     }
 
-    /// This global, and the context of the script that called the host function.
+    /// This global, and the context of the script that is calling (see
+    /// [`VirtualMachine::context_of_caller`]).
     #[inline]
-    pub fn js_thread_of_caller<'a>(&'a self, frame: &crate::CallFrame) -> JsThread<'a> {
-        self.js_thread(self.bun_vm().context_of_caller(frame))
-    }
-
-    /// As [`js_thread_of_caller`](Self::js_thread_of_caller) where no `CallFrame` reaches Rust
-    /// (see [`VirtualMachine::context_of_caller_no_frame`]).
-    #[inline]
-    pub fn js_thread_of_caller_no_frame(&self) -> JsThread<'_> {
-        self.js_thread(self.bun_vm().context_of_caller_no_frame())
+    pub fn js_thread_of_caller(&self) -> JsThread<'_> {
+        self.js_thread(self.bun_vm().context_of_caller())
     }
 }
 
@@ -407,18 +401,17 @@ impl<C: JobContext> Job<C> {
     /// # Safety
     /// `this` is the job its `Completion` posted; called once, on `vm`'s thread.
     unsafe fn take(this: *mut Self, vm: &VirtualMachine) -> (C::OffThread, C::Js) {
-        if C::CANCELLABLE {
-            // SAFETY: fn contract.
-            vm.jobs
-                .with_mut(|j| j.unlink(unsafe { &raw mut (*this).header }));
-        }
         // SAFETY: fn contract.
+        let mut job = unsafe { Box::from_raw(this) };
+        if C::CANCELLABLE {
+            vm.jobs.with_mut(|j| j.unlink(&raw mut job.header));
+        }
         let Job {
             mut keep_alive,
             off,
             js,
             ..
-        } = unsafe { *Box::from_raw(this) };
+        } = *job;
         keep_alive.unref(bun_io::js_vm_ctx());
         (off, js)
     }

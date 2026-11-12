@@ -1,0 +1,14 @@
+A spy on createRequire of node:module: what its implementation makes answers the call, and the file that the call spells is not loaded.
+#### a.test.js
+import { test, spyOn } from "bun:test";
+import M from "node:module";
+const say = (name, run) => { try { const answer = run(); console.log("| CASE", name, typeof answer === "string" ? answer : answer.name); } catch (error) { console.log("| CASE", name, "throws", error.message.slice(0, 60)); } };
+test("a spy on createRequire", () => {
+  const spy = spyOn(M, "createRequire").mockImplementation(() => name => "the spy's " + name);
+  say("spied", () => M.createRequire(import.meta.url)("./src/next.mjs"));
+  console.log("| CASE calls", spy.mock.calls.length);
+  spy.mockRestore();
+  say("restored", () => M.createRequire(import.meta.url)("./src/next.mjs"));
+});
+#### src/next.mjs
+console.log("| CASE the next file runs"); export const name = "next";

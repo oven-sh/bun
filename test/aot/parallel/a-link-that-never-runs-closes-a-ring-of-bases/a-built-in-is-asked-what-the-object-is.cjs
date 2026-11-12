@@ -1,0 +1,1 @@
+function F() { this.a = 1; } class K2 extends F {} const held = [K2]; class K extends held[0] { k() { return 2; } } if (process.argv.length > 99) Object.setPrototypeOf(F.prototype, K.prototype); const f = new F(); f.a = 5; f["b" + process.argv.length] = 6; console.log(Array.isArray(new F()), new K().k());

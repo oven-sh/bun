@@ -22,10 +22,6 @@ namespace WebCore {
 
 using namespace JSC;
 
-static JSC_DECLARE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_write);
-static JSC_DECLARE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_end);
-static JSC_DECLARE_HOST_FUNCTION(jsStringDecoderPrototypeFunction_text);
-
 static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastChar);
 static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastNeed);
 static JSC_DECLARE_CUSTOM_GETTER(jsStringDecoder_lastTotal);

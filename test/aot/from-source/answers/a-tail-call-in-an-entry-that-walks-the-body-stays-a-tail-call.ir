@@ -1,0 +1,12 @@
+# -- source: main.js
+# "use strict";
+# function down(n) { if (!n) return "bottom " + arguments.length; arguments[0] = n - 1; return globalThis.down.apply(this, arguments); }
+# function plain(n, ...rest) { if (!n) return "floor " + rest.length; return globalThis.plain(n - 1, rest[0]); }
+# globalThis.down = down;
+# globalThis.plain = plain;
+# print(globalThis.down(200000, "a", "b"), globalThis.plain(200000, "c"));
+# -- end of source
+# Each turn of the chain enters by value, through the entry that walks the body. A call in tail position there is a jump as it is in the body: 200,000 turns need the stack of one.
+# RUN: run-in-shell
+# CHECK: bottom 3 floor 1
+# CHECK-NEXT: exited with 0

@@ -25,7 +25,7 @@ enum Matcher {
     Pattern(Box<Regex>),
 }
 
-const UNEXPECTED_COMMENT: Message = Message::new(
+const UNEXPECTED_COMMENT: &Message = &Message::new(
     "unexpectedComment",
     "Unexpected '{{matchedTerm}}' comment: '{{comment}}'.",
 );

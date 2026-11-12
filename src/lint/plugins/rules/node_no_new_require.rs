@@ -5,7 +5,7 @@ use bun_lint::rule::Plugin;
 /// Warn about calling `new` on `require`.
 pub struct NoNewRequire;
 
-const NO_NEW_REQUIRE: Message = Message::new("", "Unexpected use of `new` operator with `require`");
+const NO_NEW_REQUIRE: &Message = &Message::new("", "Unexpected use of `new` operator with `require`");
 
 impl Rule for NoNewRequire {
     const META: Meta = Meta::oxlint(Plugin::Node, "no-new-require", Kind::Suggestion);

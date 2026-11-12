@@ -12,7 +12,7 @@ pub struct PreferReadonlyParameterTypes {
     ignore_inferred_types: bool,
 }
 
-const SHOULD_BE_READONLY: Message = Message::new("shouldBeReadonly", "Parameter should be a read only type.");
+const SHOULD_BE_READONLY: &Message = &Message::new("shouldBeReadonly", "Parameter should be a read only type.");
 
 /// `actualParam.typeAnnotation`. An `AssignmentPattern` has none because the annotation is part of its `left`.
 /// tsgolint's `parameter.Type()` also returns the annotation of a parameter with a default.

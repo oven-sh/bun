@@ -54,9 +54,6 @@ impl Declaration {
 
 impl Declaration {
     fn eql(&self, other: &Self) -> bool {
-        // `PropertyId` carries its own tag+prefix `PartialEq` (see
-        // properties_generated.rs `impl PartialEq for PropertyId`); `value` is
-        // byte-slice equality.
         self.property_id == other.property_id && self.value == other.value
     }
 }
@@ -91,9 +88,6 @@ impl SupportsCondition {
 
 impl SupportsCondition {
     pub fn eql(&self, other: &SupportsCondition) -> bool {
-        // Hand-expanded because `#[derive(CssEql)]` would require
-        // `PropertyId: CssEql` (it only provides the custom tag+prefix
-        // `PartialEq`). Tag mismatch → false, then field-wise structural eq.
         match (self, other) {
             (Self::Not(a), Self::Not(b)) => a.eql(b),
             (Self::And(a), Self::And(b)) | (Self::Or(a), Self::Or(b)) => {
@@ -108,6 +102,53 @@ impl SupportsCondition {
 }
 
 impl SupportsCondition {
+    /// The color features that every browser in which the condition holds has.
+    fn tested_color_features(&self, arena: &bun_alloc::Arena) -> css::Features {
+        use css::css_values::color::{CssColor, LABColor, PredefinedColor};
+        let color = match self {
+            Self::And(conditions) => {
+                return conditions
+                    .iter()
+                    .fold(css::Features::empty(), |features, condition| {
+                        features | condition.tested_color_features(arena)
+                    });
+            }
+            // Any value is valid for a custom property, so that tests nothing.
+            Self::Declaration(declaration)
+                if matches!(declaration.property_id, PropertyId::Custom(_)) =>
+            {
+                return css::Features::empty();
+            }
+            Self::Declaration(declaration) => {
+                css::parse_utility::parse_string(arena, declaration.value, CssColor::parse)
+            }
+            // `parse_in_parens` keeps `(property: value)` as raw text.
+            Self::Unknown(group) => css::parse_utility::parse_string(arena, group, |input| {
+                input.expect_parenthesis_block()?;
+                input.parse_nested_block(|input| {
+                    if input.expect_ident()?.starts_with(b"--") {
+                        return Err(input.new_custom_error(css::ParserError::invalid_value));
+                    }
+                    input.expect_colon()?;
+                    CssColor::parse(input)
+                })
+            }),
+            Self::Not(_) | Self::Or(_) | Self::Selector(_) => return css::Features::empty(),
+        };
+        match color {
+            Ok(CssColor::Lab(lab)) => match *lab {
+                LABColor::Lab(_) | LABColor::Lch(_) => css::Features::LAB_COLORS,
+                LABColor::Oklab(_) | LABColor::Oklch(_) => css::Features::OKLAB_COLORS,
+            },
+            Ok(CssColor::Predefined(color)) => match *color {
+                // Safari 10.1 to 14 has `color(display-p3 ..)` and no other space.
+                PredefinedColor::DisplayP3(_) => css::Features::P3_COLORS,
+                _ => css::Features::COLOR_FUNCTION,
+            },
+            _ => css::Features::empty(),
+        }
+    }
+
     fn needs_parens(&self, parent: &SupportsCondition) -> bool {
         match self {
             SupportsCondition::Not(_) => true,
@@ -135,7 +176,7 @@ impl SupportsCondition {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             SupportsCondition::Not(condition) => {
-                dest.write_str(b" not ")?;
+                dest.write_str(b"not ")?;
                 condition.to_css_with_parens_if_needed(dest, condition.needs_parens(self))?;
             }
             SupportsCondition::And(conditions) => {
@@ -193,7 +234,8 @@ impl SupportsCondition {
                 .copied()
                 .filter(|f| prefix.contains(*f)),
             |d| d.write_str(b") or ("),
-            |d, _flag| {
+            |d, flag| {
+                flag.to_css(d)?;
                 d.serialize_name(name)?;
                 d.delim(b':', false)?;
                 // Raw parser-input slice: may span newlines.
@@ -235,7 +277,7 @@ impl SupportsCondition {
             let _condition =
                 input.try_parse(|i: &mut css::Parser| -> css::Result<SupportsCondition> {
                     let location = i.current_source_location();
-                    let s = i.expect_ident_cloned()?;
+                    let s = i.expect_ident()?;
                     let found_type: i32 = crate::match_ignore_ascii_case! { s, {
                         b"and" => 1,
                         b"or" => 2,
@@ -317,7 +359,7 @@ impl SupportsCondition {
         input.skip_whitespace();
         let pos = input.position();
         input.expect_no_error_token()?;
-        let value = input.slice_from_cloned(pos);
+        let value = input.slice_from(pos);
         Ok(SupportsCondition::Declaration(Declaration {
             property_id,
             value,
@@ -337,7 +379,7 @@ impl SupportsCondition {
                         i.parse_nested_block(|i2| {
                             let p = i2.position();
                             i2.expect_no_error_token()?;
-                            let s = i2.slice_from_cloned(p);
+                            let s = i2.slice_from(p);
                             Ok(SupportsCondition::Selector(s))
                         })
                     });
@@ -357,7 +399,7 @@ impl SupportsCondition {
 
         input.parse_nested_block(|i| i.expect_no_error_token())?;
 
-        let s = input.slice_from_cloned(pos);
+        let s = input.slice_from(pos);
         Ok(SupportsCondition::Unknown(s))
     }
 }
@@ -410,7 +452,12 @@ impl<R> SupportsRule<R> {
         // behind it multiply against the enclosing nesting levels exactly like
         // plain nested rules — leaving them unvisited here lets the printer
         // expand them exponentially.
-        self.rules.minify(context, parent_is_unused)
+        let exclude = context.handler_context.targets.exclude;
+        let tested = self.condition.tested_color_features(context.arena);
+        context.handler_context.targets.exclude.insert(tested);
+        let result = self.rules.minify(context, parent_is_unused);
+        context.handler_context.targets.exclude = exclude;
+        result
     }
 }
 

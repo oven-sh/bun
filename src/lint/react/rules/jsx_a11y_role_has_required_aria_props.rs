@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Enforces that elements with ARIA roles must have all required attributes for that role.
 pub struct RoleHasRequiredAriaProps;
 
-const ROLE_HAS_REQUIRED_ARIA_PROPS: Message = Message::new("", "`{{role}}` role is missing required aria props {{props}}.");
+const ROLE_HAS_REQUIRED_ARIA_PROPS: &Message = &Message::new("", "`{{role}}` role is missing required aria props {{props}}.");
 
 fn required_aria_props(role: &[u8]) -> &'static [&'static str] {
     match role {

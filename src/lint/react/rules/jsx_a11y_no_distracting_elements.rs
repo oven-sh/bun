@@ -8,7 +8,7 @@ pub struct NoDistractingElements {
     check_blink: bool,
 }
 
-const NO_DISTRACTING_ELEMENTS: Message = Message::new(
+const NO_DISTRACTING_ELEMENTS: &Message = &Message::new(
     "",
     "Do not use `<{{element}}>` elements as they can create visual accessibility issues and are deprecated.",
 );

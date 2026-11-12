@@ -1,0 +1,18 @@
+# What comes round a loop is cut by every relation that the program has asked of it on the way to the head: on the edge itself, or in front of the block that the edge leaves. The other side of the relation may be computed.
+# breaks: the edge leaves an empty block behind `if (i >= to) break` . both: `i < to` stands one test up . less: below `to - 1` . two: each of two variables is held by a relation, one of them to the other
+# first: what lies below another int32 has room for one more, whatever that other one does. Nobody knows who calls. Nothing is reported
+# -- source: what-comes-round-is-cut-by-the-relations-in-front-of-its-edge.ts
+# declare function sink(...values: unknown[]): void;
+# function breaks(to: Bun.int32): Bun.int32 { let i: Bun.int32 = 0; for (;;) { i++; if (i >= to) break; } return i; }
+# function both(to: Bun.int32, more: boolean): Bun.int32 { let i: Bun.int32 = 0; do i++; while (i < to && more); return i; }
+# function less(to: Bun.int32): Bun.int32 { let i: Bun.int32 = 0; do i++; while (i < to - 1); return i; }
+# function two(to: Bun.int32): Bun.int32 { let i: Bun.int32 = 0; let j: Bun.int32 = 0; do { i++; j++; } while (i < j && j < to); return i; }
+# function first(other: Bun.int32[]): Bun.int32 { let i: Bun.int32 = 0; do i++; while (i < other[i & 7]); return i; }
+# sink(breaks, both, less, two, first);
+# -- end of source
+# RUN: walk f1 f2 f3 f4 f5 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-LABEL: code f2:Body
+# CHECK-LABEL: code f3:Body
+# CHECK-LABEL: code f4:Body
+# CHECK-LABEL: code f5:Body

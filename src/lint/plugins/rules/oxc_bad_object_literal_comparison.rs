@@ -4,8 +4,8 @@ use bun_lint::rule::Plugin;
 /// Checks for comparisons between object and array literals.
 pub struct BadObjectLiteralComparison;
 
-const OBJECT_COMPARISON: Message = Message::new("", "Unexpected object literal comparison.");
-const ARRAY_COMPARISON: Message = Message::new("", "Unexpected array literal comparison.");
+const OBJECT_COMPARISON: &Message = &Message::new("", "Unexpected object literal comparison.");
+const ARRAY_COMPARISON: &Message = &Message::new("", "Unexpected array literal comparison.");
 
 impl Rule for BadObjectLiteralComparison {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "bad-object-literal-comparison", Kind::Problem);

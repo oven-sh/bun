@@ -6,11 +6,11 @@ use bun_lint::rule::Plugin;
 /// Disallow usage of findDOMNode
 pub struct NoFindDomNode;
 
-const NO_FIND_DOM_NODE: Message = Message::new(
+const NO_FIND_DOM_NODE: &Message = &Message::new(
     "noFindDOMNode",
     "Do not use findDOMNode. It doesn’t work with function components and is deprecated in StrictMode. See https://reactjs.org/docs/react-dom.html#finddomnode",
 );
-const OXLINT: Message = Message::new("", "Unexpected call to `findDOMNode`.");
+const OXLINT: &Message = &Message::new("", "Unexpected call to `findDOMNode`.");
 
 impl Rule for NoFindDomNode {
     const META: Meta = Meta::plugin(Plugin::React, "no-find-dom-node", Kind::None).recommended();

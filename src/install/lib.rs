@@ -78,7 +78,7 @@ pub mod config_version;
 pub mod dependency;
 pub mod hosted_git_info;
 pub mod integrity;
-pub mod padding_checker;
+mod padding_checker;
 pub mod postinstall_optimizer;
 
 /// `ExternalSlice<T>` and `VersionedURLType<I>` live in `bun_install_types`
@@ -566,43 +566,36 @@ impl RunCommand {
             // (macOS), so it always resolves to the REAL bun regardless of
             // how the process was invoked. It's memoized via `Once`, so the
             // cost is paid once per process.
-            let argv0_z: &ZStr = if !optional_bun_path.is_empty() {
-                // When the caller pre-supplied a path, that path is the symlink
-                // target.
-                // SAFETY: callers pass a slice borrowed from a `ZStr` (argv[0] /
-                // self_exe_path / static literal), so `ptr[len] == 0` holds.
-                unsafe { ZStr::from_raw(optional_bun_path.as_ptr(), optional_bun_path.len()) }
-            } else {
-                // Ask the OS for the real absolute path first. Fall back to an
-                // absolute `argv[0]` only if that fails — never trust a bare
-                // `argv[0]` as the target here, because on nested `--bun` the
-                // inner process's `argv[0]` IS `<BUN_NODE_DIR>/bun`.
-                match bun_core::self_exe_path() {
-                    Ok(self_path) if !self_path.as_bytes().is_empty() => {
-                        *optional_bun_path = self_path.as_bytes();
-                        self_path
+            //
+            // Ask the OS for the real absolute path first. Fall back to an
+            // absolute `argv[0]` only if that fails — never trust a bare
+            // `argv[0]` as the target here, because on nested `--bun` the
+            // inner process's `argv[0]` IS `<BUN_NODE_DIR>/bun`.
+            let argv0_z: &ZStr = match bun_core::self_exe_path() {
+                Ok(self_path) if !self_path.as_bytes().is_empty() => {
+                    *optional_bun_path = self_path.as_bytes();
+                    self_path
+                }
+                result => {
+                    let argv0_bytes = argv0.as_bytes();
+                    if argv0_bytes.starts_with(dir.as_bytes()) {
+                        // `self_exe_path()` failed and `argv[0]` is the shim
+                        // under `BUN_NODE_DIR` (nested `--bun`). Using it as
+                        // the target would recreate the #30711 self-loop; the
+                        // OUTER bun already planted working shims and PATH, so
+                        // leave them untouched.
+                        return Ok(());
                     }
-                    result => {
-                        let argv0_bytes = argv0.as_bytes();
-                        if argv0_bytes.starts_with(dir.as_bytes()) {
-                            // `self_exe_path()` failed and `argv[0]` is the shim
-                            // under `BUN_NODE_DIR` (nested `--bun`). Using it as
-                            // the target would recreate the #30711 self-loop; the
-                            // OUTER bun already planted working shims and PATH, so
-                            // leave them untouched.
-                            return Ok(());
-                        }
-                        if argv0_bytes.first() == Some(&b'/') {
-                            *optional_bun_path = argv0_bytes;
-                            argv0
-                        } else {
-                            // No usable target — propagate the OS error when we
-                            // have one, otherwise leave PATH unmodified.
-                            return match result {
-                                Err(e) => Err(e.into()),
-                                Ok(_) => Ok(()),
-                            };
-                        }
+                    if argv0_bytes.first() == Some(&b'/') {
+                        *optional_bun_path = argv0_bytes;
+                        argv0
+                    } else {
+                        // No usable target — propagate the OS error when we
+                        // have one, otherwise leave PATH unmodified.
+                        return match result {
+                            Err(e) => Err(e.into()),
+                            Ok(_) => Ok(()),
+                        };
                     }
                 }
             };
@@ -825,7 +818,7 @@ impl RunCommand {
         // stale value.
         env_loader.map.put(
             b"npm_config_local_prefix",
-            bun_fs::FileSystem::instance().top_level_dir(),
+            bun_fs::FileSystem::get().top_level_dir(),
         )?;
 
         // `npm_package_*` is set per package. See `spawn_package_lifecycle_scripts`.

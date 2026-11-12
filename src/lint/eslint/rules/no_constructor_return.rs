@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Disallow returning value from constructor.
 pub struct NoConstructorReturn;
 
-const UNEXPECTED: Message =
-    Message::new("unexpected", "Unexpected return statement in constructor.");
+const UNEXPECTED: &Message =
+    &Message::new("unexpected", "Unexpected return statement in constructor.");
 
 impl Rule for NoConstructorReturn {
     const META: Meta = Meta::eslint("no-constructor-return", Kind::Problem);

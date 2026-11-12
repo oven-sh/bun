@@ -182,7 +182,7 @@ pub(crate) fn color<'a>(
     use bun_ast::symbol::Map as SymbolMap;
     use bun_css as css;
     use bun_css::CssColor;
-    use bun_css::values::color::{HSL, LAB, SRGB};
+    use bun_css::values::color::{Colorspace as _, HSL, LAB, SRGB};
 
     let log = Log::init();
 
@@ -233,7 +233,7 @@ pub(crate) fn color<'a>(
             let mut parser = css::Parser::new(
                 &mut parser_input,
                 None,
-                css::css_parser::ParserOpts::default(),
+                css::css_parser::ParserOpts::CLIP_COLORS,
                 None,
             );
             CssColor::parse(&mut parser)
@@ -290,14 +290,9 @@ pub(crate) fn color<'a>(
                         | OutputColorFormat::RgbObject
                         | OutputColorFormat::RgbaArray
                         | OutputColorFormat::RgbArray) => {
-                            let srgba: SRGB = match &result {
-                                CssColor::Float(float) => match &**float {
-                                    css::FloatColor::Rgb(rgb) => *rgb,
-                                    other => other.into_srgb(),
-                                },
-                                CssColor::Rgba(rgba) => rgba.into_srgb(),
-                                CssColor::Lab(lab) => lab.into_srgb(),
-                                _ => break 'formatted,
+                            // `currentColor`, a system color and `light-dark()` have no channels.
+                            let Some(srgba) = SRGB::try_from_css_color(&result) else {
+                                return Ok(None);
                             };
                             let rgba = srgba.into_rgba();
                             match tag {
@@ -419,14 +414,8 @@ pub(crate) fn color<'a>(
                         }
 
                         OutputColorFormat::Hsl => {
-                            let hsl: HSL = match &result {
-                                CssColor::Float(float) => match &**float {
-                                    css::FloatColor::Hsl(hsl) => *hsl,
-                                    other => other.into_hsl(),
-                                },
-                                CssColor::Rgba(rgba) => rgba.into_hsl(),
-                                CssColor::Lab(lab) => lab.into_hsl(),
-                                _ => break 'formatted,
+                            let Some(hsl) = HSL::try_from_css_color(&result) else {
+                                return Ok(None);
                             };
 
                             // Saturation and lightness are stored as 0..1 but hsl()
@@ -440,14 +429,8 @@ pub(crate) fn color<'a>(
                             ));
                         }
                         OutputColorFormat::Lab => {
-                            let lab: LAB = match &result {
-                                CssColor::Float(float) => float.into_lab(),
-                                CssColor::Lab(lab) => match &**lab {
-                                    css::LabColor::Lab(lab_) => *lab_,
-                                    other => other.into_lab(),
-                                },
-                                CssColor::Rgba(rgba) => rgba.into_lab(),
-                                _ => break 'formatted,
+                            let Some(lab) = LAB::try_from_css_color(&result) else {
+                                return Ok(None);
                             };
 
                             // lab() is space-separated and takes lightness as a

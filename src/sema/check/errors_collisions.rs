@@ -215,7 +215,7 @@ impl Checker<'_, '_> {
         m: MemberId,
     ) {
         if language_version(self) < ScriptTarget::ESNext
-            || !self.p.files.options.use_define_for_class_fields
+            || !self.module_options(file).use_define_for_class_fields
         {
             let node = self.hir(file).node(m);
             let flag = CONTAINS_CLASS_WITH_PRIVATE_IDENTIFIERS;
@@ -309,7 +309,7 @@ impl Checker<'_, '_> {
         if self.hir(file).text(name) == known::Object
             && self.emit_module_format_of_file(file) < ModuleKind::Es2015
         {
-            let module = self.p.files.options.module.name();
+            let module = self.module_options(file).module.name();
             self.error(file, name, 2725, &[Arg::Bytes(module)]);
         }
     }

@@ -1306,6 +1306,54 @@ Type checks the entry points, and everything they import, before Bun writes any 
   </Tab>
 </Tabs>
 
+### dts
+
+Writes the types of a library beside its JavaScript, without running `tsc`. Bun type checks the entry points and everything they import first, as with [`check`](#check). A type error fails the build.
+
+<Tabs>
+  <Tab title="JavaScript">
+    ```ts title="build.ts" icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ['./src/index.ts'],
+      outdir: './dist',
+      dts: true,
+    })
+    ```
+  </Tab>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build ./src/index.ts --outdir ./dist --dts
+    ```
+  </Tab>
+</Tabs>
+
+```txt
+  index.js       135 bytes  (entry point)
+  index.d.ts     123 bytes  (declaration)
+  index.aot.ts   232 bytes  (aot source)
+```
+
+| File           | Holds                                              | How many                 | Read by                        |
+| -------------- | -------------------------------------------------- | ------------------------ | ------------------------------ |
+| `index.js`     | The bundle                                         | One for each entry point | Every runtime and bundler      |
+| `index.d.ts`   | The types of what the source file exports          | One for each source file | Editors, `tsc`, `bun check`    |
+| `index.aot.ts` | `index.js` with the types of your sources put back | One for each entry point | [`bun compile`](/compiler/aot) |
+
+Each `.d.ts` file is where its source file is relative to [`root`](#root). Where one imports another, Bun writes the file name that Node.js would need, so `"./area"` becomes `"./area.js"`. TypeScript finds `area.d.ts` under that name with every `moduleResolution`. Files in `node_modules` get no `.d.ts` file.
+
+Point `"types"` in your `package.json` at `index.d.ts`, and the `"aot"` condition of `"exports"` at `index.aot.ts`: see [Publish a library](/compiler/libraries). [`bun compile --library`](/compiler/libraries) runs the same build and writes the `package.json` too.
+
+- **The CLI needs `--outdir`.** `Bun.build()` without `outdir` writes nothing and returns the files in `outputs`. They have `kind: "asset"`.
+- **`dts` can't be used with `compile`.**
+- **A JavaScript entry point gets a `.d.ts` file only.** Bun infers it from the code and its JSDoc comments.
+- **Some options leave out `index.aot.ts`.** With `--minify-identifiers` (which `--minify` includes), `--no-bundle`, `--sourcemap=inline` or a `--format` other than `esm`, Bun writes the `.d.ts` files and warns about the rest.
+
+```txt
+warn: the .aot.ts files that --aot compiles a package from are left out: they do not support --minify-identifiers yet
+```
+
+- **The bundle isn't byte for byte what you get without `dts`.** A `const` stays a `const`, dead code is removed, and `--minify-syntax` skips a few rewrites, so that `index.aot.ts` type checks like your sources.
+
 ### features
 
 Enable compile-time feature flags for dead code elimination: conditionally include or exclude code paths at bundle time using `import { feature } from "bun:bundle"`.
@@ -1725,7 +1773,7 @@ bun build ./cli.tsx --outfile mycli --compile
 ./mycli
 ```
 
-See [standalone executables](/bundler/executables).
+See [standalone executables](/compiler/executables).
 
 ## Logs and errors
 
@@ -1946,6 +1994,15 @@ interface BuildConfig {
    * @default false
    */
   check?: boolean;
+
+  /**
+   * Write a declaration file (`.d.ts`) for each source file, and each JavaScript
+   * output file once more with its types kept (`.aot.ts`), for `bun compile`.
+   * Implies `check`. Equivalent to `--dts` in the CLI.
+   *
+   * @default false
+   */
+  dts?: boolean;
 
   /**
    * Custom tsconfig.json file path to use for path resolution.

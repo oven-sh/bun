@@ -17,12 +17,12 @@ enum Mode {
     TopLevelIfOnlyTypeImports,
 }
 
-const USE_TOP_LEVEL_FOR_DECLARATION_FILE_IMPORT: Message =
-    Message::new("", "Type imports from declaration files must use top-level `import type` syntax.");
+const USE_TOP_LEVEL_FOR_DECLARATION_FILE_IMPORT: &Message =
+    &Message::new("", "Type imports from declaration files must use top-level `import type` syntax.");
 // The plugin's `{{kind}}` is always `type` here: Flow's `typeof` imports aren't supported.
-const INLINE: Message = Message::new("", "Prefer using inline type specifiers instead of a top-level type-only import.");
-const TOP_LEVEL: Message = Message::new("", "Prefer using a top-level type-only import instead of inline type specifiers.");
-const TOP_LEVEL_IF_ONLY_TYPE_IMPORTS: Message = Message::new(
+const INLINE: &Message = &Message::new("", "Prefer using inline type specifiers instead of a top-level type-only import.");
+const TOP_LEVEL: &Message = &Message::new("", "Prefer using a top-level type-only import instead of inline type specifiers.");
+const TOP_LEVEL_IF_ONLY_TYPE_IMPORTS: &Message = &Message::new(
     "",
     "Prefer using a top-level type-only import instead of inline type specifiers when there are only type imports.",
 );

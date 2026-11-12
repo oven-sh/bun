@@ -1,15 +1,20 @@
 use core::ffi::c_void;
 
 use bun_io::StreamBuffer;
-use bun_threading::Mutex;
+use bun_threading::guarded::GuardedLock;
+use bun_threading::{Guarded, Mutex};
 
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct ThreadSafeStreamBuffer {
-    pub(crate) buffer: StreamBuffer,
-    pub(crate) mutex: Mutex,
+    state: Guarded<State>,
     /// Intrusive atomic refcount. Starts at 2: 1 for main thread and 1 for http thread.
     pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<ThreadSafeStreamBuffer>,
-    /// Called by the http thread when the buffer drains; guarded by `mutex`, like `buffer`.
+}
+
+/// What the main thread and the http thread share, reached through [`ThreadSafeStreamBuffer::lock`].
+pub struct State {
+    pub buffer: StreamBuffer,
+    /// Called by the http thread when the buffer drains.
     callback: Option<Callback>,
 }
 
@@ -34,39 +39,33 @@ impl Callback {
     }
 }
 
-impl Default for ThreadSafeStreamBuffer {
-    fn default() -> Self {
-        Self {
-            buffer: StreamBuffer::default(),
-            mutex: Mutex::default(),
+impl ThreadSafeStreamBuffer {
+    /// The http thread calls `callback(context)` when the buffer drains.
+    /// The raw pointer carries both initial refs: the main thread adopts one into a
+    /// `RefPtr`, the http thread keeps the other in `Stream::buffer` until `detach()`.
+    pub fn new<T>(callback: fn(*mut T), context: *mut T) -> *mut Self {
+        bun_core::heap::into_raw(Box::new(Self {
+            state: Guarded::new(State {
+                buffer: StreamBuffer::default(),
+                callback: Some(Callback::init(callback, context)),
+            }),
             // .initExactRefs(2) — 1 for main thread and 1 for http thread
             ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
-            callback: None,
-        }
-    }
-}
-
-impl ThreadSafeStreamBuffer {
-    /// `bun.TrivialNew(@This())` — heap-allocate with the given field values.
-    /// Callers on both threads hold raw `*mut ThreadSafeStreamBuffer` and
-    /// release via `deref()`, so return a raw pointer (heap::alloc).
-    pub fn new(init: Self) -> *mut Self {
-        bun_core::heap::into_raw(Box::new(init))
+        }))
     }
 
-    /// Upgrade an attached intrusive-ref handle to `&mut Self`.
+    /// Upgrade an attached intrusive-ref handle to `&Self`.
     ///
     /// INVARIANT: while `p` is held, the HTTP side owns one intrusive ref on
     /// the buffer (taken at attach, released in `Stream::detach`); the buffer
-    /// is a separate heap allocation that outlives the returned borrow and is
-    /// disjoint from any `&mut HTTPClient`/`&mut Stream`. HTTP-thread-only at
-    /// every caller, so the `&mut` is the sole live borrow on this side of the
-    /// internal lock. Centralises the SAFETY argument shared by
-    /// `http_request_body::Stream::buffer_mut` and `HTTPClient::write_to_stream`.
+    /// is a separate heap allocation that outlives the returned borrow. The
+    /// main thread holds a `&Self` too; all that either thread changes is
+    /// inside the `Guarded` or atomic. Centralises the SAFETY argument shared by
+    /// `http_request_body::Stream::buffer_ref` and `HTTPClient::write_to_stream`.
     #[inline]
-    pub(crate) fn from_attached<'a>(mut p: core::ptr::NonNull<Self>) -> &'a mut Self {
+    pub(crate) fn from_attached<'a>(p: core::ptr::NonNull<Self>) -> &'a Self {
         // SAFETY: see INVARIANT above.
-        unsafe { p.as_mut() }
+        unsafe { p.as_ref() }
     }
 
     pub fn deref(this: core::ptr::NonNull<Self>) {
@@ -74,73 +73,25 @@ impl ThreadSafeStreamBuffer {
         unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this.as_ptr()) };
     }
 
-    pub(crate) fn acquire(&mut self) -> &mut StreamBuffer {
-        self.mutex.lock();
-        // The mutex stays locked until `release()`. Prefer `lock()` (RAII
-        // guard) for simple critical sections; this split form remains for
-        // callers that interleave release with disjoint `self` access.
-        &mut self.buffer
-    }
-
-    pub(crate) fn release(&mut self) {
-        self.mutex.unlock();
-    }
-
-    /// RAII spelling of `acquire()`/`release()` — locks the mutex and returns a
-    /// guard that derefs to the inner `StreamBuffer` and unlocks on `Drop`.
-    /// Use this instead of a bare `acquire`/`release` pair so the lock is
-    /// released on every return path.
+    /// Locks the mutex; the guard unlocks it on `Drop`.
     #[inline]
-    pub fn lock(&mut self) -> StreamBufferGuard<'_> {
-        self.mutex.lock();
-        StreamBufferGuard(self)
-    }
-
-    /// Should only be called in the main thread and before scheduling it to the http thread
-    pub fn set_drain_callback<T>(&mut self, callback: fn(*mut T), context: *mut T) {
-        self.callback = Some(Callback::init(callback, context));
+    pub fn lock(&self) -> GuardedLock<'_, State, Mutex> {
+        self.state.lock()
     }
 
     /// Main thread; the request may still be in flight on the http thread.
-    pub fn clear_drain_callback(&mut self) {
-        let _guard = self.mutex.lock_guard();
-        self.callback = None;
+    pub fn clear_drain_callback(&self) {
+        self.lock().callback = None;
     }
+}
 
+impl State {
     /// This is exclusively called from the http thread.
-    /// Buffer must be acquired before calling this.
     pub(crate) fn report_drain(&self) {
-        debug_assert!(self.mutex.is_held_by_current_thread());
         if self.buffer.is_empty() {
             if let Some(callback) = &self.callback {
                 callback.call();
             }
         }
-    }
-}
-
-/// RAII guard returned by [`ThreadSafeStreamBuffer::lock`]. Derefs to the
-/// protected `StreamBuffer` and releases the mutex on `Drop`.
-pub struct StreamBufferGuard<'a>(&'a mut ThreadSafeStreamBuffer);
-
-impl core::ops::Deref for StreamBufferGuard<'_> {
-    type Target = StreamBuffer;
-    #[inline]
-    fn deref(&self) -> &StreamBuffer {
-        &self.0.buffer
-    }
-}
-
-impl core::ops::DerefMut for StreamBufferGuard<'_> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut StreamBuffer {
-        &mut self.0.buffer
-    }
-}
-
-impl Drop for StreamBufferGuard<'_> {
-    #[inline]
-    fn drop(&mut self) {
-        self.0.mutex.unlock();
     }
 }

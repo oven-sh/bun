@@ -14,7 +14,7 @@ const path = require("node:path");
 
 // Resolved lazily: node:fs itself exposes Utf8Stream, so requiring it at module
 // scope would re-enter this module while node:fs is still being constructed.
-let _fs;
+let _fs: $BunModules["node:fs"] | undefined;
 function lazyFs() {
   return (_fs ??= require("node:fs"));
 }
@@ -31,6 +31,27 @@ const kNullPrototype = { __proto__: null };
 // A synchronous sleep, used only on the EAGAIN/EBUSY retry paths.
 function sleep(ms) {
   Bun.sleepSync(ms);
+}
+
+type FlushCallback = (err?: Error | null) => void;
+
+/** The functions of node:fs that the stream calls. `options.fs` may replace any of them. */
+interface StreamFs {
+  write(fd: number, data: Buffer | Uint8Array, callback: (err: Error | null, written: number) => void): void;
+  write(fd: number, data: string, encoding: string, callback: (err: Error | null, written: number) => void): void;
+  writeSync(fd: number, data: string | Buffer | Uint8Array, encoding?: string): number;
+  fsync(fd: number, callback: FlushCallback): void;
+  fsyncSync(fd: number): void;
+  close(fd: number, callback: FlushCallback): void;
+  open(
+    path: string,
+    flags: string,
+    mode: string | number | undefined,
+    callback: (err: Error | null, fd?: number) => void,
+  ): void;
+  openSync(path: string, flags: string, mode: string | number | undefined): number;
+  mkdir(path: string, options: { recursive: boolean }, callback: FlushCallback): void;
+  mkdirSync(path: string, options: { recursive: boolean }): unknown;
 }
 
 class Utf8Stream extends EventEmitter {
@@ -51,7 +72,7 @@ class Utf8Stream extends EventEmitter {
   #maxWrite = kMaxWrite;
   #opening = false;
   #periodicFlush = 0;
-  #periodicFlushTimer: ReturnType<typeof setInterval> | undefined = undefined;
+  #periodicFlushTimer: NodeJS.Timeout | undefined = undefined;
   #sync = false;
   #fsync = false;
   #append = true;
@@ -59,13 +80,13 @@ class Utf8Stream extends EventEmitter {
   #retryEAGAIN: (err: unknown, writeBufferLen: number, remainingBufferLen: number) => boolean = () => true;
   #mkdir = false;
   #writingBuf: any = "";
-  #write;
-  #flush;
-  #flushSync;
-  #actualWrite;
-  #fsWriteSync;
-  #fsWrite;
-  #fs;
+  #write: (data: string | Uint8Array) => boolean;
+  #flush: (cb: FlushCallback | null) => void;
+  #flushSync: () => void;
+  #actualWrite: () => void;
+  #fsWriteSync: () => number;
+  #fsWrite: () => void;
+  #fs: StreamFs;
 
   constructor(options = kNullPrototype) {
     validateObject(options, "options");
@@ -180,7 +201,7 @@ class Utf8Stream extends EventEmitter {
 
     if (this.#periodicFlush !== 0) {
       this.#periodicFlushTimer = setInterval(() => this.flush(null), this.#periodicFlush);
-      this.#periodicFlushTimer.unref();
+      this.#periodicFlushTimer!.unref();
     }
   }
 
@@ -584,7 +605,7 @@ class Utf8Stream extends EventEmitter {
       this.#writingBuf = kEmptyBuffer;
     }
 
-    let buf = kEmptyBuffer;
+    let buf: Buffer = kEmptyBuffer;
     while (this.#bufs.length || buf.length) {
       if (buf.length <= 0) {
         buf = mergeBuf(this.#bufs[0], this.#lens[0]);
@@ -654,7 +675,7 @@ class Utf8Stream extends EventEmitter {
     }
   }
 
-  #callFlushCallbackOnDrain(cb) {
+  #callFlushCallbackOnDrain(cb: FlushCallback) {
     this.#flushPending = true;
     const onDrain = () => {
       // Only if fsync is false to avoid double fsync
@@ -671,7 +692,7 @@ class Utf8Stream extends EventEmitter {
           });
         } catch (err) {
           this.#flushPending = false;
-          cb(err);
+          cb(err as Error);
         }
       } else {
         this.#flushPending = false;
@@ -679,7 +700,7 @@ class Utf8Stream extends EventEmitter {
       }
       this.off("error", onError);
     };
-    const onError = err => {
+    const onError = (err: Error) => {
       this.#flushPending = false;
       cb(err);
       this.off("drain", onDrain);
@@ -689,7 +710,7 @@ class Utf8Stream extends EventEmitter {
     this.once("error", onError);
   }
 
-  #flushBuffer(cb) {
+  #flushBuffer(cb: FlushCallback | null) {
     validateFunction(cb, "cb");
 
     if (this.#destroyed) {
@@ -723,7 +744,7 @@ class Utf8Stream extends EventEmitter {
     this.#actualWrite();
   }
 
-  #flushUtf8(cb) {
+  #flushUtf8(cb: FlushCallback | null) {
     validateFunction(cb, "cb");
 
     if (this.#destroyed) {
@@ -779,7 +800,7 @@ class Utf8Stream extends EventEmitter {
       bufs.push([]);
       lens.push(dataLength);
     } else {
-      bufs[bufs.length - 1].push(data);
+      (bufs[bufs.length - 1] as Uint8Array[]).push(data);
       lens[lens.length - 1] += dataLength;
     }
 
@@ -826,7 +847,7 @@ class Utf8Stream extends EventEmitter {
 /**
  * Release the writingBuf after fs.write n bytes data
  */
-function releaseWritingBuf(writingBuf, len, n) {
+function releaseWritingBuf<T extends string | Buffer>(writingBuf: T, len: number, n: number) {
   if (typeof writingBuf === "string") {
     const byteLength = Buffer.byteLength(writingBuf);
     if (byteLength !== n) {
@@ -834,7 +855,7 @@ function releaseWritingBuf(writingBuf, len, n) {
       // how many complete characters fit within those n bytes. If a partial
       // write splits a multi-byte UTF-8 character, we must back up to the
       // start of that character to avoid data corruption.
-      const buf = Buffer.from(writingBuf);
+      const buf: Buffer = Buffer.from(writingBuf);
       // UTF-8 continuation bytes have the pattern 10xxxxxx (0x80-0xBF).
       while (n > 0 && (buf[n] & 0xc0) === 0x80) {
         n--;
@@ -843,7 +864,7 @@ function releaseWritingBuf(writingBuf, len, n) {
     }
   }
   len = Math.max(len - n, 0);
-  writingBuf = writingBuf.slice(n);
+  writingBuf = writingBuf.slice(n) as T;
   return { writingBuf, len };
 }
 

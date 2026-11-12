@@ -1,0 +1,73 @@
+# a URL that is made for one question, which stands behind it in its block: the text is scanned, a plain text answers out of its own characters, and what the scan turns away makes the object and asks it, as written, in one rare arm
+# function pathOf(text) { if (typeof text === "string") return [new URL(text).pathname]; }
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = CallBuiltin {{*}}overload=CompilerHelpersScanPlainURL
+# CHECK: = Substring
+# CHECK: frequency=Rare
+# function valueOf(text, name) { if (typeof text === "string") return [new URLSearchParams(text).get(name)]; }
+# RUN(QUERY): walk f2 mechanisms=all
+# QUERY-LABEL: code f2:Body
+# QUERY: = CallBuiltin {{*}}overload=CompilerHelpersScanPlainQuery
+# QUERY: = CallBuiltin {{*}}overload=CompilerHelpersFindInPlainQuery
+# somebody else gets hold of the object: function kept(text) { if (typeof text === "string") { const url = new URL(text); return [url.pathname, url]; } }
+# RUN(KEPT): walk f3 mechanisms=all
+# KEPT-LABEL: code f3:Body
+# KEPT-NOT: CompilerHelpersScanPlainURL
+# KEPT: = NewArray
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="pathOf" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Builtin builtin=URL
+    v4 = Construct v3, -, v2 calleeName="URL"
+    v5 = PropGet v4 key="pathname"
+    v6 = NewArray v5 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}
+function f2 name="valueOf" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = TypeTest v0 testedType=string
+    Branch v2 -> taken b1(| 0), notTaken b2()
+  b1(v3):
+    v4 = Builtin builtin=URLSearchParams
+    v5 = Construct v4, -, v3 calleeName="URLSearchParams"
+    v6 = PropGet v5 key="get"
+    v7 = Call v6, v5, v1 calleeKey="get"
+    v8 = NewArray v7 contents=anything
+    Return v8
+  b2():
+    v9 = Undefined
+    Return v9
+}
+function f3 name="kept" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=string
+    Branch v1 -> taken b1(| 0), notTaken b2()
+  b1(v2):
+    v3 = Builtin builtin=URL
+    v4 = Construct v3, -, v2 calleeName="URL"
+    v5 = PropGet v4 key="pathname"
+    v6 = NewArray v5, v4 contents=anything
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
+}

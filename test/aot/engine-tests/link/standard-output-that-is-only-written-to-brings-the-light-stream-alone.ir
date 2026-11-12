@@ -1,0 +1,45 @@
+# process.stdout.write("x"); if (process.stdout.isTTY) process.stderr.write("y")
+# Native code makes the two outputs with getLightStdioWriteStreams() wherever getStdioWriteStream() is not in the executable. The traps of a light stream serve a few names by themselves and call for the whole stream at every other.
+# The table has the names from the list that the traps go by (src/js/internal/streams/load_all.ts). The look at bodies follows what process.stdout answers: it is read under such names, and what `write` answers is called on it: nothing else.
+# The control: standard-output-that-is-asked-for-another-name-brings-the-whole-stream.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# RUN(LOOKUPS): link lookups mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK: function f2 unreached
+# The light stream answers under the names, so no member of the table is found under them: not the `write` of every sink and socket.
+# LOOKUPS-NOT: lookup name-read "isTTY"
+# LOOKUPS-NOT: lookup name-called "write"
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/stdio.ts" displayPath="/$bun/js/builtins/stdio.ts" flags=[IsLibrary]
+module m2 path="/$bun/js/builtins/ProcessObjectInternals.ts" displayPath="/$bun/js/builtins/ProcessObjectInternals.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ProcessObjectInternalsGetStdioWriteStream function=f2
+runtimefunction id=StdioGetLightStdioWriteStreams function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="stdout"
+    v2 = PropGet v1 key="write"
+    v3 = String string="x"
+    v4 = Call v2, v1, v3 calleeKey="write"
+    v5 = PropGet v1 key="isTTY"
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = PropGet v0 key="stderr"
+    v7 = PropGet v6 key="write"
+    v8 = String string="y"
+    v9 = Call v7, v6, v8 calleeKey="write"
+    Jump -> next b2()
+  b2():
+    Return v4
+}
+function f1 name="getLightStdioWriteStreams" module=m1 kind=Method role=Library flags=[HasExplicitName] length=7 enclosingRuntimeFunction=StdioGetLightStdioWriteStreams thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything):
+    Return v4
+}
+function f2 name="getStdioWriteStream" module=m2 kind=Method role=Library flags=[HasExplicitName] length=4 enclosingRuntimeFunction=ProcessObjectInternalsGetStdioWriteStream thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}

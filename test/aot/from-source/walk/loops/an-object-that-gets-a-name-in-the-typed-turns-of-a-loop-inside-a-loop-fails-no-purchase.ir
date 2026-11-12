@@ -1,0 +1,37 @@
+# -- source: an-object-that-gets-a-name-in-the-typed-turns-of-a-loop-inside-a-loop-fails-no-purchase.js
+# const rows = JSON.parse("[0,5,2]");
+# function work(holder, least) {
+#   const workers = [0, 1].map(() => {
+#     let done = 0;
+#     return { step: () => ++done };
+#   });
+#   const front = { n: least };
+#   const mate = { n: least };
+#   const box = [mate];
+#   let i = -1;
+#   while (++i < holder.rows.length) {
+#     while (holder.rows[i] < least) {
+#       holder.rows[i] = holder.rows[i] + workers[i % 2].step();
+#       box[0].n += 1;
+#       box[0].late = i;
+#     }
+#   }
+#   const seen = [typeof front.n, front.n, typeof mate.n, mate.n];
+#   seen.push(mate.late);
+#   front.n += holder.rows.length;
+#   return seen.concat(front.n, JSON.stringify(front), JSON.stringify(mate)).join(" ");
+# }
+# print(work({ rows }, 3) + " " + rows.join());
+# -- end of source
+# `mate` is made in front of both loops and is believed, with its shape, where the closed copy of the loop inside begins; the typed turn that hands over to it has given it a name more. It may be fresh still: what
+# arrives is another shape than was believed. The builds of that row are given up as a try is, and every fresh object leaves in front of them; no purchase of the loop around is lost.
+# RUN: compile LoopVersioningAttemptsFailed WalkLoopsVersioned mechanisms=all
+# CHECK: statistic LoopVersioningAttemptsFailed 0
+# CHECK: statistic WalkLoopsVersioned 7
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: number 3 number 6 2 6 {"n":6} {"n":6,"late":2} 3,5,5
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: number 3 number 6 2 6 {"n":6} {"n":6,"late":2} 3,5,5
+# HELD-NEXT: exited with 0

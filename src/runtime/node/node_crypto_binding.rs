@@ -1,12 +1,9 @@
 //! `node:crypto` native binding — `pbkdf2`/`scrypt`/`random*`
 //! plus the `ExternCryptoJob` / `CryptoJob<Ctx>` work-pool plumbing.
 
-use core::ffi::{c_char, c_void};
-
 // `rust-argon2` exports its lib as crate `argon2`; alias past the `argon2` fn below.
 use ::argon2 as rust_argon2;
 use bun_boringssl as boringssl;
-use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
 use bun_core::String as BunString;
 use bun_jsc::bindgen::{self, BufferSource, Callable, JsHeap, JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::{
@@ -120,17 +117,22 @@ macro_rules! extern_crypto_job {
                     this: &mut Self,
                     done: bun_jsc::Completion<Self>,
                 ) -> Option<bun_jsc::Completion<Self>> {
+                    // Jobs report what they find on the error queue of a thread they share.
+                    boringssl::c::ERR_clear_error();
                     // SAFETY: the creating global, alive under the job's ticket; C++
                     // only threads it through to error reporting state.
                     ctx_run_task(Ctx::opaque_ref(this.ctx.0), unsafe {
                         this.global.under_ticket(done.ticket())
                     });
+                    boringssl::c::ERR_clear_error();
                     Some(done)
                 }
 
                 fn then(this: Self, callback: Strong, cx: &JsThread<'_>) -> JsResult<()> {
                     let global = cx.global();
                     let mut args = JsCallbackArgs::EMPTY;
+                    // The job ran on another thread: this one's queue is not its error stack.
+                    boringssl::c::ERR_clear_error();
                     let produced = jsc::from_js_host_call_generic(global, || {
                         ctx_run_from_js(Ctx::opaque_ref(this.ctx.0), global, &mut args);
                     });
@@ -155,7 +157,7 @@ macro_rules! extern_crypto_job {
                 ctx: *mut Ctx,
                 callback: JSValue,
             ) {
-                let cx = global.js_thread_of_caller_no_frame();
+                let cx = global.js_thread_of_caller();
                 let callback = callback.with_async_context_if_needed(global);
                 Job::<ExternJob>::schedule(
                     &cx,
@@ -196,7 +198,7 @@ enum RandomFillJob {
     /// `randomBytes`: the ArrayBuffer was allocated by us and nothing else
     /// can observe it yet, so fill its bytes directly (under the job's ticket,
     /// which keeps its VM alive).
-    InPlace { bytes: JsPtr<u8>, length: usize },
+    InPlace { bytes: JsPtr<[u8]> },
     /// `randomFill`: the caller's buffer stays untouched until completion;
     /// `scratch` (empty, `size` bytes reserved) is filled off-thread and copied in at `offset` on the JS thread.
     /// `offset` counts from the start of `memory` if the job has one.
@@ -238,17 +240,10 @@ impl JobContext for RandomFillJob {
                     })
                 }
             }
-            RandomFillJob::InPlace { bytes, length } => {
-                // SAFETY: `bytes` points into the ArrayBuffer `value` keeps alive;
-                // the ticket keeps the VM (and so that buffer) alive; `length` is
-                // the buffer's own allocation size.
-                let slice = unsafe {
-                    core::slice::from_raw_parts_mut(
-                        core::ptr::from_mut(bytes.under_ticket(done.ticket())),
-                        *length,
-                    )
-                };
-                boringssl::rand_bytes(slice);
+            RandomFillJob::InPlace { bytes } => {
+                // SAFETY: `bytes` is the ArrayBuffer `value` keeps alive;
+                // the ticket keeps the VM (and so that buffer) alive.
+                boringssl::rand_bytes(unsafe { bytes.under_ticket(done.ticket()) });
             }
         }
         Some(done)
@@ -363,26 +358,7 @@ fn random_int<'a>(
     }
 
     if max - min > MAX_RANGE {
-        // Node's ERR_OUT_OF_RANGE adds "_" numerical separators to integer
-        // "Received" values whose magnitude exceeds 2^32
-        // (lib/internal/errors.js, addNumericalSeparator).
-        let received = {
-            let digits = (max - min).to_string();
-            let (sign, digits) = match digits.strip_prefix('-') {
-                Some(rest) => ("-", rest),
-                None => ("", digits.as_str()),
-            };
-            let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);
-            out.push_str(sign);
-            let lead = digits.len() % 3;
-            for (i, ch) in digits.chars().enumerate() {
-                if i != 0 && (i + 3 - lead) % 3 == 0 {
-                    out.push('_');
-                }
-                out.push(ch);
-            }
-            out
-        };
+        let received = bun_core::fmt::NodeNumber((max - min) as f64);
         if min_specified {
             return Err(global
                 .err(
@@ -568,9 +544,8 @@ pub(crate) fn random_bytes<'a>(
         callback.to_js(),
         RandomFillJob::InPlace {
             // SAFETY: `bytes` is `result`'s backing store, kept alive by the job's
-            // Js side; a slice's data pointer is non-null even when empty.
-            bytes: unsafe { JsPtr::new(core::ptr::NonNull::new_unchecked(bytes.as_mut_ptr())) },
-            length: size as usize,
+            // Js side.
+            bytes: unsafe { JsPtr::new(core::ptr::NonNull::from_mut(bytes)) },
         },
         result,
         None,
@@ -819,7 +794,9 @@ impl Scrypt {
         };
 
         if res == 0 {
-            return Some(boringssl::c::ERR_peek_last_error());
+            let err = boringssl::c::ERR_peek_last_error();
+            boringssl::c::ERR_clear_error();
+            return Some(err);
         }
         None
     }
@@ -897,7 +874,7 @@ impl JobContext for ScryptJob {
             callback,
             global,
             JSValue::UNDEFINED,
-            &[JSValue::UNDEFINED, js.buf.get()],
+            &[JSValue::NULL, js.buf.get()],
         );
         Ok(())
     }
@@ -939,7 +916,7 @@ pub(crate) fn pbkdf2<'a>(
             JSValue::UNDEFINED,
         ));
     };
-    let algorithm = pbkdf2::algorithm_from_digest(cx.global(), digest)?;
+    let digest = pbkdf2::digest_by_name(cx.global(), digest)?;
 
     let password = isolate_for_job(cx, password)?;
     let salt = isolate_for_job(cx, salt)?;
@@ -949,7 +926,7 @@ pub(crate) fn pbkdf2<'a>(
         salt.slice(),
         iterations,
         keylen as usize,
-        algorithm,
+        digest,
     )?;
     pbkdf2::create_job(&cx.js_thread(), data, password, salt, callback.to_js());
     Ok(())
@@ -979,14 +956,14 @@ pub(crate) fn pbkdf2_sync(
 ) -> JsResult<JSValue> {
     // SAFETY: it only allocates the result and throws, and nothing borrowed is read after a throw.
     let global_this = unsafe { heap.global() };
-    let algorithm = pbkdf2::algorithm_from_digest(global_this, digest)?;
+    let digest = pbkdf2::digest_by_name(global_this, digest)?;
     let data = PBKDF2::new(
         global_this,
         password,
         salt,
         iterations,
         keylen as usize,
-        algorithm,
+        digest,
     )?;
     // `create_buffer_from_length` → `JSBuffer__bufferFromLength`, which constructs
     // with `JSBufferSubclassStructure` (a Node.js `Buffer`, not a plain Uint8Array/ArrayBuffer).
@@ -1019,38 +996,6 @@ pub(crate) fn set_engine<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, ()> {
         ErrorCode::CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED,
         format_args!("Custom engines not supported by BoringSSL"),
     ))
-}
-
-extern "C" fn for_each_hash(
-    _: *const boringssl::c::EVP_MD,
-    maybe_from: *const c_char,
-    _: *const c_char,
-    ctx: *mut c_void,
-) {
-    if maybe_from.is_null() {
-        return;
-    }
-    // SAFETY: ctx was `&mut CaseInsensitiveAsciiStringArrayHashMap<()>` cast in `get_hashes`.
-    let hashes: &mut CaseInsensitiveAsciiStringArrayHashMap<()> =
-        unsafe { bun_ptr::callback_ctx::<CaseInsensitiveAsciiStringArrayHashMap<()>>(ctx) };
-    // SAFETY: `maybe_from` is non-null (checked above) and points to a NUL-terminated C string
-    // from BoringSSL's static tables.
-    let from_bytes = unsafe { bun_core::ffi::cstr(maybe_from) }.to_bytes();
-    bun_core::handle_oom(hashes.put(from_bytes, ()));
-}
-
-pub(crate) fn get_hashes() -> Vec<Box<[u8]>> {
-    let mut hashes: CaseInsensitiveAsciiStringArrayHashMap<()> =
-        CaseInsensitiveAsciiStringArrayHashMap::new();
-
-    // Perf idea (dylan-conway): cache the names
-    // SAFETY: `for_each_hash` matches the expected callback signature; `&mut hashes` is valid
-    // for the duration of the call.
-    unsafe {
-        boringssl::c::EVP_MD_do_all_sorted(for_each_hash, (&raw mut hashes).cast::<c_void>());
-    }
-
-    core::mem::take(&mut *hashes).into_entries().0
 }
 
 pub(crate) fn scrypt<'a>(

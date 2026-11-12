@@ -174,11 +174,8 @@ bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
 impl Drop for PostgresSQLConnection {
     fn drop(&mut self) {
         self.disconnect();
-        // `free_sensitive`: the connection options carry the password.
-        for b in self.options_buf.iter_mut() {
-            // SAFETY: plain byte write; volatile so it is not elided.
-            unsafe { core::ptr::write_volatile(b, 0) };
-        }
+        // The connection options carry the password.
+        bun_alloc::secure_zero(&mut self.options_buf);
     }
 }
 
@@ -870,7 +867,7 @@ pub(crate) fn create_connection<'a>(
     let vm = global_object.bun_vm().as_mut();
     let port = port as i32;
     // The connection is the calling script's.
-    let context = global_object.bun_vm().context_of_caller_no_frame();
+    let context = global_object.bun_vm().context_of_caller();
     let Some(args) = ConnectionCtorArgs::parse(
         global_object,
         &mut *vm,

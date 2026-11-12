@@ -237,6 +237,38 @@ test("error.stack throwing an error doesn't lead to a crash", () => {
   }).toThrow();
 });
 
+// Once script has read error.stack, the frames are read back from that text.
+test("a folder named in parentheses, in the stack of an error whose stack was read", async () => {
+  using dir = tempDir("inspect-error-parentheses", {
+    "(group)/throws.js": `throw new Error("at the top level");`,
+    "(group)/fails.js": `export function fails() { throw new Error("in a function"); }`,
+    "index.js": `
+      for (const run of [() => import("./(group)/throws.js"), async () => (await import("./(group)/fails.js")).fails()]) {
+        try {
+          await run();
+        } catch (error) {
+          void error.stack;
+          console.log(Bun.inspect(error).split("\\n").find(line => /^\\s+at /.test(line)).trim());
+        }
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.replaceAll("\\", "/").replaceAll(String(dir).replaceAll("\\", "/"), "[dir]").split("\n")).toEqual([
+    "at [dir]/(group)/throws.js:1:11",
+    "at fails ([dir]/(group)/fails.js:1:37)",
+    "",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
 test("an uncaught error whose message getter throws exits with code 1", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -279,7 +311,8 @@ describe("source map remapping of the printed stack", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { dir: String(dir), out: JSON.parse(stdout), stderr, exitCode };
+    // The JSON is the last line of stdout.
+    return { dir: String(dir), out: JSON.parse(stdout.trimEnd().split("\n").at(-1)), stdout, stderr, exitCode };
   }
 
   // A prebuilt file whose map names a source that is neither on disk nor in
@@ -396,6 +429,66 @@ describe("source map remapping of the printed stack", () => {
       deletedInspect: positions(out.deletedStack),
       deletedStackThenInspect: positions(out.deletedStack),
       uncaughtAfterStack: positions(out.presentStack),
+    });
+    expect(exitCode).toBe(1);
+  });
+
+  // A file loaded through a blob: URL keeps the relative path it was opened
+  // with as its source URL. Loading it again replaces its source map, and the
+  // printer runs the `cause` getter between remapping the frames and printing
+  // them.
+  test.concurrent("a `cause` getter that loads the throwing file again", async () => {
+    const map = {
+      version: 3,
+      sources: ["orig.ts"],
+      sourcesContent: [
+        'function thrower() { throw new Error("RELOADED"); }\nexport function caller() { thrower(); }\n',
+      ],
+      names: [],
+      // Line 2 -> orig.ts:1:5, line 3 -> orig.ts:2:5.
+      mappings: ";;AAAI;AACA",
+    };
+    const { dir, out, stdout, stderr, exitCode } = await run({
+      "rel.js": [
+        "// @bun @bun-cjs",
+        "(function(exports, require, module, __filename, __dirname) {",
+        'function thrower() { throw new Error("RELOADED"); }',
+        "module.exports = function caller() { thrower(); };",
+        "})",
+        "//# sourceMappingURL=data:application/json;base64," + Buffer.from(JSON.stringify(map)).toString("base64"),
+      ].join("\n"),
+      "main.js": [
+        'const load = () => require(URL.createObjectURL(Bun.file("rel.js")));',
+        "let reloads = 0;",
+        "function thrown() {",
+        "  let error;",
+        "  try { load()(); } catch (e) { error = e; }",
+        '  Object.defineProperty(error, "cause", { get() { reloads++; load(); } });',
+        "  return error;",
+        "}",
+        "const out = { inspect: Bun.inspect(thrown()), stack: thrown().stack };",
+        'process.on("exit", () => console.log(JSON.stringify({ ...out, reloads })));',
+        "console.log(thrown());",
+        "console.error(thrown());",
+        "throw thrown();",
+      ].join("\n"),
+    });
+
+    const files = ["orig.ts", "rel.js"];
+    const expected = ["at thrower (orig.ts:1:5)", "at caller (orig.ts:2:5)"];
+    expect({
+      reloads: out.reloads,
+      inspect: frames(out.inspect, dir, files),
+      consoleLog: frames(stdout, dir, files),
+      consoleErrorThenUncaught: frames(stderr, dir, files),
+      stack: frames(out.stack, dir, files),
+    }).toEqual({
+      // Bun.inspect, console.log, console.error and the uncaught error. Reading `stack` does not read `cause`.
+      reloads: 4,
+      inspect: expected,
+      consoleLog: expected,
+      consoleErrorThenUncaught: [...expected, ...expected],
+      stack: expected,
     });
     expect(exitCode).toBe(1);
   });

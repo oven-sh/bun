@@ -1,0 +1,20 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function spread(codes: number[], places: number[], text: string, width: number): number { let i = 0; while (i < width) { codes[i] = text.charCodeAt(i) | 0; places[i] = ++i; } return codes[width - 1]! + places[0]!; }
+# const codes = [0, 0, 0, 0, 0, 0], places = [0, 0, 0, 0, 0, 0];
+# let sum = 0;
+# for (let t = 0; t < 20; t++) sum += spread(codes, places, 'harbor', 3 + (t & 3));
+# print(sum, codes.join(), places.join());
+# -- end of source
+# A turn of a typed copy begins again in the other copy only while it has done nothing. So the second store of a turn could ask nothing: not even whether its key lies inside its list. It stayed
+# closed, may run other code, and the typed copy of every loop that fills two lists side by side was thrown away. The first store asks, in front of itself, whether its key lies inside every other
+# tested list into which the same block stores later under the same key.
+# f1 = spread
+# RUN(COUNT): compile LaterStoreBoundsChecksHoisted mechanisms=all
+# COUNT: statistic LaterStoreBoundsChecksHoisted 1
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: = PutContiguousIndex
+# FORM: = PutContiguousIndex
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 2205 104,97,114,98,111,114 1,2,3,4,5,6

@@ -1,0 +1,12 @@
+# A counter that no comparison bounds and that nothing takes as an integer is a double from the first visit of its loop. It used to be walked as an integer, fit, and be visited again as a double.
+# -- source: main.cjs
+# const seen = [], notes = { note(x) { seen.push(x); return seen.length % 3 === 0; } }, note = notes[JSON.parse('"note"')];
+# function counts(list) { let count = 0; for (const each of list) if (note(each)) count++; return count; }
+# function countsDown(list) { let count = 0; for (const each of list) if (note(each)) count--; return count; }
+# function countsTurns(list) { let turns = 0; do { turns++; } while (!note(list.length)); return turns; }
+# const list = JSON.parse("[1,2,3,4,5,6,7]");
+# print(counts(list), countsDown(list), countsTurns(list), seen.length);
+# -- end of source
+# STATISTIC: LoopVisitsUndone <= 2
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 2 -2 1 15

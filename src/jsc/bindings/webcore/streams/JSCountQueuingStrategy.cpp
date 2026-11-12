@@ -161,7 +161,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCountQueuingStrategyPrototype_inspectCustom, (JSGloba
     if (!thisObject) [[unlikely]]
         return JSValue::encode(thisValue);
     JSObject* data = constructEmptyObject(lexicalGlobalObject);
-    data->putDirect(vm, Identifier::fromString(vm, "highWaterMark"_s), jsNumber(thisObject->m_highWaterMark), 0);
+    Bun::putDirectNamed(vm, data, "highWaterMark"_s, jsNumber(thisObject->m_highWaterMark));
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "CountQueuingStrategy"_s, data));
 }
 

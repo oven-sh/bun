@@ -6,7 +6,9 @@ import {
   BoolType,
   BufferSourceType,
   type BytesOptions,
+  ByteSpanType,
   BytesType,
+  CellClass,
   type ClassOptions,
   ClassType,
   type DictionaryOptions,
@@ -25,6 +27,7 @@ import {
   PromisePtrType,
   RecordResultType,
   RefType,
+  RestType,
   type SignatureOptions,
   StringType,
   type Type,
@@ -45,10 +48,10 @@ export const { u8, u16, i32, u32, u64, usize } = integers;
 /** Strict: only a number. `.loose` for `ToNumber`, then `.allowBigInt`. As a result, `b.f64.asDate`. */
 export const f64 = new DoubleType();
 
-/** A `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. As a result, `b.string.local`. */
+/** A `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. `.local` for the JS string itself. */
 export const string = new StringType();
 
-/** The JS value itself, as a `JsLocal<'a>`. */
+/** The JS value itself, as a `JsLocal<'a>`. `.stringObjectAsString`, `.orAbsent`. */
 export const any = new AnyType();
 
 /** A function, or a proxy of one, as a `JsLocal<'a, Callable>`. */
@@ -63,6 +66,12 @@ export { class_ as class };
 
 /** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.arrayBuffer`. */
 export const bufferSource = new BufferSourceType();
+
+/** Bytes that C++ passes to one of a class's `calledFromCpp`. */
+export const byteSpan = new ByteSpanType();
+
+/** An internal field that holds one `JSCell` subclass: `b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h")`. */
+export const cell = (cpp: string, header: string) => new CellClass(cpp, header);
 
 /** The bytes of a string, a buffer or a `Blob`: which of them, what becomes of anything else, and how the body holds them. */
 export const bytes = (options: BytesOptions) => new BytesType(options);
@@ -92,6 +101,9 @@ export const array = (element: Type) => new ArrayType(element);
 
 /** A result only: an object with a property for each `(key, value)` the body gives. */
 export const record = (value: Type) => new RecordResultType(value);
+
+/** The last argument: it and every one after it, as a `&'a [T]`. `element` is `b.any` or `b.string.local`. */
+export const rest = (element: Type) => new RestType(element);
 
 // A named type is called what it is exported as: `export const Formatter = b.enumeration([..])`.
 

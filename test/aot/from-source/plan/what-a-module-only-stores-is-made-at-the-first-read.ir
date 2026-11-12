@@ -1,0 +1,76 @@
+# -- source: what-a-module-only-stores-is-made-at-the-first-read.ts
+# declare function report(value: unknown): void;
+# function early() { return late; }
+# try { report(String(early())); } catch { report("dead"); }
+# const pattern = /a+/g;
+# const table = { a: 1, b: "x" };
+# const list = [1, 2, 3];
+# const arrow = (x: number) => x + 1;
+# const late = /l/;
+# var older = /o/;
+# let assigned = /first/;
+# const taken = /t/;
+# report(taken.source);
+# const counter = { n: 0 };
+# const capturing = ((step: number) => () => step)(1);
+# for (let i = 0; i < 2; i++) { var turned = /u/; }
+# export const shown = /s/;
+# export function readPattern() { return pattern; }
+# export function readTable() { return table; }
+# export function readList() { return list; }
+# export function readArrow() { return arrow; }
+# export function readOlder() { return older; }
+# export function readAssigned() { assigned = /second/; return assigned; }
+# export function readTaken() { return taken; }
+# export function readCounter() { return counter; }
+# export function readCapturing() { return capturing; }
+# export function readTurned() { return turned; }
+# export function readShown() { return shown; }
+# export function readTwice() { return pattern.source + pattern.flags; }
+# -- end of source
+# What the body of a module makes out of the text alone and only stores in a variable of the module is made at the first read of the variable.
+# Left as they are: a closure (g16), a variable that is assigned to (g19), an object that the body itself goes on to use (g20), a closure that captures (g22), what a loop makes (g23), and a variable that a record hands to the run time (g12).
+# RUN: plan deferred mechanisms=all
+# CHECK: deferred g13 made-by f0 v15 NewRegExp mark=undefined at-declaration
+# CHECK-NEXT: deferred g14 made-by f0 v17 Data mark=undefined at-declaration
+# CHECK-NEXT: deferred g15 made-by f0 v19 Data mark=undefined at-declaration
+# CHECK-NEXT: deferred g17 made-by f0 v23 NewRegExp mark=undefined at-declaration
+# CHECK-NEXT: deferred g18 made-by f0 v25 NewRegExp mark=null at-declaration
+# CHECK-NEXT: deferred g21 made-by f0 v36 Data mark=undefined at-declaration
+# CHECK-NOT: deferred
+# RUN(WITHHELD): plan deferred mechanisms=-Deferral
+# WITHHELD-NOT: deferred
+# RUN(NONE): plan deferred mechanisms=none
+# NONE-NOT: deferred
+# RUN(SCAN): summary f0 mechanisms=all
+# SCAN: defines g13 made v15 stored v16
+# SCAN-NOT: defines g20
+# SCAN-NOT: defines g22
+# SCAN-NOT: defines g23
+# RUN(READ): walk f7 mechanisms=all
+# READ-LABEL: code f7:Body
+# READ: [[held]]: undefined|absent|RegExp {{*}} = GetModuleVariable variable=g13
+# READ-NEXT: [[test]]: boolean {{*}} = TypeTest [[held]] testedType=undefined
+# READ-NEXT: Branch [[test]] -> taken [[makes]](), notTaken [[finds]]()
+# READ-NEXT: [[makes]]() frequency=Rare:
+# READ-NEXT: = NewRegExp pattern="a+" regExpFlags=[Global]
+# READ: PutModuleVariable {{*}}variable=g13
+# READ: [[finds]]():
+# READ-NEXT: : absent|RegExp {{*}} = Narrowed [[held]], [[test]]
+# RUN(VAR): walk f6 mechanisms=all
+# VAR-LABEL: code f6:Body
+# VAR: : undefined|null|RegExp {{*}} = GetModuleVariable variable=g18
+# VAR-NEXT: = TypeTest {{*}}testedType=null
+# VAR: : undefined|RegExp {{*}} = Narrowed
+# RUN(BODY): walk f0 mechanisms=all
+# BODY-LABEL: code f0:
+# BODY-NOT: pattern="a+"
+# BODY-NOT: variable=g13
+# BODY: [[mark]]: null {{*}} = Null
+# BODY: PutModuleVariable {{*}}variable=g17
+# BODY: PutModuleVariable [[mark]] variable=g18
+# BODY-NOT: pattern="o"
+# RUN(WRITTEN): walk f0 mechanisms=-Deferral
+# WRITTEN-LABEL: code f0:
+# WRITTEN: = NewRegExp pattern="a+" regExpFlags=[Global]
+# WRITTEN: PutModuleVariable {{*}}variable=g13

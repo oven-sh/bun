@@ -8605,6 +8605,9 @@ describe("a number that touches the token before it", () => {
     minify_test("a{--x:var(--a)-0.50;--y:foo(1).50;--z:5%-0.50}", "a{--x:var(--a)-.5;--y:foo(1).5;--z:5%-.5}");
     // The arguments of a pseudo-class lose their comments: a kept `-5e` would read on into `+1`.
     minify_test("a:unknown(1-5e/**/+1){color:red}", "a:unknown(1-5\\65 +1){color:red}");
+    // Before such a comment, a number that starts with `.` still keeps its text after a digit.
+    minify_test("a:unknown(a1.0/**/ b){color:red}", "a:unknown(a1.0 b){color:red}");
+    minify_test("a:unknown(a1.5px/**/ b){color:red}", "a:unknown(a1.5px b){color:red}");
   });
 
   test("Bun.build and `bun build`, with and without --minify", async () => {

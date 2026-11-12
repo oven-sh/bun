@@ -385,13 +385,13 @@ impl TokenList {
                     }
                     let token = *token;
                     // A comment is dropped here, so the token after one prints right after this one.
-                    // Only the printed value is safe there: `-5e/**/+1` needs the unit as `\65 `.
-                    let before = if input.input.tokenizer.starts_with(b"/*") {
+                    // The item is not asked there: the kept `-5e` of `-5e/**/+1` would read on.
+                    let list = if input.input.tokenizer.starts_with(b"/*") {
                         None
                     } else {
                         Some(&*tokens)
                     };
-                    tokens.push(match input.raw_number_text(before) {
+                    tokens.push(match input.raw_number_text(list) {
                         Some(text) => TokenOrValue::RawNumber(RawNumber(text)),
                         None => TokenOrValue::Token(token),
                     });

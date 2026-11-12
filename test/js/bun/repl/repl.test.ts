@@ -1156,6 +1156,31 @@ describe.concurrent("a child's stdout whose 'data' listener threw, with no 'unca
   });
 });
 
+// Node makes the stdio handles of a child when it spawns it, and reports what a 'data' listener threw inside the
+// async context they were made in. That is how node:repl below knows an uncaught error for one of its own.
+test.concurrent.each(["stdout", "stderr"] as const)(
+  "an 'uncaughtException' listener sees the AsyncLocalStorage store of the spawn for a throw from child.%s",
+  async name => {
+    const script = `
+      const { AsyncLocalStorage } = require("node:async_hooks");
+      const { spawn } = require("node:child_process");
+      const als = new AsyncLocalStorage();
+      process.on("uncaughtException", error => console.log(error.message + ", reported in " + als.getStore()));
+      als.run("the spawn", () => {
+        const child = spawn(process.execPath, ["-e", "process.${name}.write('hi')"], { stdio: ["ignore", "pipe", "pipe"] });
+        child.${name}.on("data", () => { throw new Error("thrown in " + als.getStore()); });
+      });
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "thrown in the spawn, reported in the spawn\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
 // Interactive terminal-based REPL tests. Each test drives its own pty, so they run concurrently.
 describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
   test("shows welcome message and prompt", async () => {
@@ -2274,6 +2299,33 @@ describe.concurrent("--interactive", () => {
       });
       expect(stdout).toBe("external-repl-42\n");
       expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
+
+  // node:repl takes an uncaught error for its own when it is reported inside the async context of a line it
+  // evaluated, which a child spawned on that line reports in. The child echoes each chunk it reads and the listener
+  // throws on every echo: the child is told to exit only when the third echo arrives.
+  test(
+    "a child's stdout goes on after its 'data' listener threw",
+    async () => {
+      const echo = `process.stdout.on("error", () => process.exit(2)); process.stdin.on("data", chunk => process.stdout.write(chunk)).on("end", () => process.exit(0));`;
+      const { stdout, stderr, exitCode } = await runInteractive(
+        [],
+        [
+          `const child = require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(echo)}], { stdio: ["pipe", "pipe", "ignore"] }); let calls = 0; const exited = new Promise(resolve => child.on("exit", resolve)); child.stdout.on("data", () => { if (++calls < 3) child.stdin.write("x"); else child.stdin.end(); throw new Error("boom " + calls); }); child.stdin.write("x"); 0`,
+          "await exited; calls",
+          "",
+        ].join("\n"),
+      );
+      expect(stdout.match(/Uncaught Error: boom \d/g)).toEqual([
+        "Uncaught Error: boom 1",
+        "Uncaught Error: boom 2",
+        "Uncaught Error: boom 3",
+      ]);
+      expect(stdout).toMatch(/^3$/m);
+      expect(stderr).not.toContain("boom");
       expect(exitCode).toBe(0);
     },
     interactiveTimeout,

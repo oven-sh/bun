@@ -127,6 +127,12 @@ impl Default for OpenedFileBlob {
 unsafe extern "C" {
     #[cfg(not(windows))]
     pub(crate) safe fn open_as_nonblocking_tty(fd: i32, flags: i32) -> i32;
+    /// ReadCallbackAsyncContext.cpp: makes the async context that `callback` carries current and returns the one to put back, or the empty value when it carries none.
+    safe fn Bun__enterAsyncContextOfCallback(
+        global: &jsc::JSGlobalObject,
+        callback: JSValue,
+    ) -> JSValue;
+    safe fn Bun__leaveAsyncContextOfCallback(global: &jsc::JSGlobalObject, previous: JSValue);
 }
 
 impl Lazy {
@@ -951,14 +957,22 @@ impl FileReader {
         let parent = self.parent_const();
         let global = parent.global_this();
         let vm = global.bun_vm();
-        // The callback carries the context it was registered in (`with_async_context_if_needed`).
+        // The callback carries the context it was registered in (`with_async_context_if_needed`), and the call leaves it before it returns. What the callback threw is reported after that, so the context is entered here as well: an 'uncaughtException' listener sees the `AsyncLocalStorage` store of the spawn, as in Node and as after a timer.
+        let previous = Bun__enterAsyncContextOfCallback(global, callback);
+        // Left once the outcome is known, which is ahead of the checkpoint.
+        let leave_context = |outcome: CallbackOutcome| {
+            if !previous.is_empty() {
+                Bun__leaveAsyncContextOfCallback(global, previous);
+            }
+            outcome
+        };
         vm.event_loop_mut().run_callback_then(
             jsc::ContextId::NONE,
             callback,
             global,
             this_value,
             args,
-            |outcome| match outcome {
+            |outcome| match leave_context(outcome) {
                 // `push()` returned false: the reader stops until the next `set_flowing(true)`. The `false` that `on_read_chunk` then returns is not enough: Windows' reader ignores it, and so does a POSIX read loop on a pipe that hung up, unless the reader is paused as well (`PAUSE_ENDS_READ_LOOP`).
                 CallbackOutcome::Returned(more) if more == JSValue::FALSE => {
                     self.flowing.set(false);

@@ -4280,11 +4280,10 @@ if (isBun) {
           expect(other.prototype.constructor).toBe(other);
         });
 
-        // The receiver of these stores is a Proxy, and the native setter behind a fresh `prototype` takes the mock.
-        // JavaScriptCore gives it the receiver, and the setter refuses the store.
-        // https://github.com/oven-sh/WebKit/pull/993 changes that. With a WebKit that has it, these pass: remove the
-        // `failing` mark.
-        test.failing.each([
+        // The receiver of these stores is a Proxy, and the native setter behind a fresh `prototype` refuses an object
+        // that is not the mock. A store through a Proxy ends in a definition on the mock, and Bun's JavaScriptCore
+        // gives the value of that definition to the setter, with the mock.
+        test.each([
           ["a Proxy", mocked => new Proxy(mocked, {})],
           ["a Proxy of a Proxy", mocked => new Proxy(new Proxy(mocked, {}), {})],
           ["a Proxy made in a node:vm context", mocked => vm.runInNewContext("new Proxy(mocked, {})", { mocked })],

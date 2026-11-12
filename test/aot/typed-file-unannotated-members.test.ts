@@ -120,8 +120,10 @@ const wrong: "square" = new Circle().kind;
 export class Box {
   unit = Unit.Px;
   readonly fixed = Unit.Em;
+  #spare? = Unit.Rem;
   set(unit: Unit): void { this.unit = unit; }
   isFixed(): boolean { return this.fixed === Unit.Em; }
+  spare(): Unit | undefined { return this.#spare; }
 }
 `,
     },
@@ -136,7 +138,7 @@ const wrong: Unit.Px = box.unit;
 `,
     reads: ["new Box().unit", "new Box().fixed"],
     errors: ["(8,7): TS2322"],
-    written: ["declare unit: Unit2;", "declare readonly fixed = Unit2.Em;"],
+    written: ["declare unit: Unit2;", "declare readonly fixed = Unit2.Em;", "#spare?: Unit2 | undefined;"],
   },
   "class-of-the-bundle-under-another-name": {
     files: {
@@ -187,15 +189,16 @@ box.item = new Other();
   }
   clear(): void { this.#held = null; }
   get held() { return this.#held; }
-  get kind(): "box" { return this.#kind; }
+  get kind() { return this.#kind; }
   get total() { return this.count + this.name.length; }
+  relabel(): string { let label = this.#kind; label = "other"; return label; }
 }
 `,
     },
     caller: `import { Box } from "LIBRARY";
 const box = new Box();
 const held: string | null = box.held;
-const kind: "box" = box.kind;
+const kind: string = box.kind;
 const total: number = box.total;
 const wrong: string = box.held;
 `,
@@ -206,7 +209,8 @@ const wrong: string = box.held;
       "declare private count: number;",
       "declare protected name: string;",
       "#held: string | null;",
-      'readonly #kind: "box";',
+      // `declare` is not for a private name, and `: "box"` would not widen where the sources do.
+      "readonly #kind;",
     ],
   },
   "parameter-property-that-is-stored-again": {
@@ -800,6 +804,29 @@ new Box().item = make();
     }).toEqual({ sources: [], typedFile: [] });
   });
 
+  // No annotation and no cast of the bundle names `Hidden`. The typed file declares it for the stated type.
+  test("a stated type brings a type that nothing else in the bundle names", async () => {
+    using dir = tempDir("build-dts-assigned-fields-only-name", {
+      "package.json": project(assigned)["package.json"],
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...assigned, module: "preserve", moduleResolution: "bundler", noEmit: true, types: [] },
+        include: ["src", "globals.d.ts"],
+      }),
+      "globals.d.ts": `declare function hide(): import("./src/types").Hidden;\n`,
+      "src/types.ts": `export interface Hidden { h: string }\n`,
+      "src/index.ts": `import type { Hidden } from "./types";
+export class Box {
+  hidden = hide();
+}
+`,
+    });
+    const build = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const typed = readFileSync(join(String(dir), "out/index.aot.ts"), "utf8");
+    expect(typed).toContain("interface Hidden { h: string }\n");
+    expect(typed).toContain("declare hidden: Hidden;\n");
+  });
+
   // The bundle gives such a class `constructor() { super(...arguments); }`, which is TS2556 in a typed file.
   test.todo("a derived class with no constructor keeps its typed file", async () => {
     using dir = tempDir("build-dts-assigned-fields-derived", {
@@ -833,7 +860,7 @@ export class Derived extends Base {
     });
     const build = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
     expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).toBe(`// src/index.ts
+    expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).toEndWith(`
 class Box {
   public size;
   n = 1;

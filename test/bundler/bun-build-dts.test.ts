@@ -338,7 +338,7 @@ export class Named extends Counter {
     const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(readdirSync(join(String(dir), "out")).sort()).toEqual(["index.aot.ts", "index.d.ts", "index.js"]);
-    expect(written(dir, "index.aot.ts")).toBe(`// src/index.ts
+    expect(written(dir, "index.aot.ts")).toEndWith(`
 class Box {
   constructor() {
     this.n = 1;

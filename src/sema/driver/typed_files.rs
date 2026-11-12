@@ -2121,6 +2121,16 @@ fn link(
                 .iter()
                 .filter_map(|reference| place_of(&reference.1))
         }));
+        // A stated type brings the types that it names with it. A value would come as a twin.
+        let stated = module.types.iter().flat_map(|types| &types.stated_members);
+        let named = stated.flat_map(|member| member.names.iter());
+        queue.extend(named.filter_map(|name| match &name.1 {
+            Named::Target(target) => place_of(target).filter(|(index, name)| {
+                let found = declared[*index].get(&name[..]);
+                found.is_some_and(|found| found.bindings.is_empty() && !found.is_ambient_value)
+            }),
+            Named::Global | Named::Local(_) => None,
+        }));
     }
     let entry = bundle
         .entry_point
@@ -3174,13 +3184,18 @@ impl<'a> Transfer<'_, 'a, '_> {
             else {
                 continue;
             };
-            // Where the typed file has the value that a member has in the sources, that value types the member.
-            let stated = || {
-                let stated = linked.stated_members.get(&(source, key))?;
-                let has_its_value =
-                    stated.has_initializer && output.byte(output.after_trivia(slot.start)) == b'=';
-                (!has_its_value).then_some(stated)
-            };
+            // A value is no type. And where the typed file has the value of the sources, that value types the member.
+            let stated = (slot.place == Place::MemberType)
+                .then(|| linked.stated_members.get(&(source, key)))
+                .flatten()
+                .filter(|stated| {
+                    let has_its_value = stated.has_initializer
+                        && output.byte(output.after_trivia(slot.start)) == b'=';
+                    !stated.is_value && !has_its_value
+                });
+            if stated.is_some() {
+                self.stated_slots.insert(slot.start);
+            }
             let Some(found) = source_slots.get(&(slot.place, source, key)) else {
                 if slot.place == Place::ReturnType
                     && module
@@ -3189,18 +3204,15 @@ impl<'a> Transfer<'_, 'a, '_> {
                 {
                     insertions.add(slot.start, Order::Slot, b": undefined".to_vec());
                 }
-                if slot.place == Place::MemberType
-                    && let Some(stated) = stated()
-                {
+                if let Some(stated) = stated {
                     insertions.add(slot.start, Order::Slot, [b": ", &stated.text[..]].concat());
-                    self.stated_slots.insert(slot.start);
                 }
                 continue;
             };
             let text = module.trimmed_text(found.start, found.end);
             let is_computed = module.syntax.is_in_computed_key(found.key);
             let (order, text) = match slot.place {
-                Place::MemberType if text == b"?" => match stated() {
+                Place::MemberType if text == b"?" => match stated {
                     Some(stated) => (Order::Slot, [b"?: ", &stated.text[..]].concat()),
                     None => (Order::Slot, text),
                 },

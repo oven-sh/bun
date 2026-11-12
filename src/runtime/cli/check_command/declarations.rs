@@ -47,21 +47,21 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
         loaders,
         entry_points,
         sources,
+        assigns_class_fields,
     } = checked;
     let by_extension = script_kinds_by_extension(loaders);
     let mut script_kinds: Vec<(Vec<u8>, ScriptKind)> = Vec::new();
-    // The sources whose class fields the bundle assigns in the constructor, as the checker names them.
-    let mut assigning: Vec<Vec<u8>> = Vec::new();
-    let mut sources = sources.map(|(path, text, loader, assigns_class_fields)| {
+    let mut sources = sources.map(|(path, text, loader)| {
         let script_kind = script_kind_of(loader).filter(|it| it.differs_from_name(path));
         if !bun_core::strings::contains(path, bun_paths::NODE_MODULES_NEEDLE) {
             script_kinds.extend(script_kind.map(|it| (path.to_vec(), it)));
         }
-        if assigns_class_fields {
-            assigning.push(from_native(join_abs_string::<Auto>(cwd, &[path])));
-        }
         (path, text)
     });
+    // The sources whose class fields the bundle assigns in the constructor, as the checker names them.
+    let mut assigning: Vec<Vec<u8>> = assigns_class_fields
+        .map(|path| from_native(join_abs_string::<Auto>(cwd, &[path])))
+        .collect();
     let provided = Provided {
         already_read: already_read(cwd, &mut sources),
         ..Default::default()

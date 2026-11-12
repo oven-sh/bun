@@ -2547,6 +2547,10 @@ pub mod bv2_impl {
                     loaders[index].is_javascript_like() && sources[index].path.is_file()
                 })
                 .map(|index| sources[index].path.text);
+            let assigning = crate::Graph::InputFileFlags::ASSIGNS_CLASS_FIELDS;
+            let mut assigns_class_fields = (sources.iter().zip(flags))
+                .filter(|(source, flags)| flags.contains(assigning) && source.path.is_file())
+                .map(|(source, _)| source.path.text);
             // The types are those of what is written, as in `bun check`, not of what a plugin makes
             // of it. What only a plugin provides is written nowhere else.
             let mut sources = (sources.iter().zip(loaders).zip(flags))
@@ -2556,12 +2560,7 @@ pub mod bv2_impl {
                         && !(flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
                             && bun_sys::exists(source.path.text))
                 })
-                .map(|((source, loader), flags)| {
-                    let assigns_class_fields =
-                        flags.contains(crate::Graph::InputFileFlags::ASSIGNS_CLASS_FIELDS);
-                    let text = source.contents();
-                    (source.path.text, text, *loader, assigns_class_fields)
-                });
+                .map(|((source, loader), _)| (source.path.text, source.contents(), *loader));
             let checked = options::TypeChecked {
                 cwd: Fs::FileSystem::get().top_level_dir(),
                 tsconfig: self.transpiler.options.tsconfig_override.as_deref(),
@@ -2569,6 +2568,7 @@ pub mod bv2_impl {
                 loaders: &self.transpiler.options.loaders,
                 entry_points: &mut entry_points,
                 sources: &mut sources,
+                assigns_class_fields: &mut assigns_class_fields,
             };
             if type_check(checked, self.transpiler.log_mut()) {
                 return Ok(());

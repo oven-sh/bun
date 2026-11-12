@@ -310,9 +310,57 @@ export {
   Box
 };
 `);
-      expect(filesIn(root).includes("out/index.aot.ts")).toBe(hasOutdir);
+      expect(existsSync(join(root, "out/index.aot.ts"))).toBe(hasOutdir);
     },
   );
+
+  // The check reads such a file from the disk, and the bundle has what the plugin returned for it.
+  test("a class field that the build assigns is declared with its type in a file that an onLoad plugin loads", async () => {
+    using dir = tempDir("build-api-dts-assigned-field-plugin", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          useDefineForClassFields: false,
+          module: "esnext",
+          moduleResolution: "bundler",
+          target: "esnext",
+          types: [],
+        },
+      }),
+      "package.json": JSON.stringify({
+        name: "box",
+        version: "1.0.0",
+        compilerOptions: { strict: true, useDefineForClassFields: false },
+      }),
+      "src/index.ts": `export class Box {
+  n = 1;
+  label(): string {
+    return String(this.n);
+  }
+}
+`,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      outdir: join(root, "out"),
+      tsconfig: join(root, "tsconfig.json"),
+      dts: true,
+      plugins: [
+        {
+          name: "as written",
+          setup(build) {
+            build.onLoad({ filter: /index\.ts$/ }, async ({ path }) => ({
+              contents: await Bun.file(path).text(),
+              loader: "ts",
+            }));
+          },
+        },
+      ],
+    });
+    expect(built.logs).toEqual([]);
+    expect(readFileSync(join(root, "out/index.aot.ts"), "utf8")).toContain("  declare n: number;\n");
+  });
 
   test("cannot be used with compile", () => {
     expect(() => Bun.build({ entrypoints: ["./index.ts"], compile: true, dts: true })).toThrow(

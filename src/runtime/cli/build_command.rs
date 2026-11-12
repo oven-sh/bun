@@ -226,6 +226,7 @@ impl BuildCommand {
                 loaders: &this_transpiler.options.loaders,
                 entry_points: &mut entry_points.map(|path| &**path),
                 sources: &mut core::iter::empty(),
+                assigns_class_fields: &mut core::iter::empty(),
             };
             if !type_check(checked, log_ref) {
                 log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(

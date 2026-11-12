@@ -733,10 +733,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 } else {
                     self.vis_scope().is_after_const_local_prefix = true;
                 }
+                let symbol = &mut self.symbols[id_ref.inner_index() as usize];
+                if !was_anonymous_named_expr {
+                    symbol.set_initializer_not_named_by_decl(true);
+                }
                 // SAFETY: original_name is arena-owned, valid for 'a.
-                let original_name: &'a [u8] = self.symbols[id_ref.inner_index() as usize]
-                    .original_name
-                    .slice();
+                let original_name: &'a [u8] = symbol.original_name.slice();
                 decl.value = Some(self.maybe_keep_expr_symbol_name(
                     decl.value.unwrap(),
                     original_name,
@@ -2006,6 +2008,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // fail if something with side effects is in between the declaration
                     // and the usage.
                     if symbol.use_count_estimate == 1
+                        && !p.declaration_names_value(symbol, &replacement)
                         && !p.keeps_frame_for_call(&replacement)
                         && p.substitute_single_use_symbol_in_stmt(stmt, id, replacement)
                     {

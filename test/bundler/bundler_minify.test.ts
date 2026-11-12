@@ -239,6 +239,20 @@ describe("bundler", () => {
     minifySyntax: true,
     run: { stdout: "Controller Model" },
   });
+  // A bundle still moves a single-use function, as esbuild does, so it has no name there: https://github.com/oven-sh/bun/pull/40503
+  itBundled("minify/SingleUseFunctionMovesToItsUse", {
+    files: {
+      "/entry.js": /* js */ `
+        export function arrow() { const q = () => {}; return q.name; }
+        export function block() { { function q() {} return q.name; } }
+      `,
+    },
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("return (() => {}).name;");
+      api.expectFile("/out.js").toContain("return function() {}.name;");
+    },
+  });
   itBundled("minify/TemplateStringFolding", {
     files: {
       "/entry.js": /* js */ `

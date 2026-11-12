@@ -126,6 +126,65 @@ console.log("a listener of unpipe that reads, so that nobody is on record as wai
   await turn();
   say(source);
 }
+console.log("every destination at once, and a listener of unpipe pipes a failing one beside a good one and removes it");
+{
+  const source = pushed();
+  const first = sink("first");
+  source.pipe(first);
+  source.pipe(sink("second"));
+  first.on("unpipe", () => {
+    const bad = failing();
+    source.pipe(bad);
+    source.pipe(sink());
+    source.push("b");
+    source.unpipe(bad);
+  });
+  source.push("a");
+  await turn();
+  source.unpipe();
+  say(source);
+  source.push("c");
+  await turn();
+  say(source);
+}
+console.log("every destination at once, and a listener of unpipe pipes one more and removes them all again");
+{
+  const source = pushed();
+  const first = sink("first");
+  source.pipe(first);
+  source.pipe(waitedOnce());
+  source.pipe(sink("third"));
+  first.on("unpipe", () => {
+    source.pipe(sink("fourth"));
+    source.unpipe();
+  });
+  source.push("a");
+  await turn();
+  source.unpipe();
+  say(source);
+  source.push("b");
+  await turn();
+  say(source);
+}
+console.log("every destination at once, and a listener of unpipe throws");
+{
+  const source = pushed();
+  const first = waitedOnce();
+  source.pipe(first);
+  source.pipe(sink());
+  first.on("unpipe", () => { throw new Error("boom"); });
+  source.push("a");
+  await turn();
+  try {
+    source.unpipe();
+  } catch (error) {
+    console.log("  threw", error.message);
+  }
+  say(source);
+  source.push("b");
+  await turn();
+  say(source);
+}
 for (const [title, options, ended] of [
   ["a destroyed source, and the failing one goes", {}, false],
   ["a source whose destroy has not called back, and the failing one goes", { destroy() {} }, false],

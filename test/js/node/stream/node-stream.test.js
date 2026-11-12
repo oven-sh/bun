@@ -2412,30 +2412,21 @@ describe("pipe() goes on for the other consumers once a destination that failed 
         buffered: 1,
       });
     });
+  });
 
-    it("unpipe() of every destination leaves the source flowing for a 'data' listener", async () => {
-      const events = [];
-      const readable = new Readable({ read() {} });
-      readable.on("data", chunk => events.push(`data ${chunk}`));
-      readable.pipe(drainedOnce());
-      readable.pipe(sink(events));
-      readable.push("a");
-      await atRest();
-      readable.unpipe();
-      readable.push("b");
-      await atRest();
-      expect({ flowing: readable.readableFlowing, events }).toEqual({
-        flowing: true,
-        events: ["data a", "good got a", "data b"],
-      });
-    });
-
-    // The teardown of the first destination resumes the source for the second one, and then that one goes too: "b"
-    // has nobody to read it. With the first one in backpressure Node v26.3.0 does the same.
+  // Node v26.12.1 also releases inside unpipe() with no argument: the teardown of the first destination resumes the
+  // source for the destinations behind it, and those go next. Here such a teardown keeps the needDrain test, so
+  // these are the outputs of Node v26.3.0.
+  describe("unpipe() with no argument is as before the port", () => {
     it.each([
-      ["waited once", drainedOnce],
-      ["is in backpressure", () => new Writable({ highWaterMark: 1, write() {} })],
-    ])("unpipe() of every destination leaves the source flowing when the first one %s", async (name, first) => {
+      ["waited once", drainedOnce, { flowing: false, events: ["good got a"], buffered: 1 }],
+      // Every Node resumes for a destination in backpressure, also with nobody left to read.
+      [
+        "is in backpressure",
+        () => new Writable({ highWaterMark: 1, write() {} }),
+        { flowing: true, events: ["good got a"], buffered: 0 },
+      ],
+    ])("the first destination %s", async (name, first, expected) => {
       const events = [];
       const readable = new Readable({ read() {} });
       readable.pipe(first());
@@ -2446,33 +2437,147 @@ describe("pipe() goes on for the other consumers once a destination that failed 
       const flowing = readable.readableFlowing;
       readable.push("b");
       await atRest();
-      expect({ flowing, events, buffered: readable.readableLength }).toEqual({
+      expect({ flowing, events, buffered: readable.readableLength }).toEqual(expected);
+    });
+
+    it("a 'data' listener of the program gets the next chunk at its resume()", async () => {
+      const events = [];
+      const readable = new Readable({ read() {} });
+      readable.on("data", chunk => events.push(`data ${chunk}`));
+      readable.pipe(drainedOnce());
+      readable.pipe(sink(events));
+      readable.push("a");
+      await atRest();
+      readable.unpipe();
+      readable.push("b");
+      await atRest();
+      const paused = { flowing: readable.readableFlowing, events: [...events], buffered: readable.readableLength };
+      readable.resume();
+      await atRest();
+      expect({ paused, events }).toEqual({
+        paused: { flowing: false, events: ["data a", "good got a"], buffered: 1 },
+        events: ["data a", "good got a", "data b"],
+      });
+    });
+
+    it.each([
+      ["one destination", false],
+      ["two destinations, the first one waited once", true],
+    ])("a resume() in an 'unpipe' listener holds: %s", async (name, two) => {
+      const events = [];
+      const readable = new Readable({ read() {} });
+      const first = two ? drainedOnce() : sink(events);
+      readable.pipe(first);
+      if (two) readable.pipe(sink(events));
+      first.on("unpipe", source => source.resume());
+      readable.push("a");
+      await atRest();
+      readable.unpipe();
+      readable.push("b");
+      await atRest();
+      expect({ flowing: readable.readableFlowing, events, buffered: readable.readableLength }).toEqual({
         flowing: true,
         events: ["good got a"],
         buffered: 0,
       });
     });
-  });
 
-  it.each([
-    ["one destination", false],
-    ["two destinations, the first one waited once", true],
-  ])("a resume() in an 'unpipe' listener holds after unpipe() of every destination: %s", async (name, two) => {
-    const events = [];
-    const readable = new Readable({ read() {} });
-    const first = two ? drainedOnce() : sink(events);
-    readable.pipe(first);
-    if (two) readable.pipe(sink(events));
-    first.on("unpipe", source => source.resume());
-    readable.push("a");
-    await atRest();
-    readable.unpipe();
-    readable.push("b");
-    await atRest();
-    expect({ flowing: readable.readableFlowing, events, buffered: readable.readableLength }).toEqual({
-      flowing: true,
-      events: ["good got a"],
-      buffered: 0,
+    it("an 'unpipe' listener pipes and removes every destination again", async () => {
+      const events = [];
+      const readable = new Readable({ read() {} });
+      const first = sink(events, "first");
+      readable.pipe(first);
+      readable.pipe(drainedOnce());
+      readable.pipe(sink(events, "third"));
+      first.on("unpipe", () => {
+        readable.pipe(sink(events, "fourth"));
+        readable.unpipe();
+      });
+      readable.push("a");
+      await atRest();
+      readable.unpipe();
+      readable.push("b");
+      await atRest();
+      expect({ flowing: readable.readableFlowing, events, buffered: readable.readableLength }).toEqual({
+        flowing: false,
+        events: ["first got a", "third got a"],
+        buffered: 1,
+      });
+    });
+
+    it("an 'unpipe' listener throws", async () => {
+      const events = [];
+      const readable = new Readable({ read() {} });
+      const first = drainedOnce();
+      readable.pipe(first);
+      readable.pipe(sink(events));
+      first.on("unpipe", () => {
+        throw new Error("boom");
+      });
+      readable.push("a");
+      await atRest();
+      expect(() => readable.unpipe()).toThrow("boom");
+      const flowing = readable.readableFlowing;
+      readable.push("b");
+      await atRest();
+      expect({ flowing, events, buffered: readable.readableLength }).toEqual({
+        flowing: false,
+        events: ["good got a"],
+        buffered: 1,
+      });
+    });
+
+    // This teardown is of one destination, inside unpipe() of the others: as in Node v26.12.1, and v26.3.0 stops here.
+    it("an 'unpipe' listener pipes a failing sink beside a good one and removes the failing one", async () => {
+      const events = [];
+      const readable = new Readable({ read() {} });
+      const first = sink(events, "first");
+      readable.pipe(first);
+      readable.pipe(sink(events, "second"));
+      first.on("unpipe", () => {
+        const bad = failing(events);
+        readable.pipe(bad);
+        readable.pipe(sink(events));
+        readable.push("b");
+        readable.unpipe(bad);
+      });
+      readable.push("a");
+      await atRest();
+      readable.unpipe();
+      readable.push("c");
+      await atRest();
+      expect({ flowing: readable.readableFlowing, events, buffered: readable.readableLength }).toEqual({
+        flowing: true,
+        events: ["first got a", "second got a", "second got b", "good got b", "good got c", "bad error: fail"],
+        buffered: 0,
+      });
+    });
+
+    it("process.stdin.unpipe() lets the process exit", async () => {
+      // stdin stays open for the child's whole lifetime: it only exits if unpipe() left stdin paused.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { Writable } = require("node:stream");
+          const waitedOnce = new Writable({ highWaterMark: 1, write(chunk, encoding, callback) { process.nextTick(callback); } });
+          const other = new Writable({ write(chunk, encoding, callback) { console.log("other got " + chunk); callback(); } });
+          process.stdin.pipe(waitedOnce);
+          process.stdin.pipe(other);
+          process.stdin.once("data", () => setImmediate(() => {
+            process.stdin.unpipe();
+            console.log("flowing " + process.stdin.readableFlowing);
+          }));`,
+        ],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      proc.stdin.write("a");
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      proc.stdin.end();
+      expect({ stdout, exitCode }).toEqual({ stdout: "other got a\nflowing false\n", exitCode: 0 });
     });
   });
 

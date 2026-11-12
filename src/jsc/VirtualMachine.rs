@@ -1848,20 +1848,28 @@ impl VirtualMachine {
         !el.immediate_tasks.is_empty() || !el.next_immediate_tasks.is_empty()
     }
 
-    pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
-        self.unhandled_error_counter == 0
-            && (self.is_platform_loop_active() || self.has_queued_work_excluding_immediates())
+    /// Whether something holds the event loop. A queued `setImmediate` does so only through its ref
+    /// on the platform loop (`timer::All::increment_immediate_ref`), so an unref'ed one does not.
+    pub fn is_event_loop_held(&self) -> bool {
+        self.is_platform_loop_active() || self.has_queued_work_excluding_immediates()
     }
 
+    /// Whether a run loop takes another turn. A yes grants that turn its immediates
+    /// (`EventLoop::turn_granted`).
     pub fn is_event_loop_alive(&self) -> bool {
-        self.is_event_loop_alive_excluding_immediates() || self.has_immediates()
+        let alive = self.peek_event_loop_alive();
+        self.event_loop_shared().turn_granted.set(alive);
+        alive
     }
 
-    /// `is_event_loop_alive` for `bun test`, which keeps running after an unhandled error.
-    pub(crate) fn is_event_loop_alive_despite_errors(&self) -> bool {
-        self.is_platform_loop_active()
-            || self.has_queued_work_excluding_immediates()
-            || self.has_immediates()
+    /// `is_event_loop_alive` for a reader that does not go on to take the turn.
+    pub(crate) fn peek_event_loop_alive(&self) -> bool {
+        if self.unhandled_error_counter == 0 {
+            return self.is_event_loop_held();
+        }
+        // After an unhandled error, only ref'ed immediates keep the loop alive.
+        self.has_immediates()
+            && runtime_hooks().is_some_and(|hooks| (hooks.timers_left)().immediates_hold_loop_ref)
     }
 
     /// Unlike `is_event_loop_alive`, also counts unref'd handles and timers, since they can still run JS.
@@ -2965,6 +2973,8 @@ pub struct TimersLeft {
     pub armed: bool,
     /// All ref'd JS timers share one loop ref, including fake ones that nothing fires.
     pub holds_loop_ref: bool,
+    /// A ref'ed `setImmediate` is queued. They share another loop ref.
+    pub immediates_hold_loop_ref: bool,
 }
 
 /// Which of its timers a `--hot` run takes with it.

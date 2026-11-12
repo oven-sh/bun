@@ -9,6 +9,7 @@
 //! dispatch through `virtual_machine::RuntimeHooks` (need `Timer::All` for the
 //! poll deadline). See PORTING.md §Dispatch.
 
+use core::cell::Cell;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU64, Ordering};
 
@@ -70,6 +71,10 @@ pub struct EventLoop {
     /// (link-time `__bun_run_immediate_task`) casts it back.
     pub immediate_tasks: Vec<*mut ()>,
     pub next_immediate_tasks: Vec<*mut ()>,
+    /// `VirtualMachine::is_event_loop_alive()` said yes and no `tick_immediate_tasks` has run since: a
+    /// run loop is in a turn it took because something held the loop. That turn runs its immediates
+    /// even when its tasks released the last holder, as libuv's check phase follows its poll.
+    pub(crate) turn_granted: Cell<bool>,
     /// Tasks that asked to run on the *next* loop iteration — after I/O and
     /// timers have had a turn — rather than in the current drain, which runs
     /// until the queue is empty (a task that re-posts itself there never lets
@@ -131,6 +136,7 @@ impl Default for EventLoop {
             global_is_going: false,
             immediate_tasks: Vec::new(),
             next_immediate_tasks: Vec::new(),
+            turn_granted: Cell::new(false),
             yield_tasks: Vec::new(),
             concurrent_tasks: ConcurrentQueue::default(),
             concurrent_plugin_requests: ConcurrentQueue::default(),
@@ -1060,7 +1066,9 @@ impl EventLoop {
 
     /// Cancel (never run) every queued ImmediateObject; each cancel drops the
     /// immediate's keep-alive on this loop, so the loop must still exist.
-    fn release_pending_immediates(&mut self) {
+    /// Also for a program that ended while its VM lives on (a `bun test` file, a `--hot` run):
+    /// Node exits there with the immediates that nothing held the loop for still queued.
+    pub fn release_pending_immediates(&mut self) {
         let pending = core::mem::take(&mut self.immediate_tasks);
         let next = core::mem::take(&mut self.next_immediate_tasks);
         if !pending.is_empty() || !next.is_empty() {
@@ -1127,12 +1135,19 @@ impl EventLoop {
     /// immediate queues, drains the now-current batch, then recycles the
     /// drained Vec as the next-tick buffer.
     ///
+    /// The batch runs whole, ref'ed and unref'ed immediates alike, or not at all, as Node's check
+    /// phase does (`processImmediate` in lib/internal/timers.js): it belongs to a turn of a loop
+    /// that something holds. That is a turn `is_event_loop_alive()` granted, or a call made while
+    /// something holds the loop. Otherwise the batch stays queued. It has only unref'ed and cleared
+    /// immediates then, because a ref'ed one holds the loop.
+    ///
     /// Note: the real `ImmediateObject` lives in `bun_runtime` (cycle), so
     /// the per-task body dispatches through `__bun_run_immediate_task` (link-
-    /// time, definer in `bun_runtime`). The swap always happens — this is
+    /// time, definer in `bun_runtime`). When the batch runs, the swap always happens — this is
     /// load-bearing for `auto_tick`'s `has_pending_immediate` read, which must
     /// observe the post-swap `immediate_tasks` (next-tick immediates), not the
-    /// un-drained current batch (busy-spin hazard).
+    /// un-drained current batch (busy-spin hazard). A batch that stays queued means the platform
+    /// loop is not active, and `auto_tick` never blocks in the poll of a loop that is not active.
     ///
     /// # Safety
     /// `virtual_machine` must be the live per-thread VM that owns this `EventLoop`.
@@ -1150,7 +1165,17 @@ impl EventLoop {
         // immediates JS queued during this tick. ASM-verified PROVEN_CACHED.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` is the unique live `EventLoop`; each access below is a
-        // short-lived `&mut` that does not overlap re-entry.
+        // short-lived borrow that does not overlap re-entry.
+        let turn_granted = unsafe { (*this).turn_granted.replace(false) };
+        // SAFETY: as above.
+        if unsafe { (*this).immediate_tasks.is_empty() } {
+            return;
+        }
+        // SAFETY: `virtual_machine` is the live owning VM per caller contract; reads only.
+        if !turn_granted && !unsafe { (*virtual_machine).is_event_loop_held() } {
+            return;
+        }
+        // SAFETY: as for `turn_granted` above.
         let mut to_run_now = core::mem::take(unsafe { &mut (*this).immediate_tasks });
         // SAFETY: as above.
         unsafe { (*this).immediate_tasks = core::mem::take(&mut (*this).next_immediate_tasks) };
@@ -1277,7 +1302,13 @@ impl EventLoop {
 
     /// With nothing keeping the loop alive, `auto_tick` only polls, so a caller that keeps waiting would spin. This sleeps.
     pub fn auto_tick_asleep(&mut self) {
-        if self.vm_ref().is_event_loop_alive_despite_errors() {
+        if self.vm_ref().is_event_loop_held() {
+            return self.auto_tick();
+        }
+        if !self.immediate_tasks.is_empty() {
+            // The caller waits for what script can still do, and an unref'ed immediate is script:
+            // this turn runs the batch. The poll of a loop that nothing holds does not block.
+            self.turn_granted.set(true);
             return self.auto_tick();
         }
         self.ref_keep_alive();
@@ -1567,7 +1598,7 @@ pub(crate) fn get_active_tasks(
         immediate_tasks: event_loop.immediate_tasks.len() + event_loop.next_immediate_tasks.len(),
         concurrent_tasks_empty: event_loop.concurrent_tasks.is_empty(),
         loop_active: vm_ref.platform_loop_opt().is_some_and(|h| h.is_active()),
-        event_loop_alive: vm_ref.is_event_loop_alive(),
+        event_loop_alive: vm_ref.peek_event_loop_alive(),
         concurrent_ref: event_loop.concurrent_ref.load(Ordering::SeqCst),
         num_polls,
         // SAFETY: usockets_loop() returns the live process-global loop.

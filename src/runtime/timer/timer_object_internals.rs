@@ -394,12 +394,7 @@ impl TimerObjectInternals {
             // SAFETY: `vm` is the live per-thread VM (hook contract).
             || unsafe { (*vm).script_execution_status() } != ScriptExecutionStatus::Running
             // SAFETY: as above.
-            || unsafe { (*vm).has_outlived_its_script(s.context, s.generation) }
-            // unref'd setImmediate callbacks should only run if there are things
-            // keeping the event loop alive other than setImmediates
-            || (!s.flags.get().is_keeping_event_loop_alive()
-                // SAFETY: `vm` live per hook contract.
-                && !unsafe { (*vm).is_event_loop_alive_excluding_immediates() });
+            || unsafe { (*vm).has_outlived_its_script(s.context, s.generation) };
         if cleared {
             s.set_enable_keeping_event_loop_alive(vm, false);
             s.this_value.with_mut(|r| r.downgrade());
@@ -470,13 +465,15 @@ impl TimerObjectInternals {
         exception_thrown
     }
 
+    /// The queue lets go of an immediate that it will not run. Script can still hold the
+    /// wrapper, so this clears it: `_destroyed` is true and `ref()` takes no loop ref.
+    ///
     /// # Safety
     /// `this` must be the live `internals` of a queued `ImmediateObject`.
     pub(crate) unsafe fn cancel_pending_immediate(this: *mut Self, vm: *mut VirtualMachine) {
         // SAFETY: per fn contract.
         let s = unsafe { &*this };
-        s.set_enable_keeping_event_loop_alive(vm, false);
-        s.this_value.with_mut(|r| r.downgrade());
+        s.cancel(vm);
         s.deref();
     }
 

@@ -1657,13 +1657,16 @@ impl Run<'_> {
             vm.report_exception_in_hot_reloaded_module_if_needed();
             loop {
                 while vm.is_event_loop_alive() {
-                    // After an unhandled error, only immediates keep the loop alive.
+                    // After an unhandled error, only ref'ed immediates keep the loop alive.
                     vm.timers_ran_after_error |= vm.unhandled_error_counter > 0;
                     vm.tick();
                     vm.report_exception_in_hot_reloaded_module_if_needed();
                     vm.auto_tick_active();
                 }
                 vm.on_before_exit();
+                // This run is over: nothing holds its loop, or an unhandled error ended it. As when
+                // a program exits, the immediates it left unref'ed do not run, now or after a reload.
+                vm.event_loop_ref().release_pending_immediates();
                 vm.report_exception_in_hot_reloaded_module_if_needed();
                 // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
                 // accessed here. Watcher arm keeps the process alive across

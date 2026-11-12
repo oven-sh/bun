@@ -4202,6 +4202,11 @@ impl TestCommand {
                 if should_drain_event_loop() {
                     vm.on_before_exit();
                 }
+                // The file is over. As when a program exits, the immediates that nothing
+                // holds the loop for do not run, in this file or in the next one.
+                if !vm.is_event_loop_held() {
+                    vm.event_loop_ref().release_pending_immediates();
+                }
                 reporter.jest.snapshots.remove_obsolete(buntest);
                 drop(buntest_strong);
             }

@@ -1,7 +1,8 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
 import { promisify } from "util";
@@ -497,4 +498,338 @@ it("timers/promises clears its timers with the globals that were there when it s
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1,0,1,0,1,0\n", stderr: "", exitCode: 0 });
+});
+
+// Node.js runs every queued immediate in one pass of its check phase, ref'ed or not (`processImmediate` in
+// lib/internal/timers.js). Only a ref'ed one makes the loop take the turn that has that phase.
+describe("an unref'ed immediate", () => {
+  async function run(args: string[], options: { cwd?: string; env?: typeof bunEnv } = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      ...options,
+      stdout: "pipe",
+      stderr: "pipe",
+      // A child that never ends must not outlive the test.
+      timeout: 10_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, signalCode: proc.signalCode, exitCode };
+  }
+
+  // Each script ends by itself and prints what Node.js prints.
+  it.concurrent.each([
+    [
+      "behind a ref'ed one",
+      `setImmediate(() => console.log("ref'ed"));
+       setImmediate(() => console.log("unref'ed")).unref();`,
+      "ref'ed\nunref'ed\n",
+    ],
+    [
+      "between ref'ed ones and behind the last one",
+      `for (const name of ["unref'ed 1", "ref'ed 1", "unref'ed 2", "ref'ed 2", "unref'ed 3"]) {
+         const immediate = setImmediate(() => console.log(name));
+         if (name.startsWith("unref'ed")) immediate.unref();
+       }`,
+      "unref'ed 1\nref'ed 1\nunref'ed 2\nref'ed 2\nunref'ed 3\n",
+    ],
+    [
+      "of timers/promises and of util.promisify, with ref: false",
+      `setImmediate(() => console.log("ref'ed"));
+       require("node:timers/promises").setImmediate("timers/promises", { ref: false }).then(console.log);
+       require("node:util").promisify(setImmediate)("util.promisify", { ref: false }).then(console.log);`,
+      "ref'ed\ntimers/promises\nutil.promisify\n",
+    ],
+    [
+      "behind one that cleared the timer that held the loop",
+      `const timer = setTimeout(() => console.log("timer"), 1000);
+       setImmediate(() => {
+         console.log("first");
+         clearTimeout(timer);
+       }).unref();
+       setImmediate(() => console.log("second")).unref();`,
+      "first\nsecond\n",
+    ],
+    [
+      "that a microtask of the main script queued",
+      `Promise.resolve().then(() => setImmediate(() => console.log("unref'ed")).unref());
+       setImmediate(() => console.log("ref'ed"));`,
+      "ref'ed\nunref'ed\n",
+    ],
+    [
+      "that an earlier callback of the same batch unref'ed",
+      `setImmediate(() => {
+         console.log("first");
+         second.unref();
+       });
+       const second = setImmediate(() => console.log("second"));`,
+      "first\nsecond\n",
+    ],
+    [
+      "behind one that throws to an uncaughtException listener",
+      `process.on("uncaughtException", error => console.log("caught", error.message));
+       setImmediate(() => {
+         throw new Error("thrown");
+       });
+       setImmediate(() => console.log("unref'ed")).unref();`,
+      "caught thrown\nunref'ed\n",
+    ],
+    [
+      "behind a ref'ed one, in a Worker",
+      `const { Worker } = require("node:worker_threads");
+       const worker = new Worker(
+         \`const { parentPort } = require("node:worker_threads");
+          setImmediate(() => parentPort.postMessage("ref'ed"));
+          setImmediate(() => parentPort.postMessage("unref'ed")).unref();\`,
+         { eval: true },
+       );
+       worker.on("message", message => console.log(message));
+       worker.on("exit", code => console.log("exit", code));`,
+      "ref'ed\nunref'ed\nexit 0\n",
+    ],
+    [
+      "that the top level of an ES module awaits, behind a ref'ed one",
+      `import { setImmediate as immediate } from "node:timers/promises";
+       setImmediate(() => console.log("ref'ed"));
+       console.log(await immediate("resolved", { ref: false }));`,
+      "ref'ed\nresolved\n",
+    ],
+    [
+      "that the callback of fs.stat() or zlib.gzip() queued, when that call was the last to hold the loop",
+      `setTimeout(() => {
+         require("node:fs").stat(process.execPath, () => {
+           console.log("stat");
+           setImmediate(() => {
+             console.log("unref'ed 1");
+             require("node:zlib").gzip("text", () => {
+               console.log("gzip");
+               setImmediate(() => console.log("unref'ed 2")).unref();
+             });
+           }).unref();
+         });
+       }, 1);`,
+      "stat\nunref'ed 1\ngzip\nunref'ed 2\n",
+    ],
+    [
+      "that a beforeExit listener ref'ed again, and beforeExit is emitted a second time",
+      `const immediate = setImmediate(() => console.log("callback", immediate.hasRef()));
+       immediate.unref();
+       let emitted = 0;
+       process.on("beforeExit", () => {
+         console.log("beforeExit", ++emitted, immediate.hasRef(), immediate._destroyed);
+         if (emitted > 1) return;
+         immediate.ref();
+         console.log("ref", immediate.hasRef(), immediate._destroyed);
+       });`,
+      "beforeExit 1 false false\nref true false\ncallback false\nbeforeExit 2 false true\n",
+    ],
+    [
+      "ahead of the ref'ed one that a beforeExit listener queued",
+      `setImmediate(() => console.log("unref'ed")).unref();
+       process.once("beforeExit", () => {
+         console.log("beforeExit");
+         setImmediate(() => console.log("ref'ed"));
+       });`,
+      "beforeExit\nunref'ed\nref'ed\n",
+    ],
+  ])("runs %s", async (_, script, stdout) => {
+    expect(await run(["-e", script])).toEqual({ stdout, stderr: "", signalCode: null, exitCode: 0 });
+  });
+
+  // For a pending promise, `--print` takes a loop turn without asking whether anything holds the loop.
+  it("does not run under --print while nothing holds the loop", async () => {
+    const script = `require("node:timers/promises").setImmediate("resolved", { ref: false })`;
+    expect(await run(["-p", script])).toEqual({
+      stdout: "Promise { <pending> }\n",
+      stderr: "",
+      signalCode: null,
+      exitCode: 0,
+    });
+  });
+
+  // Each script ends by itself and prints what Node.js prints. A process.exit(1) is a listener that ran too often.
+  it.concurrent.each([
+    [
+      "does not run while nothing holds the loop",
+      `setImmediate(() => console.log("callback")).unref();
+       process.on("exit", code => console.log("exit", code));`,
+      "exit 0\n",
+    ],
+    [
+      "does not run when the last ref'ed one queued it",
+      `setImmediate(() => {
+         console.log("ref'ed");
+         setImmediate(() => console.log("callback")).unref();
+       });
+       process.on("exit", code => console.log("exit", code));`,
+      "ref'ed\nexit 0\n",
+    ],
+    [
+      "does not make the loop take a turn, in which a due unref'ed timer would fire",
+      `setTimeout(() => console.log("timer"), 1).unref();
+       setImmediate(() => console.log("callback")).unref();
+       const due = performance.now() + 5;
+       while (performance.now() < due);
+       process.on("exit", code => console.log("exit", code));`,
+      "exit 0\n",
+    ],
+    [
+      "does not make the loop take a turn when it is a cleared one",
+      `setTimeout(() => console.log("timer"), 1).unref();
+       clearImmediate(setImmediate(() => console.log("callback")));
+       const due = performance.now() + 5;
+       while (performance.now() < due);
+       process.on("exit", code => console.log("exit", code));`,
+      "exit 0\n",
+    ],
+    [
+      "does not make beforeExit fire again when a beforeExit listener queued it",
+      `let emitted = 0;
+       process.on("beforeExit", () => {
+         console.log("beforeExit", ++emitted);
+         if (emitted === 3) process.exit(1);
+         setImmediate(() => console.log("callback")).unref();
+       });`,
+      "beforeExit 1\n",
+    ],
+    [
+      "does not make beforeExit fire again when a beforeExit listener queued and cleared it",
+      `let emitted = 0;
+       process.on("beforeExit", () => {
+         console.log("beforeExit", ++emitted);
+         if (emitted === 3) process.exit(1);
+         clearImmediate(setImmediate(() => console.log("callback")));
+       });`,
+      "beforeExit 1\n",
+    ],
+  ])("%s", async (_, script, stdout) => {
+    expect(await run(["-e", script])).toEqual({ stdout, stderr: "", signalCode: null, exitCode: 0 });
+  });
+
+  it("does not keep the process alive after an uncaught error, when each one queues the next", async () => {
+    const { stdout, stderr, signalCode, exitCode } = await run([
+      "-e",
+      `const again = () => setImmediate(again).unref();
+       again();
+       setImmediate(() => {
+         throw new Error("thrown");
+       });
+       process.on("exit", code => console.log("exit", code));`,
+    ]);
+    expect(stderr).toContain("error: thrown");
+    expect({ stdout, signalCode, exitCode }).toEqual({ stdout: "exit 1\n", signalCode: null, exitCode: 1 });
+  });
+
+  // What `bun test` printed: the lines of the test files, and a line for each test without the time it took.
+  const testOutput = ({ stdout, stderr }: { stdout: string; stderr: string }) => ({
+    stdout: stdout.replace(/^bun test v.*\r?\n/, ""),
+    tests: stderr
+      .split(/\r?\n/)
+      .filter(line => /^\((pass|fail)\)/.test(line))
+      .map(line => line.replace(/ \[[^\]]*\]$/, "")),
+  });
+
+  // The runner waits for what script can still do, so it runs the immediates that nothing holds the loop for.
+  it("settles what a test file and a test await in `bun test`", async () => {
+    using dir = tempDir("unrefed-immediate-awaited", {
+      "awaited.test.js": `
+        import { test } from "bun:test";
+        import { setImmediate as immediate } from "node:timers/promises";
+
+        console.log(await immediate("while the file loads", { ref: false }));
+        console.log(await immediate("and again", { ref: false }));
+        test("awaits one", async () => {
+          console.log(await immediate("in a test", { ref: false }));
+        });
+      `,
+    });
+    // Without the idle collection timer, nothing wakes a loop that sleeps once the last of them ran.
+    const { signalCode, exitCode, ...output } = await run(["test", "awaited.test.js"], {
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+    });
+    expect({ ...testOutput(output), signalCode, exitCode }).toEqual({
+      stdout: "while the file loads\nand again\nin a test\n",
+      tests: ["(pass) awaits one"],
+      signalCode: null,
+      exitCode: 0,
+    });
+  });
+
+  // A test file ends as a program exits: the runner lets go of the ones that nothing holds the loop for.
+  it("does not run in the next file of `bun test`, where ref() does not hold the loop", async () => {
+    using dir = tempDir("unrefed-immediate-leftover", {
+      "a.test.js": `
+        import { test } from "bun:test";
+
+        test("leaves one queued", () => {
+          globalThis.leftover = setImmediate(() => console.log("callback")).unref();
+        });
+      `,
+      "b.test.js": `
+        import { test } from "bun:test";
+
+        test("holds the loop with a timer", async () => {
+          const { leftover } = globalThis;
+          console.log("next file", leftover._destroyed, leftover.hasRef());
+          leftover.ref();
+          console.log("ref", leftover._destroyed, leftover.hasRef());
+          await new Promise(resolve => setTimeout(resolve, 1));
+        });
+      `,
+    });
+    const { signalCode, exitCode, ...output } = await run(["test", "a.test.js", "b.test.js"], {
+      cwd: String(dir),
+    });
+    expect({ ...testOutput(output), signalCode, exitCode }).toEqual({
+      stdout: "next file true false\nref true false\n",
+      tests: ["(pass) leaves one queued", "(pass) holds the loop with a timer"],
+      signalCode: null,
+      exitCode: 0,
+    });
+  });
+
+  // `--hot` keeps the process: a run that ended would leave its queue to the next run.
+  it("does not run in a later run of --hot, after the run that queued it ended", async () => {
+    using dir = tempDir("unrefed-immediate-hot", {
+      "main.js": `
+        setImmediate(() => console.log("immediate of run 1")).unref();
+        process.once("beforeExit", () => console.log("run 1 ended"));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+      // A child that never ends must not outlive the test.
+      timeout: 10_000,
+    });
+    const reader = proc.stdout.getReader();
+    let stdout = "";
+    // Resolves once stdout has `wanted`, or at its end.
+    const printed = async (wanted: string) => {
+      while (!stdout.includes(wanted)) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        stdout += Buffer.from(value).toString();
+      }
+    };
+    await printed("run 1 ended\n");
+    expect(stdout).toBe("run 1 ended\n");
+
+    // The timer of run 2 holds the loop, and a turn of a loop that something holds runs every queued immediate.
+    writeFileSync(
+      path.join(String(dir), "main.js"),
+      `setTimeout(() => {\n  console.log("timer of run 2");\n  process.exit(0);\n}, 1);\n`,
+    );
+    await printed("immediate of run 1");
+    expect({ stdout, exitCode: await proc.exited, signalCode: proc.signalCode }).toEqual({
+      stdout: "run 1 ended\ntimer of run 2\n",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });

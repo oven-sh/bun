@@ -1037,8 +1037,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     let loop_ = unsafe { &*(*el).usockets_loop() };
 
     // ── tick_immediate_tasks ────────────────────────────────────────────
-    // After this call `immediate_tasks` reflects next-tick immediates, so
-    // the `has_pending_immediate` read below is correct.
+    // After this call `immediate_tasks` reflects next-tick immediates, or a
+    // batch it left queued because nothing holds the loop. The poll must not
+    // block for either, so the `has_pending_immediate` read below is correct.
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
     // SAFETY: as above.
@@ -1408,6 +1409,7 @@ fn timers_left() -> TimersLeft {
     TimersLeft {
         armed: all.timers.has_program_timer(),
         holds_loop_ref: all.active_timer_count > 0,
+        immediates_hold_loop_ref: all.immediate_ref_count > 0,
     }
 }
 

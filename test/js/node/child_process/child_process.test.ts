@@ -1819,28 +1819,47 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
 // nextTicks and the promise jobs of the one before, so the loop gets every byte. `_read()` pushed what the native pull
 // returned inside the call, and flow() emitted those chunks back to back: all but the first to no listener.
 //
-// The fixture has the tail and the EOF in the pipe while the listeners of the first chunk run, and the tail is more
-// than one read.
+// The fixture has the tail in the pipe while the listeners of the first chunk run, and the tail is more than one read.
 describe.skipIf(!isPosix)("child stdio read one event at a time", () => {
-  it("every consumer gets every byte", async () => {
+  // The stream and the form of each consumer: see the fixture.
+  async function consume(...consumers: string[]) {
     using dir = tempDir("child-stdio-once-data", {});
     await using proc = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "fixtures", "child-process-stdio-once-data.js"), String(dir)],
+      cmd: [
+        bunExe(),
+        path.join(import.meta.dir, "fixtures", "child-process-stdio-once-data.js"),
+        String(dir),
+        ...consumers,
+      ],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { consumers: stdout === "" ? stdout : JSON.parse(stdout), stderr, exitCode };
+  }
+
+  it("a loop of once('data') gets every byte", async () => {
     const all = { exitCode: 0, sawEnd: true, length: 4 + 96 * 1024, head: true, tail: true };
-    expect({ consumers: stdout === "" ? stdout : JSON.parse(stdout), stderr, exitCode }).toEqual({
-      // The stream and the form of the consumer: see the fixture.
+    expect(await consume("stdout:job", "stdout:tick", "stdout:pause", "stdout:beside", "stderr:tick")).toEqual({
       consumers: {
-        "stdout job": all,
-        "stdout tick": all,
-        "stdout pause": all,
-        "stdout beside": all,
-        "stdout readable": all,
-        "stderr tick": all,
+        "stdout:job": all,
+        "stdout:tick": all,
+        "stdout:pause": all,
+        "stdout:beside": all,
+        "stderr:tick": all,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // #48514. The push inside `_read()` left the tail in the buffer of the stream with no 'readable' event. The child
+  // holds the pipe open until the listener has every byte, so nothing more came.
+  it("a 'readable' listener that takes all that is buffered hears of the bytes that follow", async () => {
+    expect(await consume("stdout:readable")).toEqual({
+      consumers: {
+        "stdout:readable": { exitCode: 0, sawEnd: true, length: (64 + 96) * 1024, head: true, tail: true },
       },
       stderr: "",
       exitCode: 0,

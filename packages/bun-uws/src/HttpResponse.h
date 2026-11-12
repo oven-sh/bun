@@ -114,6 +114,14 @@ public:
         return (getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_BODY_MASK) == HttpResponseData<SSL>::HTTP_BODY_CHUNKED;
     }
 
+    /* Bun.serve: a FIN ends this body, and it isn't all out, so only a reset tells the client. Node sends the FIN. */
+    bool isCloseDelimitedAndUnfinished() {
+        const uint32_t state = getHttpResponseData()->state;
+        return (state & HttpResponseData<SSL>::HTTP_BODY_MASK) == HttpResponseData<SSL>::HTTP_BODY_UNTIL_CLOSE
+            && ((state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || !Super::hasFullyDrained())
+            && !HttpContext<SSL>::fromSocket((us_socket_t *) this)->isNodeHttp();
+    }
+
     /* Ends the header section of every HTTP/1 response but one that node:http writes whole (tryWriteWholeResponse() in NodeHTTP.cpp). Decides the framing once, and writes the headers uWS owns unless the caller wrote them. */
     void terminateHeaders(uint64_t bodyLength) {
         using Data = HttpResponseData<SSL>;

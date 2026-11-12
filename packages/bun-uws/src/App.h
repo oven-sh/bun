@@ -256,17 +256,19 @@ public:
         /* A close handler can tick the loop (waitForPromise). That tick must not free the sockets closed here, which the walks below still read. */
         us_loop_t *loop = httpContext->getSocketGroup()->loop;
         loop->data.tick_depth++;
-        if constexpr (SSL) {
-            /* The group's close sends a close_notify ahead of the reset. Not over a response that isn't finished or isn't sent. */
-            std::vector<us_socket_t *> sockets;
-            for (us_socket_t *s = thread_ends ? nullptr : httpContext->getSocketGroup()->head_sockets; s; s = s->next) {
-                sockets.push_back(s);
+        std::vector<us_socket_t *> connections;
+        for (us_socket_t *s = httpContext->getSocketGroup()->head_sockets; s; s = s->next) {
+            connections.push_back(s);
+        }
+        for (us_socket_t *s : connections) {
+            /* An earlier close ran JavaScript. */
+            if (us_socket_is_closed(s) || us_socket_group(s) != httpContext->getSocketGroup()) {
+                continue;
             }
-            for (us_socket_t *s : sockets) {
-                auto *data = (HttpResponseData<SSL> *) ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
-                if (!us_socket_is_closed(s) && ((data->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || !((AsyncSocket<SSL> *) s)->hasFullyDrained())) {
-                    us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
-                }
+            auto *res = (HttpResponse<SSL> *) s;
+            /* The group's close sends a close_notify ahead of the reset. Not over a response that isn't finished or isn't sent. */
+            if ((SSL && !thread_ends && (!res->hasResponded() || !((AsyncSocket<SSL> *) s)->hasFullyDrained())) || res->isCloseDelimitedAndUnfinished()) {
+                us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
             }
         }
         /* close_all() walks head_listen_sockets first, so listeners are closed

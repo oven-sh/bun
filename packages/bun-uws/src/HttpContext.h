@@ -256,6 +256,9 @@ private:
 
     /* No close_notify, which says that the stream is whole, over a response that isn't finished or isn't sent. The second close drops what TLS still holds. */
     static us_socket_t *closeOverUnfinishedResponse(us_socket_t *s) {
+        if (((HttpResponse<SSL> *) s)->isCloseDelimitedAndUnfinished()) {
+            return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
+        }
         us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
         return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
     }
@@ -1176,6 +1179,10 @@ private:
             if (determinedTail || doneButBuffered) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN;
                 return s;
+            }
+            /* The peer may have ended only its own side. */
+            if (((HttpResponse<SSL> *) s)->isCloseDelimitedAndUnfinished()) {
+                return closeOverUnfinishedResponse(s);
             }
         }
 

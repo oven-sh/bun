@@ -529,7 +529,8 @@ pub(crate) fn run_appended(
         lx.start_at(expression.start);
         lx.set_src(text.get(..expression.end as usize).unwrap_or(text));
         set_language(&mut lx, &options);
-        let jsdoc = jsdoc::State::new(&options, true, false);
+        let (has_interner, reads_typescript) = (true, false);
+        let jsdoc = jsdoc::State::new(&options, has_interner, reads_typescript);
         let mut parser = Parser::<false, false>::new(lx, file, stacks, declared, options, jsdoc);
         if expression.is_strict {
             parser.context |= ctx::STRICT;

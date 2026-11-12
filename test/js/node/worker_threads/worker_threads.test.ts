@@ -1296,8 +1296,10 @@ test.concurrent("a closed port stops keeping the process alive once 'close' has 
   });
 });
 
-// Teardown can start while a close() is still waiting for its 'close' task (which is
-// then never run): the worker's stop phase has to drop the refs that task would have.
+// hasRef() keeps the same close() timing inside a worker, and a worker can exit while
+// its ports' 'close' tasks are still queued (teardown discards them unrun). Whether the
+// stop phase then drops the refs those tasks would have is not observable from here:
+// the LSan-checked main-thread test below covers that.
 test.concurrent("a worker exiting right after closing ref'd ports shuts down cleanly", async () => {
   const w = new Worker(
     `const { parentPort, MessageChannel } = require("worker_threads");

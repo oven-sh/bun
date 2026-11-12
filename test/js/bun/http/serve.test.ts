@@ -3716,6 +3716,21 @@ it.concurrent.each(["100-Continue", "100-CONTINUE"])("sends 100 Continue for Exp
   expect(reply).toEndWith("echo:hello");
 });
 
+// RFC 9110 10.1.1
+it.concurrent.each(["100-continue", "100-Continue"])("ignores Expect: %s in HTTP/1.0", async expectation => {
+  using server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async req => new Response("echo:" + (await req.text())),
+  });
+  const socket = net.connect(server.port!, "127.0.0.1");
+  socket.write(`POST / HTTP/1.0\r\nHost: x\r\nContent-Length: 5\r\nExpect: ${expectation}\r\n\r\nhello`);
+  let reply = "";
+  for await (const chunk of socket) reply += chunk;
+  expect(reply).toStartWith("HTTP/1.1 200 OK\r\n");
+  expect(reply).toEndWith("echo:hello");
+});
+
 it.concurrent("we should always send date", async () => {
   const payload = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   const tmpFile = join(tmpdirSync(), "test.bin");

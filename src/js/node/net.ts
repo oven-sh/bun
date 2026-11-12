@@ -56,6 +56,7 @@ const {
   kSNIError,
   kStandaloneWrap,
   kUpgradeClientTLS,
+  readInProgress,
   kVerifyError,
 } = require("internal/net/symbols");
 const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
@@ -931,14 +932,16 @@ const SocketHandlers = {
       self.destroy();
       return;
     }
-    let full;
+    let full = false;
+    readInProgress.socket = self;
+    readInProgress.chunk = buffer;
     try {
       full = self.push(buffer) === false;
     } catch (e) {
       // Node reports a throwing 'data' listener as uncaughtException and keeps reading.
       reportError(e);
-      return;
     }
+    readInProgress.socket = readInProgress.chunk = undefined;
     if (full) readStop(self, socket);
   },
   writeComplete(socket, status: number) {

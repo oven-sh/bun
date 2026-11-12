@@ -84,6 +84,7 @@ const http = require("internal/http");
 const netSymbols = require("internal/net/symbols");
 const kForeignListener: typeof netSymbols.kForeignListener = netSymbols.kForeignListener;
 const kHandleClosed: typeof netSymbols.kHandleClosed = netSymbols.kHandleClosed;
+const readInProgress = netSymbols.readInProgress;
 const kSNIContexts: typeof netSymbols.kSNIContexts = netSymbols.kSNIContexts;
 const { STATUS_CODES, drainMicrotasks, getMaxHTTPHeaderSize, onDataIncomingMessage, RE_CONN_CLOSE } = http;
 const enum NodeHTTPResponseAbortEvent {
@@ -2454,8 +2455,8 @@ function connectionListenerInternal(server: $Node.HttpServer, socket: $Node.Http
   socket.setEncoding = socketSetEncoding;
 
   socket._paused = false;
-  // Only the event loop feeds a socket that reads a descriptor, so no tick can hand the parser more bytes in the middle of a read.
-  parser._consumed = (socket as any)._handle?.fd >= 0;
+  // A 'data' listener of the program's is handing the socket over. It may hand over that read too.
+  if (readInProgress.socket === socket) readInProgress.socket = undefined;
   // Node's parser reads from the handle, so a pause() by the socket's previous owner doesn't stop it.
   socket.resume();
   process.nextTick(readStartAfterAttach, socket);
@@ -2560,6 +2561,8 @@ function executeParser(
   state: ConnectionState,
   d: Buffer,
 ) {
+  // The event loop read this from a descriptor: no function of the program's is running, and no tick has more bytes for the parser.
+  parser._consumed = readInProgress.socket === socket && readInProgress.chunk === d && (socket as any)._handle?.fd >= 0;
   const ret = parser.execute(d);
   onParserExecuteCommon(server, socket, parser, state, ret, d);
 }

@@ -24,4 +24,6 @@ export default {
   kUpgradeClientTLS: Symbol("kUpgradeClientTLS"),
   // True on a client-side `new tls.TLSSocket(socket)`. The TLSSocket constructor sets it.
   kStandaloneWrap: Symbol("kStandaloneWrap"),
+  // The socket that is pushing what its handle has read, and that chunk, while it does.
+  readInProgress: { socket: undefined as unknown, chunk: undefined as unknown },
 };

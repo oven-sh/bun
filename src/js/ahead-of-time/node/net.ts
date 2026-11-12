@@ -54,6 +54,7 @@ const kDestroyOnRead: typeof netSymbols.kDestroyOnRead = netSymbols.kDestroyOnRe
 const kForeignListener: typeof netSymbols.kForeignListener = netSymbols.kForeignListener;
 const kHandleClosed: typeof netSymbols.kHandleClosed = netSymbols.kHandleClosed;
 const kPreHandshakeWrite: typeof netSymbols.kPreHandshakeWrite = netSymbols.kPreHandshakeWrite;
+const readInProgress = netSymbols.readInProgress;
 const kReadStop: typeof netSymbols.kReadStop = netSymbols.kReadStop;
 const kSecureConnectDone: typeof netSymbols.kSecureConnectDone = netSymbols.kSecureConnectDone;
 const kSNIError: typeof netSymbols.kSNIError = netSymbols.kSNIError;
@@ -1310,14 +1311,16 @@ const SocketHandlers = {
       self.destroy();
       return;
     }
-    let full;
+    let full = false;
+    readInProgress.socket = self;
+    readInProgress.chunk = buffer;
     try {
       full = self.push(buffer) === false;
     } catch (e) {
       // Node reports a throwing 'data' listener as uncaughtException and keeps reading.
       reportError(e);
-      return;
     }
+    readInProgress.socket = readInProgress.chunk = undefined;
     if (full) readStop(self, socket);
   },
   writeComplete(socket, status: number) {

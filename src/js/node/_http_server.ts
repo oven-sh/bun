@@ -42,7 +42,7 @@ const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
-const { kForeignListener, kHandleClosed, kSNIContexts } = require("internal/net/symbols");
+const { kForeignListener, kHandleClosed, kSNIContexts, readInProgress } = require("internal/net/symbols");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
 const {
   kInternalSocketData,
@@ -1736,8 +1736,8 @@ function connectionListenerInternal(server, socket) {
   socket.setEncoding = socketSetEncoding;
 
   socket._paused = false;
-  // Only the event loop feeds a socket that reads a descriptor, so no tick can hand the parser more bytes in the middle of a read.
-  parser._consumed = socket._handle?.fd >= 0;
+  // A 'data' listener of the program's is handing the socket over. It may hand over that read too.
+  if (readInProgress.socket === socket) readInProgress.socket = undefined;
   // Node's parser reads from the handle, so a pause() by the socket's previous owner doesn't stop it.
   socket.resume();
   process.nextTick(readStartAfterAttach, socket);
@@ -1825,6 +1825,8 @@ function socketOnData(server, socket, parser, state, d) {
 }
 
 function executeParser(server, socket, parser, state, d) {
+  // The event loop read this from a descriptor: no function of the program's is running, and no tick has more bytes for the parser.
+  parser._consumed = readInProgress.socket === socket && readInProgress.chunk === d && socket._handle?.fd >= 0;
   const ret = parser.execute(d);
   onParserExecuteCommon(server, socket, parser, state, ret, d);
 }

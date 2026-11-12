@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/net/symbols.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 912e09c35380c27c0d8bcda419db0b456dcc309ae1c2a4cf3b214f373f2d0128.
+// Written against that file with the SHA-256 545810421e80e12a58f3c76d29eeaaed34b78770b5ab8e77bf1f224f94e45afd.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 export default {
@@ -28,6 +28,8 @@ export default {
   kUpgradeClientTLS: Symbol("kUpgradeClientTLS"),
   // True on a client-side `new tls.TLSSocket(socket)`. The TLSSocket constructor sets it.
   kStandaloneWrap: Symbol("kStandaloneWrap"),
+  // The socket that is pushing what its handle has read, and that chunk, while it does.
+  readInProgress: { socket: undefined, chunk: undefined },
 
   // Registered symbols: other modules name them by their keys. `bun run` asks the registry for one where a module spells it, and a test that has
   // replaced Symbol.for hears that: in such a run the modules ask there too, and nothing is asked here.
@@ -56,6 +58,7 @@ export default {
   readonly kVerifyError: unique symbol;
   readonly kUpgradeClientTLS: unique symbol;
   readonly kStandaloneWrap: unique symbol;
+  readonly readInProgress: { socket: unknown; chunk: unknown };
   readonly bunTlsSymbol: unique symbol;
   readonly bunSocketServerOptions: unique symbol;
   readonly kNativeSecureContextCtor: unique symbol;

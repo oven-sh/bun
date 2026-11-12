@@ -399,6 +399,59 @@ describe("a connection given to the server with emit('connection')", () => {
     );
     assert.ok(mostHeld < length / 4, `the request held ${mostHeld} of ${length} bytes`);
   });
+
+  // Resolves with the body that the server got. `feed` hands it the socket and the bytes.
+  async function bodyFedBy(payload: string, feed: (socket: Socket, handOver: () => void) => void) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const server = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", chunk => (body += chunk));
+      req.on("end", () => resolve(body));
+      req.on("end", () => res.end());
+    });
+    server.on("clientError", reject);
+    const front = createNetServer(socket => feed(socket, () => server.emit("connection", socket)));
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    const client = send((front.address() as AddressInfo).port, payload, reject);
+    try {
+      return await promise;
+    } finally {
+      client.destroy();
+      front.close();
+    }
+  }
+
+  test("no tick or microtask runs inside the emit('data') of a listener that hands over its read", async () => {
+    const order: string[] = [];
+    const body = await bodyFedBy("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 3\r\n\r\nabc", (socket, handOver) => {
+      socket.once("data", chunk => {
+        queueMicrotask(() => order.push("microtask"));
+        process.nextTick(() => order.push("tick"));
+        handOver();
+        socket.emit("data", chunk);
+        order.push("returned");
+      });
+    });
+    assert.deepStrictEqual({ body, first: order[0] }, { body: "abc", first: "returned" });
+  });
+
+  for (const [name, later] of [
+    ["ticks", process.nextTick],
+    ["microtasks", queueMicrotask],
+  ] as const) {
+    test(`a body that the program replays from ${name} arrives whole`, async () => {
+      const body = await bodyFedBy("", (socket, handOver) => {
+        handOver();
+        later(() => socket.emit("data", Buffer.from("2\r\nef\r\n")));
+        later(() => socket.emit("data", Buffer.from("2\r\ngh\r\n0\r\n\r\n")));
+        socket.emit(
+          "data",
+          Buffer.from("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nab\r\n2\r\ncd\r\n"),
+        );
+      });
+      assert.strictEqual(body, "abcdefgh");
+    });
+  }
 });
 
 for (const expectation of ["100-continue", "something-else"]) {

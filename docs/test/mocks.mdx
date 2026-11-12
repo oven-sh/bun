@@ -391,6 +391,8 @@ test("async factory", () => {
 { "foo": "baz" }
 ```
 
+Some exports share one value. A module can export it under two names (`export { lookup as io, lookup as connect }`), and another module can re-export it (`export * from "./lookup"`). A mock that updates a loaded module replaces the value for all of those names. If a second mock or a spy from `spyOn()` replaces the same value, you see the newest one. When one of them ends, the export shows the newest one that is still in place, or the real value. A spy that is still in place calls what the export would show without it.
+
 ### Keeping Part of the Original Module
 
 The factory is passed a function that loads the original module. Spread its result to replace only some exports.

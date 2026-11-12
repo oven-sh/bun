@@ -3495,6 +3495,31 @@ describe("expect()", () => {
     expect(calls).toBe(1);
   });
 
+  test_skipIf(!isBun)(
+    "toContainAllValues asks a pending async matcher again for a value that no item took",
+    async () => {
+      /** @type {string[]} */
+      const calls = [];
+      expect.extend({
+        async toBeValueLater(/** @type {unknown} */ actual, /** @type {unknown} */ value) {
+          calls.push(`${actual}~${value}`);
+          await Promise.resolve();
+          return { pass: actual === value, message: () => "" };
+        },
+      });
+      const laterIs = (/** @type {unknown} */ value) => ANY(expect).toBeValueLater(value);
+
+      // No expected item took 2, so the matcher gets it a second time. Then expect.any(Number) matches it.
+      await expect({ a: 1, b: 2, c: 3 }).toContainAllValues([laterIs(3), 3, expect.any(Number)]);
+      expect(calls).toEqual(["1~3", "2~3", "3~3", "2~3"]);
+
+      // Here no expected item matches 2.
+      calls.length = 0;
+      await expect({ a: 1, b: 2, c: 3 }).not.toContainAllValues([laterIs(3), 3, 1]);
+      expect(calls).toEqual(["1~3", "2~3", "3~3", "2~3"]);
+    },
+  );
+
   // The matcher of a value that no expected item took is asked again. A g or y regex then starts at its old lastIndex.
   test.todo("toContainAllValues with a g or y regex and a value that no item took", () => {
     expect({ a: "a", b: "b" }).toContainAllValues([expect.stringMatching(/./g), expect.stringMatching(/./g)]);

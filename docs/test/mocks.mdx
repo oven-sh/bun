@@ -315,7 +315,7 @@ test("mock an object", () => {
 });
 ```
 
-With `{ spy: true }`, functions keep their implementation, and `value` is modified in place instead of copied.
+With `{ spy: true }`, functions keep their implementation, and `value` is modified in place instead of copied. The spies stay until the test file ends, also after `vi.restoreAllMocks()`. See [Cleanup After Each Test File](#cleanup-after-each-test-file).
 
 ## Module Mocks with mock.module()
 
@@ -475,7 +475,7 @@ You can call `vi.mock(path)` and `jest.mock(path)` without a factory. `mock.modu
 
 - If a `__mocks__` directory has a file with the same name, Bun loads that file instead. For a file, that's `__mocks__/<file>` in the same directory. For a package or a builtin like `fs`, it's `__mocks__/<package>` in the directory where `bun test` runs.
 - Otherwise, Bun loads the original module and mocks its exports. Functions and classes become mocks that return `undefined`, arrays become empty, and other values are kept.
-- `vi.mock(path, { spy: true })` keeps every function's implementation and records its calls.
+- `vi.mock(path, { spy: true })` keeps every function's implementation and records its calls. The spies can be on the module's own classes and objects, as in Vitest. Another module that has one of them has the spies too, until the test file ends.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, vi } from "bun:test";
@@ -730,6 +730,10 @@ Call `mock.restore()` in an `afterEach` block, or in your test preload script, i
 
 When a test file ends, Bun restores any spies that are still active and clears every mock's recorded calls. Return values and implementations set with `mockReturnValue()`, `mockImplementation()` and similar methods stay until you reset the mock. A mock in a module that several test files import keeps them from one file to the next.
 
+A `{ spy: true }` mock can put its spies on objects that other modules share: on a class's prototype, on a plain object, on an instance. When the test file ends, Bun takes those spies out, so the next file gets the functions that the modules declared. `vi.restoreAllMocks()`, `mock.restore()` and `mockRestore()` don't take them out.
+
+A setter or a Proxy trap that took a spy gets the function back the same way, after the file's `afterAll()` hooks. An error that it throws is an error of the test file. An element of an object or array that was frozen after the mock keeps its spy. If an object gets a spy again each time it gives one back, the file ends with a `TypeError` after 1,000 rounds.
+
 Spies and mocks made in a `--preload` script, or in one of its `beforeAll()` hooks, aren't restored or cleared. They stay the same for every test file.
 
 ## Vitest Compatibility
@@ -798,6 +802,10 @@ test("lazy import", async () => {
 - To update a module in place, Bun calls the factory when you mock the module, not at the next import. If the factory returns a promise, an `import()` of the module doesn't wait for it. Await what `vi.mock()` returns instead. `vi.doMock()` does the same for a builtin module such as `node:fs`.
 - After `vi.doUnmock()`, a module that imported the mock is evaluated again at its next import, and gets the real module. After a second `vi.doMock()` of the same module, it gets the new mock. In Vitest it stays cached with the first mock until `vi.resetModules()`.
 - Without `--isolate`, test files share the modules they load. For `vi.doMock()`, a module that an earlier file loaded counts as not loaded, even if this file imports it too. `vi.importActual()` and `importOriginal` evaluate it again.
+- Without `--isolate`, the next test file has the objects that a `{ spy: true }` mock spied on. Bun takes the spies out of those objects when the file ends (see [Cleanup After Each Test File](#cleanup-after-each-test-file)). Bun puts back the properties that the mock changed. Code that copied a spy from one of them while the file ran still calls the spy, with its `mockReturnValue()`: a variable of a module that stays loaded, a bound function, a listener. In Vitest every test file has its own modules.
+- For a module that an earlier test file loaded, `vi.mock(path, { spy: true })` makes the mock of a copy of the exports. An instance of a class that such a module exports is not spied. To spy on it, call `vi.mockObject(await importOriginal(), { spy: true })` in a factory, or run the files with `--isolate`. In Vitest the mock spies on the module's own objects.
+- For a builtin module such as `node:http`, `vi.mock(path, { spy: true })` makes the mock of a copy of the exports in every mode. An object that the module exports, such as `http.globalAgent`, is not spied. Use `vi.spyOn(http.globalAgent, "createConnection")` for it.
+- Without `--isolate`, a module that stays loaded between test files doesn't run again. A spy that its top-level code makes with `vi.spyOn()` or with `vi.mockObject(value, { spy: true })` ends with the test file that runs at that time. A module that Bun evaluates again makes its spies again (see [Module Mocks Are Removed After Each Test File](#module-mocks-are-removed-after-each-test-file)). In Vitest every test file has its own modules, so the module makes its spies again for each file.
 - Only test files and `--preload` scripts run their imports one at a time. Any other module's imports are all linked before the first one runs, as are those of a test file that uses `bun:test` and has no hoisted call. If one of them calls `vi.mock()` for a module that another one imports, that module is updated in place.
 - If a module that is imported with a static import calls `vi.mock()` with an async factory, a module that is imported after it can run before the factory settles. What that module reads from the mocked module while it loads is the original. What it reads later is the mock.
 - Where a loaded package is updated in place (see [Mocking a Package](#mocking-a-package)), a module inside `node_modules` that imports it gets the mock. In Vitest it gets the real package.

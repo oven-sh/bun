@@ -3643,6 +3643,12 @@ impl File<'_> {
         })
     }
 
+    pub(crate) fn is_evaluated_text(&self, node: Node) -> bool {
+        !self.known_evaluations.is_empty()
+            && self.is_in_known_evaluation(self.start(node))
+            && !self.is_in_known_evaluation(self.start(self.parent(node)))
+    }
+
     /// `node.Flags&NodeFlagsAwaitContext != 0`, as set by the parser's first pass. Returns `Err` if it's the context of
     /// the returned top-level statement, which `reparseTopLevelAwait` may reparse.
     pub fn await_context(&self, node: Node) -> Result<bool, Node> {
@@ -3660,6 +3666,9 @@ impl File<'_> {
         let is_await = modifier == Flags::ASYNC;
         let (mut below, mut above) = (node, self.parent(node));
         loop {
+            if self.is_evaluated_text(below) {
+                return Ok(false);
+            }
             let kind = self.kind(above);
             match kind {
                 Kind::SourceFile => return Err(below),

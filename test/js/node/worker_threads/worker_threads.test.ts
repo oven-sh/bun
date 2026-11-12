@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -2574,8 +2574,8 @@ test.each([
     "entry.js": `postMessage("ran");`,
     "elsewhere/empty.txt": "",
   });
-  // Fewer on a debug build, where a worker takes about a second to start.
-  const rounds = isDebug ? 4 : 32;
+  // Fewer on a debug or ASAN build, where a worker takes much longer to start.
+  const rounds = isDebug || isASAN ? 4 : 32;
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2584,23 +2584,25 @@ test.each([
        const home = process.cwd();
        (async () => {
          const heard = [];
+         let moved = 0;
+         const move = () => { moved++; process.chdir("elsewhere"); };
          for (let i = 0; i < ${rounds}; i++) {
            process.chdir(home);
            heard.push(await new Promise(resolve => {
              if (${JSON.stringify(kind)} === "node") {
                const worker = new NodeWorker("./entry.js");
-               worker.on("online", () => process.chdir("elsewhere"));
+               worker.on("online", move);
                worker.on("message", resolve);
                worker.on("error", error => resolve("error: " + error.code));
              } else {
                const worker = new Worker("./entry.js");
-               worker.addEventListener("open", () => process.chdir("elsewhere"));
+               worker.addEventListener("open", move);
                worker.onmessage = event => resolve(event.data);
                worker.onerror = event => { event.preventDefault(); resolve("error: " + event.message); };
              }
            }));
          }
-         console.log(JSON.stringify(heard));
+         console.log(JSON.stringify({ heard, moved }));
        })();`,
     ],
     cwd: String(dir),
@@ -2609,8 +2611,10 @@ test.each([
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ heard: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+  // `moved` says that the listener ran ahead of each entry, so the working directory did change.
+  expect({ ...JSON.parse(stdout || "{}"), stderr, exitCode }).toEqual({
     heard: Array.from({ length: rounds }, () => "ran"),
+    moved: rounds,
     stderr: "",
     exitCode: 0,
   });

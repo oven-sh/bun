@@ -1,59 +1,30 @@
 // Also runs in Node.js (`node --test <file>`), so it uses node:test and imports only Node modules.
 import assert from "node:assert";
-import { before, test } from "node:test";
-import { Worker } from "node:worker_threads";
+import { execFile } from "node:child_process";
+import { test } from "node:test";
+import { promisify } from "node:util";
 
-// A process's first Worker pays one-time costs on both threads. This one pays them, so that the
-// workers that the test measures do not.
-before(async () => {
-  const worker = new Worker("", { eval: true });
-  await new Promise(resolve => worker.once("exit", resolve));
-});
-
-// Node posts 'online' from the worker's bootstrap, which has received workerData by then, and runs
-// the entry next: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/main/worker_thread.js#L148
-// No event tells the parent that the worker has its workerData, so this compares two times. With a
-// large workerData, most of the time to the entry's first message passes before 'online'. A worker
-// that posts 'online' when its thread starts has most of that time still ahead of it.
-test("'online' follows the worker's receipt of workerData", async () => {
-  const workerData = Array.from({ length: 100_000 }, (_, i) => i);
-  const ended: Promise<number>[] = [];
-
-  // The part of the time from the constructor to the entry's first message that passed before 'online'.
-  async function shareBeforeOnline() {
-    const worker = new Worker(
-      'require("node:worker_threads").parentPort.postMessage("first"); setInterval(() => {}, 1000);',
-      { eval: true, workerData },
-    );
-    // The constructor serializes workerData, so the clock starts behind it.
-    const start = performance.now();
-    let online = NaN;
-    worker.once("online", () => {
-      online = performance.now() - start;
+// Node runs the worker's bootstrap, posts 'online', then runs the entry:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/main/worker_thread.js#L148
+// The bootstrap reads NODE_CHANNEL_FD (#L72). If it is set, the worker gets a process.send() that
+// throws. With a shared env, an 'online' listener can set that variable, and by then it is too late
+// to change the worker. The variable belongs to the whole process, so a child process runs this.
+test("the worker's bootstrap is over when 'online' is emitted", async () => {
+  const script = `
+    const { Worker, SHARE_ENV } = require("node:worker_threads");
+    const seen = [];
+    const worker = new Worker('require("node:worker_threads").parentPort.postMessage(typeof process.send);', {
+      eval: true,
+      env: SHARE_ENV,
     });
-    const message = await new Promise<number>((resolve, reject) => {
-      worker.once("error", reject);
-      worker.once("exit", code => reject(new Error(`exit ${code} before the entry's first message`)));
-      worker.once("message", () => resolve(performance.now() - start));
+    worker.on("online", () => {
+      process.env.NODE_CHANNEL_FD = "3";
+      seen.push("online");
     });
-    ended.push(worker.terminate());
-    return online / message;
-  }
-
-  // Two workers of three decide, so that one late turn of the parent's loop does not.
-  const shares: number[] = [];
-  let most = 0;
-  let less = 0;
-  while (most < 2 && less < 2) {
-    const share = await shareBeforeOnline();
-    shares.push(share);
-    if (share > 0.5) most++;
-    else less++;
-  }
-  await Promise.all(ended);
-  assert.strictEqual(
-    most,
-    2,
-    `'online' came after ${shares.map(share => share.toFixed(2)).join(" and ")} of the time to the entry's first message`,
-  );
+    worker.on("message", send => seen.push("process.send is " + send));
+    worker.on("exit", code => console.log(seen.concat("exit " + code).join(", ")));
+  `;
+  const { NODE_CHANNEL_FD: _, ...env } = process.env;
+  const { stdout } = await promisify(execFile)(process.execPath, ["-e", script], { env });
+  assert.strictEqual(stdout, "online, process.send is undefined, exit 0\n");
 });

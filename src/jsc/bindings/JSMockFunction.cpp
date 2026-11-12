@@ -36,6 +36,7 @@
 #include "JavaScriptCore/AOTHost.h"
 #include "BunPlugin.h"
 #include "BunCompiledModules.h"
+#include "ModuleExportOverrides.h"
 #include "NodeVM.h"
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
@@ -885,6 +886,32 @@ public:
         didUninstall();
     }
 
+    // The mock stands in an export variable over `ended`, which has left the variable: `beneath` is there now. A spy on the
+    // namespace, and the wrapper of a `{ spy: true }` mock, call the function they were laid over. From here on that is
+    // `beneath`. Any other mock function calls what its test gave it, which may be the same function.
+    void didEndExportBeneath(JSGlobalObject* globalObject, JSValue ended, JSValue beneath)
+    {
+        auto& vm = this->vm();
+        bool isSpyOverEnded = (m_spyAttributes & SpyAttributeESModuleNamespace) && m_spyOriginal.get() == ended;
+        bool isWrapperOfEnded = this->isAutomock && m_initialImplementation.get() == ended;
+        if (!isSpyOverEnded && !isWrapperOfEnded)
+            return;
+        bool isCallable = beneath.isCallable();
+        if (m_spyOriginal.get() == ended)
+            m_spyOriginal.set(vm, this, beneath);
+        if (m_initialImplementation.get() == ended) {
+            if (isCallable)
+                m_initialImplementation.set(vm, this, beneath);
+            else
+                m_initialImplementation.clear();
+        }
+        auto* fallback = tryJSDynamicCast<JSMockImplementation*, Unknown>(m_configuration.fallbackImplmentation);
+        if (!fallback || fallback->kind != JSMockImplementation::Kind::Call || fallback->underlyingValue.get() != ended)
+            return;
+        setFallbackImplementation(isCallable ? JSMockImplementation::Kind::Call : JSMockImplementation::Kind::ReturnValue, beneath);
+        this->updatePrototype(globalObject);
+    }
+
     static void clearAll(Zig::GlobalObject*);
     static void resetAll(Zig::GlobalObject*);
     static void restoreAll(Zig::GlobalObject*);
@@ -986,9 +1013,9 @@ private:
         if (attributes & SpyAttributeESModuleNamespace) {
             if (!original)
                 return;
-            ThroughLockOfBuiltins throughLock(globalObject->vm(), isOpaque);
 #if ENABLE(AOT)
             if (JSC::AOT::isModuleNamespace(target)) {
+                ThroughLockOfBuiltins throughLock(globalObject->vm(), isOpaque);
                 bool isBack = JSC::AOT::tryReplaceExport(target, identifier.impl(), original);
                 RETURN_IF_EXCEPTION(scope, );
                 // The spy was laid there, so the export takes a value. A spy that stays answers undefined to every later test of the process, and nobody hears of it.
@@ -997,9 +1024,10 @@ private:
                 return;
             }
 #endif
+            // Not behind the lock of built-ins: the export of a built-in module that comes back may be made by JavaScript.
             scope.release();
             if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target))
-                moduleNamespaceObject->overrideExportValue(globalObject, identifier, original);
+                Bun::restoreExport(globalObject, moduleNamespaceObject, identifier, this);
             return;
         }
 
@@ -2835,6 +2863,12 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMocked, (JSC::JSGlobalObject*, JSC::CallF
     return JSValue::encode(callframe->argument(0));
 }
 
+void didEndExportBeneathMock(JSC::JSGlobalObject* globalObject, JSC::JSValue mock, JSC::JSValue ended, JSC::JSValue beneath)
+{
+    if (auto* function = dynamicDowncast<JSMockFunction>(mock))
+        function->didEndExportBeneath(globalObject, ended, beneath);
+}
+
 } // namespace Bun
 
 using namespace Bun;
@@ -3126,13 +3160,14 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
 #endif
 
     // True if the object is a module namespace object. Its exports are replaced in the module that declares them.
-    auto replaceExport = [&](JSValue replacement) {
+    auto replaceExport = [&](JSMockFunction* replacement) {
         if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
-            moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, replacement);
+            Bun::overrideExport(globalObject, moduleNamespaceObject, propertyKey, replacement, replacement);
             return true;
         }
 #if ENABLE(AOT)
         if (JSC::AOT::isModuleNamespace(object)) {
+            ThroughLockOfBuiltins throughLock(vm, isOpaque);
             bool isReplaced = JSC::AOT::tryReplaceExport(object, propertyKey.impl(), replacement);
             RETURN_IF_EXCEPTION(scope, true);
             if (!isReplaced)
@@ -3180,9 +3215,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             wrapFunction(globalObject, mock, value);
             RETURN_IF_EXCEPTION(scope, {});
 
-            ThroughLockOfBuiltins throughLock(vm, isOpaque);
-            if (!replaceExport(mock))
+            if (!replaceExport(mock)) {
+                ThroughLockOfBuiltins throughLock(vm, isOpaque);
                 putOwnPropertyStorage(globalObject, object, propertyKey, mock, attributes, isOpaque);
+            }
             RETURN_IF_EXCEPTION(scope, {});
         } else {
             // JSFunction::getOwnPropertySlot serves `prototype` straight from property storage, ignoring
@@ -3195,9 +3231,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             mock->pushImpl(globalObject, JSMockImplementation::Kind::ReturnValue, value);
             RETURN_IF_EXCEPTION(scope, {});
 
-            ThroughLockOfBuiltins throughLock(vm, isOpaque);
-            if (!replaceExport(mock))
+            if (!replaceExport(mock)) {
+                ThroughLockOfBuiltins throughLock(vm, isOpaque);
                 putOwnPropertyStorage(globalObject, object, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes | PropertyAttribute::Accessor, isOpaque);
+            }
             RETURN_IF_EXCEPTION(scope, {});
         }
 

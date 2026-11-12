@@ -21,6 +21,10 @@ class JSMockFunction;
 // Automocks a module's exports. With `spy` the mocks call through, and nested objects are mutated in place unless `leaveOriginalAlone`.
 JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool leaveOriginalAlone = false);
 
+// `mock` stands in an export variable over `ended`, which has left the variable: `beneath` is there now. If `mock` is a mock
+// function that calls `ended` (a spy, or the wrapper of a `{ spy: true }` mock), it calls `beneath` from here on.
+void didEndExportBeneathMock(JSC::JSGlobalObject*, JSC::JSValue mock, JSC::JSValue ended, JSC::JSValue beneath);
+
 // For `vi.dynamicImportSettled()`. `import` is the module loader's own promise for an `import()`, not the one script gets.
 // `key` is null unless there are module mocks.
 void didStartDynamicImport(Zig::GlobalObject*, JSC::JSPromise* import, const String& key);

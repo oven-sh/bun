@@ -160,6 +160,10 @@ pub trait SourceProvider: Sync {
 
     fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad>;
 
+    fn data_url_loader(&self, _url: &[u8]) -> Option<Loader> {
+        None
+    }
+
     fn decode_data_url(&self, _url: &[u8]) -> Option<Vec<u8>> {
         None
     }
@@ -200,6 +204,14 @@ pub trait SourceProvider: Sync {
 
     fn is_embedding_undecided(&self, _source_path: &[u8]) -> bool {
         false
+    }
+
+    fn is_asset_unreachable(&self, _module_path: &[u8], _source_path: &[u8]) -> bool {
+        false
+    }
+
+    fn find_symlink_in_asset(&self, _source_path: &[u8]) -> Option<Vec<u8>> {
+        None
     }
 
     fn warn_if_not_embedded(&self, _source_path: &[u8], _warning: Msg) {}
@@ -294,7 +306,7 @@ fn parse_without_bundler(
     options.warn_about_unbundled_modules = false;
     options.tree_shaking = true;
     options.is_entry_point = file.is_entry_point;
-    options.import_meta_main_value = Some(file.is_entry_point);
+    options.import_meta_main_value = (!file.is_entry_point).then_some(false);
     options.use_define_for_class_fields = file.settings.use_define_for_class_fields != Some(false);
     options.import_meta_glob = glob_host;
     let has_legacy_decorators =

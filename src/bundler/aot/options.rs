@@ -124,7 +124,7 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         bytecode.then_some("--bytecode"),
         transform_only.then_some("--no-bundle"),
         server_components.then_some("--server-components"),
-        (!matches!(allow_unresolved, AllowUnresolved::All)).then_some("--allow-unresolved"),
+        unresolved_argument(allow_unresolved),
         (!macro_remap.is_empty()).then_some("the \"macros\" map of bunfig.toml"),
         inject.as_ref().is_some_and(|list| !list.is_empty()).then_some("inject"),
         react_compiler_parse_test_pragmas.then_some("reactCompilerParseTestPragmas"),
@@ -140,6 +140,14 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         }
     }
     reported.is_empty()
+}
+
+fn unresolved_argument(allow_unresolved: &AllowUnresolved) -> Option<&'static str> {
+    match allow_unresolved {
+        AllowUnresolved::All => None,
+        AllowUnresolved::None => Some("--reject-unresolved"),
+        AllowUnresolved::Patterns(..) => Some("--allow-unresolved"),
+    }
 }
 
 fn format_argument(format: Format) -> Option<&'static str> {

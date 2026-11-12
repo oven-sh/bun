@@ -37,14 +37,14 @@ pub use jsx::{
 };
 pub use macro_calls::{macro_callee, macro_import_symbols};
 pub use made_requires::{
-    ExportedRequire, OwnRequire, find_base_that_a_call_made_of_own_file, find_exported_requires,
-    find_holder_of_require_made_for_choice, find_made_requires_that_go_out_of_sight,
-    find_other_values_of_own_require, find_own_require, find_result_expression,
-    gives_first_argument_to_own_require, holds_import_meta_require, is_call_of_create_require,
-    is_create_require_behind_get_builtin_module, is_create_require_called_through_call,
-    is_made_require, is_require_made_for_own_file, may_be_modified,
-    may_call_have_made_base_of_require, may_call_have_made_path, may_require_get_members,
-    may_still_be_undefined,
+    ExportedRequire, OwnRequire, answers_with_require, find_base_that_a_call_made_of_own_file,
+    find_exported_requires, find_holder_of_require_made_for_choice,
+    find_made_requires_that_go_out_of_sight, find_other_values_of_own_require, find_own_require,
+    find_result_expression, gives_first_argument_to_own_require, holds_import_meta_require,
+    is_call_of_create_require, is_create_require_behind_get_builtin_module,
+    is_create_require_called_through_call, is_made_require, is_require_made_for_own_file,
+    may_be_modified, may_call_have_made_base_of_require, may_call_have_made_path,
+    may_require_get_members, may_still_be_undefined,
 };
 pub(crate) use made_requires::{OtherUse, find_imported_export, names_own_file, settled_symbol};
 pub use parameters::{
@@ -52,8 +52,8 @@ pub use parameters::{
     find_values_passed_for, is_exported,
 };
 pub(crate) use scan::collect_import_sites;
-pub use statements::find_statement_sites;
 pub(crate) use statements::is_runtime_import;
+pub use statements::{SitesByName, find_sites_by_name, find_statement_sites};
 pub(crate) use touched_exports::{
     is_module_that_reaches_modules, reaches_modules_unnamed, touches_export,
 };
@@ -204,12 +204,19 @@ pub enum ResolvedFrom {
     PathFromOwnFolder(Atom),
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct WorkerName {
+    pub argument: ExprId,
+    pub name: ImportSpecifier,
+    pub is_on_trust: bool,
+}
+
 pub(crate) struct ImportScan<'s> {
     pub sites: &'s [ImportSite],
     pub alternatives: &'s [ImportSpecifier],
     pub paths_from_own_directory: &'s [ExprId],
     pub answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
-    pub names_of_workers: &'s [(ExprId, ImportSpecifier)],
+    pub names_of_workers: &'s [WorkerName],
     pub paths_of_changed_files: &'s [ChangedPath],
     pub module_relative_reads: &'s [(ExprId, Atom)],
     pub caller_relative_reads: &'s [CallerRelativeRead],

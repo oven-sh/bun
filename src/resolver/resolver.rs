@@ -571,6 +571,12 @@ pub struct Resolver<'a> {
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
 
+    /// The importer is a file that the executable loaded from disk, so files on disk take precedence over compiled ones.
+    pub resolves_for_code_from_disk: bool,
+
+    /// Folders of packages that such importers requested by name: second instances of compiled packages.
+    packages_of_code_from_disk: Vec<Box<[u8]>>,
+
     /// Why "exports" or "imports" led to no file: the first time since this was last `None`.
     pub esm_failure: Option<crate::package_json::Status>,
 }
@@ -640,6 +646,8 @@ impl<'a> Resolver<'a> {
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
+            resolves_for_code_from_disk: false,
+            packages_of_code_from_disk: Vec::new(),
             esm_failure: None,
         }
     }
@@ -996,6 +1004,8 @@ impl<'a> Resolver<'a> {
             outfile_of_build: None,
             prefer_module_field: true,
             custom_dir_paths: None,
+            resolves_for_code_from_disk: false,
+            packages_of_code_from_disk: Vec::new(),
             esm_failure: None,
         }
     }
@@ -1166,6 +1176,12 @@ impl<'a> Resolver<'a> {
         let Some(graph) = self.standalone_module_graph else {
             return PackageLookup::Unknown;
         };
+        if self.resolves_for_code_from_disk
+            && !::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir)
+            && !::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path)
+        {
+            return PackageLookup::Unknown;
+        }
         let followed = graph.compiled_program().and_then(|program| {
             let public_root = graph.base_public_path_with_default_suffix();
             program.find_name_that_build_followed(
@@ -1190,6 +1206,33 @@ impl<'a> Resolver<'a> {
             Some(file_name) => PackageLookup::Found(file_name),
             None => self.resolve_embedded_package(source_dir, import_path, kind),
         }
+    }
+
+    /// Whether an importer from disk gets `path` from disk although it is compiled: if it belongs to a package that such importers request by name.
+    /// Code from disk may not load any other compiled file.
+    fn finds_second_instance(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        path: &[u8],
+    ) -> bool {
+        if !self.resolves_for_code_from_disk {
+            return false;
+        }
+        let Some(folder) = installed_package_folder(path) else {
+            return false;
+        };
+        let mut packages = self.packages_of_code_from_disk.iter();
+        if packages.any(|package| **package == *folder) {
+            return true;
+        }
+        let is_own_file =
+            source_dir.starts_with(folder) || *source_dir == folder[..folder.len() - 1];
+        if is_own_file || !bun_paths::is_package_path(import_path) {
+            return false;
+        }
+        self.packages_of_code_from_disk.push(folder.into());
+        true
     }
 
     /// `bun run` looks for a relative name beside the importer, and no folder on disk is known to stand for that of a file of the executable.
@@ -1773,8 +1816,11 @@ impl<'a> Resolver<'a> {
                         })
                     });
                     let found = result.path().map(|path| path.text());
+                    let is_second_instance = found.is_some_and(|path| {
+                        self.finds_second_instance(source_dir, import_path, path)
+                    });
                     let found = found
-                        .filter(|_| !is_left_to_disk)
+                        .filter(|_| !is_left_to_disk && !is_second_instance)
                         .and_then(|path| self.resolve_embedded_module(b"", path, kind));
                     if let Some(module) = found {
                         result.path_pair = PathPair {
@@ -7174,6 +7220,20 @@ fn is_require(kind: ast::ImportKind) -> bool {
         kind,
         ast::ImportKind::Require | ast::ImportKind::RequireResolve
     )
+}
+
+/// The package folder in node_modules that contains `path`, with a trailing separator.
+fn installed_package_folder(path: &[u8]) -> Option<&[u8]> {
+    let needle = bun_paths::NODE_MODULES_NEEDLE;
+    let start = strings::last_index_of(path, needle)? + needle.len();
+    let is_scoped = path.get(start) == Some(&b'@');
+    let end = path[start..]
+        .iter()
+        .enumerate()
+        .filter(|(_, byte)| bun_paths::is_sep_native(**byte))
+        .nth(usize::from(is_scoped))?
+        .0;
+    Some(&path[..=start + end])
 }
 
 /// TypeScript matches `./foo.js` with `./foo.ts` (microsoft/TypeScript#4595). This

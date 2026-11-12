@@ -899,13 +899,18 @@ describeWithContainer("postgres_plain", { image: "postgres_plain" }, container =
               [app],
             )
           )[0].n;
-        while ((await sessions()) < blocked) {}
+        const deadline = performance.now() + 3000;
+        for (let n: number; (n = await sessions()) < blocked; ) {
+          if (performance.now() > deadline) throw new Error(`${n} of ${blocked} sessions wait for the lock`);
+        }
         await admin.unsafe(`select pg_terminate_backend(pid) from pg_stat_activity where application_name = $1`, [app]);
         await holder.unsafe(`select pg_advisory_unlock(${key})`);
         const results = await Promise.all(outcomes);
         const [{ n: rows }] = await admin.unsafe(`select count(*)::int as n from ${table}`);
         return { results, rows };
       } finally {
+        // An insert that still waits for the lock holds the table.
+        await holder.unsafe(`select pg_advisory_unlock_all()`);
         await admin.unsafe(`drop table ${table}`);
       }
     }

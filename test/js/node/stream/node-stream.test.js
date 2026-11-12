@@ -710,14 +710,9 @@ it("Readable.fromWeb: a stream that ended while paused still delivers every byte
   expect(bytes).toBe(size);
 });
 
-// A native source can hand _read() its bytes synchronously. When the stream's decoder keeps them whole (part of a
-// character, less than one base64 group), that push gives the stream no text. A node stream reads on after such a push
-// only through maybeReadMore_, which stops when the push came from its own _read() and never reads for a paused stream
-// at highWaterMark 0. The source reads only when _read() asks, so the stream stopped there: no more text, no 'end'.
+// After a push inside _read() that the decoder kept whole, maybeReadMore_ can stop. The source has to ask again.
 describe("Readable.fromWeb over a native source: a pull inside _read() that returns bytes the decoder holds back", () => {
-  // A stream whose native source returns what the test scripts, one step a pull. _read() calls `setFlowing?.(true)`
-  // on the source first and the Blob source has no setFlowing, so one on Object.prototype runs with the source as
-  // `this`. The stream's first read() is made here, while that property exists, so no other stream can reach it.
+  // The Blob source has no setFlowing, so the `setFlowing?.(true)` of _read() runs this one with the source as `this`.
   function scripted(script, options) {
     const log = { pulls: 0 };
     Object.defineProperty(Object.prototype, "setFlowing", {
@@ -739,14 +734,14 @@ describe("Readable.fromWeb over a native source: a pull inside _read() that retu
     });
     try {
       const stream = Readable.fromWeb(new Blob(["unused"]).stream(), options);
+      // The first _read() happens here, so no other stream can reach the property.
       stream.read(0);
       return { stream, log };
     } finally {
       delete Object.prototype.setFlowing;
     }
   }
-  // Steps. A pull returns its bytes at once, copied into the view it was given or in an array of their own, or it
-  // returns false at EOF, or a promise of one of those.
+  // What a pull returns: bytes in its view, bytes in an array of their own, false at EOF, or a promise of one of those.
   const into = bytes => view => (view.set(bytes), bytes.length);
   const owned = bytes => () => Buffer.from(bytes);
   const done = () => false;
@@ -769,8 +764,7 @@ describe("Readable.fromWeb over a native source: a pull inside _read() that retu
     return pushed;
   }
 
-  // The first chunk settles a pull that waits, so its 'data' is followed by a pull from maybeReadMore_. That pull
-  // returns the held bytes at once.
+  // The first chunk settles a pull that waits, so maybeReadMore_ makes the pull that returns the held bytes.
   it.each([
     ["utf8, bytes copied into the view", "utf8", into, ["78", "e2", "82ac"], "x€"],
     ["utf8, bytes in an array of their own", "utf8", owned, ["78", "e2", "82ac"], "x€"],
@@ -820,8 +814,7 @@ describe("Readable.fromWeb over a native source: a pull inside _read() that retu
     });
   });
 
-  // Five characters stay in the stream's buffer the whole time, so its length is never 0. The first held pull is
-  // made by read(10), the second by maybeReadMore_.
+  // Five characters stay buffered, so the length is never 0. read(10) makes one held pull, maybeReadMore_ the next.
   it("a 'readable' listener with read(n) and text buffered: two held pulls in a row", async () => {
     const first = parked();
     const rest = parked();
@@ -849,8 +842,7 @@ describe("Readable.fromWeb over a native source: a pull inside _read() that retu
     expect(seen).toEqual({ read: [null, "abcde€fghi"], end: 1 });
   });
 
-  // The held byte comes back from the pull that read() makes. (When it settles a pull that waits, a paused stream at
-  // highWaterMark 0 stops in Node too.)
+  // Only this order: when the held byte settles a pull that waits, Node stops too.
   it("highWaterMark 0 and a 'readable' listener: a held pull made by read()", async () => {
     const first = parked();
     const rest = parked();
@@ -873,8 +865,7 @@ describe("Readable.fromWeb over a native source: a pull inside _read() that retu
     expect(seen).toEqual({ text: "x€", end: 1 });
   });
 
-  // The stream asks again only after a pull that was held. A read(0) at any other time is work for every chunk, and
-  // at EOF it emits 'end' on a paused stream before anything reads it.
+  // A read(0) after any other pull is work for every chunk, and at EOF it emits 'end' on a paused stream too early.
   describe("the stream does not ask again when nothing was held", () => {
     it.each([
       ["Buffer mode", undefined],
@@ -933,8 +924,7 @@ describe("Readable.fromWeb over a native source: a pull inside _read() that retu
       expect(events).toEqual(["data abc", "resume", "end", "close"]);
     });
 
-    // The source hands over 16384 bytes when it starts. Its next pull returns the last byte together with EOF, and
-    // the utf16le decoder holds that byte.
+    // The source starts with 16384 bytes. Its next pull returns the last byte with EOF, and utf16le holds that byte.
     it("a held pull that comes with EOF: a paused stream emits 'end' only once it is read", async () => {
       const stream = Readable.fromWeb(new Blob([Buffer.alloc(16384 + 1, "a\0")]).stream());
       stream.setEncoding("utf16le");
@@ -955,10 +945,8 @@ describe("Readable.fromWeb over a native source: a pull inside _read() that retu
     });
   });
 
-  // The producer writes a chunk when the reader asks for it and stays alive (no EOF) until it is told to exit. The
-  // reader asks for the held byte from inside the handler that takes the first text, so the pull that read() makes
-  // next finds it in the pipe. Only on POSIX does a pull read the pipe itself.
-  it.skipIf(isWindows)(
+  // Only on POSIX does a pull read the pipe itself. The reader asks for the held byte before the read() that pulls it.
+  it.skipIf(isWindows).concurrent(
     "Bun.spawn().stdout with highWaterMark 0 and a 'readable' listener: a held pull made by read()",
     async () => {
       using dir = tempDir("fromweb-held-pull", {
@@ -1023,8 +1011,7 @@ describe("Readable.fromWeb over a native source: a pull inside _read() that retu
             }
           });
           stream.on("end", () => seen.end++);
-          // The 'readable' listener made the stream's first read() a tick ago and it found the pipe empty, so
-          // chunk 0 settles that read.
+          // The stream's first read() was made a tick ago and found the pipe empty, so chunk 0 settles it.
           setImmediate(() => write(0));
           process.on("exit", () => console.log(JSON.stringify(seen)));
         `,
@@ -1046,9 +1033,7 @@ describe("Readable.fromWeb over a native source: a pull inside _read() that retu
     },
   );
 
-  // A fetch body keeps the bytes that do not fit the buffer of the pull that waits for them, and returns them to the
-  // next pull at once. A pull reads into what the pull before it left of a highWaterMark-sized buffer, if that is 512
-  // bytes or more. So the pull that waits for part 1 has room for 512 bytes, and part 1 is one byte longer.
+  // The pull that waits for part 1 has room for 512 bytes. The body keeps the byte that does not fit for the next pull.
   describe("a fetch body", () => {
     const reader = `
       const net = require("node:net");
@@ -1107,7 +1092,7 @@ describe("Readable.fromWeb over a native source: a pull inside _read() that retu
       [1, true],
     ];
 
-    it.each([
+    it.concurrent.each([
       [
         "the rest arrives: 'end'",
         "end",

@@ -1812,21 +1812,8 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
   }, 30_000);
 });
 
-// A pull can return bytes that the stream's decoder holds back whole: part of
-// a character, or less than one base64 group. That push hands the stream no
-// text. A node stream reads on after such a push only through maybeReadMore_,
-// which stops when the push came from its own _read(). This source reads only
-// when _read() asks, so the stream stopped there: the EOF was never read,
-// 'end', 'close' and execFile's callback never came, and the parent exited
-// with code 0. The other shapes of this are in node-stream.test.js.
-//
-// This is the shape of the report: two bytes in two writes, and neither
-// becomes text before the end. Pinned down with markers: the producer writes
-// a byte when the reader asks for it and stays alive (no EOF) until it is told
-// to exit. No 'data' comes before the end, so the reader asks from inside
-// push(): when the push of byte 0 returns, byte 1 is in the pipe, and the pull
-// that follows finds it there.
-it.skipIf(!isPosix)(
+// Neither byte becomes text, so no 'data' comes: the reader asks for byte 1 from inside the push() of byte 0.
+it.skipIf(!isPosix).concurrent(
   "execFile() calls back when a pull inside _read() returns a byte that the decoder holds back",
   async () => {
     using dir = tempDir("child-stdout-held-pull", {
@@ -1867,8 +1854,7 @@ it.skipIf(!isPosix)(
         const child = execFile(process.execPath, [file("producer.js"), "e2", "82"], (error, stdout, stderr) => {
           seen.callback = { error: error ? error.message : null, stdout, stderr };
         });
-        // 'resume' is emitted after the stream's first read() has been made
-        // and found the pipe empty, so byte 0 settles that read.
+        // 'resume' follows the stream's first read(), which found the pipe empty: byte 0 settles it.
         child.stdout.once("resume", () => write(0));
         const push = child.stdout.push;
         child.stdout.push = function (chunk) {

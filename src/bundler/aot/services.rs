@@ -27,7 +27,7 @@ use bun_sema::fold::FoldOptions;
 use bun_sema::hir_from_data::DataModule;
 use bun_sema::resolve::{AOT_CONDITION, CodeFailure, CodeImportKind, FileSearch, FoundCode, Host};
 use bun_sema::util::FxHashSet;
-use bun_sema_driver::host::{from_native, to_native};
+use bun_sema_driver::host::{from_native, is_regular_file, to_native};
 use bun_threading::Guarded;
 use core::ptr::NonNull;
 use std::borrow::Cow;
@@ -348,12 +348,6 @@ fn is_application_file_under(manifest: &[u8], path: &[u8]) -> bool {
     let folder = bun_paths::dirname(manifest).unwrap_or_default();
     let mut below = path[folder.len()..].split(|&byte| bun_paths::is_sep_any(byte));
     find_node_modules_parent(path).is_none() && !below.any(|it| it.first() == Some(&b'.'))
-}
-
-/// Opening a named pipe waits for a writer, and some devices never end.
-fn is_regular_file(path: &[u8]) -> bool {
-    bun_sys::stat(&ZBox::from_bytes(path))
-        .is_ok_and(|it| bun_sys::is_regular_file(it.st_mode as bun_sys::Mode))
 }
 
 /// A program or a library of machine code. A process is started from it, or it is loaded.

@@ -1868,6 +1868,10 @@
     "aot/test-run-function-source-enum-namespace.test.ts",
     "aot/test-run-function-source-enum-read.test.ts",
     "aot/typescript-that-tsc-rejects.test.ts",
-    "aot/a-damaged-list-of-package-names-says-so.test.ts"
+    "aot/a-damaged-list-of-package-names-says-so.test.ts",
+    "aot/a-few-of-every-sweep-5.test.ts",
+    "aot/a-few-of-every-sweep-6.test.ts",
+    "aot/a-few-of-every-sweep-7.test.ts",
+    "aot/a-few-of-every-sweep-8.test.ts"
   ]
 }

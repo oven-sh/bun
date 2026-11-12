@@ -88,17 +88,19 @@ pub(crate) fn file_size(path: &[u8]) -> Option<u64> {
     u64::try_from(stat.st_size).ok()
 }
 
-pub(crate) fn is_regular_file(path: &[u8]) -> bool {
-    let native_path = to_native(path);
-    !contains_char(native_path, 0)
-        && bun_sys::stat(&ZBox::from_bytes(native_path))
-            .is_ok_and(|it| bun_sys::is_regular_file(it.st_mode as bun_sys::Mode))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bun_sema_driver::host::from_native;
+    use bun_sema_driver::host::{from_native, is_regular_file};
+
+    #[test]
+    fn folders_and_names_with_nul_are_no_regular_files() {
+        let executable = std::env::current_exe().unwrap();
+        let path = from_native(executable.to_str().unwrap().as_bytes()).to_vec();
+        assert!(is_regular_file(&path));
+        assert!(!is_regular_file(bun_paths::dirname(&path).unwrap()));
+        assert!(!is_regular_file(&[&path[..], b"\0"].concat()));
+    }
 
     #[test]
     fn host_platform_is_one_platform() {

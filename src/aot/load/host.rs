@@ -29,7 +29,9 @@ use bun_sema::resolve::{
 use bun_sema::session::{Arena, Session};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::Libs;
-use bun_sema_driver::host::{AlreadyRead, Disk, from_argument, from_native, is_bundled, to_native};
+use bun_sema_driver::host::{
+    AlreadyRead, Disk, from_argument, from_native, is_bundled, is_regular_file, to_native,
+};
 use bun_sema_parser::{CompileParseOptions, appears_to_be_binary, parse_for_compile};
 use bun_threading::Guarded;
 
@@ -54,6 +56,7 @@ use crate::load::disk_delegation::{
 use crate::load::externals::{contains, is_external};
 use crate::load::import_functions;
 use crate::load::import_meta_glob;
+use crate::load::is_host_path;
 use crate::load::known_evaluations::{self, CodeBeside};
 use crate::load::loaders::{
     BY_NAME, HostLoaderKind, gives_data, host_loader_kind, is_taken_by_written_type,
@@ -81,7 +84,6 @@ use crate::load::sources::{
 };
 use crate::load::test_runner_names;
 use crate::load::text_for_json_parse::is_taken_by_json_parse;
-use crate::load::{is_host_path, is_regular_file};
 use crate::module_keys::{is_url_with_text, loader_name, name_of_text};
 use crate::options::{EntryText, Options};
 use crate::statistics::{Stage, StepClock};

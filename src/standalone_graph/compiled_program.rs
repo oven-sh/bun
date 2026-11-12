@@ -3,7 +3,7 @@
 use core::mem::size_of;
 use core::ptr::read_unaligned;
 #[cfg(not(windows))]
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::borrow::Cow;
 
 use bun_collections::StringArrayHashMap;
@@ -1187,6 +1187,36 @@ static DESCRIPTOR_FILTER: AtomicU64 = AtomicU64::new(0);
 static WRITTEN_BY_POOL: bun_threading::Guarded<Vec<Box<[u8]>>> =
     bun_threading::Guarded::new(Vec::new());
 
+#[cfg(not(windows))]
+static HAS_WRITTEN_BY_POOL: AtomicBool = AtomicBool::new(false);
+
+/// Whether `move_waiting_descriptors` has anything to do.
+#[cfg(not(windows))]
+#[inline(always)]
+pub fn has_waiting_descriptors() -> bool {
+    HAS_WRITTEN_BY_POOL.load(Ordering::Acquire)
+}
+
+/// Calls `read`, which reads `fd`. No thread moves an embedded file that is open there to the disk in the middle of it, or between its position and its bytes.
+#[cfg(not(windows))]
+#[inline]
+pub fn read_descriptor<T>(fd: Fd, read: impl FnOnce() -> T) -> T {
+    if DESCRIPTOR_FILTER.load(Ordering::Relaxed) & filter_bit(fd) == 0 {
+        return read();
+    }
+    let descriptors = DESCRIPTORS.lock();
+    let recorded = descriptors.get(fd.native() as usize);
+    let is_embedded_file = recorded.and_then(Option::as_deref).is_some_and(|it| {
+        stat_descriptor(fd).is_ok_and(|now| is_same_file(&now, &it.opened, has_birth_time()))
+    });
+    // What has the number of one that was closed may be a pipe.
+    if !is_embedded_file {
+        drop(descriptors);
+        return read();
+    }
+    read()
+}
+
 /// `fd` is about to be closed. From then on, any file may have its number.
 #[cfg(not(windows))]
 pub fn forget_descriptor(fd: Fd) {
@@ -1632,7 +1662,7 @@ impl StandaloneModuleGraph {
         bun_sys::IS_FSTATX_DIRECT.store(false, Ordering::Relaxed);
     }
 
-    /// The program has written the file at the source path `name` whole. What has the embedded file open reads there: at once if this thread runs scripts, and otherwise, as a script may be reading, from `move_waiting_descriptors` on.
+    /// The program has written the file at the source path `name` whole. What has the embedded file open reads there, in whichever thread: at once if this thread runs scripts, and otherwise, as a script may be reading, from the next `move_waiting_descriptors` on.
     #[cfg(not(windows))]
     pub fn move_descriptors_to_disk(&self, name: &[u8], runs_scripts: bool) {
         let mut buffer = path_buffer_pool::get();
@@ -1641,13 +1671,18 @@ impl StandaloneModuleGraph {
         };
         match runs_scripts {
             true => self.move_descriptors_to(path),
-            false => WRITTEN_BY_POOL.lock().push(path.into()),
+            false => {
+                WRITTEN_BY_POOL.lock().push(path.into());
+                HAS_WRITTEN_BY_POOL.store(true, Ordering::Release);
+            }
         }
     }
 
-    /// For the completion of what a thread of the pool has written, on a thread that runs scripts.
+    /// For what threads of the pool have written, on a thread that runs scripts.
     #[cfg(not(windows))]
+    #[cold]
     pub fn move_waiting_descriptors(&self) {
+        HAS_WRITTEN_BY_POOL.store(false, Ordering::Release);
         let written = core::mem::take(&mut *WRITTEN_BY_POOL.lock());
         for path in &written {
             self.move_descriptors_to(path);

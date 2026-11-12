@@ -628,6 +628,15 @@ impl ModuleGraph {
         Some(self.finish_site(site))
     }
 
+    /// The module around a call that evaluates a module, or that makes a function that does.
+    pub fn find_referrer(&self, file: FileId, call: ExprId) -> Option<ModuleRef> {
+        let keys = [SiteKey::Call(call), SiteKey::Request(call)];
+        let site = keys
+            .into_iter()
+            .find_map(|key| self.find_stored_site(file, key))?;
+        Some(site.referrer)
+    }
+
     /// The module around the call that makes such a function.
     pub fn find_requester(&self, file: FileId, call: ExprId) -> Option<ModuleRef> {
         let site = self.find_stored_site(file, SiteKey::Request(call))?;

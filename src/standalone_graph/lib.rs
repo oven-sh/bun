@@ -25,7 +25,9 @@ pub use compiled_program::{
 };
 pub use compiled_program::{find_written_file, has_written_files, normalize_source_path};
 #[cfg(not(windows))]
-pub use compiled_program::{forget_descriptor, has_descriptors};
+pub use compiled_program::{
+    forget_descriptor, has_descriptors, has_waiting_descriptors, read_descriptor,
+};
 pub use executable_file::with_executable_image;
 
 // Re-export the flat surface most downstream callers use.

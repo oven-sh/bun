@@ -18,6 +18,7 @@ pub(super) enum Global {
     String,
     RegExp,
     Url,
+    UrlModule,
     Require,
     RequireResolve,
     ImportMeta,
@@ -34,7 +35,7 @@ impl Global {
         match specifier.strip_prefix(b"node:").unwrap_or(specifier) {
             b"fs" => Some(Global::FileSystem),
             b"path" => Some(Global::Path),
-            b"url" => Some(Global::Url),
+            b"url" => Some(Global::UrlModule),
             _ => None,
         }
     }
@@ -42,7 +43,11 @@ impl Global {
     pub(super) fn is_function(self) -> bool {
         !matches!(
             self,
-            Global::ObjectPrototype | Global::ImportMeta | Global::FileSystem | Global::Path
+            Global::ObjectPrototype
+                | Global::ImportMeta
+                | Global::FileSystem
+                | Global::Path
+                | Global::UrlModule
         )
     }
 
@@ -56,8 +61,9 @@ impl Global {
             (Global::Path, b"default" | b"posix") => Some(Global::Path),
             (Global::Path, b"dirname") => Some(Global::PathDirname),
             (Global::Path, b"join" | b"resolve") => Some(Global::PathJoin),
-            (Global::Url, b"default" | b"URL") => Some(Global::Url),
-            (Global::Url, b"fileURLToPath") => Some(Global::FileUrlToPath),
+            (Global::UrlModule, b"default") => Some(Global::UrlModule),
+            (Global::UrlModule, b"URL") => Some(Global::Url),
+            (Global::UrlModule, b"fileURLToPath") => Some(Global::FileUrlToPath),
             _ => None,
         }
     }

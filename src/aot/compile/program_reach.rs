@@ -1724,7 +1724,8 @@ impl<'a, 's> FileScan<'a, 's> {
         let graph = self.input.graph;
         for (call, target) in take(&mut self.sites) {
             let region = self.region_of(call);
-            let referrer = self.module_at(region);
+            let referrer = graph.find_referrer(self.file, call);
+            let referrer = referrer.unwrap_or_else(|| self.module_at(region));
             let gives_object = !matches!(target, ModuleRef::Inner { .. })
                 || graph.shape(target) != Shape::EsModule;
             let is_read_as_value = gives_object && graph.is_site_read_as_value(self.file, call);
@@ -1929,7 +1930,16 @@ impl<'a, 's> FileScan<'a, 's> {
                         self.add_file_loaded_by_call(candidate.module);
                     }
                     if is_object_followed {
-                        let referrer = self.module_at(region as u32);
+                        let inner = call.and_then(|call| {
+                            graph.wrapped().enclosing(self.input.files, self.file, call)
+                        });
+                        let referrer = match inner {
+                            Some(inner) => ModuleRef::Inner {
+                                file: self.file,
+                                callback: inner.callback,
+                            },
+                            None => ModuleRef::File(self.file),
+                        };
                         let required = candidates.iter().map(|it| Interest::Require {
                             referrer,
                             target: it.module,

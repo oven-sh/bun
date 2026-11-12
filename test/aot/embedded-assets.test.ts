@@ -2281,6 +2281,101 @@ export const start = async () => {
     120_000,
   );
 
+  // On Windows a file that was opened keeps its bytes.
+  test.skipIf(isWindows)(
+    "what a package has open follows the writes of a Worker and of other threads",
+    async () => {
+      using dir = tempDir("aot-descriptors-of-threads", {
+        "app/main.mjs": `import { start } from "store";
+const workers = ["one", "two", "three"].map(() => new Worker(new URL("./worker.mjs", import.meta.url).href));
+const ask = (index, request) => new Promise((done, fail) => {
+  workers[index].onmessage = event => done(event.data);
+  workers[index].onerror = event => fail(event.message);
+  workers[index].postMessage(request);
+});
+console.log(await start(ask, index => workers[index].terminate()));
+for (const worker of workers) worker.terminate();
+`,
+        "app/worker.mjs": `import fs from "node:fs";
+import { below, openForWorker } from "store";
+self.onmessage = ({ data: { opens, writes, removes, moves } }) => {
+  if (writes) fs.writeFileSync(below(writes), "new");
+  if (removes) fs.unlinkSync(below(removes));
+  if (moves) fs.renameSync(below(moves), below(moves + ".moved"));
+  self.postMessage(opens ? openForWorker(opens) : "done");
+};
+`,
+        "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.mjs" }`,
+        "app/node_modules/store/below.cjs": `exports.below = name => require("node:path").join(__dirname, "data", name);`,
+        "app/node_modules/store/index.mjs": `import fs from "node:fs";
+import path from "node:path";
+export { below } from "./below.cjs";
+import { below } from "./below.cjs";
+const own = name => path.join(import.meta.dirname, "data", name);
+export const openForWorker = name => fs.openSync(own(name));
+export const start = async (ask, terminate) => {
+  const said = [], read = descriptor => fs.readFileSync(descriptor, "utf8");
+  for (const name of ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]) fs.readFileSync(own(name));
+  // Each is the first that this thread does with its descriptor, or at all, behind the write.
+  const [a, b, c, d, e, f] = ["a", "b", "c", "d", "e", "f"].map(name => fs.openSync(own(name)));
+  await ask(0, { writes: "a" });
+  said.push("Bun.file " + (await Bun.file(a).text()));
+  await ask(0, { writes: "b" });
+  said.push("a child " + Bun.spawnSync({ cmd: ["cat"], stdin: b }).stdout);
+  await ask(0, { writes: "c", removes: "c" });
+  said.push("removed " + read(c));
+  await ask(0, { writes: "d", moves: "d" });
+  said.push("moved " + read(d));
+  const part = Buffer.alloc(1);
+  fs.readSync(e, part);
+  await ask(0, { writes: "e" });
+  said.push("begun " + part + read(e));
+  const handed = await ask(0, { opens: "g" });
+  fs.writeFileSync(below("g"), "new");
+  said.push("opened by a Worker " + read(handed));
+  const other = await ask(0, { opens: "h" });
+  await ask(1, { writes: "h" });
+  said.push("opened by a Worker, written by another " + read(other));
+  const left = await ask(2, { opens: "i" });
+  terminate(2);
+  fs.writeFileSync(below("i"), "new");
+  said.push("opened by a Worker that has ended " + read(left));
+  const handle = await fs.promises.open(own("j"));
+  await ask(0, { writes: "j" });
+  said.push("a handle " + (await handle.readFile("utf8")));
+  await handle.close();
+  const written = fs.promises.writeFile(below("f"), "new");
+  while (fs.readFileSync(below("f"), "utf8") !== "new");
+  said.push("not awaited " + read(f));
+  await written;
+  return said.join("\\n");
+};
+`,
+        ...Object.fromEntries([..."abcdefghij"].map(name => [`app/node_modules/store/data/${name}`, "first"])),
+      });
+      const { plain, compiled } = await plainAndBeside(String(dir));
+      expect(plain).toEqual({
+        stdout: [
+          "Bun.file new",
+          "a child new",
+          "removed new",
+          "moved new",
+          "begun few",
+          "opened by a Worker new",
+          "opened by a Worker, written by another new",
+          "opened by a Worker that has ended new",
+          "a handle new",
+          "not awaited new",
+          "",
+        ].join("\n"),
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(compiled).toEqual(plain);
+    },
+    120_000,
+  );
+
   test("a failed mv leaves what the disk does not have", async () => {
     using dir = tempDir("aot-mv-of-embedded-file", {
       "app/main.mjs": `import { start } from "store"; console.log(await start());`,

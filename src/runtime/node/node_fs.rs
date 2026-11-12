@@ -529,10 +529,19 @@ fn note_copied(path: &[u8]) {
     }
 }
 
-/// For the completion of a call that a thread of the pool may have written files for.
-fn move_waiting_descriptors() {
+/// As `read()`, of what may be open of an embedded file.
+pub(crate) fn read_descriptor(fd: FD, buffer: &mut [u8]) -> Maybe<usize> {
     #[cfg(not(windows))]
-    if bun_standalone_graph::has_descriptors()
+    return bun_standalone_graph::read_descriptor(fd, || Syscall::read(fd, buffer));
+    #[cfg(windows)]
+    Syscall::read(fd, buffer)
+}
+
+/// In front of each call of `node:fs` and behind each that a thread of the pool has made.
+#[inline]
+pub(crate) fn move_waiting_descriptors() {
+    #[cfg(not(windows))]
+    if bun_standalone_graph::has_waiting_descriptors()
         && let Some(graph) = compiled_program_graph()
     {
         graph.move_waiting_descriptors();
@@ -6925,7 +6934,7 @@ impl NodeFS {
         buf = &mut buf[off..];
         let l = (args.length as usize).min(buf.len());
         buf = &mut buf[..l];
-        match Syscall::read(args.fd, buf) {
+        match read_descriptor(args.fd, buf) {
             Err(err) => Err(err),
             Ok(amt) => Ok(ret::Read {
                 bytes_read: amt as u64,
@@ -7100,7 +7109,11 @@ impl NodeFS {
         let bufs = args.buffers.buffers.as_slice();
         // libuv `uv__fs_read`: cap `nbufs` at IOV_MAX and issue one syscall.
         let bufs = &bufs[..bufs.len().min(IOV_MAX)];
-        match Syscall::readv(args.fd, bufs) {
+        #[cfg(not(windows))]
+        let read = bun_standalone_graph::read_descriptor(args.fd, || Syscall::readv(args.fd, bufs));
+        #[cfg(windows)]
+        let read = Syscall::readv(args.fd, bufs);
+        match read {
             Err(err) => Err(err),
             Ok(amt) => Ok(ret::Readv {
                 bytes_read: amt as u64,
@@ -7994,7 +8007,7 @@ impl NodeFS {
         let temporary_read_buffer_before_stat_call: &[u8] = {
             let mut available: &mut [u8] = &mut pre_stat_buf[..];
             while !available.is_empty() {
-                let amt = Syscall::read(fd, available)?;
+                let amt = read_descriptor(fd, available)?;
                 if amt == 0 {
                     did_succeed = true;
                     break;
@@ -8147,7 +8160,7 @@ impl NodeFS {
             // Do NOT pre-grow here; growth happens only in the `total > size && amt != 0 &&
             // !has_max_size` arm below.
             let upper = (buf.capacity() as u64).min(max_size) as usize;
-            let amt = Syscall::read(fd, &mut buf[total..upper])?;
+            let amt = read_descriptor(fd, &mut buf[total..upper])?;
             total += amt;
 
             if args.limit_size_for_javascript {

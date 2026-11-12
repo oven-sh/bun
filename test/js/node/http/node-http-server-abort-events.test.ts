@@ -409,17 +409,14 @@ describe("a late end() or write() answers its callback like Node.js", () => {
     });
   });
 
-  // Like on a connection. Node throws ERR_STREAM_NULL_VALUES and ERR_INVALID_ARG_TYPE.
-  test.each([null, undefined])(
-    "write(%p) to a destroyed response without a socket fails like write('')",
-    async chunk => {
-      const res = new ServerResponse(new IncomingMessage(null as any));
-      res.destroy();
-      const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null | undefined>();
-      expect(res.write(chunk as any, resolve)).toBe(false);
-      expect((await promise)?.code).toBe("ERR_STREAM_DESTROYED");
-    },
-  );
+  test.each([
+    [null, "ERR_STREAM_NULL_VALUES"],
+    [undefined, "ERR_INVALID_ARG_TYPE"],
+  ])("write(%p) to a destroyed response without a socket throws %s", (chunk, code) => {
+    const res = new ServerResponse(new IncomingMessage(null as any));
+    res.destroy();
+    expect(() => res.write(chunk as any, () => {})).toThrow(expect.objectContaining({ code }));
+  });
 });
 
 test("'close' of the socket follows 'close' of the request when the response that closes the connection ends late", async () => {

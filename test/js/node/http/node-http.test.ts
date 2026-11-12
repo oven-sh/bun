@@ -4375,6 +4375,12 @@ it("standalone ServerResponse discards body writes to a no-body response without
   expect(out).not.toContain("body");
 });
 
+it("standalone ServerResponse refuses write(null) and write()", () => {
+  const res = new ServerResponse(new IncomingMessage(null as any));
+  expect(() => res.write(null)).toThrow(expect.objectContaining({ code: "ERR_STREAM_NULL_VALUES" }));
+  expect(() => (res as any).write()).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+});
+
 it("standalone ServerResponse end() after writeHead() sets writableEnded (#25632)", async () => {
   // With no native handle and no socket assigned, end() after writeHead() must
   // still transition to `finished` / `writableEnded` and buffer the rendered

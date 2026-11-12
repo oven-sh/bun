@@ -6162,7 +6162,9 @@ function writeInFull(
   const handle = res[kHandle];
   // So does a late write().
   if (!handle || res.finished || res.destroyed) {
-    return OutgoingMessagePrototype.write.$call(res, toOutgoingChunk(res, chunk) ?? "", encoding, callback);
+    // Only a server's response takes null and undefined.
+    if (handle !== undefined) chunk ??= "";
+    return OutgoingMessagePrototype.write.$call(res, toOutgoingChunk(res, chunk), encoding, callback);
   }
 
   if ($isCallable(chunk)) {

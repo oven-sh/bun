@@ -3443,7 +3443,9 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   const handle = this[kHandle];
   // So does a late write().
   if (!handle || this.finished || this.destroyed) {
-    return OutgoingMessagePrototype.write.$call(this, toOutgoingChunk(this, chunk) ?? "", encoding, callback);
+    // Only a server's response takes null and undefined.
+    if (handle !== undefined) chunk ??= "";
+    return OutgoingMessagePrototype.write.$call(this, toOutgoingChunk(this, chunk), encoding, callback);
   }
 
   if ($isCallable(chunk)) {

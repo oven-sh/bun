@@ -317,12 +317,12 @@ fn becomes_declaration(e: Expr<'_>, kept: Expr<'_>) -> bool {
 fn replaced_span(e: Expr<'_>, kept: Expr<'_>) -> Span {
     let file = e.file();
     let semicolon = file.token_after(e).filter(|it| it.is_punctuator(";"));
+    let Span { start, end: after } = e.span();
     match semicolon {
         Some(semicolon)
-            if becomes_declaration(e, kept)
-                && file.comments_in(Span::new(e.span().end, semicolon.start())).next().is_none() =>
+            if becomes_declaration(e, kept) && file.comments_in(Span::new(after, semicolon.start())).next().is_none() =>
         {
-            Span::new(e.span().start, semicolon.end())
+            Span::new(start, semicolon.end())
         }
         _ => e.span(),
     }

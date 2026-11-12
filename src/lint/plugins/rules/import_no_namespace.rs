@@ -115,8 +115,7 @@ impl<'a> Member<'a> {
     }
 }
 
-/// True if the fix changes what `bun test` does with a call on a member of the namespace: see [`bun_test`]. `bun test`
-/// hoists `jest.mock()` for the named import that the fix makes of `ns.jest`, and not for `ns.jest`.
+/// True if the fix makes `ns.jest` with a module mock call a named import, for which `bun test` hoists and for `ns.jest` doesn't: see [`bun_test`].
 #[cold]
 fn changes_module_mock_calls<'a>(declaration: Stmt<'a>, import: Import<'a>, local: Ident<'a>) -> bool {
     if !bun_test::is_test_module(import.spec().bytes()) {

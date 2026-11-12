@@ -159,9 +159,7 @@ fn import_source<'a>(file: &'a File<'a>, import: Option<ImportEntry<'a>>) -> &'a
     source.map_or(b"vitest".as_slice(), Name::bytes)
 }
 
-/// True if the fix changes how the file gets `vi`, and that changes what `bun test` does with a call on it: see
-/// [`bun_test`]. The global becomes a name from `require()`, or a named import, and `bun test` treats a named import
-/// like the global only if it is from `vitest`.
+/// True if the fix gets `vi` from `require()` or from a package other than `vitest`, which changes what `bun test` does with a call on it: see [`bun_test`].
 #[cold]
 fn changes_module_mock_calls<'a>(file: &'a File<'a>, missing_globals: &[&str]) -> bool {
     let import = vitest_import(file);
@@ -174,8 +172,7 @@ fn changes_module_mock_calls<'a>(file: &'a File<'a>, missing_globals: &[&str]) -
     })
 }
 
-/// The `{ .. }` of the `const { .. } = require("vitest")` that the fix adds the names to, if it finds no `import` for
-/// them.
+/// The `{ .. }` of the `const { .. } = require("vitest")` that the fix adds the names to if the file has no `import` for them.
 fn required_pattern<'a>(file: &'a File<'a>) -> Option<(Pat<'a>, List<'a, PatProp<'a>>)> {
     for (call, _) in vitest_requires(file) {
         let declarator = Node::Expr(call).ancestors().find_map(|it| match it {

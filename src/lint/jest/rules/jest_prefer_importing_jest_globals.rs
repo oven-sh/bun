@@ -158,8 +158,7 @@ fn jest_require<'a>(file: &'a File<'a>) -> Option<VarDecl<'a>> {
     })
 }
 
-/// The properties of the `{ .. }` in `const { .. } = require("@jest/globals")` that the fix keeps, each with its key
-/// and the name that it binds.
+/// The properties of `const { .. } = require("@jest/globals")` that the fix keeps: the key, the name that it binds, the pattern.
 fn kept_properties<'a>(
     declarator: VarDecl<'a>,
 ) -> impl Iterator<Item = (Name<'a>, Name<'a>, Pat<'a>)> {
@@ -180,13 +179,11 @@ fn declaration_of(declarator: VarDecl<'_>) -> Node<'_> {
     Node::VarDecl(declarator).parent()
 }
 
-/// True if the fix changes how the file gets `jest`, `vi` or `vitest`, and that changes what `bun test` does with a
-/// call on it: see [`bun_test`]. `added` are those of [`bun_test::MOCK_APIS`] that are globals which the fix imports.
+/// True if the fix changes what `bun test` does with a call on `jest` or `vi`: see [`bun_test`]. `added`: those globals that the fix imports.
 #[cold]
 fn changes_module_mock_calls<'a>(file: &'a File<'a>, added: &[&str]) -> bool {
     if let Some(first) = jest_import(file) {
-        // A global becomes a named import, and `bun test` treats the two alike. A default import becomes a named
-        // one, and the name of a namespace becomes a global.
+        // `bun test` treats a global and a named import alike. A default import becomes a named one, a namespace's name a global.
         let scope = || Node::Stmt(first.declaration.stmt()).scope();
         return import_entries_of(first.declaration).any(|it| match it.import_name {
             ImportImportName::Name(_) => false,

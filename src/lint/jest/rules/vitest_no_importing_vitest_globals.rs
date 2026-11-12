@@ -75,8 +75,7 @@ fn check_import<'a>(node: Stmt<'a>, import_decl: Import<'a>, cx: &Cx<'a, NoImpor
     };
     let report = cx.report(first_global, NO_IMPORTING_VITEST_GLOBALS).first_label(REMOVE_THIS);
     let others = import_decl.named().iter().filter(is_global).skip(1);
-    // The names become globals, and `bun test` treats a call on the global `vi` like one on a `vi` from `vitest`, and
-    // not like one on a `vi` from another package: see [`bun_test`].
+    // The names become globals, and `bun test` treats the global `vi` like a `vi` from `vitest` only: see [`bun_test`].
     let is_safe = || {
         let source = import_decl.spec().bytes();
         let mut removed = import_decl.named().iter().filter(is_global);
@@ -122,8 +121,7 @@ fn is_global_property(property: &PatProp) -> bool {
     property.key().and_then(|it| it.name()).is_some_and(|it| it.is_any(&VITEST_GLOBALS))
 }
 
-/// True if the fix makes a `vi` or `vitest` from `require()` a global, and that changes what `bun test` does with a call
-/// on it: see [`bun_test`].
+/// True if the fix makes a `vi` or `vitest` from `require()` a global, which changes what `bun test` does with a call on it: see [`bun_test`].
 #[cold]
 fn changes_module_mock_calls<'a>(declarations: List<'a, VarDecl<'a>>) -> bool {
     let properties = declarations.iter().filter_map(vitest_require).flat_map(|it| it.0.iter());

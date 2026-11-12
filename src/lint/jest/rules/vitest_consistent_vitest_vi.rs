@@ -90,8 +90,7 @@ impl ConsistentVitestVi {
         });
     }
 
-    /// True if the fix of `check_import` makes `import` declare `function`, which takes the calls on the global of that
-    /// name, and that changes what `bun test` does with one of them: see [`bun_test`].
+    /// True if the renamed `import` takes a module mock call from the global `function`, which `bun test` then treats in another way: see [`bun_test`].
     #[cold]
     fn takes_module_mock_calls<'a>(&self, file: &'a File<'a>, import: Import<'a>) -> bool {
         let is_named = |it: &ImportEntry, name: &str| it.local_name().bytes() == name.as_bytes();
@@ -107,8 +106,7 @@ impl ConsistentVitestVi {
         !is_known && bun_test::global_has_module_mock_call(file, self.function.as_bytes())
     }
 
-    /// True if the file gets `object` and the `function` that replaces it in different ways, and that changes what
-    /// `bun test` does with the call on it: see [`bun_test`].
+    /// True if the file gets `object` and `function` in different ways, which changes what `bun test` does with the call: see [`bun_test`].
     #[cold]
     fn changes_module_mock_call<'a>(&self, file: &'a File<'a>, object: Expr<'a>) -> bool {
         // The rule doesn't resolve the file's names for any other call.

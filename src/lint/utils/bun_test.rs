@@ -1,17 +1,4 @@
-//! What `bun test` does with some calls on `jest`, `vi` and `vitest` depends on how the file gets the object. If the
-//! object is a global or a named import from `bun:test`, `vitest` or `@jest/globals`, `bun test`
-//! - moves a top-level `jest.mock()`, `jest.unmock()` or `vi.hoisted()` above the rest of the file,
-//! - keeps the caller's frame for `return jest.requireActual()`, which finds the caller's file in it,
-//! - reads the path from `vi.doMock(import("./a"))`.
-//!
-//! It does none of that if the object comes from `require()` or from another module, or is a member of a namespace
-//! import. `P::mock_api`, `is_hoisted_mock_stmt`, `reads_frame_of_caller` and `visit_import_in_mock_path` in
-//! `src/js_parser/lower/hoist_test_mocks.rs` decide it, and the lists here are theirs.
-//!
-//! So a fix that moves one of these names from one group to the other changes what the tests do, if the file has such
-//! a call. These functions find one, for [`Report::fix_where_safe`].
-//!
-//! [`Report::fix_where_safe`]: crate::context::Report::fix_where_safe
+//! Whether a fix changes what `bun test` does with `jest.mock()` and the like, which `src/js_parser/lower/hoist_test_mocks.rs` treats by how the file gets `jest`.
 
 use crate::ast::{
     BinOp, Chain, Expr, ExprKind, ExprTag, File, Flags, FnBody, Node, PatTag, Stmt, StmtKind,
@@ -94,8 +81,7 @@ fn is_erased(declaration: Declaration<'_>) -> bool {
     }
 }
 
-/// What `bun test` takes `name` for where it resolves to `symbol`. A name that nothing declares when the file runs is
-/// the global.
+/// `P::mock_api`: what `bun test` takes `name` for where it resolves to `symbol`. A name with no declaration at runtime is the global.
 fn api_of(name: &[u8], symbol: Option<Symbol<'_>>) -> Option<Api> {
     match symbol.and_then(|it| it.declarations().find(|it| !is_erased(*it))) {
         None => Api::of(name),
@@ -172,8 +158,7 @@ fn has_call<'a>(references: impl IntoIterator<Item = Reference<'a>>, api: Api) -
     objects.any(|it| is_object_of(it, api))
 }
 
-/// True if `object` is the object of a module mock call: a call that `bun test` treats as the module says if it takes
-/// `object` for `export`, one of [`MOCK_APIS`]. A method whose key isn't a literal can be any of them.
+/// True if `object` is the object of a call that `bun test` hoists, keeps a frame for or reads a path of, if it takes `object` for `export`.
 pub fn is_object_of_module_mock_call(object: Expr<'_>, export: &[u8]) -> bool {
     Api::of(export).is_some_and(|it| is_object_of(object, it))
 }
@@ -192,9 +177,7 @@ pub fn global_has_module_mock_call<'a>(file: &'a File<'a>, name: &[u8]) -> bool 
     has_module_mock_call(file.unresolved_references_to(name), name)
 }
 
-/// True if `bun test` treats a call on `symbol` in another way once nothing declares its name, which makes the name a
-/// global: `const { vi } = require("vitest")` and `vi.mock("./a")` once a fix removes the declaration. Only a name
-/// that [`is_mock_api`], or that is imported under such a name, can change.
+/// True if `bun test` treats a call on `symbol` in another way once a fix removes its declaration, which makes the name a global.
 #[cold]
 pub fn changes_as_global(symbol: Symbol<'_>) -> bool {
     let name = symbol.name().bytes();
@@ -203,8 +186,7 @@ pub fn changes_as_global(symbol: Symbol<'_>) -> bool {
     before != after && apis.any(|it| has_call(symbol.references(), it))
 }
 
-/// The identifier that a top-level statement starts with, if `bun test` moves the statement above the rest of the
-/// file: `jest.mock("./a")`, `jest.mock("./a").unmock("./b")`, `const mocks = vi.hoisted(..)`, each also with `await`.
+/// The identifier at the start of a top-level statement that `bun test` hoists: `jest.mock(..)`, a chain of them, `const a = vi.hoisted(..)`.
 fn object_of_hoisted<'a>(statement: Stmt<'a>) -> Option<Expr<'a>> {
     let chain_of = |value: Expr<'a>| {
         let value = without_type_syntax(value);
@@ -290,9 +272,7 @@ fn is_literal_declaration(statement: Stmt<'_>) -> bool {
     })
 }
 
-/// True if `bun test` can make `call` the last call of a function, a tail call, which drops the function's frame:
-/// the function returns `call`, or `call` initializes a variable that it returns. `bun test` writes the call in the
-/// place of such a variable.
+/// True if `call` can be a function's tail call, which drops the frame: it's returned, or it initializes a returned variable, which `bun test` inlines.
 fn can_be_tail_call(call: Expr<'_>) -> bool {
     fn is_returned(value: Expr<'_>, variables: u8) -> bool {
         let mut value = with_type_syntax(value);
@@ -343,13 +323,7 @@ fn has_import_for_path(call: Expr<'_>) -> bool {
         })
 }
 
-/// True if `bun test` runs `file` in another way once `names`, which are globals of [`MOCK_APIS`], are names that a
-/// `require()` in the file's first statement gives. Unlike [`global_has_module_mock_call`] it goes by where the calls
-/// are. The file runs the same if
-/// - every top-level `jest.mock()`, and every `const a = "a"`, which `bun test` moves with them, already stands above
-///   the statements that stay in place,
-/// - no call that reads the caller's frame can be the last call of a function,
-/// - and no call has an `import()` for its path.
+/// True if `bun test` runs `file` in another way once the globals `names` come from a `require()` in the file's first statement.
 #[cold]
 pub fn changes_once_required<'a>(file: &'a File<'a>, names: &[&str]) -> bool {
     if names.is_empty() {
@@ -370,6 +344,7 @@ pub fn changes_once_required<'a>(file: &'a File<'a>, names: &[&str]) -> bool {
     if names.iter().any(|it| changes(it)) {
         return true;
     }
+    // What is left: the hoisted statements, and the literals that move with them, have to stand first already.
 
     // A function declaration is there before the first statement runs, and a type or a `declare` never runs.
     let runs_in_place = |it: &Stmt<'a>| {
@@ -391,8 +366,7 @@ pub fn changes_once_required<'a>(file: &'a File<'a>, names: &[&str]) -> bool {
     if !leaves {
         return false;
     }
-    // With a statement that stays hoisted, `bun test` still moves statements. It also turns the imports of a file
-    // with a hoisted statement into `await import()`.
+    // `bun test` still moves statements if one stays hoisted, and it turns the imports of such a file into `await import()`.
     if stays || file.has_stmts([StmtTag::Import]) {
         return true;
     }

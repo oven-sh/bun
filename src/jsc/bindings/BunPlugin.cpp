@@ -5830,48 +5830,34 @@ static std::optional<size_t> recordBodyMock(Zig::GlobalObject* globalObject, JSC
 }
 #endif
 
-// The source text of the code that called. A module and a copy of it under another key have one source origin, so callerPath() names both alike.
-static JSC::SourceProvider* callerSourceProvider(JSC::VM& vm, JSC::CallFrame* callframe)
-{
-    JSC::SourceProvider* provider = nullptr;
-    JSC::StackVisitor::visit(callframe, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        JSC::CodeBlock* codeBlock = visitor->codeBlock();
-        if (!codeBlock)
-            return WTF::IterationStatus::Continue;
-        if (auto* function = dynamicDowncast<JSC::FunctionExecutable>(codeBlock->ownerExecutable()); function && function->isPrivateBuiltinFunction())
-            return WTF::IterationStatus::Continue;
-        provider = codeBlock->source().provider();
-        return WTF::IterationStatus::Done;
-    });
-    return provider;
-}
-
-// Whether the caller's code is of the private copy of a module that a running factory got, see redirectedModuleKey().
+// Whether the private copy that a running factory got of a module calls, itself or through a function that it called. See redirectedModuleKey().
+// A module and its copy under another key have one source origin, so callerPath() names both alike. Their source texts are two.
 static bool isCalledByCopyForRunningFactory(Zig::GlobalObject* globalObject, JSC::CallFrame* callframe)
 {
-    auto& runningModuleMocks = globalObject->onLoadPlugins.runningModuleMocks;
-    if (runningModuleMocks.isEmpty()) [[likely]]
-        return false;
     auto& vm = JSC::getVM(globalObject);
-    String path = callerPath(vm, callframe);
-    JSC::SourceProvider* caller = nullptr;
-    for (auto& running : runningModuleMocks) {
-        if (!running.importChainWithoutQuery.contains(path))
+    Vector<JSC::SourceProvider*, 4> copies;
+    for (auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
+        if (running.importChainWithoutQuery.isEmpty())
             continue;
         for (auto& key : running.importChain) {
-            if (key.length() == path.length() || withoutOriginalModuleQuery(key) != path)
+            if (withoutOriginalModuleQuery(key).length() == key.length())
                 continue;
             auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, key));
-            auto* record = entry ? dynamicDowncast<JSC::JSModuleRecord>(entry->record()) : nullptr;
-            if (!record)
-                continue;
-            if (!caller)
-                caller = callerSourceProvider(vm, callframe);
-            if (record->sourceCode().provider() == caller)
-                return true;
+            if (auto* record = entry ? dynamicDowncast<JSC::JSModuleRecord>(entry->record()) : nullptr)
+                copies.append(record->sourceCode().provider());
         }
     }
-    return false;
+    if (copies.isEmpty()) [[likely]]
+        return false;
+    bool isCalledByCopy = false;
+    JSC::StackVisitor::visit(callframe, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+        JSC::CodeBlock* codeBlock = visitor->codeBlock();
+        if (!codeBlock || !copies.contains(codeBlock->source().provider()))
+            return WTF::IterationStatus::Continue;
+        isCalledByCopy = true;
+        return WTF::IterationStatus::Done;
+    });
+    return isCalledByCopy;
 }
 
 // Whether `factory` is the function that `mock` has, or one that another evaluation of the same module text made.

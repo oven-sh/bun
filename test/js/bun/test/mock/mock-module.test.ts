@@ -4371,10 +4371,23 @@ describe.concurrent("a module that a factory loads while the module awaits impor
         export const seen = name;
       `,
     ],
+    [
+      "mock.module() in a function of another module",
+      `
+        import { lay } from "./lays.js";
+        export const calls = [];
+        let instance;
+        lay(() => ({ call: () => (calls.push(instance), instance) }));
+        const { name } = await import("./dep.js");
+        instance = globalThis.runs = (globalThis.runs ?? 0) + 1;
+        export const seen = name;
+      `,
+    ],
   ])("a mock that the module made with %s stays the module's when the factory gets a copy of the module", async (_, helper) => {
     await expectFixturesToPass(
       {
         ...files,
+        "lays.js": `import { mock } from "bun:test"; export const lay = factory => mock.module("./other.js", factory);`,
         "waits.js": helper,
         "owner.test.js": `
           import { expect, test, vi } from "bun:test";

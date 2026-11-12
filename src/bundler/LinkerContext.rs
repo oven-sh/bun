@@ -4234,8 +4234,7 @@ impl<'a> LinkerContext<'a> {
             || self.is_esm_namespace_ref(result.source_index, result.r#ref)
     }
 
-    /// Must `X.name()` keep `X` as `this`, where `X.name` resolved to `ref_` of file `source_index`?
-    /// A lifted CommonJS function can read `this`. A module namespace object is not a function.
+    /// Must `X.name()` keep `X` as `this`, where `X.name` is `ref_`? A namespace object is not a function.
     fn method_call_needs_this(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
         self.graph.ast.items_flags()[source_index as usize]
             .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
@@ -4264,9 +4263,7 @@ impl<'a> LinkerContext<'a> {
             && self.method_call_needs_this(result.source_index, result.r#ref)
     }
 
-    /// `X.default()` where `X` is `module.exports` of a lifted module with no `default` export: a default
-    /// import of that module, or its `ns.default`. Node gives `undefined` for `X.default` there, and so does
-    /// the property read that a call keeps. A namespace from `import *` or from a re-export is not this case.
+    /// `X.default()` on a default import or `ns.default` of a lifted module: Node reads `undefined` there.
     fn is_default_of_module_exports(
         &self,
         source_index: crate::IndexInt,
@@ -4292,8 +4289,7 @@ impl<'a> LinkerContext<'a> {
                 })
     }
 
-    /// `ns.name` and `ns.name(...)` are two items of one name. Only the first of them in the file
-    /// reports that the name has no export.
+    /// `ns.name` and `ns.name(...)` are two items of one name: only the first reports a missing export.
     fn is_later_item_of_name(
         &self,
         source_index: crate::IndexInt,

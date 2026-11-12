@@ -205,9 +205,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // module linking just to rewrite these EDot expressions.
                     if p.options.bundle {
                         if p.import_items_for_namespace.contains_key(&id.ref_) {
-                            // A callee that keeps `ns` as `this` stays `ns.a(...)`. It takes an item of its own, so
-                            // no call decides what a read of `ns.a` is. The linker never keeps `this` for a local
-                            // that holds an `import()` / `require()` namespace.
+                            // Only a callee stays `ns.a(...)` to keep `this`: it takes an item apart from the reads.
                             let is_callee = identifier_opts.is_callee() && dynamic_record.is_none();
                             // Note: split into lookup → (maybe new_symbol) → re-borrow for borrowck.
                             let existing = if is_callee {

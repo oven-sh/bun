@@ -792,7 +792,7 @@ impl<'a> Printer<'a, '_> {
     ///
     /// - After indented code, a list that cannot interrupt a paragraph is a paragraph to micromark, `    a\n2. b\n3. c`,
     ///   with or without an empty line between. To CommonMark it is the list, so a line break before an item stays:
-    ///   see `is_kept_before_item`.
+    ///   see `line_break_before_item`.
     /// - After a definition, the line that follows it was a line of the same paragraph. If it cannot start a paragraph
     ///   on its own, `9. c\n10. d` or `-\nb`, it stays a line, so that what `empty_line_decides_block` decides on
     ///   is what is printed. Joined, `- b` is an item.
@@ -818,7 +818,10 @@ impl<'a> Printer<'a, '_> {
         // Where lines are joined, the first is kept only if the printer of its text can keep it: see
         // `print_sentence`.
         let is_kept_when_joined = self.options.prose_wrap == ProseWrap::Preserve
-            || line.len() == source.len()
+            || !bun_core::strings::contains_char(
+                bun_core::strings::trim_js_whitespace_end(source),
+                b'\n',
+            )
             || self.kind(block.first_child) == Some(Kind::Sentence);
         match is_kept_when_joined && !is_paragraph_on_its_own(line) {
             true => KeptLineBreaks::First,
@@ -826,31 +829,47 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// True if the line break before `word`, at `start` in the text, stays in a block whose lines are items.
-    /// `before` is the first word of the line before the break, where it starts, and whether it is that whole line.
-    /// The break stays where `word` is an item: it is a marker, on a line that is not indented into the item before
-    /// it, or like code under the block's container. And where the line before is a marker alone: joined, `word`
-    /// is in that item, unless its line is indented into it. Text that is a copy, in a block quote, has no `start`:
-    /// then the line is joined, as Prettier joins it.
-    fn is_kept_before_item(
+    /// Whether the line break before `word`, at `start` in the text, stays in a block whose lines are items:
+    /// `Some(true)`, or is a space, `Some(false)`, or is printed as Prettier prints it, `None`. `before` is the first
+    /// word of the line before the break, where it starts, and whether it is that whole line. The break stays where
+    /// `word` is an item: it is a marker, on a line that is not indented into the item of the line before it, or
+    /// like code under the block's container. Where the line before is a marker alone, `word` is in that item either
+    /// way: on a line of its own if its line is not indented into the item, else behind the marker. Text that is a
+    /// copy, in a block quote, has no `start`: then the line is printed as Prettier prints it.
+    fn line_break_before_item(
         &self,
         sentence: NodeId,
         word: &[u8],
         start: Option<u32>,
         before: Option<(&[u8], Option<u32>, bool)>,
-    ) -> bool {
+    ) -> Option<bool> {
         let marker_before =
             before.filter(|(line, ..)| Self::list_marker_at_start(line) == Some(line));
         let is_alone_before = marker_before.is_some_and(|(_, _, is_alone)| is_alone);
         if !is_alone_before && Self::list_marker_at_start(word).is_none() {
-            return false;
+            return None;
         }
         let (Some(start), Some((_, block))) = (start, self.block_of(sentence)) else {
-            return false;
+            return None;
         };
         let bound = match marker_before {
             Some((marker, Some(marker_start), _)) => {
-                self.visual_column(marker_start) + marker.len() as u32 + 1
+                // The content of the item starts after one to four blanks. Five or more are code, after one.
+                let after = marker_start + marker.len() as u32;
+                let blanks = self
+                    .original
+                    .get(after as usize..)
+                    .unwrap_or_default()
+                    .iter()
+                    .take_while(|&&byte| matches!(byte, b' ' | b'\t'))
+                    .count() as u32;
+                let content = self.visual_column(after + blanks) - self.visual_column(after);
+                self.visual_column(after)
+                    + if (1..=4).contains(&content) {
+                        content
+                    } else {
+                        1
+                    }
             }
             _ => {
                 let content_column = match self.node(block.parent) {
@@ -863,7 +882,8 @@ impl<'a> Printer<'a, '_> {
                 content_column + 4
             }
         };
-        self.visual_column(start) < bound
+        let is_item = self.visual_column(start) < bound;
+        (is_item || is_alone_before).then_some(is_item)
     }
 
     /// The column of `offset` as CommonMark counts it: a tab advances to the next multiple of four.
@@ -1236,7 +1256,15 @@ impl<'a> Printer<'a, '_> {
                             &first[..first.iter().take_while(|&&byte| !is_white(byte)).count()];
                         let is_alone = first.len() == line.len() - indent;
                         let before = Some((first, at(line_start + indent), is_alone));
-                        self.is_kept_before_item(id, word, at(white_end), before)
+                        match self.line_break_before_item(id, word, at(white_end), before) {
+                            Some(true) => true,
+                            Some(false) => {
+                                parts.content(Doc::from(" "));
+                                line_breaks += 1;
+                                continue;
+                            }
+                            None => false,
+                        }
                     }
                     KeptLineBreaks::First => is_first_sentence && line_breaks == 0,
                     KeptLineBreaks::None => false,
@@ -1343,31 +1371,35 @@ impl<'a> Printer<'a, '_> {
             }
             let next = tokens.get(index + 1);
             let after_next = tokens.get(index + 2);
+            let break_before_item = match (token.kind, kept) {
+                (TokenKind::Newline, KeptLineBreaks::Items) => next.and_then(|next| {
+                    // The first word of the line before, and whether it is that whole line.
+                    let line_start = (0..index)
+                        .rev()
+                        .find(|&at| tokens[at].kind == TokenKind::Newline)
+                        .map_or(0, |at| at + 1);
+                    let before = tokens[line_start..index]
+                        .iter()
+                        .position(Token::is_word)
+                        .map(|at| {
+                            let first = &tokens[line_start + at];
+                            let is_alone = tokens[line_start + at + 1..index]
+                                .iter()
+                                .all(|it| !it.is_word());
+                            (self.str(first.value), first.value.source_start(), is_alone)
+                        });
+                    self.line_break_before_item(
+                        id,
+                        self.str(next.value),
+                        next.value.source_start(),
+                        before,
+                    )
+                }),
+                _ => None,
+            };
             let is_kept = token.kind == TokenKind::Newline
                 && match kept {
-                    KeptLineBreaks::Items => next.is_some_and(|next| {
-                        // The first word of the line before, and whether it is that whole line.
-                        let line_start = (0..index)
-                            .rev()
-                            .find(|&at| tokens[at].kind == TokenKind::Newline)
-                            .map_or(0, |at| at + 1);
-                        let before = tokens[line_start..index]
-                            .iter()
-                            .position(Token::is_word)
-                            .map(|at| {
-                                let first = &tokens[line_start + at];
-                                let is_alone = tokens[line_start + at + 1..index]
-                                    .iter()
-                                    .all(|it| !it.is_word());
-                                (self.str(first.value), first.value.source_start(), is_alone)
-                            });
-                        self.is_kept_before_item(
-                            id,
-                            self.str(next.value),
-                            next.value.source_start(),
-                            before,
-                        )
-                    }),
+                    KeptLineBreaks::Items => break_before_item == Some(true),
                     KeptLineBreaks::First => is_first_sentence && line_breaks == 0,
                     KeptLineBreaks::None => false,
                 };
@@ -1381,7 +1413,7 @@ impl<'a> Printer<'a, '_> {
                 || (can_break && self.must_not_start_line(node, tokens, index + 1));
             let prose_wrap = if is_kept {
                 ProseWrap::Preserve
-            } else if joins {
+            } else if joins || break_before_item == Some(false) {
                 ProseWrap::Never
             } else {
                 self.options.prose_wrap

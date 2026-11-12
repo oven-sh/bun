@@ -2447,13 +2447,18 @@ describe.concurrent("bun fmt", () => {
 
     describe("a run that CommonMark's rule of 3 refuses as written", () => {
       // Each row is the text, Bun's output and Prettier 3.9.9's output. To micromark what is left of a run counts for
-      // the rule of 3, so it pairs runs that CommonMark does not, and Prettier prints them as a pair. Every run that
-      // such a pair uses, or that shares a pair with one, keeps its marker, so that CommonMark reads the text as before.
+      // the rule of 3, so it pairs runs that CommonMark does not, and the other way round, and Prettier prints what it
+      // pairs. Every run of such a pair, every run that shares a pair with one and every run next to one keeps its
+      // marker, so that CommonMark reads the text as before.
       test.each([
         ["__a_(_) x\n", "__a_(_) x\n", "_*a*(_) x\n"],
         ["*a****a**\n", "*a****a**\n", "_a_***a**\n"],
         ["*bax****c**\n", "*bax****c**\n", "_bax_***c**\n"],
         ['x ____a b__ c."__".\n', 'x ____a b__ c."__".\n', 'x ****a b** c."**".\n'],
+        // The `*` next to the kept `__` would join it as `_`.
+        ["*__a_(_) x*\n", "*__a_(_) x*\n", "_**a*(*) x_\n"],
+        // CommonMark pairs `****` and `***` as written. To micromark the `*` left of `***` is 1 against 2.
+        ["x****a***b* c\n", "x****a***b* c\n", "x****a**_b_ c\n"],
       ])("%j", async (before, after, byPrettier) => {
         expect(after).not.toBe(byPrettier);
         expect(rendered(after)).toBe(rendered(before));

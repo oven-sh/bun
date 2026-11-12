@@ -5238,6 +5238,71 @@ describe("react-compiler compiles every JavaScript-like loader", () => {
     });
   });
 
+  test("bun build --react-compiler compiles a hook in a .ts file", async () => {
+    using dir = tempDir("react-compiler-cli-ts", { "useTotal.ts": hook });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--react-compiler",
+        "--target=browser",
+        "--external",
+        "react",
+        "--external",
+        "react/compiler-runtime",
+        "./useTotal.ts",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("react/compiler-runtime");
+    expect(stdout).toMatch(/\b_c\(\d+\)/);
+    expect(exitCode).toBe(0);
+  });
+
+  // A CommonJS hook: the linker hoists the compiler's runtime import above the
+  // `__commonJS` wrapper, so the output is still loadable.
+  test("a CommonJS .cjs hook bundles and runs", async () => {
+    using dir = tempDir("react-compiler-cjs-hook", {
+      "useTotal.cjs": /* js */ `
+        const { useMemo, useState } = require("react");
+        function useTotal(items) {
+          const [discount] = useState(0);
+          const total = useMemo(() => items.reduce((sum, item) => sum + item.price, 0), [items]);
+          return { total, discounted: total - discount };
+        }
+        module.exports = { useTotal };
+      `,
+      "entry.ts": /* ts */ `
+        import { useTotal } from "./useTotal.cjs";
+        console.log(JSON.stringify(useTotal([{ price: 2 }, { price: 3 }])), globalThis.caches);
+      `,
+      "node_modules/react/package.json": `{ "name": "react", "exports": { ".": "./index.js", "./compiler-runtime": "./compiler-runtime.js" } }`,
+      "node_modules/react/index.js": `exports.useState = v => [v, () => {}]; exports.useMemo = f => f();`,
+      "node_modules/react/compiler-runtime.js": `exports.c = n => { globalThis.caches = (globalThis.caches ?? 0) + 1; return new Array(n).fill(Symbol.for("react.memo_cache_sentinel")); };`,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      reactCompiler: true,
+      target: "bun",
+      reactCompilerOutputMode: "client",
+      outdir: join(String(dir), "out"),
+    });
+    expect(result.logs).toEqual([]);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "out", "entry.js")],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe('{"total":5,"discounted":5} 1\n');
+    expect(exitCode).toBe(0);
+  });
+
   // Mapping `.ts` to the `tsx` loader is not a workaround: a generic arrow and
   // an angle-bracket cast parse as JSX there. The `ts` loader keeps them.
   test("a .ts file keeps TypeScript-only syntax while it is compiled", async () => {

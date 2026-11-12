@@ -4554,7 +4554,7 @@
         },
         {
           "name": "react-compiler",
-          "description": "Run the React Compiler over .jsx/.tsx files (experimental)",
+          "description": "Run the React Compiler over every JavaScript and TypeScript file outside node_modules (experimental)",
           "hasValue": false,
           "required": false,
           "multiple": false

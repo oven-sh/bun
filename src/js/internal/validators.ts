@@ -1,6 +1,7 @@
 const { hideFromStack } = require("internal/shared");
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
+const StringPrototypeIncludes = String.prototype.includes;
 const ArrayIsArray = Array.isArray;
 
 const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
@@ -77,6 +78,13 @@ function validateString(value: unknown, name: string): void {
   if (typeof value !== "string") throw $ERR_INVALID_ARG_TYPE(name, "string", value);
 }
 
+function validateStringWithoutNullBytes(value: unknown, name: string): void {
+  if (typeof value !== "string") throw $ERR_INVALID_ARG_TYPE(name, "string", value);
+  if (StringPrototypeIncludes.$call(value, "\u0000")) {
+    throw $ERR_INVALID_ARG_VALUE(name, value, "must be a string without null bytes");
+  }
+}
+
 function validateFunction(value: unknown, name: string): void {
   if (typeof value !== "function") throw $ERR_INVALID_ARG_TYPE(name, "function", value);
 }
@@ -125,7 +133,7 @@ function getValidatedFsPath(p: string | Uint8Array | URL, propName: string = "pa
 }
 
 hideFromStack(validateLinkHeaderValue);
-hideFromStack(validateString, validateFunction, validateBoolean);
+hideFromStack(validateString, validateStringWithoutNullBytes, validateFunction, validateBoolean);
 hideFromStack(getValidatedPath, getValidatedFsPath, throwIfNullBytesInFileName);
 
 // Must match jsFunction_validateObject in NodeValidator.cpp. The values are node's:
@@ -164,6 +172,8 @@ export default {
   ) => void,
   /** `(value, name)` */
   validateString,
+  /** `(value, name)` */
+  validateStringWithoutNullBytes,
   /** `(number, name)` */
   validateFiniteNumber: $bindgen("node_validators.bind.ts", "validateFiniteNumber") as (
     number: unknown,

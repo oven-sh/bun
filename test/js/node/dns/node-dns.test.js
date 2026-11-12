@@ -895,6 +895,40 @@ describe("hostnames containing NUL bytes", () => {
   });
 });
 
+// setLocalAddress() refuses the address before the resolver gets it, as in Node.js v26.12.1:
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/dns/utils.js#L181-L186
+describe("local addresses containing NUL bytes", () => {
+  it.each([
+    ["dns.Resolver", dns.Resolver],
+    ["dns.promises.Resolver", dns_promises.Resolver],
+  ])("%s#setLocalAddress throws instead of truncating at the NUL", (_, Resolver) => {
+    const thrownBy = fn => {
+      try {
+        fn();
+      } catch (error) {
+        return { name: error.name, code: error.code, message: error.message };
+      }
+    };
+    const resolver = new Resolver();
+    expect({
+      ipv4: thrownBy(() => resolver.setLocalAddress("127.0.0.2\0.allowed.example")),
+      ipv6: thrownBy(() => resolver.setLocalAddress("127.0.0.1", "::1\0junk")),
+    }).toEqual({
+      ipv4: {
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "The argument 'ipv4' must be a string without null bytes. Received '127.0.0.2\\x00.allowed.example'",
+      },
+      ipv6: {
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "The argument 'ipv6' must be a string without null bytes. Received '::1\\x00junk'",
+      },
+    });
+    expect(thrownBy(() => resolver.setLocalAddress("127.0.0.1", "::1"))).toBeUndefined();
+  });
+});
+
 // Node treats a null option field the same as an absent one (its guards are
 // `!= null`), so e.g. `{ hints: null }` must not throw. https://github.com/oven-sh/bun/issues/37318
 describe("dns.lookup null option fields are treated as unset", () => {

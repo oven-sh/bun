@@ -7,6 +7,7 @@ const {
   validateFunction,
   validateArray,
   validateString,
+  validateStringWithoutNullBytes,
   validateBoolean,
   validateNumber,
   validateInt32,
@@ -261,9 +262,9 @@ function validateResolve(hostname: unknown, callback: ResolveCallback | undefine
 }
 
 function validateLocalAddresses(first: string, second?: string) {
-  validateString(first, "ipv4");
+  validateStringWithoutNullBytes(first, "ipv4");
   if (typeof second !== "undefined") {
-    validateString(second, "ipv6");
+    validateStringWithoutNullBytes(second, "ipv6");
   }
 }
 

@@ -326,11 +326,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let other = self.create_block();
         self.lower_condition(test, suspending, other);
         self.continue_in(suspending);
-        self.push_continue_target(arm.loop_statement, arm.resumed);
+        let cleans_up = self.cleans_up_before_next_iteration(arm.loop_statement);
+        let target = self.set_continue_target(arm.loop_statement, arm.resumed);
         self.lower_statement(yes);
         self.lower_statements(behind);
-        self.pop_jump_target();
-        self.jump(arm.resumed);
+        self.emit_continue(arm.loop_statement);
+        // What is cleaned up behind this asks for the target then.
+        if !cleans_up && let Some(target) = target {
+            self.set_continue_target(arm.loop_statement, target);
+        }
 
         self.continue_in(other);
         if no.is_some() {

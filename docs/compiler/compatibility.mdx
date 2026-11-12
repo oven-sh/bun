@@ -269,6 +269,8 @@ A path made from `import.meta.dirname` climbs at most one folder above the root 
 
 `--asset` follows no symbolic links inside a folder, so what they lead to isn't embedded. Where the build can see such a read, it warns and names the link to pass as an asset of its own (`TS100165`).
 
+`fs.stat()` gives an embedded file the modification time that it had when you built. A folder is as new as the newest embedded file in it, so two builds of the same files are identical.
+
 Your own code is in there as machine code, not as text. `fs.existsSync()` finds a compiled file, but its size is `0` and reading it fails with `ENOENT`.
 
 Some packages load their own files by a name that they put together when the program runs:

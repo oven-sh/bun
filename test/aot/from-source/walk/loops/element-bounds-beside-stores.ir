@@ -1,0 +1,17 @@
+# A loop compares its counter with an element, and its iterations store elements into another array: the element is read before the loop.
+# LIBRARY: own
+# -- source: main.ts
+# function raise(lengths: number[], counts: number[], i: number): void { for (let c = 0; c < lengths[i]; c++) counts[c] = counts[c] + 1 | 0; }
+# const lengths = [3, 1, 4, 1, 5], counts = [0, 0, 0, 0, 0, 0, 0, 0];
+# publish(() => { for (let i = 0; i < lengths.length; i++) { raise(lengths, counts, i); raise(lengths, lengths, 1); } return counts.join() + " " + lengths.join(); });
+# declare function publish(run: () => string): void;
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# The two arrays may be one.
+# CHECK: StrictEq {{*}} form=Bits
+# CHECK: isLoopHead=true
+# CHECK: Less {{*}} form=Integers
+# CHECK: Increment {{*}} form=Integers
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run()); };
+# SHELL: 5,3,3,2,1,0,0,0 8,1,4,1,5

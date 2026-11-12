@@ -4,12 +4,12 @@
 // STATISTIC: FallbackBlocksKeepingSiteCaches = 1
 function step(n: number) { return { done: n > 3, value: n }; }
 const D: string = JSON.parse('"done"'), V: string = JSON.parse('"value"');
-function odd(done: unknown, value: unknown): any { const o: any = {}; o[V] = value; o[D] = done; return o; }
+function odd(done: unknown, value: unknown): any { const o: any = JSON.parse("{}"); o[V] = value; o[D] = done; return o; }
 function go(c: any): unknown { const it = c.values(); let s: any = 0, r = it.next(); while (!r.done) { s += r.value; r = it.next(); } return s; }
 const own = (first: number) => ({ values() { let n = first; return { next() { return step(n++); } }; } });
 const late = { values() { let n = 0; return { next() { return odd(n > 2, n++); } }; } };
 const mixed = { values() { let n = 0; return { next() { return n & 1 ? step(n++) : odd(false, n++ * 100); } }; } };
-const getters = { values() { let n = 0; return { next() { const o = {}; Object.defineProperty(o, D, { get() { return n > 2; } }); Object.defineProperty(o, V, { get() { return n++ * 10; } }); return o; } }; } };
+const getters = { values() { let n = 0; return { next() { const o = JSON.parse("{}"); Object.defineProperty(o, D, { get() { return n > 2; } }); Object.defineProperty(o, V, { get() { return n++ * 10; } }); return o; } }; } };
 const thrower = { values() { let n = 0; return { next() { if (n++ > 1) throw new RangeError("no third"); return odd(false, n); } }; } };
 const frozen = { values() { let n = 0; return { next() { return Object.freeze(step(n += 2)); } }; } };
 const given: any[] = JSON.parse('[[1,2,3],[],["a","b"]]');

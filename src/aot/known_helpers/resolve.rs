@@ -7,7 +7,7 @@ use crate::modules::{
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingInitializer, BindingKind, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue};
-use bun_sema::hir::{BinOp, Chain, ExprId, ExprKind, MemberKey, NodeData};
+use bun_sema::hir::{BinOp, Chain, ExprId, ExprKind, FnId, MemberKey, NodeData};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, Files, Sym};
 use smallvec::SmallVec;
@@ -250,9 +250,17 @@ pub fn resolve_reference(
     })
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum PublicFieldAnswer {
+    Value,
+    DefinedObjectOrStoredValue,
+    Object,
+}
+
 pub struct PublicFieldCallee {
     pub file: FileId,
-    pub shape: Shape,
+    pub answer: PublicFieldAnswer,
+    /// The function that stores: whether it is strict decides what a refused store does.
     pub defines: HeldFunction,
 }
 
@@ -268,9 +276,31 @@ pub fn resolve_public_field(
     };
     let known = input.helpers.function(callee.file, held.definition)?;
     let is_certain = !callee.needs_guard() && callee.holds_from_the_start;
-    if known.shape.helper() != Helper::PublicField || !is_certain || !known.relies_on_facts {
+    let converts_key = known.shape == Shape::PublicFieldWithConvertedKey;
+    let is_known = match converts_key {
+        true => {
+            known.names_locked_globals
+                && calls_only_published_helpers(input, callee.file, held.definition)
+        }
+        false => known.relies_on_facts,
+    };
+    if !is_certain || !is_known {
         return None;
     }
+    let answer = match known.shape {
+        Shape::PublicFieldAnswersValue => PublicFieldAnswer::Value,
+        Shape::PublicFieldAnswersWhatDefiningAnswers => {
+            PublicFieldAnswer::DefinedObjectOrStoredValue
+        }
+        Shape::PublicFieldReturnsObject | Shape::PublicFieldWithConvertedKey => {
+            return Some(PublicFieldCallee {
+                file: callee.file,
+                answer: PublicFieldAnswer::Object,
+                defines: held,
+            });
+        }
+        _ => return None,
+    };
     let [reference] = known.references[..] else {
         return None;
     };
@@ -279,9 +309,32 @@ pub fn resolve_public_field(
     })?;
     (!defines.needs_guard).then_some(PublicFieldCallee {
         file: callee.file,
-        shape: known.shape,
+        answer,
         defines: defines.function,
     })
+}
+
+pub fn calls_only_published_helpers(
+    input: &ResolveInput<'_, '_>,
+    home: FileId,
+    function: FnId,
+) -> bool {
+    let Some(known) = input.helpers.function(home, function) else {
+        return false;
+    };
+    let relies_on_facts = !known.shape.replaces_itself()
+        || (known.relies_on_facts && known.is_named_only_to_be_called);
+    relies_on_facts
+        && known.references.iter().all(|&reference| match reference {
+            KnownReference::Loaded { .. } => resolve_loaded_reference(input, home, reference)
+                .is_some_and(|(file, called)| {
+                    calls_only_published_helpers(input, file, called.definition)
+                }),
+            _ => resolve_reference(input, home, reference, &|_| true).is_some_and(|called| {
+                !called.needs_guard
+                    && calls_only_published_helpers(input, home, called.function.definition)
+            }),
+        })
 }
 
 pub fn resolve_loaded_reference(

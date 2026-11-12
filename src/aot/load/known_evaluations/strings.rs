@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use bun_core::strings::{index_of, index_of_char_usize};
 
-use super::values::{Pattern, Value};
+use super::values::{Matcher, Pattern, Value};
 
 pub(super) fn parse_pattern(source: &[u8], flags: &[u8]) -> Option<Pattern> {
     let is_global = match flags {
@@ -29,6 +29,42 @@ pub(super) fn parse_pattern(source: &[u8], flags: &[u8]) -> Option<Pattern> {
         literal: literal.into(),
         is_global,
     })
+}
+
+pub(super) fn parse_matcher(source: &[u8], flags: &[u8]) -> Option<Matcher> {
+    if !flags.is_empty() {
+        return None;
+    }
+    if source == b"\\s+" {
+        return Some(Matcher::Blanks);
+    }
+    let literal = |source: &[u8]| parse_pattern(source, b"").map(|it| it.literal);
+    if let Some(rest) = source.strip_prefix(b"^") {
+        return literal(rest).map(Matcher::Start);
+    }
+    literal(source.strip_suffix(b"$")?).map(Matcher::End)
+}
+
+pub(super) fn is_match(text: &[u8], matcher: &Matcher) -> Option<bool> {
+    match matcher {
+        Matcher::Start(literal) => Some(text.starts_with(literal)),
+        Matcher::End(literal) => Some(text.ends_with(literal)),
+        Matcher::Blanks => text.is_ascii().then(|| text.iter().any(|&it| is_blank(it))),
+    }
+}
+
+pub(super) fn split_at_blanks(text: &[u8]) -> Option<Vec<Value>> {
+    if text.is_empty() || !text.is_ascii() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.iter().position(|&it| is_blank(it)) {
+        parts.push(Value::string(&rest[..at]));
+        rest = trim_start(&rest[at..]);
+    }
+    parts.push(Value::string(rest));
+    Some(parts)
 }
 
 pub(super) fn find_matches(text: &[u8], literal: &[u8], is_global: bool) -> Vec<usize> {

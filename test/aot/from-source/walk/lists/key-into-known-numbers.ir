@@ -20,9 +20,9 @@
 # -- end of source
 # f2 = score
 # RUN(EVENT): compile NumberKeysGuardedInIterations mechanisms=all
-# EVENT-NOT: statistic NumberKeysGuardedInIterations 0
+# EVENT: statistic NumberKeysGuardedInIterations 0
 # RUN(SCORE): walk f2 mechanisms=all
 # SCORE-LABEL: code f2:Body
-# SCORE: = TypeTest {{*}}testedType=i32
-# SCORE: = NumberToInteger
 # SCORE: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral
+# SCORE: inlineBuiltin=MathAbs
+# SCORE: = GetArrayElement {{*}}level=Proven [keyIsIntegral

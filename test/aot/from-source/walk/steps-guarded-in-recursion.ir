@@ -1,0 +1,20 @@
+# -- source: main.js
+# function even(n) { return n === 0 ? true : odd(n - 1); }
+# function odd(n) { return n === 0 ? false : even(n - 1); }
+# function down(x, d) { return d === 0 ? x : lower(x - 1, d - 1); }
+# function lower(x, d) { return d === 0 ? x : down(x - 1, d - 1); }
+# print(even(1000), odd(77), down(5, 8), down(2147483650, 4), down(-2147483648, 3), down(-9007199254740992, 3), down(9007199254740992, 1));
+# -- end of source
+# LIBRARY: own
+# A step of an exact integer round a cycle of calls is guarded in a specialized version of the body, and the generic version behind it takes what is no int32: the second step of a round asks nothing.
+# RUN: walk f1 mechanisms=all
+# CHECK: code f1:Body
+# CHECK: TypeTest v0 testedType=int[1, 2147483648]
+# CHECK: Sub {{*}} form=Integers
+# CHECK: StrictEq
+# CHECK: Sub {{*}} form=Integers
+# CHECK: CallDirect {{*}} function=f1
+# CHECK: form=CheckedIntegers
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: true true -3 2147483646 -2147483651 -9007199254740992 9007199254740991
+# ANSWERS-NEXT: exited with 0

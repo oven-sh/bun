@@ -348,6 +348,7 @@ bool canRequireOriginalOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMoc
 bool hasSynchronousMockFactory(Zig::GlobalObject*, const String& path, bool isOriginalSynchronous);
 bool isSpyMock(Zig::GlobalObject*, const String& path);
 #if ENABLE(AOT)
+bool hasRegisteredModuleMock(Zig::GlobalObject*, const String& path);
 bool canRequireMockOriginalAt(Zig::GlobalObject*, const String& path);
 // In `bun test` the require map holds a restored preload mock, which is dropped with the key.
 void didDeleteModuleMockKey(Zig::GlobalObject*, const String& key);

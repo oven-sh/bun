@@ -3,7 +3,7 @@ use super::answers::{
     MemberForm, MemberName, ObjectMemberKind, PositionTypes,
 };
 use super::class_stores::{
-    BindingStore, BindingStoreKind, StoreForm, StoreIndex, ThisOwner,
+    BindingStore, BindingStoreKind, StoreForm, StoreIndex, ThisOwner, WrittenStores,
     find_prototype_object_held_by, is_prototype_property,
 };
 use super::queries::Queries;
@@ -107,7 +107,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if !can_be_constructor_function(&hir[function]) || !bound.runtime.is_computed() {
             return None;
         }
-        if is_written_as_method(hir, bound, function) {
+        let written = self.c.written_stores(file);
+        if is_written_as_method(hir, bound, written, function) {
             return None;
         }
         let index = self.store_index(file);
@@ -503,7 +504,12 @@ fn is_stored_into(
     )
 }
 
-fn is_written_as_method(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId) -> bool {
+fn is_written_as_method(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    written: WrittenStores<'_>,
+    function: FnId,
+) -> bool {
     let FnOwner::Expr(expression) = bound.fns[function.idx()].owner else {
         return false;
     };
@@ -514,6 +520,7 @@ fn is_written_as_method(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId) 
         );
         let literal = bound.prop_owner[property.idx()];
         return is_accessor_of_descriptor
+            || written.is_named_prototype_literal(literal)
             || is_stored_into(hir, bound, literal, |place| {
                 is_prototype_property(hir, hir.skip_type_assertions(place))
             });
@@ -577,6 +584,10 @@ fn store_candidates(
             hir[candidate.store].pos,
             candidate.store,
         )
+    });
+    let stores = bound.move_inner_assignments_first(hir, stores, |candidate| {
+        let is_own = candidate.place == StorePlace::Instance && !candidate.is_stored_by_callee;
+        is_own.then_some(candidate.store)
     });
     StoreCandidates {
         stores,

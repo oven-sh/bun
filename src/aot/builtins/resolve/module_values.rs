@@ -136,14 +136,13 @@ impl Resolver<'_, '_> {
             },
             _ => return false,
         };
-        let statement = match bound.parent_of_expr(outermost) {
-            Parent::Stmt(statement) if matches!(hir[statement].kind, StmtKind::Expr(_)) => {
-                statement
+        match bound.parent_of_expr(outermost) {
+            Parent::Stmt(statement) => matches!(hir[statement].kind, StmtKind::Expr(_)),
+            Parent::VarInit(declaration) => {
+                bound.parent_of_stmt(bound.var_stmt[declaration.idx()]) == Parent::File
             }
-            Parent::VarInit(declaration) => bound.var_stmt[declaration.idx()],
-            _ => return false,
-        };
-        bound.parent_of_stmt(statement) == Parent::File
+            _ => false,
+        }
     }
 
     pub(super) fn classify_stores_to_exports(&mut self) {

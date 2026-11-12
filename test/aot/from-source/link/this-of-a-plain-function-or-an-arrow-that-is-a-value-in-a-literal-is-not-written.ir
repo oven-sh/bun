@@ -6,7 +6,7 @@
 # -- source: this-of-a-plain-function-or-an-arrow-that-is-a-value-in-a-literal-is-not-written.js
 # const reply = { plain: function () { return this && this.tag; }, arrow: () => typeof this, tag: "literal" };
 # globalThis.kept = reply;
-# const below = Object.create(reply);
+# const below = Object.create(globalThis.kept);
 # below.tag = "below";
 # console.log(below.plain(), below.arrow());
 # -- end of source

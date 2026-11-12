@@ -1,0 +1,16 @@
+# The generator that unmatchedOf passes is only stepped by the loop in firstOf, which walks its body. What its function's generators inherit is asked of the function, so the generator is made where the copy leaves for its call alone.
+# -- source: main.ts
+# declare const sink: any;
+# function firstOf(iter: any): any { if (iter !== undefined) { for (const value of iter) return value; } return undefined; }
+# function* unmatched(source: number[], target: number[]): any { for (const wanted of target) if (!source.includes(wanted)) yield wanted; }
+# function unmatchedOf(source: number[], target: number[]): any { return firstOf(unmatched(source, target)); }
+# sink({ unmatched, unmatchedOf });
+# -- end of source
+# f1 = firstOf, f2 = unmatched, f3 = unmatchedOf
+# RUN: walk f3:Body mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: coroutine(f2)
+# CHECK: MakesPlainGenerators
+# CHECK: frequency=Rare
+# CHECK: coroutine(f2)
+# CHECK-NOT: IsUnmodifiedGenerator

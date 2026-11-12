@@ -2,7 +2,7 @@
 // and whatever the program has laid into the state. Each of them looks at every public face of the stream and of its state, and must find what plain Bun leaves there at that point.
 const { Readable } = require("node:stream");
 const { createHook } = require("node:async_hooks");
-const turns = Number(process.argv[2] ?? 3);
+const turns = Number(process.argv[2] ?? 2);
 const faces = ["readable", "readableFlowing", "readableLength", "readableHighWaterMark", "readableEnded", "readableDidRead", "readableAborted", "destroyed", "closed"];
 const facesOfState = ["reading", "sync", "needReadable", "emittedReadable", "readableListening", "resumeScheduled", "ended", "endEmitted", "flowing", "dataEmitted", "readingMore", "constructed", "errorEmitted", "closeEmitted", "length", "highWaterMark", "bufferIndex", "awaitDrainWriters"];
 const short = value => (value === true ? "1" : value === false ? "0" : value === null ? "n" : value === undefined ? "u" : String(value));

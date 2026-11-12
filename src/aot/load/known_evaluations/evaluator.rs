@@ -1,19 +1,23 @@
 use std::rc::Rc;
 
+use bun_paths::platform::Posix;
+use bun_paths::resolve_path::dirname;
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::hir::{
-    BinOp, Call, CallId, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, IdList, PatId,
-    PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind,
+    BinOp, Call, CallId, Chain, ClassId, ExprId, ExprKind, File, Flags, FnBody, FnId, FnKind,
+    IdList, MemberKind, PatId, PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp, VarKind,
 };
+use bun_sema_driver::host::from_argument;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::EvaluatingCall;
 use super::strings;
-use super::values::{EnvironmentId, Global, Object, ObjectId, Value};
+use super::values::{EnvironmentId, Global, Matcher, Object, ObjectId, Value};
+use super::{CodeBeside, EvaluatingCall};
 
 const ALLOWANCE: u32 = 1 << 18;
-const TEXT_PER_SOURCE: usize = 8;
+pub(super) const TEXT_PER_SOURCE: usize = 8;
 const MAX_DEPTH: u32 = 256;
+const GLOBAL_ENVIRONMENT: EnvironmentId = EnvironmentId(1);
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Completion {
@@ -55,6 +59,10 @@ struct Environment {
 pub(super) struct Evaluator<'a, 's> {
     hir: &'a File<'s>,
     atoms: &'a Interner<'s>,
+    beside: &'a CodeBeside<'a>,
+    first_call: CallId,
+    files: FxHashMap<Rc<[u8]>, Option<Rc<[u8]>>>,
+    appended: u32,
     evals: FxHashSet<CallId>,
     calls_of_function: FxHashSet<CallId>,
     texts: Vec<(CallId, Vec<Rc<[u8]>>)>,
@@ -63,6 +71,11 @@ pub(super) struct Evaluator<'a, 's> {
     environments: Vec<Environment>,
     current: EnvironmentId,
     closures: FxHashMap<FnId, EnvironmentId>,
+    ends: FxHashMap<FnId, u32>,
+    prototypes: FxHashMap<FnId, FxHashMap<Rc<[u8]>, Value>>,
+    evaluating: FxHashSet<FnId>,
+    evaluating_methods: Vec<(FnId, FnId)>,
+    receiver: Value,
     entered: FxHashSet<FnId>,
     objects: Vec<Object>,
     journal: Vec<(Place, Contents)>,
@@ -77,8 +90,12 @@ impl<'a, 's> Evaluator<'a, 's> {
     pub(super) fn new(
         hir: &'a File<'s>,
         atoms: &'a Interner<'s>,
+        beside: &'a CodeBeside<'a>,
         calls: &[EvaluatingCall],
+        first_call: CallId,
+        text_allowance: usize,
     ) -> Self {
+        let appended = hir.text.len() as u32 - hir.written_text_end();
         let calls_of = |is_of_function: bool| {
             let calls = calls
                 .iter()
@@ -88,29 +105,94 @@ impl<'a, 's> Evaluator<'a, 's> {
         Evaluator {
             hir,
             atoms,
+            beside,
+            first_call,
+            files: FxHashMap::default(),
+            appended,
             evals: calls_of(false),
             calls_of_function: calls_of(true),
             texts: Vec::new(),
             noted: FxHashSet::default(),
-            text_allowance: hir.text.len() * TEXT_PER_SOURCE,
-            environments: vec![Environment {
-                is_of_function: true,
-                ..Environment::default()
-            }],
+            text_allowance,
+            environments: vec![
+                Environment {
+                    parent: Some(GLOBAL_ENVIRONMENT),
+                    is_of_function: true,
+                    ..Environment::default()
+                },
+                Environment {
+                    is_of_function: true,
+                    ..Environment::default()
+                },
+            ],
             current: EnvironmentId(0),
             closures: FxHashMap::default(),
+            ends: FxHashMap::default(),
+            prototypes: FxHashMap::default(),
+            evaluating: calls
+                .iter()
+                .flat_map(|it| it.functions.iter().copied())
+                .collect(),
+            evaluating_methods: Vec::new(),
+            receiver: Value::Unknown,
             entered: FxHashSet::default(),
             objects: Vec::new(),
             journal: Vec::new(),
             alternatives: 0,
             returned: None,
-            allowance: ALLOWANCE,
+            allowance: ALLOWANCE.saturating_add(appended),
             repetitions: 0,
             depth: 0,
         }
     }
 
-    pub(super) fn find_texts(mut self, calls: &[EvaluatingCall]) -> Vec<(CallId, Vec<Rc<[u8]>>)> {
+    fn renew_allowance(&mut self) {
+        self.allowance = ALLOWANCE.saturating_add(self.appended);
+    }
+
+    fn declare_module_names(&mut self) {
+        let exports = self.create(Object::unseen());
+        let mut module = Object::unseen();
+        module.set(b"exports", exports.clone());
+        let module = self.create(module);
+        let folder = Value::Path(dirname::<Posix>(self.beside.path).into());
+        let names = [
+            (known::require, Value::Global(Global::Require)),
+            (known::exports, exports),
+            (known::module, module),
+            (self.atoms.intern(b"__dirname"), folder),
+            (
+                self.atoms.intern(b"__filename"),
+                Value::Path(self.beside.path.into()),
+            ),
+        ];
+        for (name, value) in names {
+            self.declare(EnvironmentId(0), name, value);
+        }
+        let hir = self.hir;
+        for import in hir.imports.iter().filter(|it| !it.type_only) {
+            let Some(module) = Global::of_module(self.atoms.bytes(import.spec)) else {
+                continue;
+            };
+            for whole in [import.default, import.namespace] {
+                if whole.is_some() {
+                    self.declare(EnvironmentId(0), whole, Value::Global(module));
+                }
+            }
+            for spec in import.named.iter() {
+                let spec = hir[spec];
+                if let Some(value) = module.property(self.atoms.bytes(spec.imported)) {
+                    self.declare(EnvironmentId(0), spec.local, Value::Global(value));
+                }
+            }
+        }
+    }
+
+    pub(super) fn find_texts(
+        mut self,
+        calls: &[EvaluatingCall],
+    ) -> (Vec<(CallId, Vec<Rc<[u8]>>)>, usize) {
+        self.declare_module_names();
         self.hoist(self.hir.body);
         self.statements(self.hir.body);
         for call in calls {
@@ -119,12 +201,132 @@ impl<'a, 's> Evaluator<'a, 's> {
                 let own = self.closures.get(&function).copied();
                 around = own.unwrap_or(around);
                 if !self.entered.contains(&function) {
-                    self.allowance = ALLOWANCE;
-                    around = self.run(function, around, &[]).0;
+                    self.renew_allowance();
+                    around = self.run(function, around, &[], Value::Unknown).0;
                 }
             }
         }
-        self.texts
+        self.construct_with_constants();
+        (self.texts, self.text_allowance)
+    }
+
+    fn construct_with_constants(&mut self) {
+        let hir = self.hir;
+        let methods = self.evaluating_methods.iter();
+        let mut constructors: Vec<FnId> = methods.map(|it| it.0).collect();
+        constructors.sort_unstable_by_key(|it| it.0);
+        constructors.dedup();
+        if constructors.is_empty() {
+            return;
+        }
+        self.renew_allowance();
+        let outer = self.current;
+        type Arguments = Vec<(bool, Option<Rc<[u8]>>)>;
+        let mut constructed: FxHashSet<(FnId, Arguments)> = FxHashSet::default();
+        for expression in hir.exprs.iter() {
+            let ExprKind::New(call) = expression.kind else {
+                continue;
+            };
+            let site = hir[call];
+            let ExprKind::Ident(name) = hir[hir.skip_type_assertions(site.callee)].kind else {
+                continue;
+            };
+            for &constructor in &constructors {
+                let Some(&around) = self.closures.get(&constructor) else {
+                    continue;
+                };
+                self.current = around;
+                if self.read(name) != Value::Function(constructor, around) {
+                    continue;
+                }
+                let args: Vec<Value> = hir.ids(site.args).map(|it| self.constant(it)).collect();
+                let key = args
+                    .iter()
+                    .map(|it| (it.as_string().is_some(), it.to_text()));
+                if constructed.insert((constructor, key.collect())) {
+                    let instance = self.construct(constructor, around, &args);
+                    self.call_evaluating_methods(constructor, &instance);
+                }
+            }
+        }
+        self.current = outer;
+    }
+
+    fn call_evaluating_methods(&mut self, constructor: FnId, instance: &Value) {
+        for index in 0..self.evaluating_methods.len() {
+            let (owner, method) = self.evaluating_methods[index];
+            let around = self.closures.get(&method).copied();
+            if let Some(around) = around.filter(|_| owner == constructor) {
+                let args = vec![Value::Unknown; self.hir[method].params.len()];
+                self.call_function(method, around, &args, instance.clone());
+            }
+        }
+    }
+
+    fn constant(&self, expression: ExprId) -> Value {
+        let hir = self.hir;
+        match hir[hir.skip_type_assertions(expression)].kind {
+            ExprKind::Null => Value::Null,
+            ExprKind::True => Value::Boolean(true),
+            ExprKind::False => Value::Boolean(false),
+            ExprKind::Number(number) => Value::Number(hir.numbers[number as usize]),
+            ExprKind::String(text) => Value::string(self.atoms.bytes(text)),
+            _ => Value::Unknown,
+        }
+    }
+
+    fn construct(&mut self, function: FnId, around: EnvironmentId, args: &[Value]) -> Value {
+        let instance = self.create(Object::instance(function));
+        match self.call_function(function, around, args, instance.clone()) {
+            object @ Value::Object(_) => object,
+            _ => instance,
+        }
+    }
+
+    fn has_evaluating_methods(&self, constructor: FnId) -> bool {
+        let mut methods = self.evaluating_methods.iter();
+        methods.any(|it| it.0 == constructor)
+    }
+
+    fn set_on_prototype(&mut self, constructor: FnId, key: &[u8], value: Value) {
+        if let Value::Function(method, _) = value
+            && self.evaluating.contains(&method)
+        {
+            self.evaluating_methods.push((constructor, method));
+        }
+        let properties = self.prototypes.entry(constructor).or_default();
+        properties.insert(key.into(), value);
+    }
+
+    fn class(&mut self, class: ClassId) -> Value {
+        let hir = self.hir;
+        let current = self.current;
+        let mut constructor = None;
+        for member in hir[class].members.iter() {
+            let function = hir[member].func;
+            if function.is_none() || matches!(hir[function].body, FnBody::None) {
+                continue;
+            }
+            self.closures.insert(function, current);
+            if hir.runtime_member_kind(member) == MemberKind::Constructor {
+                constructor = Some(function);
+            }
+        }
+        let Some(constructor) = constructor else {
+            return Value::Unknown;
+        };
+        for member in hir[class].members.iter() {
+            let it = hir[member];
+            if hir.runtime_member_kind(member) == MemberKind::Method
+                && !it.flags.contains(Flags::STATIC)
+                && let PropKey::Name(name) = it.key
+                && self.closures.contains_key(&it.func)
+            {
+                let key = self.atoms.bytes(name);
+                self.set_on_prototype(constructor, key, Value::Function(it.func, current));
+            }
+        }
+        Value::Function(constructor, current)
     }
 
     fn pays(&mut self, cost: usize) -> bool {
@@ -271,12 +473,13 @@ impl<'a, 's> Evaluator<'a, 's> {
             b"Array" => Value::Global(Global::Array),
             b"String" => Value::Global(Global::String),
             b"RegExp" => Value::Global(Global::RegExp),
+            b"URL" => Value::Global(Global::Url),
             _ => Value::Unknown,
         }
     }
 
     fn assign(&mut self, name: Atom, value: Value) {
-        let environment = self.environment_of(name).unwrap_or(EnvironmentId(0));
+        let environment = self.environment_of(name).unwrap_or(GLOBAL_ENVIRONMENT);
         self.declare(environment, name, value);
     }
 
@@ -350,11 +553,17 @@ impl<'a, 's> Evaluator<'a, 's> {
         function: FnId,
         around: EnvironmentId,
         args: &[Value],
+        receiver: Value,
     ) -> (EnvironmentId, Value) {
         let hir = self.hir;
         let func = hir[function];
         let returned = self.returned.take();
         let outer = self.current;
+        let receiver = match func.kind {
+            FnKind::Arrow => self.receiver.clone(),
+            _ => receiver,
+        };
+        let outer_receiver = std::mem::replace(&mut self.receiver, receiver);
         self.entered.insert(function);
         self.environments.push(Environment {
             parent: Some(around),
@@ -405,15 +614,26 @@ impl<'a, 's> Evaluator<'a, 's> {
         };
         self.current = outer;
         self.returned = returned;
+        self.receiver = outer_receiver;
         (own, result)
     }
 
-    fn call_function(&mut self, function: FnId, around: EnvironmentId, args: &[Value]) -> Value {
+    fn call_function(
+        &mut self,
+        function: FnId,
+        around: EnvironmentId,
+        args: &[Value],
+        receiver: Value,
+    ) -> Value {
         let func = self.hir[function];
         if func.flags.intersects(Flags::ASYNC | Flags::GENERATOR) {
             return Value::Unknown;
         }
-        if !args.is_empty() && !args.iter().any(Value::is_known) {
+        let is_instance = match &receiver {
+            Value::Object(id) => self.objects[id.0].constructor.is_some(),
+            _ => false,
+        };
+        if !args.is_empty() && !is_instance && !args.iter().any(Value::is_known) {
             return Value::Unknown;
         }
         let handed = match args.is_empty() {
@@ -428,7 +648,7 @@ impl<'a, 's> Evaluator<'a, 's> {
         self.allowance = share;
         self.repetitions += 1;
         self.depth += 4;
-        let (_, result) = self.run(function, around, handed);
+        let (_, result) = self.run(function, around, handed, receiver);
         self.depth -= 4;
         self.repetitions -= 1;
         let is_exhausted = self.allowance == 0;
@@ -439,16 +659,113 @@ impl<'a, 's> Evaluator<'a, 's> {
         }
     }
 
-    fn call_value(&mut self, callee: &Value, args: &[Value]) -> Value {
+    fn call_value(&mut self, callee: &Value, args: &[Value], receiver: Value) -> Value {
         match callee {
-            Value::Function(function, around) => self.call_function(*function, *around, args),
+            Value::Function(function, around) => {
+                self.call_function(*function, *around, args, receiver)
+            }
             Value::Global(Global::String) => match args.first() {
+                Some(value @ Value::Function(..)) => {
+                    let source = self.text_of(value);
+                    source.map_or(Value::Unknown, Value::String)
+                }
                 Some(value) => value.to_text().map_or(Value::Unknown, Value::String),
                 None => Value::string(b""),
             },
             Value::Global(Global::RegExp) => self.create_pattern(args),
             Value::Global(Global::Array) => self.create_array_of(args.to_vec()),
+            Value::Global(Global::Require) => {
+                let module = args.first().and_then(Value::as_string);
+                let module = module.and_then(|it| Global::of_module(it));
+                module.map_or(Value::Unknown, Value::Global)
+            }
+            Value::Global(Global::RequireResolve) => match args {
+                [Value::String(specifier)] if is_relative(specifier) => {
+                    self.join_path(&dirname::<Posix>(self.beside.path).into(), specifier)
+                }
+                _ => Value::Unknown,
+            },
+            Value::Global(Global::ReadFileSync) => self.read_file(args),
+            Value::Global(Global::PathDirname) => match args {
+                [Value::Path(path)] => Value::Path(dirname::<Posix>(path).into()),
+                _ => Value::Unknown,
+            },
+            Value::Global(Global::PathJoin) => {
+                let Some((Value::Path(path), rest)) = args.split_first() else {
+                    return Value::Unknown;
+                };
+                let mut joined = Rc::clone(path);
+                for part in rest {
+                    let Value::String(part) = part else {
+                        return Value::Unknown;
+                    };
+                    match self.join_path(&joined, part) {
+                        Value::Path(path) => joined = path,
+                        _ => return Value::Unknown,
+                    }
+                }
+                Value::Path(joined)
+            }
+            Value::Global(Global::FileUrlToPath) => match args {
+                [path @ Value::Path(_)] => path.clone(),
+                _ => Value::Unknown,
+            },
+            Value::Evaluated => self.create(Object::unseen()),
             _ => Value::Unknown,
+        }
+    }
+
+    fn join_path(&self, folder: &Rc<[u8]>, relative: &[u8]) -> Value {
+        match relative.first() {
+            Some(b'/') | None => Value::Unknown,
+            Some(_) => Value::Path(from_argument(folder, relative).into()),
+        }
+    }
+
+    fn read_file(&mut self, args: &[Value]) -> Value {
+        let Some(Value::Path(path)) = args.first() else {
+            return Value::Unknown;
+        };
+        let encoding = match args.get(1) {
+            Some(Value::Object(id)) => self.objects[id.0].get(b"encoding"),
+            Some(value) => value.clone(),
+            None => Value::Undefined,
+        };
+        let is_text = match &encoding {
+            Value::Undefined | Value::Null => false,
+            Value::String(name) if matches!(&name[..], b"utf8" | b"utf-8" | b"UTF-8" | b"UTF8") => {
+                true
+            }
+            _ => return Value::Unknown,
+        };
+        let contents = match self.files.get(path) {
+            Some(contents) => contents.clone(),
+            None => {
+                let contents = (self.beside.read_file)(path);
+                let contents = contents.filter(|it| std::str::from_utf8(it).is_ok());
+                let contents: Option<Rc<[u8]>> = contents.map(Rc::from);
+                let length = contents.as_ref().map_or(0, |it| it.len());
+                self.text_allowance += length * TEXT_PER_SOURCE;
+                let added = u32::try_from(4 * length).unwrap_or(u32::MAX);
+                self.allowance = self.allowance.saturating_add(added);
+                self.files.insert(Rc::clone(path), contents.clone());
+                contents
+            }
+        };
+        match contents {
+            Some(contents) if is_text => Value::String(contents),
+            Some(contents) => Value::Contents(contents),
+            None => Value::Unknown,
+        }
+    }
+
+    fn has_own_property(&self, object: Option<&Value>, key: Option<&Value>) -> Value {
+        let (Some(Value::Object(id)), Some(Value::String(key))) = (object, key) else {
+            return Value::Unknown;
+        };
+        match self.objects[id.0].keys() {
+            Some(keys) => Value::Boolean(keys.iter().any(|it| it == key)),
+            None => Value::Unknown,
         }
     }
 
@@ -471,8 +788,7 @@ impl<'a, 's> Evaluator<'a, 's> {
             Some(Value::String(flags)) => flags,
             Some(_) => return Value::Unknown,
         };
-        let pattern = strings::parse_pattern(source, flags);
-        pattern.map_or(Value::Unknown, |it| Value::Pattern(Rc::new(it)))
+        pattern_of(source, flags)
     }
 
     fn hoist(&mut self, list: IdList<StmtId>) {
@@ -491,6 +807,7 @@ impl<'a, 's> Evaluator<'a, 's> {
             {
                 let current = self.current;
                 self.closures.insert(function, current);
+                self.ends.insert(function, hir[statement].loc.end);
                 self.declare(
                     current,
                     hir[function].name,
@@ -679,7 +996,8 @@ impl<'a, 's> Evaluator<'a, 's> {
             }
             StmtKind::Class(class) => {
                 let (name, current) = (hir[class].name, self.current);
-                self.declare(current, name, Value::Unknown);
+                let value = self.class(class);
+                self.declare(current, name, value);
                 Completion::Normal
             }
             StmtKind::Return(expression) => {
@@ -897,6 +1215,8 @@ impl<'a, 's> Evaluator<'a, 's> {
         let hir = self.hir;
         match hir[expression].kind {
             ExprKind::Ident(name) => self.read(name),
+            ExprKind::This => self.receiver.clone(),
+            ExprKind::Class(class) => self.class(class),
             ExprKind::Null => Value::Null,
             ExprKind::True => Value::Boolean(true),
             ExprKind::False => Value::Boolean(false),
@@ -909,17 +1229,19 @@ impl<'a, 's> Evaluator<'a, 's> {
                 }
             }
             ExprKind::Regex { pattern, flags } => {
-                let (source, flags) = (self.atoms.bytes(pattern), self.atoms.bytes(flags));
-                let pattern = strings::parse_pattern(source, flags);
-                pattern.map_or(Value::Unknown, |it| Value::Pattern(Rc::new(it)))
+                pattern_of(self.atoms.bytes(pattern), self.atoms.bytes(flags))
             }
             ExprKind::Template { exprs } => {
                 let mut texts = hir.ids(hir.template_texts(exprs));
                 let mut joined = Vec::new();
                 let mut is_known = true;
+                let mut path = None;
                 joined.extend(texts.next().map_or(&[][..], |it| self.atoms.bytes(it)));
                 for substitution in hir.ids(exprs) {
                     match self.expression(substitution) {
+                        Value::Path(start) if joined.is_empty() && path.is_none() => {
+                            path = Some(start);
+                        }
                         value if !is_known || !value.is_known() => is_known = false,
                         value => match self.text_of(&value) {
                             Some(text) => joined.extend_from_slice(&text),
@@ -928,11 +1250,13 @@ impl<'a, 's> Evaluator<'a, 's> {
                     }
                     joined.extend(texts.next().map_or(&[][..], |it| self.atoms.bytes(it)));
                 }
-                match is_known {
-                    true => self.string(joined),
-                    false => Value::Unknown,
+                match path {
+                    _ if !is_known => Value::Unknown,
+                    Some(path) => append_to_path(&path, &joined),
+                    None => self.string(joined),
                 }
             }
+            ExprKind::ImportMeta => Value::Global(Global::ImportMeta),
             ExprKind::Array(list) => {
                 let mut array = Object::array(Vec::new());
                 for element in hir.ids(list) {
@@ -1001,6 +1325,7 @@ impl<'a, 's> Evaluator<'a, 's> {
             ExprKind::Fn(function) => {
                 let current = self.current;
                 self.closures.insert(function, current);
+                self.ends.insert(function, hir[expression].end);
                 Value::Function(function, current)
             }
             ExprKind::Dot { obj, name, .. } => {
@@ -1017,8 +1342,7 @@ impl<'a, 's> Evaluator<'a, 's> {
             }
             ExprKind::Call(call) => self.call(call, hir[call]),
             ExprKind::New(call) if self.calls_of_function.contains(&call) => {
-                self.note_call_of_function(call, hir[call]);
-                Value::Unknown
+                self.evaluate_function(call)
             }
             ExprKind::New(call) => {
                 let callee = self.expression(hir[call].callee);
@@ -1026,6 +1350,18 @@ impl<'a, 's> Evaluator<'a, 's> {
                 match (callee, args) {
                     (Value::Global(Global::RegExp), Some(args)) => self.create_pattern(&args),
                     (Value::Global(Global::Array), Some(args)) => self.create_array_of(args),
+                    (Value::Global(Global::Url), Some(args)) => match &args[..] {
+                        [Value::String(relative), Value::Path(path)] if is_relative(relative) => {
+                            self.join_path(&dirname::<Posix>(path).into(), relative)
+                        }
+                        _ => Value::Unknown,
+                    },
+                    (Value::Evaluated, Some(_)) => self.create(Object::unseen()),
+                    (Value::Function(function, around), Some(args))
+                        if self.has_evaluating_methods(function) =>
+                    {
+                        self.construct(function, around, &args)
+                    }
                     _ => Value::Unknown,
                 }
             }
@@ -1056,7 +1392,23 @@ impl<'a, 's> Evaluator<'a, 's> {
     fn text_of(&mut self, value: &Value) -> Option<Rc<[u8]>> {
         match value {
             Value::Object(_) => self.join(value, b","),
+            Value::Function(function, _) => self.source_of(*function),
             _ => value.to_text(),
+        }
+    }
+
+    fn source_of(&mut self, function: FnId) -> Option<Rc<[u8]>> {
+        let hir = self.hir;
+        let end = *self.ends.get(&function)?;
+        let source = match hir.is_js {
+            true => hir
+                .text
+                .get(hir[function].text_start as usize..end as usize)?,
+            false => return None,
+        };
+        match self.string(source.to_vec()) {
+            Value::String(source) => Some(source),
+            _ => None,
         }
     }
 
@@ -1083,7 +1435,30 @@ impl<'a, 's> Evaluator<'a, 's> {
 
     fn property(&self, object: &Value, key: &[u8]) -> Value {
         match object {
-            Value::Object(id) => self.objects[id.0].get(key),
+            Value::Object(id) => {
+                let object = &self.objects[id.0];
+                match (object.get(key), object.constructor, object.parent) {
+                    (Value::Undefined, Some(constructor), _) => {
+                        self.property_of_prototype(constructor, key)
+                    }
+                    (Value::Undefined, None, Some(parent)) if parent.0 < id.0 => {
+                        self.property(&Value::Object(parent), key)
+                    }
+                    (value, ..) => value,
+                }
+            }
+            Value::Global(Global::ImportMeta) => match key {
+                b"url" | b"filename" | b"path" => Value::Path(self.beside.path.into()),
+                b"dirname" | b"dir" => Value::Path(dirname::<Posix>(self.beside.path).into()),
+                _ => Value::Unknown,
+            },
+            Value::Global(global) => {
+                let value = global.property(key);
+                value.map_or(Value::Unknown, Value::Global)
+            }
+            Value::Path(path) if key == b"pathname" => Value::Path(Rc::clone(path)),
+            Value::Function(function, _) if key == b"prototype" => Value::Prototype(*function),
+            Value::Prototype(constructor) => self.property_of_prototype(*constructor, key),
             Value::String(text) if text.is_ascii() => {
                 if key == b"length" {
                     return Value::Number(text.len() as f64);
@@ -1106,6 +1481,12 @@ impl<'a, 's> Evaluator<'a, 's> {
             }
             _ => Value::Unknown,
         }
+    }
+
+    fn property_of_prototype(&self, constructor: FnId, key: &[u8]) -> Value {
+        let properties = self.prototypes.get(&constructor);
+        let value = properties.and_then(|it| it.get(key));
+        value.cloned().unwrap_or(Value::Unknown)
     }
 
     fn unary(&mut self, op: UnOp, operand: ExprId) -> Value {
@@ -1140,8 +1521,17 @@ impl<'a, 's> Evaluator<'a, 's> {
                 Value::Boolean(_) => Value::string(b"boolean"),
                 Value::Number(_) => Value::string(b"number"),
                 Value::String(_) => Value::string(b"string"),
-                Value::Function(..) | Value::Global(_) => Value::string(b"function"),
-                Value::Null | Value::Object(_) | Value::Pattern(_) => Value::string(b"object"),
+                Value::Global(global) if !global.is_function() => Value::string(b"object"),
+                Value::Function(..) | Value::Evaluated | Value::Global(_) => {
+                    Value::string(b"function")
+                }
+                Value::Path(_) => Value::Unknown,
+                Value::Null
+                | Value::Object(_)
+                | Value::Pattern(_)
+                | Value::Matcher(_)
+                | Value::Contents(_)
+                | Value::Prototype(_) => Value::string(b"object"),
             },
             _ => Value::Unknown,
         }
@@ -1177,8 +1567,15 @@ impl<'a, 's> Evaluator<'a, 's> {
             sum = match (&sum, &value) {
                 (Value::Unknown, _) | (_, Value::Unknown) => Value::Unknown,
                 (Value::Number(left), Value::Number(right)) => Value::Number(left + right),
-                (Value::String(_) | Value::Object(_), _)
-                | (_, Value::String(_) | Value::Object(_)) => {
+                (Value::Path(path), Value::String(added)) => append_to_path(path, added),
+                (
+                    Value::String(_) | Value::Contents(_) | Value::Object(_) | Value::Function(..),
+                    _,
+                )
+                | (
+                    _,
+                    Value::String(_) | Value::Contents(_) | Value::Object(_) | Value::Function(..),
+                ) => {
                     let (left, right) = (self.text_of(&sum), self.text_of(&value));
                     if let (Some(left), Some(right)) = (left, right) {
                         text = Some([&left[..], &right[..]].concat());
@@ -1232,6 +1629,9 @@ impl<'a, 's> Evaluator<'a, 's> {
                 BinOp::Mul => Value::Number(left * right),
                 BinOp::Div => Value::Number(left / right),
                 BinOp::Rem => Value::Number(left % right),
+                BinOp::BitOr => Value::Number(f64::from(to_int32(left) | to_int32(right))),
+                BinOp::BitAnd => Value::Number(f64::from(to_int32(left) & to_int32(right))),
+                BinOp::BitXor => Value::Number(f64::from(to_int32(left) ^ to_int32(right))),
                 BinOp::Lt => Value::Boolean(left < right),
                 BinOp::Le => Value::Boolean(left <= right),
                 BinOp::Gt => Value::Boolean(left > right),
@@ -1286,9 +1686,23 @@ impl<'a, 's> Evaluator<'a, 's> {
         match hir[hir.skip_type_assertions(target)].kind {
             ExprKind::Ident(name) => self.assign(name, value),
             ExprKind::Dot { obj, name, .. } => {
-                if let Value::Object(id) = self.expression(obj) {
-                    let key = self.atoms.bytes(name);
-                    self.change_object(id, |object| object.set(key, value));
+                let key = self.atoms.bytes(name);
+                match self.expression(obj) {
+                    Value::Object(id) => {
+                        self.change_object(id, |object| object.set(key, value));
+                    }
+                    Value::Prototype(constructor) => {
+                        self.set_on_prototype(constructor, key, value);
+                    }
+                    Value::Function(constructor, _) if key == b"prototype" => {
+                        if let Value::Object(id) = value {
+                            let properties = self.objects[id.0].properties.clone();
+                            for (key, value) in properties {
+                                self.set_on_prototype(constructor, &key, value);
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
             ExprKind::Index { obj, index, .. } => {
@@ -1331,15 +1745,22 @@ impl<'a, 's> Evaluator<'a, 's> {
     fn call(&mut self, call: CallId, site: Call) -> Value {
         let hir = self.hir;
         if self.evals.contains(&call) {
-            let args = self.arguments(site);
-            if let Some(Value::String(text)) = args.iter().flatten().next() {
-                self.note_texts(call, vec![Rc::clone(text)]);
-            }
-            return Value::Unknown;
+            let args = self.arguments(self.written_site(call));
+            let Some(Value::String(text)) = args.iter().flatten().next() else {
+                return Value::Unknown;
+            };
+            let text = [Rc::clone(text)];
+            let current = self.current;
+            return match self.known_function(call, &text, current) {
+                Some(function) => function,
+                None => {
+                    self.note_texts(call, text.to_vec());
+                    Value::Unknown
+                }
+            };
         }
         if self.calls_of_function.contains(&call) {
-            self.note_call_of_function(call, site);
-            return Value::Unknown;
+            return self.evaluate_function(call);
         }
         let callee = hir.skip_type_assertions(site.callee);
         let method = match hir[callee].kind {
@@ -1366,14 +1787,17 @@ impl<'a, 's> Evaluator<'a, 's> {
         }
         let callee = self.expression(callee);
         match self.arguments(site) {
-            Some(args) if site.chain == Chain::No => self.call_value(&callee, &args),
+            Some(args) if site.chain == Chain::No => {
+                self.call_value(&callee, &args, Value::Unknown)
+            }
             _ => Value::Unknown,
         }
     }
 
     fn note_texts(&mut self, call: CallId, arguments: Vec<Rc<[u8]>>) {
         let length = arguments.iter().map(|it| it.len()).sum::<usize>();
-        if self.noted.insert((call, arguments.clone()))
+        if call.0 >= self.first_call.0
+            && self.noted.insert((call, arguments.clone()))
             && self.pays_for_text(length * 16)
             && let Some(left) = self.text_allowance.checked_sub(length)
         {
@@ -1382,14 +1806,51 @@ impl<'a, 's> Evaluator<'a, 's> {
         }
     }
 
-    fn note_call_of_function(&mut self, call: CallId, site: Call) {
+    fn written_site(&self, call: CallId) -> Call {
+        let args = self.hir.written_args(call);
+        Call {
+            args,
+            ..self.hir[call]
+        }
+    }
+
+    fn evaluate_function(&mut self, call: CallId) -> Value {
+        let site = self.written_site(call);
         let args = self.arguments(site);
         let texts = args.iter().flatten().map(|it| it.as_string().cloned());
-        if let Some(texts) = texts.collect::<Option<Vec<Rc<[u8]>>>>()
-            && texts.len() == site.args.len()
-        {
-            self.note_texts(call, texts);
+        let Some(texts) = texts.collect::<Option<Vec<Rc<[u8]>>>>() else {
+            return Value::Unknown;
+        };
+        if texts.len() != site.args.len() {
+            return Value::Unknown;
         }
+        if let Some(function) = self.known_function(call, &texts, GLOBAL_ENVIRONMENT) {
+            return function;
+        }
+        self.note_texts(call, texts);
+        Value::Evaluated
+    }
+
+    fn known_function(
+        &mut self,
+        call: CallId,
+        texts: &[Rc<[u8]>],
+        around: EnvironmentId,
+    ) -> Option<Value> {
+        let hir = self.hir;
+        let mut known = hir.known_evaluations_of(call).iter();
+        let evaluation = known.find(|it| {
+            let arguments = hir.ids(it.arguments);
+            it.arguments.len as usize == texts.len()
+                && (arguments.zip(texts)).all(|(atom, text)| *self.atoms.bytes(atom) == **text)
+        })?;
+        let root = hir.skip_type_assertions(evaluation.function);
+        let ExprKind::Fn(function) = hir[root].kind else {
+            return None;
+        };
+        self.closures.insert(function, around);
+        self.ends.insert(function, hir[root].end);
+        Some(Value::Function(function, around))
     }
 
     fn call_method(&mut self, receiver: &Value, name: &[u8], args: &[Value]) -> Value {
@@ -1398,17 +1859,43 @@ impl<'a, 's> Evaluator<'a, 's> {
             Value::Object(id) if self.objects[id.0].is_array => {
                 self.call_array_method(*id, name, args)
             }
-            Value::Object(id) => {
-                let method = self.objects[id.0].get(name);
-                self.call_value(&method, args)
+            Value::Matcher(matcher) if name == b"test" => match args {
+                [Value::String(text)] => {
+                    let is_match = strings::is_match(text, matcher);
+                    is_match.map_or(Value::Unknown, Value::Boolean)
+                }
+                _ => Value::Unknown,
+            },
+            Value::Contents(text) if name == b"toString" => match args {
+                [] => Value::String(Rc::clone(text)),
+                [Value::String(encoding)] if matches!(&encoding[..], b"utf8" | b"utf-8") => {
+                    Value::String(Rc::clone(text))
+                }
+                _ => Value::Unknown,
+            },
+            Value::Global(Global::HasOwnProperty) if name == b"call" => {
+                self.has_own_property(args.first(), args.get(1))
+            }
+            Value::Object(_) if name == b"hasOwnProperty" => {
+                self.has_own_property(Some(receiver), args.first())
+            }
+            Value::Object(_) => {
+                let method = self.property(receiver, name);
+                self.call_value(&method, args, receiver.clone())
             }
             Value::Function(function, around) if name == b"call" => {
+                let receiver = args.first().cloned().unwrap_or(Value::Unknown);
                 let args = args.get(1..).unwrap_or_default();
-                self.call_function(*function, *around, args)
+                self.call_function(*function, *around, args, receiver)
+            }
+            Value::Function(function, _) if name == b"toString" => {
+                let source = self.source_of(*function);
+                source.map_or(Value::Unknown, Value::String)
             }
             Value::Function(function, around) if name == b"apply" => {
+                let receiver = args.first().cloned().unwrap_or(Value::Unknown);
                 match args.get(1).and_then(|it| self.elements_of(it)) {
-                    Some(args) => self.call_function(*function, *around, &args),
+                    Some(args) => self.call_function(*function, *around, &args, receiver),
                     None => Value::Unknown,
                 }
             }
@@ -1418,11 +1905,26 @@ impl<'a, 's> Evaluator<'a, 's> {
                 Some(Value::Unknown) => Value::Unknown,
                 _ => Value::Boolean(false),
             },
+            Value::Global(_) => {
+                let method = self.property(receiver, name);
+                self.call_value(&method, args, receiver.clone())
+            }
             _ => Value::Unknown,
         }
     }
 
     fn call_static_of_object(&mut self, name: &[u8], args: &[Value]) -> Value {
+        if name == b"create" && args.len() == 1 {
+            let parent = match &args[0] {
+                Value::Object(id) => Some(*id),
+                Value::Null => None,
+                _ => return Value::Unknown,
+            };
+            return self.create(Object {
+                parent,
+                ..Object::default()
+            });
+        }
         let Some(Value::Object(id)) = args.first() else {
             return Value::Unknown;
         };
@@ -1456,6 +1958,7 @@ impl<'a, 's> Evaluator<'a, 's> {
                 let parts = match &args[0] {
                     Value::String(separator) => strings::split(text, separator),
                     Value::Pattern(pattern) => strings::split(text, &pattern.literal),
+                    Value::Matcher(it) if **it == Matcher::Blanks => strings::split_at_blanks(text),
                     _ => None,
                 };
                 match parts {
@@ -1501,7 +2004,7 @@ impl<'a, 's> Evaluator<'a, 's> {
                         Value::Number(at as f64),
                         Value::String(Rc::clone(text)),
                     ];
-                    let value = self.call_function(*function, *around, &args);
+                    let value = self.call_function(*function, *around, &args, Value::Unknown);
                     self.text_of(&value)
                 }
                 Some(value) => {
@@ -1593,7 +2096,7 @@ impl<'a, 's> Evaluator<'a, 's> {
                 let mut results = Vec::with_capacity(elements.len());
                 for (index, element) in elements.iter().enumerate() {
                     let args = [element.clone(), Value::Number(index as f64), array.clone()];
-                    results.push(self.call_function(*function, *around, &args));
+                    results.push(self.call_function(*function, *around, &args, Value::Unknown));
                 }
                 match name {
                     b"forEach" => Value::Undefined,
@@ -1622,7 +2125,7 @@ impl<'a, 's> Evaluator<'a, 's> {
                         Value::Number(index as f64),
                         array.clone(),
                     ];
-                    sum = self.call_function(function, around, &args);
+                    sum = self.call_function(function, around, &args, Value::Unknown);
                 }
                 sum
             }
@@ -1631,16 +2134,38 @@ impl<'a, 's> Evaluator<'a, 's> {
     }
 }
 
+fn is_relative(specifier: &[u8]) -> bool {
+    specifier.starts_with(b"./") || specifier.starts_with(b"../")
+}
+
+fn append_to_path(folder: &[u8], added: &[u8]) -> Value {
+    match added.strip_prefix(b"/") {
+        Some(relative) => Value::Path(from_argument(folder, relative).into()),
+        None => Value::Unknown,
+    }
+}
+
+fn pattern_of(source: &[u8], flags: &[u8]) -> Value {
+    if let Some(pattern) = strings::parse_pattern(source, flags) {
+        return Value::Pattern(Rc::new(pattern));
+    }
+    let matcher = strings::parse_matcher(source, flags);
+    matcher.map_or(Value::Unknown, |it| Value::Matcher(Rc::new(it)))
+}
+
+fn to_int32(number: f64) -> i32 {
+    match number.is_finite() {
+        true => number.trunc().rem_euclid(4_294_967_296.0) as u32 as i32,
+        false => 0,
+    }
+}
+
 fn merge(left: Contents, right: Contents) -> Contents {
     if left == right {
         return left;
     }
     match (left, right) {
-        (Contents::Object(left), Contents::Object(_)) => Contents::Object(Object {
-            is_array: left.is_array,
-            is_open: true,
-            ..Object::default()
-        }),
+        (Contents::Object(left), Contents::Object(right)) => Contents::Object(left.merge(&right)),
         _ => Contents::Variable(Some(Value::Unknown)),
     }
 }

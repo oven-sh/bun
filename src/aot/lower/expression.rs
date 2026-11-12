@@ -355,6 +355,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         {
             return self.emit_locked_builtin(builtin);
         }
+        if let Some(Resolved::Builtin(path)) = resolved
+            && let Some(number) = path.locked_number()
+            && self.file.builtins.of_pure_expr(expression).is_some()
+            && !self.file.names_source_path(expression)
+        {
+            return self.emit_number(number);
+        }
         match resolved {
             Some(Resolved::Builtin(path))
                 if !matches!(self.file.hir[expression].kind, ExprKind::Ident(_)) =>
@@ -397,6 +404,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             ExprKind::TaggedTemplate(_) => {
                 template::lower_tagged_template(self, expression, evaluation.tail)
+            }
+            ExprKind::Object(_) if self.file.is_literal_of_bodies(expression) => {
+                let layout = self.file.untyped_layout(&[]);
+                let object = self.begin_object(layout);
+                object::finish_object(self, object)
             }
             ExprKind::Object(properties) if properties.len() == 0 => {
                 match self.file.find_emitted_enum_born_at(expression) {
@@ -465,6 +477,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     }
                 }
                 BinOp::Comma => {
+                    if let Some(copied) = self.file.hir.copied_factory_of(expression) {
+                        return self.lower_call_of_copied_factory(copied);
+                    }
                     let last = logical::lower_comma_prefix(self, expression, ResultUsage::Value);
                     self.lower_expression_in(last, Evaluation::at_tail(evaluation.tail))
                 }
@@ -691,6 +706,14 @@ impl FileLowering<'_, '_, '_, '_> {
     #[inline]
     pub(crate) fn skip_type_syntax(&self, expression: ExprId) -> ExprId {
         self.hir.skip_type_assertions(expression)
+    }
+
+    /// The operand of type syntax that hands its value on as it is. `as` converts in a checked file.
+    pub(in crate::lower) fn unconverted_operand(&self, expression: ExprId) -> Option<ExprId> {
+        match self.hir[expression].kind {
+            ExprKind::As { .. } if self.is_checked() => None,
+            _ => self.hir.type_assertion_operand(expression),
+        }
     }
 
     pub(in crate::lower) fn is_statically_resolved(&self, expression: ExprId) -> bool {

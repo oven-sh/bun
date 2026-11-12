@@ -112,8 +112,9 @@ test/js/bun/test/mock/mock-module.test.ts: a spy on an export of a module that a
 # The next two: the engine keeps what a mock of a compiled module wrote over. A spy that was on an export goes back at the end of the mock though it was restored since.
 test/js/bun/test/mock/mock-module.test.ts: a spy on an export of a module that a mock patches in place > a spy laid through another module's namespace, on a builtin, on a CommonJS module or on what require() returns
 test/js/bun/test/mock/mock-module.test.ts: a spy on an export of a module that a mock patches in place > a spy of a preload
-# The next one: a compiled run mocks a CommonJS file beside its entry of require.cache. A spy on `exports` of that entry stays above the mock, and jest.requireActual() gives the file's own function while the spy is installed.
+# The next two: a compiled run mocks a CommonJS file beside its entry of require.cache. A spy on `exports` of that entry stays above the mock, and jest.requireActual() gives the file's own function while the spy is installed.
 test/js/bun/test/mock/mock-module.test.ts: a spy on an export of a module that a mock patches in place > a spy on module.exports
+test/js/bun/test/mock/mock-module.test.ts: a spy on an export of a module that a mock patches in place > a spy on module.exports of a module object that is collected
 # The next six: the engine keeps what a mock of a compiled module wrote over. A spy that was on an export goes back at the end of the mock though it was restored since.
 test/js/bun/test/mock/mock-module.test.ts: a spy on an export of a module that a mock patches in place > each run of one file starts with the module's own function: ["--isolate","--rerun-each=2"]
 test/js/bun/test/mock/mock-module.test.ts: a spy on an export of a module that a mock patches in place > each run of one file starts with the module's own function: ["--rerun-each=3"]

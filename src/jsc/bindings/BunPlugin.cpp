@@ -508,14 +508,21 @@ static JSValue savedSpy(Zig::GlobalObject* globalObject, const Bun::InstalledSpy
     return JSC::InternalFieldTuple::create(globalObject->vm(), globalObject->internalFieldTupleStructure(), spy.spy, spy.replaced);
 }
 
-// What a mock saved is read through this: the spy for as long as it is installed, then what it replaced. No tuple is handed to script.
-static JSValue whatStandsOfSaved(JSValue saved)
+// What a mock saved is read through these: the spy until its restore, then what it replaced. No tuple is handed to script.
+// Where the value is written back, `isOnThatPlace` also asks whether the spy is on the place written to. Its restore reaches no other.
+template<typename IsOnThatPlace>
+static JSValue whatStandsOfSaved(JSValue saved, const IsOnThatPlace& isOnThatPlace)
 {
     auto* spyAndReplaced = saved ? dynamicDowncast<JSC::InternalFieldTuple>(saved) : nullptr;
     if (!spyAndReplaced)
         return saved;
-    JSValue spy = spyAndReplaced->getInternalField(0);
-    return Bun::installedSpy(spy) ? spy : spyAndReplaced->getInternalField(1);
+    auto spy = Bun::installedSpy(spyAndReplaced->getInternalField(0));
+    return spy && isOnThatPlace(*spy) ? JSValue(spy->spy) : spyAndReplaced->getInternalField(1);
+}
+
+static JSValue whatStandsOfSaved(JSValue saved)
+{
+    return whatStandsOfSaved(saved, [](const Bun::InstalledSpy&) { return true; });
 }
 
 static bool isSpyOnModuleExports(JSC::VM& vm, const Bun::InstalledSpy& spy, Bun::JSCommonJSModule* moduleObject)
@@ -541,12 +548,7 @@ public:
     // What goes back into `moduleObject`. After `delete require.cache[key]` that is another module object, and the spy is not on it.
     JSValue standsOn(JSC::VM& vm, Bun::JSCommonJSModule* moduleObject) const
     {
-        JSValue saved = m_saved.get();
-        auto* spyAndReplaced = saved ? dynamicDowncast<JSC::InternalFieldTuple>(saved) : nullptr;
-        if (!spyAndReplaced)
-            return saved;
-        auto spy = Bun::installedSpy(spyAndReplaced->getInternalField(0));
-        return spy && isSpyOnModuleExports(vm, *spy, moduleObject) ? JSValue(spy->spy) : spyAndReplaced->getInternalField(1);
+        return whatStandsOfSaved(m_saved.get(), [&](const Bun::InstalledSpy& spy) { return isSpyOnModuleExports(vm, spy, moduleObject); });
     }
     template<typename Visitor> void visit(Visitor& visitor) { visitor.append(m_saved); }
 
@@ -4006,7 +4008,9 @@ static void restoreOverwrittenExports(Zig::GlobalObject* globalObject, JSC::JSMo
         JSValue original = overwritten->get(globalObject, name);
         RETURN_IF_EXCEPTION(scope, );
         if (original != overwritten) {
-            moduleNamespace->overrideExportValue(globalObject, name, whatStandsOfSaved(original));
+            // The restore of a spy reaches the export through the namespace object that the spy was laid on.
+            JSValue stands = whatStandsOfSaved(original, [](const Bun::InstalledSpy& spy) { return !!spy.target; });
+            moduleNamespace->overrideExportValue(globalObject, name, stands);
             RETURN_IF_EXCEPTION(scope, );
             continue;
         }

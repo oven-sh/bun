@@ -863,15 +863,16 @@ public:
     // `original` is getOwnPropertyStorage() of the replaced property, or empty if the target had no own one.
     void didInstall(JSObject* target, const Identifier& key, JSValue original, unsigned attributes);
 
-    bool isRestoredSpy() const { return isSpy && !m_spyTarget; }
+    // From didInstall() to didUninstall(). The target is weak and may be collected before that, which is not a restore.
+    bool isInstalledSpy() const { return !m_spyIdentifier.isNull(); }
+    bool isRestoredSpy() const { return isSpy && !isInstalledSpy(); }
 
     std::optional<InstalledSpy> asInstalledSpy()
     {
-        JSObject* target = m_spyTarget.get();
         JSValue replaced = m_spyOriginal.get();
-        if (!target || !replaced || (m_spyAttributes & SpyAttributeAccessor))
+        if (!replaced || (m_spyAttributes & SpyAttributeAccessor))
             return std::nullopt;
-        return InstalledSpy { this, target, m_spyIdentifier, replaced };
+        return InstalledSpy { this, m_spyTarget.get(), m_spyIdentifier, replaced };
     }
 
     // Puts the spied-on property back as it was; that can throw (a module namespace export, an indexed slot).
@@ -1254,7 +1255,7 @@ __attribute__((minsize)) void JSMockFunction::didFinishTestFile(Zig::GlobalObjec
     }
     for (size_t i = 0; i < spiesOfPreload.size(); ++i) {
         auto* spy = uncheckedDowncast<JSMockFunction>(spiesOfPreload.at(i));
-        if (spy->m_spyTarget)
+        if (spy->isInstalledSpy())
             spy->enter(List::Spies);
     }
 

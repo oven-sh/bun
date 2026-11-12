@@ -29,7 +29,7 @@ void didStartDynamicImport(Zig::GlobalObject*, JSC::JSPromise* import, const Str
 // A spy that spyOn() laid in place of a value, until its restore.
 struct InstalledSpy {
     JSC::JSObject* spy;
-    // What spyOn() was called with: for a spy on an export, the module namespace object.
+    // The object that holds the spy: for a spy on an export, the module namespace object. Null once that object is collected, and then the restore writes nothing.
     JSC::JSObject* target;
     JSC::Identifier key;
     // What its restore writes back.

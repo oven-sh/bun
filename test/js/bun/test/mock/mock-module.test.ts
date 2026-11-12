@@ -4682,6 +4682,57 @@ describe.concurrent("a spy on an export of a module that a mock patches in place
     );
   });
 
+  // A spy holds the object that it was laid on weakly. A collection of that object is not a restore of the spy.
+  test("a spy on module.exports of a module object that is collected", async () => {
+    await expectFixturesToPass(
+      {
+        "of-file.cjs": `module.exports = function greet(s) { return "real:" + s; };`,
+        "of-preload.cjs": `module.exports = function greet(s) { return "real:" + s; };`,
+        // A require() keeps each module object that it loads among its children. This require() goes when the function returns.
+        "spied.ts": `
+          import { mock, spyOn } from "bun:test";
+          import { createRequire } from "node:module";
+          export function spyOnModuleObjectThatNothingKeeps(path) {
+            const require = createRequire(import.meta.url);
+            const own = require(path);
+            const spy = spyOn(require.cache[require.resolve(path)], "exports");
+            mock.module(path, () => ({ greet: () => "mocked" }));
+            delete require.cache[require.resolve(path)];
+            return { own, spy };
+          }
+        `,
+        "preload.ts": `
+          import { spyOnModuleObjectThatNothingKeeps } from "./spied.ts";
+          globalThis.ofPreload = spyOnModuleObjectThatNothingKeeps("./of-preload.cjs");
+        `,
+        "1.test.ts": `
+          import { expect, jest, test, vi } from "bun:test";
+          import { spyOnModuleObjectThatNothingKeeps } from "./spied.ts";
+          test("requireActual() and importActual() give the spy until its restore", async () => {
+            const { own, spy } = spyOnModuleObjectThatNothingKeeps("./of-file.cjs");
+            Bun.gc(true);
+            expect(jest.requireActual("./of-file.cjs")).toBe(spy);
+            expect((await vi.importActual("./of-file.cjs")).default).toBe(spy);
+            expect(jest.requireActual("./of-preload.cjs")).toBe(globalThis.ofPreload.spy);
+            spy.mockRestore();
+            expect(jest.requireActual("./of-file.cjs")).toBe(own);
+          });
+        `,
+        "2.test.ts": `
+          import { expect, jest, mock, test } from "bun:test";
+          test("mock.restore() in a later file ends the spy of the preload", () => {
+            const { own, spy } = globalThis.ofPreload;
+            expect(jest.requireActual("./of-preload.cjs")).toBe(spy);
+            mock.restore();
+            expect(jest.requireActual("./of-preload.cjs")).toBe(own);
+          });
+        `,
+      },
+      2,
+      ["--preload", "./preload.ts"],
+    );
+  });
+
   // The mock came before the body of the module had run, so it saved the export later, once the body had run. By then the spy was on it.
   test("a spy laid between the body of a module and the mock that was waiting for that body", async () => {
     await expectFixturesToPass(

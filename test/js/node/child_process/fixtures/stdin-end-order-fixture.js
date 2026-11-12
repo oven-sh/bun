@@ -151,7 +151,10 @@ if (process.platform === "linux") {
     await new Promise(resolve => setImmediate(resolve));
     process.kill(child.pid, "SIGKILL");
     // The child is a zombie until this process reaps it, and this loop has not polled since the kill.
-    while (!/^\d+ \(.*\) Z /.test(fs.readFileSync(`/proc/${child.pid}/stat`, "utf8"))) {}
+    const deadline = Date.now() + 3000;
+    while (!/^\d+ \(.*\) Z /.test(fs.readFileSync(`/proc/${child.pid}/stat`, "utf8"))) {
+      if (Date.now() > deadline) throw new Error("the killed child did not become a zombie");
+    }
     setImmediate(() => log.push("immediate"));
     child.stdin.end(callback(log, "end"));
     await settled(child);

@@ -978,57 +978,73 @@ fn run_queued_task(
 /// callbacks of this loop turn, then what its pending queue holds by then (see
 /// `EventLoop::enqueue_completion_task`). `completes_before_poll` is what
 /// `EventLoop::begin_immediates` returned.
+///
+/// # Safety
+/// `el` and `vm` are the live per-thread event loop and VM, and no `&mut` to either is held
+/// across this call. `el` is a field of `*vm`, so it is reached through the pointer, one access
+/// at a time.
 #[inline]
-pub(crate) fn run_closing_tasks(
-    el: &mut EventLoop,
-    vm: &mut VirtualMachine,
+pub(crate) unsafe fn run_closing_tasks(
+    el: *mut EventLoop,
+    vm: *mut VirtualMachine,
     completes_before_poll: bool,
 ) -> Result<(), Stopped> {
     // Out of line: a loop turn with nothing to close pays two length checks here.
     #[inline(never)]
-    fn run(
-        el: &mut EventLoop,
-        vm: &mut VirtualMachine,
+    unsafe fn run(
+        el: *mut EventLoop,
+        vm: *mut VirtualMachine,
         completes_before_poll: bool,
     ) -> Result<(), Stopped> {
-        // SAFETY: `el.global` is set by VM init before the first tick; live for the drain.
-        let global: &JSGlobalObject =
-            unsafe { el.global.expect("EventLoop.global unset").as_ref() };
-        let global_vm = global.vm();
-        // Taken once, as libuv takes its list: a close that a callback here asks for completes in
-        // the next loop turn. That list is a stack: the handle that closed last reports first.
-        let mut closing = core::mem::take(&mut el.closing_tasks);
-        closing.reverse();
-        let mut result = run_task_list(&mut closing, el, vm, global, global_vm);
-        el.set_completes_before_poll(completes_before_poll);
-        let mut completions = core::mem::take(&mut el.completion_tasks);
-        if result.is_ok() {
-            result = run_task_list(&mut completions, el, vm, global, global_vm);
-        } else {
-            release_task_list(completions.drain(..));
+        // SAFETY: contract of `run_closing_tasks`. Every access to `*el` here ends before a task
+        // runs script, which reaches the loop through the VM.
+        unsafe {
+            // Set by VM init before the first tick; live for the drain.
+            let global: &JSGlobalObject = (*el).global.expect("EventLoop.global unset").as_ref();
+            let global_vm = global.vm();
+            // Taken once, as libuv takes its list: a close that a callback here asks for completes
+            // in the next loop turn. That list is a stack: the handle that closed last reports first.
+            let mut closing = core::mem::take(&mut (*el).closing_tasks);
+            closing.reverse();
+            let mut result = run_task_list(&mut closing, el, vm, global, global_vm);
+            (*el).set_completes_before_poll(completes_before_poll);
+            let mut completions = core::mem::take(&mut (*el).completion_tasks);
+            if result.is_ok() {
+                result = run_task_list(&mut completions, el, vm, global, global_vm);
+            } else {
+                release_task_list(completions.drain(..));
+            }
+            keep_buffer(&mut (*el).closing_tasks, closing);
+            keep_buffer(&mut (*el).completion_tasks, completions);
+            result
         }
-        keep_buffer(&mut el.closing_tasks, closing);
-        keep_buffer(&mut el.completion_tasks, completions);
-        result
     }
-    if !el.has_closing_tasks() {
-        el.set_completes_before_poll(completes_before_poll);
-        return Ok(());
+    // SAFETY: fn contract.
+    unsafe {
+        if !(*el).has_closing_tasks() {
+            (*el).set_completes_before_poll(completes_before_poll);
+            return Ok(());
+        }
+        run(el, vm, completes_before_poll)
     }
-    run(el, vm, completes_before_poll)
 }
 
 /// Runs `tasks` in order and leaves the list empty. Once the VM stops, the rest are released unrun.
-fn run_task_list(
+///
+/// # Safety
+/// As [`run_closing_tasks`].
+unsafe fn run_task_list(
     tasks: &mut Vec<Task>,
-    el: &mut EventLoop,
-    vm: &mut VirtualMachine,
+    el: *mut EventLoop,
+    vm: *mut VirtualMachine,
     global: &JSGlobalObject,
     global_vm: &bun_jsc::VM,
 ) -> Result<(), Stopped> {
     let mut tasks = tasks.drain(..);
     while let Some(task) = tasks.next() {
-        if let Err(stopped) = run_queued_task(task, el, vm, global, global_vm) {
+        // SAFETY: fn contract. The pair lives for this one task, as in `__bun_tick_queue_with_count`.
+        let ran = unsafe { run_queued_task(task, &mut *el, &mut *vm, global, global_vm) };
+        if let Err(stopped) = ran {
             release_task_list(tasks);
             return Err(stopped);
         }

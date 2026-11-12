@@ -54,48 +54,91 @@ fn is_component_or_hook_name(name: &[u8]) -> bool {
     name.first().is_some_and(u8::is_ascii_uppercase) || is_hook_name(name)
 }
 
+/// `memo`, `React.memo`
+fn is_react_api(callee: Expr<'_>, names: &[&str]) -> bool {
+    ast_utils::is_specific_id_with(callee, |it| names.iter().any(|name| name.as_bytes() == it))
+        || ast_utils::is_member_access_of_any(callee, names)
+}
+
+/// The name the compiler gives `func`: its own for a declaration, the variable's for a function that is the whole
+/// initializer of a `const`. A function expression's own name doesn't count.
+fn compiler_name(func: Func<'_>) -> Option<Name<'_>> {
+    if func.kind() == FnKind::Decl {
+        return func.name().map(Ident::name);
+    }
+    match func.owner() {
+        Node::Expr(e) => match e.parent() {
+            Node::VarDecl(declaration) => declaration.pat().as_ident(),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// True if the compiler would consider compiling `func` on its own: it's named like a component or a hook, it's the
 /// argument of `memo()` or `forwardRef()`, or it opts in. A function inside one of these is compiled as part of it, so a
 /// directive in it means nothing.
 fn is_compile_candidate(func: Func<'_>) -> bool {
-    if let Some(name) = func.name()
-        && matches!(func.kind(), FnKind::Decl | FnKind::Expr)
-    {
-        return is_component_or_hook_name(name.bytes());
+    if compiler_name(func).is_some_and(|it| is_component_or_hook_name(it.bytes())) {
+        return true;
     }
-    let Node::Expr(e) = func.owner() else {
-        return false;
-    };
-    match e.parent() {
-        Node::VarDecl(declaration) => {
-            declaration.pat().as_ident().is_some_and(|it| is_component_or_hook_name(it.bytes()))
-        }
-        Node::Expr(parent) => parent.as_call().is_some_and(|call| {
-            let callee = call.callee();
-            call.args().first() == Some(e)
-                && (ast_utils::is_specific_id_with(callee, |it| matches!(it, b"memo" | b"forwardRef"))
-                    || ast_utils::is_member_access_of_any(callee, &["memo", "forwardRef"]))
-        }),
+    let is_react_api_callback = match func.owner() {
+        Node::Expr(e) => match e.parent() {
+            Node::Expr(parent) => parent.as_call().is_some_and(|call| {
+                call.args().first() == Some(e) && is_react_api(call.callee(), &["memo", "forwardRef"])
+            }),
+            _ => false,
+        },
         _ => false,
-    }
+    };
+    is_react_api_callback || has_body_directive(func, &OPT_IN_DIRECTIVES)
 }
 
 /// True if the function the compiler would compile `e` as part of opts out, which leaves its memoization to the code.
+/// That's the outermost candidate around `e`: the compiler doesn't look inside a function it compiles.
 fn is_in_opted_out_function(e: Expr<'_>) -> bool {
-    let mut functions = Node::Expr(e).ancestors().filter_map(Node::as_func);
-    let candidate = functions.find(|it| is_compile_candidate(*it) || has_body_directive(*it, &OPT_IN_DIRECTIVES));
+    let functions = Node::Expr(e).ancestors().filter_map(Node::as_func);
+    let candidate = functions.filter(|it| is_compile_candidate(*it)).last();
     candidate.is_some_and(opts_out)
 }
 
-/// Returns the function that `e` is, or that `e` names in this file: `C` in `memo(C)`.
-fn function_of(e: Expr<'_>) -> Option<Func<'_>> {
+/// The component that `memo()` wraps.
+enum Component<'a> {
+    Class,
+    Func(Func<'a>),
+}
+
+/// Returns the component that `e` is, or that `e` names in this file: `C` in `memo(C)`, through `forwardRef()`.
+fn component_of(e: Expr<'_>, depth: u8) -> Option<Component<'_>> {
+    if depth == 0 {
+        return None;
+    }
+    if e.tag() == ExprTag::Class {
+        return Some(Component::Class);
+    }
     if let Some(func) = e.as_fn() {
-        return Some(func);
+        return Some(Component::Func(func));
+    }
+    if let Some(call) = e.as_call()
+        && is_react_api(call.callee(), &["forwardRef"])
+    {
+        return component_of(call.args().first()?, depth - 1);
     }
     match e.symbol()?.declarations().next()?.node()? {
-        Node::Func(func) => Some(func),
-        Node::VarDecl(declaration) => declaration.init()?.as_fn(),
+        Node::Class(_) => Some(Component::Class),
+        Node::Func(func) => Some(Component::Func(func)),
+        Node::VarDecl(declaration) => component_of(declaration.init()?, depth - 1),
         _ => None,
+    }
+}
+
+/// True if the compiler leaves the component `e` alone, so `memo()` is what memoizes it: a class, or a function that
+/// opts out.
+fn compiler_skips(e: Expr<'_>) -> bool {
+    match component_of(e, 4) {
+        Some(Component::Class) => true,
+        Some(Component::Func(func)) => opts_out(func),
+        None => false,
     }
 }
 
@@ -115,21 +158,18 @@ fn first_argument(call: Call<'_>, count: usize) -> Option<Expr<'_>> {
     (fits && call.type_args().is_empty() && !call.is_optional()).then(|| args.first()).flatten()
 }
 
-/// The name of a function or class expression.
-fn own_name(e: Expr<'_>) -> Option<Ident<'_>> {
-    match e.kind() {
-        ExprKind::Fn(func) => func.name(),
-        ExprKind::Class(class) => class.name(),
+/// True if the function `kept` still has a name for the compiler to find once the `memo()` around it is gone: that of
+/// the variable the call is assigned to, or its own once it's a declaration.
+fn keeps_name<'a>(e: Expr<'a>, kept: Expr<'a>) -> bool {
+    let Some(func) = kept.as_fn() else {
+        return true;
+    };
+    let name = match e.parent() {
+        Node::VarDecl(declaration) if declaration.init() == Some(e) => declaration.pat().as_ident(),
+        _ if becomes_declaration(e, kept) => func.name().map(Ident::name),
         _ => None,
-    }
-}
-
-/// True if the function or class `kept` still has a name for the compiler to find once the `memo()` around it is gone:
-/// its own, or that of the variable the call is assigned to.
-fn keeps_name(e: Expr<'_>, kept: Expr<'_>) -> bool {
-    !matches!(kept.tag(), ExprTag::Fn | ExprTag::Class)
-        || own_name(kept).is_some()
-        || matches!(e.parent(), Node::VarDecl(declaration) if declaration.init() == Some(e))
+    };
+    name.is_some_and(|it| is_component_or_hook_name(it.bytes()))
 }
 
 /// Returns what the call leaves behind, and the message that says so: `expr` for `useMemo(() => expr, deps)`, `fn` for
@@ -157,9 +197,13 @@ fn replacement<'a>(name: Name<'a>, e: Expr<'a>, call: Call<'a>) -> Option<(Expr<
     }
 }
 
+fn is_export_default(e: Expr<'_>) -> bool {
+    matches!(e.parent(), Node::Stmt(statement) if matches!(statement.kind(), StmtKind::ExportDefault(_)))
+}
+
 /// True if `kept` needs parentheses in the place of `e`: an operator around it would take part of it, an `as` or a `!`
-/// after it would apply to part of it, a `{`, `function` or `class` would start a statement or an arrow function's
-/// block, or it's a comma expression.
+/// after it would apply to part of it, a `{`, `function` or `class` would start a statement, an arrow function's block
+/// or a declaration after `export default`, or it's a comma expression.
 fn needs_parentheses(e: Expr<'_>, kept: Expr<'_>) -> bool {
     let has_postfix_parent = match e.parent() {
         Node::Expr(parent) => matches!(
@@ -172,45 +216,58 @@ fn needs_parentheses(e: Expr<'_>, kept: Expr<'_>) -> bool {
         ),
         _ => false,
     };
-    let starts_block = || {
+    let starts_block_or_declaration = || {
         let Some(first) = e.file().tokens_in(kept).next() else {
             return false;
         };
         is_start_of_expression_statement_needing_parentheses(e, &first)
             || is_start_of_arrow_function_body_needing_parentheses(e, &first)
+            || (is_export_default(e)
+                && !becomes_declaration(e, kept)
+                && matches!(first.text(), b"function" | b"class" | b"async"))
     };
     (!is_strong_precedence_node(kept) && (is_weak_precedence_parent(e) || has_postfix_parent))
         || matches!(kept.kind(), ExprKind::Binary { op: BinOp::Comma, .. })
-        || starts_block()
+        || starts_block_or_declaration()
 }
 
-/// True if the function or class `kept` becomes a declaration in the place of `e`: `export default memo(function C ..)`.
+/// True if the function `kept` becomes a declaration in the place of `e`: `export default memo(function C ..)`.
 fn becomes_declaration(e: Expr<'_>, kept: Expr<'_>) -> bool {
-    let is_declaration_shape = matches!(kept.kind(), ExprKind::Fn(func) if !func.is_arrow()) || kept.tag() == ExprTag::Class;
-    is_declaration_shape && matches!(e.parent(), Node::Stmt(statement) if matches!(statement.kind(), StmtKind::ExportDefault(_)))
+    matches!(kept.kind(), ExprKind::Fn(func) if !func.is_arrow()) && is_export_default(e)
 }
 
-/// The span to replace: the call, and the `;` after it when a function or class expression becomes a declaration.
+/// The span to replace: the call, and the `;` right after it when a function expression becomes a declaration.
 fn replaced_span(e: Expr<'_>, kept: Expr<'_>) -> Span {
-    let semicolon = e.file().token_after(e).filter(|it| it.is_punctuator(";"));
+    let file = e.file();
+    let semicolon = file.token_after(e).filter(|it| it.is_punctuator(";"));
     match semicolon {
-        Some(semicolon) if becomes_declaration(e, kept) => Span::new(e.span().start, semicolon.end()),
+        Some(semicolon)
+            if becomes_declaration(e, kept)
+                && file.comments_in(Span::new(e.span().end, semicolon.start())).next().is_none() =>
+        {
+            Span::new(e.span().start, semicolon.end())
+        }
         _ => e.span(),
     }
 }
 
-/// True if `kept` as a declaration would have the name of something else in the module.
+/// True if `kept` as a declaration would take the name of something else that the module uses: a declaration of its own
+/// or a global.
 fn name_is_taken<'a>(e: Expr<'a>, kept: Expr<'a>) -> bool {
+    let file = e.file();
     becomes_declaration(e, kept)
-        && own_name(kept).is_some_and(|it| e.file().top_level_scope().get_name(it.name()).is_some())
+        && kept.as_fn().and_then(Func::name).is_some_and(|it| {
+            file.top_level_scope().get_name(it.name()).is_some()
+                || file.unresolved_references_to(it.name().bytes()).len() > 0
+        })
 }
 
 /// Every use of a memoizer in `file`, in source order: the references of the named imports, the members of the default
 /// and namespace imports, and the named imports that nothing refers to.
 fn uses<'a>(file: &'a File<'a>) -> Vec<Use<'a>> {
-    let scope = file.top_level_scope();
     let mut all = Vec::new();
     for import in react_imports(file) {
+        let scope = file.top_level_scope();
         let named = import.named().iter().filter(|it| !it.is_type_only());
         for specifier in named.filter(|it| it.imported().name().is_any(&MEMOIZERS)) {
             let Some(symbol) = scope.get_name(specifier.local().name()) else {
@@ -263,7 +320,10 @@ impl Rule for ReactNoManualMemoization {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("react") || has_directive(file.body().iter(), &OPT_OUT_DIRECTIVES) {
+        if !file.mentions("react")
+            || !file.mentions_any(&MEMOIZERS)
+            || has_directive(file.body().iter(), &OPT_OUT_DIRECTIVES)
+        {
             return None;
         }
         Some(())
@@ -272,17 +332,18 @@ impl Rule for ReactNoManualMemoization {
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
         for Use { at, name, call, specifier } in uses(file) {
-            // The compiler compiles the argument of `memo()` on its own. If that opts out, `memo()` is what memoizes it.
             if name.is("memo")
                 && let Some((_, call)) = call
-                && call.args().first().and_then(function_of).is_some_and(opts_out)
+                && call.args().first().is_some_and(compiler_skips)
             {
                 continue;
             }
             let report = cx.report(at, MANUAL_MEMOIZATION).data("name", name);
             let Some((e, call)) = call else {
                 if let Some(specifier) = specifier.filter(|it| it.span() == at) {
-                    report.suggest(REMOVE_IMPORT, |fixer| fixer.remove_import_specifier(specifier));
+                    report.suggest(REMOVE_IMPORT, |fixer| {
+                        fixer.remove_import_specifier(specifier).filter(|it| fixer.keeps_comments(it))
+                    });
                 }
                 continue;
             };
@@ -293,13 +354,19 @@ impl Rule for ReactNoManualMemoization {
                 continue;
             }
             report.suggest(message, move |fixer| {
-                let text = match needs_parentheses(e, kept) {
+                let mut text = match needs_parentheses(e, kept) {
                     true => [b"(", kept.text(), b")"].concat(),
                     false => kept.text().to_vec(),
                 };
+                if matches!(text.first(), Some(b'(' | b'[' | b'`' | b'+' | b'-' | b'/'))
+                    && ast_utils::is_start_of_expression_statement(e)
+                    && ast_utils::needs_preceding_semicolon(e)
+                {
+                    text.insert(0, b';');
+                }
                 let mut fixes = vec![fixer.replace(replaced_span(e, kept), text)];
                 fixes.extend(specifier.and_then(|it| fixer.remove_import_specifier(it)));
-                fixes
+                fixes.iter().all(|it| fixer.keeps_comments(it)).then_some(fixes)
             });
         }
     }

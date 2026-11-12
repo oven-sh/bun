@@ -985,10 +985,6 @@ const rules: Record<string, Case[]> = {
         `${memo}export default «memo»(function Row({ label }) {\n  return <li>{label}</li>;\n});`,
         `export default function Row({ label }) {\n  return <li>{label}</li>;\n}`,
       ],
-      [
-        `${memo}export default «memo»(class Row extends Component {});`,
-        `export default class Row extends Component {}`,
-      ],
       [`${memo}export default «memo»(Row);`, `export default Row;`],
       [`import { memo as m } from "react";\nexport default «m»(Row);`, `export default Row;`],
       [
@@ -1052,9 +1048,24 @@ const rules: Record<string, Case[]> = {
         `function withTotal(Wrapped) {\n  "use no memo";\n  return function Total({ a, b }) {\n    return <Wrapped total={a + b} />;\n  };\n}`,
       ],
       [
-        `${useMemo}function App({ a, b }) {\n  "use no memo";\n  const Row = () => «useMemo»(() => a + b, [a, b]);\n}`,
-        `function App({ a, b }) {\n  "use no memo";\n  const Row = () => a + b;\n}`,
+        `${useMemo}function withTotal(Wrapped) {\n  "use no memo";\n  const Total = ({ a, b }) => <Wrapped total={«useMemo»(() => a + b, [a, b])} />;\n  return Total;\n}`,
+        `function withTotal(Wrapped) {\n  "use no memo";\n  const Total = ({ a, b }) => <Wrapped total={a + b} />;\n  return Total;\n}`,
       ],
+      [
+        `${useMemo}const Total = function inner({ a, b }) {\n  return «useMemo»(() => a + b, [a, b]);\n};`,
+        `const Total = function inner({ a, b }) {\n  return a + b;\n};`,
+      ],
+      [
+        `${memo}export default «memo»(function Row({ label }) {\n  return <li>{label}</li>;\n}) /* note */;`,
+        `export default function Row({ label }) {\n  return <li>{label}</li>;\n} /* note */;`,
+      ],
+      [
+        `${memo}export default «memo»(function Row() {\n  return null;\n} as FC);`,
+        `export default (function Row() {\n  return null;\n} as FC);`,
+      ],
+      [`${useCallback}go();\n«useCallback»(() => 1, [])();`, `go();\n(() => 1)();`],
+      [`${useCallback}go()\n«useCallback»(() => 1, [])()`, `go()\n;(() => 1)()`],
+      [`${useMemo}const list = []\n«useMemo»(() => [a], [a]).forEach(run)`, `const list = []\n;[a].forEach(run)`],
       [
         `${useMemo}function App({ a, b }) {\n  const total = () => {\n    "use no memo";\n    return «useMemo»(() => a + b, [a, b]);\n  };\n}`,
         `function App({ a, b }) {\n  const total = () => {\n    "use no memo";\n    return a + b;\n  };\n}`,
@@ -1089,13 +1100,20 @@ const rules: Record<string, Case[]> = {
     `${useMemo}const total = «useMemo»?.(() => a + b, [a, b]);`,
     `${useMemo}const total = «useMemo»(compute, [a]);`,
     `${useMemo}const compute = «useMemo»;`,
-    // Without `memo()` the compiler would not find a component that has no name.
+    // Without `memo()` the compiler would not find a component that has no name it looks at.
     `${memo}export default «memo»(() => <li />);`,
     `${memo}export default «memo»(function () {\n  return <li />;\n});`,
     `${memo}rows.push(«memo»(() => <li />));`,
+    `${memo}rows.push(«memo»(function Row() {\n  return <li />;\n}));`,
     `${memo}export const M = «memo»(() => null) as any;`,
-    // The name of the function is already taken in the module.
+    `${memo}const row = «memo»(() => <li />);`,
+    // The name of the function is already taken in the module, or is a global the module uses.
     `${memo}import { Row } from "./Row";\nexport default «memo»(function Row() {\n  return <li />;\n});`,
+    `${memo}const img = new Image();\nexport default «memo»(function Image() {\n  return <img />;\n});`,
+    // A comment would be lost.
+    `${useMemo}const total = «useMemo»(\n  // in cents\n  () => a + b,\n  [a, b],\n);`,
+    `${useMemo}const total = «useMemo»(() => a + b, [a, b] /* deps */);`,
+    `import { «useMemo» /* a */ } from "react";`,
 
     `"use no memo";\n${useMemo}const total = useMemo(() => a + b, [a, b]);`,
     `"use no forget";\n${useMemo}const total = useMemo(() => a + b, [a, b]);`,
@@ -1107,6 +1125,8 @@ const rules: Record<string, Case[]> = {
     `${useMemo}const Total = ({ a, b }) => {\n  "use no memo";\n  return useMemo(() => a + b, [a, b]);\n};`,
     `${useMemo}const Total = function ({ a, b }) {\n  "use no memo";\n  return useMemo(() => a + b, [a, b]);\n};`,
     `${useMemo}function Total({ a, b }) {\n  "use no memo";\n  const f = () => useMemo(() => a + b, [a, b]);\n}`,
+    `${useMemo}function App({ a, b }) {\n  "use no memo";\n  const Row = () => useMemo(() => a + b, [a, b]);\n}`,
+    `${useMemo}const Total = function inner({ a, b }) {\n  "use no memo";\n  return useMemo(() => a + b, [a, b]);\n};`,
     `${useMemo}function total(a, b) {\n  "use memo";\n  "use no memo";\n  return useMemo(() => a + b, [a, b]);\n}`,
     `${useMemo}const Total = memo(({ a, b }) => {\n  "use no memo";\n  return useMemo(() => a + b, [a, b]);\n});`,
     `${useMemo}const Total = React.forwardRef((props, ref) => {\n  "use no memo";\n  return useMemo(() => props.a, [props.a]);\n});`,
@@ -1115,6 +1135,12 @@ const rules: Record<string, Case[]> = {
     `${memo}export default memo(function Row() {\n  "use no memo";\n  return <li />;\n});`,
     `${memo}function Row() {\n  "use no memo";\n  return <li />;\n}\nexport default memo(Row);`,
     `${memo}const Row = () => {\n  "use no memo";\n  return <li />;\n};\nexport default memo(Row);`,
+    `${memo}export default memo(forwardRef(function Row(props, ref) {\n  "use no memo";\n  return <li />;\n}));`,
+    `${memo}const Row = React.forwardRef((props, ref) => {\n  "use no memo";\n  return <li />;\n});\nexport default memo(Row);`,
+    // The compiler never compiles a class.
+    `${memo}export default memo(class Row extends Component {});`,
+    `${memo}class Row extends Component {}\nexport default memo(Row);`,
+    `${memo}const Row = class extends Component {};\nexport default memo(Row);`,
     `import { memo } from "./memo";\nexport default memo(Row);`,
     `import type { useMemo } from "react";\ntype T = typeof useMemo;`,
     `import { type useMemo } from "react";\ntype T = typeof useMemo;`,

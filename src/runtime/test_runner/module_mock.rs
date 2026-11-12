@@ -61,6 +61,7 @@ fn print_minified(text: &[u8]) -> Option<bun_core::String> {
 
     let source = bun_ast::Source::init_path_string(&b"factory.js"[..], text);
     let mut options = bun_js_parser::ParserOptions::init(Default::default(), bun_ast::Loader::Js);
+    options.undeclared_private_names = true;
     // What the runtime transpiler sets in a plain run.
     options.tree_shaking = true;
     options.features.minify_syntax = true;

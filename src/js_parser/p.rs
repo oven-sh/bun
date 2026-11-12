@@ -9728,7 +9728,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             commonjs_named_exports_deoptimized,
 
             // ─── all remaining fields default ───
-            allow_private_identifiers: false,
+            allow_private_identifiers: opts.undeclared_private_names,
             has_top_level_return: false,
             latest_return_had_semicolon: false,
             has_import_meta: false,

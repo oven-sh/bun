@@ -854,6 +854,16 @@ describe.concurrent("the original of a mocked module", () => {
         `vi.doMock("./own", new Holder().make());`,
         another,
       ),
+      "method-with-private-name.test.ts": testOf(
+        `class Holder { static #value = "mock"; static async factory() { ${inQuotes.replace('"mock"', "Holder.#value")} } }`,
+        `vi.doMock("./own", Holder.factory);`,
+        another,
+      ),
+      "arrow-with-private-name.test.ts": testOf(
+        `class Holder { #value = "mock"; make() { return async () => { ${inQuotes.replace('"mock"', '#value in this ? this.#value : "none"')} }; } }`,
+        `vi.doMock("./own", new Holder().make());`,
+        another,
+      ),
     };
     await expectFixturesToPass({ ...logged, ...files }, Object.keys(files).length, ["--isolate", ...printMode]);
   });

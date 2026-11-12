@@ -231,10 +231,6 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_is_paused(Self::ssl_flag(), self.as_raw())
     }
 
-    pub(crate) fn write_continue(&mut self) {
-        c::uws_res_write_continue(Self::ssl_flag(), self.as_raw())
-    }
-
     pub(crate) fn write_informational(&mut self, data: &[u8]) {
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
         unsafe {
@@ -882,10 +878,6 @@ impl AnyResponse {
         }
     }
 
-    pub fn write_continue(self) {
-        any_dispatch!(self, |r| r.write_continue())
-    }
-
     pub fn write_informational(self, data: &[u8]) {
         any_dispatch!(self, |r| r.write_informational(data))
     }
@@ -1361,7 +1353,6 @@ pub mod c {
         pub(crate) safe fn uws_res_pause(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_resume(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_is_paused(ssl: i32, res: &mut uws_res) -> bool;
-        pub(crate) safe fn uws_res_write_continue(ssl: i32, res: &mut uws_res);
         pub(crate) fn uws_res_write_informational(
             ssl: i32,
             res: *mut uws_res,

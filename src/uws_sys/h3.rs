@@ -142,9 +142,6 @@ impl Response {
         // SAFETY: self is a live FFI handle; key ptr/len valid for read
         unsafe { c::uws_h3_res_write_header_int(self, key.as_ptr(), key.len(), value) }
     }
-    pub(crate) fn write_continue(&mut self) {
-        c::uws_h3_res_write_continue(self)
-    }
     pub(crate) fn write_informational(&mut self, _data: &[u8]) {
         // node:http (the only caller) never reaches HTTP/3; kept for AnyResponse dispatch parity.
     }
@@ -615,7 +612,6 @@ mod c {
             hostname: *const c_char,
             opts: BunSocketContextOptions,
         ) -> bool;
-        pub(super) safe fn uws_h3_res_write_continue(res: &mut Response);
         pub(super) fn uws_h3_app_get(
             app: *mut App,
             p: *const u8,

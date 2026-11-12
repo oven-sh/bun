@@ -496,6 +496,8 @@ pub(crate) struct SocketConfig {
     pub(crate) local_binding: Option<(Box<[u8]>, u16)>,
     pub(crate) ssl: Option<SSLConfig>,
     pub(crate) handlers: Rc<Handlers>,
+    /// No wrapper holds the cell of `handlers` yet.
+    _cell_root: Strong,
     pub(crate) default_data: JSValue,
     pub(crate) exclusive: bool,
     pub(crate) allow_half_open: bool,
@@ -553,7 +555,9 @@ impl SocketConfig {
                     }
                 }
             };
+            let handlers = Handlers::from_generated(global, &generated.handlers, mode)?;
             break 'blk SocketConfig {
+                _cell_root: handlers.root_cell(global),
                 hostname_or_unix: Utf8Bytes::EMPTY,
                 port: None,
                 fd: generated.fd.map(|v| {
@@ -569,7 +573,7 @@ impl SocketConfig {
                     (address.into_utf8().into_vec().into_boxed_slice(), port)
                 }),
                 ssl,
-                handlers: Handlers::from_generated(global, &generated.handlers, mode)?,
+                handlers,
                 default_data: if generated.data.is_undefined() {
                     JSValue::ZERO
                 } else {

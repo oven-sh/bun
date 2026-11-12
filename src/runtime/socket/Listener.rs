@@ -257,12 +257,6 @@ impl Listener {
         let vm = VirtualMachine::get().as_mut();
 
         let mut socket_config = SocketConfig::from_js(vm, opts, cx.global(), SocketMode::Server)?;
-        // Teardown handled by Drop on SocketConfig; `handlers` is an `Rc` the
-        // `Listener` clones out of it.
-        //
-        // The handlers cell has no JS wrapper holding it yet — root it until
-        // `js::handlers_set_cached` below.
-        let _cell_root = socket_config.handlers.root_cell(cx.global());
 
         let port = socket_config.port;
         if port.is_some() {
@@ -857,10 +851,7 @@ impl Listener {
         // Client mode: these handlers have no owning listener, so
         // `mark_inactive` skips the listener-release branch.
         let mut socket_config = SocketConfig::from_js(vm, opts, cx.global(), SocketMode::Client)?;
-        // No JS wrapper holds the handlers cell until `connect_finish` creates
-        // the socket's; the option getters below run user JS that can GC.
         let handlers = Rc::clone(&socket_config.handlers);
-        let _cell_root = handlers.root_cell(cx.global());
 
         let port = socket_config.port;
         let mut owned_ssl_ctx = prebuilt_ssl_ctx(vm, cx.global(), opts, &mut socket_config, false)?;

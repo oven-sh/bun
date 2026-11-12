@@ -12,9 +12,9 @@ P = {
     "reviewed": "Self-reviewed: 99 concerns raised, 77 addressed, 1 rejected (a byte-count minimum: timing moves it).",
     # The first PR, as "#NNNNN".
     "first": "the write-check backport",
-    # lsquic_stream.o, release flags without LTO, on the final patch stack.
-    "text_bytes": "302",
-    "bss_bytes": "16",
+    # The release binary (`size`), over the first PR. lsquic_stream.o alone: 302 and 16.
+    "text_bytes": "807",
+    "bss_bytes": "32",
     # Executed instructions in lsquic_stream.o for one 49,500-byte response.
     "instructions": "17 more instructions per 49,500-byte response (29,446 before)",
     "base": "main with #46528",
@@ -46,7 +46,7 @@ visible = f"""### Problem
 - Considered a flush in bun (a STREAM frame more per response). lsquic v4.11.1 has both defects. Questions: {QUESTIONS}.
 
 ### Downsides
-- Cost: {P["text_bytes"]} bytes of `.text`, {P["bss_bytes"]} of `.bss`, {P["instructions"]}. The counter ships in release builds.
+- Cost: {P["text_bytes"]} bytes of text, {P["bss_bytes"]} of bss, {P["instructions"]}. The counter ships in release builds.
 - With a used-up window, 100 responses take 499 STREAM frames, not 439.
 - Open: a node:quic response with no body keeps its FIN until MAX_DATA.
 
@@ -85,11 +85,12 @@ notes = f"""<details><summary>Notes</summary>
 
 **Measurements.** On one linux-x64 machine, on {P["base"]}.
 
-- With the patches: the 10 rows pass on a debug build and on a release build (30 of 30 release runs). Release build: `quic-stream.test.ts` (119), `serve-http3.test.ts` (120, 2 skipped), `quic-endpoint.test.ts` (42, 2 skipped), `quic-sni.test.ts` (20), `fetch-http3-client.test.ts` (108), `test/js/node/test/parallel/test-quic-*.mjs` (233 of 235: the other two import `node:stream/iter`, which does not exist). Debug build: `quic-stream.test.ts` (119) and `serve-http3.test.ts` (122).
-- Without the patches, on a debug build that has the write check: all 10 rows fail (lsquic's asserts `cc_sent <= cc_max` and `size <= stream_avail`, 0 of 40 four times, a count of 0 stops, 12 of 100). A release build with none of the three fix patches fails all 10 too: 161,007 and 158,571 bytes into a 136,000-byte window, `flow control violation on stream 0`, and the stalls.
-- `lsquic_stream.o`, release flags without LTO: `.text` 38,992 to 39,294 bytes. The counter is 117 of the 302. No patch adds an allocation, a system call or a pass over the streams.
-- Instructions that `lsquic_stream.o` executes per stream, counted by single-stepping a driver in the scaffolding of lsquic's `tests/test_h3_framing.c`, mean of 10 streams: a header block with a 49,500-byte body 29,446 to 29,463, a header block alone 2,137 to 2,140, a 103 in front 30,770 to 30,790, trailers behind 30,754 to 30,778. Of the 17, the credit check is 11, the flush 2, the counter 3.
-- STREAM frames end to end, on debug builds with `Bun.serve` and the client in one process: 100 responses with 100-byte bodies into a 1 MiB window give 220 with and without the patches. 100 responses with 3,000-byte bodies into a 120,000-byte window give 439 without and 499 with (5 runs each), in 287 to 295 packets both ways. Into a 30,000-byte window both give 433.
+- With the patches: the 10 rows pass on a debug build and on a release build (30 of 30 release runs). Release build: `quic-stream.test.ts` (119), `serve-http3.test.ts` (120, 2 skipped), `quic-endpoint.test.ts` (42, 2 skipped), `quic-sni.test.ts` (21), `fetch-http3-client.test.ts` (108), `test/js/node/test/parallel/test-quic-*.mjs` (233 of 235: the other two import `node:stream/iter`, which does not exist). Debug build: `quic-stream.test.ts` (119) and `serve-http3.test.ts` (122).
+- Without the patches, on a debug build that has the write check: all 10 rows fail (lsquic's asserts `cc_sent <= cc_max` and `size <= stream_avail`, 0 of 40 four times, a count of 0 stops, 11 of 100). A release build that has the write check and not these patches fails all 10 too, in 10 of 10 runs: 157,010 to 166,507 bytes into a 136,000-byte window, `flow control violation on stream 0`, and the stalls.
+- The release binary (`size`): text 144,159,475 to 144,160,282 bytes (807 more), bss 32 more. `lsquic_stream.o`, release flags without LTO: `.text` 38,992 to 39,294 bytes (302 more, of which the counter is 117). The rest of the 807 is the counter's two host functions and their two rows in the table of built-ins. No patch adds an allocation, a system call or a pass over the streams.
+- Instructions that `lsquic_stream.o` executes per stream (on an earlier head of #46528, 2613145a7b, with the same `lsquic_stream.c`), counted by single-stepping a driver in the scaffolding of lsquic's `tests/test_h3_framing.c`, mean of 10 streams: a header block with a 49,500-byte body 29,446 to 29,463, a header block alone 2,137 to 2,140, a 103 in front 30,770 to 30,790, trailers behind 30,754 to 30,778. Of the 17, the credit check is 11, the flush 2, the counter 3.
+- STREAM frames end to end, on debug builds of that earlier head with `Bun.serve` and the client in one process: 100 responses with 100-byte bodies into a 1 MiB window give 220 with and without the patches. 100 responses with 3,000-byte bodies into a 120,000-byte window give 439 without and 499 with (5 runs each), in 287 to 295 packets both ways. Into a 30,000-byte window both give 433.
+- Existing tests of `serve-http3.test.ts` fail at a low rate in whole-file release runs on this machine, with and without these patches: 7 of 372 runs with the first PR alone, 14 of 372 with both (not significant, Fisher p about 0.18). The three that failed more than once failed in both builds: "server.stop(true) after server.stop() closes the H3 connections that are still draining" (4 and 6), "server.stop(true) sends CONNECTION_CLOSE on an idle H3 connection" (1 and 4), "maxRequestBodySize is enforced for H3 bodies without Content-Length" (1 and 3). A whole-file run takes the same CPU time with both builds.
 - Four unit cases fail on lsquic at the pin with this tree's other patches, and on v4.11.1 (2f4cd42f) as it is. They pass with the credit and flush patches. Upstream's `tests/test_h3_framing.c` passes with them. The cases are in {REFERENCE}.
 - Earlier heads of these patches ran through unit sweeps on main's patch stack and on an earlier head of #46528: 74,368 cases at the window edges (0 change from right to wrong), 72,000 configurations of the stall (0 stalled), 3,246 of a flush that ends with a packet (0 stop), 4,056 at the edge of both windows (0 pass a limit, where lsquic at the pin passes one in 548). The sweeps did not run again on this tree.
 

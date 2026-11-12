@@ -85,6 +85,9 @@ pub struct EmphDelim {
     pub(crate) can_close_as_written: bool,
     // `SpanDetail::is_kept_as_written`
     pub(crate) is_kept_as_written: bool,
+    // The run that CommonMark pairs this one with and micromark does not. Both are kept as written if both pair
+    // with something: a run that stays text is escaped by the printer. `usize::MAX` if none.
+    pub(crate) kept_with: usize,
     pub(crate) remaining: usize,   // chars not yet consumed
     pub(crate) open_count: usize,  // total chars consumed as opener
     pub(crate) close_count: usize, // total chars consumed as closer
@@ -110,6 +113,7 @@ impl Default for EmphDelim {
             can_open_as_written: false,
             can_close_as_written: false,
             is_kept_as_written: false,
+            kept_with: usize::MAX,
             remaining: 0,
             open_count: 0,
             close_count: 0,
@@ -1284,8 +1288,8 @@ impl Parser<'_> {
                                 &self.emph_delims[closer_idx],
                             )
                         {
-                            self.emph_delims[oi].is_kept_as_written = true;
-                            self.emph_delims[closer_idx].is_kept_as_written = true;
+                            self.emph_delims[oi].kept_with = closer_idx;
+                            self.emph_delims[closer_idx].kept_with = oi;
                         }
                         from = oi;
                         oi = prev_candidate[oi];
@@ -1379,6 +1383,17 @@ impl Parser<'_> {
             closer_idx = closer_idx.wrapping_add(1);
         }
         if counts_what_is_left {
+            for i in 0..len {
+                let with = self.emph_delims[i].kept_with;
+                let has_paired = |d: &EmphDelim| d.remaining < d.count;
+                let both_paired = with < len
+                    && has_paired(&self.emph_delims[i])
+                    && self.emph_delims.get(with).is_some_and(has_paired);
+                if both_paired {
+                    self.emph_delims[i].is_kept_as_written = true;
+                    self.emph_delims[with].is_kept_as_written = true;
+                }
+            }
             for i in 0..len {
                 let set = find(&mut set_of, i);
                 let is_kept = self.emph_delims[i].is_kept_as_written;

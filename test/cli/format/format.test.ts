@@ -2040,6 +2040,7 @@ describe.concurrent("bun fmt", () => {
     // them apart from `*foo_bar*`, where `_foo_bar_` is correct, requires the delimiter run rules.
     test.each([
       ["**a****a**\n", "**a\\****a**\n"],
+      ["__x ***a** b**c d* e__\n", "**x _**a** b\\**c d_ e**\n"],
       ["*b **a*b*** c*\n", "*b \\**a*b*** c*\n"],
       ["*b _a_*b* c*\n", "*b *a**b* c*\n"],
       ["*b _*a*_ c*\n", "*b _*a*\\_ c*\n"],
@@ -2460,6 +2461,8 @@ describe.concurrent("bun fmt", () => {
         ["x****a***b* c\n", "x****a***b* c\n", "x****a**_b_ c\n"],
         // CommonMark pairs the `*` before `)` with the first `*`, so the emphasis around a kept one keeps its marker.
         ["*x **a*(*)d*\n", "*x **a*(*)d*\n", "_x **a*(*)d_\n"],
+        // The `_` emphasis at the start of the kept one would join its marker.
+        ["*_b_ **a*(*)d*\n", "*_b_ **a*(*)d*\n", "_*b* **a*(*)d_\n"],
       ])("%j", async (before, after, byPrettier) => {
         expect(after).not.toBe(byPrettier);
         expect(rendered(byPrettier)).not.toBe(rendered(before));

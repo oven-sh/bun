@@ -1951,14 +1951,30 @@ impl RendererImpl for Builder<'_> {
             return Ok(());
         };
         // The emphasis around one that keeps its marker keeps its own: CommonMark may pair its runs with the kept ones.
+        // So does an emphasis at either end of a kept one, whose marker would join the kept marker.
         if matches!(kind, Kind::Emphasis | Kind::Strong) && number == 1 {
+            let is_emphasis =
+                |it: &super::ast::Node| matches!(it.kind, Kind::Emphasis | Kind::Strong);
             let mut ancestor = parent;
-            while let Some(node) = self.tree.get_mut(ancestor) {
-                if matches!(node.kind, Kind::Emphasis | Kind::Strong) {
-                    node.number = 1;
+            while let Some(it) = self.tree.get_mut(ancestor) {
+                if is_emphasis(it) {
+                    it.number = 1;
                     break;
                 }
-                ancestor = node.parent;
+                if !matches!(it.kind, Kind::Delete | Kind::Link | Kind::LinkReference) {
+                    break;
+                }
+                ancestor = it.parent;
+            }
+            for edge in [
+                |it: &super::ast::Node| it.first_child,
+                |it: &super::ast::Node| it.last_child,
+            ] {
+                let mut child = self.tree.get(node).map(edge).unwrap_or(NONE);
+                while let Some(it) = self.tree.get_mut(child).filter(|it| is_emphasis(it)) {
+                    it.number = 1;
+                    child = edge(it);
+                }
             }
         }
         if matches!(kind, Kind::Image | Kind::ImageReference) {

@@ -1233,8 +1233,7 @@ impl<'a> Uses<'a> {
                     if is_break {
                         return self.is_read_after(target);
                     }
-                    // ESLint's `getLabel` gives a loop only the label right before it, so a `continue` with another of
-                    // its labels leads nowhere.
+                    // ESLint's `getLabel` gives a loop only the label right before it.
                     return body.is_loop() && self.is_read_after_body(body);
                 }
                 (_, None) if is_loop && !is_break => return self.is_read_after_body(target),

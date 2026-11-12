@@ -15,6 +15,50 @@ const ASAN_MULTIPLIER = isDebug ? 10 : isASAN ? 3 : 1;
 // These tests cover call sites where this was observed under ASAN.
 
 test(
+  "session.request() from a stream 'aborted' listener during forEachStream does not UAF on hashmap rehash",
+  async () => {
+    const script = /* js */ `
+    const http2 = require("node:http2");
+    const { duplexPair } = require("node:stream");
+
+    const [transport, peer] = duplexPair();
+    peer.resume();
+    const client = http2.connect("http://localhost", { createConnection: () => transport });
+    const counts = { aborted: 0, opened: 0, closed: 0 };
+    function open() {
+      const req = client.request({ ":method": "POST" });
+      if (!req.pending) counts.opened++;
+      return req.on("close", () => counts.closed++);
+    }
+    client.on("connect", () => {
+      for (let i = 0; i < 24; i++) {
+        // The transport's close cancels every stream from inside forEachStream().
+        open().on("aborted", () => {
+          counts.aborted++;
+          for (let j = 0; j < 4; j++) open();
+        });
+      }
+      transport.destroy();
+    });
+    process.on("exit", () => console.log(JSON.stringify(counts)));
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode, stderr }).toEqual({
+      stdout: JSON.stringify({ aborted: 24, opened: 120, closed: 120 }),
+      exitCode: 0,
+      stderr: "",
+    });
+  },
+  10_000 * ASAN_MULTIPLIER,
+);
+
+test(
   "http2 client request() does not hold *Stream across user-controlled options getters",
   async () => {
     const script = /* js */ `

@@ -9137,7 +9137,8 @@ it.skipIf(!isLinux)("streams build no frames for what they have buffered when th
   const chunk = Buffer.alloc(1000, "x");
   const errors = [];
   let streams = 0;
-  let settled = 0;
+  let completed = 0;
+  const failed = {};
   let batches = 0;
   const server = http2.createSecureServer(TLS_CERT);
   server.on("sessionError", err => errors.push(`sessionError:${err.code}`));
@@ -9150,7 +9151,7 @@ it.skipIf(!isLinux)("streams build no frames for what they have buffered when th
     socket.resetAndDestroy();
     stream.respond({ ":status": 200 });
     for (let i = 0; i < 4000; i++) {
-      stream.write(chunk, () => settled++);
+      stream.write(chunk, err => (err ? (failed[err.code] = (failed[err.code] ?? 0) + 1) : completed++));
     }
     stream.end();
   });
@@ -9179,8 +9180,14 @@ it.skipIf(!isLinux)("streams build no frames for what they have buffered when th
     Buffer.concat = concat;
   }
   await new Promise(resolve => server.close(resolve));
-  // Only the first stream's write completed while the transport was open.
-  expect({ errors, streams, settled, batches }).toEqual({ errors: [], streams: 5, settled: 20000, batches: 1 });
+  // Only the first stream's write completed while the transport was open. The other four had one write in flight and the rest buffered.
+  expect({ errors, streams, completed, failed, batches }).toEqual({
+    errors: [],
+    streams: 5,
+    completed: 4000 + 4,
+    failed: { ERR_STREAM_DESTROYED: 4 * 3999 },
+    batches: 1,
+  });
 });
 
 it("res.end() calls its callback once when the client leaves before the response is sent", async () => {

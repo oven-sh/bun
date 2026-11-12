@@ -583,14 +583,14 @@ describe("bun", () => {
     });
 
     // `child_process.fork()` starts `bun <execArgv> <script>`, so the path must be in execArgv, not in argv.
-    test.concurrent.each(spellings)("%j is in execArgv, not in argv", async (...flag) => {
+    test.concurrent.each(spellings.map(flag => [flag]))("%j is in execArgv, not in argv", async flag => {
       using dir = tempDir("config-flag", {
         ...files,
         "index.js": `console.log(JSON.stringify([process.execArgv, process.argv.slice(2)]));`,
       });
       await using proc = Bun.spawn({
         cmd: [bunExe(), ...flag, "index.js", "arg"],
-        env: bunEnv,
+        env: { ...bunEnv, BUN_OPTIONS: undefined },
         cwd: String(dir),
         stderr: "pipe",
       });

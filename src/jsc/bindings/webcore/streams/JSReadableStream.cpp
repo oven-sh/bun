@@ -40,8 +40,6 @@ namespace WebCore {
 using namespace JSC;
 using namespace Bun::WebStreams;
 
-static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_cancel);
-static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_getReader);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_pipeThrough);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_pipeTo);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_tee);
@@ -51,7 +49,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_json);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_bytes);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_blob);
 static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamStaticFunction_from);
-static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_locked);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_nodeReadable);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_nodeErrored);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_nodeDisturbed);

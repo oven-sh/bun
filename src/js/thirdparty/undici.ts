@@ -1,7 +1,7 @@
 const EventEmitter = require("node:events");
 const dc = require("node:diagnostics_channel");
 const { isArrayBuffer } = require("node:util/types");
-const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
+const { _ReadableFromWeb: ReadableFromWeb, _kFetchedBody: kFetchedBody } = require("internal/webstreams_adapters");
 
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
@@ -20,6 +20,22 @@ const BunWebSocket: typeof globalThis.WebSocket = bindings[8];
 const CloseEvent = bindings[9];
 const ErrorEvent = bindings[10];
 const MessageEvent = bindings[11];
+
+// What the fetch() of request() resolves with, and its headers. The program never gets them and can replace every
+// member of Response.prototype and Headers.prototype, so these types have no member: the functions below read them.
+declare const fetched: unique symbol;
+type FetchedResponse = { readonly [fetched]: "Response" };
+type FetchedHeaders = { readonly [fetched]: "Headers" };
+// Native code makes each from the member of the prototype. `this` is the Response or the Headers.
+const responseStatus: (this: FetchedResponse) => number = bindings[12];
+const responseHeaders: (this: FetchedResponse) => FetchedHeaders = bindings[13];
+const headersToJSON: (this: FetchedHeaders) => Record<string, string | string[]> = bindings[14];
+const responseBody: (this: FetchedResponse) => ReadableStream | null = bindings[15];
+const responseArrayBuffer: (this: FetchedResponse) => Promise<ArrayBuffer> = bindings[16];
+const responseBlob: (this: FetchedResponse) => Promise<Blob> = bindings[17];
+const responseFormData: (this: FetchedResponse) => Promise<FormData> = bindings[18];
+const responseJSON: (this: FetchedResponse) => Promise<unknown> = bindings[19];
+const responseText: (this: FetchedResponse) => Promise<string> = bindings[20];
 
 class FileReader extends EventTarget {
   constructor() {
@@ -54,25 +70,21 @@ function notImplemented(): never {
  * @typedef {import('events').EventEmitter} EventEmitter
  */
 
-function closeEmptyBody(controller: ReadableStreamDefaultController) {
-  controller.close();
-}
+const kBodyOptions = { __proto__: null, responseBody: true };
 
 class BodyReadable extends ReadableFromWeb {
-  #response: Response;
-  #bodyUsed: boolean;
+  #response: FetchedResponse;
+  #bodyUsed = false;
 
-  constructor(response: Response, options: object = {}) {
+  constructor(response: FetchedResponse) {
     // A response with no body (204, HEAD) still gets a body, as in undici:
     // https://github.com/nodejs/undici/blob/v6.21.3/lib/api/api-request.js#L118-L126
-    super({ ...options, responseBody: true }, response.body ?? new ReadableStream({ start: closeEmptyBody }));
+    super(kBodyOptions, responseBody.$call(response), kFetchedBody);
 
     this.#response = response;
-    this.#bodyUsed = response.bodyUsed;
   }
 
   get bodyUsed() {
-    // return this.#response.bodyUsed;
     return this.#bodyUsed;
   }
 
@@ -83,27 +95,27 @@ class BodyReadable extends ReadableFromWeb {
 
   async arrayBuffer() {
     this.#consume();
-    return await this.#response.arrayBuffer();
+    return await responseArrayBuffer.$call(this.#response);
   }
 
   async blob() {
     this.#consume();
-    return await this.#response.blob();
+    return await responseBlob.$call(this.#response);
   }
 
   async formData() {
     this.#consume();
-    return await this.#response.formData();
+    return await responseFormData.$call(this.#response);
   }
 
   async json() {
     this.#consume();
-    return await this.#response.json();
+    return await responseJSON.$call(this.#response);
   }
 
   async text() {
     this.#consume();
-    return await this.#response.text();
+    return await responseText.$call(this.#response);
   }
 }
 
@@ -220,7 +232,7 @@ async function request(
 
   const followRedirects = maxRedirections != null && maxRedirections > 0;
 
-  const resp = await fetch(url, {
+  const resp = (await fetch(url, {
     signal,
     mode: "cors",
     method,
@@ -229,9 +241,12 @@ async function request(
     redirect: followRedirects ? "follow" : "manual",
     maxRedirects: followRedirects ? maxRedirections : undefined,
     keepalive: !reset,
-  });
+  })) as unknown as FetchedResponse;
 
-  const { status: statusCode, headers } = resp;
+  const statusCode = responseStatus.$call(resp);
+  // Before the body: a response that fetch() made of a file or of a data: URL takes its content-type from a body
+  // that nothing has read yet.
+  const headers = responseHeaders.$call(resp);
 
   // Throw if received 4xx or 5xx response indicating HTTP error
   if (throwOnError && statusCode >= 400 && statusCode < 600) {
@@ -243,7 +258,7 @@ async function request(
   // The result of undici: https://github.com/nodejs/undici/blob/v6.21.3/lib/api/api-request.js#L141-L147
   return {
     statusCode,
-    headers: headers.toJSON(),
+    headers: headersToJSON.$call(headers),
     body,
     trailers: {},
     opaque: opaque || null,

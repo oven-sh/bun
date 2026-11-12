@@ -58,4 +58,9 @@ private:
 
 using JSReadableStreamDefaultReaderConstructor = JSStreamConstructor<JSReadableStreamDefaultReader>;
 
+// Members of ReadableStreamDefaultReader.prototype that createFetchedBodyMethods() (BunStreamConsumers.cpp) also makes functions from.
+JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_cancel);
+JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_read);
+JSC_DECLARE_HOST_FUNCTION(jsReadableStreamDefaultReaderPrototypeFunction_releaseLock);
+
 } // namespace WebCore

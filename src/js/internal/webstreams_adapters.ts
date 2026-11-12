@@ -46,14 +46,45 @@ function tryTransferToNativeReadable(stream: ReadableStream, options: StreamRead
 
 type DefaultReader = ReturnType<ReadableStream["getReader"]>;
 
+// What a ReadableFromWeb reads.
+// A stream that the program has. Its own methods read it, as in Node, and the program can have replaced them.
+const kProgramStream: 0 = 0;
+// node-fetch, undici: the body of a fetch() response, or null for a response that has none. The program did not make
+// this stream, so the functions below read it and nothing that the program stored on a prototype is called.
+const kFetchedBody: 1 = 1;
+
+// The members of ReadableStream.prototype and of the reader's prototype, as functions that native code makes for the
+// first fetched body: the `this` of each is the stream or the reader.
+let streamLocked: (this: ReadableStream) => boolean;
+let streamGetReader: (this: ReadableStream) => DefaultReader;
+let streamCancel: (this: ReadableStream, reason: unknown) => Promise<void>;
+let readerRead: (this: DefaultReader) => ReturnType<DefaultReader["read"]>;
+let readerReleaseLock: (this: DefaultReader) => void;
+let readerCancel: (this: DefaultReader, reason: unknown) => Promise<void>;
+
+function loadFetchedBodyMethods() {
+  const methods = $cpp("streams/BunStreamConsumers.cpp", "createFetchedBodyMethods");
+  streamLocked = methods[0];
+  streamGetReader = methods[1];
+  streamCancel = methods[2];
+  readerRead = methods[3];
+  readerReleaseLock = methods[4];
+  readerCancel = methods[5];
+}
+
 class ReadableFromWeb extends Readable {
   #reader: DefaultReader | undefined;
   #closed: boolean;
-  #stream: ReadableStream | undefined;
+  #stream: ReadableStream | null | undefined;
   // node-fetch, undici: `stream` is a Response body, which text(), json(), ... lock for good.
   #responseBody: boolean;
+  #fetched: boolean;
 
-  constructor(options: StreamReadableFromReadableStreamOptions, stream: ReadableStream) {
+  constructor(
+    options: StreamReadableFromReadableStreamOptions,
+    stream: ReadableStream | null,
+    source: typeof kProgramStream | typeof kFetchedBody = kProgramStream,
+  ) {
     const { objectMode, highWaterMark, encoding, signal, responseBody = false } = options;
     super({
       objectMode,
@@ -65,15 +96,26 @@ class ReadableFromWeb extends Readable {
     this.#stream = stream;
     this.#closed = false;
     this.#responseBody = responseBody;
+    const fetched = (this.#fetched = source === kFetchedBody);
+    if (fetched) {
+      if (streamGetReader === undefined) loadFetchedBodyMethods();
+      // Chosen once here: _read() below runs for every chunk of Readable.fromWeb() and does not ask.
+      this._read = this.#readFetchedBody;
+    }
   }
 
   // Locked before this wrapper opened it: a body method has the contents, nothing to read or cancel.
   #takenByResponse(stream: ReadableStream) {
-    return this.#responseBody && stream.locked;
+    return this.#responseBody && (this.#fetched ? streamLocked.$call(stream) : stream.locked);
+  }
+
+  #releaseLock(reader: DefaultReader) {
+    if (this.#fetched) readerReleaseLock.$call(reader);
+    else reader.releaseLock();
   }
 
   #handleDone(reader: DefaultReader) {
-    reader.releaseLock();
+    this.#releaseLock(reader);
     this.#reader = undefined;
     this.#closed = true;
     this.push(null);
@@ -83,7 +125,7 @@ class ReadableFromWeb extends Readable {
     if (reader) {
       this.#reader = undefined;
       try {
-        reader.releaseLock();
+        this.#releaseLock(reader);
       } catch {}
     }
     this.#closed = true;
@@ -122,6 +164,36 @@ class ReadableFromWeb extends Readable {
     );
   }
 
+  // _read() of a fetched body.
+  #readFetchedBody() {
+    if (this.#closed) return;
+    var reader = this.#reader;
+    var stream = this.#stream;
+    if (stream !== undefined) {
+      // No body, or a body method took it (#takenByResponse).
+      if (stream === null || streamLocked.$call(stream)) {
+        this.#stream = undefined;
+        this.#closed = true;
+        this.push(null);
+        return;
+      }
+      reader = this.#reader = streamGetReader.$call(stream);
+      this.#stream = undefined;
+    }
+    PromisePrototypeThen.$call(
+      readerRead.$call(reader!),
+      chunk => {
+        if (this.#closed) return;
+        if (chunk.done) {
+          this.#handleDone(reader!);
+        } else {
+          this.push(chunk.value);
+        }
+      },
+      error => this.#handleError(reader, error),
+    );
+  }
+
   _destroy(error: Error | null, callback: $Node.ErrorCallback) {
     if (!this.#closed) {
       this.#closed = true;
@@ -130,14 +202,22 @@ class ReadableFromWeb extends Readable {
       var reader = this.#reader;
       if (reader) {
         this.#reader = undefined;
-        PromisePrototypeThen.$call(reader.cancel(error), done, done);
+        PromisePrototypeThen.$call(
+          this.#fetched ? readerCancel.$call(reader, error) : reader.cancel(error),
+          done,
+          done,
+        );
         return;
       }
       var stream = this.#stream;
       if (stream) {
         this.#stream = undefined;
         if (!this.#takenByResponse(stream)) {
-          PromisePrototypeThen.$call(stream.cancel(error), done, done);
+          PromisePrototypeThen.$call(
+            this.#fetched ? streamCancel.$call(stream, error) : stream.cancel(error),
+            done,
+            done,
+          );
           return;
         }
       }
@@ -893,4 +973,5 @@ export default {
   newReadableWritablePairFromDuplex,
   newStreamDuplexFromReadableWritablePair,
   _ReadableFromWeb: ReadableFromWeb,
+  _kFetchedBody: kFetchedBody,
 };

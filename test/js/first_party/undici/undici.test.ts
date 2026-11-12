@@ -1,5 +1,9 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, it, mock, spyOn } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import diagnosticsChannel from "node:diagnostics_channel";
+import { once } from "node:events";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import { Readable } from "node:stream";
 // @ts-ignore undici 5's types don't declare ping()
 import { ping, request, fetch as undiciFetch, WebSocket as UndiciWebSocket } from "undici";
@@ -352,6 +356,16 @@ describe("undici", () => {
       expect(second.opaque).toBe(opaque);
     });
 
+    // fetch() answers a data: URL itself. The content-type comes from the body, and is lost if `body` is read first.
+    it("gives the content-type of a data: URL", async () => {
+      const { statusCode, headers, body } = await request("data:text/plain,hello");
+      expect({ statusCode, headers, text: await body.text() }).toEqual({
+        statusCode: 200,
+        headers: { "content-type": "text/plain;charset=utf-8" },
+        text: "hello",
+      });
+    });
+
     it("a write to a result does not reach the headers of the next request", async () => {
       const { trailers, opaque, context } = await request(`${hostUrl}/headers`);
       for (const part of [trailers, opaque, context]) {
@@ -426,6 +440,255 @@ describe("undici.request maxRedirections", () => {
     } finally {
       server.stop(true);
     }
+  });
+});
+
+// request() makes its result from the Response of a fetch() that the program never gets. undici has no Response,
+// no Headers and no web stream there, so what a program puts on their prototypes does not reach the result.
+describe("undici.request does not call what a program put on the prototypes of its response", () => {
+  afterEach(() => {
+    mock.restore();
+  });
+
+  function serve() {
+    return Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/formData") {
+          return new Response("a=1", {
+            status: 201,
+            headers: { "content-type": "application/x-www-form-urlencoded", "x-served": "yes" },
+          });
+        }
+        if (pathname.startsWith("/status/")) return new Response(null, { status: Number(pathname.slice(8)) });
+        return Response.json({ a: 1 }, { status: 201, headers: { "x-served": "yes" } });
+      },
+    });
+  }
+
+  type Body = Awaited<ReturnType<typeof request>>["body"];
+  const readers = {
+    arrayBuffer: async (body: Body) => new TextDecoder().decode(await body.arrayBuffer()),
+    blob: async (body: Body) => await (await body.blob()).text(),
+    formData: async (body: Body) => Object.fromEntries(await body.formData()),
+    json: async (body: Body) => await body.json(),
+    text: async (body: Body) => await body.text(),
+    stream: async (body: Body) => Buffer.concat(await Array.fromAsync(body)).toString(),
+  };
+  const served = {
+    arrayBuffer: '{"a":1}',
+    blob: '{"a":1}',
+    formData: { a: "1" },
+    json: { a: 1 },
+    text: '{"a":1}',
+    stream: '{"a":1}',
+  };
+
+  // Everything request() gives for one response of serve(), with the body read in every way.
+  async function results(origin: string) {
+    const all: Record<string, unknown> = {};
+    for (const [name, read] of Object.entries(readers)) {
+      const { statusCode, headers, body } = await request(`${origin}${name}`);
+      const before = body.bodyUsed;
+      all[name] = { statusCode, served: headers["x-served"], before, value: await read(body), after: body.bodyUsed };
+    }
+    return all;
+  }
+  const expected = Object.fromEntries(
+    Object.entries(served).map(([name, value]) => [
+      name,
+      // Reading the stream itself is not a body method, so it does not set bodyUsed.
+      { statusCode: 201, served: "yes", before: false, value, after: name !== "stream" },
+    ]),
+  );
+
+  // What reading a web stream as a node stream can call. A spy on each still calls the member.
+  function spyOnStreamMembers() {
+    return [
+      spyOn(ReadableStream.prototype, "locked", "get"),
+      spyOn(ReadableStream.prototype, "getReader"),
+      spyOn(ReadableStream.prototype, "cancel"),
+      spyOn(ReadableStreamDefaultReader.prototype, "read"),
+      spyOn(ReadableStreamDefaultReader.prototype, "releaseLock"),
+      spyOn(ReadableStreamDefaultReader.prototype, "cancel"),
+    ];
+  }
+  const callsOf = (spies: { mock: { calls: unknown[] } }[]) => spies.map(spy => spy.mock.calls.length);
+
+  const outcomeOf = (promise: Promise<unknown>) =>
+    promise.then(
+      () => "resolved",
+      error => error.name,
+    );
+
+  it("gives these results when nothing is replaced", async () => {
+    await using server = serve();
+    expect(await results(server.url.href)).toEqual(expected);
+  });
+
+  it.each([
+    ["status", 500],
+    ["headers", new Headers({ "x-served": "no" })],
+    ["body", null],
+    ["bodyUsed", true],
+  ] as const)("a getter that replaces Response.prototype.%s", async (name, value) => {
+    await using server = serve();
+    const spy = spyOn(Response.prototype, name, "get").mockReturnValue(value as never);
+
+    expect(await results(server.url.href)).toEqual(expected);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it.each(["arrayBuffer", "blob", "formData", "json", "text"] as const)(
+    "a function that replaces Response.prototype.%s",
+    async method => {
+      await using server = serve();
+      const spy = spyOn(Response.prototype, method).mockResolvedValue("replaced" as never);
+
+      expect(await results(server.url.href)).toEqual(expected);
+      expect(spy).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a function that replaces Headers.prototype.toJSON", async () => {
+    await using server = serve();
+    const spy = spyOn(Headers.prototype, "toJSON").mockReturnValue({ "x-served": "no" });
+
+    expect(await results(server.url.href)).toEqual(expected);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("a status getter does not decide throwOnError", async () => {
+    await using server = serve();
+    const spy = spyOn(Response.prototype, "status", "get");
+
+    spy.mockReturnValue(500);
+    const { statusCode, body } = await request(`${server.url.href}json`, { throwOnError: true });
+    expect({ statusCode, json: await body.json() }).toEqual({ statusCode: 201, json: { a: 1 } });
+
+    spy.mockReturnValue(200);
+    await expect(request(`${server.url.href}status/404`, { throwOnError: true })).rejects.toThrow(
+      "Request failed with status code 404",
+    );
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("the members of the stream prototypes, for a body that is read as a stream", async () => {
+    const secondChunk = Promise.withResolvers<void>();
+    await using server = http.createServer((req, res) => {
+      if (req.url === "/one") return void res.end("one chunk");
+      res.write("first ");
+      secondChunk.promise.then(() => res.end("second"));
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const spies = spyOnStreamMembers();
+
+    const toTheEnd = (await request(`${origin}/one`)).body;
+    const unread = (await request(`${origin}/one`)).body;
+    const halfRead = (await request(`${origin}/two`)).body;
+    const [firstChunk] = await once(halfRead, "data");
+
+    expect({
+      toTheEnd: await readers.stream(toTheEnd),
+      // destroy() cancels the web stream, or the reader that read() made of it, so no body method gets the body.
+      unread: [await once(unread.destroy(), "close"), await outcomeOf(unread.text())],
+      halfRead: [String(firstChunk), await once(halfRead.destroy(), "close"), await outcomeOf(halfRead.text())],
+      calls: callsOf(spies),
+    }).toEqual({
+      toTheEnd: "one chunk",
+      unread: [[], "TypeError"],
+      halfRead: ["first ", [], "TypeError"],
+      calls: [0, 0, 0, 0, 0, 0],
+    });
+    secondChunk.resolve();
+  });
+
+  // A body method after the stream gave the body to somebody else rejects, as it did when the program's own
+  // methods read the stream.
+  it("a body method rejects after the stream was read to the end", async () => {
+    await using server = serve();
+    const { body } = await request(`${server.url.href}stream`);
+
+    expect({
+      stream: await readers.stream(body),
+      before: body.bodyUsed,
+      text: await outcomeOf(body.text()),
+      after: body.bodyUsed,
+    }).toEqual({ stream: '{"a":1}', before: false, text: "TypeError", after: true });
+  });
+
+  it.each([
+    ["a 204", "status/204", {}],
+    ["the response to a HEAD request", "json", { method: "HEAD" as const }],
+  ])("makes no web stream for %s", async (_, path, init) => {
+    await using server = serve();
+    const close = spyOn(ReadableStreamDefaultController.prototype, "close");
+    const spies = spyOnStreamMembers();
+
+    const { body } = await request(`${server.url.href}${path}`, init);
+    expect({ stream: await readers.stream(body), calls: [...callsOf(spies), close.mock.calls.length] }).toEqual({
+      stream: "",
+      calls: [0, 0, 0, 0, 0, 0, 0],
+    });
+  });
+
+  // The module is loaded on its first require, so what it keeps from the prototypes at that time can be a replacement.
+  it("members that were replaced before undici was loaded", async () => {
+    await using server = serve();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { spyOn } = require("bun:test");
+          const spies = [
+            spyOn(Response.prototype, "status", "get").mockReturnValue(500),
+            spyOn(Response.prototype, "headers", "get").mockReturnValue(new Headers({ "x-served": "no" })),
+            spyOn(Response.prototype, "body", "get").mockReturnValue(null),
+            spyOn(Response.prototype, "bodyUsed", "get").mockReturnValue(true),
+            spyOn(Response.prototype, "text").mockResolvedValue("replaced"),
+            spyOn(Response.prototype, "json").mockResolvedValue("replaced"),
+            spyOn(Headers.prototype, "toJSON").mockReturnValue({ "x-served": "no" }),
+            spyOn(ReadableStream.prototype, "getReader").mockReturnValue({ read: async () => ({ done: true }) }),
+            spyOn(ReadableStreamDefaultReader.prototype, "read").mockResolvedValue({ done: true }),
+          ];
+          const { request } = require("undici");
+          const origin = process.argv.at(-1);
+          const text = await request(origin + "text");
+          const json = await request(origin + "json");
+          const stream = await request(origin + "stream");
+          console.log(
+            JSON.stringify({
+              statusCode: text.statusCode,
+              served: text.headers["x-served"],
+              before: text.body.bodyUsed,
+              text: await text.body.text(),
+              json: await json.body.json(),
+              stream: Buffer.concat(await Array.fromAsync(stream.body)).toString(),
+              calls: spies.map(spy => spy.mock.calls.length),
+            }),
+          );
+        `,
+        server.url.href,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      statusCode: 201,
+      served: "yes",
+      before: false,
+      text: '{"a":1}',
+      json: { a: 1 },
+      stream: '{"a":1}',
+      calls: [0, 0, 0, 0, 0, 0, 0, 0, 0],
+    });
+    expect(exitCode).toBe(0);
   });
 });
 

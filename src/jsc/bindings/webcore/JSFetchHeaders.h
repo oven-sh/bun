@@ -70,6 +70,8 @@ protected:
 };
 
 JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSFetchHeaders* castedThis);
+// Headers.prototype.toJSON, which createUndiciInternalBinding() (Undici.cpp) also makes a function from.
+JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_toJSON);
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, FetchHeaders&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, FetchHeaders* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }

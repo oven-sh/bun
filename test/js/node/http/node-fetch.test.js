@@ -11,7 +11,7 @@ import path from "node:path";
 import tls from "node:tls";
 import * as stream from "stream";
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 
 const originalResponse = globalThis.Response;
 const originalRequest = globalThis.Request;
@@ -269,6 +269,77 @@ test("node-fetch body stream delivers every chunk of a streamed response", async
     secondChunk.resolve();
   }
   expect(chunks.join("")).toBe("first second");
+});
+
+// What reading a web stream as a node stream can call. A spy on each still calls the member.
+function spyOnStreamMembers() {
+  const spies = {
+    locked: spyOn(ReadableStream.prototype, "locked", "get"),
+    getReader: spyOn(ReadableStream.prototype, "getReader"),
+    cancelStream: spyOn(ReadableStream.prototype, "cancel"),
+    read: spyOn(ReadableStreamDefaultReader.prototype, "read"),
+    releaseLock: spyOn(ReadableStreamDefaultReader.prototype, "releaseLock"),
+    cancelReader: spyOn(ReadableStreamDefaultReader.prototype, "cancel"),
+  };
+  return {
+    calls: () => Object.fromEntries(Object.entries(spies).map(([name, spy]) => [name, spy.mock.calls.length])),
+    [Symbol.dispose]() {
+      for (const spy of Object.values(spies)) spy.mockRestore();
+    },
+  };
+}
+
+// node-fetch has no web stream under the body of a response that it fetched, so what a program puts on the
+// prototypes of the web streams does not reach `body`.
+test("node-fetch reads the body of a fetched response without the members of the stream prototypes", async () => {
+  const secondChunk = Promise.withResolvers();
+  using server = serveTwoChunks(secondChunk.promise);
+  using empty = Bun.serve({ port: 0, fetch: () => new Response(null, { status: 204 }) });
+  using members = spyOnStreamMembers();
+
+  const toTheEnd = (await fetch2(server.url)).body;
+  const unread = (await fetch2(server.url)).body;
+  const halfRead = (await fetch2(server.url)).body;
+  const [firstChunk] = await once(halfRead, "data");
+  secondChunk.resolve();
+
+  expect({
+    toTheEnd: Buffer.concat(await Array.fromAsync(toTheEnd)).toString(),
+    unread: await once(unread.destroy(), "close"),
+    halfRead: [String(firstChunk), await once(halfRead.destroy(), "close")],
+    empty: await Array.fromAsync((await fetch2(empty.url)).body),
+    calls: members.calls(),
+  }).toEqual({
+    toTheEnd: "first second",
+    unread: [],
+    halfRead: ["first ", []],
+    empty: [],
+    calls: { locked: 0, getReader: 0, cancelStream: 0, read: 0, releaseLock: 0, cancelReader: 0 },
+  });
+});
+
+// The program made these streams and can have given them methods of its own, so those read them, as in Node.
+test("node-fetch and Readable.fromWeb() read a stream of the program with the program's methods", async () => {
+  const oneChunk = text =>
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(text));
+        controller.close();
+      },
+    });
+  const read = async (body, members) => ({
+    text: Buffer.concat(await Array.fromAsync(body)).toString(),
+    getReader: members.calls().getReader,
+    read: members.calls().read,
+  });
+
+  for (const [text, body] of [
+    ["a Response of the program", () => new Response(oneChunk("a Response of the program")).body],
+    ["Readable.fromWeb()", () => stream.Readable.fromWeb(oneChunk("Readable.fromWeb()"))],
+  ]) {
+    using members = spyOnStreamMembers();
+    expect(await read(body(), members)).toEqual({ text, getReader: 1, read: 2 });
+  }
 });
 
 // clone() moves the body to a new web stream. As in node-fetch, `body` is a new node stream then.

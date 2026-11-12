@@ -7,6 +7,10 @@
 
 #include "root.h"
 
+namespace Zig {
+class GlobalObject;
+}
+
 namespace WebCore {
 
 // All userJS: yes — BunStreamConsumers.cpp
@@ -20,5 +24,10 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionReadableStreamToFormData);
 // body: dynamicDowncast<JSReadableStream>(arg0)->{m_transferred = true, m_disturbed = true}.
 // Referenced by src/js/internal/streams/native-readable.ts via $newCppFunction.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream);
+
+// `$cpp("streams/BunStreamConsumers.cpp", "createFetchedBodyMethods")` in src/js/internal/webstreams_adapters.ts: an array of
+// [locked, getReader, cancel] of ReadableStream.prototype and [read, releaseLock, cancel] of ReadableStreamDefaultReader.prototype,
+// each a function made from the native code of that member and called with the stream or the reader as `this`.
+JSC::JSValue createFetchedBodyMethods(Zig::GlobalObject*);
 
 } // namespace WebCore

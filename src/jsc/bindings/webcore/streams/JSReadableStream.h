@@ -137,4 +137,9 @@ private:
 
 using JSReadableStreamConstructor = JSStreamConstructor<JSReadableStream>;
 
+// Members of ReadableStream.prototype that createFetchedBodyMethods() (BunStreamConsumers.cpp) also makes functions from.
+JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_locked);
+JSC_DECLARE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_cancel);
+JSC_DECLARE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_getReader);
+
 } // namespace WebCore

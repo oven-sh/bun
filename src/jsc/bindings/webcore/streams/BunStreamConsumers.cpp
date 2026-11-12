@@ -34,6 +34,7 @@
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/JSCustomGetterFunction.h>
 #include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSTypedArrays.h>
@@ -1451,6 +1452,32 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream, (JSGlobalObje
         stream->m_disturbed = true;
     }
     return JSValue::encode(jsUndefined());
+}
+
+// node-fetch and undici read the body of a fetch() response with these, so that nothing a program has stored on the two
+// prototypes is called for a stream that the program never named.
+JSC::JSValue createFetchedBodyMethods(Zig::GlobalObject* globalObject)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto method = [&](unsigned length, ASCIILiteral name, JSC::NativeFunction function) {
+        return JSFunction::create(vm, globalObject, length, name, function, ImplementationVisibility::Private);
+    };
+    JSValue methods[] = {
+        JSCustomGetterFunction::create(vm, globalObject, Identifier::fromString(vm, "locked"_s), jsReadableStreamPrototypeGetter_locked),
+        method(0, "getReader"_s, jsReadableStreamPrototypeFunction_getReader),
+        method(0, "cancel"_s, jsReadableStreamPrototypeFunction_cancel),
+        method(0, "read"_s, jsReadableStreamDefaultReaderPrototypeFunction_read),
+        method(0, "releaseLock"_s, jsReadableStreamDefaultReaderPrototypeFunction_releaseLock),
+        method(0, "cancel"_s, jsReadableStreamDefaultReaderPrototypeFunction_cancel),
+    };
+    auto* array = constructEmptyArray(globalObject, nullptr, std::size(methods));
+    RETURN_IF_EXCEPTION(scope, {});
+    for (unsigned index = 0; index < std::size(methods); ++index) {
+        array->putDirectIndex(globalObject, index, methods[index]);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return array;
 }
 
 // [reaction-convention] handlers (FOR_EACH_WEB_STREAMS_REACTION_HANDLER_BUN_CONSUMERS).

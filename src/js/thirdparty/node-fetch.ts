@@ -63,10 +63,6 @@ const kBody = Symbol("kBody");
 const kFetched = Symbol("kFetched");
 const HeadersPrototype = Headers.prototype;
 
-function closeEmptyBody(controller: ReadableStreamDefaultController) {
-  controller.close();
-}
-
 // An old-style Stream (minipass, form-data's CombinedStream) is not a Readable, which Readable.toWeb() needs.
 function readableFromOldStyleStream(source: $Node.Stream) {
   const { PassThrough } = require("node:stream");
@@ -97,12 +93,17 @@ class Response extends WebResponse {
   get body() {
     let body = this[kBody];
     if (!body) {
-      var web = super.body;
-      if (!web) {
-        if (!this[kFetched]) return null;
-        web = new ReadableStream({ start: closeEmptyBody });
-      }
-      body = this[kBody] = new (require("internal/webstreams_adapters")._ReadableFromWeb)({ responseBody: true }, web);
+      const web = super.body;
+      const fetched = this[kFetched];
+      if (!web && !fetched) return null;
+      const {
+        _ReadableFromWeb: ReadableFromWeb,
+        _kFetchedBody: kFetchedBody,
+      } = require("internal/webstreams_adapters");
+      // The program made the stream of a Response that it constructed, and can have given it methods of its own.
+      body = this[kBody] = fetched
+        ? new ReadableFromWeb({ responseBody: true }, web, kFetchedBody)
+        : new ReadableFromWeb({ responseBody: true }, web);
     }
 
     return body;

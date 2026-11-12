@@ -332,7 +332,7 @@ async function rerunCommonJSTestFiles(flags: string[]) {
   return { evaluations, summary: summaryOf(stderr), exitCode };
 }
 
-// dep.cjs stays cached over the reruns of a file and counts every evaluation.
+// dep.cjs stays cached over the reruns of a file in every mode: --isolate swaps the global after the last rerun.
 const everyEvaluationCounted = {
   evaluations: [
     { file: "a", evaluation: 1 },
@@ -345,33 +345,17 @@ const everyEvaluationCounted = {
   summary: ["6 pass", "0 fail", "Ran 6 tests across 2 files."],
   exitCode: 0,
 };
-const sharedGlobalModes: [string, string[]][] = [
+const concurrentModes: [string, string[]][] = [
   ["by default", []],
-  ["with --parallel --no-isolate", ["--parallel=2", "--no-isolate"]],
-];
-const isolatedModes: [string, string[]][] = [
   ["with --isolate", ["--isolate"]],
   ["with --parallel", ["--parallel=2"]],
+  ["with --parallel --no-isolate", ["--parallel=2", "--no-isolate"]],
 ];
 
-// In these modes the reruns of a file share one module cache.
-test.concurrent.each(sharedGlobalModes)(
+test.concurrent.each(concurrentModes)(
   "--rerun-each evaluates a CommonJS test file again for every rerun %s",
   async (_, flags) => {
     expect(await rerunCommonJSTestFiles(flags)).toEqual(everyEvaluationCounted);
-  },
-);
-
-// --isolate and --parallel decide what a rerun shares with the run before it, so this pins only the number of evaluations.
-test.concurrent.each(isolatedModes)(
-  "--rerun-each evaluates a CommonJS test file again for every rerun %s",
-  async (_, flags) => {
-    const { evaluations, summary, exitCode } = await rerunCommonJSTestFiles(flags);
-    expect({ files: evaluations.map(({ file }) => file), summary, exitCode }).toEqual({
-      files: ["a", "a", "a", "b", "b", "b"],
-      summary: ["6 pass", "0 fail", "Ran 6 tests across 2 files."],
-      exitCode: 0,
-    });
   },
 );
 

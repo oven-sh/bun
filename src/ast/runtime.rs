@@ -10,7 +10,7 @@
 
 use bun_collections::StringArrayHashMap;
 
-use crate::{Expr, Ref};
+use crate::{Expr, Loader, Ref};
 
 // ───────────────────────────── Runtime ─────────────────────────────
 
@@ -104,6 +104,29 @@ impl ReactCompilerMode {
     #[inline]
     pub fn is_ssr(self) -> bool {
         matches!(self, Self::Ssr)
+    }
+
+    /// The mode the React Compiler runs one module in. This is the one rule
+    /// for which modules the compiler considers: every JavaScript-like loader
+    /// outside `node_modules`, narrowed by the caller's own filter (`bun test`
+    /// excludes test files and preloads). The bundler, the AOT loader and the
+    /// runtime transpiler all decide through here so they cannot disagree.
+    ///
+    /// `is_node_module` and `is_compiled` scan the path, so they are closures:
+    /// with the compiler off, neither runs.
+    #[inline]
+    pub fn for_module(
+        self,
+        loader: Loader,
+        is_node_module: impl FnOnce() -> bool,
+        is_compiled: impl FnOnce() -> bool,
+    ) -> Self {
+        if self.is_enabled() && loader.is_javascript_like() && !is_node_module() && is_compiled()
+        {
+            self
+        } else {
+            Self::Disabled
+        }
     }
 }
 

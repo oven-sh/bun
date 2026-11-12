@@ -205,7 +205,13 @@ function shouldSkip(relPath: string, pragmas: Pragmas): string | null {
 // Known divergences from upstream — Bun produces a different (or no) result.
 // Grow this from CI; each entry must say why.
 // `__proto__: null`: a fixture named "constructor" exists.
-const TODO: Record<string, string> = Object.assign(Object.create(null), {});
+const TODO: Record<string, string> = Object.assign(Object.create(null), {
+  // Upstream's `infer` mode reads the type annotation of the first parameter and
+  // skips `Component(fakeProps: number)` because `number` is not a props object.
+  // Bun's parser drops TypeScript type annotations before the compiler runs, so
+  // Bun cannot see the annotation and compiles the function.
+  "infer-no-component-annot": "infer mode cannot read the dropped `: number` props annotation",
+});
 
 // Fixtures where Bun's memo slot counts differ from upstream's on purpose, with
 // the counts Bun produces. The fixture still has to produce them, so a compiler
@@ -257,6 +263,17 @@ const MINIFY_SYNTAX_DIVERGENCE: Record<string, { compiledFunctions: number; buil
       compiledFunctions: 0,
       buildError: true,
       reason: "constant folding rewrites the useMemo deps array entry `x` to the literal `0`",
+    },
+    // Same gap: `const sourceDep = 0` / `const constVal = 0` fold into the deps array.
+    "preserve-memo-validation/useMemo-constant-prop": {
+      compiledFunctions: 0,
+      buildError: true,
+      reason: "constant folding rewrites the useMemo deps array entry `sourceDep` to the literal `0`",
+    },
+    "preserve-memo-validation/todo-ensure-constant-prop-decls-get-removed": {
+      compiledFunctions: 0,
+      buildError: true,
+      reason: "constant folding rewrites the useMemo deps array entry `constVal` to the literal `0`",
     },
   });
 

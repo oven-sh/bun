@@ -796,7 +796,7 @@ impl FileReader {
         reads_on_the_loop && !reader.is_done() && reader.buffer().is_empty()
     }
 
-    /// `on_start`'s setup without its read. The reader is stopped until `set_flowing(true)`.
+    /// `on_start`'s setup without its read, then the first read start. Node asks for that one when it builds the stream (`this.read(0)` in `net.Socket`'s constructor, https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L491-L502): what the child writes is in the stream's buffer, up to its `highWaterMark`, before anything reads the stream, and a `read()` in the child's 'exit' returns it. As there, the reader holds the process while it waits for the child, whether or not anything reads the stream: `unref()` lets go.
     fn enter_handle_mode(&self) {
         self.read_callback.set(true);
         self.flowing.set(false);
@@ -809,6 +809,7 @@ impl FileReader {
         debug_assert!(matches!(started, streams::Start::Ready));
         // A reader `Bun.spawn` could not leave lazy is waiting for bytes already.
         self.reader().pause();
+        self.set_flowing(true);
     }
 
     /// Handle mode's read start. `set_flowing(true)` has JS on the stack, so a task starts the reader: what the pipe holds by then comes on the next turn of the event loop, ahead of what the loop polls for, the child's exit included.
@@ -1315,7 +1316,7 @@ impl Source {
         let global = cx.global();
         self.global_this.set(Some(bun_ptr::BackRef::new(global)));
         self.reader_context.set(Some(cx.context().id()));
-        // `node:child_process` registers at spawn: listeners see the `AsyncLocalStorage` store of the spawn, as in Node. Except for what Node has already read when the first listener is attached: it emits that in the store of the attach. Here nothing is read until then.
+        // `node:child_process` registers at spawn: listeners see the `AsyncLocalStorage` store of the spawn, as in Node. What was read before a listener was attached is emitted from the stream's buffer by `resume()`, in the store of that call, also as in Node.
         js::read_callback_set_cached(
             this_value.to_js(),
             global,

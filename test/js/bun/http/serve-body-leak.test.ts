@@ -152,14 +152,15 @@ describe.each([false, true])("request body leak (http2: %p)", http2 => {
     );
   }
 
-  // Positive control. /retain keeps every body, so the same measurement has to flag it: 360 bodies
-  // (180 MB) after the first checkpoint. Runs last because they stay resident until the fixture exits.
+  // Positive control. /retain keeps every body, so the same measurement has to flag it. macOS doesn't count
+  // pages that the allocator gave back and took again, so this keeps more (640 MB) than the scenarios above
+  // peak at (450 MB). Runs last because the bodies stay resident until the fixture exits.
   it(
     "detects a retained body",
     async () => {
       expect(fixture.exitCode ?? fixture.signalCode).toBeNull();
       const scenario = { name: "retain", path: "/retain", body: zeroCopyPayload, expected: "Ok" };
-      const report = await measureMemoryGrowth(target, scenario, 480);
+      const report = await measureMemoryGrowth(target, scenario, 1280);
       console.log(scenario.path, report);
       expect(report.growthMB).toBeGreaterThan(maxGrowthMB);
     },

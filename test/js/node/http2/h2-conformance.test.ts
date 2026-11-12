@@ -543,6 +543,7 @@ describe("streams opened from code that request() and pushStream() run (RFC 9113
   ])("a push from %s keeps the ids in order", async (_, run) => {
     const server = http2.createServer();
     server.on("stream", stream => {
+      stream.on("error", () => {});
       const push = (headers: any = {}) => stream.pushStream(headers, (_, pushed) => pushed.on("error", () => {}));
       run(push, push);
     });

@@ -323,7 +323,7 @@ fn is_member_of(node: Expr, is_object: fn(ExprKind) -> bool) -> bool {
     }
 }
 
-/// The matchers of `bun test` that only inspect the value: none calls it or returns the expectation. Sorted.
+/// The matchers of `bun test` that only inspect the value and their arguments and don't return the expectation. Sorted.
 const INSPECTING_MATCHERS: [&str; 78] = [
     "fail",
     "lastCalledWith",
@@ -440,6 +440,22 @@ fn is_received_by_inspecting_matcher<'a>(argument: Expr<'a>, expect: Call<'a>, m
     }
 }
 
+/// `expect(..).toBe`, also after `.not`, `.resolves` or `.rejects`: these do nothing to the arguments of the matcher.
+fn is_inspecting_matcher_of_expect<'a>(matcher: Expr<'a>, mut expectation: Expr<'a>) -> bool {
+    loop {
+        if let Some(expect) = expectation.as_call() {
+            break is_expect(expect)
+                && ast_utils::get_static_property_name(matcher).is_some_and(|name| is_inspecting_matcher(&name));
+        }
+        let is_modifier = ast_utils::get_static_property_name(expectation)
+            .is_some_and(|name| matches!(&*name, b"not" | b"resolves" | b"rejects"));
+        match expectation.object() {
+            Some(object) if is_modifier => expectation = object,
+            _ => break false,
+        }
+    }
+}
+
 /// `mocked(argument).mockX()` or `expect(mocked(argument))`. Anywhere else the result is the method, still unbound.
 fn is_mocked_for_inspection<'a>(argument: Expr<'a>, mocked: Call<'a>, result: Expr<'a>) -> bool {
     if mocked.args().first() != Some(argument) {
@@ -460,8 +476,8 @@ fn is_mocked_for_inspection<'a>(argument: Expr<'a>, mocked: Call<'a>, result: Ex
 #[inline(never)]
 fn is_inspected_by_test_runner<'a>(argument: Expr<'a>, call: Call<'a>, call_expr: Expr<'a>) -> bool {
     let callee = call.callee();
-    // Each call below starts with `expect`, `jest` or `vi`: a byte of the text rules most others out.
-    if !matches!(callee.text().first(), Some(b'e' | b'j' | b'v')) {
+    // Each call below starts with `expect`, `jest`, `vi` or a `(`: a byte of the text rules most others out.
+    if !matches!(callee.text().first(), Some(b'e' | b'j' | b'v' | b'(')) {
         return false;
     }
     if is_expect(call) {
@@ -471,9 +487,13 @@ fn is_inspected_by_test_runner<'a>(argument: Expr<'a>, call: Call<'a>, call_expr
         return false;
     };
     // `jest.mocked(argument)`
-    object.as_ident().is_some_and(|name| name.is_any(&["jest", "vi"]))
-        && callee.member_name().is_some_and(|it| it.name().is("mocked"))
-        && is_mocked_for_inspection(argument, call, call_expr)
+    if let Some(name) = object.as_ident() {
+        return name.is_any(&["jest", "vi"])
+            && callee.member_name().is_some_and(|it| it.name().is("mocked"))
+            && is_mocked_for_inspection(argument, call, call_expr);
+    }
+    // `expect(..).toBe(argument)`
+    is_inspecting_matcher_of_expect(callee, object)
 }
 
 /// A `ChainExpression` has the same answer as the expression inside it, so it doesn't matter that it isn't a node here.

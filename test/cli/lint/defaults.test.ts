@@ -996,6 +996,17 @@ export declare function use(value: unknown): void;
       `jest.mocked(store.get)["mockReturnValue"]("x");`,
       `jest.mocked(store.get!).mockReturnValue("x");`,
       `expect(jest.mocked(store.get)).toHaveBeenCalled();`,
+      // The matcher only looks at its arguments too.
+      `expect(fallback).toBe(store.get);`,
+      `expect(fallback).not.toBe(store.get);`,
+      `expect.soft(fallback).toBe(store.get);`,
+      `expect(fallback)["toBe"](store.get);`,
+      `expect(fallback)["not"].toBe(store.get);`,
+      `(expect(fallback)).toBe(store.get);`,
+      `expect(fallback).toHaveBeenCalledWith(1, store.get);`,
+      `await expect(fallback).resolves.toBe(store.get);`,
+      `await expect(fallback).rejects.not.toBe(store.get);`,
+      `expect(fallback).toHaveBeenCalledBefore(jest.mocked(store.get));`,
     ];
     // The matcher calls the method or hands it on, or nothing says what happens to it.
     const called = [
@@ -1035,7 +1046,11 @@ export declare function use(value: unknown): void;
       `ensure[jest.mocked(store.get)];`,
       `use(jest.mocked(store.get));`,
       `expect(jest.mocked(store.get)).toThrow();`,
-      `expect(fallback).toBe(store.get);`,
+      `expect(fallback).toSatisfy(store.get);`,
+      `expect(fallback).toBeSpied(store.get);`,
+      `expect(fallback).never.toBe(store.get);`,
+      `await expect.poll(fallback).toBe(store.get);`,
+      `expect(fallback).toBe(use(store.get));`,
     ];
     // Every matcher named above.
     const matchers = [...new Set([...inspected, ...called].flatMap(it => it.match(/\bto\w+/g) ?? []))];
@@ -1097,19 +1112,21 @@ const rows = {
   toIncludeRepeated: ["a", 1],
   toMatchInlineSnapshot: ['"a"'],
 };
-const facts = { names, callsIt: [], handsItOn: [], returnsTheExpectation: [], unprobed: [] };
+const facts = { names, callsIt: [], handsItOn: [], callsItsArgument: [], returnsTheExpectation: [], unprobed: [] };
 
 // A test for each matcher: on a debug build, all of them in one test have taken longer than a test may.
 describe.each(names)("%s", name => {
   test("what it does with the value", () => {
     let called = false;
     let handedOn = false;
+    let calledArgument = false;
     let chained = false;
     let reached = false;
     const method = jest.fn(() => {
       called = true;
     });
     const callback = (...args) => {
+      calledArgument = true;
       handedOn ||= args.includes(method);
       return true;
     };
@@ -1126,6 +1143,7 @@ describe.each(names)("%s", name => {
     }
     if (called) facts.callsIt.push(name);
     if (handedOn) facts.handsItOn.push(name);
+    if (calledArgument) facts.callsItsArgument.push(name);
     if (chained) facts.returnsTheExpectation.push(name);
     if (!reached && !called && !handedOn) facts.unprobed.push(name);
   });
@@ -1150,6 +1168,7 @@ afterAll(() => console.log(JSON.stringify(facts)));
       expect(facts).toEqual({
         callsIt: ["toThrow", "toThrowError", "toThrowErrorMatchingInlineSnapshot", "toThrowErrorMatchingSnapshot"],
         handsItOn: ["toSatisfy"],
+        callsItsArgument: ["toSatisfy"],
         unprobed: [],
       });
       expect(stderr).toContain(` ${names.length} pass`);
@@ -1160,6 +1179,7 @@ afterAll(() => console.log(JSON.stringify(facts)));
         "runners.d.ts": runners(names),
         "store.ts": store,
         "received.test.ts": testFile(names.map((name: string) => `expect(store.get).${name}();`)),
+        "argument.test.ts": testFile(names.map((name: string) => `expect(fallback).${name}(store.get);`)),
       };
       const { native, eslint } = await inBothModes(all, [rule], ["--type-aware"]);
       const matchersOf = (reports: string[], file: string) =>
@@ -1169,6 +1189,8 @@ afterAll(() => console.log(JSON.stringify(facts)));
       const reported = names.filter((name: string) => doesMore.includes(name));
       expect(matchersOf(native, "received.test.ts")).toEqual(reported);
       expect(matchersOf(eslint, "received.test.ts")).toEqual(names);
+      expect(matchersOf(native, "argument.test.ts")).toEqual(reported);
+      expect(matchersOf(eslint, "argument.test.ts")).toEqual(names);
     });
 
     test("a comment that disables it is unused, but not with an ESLint config", async () => {

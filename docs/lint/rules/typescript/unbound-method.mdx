@@ -82,7 +82,7 @@ const create = User.create;
 const log = console.log;
 ```
 
-In a test, `expect()` gets a method only to look at it, so that's fine too, as long as the matcher doesn't call it. `jest.mocked()` and `vi.mocked()` return what they get, so a method is fine there if you only use a property of the result or give it to `expect()`. With an ESLint or oxlint config file none of this applies: the rule reports what typescript-eslint or oxlint reports.
+In a test, `expect()` gets a method only to look at it, so that's fine too, as long as the matcher doesn't call it. So is a method that is an argument of such a matcher. `jest.mocked()` and `vi.mocked()` return what they get, so a method is fine there if you only use a property of the result or give it to `expect()`. With an ESLint or oxlint config file none of this applies: the rule reports what typescript-eslint or oxlint reports.
 
 {/* good */}
 ```ts
@@ -102,6 +102,7 @@ test("greets once", () => {
   user.greet();
   expect(user.greet).toHaveBeenCalledTimes(1);
   expect(user.greet).not.toHaveBeenCalledWith("Grace");
+  expect(user.greet).not.toBe(User.prototype.greet);
 });
 ```
 

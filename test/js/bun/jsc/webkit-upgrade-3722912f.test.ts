@@ -98,6 +98,9 @@ describe.concurrent("WebKit 3722912ff800 upgrade", () => {
     });
     const ownWins = Object.setPrototypeOf([1], proto);
     Object.defineProperty(ownWins, "toJSON", { value: () => "own", enumerable: false });
+    const restored = Object.setPrototypeOf([1, 2, 3], proto);
+    const whileReplaced = JSON.stringify(restored);
+    Object.setPrototypeOf(restored, Array.prototype);
     const extra: number[] & { extra?: number } = [1];
     extra.extra = 2;
 
@@ -109,7 +112,7 @@ describe.concurrent("WebKit 3722912ff800 upgrade", () => {
       nonEnumerableOnProto: JSON.stringify(Object.setPrototypeOf([1, 2], nonEnumerableProto)),
       ownWins: JSON.stringify(ownWins),
       untouched: JSON.stringify([1, 2, 3]),
-      resetToOriginal: JSON.stringify(Object.setPrototypeOf([1, 2, 3], Array.prototype)),
+      restored: [whileReplaced, JSON.stringify(restored)],
       nullPrototype: JSON.stringify(Object.setPrototypeOf([1, 2], null)),
       namedProperty: JSON.stringify(extra),
     }).toEqual({
@@ -120,17 +123,50 @@ describe.concurrent("WebKit 3722912ff800 upgrade", () => {
       nonEnumerableOnProto: "2",
       ownWins: '"own"',
       untouched: "[1,2,3]",
-      resetToOriginal: "[1,2,3]",
+      restored: ['"via prototype"', "[1,2,3]"],
       nullPrototype: "[1,2]",
       namedProperty: "[1]",
     });
   });
 
-  test("JSON.stringify reaches toJSON held in a non-reified static table (8b9071b24ead)", () => {
-    // Date.prototype.toJSON sits in a static hash table until first touched, and
-    // is non-enumerable once reified. Either way the fast path used to return
-    // "{}" for it instead of calling it (which throws, since it is not a Date).
-    expect(() => JSON.stringify(Date.prototype)).toThrow(TypeError);
+  test("JSON.stringify reaches toJSON held in a non-reified static table (8b9071b24ead)", async () => {
+    // Date.prototype.toJSON is in a static hash table until it is read, then a
+    // non-enumerable property. A delete moves the whole table into the object.
+    // The fast path returned "{}" in each state instead of calling toJSON, which
+    // throws for Date.prototype. In a process of its own, where nothing has read
+    // toJSON before the first call.
+    const script = `
+      import { jscDescribe } from "bun:jsc";
+      const state = () => {
+        const table = /[{](.*?)[}]/.exec(jscDescribe(Date.prototype))[1];
+        const properties = table.split(", ").map(entry => entry.split(":")[0]);
+        let text;
+        try {
+          text = JSON.stringify(Date.prototype);
+        } catch (error) {
+          text = error.constructor.name;
+        }
+        return [properties.includes("toJSON"), properties.includes("getDate"), text];
+      };
+      const untouched = state();
+      void Date.prototype.toJSON;
+      const read = state();
+      delete Date.prototype.getYear;
+      const allReified = state();
+      console.log(JSON.stringify({ untouched, read, allReified }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // For each state: whether toJSON is a property, whether a method that nothing read is one, and the outcome.
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        untouched: [false, false, "TypeError"],
+        read: [true, false, "TypeError"],
+        allReified: [true, true, "TypeError"],
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("WebAssembly.Exception gains options.traceStack and stack getter (bf6512f84f7d)", () => {

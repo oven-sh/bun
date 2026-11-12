@@ -1120,16 +1120,17 @@ describe.concurrent("WebKit 8156ba68ef upgrade", () => {
 
     // An object in dictionary mode keeps its Structure when it gets a property, so nothing replaces what the first call
     // remembered.
-    const structureOf = (value: object) => /Structure (0x[0-9a-f]+)/.exec(jscDescribe(value))![1];
+    // The digits of the address are upper case on Windows. The colon ends it, so a part of it never matches.
+    const structureOf = (value: object) => /Structure (0x[0-9a-f]+):/i.exec(jscDescribe(value))![1];
     const text = '{"a":1,' + Array.from({ length: 200 }, (_, i) => `"k${i}":${i}`).join(",") + "}";
     for (const value of [{ a: 1 }, new Instance()]) {
       for (let i = 0; i < 200; i++) (value as any)["k" + i] = i;
       const structure = structureOf(value);
       const first = JSON.stringify(value);
       withToJSON(value, later);
-      expect({ first, keptStructure: structureOf(value) === structure, second: JSON.stringify(value) }).toEqual({
+      expect({ first, structure: structureOf(value), second: JSON.stringify(value) }).toEqual({
         first: text,
-        keptStructure: true,
+        structure,
         second: '"later"',
       });
     }

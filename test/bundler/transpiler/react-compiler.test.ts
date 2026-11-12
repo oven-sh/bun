@@ -5238,7 +5238,7 @@ describe("react-compiler compiles every JavaScript-like loader", () => {
     });
   });
 
-  test("bun build --react-compiler compiles a hook in a .ts file", async () => {
+  test.concurrent("bun build --react-compiler compiles a hook in a .ts file", async () => {
     using dir = tempDir("react-compiler-cli-ts", { "useTotal.ts": hook });
     await using proc = Bun.spawn({
       cmd: [
@@ -5265,7 +5265,7 @@ describe("react-compiler compiles every JavaScript-like loader", () => {
 
   // A CommonJS hook: the linker hoists the compiler's runtime import above the
   // `__commonJS` wrapper, so the output is still loadable.
-  test("a CommonJS .cjs hook bundles and runs", async () => {
+  test.concurrent("a CommonJS .cjs hook bundles and runs", async () => {
     using dir = tempDir("react-compiler-cjs-hook", {
       "useTotal.cjs": /* js */ `
         const { useMemo, useState } = require("react");

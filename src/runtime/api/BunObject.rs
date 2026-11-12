@@ -760,19 +760,27 @@ pub(crate) fn sleep_sync<'a>(heap: &JsHeap<'a>, milliseconds: f64) -> bindgen::R
         // the thread's timer slack. So the sleep counts the time itself.
         let started = std::time::Instant::now();
         let mut left = duration;
-        while !left.is_zero() {
+        loop {
             let request = libc::timespec {
                 tv_sec: left.as_secs() as _,
                 tv_nsec: left.subsec_nanos() as _,
             };
-            match sys::c::clock_nanosleep(libc::CLOCK_MONOTONIC, 0, &request, None) {
+            let mut remain = request;
+            match sys::c::clock_nanosleep(libc::CLOCK_MONOTONIC, 0, &request, Some(&mut remain)) {
                 0 => break,
-                libc::EINTR => left = duration.saturating_sub(started.elapsed()),
+                libc::EINTR => {}
                 // Refused: `thread::sleep` makes the same call and asserts, as it does without this loop.
                 _ => {
                     std::thread::sleep(left);
                     break;
                 }
+            }
+            // The kernel's count bounds the rest too: no time passes on a clock that stands still (libfaketime).
+            let reported = core::time::Duration::from_secs(remain.tv_sec as u64)
+                .saturating_add(core::time::Duration::from_nanos(remain.tv_nsec as u64));
+            left = reported.min(duration.saturating_sub(started.elapsed()));
+            if left.is_zero() {
+                break;
             }
         }
     }

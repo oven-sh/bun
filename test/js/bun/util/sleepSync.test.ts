@@ -1,7 +1,7 @@
 import { sleepSync } from "bun";
 import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, compileFixture, isASAN, isLinux, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 it("sleepSync uses milliseconds", async () => {
@@ -108,6 +108,22 @@ it.skipIf(isASAN /* malloc is not mimalloc */)(
   },
 );
 
+// A sandbox can leave a procfs file out or refuse a write to it. The tests that need one are skipped there.
+const works = (use: () => unknown) => {
+  try {
+    use();
+    return true;
+  } catch {
+    return false;
+  }
+};
+// A thread sets its own timer slack through this file. To write the value that it has changes nothing.
+const canSetTimerSlack =
+  isLinux && works(() => writeFileSync("/proc/self/timerslack_ns", readFileSync("/proc/self/timerslack_ns")));
+const timesBlocked = () =>
+  Number(/^voluntary_ctxt_switches:\s*(\d+)$/m.exec(readFileSync("/proc/thread-self/status", "utf8"))![1]);
+const countsTimesBlocked = isLinux && works(timesBlocked);
+
 // The program of a child that sleeps until a `sh` loop has sent it SIGUSR2 `signals` times. The loop sends a signal
 // only when /proc shows the main thread blocked. Most of them interrupt a sleep. One can find the thread in another
 // wait, or arrive after the sleep ended, so nothing here counts them. The sleeps take 100 and 101 ms in turn: a
@@ -153,8 +169,8 @@ const sleepsWhileSignalled = (signals: number) => `
 
 // A sleep that goes on for the time the kernel reports as left after a signal ends late. That time leaves out what
 // the handler takes, and on Linux it has the thread's timer slack added: 50 us by default, 200 ms here, so ten signals
-// add two seconds. Only Linux has /proc/self/timerslack_ns.
-it.skipIf(!isLinux)("sleepSync ends at its deadline when signals interrupt it", async () => {
+// add two seconds.
+it.skipIf(!canSetTimerSlack)("sleepSync ends at its deadline when signals interrupt it", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -187,9 +203,7 @@ it.skipIf(!isLinux)("sleepSync ends at its deadline when signals interrupt it", 
 
 // The kernel blocks a thread for its timer slack even for a sleep of zero, so a zero duration must not reach it.
 // Linux counts one voluntary context switch each time a thread blocks.
-it.skipIf(!isLinux)("sleepSync(0) does not block the thread", () => {
-  const timesBlocked = () =>
-    Number(/^voluntary_ctxt_switches:\s*(\d+)$/m.exec(readFileSync("/proc/thread-self/status", "utf8"))![1]);
+it.skipIf(!countsTimesBlocked)("sleepSync(0) does not block the thread", () => {
   const before = timesBlocked();
   for (let i = 0; i < 1000; i++) sleepSync(0);
   expect(timesBlocked() - before).toBeLessThan(100);
@@ -221,30 +235,70 @@ static void say_once(int *said, const char *line) {
 }
 
 static volatile sig_atomic_t handler_ran;
+static int frozen;
+static struct timespec frozen_at;
+
+// "frozen-clock": while the main thread sleeps, its monotonic clock stands still.
+int clock_gettime(clockid_t clock, struct timespec *time) {
+  static int (*real)(clockid_t, struct timespec *);
+  if (!real) real = (int (*)(clockid_t, struct timespec *))dlsym(RTLD_NEXT, "clock_gettime");
+  if (frozen && clock == CLOCK_MONOTONIC && on_main_thread()) {
+    *time = frozen_at;
+    return 0;
+  }
+  return real(clock, time);
+}
 
 int clock_nanosleep(clockid_t clock, int flags, const struct timespec *request, struct timespec *remain) {
   typedef int sleep_fn(clockid_t, int, const struct timespec *, struct timespec *);
   static sleep_fn *real;
-  static int refused, said_interrupted, said_went_on;
-  static long interrupted;
+  static int refused, said_interrupted, said_went_on, said_frozen, said_same, interruptions;
+  static long interrupted, before;
   if (!real) real = (sleep_fn *)dlsym(RTLD_NEXT, "clock_nanosleep");
   if (!on_main_thread() || (flags & TIMER_ABSTIME)) return real(clock, flags, request, remain);
+  long ns = request->tv_sec * 1000000000L + request->tv_nsec;
 
   // "refused-once": the first sleep of 123 ms fails.
-  if (is("refused-once") && request->tv_sec == 0 && request->tv_nsec == 123000000 && !refused) {
+  if (is("refused-once") && ns == 123000000L && !refused) {
     say_once(&refused, "sleep-shim: refused a sleep\\n");
     return EINVAL;
   }
 
   // "slow-handler": the handler takes longer than a sleep, so the sleep it interrupts has no time left. The next
   // request is the next sleep: a whole one, of the other length.
-  long ns = request->tv_sec * 1000000000L + request->tv_nsec;
   if (interrupted && (ns == interrupted || (ns != 100000000L && ns != 101000000L)))
     say_once(&said_went_on, "sleep-shim: a sleep went on after the handler\\n");
+
+  // "frozen-clock": no time passes on the clock of this thread while it sleeps, and each 50 ms the sleep ends the
+  // way a signal ends it: with EINTR and the time that is left. A sleep that ends there asks for less time after
+  // each one.
+  if (is("frozen-clock")) {
+    if (!frozen) {
+      clock_gettime(CLOCK_MONOTONIC, &frozen_at);
+      frozen = 1;
+      interruptions = 0;
+    } else if (ns == before) {
+      say_once(&said_same, "sleep-shim: a sleep asked for the same time again after EINTR\\n");
+    }
+    before = ns;
+    // A sleep of 300 ms takes five of them. One that asks for the same time again gets eight, then it ends.
+    if (ns > 50000000L && interruptions++ < 8) {
+      struct timespec slice = {0, 50000000L};
+      while (real(clock, flags, &slice, &slice) == EINTR);
+      if (remain) {
+        remain->tv_sec = (ns - 50000000L) / 1000000000L;
+        remain->tv_nsec = (ns - 50000000L) % 1000000000L;
+      }
+      say_once(&said_frozen, "sleep-shim: interrupted a sleep under a clock that stands still\\n");
+      return EINTR;
+    }
+  }
+
   handler_ran = 0;
   int result = real(clock, flags, request, remain);
   interrupted = result == EINTR && handler_ran ? ns : 0;
   if (interrupted) say_once(&said_interrupted, "sleep-shim: the handler interrupted a sleep\\n");
+  if (result != EINTR) frozen = 0;
   return result;
 }
 
@@ -297,6 +351,22 @@ describe.skipIf(!shim)("sleepSync under a preloaded library", () => {
     expect(await run("slow-handler", program)).toEqual({
       stdout: "slept\n",
       stderr: "sleep-shim: the handler interrupted a sleep\n",
+      exitCode: 0,
+    });
+  });
+
+  // libfaketime stops the clocks of a process on request. On such a clock no time passes, so only the kernel's count
+  // of the time left can end a sleep that signals keep interrupting. The library interrupts it here: a signal that
+  // finds the thread without a CPU for the rest of the sleep does not.
+  it("sleepSync ends when signals interrupt it and the clock stands still", async () => {
+    const program = `
+      const start = performance.now();
+      Bun.sleepSync(300);
+      console.log(performance.now() - start >= 300 ? "slept" : "returned early");
+    `;
+    expect(await run("frozen-clock", program)).toEqual({
+      stdout: "slept\n",
+      stderr: "sleep-shim: interrupted a sleep under a clock that stands still\n",
       exitCode: 0,
     });
   });

@@ -2177,8 +2177,10 @@ describe.concurrent("bun fmt", () => {
           "rule.md": "    x\n2. b\n---\n- c\n",
           // `c` leaves the quote, as with Prettier. Without the empty line it would leave it on the second run.
           "quote.md": "> a\n<b>\nc\n",
-          // Behind `*`, `b` would be an item of a list that the next run prints with `-`.
+          // Behind `*`, `b` would be an item of a list that the next run prints with `-`, behind `01.` one that it
+          // prints with `1.`.
           "star.md": "    a\n*\n  b\n",
+          "zero.md": "    a\n01.\n    b\n",
         };
         const result = await format(files, [], { reads: Object.keys(files) });
         expect(result.files).toEqual({
@@ -2188,6 +2190,7 @@ describe.concurrent("bun fmt", () => {
           "rule.md": "    x\n\n2. b\n---\n\n- c\n",
           "quote.md": "> a\n> <b>\n\nc\n",
           "star.md": "    a\n\n*\nb\n",
+          "zero.md": "    a\n\n01.\nb\n",
         });
         expect(result.exitCode).toBe(0);
       });

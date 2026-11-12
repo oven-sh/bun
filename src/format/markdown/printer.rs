@@ -866,11 +866,17 @@ impl<'a> Printer<'a, '_> {
             let word = Self::list_marker_at_start(&line[indent..]);
             let is_first = offset == 0;
             let decision = match word {
-                // Behind the marker, the text is an item of a list that the next run prints with `-` or `N.`, or
-                // a paragraph again, `2) b`.
+                // Behind the marker, the text is an item of a list that the next run prints with `-` or `1.`, or
+                // a paragraph again, `2) b` or `02. b`.
                 _ if !is_first && is_alone && column >= content_column => {
-                    (matches!(marker_before, [b'-'] | [.., b'.'])
-                        || (marker_before.ends_with(b")") && marker_before != b"1)"))
+                    let number = marker_before
+                        .iter()
+                        .take_while(|byte| byte.is_ascii_digit())
+                        .fold(0u64, |number, digit| number * 10 + u64::from(digit - b'0'));
+                    let is_numbered = marker_before.len() > 1;
+                    (marker_before == b"-"
+                        || marker_before == b"1."
+                        || (is_numbered && number != 1))
                         .then_some(false)
                 }
                 Some(_) if is_first || column < content_column.min(code_column) => Some(true),

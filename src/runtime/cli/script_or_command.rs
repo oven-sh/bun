@@ -55,7 +55,7 @@ fn place_of_short_with_value(shorts: &[u8]) -> Option<usize> {
 }
 
 /// Whether `flag` is one of `bun`'s that has its value in the argument after it.
-fn has_value_in_next_argument(flag: &[u8]) -> bool {
+pub(crate) fn has_value_in_next_argument(flag: &[u8]) -> bool {
     match flag {
         [b'-', b'-', long @ ..] => matches!(
             values_of(&|names| names.matches_long(long)),

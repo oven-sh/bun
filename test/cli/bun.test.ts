@@ -582,19 +582,20 @@ describe("bun", () => {
       expect(exitCode).toBe(0);
     });
 
-    test.concurrent("--config <path> is in execArgv, not in argv", async () => {
+    // `child_process.fork()` starts `bun <execArgv> <script>`, so the path must be in execArgv, not in argv.
+    test.concurrent.each(spellings)("%j is in execArgv, not in argv", async (...flag) => {
       using dir = tempDir("config-flag", {
         ...files,
         "index.js": `console.log(JSON.stringify([process.execArgv, process.argv.slice(2)]));`,
       });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "--config", "other.toml", "index.js", "arg"],
+        cmd: [bunExe(), ...flag, "index.js", "arg"],
         env: bunEnv,
         cwd: String(dir),
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr }).toEqual({ stdout: `preload\n[["--config","other.toml"],["arg"]]\n`, stderr: "" });
+      expect({ stdout, stderr }).toEqual({ stdout: `preload\n${JSON.stringify([flag, ["arg"]])}\n`, stderr: "" });
       expect(exitCode).toBe(0);
     });
 

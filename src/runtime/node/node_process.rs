@@ -361,52 +361,16 @@ mod _impl {
                 continue;
             }
 
-            // A set of execArgv args consume an extra argument, so we do not want to
-            // confuse these with script names.
-            // Build the set lazily at runtime from the `AUTO_PARAMS` table:
-            // `--long` / `-s` for every param with a value.
-            static MAP: std::sync::LazyLock<bun_collections::StringSet> =
-                std::sync::LazyLock::new(|| {
-                    let mut set = bun_collections::StringSet::new();
-                    for param in crate::cli::arguments::AUTO_PARAMS.iter() {
-                        // An optional value is only ever written `--name=value`.
-                        if param.takes_value != bun_clap::Values::None
-                            && param.takes_value != bun_clap::Values::OneOptional
-                            && param.takes_value != bun_clap::Values::ManyOptional
-                        {
-                            if let Some(name) = param.names.long {
-                                let mut k = Vec::with_capacity(2 + name.len());
-                                k.extend_from_slice(b"--");
-                                k.extend_from_slice(name);
-                                bun_core::handle_oom(set.insert(&k));
-                            }
-                            if let Some(name) = param.names.short {
-                                bun_core::handle_oom(set.insert(&[b'-', name]));
-                            }
-                        }
-                    }
-                    // Node's whole-token aliases are not params, so they never
-                    // land above; an alias takes a value iff its target does.
-                    use crate::cli::command::Tag;
-                    let as_node =
-                        crate::cli::PRETEND_TO_BE_NODE.load(core::sync::atomic::Ordering::Relaxed);
-                    let cmd = if as_node {
-                        Tag::RunAsNodeCommand
-                    } else {
-                        Tag::AutoCommand
-                    };
-                    for (from, to) in crate::cli::arguments::short_aliases_of(cmd) {
-                        if set.contains(to) {
-                            bun_core::handle_oom(set.insert(from));
-                        } else {
-                            set.swap_remove(from);
-                        }
-                    }
-                    set
-                });
-
+            // A flag that takes its value from the next argument keeps it out of the script name:
+            // `--config x`, `-c x`, `-bc x`. As `node`, `-c` is `--check`, which takes none.
             if let Some(p) = prev {
-                if MAP.contains(p) {
+                use crate::cli::command::Tag;
+                let as_node =
+                    crate::cli::PRETEND_TO_BE_NODE.load(core::sync::atomic::Ordering::Relaxed);
+                let cmd = if as_node { Tag::RunAsNodeCommand } else { Tag::AutoCommand };
+                let aliases = crate::cli::arguments::short_aliases_of(cmd);
+                let flag = aliases.iter().find(|(from, _)| *from == p).map_or(p, |(_, to)| *to);
+                if crate::cli::script_or_command::has_value_in_next_argument(flag) {
                     args.push(BunString::clone_utf8(arg));
                     prev = Some(arg);
                     continue;

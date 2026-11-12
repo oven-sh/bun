@@ -5,7 +5,6 @@
 // The packages of a project lie in a folder `installed`, which the copy has as `node_modules`: git ignores a folder of that name, and so does whatever carries this tree to another machine.
 // A project waits for events, never for a time: on a busy machine every time is too short. A factory waits for a gate that the test opens, and a factory, a body or a timer that is waited for resolves a promise.
 // Where nothing can say that nothing more comes, the test runs the event loop some 20 times (spinEventLoop): what a failure or a settled factory brings about comes in the first of them.
-// A project whose text reads a clock (`performance.now`, `Date.now`) has no other case of its file beside it, but for a Bun with a sanitizer, where every case has.
 // A file flags.txt in the folder holds flags for both runs: `--isolate`.
 // A file todo.txt in the folder, lines of the form `"<words>" | "<the words for them>": <why>`: the two runs differ today, and in that alone: one says the first words of a line where the other says the second.
 // The project is run all the same. It fails by any other difference, and once the two runs agree: the file goes out.
@@ -15,9 +14,9 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { existsSync, readFileSync, readdirSync, renameSync } from "node:fs";
-import { availableParallelism } from "node:os";
 import { basename, join } from "node:path";
 import { test } from "../supported";
+import { atLeastWhatTheRunnerGave } from "./default-timeout";
 import { run } from "./run";
 
 const root = join(import.meta.dir, "..", "parallel-test-runs");
@@ -53,17 +52,6 @@ const takenForTestsOfTheRepository = (folder: string) =>
     path => /\.(c|m)?(j|t)sx?$/.test(basename(path)) && /\.test|spec\./.test(basename(path)),
   );
 
-// A project that reads a clock may judge by it, and then a busy machine changes its answer. No file of a project says so, so its text is asked.
-const readsAClock = (folder: string) =>
-  readdirSync(folder, { recursive: true, withFileTypes: true }).some(
-    entry =>
-      entry.isFile() &&
-      /\.[cm]?[jt]sx?$/.test(entry.name) &&
-      /\b(performance\.now|Date\.now|process\.hrtime|Bun\.nanoseconds)\b/.test(
-        readFileSync(join(entry.parentPath, entry.name), "utf8"),
-      ),
-  );
-
 function markOf(folder: string) {
   if (!existsSync(join(folder, "todo.txt"))) return undefined;
   const lines = readFileSync(join(folder, "todo.txt"), "utf8").trimEnd().split(/\r?\n/);
@@ -96,11 +84,12 @@ function layPackages(folder: string) {
 // bunEnv drops each BUN_DEBUG_ variable of whoever runs this file.
 const wordsOfAll = process.env.AOT_TEST_RUN_WORDS ?? "";
 
-// What a case may take. Where Bun has assertions ../supported raises it to what the runner gives.
+// What a case asks for, and what it gets: ../supported raises the limit where Bun has assertions. Undefined: the flag of the runner says it there, and this file cannot read the flag.
 const limitOfACase = 180_000;
-// A run that has not ended half a minute before that is killed, and its case fails with what the run said up to there. A case that passes its own limit shows nothing of its runs, and `bun test`
-// ends no child of a case that ran beside others. A Bun with assertions has no such limit: its largest builds take minutes, and this file cannot read the limit that the runner gives its cases.
-const limitOfARun = isASAN || isDebug ? undefined : limitOfACase - 30_000;
+const limitThatACaseGets = atLeastWhatTheRunnerGave(limitOfACase, isASAN || isDebug);
+// A run that has not ended half a minute before that is killed, and its case fails with what the run wrote up to there: a case that passes its own limit shows nothing of its runs, and
+// `bun test` ends no child of a case that ran beside others. Where the flag of the runner says the limit a run has none, as before.
+const limitOfARun = limitThatACaseGets === undefined ? undefined : limitThatACaseGets - 30_000;
 // What `run` answers for a child that a signal ended: this much above the number of the signal. The limit ends a run with SIGKILL, which is 9.
 const endedBySignal = 128;
 
@@ -158,39 +147,14 @@ async function outcomeOf(dir: string, words: string, ...flags: string[]) {
   return outcome;
 }
 
-// How many cases have their runs under way at once. Without a sanitizer it is half the processors, and two at the least, whatever `--max-concurrency` says: the runner starts two of these files
-// at once, and that many cases of each keep its processors busy. More of them end no sooner, and each run waits longer for a processor, where a test of a project has five seconds. With a
-// sanitizer it is as many as `--max-concurrency` says, as before.
-const casesAtOnce = isASAN ? Infinity : Math.max(2, Math.ceil(availableParallelism() / 2));
-let underWay = 0;
-const waitingForATurn: (() => void)[] = [];
-async function turn(): Promise<Disposable> {
-  if (underWay < casesAtOnce) underWay++;
-  else await new Promise<void>(next => waitingForATurn.push(next));
-  return {
-    [Symbol.dispose]() {
-      const next = waitingForATurn.shift();
-      // The turn goes to whoever waits for one.
-      if (next) next();
-      else underWay--;
-    },
-  };
-}
-
 /**
  * One file took ten minutes, and CI's runner tries a file that fails four times. So `parts` files share the projects, each a stretch of them in the order of their names.
  */
 export function testRunsInFolders(part: number, parts: number) {
   const projects = foldersIn(root).flatMap(area => foldersIn(join(root, area)).map(project => [area, project]));
   const stretch = Math.ceil(projects.length / parts);
-  // ../supported has the cases of a file beside one another only with a sanitizer. Here they are so on every lane: a case waits for its two runs, each project has folders and processes of its own,
-  // and two of these files with one case each keep little more than two of four processors busy. AOT_CASES_AT_ONCE=0 asks for one after another here too.
-  // A project that reads a clock stays as ../supported has it: it is beside other cases only where it was before.
-  const besideOthers = process.env.AOT_CASES_AT_ONCE !== "0";
   for (const [area, project] of projects.slice((part - 1) * stretch, part * stretch)) {
-    const declare = besideOthers && !readsAClock(join(root, area, project)) ? test.concurrent : test;
-    declare(`${area}/${project}`, async () => {
-      using _turn = await turn();
+    test(`${area}/${project}`, async () => {
       // See the head of this file: such a folder stays behind where the tree is carried, and the project then runs without its packages.
       expect(literalPackagesIn(join(root, area, project)).slice(0, 3)).toEqual([]);
       // See the head of this file: the runner would run such a file where it lies, by itself and without the packages of its project, and here it would be no test file that is named in its order.

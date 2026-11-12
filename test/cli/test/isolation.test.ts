@@ -3529,7 +3529,7 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     });
 
     // These keep what is stored on them outside their target, so the read behind the traps finds no spy and the trap is asked.
-    test("a Proxy whose trap throws for that read, or makes a spy in it", async () => {
+    test("a Proxy that shows a spy only when it is read, whose trap throws for the read, or makes a spy in it", async () => {
       using dir = tempDir("spies-of-a-file", {
         "a.test.ts": `
           import { expect, spyOn, test } from "bun:test";
@@ -3556,13 +3556,16 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
             madeByTrap.push(object);
             spyOn(object, "method");
           }));
+          const quiet = (globalThis.quiet = keptElsewhere(() => {}));
           test("a", () => {
+            // Left on its property, which only a read of the object shows.
+            spyOn(quiet.proxy, "method").mockReturnValue("spied");
             // Left on its property: restored without an answer, and without an error.
             spyOn(throwing.proxy, "method").mockReturnValue("spied");
             // Replaced by the test: asked when the file ends, and again after its undos.
             spyOn(spying.proxy, "method");
             spying.proxy.method = globalThis.assigned = () => "assigned";
-            expect([throwing.proxy.method(), spying.proxy.method()]).toEqual(["spied", "assigned"]);
+            expect([quiet.proxy.method(), throwing.proxy.method(), spying.proxy.method()]).toEqual(["spied", "spied", "assigned"]);
             throwing.state.armed = spying.state.armed = true;
           });
         `,
@@ -3571,10 +3574,11 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
           test("b", () => {
             throwing.state.armed = spying.state.armed = false;
             expect({
+              quiet: [jest.isMockFunction(quiet.proxy.method), quiet.proxy.method()],
               throwing: [jest.isMockFunction(throwing.proxy.method), throwing.proxy.method()],
               spying: spying.proxy.method === assigned,
               madeByTrap: [madeByTrap.length, madeByTrap.filter(object => jest.isMockFunction(object.method)).length],
-            }).toEqual({ throwing: [false, "original"], spying: true, madeByTrap: [2, 0] });
+            }).toEqual({ quiet: [false, "original"], throwing: [false, "original"], spying: true, madeByTrap: [2, 0] });
           });
         `,
       });

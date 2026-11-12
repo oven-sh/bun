@@ -909,7 +909,14 @@ public:
         }
         JSValue current = getOwnPropertyStorage(globalObject, target, m_spyIdentifier, attributes);
         RETURN_IF_EXCEPTION(scope, false);
-        return this->isIn(current);
+        if (this->isIn(current))
+            return true;
+        // Traps may keep a value where neither read shows it. A read of an accessor would call the spy, so only a value is read.
+        if ((m_spyAttributes & (SpyAttributeOpaque | SpyAttributeAccessor)) != SpyAttributeOpaque)
+            return false;
+        JSValue visible = target->get(globalObject, m_spyIdentifier);
+        RETURN_IF_EXCEPTION(scope, false);
+        return visible == JSValue(this);
     }
 
     // Puts the spied-on property back as it was; that can throw (a module namespace export, an indexed slot).

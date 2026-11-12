@@ -42,6 +42,8 @@ pub(crate) struct Printer<'a, 'e> {
     pub(crate) is_in_label: bool,
     /// For oxfmt: `first_list_of_run`'s cache, indexed by list.
     pub(crate) first_of_run: Vec<NodeId>,
+    /// `kept_line_breaks` of the block whose sentences are being printed.
+    pub(crate) kept_line_breaks: std::cell::Cell<(NodeId, KeptLineBreaks)>,
     pub(crate) stack: Stack,
     /// Why a table cell couldn't be printed.
     pub(crate) failure: Option<FormatError>,
@@ -333,6 +335,16 @@ enum Whitespace {
     Hardline,
 }
 
+/// See `Printer::kept_line_breaks`.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum KeptLineBreaks {
+    None,
+    /// The first line break of the block.
+    First,
+    /// Those before a line that is an item.
+    Items,
+}
+
 impl<'a> Printer<'a, '_> {
     fn node(&self, id: NodeId) -> Option<&'a Node> {
         self.tree.get(id)
@@ -605,7 +617,7 @@ impl<'a> Printer<'a, '_> {
         !is_inline_node && !is_inline_html && !is_text
     }
 
-    fn should_pre_print_double_hardline(&self, node: &Node) -> bool {
+    fn should_pre_print_double_hardline(&mut self, id: NodeId, node: &Node) -> bool {
         let (Some(previous), Some(parent)) = (self.node(node.previous), self.node(node.parent))
         else {
             return false;
@@ -617,10 +629,8 @@ impl<'a> Printer<'a, '_> {
             return false;
         }
         let follows_directly = self.end_line(previous) + 1 == self.start_line(node);
-        if let Some(keeps_empty_line) =
-            self.empty_line_decides_block(previous, node, follows_directly)
-        {
-            return keeps_empty_line;
+        if self.empty_line_decides_block(id, previous, node) {
+            return !follows_directly;
         }
         if self.is_loose_list_item(node.previous)
             || (node.kind == Kind::List
@@ -654,55 +664,41 @@ impl<'a> Printer<'a, '_> {
             || is_liquid_without_blank_line)
     }
 
-    /// Whether the empty line between `previous` and `node`, or its absence, decides where a block ends. Then it is
-    /// printed as the source has it, whatever `should_pre_print_double_hardline` says. None if it does not.
+    /// True if the empty line between `previous` and `node`, or its absence, decides where a block ends. Then the
+    /// separator is printed as the source has it, whatever `should_pre_print_double_hardline` says.
     ///
     /// - HTML that only an empty line ends (a `<div>`, a `<x-y>` on its own line: CommonMark 4.6, kinds 6 and 7) keeps
-    ///   the empty line after it. Prettier drops it before a list in a list item, `- <div>\n\n  - b` becomes
-    ///   `- <div>\n  - b`, and the item is then a line of the HTML.
+    ///   the empty line after it. Prettier 3.9.9 drops it before a list in a list item, `- <div>\n\n  - b` becomes
+    ///   `- <div>\n  - b`, and the item is then a line of the HTML. Prettier 3.10.0 keeps it after any HTML there.
     /// - A complete tag on a line without the markers of its containers, `- a\n<b>\nc`, does not end the paragraph
     ///   before it. To micromark it ends the paragraph and the containers, so Prettier prints an empty line before `c`,
-    ///   which takes `c` out of the list. Here `c` follows the HTML directly, as it does in the source.
+    ///   which takes `c` out of the list, and another before a `- d` that follows `c`, which makes the list loose.
     /// - The line after a definition was a line of the definition's paragraph. Prettier prints an empty line between
     ///   them, after which `9. c` is a list that starts at 9, `<x-y>` an HTML block, `2.` an empty item.
     /// - A marker alone on a line after indented code is a paragraph to micromark, `    a\n-\n- b`, and two of them
-    ///   a setext heading, which MDX prints as `## -`. Prettier prints an empty line between it and the list: the
-    ///   list becomes loose.
-    fn empty_line_decides_block(
-        &self,
-        previous: &Node,
-        node: &Node,
-        follows_directly: bool,
-    ) -> Option<bool> {
+    ///   a setext heading. Prettier prints an empty line between it and the list: the list becomes loose.
+    fn empty_line_decides_block(&mut self, id: NodeId, previous: &Node, node: &Node) -> bool {
         if matches!(previous.kind, Kind::Html | Kind::Jsx) && previous.number == 0 {
-            return (!follows_directly).then_some(true);
+            return true;
         }
-        if !follows_directly {
-            return None;
+        match previous.kind {
+            Kind::List | Kind::Blockquote if self.is_paragraph_like(node) => {
+                self.ends_in_lazy_html(previous)
+            }
+            Kind::Definition if self.is_paragraph_like(node) => {
+                self.kept_line_breaks(node) == KeptLineBreaks::First
+            }
+            Kind::Paragraph | Kind::Heading if node.kind == Kind::List => {
+                self.is_lazy_tail(previous) || self.is_marker_of(previous, id, node)
+            }
+            _ => false,
         }
-        match (previous.kind, node.kind) {
-            (Kind::List | Kind::Blockquote, Kind::Paragraph) => {
-                self.ends_in_lazy_html(previous).then_some(false)
-            }
-            (Kind::Definition, Kind::Paragraph) => {
-                let line = self.source(node);
-                let line = &line
-                    [..bun_core::strings::index_of_char_usize(line, b'\n').unwrap_or(line.len())];
-                let line = bun_core::strings::trim_js_whitespace_end(line);
-                (!is_paragraph_on_its_own(line)).then_some(false)
-            }
-            (Kind::Paragraph | Kind::Heading, Kind::List)
-                if previous.kind == Kind::Paragraph || !self.is_mdx =>
-            {
-                let text = self.source(previous);
-                let word = &text[..text
-                    .iter()
-                    .take_while(|&&byte| !matches!(byte, b'\t' | b'\n' | b' '))
-                    .count()];
-                Self::is_list_marker(word).then_some(false)
-            }
-            _ => None,
-        }
+    }
+
+    /// A paragraph, or a setext heading that is printed as the source has it.
+    fn is_paragraph_like(&self, node: &Node) -> bool {
+        node.kind == Kind::Paragraph
+            || (node.kind == Kind::Heading && !self.is_mdx && self.is_setext_heading(node))
     }
 
     /// True if the last leaf of `container` is HTML on a line without the container's markers, printed right after
@@ -720,40 +716,161 @@ impl<'a> Printer<'a, '_> {
             && (!self.is_lazy_html(node) || self.is_lazy_html_in_tight_item(node))
     }
 
-    /// A bullet or an ordered marker, and nothing else.
-    fn is_list_marker(word: &[u8]) -> bool {
-        match word {
+    /// True if `paragraph` is the text that continues a list after HTML without the list's markers, `c` in
+    /// `- a\n<b>\nc`, which is a paragraph after the list to micromark.
+    fn is_lazy_tail(&self, paragraph: &Node) -> bool {
+        self.is_paragraph_like(paragraph)
+            && self.node(paragraph.previous).is_some_and(|list| {
+                list.kind == Kind::List
+                    && self.end_line(list) + 1 == self.start_line(paragraph)
+                    && self.ends_in_lazy_html(list)
+            })
+    }
+
+    /// True if `block` is a marker alone on a line, or a setext heading of such lines, with the marker that `list`
+    /// prints: read together, they are one list.
+    fn is_marker_of(&mut self, block: &Node, list: NodeId, list_node: &Node) -> bool {
+        let Some(word) = Self::list_marker_at_start(self.source(block)) else {
+            return false;
+        };
+        let source = bun_core::strings::trim_js_whitespace_end(self.source(block));
+        let text = match block.kind {
+            // The underline is after the markers of the containers.
+            Kind::Heading if !self.is_mdx => bun_core::strings::last_index_of_char(source, b'\n')
+                .map(|at| source.split_at(at))
+                .filter(|(_, underline)| {
+                    let markers = underline
+                        .iter()
+                        .take_while(|&&byte| matches!(byte, b' ' | b'\t' | b'\n' | b'>'))
+                        .count();
+                    &underline[markers..] == b"-"
+                })
+                .map(|(text, _)| text),
+            Kind::Heading => None,
+            _ => Some(source),
+        };
+        if text.map(bun_core::strings::trim_js_whitespace_end) != Some(word) {
+            return false;
+        }
+        let is_alternate = self.uses_alternate_marker(list);
+        match (word, list_node.ordered) {
+            ([b'-'], false) => !is_alternate,
+            ([b'*'], false) => is_alternate,
+            ([.., b'.'], true) => !is_alternate,
+            ([.., b')'], true) => is_alternate,
+            _ => false,
+        }
+    }
+
+    /// The list marker that `text` starts with: a bullet or an ordered marker, and then whitespace or nothing.
+    fn list_marker_at_start(text: &[u8]) -> Option<&[u8]> {
+        let word = &text[..text
+            .iter()
+            .take_while(|&&byte| !matches!(byte, b'\t' | b'\n' | b' '))
+            .count()];
+        let is_marker = match word {
             [b'*' | b'+' | b'-'] => true,
             [digits @ .., b')' | b'.'] => {
                 !digits.is_empty() && digits.len() <= 9 && digits.iter().all(u8::is_ascii_digit)
             }
             _ => false,
+        };
+        is_marker.then_some(word)
+    }
+
+    /// The paragraph or setext heading that `sentence` is in.
+    fn block_of(&self, sentence: NodeId) -> Option<(NodeId, &'a Node)> {
+        let block = self.find_ancestor(sentence, |it| {
+            matches!(it.kind, Kind::Paragraph | Kind::Heading)
+        })?;
+        let node = self.node(block).filter(|it| self.is_paragraph_like(it))?;
+        Some((block, node))
+    }
+
+    /// Which line breaks of `block` stay line breaks, whatever `proseWrap` says. Prettier joins a line that starts
+    /// with a marker to the line before it, and wraps `-\nb` into `- b`.
+    ///
+    /// - After indented code, a list that cannot interrupt a paragraph is a paragraph to micromark, `    a\n2. b\n3. c`,
+    ///   with or without an empty line between. To CommonMark it is the list, so a line break before an item stays:
+    ///   see `is_kept_before_item`.
+    /// - After a definition, the line that follows it was a line of the same paragraph. If it cannot start a paragraph
+    ///   on its own, `9. c\n10. d` or `-\nb`, it stays a line, so that what `empty_line_decides_block` decides on
+    ///   is what is printed. Joined, `- b` is an item.
+    fn kept_line_breaks(&self, block: &Node) -> KeptLineBreaks {
+        let Some(previous) = self.node(block.previous) else {
+            return KeptLineBreaks::None;
+        };
+        if previous.kind == Kind::Code
+            && is_indented_code(self.original, self.tree, block.previous)
+            && Self::list_marker_at_start(self.source(block)).is_some()
+        {
+            return KeptLineBreaks::Items;
+        }
+        if previous.kind != Kind::Definition
+            || self.end_line(previous) + 1 != self.start_line(block)
+        {
+            return KeptLineBreaks::None;
+        }
+        let source = self.source(block);
+        let line = &source
+            [..bun_core::strings::index_of_char_usize(source, b'\n').unwrap_or(source.len())];
+        let line = bun_core::strings::trim_js_whitespace_end(line);
+        // Where lines are joined, the first is kept only if the printer of its text can keep it: see
+        // `print_sentence`.
+        let is_kept_when_joined = self.options.prose_wrap == ProseWrap::Preserve
+            || line.len() == source.len()
+            || self.kind(block.first_child) == Some(Kind::Sentence);
+        match is_kept_when_joined && !is_paragraph_on_its_own(line) {
+            true => KeptLineBreaks::First,
+            false => KeptLineBreaks::None,
         }
     }
 
-    /// True if `sentence` starts a paragraph with a list marker. To CommonMark such a paragraph is a list: micromark
-    /// reads a list that cannot interrupt a paragraph as one where it follows indented code, `    a\n2. b\n3. c`, or
-    /// a definition, `[a]: /url\n2.\n3. c`. Its lines stay lines. Prettier joins a line that starts with a marker to
-    /// the line before it, `2. b 3. c`, which is one item, escapes a `-` on a line of its own, and with `proseWrap:
-    /// always` wraps `-\nb` into `- b`.
-    fn is_list_to_common_mark(&self, sentence: &Node) -> bool {
-        if sentence.previous != NONE || self.kind(sentence.parent) != Some(Kind::Paragraph) {
+    /// True if the line break before `word`, at `start` in the text, stays in a block whose lines are items. The line
+    /// is an item: it starts with a marker, and is not indented like code under the block's container. Or a marker
+    /// alone is before the break, `marker_before`: joined, `word` is in that item, unless its line is indented into
+    /// the item. `start` is unknown for text that is a copy, in a block quote: then the break stays.
+    fn is_kept_before_item(
+        &self,
+        sentence: NodeId,
+        word: &[u8],
+        start: Option<u32>,
+        marker_before: Option<&[u8]>,
+    ) -> bool {
+        if marker_before.is_none() && Self::list_marker_at_start(word).is_none() {
             return false;
         }
-        let first_word = match sentence.number {
-            preprocess::PLAIN => {
-                let text = self.str(sentence.value);
-                &text[..text
-                    .iter()
-                    .take_while(|&&byte| !matches!(byte, b'\t' | b'\n' | b' '))
-                    .count()]
-            }
-            _ => match self.tokens(sentence).first() {
-                Some(token) if token.is_word() => self.str(token.value),
-                _ => return false,
-            },
+        let (Some(start), Some((_, block))) = (start, self.block_of(sentence)) else {
+            return true;
         };
-        Self::is_list_marker(first_word)
+        let content_column = match self.node(block.parent) {
+            Some(parent) if parent.kind == Kind::ListItem => self
+                .node(parent.first_child)
+                .map_or(0, |first| self.column(first.start)),
+            Some(parent) if parent.kind == Kind::Root => 0,
+            _ => self.column(block.start),
+        };
+        let indent = marker_before.map_or(4, |marker| marker.len() as u32 + 1);
+        self.column(start) < content_column + indent
+    }
+
+    /// The line breaks of the block that `sentence` is in that stay, and whether the first line of the block ends in
+    /// this sentence.
+    fn kept_line_breaks_of(&self, sentence: NodeId, node: &Node) -> (KeptLineBreaks, bool) {
+        let Some((id, block)) = self.block_of(sentence) else {
+            return (KeptLineBreaks::None, false);
+        };
+        // A block has many sentences, and the answer parses a line of the text.
+        let kept = match self.kept_line_breaks.get() {
+            (cached, kept) if cached == id => kept,
+            _ => {
+                let kept = self.kept_line_breaks(block);
+                self.kept_line_breaks.set((id, kept));
+                kept
+            }
+        };
+        let is_first = node.previous == NONE && self.kind(node.parent) == Some(block.kind);
+        (kept, is_first)
     }
 
     /// oxfmt's `front_matter_risk`: the document's first paragraph starts with `---` or `+++`, and what follows would
@@ -839,7 +956,7 @@ impl<'a> Printer<'a, '_> {
                     parts.push(Doc::Dedent(Box::new(hardline())));
                 } else if !parts.is_empty() && self.should_pre_print_hardline(node) {
                     parts.extend([Doc::Line(Line::Hard), Doc::BreakParent]);
-                    if self.should_pre_print_double_hardline(node) {
+                    if self.should_pre_print_double_hardline(child, node) {
                         parts.extend([Doc::Line(Line::Hard), Doc::BreakParent]);
                     }
                 }
@@ -1030,11 +1147,12 @@ impl<'a> Printer<'a, '_> {
 
     /// The same for a sentence that hasn't been split into words: it's ASCII, and lines aren't wrapped. Each stretch
     /// that's printed unchanged is a single text here.
-    fn print_plain_sentence(&self, node: &Node) -> Doc<'a> {
+    fn print_plain_sentence(&self, id: NodeId, node: &Node) -> Doc<'a> {
         let text = self.str(node.value);
         let is_white = |byte: u8| matches!(byte, b'\t' | b'\n' | b' ');
         let is_preserved = self.options.prose_wrap == ProseWrap::Preserve;
-        let is_list = self.is_list_to_common_mark(node);
+        let (kept, is_first_sentence) = self.kept_line_breaks_of(id, node);
+        let mut line_breaks = 0;
         let mut parts = FillParts::new(false);
         // The start of the text that hasn't been printed yet.
         let mut start = 0;
@@ -1075,18 +1193,34 @@ impl<'a> Printer<'a, '_> {
             start = white_end;
             let has_newline =
                 bun_core::strings::contains_char(&text[white_start..white_end], b'\n');
-            if !has_newline || !is_preserved {
-                parts.content(Doc::from(" "));
-                continue;
-            }
             // The word at the start of the next line, and whether it's that whole line.
             let word = &text[white_end..];
             let word = &word[..word.iter().take_while(|&&byte| !is_white(byte)).count()];
+            let is_kept = has_newline
+                && match kept {
+                    KeptLineBreaks::Items => {
+                        let start = node.value.source_start().map(|at| at + white_end as u32);
+                        let line_start =
+                            bun_core::strings::last_index_of_char(&text[..white_start], b'\n')
+                                .map_or(0, |at| at + 1);
+                        let line = &text[line_start..white_start];
+                        let marker_before =
+                            Self::list_marker_at_start(line).filter(|it| it.len() == line.len());
+                        self.is_kept_before_item(id, word, start, marker_before)
+                    }
+                    KeptLineBreaks::First => is_first_sentence && line_breaks == 0,
+                    KeptLineBreaks::None => false,
+                };
+            line_breaks += usize::from(has_newline);
+            if !is_kept && (!has_newline || !is_preserved) {
+                parts.content(Doc::from(" "));
+                continue;
+            }
             let after = &text[white_end + word.len()..];
             let after = &after[..after.iter().take_while(|&&byte| is_white(byte)).count()];
             let is_whole_line = white_end + word.len() == text.len()
                 || bun_core::strings::contains_char(after, b'\n');
-            if Self::may_start_block(word) && !(word == b"-" && is_whole_line) && !is_list {
+            if !is_kept && Self::may_start_block(word) && !(word == b"-" && is_whole_line) {
                 parts.content(Doc::from(" "));
                 continue;
             }
@@ -1096,8 +1230,7 @@ impl<'a> Printer<'a, '_> {
                 && is_whole_line
                 && (word.iter().all(|&byte| byte == b'=') || word.iter().all(|&byte| byte == b'-'))
                 && !node.is_aligned
-                && !self.is_mdx
-                && !is_list;
+                && !self.is_mdx;
             if is_fake_setext_line {
                 parts.content(Doc::from("\\"));
             }
@@ -1162,7 +1295,7 @@ impl<'a> Printer<'a, '_> {
     /// Prettier's `printSentence`
     fn print_sentence(&mut self, id: NodeId, node: &Node) -> Doc<'a> {
         if node.number == preprocess::PLAIN {
-            return self.print_plain_sentence(node);
+            return self.print_plain_sentence(id, node);
         }
         let tokens = self.tokens(node);
         let can_break = self.options.prose_wrap == ProseWrap::Always && !self.is_on_single_line(id);
@@ -1170,15 +1303,36 @@ impl<'a> Printer<'a, '_> {
             self.find_ancestor(id, |it| matches!(it.kind, Kind::Emphasis | Kind::Strong));
         let is_newline =
             |token: Option<&Token>| token.is_some_and(|it| it.kind == TokenKind::Newline);
-        let is_list = self.is_list_to_common_mark(node);
+        let (kept, is_first_sentence) = self.kept_line_breaks_of(id, node);
+        let mut line_breaks = 0;
         let mut parts = FillParts::new(self.options.prose_wrap == ProseWrap::Always);
         for (index, token) in tokens.iter().enumerate() {
             if token.is_word() {
-                parts.content(self.print_word(node, tokens, index, emphasis, is_list));
+                parts.content(self.print_word(node, tokens, index, emphasis));
                 continue;
             }
             let next = tokens.get(index + 1);
             let after_next = tokens.get(index + 2);
+            let is_kept = token.kind == TokenKind::Newline
+                && match kept {
+                    KeptLineBreaks::Items => next.is_some_and(|next| {
+                        let marker_before = index
+                            .checked_sub(1)
+                            .and_then(|at| tokens.get(at))
+                            .filter(|_| index == 1 || is_newline(tokens.get(index - 2)))
+                            .map(|it| self.str(it.value))
+                            .filter(|it| Self::list_marker_at_start(it) == Some(it));
+                        self.is_kept_before_item(
+                            id,
+                            self.str(next.value),
+                            next.value.source_start(),
+                            marker_before,
+                        )
+                    }),
+                    KeptLineBreaks::First => is_first_sentence && line_breaks == 0,
+                    KeptLineBreaks::None => false,
+                };
+            line_breaks += usize::from(token.kind == TokenKind::Newline);
             let is_next_fake_setext_line = token.kind == TokenKind::Newline
                 && next.is_some_and(|it| self.str(it.value) == b"-")
                 && (after_next.is_none() || is_newline(after_next));
@@ -1186,7 +1340,7 @@ impl<'a> Printer<'a, '_> {
                 && !after_next.is_some_and(|it| it.kind == TokenKind::NoSpace)
                 && !(self.options.prose_wrap == ProseWrap::Preserve && is_next_fake_setext_line))
                 || (can_break && self.must_not_start_line(node, tokens, index + 1));
-            let prose_wrap = if is_list && token.kind == TokenKind::Newline {
+            let prose_wrap = if is_kept {
                 ProseWrap::Preserve
             } else if joins {
                 ProseWrap::Never
@@ -1201,15 +1355,13 @@ impl<'a> Printer<'a, '_> {
         parts.finish()
     }
 
-    /// Prettier's `printWord`. `emphasis` is the emphasis or strong emphasis that contains it, `is_list` says that the
-    /// sentence is a list to CommonMark: see `is_list_to_common_mark`.
+    /// Prettier's `printWord`. `emphasis` is the emphasis or strong emphasis that contains it.
     fn print_word(
         &self,
         sentence: &Node,
         tokens: &[Token],
         index: usize,
         emphasis: Option<NodeId>,
-        is_list: bool,
     ) -> Doc<'a> {
         let text = self.str(tokens[index].value);
         if self.is_mdx {
@@ -1224,8 +1376,7 @@ impl<'a> Printer<'a, '_> {
             let is_fake_setext_line = self.options.prose_wrap == ProseWrap::Preserve
                 && (text.iter().all(|&byte| byte == b'=') || text.iter().all(|&byte| byte == b'-'))
                 && is_newline(previous)
-                && (next.is_none() || is_newline(next))
-                && !is_list;
+                && (next.is_none() || is_newline(next));
             return match is_fake_setext_line {
                 true => Doc::from([b"\\", text].concat()),
                 false => Doc::from(text),

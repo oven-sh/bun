@@ -949,75 +949,9 @@ describe("Readable.fromWeb over a native source: a pull inside _read() that retu
   it.skipIf(isWindows).concurrent(
     "Bun.spawn().stdout with highWaterMark 0 and a 'readable' listener: a held pull made by read()",
     async () => {
-      using dir = tempDir("fromweb-held-pull", {
-        "producer.js": `
-          const fs = require("node:fs");
-          const path = require("node:path");
-          const chunks = process.argv.slice(2);
-          const file = name => path.join(__dirname, name);
-          const deadline = Date.now() + 15_000;
-          function waitFor(name) {
-            while (!fs.existsSync(file(name))) {
-              if (Date.now() > deadline) throw new Error("producer timed out waiting for " + name);
-              Bun.sleepSync(1);
-            }
-          }
-          chunks.forEach((hex, i) => {
-            waitFor("write-" + i);
-            fs.writeSync(1, Buffer.from(hex, "hex"));
-            fs.writeFileSync(file("wrote-" + i), "");
-          });
-          waitFor("exit");
-        `,
-        "reader.js": `
-          const fs = require("node:fs");
-          const path = require("node:path");
-          const { Readable } = require("node:stream");
-          const chunks = process.argv.slice(2);
-          const file = name => path.join(__dirname, name);
-          const deadline = Date.now() + 15_000;
-          // Returns once chunk i is in the pipe. The producer is still alive.
-          function write(i) {
-            fs.writeFileSync(file("write-" + i), "");
-            while (!fs.existsSync(file("wrote-" + i))) {
-              if (Date.now() > deadline) throw new Error("reader timed out waiting for chunk " + i);
-              Bun.sleepSync(1);
-            }
-          }
-          const child = Bun.spawn({
-            cmd: [process.execPath, file("producer.js"), ...chunks],
-            stdio: ["ignore", "pipe", "inherit"],
-          });
-          const stream = Readable.fromWeb(child.stdout, { highWaterMark: 0 });
-          stream.setEncoding("utf8");
-          const seen = { pushed: [], text: "", end: 0 };
-          const push = stream.push;
-          stream.push = function (chunk) {
-            seen.pushed.push(chunk === null ? null : [chunk.length, this._readableState.sync]);
-            return push.call(this, chunk);
-          };
-          stream.on("readable", () => {
-            let text;
-            while ((text = stream.read()) !== null) {
-              if (seen.text === "") {
-                write(1);
-                // After the pull that the next read() makes: the rest, then EOF.
-                setImmediate(() => {
-                  write(2);
-                  fs.writeFileSync(file("exit"), "");
-                });
-              }
-              seen.text += text;
-            }
-          });
-          stream.on("end", () => seen.end++);
-          // The stream's first read() was made a tick ago and found the pipe empty, so chunk 0 settles it.
-          setImmediate(() => write(0));
-          process.on("exit", () => console.log(JSON.stringify(seen)));
-        `,
-      });
+      using dir = tempDir("fromweb-held-pull", {});
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "reader.js", "78", "e2", "82ac"],
+        cmd: [bunExe(), join(import.meta.dir, "native-readable-held-pull-fixture.js"), "fromWeb", "78", "e2", "82ac"],
         cwd: String(dir),
         env: bunEnv,
         stdout: "pipe",

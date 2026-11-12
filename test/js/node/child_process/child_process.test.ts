@@ -1816,62 +1816,15 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
 it.skipIf(!isPosix).concurrent(
   "execFile() calls back when a pull inside _read() returns a byte that the decoder holds back",
   async () => {
-    using dir = tempDir("child-stdout-held-pull", {
-      "producer.js": `
-        const fs = require("node:fs");
-        const path = require("node:path");
-        const bytes = process.argv.slice(2);
-        const file = name => path.join(__dirname, name);
-        const deadline = Date.now() + 15_000;
-        function waitFor(name) {
-          while (!fs.existsSync(file(name))) {
-            if (Date.now() > deadline) throw new Error("producer timed out waiting for " + name);
-            Bun.sleepSync(1);
-          }
-        }
-        bytes.forEach((hex, i) => {
-          waitFor("write-" + i);
-          fs.writeSync(1, Buffer.from(hex, "hex"));
-          fs.writeFileSync(file("wrote-" + i), "");
-        });
-        waitFor("exit");
-      `,
-      "reader.js": `
-        const { execFile } = require("node:child_process");
-        const fs = require("node:fs");
-        const path = require("node:path");
-        const file = name => path.join(__dirname, name);
-        const deadline = Date.now() + 15_000;
-        // Returns once byte i is in the pipe. The producer is still alive.
-        function write(i) {
-          fs.writeFileSync(file("write-" + i), "");
-          while (!fs.existsSync(file("wrote-" + i))) {
-            if (Date.now() > deadline) throw new Error("reader timed out waiting for byte " + i);
-            Bun.sleepSync(1);
-          }
-        }
-        const seen = { pushed: [], callback: null, close: 0 };
-        const child = execFile(process.execPath, [file("producer.js"), "e2", "82"], (error, stdout, stderr) => {
-          seen.callback = { error: error ? error.message : null, stdout, stderr };
-        });
-        // 'resume' follows the stream's first read(), which found the pipe empty: byte 0 settles it.
-        child.stdout.once("resume", () => write(0));
-        const push = child.stdout.push;
-        child.stdout.push = function (chunk) {
-          const insideRead = this._readableState.sync;
-          const more = push.call(this, chunk);
-          seen.pushed.push(chunk === null ? null : [chunk.length, insideRead]);
-          if (seen.pushed.length === 1) write(1);
-          // After the pull that follows the push of byte 1: EOF.
-          else if (seen.pushed.length === 2) setImmediate(() => fs.writeFileSync(file("exit"), ""));
-          return more;
-        };
-        child.on("close", () => seen.close++);
-        process.on("exit", () => console.log(JSON.stringify(seen)));
-      `,
-    });
+    using dir = tempDir("child-stdout-held-pull", {});
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "reader.js"],
+      cmd: [
+        bunExe(),
+        path.join(import.meta.dir, "../stream/native-readable-held-pull-fixture.js"),
+        "execFile",
+        "e2",
+        "82",
+      ],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",

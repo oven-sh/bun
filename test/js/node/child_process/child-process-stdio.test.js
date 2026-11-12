@@ -89,14 +89,22 @@ describe.concurrent("child.stdout and child.stderr", () => {
     });
   });
 
+  // Resolves when a block waits in `stream`, and rejects when `stream` is over first.
+  function nextBlockWaits(stream) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const over = () => reject(new Error("the stream was over before its next block"));
+    // 'readable' with nothing to read is the end of the stream.
+    const onReadable = () => (stream.readableLength > 0 ? resolve() : over());
+    stream.on("readable", onReadable).on("close", over).on("error", reject);
+    return promise.finally(() => stream.off("readable", onReadable).off("close", over).off("error", reject));
+  }
+
   it("a chunk of a for await loop moves out while the next one waits in the stream", async () => {
     const child = spawnWriter("stdout");
     const moved = [];
     for await (const chunk of child.stdout) {
       child.stdin.write("\n");
-      if (moved.length < 3) {
-        while (child.stdout.readableLength === 0) await new Promise(resolve => setImmediate(resolve));
-      }
+      if (moved.length < 3 && child.stdout.readableLength === 0) await nextBlockWaits(child.stdout);
       moved.push(chunk.length > 0 ? moveOut(chunk) : "");
     }
     expect(moved).toEqual(["a8", "b8", "c8", "d8"]);

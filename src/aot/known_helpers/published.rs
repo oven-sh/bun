@@ -21,6 +21,7 @@ pub enum Helper {
     ReExport,
     SetModuleDefault,
     ImportStar,
+    WildcardCache,
     ImportDefault,
     DefineProperties,
     CreateClass,
@@ -29,12 +30,26 @@ pub enum Helper {
     Typeof,
     DefineNormalProperty,
     PublicField,
+    PossibleConstructorReturn,
+    AssertThisInitialized,
+    CallSuper,
+    ClassCallCheck,
+    CreateSuper,
+    GetPrototypeOf,
+    IsNativeReflectConstruct,
+    HasOwn,
+    Assign,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Shape {
     ExportStarBindsNamesTheTargetLacks,
+    ExportStarOfKeysIfMissing,
+    ExportStarInlineIfMissing,
+    ExportStarInline,
+    ExportStarInlineIfUnlisted,
     ExportStarInLineDefinesGettersForNamesThatDiffer,
+    ExportStarInlineIfDifferent,
     CreateBindingDefinesGetter,
     CreateBindingReusesDescriptor,
     CreateBindingCopiesValue,
@@ -44,7 +59,10 @@ pub enum Shape {
     ClassPrivateFieldSetByKind,
     ClassPrivateFieldInAsksStateOrComparesConstructor,
     MarkAsModuleDefinesFlag,
+    MarkAsModuleWithTag,
     ExportDefinesGetters,
+    ExportGettersOfLiteral,
+    ExportGettersIfMissing,
     ExportMarksModuleAndDefinesGetters,
     ExportDefinesGettersAndSettersOfTheLastName,
     ExportDefinesGettersAndBoundSetters,
@@ -71,6 +89,8 @@ pub enum Shape {
     SetModuleDefaultStoresValue,
     ImportStarAnswersMarkedValueOrBindsItsEnumerableNames,
     ImportStarAnswersMarkedValueOrBindsItsOwnNames,
+    ImportStarMarkedOrCopied,
+    WildcardCacheReturnsMap,
     ImportDefaultAnswersMarkedValueOrWrapsIt,
     DefinePropertiesOfDescriptors,
     DefinePropertiesOfDescriptorsUnderConvertedKeys,
@@ -82,13 +102,37 @@ pub enum Shape {
     DefineNormalPropertyDefinesWhatIsThereAndStoresWhatIsNot,
     PublicFieldAnswersValue,
     PublicFieldAnswersWhatDefiningAnswers,
+    PublicFieldReturnsObject,
+    PublicFieldWithConvertedKey,
+    PossibleConstructorReturnOrThis,
+    PossibleConstructorReturnChecked,
+    AssertThisInitializedReturnsThis,
+    CallSuperConstructsParent,
+    ClassCallCheckByInstanceOf,
+    CreateSuperConstructsParent,
+    GetPrototypeOfReplacesItself,
+    IsNativeReflectConstructByTrial,
+    HasOwnByObjectPrototype,
+    AssignReplacesItself,
 }
 
 impl Shape {
+    pub const fn replaces_itself(self) -> bool {
+        matches!(
+            self,
+            Shape::TypeofAnswersSymbolForSymbols | Shape::AssignReplacesItself
+        )
+    }
+
     pub const fn helper(self) -> Helper {
         match self {
             Shape::ExportStarBindsNamesTheTargetLacks => Helper::ExportStar,
+            Shape::ExportStarOfKeysIfMissing => Helper::ExportStar,
+            Shape::ExportStarInlineIfMissing => Helper::ExportStarInLine,
+            Shape::ExportStarInline => Helper::ExportStarInLine,
+            Shape::ExportStarInlineIfUnlisted => Helper::ExportStarInLine,
             Shape::ExportStarInLineDefinesGettersForNamesThatDiffer => Helper::ExportStarInLine,
+            Shape::ExportStarInlineIfDifferent => Helper::ExportStarInLine,
             Shape::DefinePropertiesOfDescriptors => Helper::DefineProperties,
             Shape::DefinePropertiesOfDescriptorsUnderConvertedKeys => Helper::DefineProperties,
             Shape::ToPropertyKeyAnswersSymbolOrText => Helper::ToPropertyKey,
@@ -99,6 +143,16 @@ impl Shape {
             }
             Shape::PublicFieldAnswersValue => Helper::PublicField,
             Shape::PublicFieldAnswersWhatDefiningAnswers => Helper::PublicField,
+            Shape::PublicFieldReturnsObject => Helper::PublicField,
+            Shape::PublicFieldWithConvertedKey => Helper::PublicField,
+            Shape::PossibleConstructorReturnOrThis => Helper::PossibleConstructorReturn,
+            Shape::PossibleConstructorReturnChecked => Helper::PossibleConstructorReturn,
+            Shape::AssertThisInitializedReturnsThis => Helper::AssertThisInitialized,
+            Shape::CallSuperConstructsParent => Helper::CallSuper,
+            Shape::ClassCallCheckByInstanceOf => Helper::ClassCallCheck,
+            Shape::CreateSuperConstructsParent => Helper::CreateSuper,
+            Shape::GetPrototypeOfReplacesItself => Helper::GetPrototypeOf,
+            Shape::IsNativeReflectConstructByTrial => Helper::IsNativeReflectConstruct,
             Shape::CreateClassDefinesBothSides => Helper::CreateClass,
             Shape::CreateClassDefinesBothSidesAndLocksPrototype => Helper::CreateClass,
             Shape::CommonJsRunsCallbackOnce => Helper::CommonJs,
@@ -122,7 +176,12 @@ impl Shape {
             Shape::ClassPrivateFieldSetByKind => Helper::ClassPrivateFieldSet,
             Shape::ClassPrivateFieldInAsksStateOrComparesConstructor => Helper::ClassPrivateFieldIn,
             Shape::MarkAsModuleDefinesFlag => Helper::MarkAsModule,
+            Shape::MarkAsModuleWithTag => Helper::MarkAsModule,
+            Shape::ExportGettersIfMissing => Helper::Export,
+            Shape::HasOwnByObjectPrototype => Helper::HasOwn,
+            Shape::AssignReplacesItself => Helper::Assign,
             Shape::ExportDefinesGetters => Helper::Export,
+            Shape::ExportGettersOfLiteral => Helper::Export,
             Shape::ExportMarksModuleAndDefinesGetters => Helper::Export,
             Shape::ExportDefinesGettersAndSettersOfTheLastName => Helper::Export,
             Shape::ExportDefinesGettersAndBoundSetters => Helper::Export,
@@ -137,6 +196,8 @@ impl Shape {
             Shape::SetModuleDefaultStoresValue => Helper::SetModuleDefault,
             Shape::ImportStarAnswersMarkedValueOrBindsItsEnumerableNames => Helper::ImportStar,
             Shape::ImportStarAnswersMarkedValueOrBindsItsOwnNames => Helper::ImportStar,
+            Shape::ImportStarMarkedOrCopied => Helper::ImportStar,
+            Shape::WildcardCacheReturnsMap => Helper::WildcardCache,
             Shape::ImportDefaultAnswersMarkedValueOrWrapsIt => Helper::ImportDefault,
         }
     }
@@ -172,6 +233,11 @@ const GET_PROTOTYPE_OF: (&str, Reference) = (
 const COPY_PROPERTIES: (&str, Reference) =
     ("__copyProps", Reference::Helper(Helper::CopyProperties));
 
+const WILDCARD_CACHE: (&str, Reference) = (
+    "_getRequireWildcardCache",
+    Reference::Helper(Helper::WildcardCache),
+);
+
 const DEFINE_NORMAL_PROPERTY: (&str, Reference) = (
     "__defNormalProp",
     Reference::Helper(Helper::DefineNormalProperty),
@@ -195,6 +261,195 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
         text: "(obj, key, value) => __defNormalProp(obj, typeof key !== \"symbol\" ? key + \"\" : key, value)",
         references: &[DEFINE_NORMAL_PROPERTY],
         origin: "esbuild 0.21 and after; bun",
+    },
+    PublishedFunction {
+        shape: Shape::PublicFieldReturnsObject,
+        text: "function(obj, key, value) {\nif (key in obj) {\nObject.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true });\n} else {\nobj[key] = value;\n}\nreturn obj;\n}",
+        references: &[],
+        origin: "babel 7 before 7.20, swc",
+    },
+    PublishedFunction {
+        shape: Shape::PublicFieldWithConvertedKey,
+        text: "function(obj, key, value) {\nkey = _toPropertyKey(key);\nif (key in obj) {\nObject.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true });\n} else {\nobj[key] = value;\n}\nreturn obj;\n}",
+        references: &[("_toPropertyKey", Reference::Helper(Helper::ToPropertyKey))],
+        origin: "babel 7.20.6 to 7.24.5",
+    },
+    PublishedFunction {
+        shape: Shape::PublicFieldWithConvertedKey,
+        text: "function(e, r, t) {\nreturn (r = _toPropertyKey(r)) in e ? Object.defineProperty(e, r, { value: t, enumerable: !0, configurable: !0, writable: !0 }) : e[r] = t, e;\n}",
+        references: &[("_toPropertyKey", Reference::Helper(Helper::ToPropertyKey))],
+        origin: "babel 7.24.6 and after",
+    },
+    PublishedFunction {
+        shape: Shape::PossibleConstructorReturnOrThis,
+        text: "function(self, call) {\nif (!self) {\nthrow new ReferenceError(\"this hasn't been initialised - super() hasn't been called\");\n}\nreturn call && (typeof call === \"object\" || typeof call === \"function\") ? call : self;\n}",
+        references: &[],
+        origin: "babel 6, where typeof is not transformed",
+    },
+    PublishedFunction {
+        shape: Shape::PossibleConstructorReturnOrThis,
+        text: "function(self, call) {\nif (call && (typeof call === \"object\" || typeof call === \"function\")) {\nreturn call;\n}\nreturn _assertThisInitialized(self);\n}",
+        references: &[(
+            "_assertThisInitialized",
+            Reference::Helper(Helper::AssertThisInitialized),
+        )],
+        origin: "babel 7 before 7.16, where typeof is not transformed",
+    },
+    PublishedFunction {
+        shape: Shape::PossibleConstructorReturnChecked,
+        text: "function(self, call) {\nif (call && (typeof call === \"object\" || typeof call === \"function\")) {\nreturn call;\n} else if (call !== void 0) {\nthrow new TypeError(\"Derived constructors may only return object or undefined\");\n}\nreturn _assertThisInitialized(self);\n}",
+        references: &[(
+            "_assertThisInitialized",
+            Reference::Helper(Helper::AssertThisInitialized),
+        )],
+        origin: "babel 7.16 to 7.23, where typeof is not transformed",
+    },
+    PublishedFunction {
+        shape: Shape::PossibleConstructorReturnChecked,
+        text: "function(t, e) {\nif (e && (\"object\" == typeof e || \"function\" == typeof e)) return e;\nif (void 0 !== e) throw new TypeError(\"Derived constructors may only return object or undefined\");\nreturn _assertThisInitialized(t);\n}",
+        references: &[(
+            "_assertThisInitialized",
+            Reference::Helper(Helper::AssertThisInitialized),
+        )],
+        origin: "babel 7.24 and after, where typeof is not transformed",
+    },
+    PublishedFunction {
+        shape: Shape::PossibleConstructorReturnOrThis,
+        text: "function(self, call) {\nif (!self) {\nthrow new ReferenceError(\"this hasn't been initialised - super() hasn't been called\");\n}\nreturn call && (_typeof(call) === \"object\" || typeof call === \"function\") ? call : self;\n}",
+        references: &[("_typeof", Reference::Helper(Helper::Typeof))],
+        origin: "babel 6",
+    },
+    PublishedFunction {
+        shape: Shape::PossibleConstructorReturnOrThis,
+        text: "function(self, call) {\nif (call && (_typeof(call) === \"object\" || typeof call === \"function\")) {\nreturn call;\n}\nreturn _assertThisInitialized(self);\n}",
+        references: &[
+            ("_typeof", Reference::Helper(Helper::Typeof)),
+            (
+                "_assertThisInitialized",
+                Reference::Helper(Helper::AssertThisInitialized),
+            ),
+        ],
+        origin: "babel 7 before 7.16",
+    },
+    PublishedFunction {
+        shape: Shape::PossibleConstructorReturnChecked,
+        text: "function(self, call) {\nif (call && (_typeof(call) === \"object\" || typeof call === \"function\")) {\nreturn call;\n} else if (call !== void 0) {\nthrow new TypeError(\"Derived constructors may only return object or undefined\");\n}\nreturn _assertThisInitialized(self);\n}",
+        references: &[
+            ("_typeof", Reference::Helper(Helper::Typeof)),
+            (
+                "_assertThisInitialized",
+                Reference::Helper(Helper::AssertThisInitialized),
+            ),
+        ],
+        origin: "babel 7.16 to 7.23",
+    },
+    PublishedFunction {
+        shape: Shape::PossibleConstructorReturnChecked,
+        text: "function(t, e) {\nif (e && (\"object\" == _typeof(e) || \"function\" == typeof e)) return e;\nif (void 0 !== e) throw new TypeError(\"Derived constructors may only return object or undefined\");\nreturn _assertThisInitialized(t);\n}",
+        references: &[
+            ("_typeof", Reference::Helper(Helper::Typeof)),
+            (
+                "_assertThisInitialized",
+                Reference::Helper(Helper::AssertThisInitialized),
+            ),
+        ],
+        origin: "babel 7.24 and after",
+    },
+    PublishedFunction {
+        shape: Shape::AssertThisInitializedReturnsThis,
+        text: "function(self) {\nif (self === void 0) {\nthrow new ReferenceError(\"this hasn't been initialised - super() hasn't been called\");\n}\nreturn self;\n}",
+        references: &[],
+        origin: "babel 7 before 7.24",
+    },
+    PublishedFunction {
+        shape: Shape::AssertThisInitializedReturnsThis,
+        text: "function(e) {\nif (void 0 === e) throw new ReferenceError(\"this hasn't been initialised - super() hasn't been called\");\nreturn e;\n}",
+        references: &[],
+        origin: "babel 7.24 and after",
+    },
+    PublishedFunction {
+        shape: Shape::CallSuperConstructsParent,
+        text: "function(t, o, e) {\nreturn o = _getPrototypeOf(o), _possibleConstructorReturn(t, _isNativeReflectConstruct() ? Reflect.construct(o, e || [], _getPrototypeOf(t).constructor) : o.apply(t, e));\n}",
+        references: &[
+            ("_getPrototypeOf", Reference::Helper(Helper::GetPrototypeOf)),
+            (
+                "_possibleConstructorReturn",
+                Reference::Helper(Helper::PossibleConstructorReturn),
+            ),
+            (
+                "_isNativeReflectConstruct",
+                Reference::Helper(Helper::IsNativeReflectConstruct),
+            ),
+        ],
+        origin: "babel 7.24 and after",
+    },
+    PublishedFunction {
+        shape: Shape::CallSuperConstructsParent,
+        text: "function(_this, derived, args) {\nderived = _getPrototypeOf(derived);\nreturn _possibleConstructorReturn(_this, _isNativeReflectConstruct() ? Reflect.construct(derived, args || [], _getPrototypeOf(_this).constructor) : derived.apply(_this, args));\n}",
+        references: &[
+            ("_getPrototypeOf", Reference::Helper(Helper::GetPrototypeOf)),
+            (
+                "_possibleConstructorReturn",
+                Reference::Helper(Helper::PossibleConstructorReturn),
+            ),
+            (
+                "_isNativeReflectConstruct",
+                Reference::Helper(Helper::IsNativeReflectConstruct),
+            ),
+        ],
+        origin: "babel 7.23",
+    },
+    PublishedFunction {
+        shape: Shape::CreateSuperConstructsParent,
+        text: "function(Derived) {\nvar hasNativeReflectConstruct = _isNativeReflectConstruct();\nreturn function _createSuperInternal() {\nvar Super = _getPrototypeOf(Derived), result;\nif (hasNativeReflectConstruct) {\nvar NewTarget = _getPrototypeOf(this).constructor;\nresult = Reflect.construct(Super, arguments, NewTarget);\n} else {\nresult = Super.apply(this, arguments);\n}\nreturn _possibleConstructorReturn(this, result);\n};\n}",
+        references: &[
+            (
+                "_isNativeReflectConstruct",
+                Reference::Helper(Helper::IsNativeReflectConstruct),
+            ),
+            ("_getPrototypeOf", Reference::Helper(Helper::GetPrototypeOf)),
+            (
+                "_possibleConstructorReturn",
+                Reference::Helper(Helper::PossibleConstructorReturn),
+            ),
+        ],
+        origin: "babel 7.9 to 7.22",
+    },
+    PublishedFunction {
+        shape: Shape::ClassCallCheckByInstanceOf,
+        text: "function(instance, Constructor) {\nif (!(instance instanceof Constructor)) {\nthrow new TypeError(\"Cannot call a class as a function\");\n}\n}",
+        references: &[],
+        origin: "babel 6 and 7",
+    },
+    PublishedFunction {
+        shape: Shape::GetPrototypeOfReplacesItself,
+        text: "function _getPrototypeOf(t) {\nreturn _getPrototypeOf = Object.setPrototypeOf ? Object.getPrototypeOf.bind() : function (t) {\nreturn t.__proto__ || Object.getPrototypeOf(t);\n}, _getPrototypeOf(t);\n}",
+        references: &[],
+        origin: "babel 7.24 and after",
+    },
+    PublishedFunction {
+        shape: Shape::GetPrototypeOfReplacesItself,
+        text: "function _getPrototypeOf(o) {\n_getPrototypeOf = Object.setPrototypeOf ? Object.getPrototypeOf.bind() : function _getPrototypeOf(o) {\nreturn o.__proto__ || Object.getPrototypeOf(o);\n};\nreturn _getPrototypeOf(o);\n}",
+        references: &[],
+        origin: "babel 7.18 to 7.23",
+    },
+    PublishedFunction {
+        shape: Shape::GetPrototypeOfReplacesItself,
+        text: "function _getPrototypeOf(o) {\n_getPrototypeOf = Object.setPrototypeOf ? Object.getPrototypeOf : function _getPrototypeOf(o) {\nreturn o.__proto__ || Object.getPrototypeOf(o);\n};\nreturn _getPrototypeOf(o);\n}",
+        references: &[],
+        origin: "babel 7.0 to 7.17",
+    },
+    PublishedFunction {
+        shape: Shape::IsNativeReflectConstructByTrial,
+        text: "function _isNativeReflectConstruct() {\ntry {\nvar t = !Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {}));\n} catch (t) {}\nreturn (_isNativeReflectConstruct = function _isNativeReflectConstruct() {\nreturn !!t;\n})();\n}",
+        references: &[],
+        origin: "babel 7.23 and after",
+    },
+    PublishedFunction {
+        shape: Shape::IsNativeReflectConstructByTrial,
+        text: "function _isNativeReflectConstruct() {\nif (typeof Reflect === \"undefined\" || !Reflect.construct) return false;\nif (Reflect.construct.sham) return false;\nif (typeof Proxy === \"function\") return true;\ntry {\nBoolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {}));\nreturn true;\n} catch (e) {\nreturn false;\n}\n}",
+        references: &[],
+        origin: "babel 7.12 to 7.22",
     },
     PublishedFunction {
         shape: Shape::DefinePropertiesOfDescriptors,
@@ -329,6 +584,24 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
         origin: "babel 7.8 to 7.15",
     },
     PublishedFunction {
+        shape: Shape::AssignReplacesItself,
+        text: "function _extends() {\nreturn _extends = Object.assign ? Object.assign.bind() : function (n) {\nfor (var e = 1; e < arguments.length; e++) {\nvar t = arguments[e];\nfor (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]);\n}\nreturn n;\n}, _extends.apply(null, arguments);\n}",
+        references: &[],
+        origin: "babel 7.24 and after",
+    },
+    PublishedFunction {
+        shape: Shape::AssignReplacesItself,
+        text: "function _extends() {\n_extends = Object.assign ? Object.assign.bind() : function (target) {\nfor (var i = 1; i < arguments.length; i++) {\nvar source = arguments[i];\nfor (var key in source) {\nif (Object.prototype.hasOwnProperty.call(source, key)) {\ntarget[key] = source[key];\n}\n}\n}\nreturn target;\n};\nreturn _extends.apply(this, arguments);\n}",
+        references: &[],
+        origin: "babel 7.17 to 7.23",
+    },
+    PublishedFunction {
+        shape: Shape::AssignReplacesItself,
+        text: "function _extends() {\n_extends = Object.assign || function (target) {\nfor (var i = 1; i < arguments.length; i++) {\nvar source = arguments[i];\nfor (var key in source) {\nif (Object.prototype.hasOwnProperty.call(source, key)) {\ntarget[key] = source[key];\n}\n}\n}\nreturn target;\n};\nreturn _extends.apply(this, arguments);\n}",
+        references: &[],
+        origin: "babel 7.0 to 7.16",
+    },
+    PublishedFunction {
         shape: Shape::ExportStarBindsNamesTheTargetLacks,
         text: "function(m, o) {\nfor (var p in m) if (p !== \"default\" && !Object.prototype.hasOwnProperty.call(o, p)) __createBinding(o, m, p);\n}",
         references: &[("__createBinding", Reference::Helper(Helper::CreateBinding))],
@@ -339,6 +612,72 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
         text: "function (key) {\nif (key === \"default\" || key === \"__esModule\") return;\nif (key in exports && exports[key] === _x[key]) return;\nObject.defineProperty(exports, key, {\nenumerable: true,\nget: function () {\nreturn _x[key];\n}\n});\n}",
         references: &[("_x", Reference::Holder)],
         origin: "babel 7.9 and after, a file without names of its own",
+    },
+    PublishedFunction {
+        shape: Shape::ExportStarInlineIfDifferent,
+        text: "function (key) {\nif (key === \"default\" || key === \"__esModule\") return;\nif (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;\nif (key in exports && exports[key] === _x[key]) return;\nObject.defineProperty(exports, key, {\nenumerable: true,\nget: function () {\nreturn _x[key];\n}\n});\n}",
+        references: &[
+            ("_exportNames", Reference::Holder),
+            ("_x", Reference::Holder),
+        ],
+        origin: "babel 7.9 and after, a file with names of its own",
+    },
+    PublishedFunction {
+        shape: Shape::ExportStarInLineDefinesGettersForNamesThatDiffer,
+        text: "function (key) {\nif (key === \"default\" || key === \"__esModule\") return;\nif (key in exports && exports[key] === _x[key]) return;\nObject.defineProperty(exports, key, {\nenumerable: true,\nget: function get() {\nreturn _x[key];\n}\n});\n}",
+        references: &[("_x", Reference::Holder)],
+        origin: "babel 7.9 and after with names of functions, a file without names of its own",
+    },
+    PublishedFunction {
+        shape: Shape::ExportStarInlineIfDifferent,
+        text: "function (key) {\nif (key === \"default\" || key === \"__esModule\") return;\nif (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;\nif (key in exports && exports[key] === _x[key]) return;\nObject.defineProperty(exports, key, {\nenumerable: true,\nget: function get() {\nreturn _x[key];\n}\n});\n}",
+        references: &[
+            ("_exportNames", Reference::Holder),
+            ("_x", Reference::Holder),
+        ],
+        origin: "babel 7.9 and after with names of functions, a file with names of its own",
+    },
+    PublishedFunction {
+        shape: Shape::ExportStarInline,
+        text: "function (key) {\nif (key === \"default\" || key === \"__esModule\") return;\nObject.defineProperty(exports, key, {\nenumerable: true,\nget: function () {\nreturn _x[key];\n}\n});\n}",
+        references: &[("_x", Reference::Holder)],
+        origin: "babel 7.0 to 7.8, a file without names of its own",
+    },
+    PublishedFunction {
+        shape: Shape::ExportStarInline,
+        text: "function (key) {\nif (key === \"default\" || key === \"__esModule\") return;\nObject.defineProperty(exports, key, {\nenumerable: true,\nget: function get() {\nreturn _x[key];\n}\n});\n}",
+        references: &[("_x", Reference::Holder)],
+        origin: "babel 6; babel 7.0 to 7.8 with names of functions, a file without names of its own",
+    },
+    PublishedFunction {
+        shape: Shape::ExportStarInlineIfUnlisted,
+        text: "function (key) {\nif (key === \"default\" || key === \"__esModule\") return;\nif (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;\nObject.defineProperty(exports, key, {\nenumerable: true,\nget: function () {\nreturn _x[key];\n}\n});\n}",
+        references: &[
+            ("_exportNames", Reference::Holder),
+            ("_x", Reference::Holder),
+        ],
+        origin: "babel 7.0 to 7.8, a file with names of its own",
+    },
+    PublishedFunction {
+        shape: Shape::ExportStarInlineIfUnlisted,
+        text: "function (key) {\nif (key === \"default\" || key === \"__esModule\") return;\nif (Object.prototype.hasOwnProperty.call(_exportNames, key)) return;\nObject.defineProperty(exports, key, {\nenumerable: true,\nget: function get() {\nreturn _x[key];\n}\n});\n}",
+        references: &[
+            ("_exportNames", Reference::Holder),
+            ("_x", Reference::Holder),
+        ],
+        origin: "babel 7.0 to 7.8 with names of functions, a file with names of its own",
+    },
+    PublishedFunction {
+        shape: Shape::ExportStarInlineIfMissing,
+        text: "function (k) {\nif (k !== 'default' && !Object.prototype.hasOwnProperty.call(exports, k)) Object.defineProperty(exports, k, {\nenumerable: true,\nget: function () { return _x[k]; }\n});\n}",
+        references: &[("_x", Reference::Holder)],
+        origin: "rollup 3 and after",
+    },
+    PublishedFunction {
+        shape: Shape::ExportStarOfKeysIfMissing,
+        text: "function _export_star(from, to) {\nObject.keys(from).forEach(function(k) {\nif (k !== \"default\" && !Object.prototype.hasOwnProperty.call(to, k)) {\nObject.defineProperty(to, k, {\nenumerable: true,\nget: function() {\nreturn from[k];\n}\n});\n}\n});\nreturn from;\n}",
+        references: &[],
+        origin: "swc 1.2.206 and after",
     },
     PublishedFunction {
         shape: Shape::CreateBindingDefinesGetter,
@@ -405,6 +744,42 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
         text: "function _export(target, all) {\nfor(var name in all)Object.defineProperty(target, name, {\nenumerable: true,\nget: all[name]\n});\n}",
         references: &[],
         origin: "swc 1.2.206 to 1.15; next 13.0 to 16.0",
+    },
+    PublishedFunction {
+        shape: Shape::ExportGettersOfLiteral,
+        text: "function _export(target, all) {\nfor(var name in all)Object.defineProperty(target, name, {\nenumerable: true,\nget: Object.getOwnPropertyDescriptor(all, name).get\n});\n}",
+        references: &[],
+        origin: "swc 1.13 and after",
+    },
+    PublishedFunction {
+        shape: Shape::ExportGettersIfMissing,
+        text: "(exports, definition) => {\nfor (var key in definition) {\nif (__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {\nObject.defineProperty(exports, key, { enumerable: true, get: definition[key] });\n}\n}\n}",
+        references: &[("__webpack_require__", Reference::Holder)],
+        origin: "webpack 5; rspack 1",
+    },
+    PublishedFunction {
+        shape: Shape::ExportGettersIfMissing,
+        text: "(e, t) => {\nfor (var r in t) n.o(t, r) && !n.o(e, r) && Object.defineProperty(e, r, { enumerable: !0, get: t[r] });\n}",
+        references: &[("n", Reference::Holder)],
+        origin: "webpack 5, minified by terser",
+    },
+    PublishedFunction {
+        shape: Shape::MarkAsModuleWithTag,
+        text: "(exports) => {\nif (typeof Symbol !== \"undefined\" && Symbol.toStringTag) {\nObject.defineProperty(exports, Symbol.toStringTag, { value: \"Module\" });\n}\nObject.defineProperty(exports, \"__esModule\", { value: true });\n}",
+        references: &[],
+        origin: "webpack 5; rspack 1",
+    },
+    PublishedFunction {
+        shape: Shape::MarkAsModuleWithTag,
+        text: "(e) => {\n\"undefined\" != typeof Symbol && Symbol.toStringTag && Object.defineProperty(e, Symbol.toStringTag, { value: \"Module\" }), Object.defineProperty(e, \"__esModule\", { value: !0 });\n}",
+        references: &[],
+        origin: "webpack 5, minified by terser",
+    },
+    PublishedFunction {
+        shape: Shape::HasOwnByObjectPrototype,
+        text: "(obj, prop) => Object.prototype.hasOwnProperty.call(obj, prop)",
+        references: &[],
+        origin: "webpack 5; rspack 1",
     },
     PublishedFunction {
         shape: Shape::ExportMarksModuleAndDefinesGetters,
@@ -672,6 +1047,81 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
             ),
         ],
         origin: "typescript 5.7 to 6.0",
+    },
+    PublishedFunction {
+        shape: Shape::WildcardCacheReturnsMap,
+        text: "function _getRequireWildcardCache() {\nif (typeof WeakMap !== \"function\") return null;\nvar cache = new WeakMap();\n_getRequireWildcardCache = function () {\nreturn cache;\n};\nreturn cache;\n}",
+        references: &[],
+        origin: "babel 7.4 to 7.13",
+    },
+    PublishedFunction {
+        shape: Shape::WildcardCacheReturnsMap,
+        text: "function _getRequireWildcardCache(nodeInterop) {\nif (typeof WeakMap !== \"function\") return null;\nvar cacheBabelInterop = new WeakMap();\nvar cacheNodeInterop = new WeakMap();\nreturn (_getRequireWildcardCache = function (nodeInterop) {\nreturn nodeInterop ? cacheNodeInterop : cacheBabelInterop;\n})(nodeInterop);\n}",
+        references: &[],
+        origin: "babel 7.14 to 7.23; swc 1.2.206 and after",
+    },
+    PublishedFunction {
+        shape: Shape::WildcardCacheReturnsMap,
+        text: "function _getRequireWildcardCache(e) {\nif (\"function\" != typeof WeakMap) return null;\nvar r = new WeakMap(), t = new WeakMap();\nreturn (_getRequireWildcardCache = function (e) {\nreturn e ? t : r;\n})(e);\n}",
+        references: &[],
+        origin: "babel 7.24 to 7.26",
+    },
+    PublishedFunction {
+        shape: Shape::ImportStarMarkedOrCopied,
+        text: "function _interopRequireWildcard(obj) {\nif (obj && obj.__esModule) {\nreturn obj;\n} else {\nvar newObj = {};\nif (obj != null) {\nfor (var key in obj) {\nif (Object.prototype.hasOwnProperty.call(obj, key)) newObj[key] = obj[key];\n}\n}\nnewObj.default = obj;\nreturn newObj;\n}\n}",
+        references: &[],
+        origin: "babel 6",
+    },
+    PublishedFunction {
+        shape: Shape::ImportStarMarkedOrCopied,
+        text: "function _interopRequireWildcard(obj) {\nif (obj && obj.__esModule) {\nreturn obj;\n} else {\nvar newObj = {};\nif (obj != null) {\nfor (var key in obj) {\nif (Object.prototype.hasOwnProperty.call(obj, key)) {\nvar desc = Object.defineProperty && Object.getOwnPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : {};\nif (desc.get || desc.set) {\nObject.defineProperty(newObj, key, desc);\n} else {\nnewObj[key] = obj[key];\n}\n}\n}\n}\nnewObj.default = obj;\nreturn newObj;\n}\n}",
+        references: &[],
+        origin: "babel 7.0 to 7.3",
+    },
+    PublishedFunction {
+        shape: Shape::ImportStarMarkedOrCopied,
+        text: "function _interopRequireWildcard(obj) {\nif (obj && obj.__esModule) {\nreturn obj;\n}\nif (obj === null || typeof obj !== \"object\" && typeof obj !== \"function\") {\nreturn { default: obj };\n}\nvar cache = _getRequireWildcardCache();\nif (cache && cache.has(obj)) {\nreturn cache.get(obj);\n}\nvar newObj = {};\nvar hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;\nfor (var key in obj) {\nif (Object.prototype.hasOwnProperty.call(obj, key)) {\nvar desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;\nif (desc && (desc.get || desc.set)) {\nObject.defineProperty(newObj, key, desc);\n} else {\nnewObj[key] = obj[key];\n}\n}\n}\nnewObj.default = obj;\nif (cache) {\ncache.set(obj, newObj);\n}\nreturn newObj;\n}",
+        references: &[WILDCARD_CACHE],
+        origin: "babel 7.4 to 7.13",
+    },
+    PublishedFunction {
+        shape: Shape::ImportStarMarkedOrCopied,
+        text: "function _interopRequireWildcard(obj, nodeInterop) {\nif (!nodeInterop && obj && obj.__esModule) {\nreturn obj;\n}\nif (obj === null || typeof obj !== \"object\" && typeof obj !== \"function\") {\nreturn { default: obj };\n}\nvar cache = _getRequireWildcardCache(nodeInterop);\nif (cache && cache.has(obj)) {\nreturn cache.get(obj);\n}\nvar newObj = {};\nvar hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;\nfor (var key in obj) {\nif (key !== \"default\" && Object.prototype.hasOwnProperty.call(obj, key)) {\nvar desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;\nif (desc && (desc.get || desc.set)) {\nObject.defineProperty(newObj, key, desc);\n} else {\nnewObj[key] = obj[key];\n}\n}\n}\nnewObj.default = obj;\nif (cache) {\ncache.set(obj, newObj);\n}\nreturn newObj;\n}",
+        references: &[WILDCARD_CACHE],
+        origin: "babel 7.14 to 7.22",
+    },
+    PublishedFunction {
+        shape: Shape::ImportStarMarkedOrCopied,
+        text: "function _interopRequireWildcard(obj, nodeInterop) {\nif (!nodeInterop && obj && obj.__esModule) {\nreturn obj;\n}\nif (obj === null || typeof obj !== \"object\" && typeof obj !== \"function\") {\nreturn { default: obj };\n}\nvar cache = _getRequireWildcardCache(nodeInterop);\nif (cache && cache.has(obj)) {\nreturn cache.get(obj);\n}\nvar newObj = { __proto__: null };\nvar hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;\nfor (var key in obj) {\nif (key !== \"default\" && Object.prototype.hasOwnProperty.call(obj, key)) {\nvar desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;\nif (desc && (desc.get || desc.set)) {\nObject.defineProperty(newObj, key, desc);\n} else {\nnewObj[key] = obj[key];\n}\n}\n}\nnewObj.default = obj;\nif (cache) {\ncache.set(obj, newObj);\n}\nreturn newObj;\n}",
+        references: &[WILDCARD_CACHE],
+        origin: "babel 7.23; swc 1.3.80 and after",
+    },
+    PublishedFunction {
+        shape: Shape::ImportStarMarkedOrCopied,
+        text: "function _interopRequireWildcard(e, r) {\nif (!r && e && e.__esModule) return e;\nif (null === e || \"object\" != typeof e && \"function\" != typeof e) return { default: e };\nvar t = _getRequireWildcardCache(r);\nif (t && t.has(e)) return t.get(e);\nvar n = { __proto__: null }, a = Object.defineProperty && Object.getOwnPropertyDescriptor;\nfor (var u in e) if (\"default\" !== u && {}.hasOwnProperty.call(e, u)) {\nvar i = a ? Object.getOwnPropertyDescriptor(e, u) : null;\ni && (i.get || i.set) ? Object.defineProperty(n, u, i) : n[u] = e[u];\n}\nreturn n.default = e, t && t.set(e, n), n;\n}",
+        references: &[WILDCARD_CACHE],
+        origin: "babel 7.24 to 7.26",
+    },
+    PublishedFunction {
+        shape: Shape::ImportStarMarkedOrCopied,
+        text: "function _interopNamespace(e) {\nif (e && e.__esModule) return e;\nvar n = Object.create(null);\nif (e) {\nObject.keys(e).forEach(function (k) {\nif (k !== 'default') {\nvar d = Object.getOwnPropertyDescriptor(e, k);\nObject.defineProperty(n, k, d.get ? d : {\nenumerable: true,\nget: function () { return e[k]; }\n});\n}\n});\n}\nn[\"default\"] = e;\nreturn Object.freeze(n);\n}",
+        references: &[],
+        origin: "rollup 2 and after",
+    },
+    PublishedFunction {
+        shape: Shape::WildcardCacheReturnsMap,
+        text: "function _getRequireWildcardCache(nodeInterop) {\nif (typeof WeakMap !== \"function\") return null;\nvar cacheBabelInterop = new WeakMap();\nvar cacheNodeInterop = new WeakMap();\nreturn (_getRequireWildcardCache = function _getRequireWildcardCache(nodeInterop) {\nreturn nodeInterop ? cacheNodeInterop : cacheBabelInterop;\n})(nodeInterop);\n}",
+        references: &[],
+        origin: "babel 7.14 to 7.23, where function names are transformed",
+    },
+    PublishedFunction {
+        shape: Shape::ImportStarMarkedOrCopied,
+        text: "function _interopRequireWildcard(obj, nodeInterop) {\nif (!nodeInterop && obj && obj.__esModule) {\nreturn obj;\n}\nif (obj === null || _typeof(obj) !== \"object\" && typeof obj !== \"function\") {\nreturn { \"default\": obj };\n}\nvar cache = _getRequireWildcardCache(nodeInterop);\nif (cache && cache.has(obj)) {\nreturn cache.get(obj);\n}\nvar newObj = {};\nvar hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor;\nfor (var key in obj) {\nif (key !== \"default\" && Object.prototype.hasOwnProperty.call(obj, key)) {\nvar desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null;\nif (desc && (desc.get || desc.set)) {\nObject.defineProperty(newObj, key, desc);\n} else {\nnewObj[key] = obj[key];\n}\n}\n}\nnewObj[\"default\"] = obj;\nif (cache) {\ncache.set(obj, newObj);\n}\nreturn newObj;\n}",
+        references: &[
+            ("_typeof", Reference::Helper(Helper::Typeof)),
+            WILDCARD_CACHE,
+        ],
+        origin: "babel 7.14 to 7.23, where typeof is transformed",
     },
     PublishedFunction {
         shape: Shape::ImportDefaultAnswersMarkedValueOrWrapsIt,

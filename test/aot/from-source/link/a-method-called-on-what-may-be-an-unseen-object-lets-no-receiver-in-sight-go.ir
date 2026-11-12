@@ -1,7 +1,7 @@
 # `table[key].get(1)` where table is a record of the program that holds Nodes and key is a text nobody knows. Under such a key the read may also find a member of Object.prototype: Link says "an object of unseen code".
 # On that object nobody knows what `get` is: the call runs unseen code. But that code is called ON THE UNSEEN OBJECT: a Node finds its `get` by its own lookup, in its class.
 # Until now the call handed every receiver that arrives to unseen code: the Node, its fields and its class went out of sight by one read out of a table.
-# The arguments go out as ever: `carried` is handed over in `give` and is out of sight.
+# No built-in that such a key finds has a `take`, and built-ins are read-only: `carried` stays in sight, too.
 # -- source: a-method-called-on-what-may-be-an-unseen-object-lets-no-receiver-in-sight-go.ts
 # declare function text(): string;
 # declare function sink(...values: unknown[]): void;
@@ -14,6 +14,6 @@
 # -- end of source
 # RUN: link fields mechanisms=all
 # CHECK: field L0.0 "v" proven=int[0, 2147483647]
-# CHECK-NOT: field L1.0 "y" proven=
+# CHECK: field L1.0 "y" proven=int[0, 2147483647]
 # RUN(SHELL): run-in-shell const all = ["a", "nothing"]; let at = 0; globalThis.text = () => all[at++]; globalThis.sink = (...values) => print(values.join(" "));
 # SHELL: 3 5 -1 5

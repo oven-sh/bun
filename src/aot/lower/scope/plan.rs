@@ -178,9 +178,25 @@ impl<'x, 's> Context<'x, 's> {
             };
             let is_repeated = walk.is_repeated_scope[index];
             let is_entered_once = unit == CodeUnit::File && !is_repeated;
+            let is_at_module_level = match unit {
+                CodeUnit::File => is_parent_at_module_level,
+                CodeUnit::Function(callback) if is_body_of_inner_module(walk, callback) => {
+                    let (file, is_top) = (input.file, context.is_top_of_unit(index, callback));
+                    match is_top {
+                        true => {
+                            has_module_variables
+                                && input
+                                    .modules
+                                    .runs_body_once(ModuleRef::Inner { file, callback })
+                        }
+                        false => is_parent_at_module_level,
+                    }
+                }
+                CodeUnit::Function(_) | CodeUnit::FieldInitializer(_) => false,
+            };
             context
                 .is_module_level_scope
-                .push(is_parent_at_module_level && is_entered_once);
+                .push(is_at_module_level && !is_repeated);
             if context.has_instances {
                 let scopes = &mut context.is_entered_once_per_instance;
                 let is_parent_entered_once = parent.is_none_or(|parent| scopes[parent]);
@@ -188,6 +204,22 @@ impl<'x, 's> Context<'x, 's> {
             }
         }
         context
+    }
+
+    #[inline]
+    fn is_top_of_unit(&self, scope: usize, function: FnId) -> bool {
+        self.input.bound.fns[function.idx()].scope.idx() == scope
+    }
+
+    fn is_top_of_module_body(&self, scope: ScopeId) -> bool {
+        scope == self.file_scope
+            || match self.input.bound.code_unit(scope) {
+                CodeUnit::Function(function) => {
+                    self.is_module_level_scope[scope.idx()]
+                        && self.is_top_of_unit(scope.idx(), function)
+                }
+                CodeUnit::File | CodeUnit::FieldInitializer(_) => false,
+            }
     }
 
     #[inline]
@@ -252,6 +284,12 @@ impl<'x, 's> Context<'x, 's> {
     fn is_holder_without_value(&self, binding: BindingRef) -> bool {
         binding.is_listed_in(&self.holders_without_value)
     }
+}
+
+fn is_body_of_inner_module(walk: &ScopeWalk, function: FnId) -> bool {
+    walk.function_of_fn[function.idx()].is_some_and(|walked| {
+        walked != WalkedFunctionId::MODULE_BODY && walk.functions[walked.index()].creator.is_none()
+    })
 }
 
 fn find_module_bodies(walk: &ScopeWalk) -> Vec<WalkedFunctionId> {

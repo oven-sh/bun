@@ -1,0 +1,13 @@
+# -- source: main.mjs
+# function Wrapper(value) { this.value = value; }
+# function run(turns) { const w = new Wrapper(3); let n = 0; for (let i = 0; i < turns; i++) n += w.add(i) + w.twice(0); return n; }
+# const functions = { add(v, x) { return v + x; }, twice(v) { return v * 2; } };
+# for (const name in functions) { const f = functions[name]; Wrapper.prototype[name] = function (x) { return f(this.value, x); }; }
+# print(run(4), run(0));
+# -- end of source
+# A closure with captures that a loop lays on the prototype of a constructor function is read out of the record of its member.
+# RUN: walk f2 mechanisms=all
+# CHECK: GetAssignedMember conditions=[{kind=MemberAssigned layout=L0 key="add"}]
+# CHECK: GetAssignedMember conditions=[{kind=MemberAssigned layout=L0 key="twice"}]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 42 0

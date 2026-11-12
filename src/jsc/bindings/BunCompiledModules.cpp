@@ -2033,6 +2033,13 @@ static bool hasPendingPatch(JSGlobalObject* globalObject, AOT::ModuleID module)
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 
+static bool hasRegisteredMock(JSGlobalObject* globalObject, const String& path)
+{
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
+    return hasRegisteredModuleMock(defaultGlobalObject(globalObject), path);
+    BUN_END_REMOVABLE_ENTRY_POINT
+}
+
 static bool isFactoryCallPending(JSGlobalObject* globalObject, uint64_t call)
 {
     BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
@@ -2137,9 +2144,10 @@ static void didStartImport(JSGlobalObject* globalObject, JSPromise* import, cons
 }
 
 // The importer's static imports are linked, but an import() in it resolves again.
-static bool wasLinkedBeforeMock(JSGlobalObject* globalObject, const String& path, const String& importer)
+static bool wasLinkedBeforeMock(JSGlobalObject* globalObject, const ScopedLambda<String()>& path, const ScopedLambda<String()>& importer)
 {
-    return defaultGlobalObject(globalObject)->onLoadPlugins.compiledImportersLinkedBeforeMocks.containsIf([&](const auto& linked) { return linked.mocked == path && linked.importer == importer; });
+    const auto& linkedImporters = defaultGlobalObject(globalObject)->onLoadPlugins.compiledImportersLinkedBeforeMocks;
+    return !linkedImporters.isEmpty() && linkedImporters.containsIf([mocked = path(), linkedImporter = importer()](const auto& linked) { return linked.mocked == mocked && linked.importer == linkedImporter; });
 }
 
 static bool shouldBypassMock(JSGlobalObject* globalObject, const String& path, const String& importer, bool isImport)
@@ -2393,6 +2401,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &isInPendingFactoryChain,
     &isRequiredByOwnFactory,
     &isFactoryCallPending,
+    &hasRegisteredMock,
     &isAwaitingOriginalBody,
     &didRunOriginal,
     &deferPatchToNextLoad,
@@ -2408,7 +2417,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &isESModuleInNode,
 };
 // A member missing from the initializer is null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 67 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 68 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);

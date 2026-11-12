@@ -10,6 +10,7 @@ mod convert;
 mod counted_places;
 mod data;
 mod decorators;
+mod definitions_of_getters;
 mod dispose;
 mod exception;
 mod expected_result;
@@ -37,6 +38,7 @@ mod said_types;
 mod scope;
 mod self_tail_calls;
 mod statement;
+mod super_calls;
 mod switch;
 mod tables;
 mod template;
@@ -156,6 +158,9 @@ fn lower_in_parts<'s>(
     task: &mut TaskState,
     visit: &PartsOfVisit<'_, 's>,
 ) -> Option<Result<LoweredFile, NotInParts>> {
+    if visit.has_given_up() {
+        return None;
+    }
     let parts = plan_parts(inputs, queries, file)?;
     if !infer_types_for_all_parts(inputs, queries, &parts) {
         return None;
@@ -233,6 +238,7 @@ impl FileLowering<'_, '_, '_, '_> {
             FunctionKey::PrivateNameTest { member, .. } => {
                 self.lower_private_name_test(function, member);
             }
+            FunctionKey::ModuleRequest { call, .. } => self.lower_module_request(function, call),
         }
     }
 }

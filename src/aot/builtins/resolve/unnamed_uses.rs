@@ -430,6 +430,24 @@ impl Resolver<'_, '_> {
                 }))
     }
 
+    pub(super) fn may_read_function_constructor(&self) -> bool {
+        let hir = self.input.hir;
+        let is_taken = |&read: &ExprId| {
+            let key = hir.member_key(read).map(|member| member.1);
+            matches!(key, Some(MemberKey::Name(known::constructor)))
+                && !matches!(
+                    self.classify_use(read),
+                    MentionUse::Holder | MentionUse::Inspected
+                )
+        };
+        let mut pattern_keys = hir.pat_props.iter().map(|property| property.key);
+        let mut kinds = hir.exprs.iter().map(|expr| expr.kind);
+        self.output.may_call_evaluator
+            || self.computed.iter().any(is_taken)
+            || pattern_keys.any(|key| key == PropKey::Name(known::constructor))
+            || kinds.any(|kind| matches!(kind, ExprKind::String(known::constructor)))
+    }
+
     fn note_text_taken_by_pattern(&mut self, name: Atom) {
         self.output.may_call_evaluator |= name == known::constructor;
         self.note_method_taken_off_value_nobody_knows(name);

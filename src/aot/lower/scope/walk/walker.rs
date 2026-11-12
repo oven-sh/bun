@@ -586,7 +586,7 @@ impl<'x, 's> Walker<'x, 's> {
             lexical_scope: self.lexical_owners[scope.idx()],
             enclosing_loop: None,
             enclosing_try: None,
-            is_repeated: function != WalkedFunctionId::MODULE_BODY,
+            is_repeated: self.walk.functions[function.index()].creator.is_some(),
             is_conditional: false,
         };
         self.enter_scope(scope, context);

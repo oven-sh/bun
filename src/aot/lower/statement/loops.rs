@@ -177,6 +177,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 statement: found,
                 loop_statement: statement,
                 resumed,
+                late_continue: None,
             },
         })
     }

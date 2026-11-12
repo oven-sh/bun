@@ -5,5 +5,5 @@
 # class Point { constructor(x) { this.x = x; } combine(other) { return this.x + other.x; } }
 # String.prototype.combine = function (other) { other.x = this; return 4; };
 # const values = [new Point(1), 2, "three"];
-# for (const value of values) if (typeof value === "object") console.log(value.combine(new Point(3)));
+# for (const value of values) if (value !== 2) console.log(value.combine(new Point(3)));
 # -- end of source

@@ -9,7 +9,7 @@
 # With testing=CheckProofsAtRunTime the read is also built inside the iteration, and its result is checked against the remembered row.
 # Here an accessor returns one array at its first two calls and another array from then on. The operation that runs no code returns absent, and the loop runs as written.
 # The injected fault, testing=UseGenericOwnKeyReads, makes the lookup take the generic path, which runs code.
-# Both reads in the preheader get the first array, the wrong row is remembered, and the program prints a different result.
+# The one read in the preheader gets the first array, the wrong row is remembered, and the program prints a different result.
 # Where proofs are checked, the read inside the iteration gets the other array, and the check crashes the process.
 # RUN(EVENT): compile KeyedRowLookupsHoisted KeyedRowLookupsRevalidated mechanisms=all
 # EVENT: statistic KeyedRowLookupsHoisted 1
@@ -21,7 +21,7 @@
 # HELD: 8 17 5,6,7,8 3,3,3,3
 # HELD-NEXT: exited with 0
 # RUN(LIE): run-in-shell mechanisms=all testing=UseGenericOwnKeyReads
-# LIE: 26 2 7,8,9,10 1,1,1,1
+# LIE: 26 1 7,8,9,10 1,1,1,1
 # LIE-NEXT: exited with 0
 # RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,UseGenericOwnKeyReads
 # STOPPED: bun: internal AOT error: redundancy elimination check failed

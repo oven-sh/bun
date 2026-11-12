@@ -10,5 +10,5 @@
 # f1 = words
 # RUN(FORM): walk f1 mechanisms=all
 # FORM-LABEL: code f1:Body
-# FORM: [[record]]: boolean @Boolean = ShapeTest {{*}} layouts=[L0]
+# Its own test for an object leaves the record alone: no shape is asked.
 # FORM: = HasKeyOrder {{*}} layout=L0

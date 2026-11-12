@@ -1,5 +1,5 @@
-# The remainder by a reciprocal is shown exact for a dividend in [0, 2^32 - 1] and for no other. `(j - 7) % d` may be negative, and -0 is among its answers: it stays in numbers. `j + 4294967296` lies just beyond 32 bits, and in
-# `wide` the counter runs to a number that nobody bounds, so that its type reaches 2^53: both stay a division in integers. The divisor is known to nobody: a divisor that Link knows goes its own way and would show nothing.
+# The remainder by a reciprocal is shown exact for a dividend in [0, 2^32 - 1] and for no other. `(j - 7) % d` may be negative, and -0 is among its answers: it stays in numbers. `j + 4294967296` lies just beyond 32 bits: it stays
+# a division in integers. In `wide` the counter runs to a number that nobody bounds: the loop whose bound the preheader checks for an int32 takes the reciprocal. The divisor is known to nobody: a divisor that Link knows goes its own way and would show nothing.
 # function signed(d: number) { let s = 0; for (let j = 0; j < 1000; j++) s += (j - 7) % d; return s; }
 # function beyond(d: number) { let s = 0; for (let j = 0; j < 1000; j++) s = (s + (j + 4294967296) % d) | 0; return s; }
 # function wide(d: number, n: number) { let s = 0; for (let j = 0; j < n; j++) s = (s + j % d) | 0; return s; }
@@ -11,8 +11,10 @@
 # CHECK: = Mod {{*}} form=Integers
 # CHECK-NOT: Reciprocal
 # CHECK-LABEL: code f3:Body
-# CHECK: = Mod {{*}} form=Integers
-# CHECK-NOT: Reciprocal
+# CHECK: = IntegerBound
+# CHECK-NEXT: = TypeTest {{*}} testedType=i32
+# CHECK: int[0, 2147483647] @Int32) isInLoop=true isLoopHead=true
+# CHECK: = RemainderByReciprocal
 
 module m0 path="remainder-is-not-made-by-a-reciprocal-where-the-dividend-may-be-negative-or-wider-than-32-bits.ts" displayPath="remainder-is-not-made-by-a-reciprocal-where-the-dividend-may-be-negative-or-wider-than-32-bits.ts" body=f0 namespaceLayout=L(m0)
 entry module=m0

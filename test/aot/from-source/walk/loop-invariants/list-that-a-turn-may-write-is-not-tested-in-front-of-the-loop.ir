@@ -34,8 +34,12 @@
 # LENGTH: isLoopHead=true
 # LENGTH: = HasArrayStorage
 # LENGTH-NOT: = GetArrayStorage
+# pop() leaves the storage and the kind as they are: both are taken before the loop, and the length is read in the iteration
 # RUN(SHRINKS): walk f4 mechanisms=all
-# SHRINKS-NOT: = GetArrayStorage
+# SHRINKS: = HasArrayStorage {{*}}arrayStorage=Int32 [isWritable]
+# SHRINKS: = GetArrayStorage
+# SHRINKS: isLoopHead=true
+# SHRINKS: = GetArrayLength
 # RUN(KIND): walk f5 mechanisms=all
 # KIND-NOT: = HasArrayStorage
 # KIND-NOT: = GetArrayStorage

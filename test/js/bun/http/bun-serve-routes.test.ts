@@ -751,6 +751,15 @@ it.each([
   }).toThrow("Support for duplicate route parameter names is not yet implemented.");
 });
 
+// Nothing reads the parameters of such a route.
+it.each(["/:a:b/:b", "/:x:a/:y:a"])("serves a static response for %s", async route => {
+  await using server = Bun.serve({
+    port: 0,
+    routes: { [route]: { GET: new Response("static") } },
+  });
+  expect(await (await fetch(new URL("/1/2", server.url))).text()).toBe("static");
+});
+
 it.each([
   ["/:id:edit", "/1", { edit: "1" }],
   ["/:a:b/:c", "/1/2", { b: "1", c: "2" }],

@@ -550,22 +550,36 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
             ));
         }
 
-        // ServerRouteList names the parameter after the last ":" of its segment.
-        let property_name = match strings::rsplit_once_char(route_name, b':') {
-            Some((_, name)) if !name.is_empty() => name,
-            _ => route_name,
-        };
-        let entry = bun_core::handle_oom(duped_route_names.get_or_put(property_name));
+        let entry = bun_core::handle_oom(duped_route_names.get_or_put(route_name));
         if entry.found_existing {
-            return Err(global.throw_todo(
-                b"Support for duplicate route parameter names is not yet implemented.\n\n\
-                  If you run into this, please file an issue and we will add support for it.",
-            ));
+            return Err(throw_duplicate_route_parameter(global));
         }
 
         remaining = &remaining[end..];
     }
     Ok(())
+}
+
+/// For a route whose handler gets `req.params`. ServerRouteList names a parameter after the last ":"
+/// of its segment, and cannot build an object that has a name twice.
+fn validate_params_of_route(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
+    let mut names: StringHashMap<()> = StringHashMap::new();
+    for segment in strings::split(path, b"/") {
+        let Some((_, name)) = strings::rsplit_once_char(segment, b':') else {
+            continue;
+        };
+        if !name.is_empty() && bun_core::handle_oom(names.get_or_put(name)).found_existing {
+            return Err(throw_duplicate_route_parameter(global));
+        }
+    }
+    Ok(())
+}
+
+fn throw_duplicate_route_parameter(global: &JSGlobalObject) -> bun_jsc::JsError {
+    global.throw_todo(
+        b"Support for duplicate route parameter names is not yet implemented.\n\n\
+          If you run into this, please file an issue and we will add support for it.",
+    )
 }
 
 fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<JSValue>> {
@@ -759,6 +773,7 @@ impl ServerConfig {
 
                 if value.is_callable() {
                     validate_route_name(global, &path)?;
+                    validate_params_of_route(global, &path)?;
                     args.user_routes_to_build.push(UserRouteBuilder {
                         route: RouteDeclaration {
                             path: ZBox::from_bytes(&*path),
@@ -796,6 +811,7 @@ impl ServerConfig {
                             found = true;
 
                             if function.is_callable() {
+                                validate_params_of_route(global, &path)?;
                                 let callback = function.with_async_context_if_needed(global);
                                 args.user_routes_to_build.push(UserRouteBuilder {
                                     route: RouteDeclaration {

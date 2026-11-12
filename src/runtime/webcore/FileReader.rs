@@ -1345,6 +1345,23 @@ impl bun_event_loop::Taskable for Source {
     }
 }
 
+/// A Node `Buffer` that owns `chunk`'s bytes and shares them with no other chunk. The allocation of a `Chunk::Buffer` or `Chunk::Owned` that is at least half full becomes the `Buffer`'s, with no copy. The loop's scratch, and a short read in a large allocation, are copied once into a `Buffer` of their length.
+fn chunk_into_buffer(global: &jsc::JSGlobalObject, chunk: Chunk<'_>) -> jsc::JsResult<JSValue> {
+    // Never an empty chunk's allocation: `JSValue::create_buffer` frees nothing behind an empty slice.
+    let half_full = |bytes: &Vec<u8>| !bytes.is_empty() && bytes.len() >= bytes.capacity() / 2;
+    let adopt = match &chunk {
+        Chunk::Scratch(_) => false,
+        Chunk::Buffer(bytes) => half_full(bytes),
+        Chunk::Owned(bytes) => half_full(bytes),
+    };
+    if !adopt {
+        return jsc::ArrayBuffer::create_buffer(global, &chunk);
+    }
+    // The allocation is JSC's from here, on `Err` too: `MarkedArrayBuffer_deallocator` is the global allocator's free (libc's under ASAN). Shrinking it to the bytes first (`into_boxed_slice()`) would move them.
+    let mut bytes = mem::ManuallyDrop::new(chunk.take());
+    JSValue::create_buffer(global, bytes.as_mut_slice())
+}
+
 // Local shim: `bun_io::ReadState` doesn't derive `IntoStaticStr` (upstream crate);
 // used for the scoped log only.
 #[inline]

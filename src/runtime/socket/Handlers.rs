@@ -314,6 +314,15 @@ impl Handlers {
         Ok(())
     }
 
+    /// Calls `callback(socket)` and routes what it throws to `call_error_handler`.
+    pub(crate) fn call_with_socket(&self, callback: JSValue, this_value: JSValue) -> JsResult<()> {
+        let global = self.global_object;
+        match callback.call(&global, this_value, &[this_value]) {
+            Ok(_) => Ok(()),
+            Err(err) => self.call_error_handler(this_value, &[this_value, global.take_error(err)]),
+        }
+    }
+
     /// Calls `writeComplete(socket, status)`. What it throws is an uncaught exception, as in Node.
     pub(crate) fn call_write_complete(&self, this_value: JSValue, status: core::ffi::c_int) {
         let callback = self.on_write_complete();

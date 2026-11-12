@@ -133,6 +133,14 @@ macro_rules! log {
     ($($arg:tt)*) => { bun_output::scoped_log!(Socket, $($arg)*) };
 }
 
+fn log_event(name: &str, handlers: &Handlers) {
+    let side = match handlers.mode {
+        super::SocketMode::Server => "S",
+        _ => "C",
+    };
+    log!("{} {}", name, side);
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // ALPN select callback
 // ──────────────────────────────────────────────────────────────────────────
@@ -1019,11 +1027,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             scope: Some(handlers.enter()),
         };
 
-        let this_value = this.get_this_value(&global);
-        if let Err(err) = callback.call(&global, this_value, &[this_value]) {
-            handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])?;
-        }
-        Ok(())
+        handlers.call_with_socket(callback, this.get_this_value(&global))
     }
 
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
@@ -1035,14 +1039,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let Some(handlers) = this.dispatch_handlers() else {
             return Ok(());
         };
-        log!(
-            "onTimeout {}",
-            if handlers.mode == super::SocketMode::Server {
-                "S"
-            } else {
-                "C"
-            }
-        );
+        log_event("onTimeout", &handlers);
         let callback = handlers.on_timeout();
         if this.flags.get().contains(Flags::FINALIZING) {
             return Ok(());
@@ -1057,15 +1054,11 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // The peer took nothing of `end(data)`'s tail for the whole timeout.
         let tail_timed_out = this.waits_to_send_tail();
-        let mut handled = Ok(());
-        if !callback.is_empty() {
-            let global = handlers.global_object;
-            let this_value = this.get_this_value(&global);
-            if let Err(err) = callback.call(&global, this_value, &[this_value]) {
-                handled =
-                    handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
-            }
-        }
+        let handled = if callback.is_empty() {
+            Ok(())
+        } else {
+            handlers.call_with_socket(callback, this.get_this_value(&handlers.global_object))
+        };
         if tail_timed_out && this.waits_to_send_tail() {
             this.buffered_data_for_node_net
                 .with_mut(|b| b.fail(sys::SystemErrno::ETIMEDOUT));
@@ -1779,14 +1772,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let Some(handlers) = this.dispatch_handlers() else {
             return Ok(());
         };
-        log!(
-            "onEnd {}",
-            if handlers.mode == super::SocketMode::Server {
-                "S"
-            } else {
-                "C"
-            }
-        );
+        log_event("onEnd", &handlers);
         // Ensure the socket remains alive until this is finished
         let _guard = RefPtr::from_this(this);
 
@@ -1812,14 +1798,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             scope: Some(handlers.enter()),
         };
 
-        let global = handlers.global_object;
-        let this_value = this.get_this_value(&global);
-        let handled = match callback.call(&global, this_value, &[this_value]) {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                handlers.call_error_handler(this_value, &[this_value, global.take_error(err)])
-            }
-        };
+        let handled =
+            handlers.call_with_socket(callback, this.get_this_value(&handlers.global_object));
         // Runs the handler's microtasks first, because one of them may call `end(data)`.
         drop(scope);
         this.end_on_peer_fin();
@@ -2236,14 +2216,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         let handlers = this.get_handlers();
         let _cell = handlers.keep_cell_alive();
-        log!(
-            "onClose {}",
-            if handlers.mode == super::SocketMode::Server {
-                "S"
-            } else {
-                "C"
-            }
-        );
+        log_event("onClose", &handlers);
         // Like Node, an http2 session reports a failed read, not a send that the kernel rejected.
         let err = if SSL
             && matches!(this.native_callback.get(), NativeCallbacks::H2(_))

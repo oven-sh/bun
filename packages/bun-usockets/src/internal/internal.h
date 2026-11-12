@@ -64,8 +64,8 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 #endif
 
 #ifndef LIKELY
-#define LIKELY(cond) __builtin_expect((_Bool)(cond), 1)
-#define UNLIKELY(cond) __builtin_expect((_Bool)(cond), 0)
+#define LIKELY(cond) __builtin_expect(!!(cond), 1)
+#define UNLIKELY(cond) __builtin_expect(!!(cond), 0)
 #endif
 
 extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t length);

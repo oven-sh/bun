@@ -3627,13 +3627,12 @@ impl<'a> Parser<'a> {
     }
 
     /// The source text of the numeric token `next*` returned last, if an f32 may not hold it
-    /// (`1700000000.25`, `123456.78`) or its value can print as part of a neighbour: `5.0.1` is
-    /// `5.0` and `.1`, whose values print as `5.1`, and the `.0` of `beta.0` prints as `0`.
-    /// `list` is the list that takes the token, if its last item touches the token. It is the
-    /// `Vec` and not a slice, so that a caller loads nothing for a number that keeps no text.
+    /// (`1700000000.25`, `123456.78`) or it touches another number: `5.0.1` is `5.0` and `.1`,
+    /// whose values print as `5.1`. Likewise the `.0` of `beta.0`, after the last item of `list`.
     #[inline]
     pub(crate) fn raw_number_text(
         &self,
+        // Not a slice: a caller would load its pointer and length for every number.
         list: Option<&Vec<css_properties::custom::TokenOrValue>>,
     ) -> Option<&'static [u8]> {
         let cached = self.input.cached_token.as_ref()?;

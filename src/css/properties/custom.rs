@@ -384,8 +384,7 @@ impl TokenList {
                         });
                     }
                     let token = *token;
-                    // A comment is dropped here, so the token after one prints right after this one.
-                    // The item is not asked there: the kept `-5e` of `-5e/**/+1` would read on.
+                    // Before a comment, which is dropped, the kept `-5e` of `-5e/**/+1` would read on.
                     let list = if input.input.tokenizer.starts_with(b"/*") {
                         None
                     } else {
@@ -1189,8 +1188,7 @@ pub struct RawNumber(&'static [u8]);
 impl RawNumber {
     fn to_css(self, dest: &mut Printer) -> PrintResult<()> {
         dest.write_bytes(self.0)?;
-        // The text of a dimension can end inside an escape, which takes in what prints after it:
-        // `1\70` a blank or a hex digit, and `1\` at the end of the input any byte.
+        // A unit can end inside an escape, `1\70` or `1\`, which takes in what prints next.
         let hex_digits = self
             .0
             .iter()
@@ -1200,7 +1198,7 @@ impl RawNumber {
         let escape = &self.0[..self.0.len() - hex_digits];
         if escape.iter().rev().take_while(|b| **b == b'\\').count() % 2 == 1 {
             match hex_digits {
-                0 => dest.write_str("fffd ")?,
+                0 => dest.write_str("fffd ")?, // the input ended after `\`, which is U+FFFD
                 1..=6 => dest.write_char(b' ')?,
                 _ => {}
             }
@@ -1259,9 +1257,7 @@ impl TokenOrValue {
         matches!(self, TokenOrValue::Token(Token::Whitespace(_)))
     }
 
-    /// Whether the value of a number that is written with a leading `.` or `-` can print as part
-    /// of this item. These are the tokens that css-syntax-3 §9 keeps apart from a number with
-    /// `/**/`, and the values that print as one of them.
+    /// Whether a number written `.5` or `-5` can print as part of this item (css-syntax-3 §9).
     pub(crate) fn joins_a_number(&self) -> bool {
         match self {
             TokenOrValue::Token(token) => match token {

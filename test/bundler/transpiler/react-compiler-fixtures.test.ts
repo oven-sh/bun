@@ -205,7 +205,7 @@ function shouldSkip(relPath: string, pragmas: Pragmas): string | null {
 // Known divergences from upstream — Bun produces a different (or no) result.
 // Grow this from CI; each entry must say why.
 // `__proto__: null`: a fixture named "constructor" exists.
-const TODO: Record<string, string> = Object.assign(Object.create(null), {
+const UPSTREAM_DIVERGENCE: Record<string, string> = Object.assign(Object.create(null), {
   // Upstream's `infer` mode reads the type annotation of the first parameter and
   // skips `Component(fakeProps: number)` because `number` is not a props object.
   // Bun's parser drops TypeScript type annotations before the compiler runs, so
@@ -310,7 +310,7 @@ function discover(): Fixture[] {
       source,
       pragmas,
       skip: shouldSkip(stem, pragmas),
-      todo: TODO[stem],
+      todo: UPSTREAM_DIVERGENCE[stem],
     });
   }
   out.sort((a, b) => a.name.localeCompare(b.name));

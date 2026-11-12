@@ -5643,6 +5643,7 @@ it("text() of one chunk over a SharedArrayBuffer decodes a copy of it", async ()
     "worker.js": `
       const { workerData, parentPort } = require("node:worker_threads");
       const words = new Uint32Array(workerData);
+      words.fill(0x61616161);
       parentPort.postMessage("ready");
       for (;;) {
         words.fill(0xa9c3a9c3);
@@ -5677,3 +5678,41 @@ it("text() of one chunk over a SharedArrayBuffer decodes a copy of it", async ()
   expect({ stdout, stderr }).toEqual({ stdout: "done\n", stderr: "" });
   expect(exitCode).toBe(0);
 });
+
+// A read that the bytes of a released BYOB read answer does not use the descriptor that autoAllocateChunkSize made for it.
+it.each([
+  [1, false, [[7], [9], [11]]],
+  [2, false, [[7], [9], [11]]],
+  [3, true, [[7], [9], [10], [11]]],
+])(
+  "byobRequest after %i default reads and an enqueue() behind a released BYOB read",
+  async (reads, hasRequest, expected) => {
+    let controller;
+    const stream = new ReadableStream({
+      type: "bytes",
+      autoAllocateChunkSize: 16,
+      start(c) {
+        controller = c;
+      },
+    });
+    const byob = stream.getReader({ mode: "byob" });
+    byob.read(new Uint32Array(2), { min: 2 }).catch(() => {});
+    await 1;
+    controller.byobRequest.view[0] = 7;
+    controller.byobRequest.respond(1);
+    byob.releaseLock();
+    const reader = stream.getReader();
+    const pending = Array.from({ length: reads }, () => reader.read());
+    controller.enqueue(new Uint8Array([9]));
+    const request = controller.byobRequest;
+    if (request) {
+      request.view[0] = 10;
+      request.respond(1);
+    }
+    controller.enqueue(new Uint8Array([11]));
+    controller.close();
+    const received = (await Promise.all(pending)).map(({ value }) => [...value]);
+    for (let result; !(result = await reader.read()).done;) received.push([...result.value]);
+    expect({ hasRequest: !!request, received }).toEqual({ hasRequest, received: expected });
+  },
+);

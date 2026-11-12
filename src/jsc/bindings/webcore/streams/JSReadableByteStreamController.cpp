@@ -1009,6 +1009,10 @@ void readableByteStreamControllerProcessReadRequestsUsingQueue(JSGlobalObject* g
             WTF::Locker locker { reader->cellLock() };
             readRequest = reader->m_readRequests.takeFirst().get();
         }
+        // The descriptor that autoAllocateChunkSize made for this request, which the queue answers instead. Before
+        // the fill, which can call pull().
+        if (!controller->m_pendingPullIntos.isEmpty() && controller->m_pendingPullIntos.first()->m_readerType == ReaderType::Default)
+            readableByteStreamControllerShiftPendingPullInto(controller);
         readableByteStreamControllerFillReadRequestFromQueue(globalObject, controller, readRequest);
         RETURN_IF_EXCEPTION(scope, void());
     }

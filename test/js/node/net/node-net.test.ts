@@ -4630,6 +4630,26 @@ describe("setTimeout() with a queued write", () => {
     }
   });
 
+  it("doesn't fire on a write that moves, whatever the previous connection had sent", async () => {
+    using pair = await connectToPausedPeer();
+    const { socket, peer } = pair;
+    let timeouts = 0;
+    socket.on("timeout", () => timeouts++);
+    // More than the kernel takes of the next connection's write.
+    peer.resume();
+    await new Promise(resolve => socket.write(Buffer.alloc(32 << 20), resolve));
+    peer.pause();
+    writeUntilQueued(socket);
+    // What the timer does when it fires.
+    (socket as any)._onTimeout();
+    socket.destroy();
+    await once(socket, "close");
+    await once(socket.connect(pair.port, "127.0.0.1"), "connect");
+    writeUntilQueued(socket);
+    (socket as any)._onTimeout();
+    expect(timeouts).toBe(0);
+  });
+
   it("restarts the timer when the write completes", async () => {
     using pair = await connectToPausedPeer();
     const { socket, peer } = pair;

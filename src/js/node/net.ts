@@ -3955,6 +3955,7 @@ function initSocketHandle(self) {
   self[kclosed] = false;
   self[kended] = false;
   self[kHungUp] = false;
+  self[kLastBytesSent] = 0;
   // Bytes the onread callback declined belong to the previous connection.
   if (self[kOnreadTail] !== undefined) {
     self[kOnreadTail] = undefined;

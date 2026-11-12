@@ -6799,8 +6799,17 @@ impl<'a> Resolver<'a> {
                 }
                 let loaded = self.load_tsconfig(tsconfigpath, fd);
                 self.log = log;
+                let mut loaded = loaded?;
+                if let Some(config) = loaded.as_deref_mut()
+                    && !info.abs_real_path.is_empty()
+                {
+                    let above = core::iter::successors(parent, |directory| directory.get_parent())
+                        .map(|directory| (directory.abs_path, directory.abs_real_path));
+                    let directories = core::iter::once((path, info.abs_real_path)).chain(above);
+                    config.name_files_by_real_directory(&directories);
+                }
                 // A leaked Box, interned into DirInfo: it outlives the resolver.
-                info.tsconfig_json = loaded?.map(|it| {
+                info.tsconfig_json = loaded.map(|it| {
                     NonNull::new(bun_core::heap::into_raw(it)).expect("heap::alloc is non-null")
                 });
                 info.enclosing_tsconfig_json = info.tsconfig_json();
@@ -6886,10 +6895,16 @@ impl<'a> Resolver<'a> {
             }
 
             let mut merged_config = current;
+            if parent_configs.len() > 0 {
+                let base = (merged_config.abs_path.clone(), merged_config.jsx.clone());
+                merged_config.jsx_of_files.push(base);
+            }
             // starting from the base config (end of the list)
             // successively apply the inheritable attributes to the next config
             while let Some(mut parent_config) = parent_configs.pop() {
                 let mc = &mut *merged_config;
+                // The path of the file that was asked for: the last one of the chain.
+                mc.abs_path = core::mem::take(&mut parent_config.abs_path);
                 mc.emit_decorator_metadata =
                     mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
                 if let Some(v) = parent_config.use_define_for_class_fields {
@@ -6898,7 +6913,9 @@ impl<'a> Resolver<'a> {
                 if !parent_config.base_url.is_empty() {
                     mc.base_url = core::mem::take(&mut parent_config.base_url);
                 }
-                mc.jsx.lay_over(&parent_config.jsx);
+                let jsx = core::mem::take(&mut parent_config.jsx);
+                mc.jsx.lay_over(&jsx);
+                mc.jsx_of_files.push((mc.abs_path.clone(), jsx));
 
                 if let Some(value) = parent_config.preserve_imports_not_used_as_values {
                     mc.preserve_imports_not_used_as_values = Some(value);
@@ -7028,6 +7045,17 @@ impl<'a> Resolver<'a> {
             None => dir_info
                 .enclosing_tsconfig_json
                 .map(TSConfigRef::OfDirectory),
+        }
+    }
+
+    /// The tsconfig.json of the project that `dir_info` is in: the nearest one. `None` under `--tsconfig-override`.
+    pub fn project_tsconfig_json(
+        &mut self,
+        dir_info: &DirInfo::DirInfo,
+    ) -> Option<&'static TSConfigJSON> {
+        match self.tsconfig_override() {
+            Some(_) => None,
+            None => dir_info.enclosing_tsconfig_json,
         }
     }
 

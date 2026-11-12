@@ -65,6 +65,33 @@ impl JsxSettings {
     }
 }
 
+/// The JSX options, other than `development`, that the program's own sources state: the project's tsconfig.json does not decide them.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub struct JsxStated {
+    pub runtime: bool,
+    pub factory: bool,
+    pub fragment: bool,
+    pub import_source: bool,
+}
+
+impl JsxStated {
+    /// Reads `written` as if it did not state these options.
+    fn leave_out_of(self, written: &mut JsxFields) {
+        if self.runtime {
+            written.runtime = None;
+        }
+        if self.factory {
+            written.factory = None;
+        }
+        if self.fragment {
+            written.fragment = None;
+        }
+        if self.import_source {
+            written.import_source = None;
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct TranspileSettings {
     pub jsx: JsxSettings,
@@ -142,6 +169,7 @@ pub(in crate::resolve) struct ConfigCaches<'h> {
     aot_package_settings: Memo<&'h [u8], &'h TranspileSettings>,
     is_development: OnceLock<bool>,
     bun_run_assigns_class_fields: OnceLock<bool>,
+    project_config_files: OnceLock<Vec<Vec<u8>>>,
 }
 
 impl<'h> ConfigCaches<'h> {
@@ -154,6 +182,7 @@ impl<'h> ConfigCaches<'h> {
             aot_package_settings: Memo::new(are_small),
             is_development: OnceLock::new(),
             bun_run_assigns_class_fields: OnceLock::new(),
+            project_config_files: OnceLock::new(),
         }
     }
 }
@@ -407,10 +436,28 @@ impl<'h> Resolver<'h> {
         Some(config)
     }
 
+    /// The project's tsconfig.json and the files that it extends. Empty when they give way to nothing, and under `--tsconfig-override`.
+    fn project_config_files(&self) -> &[Vec<u8>] {
+        self.config_caches().project_config_files.get_or_init(|| {
+            let options = self.code_options();
+            if options.jsx_stated == JsxStated::default() || options.tsconfig_override.is_some() {
+                return Vec::new();
+            }
+            let mut files = Vec::new();
+            let mut next =
+                ancestors(&options.working_directory).find_map(|it| self.find_config_file(it));
+            while let Some(path) = next.take().filter(|_| files.len() < MAX_EXTENDED_CONFIGS) {
+                next = self.read_config(&path).and_then(|it| it.extends);
+                files.push(path);
+            }
+            files
+        })
+    }
+
     fn load_merged(&self, path: &[u8]) -> Option<ParsedConfig> {
-        let mut merged = self.read_config(path)?;
+        let mut merged = self.read_to_merge(path)?;
         let mut config_count = 1;
-        while let Some(parent) = merged.extends.take().and_then(|it| self.read_config(&it)) {
+        while let Some(parent) = merged.extends.take().and_then(|it| self.read_to_merge(&it)) {
             if config_count == MAX_EXTENDED_CONFIGS {
                 return None;
             }
@@ -418,6 +465,16 @@ impl<'h> Resolver<'h> {
             merged.inherit(parent);
         }
         Some(merged)
+    }
+
+    /// `read_config`, where a file of the project is read as if it did not state what the program states.
+    fn read_to_merge(&self, path: &[u8]) -> Option<ParsedConfig> {
+        let mut config = self.read_config(path)?;
+        if self.project_config_files().iter().any(|it| it == path) {
+            let stated = self.code_options().jsx_stated;
+            stated.leave_out_of(&mut config.jsx);
+        }
+        Some(config)
     }
 
     fn read_config(&self, path: &[u8]) -> Option<ParsedConfig> {

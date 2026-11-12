@@ -204,17 +204,35 @@ impl Stated {
 
     /// Lays `top` over `self`: option by option, what `top` states wins.
     pub fn lay_over(&mut self, top: &Stated) {
-        fn lay<T: Clone>(below: &mut Option<T>, top: &Option<T>) {
-            if top.is_some() {
+        self.lay(top, &Stated::default());
+    }
+
+    /// Lays a tsconfig.json over `self`. It does not decide an option that `user` states.
+    pub fn lay_tsconfig_over(&mut self, tsconfig: &Stated, user: &Stated) {
+        self.lay(tsconfig, user);
+    }
+
+    /// `top` wins option by option, except for an option that `kept` states.
+    fn lay(&mut self, top: &Stated, kept: &Stated) {
+        fn lay<T: Clone>(below: &mut Option<T>, top: &Option<T>, kept: &Option<T>) {
+            if top.is_some() && kept.is_none() {
                 below.clone_from(top);
             }
         }
-        lay(&mut self.runtime, &top.runtime);
-        lay(&mut self.development, &top.development);
-        lay(&mut self.factory, &top.factory);
-        lay(&mut self.fragment, &top.fragment);
-        lay(&mut self.import_source, &top.import_source);
-        lay(&mut self.side_effects, &top.side_effects);
+        lay(&mut self.runtime, &top.runtime, &kept.runtime);
+        lay(&mut self.development, &top.development, &kept.development);
+        lay(&mut self.factory, &top.factory, &kept.factory);
+        lay(&mut self.fragment, &top.fragment, &kept.fragment);
+        lay(
+            &mut self.import_source,
+            &top.import_source,
+            &kept.import_source,
+        );
+        lay(
+            &mut self.side_effects,
+            &top.side_effects,
+            &kept.side_effects,
+        );
     }
 }
 
@@ -258,21 +276,43 @@ impl Sources {
 
     /// The sources as one layer, each over its default: bunfig.toml, then the flags, `Bun.build()`, the server mode.
     pub fn layer(&self) -> Stated {
+        self.laid().0
+    }
+
+    /// What the sources state themselves: `layer()` without a `development` that is a default or the mode of a server.
+    pub fn stated(&self) -> Stated {
+        let (mut stated, states_development) = self.laid();
+        if !states_development {
+            stated.development = None;
+        }
+        stated
+    }
+
+    /// `layer()`, and whether its `development` is what a source states.
+    fn laid(&self) -> (Stated, bool) {
         let mut layer = Stated::default();
+        let mut stated_development = None;
+        let mut lay = |default: &Stated, source: &Stated| {
+            layer.lay_over(default);
+            layer.lay_over(source);
+            stated_development = source.development.or(stated_development);
+        };
         if let Some(bunfig) = &self.bunfig {
-            layer.lay_over(&Self::BUNFIG_DEFAULT);
-            layer.lay_over(bunfig);
+            lay(&Self::BUNFIG_DEFAULT, bunfig);
         }
         if self.flags_have_a_value() {
-            layer.lay_over(&Self::FLAGS_DEFAULT);
-            layer.lay_over(&self.flags);
+            lay(&Self::FLAGS_DEFAULT, &self.flags);
         }
         if let Some(build) = &self.build {
-            layer.lay_over(&Self::BUILD_DEFAULT);
-            layer.lay_over(build);
+            lay(&Self::BUILD_DEFAULT, build);
         }
-        layer.development = self.server_mode.or(layer.development);
-        layer
+        if let Some(development) = self.server_mode {
+            layer.development = Some(development);
+            stated_development = None;
+        }
+        // A later default that says the same leaves the statement in force. One that says another value replaces it.
+        let states_development = stated_development.is_some_and(|it| layer.development == Some(it));
+        (layer, states_development)
     }
 }
 
@@ -501,6 +541,37 @@ mod tests {
     }
 
     #[test]
+    fn a_tsconfig_does_not_decide_what_the_user_states() {
+        let user = Stated {
+            runtime: Some(Runtime::Classic),
+            factory: members(&[b"user"]),
+            ..Default::default()
+        };
+        let tsconfig = Stated {
+            runtime: Some(Runtime::Automatic),
+            development: Some(false),
+            factory: members(&[b"tsconfig"]),
+            fragment: members(&[b"tsconfig"]),
+            import_source: Some(ImportSource::new(b"tsconfig")),
+            ..Default::default()
+        };
+        let mut laid = user.clone();
+        laid.lay_tsconfig_over(&tsconfig, &user);
+        assert_eq!(
+            show(&Pragma::from(laid)),
+            "Classic development=false side_effects=false user tsconfig tsconfig/jsx-runtime tsconfig"
+        );
+
+        // Beside a user that states nothing it is `lay_over`.
+        let mut laid = user.clone();
+        laid.lay_tsconfig_over(&tsconfig, &Stated::default());
+        assert_eq!(
+            show(&Pragma::from(laid)),
+            show(&Pragma::resolve(&[&user, &tsconfig]))
+        );
+    }
+
+    #[test]
     fn import_source_derives_its_names_once() {
         let preact = ImportSource::new(b"preact");
         assert_eq!(preact.package(), b"preact");
@@ -575,6 +646,44 @@ mod tests {
         assert_eq!(development(&sources), Some(false));
         sources.server_mode = Some(true);
         assert_eq!(development(&sources), Some(true));
+    }
+
+    #[test]
+    fn sources_state_development_only_where_a_source_names_it() {
+        let stated = |sources: &Sources| sources.stated().development;
+        let jsxdev = Stated {
+            runtime: Some(Runtime::Automatic),
+            development: Some(true),
+            ..Default::default()
+        };
+        // A default is not a statement.
+        let mut sources = Sources {
+            bunfig: Some(Stated::default()),
+            ..Default::default()
+        };
+        assert_eq!(stated(&sources), None);
+        sources.bunfig = Some(jsxdev.clone());
+        assert_eq!(stated(&sources), Some(true));
+        assert_eq!(sources.stated().runtime, Some(Runtime::Automatic));
+
+        // The default of the flags is over what bunfig.toml states.
+        sources.flags.import_source = Some(ImportSource::new(b"preact"));
+        assert_eq!(stated(&sources), None);
+        assert_eq!(sources.layer().development, Some(false));
+        assert!(sources.stated().import_source.is_some());
+        // A bunfig.toml that states the same as that default still states it.
+        sources.bunfig = Some(Stated::of_development(false));
+        assert_eq!(stated(&sources), Some(false));
+
+        // The mode of a server is over what `Bun.build()` states.
+        let mut sources = Sources {
+            build: Some(jsxdev),
+            ..Default::default()
+        };
+        assert_eq!(stated(&sources), Some(true));
+        sources.server_mode = Some(false);
+        assert_eq!(stated(&sources), None);
+        assert_eq!(sources.layer().development, Some(false));
     }
 
     #[test]

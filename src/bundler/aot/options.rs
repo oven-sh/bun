@@ -13,7 +13,7 @@ use bun_options_types::aot_options::AotOptions;
 use bun_paths::MAX_PATH_BYTES;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_trailing_slash_windows_path;
-use bun_sema::resolve::{CodeOptions, JsxRuntime, JsxSettings};
+use bun_sema::resolve::{CodeOptions, JsxRuntime, JsxSettings, JsxStated};
 use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::Libs;
 use bun_sema_driver::host::{from_argument, from_native, to_native};
@@ -89,7 +89,7 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         server_components, allow_unresolved, macro_remap, inject, framework, dev_server,
         hot_module_reloading, ignore_module_resolution_errors, disable_transpilation, repl_mode,
         react_compiler_parse_test_pragmas,
-        loaders: _, jsx: _, jsx_user: _, jsx_cwd: _,
+        loaders: _, jsx: _, jsx_user: _, jsx_user_stated: _, jsx_project_tsconfig: _, jsx_cwd: _,
         react_compiler: _, react_compiler_filter: _, root_dir: _, preserve_symlinks: _,
         tsconfig_override: _, main_fields: _, transform_options: _, external: _, packages: _,
         extension_order: _, main_field_extension_order: _, no_macros: _, custom_conditions: _,
@@ -249,6 +249,7 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
     .collect();
 
     code.jsx = jsx_settings(&options.jsx);
+    code.jsx_stated = jsx_stated(&options.jsx_user_stated);
     code.forced_jsx_development = Some(options.forced_jsx_development());
     code
 }
@@ -263,6 +264,15 @@ fn jsx_settings(pragma: &jsx::Pragma) -> JsxSettings {
         factory: pragma.factory.iter().map(<[u8]>::to_vec).collect(),
         fragment: pragma.fragment.iter().map(<[u8]>::to_vec).collect(),
         import_source: pragma.package_name().to_vec(),
+    }
+}
+
+fn jsx_stated(stated: &jsx::Stated) -> JsxStated {
+    JsxStated {
+        runtime: stated.runtime.is_some(),
+        factory: stated.factory.is_some(),
+        fragment: stated.fragment.is_some(),
+        import_source: stated.import_source.is_some(),
     }
 }
 

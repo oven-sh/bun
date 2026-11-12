@@ -551,10 +551,11 @@ impl<'a> Transpiler<'a> {
             // Most of the time, this will already be cached
             let top_level_dir = Fs::FileSystem::get().top_level_dir();
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
+                self.note_project_tsconfig(&root_dir);
                 if let Some(tsconfig) = self.resolver.tsconfig_json(&root_dir) {
                     // Beside a bunfig.toml, a `--jsx-*` flag or `Bun.build()`, only `run_env_loader` takes its JSX.
                     if self.options.transform_options.jsx.is_empty() {
-                        self.options.lay_over_jsx(&tsconfig.jsx);
+                        self.options.lay_tsconfig_over_jsx(&tsconfig);
                     }
                     self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
                     self.options.experimental_decorators = tsconfig.experimental_decorators;
@@ -563,6 +564,14 @@ impl<'a> Transpiler<'a> {
                     }
                 }
             }
+        }
+    }
+
+    /// Notes which tsconfig.json is the project's, when the user's sources state an option that it must not decide.
+    fn note_project_tsconfig(&mut self, working_directory: &bun_resolver::DirInfo) {
+        if !self.options.jsx_user_stated.states_nothing() {
+            self.options.jsx_project_tsconfig =
+                self.resolver.project_tsconfig_json(working_directory);
         }
     }
 
@@ -620,8 +629,9 @@ impl<'a> Transpiler<'a> {
                     _ => return Ok(()),
                 };
 
+                self.note_project_tsconfig(&dir_info);
                 if let Some(tsconfig) = self.resolver.tsconfig_json(&dir_info) {
-                    self.options.lay_over_jsx(&tsconfig.jsx);
+                    self.options.lay_tsconfig_over_jsx(&tsconfig);
                 }
 
                 // Copy the listing's basenames out under `entries_mutex`,

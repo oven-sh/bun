@@ -1308,6 +1308,10 @@ pub struct BundleOptions<'a> {
     pub jsx: jsx::Pragma,
     /// `transform_options.jsx` as one layer: what bunfig.toml, the `--jsx-*` flags and `Bun.build()` give.
     pub jsx_user: jsx::Stated,
+    /// What those sources state themselves: the files of `jsx_project_tsconfig` do not decide these options.
+    pub jsx_user_stated: jsx::Stated,
+    /// The tsconfig.json nearest to the working directory. `None` under `--tsconfig-override`, and when no user source states an option.
+    pub jsx_project_tsconfig: Option<&'static bun_resolver::TSConfigJSON>,
     /// What the working directory's tsconfig.json and the environment state, later over earlier.
     pub jsx_cwd: jsx::Stated,
     pub emit_decorator_metadata: bool,
@@ -1546,13 +1550,34 @@ impl<'a> BundleOptions<'a> {
 
     /// `development` as the environment chooses it: `NODE_ENV`, `--production`, the mode of a server.
     pub fn set_jsx_development(&mut self, development: bool) {
-        self.lay_over_jsx(&jsx::Stated::of_development(development));
+        self.jsx_cwd
+            .lay_over(&jsx::Stated::of_development(development));
+        self.jsx = jsx::Pragma::resolve(&[&self.jsx_user, &self.jsx_cwd]);
     }
 
-    /// Lays `layer` over `jsx_cwd` and resolves `jsx` from the layers again.
-    pub(crate) fn lay_over_jsx(&mut self, layer: &jsx::Stated) {
-        self.jsx_cwd.lay_over(layer);
+    /// Lays the working directory's tsconfig.json over `jsx_cwd` and resolves `jsx` again.
+    pub(crate) fn lay_tsconfig_over_jsx(&mut self, tsconfig: &bun_resolver::TSConfigRef) {
+        let mut cwd = core::mem::take(&mut self.jsx_cwd);
+        self.lay_tsconfig(&mut cwd, tsconfig);
+        self.jsx_cwd = cwd;
         self.jsx = jsx::Pragma::resolve(&[&self.jsx_user, &self.jsx_cwd]);
+    }
+
+    /// Lays `tsconfig` over `stated`. What a file of `jsx_project_tsconfig` states gives way to the user's sources.
+    fn lay_tsconfig(&self, stated: &mut jsx::Stated, tsconfig: &bun_resolver::TSConfigRef) {
+        use bun_resolver::TSConfigRef;
+        let (TSConfigRef::OfDirectory(_), Some(project)) = (tsconfig, self.jsx_project_tsconfig)
+        else {
+            return stated.lay_over(&tsconfig.jsx);
+        };
+        // By path: a file that is read again is another value.
+        let is_of_project = |file: &[u8]| project.jsx_by_file().any(|(path, _)| path == file);
+        for (file, states) in tsconfig.jsx_by_file() {
+            match is_of_project(file) {
+                true => stated.lay_tsconfig_over(states, &self.jsx_user_stated),
+                false => stated.lay_over(states),
+            }
+        }
     }
 
     pub(crate) fn forced_jsx_development(&self) -> bool {
@@ -1579,7 +1604,7 @@ impl<'a> BundleOptions<'a> {
         }
         for layer in result.jsx.layers.iter().flatten() {
             match layer {
-                JsxLayer::TSConfig(tsconfig) => stated.lay_over(&tsconfig.jsx),
+                JsxLayer::TSConfig(tsconfig) => self.lay_tsconfig(&mut stated, tsconfig),
                 // Of what ranks below a package with the "aot" condition, only `development` stays.
                 JsxLayer::AotPackage(own) => {
                     let development = jsx::Pragma::from(stated).development;
@@ -1623,6 +1648,8 @@ impl<'a> BundleOptions<'a> {
             loaders: bun_core::handle_oom(self.loaders.clone()),
             jsx: self.jsx.clone(),
             jsx_user: self.jsx_user.clone(),
+            jsx_user_stated: self.jsx_user_stated.clone(),
+            jsx_project_tsconfig: self.jsx_project_tsconfig,
             jsx_cwd: self.jsx_cwd.clone(),
             emit_decorator_metadata: self.emit_decorator_metadata,
             experimental_decorators: self.experimental_decorators,
@@ -1899,6 +1926,8 @@ impl<'a> BundleOptions<'a> {
 
             jsx: jsx::Pragma::resolve(&[&jsx_user]),
             jsx_user,
+            jsx_user_stated: transform.jsx.stated(),
+            jsx_project_tsconfig: None,
             jsx_cwd: jsx::Stated::default(),
             emit_decorator_metadata: false,
             experimental_decorators: false,
@@ -2157,13 +2186,32 @@ fn jsx_for_lays_the_configuration_of_a_file_over_the_options_of_the_program() {
         let names: Box<[Box<[u8]>]> = Box::new([Box::from(name)]);
         Some(names.into())
     }
-    fn config(stated: &jsx::Stated) -> Arc<TSConfigJSON> {
+    fn config(path: &[u8], stated: &jsx::Stated) -> TSConfigJSON {
         let mut config = TSConfigJSON::default();
+        config.abs_path = Box::from(path);
         config.jsx = stated.clone();
-        Arc::new(config)
+        config
     }
-    fn tsconfig(stated: &jsx::Stated) -> Option<JsxLayer> {
-        Some(JsxLayer::TSConfig(TSConfigRef::Override(config(stated))))
+    /// A tsconfig.json of a directory: `DirInfo` keeps one for as long as the process lasts.
+    fn of_directory(path: &[u8], stated: &jsx::Stated) -> &'static TSConfigJSON {
+        Box::leak(Box::new(config(path, stated)))
+    }
+    /// A tsconfig.json with `extends`. `files` lists each file and what it states, the base first.
+    fn extending(files: &[(&[u8], &jsx::Stated)]) -> &'static TSConfigJSON {
+        let mut merged = jsx::Stated::default();
+        for (_, states) in files {
+            merged.lay_over(states);
+        }
+        let (path, _) = files.last().expect("a file");
+        let mut config = config(path, &merged);
+        config.jsx_of_files = files
+            .iter()
+            .map(|(path, states)| (Box::from(*path), (*states).clone()))
+            .collect();
+        Box::leak(Box::new(config))
+    }
+    fn tsconfig(config: &'static TSConfigJSON) -> Option<JsxLayer> {
+        Some(JsxLayer::TSConfig(TSConfigRef::OfDirectory(config)))
     }
     /// The options of a file of the build that lists `layers`.
     fn jsx_of(options: &BundleOptions<'_>, layers: [Option<JsxLayer>; 3]) -> String {
@@ -2195,8 +2243,6 @@ fn jsx_for_lays_the_configuration_of_a_file_over_the_options_of_the_program() {
             bunfig: Some(jsx::Stated {
                 runtime: Some(jsx::Runtime::Classic),
                 factory: named(b"user"),
-                fragment: named(b"user"),
-                import_source: Some(jsx::ImportSource::new(b"user")),
                 ..Default::default()
             }),
             ..Default::default()
@@ -2206,56 +2252,125 @@ fn jsx_for_lays_the_configuration_of_a_file_over_the_options_of_the_program() {
     let mut options = BundleOptions::from_api(&mut log, transform)
         .ok()
         .expect("options");
-    // The tsconfig.json of the working directory, then `NODE_ENV=production`.
-    options.lay_over_jsx(&jsx::Stated {
-        fragment: named(b"cwd"),
+    // The tsconfig.json of the project with the file that it extends, then `NODE_ENV=production`.
+    const PROJECT: &[u8] = b"/project/tsconfig.json";
+    const BASE: &[u8] = b"/project/base.json";
+    let base_states = jsx::Stated {
+        runtime: Some(jsx::Runtime::Automatic),
+        factory: named(b"project"),
         ..Default::default()
-    });
+    };
+    let project_states = jsx::Stated {
+        fragment: named(b"project"),
+        ..Default::default()
+    };
+    let project_files = [(BASE, &base_states), (PROJECT, &project_states)];
+    let project = extending(&project_files);
+    options.jsx_project_tsconfig = Some(project);
+    options.lay_tsconfig_over_jsx(&TSConfigRef::OfDirectory(project));
     options.set_jsx_development(false);
 
-    // A file that lists no configuration takes the options of the program, and one outside the build the defaults.
+    // The tsconfig.json of the project does not decide what the user's sources state: here the runtime and the factory.
+    let of_project = "Classic development=false user project react";
+    assert_eq!(show(&options.jsx), of_project);
+    assert_eq!(jsx_of(&options, [None, None, None]), of_project);
     assert_eq!(
-        jsx_of(&options, [None, None, None]),
-        "Classic development=false user cwd user"
+        jsx_of(&options, [tsconfig(project), None, None]),
+        of_project
     );
+    // Read again after a change in its directory, it is another value for the same files.
+    let read_again = extending(&project_files);
+    assert_eq!(
+        jsx_of(&options, [tsconfig(read_again), None, None]),
+        of_project
+    );
+    // A file outside the build takes the defaults.
     assert_eq!(
         show(&options.jsx_for(&bun_resolver::Result::default())),
         "Automatic development=true React React react"
     );
 
-    // Each tsconfig.json that a file lists is over the program and over the one listed before it.
-    let own = jsx::Stated {
+    // Any other tsconfig.json decides all that it states, over the program and over the one listed before it.
+    let nested = jsx::Stated {
         runtime: Some(jsx::Runtime::Automatic),
         development: Some(true),
-        factory: named(b"own"),
+        factory: named(b"nested"),
         ..Default::default()
     };
     let later = jsx::Stated {
-        factory: named(b"later"),
+        fragment: named(b"later"),
         import_source: Some(jsx::ImportSource::new(b"later")),
         ..Default::default()
     };
-    assert_eq!(
-        jsx_of(&options, [tsconfig(&own), None, None]),
-        "Automatic development=true own cwd user"
-    );
-    assert_eq!(
-        jsx_of(&options, [tsconfig(&own), tsconfig(&later), None]),
-        "Automatic development=true later cwd later"
-    );
-
-    // A package with the "aot" condition takes `development` and nothing else of what ranks below it.
-    let package = |stated: &jsx::Stated| Some(JsxLayer::AotPackage(config(stated)));
+    let of_nested = "Automatic development=true nested project react";
+    const NESTED: &[u8] = b"/project/nested/tsconfig.json";
+    const LATER: &[u8] = b"/project/later/tsconfig.json";
     assert_eq!(
         jsx_of(
             &options,
-            [tsconfig(&later), package(&jsx::Stated::default()), None]
+            [tsconfig(of_directory(NESTED, &nested)), None, None]
+        ),
+        of_nested
+    );
+    // The file that `--tsconfig-override` names is not the project's, whatever its path.
+    let named_file = JsxLayer::TSConfig(TSConfigRef::Override(Arc::new(config(PROJECT, &nested))));
+    assert_eq!(jsx_of(&options, [Some(named_file), None, None]), of_nested);
+    assert_eq!(
+        jsx_of(
+            &options,
+            [
+                tsconfig(of_directory(NESTED, &nested)),
+                tsconfig(of_directory(LATER, &later)),
+                None
+            ]
+        ),
+        "Automatic development=true nested later later"
+    );
+
+    // What a tsconfig.json takes with `extends` from a file of the project gives way like that file.
+    let own_fragment = jsx::Stated {
+        fragment: named(b"own"),
+        ..Default::default()
+    };
+    let takes_from_project = "Classic development=false user own react";
+    let extends_project = extending(&[project_files[0], project_files[1], (NESTED, &own_fragment)]);
+    assert_eq!(
+        jsx_of(&options, [tsconfig(extends_project), None, None]),
+        takes_from_project
+    );
+    let extends_base = extending(&[project_files[0], (NESTED, &own_fragment)]);
+    assert_eq!(
+        jsx_of(&options, [tsconfig(extends_base), None, None]),
+        takes_from_project
+    );
+    // What it states itself stays, also an option that the user's sources state.
+    let own_factory = jsx::Stated {
+        factory: named(b"own"),
+        ..Default::default()
+    };
+    let states_factory = extending(&[project_files[0], project_files[1], (NESTED, &own_factory)]);
+    assert_eq!(
+        jsx_of(&options, [tsconfig(states_factory), None, None]),
+        "Classic development=false own project react"
+    );
+
+    // A package with the "aot" condition takes `development` and nothing else of what ranks below it.
+    let package =
+        |stated: &jsx::Stated| Some(JsxLayer::AotPackage(Arc::new(config(NESTED, stated))));
+    assert_eq!(
+        jsx_of(
+            &options,
+            [
+                tsconfig(of_directory(LATER, &later)),
+                package(&jsx::Stated::default()),
+                None
+            ]
         ),
         "Automatic development=false React React react"
     );
     assert_eq!(
-        jsx_of(&options, [package(&own), None, None]),
-        "Automatic development=true own React react"
+        jsx_of(&options, [package(&nested), None, None]),
+        "Automatic development=true nested React react"
     );
 }
 

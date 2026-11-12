@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
+import { join } from "node:path";
 
 // tsconfig "jsx": "react-jsx" selects the production automatic runtime (jsx/jsxs),
 // "react-jsxdev" selects the development runtime (jsxDEV), matching TypeScript/esbuild.
@@ -224,6 +226,208 @@ describe("--jsx-* flags beside a bunfig.toml", () => {
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, exitCode }).toEqual({ stdout: "flag\n", exitCode: 0 });
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/15844
+describe("an option that bunfig.toml or a --jsx-* flag states is not taken from tsconfig.json", () => {
+  const runtimeOf = (name: string) => ({
+    [`node_modules/${name}/jsx-runtime.js`]: `export const jsx = () => "${name} jsx", jsxs = jsx, Fragment = "";`,
+    [`node_modules/${name}/jsx-dev-runtime.js`]: `export const jsxDEV = () => "${name} jsxDEV", Fragment = "";`,
+  });
+  const files = {
+    ...runtimeOf("from-tsconfig"),
+    ...runtimeOf("stated"),
+    "m.jsx": `
+      Object.assign(globalThis, {
+        React: { createElement: () => "React.createElement" },
+        stated: () => "stated",
+        fromTsconfig: () => "fromTsconfig",
+      });
+      console.log(<div />);
+    `,
+  };
+  const automatic = { jsx: "react-jsx", jsxImportSource: "from-tsconfig" };
+  const automaticDev = { jsx: "react-jsxdev", jsxImportSource: "from-tsconfig" };
+
+  // [name, compilerOptions, bunfig.toml, flags, what the element prints, what the compiled element names]
+  const cases = [
+    [
+      "bunfig.toml: jsx and jsxFactory",
+      automatic,
+      `jsx = "react"\njsxFactory = "stated"\n`,
+      [],
+      "stated",
+      `stated("div"`,
+    ],
+    [
+      "bunfig.toml: jsxImportSource",
+      automaticDev,
+      `jsxImportSource = "stated"\n`,
+      [],
+      "stated jsxDEV",
+      `from "stated/jsx-dev-runtime"`,
+    ],
+    [
+      'bunfig.toml: jsx = "react-jsxDEV"',
+      automatic,
+      `jsx = "react-jsxDEV"\n`,
+      [],
+      "from-tsconfig jsxDEV",
+      `from "from-tsconfig/jsx-dev-runtime"`,
+    ],
+    [
+      "flags: --jsx-runtime and --jsx-factory",
+      automatic,
+      "",
+      ["--jsx-runtime=classic", "--jsx-factory=stated"],
+      "stated",
+      `stated("div"`,
+    ],
+    [
+      "flags: --jsx-import-source",
+      automatic,
+      "",
+      ["--jsx-import-source=stated"],
+      "stated jsx",
+      `from "stated/jsx-runtime"`,
+    ],
+    // A flag with a value means the production runtime, and bunfig.toml states the same.
+    [
+      'bunfig.toml: jsx = "react-jsx" beside a flag',
+      automaticDev,
+      `jsx = "react-jsx"\n`,
+      ["--jsx-import-source=stated"],
+      "stated jsx",
+      `from "stated/jsx-runtime"`,
+    ],
+    // tsconfig.json still decides what no other source states.
+    [
+      "bunfig.toml: only jsxImportSource beside a classic tsconfig.json",
+      { jsx: "react", jsxFactory: "fromTsconfig" },
+      `jsxImportSource = "stated"\n`,
+      [],
+      "fromTsconfig",
+      `fromTsconfig("div"`,
+    ],
+    [
+      "flags: an empty --jsx-import-source",
+      automatic,
+      "",
+      ["--jsx-import-source="],
+      "from-tsconfig jsx",
+      `from "from-tsconfig/jsx-runtime"`,
+    ],
+  ] as const;
+
+  test.concurrent.each(cases)("%s", async (_, compilerOptions, bunfig, flags, printed, compiled) => {
+    using dir = tempDir("jsx-stated-over-tsconfig", {
+      ...files,
+      "tsconfig.json": JSON.stringify({ compilerOptions }),
+      ...(bunfig && { "bunfig.toml": bunfig }),
+    });
+    const run = async (...cmd: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...cmd],
+        env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, exitCode };
+    };
+    // The runtime, a bundle, and a file transpiled alone.
+    const [ran, bundled, transpiled] = await Promise.all([
+      run(...flags, "m.jsx"),
+      run("build", ...flags, "m.jsx", "--external", "*"),
+      run("build", ...flags, "--no-bundle", "m.jsx"),
+    ]);
+    const names = ({ stdout, exitCode }: { stdout: string; exitCode: number }) => ({
+      compiled: stdout.includes(compiled),
+      exitCode,
+    });
+    expect({ ran, bundled: names(bundled), transpiled: names(transpiled) }).toEqual({
+      ran: { stdout: printed + "\n", exitCode: 0 },
+      bundled: { compiled: true, exitCode: 0 },
+      transpiled: { compiled: true, exitCode: 0 },
+    });
+  });
+
+  test("only what the tsconfig.json of the project states gives way", async () => {
+    const classic = (jsxFactory: string) => JSON.stringify({ compilerOptions: { jsx: "react", jsxFactory } });
+    using dir = tempDir("jsx-stated-over-project-tsconfig", {
+      // The tsconfig.json of the project, and the file that it extends.
+      "tsconfig.json": JSON.stringify({ extends: "./base.json" }),
+      "base.json": JSON.stringify({ compilerOptions: automatic }),
+      "bunfig.toml": `jsx = "react"\njsxFactory = "stated"\n`,
+      "m.jsx": `export const m = <div />;`,
+      "nested/tsconfig.json": classic("fromNested"),
+      "nested/n.jsx": `export const n = <div />;`,
+      "extending/tsconfig.json": JSON.stringify({
+        extends: "../base.json",
+        compilerOptions: { jsxFragmentFactory: "own" },
+      }),
+      "extending/e.jsx": `export const e = [<div />, <></>];`,
+      "named.json": classic("fromNamed"),
+    });
+    // The calls that the elements of a file compile to.
+    const calls = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--no-bundle", ...args],
+        env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { calls: stdout.match(/\w+\(("div"|\w+)/g), exitCode };
+    };
+    const [project, nested, extending, named] = await Promise.all([
+      calls("m.jsx"),
+      calls("nested/n.jsx"),
+      calls("extending/e.jsx"),
+      calls("--tsconfig-override", "named.json", "m.jsx"),
+    ]);
+    expect({ project, nested, extending, named }).toEqual({
+      project: { calls: ['stated("div"'], exitCode: 0 },
+      // A tsconfig.json in a directory below keeps what it states itself, and so does the file of --tsconfig-override.
+      nested: { calls: ['fromNested("div"'], exitCode: 0 },
+      // What it takes with "extends" from a file of the project gives way: here the automatic runtime.
+      extending: { calls: ['stated("div"', "stated(own"], exitCode: 0 },
+      named: { calls: ['fromNamed("div"'], exitCode: 0 },
+    });
+  });
+
+  test("a file of the project is the same file through a link to a directory", async () => {
+    using dir = tempDir("jsx-stated-over-linked-tsconfig", {
+      "real/tsconfig.json": JSON.stringify({ extends: "./base.json" }),
+      // bunfig.toml states no fragment, so the one of this file shows that the file was read.
+      "real/base.json": JSON.stringify({ compilerOptions: { ...automatic, jsxFragmentFactory: "fromBase" } }),
+      "real/bunfig.toml": `jsx = "react"\njsxFactory = "stated"\n`,
+      "real/m.jsx": `export const m = [<div />, <></>];`,
+      // Through the link "real/app", "../tsconfig.json" is the tsconfig.json of the project.
+      "real/packages/app/tsconfig.json": JSON.stringify({ extends: "../tsconfig.json" }),
+      "real/packages/app/p.jsx": `export const p = [<div />, <></>];`,
+    });
+    const real = join(String(dir), "real");
+    const link = join(String(dir), "link");
+    symlinkSync(real, link, "junction");
+    symlinkSync(join(real, "packages", "app"), join(real, "app"), "junction");
+    const calls = async (file: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--no-bundle", file],
+        env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined },
+        cwd: real,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { calls: stdout.match(/\w+\(("div"|\w+)/g), exitCode };
+    };
+    const [linkToProject, linkInProject] = await Promise.all([calls(join(link, "m.jsx")), calls(join("app", "p.jsx"))]);
+    const ofProject = { calls: ['stated("div"', "stated(fromBase"], exitCode: 0 };
+    expect({ linkToProject, linkInProject }).toEqual({ linkToProject: ofProject, linkInProject: ofProject });
   });
 });
 

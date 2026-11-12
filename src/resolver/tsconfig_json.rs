@@ -117,7 +117,8 @@ impl JsonCache {
 pub(crate) type PathsMap = ArrayHashMap<Box<[u8]>, Vec<Box<[u8]>>>;
 
 pub struct TSConfigJSON {
-    pub(crate) abs_path: Box<[u8]>,
+    /// The file that was asked for, also with `extends`. `name_files_by_real_directory` names it by the real path of its directory.
+    pub abs_path: Box<[u8]>,
 
     /// The absolute path of "compilerOptions.baseUrl"
     pub(crate) base_url: Box<[u8]>,
@@ -140,6 +141,8 @@ pub struct TSConfigJSON {
 
     /// What `compilerOptions` states about JSX, laid over what the configs it extends state.
     pub jsx: options::jsx::Stated,
+    /// With `extends`: each file that `jsx` merges and what that file states, the base first and this file last.
+    pub jsx_of_files: Vec<(Box<[u8]>, options::jsx::Stated)>,
 
     pub(crate) preserve_imports_not_used_as_values: Option<bool>,
 
@@ -165,6 +168,7 @@ impl Default for TSConfigJSON {
             extends: Box::default(),
             paths: PathsMap::default(),
             jsx: options::jsx::Stated::default(),
+            jsx_of_files: Vec::new(),
             preserve_imports_not_used_as_values: Some(false),
             emit_decorator_metadata: false,
             experimental_decorators: false,
@@ -215,6 +219,48 @@ impl TSConfigJSON {
 
     pub(crate) fn has_base_url(&self) -> bool {
         !self.base_url.is_empty()
+    }
+
+    /// Names each file of `jsx_by_file` by the real path of the directory that holds it: one name for a file, however its directory is asked for.
+    pub(crate) fn name_files_by_real_directory<'d>(
+        &mut self,
+        // The directory of this config and each one above it: as asked, and its real path when that is another.
+        directories: &(impl Iterator<Item = (&'d [u8], &'d [u8])> + Clone),
+    ) {
+        use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
+        let without_separators = |mut directory: &'d [u8]| {
+            while let [rest @ .., last] = directory
+                && bun_paths::is_sep_any(*last)
+            {
+                directory = rest;
+            }
+            directory
+        };
+        let name = |file: &mut Box<[u8]>| {
+            let holds = |(asked, _): &(&[u8], &[u8])| {
+                is_parent_or_equal(asked, file) == ParentEqual::Parent
+            };
+            if let Some((asked, real)) = directories.clone().find(holds)
+                && !real.is_empty()
+            {
+                let below = &file[without_separators(asked).len()..];
+                *file = [without_separators(real), below].concat().into();
+            }
+        };
+        name(&mut self.abs_path);
+        for (file, _) in &mut self.jsx_of_files {
+            name(file);
+        }
+    }
+
+    /// Each file that `jsx` merges, with what that file states: the base of `extends` first.
+    pub fn jsx_by_file(&self) -> impl Iterator<Item = (&[u8], &options::jsx::Stated)> {
+        let alone = self
+            .jsx_of_files
+            .is_empty()
+            .then_some((&*self.abs_path, &self.jsx));
+        let merged = self.jsx_of_files.iter().map(|(path, jsx)| (&**path, jsx));
+        alone.into_iter().chain(merged)
     }
 
     pub(crate) fn abs_base_url_for_paths(&self) -> &[u8] {
@@ -805,7 +851,7 @@ mod tests {
     use bun_sema_standalone as _;
 
     use super::*;
-    use options::jsx::{MemberList, Runtime};
+    use options::jsx::{MemberList, Runtime, Stated};
 
     /// The config of `{"compilerOptions": <compiler_options>}` and the number of warnings it logs.
     fn parse(compiler_options: &str) -> (Box<TSConfigJSON>, u32) {
@@ -864,5 +910,57 @@ mod tests {
         let (config, warnings) = parse(r#"{"jsxFactory": "1x.y"}"#);
         assert!(config.jsx.states_nothing());
         assert_eq!(warnings, 1);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn files_are_named_by_the_real_path_of_the_directory_that_holds_them() {
+        let chain = |files: &[&[u8]]| {
+            let file = |path: &&[u8]| (Box::from(*path), Stated::default());
+            TSConfigJSON {
+                abs_path: Box::from(*files.last().expect("a file")),
+                jsx_of_files: files.iter().map(file).collect(),
+                ..Default::default()
+            }
+        };
+        let named = |mut config: TSConfigJSON, directories: &[(&[u8], &[u8])]| {
+            config.name_files_by_real_directory(&directories.iter().copied());
+            let files: Vec<String> = config
+                .jsx_by_file()
+                .map(|(file, _)| String::from_utf8_lossy(file).into_owned())
+                .collect();
+            assert_eq!(&*config.abs_path, files.last().expect("a file").as_bytes());
+            files.join(" ")
+        };
+
+        // A link above the config: the file that it extends is under the same link.
+        let under_link = chain(&[b"/link/base.json", b"/link/app/tsconfig.json"]);
+        let directories: [(&[u8], &[u8]); 3] = [
+            (b"/link/app", b"/real/app"),
+            (b"/link", b"/real"),
+            (b"/", b""),
+        ];
+        assert_eq!(
+            named(under_link, &directories),
+            "/real/base.json /real/app/tsconfig.json"
+        );
+
+        // The directory of the config is the link: the file that it extends is outside and keeps its name.
+        let is_link = chain(&[b"/project/tsconfig.json", b"/project/link/tsconfig.json"]);
+        let directories: [(&[u8], &[u8]); 3] = [
+            (b"/project/link", b"/project/packages/app"),
+            (b"/project", b""),
+            (b"/", b""),
+        ];
+        assert_eq!(
+            named(is_link, &directories),
+            "/project/tsconfig.json /project/packages/app/tsconfig.json"
+        );
+
+        // Without `extends` the config is its one file. Here the link leads to the root directory.
+        let mut alone = chain(&[b"/link/tsconfig.json"]);
+        alone.jsx_of_files.clear();
+        let directories: [(&[u8], &[u8]); 2] = [(b"/link", b"/"), (b"/", b"")];
+        assert_eq!(named(alone, &directories), "/tsconfig.json");
     }
 }

@@ -438,6 +438,9 @@ impl<'a> Fixer<'a> {
         let statement = import.stmt();
         if import.named().len() == 1 {
             if import.default().is_none() {
+                if self.has_directive_before(statement) {
+                    return None;
+                }
                 let removal = Removal::of(self.file.text(), statement.span());
                 return Some(self.remove(removal.without_leftovers()));
             }

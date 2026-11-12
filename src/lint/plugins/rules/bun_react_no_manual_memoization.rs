@@ -92,11 +92,19 @@ fn is_compile_candidate(func: Func<'_>) -> bool {
     is_react_api_callback || has_body_directive(func, &OPT_IN_DIRECTIVES)
 }
 
-/// True if the outermost compile candidate around `e` opts out. The compiler doesn't look inside a function it compiles.
-fn is_in_opted_out_function(e: Expr<'_>) -> bool {
+/// The function the compiler would compile `e` as part of: the outermost candidate, as it doesn't look inside one.
+fn compiled_function(e: Expr<'_>) -> Option<Func<'_>> {
     let functions = Node::Expr(e).ancestors().filter_map(Node::as_func);
-    let candidate = functions.filter(|it| is_compile_candidate(*it)).last();
-    candidate.is_some_and(opts_out)
+    functions.filter(|it| is_compile_candidate(*it)).last()
+}
+
+fn is_in_opted_out_function(e: Expr<'_>) -> bool {
+    compiled_function(e).is_some_and(opts_out)
+}
+
+/// True if `e` is in a function that the compiler never finds, like `export default () => ..`.
+fn is_in_undiscovered_function(e: Expr<'_>) -> bool {
+    Node::Expr(e).enclosing_function().is_some() && compiled_function(e).is_none()
 }
 
 /// The component that `memo()` wraps.
@@ -151,19 +159,23 @@ fn call_of(e: Expr<'_>) -> Option<(Expr<'_>, Call<'_>)> {
 fn first_argument(call: Call<'_>, count: usize) -> Option<Expr<'_>> {
     let args = call.args();
     let fits = (count - 1..=count).contains(&args.len()) && args.iter().all(|it| it.tag() != ExprTag::Spread);
-    (fits && call.type_args().is_empty() && !call.is_optional()).then(|| args.first()).flatten()
+    let is_plain = call.type_args().is_empty() && !call.is_optional() && !call.callee().is_in_optional_chain();
+    (fits && is_plain).then(|| args.first()).flatten()
 }
 
 /// True if the function `kept` has a name the compiler looks at once `memo()` is gone: the variable's, or its own as a
-/// declaration.
+/// declaration. A function this file declares keeps the name it has.
 fn keeps_name<'a>(e: Expr<'a>, kept: Expr<'a>) -> bool {
-    let Some(func) = kept.as_fn() else {
-        return true;
-    };
-    let name = match e.parent() {
-        Node::VarDecl(declaration) if declaration.init() == Some(e) => declaration.pat().as_ident(),
-        _ if becomes_declaration(e, kept) => func.name().map(Ident::name),
-        _ => None,
+    let name = match kept.as_fn() {
+        Some(func) => match e.parent() {
+            Node::VarDecl(declaration) if declaration.init() == Some(e) => declaration.pat().as_ident(),
+            _ if becomes_declaration(e, kept) => func.name().map(Ident::name),
+            _ => None,
+        },
+        None => match component_of(kept, 4) {
+            Some(Component::Func(func)) => compiler_name(func),
+            _ => return true,
+        },
     };
     name.is_some_and(|it| is_component_or_hook_name(it.bytes()))
 }
@@ -220,7 +232,9 @@ fn needs_parentheses(e: Expr<'_>, kept: Expr<'_>) -> bool {
                 && !becomes_declaration(e, kept)
                 && matches!(first.text(), b"function" | b"class" | b"async"))
     };
-    (!is_strong_precedence_node(kept) && (is_weak_precedence_parent(e) || has_postfix_parent))
+    // `new Date` is strong, but `new Date.getTime()` is not `(new Date).getTime()`.
+    let is_bare_new = matches!(kept.kind(), ExprKind::New(_)) && !kept.text().ends_with(b")");
+    ((!is_strong_precedence_node(kept) || is_bare_new) && (is_weak_precedence_parent(e) || has_postfix_parent))
         || matches!(kept.kind(), ExprKind::Binary { op: BinOp::Comma, .. })
         || starts_block_or_declaration()
 }
@@ -272,7 +286,14 @@ fn uses<'a>(file: &'a File<'a>) -> Vec<Use<'a>> {
                 continue;
             }
             let is_only_reference = references.len() == 1;
-            for e in references.filter_map(|it| it.expr()) {
+            for reference in references {
+                let Some(e) = reference.expr() else {
+                    // `export { memo }`
+                    if matches!(reference.node(), Node::ExportSpec(_)) {
+                        all.push(Use { at: reference.span(), name, call: None, specifier: None });
+                    }
+                    continue;
+                };
                 if e.is_in_type_query() || is_in_opted_out_function(e) {
                     continue;
                 }
@@ -342,7 +363,7 @@ impl Rule for ReactNoManualMemoization {
             let Some((kept, message)) = replacement(name, e, call) else {
                 continue;
             };
-            if name_is_taken(e, kept) {
+            if name_is_taken(e, kept) || is_in_undiscovered_function(e) {
                 continue;
             }
             report.suggest(message, move |fixer| {

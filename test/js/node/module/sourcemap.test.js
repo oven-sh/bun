@@ -554,7 +554,7 @@ describe("findSourceMap", () => {
         console.log(JSON.stringify({
           codes, before, plain, frozen: Object.isFrozen(plain),
           full: getSourceMapsSupport(), withoutNodeModules, withNodeModules,
-          bad: [findSourceMap(), findSourceMap(1), findSourceMap("foo"), findSourceMap("file://%zz"), findSourceMap("node:fs")],
+          bad: [findSourceMap(), findSourceMap(1), findSourceMap("foo"), findSourceMap("file://%zz"), findSourceMap("node:fs"), findSourceMap(new String(import.meta.resolve("./src.ts")))],
         }));
       `,
         "node_modules/dep/index.ts": "export const a: number = 1;\n",
@@ -568,7 +568,7 @@ describe("findSourceMap", () => {
         full: { enabled: true, nodeModules: true, generatedCode: false },
         withoutNodeModules: ["SourceMap", null],
         withNodeModules: [null, "SourceMap"],
-        bad: [null, null, null, null, null],
+        bad: [null, null, null, null, null, null],
       });
     },
   );

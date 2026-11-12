@@ -22,7 +22,8 @@ pub(crate) fn find_source_map<'a>(
 ) -> JsResult<Option<JsWrapper<'a, JSSourceMap>>> {
     let global = cx.global();
     let source_url_value = path.to_js();
-    if !source_url_value.is_string() {
+    // A String object is not a string to Node, and its `toString` must not run.
+    if !source_url_value.is_string_literal() {
         return Ok(None);
     }
 

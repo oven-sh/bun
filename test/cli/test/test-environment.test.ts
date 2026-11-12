@@ -327,6 +327,40 @@ describe.concurrent("test environment", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Bun's own `onerror` and `onmessage` are native: assigning one registers a handler. A window has both names.
+  test.each([[[]], [["--isolate=modules"]]])(
+    "after a file with a window, assigning onerror and onmessage registers a handler again %j",
+    async flags => {
+      using dir = tempDir("test-environment", {
+        "node_modules/happy-dom/package.json": fakePackages["node_modules/happy-dom/package.json"],
+        "node_modules/happy-dom/index.js": `
+          exports.Window = class Window {
+            onerror = null;
+            onmessage = null;
+            document = { defaultView: this };
+            happyDOM = { async abort() {} };
+            close() {}
+          };
+        `,
+        "a.test.js": `// ${VITEST} happy-dom\nimport { test } from "bun:test";\ntest("has a window", () => {});`,
+        "b.test.js": `
+          import { test } from "bun:test";
+          test("has none", () => {
+            globalThis.onerror = () => console.log("onerror ran");
+            globalThis.onmessage = () => console.log("onmessage ran");
+            globalThis.dispatchEvent(new Event("error"));
+            globalThis.dispatchEvent(new Event("message"));
+            globalThis.onerror = globalThis.onmessage = null;
+          });
+        `,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir), ...flags);
+      expect(stdout).toEqual(["onerror ran", "onmessage ran"]);
+      expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test("the package is resolved from the test file", async () => {
     using dir = tempDir("test-environment", {
       "packages/a/node_modules/happy-dom/package.json": fakePackages["node_modules/happy-dom/package.json"],

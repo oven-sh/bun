@@ -25,6 +25,9 @@ JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool
 // `key` is null unless there are module mocks.
 void didStartDynamicImport(Zig::GlobalObject*, JSC::JSPromise* import, const String& key);
 
+// Writes a property's storage: a data property's value, or an accessor's raw GetterSetter / CustomGetterSetter cell.
+void putOwnPropertyStorage(JSC::JSGlobalObject*, JSC::JSObject*, JSC::PropertyName, JSC::JSValue storage, unsigned attributes, bool isOpaque);
+
 // Wrapper to scope a bunch of GlobalObject properties related to mocks
 class JSMockModule final {
 public:

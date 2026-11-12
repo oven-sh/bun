@@ -527,6 +527,7 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__retireForTestIsolation(global: &JSGlobalObject);
     safe fn Bun__TestFile__enterModuleGraph(global: &JSGlobalObject) -> u32;
+    safe fn Bun__TestGlobals__resetNativeState(global: &JSGlobalObject);
     safe fn Bun__Process__resetArgv(global: &JSGlobalObject);
     safe fn Bun__TestFile__leaveModuleGraph(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__retireDerivedRealmsForTestIsolation(global: &JSGlobalObject);
@@ -6591,8 +6592,10 @@ impl VirtualMachine {
     pub fn enter_module_graph_for_test_isolation(&mut self) -> JsResult<()> {
         let state = &self.test_isolation_state;
         if state.shares_global && state.file_context == crate::ContextId::NONE {
-            // The first call snapshots the globals. Later calls restore them.
             let global = self.global();
+            // Listeners and the capture callback of `process`: what the snapshot below cannot see.
+            Bun__TestGlobals__resetNativeState(global);
+            // The first call snapshots the globals. Later calls restore them.
             let restore_globals = crate::cpp::Bun__TestGlobals__getRestoreFunction(global)?;
             restore_globals.call(global, JSValue::UNDEFINED, &[])?;
             self.test_isolation_state.file_context =

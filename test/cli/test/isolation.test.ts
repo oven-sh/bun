@@ -1428,6 +1428,16 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect(exitCode).toBe(0);
     return stdout;
   };
+  // Without the "bun test v1.2.3" line.
+  const printed = (stdout: string) => stdout.slice(stdout.indexOf("\n") + 1);
+  // What the same files print when each of them has a global object of its own.
+  const printsWithNewGlobals = async (files: Record<string, string>) => {
+    using dir = tempDir("isolate-global", files);
+    const names = Object.keys(files)
+      .filter(name => name.includes(".test."))
+      .map(name => "./" + name);
+    return printed((await runTests(String(dir), ["--isolate"], names)).stdout);
+  };
 
   test("what a file leaves open is closed, and what it put on globalThis is gone", async () => {
     await passes(fixtures, 2);
@@ -1614,6 +1624,132 @@ describe.concurrent("bun test --isolate=modules", () => {
     };
     const lines = (await passes(files, 2)).split("\n").filter(line => line.startsWith("["));
     expect(lines).toEqual(Array(2).fill(JSON.stringify(["fetch", true, false])));
+  });
+
+  test("the listeners that a file left on globalThis and performance are gone, and so is its capture callback", async () => {
+    const files = {
+      "a.test.js": `test("a", () => {
+        globalThis.addEventListener("leftover", () => console.log("globalThis listener of a"));
+        globalThis.onerror = () => console.log("onerror of a");
+        globalThis.onmessage = () => console.log("onmessage of a");
+        performance.addEventListener("leftover", () => console.log("performance listener of a"));
+        performance.onresourcetimingbufferfull = () => console.log("performance handler of a");
+        process.setUncaughtExceptionCaptureCallback(() => {});
+      });`,
+      "b.test.js": `test("b", () => {
+        globalThis.onerror = () => console.log("onerror of b");
+        for (const type of ["leftover", "error", "message"]) globalThis.dispatchEvent(new Event(type));
+        for (const type of ["leftover", "resourcetimingbufferfull"]) performance.dispatchEvent(new Event(type));
+        console.log(process.hasUncaughtExceptionCaptureCallback());
+        // Throws while a callback is set.
+        process.setUncaughtExceptionCaptureCallback(() => {});
+      });`,
+    };
+    const expected = "onerror of b\nfalse\n";
+    expect(printed(await passes(files, 2))).toBe(expected);
+    expect(await printsWithNewGlobals(files)).toBe(expected);
+    // One worker of --parallel runs both files. What they print comes with the results.
+    using dir = tempDir("isolate-modules-worker", files);
+    const env = { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" };
+    const worker = await runTests(
+      String(dir),
+      ["--isolate=modules", "--parallel=2"],
+      ["./a.test.js", "./b.test.js"],
+      env,
+    );
+    expect(worker.stderr).toContain(expected);
+    expect(worker.exitCode).toBe(0);
+  });
+
+  test("what a preload registers is there once for each file, and its capture callback is set for each", async () => {
+    const file = `test("dispatches", () => {
+      globalThis.dispatchEvent(new Event("fromPreload"));
+      performance.dispatchEvent(new Event("fromPreload"));
+    });`;
+    const files = {
+      "preload.js": `
+        globalThis.addEventListener("fromPreload", () => console.log("globalThis listener"));
+        performance.addEventListener("fromPreload", () => console.log("performance listener"));
+        process.setUncaughtExceptionCaptureCallback(() => {});
+      `,
+      "a.test.js": file,
+      "b.test.js": file,
+      "c.test.js": file,
+    };
+    expect(printed(await passes(files, 3, ["--preload", "./preload.js"]))).toBe(
+      Array(3).fill("globalThis listener\nperformance listener\n").join(""),
+    );
+  });
+
+  test("onerror, onmessage and Error.prepareStackTrace are Bun's again, however a file left them", async () => {
+    const file = (name: string, leave: string) => `test("${name}", () => {
+      const seen = [new Error("unformatted").stack.split("\\n")[0]];
+      Error.prepareStackTrace = () => "stack of ${name}";
+      seen.push(new Error("formatted").stack);
+      globalThis.onerror = () => seen.push("onerror of ${name}");
+      globalThis.onmessage = () => seen.push("onmessage of ${name}");
+      globalThis.dispatchEvent(new Event("error"));
+      globalThis.dispatchEvent(new Event("message"));
+      console.log(seen.join(", "));
+      const native = [[Error, "prepareStackTrace"], [globalThis, "onerror"], [globalThis, "onmessage"]];
+      ${leave}
+    });`;
+    const files = {
+      "assigned.test.js": file("assigned", ""),
+      "deleted.test.js": file("deleted", `for (const [object, key] of native) delete object[key];`),
+      "defined.test.js": file(
+        "defined",
+        `for (const [object, key] of native) Object.defineProperty(object, key, { get() {}, set() {}, configurable: false });`,
+      ),
+      "last.test.js": file("last", ""),
+    };
+    const expected = ["assigned", "deleted", "defined", "last"]
+      .map(name => `Error: unformatted, stack of ${name}, onerror of ${name}, onmessage of ${name}\n`)
+      .join("");
+    expect(printed(await passes(files, 4))).toBe(expected);
+    expect(await printsWithNewGlobals(files)).toBe(expected);
+  });
+
+  test("a REPL in a later file handles the errors of what it runs", async () => {
+    // Under the globals of vitest, an error that nothing catches goes to the capture callback of process, which a REPL sets.
+    const file = (name: string) => `
+      import { test } from "vitest";
+      import repl from "node:repl";
+      import { PassThrough } from "node:stream";
+      test("${name}", async () => {
+        const input = new PassThrough();
+        const output = new PassThrough();
+        let printed = "";
+        const { promise, resolve } = Promise.withResolvers();
+        output.on("data", chunk => {
+          printed += chunk;
+          if (printed.includes("Uncaught")) resolve();
+        });
+        const server = repl.start({ input, output, terminal: false, prompt: "" });
+        input.write('setTimeout(() => { throw new Error("thrown in ${name}"); })\\n');
+        await promise;
+        console.log(printed.includes("thrown in ${name}"));
+        server.close();
+      });
+    `;
+    expect(printed(await passes({ "a.test.js": file("a"), "b.test.js": file("b") }, 2))).toBe("true\ntrue\n");
+  });
+
+  test("a file that never finishes loading is reported after a file that left a message listener", async () => {
+    using dir = tempDir("isolate-modules-message", {
+      // The listener holds the event loop until it is removed.
+      "a.test.js": `test("a", () => { globalThis.addEventListener("message", () => {}); });`,
+      "b.test.js": `await new Promise(() => {}); test("unreachable", () => {});`,
+      "c.test.js": `test("c", () => {});`,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate=modules"],
+      ["./a.test.js", "./b.test.js", "./c.test.js"],
+    );
+    expect(stderr).toMatch(/error: ".*b\.test\.js" never finished loading/);
+    expect(stderr).toContain(" 2 pass\n 1 fail\n");
+    expect(exitCode).toBe(1);
   });
 
   test("keeps what node:perf_hooks and node:worker_threads add to the builtins when they load", async () => {

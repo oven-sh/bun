@@ -331,7 +331,8 @@ const getOwnNonIndexProperties: (value: object, filter: number) => (string | sym
 let captureCallbacks: ((err: unknown) => unknown)[] | null = null;
 
 function addUncaughtExceptionCaptureCallback(cb: (err: unknown) => unknown) {
-  if (!captureCallbacks) {
+  // `bun test --isolate=modules` shares this module between test files and empties the slot after each.
+  if (!captureCallbacks || !process.hasUncaughtExceptionCaptureCallback()) {
     captureCallbacks = [];
     try {
       process.setUncaughtExceptionCaptureCallback((err: unknown) => {

@@ -11,6 +11,14 @@ const lastingCopyOfThisModule: () => typeof setup = $newCppFunction(
   "jsFunctionTestEnvironmentModuleOfLastingRealm",
   0,
 );
+// See src/js/internal/test/globals.ts.
+const customValuesOf: (objects: object[], indexes: number[]) => unknown[] = $newCppFunction(
+  "TestEnvironment.cpp",
+  "jsFunctionCustomValuesOfObjects",
+  2,
+);
+const restoreCustomValue: (object: object, key: PropertyKey, customValue: unknown, value: unknown) => void =
+  $newCppFunction("TestEnvironment.cpp", "jsFunctionRestoreCustomValue", 4);
 
 const { captureStackTrace } = Error;
 const { isExtensible } = Object;
@@ -470,6 +478,34 @@ function putBack(key: string, original: PropertyDescriptor | undefined) {
   }
 }
 
+// Bun's own `onerror` and `onmessage` are native getters and setters that a descriptor shows as a value. putBack() of that
+// descriptor leaves a plain property, which no later `onerror = fn` registers a handler through.
+// Returns the key, what restoreCustomValue() takes and the value, for each one that `properties` is about to replace.
+function customValuesUnder(properties: Properties) {
+  const under: unknown[] = [];
+  const found = customValuesOf([globalThis], [0]);
+  for (let i = 0; i < found.length; i += 3) {
+    const key = found[i + 1] as string;
+    if (!properties.$get(key)) continue;
+    $arrayPush(under, key);
+    $arrayPush(under, found[i + 2]);
+    $arrayPush(under, (globalThis as any)[key]);
+  }
+  return under;
+}
+
+// Call it after putBack(). Returns those whose key `installed` still has.
+function putBackCustomValues(customValues: unknown[], installed?: Map<string, unknown>) {
+  if (!customValues.length) return customValues;
+  const kept: unknown[] = [];
+  for (let i = 0; i < customValues.length; i += 3) {
+    const key = customValues[i] as string;
+    if (!installed?.$has(key)) restoreCustomValue(globalThis, key, customValues[i + 1], customValues[i + 2]);
+    else for (let j = i; j < i + 3; j++) $arrayPush(kept, customValues[j]);
+  }
+  return kept;
+}
+
 // Without --isolate. JSC stops caching reads of globals once several hundred names have been deleted from globalThis
 // and defined again a few times. So the last file's names stay until a file needs another environment.
 let left: { environment: Environment; teardown(isLoadingFileAgain: boolean): unknown; leave(): unknown } | undefined;
@@ -478,6 +514,7 @@ function enter(name: string, environment: Environment, keep: boolean) {
   const { properties, keys } = environment;
   const defined: string[] = [];
   const originals: (PropertyDescriptor | undefined)[] = [];
+  const customValues = customValuesUnder(properties);
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     const descriptor = properties.$get(key);
@@ -488,6 +525,7 @@ function enter(name: string, environment: Environment, keep: boolean) {
       $Object.$defineProperty(globalThis, key, descriptor);
     } catch (error) {
       for (let j = defined.length; j--;) putBack(defined[j], originals[j]);
+      putBackCustomValues(customValues);
       return `cannot define "${key}" on globalThis: ${(error as Error).message}`;
     }
     $arrayPush(defined, key);
@@ -521,6 +559,7 @@ function enter(name: string, environment: Environment, keep: boolean) {
       // Only an error if the stuck property is still ours, not one the file redefined as non-configurable.
       if (!current || (current.get === ours.get && current.value === ours.value)) stuck ??= key;
     }
+    putBackCustomValues(customValues);
     const closed = keep ? undefined : environment.close();
     if (stuck !== undefined) {
       throw new Error(
@@ -539,6 +578,8 @@ function enter(name: string, environment: Environment, keep: boolean) {
 let currentWindowProperties: Properties | undefined;
 const forwarders = new $Map<string, PropertyDescriptor>();
 const originalDescriptors = new $Map<string, PropertyDescriptor | undefined>();
+// What customValuesUnder() returned for the keys of `originalDescriptors`.
+let originalCustomValues: unknown[] = [];
 
 function forwarder(key: string) {
   let descriptor = forwarders.$get(key);
@@ -563,10 +604,14 @@ function uninstallFromSharedGlobal() {
   currentWindowProperties = undefined;
   originalDescriptors.$forEach((original, key) => void putBack(key, original));
   originalDescriptors.$clear();
+  originalCustomValues = putBackCustomValues(originalCustomValues);
 }
 
 function installOnSharedGlobal(environment: Environment) {
   const { properties, keys } = environment;
+  // None of those that an earlier window replaced is found again.
+  const customValues = customValuesUnder(properties);
+  for (let i = 0; i < customValues.length; i++) $arrayPush(originalCustomValues, customValues[i]);
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     const windowDescriptor = properties.$get(key);
@@ -584,6 +629,7 @@ function installOnSharedGlobal(environment: Environment) {
     putBack(key, original);
     originalDescriptors.$delete(key);
   });
+  originalCustomValues = putBackCustomValues(originalCustomValues, originalDescriptors);
   currentWindowProperties = properties;
 }
 

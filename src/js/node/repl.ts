@@ -332,7 +332,7 @@ function loadImpl(): Loaded {
   // shim's fallthrough re-emits `uncaughtException` with the origin arg so user
   // listeners still see it.
   function setupExceptionCapture() {
-    if (exceptionCaptureInstalled) return;
+    if (exceptionCaptureInstalled && process.hasUncaughtExceptionCaptureCallback()) return;
     exceptionCaptureInstalled = true;
     require("internal/repl/node-shims").addUncaughtExceptionCaptureCallback(replExceptionCaptureCallback);
   }

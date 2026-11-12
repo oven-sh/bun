@@ -267,36 +267,198 @@ static bool partialBufferContentsEquiv(JSC::JSGlobalObject* globalObject, JSC::T
 extern "C" bool JSC__JSValue__strictDeepEquals(JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::JSGlobalObject*);
 
 // assert.partialDeepStrictEqual (node's kPartial mode), fully native. `expected` must be
-// recursively contained in `actual`; cycles are accepted only when both sides revisit together.
-// https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
+// recursively contained in `actual`.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js
 namespace PartialDeepEqual {
 
-struct CycleState {
-    WTF::Vector<JSC::JSCell*, 8> actualSeen;
-    WTF::Vector<JSC::JSCell*, 8> expectedSeen;
+// Node compares with no cycle check until a comparison throws, a stack overflow included. From then on every
+// comparison of the realm runs under `handleCycles`, so its answer depends on what ran before. Here nothing outlives
+// a call, and every call answers as a new node process does: the first run gives no cycle verdict and only finds
+// out that it cannot end, and the host function then compares once more under node's memos. A first run that throws
+// from operand code is not repeated.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L1045-L1053
+struct Memos {
+    explicit Memos(JSC::MarkedArgumentBuffer& kept)
+        : kept(kept)
+    {
+    }
+
+    // node's names. `a` is null until the first pair arrives.
+    JSC::JSCell* a { nullptr };
+    JSC::JSCell* b { nullptr };
+    JSC::JSCell* c { nullptr };
+    JSC::JSCell* d { nullptr };
+    bool deep { false };
+    bool hasSet { false };
+    WTF::HashSet<JSC::JSCell*> set;
+    // Roots what stays in `set` when its comparison is over.
+    JSC::MarkedArgumentBuffer& kept;
 };
 
-static bool compareBranch(JSC::JSGlobalObject*, JSC::MarkedArgumentBuffer&, CycleState&, JSC::ThrowScope&, JSValue actual, JSValue expected);
+struct CycleState {
+    explicit CycleState(void* stackEnd)
+        : stackEnd(stackEnd)
+    {
+    }
 
-// Both-sides cycle guard: a cycle is accepted only when actual and expected
-// each cycle back on their own side together.
-template<typename Body>
-static bool withCycleGuard(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Body body)
+    // The run is out of stack below this address.
+    void* stackEnd;
+    // First run: the pairs that are being compared, each at one index of both.
+    WTF::Vector<JSC::JSCell*, 8> actualOpen;
+    WTF::Vector<JSC::JSCell*, 8> expectedOpen;
+    bool endless { false };
+    // Second run.
+    std::optional<Memos> memos;
+};
+
+using Comparison = bool(JSC::JSGlobalObject*, JSC::MarkedArgumentBuffer&, CycleState&, JSC::ThrowScope&, JSValue actual, JSValue expected);
+static Comparison compareBranch, nonIndexObjectSubset, arraySubsequence, mapSubsetAndProps, setSubsetAndProps, errorSubset;
+
+// Operand code (a getter, a Proxy trap) gets a RangeError from JSC at the soft limit. The first run ends above it,
+// so that a comparison that cannot end gets node's answer and not that error.
+static void* stackEndOfFirstRun(JSC::VM& vm)
+{
+#if ASAN_ENABLED
+    static constexpr size_t headroom = 384 * KB;
+#else
+    static constexpr size_t headroom = 128 * KB;
+#endif
+    return static_cast<char*>(vm.softStackLimit()) + headroom;
+}
+
+// node's keyCheck answers true for an `expected` with no key, element or entry before it looks at its memos. The
+// caller has counted the elements of an array.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L510-L515
+static bool hasNoKeyOrEntry(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSObject* expected, Comparison* body)
+{
+    // errorSubset compares the name, message, errors and cause of an Error with no key.
+    if (body == errorSubset)
+        return false;
+    if (body == mapSubsetAndProps && uncheckedDowncast<JSC::JSMap>(expected)->size())
+        return false;
+    if (body == setSubsetAndProps && uncheckedDowncast<JSC::JSSet>(expected)->size())
+        return false;
+    JSC::PropertyNameArrayBuilder names(globalObject->vm(), JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
+    if (body == arraySubsequence || body == nonIndexObjectSubset)
+        expected->getOwnNonIndexPropertyNames(globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
+    else
+        expected->methodTable()->getOwnPropertyNames(expected, globalObject, names, JSC::DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, false);
+    return !names.size();
+}
+
+// node's handleCycles up to its call of objEquiv, behind the answers that node gives ahead of it: an answer, or
+// nothing when the pair is to be compared. Not inline, and with no argument on the stack: the frames under a
+// comparison must not be larger than those of the first run.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L523-L570
+static NEVER_INLINE std::optional<bool> enterMemos(JSC::JSGlobalObject* globalObject, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Comparison* body)
+{
+    bool hasElements = false;
+    if (body == arraySubsequence) {
+        const uint64_t actualLength = static_cast<uint64_t>(JSC::toLength(globalObject, actual.getObject()));
+        RETURN_IF_EXCEPTION(scope, false);
+        const uint64_t expectedLength = static_cast<uint64_t>(JSC::toLength(globalObject, expected.getObject()));
+        RETURN_IF_EXCEPTION(scope, false);
+        if (expectedLength > actualLength)
+            return false;
+        hasElements = expectedLength;
+    }
+    if (!hasElements) {
+        const bool nothingToCompare = hasNoKeyOrEntry(globalObject, scope, expected.getObject(), body);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (nothingToCompare)
+            return true;
+    }
+
+    Memos& memos = *cycles.memos;
+    JSC::JSCell* actualCell = actual.asCell();
+    JSC::JSCell* expectedCell = expected.asCell();
+    if (!memos.a) {
+        memos.a = actualCell;
+        memos.b = expectedCell;
+        return std::nullopt;
+    }
+    if (!memos.hasSet) {
+        if (!memos.deep) {
+            if (memos.a == actualCell)
+                return memos.b == expectedCell;
+            if (memos.b == expectedCell)
+                return false;
+            memos.c = actualCell;
+            memos.d = expectedCell;
+            memos.deep = true;
+            return std::nullopt;
+        }
+        memos.hasSet = true;
+        memos.set.add(memos.a);
+        memos.set.add(memos.b);
+        memos.set.add(memos.c);
+        memos.set.add(memos.d);
+    }
+    const bool actualIsNew = memos.set.add(actualCell).isNewEntry;
+    const bool expectedIsNew = memos.set.add(expectedCell).isNewEntry;
+    if (actualIsNew && expectedIsNew)
+        return std::nullopt;
+    // node leaves the one that was new in its Set. It can be a getter's fresh object that nothing else holds, and
+    // its address must not become another object's while the Set has it.
+    memos.kept.append(actual);
+    memos.kept.append(expected);
+    return !actualIsNew && !expectedIsNew;
+}
+
+// What handleCycles does once objEquiv has answered for a pair. While `deep` is set, `c` is in the Set if there is
+// one, so the pair that set `deep` is the only compared pair with `c`. For the first pair of all nothing is left to
+// do, and what this does then has no effect.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L549-L577
+static NEVER_INLINE void leaveMemos(CycleState& cycles, JSC::JSCell* actualCell, JSC::JSCell* expectedCell)
+{
+    Memos& memos = *cycles.memos;
+    if (memos.deep && memos.c == actualCell) {
+        memos.deep = false;
+        if (!memos.hasSet)
+            return;
+    }
+    memos.set.remove(actualCell);
+    memos.set.remove(expectedCell);
+}
+
+static NEVER_INLINE bool withMemos(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Comparison* body)
+{
+    if (const std::optional<bool> answer = enterMemos(globalObject, cycles, scope, actual, expected, body))
+        return *answer;
+    const bool result = body(globalObject, gcBuffer, cycles, scope, actual, expected);
+    leaveMemos(cycles, actual.asCell(), expected.asCell());
+    return result;
+}
+
+// First run: a pair inside its own comparison cannot end. Nothing else is a verdict: one side alone that comes
+// back says nothing about a pair that was never compared.
+static NEVER_INLINE bool withOpenPair(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Comparison* body)
 {
     JSC::JSCell* actualCell = actual.asCell();
     JSC::JSCell* expectedCell = expected.asCell();
-    const bool hadActual = cycles.actualSeen.contains(actualCell);
-    const bool hadExpected = cycles.expectedSeen.contains(expectedCell);
-    if (hadActual && hadExpected)
-        return true;
-    if (hadActual || hadExpected)
-        return false;
-    cycles.actualSeen.append(actualCell);
-    cycles.expectedSeen.append(expectedCell);
+    const auto actualOpen = cycles.actualOpen.span();
+    const auto expectedOpen = cycles.expectedOpen.span();
+    for (size_t i = 0; i < actualOpen.size(); i++) {
+        if (actualOpen[i] == actualCell && expectedOpen[i] == expectedCell) {
+            cycles.endless = true;
+            return false;
+        }
+    }
+    cycles.actualOpen.append(actualCell);
+    cycles.expectedOpen.append(expectedCell);
     const bool result = body(globalObject, gcBuffer, cycles, scope, actual, expected);
-    cycles.actualSeen.removeLast();
-    cycles.expectedSeen.removeLast();
+    cycles.actualOpen.removeLast();
+    cycles.expectedOpen.removeLast();
     return result;
+}
+
+// Inline, so that neither run has a frame more than the other under a comparison.
+static ALWAYS_INLINE bool withCycleGuard(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Comparison* body)
+{
+    if (cycles.memos) [[unlikely]]
+        return withMemos(globalObject, gcBuffer, cycles, scope, actual, expected, body);
+    return withOpenPair(globalObject, gcBuffer, cycles, scope, actual, expected, body);
 }
 
 // JS `actual[key]` guarded by `ObjectPrototypePropertyIsEnumerable`: the
@@ -357,8 +519,8 @@ static bool nonIndexObjectSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedA
     return true;
 }
 
-// Expected's elements as a subsequence of actual's, in order with gaps, then
-// expected's own enumerable non-index properties.
+// Expected's own enumerable non-index properties, then expected's elements as a subsequence of actual's, in order
+// with gaps. The order is node's (objEquiv): where a comparison ends, and so which run answers, depends on it.
 static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     JSC::JSObject* actualObject = actual.getObject();
@@ -368,6 +530,11 @@ static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgum
     const uint64_t expectedLength = static_cast<uint64_t>(JSC::toLength(globalObject, expectedObject));
     RETURN_IF_EXCEPTION(scope, false);
     if (expectedLength > actualLength)
+        return false;
+
+    bool namedEqual = nonIndexObjectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!namedEqual) [[unlikely]]
         return false;
 
     uint64_t actualPos = 0;
@@ -381,6 +548,8 @@ static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgum
             RETURN_IF_EXCEPTION(scope, false);
             bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualElement, expectedElement);
             RETURN_IF_EXCEPTION(scope, false);
+            if (cycles.endless)
+                return false;
             actualPos++;
             if (equal) {
                 matched = true;
@@ -391,7 +560,7 @@ static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgum
             return false;
     }
 
-    return nonIndexObjectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
+    return true;
 }
 
 // Expected's entries as a subset of actual's: identity keys fast-path with
@@ -473,6 +642,8 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
                 RETURN_IF_EXCEPTION(scope, false);
                 bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
                 RETURN_IF_EXCEPTION(scope, false);
+                if (cycles.endless)
+                    return false;
                 if (equal) {
                     usedIdentityKeys.append(expectedKey);
                     if (identityIndex != SIZE_MAX)
@@ -499,10 +670,14 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
                 continue;
             bool keyEqual = compareBranch(globalObject, gcBuffer, cycles, scope, candidateKey, expectedKey);
             RETURN_IF_EXCEPTION(scope, false);
+            if (cycles.endless)
+                return false;
             if (!keyEqual)
                 continue;
             bool valueEqual = compareBranch(globalObject, gcBuffer, cycles, scope, gcBuffer.at(entriesStart + i * 2 + 1), expectedValue);
             RETURN_IF_EXCEPTION(scope, false);
+            if (cycles.endless)
+                return false;
             if (valueEqual) {
                 usedIndices[i] = true;
                 matched = true;
@@ -548,6 +723,8 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
                 continue;
             bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, gcBuffer.at(itemsStart + i), expectedItem);
             RETURN_IF_EXCEPTION(scope, false);
+            if (cycles.endless)
+                return false;
             if (equal) {
                 usedIndices[i] = true;
                 matched = true;
@@ -626,25 +803,24 @@ static JSC::JSWrapperObject* asBoxedPrimitive(JSValue value)
     return nullptr;
 }
 
-// Container contents first, then own enumerable properties on the Map/Set
-// object itself — node's partial mode checks both (subset semantics), like
-// every other container arm.
+// Own enumerable properties on the Map/Set object itself first, then the container contents — node's partial mode
+// checks both (subset semantics), like every other container arm, and in this order (objEquiv).
 static bool mapSubsetAndProps(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
-    bool contents = mapSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
+    bool props = objectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
     RETURN_IF_EXCEPTION(scope, false);
-    if (!contents)
+    if (!props)
         return false;
-    return objectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
+    return mapSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
 }
 
 static bool setSubsetAndProps(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
-    bool contents = setSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
+    bool props = objectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
     RETURN_IF_EXCEPTION(scope, false);
-    if (!contents)
+    if (!props)
         return false;
-    return objectSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
+    return setSubset(globalObject, gcBuffer, cycles, scope, actual, expected);
 }
 
 static bool isSpecialValue(JSValue value)
@@ -658,8 +834,11 @@ static bool isSpecialValue(JSValue value)
 static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     auto& vm = globalObject->vm();
-    if (!vm.isSafeToRecurse()) [[unlikely]] {
-        JSC::throwStackOverflowError(globalObject, scope);
+    if (currentStackPointer() < cycles.stackEnd) [[unlikely]] {
+        if (cycles.memos)
+            JSC::throwStackOverflowError(globalObject, scope);
+        else
+            cycles.endless = true;
         return false;
     }
 
@@ -867,11 +1046,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPartialDeepStrictEqual,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callframe))
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::MarkedArgumentBuffer gcBuffer;
-    PartialDeepEqual::CycleState cycles;
+    PartialDeepEqual::CycleState cycles { PartialDeepEqual::stackEndOfFirstRun(vm) };
     bool result = PartialDeepEqual::compareBranch(globalObject, gcBuffer, cycles, scope, callframe->argument(0), callframe->argument(1));
     RETURN_IF_EXCEPTION(scope, {});
+    if (cycles.endless) [[unlikely]] {
+        cycles.endless = false;
+        cycles.stackEnd = vm.stackLimit();
+        cycles.memos.emplace(gcBuffer);
+        result = PartialDeepEqual::compareBranch(globalObject, gcBuffer, cycles, scope, callframe->argument(0), callframe->argument(1));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     return JSValue::encode(jsBoolean(result));
 }
 

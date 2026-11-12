@@ -1092,7 +1092,7 @@ function getDarwinSignStep(darwinPlatforms: Platform[]): CommandStep {
     agents: { queue: "release-darwin" },
     retry: getRetry(),
     timeout_in_minutes: 30,
-    command: `.buildkite/scripts/sign-darwin-artifacts.sh ${artifacts.join(" ")}`,
+    command: `node .buildkite/scripts/sign-darwin-artifacts.ts ${artifacts.join(" ")}`,
   };
 }
 
@@ -1139,7 +1139,7 @@ function getReleaseStep(releasePlatforms: Platform[], kind: "canary" | "draft"):
     label: getBuildkiteEmoji("rocket"),
     agents: getEc2Agent(buildHostPlatform, { instanceType: "c8g.large" }),
     depends_on: releasePlatforms.map(platform => `${getTargetKey(platform)}-build-bun`),
-    command: `.buildkite/scripts/upload-release.sh ${kind}`,
+    command: `node .buildkite/scripts/upload-release.ts ${kind}`,
   };
 }
 

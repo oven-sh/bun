@@ -39,6 +39,29 @@ export function getEnv(name: string): string {
   return value;
 }
 
+/** A secret of the Buildkite cluster. Unlike getSecret(), it stays out of the environment that child processes inherit. */
+export function readSecret(name: string, ...flags: string[]): string {
+  const { status, stdout } = spawnSync("buildkite-agent", ["secret", "get", name, ...flags], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  const secret = status === 0 && stdout.trim();
+  if (!secret) {
+    const orgId = process.env.BUILDKITE_ORGANIZATION_SLUG;
+    const clusterId = process.env.BUILDKITE_CLUSTER_ID;
+
+    let hint;
+    if (orgId && clusterId) {
+      hint = `https://buildkite.com/organizations/${orgId}/clusters/${clusterId}/secrets`;
+    } else {
+      hint = "https://buildkite.com/docs/pipelines/buildkite-secrets";
+    }
+
+    throw new Error(`Secret not found: ${name} (hint: go to ${hint} and create a secret)`);
+  }
+  return secret;
+}
+
 interface SecretOptions {
   required?: boolean;
 }
@@ -54,21 +77,7 @@ export function getSecret(name: string, { required = true }: SecretOptions = {})
   }
 
   if (isBuildkite) {
-    const secret = output(["buildkite-agent", "secret", "get", name])?.trim();
-    if (!secret) {
-      const orgId = process.env.BUILDKITE_ORGANIZATION_SLUG;
-      const clusterId = process.env.BUILDKITE_CLUSTER_ID;
-
-      let hint;
-      if (orgId && clusterId) {
-        hint = `https://buildkite.com/organizations/${orgId}/clusters/${clusterId}/secrets`;
-      } else {
-        hint = "https://buildkite.com/docs/pipelines/buildkite-secrets";
-      }
-
-      throw new Error(`Secret not found: ${name} (hint: go to ${hint} and create a secret)`);
-    }
-
+    const secret = readSecret(name);
     process.env[name] = secret;
     return secret;
   }

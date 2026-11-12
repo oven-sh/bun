@@ -4,7 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { isLinux, tempDir } from "harness";
 import { generateKeyPairSync } from "node:crypto";
-import { chmodSync, existsSync, readdirSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 const repoRoot = join(import.meta.dir, "..", "..", "..");
@@ -62,7 +62,7 @@ function sandbox(programs: Record<string, string>, files: Record<string, string>
         cmd,
         cwd: path,
         env: {
-          PATH: `${join(path, "bin")}:${process.env.PATH}`,
+          PATH: `${join(path, "bin")}:${env.STUB_PATH ?? process.env.PATH}`,
           HOME: path,
           TMPDIR: path,
           STUB_DIR: path,
@@ -82,14 +82,18 @@ function sandbox(programs: Record<string, string>, files: Record<string, string>
 describe.skipIf(!isLinux)("check-release.ts", () => {
   const check = async (env: Env) => {
     using box = sandbox({});
-    return await box.run([process.execPath, join(repoRoot, "scripts", "check-release.ts")], {
-      ...releaseBuild,
-      ...env,
-    });
+    const script = `
+      import { checkRelease } from ${JSON.stringify(join(repoRoot, "scripts", "check-release.ts"))};
+      console.log(JSON.stringify(checkRelease()));`;
+    return await box.run([process.execPath, "-e", script], { ...releaseBuild, ...env });
   };
 
-  test.concurrent.each([commit, "HEAD"])("prints the release that %s follows", async BUILDKITE_COMMIT => {
-    expect(await check({ BUILDKITE_COMMIT })).toEqual({ stdout: "bun-v1.9.10\n", stderr: "", exitCode: 0 });
+  test.concurrent.each([commit, "HEAD"])("accepts a build of %s", async BUILDKITE_COMMIT => {
+    expect(await check({ BUILDKITE_COMMIT })).toEqual({
+      stdout: `${JSON.stringify({ version: "1.10.0", commit, previousTag: "bun-v1.9.10" })}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test.concurrent.each<[string, Env, string]>([
@@ -107,22 +111,22 @@ describe.skipIf(!isLinux)("check-release.ts", () => {
     [
       "a published version",
       { STUB_TAGS: "bun-v1.9.10 bun-v1.10.0" },
-      `1.10.0 is not newer than 1.10.0, which https://github.com/${repo} has already published`,
+      `1.10.0 is not newer than 1.10.0, which ${repo} has already published`,
     ],
     [
       "a version published for the updater",
       { STUB_UPDATER_TAGS: "bun-v1.10.0" },
-      `1.10.0 is not newer than 1.10.0, which https://github.com/${updaterRepo} has already published`,
+      `1.10.0 is not newer than 1.10.0, which ${updaterRepo} has already published`,
     ],
     ["an older patch", { STUB_TAGS: "bun-v1.10.1" }, "1.10.0 is not newer than 1.10.1"],
     ["an older major", { STUB_TAGS: "bun-v2.0.0 bun-v1.0.0" }, "1.10.0 is not newer than 2.0.0"],
-    ["no tags", { STUB_TAGS: "" }, `https://github.com/${repo} has no bun-v* tags`],
+    ["no tags", { STUB_TAGS: "" }, `${repo} has no bun-v* tags`],
     [
       "a branch that moved",
       { STUB_HEAD: otherCommit },
       `This build is of ${commit}, but release/bun-v1.10.0 is at ${otherCommit}.`,
     ],
-    ["a missing branch", { STUB_HEAD: "" }, `https://github.com/${repo} has no branch named release/bun-v1.10.0`],
+    ["a missing branch", { STUB_HEAD: "" }, `${repo} has no branch named release/bun-v1.10.0`],
     ["an unreachable remote", { STUB_GIT_ERROR: "unable to access" }, "unable to access"],
   ])("refuses %s", async (_, env, message) => {
     const { stdout, stderr, exitCode } = await check(env);
@@ -182,7 +186,7 @@ esac`,
       everyMac: groups.some(({ key }) => key === "darwin-aarch64-14"),
       enforcesSize: /binary-size/.test(command("binary-size")) && !command("binary-size").includes("--no-fail"),
       signs: steps.map(({ key }) => key).filter(key => key.endsWith("-sign")),
-      uploads: command("release").split(" ")[1],
+      uploads: command("release").split(" ")[2],
     };
     return { stderr, exitCode, steps, summary };
   }
@@ -273,20 +277,20 @@ esac`,
       agents: { queue: "release-darwin" },
       depends_on: ["darwin-aarch64-build-bun", "darwin-x64-build-bun"],
       command:
-        ".buildkite/scripts/sign-darwin-artifacts.sh" +
+        "node .buildkite/scripts/sign-darwin-artifacts.ts" +
         " bun-darwin-aarch64-profile.zip=darwin-aarch64-build-bun bun-darwin-aarch64.zip=darwin-aarch64-build-bun" +
         " bun-darwin-x64-profile.zip=darwin-x64-build-bun bun-darwin-x64.zip=darwin-x64-build-bun",
     });
   });
 });
 
-const hasTools = isLinux && ["cmake", "unzip", "jq", "openssl"].every(tool => Bun.which(tool));
+const hasTools = isLinux && ["cmake", "unzip"].every(tool => Bun.which(tool));
 
 /** An artifact holds one file, $STUB_BINARY followed by the key of the step it came from. */
 const agent = `#!/bin/bash
 ${log}
 case "$1 $2" in
-  "secret get") name="STUB_SECRET_$3"; echo "\${!name:-secret}" ;;
+  "secret get") [ "$3" != "$STUB_MISSING_SECRET" ] || exit 1; name="STUB_SECRET_$3"; echo "\${!name:-secret}" ;;
   "artifact download")
     [ "$3" != "$STUB_MISSING_ARTIFACT" ] || exit 1
     zip="$PWD/$3"; directory="\${3%.zip}"; binary=bun
@@ -295,10 +299,10 @@ case "$1 $2" in
     echo "$STUB_BINARY\${6:-any}" > "$directory/$binary" && chmod +x "$directory/$binary"
     cmake -E tar cf "$zip" --format=zip "$directory" ;;
   "annotate "*) cat > "$STUB_DIR/annotation.md" ;;
-  "redactor add") cat > /dev/null ;;
+  "redactor add") cat > "$STUB_DIR/redacted.txt" ;;
 esac`;
 
-describe.skipIf(!hasTools)("upload-release.sh", () => {
+describe.skipIf(!hasTools)("upload-release.ts", () => {
   interface Release {
     id: number;
     draft: boolean;
@@ -316,63 +320,92 @@ describe.skipIf(!hasTools)("upload-release.sh", () => {
     const text = { type: "string" }, flag = { type: "boolean" };
     const { values, positionals } = parseArgs({
       allowPositionals: true,
-      options: {
-        repo: text, title: text, target: text, notes: text, "notes-file": text, draft: flag, clobber: flag,
-        method: text, jq: text, paginate: flag, field: { type: "string", short: "f", multiple: true },
-      },
+      options: { repo: text, title: text, target: text, notes: text, draft: flag, clobber: flag },
     });
-    const { STUB_DIR, STUB_CORRUPT, STUB_DUPLICATE, STUB_FAIL_CREATE, STUB_FAIL_RENAME } = process.env;
-    const state = JSON.parse(readFileSync(STUB_DIR + "/releases.json", "utf8"));
-    let pages = [];
+    const { GH_TOKEN, STUB_DIR, STUB_CORRUPT, STUB_EXTRA, STUB_DUPLICATE, STUB_FAIL_CREATE } = process.env;
+    if (GH_TOKEN !== "token") process.exit(4);
+    if (positionals[1] !== "create") process.exit(0);
 
-    if (positionals[0] === "release") {
-      if (positionals[1] !== "create") process.exit(0);
-      const [, , tag_name, ...files] = positionals;
-      const assets = files.map(name => ({ name, digest: "sha256:" + Bun.SHA256.hash(readFileSync(name), "hex") }));
-      if (STUB_CORRUPT === values.repo) assets[3].digest = "sha256:0";
-      if (STUB_FAIL_CREATE === values.repo) assets.length = 3;
-      for (const id of STUB_DUPLICATE === values.repo ? [100, 101] : [100]) {
-        state[values.repo].push({
-          id, tag_name, assets, draft: !!values.draft, name: values.title, target_commitish: values.target ?? "master",
-          body: values.notes ?? readFileSync(values["notes-file"], "utf8"),
-        });
-      }
-      if (STUB_FAIL_CREATE === values.repo) {
-        console.error("upload failed");
-        process.exitCode = 1;
-      }
-    } else {
-      const [, repo, kind, id, assets] = /^repos\\/([^/]+\\/[^/]+)\\/(\\w+)\\/?([^/?]+)?(\\/assets)?/.exec(positionals[1]);
-      const release = state[repo].find(release => release.id === Number(id));
-      const user = login => ({ author: { login, type: "User" } });
-      if (kind === "compare") {
-        if (id !== "bun-v1.9.10...${commit}") process.exit(1);
-        pages = [
-          { commits: [user("zed"), user("Bob"), { author: null }] },
-          { commits: [user("alice"), user("zed"), { author: { login: "app[bot]", type: "Bot" } }] },
-        ];
-      } else if (values.method === "DELETE") {
-        state[repo] = state[repo].filter(other => other !== release);
-      } else if (values.method === "PATCH") {
-        if (STUB_FAIL_RENAME === repo) {
-          console.error("rename failed");
-          process.exit(1);
-        }
-        const fields = Object.fromEntries(values.field.map(field => field.split("=")));
-        Object.assign(release, { tag_name: "untagged-1" }, fields);
-        pages = [{ ...release, html_url: "https://github.com/" + repo + "/releases/" + id }];
-      } else {
-        const list = assets ? release.assets : state[repo];
-        pages = [list.slice(0, 2), list.slice(2)];
-      }
+    const [, , tag_name, ...files] = positionals;
+    const assets = files.map(name => ({ name, digest: "sha256:" + Bun.SHA256.hash(readFileSync(name), "hex") }));
+    if (STUB_CORRUPT === values.repo) assets[3].digest = "sha256:0";
+    if (STUB_EXTRA === values.repo) assets.push({ name: "extra.zip", digest: null });
+    if (STUB_FAIL_CREATE === values.repo) {
+      assets.length = 3;
+      console.error("upload failed");
+      process.exitCode = 1;
     }
+    const state = JSON.parse(readFileSync(STUB_DIR + "/releases.json", "utf8"));
+    for (const id of STUB_DUPLICATE === values.repo ? [100, 101] : [100]) {
+      state[values.repo].push({
+        id, tag_name, assets, draft: !!values.draft, name: values.title, body: values.notes,
+        target_commitish: values.target ?? "master",
+      });
+    }
+    writeFileSync(STUB_DIR + "/releases.json", JSON.stringify(state));`;
 
-    writeFileSync(STUB_DIR + "/releases.json", JSON.stringify(state));
-    for (const page of values.paginate ? pages : pages.slice(0, 1)) {
-      const jq = Bun.spawnSync(["jq", "-r", values.jq], { stdin: Buffer.from(JSON.stringify(page)), stderr: "inherit" });
-      process.stdout.write(jq.stdout);
-      process.exitCode ||= jq.exitCode;
-    }`;
+  const { privateKey, publicKey } = generateKeyPairSync("rsa", {
+    modulusLength: 1024,
+    privateKeyEncoding: { type: "pkcs1", format: "pem" },
+    publicKeyEncoding: { type: "pkcs1", format: "pem" },
+  });
+
+  /** What matters is on the second page of every list but that of a draft's files. */
+  const api = `
+    import { createVerify } from "node:crypto";
+    import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+    const { STUB_DIR, STUB_FAIL_RENAME } = process.env;
+    const user = login => ({ author: { login, type: "User" } });
+
+    globalThis.fetch = async (url, { method, headers, body } = {}) => {
+      const { hostname, pathname, searchParams } = new URL(url);
+      if (hostname === "github.com") return { url: url.replace("latest", "tag/v1.2.3") };
+      if (hostname === "discord.test") {
+        const [{ title, description }] = JSON.parse(body).embeds;
+        appendFileSync(STUB_DIR + "/calls.txt", "discord " + JSON.stringify({ title, description }) + "\\n");
+        return new Response(null, { status: Number(process.env.STUB_DISCORD_STATUS ?? 204) });
+      }
+
+      const token = headers.Authorization.slice("Bearer ".length);
+      if (method === "POST" && pathname === "/app/installations/177437987/access_tokens") {
+        const [header, payload, signature] = token.split(".");
+        const { iss, iat, exp } = JSON.parse(Buffer.from(payload, "base64url"));
+        const now = Date.now() / 1000;
+        const signed = createVerify("RSA-SHA256")
+          .update(header + "." + payload)
+          .verify(${JSON.stringify(publicKey)}, signature, "base64url");
+        const valid = signed && iss === "Iv23li0GlmKSYj59x7e3" && iat < now && now < exp && exp < now + 600;
+        return valid ? Response.json({ token: "token" }) : new Response("bad JWT", { status: 400 });
+      }
+      if (token !== "token") return new Response("bad token", { status: 400 });
+
+      const page = (list, filler) => {
+        const [size, number] = [Number(searchParams.get("per_page")), Number(searchParams.get("page"))];
+        return [...(filler ? Array(size).fill(filler) : []), ...list].slice((number - 1) * size, number * size);
+      };
+      const [, repo, kind, id, assets] = /^.repos.([^/]+.[^/]+).(\\w+).?([^/]+)?(.assets)?$/.exec(pathname);
+      if (kind === "compare") {
+        if (id !== "bun-v1.9.10...${commit}") return new Response("no such range", { status: 404 });
+        const bot = { author: { login: "app[bot]", type: "Bot" } };
+        return Response.json({ commits: page([user("Bob"), { author: null }, user("alice"), bot], user("zed")) });
+      }
+
+      const state = JSON.parse(readFileSync(STUB_DIR + "/releases.json", "utf8"));
+      const release = state[repo].find(release => release.id === Number(id));
+      if (method === "GET") {
+        return Response.json(assets ? page(release.assets) : page(state[repo], { id: 0, draft: false, tag_name: "old" }));
+      }
+      if (method === "DELETE") {
+        state[repo] = state[repo].filter(other => other !== release);
+      } else {
+        if (STUB_FAIL_RENAME === repo) return new Response("rename failed", { status: 422 });
+        Object.assign(release, { tag_name: "untagged-1" }, JSON.parse(body));
+      }
+      writeFileSync(STUB_DIR + "/releases.json", JSON.stringify(state));
+      return method === "DELETE"
+        ? new Response(null, { status: 204 })
+        : Response.json({ ...release, html_url: "https://github.com/" + repo + "/releases/" + id });
+    };`;
 
   const untouched: Release[] = [
     { id: 1, draft: false, tag_name: "bun-v1.10.0", name: "published after the check" },
@@ -386,27 +419,24 @@ describe.skipIf(!hasTools)("upload-release.sh", () => {
     ],
     [updaterRepo]: [...untouched, { id: 5, draft: true, tag_name: "bun-v1.10.0", name: "Bun v1.10.0" }],
   };
-  const { privateKey } = generateKeyPairSync("rsa", {
-    modulusLength: 1024,
-    privateKeyEncoding: { type: "pkcs1", format: "pem" },
-    publicKeyEncoding: { type: "pkcs1", format: "pem" },
-  });
+  const programs = {
+    "gh": `#!/bin/bash\n${log}\nexec "${process.execPath}" "$STUB_DIR/gh.mjs" "$@"`,
+    "aws": `#!/bin/bash\n${log}\n[ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$AWS_SECRET_ACCESS_KEY" ] && [ -z "$STUB_FAIL_S3" ]`,
+    "sentry-cli": `#!/bin/bash\n${log}\n[ -n "$SENTRY_AUTH_TOKEN" ] && [ -n "$SENTRY_ORG" ] && [ -n "$SENTRY_PROJECT" ]`,
+  };
 
-  async function upload(kind: string, env: Env = {}) {
+  async function upload(kind: string, env: Env = {}, installed: Env = programs) {
     using box = sandbox(
-      {
-        "buildkite-agent": agent,
-        "gh": `#!/bin/bash\n${log}\nexec "${process.execPath}" "$STUB_DIR/gh.mjs" "$@"`,
-        "node": `#!/bin/bash\nexec "${process.execPath}" "${repoRoot}/$1"`,
-        "curl": `#!/bin/bash\necho '{"token":"token"}'`,
-        "aws": "#!/bin/bash",
-        "sentry-cli": "#!/bin/bash",
-      },
-      { "gh.mjs": gh, "releases.json": JSON.stringify(before) },
+      { "buildkite-agent": agent, ...installed },
+      { "gh.mjs": gh, "api.mjs": api, "releases.json": JSON.stringify(before), "redacted.txt": "" },
     );
-    const result = await box.run([join(repoRoot, ".buildkite", "scripts", "upload-release.sh"), kind], {
+    const script = join(repoRoot, ".buildkite", "scripts", "upload-release.ts");
+    const result = await box.run([process.execPath, "--preload", "./api.mjs", script, kind], {
       ...releaseBuild,
       STUB_SECRET_GITHUB_APP_BUN_RELEASE_UPLOAD_PRIVATE_KEY_BASE64: btoa(privateKey),
+      STUB_SECRET_BUN_ANNOUNCE_CANARY_WEBHOOK_URL: "https://discord.test/webhook",
+      STUB_SECRET_AWS_ENDPOINT: "https://s3.test",
+      STUB_SECRET_AWS_BUCKET: "bucket",
       ...env,
     });
     const zips = readdirSync(box.path).filter(file => file.endsWith(".zip"));
@@ -415,6 +445,7 @@ describe.skipIf(!hasTools)("upload-release.sh", () => {
       ...result,
       releases: JSON.parse(box.read("releases.json")) as Releases,
       calls: box.calls(),
+      redacted: box.read("redacted.txt"),
       annotation: existsSync(join(box.path, "annotation.md")) ? box.read("annotation.md") : undefined,
       origins:
         result.exitCode === 0
@@ -438,7 +469,9 @@ describe.skipIf(!hasTools)("upload-release.sh", () => {
   const files = targets.flatMap(target => [`bun-${target}.zip`, `bun-${target}-profile.zip`]).sort();
 
   test.concurrent("draft replaces the drafts of the version", async () => {
-    const { releases, origins, annotation, exitCode } = await upload("draft");
+    const { releases, origins, redacted, annotation, exitCode } = await upload("draft");
+
+    expect(redacted).toBe("token");
 
     expect(origins).toEqual(
       Object.fromEntries(
@@ -508,33 +541,15 @@ describe.skipIf(!hasTools)("upload-release.sh", () => {
     expect({ releases, annotation, exitCode }).toEqual({ releases: before, annotation: undefined, exitCode: 1 });
   });
 
+  const both = [[incomplete], [incomplete]];
   test.concurrent.each<[string, Env, string[][], string]>([
     ["an upload fails", { STUB_FAIL_CREATE: repo }, [[incomplete], []], "upload failed"],
-    [
-      "an upload for the updater fails",
-      { STUB_FAIL_CREATE: updaterRepo },
-      [[incomplete], [incomplete]],
-      "upload failed",
-    ],
-    ["a file differs", { STUB_CORRUPT: repo }, [[incomplete], [incomplete]], `the draft on ${repo} are not`],
-    [
-      "a file for the updater differs",
-      { STUB_CORRUPT: updaterRepo },
-      [[incomplete], [incomplete]],
-      `the draft on ${updaterRepo} are not`,
-    ],
-    [
-      "another draft appears",
-      { STUB_DUPLICATE: updaterRepo },
-      [[incomplete], [incomplete, incomplete]],
-      `on ${updaterRepo}, found: 100 101`,
-    ],
-    [
-      "the updater's draft cannot be renamed",
-      { STUB_FAIL_RENAME: updaterRepo },
-      [[incomplete], [incomplete]],
-      "rename failed",
-    ],
+    ["an upload for the updater fails", { STUB_FAIL_CREATE: updaterRepo }, both, "upload failed"],
+    ["a file differs", { STUB_CORRUPT: repo }, both, `${repo} differs from this build in: bun-darwin-x64-profile.zip`],
+    ["a file for the updater differs", { STUB_CORRUPT: updaterRepo }, both, `${updaterRepo} differs from this build`],
+    ["there is a file too many", { STUB_EXTRA: repo }, both, `${repo} differs from this build in: extra.zip`],
+    ["another draft appears", { STUB_DUPLICATE: repo }, [[incomplete, incomplete], [incomplete]], "found: 100, 101"],
+    ["the updater's draft cannot be renamed", { STUB_FAIL_RENAME: updaterRepo }, both, "releases/100: 422"],
   ])("draft leaves both drafts incomplete when %s", async (_, env, expected, message) => {
     const { releases, annotation, stderr, exitCode } = await upload("draft", env);
     expect(stderr).toContain(message);
@@ -545,45 +560,143 @@ describe.skipIf(!hasTools)("upload-release.sh", () => {
     });
   });
 
+  const main = { BUILDKITE_BRANCH: "main", BUILDKITE_SOURCE: "webhook" };
+  /** The calls after the downloads, with the lists of files folded. */
+  const published = (calls: string[]) => [
+    ...new Set(
+      calls
+        .slice(calls.findLastIndex(call => call.includes("artifact download")) + 1)
+        .map(call => call.replaceAll(/bun-[\w-]+\.zip( bun-[\w-]+\.zip)*/g, "<zip>")),
+    ),
+  ];
+
   test.concurrent("canary uploads the builds of main", async () => {
-    const { calls, origins, exitCode } = await upload("canary", { BUILDKITE_BRANCH: "main" });
+    const { calls, origins, releases, exitCode } = await upload("canary", main);
     expect(origins).toEqual(Object.fromEntries(files.map(file => [file, "any"])));
-    expect(calls.filter(call => call.startsWith("gh ")).map(call => call.split(" ", 4).join(" "))).toEqual([
-      "gh release upload canary",
-      "gh release edit canary",
-    ]);
+    expect(calls).toContain("buildkite-agent secret get AWS_BUCKET --skip-redaction");
+    expect(
+      calls
+        .find(call => call.startsWith("gh release upload"))!
+        .match(/\S+\.zip/g)!
+        .sort(),
+    ).toEqual(files);
+    expect(calls.filter(call => call.startsWith("aws "))).toHaveLength(files.length * 2);
+    expect(published(calls).join("\n")).toMatchInlineSnapshot(`
+      "gh release upload canary <zip> --clobber --repo oven-sh/bun
+      gh release edit canary --repo oven-sh/bun --notes This release of Bun corresponds to the commit: 0123456789abcdef0123456789abcdef01234567
+      sentry-cli releases new 0123456789abcdef0123456789abcdef01234567-canary --finalize
+      sentry-cli releases set-commits 0123456789abcdef0123456789abcdef01234567-canary --auto --ignore-missing
+      sentry-cli deploys new --env=canary --release=0123456789abcdef0123456789abcdef01234567-canary
+      buildkite-agent secret get BUN_ANNOUNCE_CANARY_WEBHOOK_URL
+      discord {"title":"New Bun Canary now available","description":"A new canary build of Bun has been automatically uploaded ([0123456](https://github.com/oven-sh/bun/commit/0123456789abcdef0123456789abcdef01234567)). To upgrade, run:\\n\\n\`\`\`shell\\nbun upgrade --canary\\n\`\`\`\\nCommit: \`0123456789abcdef0123456789abcdef01234567\`"}
+      aws --endpoint-url=https://s3.test s3 cp <zip> s3://bucket/releases/0123456789abcdef0123456789abcdef01234567-canary/<zip>
+      aws --endpoint-url=https://s3.test s3 cp <zip> s3://bucket/releases/canary/<zip>"
+    `);
+    expect({ releases, exitCode }).toEqual({ releases: before, exitCode: 0 });
+  });
+
+  test.concurrent.each<[string, Env]>([
+    ["S3 fails", { STUB_FAIL_S3: "1" }],
+    ["there is no webhook", { STUB_MISSING_SECRET: "BUN_ANNOUNCE_CANARY_WEBHOOK_URL" }],
+  ])("canary still ships when %s", async (_, env) => {
+    const { calls, exitCode } = await upload("canary", { ...main, ...env });
+    expect(calls.filter(call => call.startsWith("aws "))).toHaveLength(files.length * 2);
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent.each([
-    ["canary", "error: Cannot upload release from a branch other than main\n"],
-    ["", "error: Expected canary or draft, got: \n"],
-  ])("refuses %p on a release branch", async (kind, stdout) => {
-    expect(await upload(kind)).toMatchObject({ stdout, calls: [], exitCode: 1 });
+  test.concurrent.each<[string, Env, string]>([
+    ["a file is missing", { STUB_MISSING_ARTIFACT: "bun-linux-x64.zip" }, "artifact download bun-linux-x64.zip"],
+    ["a secret is missing", { STUB_MISSING_SECRET: "SENTRY_ORG" }, "Secret not found: SENTRY_ORG"],
+    ["it is another branch", { BUILDKITE_BRANCH: "release/bun-v1.10.0" }, "only uploaded from main"],
+    ["it is a pull request", { BUILDKITE_PULL_REQUEST: "123" }, "only uploaded from main"],
+    ["it is a fork", { BUILDKITE_PULL_REQUEST_REPO: "https://github.com/someone/bun.git" }, "only uploaded from main"],
+  ])("canary uploads nothing when %s", async (_, env, message) => {
+    const { calls, stderr, exitCode } = await upload("canary", { ...main, ...env });
+    expect(stderr).toContain(message);
+    expect(calls.filter(call => !call.startsWith("buildkite-agent "))).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("canary does not print the webhook when the announcement fails", async () => {
+    const { stdout, stderr, exitCode } = await upload("canary", { ...main, STUB_DISCORD_STATUS: "500" });
+    expect(stderr).toContain("Failed to announce the canary on Discord: 500");
+    expect(stdout + stderr).not.toContain("discord.test");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("canary installs the programs that the machine lacks", async () => {
+    // A PATH without whatever gh, aws and sentry-cli this machine has.
+    using path = tempDir("release-path", programs);
+    mkdirSync(join(String(path), "bin"));
+    for (const name of [
+      "basename",
+      "cat",
+      "chmod",
+      "cmake",
+      "cp",
+      "env",
+      "install",
+      "mkdir",
+      "mktemp",
+      "sh",
+      "tar",
+      "gzip",
+      "unzip",
+    ]) {
+      symlinkSync(Bun.which(name)!, join(String(path), "bin", name));
+    }
+    const curl = `#!/bin/bash
+${log}
+out="$PWD/$4"; cd "$(mktemp -d)"
+case "$2" in
+  */cli/cli/*) mkdir -p gh/bin && install "${path}/gh" gh/bin && tar -czf "$out" gh ;;
+  */awscli-*)
+    mkdir aws && printf '#!/bin/sh\\ninstall "${path}/aws" "$4"' > aws/install && chmod +x aws/install
+    cmake -E tar cf "$out" --format=zip aws ;;
+  *) echo 'install "${path}/sentry-cli" "$INSTALL_DIR"' > "$out" ;;
+esac`;
+    const { calls, exitCode } = await upload("canary", { ...main, STUB_PATH: join(String(path), "bin") }, { curl });
+    const [gh, aws] = process.arch === "x64" ? ["amd64", "x86_64"] : ["arm64", "aarch64"];
+    expect(calls.filter(call => call.startsWith("curl ")).map(call => call.split(" ")[2])).toEqual([
+      `https://github.com/cli/cli/releases/download/v1.2.3/gh_1.2.3_linux_${gh}.tar.gz`,
+      `https://awscli.amazonaws.com/awscli-exe-linux-${aws}.zip`,
+      "https://sentry.io/get-cli/",
+    ]);
+    expect(published(calls)).toHaveLength(9);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("refuses another kind of release", async () => {
+    const { calls, stderr, exitCode } = await upload("latest");
+    expect(stderr).toContain("Expected canary or draft, got: latest");
+    expect({ calls, exitCode }).toEqual({ calls: [], exitCode: 1 });
   });
 });
 
-describe.skipIf(!hasTools)("sign-darwin-artifacts.sh", () => {
+describe.skipIf(!hasTools)("sign-darwin-artifacts.ts", () => {
   const signature = "flags=0x10000(runtime) Hash type=sha256 Timestamp=now";
 
   async function sign(env: Env = {}) {
     using box = sandbox({
       "buildkite-agent": agent,
       "curl": `#!/bin/bash\n${log}`,
-      "uuidgen": "#!/bin/bash\necho uuid",
-      "security": `#!/bin/bash\n${log}`,
-      "ditto": `#!/bin/bash\n${log}`,
+      "security": `#!/bin/bash
+${log}
+[[ "$2" != *.p12 || "$(cat "$2")" == p12 ]] || exit 1
+[[ -z "$STUB_SECURITY_FAILS" || "$*" != *"$STUB_SECURITY_FAILS"* ]]`,
+      "ditto": `#!/bin/bash\n${log}\n[ -d "$5" ] && touch "$6"`,
       "codesign": `#!/bin/bash
 ${log}
 [ "$1" != "$STUB_CODESIGN_FAILS" ] || exit 1
 [ "$1" != "--display" ] || echo "$STUB_SIGNATURE" >&2`,
     });
     const artifacts = ["aarch64-profile", "aarch64", "x64"].map(name => `bun-darwin-${name}.zip=build-${name}`);
-    const { exitCode } = await box.run(
-      [join(repoRoot, ".buildkite", "scripts", "sign-darwin-artifacts.sh"), ...artifacts],
+    const { stdout, stderr, exitCode } = await box.run(
+      [process.execPath, join(repoRoot, ".buildkite", "scripts", "sign-darwin-artifacts.ts"), ...artifacts],
       {
         ...releaseBuild,
         STUB_SECRET_APPLE_DEVELOPER_ID_P12_BASE64: btoa("p12"),
+        STUB_SECRET_APPLE_DEVELOPER_ID_P12_PASSWORD: "hunter2",
         STUB_SIGNATURE: signature,
         STUB_REVISION: "1.10.0+012345678",
         STUB_BINARY: `#!/bin/bash
@@ -596,48 +709,49 @@ ${log}
     );
     const calls = box.calls().map(call =>
       call
-        .replaceAll(/\S+\/tmp\.\w+/g, "<work>")
-        .replaceAll(box.path, "<checkout>")
-        .replaceAll(/ +/g, " "),
+        .replaceAll(/\S+\/sign-\w{6}\b/g, "<work>")
+        .replaceAll(repoRoot, "<checkout>")
+        .replaceAll(/[\da-f]{8}(-[\da-f]{4}){3}-[\da-f]{12}/g, "<uuid>"),
     );
-    return { exitCode, calls };
+    const leftovers = readdirSync(box.path).filter(name => name.startsWith("sign-"));
+    return { printed: stdout + stderr, exitCode, calls, leftovers };
   }
 
   test.concurrent("signs, checks and uploads each zip", async () => {
     const { calls, exitCode } = await sign();
     expect(calls.join("\n")).toMatchInlineSnapshot(`
-      "security create-keychain -p uuid <work>/signing.keychain-db
+      "security create-keychain -p <uuid> <work>/signing.keychain-db
       security set-keychain-settings <work>/signing.keychain-db
-      security unlock-keychain -p uuid <work>/signing.keychain-db
-      curl -fsSL --retry 3 -o <work>/DeveloperIDCA.cer https://www.apple.com/certificateauthority/DeveloperIDCA.cer
+      security unlock-keychain -p <uuid> <work>/signing.keychain-db
+      curl -fsSL --retry 3 -o DeveloperIDCA.cer https://www.apple.com/certificateauthority/DeveloperIDCA.cer
       security import <work>/DeveloperIDCA.cer -k <work>/signing.keychain-db
-      curl -fsSL --retry 3 -o <work>/DeveloperIDG2CA.cer https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+      curl -fsSL --retry 3 -o DeveloperIDG2CA.cer https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
       security import <work>/DeveloperIDG2CA.cer -k <work>/signing.keychain-db
       buildkite-agent secret get APPLE_DEVELOPER_ID_P12_BASE64
       buildkite-agent secret get APPLE_DEVELOPER_ID_P12_PASSWORD
-      security import <work>/identity.p12 -k <work>/signing.keychain-db -f pkcs12 -P secret -T /usr/bin/codesign
-      security set-key-partition-list -S apple-tool:,apple: -s -k uuid <work>/signing.keychain-db
+      security import <work>/identity.p12 -k <work>/signing.keychain-db -f pkcs12 -P hunter2 -T /usr/bin/codesign
+      security set-key-partition-list -S apple-tool:,apple: -s -k <uuid> <work>/signing.keychain-db
       security list-keychains -d user -s <work>/signing.keychain-db
       buildkite-agent artifact download bun-darwin-aarch64-profile.zip . --step build-aarch64-profile
-      codesign --entitlements <checkout>/.buildkite/scripts/entitlements.profile.plist --options runtime --force --timestamp -vvvv --deep --strict --keychain <work>/signing.keychain-db --sign Developer ID Application bun-darwin-aarch64-profile/bun-profile
-      codesign --verify --strict --verbose=2 --test-requirement==identifier "bun-profile" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "7FRXF46ZSN" bun-darwin-aarch64-profile/bun-profile
-      codesign --display --verbose=3 bun-darwin-aarch64-profile/bun-profile
+      codesign --entitlements <checkout>/.buildkite/scripts/entitlements.profile.plist --options runtime --force --timestamp -vvvv --deep --strict --keychain <work>/signing.keychain-db --sign Developer ID Application <work>/bun-darwin-aarch64-profile/bun-profile
+      codesign --verify --strict --verbose=2 --test-requirement==identifier "bun-profile" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "7FRXF46ZSN" <work>/bun-darwin-aarch64-profile/bun-profile
+      codesign --display --verbose=3 <work>/bun-darwin-aarch64-profile/bun-profile
       bun-profile --revision
-      bun-profile build --compile <work>/smoke.js --outfile <work>/smoke
+      bun-profile build --compile smoke.js --outfile smoke
       ditto -ck --rsrc --sequesterRsrc --keepParent bun-darwin-aarch64-profile bun-darwin-aarch64-profile.zip
       buildkite-agent artifact upload bun-darwin-aarch64-profile.zip
       buildkite-agent artifact download bun-darwin-aarch64.zip . --step build-aarch64
-      codesign --entitlements <checkout>/entitlements.plist --options runtime --force --timestamp -vvvv --deep --strict --keychain <work>/signing.keychain-db --sign Developer ID Application bun-darwin-aarch64/bun
-      codesign --verify --strict --verbose=2 --test-requirement==identifier "bun" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "7FRXF46ZSN" bun-darwin-aarch64/bun
-      codesign --display --verbose=3 bun-darwin-aarch64/bun
+      codesign --entitlements <checkout>/entitlements.plist --options runtime --force --timestamp -vvvv --deep --strict --keychain <work>/signing.keychain-db --sign Developer ID Application <work>/bun-darwin-aarch64/bun
+      codesign --verify --strict --verbose=2 --test-requirement==identifier "bun" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "7FRXF46ZSN" <work>/bun-darwin-aarch64/bun
+      codesign --display --verbose=3 <work>/bun-darwin-aarch64/bun
       bun --revision
-      bun build --compile <work>/smoke.js --outfile <work>/smoke
+      bun build --compile smoke.js --outfile smoke
       ditto -ck --rsrc --sequesterRsrc --keepParent bun-darwin-aarch64 bun-darwin-aarch64.zip
       buildkite-agent artifact upload bun-darwin-aarch64.zip
       buildkite-agent artifact download bun-darwin-x64.zip . --step build-x64
-      codesign --entitlements <checkout>/entitlements.plist --options runtime --force --timestamp -vvvv --deep --strict --keychain <work>/signing.keychain-db --sign Developer ID Application bun-darwin-x64/bun
-      codesign --verify --strict --verbose=2 --test-requirement==identifier "bun" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "7FRXF46ZSN" bun-darwin-x64/bun
-      codesign --display --verbose=3 bun-darwin-x64/bun
+      codesign --entitlements <checkout>/entitlements.plist --options runtime --force --timestamp -vvvv --deep --strict --keychain <work>/signing.keychain-db --sign Developer ID Application <work>/bun-darwin-x64/bun
+      codesign --verify --strict --verbose=2 --test-requirement==identifier "bun" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "7FRXF46ZSN" <work>/bun-darwin-x64/bun
+      codesign --display --verbose=3 <work>/bun-darwin-x64/bun
       ditto -ck --rsrc --sequesterRsrc --keepParent bun-darwin-x64 bun-darwin-x64.zip
       buildkite-agent artifact upload bun-darwin-x64.zip
       security delete-keychain <work>/signing.keychain-db"
@@ -655,6 +769,8 @@ ${log}
   });
 
   test.concurrent.each<[string, Env]>([
+    ["the password is wrong", { STUB_SECURITY_FAILS: "pkcs12" }],
+    ["a secret is missing", { STUB_MISSING_SECRET: "APPLE_DEVELOPER_ID_P12_BASE64" }],
     ["signing fails", { STUB_CODESIGN_FAILS: "--entitlements" }],
     ["the signer is someone else", { STUB_CODESIGN_FAILS: "--verify" }],
     ["the runtime flag is missing", { STUB_SIGNATURE: signature.replace("0x10000(runtime)", "0x0(none)") }],
@@ -665,9 +781,10 @@ ${log}
     ["a compiled executable does not run", { STUB_COMPILED_EXIT_CODE: "1" }],
     ["the zip is missing", { STUB_MISSING_ARTIFACT: "bun-darwin-aarch64-profile.zip" }],
   ])("uploads nothing when %s", async (_, env) => {
-    const { calls, exitCode } = await sign(env);
+    const { calls, printed, leftovers, exitCode } = await sign(env);
+    expect(printed).not.toContain("hunter2");
     expect(calls.filter(call => call.includes("artifact upload"))).toEqual([]);
     expect(calls.at(-1)).toBe("security delete-keychain <work>/signing.keychain-db");
-    expect(exitCode).toBe(1);
+    expect({ leftovers, exitCode }).toEqual({ leftovers: [], exitCode: 1 });
   });
 });

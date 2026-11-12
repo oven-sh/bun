@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::run_mode;
 
 /// Disallow empty exports that don't change anything in a module file.
 pub struct NoUselessEmptyExport;
@@ -48,7 +49,11 @@ impl Rule for NoUselessEmptyExport {
             && matches!(stmt.parent(), Node::File(_))
             && *cx.state.get_or_insert_with(|| stmt.file().body().iter().any(is_other_export_or_import))
         {
-            cx.report(stmt, USELESS_EXPORT).fix(|fixer| fixer.remove(stmt));
+            // Bun can run the file as CommonJS without it, if what is left is a type. `export {} from "a"` loads a module.
+            cx.report(stmt, USELESS_EXPORT).fix_where_safe(
+                || run_mode::keeps_run_mode_without(cx.file(), stmt),
+                |fixer| fixer.remove(stmt),
+            );
         }
     }
 }

@@ -5,6 +5,7 @@ use bun_lint::semantic::DeclarationKinds;
 use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::oxlint::AmbientAncestors;
+use bun_lint::utils::run_mode::{self, Edit};
 use bun_lint::utils::ts_scope::{
     SymbolSet, UsedMarks, Variable, VariableAnalysis, collect_unused_variables, collect_variables,
     has_rest_sibling, is_defined_in_array_pattern, is_referenced_in_array_pattern,
@@ -1169,6 +1170,38 @@ fn are_all_specifiers_unused(declaration: Import, reported: &SymbolSet) -> bool 
     imported_variables(declaration).all(|it| reported.contains(it))
 }
 
+/// True if Bun runs the file in another way without the unused names of the import that `def` is in: see
+/// [`run_mode`]. Bun keeps an import that nothing uses, or that only types use, unless it says `type`.
+#[cold]
+fn removal_changes_run_mode<'a>(
+    file: &'a File<'a>,
+    def: Declaration<'a>,
+    reported: &SymbolSet,
+) -> bool {
+    let import = match def {
+        Declaration::ImportDefault(it) | Declaration::ImportNamespace(it) => it,
+        Declaration::ImportSpec(it) => it.import(),
+        Declaration::ImportEquals(it) => {
+            let is_require = matches!(it.target(), ImportEqualsTarget::Require(_));
+            return is_require && !run_mode::keeps_run_mode_without(file, it.stmt());
+        }
+        _ => return false,
+    };
+    let statement = import.stmt();
+    if !matches!(statement.parent(), Node::File(_)) || run_mode::has_runtime_use(import) {
+        return false;
+    }
+    // typescript-eslint removes the whole declaration for an unused `* as a`.
+    if are_all_specifiers_unused(import, reported) || matches!(def, Declaration::ImportNamespace(_)) {
+        return !run_mode::keeps_run_mode_without(file, statement);
+    }
+    // What is left has only names that are used as types.
+    let edit = Edit::Retypes(statement);
+    run_mode::is_kept(import)
+        && (run_mode::changes_globals(file, edit, import.spec().bytes(), |_| false)
+            || !run_mode::keeps_module_format(file, edit))
+}
+
 fn get_import_fixer<'a>(variable: Variable<'a>, reported: &SymbolSet) -> Option<ImportFix<'a>> {
     let mut defs = variable.defs();
     let def = defs.next()?;
@@ -1824,7 +1857,10 @@ impl NoUnusedVars {
             } {
                 FixMode::Off => {}
                 _ if matches!(def, Declaration::ImportEquals(_)) => {}
-                FixMode::SafeFix => drop(report.fix(fix)),
+                FixMode::SafeFix => drop(report.fix_where_safe(
+                    || !removal_changes_run_mode(cx.file(), def, reported),
+                    fix,
+                )),
                 FixMode::Suggestion if is_import || def.is_catch_parameter() => {
                     report.suggest_with(REMOVE_UNUSED_VAR, &[("varName", name.bytes())], fix);
                 }
@@ -1836,7 +1872,11 @@ impl NoUnusedVars {
             return;
         };
         if self.autofixes_imports {
-            report.fix(|fixer| fix_import(fixer, fix, reported));
+            let def = unused_var.defs().next();
+            report.fix_where_safe(
+                || !def.is_some_and(|it| removal_changes_run_mode(cx.file(), it, reported)),
+                |fixer| fix_import(fixer, fix, reported),
+            );
             return;
         }
         let suggestion = match fix {

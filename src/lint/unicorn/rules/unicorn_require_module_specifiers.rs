@@ -2,7 +2,7 @@ use bun_core::strings;
 use bun_lint_oxlint::text::find_next_token_within;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use bun_lint::utils::visible::is_module_without_empty_exports;
+use bun_lint::utils::run_mode;
 
 /// Enforce a non-empty specifier list in `import` and `export` statements.
 pub struct RequireModuleSpecifiers;
@@ -67,10 +67,10 @@ impl RequireModuleSpecifiers {
         cx.report(braces, EMPTY_SPECIFIER)
             .data("statement_type", "export")
             // `export {}` makes a file a module when it has no other `import` or `export`. Without it, `declare global`
-            // is an error and top-level names become global. In a declaration file it also stops everything else from
-            // being exported.
+            // is an error and top-level names become global, and Bun can run the file as CommonJS: see [`run_mode`]. In
+            // a declaration file it also stops everything else from being exported.
             .fix_where_safe(
-                || is_module_without_empty_exports(cx.file()) && !cx.file().is_declaration_file(),
+                || run_mode::keeps_run_mode_without(cx.file(), stmt) && !cx.file().is_declaration_file(),
                 |fixer| (!export.has_from()).then(|| fixer.remove(stmt)),
             );
     }

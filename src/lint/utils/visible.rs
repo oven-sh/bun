@@ -5,8 +5,7 @@
 //! [`Report::fix_where_safe`]: crate::context::Report::fix_where_safe
 
 use crate::ast::{
-    BinOp, Expr, ExprKind, ExprTag, File, Interface, Keyword, Name, Node, Stmt, StmtKind, StmtTag,
-    TypeKind, TypeNode,
+    BinOp, Expr, ExprKind, ExprTag, Interface, Keyword, Name, Node, Stmt, TypeKind, TypeNode,
 };
 use crate::semantic::{Declaration, Symbol};
 
@@ -15,26 +14,6 @@ use crate::semantic::{Declaration, Symbol};
 pub fn is_exported_from_namespace(statement: Stmt<'_>) -> bool {
     statement.is_exported()
         && matches!(statement.parent(), Node::Stmt(parent) if parent.as_module().is_some())
-}
-
-/// True for an `import` or an `export`. Either one makes the file a module.
-fn makes_a_module(statement: Stmt<'_>) -> bool {
-    statement.is_exported()
-        || matches!(
-            statement.tag(),
-            StmtTag::Import
-                | StmtTag::ExportNamed
-                | StmtTag::ExportStar
-                | StmtTag::ExportDefault
-                | StmtTag::ExportAssign
-        )
-}
-
-/// True if the file is still a module after every `export {}` is removed.
-pub fn is_module_without_empty_exports<'a>(file: &'a File<'a>) -> bool {
-    let is_empty = |it: Stmt<'a>| matches!(it.kind(), StmtKind::ExportNamed(export) if !export.has_from() && export.items().is_empty());
-    let mut statements = file.body().iter();
-    statements.any(|it| makes_a_module(it) && !is_empty(it))
 }
 
 /// True if the file declares `interface`'s name more than once. Replacing the interface with a type alias would then be

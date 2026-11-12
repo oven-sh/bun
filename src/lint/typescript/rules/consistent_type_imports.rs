@@ -2,6 +2,7 @@ use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::ast_utils::{is_closing_brace_token, is_comma_token, is_opening_brace_token};
 use bun_lint::utils::oxlint::AmbientAncestors;
+use bun_lint::utils::run_mode::{self, Edit};
 use bun_lint::utils::ts_utils::format_word_list;
 use rustc_hash::FxHashMap;
 use std::cell::OnceCell;
@@ -147,6 +148,20 @@ fn oxlint_is_ambient(class: Class) -> bool {
     class.file().is_declaration_file()
         || class.flags().contains(Flags::AMBIENT)
         || AmbientAncestors::default().has_ambient_typescript_ancestor(class.into())
+}
+
+/// True if Bun runs the file in another way once it keeps `import`, or no longer does: see [`run_mode`]. It keeps an
+/// import whose names are only used as types, unless the import says `type`.
+#[cold]
+fn changes_run_mode<'a>(
+    file: &'a File<'a>,
+    import: Import<'a>,
+    edit: fn(Stmt<'a>) -> Edit<'a>,
+) -> bool {
+    let edit = edit(import.stmt());
+    matches!(import.stmt().parent(), Node::File(_))
+        && (run_mode::changes_globals(file, edit, import.spec().bytes(), |_| false)
+            || !run_mode::keeps_module_format(file, edit))
 }
 
 /// True if an `import type` would be enough for `reference`.
@@ -609,7 +624,10 @@ impl ConsistentTypeImports {
             } else if !has_attributes(report.import) {
                 cx.report(statement, TYPE_OVER_VALUE)
                     .at_the_end()
-                    .fix(|fixer| fix(fixer, report));
+                    .fix_where_safe(
+                        || !changes_run_mode(cx.file(), report.import, Edit::Retypes),
+                        |fixer| fix(fixer, report),
+                    );
             }
         }
     }
@@ -679,8 +697,10 @@ impl Rule for ConsistentTypeImports {
             if let Some(import) = statement.as_import()
                 && import.is_type_only()
             {
-                cx.report(statement, AVOID_IMPORT_TYPE)
-                    .fix(|fixer| fix_remove_type_specifier_from_import_declaration(fixer, import));
+                cx.report(statement, AVOID_IMPORT_TYPE).fix_where_safe(
+                    || !changes_run_mode(cx.file(), import, Edit::Keeps),
+                    |fixer| fix_remove_type_specifier_from_import_declaration(fixer, import),
+                );
             }
             return;
         }
@@ -709,8 +729,12 @@ impl Rule for ConsistentTypeImports {
 
     fn import_spec<'a>(&self, spec: ImportSpec<'a>, cx: &mut Cx<'a, Self>) {
         if spec.is_type_only() {
-            cx.report(spec, AVOID_IMPORT_TYPE)
-                .fix(|fixer| fix_remove_type_specifier_from_import_specifier(fixer, spec));
+            // The import only starts to be one that Bun keeps if it has no other name without `type`.
+            let import = spec.import();
+            cx.report(spec, AVOID_IMPORT_TYPE).fix_where_safe(
+                || run_mode::is_kept(import) || !changes_run_mode(cx.file(), import, Edit::Keeps),
+                |fixer| fix_remove_type_specifier_from_import_specifier(fixer, spec),
+            );
         }
     }
 

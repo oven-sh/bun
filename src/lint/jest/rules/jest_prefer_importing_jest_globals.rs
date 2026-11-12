@@ -5,6 +5,7 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::bun_test;
 use bun_lint::utils::oxlint::source_type;
+use bun_lint::utils::run_mode::{self, Edit};
 use bun_lint_oxlint::import::{ImportEntry, ImportImportName, import_entries, import_entries_of};
 use smallvec::SmallVec;
 use std::collections::BTreeSet;
@@ -95,8 +96,11 @@ impl PreferImportingJestGlobals {
         (cx.report(span, PREFER_IMPORTING_JEST_GLOBALS)
             .data("globals", join(&functions_to_import)))
         .fix_where_safe(
-            || !changes_module_mock_calls(file, &added),
-            |fixer| build_fix(file, fixer, functions_to_import),
+            || {
+                !changes_module_mock_calls(file, &added)
+                    && !changes_run_mode(file, &functions_to_import)
+            },
+            |fixer| build_fix(file, fixer, functions_to_import.clone()),
         );
     }
 }
@@ -214,6 +218,37 @@ fn changes_module_mock_calls<'a>(file: &'a File<'a>, added: &[&str]) -> bool {
         // A name that the fix doesn't keep becomes a global.
         || (declaration_of(declarator).declared_symbols().into_iter())
             .any(|it| !is_kept(it) && bun_test::changes_as_global(it))
+}
+
+/// True if the fix changes how Bun runs the file, or what `bun test` takes one of the names for: see [`run_mode`].
+#[cold]
+fn changes_run_mode<'a>(file: &'a File<'a>, functions_to_import: &Names) -> bool {
+    // `@jest/globals` has the functions of `bun:test`, and a file that loads `vitest` has other ones as its globals.
+    if run_mode::may_load_vitest(file) {
+        return true;
+    }
+    let (extends_import, is_module) = (jest_import(file).is_some(), is_module(file));
+    // An `import` of a name that the module lacks doesn't link. From `require()` it is `undefined`, like the global.
+    let is_lacking = |it: &Vec<u8>| !run_mode::has_export(IMPORT_SOURCE.as_bytes(), it);
+    if (extends_import || is_module) && functions_to_import.iter().any(is_lacking) {
+        return true;
+    }
+    if extends_import {
+        return false;
+    }
+    let required = jest_require(file).map(declaration_of);
+    let edit = match (required, is_module) {
+        (_, true) => Edit::AddsImport,
+        (None, false) => Edit::AddsRequire,
+        // The names go into the `require()` line, which stays.
+        (Some(_), false) => return false,
+    };
+    // A `require()` at the top level runs, so the file loads the module already.
+    let is_top_level = |it: Node<'a>| matches!(it, Node::Stmt(it) if matches!(it.parent(), Node::File(_)));
+    let is_declared = |it: &[u8]| functions_to_import.contains(it);
+    !run_mode::keeps_module_format(file, edit)
+        || (!required.is_some_and(is_top_level)
+            && run_mode::changes_globals(file, edit, IMPORT_SOURCE.as_bytes(), is_declared))
 }
 
 fn build_fix<'a>(file: &'a File<'a>, fixer: Fixer<'a>, mut functions_to_import: Names) -> Fix {

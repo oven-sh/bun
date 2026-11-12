@@ -194,7 +194,7 @@ fn changes_run_mode<'a>(file: &'a File<'a>, missing_globals: &[&str]) -> bool {
     let is_lacking = |it: &&str| !run_mode::has_export(b"vitest", it.as_bytes());
     // A new statement is the file's first load of `vitest`, which changes its globals, or an `import` in a CommonJS file.
     let is_new = || {
-        !run_mode::loads_vitest_elsewhere(file, None)
+        run_mode::changes_globals(file, Edit::AddsImport, b"vitest", |_| false)
             || !run_mode::keeps_module_format(file, Edit::AddsImport)
     };
     missing_globals.iter().any(is_lacking) || (!extends_import && is_new())

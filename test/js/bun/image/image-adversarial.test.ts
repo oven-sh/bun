@@ -22,6 +22,7 @@ import {
   runFixtureMaxRSS,
   tempDir,
 } from "harness";
+import { truncateSync } from "node:fs";
 import { join } from "node:path";
 import zlib from "node:zlib";
 import { hash, readPng } from "./jpeg-golden/observe";
@@ -168,6 +169,14 @@ describe("format confusion", () => {
     ["PNG magic + zeros", Buffer.concat([Buffer.from("\x89PNG\r\n\x1a\n"), Buffer.alloc(64, 0)])],
   ])("%s rejects without crashing", async (_name, buf) => {
     expect(await survives(new Bun.Image(buf).metadata())).toBe("rejected");
+  });
+
+  test.each([0, 1, 2])("a JPEG with byte %d of FF D8 FF changed is no format that is known", async at => {
+    const file = Buffer.from(tinyJpeg);
+    file[at] = 0;
+    const unknown = { code: "ERR_IMAGE_UNKNOWN_FORMAT" };
+    await expect(new Bun.Image(file).metadata()).rejects.toMatchObject(unknown);
+    await expect(new Bun.Image(file).png().bytes()).rejects.toMatchObject(unknown);
   });
 
   // Valid magic, valid different-format body — sniffer should follow the
@@ -409,6 +418,26 @@ describe("hostile header dimensions", () => {
     expect(readPng(await new Bun.Image(jpeg, { maxPixels: 64 }).png().bytes())).toMatchObject({ width, height });
   });
 
+  test("maxPixels holds for what a resize makes, and for what it makes on the way", async () => {
+    const resized = (w: number, h: number) =>
+      new Bun.Image(jpegWithDims(8, 8), { maxPixels: 64 }).resize(w, h, { fit: "fill" }).png().bytes();
+    const tooMany = { code: "ERR_IMAGE_TOO_MANY_PIXELS" };
+    expect(readPng(await resized(4, 16))).toMatchObject({ width: 4, height: 16 });
+    await expect(resized(5, 13)).rejects.toMatchObject(tooMany);
+    // The width goes first: 8 x 8, then 9 x 8, on the way to a height of 4.
+    expect(readPng(await resized(8, 4))).toMatchObject({ width: 8, height: 4 });
+    await expect(resized(9, 4)).rejects.toMatchObject(tooMany);
+  });
+
+  // Not tried at 256 MiB: all of it would be read into this process, which judges leaks by its own memory further down.
+  test("the file at a path is not read if it has more than 256 MiB", async () => {
+    using dir = tempDir("image-large-file", { "large.jpg": Buffer.from(tinyJpeg) });
+    const path = join(String(dir), "large.jpg");
+    // Sparse where the file system can do that.
+    truncateSync(path, (256 << 20) + 1);
+    await expect(new Bun.Image(path).metadata()).rejects.toMatchObject({ code: "ERR_IMAGE_TOO_MANY_PIXELS" });
+  });
+
   // TurboJPEG counted pixels in an `int`.
   describe.each([
     [46341, 46341],
@@ -441,7 +470,7 @@ describe("hostile header dimensions", () => {
         bunExe(),
         `for (const file of process.env.FILES.split(",")) {
           const image = new Bun.Image(Buffer.from(file, "base64"), { maxPixels: 2 ** 32 });
-          console.log(await image.png().bytes().then(() => "decoded", error => error.code));
+          console.log(await image.png().bytes().then(() => "decoded", error => error.code + ": " + error.message));
         }`,
       ],
       env: {
@@ -456,7 +485,7 @@ describe("hostile header dimensions", () => {
     const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
     // The sanitizer warns of the allocation.
     expect({ stdout, exitCode, stderr: exitCode ? stderr : "" }).toEqual({
-      stdout: "ERR_OUT_OF_MEMORY\nERR_OUT_OF_MEMORY\n",
+      stdout: "ERR_OUT_OF_MEMORY: Image: out of memory\nERR_OUT_OF_MEMORY: Image: out of memory\n",
       exitCode: 0,
       stderr: "",
     });

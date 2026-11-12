@@ -1,10 +1,10 @@
 import { S3Client } from "bun";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { isMacOS, isWindows, tempDir } from "harness";
 import zlib from "node:zlib";
 import { join } from "path";
-import { hash, pngOfPixels } from "./jpeg-golden/observe";
+import { hash, pngOfPixels, readPng } from "./jpeg-golden/observe";
 
 // ─── Fixture builders ───────────────────────────────────────────────────────
 // Fixtures are generated in-process so the test stays hermetic and we never
@@ -902,10 +902,10 @@ describe("Bun.Image", () => {
       [65_500, 1, true, "30263:32524a6719"],
       [1, 65_500, false, "55820:265bf66a37"],
       [1, 65_500, true, "30424:eba7d5dd7d"],
-      [65_501, 1, false, "ERR_IMAGE_ENCODE_FAILED"],
-      [65_501, 1, true, "ERR_IMAGE_ENCODE_FAILED"],
-      [1, 65_501, false, "ERR_IMAGE_ENCODE_FAILED"],
-      [1, 65_501, true, "ERR_IMAGE_ENCODE_FAILED"],
+      [65_501, 1, false, "ERR_IMAGE_ENCODE_FAILED: Image: encode failed"],
+      [65_501, 1, true, "ERR_IMAGE_ENCODE_FAILED: Image: encode failed"],
+      [1, 65_501, false, "ERR_IMAGE_ENCODE_FAILED: Image: encode failed"],
+      [1, 65_501, true, "ERR_IMAGE_ENCODE_FAILED: Image: encode failed"],
     ])(
       "the encoder takes 65500 pixels a side and no more: %d x %d, progressive: %p",
       async (w, h, progressive, expected) => {
@@ -918,7 +918,7 @@ describe("Bun.Image", () => {
           .bytes()
           .then(
             jpeg => `${jpeg.length}:${hash(jpeg)}`,
-            error => error.code,
+            error => `${error.code}: ${error.message}`,
           );
         expect(actual).toBe(expected);
       },
@@ -1022,6 +1022,219 @@ describe("Bun.Image", () => {
       width: 4,
       height: 2,
       format: "jpeg",
+    });
+  });
+
+  // What is expected here is what Bun 1.4.4 did.
+  describe.concurrent("EXIF orientation of a JPEG", () => {
+    type Exif = {
+      marker?: number;
+      id?: string;
+      little?: boolean;
+      mark?: string;
+      magic?: number;
+      pad?: number;
+      offset?: number;
+      entries?: number[][];
+      count?: number;
+    };
+    // Tag 0x0112 is Orientation, and type 3 is a SHORT.
+    const tag = (value: number, { id = 0x0112, type = 3, count = 1 } = {}) => [id, type, count, value];
+    const make = tag(8, { id: 0x010f });
+    function payload(options: Exif = {}): number[] {
+      const { id = "Exif\0\0", little = false, mark = little ? "II" : "MM", magic = 42, pad = 0 } = options;
+      const { offset = 8 + pad, entries = [tag(6)], count = entries.length } = options;
+      const u16 = (n: number) => (little ? [n & 255, n >> 8] : [n >> 8, n & 255]);
+      const u32 = (n: number) =>
+        little ? [...u16(n & 0xffff), ...u16(n >>> 16)] : [...u16(n >>> 16), ...u16(n & 0xffff)];
+      const ifd = entries.flatMap(([which, type, n, value]) =>
+        [u16(which), u16(type), u32(n), u16(value), [0, 0]].flat(),
+      );
+      const header = [[...Buffer.from(id + mark)], u16(magic), u32(offset), Array(pad).fill(0)];
+      return [header.flat(), u16(count), ifd, u32(0)].flat();
+    }
+    const segment = (marker: number, body: Iterable<number>, extra = 0) => {
+      const bytes = [...body];
+      return [0xff, marker, (bytes.length + 2 + extra) >> 8, (bytes.length + 2 + extra) & 255, ...bytes];
+    };
+    const exif = (options: Exif = {}) => segment(options.marker ?? 0xe1, payload(options));
+    // 6 bytes of "Exif\0\0", 8 of header and 2 of count come before the entry.
+    const cutInEntry = (after: number) => segment(0xe1, payload().slice(0, 16 + after));
+    const comment = (length: number) => segment(0xfe, Array(length - 2).fill(0x20));
+    const afterSoi = (jpeg: Uint8Array, inserted: number[]) =>
+      Buffer.concat([jpeg.subarray(0, 2), Buffer.from(inserted), jpeg.subarray(2)]);
+    const oriented = (jpeg: Uint8Array, orientation: number) => afterSoi(jpeg, exif({ entries: [tag(orientation)] }));
+
+    const upright: Record<number, (stored: Bun.Image) => Bun.Image> = {
+      1: stored => stored,
+      2: stored => stored.flop(),
+      3: stored => stored.rotate(180),
+      4: stored => stored.flip(),
+      5: stored => stored.rotate(90).flop(),
+      6: stored => stored.rotate(90),
+      7: stored => stored.rotate(90).flip(),
+      8: stored => stored.rotate(270),
+    };
+    const pixels = async (image: Bun.Image) => {
+      const { width, height, rgba } = readPng(await image.png().bytes());
+      return `${width}x${height}:${hash(rgba)}`;
+    };
+
+    let blocks: Uint8Array;
+    const orientationByPixels = new Map<string, number>();
+    let detail: Uint8Array;
+    let detailAtEachScale: Uint8Array[];
+    beforeAll(async () => {
+      // No turn or mirror image of it is the picture itself.
+      const coarse = makePng(32, 16, (x, y) => [(x >> 3) * 80, (y >> 3) * 200, (x >> 3) * 20 + 90, 255]);
+      blocks = await new Bun.Image(coarse).jpeg({ quality: 90 }).bytes();
+      for (const [orientation, turn] of Object.entries(upright))
+        orientationByPixels.set(await pixels(turn(new Bun.Image(blocks))), Number(orientation));
+      expect(orientationByPixels.size).toBe(8);
+
+      const fine = makePng(256, 96, (x, y) => [(x * 7 + y * 3) & 255, (x * x + y) & 255, (x ^ (y * 5)) & 255, 255]);
+      detail = await new Bun.Image(fine).jpeg({ quality: 90 }).bytes();
+      // A resize to exactly one of the 8 sizes is the decode at that scale and nothing else.
+      const sizes = [1, 2, 3, 4, 5, 6, 7, 8].map(eighths => [32 * eighths, 12 * eighths]);
+      detailAtEachScale = await Promise.all(sizes.map(([w, h]) => new Bun.Image(detail).resize(w, h).png().bytes()));
+    });
+    /** The orientation that was applied to `file`, which is `blocks` with something added. */
+    const applied = async (file: Uint8Array, options?: { autoOrient: boolean }) =>
+      orientationByPixels.get(await pixels(new Bun.Image(file, options)));
+
+    test.each([1, 2, 3, 4, 5, 6, 7, 8])("Orientation=%d is applied to the pixels", async orientation => {
+      expect(await applied(oriented(blocks, orientation))).toBe(orientation);
+      expect(await applied(oriented(blocks, orientation), { autoOrient: false })).toBe(1);
+    });
+
+    test.each([1, 2, 3, 4, 5, 6, 7, 8])(
+      "Orientation=%d in the metadata of bytes, a file and a path",
+      async orientation => {
+        const file = oriented(blocks, orientation);
+        using dir = tempDir("image-exif", { "oriented.jpg": file });
+        const path = join(String(dir), "oriented.jpg");
+        const ofEach = (options?: { autoOrient: boolean }) =>
+          Promise.all([file, Bun.file(path), path].map(source => new Bun.Image(source, options).metadata()));
+        const [width, height] = orientation >= 5 ? [16, 32] : [32, 16];
+        expect(await ofEach()).toEqual(Array(3).fill({ width, height, format: "jpeg" }));
+        expect(await ofEach({ autoOrient: false })).toEqual(Array(3).fill({ width: 32, height: 16, format: "jpeg" }));
+      },
+    );
+
+    /** In eighths, the scale that `detail` was decoded at. */
+    async function scaleOf(orientation: number, autoOrient: boolean, rotate: number, w: number, h?: number) {
+      const fromEachScale = await Promise.all(
+        detailAtEachScale.map(async png => {
+          const turned = await (autoOrient ? upright[orientation] : upright[1])(new Bun.Image(png)).png().bytes();
+          return pixels(new Bun.Image(turned).rotate(rotate).resize(w, h));
+        }),
+      );
+      expect(new Set(fromEachScale).size).toBe(8);
+      const image = new Bun.Image(oriented(detail, orientation), { autoOrient });
+      return fromEachScale.indexOf(await pixels(image.rotate(rotate).resize(w, h))) + 1;
+    }
+
+    // The decoder is asked, in the axes of the file, for the smallest of its 8 scales that fills the box of resize().
+    test.each([
+      [1, true, 90, [24, 128], 4],
+      [1, true, 180, [128, 24], 4],
+      [1, true, 270, [24, 128], 4],
+      [3, true, 0, [128, 24], 4],
+      [5, true, 0, [24, 128], 4],
+      [6, true, 0, [24, 128], 4],
+      [7, true, 0, [24, 128], 4],
+      [8, true, 0, [24, 128], 4],
+      [6, false, 0, [128, 24], 4],
+      [8, false, 0, [128, 24], 4],
+      [6, true, 90, [128, 24], 4],
+      [6, true, 270, [128, 24], 4],
+      [8, true, 90, [128, 24], 4],
+      [8, true, 270, [128, 24], 4],
+    ] as const)(
+      "Orientation=%d, autoOrient: %p, rotate(%d) and resize(%p) decode at %d/8",
+      async (orientation, autoOrient, rotate, [w, h], eighths) => {
+        expect(await scaleOf(orientation, autoOrient, rotate, w, h)).toBe(eighths);
+      },
+    );
+
+    // It is 6/8: without a height the box is a square.
+    test("resize(64) decodes at a scale that fills 64 x 24, and not in full", async () => {
+      expect(await scaleOf(1, true, 0, 64)).toBeWithin(2, 8);
+    });
+
+    // Each is put straight after SOI, and the decoder takes every one of these files.
+    test.each<[string, number, number[]]>([
+      ["little-endian", 6, exif({ little: true })],
+      ["an offset of IFD0 with a high half", 1, exif({ offset: 0x10008 })],
+      ["IFD0 not straight after the header", 6, exif({ pad: 2 })],
+      ["MI for a byte order", 1, exif({ mark: "MI" })],
+      ["IM for a byte order", 1, exif({ mark: "IM", little: true })],
+      ["XX for a byte order", 1, exif({ mark: "XX", little: true })],
+      ["43 for 42", 1, exif({ magic: 43 })],
+      ["the tag in second place", 6, exif({ entries: [make, tag(6)] })],
+      ["the tag after the last entry that is counted", 1, exif({ entries: [make, tag(6)], count: 1 })],
+      ["the tag in an IFD of no entries", 1, exif({ count: 0 })],
+      ["tag 0x0212", 1, exif({ entries: [tag(6, { id: 0x0212 })] })],
+      ["a LONG", 1, exif({ entries: [tag(6, { type: 4 })] })],
+      ["two values", 1, exif({ entries: [tag(6, { count: 2 })] })],
+      ["a value of 0", 1, exif({ entries: [tag(0)] })],
+      ["a value of 9", 1, exif({ entries: [tag(9)] })],
+      ["a value of 10", 1, exif({ entries: [tag(10)] })],
+      ["a segment that ends with the value", 6, cutInEntry(10)],
+      ["a segment that ends in the value", 1, cutInEntry(9)],
+      ["a segment that ends before the value, which follows as junk", 1, [...cutInEntry(8), 0, 6]],
+      ["a segment that ends in the count", 1, cutInEntry(7)],
+      ["APP2", 1, exif({ marker: 0xe2 })],
+      ["COM", 1, exif({ marker: 0xfe })],
+      ["Exif\\0\\1", 1, exif({ id: "Exif\0\x01" })],
+      ["XMP in an APP1 before it", 6, [...segment(0xe1, Buffer.from("http://ns.adobe.com/xap/1.0/\0<x/>")), ...exif()]],
+      ["an Exif segment without a TIFF before it", 1, [...segment(0xe1, Buffer.from("Exif\0\0")), ...exif()]],
+      ["an Exif segment with a broken TIFF before it", 1, [...exif({ magic: 43 }), ...exif()]],
+      ["a fill byte before it", 6, [0xff, ...exif()]],
+      ["RST0 before it", 6, [0xff, 0xd0, ...exif()]],
+      ["RST7 before it", 6, [0xff, 0xd7, ...exif()]],
+      ["an empty comment before it", 6, [...comment(2), ...exif()]],
+      ["a comment of 256 bytes before it", 6, [...comment(256), ...exif()]],
+      [
+        "a comment that ends in FF E1 before it",
+        3,
+        [...segment(0xfe, [0x61, 0x62, 0xff, 0xe1]), ...exif({ entries: [tag(3)] })],
+      ],
+      ["a comment and 3 bytes of junk before it", 6, [...comment(4), 0x78, 0x79, 0x7a, ...exif()]],
+      ["a comment and 5000 bytes of junk before it", 6, [...comment(4), ...Array(5000).fill(0x55), ...exif()]],
+    ])("%s: Orientation %d", async (_, orientation, inserted) => {
+      expect(await applied(afterSoi(blocks, inserted))).toBe(orientation);
+    });
+
+    // The decoder goes on to the next marker. The reader gives up, as it always has.
+    describe.each([
+      ["a comment of length 0", [0xff, 0xfe, 0, 0]],
+      ["a comment of length 1", [0xff, 0xfe, 0, 1]],
+      ["TEM", [0xff, 0x01]],
+    ])("%s before it", (_, before) => {
+      test("is decoded", async () => {
+        expect(await applied(afterSoi(blocks, [...before, ...exif()]), { autoOrient: false })).toBe(1);
+      });
+
+      test.failing("Orientation 6", async () => {
+        expect(await applied(afterSoi(blocks, [...before, ...exif()]))).toBe(6);
+      });
+    });
+
+    test("an Exif segment after the scan is not looked for", async () => {
+      expect([...blocks.subarray(-2)]).toEqual([0xff, 0xd9]);
+      const file = Buffer.concat([blocks.subarray(0, -2), Buffer.from(exif()), blocks.subarray(-2)]);
+      expect(await applied(file)).toBe(1);
+    });
+
+    // With a resize the orientation is read before the decoder has seen the file.
+    test.each<[string, number[]]>([
+      ["in the length of a segment", [0xff, 0xe1, 0x00]],
+      ["one byte before the end of an Exif segment", segment(0xe1, payload(), 1)],
+    ])("a file that ends %s fails to decode", async (_, rest) => {
+      await expect(new Bun.Image(Buffer.from([0xff, 0xd8, ...rest])).resize(8, 8).png().bytes()).rejects.toMatchObject({
+        code: "ERR_IMAGE_DECODE_FAILED",
+      });
     });
   });
 
@@ -1424,6 +1637,15 @@ describe("Bun.Image", () => {
       const { w, h } = decodePngRaw(out);
       expect(w).toBe(4);
       expect(h).toBe(3);
+    });
+
+    test.each([
+      [8, 2, 4, 3],
+      [2, 6, 4, 3],
+      [4, 2, 4, 2],
+    ])("withoutEnlargement: resize(%d, %d) makes %d x %d of 4 x 3", async (width, height, w, h) => {
+      const out = await new Bun.Image(cornersPng).resize(width, height, { withoutEnlargement: true }).png().bytes();
+      expect(decodePngRaw(out)).toMatchObject({ w, h });
     });
 
     test("new Response(image) encodes and sets Content-Type", async () => {

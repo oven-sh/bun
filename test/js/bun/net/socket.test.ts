@@ -401,6 +401,74 @@ describe.concurrent("socket", () => {
     expect(timeouts).toBe(1);
   });
 
+  it("a timeout set from the timeout handler is due after as many sweeps as it has periods", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { sweepSocketTimers } from "bun:internal-for-testing";
+        const accepted = Promise.withResolvers();
+        let seconds, sweeps, firedAt;
+        const timeout = socket => void (firedAt.push(sweeps), socket.timeout(seconds));
+        using server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open: accepted.resolve, timeout, data() {} } });
+        using client = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+        const socket = await accepted.promise;
+        for (seconds of [1, 4, 5, 8]) {
+          socket.timeout(0);
+          sweepSocketTimers(1);
+          firedAt = [];
+          socket.timeout(1);
+          for (sweeps = 1; sweeps <= 5; sweeps++) sweepSocketTimers(1);
+          console.log(seconds + ":", ...firedAt);
+        }
+        `,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim().split("\n")).toEqual(["1: 1 2 3 4 5", "4: 1 2 3 4 5", "5: 1 3 5", "8: 1 3 5"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The one test that waits for the loop's own sweep, 4 seconds.
+  it.concurrent(
+    "the event loop fires a timeout on the clock, and not early",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          import { sweepSocketTimers } from "bun:internal-for-testing";
+          const accepted = Promise.withResolvers(), fired = Promise.withResolvers();
+          let setAt;
+          function timeout(socket) {
+            if (setAt) return fired.resolve(performance.now() - setAt);
+            // The sweep began a while before this call, which the 4 seconds count from.
+            Bun.sleepSync(100);
+            setAt = performance.now();
+            socket.timeout(4);
+          }
+          using server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open: accepted.resolve, timeout, data() {} } });
+          using client = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+          (await accepted.promise).timeout(1);
+          while (!setAt) sweepSocketTimers(1);
+          console.log(await fired.promise);
+          `,
+        ],
+        env: bunEnv,
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      // libuv's timers count whole milliseconds.
+      expect(Number(stdout)).toBeWithin(isWindows ? 3999 : 4000, 7500);
+      expect(exitCode).toBe(0);
+    },
+    20_000,
+  );
+
   // Runs in a child because the sweeps also advance every other socket's timeout on the thread.
   it("socket.timeout() fires once and never early, for any number of seconds", async () => {
     await using proc = Bun.spawn({

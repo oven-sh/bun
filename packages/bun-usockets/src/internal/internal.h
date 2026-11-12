@@ -212,6 +212,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);
+/* Makes the next sweep a whole period from now. */
+void us_internal_restart_sweep_timer(struct us_loop_t *loop);
 #ifndef LIBUS_USE_LIBUV
 /* CLOCK_MONOTONIC in ns. The clock every deadline on the loop is measured
  * against, so anything comparing against one must read it and not another. */
@@ -353,9 +355,14 @@ static inline uint32_t us_internal_timeout_tick(struct us_loop_t *loop, unsigned
     uint64_t ms = (uint64_t) seconds * 1000;
     /* With no socket there are no sweeps, and the first socket starts a whole period. */
     if (loop->data.sweep_timer_count) {
-        uint64_t since_sweep = us_internal_coarse_ms() - loop->data.sweep_time_ms + LIBUS_COARSE_CLOCK_LAG_MS;
-        /* A sweep that is overdue still comes after this call, and the next a whole period after that one. */
-        ms += since_sweep < period ? since_sweep : period;
+        if (UNLIKELY(loop->data.iterator || loop->data.low_prio_iterator)) {
+            /* Set from a timeout handler. Counted from the start of this sweep, whole periods would come a sweep late. */
+            us_internal_restart_sweep_timer(loop);
+        } else {
+            uint64_t since_sweep = us_internal_coarse_ms() - loop->data.sweep_time_ms + LIBUS_COARSE_CLOCK_LAG_MS;
+            /* A sweep that is overdue still comes after this call, and the next a whole period after that one. */
+            ms += since_sweep < period ? since_sweep : period;
+        }
     }
     return loop->data.sweep_tick + (uint32_t) ((ms + period - 1) / period);
 }

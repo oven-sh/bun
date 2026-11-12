@@ -56,7 +56,7 @@ void sweep_timer_cb(struct us_internal_callback_t *cb);
 void sweep_timer_noop(struct us_timer_t *timer) {}
 
 /* The coarse reading comes first, so the next sweep is no less than a period after it. */
-static void us_internal_restart_sweep_timer(struct us_loop_t *loop) {
+void us_internal_restart_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_time_ms = us_internal_coarse_ms();
     us_timer_again(loop->data.sweep_timer);
 }
@@ -88,7 +88,7 @@ uint64_t us_internal_monotonic_ns(void) {
 }
 
 /* The coarse reading comes first, so the next sweep is no less than a period after it. */
-static void us_internal_restart_sweep_timer(struct us_loop_t *loop) {
+void us_internal_restart_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_time_ms = us_internal_coarse_ms();
     loop->data.sweep_next_tick_ns = (long long) us_internal_monotonic_ns() + LIBUS_TIMEOUT_GRANULARITY_NS;
 }

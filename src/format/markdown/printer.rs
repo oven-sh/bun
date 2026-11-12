@@ -570,9 +570,8 @@ impl<'a> Printer<'a, '_> {
             .is_some_and(|next| self.end_line(item) + 1 < self.start_line(next))
     }
 
-    /// Prettier's `INLINE_NODE_TYPES`, and `Text`: the text of a paragraph that `[[` and `]]` make risky to wrap,
-    /// which `preprocess` keeps whole. To Prettier 3.9.9 it is a block, so after a link in an emphasis it prints an
-    /// empty line before it: `*[a](b)[[]]*` becomes `_[a](b)`, an empty line, `[[]]_`, two paragraphs and no emphasis.
+    /// Prettier's `INLINE_NODE_TYPES`, and `Text`: the text of a risky paragraph, which `preprocess` keeps whole.
+    /// Prettier 3.9.9 has it as a block, and prints `*[a](b)[[]]*` as `_[a](b)`, an empty line, `[[]]_`.
     fn is_inline(kind: Kind) -> bool {
         matches!(
             kind,
@@ -1273,10 +1272,8 @@ impl<'a> Printer<'a, '_> {
                 .node(sibling)
                 .filter(|it| matches!(it.kind, Kind::Sentence | Kind::Text))?;
             if sentence.kind == Kind::Text {
-                // The text of a risky paragraph (see `is_inline`), which has not been split into words. Prettier 3.9.9
-                // sees no word in it, and prints `snake*case*word` as `snake_case_word`, which is not an emphasis.
-                // Next to whitespace or to punctuation as CommonMark defines it, symbols included, `_` is an
-                // emphasis, so only a letter or a digit there is a word, in either flavor.
+                // The whole text of a risky paragraph. Prettier 3.9.9 sees no word in it, and prints `snake*case*word`
+                // as `snake_case_word`. A letter or a digit is a word, CommonMark's punctuation or whitespace is not.
                 let text = self.str(sentence.value);
                 let (c, _) = if is_last {
                     last_char(text)

@@ -1335,11 +1335,12 @@ declare namespace $Node {
     hasOpenStreams(): boolean;
     hasRejectedSend(): boolean;
     isStreamClosed(streamId: number): boolean;
-    releaseStream(streamId: number): boolean;
+    /** `unread`: the stream is closed and waits for a reader. */
+    releaseStream(streamId: number, unread?: boolean): boolean;
     bufferSize(): number;
     setNextStreamID(id: number): undefined;
-    /** `closed`: the closed streams. Otherwise those whose close was not delivered yet. Only streams with a context. */
-    forEachStream(callback: (stream: never, isClosed: boolean) => void, closed?: boolean): undefined;
+    /** `unread`: the streams released as such that are still alive. Otherwise those whose close was not delivered yet. Only streams with a context. */
+    forEachStream(callback: (stream: never, isClosed: boolean) => void, unread?: boolean): undefined;
     emitErrorToAllStreams(code: number): undefined;
     /** -1: the ids have run out. 0: the peer's limit of concurrent streams is reached. */
     getNextStream(): number;

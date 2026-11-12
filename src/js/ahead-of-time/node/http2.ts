@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 3aab1a156ab0092f6c6553adfc526acf1c1b99a3e2031425930fc5daff87e330.
+// Written against that file with the SHA-256 d7806631fc2844f5ac517d1c55066c2dfc0c8e4266fa3729807438e355da51ff.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -2753,7 +2753,7 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
     assertSession(session);
     const id = this.#id;
     const native = session[bunHTTP2Native];
-    // The table forgets a closed stream once its Http2Stream is destroyed. A session without a parser has closed all of its streams.
+    // The table forgets a closed stream once it's released. A session without a parser has closed all of its streams.
     const closedOnWire = typeof id === "number" && (!native || native.releaseStream(id));
 
     let rstCode = this.rstCode;
@@ -5099,6 +5099,7 @@ function destroyClosedStream(session: Http2Session, stream: Http2Stream) {
     // A flowing stream with nothing buffered emits 'end' within a few ticks, whatever happens to its session.
     if (!stream.readableFlowing || stream.readableLength > 0) {
       stream[bunHTTP2StreamStatus] |= StreamState.AwaitsReader;
+      session[bunHTTP2Native]?.releaseStream(stream.id, true);
     }
   } else if (!stream.writableFinished && !stream.destroyed && stream.errored == null) {
     // END_STREAM closed the stream from inside end(), or from respond() just before its end(). Destroying now would swallow 'finish'. An errored stream never emits it.
@@ -5112,7 +5113,7 @@ function destroyClosedStream(session: Http2Session, stream: Http2Stream) {
 function unreadClosedStreams(parser: $Bindgen.H2FrameParser | null) {
   const streams: Http2Stream[] = [];
   parser?.forEachStream(stream => {
-    if ((stream[bunHTTP2StreamStatus] & StreamState.AwaitsReader) !== 0) streams.push(stream);
+    if (!stream.destroyed) streams.push(stream);
   }, true);
   return streams;
 }

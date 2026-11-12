@@ -3341,6 +3341,61 @@ describe("inbound stream lifecycle", () => {
     }
   }, 30_000);
 
+  test("streams that closed with their request unread don't count against maxSessionMemory and are released", async () => {
+    const refs: WeakRef<object>[] = [];
+    const held: http2.ServerHttp2Stream[] = [];
+    const server = http2.createServer({ maxSessionMemory: 1 });
+    server.on("stream", stream => {
+      if (stream.id! % 200 === 1) held.push(stream);
+      else refs.push(new WeakRef(stream));
+      stream.pause();
+      stream.respond({ ":status": 401 }, { endStream: true });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      const block = requestHeaderBlock("POST");
+      const upload = (id: number) => [
+        encodeFrame(FrameType.HEADERS, 0x4, id, block),
+        encodeFrame(FrameType.DATA, 0x1, id, Buffer.from("x")),
+      ];
+      // More than the limit holds open at once.
+      for (let first = 1; first < 3000; first += 200) {
+        c.send(Buffer.concat(Array.from({ length: 100 }, (_, i) => upload(first + 2 * i)).flat()));
+        await c.waitFor(f => f.streamId === first + 198, 20_000);
+      }
+      expect(c.frames.filter(f => f.type === FrameType.RST_STREAM || f.type === FrameType.GOAWAY)).toEqual([]);
+      expect(await liveCount(refs)).toBeLessThanOrEqual(GC_STRAGGLERS);
+      expect(held.map(stream => stream.destroyed)).toEqual(Array(15).fill(false));
+      held[0].session!.destroy();
+      expect(held.map(stream => stream.destroyed)).toEqual(Array(15).fill(true));
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  }, 30_000);
+
+  test("releases client streams whose response nobody reads", async () => {
+    const server = http2.createServer((req, res) => res.end("unread"));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    try {
+      const refs: WeakRef<object>[] = [];
+      const request = () =>
+        new Promise((resolve, reject) => {
+          refs.push(new WeakRef(client.request().on("response", resolve).on("error", reject)));
+        });
+      await Promise.all(Array.from({ length: 32 }, request));
+      await new Promise(resolve => client.ping(resolve));
+      expect(await liveCount(refs)).toBeLessThanOrEqual(GC_STRAGGLERS);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
   test("maxSessionMemory doesn't hold back a client's own requests", async () => {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`, { maxSessionMemory: 1 });

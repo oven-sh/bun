@@ -3073,7 +3073,7 @@ impl H2FrameParser {
 
     pub(crate) fn get_stream_state(&self, cx: &mut JsScope<'_>, stream_id: u32) -> JSValue {
         let global_object = cx.global();
-        // A closed stream keeps its entry until its `Http2Stream` is destroyed.
+        // A closed stream keeps its entry until JS releases it.
         let Some(stream) = self.engine.streams.get(stream_id) else {
             return JSValue::UNDEFINED;
         };
@@ -3128,12 +3128,15 @@ impl H2FrameParser {
         }
     }
 
-    /// JS destroyed the `Http2Stream`. Returns true if the stream is closed, so there's nothing left to reset.
-    pub(crate) fn release_stream(&self, stream_id: u32) -> bool {
-        self.engine
-            .streams
-            .get(stream_id)
-            .is_none_or(|stream| self.engine.streams.release(&stream))
+    /// JS destroyed the `Http2Stream`, or leaves it to a reader (`unread`). Returns true if the stream is closed, so there's nothing left to reset.
+    pub(crate) fn release_stream(&self, stream_id: u32, unread: bool) -> bool {
+        let streams = &self.engine.streams;
+        streams.get(stream_id).is_none_or(|stream| {
+            if unread {
+                streams.remember_unread(&stream, &self.global());
+            }
+            streams.release(&stream)
+        })
     }
 
     pub(crate) fn is_stream_closed(&self, stream_id: u32) -> bool {
@@ -3743,34 +3746,37 @@ impl H2FrameParser {
         }
     }
 
-    /// Calls `callback(stream, isClosed)` for the closed streams, or for those whose close JS hasn't handled yet. One in its close handler is both.
+    /// Calls `callback(stream, isClosed)` for the streams released as `unread`, or for those whose close JS hasn't handled yet.
     pub(crate) fn for_each_stream(
         &self,
         cx: &mut JsScope<'_>,
         callback: JsLocal<'_, Callable>,
-        closed: bool,
+        unread: bool,
     ) {
         let global_object = cx.global();
         let callback = callback.to_js();
-        for stream in self.engine.streams.snapshot() {
-            let wanted = if closed {
-                stream.is_closed()
-            } else {
-                !stream.close_delivered.get()
-            };
-            if !wanted {
-                continue;
-            }
-            let Some(value) = stream.js_context.get().get() else {
-                continue;
-            };
+        let call = |stream: JSValue, is_closed: bool| {
             self.handlers.vm.event_loop_mut().run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,
                 global_object,
                 JSValue::UNDEFINED,
-                &[value, JSValue::from(stream.is_closed())],
+                &[stream, JSValue::from(is_closed)],
             );
+        };
+        let streams = &self.engine.streams;
+        if unread {
+            for value in (0..streams.unread_len()).filter_map(|i| streams.unread_at(i)) {
+                call(value, true);
+            }
+            return;
+        }
+        for stream in streams.snapshot() {
+            if !stream.close_delivered.get()
+                && let Some(value) = stream.js_context.get().get()
+            {
+                call(value, stream.is_closed());
+            }
         }
     }
 

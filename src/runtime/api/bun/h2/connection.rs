@@ -102,7 +102,7 @@ pub(crate) struct Feed {
 /// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
 const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 
-/// What a stream counts toward maxSessionMemory, for its table entry and its `Http2Stream`. Node counts as much: its 10 MB hold 13,866 streams.
+/// What an open stream counts toward maxSessionMemory, for its table entry and its `Http2Stream`. Node counts as much: its 10 MB hold 13,866 streams.
 const STREAM_MEMORY_COST: usize = 756;
 
 /// nghttp2's NGHTTP2_DEFAULT_MAX_CONTINUATIONS: CONTINUATION frames allowed per header block.
@@ -334,8 +334,8 @@ impl Connection {
 
     /// node's IsAvailableSessionMemory. New streams are refused while this returns true.
     pub(crate) fn is_over_memory_limit(&self, sink: &impl Sink) -> bool {
-        sink.buffered_output() + self.streams.len() * STREAM_MEMORY_COST
-            > self.max_session_memory.get()
+        let open = self.streams.open_local() as usize + self.streams.open_peer() as usize;
+        sink.buffered_output() + open * STREAM_MEMORY_COST > self.max_session_memory.get()
     }
 
     // ---- Outbound -------------------------------------------------------

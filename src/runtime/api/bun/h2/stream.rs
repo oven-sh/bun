@@ -8,7 +8,7 @@ use bun_collections::HashMap;
 use bun_http_types::h2::flow_control::{RecvWindow, SendWindow};
 use bun_http_types::h2::frame::ErrorCode;
 use bun_http_types::h2::stream::{Event, State, TransitionError, transition};
-use bun_jsc::{JSGlobalObject, JSValue, StrongOptional};
+use bun_jsc::{JSGlobalObject, JSValue, StrongOptional, Weak};
 use bun_ptr::JsCell;
 
 /// Request methods that change how the response body is framed (nghttp2's METH_HEAD and METH_CONNECT flags).
@@ -80,7 +80,7 @@ pub(crate) struct Stream {
     pub reset: Cell<Option<ResetBy>>,
     /// The JS `Http2Stream`.
     pub js_context: JsCell<StrongOptional>,
-    /// JS destroyed its `Http2Stream`.
+    /// JS destroyed its `Http2Stream`, or only waits for someone to read it.
     released: Cell<bool>,
     /// The handler that tells JS about the close has run, or is running for a close that JS asked for.
     pub close_delivered: Cell<bool>,
@@ -229,7 +229,7 @@ impl Stream {
     }
 }
 
-/// A session's streams: the open ones, and the closed ones that JS still has an `Http2Stream` for. Entries are shared, so a caller can hold one across JS that removes it.
+/// A session's streams: the open ones, and the closed ones that JS hasn't released yet. Entries are shared, so a caller can hold one across JS that removes it.
 #[derive(Default)]
 pub(crate) struct StreamTable {
     map: JsCell<HashMap<u32, Rc<Stream>>>,
@@ -241,6 +241,8 @@ pub(crate) struct StreamTable {
     read_count: Cell<u32>,
     /// `end_read` has entries to forget.
     has_forgettable: Cell<bool>,
+    /// The `Http2Stream`s that closed with unread data. Weak, because their reader may never come.
+    unread: JsCell<Vec<Weak<()>>>,
 }
 
 impl StreamTable {
@@ -255,10 +257,6 @@ impl StreamTable {
             !stream.is_closed()
                 || (self.is_reading() && stream.closed_in_read.get() == self.read_count.get())
         })
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.map.get().len()
     }
 
     pub(crate) fn open_local(&self) -> u32 {
@@ -318,6 +316,29 @@ impl StreamTable {
         stream.is_closed()
     }
 
+    /// Remembers the `Http2Stream` of `stream` past its release, for as long as something else keeps it alive.
+    pub(crate) fn remember_unread(&self, stream: &Stream, global: &JSGlobalObject) {
+        let Some(context) = stream.js_context.get().get() else {
+            return;
+        };
+        let weak = Weak::create_passive(context, global);
+        self.unread.with_mut(|unread| {
+            if unread.len() == unread.capacity() {
+                unread.retain(|weak| weak.get().is_some());
+                unread.reserve(unread.len());
+            }
+            unread.push(weak);
+        });
+    }
+
+    pub(crate) fn unread_len(&self) -> usize {
+        self.unread.get().len()
+    }
+
+    pub(crate) fn unread_at(&self, index: usize) -> Option<JSValue> {
+        self.unread.get().get(index)?.get()
+    }
+
     fn forget_if_done(&self, stream: &Stream) {
         if !stream.is_forgettable() {
             return;
@@ -352,6 +373,7 @@ impl StreamTable {
     /// Forgets every stream, open or not.
     pub(crate) fn clear(&self) {
         drop(self.map.take());
+        drop(self.unread.take());
         self.open_local.set(0);
         self.open_peer.set(0);
         self.has_forgettable.set(false);

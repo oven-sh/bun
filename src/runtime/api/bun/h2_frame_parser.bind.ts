@@ -82,7 +82,7 @@ export const H2FrameParser = b.class({
     },
     emitErrorToAllStreams: { args: { code: b.u32 }, capability: "js" },
     flush: { returns: b.usize, capability: "js", rustName: "flush_from_js" },
-    forEachStream: { args: { callback: b.callable, closed: b.bool.default(false) }, capability: "js" },
+    forEachStream: { args: { callback: b.callable, unread: b.bool.default(false) }, capability: "js" },
     getCurrentState: { returns: b.any.returning("object"), capability: "js" },
     getFrameCounters: { returns: b.any.returning("object"), capability: "js" },
     getNextStream: { returns: b.i32, capability: "js" },
@@ -101,7 +101,7 @@ export const H2FrameParser = b.class({
       returns: b.any.returning("number"),
     },
     read: { ...js, args: { data: buffer } },
-    releaseStream: { args: { streamId: b.u32 }, returns: b.bool },
+    releaseStream: { args: { streamId: b.u32, unread: b.bool.default(false) }, returns: b.bool },
     request: {
       ...js,
       args: {

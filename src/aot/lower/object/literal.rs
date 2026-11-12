@@ -160,7 +160,7 @@ impl FileLowering<'_, '_, '_, '_> {
         if !matches!(hir[literal].kind, ExprKind::Object(_)) {
             return false;
         }
-        let named = &self.literals_named_as_prototype_objects;
+        let named = &self.lists.literals_named_as_prototype_objects;
         if (named.get_or_init(|| self.find_literals_named_as_prototype_objects()))
             .contains(&literal)
         {

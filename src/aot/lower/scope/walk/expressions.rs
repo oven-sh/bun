@@ -19,10 +19,12 @@ use crate::ir::ClassSlot;
 use crate::lower::jsx::find_key_argument;
 use crate::lower::module::has_settled_type;
 use crate::lower::scope::lexical_owners::{ScopeObjectSearch, find_binding_looked_for};
+use crate::lower::scope::plan::is_instance_jsx_import;
 use crate::lower::scope::{
     BindingRef, CalledByName, ScopeSlot, find_declaration_called_by_name,
     find_declaration_made_at_first_read,
 };
+use crate::lower::self_tail_calls::function_named_by_call;
 use crate::lower::{class, commonjs, parameters};
 use crate::modules::{Member, ModuleRef, Site, SiteAnswer};
 
@@ -132,8 +134,14 @@ impl Walker<'_, '_> {
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
             | ExprKind::Regex { .. }
-            | ExprKind::JsxText(_)
-            | ExprKind::ImportMeta => {}
+            | ExprKind::JsxText(_) => {}
+            ExprKind::ImportMeta => {
+                if self.input.modules.has_instances(self.input.file) {
+                    let file_scope = self.file_scope;
+                    let slot = ScopeSlot::ModuleInstance;
+                    self.record_slot_use(context.function, file_scope, slot);
+                }
+            }
             ExprKind::Binary { left, right, .. } => {
                 self.push_present_expressions([left, right], context);
             }
@@ -451,6 +459,11 @@ impl Walker<'_, '_> {
                 let slot = ScopeSlot::CommonJs(CommonJsVariable::Module);
                 self.record_slot_use(context.function, self.file_scope, slot);
             }
+            if let Some((function, _)) = function_named_by_call(self.hir, self.bound, &call)
+                && self.walk.function_of_fn[function.idx()] == Some(context.function)
+            {
+                self.walk.functions_calling_themselves.push(function);
+            }
             if !loads_module {
                 let called = find_declaration_called_by_name(self.hir, self.bound, expression);
                 match called.filter(|called| self.runs_behind_initialization(called, context)) {
@@ -600,11 +613,24 @@ impl Walker<'_, '_> {
         }
     }
 
+    fn use_jsx_import(&mut self, import: JsxImport, context: Context) {
+        if is_instance_jsx_import(self.input, import) {
+            let file_scope = self.bound.top_scope(self.hir, CodeUnit::File);
+            self.record_slot_use(context.function, file_scope, ScopeSlot::ModuleInstance);
+        }
+    }
+
     fn visit_jsx(&mut self, expression: ExprId, jsx: JsxId, context: Context) {
         let hir = self.hir;
         let callee = jsx_callee(hir, self.input.compiled.jsx_mode, jsx);
         if callee == JsxCallee::Import(JsxImport::JsxDev) {
             self.use_this(context);
+        }
+        if let JsxCallee::Import(import) = callee {
+            self.use_jsx_import(import, context);
+        }
+        if hir[jsx].tag.is_none() {
+            self.use_jsx_import(JsxImport::Fragment, context);
         }
         for binding in bindings_of(&self.jsx_uses, expression) {
             self.note_binding_is_looked_at(binding);

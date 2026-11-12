@@ -347,7 +347,7 @@ WTF::String formatStackTrace(
         if (frame.isCompiledFrame()) [[unlikely]] {
             if (auto position = frame.compiledPosition()) {
                 originalLineColumns[i] = position->lineColumn;
-                if (position->source) {
+                if (position->source && !position->isInEvaluatedString) {
                     sourceURLs[i] = position->source == previousCompiledModule ? sourceURLs[previousCompiledFrame] : JSC::AOT::displayPathOf(position->source);
                     previousCompiledModule = position->source;
                     previousCompiledFrame = i;

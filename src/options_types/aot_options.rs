@@ -89,6 +89,10 @@ pub struct AotOptions {
     pub writes_no_executable: bool,
     /// `--aot-testing=DiscardsFirstVisits`: the first visit of every file is thrown away, as one is that ends with an invalid commit, and the file is visited again. The program is the same.
     pub discards_first_visits: bool,
+    /// `--aot-testing=LowersInParts`: a JavaScript file that nobody checks is lowered in parts, however small it is, as a large one always is.
+    pub lowers_small_files_in_parts: bool,
+    /// `--aot-testing=CheckOrder=<odd number>`: the order in which the checker's threads take the files. 1: as always. 4294967295: the last file first. Any other number: a fixed permutation. The program and its type errors are the same.
+    pub check_order: u32,
     /// `--aot-testing=TypeErrorsWarn`: a type error is printed as `bun test --aot` prints it, and the executable is built. What is compiled is the same.
     pub type_errors_warn: bool,
     pub runs_in_place: bool,
@@ -186,6 +190,8 @@ impl Default for AotOptions {
             other_products: Vec::new(),
             writes_no_executable: false,
             discards_first_visits: false,
+            lowers_small_files_in_parts: false,
+            check_order: 1,
             type_errors_warn: false,
             runs_in_place: false,
             missing_tsconfig_override: None,
@@ -251,6 +257,8 @@ mod tests {
             other_products,
             writes_no_executable,
             discards_first_visits,
+            lowers_small_files_in_parts,
+            check_order,
             type_errors_warn,
             runs_in_place,
             missing_tsconfig_override,
@@ -307,6 +315,8 @@ mod tests {
         assert!(other_products.is_empty());
         assert!(!writes_no_executable);
         assert!(!discards_first_visits);
+        assert!(!lowers_small_files_in_parts);
+        assert_eq!(check_order, 1);
         assert!(!type_errors_warn);
         assert!(!runs_in_place);
         assert!(missing_tsconfig_override.is_none());

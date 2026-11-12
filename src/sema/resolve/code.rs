@@ -48,6 +48,8 @@ pub enum CodeImportForm {
     ResolveOnly,
     Macro,
     WrittenByHost,
+    /// The program doesn't load the file: a text of it may be the file's name.
+    Guess,
 }
 
 impl CodeImportForm {

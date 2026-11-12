@@ -46,7 +46,9 @@ pub(super) struct NamesLookedUp {
     with_shared_types_since: Vec<u32>,
     readers: Vec<(u32, u32)>,
     reader_count_without_repeats: usize,
+    /// By importing file: for each of its imported names, the file that holds the variable, or `NO_HOLDER`.
     holders: FxHashMap<u32, Vec<u32>>,
+    /// By file. They depend only on the statements of the files, so folding a file again does not change them.
     stars: Vec<OnceLock<Arc<Stars>>>,
     ever_parsed: FxHashSet<u32>,
     has_new_files: bool,
@@ -751,6 +753,7 @@ pub(super) fn fold_files_that_import_constants_again<'s, 'r>(
                 true => imported_names(file),
                 false => &[],
             };
+            // A name whose holder was not parsed again has the constant that it had, if the importing file was not parsed again either.
             let known = match is_parsed[index as usize] {
                 true => None,
                 false => looked_up.holders.get(&index),

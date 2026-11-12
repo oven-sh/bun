@@ -177,7 +177,7 @@ module.exports = { pack };
         "node_modules/packer/locales/en.json": `{ "hello": "hello" }`,
         "node_modules/packer/locales/README.md": "# translations\n",
       });
-      const codes = (text: string) => [...text.matchAll(/TS\d+/g)].map(String);
+      const codes = (text: string) => [...text.matchAll(/^\w+: (TS\d+):/gm)].map(match => match[1]);
       const notes = (text: string) => text.split("\n").filter(line => /^ {13,}[a-z]/.test(line));
       const counted =
         "             note  2 regular expressions in packer are compiled at run time (--explain lists them)";

@@ -382,7 +382,7 @@ fn warning_at_witness_in_module_without_source_has_no_location() {
 #[test]
 fn worker_start_of_no_place_warns_nobody() {
     let mut diagnostics = Diagnostics::new();
-    diagnostics.add_worker_start_without_name(&witness(NO_LOCATION), &texts());
+    diagnostics.add_worker_start_without_name(&witness(NO_LOCATION), b"", &texts());
     assert!(written(diagnostics).msgs.is_empty());
 }
 
@@ -393,8 +393,8 @@ fn worker_start_at_place_warns_there() {
         ..witness(at(PROGRAM, 7))
     };
     let mut diagnostics = Diagnostics::new();
-    diagnostics.add_worker_start_without_name(&seen, &texts());
-    let sentence = sentence_of(Code::WorkerStartedFromUnknownValue, &[]);
+    diagnostics.add_worker_start_without_name(&seen, b"", &texts());
+    let sentence = sentence_of(Code::WorkerStartedFromUnknownValue, &[b""]);
     assert_eq!(
         describe(&written(diagnostics)),
         [format!("/p/a.ts:2:1 Warn {sentence}")]

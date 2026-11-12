@@ -109,6 +109,8 @@ pub(super) struct Commits<'s> {
     /// One bit per file. Set once a task that was checking another file has found an error while evaluating something
     /// about this file, and has committed. See `View::hides`.
     with_errors: &'s [AtomicU32],
+    /// One bit per file. Set until the file's type errors have been collected. See `Checker::needs_argument_check`.
+    pending_checks: &'s [AtomicU32],
     /// `tables_written_immediately`
     immediate_tables: u128,
     /// `Program::commit_totals`
@@ -257,6 +259,7 @@ impl<'s> Commits<'s> {
             cycle_commits: Guarded::default(),
             ranks_of_files: &[],
             with_errors: &[],
+            pending_checks: &[],
             immediate_tables: tables_written_immediately(),
             totals: Default::default(),
             counts_entries_found: AtomicBool::new(false),
@@ -308,8 +311,10 @@ impl<'s> Commits<'s> {
 
     /// `ranks` is `Files::rank_of_file`, indexed by file. Without this call, no task hides anything. See `View::hides`.
     pub(super) fn for_files(mut self, ranks: &'s [u32], arena: &'s Arena) -> Commits<'s> {
-        let words = (0..ranks.len().div_ceil(32)).map(|_| AtomicU32::new(0));
-        (self.ranks_of_files, self.with_errors) = (ranks, arena.alloc_slice_fill_iter(words));
+        let words = || (0..ranks.len().div_ceil(32)).map(|_| AtomicU32::new(0));
+        self.ranks_of_files = ranks;
+        self.with_errors = arena.alloc_slice_fill_iter(words());
+        self.pending_checks = arena.alloc_slice_fill_iter(words());
         self
     }
 
@@ -728,6 +733,25 @@ impl<'s> Program<'s> {
         not_registered
     }
 
+    /// A task is going to check `file` and report its type errors. Call before any task begins.
+    pub fn set_check_pending(&self, file: FileId) {
+        if let Some(word) = self.commits.pending_checks.get(file.idx() / 32) {
+            word.fetch_or(1 << (file.0 % 32), Ordering::Relaxed);
+        }
+    }
+
+    /// `file` is checked for good.
+    fn clear_check_pending(&self, file: FileId) {
+        if let Some(word) = self.commits.pending_checks.get(file.idx() / 32) {
+            word.fetch_and(!(1 << (file.0 % 32)), Ordering::Release);
+        }
+    }
+
+    pub(super) fn is_check_pending(&self, file: FileId) -> bool {
+        let word = self.commits.pending_checks.get(file.idx() / 32);
+        word.is_some_and(|it| it.load(Ordering::Acquire) >> (file.0 % 32) & 1 != 0)
+    }
+
     /// Returns the number of the last commit that has finished storing.
     pub fn last_commit(&self) -> u32 {
         self.commits.numbers.stored.load(Ordering::Acquire)
@@ -1088,10 +1112,12 @@ impl<'s> Checker<'_, 's> {
     pub fn commit_after_file(&mut self, is_last: bool) -> bool {
         self.discard_if_missed_cycle_member();
         // The last round's task commits once, when it ends. See `is_commit_due`. It's never discarded.
-        if self.task.is_trusted() && !is_last && !self.task.was_discarded() {
-            return true;
+        let commits_later = self.task.is_trusted() && !is_last && !self.task.was_discarded();
+        let is_kept = commits_later || self.commit(true);
+        if is_kept && let Some(file) = self.task.file {
+            self.p.clear_check_pending(file);
         }
-        self.commit(true)
+        is_kept
     }
 
     /// See the top of this file. Nothing may be in progress in the task.

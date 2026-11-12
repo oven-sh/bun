@@ -27,7 +27,7 @@
 # Two lists made in front of both loops are believed fresh where the closed copy of the loop inside begins and have left on the edge that arrives there: the builds of that row are given up; nothing fails.
 # RUN: compile LoopVersioningAttemptsFailed WalkLoopsVersioned mechanisms=all
 # CHECK: statistic LoopVersioningAttemptsFailed 0
-# CHECK: statistic WalkLoopsVersioned 5
+# CHECK: statistic WalkLoopsVersioned 6
 # RUN(SHELL): run-in-shell mechanisms=all
 # SHELL: 0 number 3 2 1 3 [3] [3,7] 3,5,3
 # SHELL-NEXT: exited with 0

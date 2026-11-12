@@ -15,9 +15,16 @@
 // # WALK: [[read]]: {{*}} = GetSlotOrUndefined {{*}} key="part" {{*}} level=Expected
 // # WALK: = ToBoolean [[read]] form=Generic [expectsObjectOrNothing]
 // # Where the proofs of fields are checked at run time the read goes the whole way, and what it finds in the slot is asked for the type that the slot is held to.
-// # RUN(ASKED): emit f8:Body mechanisms=all testing=CheckProofsAtRunTime
-// # ASKED: = Load({{*}}AOTObject_shapeWord, origin = [[read]])
-// # ASKED: = Load({{*}}AOTObject_shapeNumber, ReadsImmutableHeap, origin = [[read]])
+// # REQUIRES(MARKED): x86_64
+// # RUN(MARKED): emit f8:Body mechanisms=all testing=CheckProofsAtRunTime
+// # MARKED: = Load({{*}}AOTObject_shapeWord, origin = [[read]])
+// # MARKED: = Load({{*}}AOTObject_shapeWord, origin = [[read]])
+// # MARKED: = Load({{*}}AOTObject_shapeWord, origin = [[read]])
+// # REQUIRES(NUMBERED): arm64
+// # RUN(NUMBERED): emit f8:Body mechanisms=all testing=CheckProofsAtRunTime
+// # NUMBERED: = Load({{*}}AOTObject_shapeWord, origin = [[read]])
+// # NUMBERED: = Load({{*}}AOTObject_shapeWord, origin = [[read]])
+// # NUMBERED: = Load({{*}}AOTObject_shapeNumber, ReadsImmutableHeap, origin = [[read]])
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 268 of 268 of 268

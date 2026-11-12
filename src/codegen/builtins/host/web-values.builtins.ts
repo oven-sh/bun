@@ -200,8 +200,13 @@ const assignableURLComponent = {
   },
 } satisfies b.GetterField;
 
+// Its setter throws. Called as a function of its own it would have a frame in the stack of the error.
+const urlHref = {
+  ...assignableURLComponent,
+  setter: { ...assignableURLComponent.setter, implementation: b.generic },
+} satisfies b.GetterField;
+
 const assignableURLComponents = [
-  "href",
   "protocol",
   "username",
   "password",
@@ -420,6 +425,7 @@ export default b.declarations(
   b.static("URL.canParse", parsesURL(b.bool, false)),
   b.static("URL.parse", parsesURL(b.union(b.instance("URL"), b.strictNull).fresh, false)),
   membersOf("URL.prototype", {
+    href: urlHref,
     ...eachOf(assignableURLComponents, assignableURLComponent),
     origin: urlComponent,
     // Every read answers the same object, which native code makes at the first one, and a change to it changes the URL.

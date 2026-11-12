@@ -4783,6 +4783,11 @@ declare module "bun" {
         }>;
         /** List of exported names from this output */
         exports: string[];
+        /**
+         * The strings whose characters are only in the machine code of this executable, such as the labels of
+         * a `switch`. A search of the file's bytes doesn't find them. Only for builds with `compile.aot`.
+         */
+        inlinedStrings?: string[];
         /** Entrypoint path, if this output is an entrypoint */
         entryPoint?: string;
         /** Path to the associated CSS bundle (for JS entrypoints with CSS) */

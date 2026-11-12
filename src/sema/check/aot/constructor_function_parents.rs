@@ -49,6 +49,9 @@ impl<'s> LinkedFunctions<'s> {
                 continue;
             };
             ends.push(child);
+            if link.is_plain_literal {
+                continue;
+            }
             let parent = link.parent.and_then(LinkEnd::as_parent);
             of_functions.push(FunctionLink { child, parent });
         }
@@ -96,6 +99,13 @@ struct LinksOfParameters {
 
 impl LinksOfParameters {
     fn add(&mut self, link: PrototypeLink) -> bool {
+        if link.is_plain_literal {
+            let is_new = !self.links.contains(&link);
+            if is_new {
+                self.links.push(link);
+            }
+            return is_new;
+        }
         let parents = self.parents.entry(link.child).or_default();
         if parents.is_unknown {
             return false;
@@ -113,6 +123,7 @@ impl LinksOfParameters {
         self.links.push(PrototypeLink {
             child: link.child,
             parent: link.parent.filter(|_| is_first_of_its_kind),
+            is_plain_literal: false,
         });
         true
     }
@@ -719,7 +730,11 @@ mod tests {
     }
 
     fn link(child: LinkEnd, parent: Option<LinkEnd>) -> PrototypeLink {
-        PrototypeLink { child, parent }
+        PrototypeLink {
+            child,
+            parent,
+            is_plain_literal: false,
+        }
     }
 
     fn parameter(index: u32) -> LinkEnd {

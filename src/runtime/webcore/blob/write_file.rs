@@ -349,6 +349,9 @@ impl WriteFile {
     ) -> jsc::JsResult<()> {
         let system_error = this.system_error.take();
         let total_written = this.total_written;
+        if system_error.is_none() {
+            note_written(&this.file_blob);
+        }
         drop(this);
 
         if let Some(err) = system_error {
@@ -1044,7 +1047,10 @@ mod windows_impl {
                 }
             } else {
                 // SAFETY: caller contract — `this` is live.
-                let wrote = unsafe { (*this).total_written };
+                let wrote = unsafe {
+                    note_written(&(*this).file_blob);
+                    (*this).total_written
+                };
                 // SAFETY: caller contract — `this` is live; consumed here.
                 unsafe { Self::deinit(this) };
                 if let Err(e) = settle(
@@ -1210,6 +1216,15 @@ fn settle(
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+
+fn note_written(file: &Blob) {
+    let store = file.store.get().as_ref();
+    if let Some(blob::store::Data::File(file)) = store.map(|it| &it.data)
+        && file.pathlike.is_path()
+    {
+        crate::node::fs::note_opened_for_write(file.pathlike.path().slice(), true);
+    }
+}
 
 pub(crate) struct WriteFileWaitFromLockedValueTask {
     pub(crate) file_blob: Blob,

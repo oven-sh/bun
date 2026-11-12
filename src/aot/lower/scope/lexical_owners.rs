@@ -38,7 +38,7 @@ pub(super) fn find_container_binding(
             _ => return None,
         };
         let binding = bound.declared_symbol(declaration).some()?;
-        let names_container = bound.export_symbol_of_value_symbol_if_exported(binding) == container
+        let names_container = bound.exported_value(binding) == container
             || bound.symbol_of_declaration(declaration) == container;
         let parameter = bound.container_parameter(scope).some();
         parameter.filter(|_| names_container)

@@ -849,7 +849,12 @@ function read(this: $Node.Readable, state: ReadableState, n: number) {
         } else if ((flags & Flag.ObjectMode) !== 0) {
           amount = 1;
         } else if (n !== n) {
-          if (length && ((flags & Flag.Decoder) === 0 || (flags & Flag.Flowing) !== 0)) break decided;
+          if (length && ((flags & Flag.Decoder) === 0 || (flags & Flag.Flowing) !== 0)) {
+            // The length of a chunk may be an accessor of the program. A single chunk is as long as the state says.
+            const buffer: unknown = state.buffer;
+            const index: unknown = state.bufferIndex;
+            if (!$isJSArray(buffer) || typeof index !== "number" || buffer.length - index !== 1) break decided;
+          }
           amount = length;
         } else {
           amount = n <= length ? n : (flags & Flag.Ended) !== 0 ? length : 0;

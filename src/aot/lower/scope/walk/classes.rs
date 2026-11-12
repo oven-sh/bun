@@ -155,7 +155,7 @@ impl<'s> Walker<'_, 's> {
             bound,
             decisions: self.decisions,
             places_of_this_super_and_return: places
-                .get_or_init(|| class::find_places_of_this_super_and_return(hir, bound)),
+                .get_or_init(|| class::find_this_super_returns(hir, bound)),
         }
     }
 

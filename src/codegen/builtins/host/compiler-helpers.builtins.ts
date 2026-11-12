@@ -15,6 +15,7 @@ const helpersIn = (file: string, usesByHelper: Readonly<Record<string, UsesByPar
         runsUnseenCode: false,
         uses,
         implementation: b.compiled(file, name),
+        ...(name === "applyMethodDecorators" ? { marks: ["AppliesMethodDecorators"] as const } : {}),
       } satisfies b.FunctionField,
     ]),
   );
@@ -83,6 +84,7 @@ const sortInPlace = (name: string) =>
 
 // A helper calls the functions that a list holds, and defines on a class what they return. No word says either.
 const calledOrChanged = [b.everything];
+const changedOrReturned = [b.everything, b.returned];
 const kept = [b.retained];
 const usedAsKey = [b.retained, b.runs("ToPrimitive")];
 
@@ -295,7 +297,7 @@ export default b.declarations(
       implementation: b.compiled("prelude/test-files", "askRunOfTestFile"),
     },
     ...helpersIn("prelude/decorators", {
-      decorateClass: { decorators: calledOrChanged, target: calledOrChanged },
+      decorateClass: { decorators: calledOrChanged, target: changedOrReturned },
       decorateMethod: { decorators: calledOrChanged, target: calledOrChanged, key: usedAsKey },
       decorateProperty: { decorators: calledOrChanged, target: calledOrChanged, key: usedAsKey },
       decorateParameter: {
@@ -319,7 +321,7 @@ export default b.declarations(
       createPrivateStorage: { test: kept, get: kept, set: kept },
       applyClassDecorators: {
         decorators: calledOrChanged,
-        target: calledOrChanged,
+        target: changedOrReturned,
         name: kept,
         metadata: calledOrChanged,
         initializers: calledOrChanged,
@@ -333,7 +335,7 @@ export default b.declarations(
       },
       applyPrivateMethodDecorators: {
         decorators: calledOrChanged,
-        value: calledOrChanged,
+        value: changedOrReturned,
         element: calledOrChanged,
         test: calledOrChanged,
         metadata: calledOrChanged,
@@ -370,8 +372,9 @@ export default b.declarations(
         valueInitializers: calledOrChanged,
         extraInitializers: calledOrChanged,
       },
+      keepInitializerLists: { lists: calledOrChanged },
       runInitializers: { initializers: calledOrChanged, receiver: calledOrChanged },
-      runValueInitializers: { initializers: calledOrChanged, receiver: calledOrChanged, value: calledOrChanged },
+      runValueInitializers: { initializers: calledOrChanged, receiver: calledOrChanged, value: changedOrReturned },
     }),
     maxOfList: extremumOfList("maxOfList"),
     minOfList: extremumOfList("minOfList"),

@@ -407,7 +407,7 @@ fn a_made_name_leaves_the_cycle_to_the_loader_where_every_file_is_found_by_name(
             let is_left = |file: &(&str, &str)| marks[file_named(input, file.0).idx()];
             assert!(files.iter().all(is_left), "{asker}, tests: {runs_tests}");
             assert!(
-                order.leaves_cycles_to_loader(),
+                order.defers_cycles_to_loader(),
                 "{asker}, tests: {runs_tests}"
             );
         });

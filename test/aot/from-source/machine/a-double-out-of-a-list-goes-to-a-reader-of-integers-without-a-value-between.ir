@@ -21,7 +21,8 @@
 # CHECK: = Check(
 # CHECK-NOT: IToD(
 # CHECK: = Check(
-# CHECK-NEXT: = Upsilon(
+# CHECK-NOT: = Phi(
+# CHECK: Int32 {{*}} = Trunc(
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 3421780262 0 3040120786
 # ANSWERS: 1845890564 -1206372329 -2122088080

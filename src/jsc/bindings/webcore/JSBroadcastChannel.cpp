@@ -441,11 +441,12 @@ bool JSBroadcastChannelOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknow
     return false;
 }
 
-void JSBroadcastChannelOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSBroadcastChannelOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsBroadcastChannel = static_cast<JSBroadcastChannel*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, &jsBroadcastChannel->wrapped(), jsBroadcastChannel);
+    return FinalizeResult::KeepImpl;
 }
 
 #if ENABLE(BINDING_INTEGRITY)

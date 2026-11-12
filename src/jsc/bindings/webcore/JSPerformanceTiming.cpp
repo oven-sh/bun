@@ -575,11 +575,12 @@ bool JSPerformanceTimingOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unkno
     return false;
 }
 
-void JSPerformanceTimingOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSPerformanceTimingOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsPerformanceTiming = static_cast<JSPerformanceTiming*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, &jsPerformanceTiming->wrapped(), jsPerformanceTiming);
+    return FinalizeResult::KeepImpl;
 }
 
 #if ENABLE(BINDING_INTEGRITY)

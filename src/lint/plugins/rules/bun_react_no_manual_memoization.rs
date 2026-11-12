@@ -6,8 +6,9 @@ use bun_lint::utils::ts_utils::{
     is_strong_precedence_node, is_weak_precedence_parent,
 };
 use bun_lint_oxlint::ast_util::static_property_name;
-use bun_lint_react_compiler::{Discovered, Flavor, discover, is_hook_call, would_compile};
+use bun_lint_react_compiler::{Discovered, Flavor, OPT_OUT_DIRECTIVES, discover, is_hook_call, would_compile};
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::OnceCell;
 
 /// Disallow `useMemo`, `useCallback` and `memo` in a project that relies on the React Compiler.
 pub struct ReactNoManualMemoization;
@@ -21,11 +22,11 @@ const REMOVE_IMPORT: &Message = &Message::new("removeImport", "Remove the import
 
 const MEMOIZERS: [&str; 3] = ["memo", "useCallback", "useMemo"];
 
-/// The directives that opt a file out of the React Compiler. `src/lint/react_compiler/program.rs` has the same list.
-const OPT_OUT_DIRECTIVES: [&str; 2] = ["use no forget", "use no memo"];
-
 /// The compiler port as oxlint runs it, which is the closest to `bun build --react-compiler`.
 const FLAVOR: Flavor = Flavor::Oxlint;
+
+/// The extensions whose default loader is JSX. `bun build --react-compiler` compiles only those files.
+const JSX_EXTENSIONS: [&str; 3] = [".js", ".jsx", ".tsx"];
 
 /// A use of one of the memoizers.
 struct Use<'a> {
@@ -50,9 +51,14 @@ fn is_react_api(callee: Expr<'_>, names: &[&str]) -> bool {
         || ast_utils::is_member_access_of_any(callee, names)
 }
 
-/// What the compiler would do with the functions of a file. The compiler port decides which ones it compiles, by the
-/// rules of `bun build --react-compiler`.
+/// What the compiler would do with the functions of a file, found once the first use asks. The compiler port decides
+/// which ones it compiles, by the rules of `bun build --react-compiler`.
 struct Compiled<'a> {
+    file: &'a File<'a>,
+    found: OnceCell<Found<'a>>,
+}
+
+struct Found<'a> {
     discovered: FxHashMap<Func<'a>, Discovered<'a>>,
     /// The hook calls in each function itself, not in a function inside it.
     hook_calls: FxHashMap<Func<'a>, u32>,
@@ -60,9 +66,13 @@ struct Compiled<'a> {
     with_jsx: FxHashSet<Func<'a>>,
 }
 
-impl<'a> Compiled<'a> {
+impl<'a> Found<'a> {
     fn new(file: &'a File<'a>) -> Self {
-        let discovered = discover(file, FLAVOR).into_iter().map(|it| (it.func, it)).collect();
+        let is_built_with_jsx = JSX_EXTENSIONS.iter().any(|it| file.path().ends_with(it.as_bytes()));
+        let discovered = match is_built_with_jsx {
+            true => discover(file, FLAVOR).into_iter().map(|it| (it.func, it)).collect(),
+            false => FxHashMap::default(),
+        };
         let mut hook_calls: FxHashMap<Func<'a>, u32> = FxHashMap::default();
         let hooks = file.exprs_of_kind(ExprTag::Call).filter(|e| e.as_call().is_some_and(|it| is_hook_call(it, FLAVOR)));
         for e in hooks {
@@ -71,13 +81,23 @@ impl<'a> Compiled<'a> {
             }
         }
         let jsx = file.exprs_of_kind(ExprTag::Jsx).filter_map(|e| Node::Expr(e).enclosing_function());
-        Compiled { discovered, hook_calls, with_jsx: jsx.collect() }
+        Found { discovered, hook_calls, with_jsx: jsx.collect() }
+    }
+}
+
+impl<'a> Compiled<'a> {
+    fn new(file: &'a File<'a>) -> Self {
+        Compiled { file, found: OnceCell::new() }
+    }
+
+    fn found(&self) -> &Found<'a> {
+        self.found.get_or_init(|| Found::new(self.file))
     }
 
     /// The function the compiler compiles `e` as part of.
     fn function_around(&self, e: Expr<'a>) -> Option<Discovered<'a>> {
         let mut functions = Node::Expr(e).ancestors().filter_map(Node::as_func);
-        functions.find_map(|it| self.discovered.get(&it).copied())
+        functions.find_map(|it| self.found().discovered.get(&it).copied())
     }
 
     fn is_in_skipped_function(&self, e: Expr<'a>) -> bool {
@@ -89,18 +109,21 @@ impl<'a> Compiled<'a> {
         Node::Expr(e).enclosing_function().is_some() && self.function_around(e).is_none()
     }
 
-    /// True if the compiler would stop finding the function that the hook call `e` is in once the call is gone.
-    fn is_last_hook_call(&self, e: Expr<'a>) -> bool {
+    /// True if the compiler would stop finding the function that the hook call `e` is in once the hook calls that
+    /// `removed` counts for it are gone: `e` itself, and the other memoizer calls with a suggestion.
+    fn leaves_no_hook_call(&self, e: Expr<'a>, removed: &FxHashMap<Func<'a>, u32>) -> bool {
         let Some(func) = Node::Expr(e).enclosing_function() else {
             return false;
         };
+        let found = self.found();
         let is_compiled = self.function_around(e).is_some_and(|it| it.func == func);
-        is_compiled && self.hook_calls.get(&func).copied().unwrap_or(0) <= 1 && !self.with_jsx.contains(&func)
+        let count = |calls: &FxHashMap<Func<'a>, u32>| calls.get(&func).copied().unwrap_or(0);
+        is_compiled && count(&found.hook_calls) <= count(removed) && !found.with_jsx.contains(&func)
     }
 
     /// True if the compiler compiles `func` and doesn't skip it.
     fn compiles(&self, func: Func<'a>) -> bool {
-        self.discovered.get(&func).is_some_and(|it| !it.skipped)
+        self.found().discovered.get(&func).is_some_and(|it| !it.skipped)
     }
 }
 
@@ -179,8 +202,26 @@ fn first_argument(call: Call<'_>, count: usize) -> Option<Expr<'_>> {
     (fits && is_plain).then(|| args.first()).flatten()
 }
 
+/// `a`, `a.b`, `a?.b`, `a!.b`, `this.a`
+fn is_name_path(e: Expr<'_>) -> bool {
+    match e.kind() {
+        ExprKind::Ident(_) | ExprKind::This => true,
+        ExprKind::Dot { obj, .. } | ExprKind::NonNull(obj) => is_name_path(obj),
+        _ => false,
+    }
+}
+
+/// True if the dependency list of `call` can go with the call: there is none, or it is an array of names and member
+/// chains, which do nothing. `[a, useB()]` calls a hook.
+fn has_droppable_deps(call: Call<'_>) -> bool {
+    match call.args().get(1) {
+        None => true,
+        Some(deps) => deps.as_array().is_some_and(|it| it.iter().all(is_name_path)),
+    }
+}
+
 /// True if the compiler would still compile the component `kept` once `memo()` is gone: under the variable's name, or
-/// under its own as a declaration. A component from another file may not be compiled at all.
+/// under its own as a declaration. A component from another file, or one nothing declares, may not be compiled at all.
 fn stays_compiled<'a>(compiled: &Compiled<'a>, e: Expr<'a>, kept: Expr<'a>) -> bool {
     match kept.as_fn() {
         Some(func) => {
@@ -197,8 +238,7 @@ fn stays_compiled<'a>(compiled: &Compiled<'a>, e: Expr<'a>, kept: Expr<'a>) -> b
                 let inside = kept.span().start <= func.span().start && func.span().end <= kept.span().end;
                 compiled.compiles(func) && !inside
             }
-            Some(Component::Class | Component::Other | Component::Import) => false,
-            None => true,
+            Some(Component::Class | Component::Other | Component::Import) | None => false,
         },
     }
 }
@@ -212,7 +252,7 @@ fn replacement<'a>(
 ) -> Option<(Expr<'a>, &'static Message)> {
     match name.bytes() {
         b"useMemo" => {
-            let factory = first_argument(call, 2)?.as_fn()?;
+            let factory = first_argument(call, 2).filter(|_| has_droppable_deps(call))?.as_fn()?;
             let FnBody::Expr(value) = factory.body() else {
                 return None;
             };
@@ -223,7 +263,7 @@ fn replacement<'a>(
                 && factory.return_type().is_none();
             is_plain.then_some((value, KEEP_VALUE))
         }
-        b"useCallback" => Some((first_argument(call, 2)?, KEEP_FUNCTION)),
+        b"useCallback" => Some((first_argument(call, 2).filter(|_| has_droppable_deps(call))?, KEEP_FUNCTION)),
         b"memo" => {
             let component = first_argument(call, 1)?;
             stays_compiled(compiled, e, component).then_some((component, KEEP_COMPONENT))
@@ -374,30 +414,39 @@ impl Rule for ReactNoManualMemoization {
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
         let compiled = Compiled::new(file);
-        for Use { at, name, call, specifier } in uses(file, &compiled) {
-            if name.is("memo")
-                && let Some((_, call)) = call
-                && call.args().first().is_some_and(|it| compiler_skips(&compiled, it))
-            {
-                continue;
+        let all = uses(file, &compiled).into_iter().filter(|it| match it.call {
+            Some((_, call)) if it.name.is("memo") => {
+                !call.args().first().is_some_and(|it| compiler_skips(&compiled, it))
             }
+            _ => true,
+        });
+        // What each call leaves behind, and the hook calls that `--fix-suggestions` removes from each function.
+        let mut removed: FxHashMap<Func<'a>, u32> = FxHashMap::default();
+        let planned: Vec<_> = all
+            .map(|it| {
+                let rewrite = it.call.and_then(|(e, call)| {
+                    let (kept, message) = replacement(&compiled, it.name, e, call)?;
+                    let fits = !name_is_taken(e, kept) && !compiled.is_in_undiscovered_function(e);
+                    if fits && is_hook_call(call, FLAVOR) && let Some(func) = Node::Expr(e).enclosing_function() {
+                        *removed.entry(func).or_default() += 1;
+                    }
+                    fits.then_some((kept, message))
+                });
+                (it, rewrite)
+            })
+            .collect();
+        for (Use { at, name, call, specifier }, rewrite) in planned {
             let report = cx.report(at, MANUAL_MEMOIZATION).data("name", name);
-            let Some((e, call)) = call else {
-                if let Some(specifier) = specifier.filter(|it| it.span() == at) {
+            let Some((e, kept, message)) = call.zip(rewrite).map(|((e, _), (kept, message))| (e, kept, message)) else {
+                if call.is_none() && let Some(specifier) = specifier.filter(|it| it.span() == at) {
                     report.suggest(REMOVE_IMPORT, |fixer| {
                         fixer.remove_import_specifier(specifier).filter(|it| fixer.keeps_comments(it))
                     });
                 }
                 continue;
             };
-            let Some((kept, message)) = replacement(&compiled, name, e, call) else {
-                continue;
-            };
-            if name_is_taken(e, kept) || compiled.is_in_undiscovered_function(e) {
-                continue;
-            }
-            // Without its only hook call, a hook is no longer one to the compiler.
-            if !name.is("memo") && compiled.is_last_hook_call(e) {
+            // Without any hook call left, a hook is no longer one to the compiler.
+            if compiled.leaves_no_hook_call(e, &removed) {
                 continue;
             }
             report.suggest(message, move |fixer| {

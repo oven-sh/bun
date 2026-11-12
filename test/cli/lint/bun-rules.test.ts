@@ -29,6 +29,8 @@ const react = `import React from "react";\n`;
 const useMemo = `import { useMemo } from "react";\n`;
 const useCallback = `import { useCallback } from "react";\n`;
 const memo = `import { memo } from "react";\n`;
+const row = `function Row() {\n  return <li />;\n}\n`;
+const cell = `function Cell() {\n  return <td />;\n}\n`;
 const foo = [{ patterns: [{ pattern: "foo" }] }];
 const inText = [{ pairs: [{ outer: "Text", inner: "View" }] }];
 const component = (body: string) => `function A({ count }) {\n  const saved = useRef(count);\n${body}\n}`;
@@ -959,7 +961,14 @@ const rules: Record<string, Case[]> = {
         `${useMemo}const all = <List items={«useMemo»(() => a.concat(b), [a, b])} />;`,
         `const all = <List items={a.concat(b)} />;`,
       ],
-      [`${useMemo}const useGet = () => «useMemo»(() => ({ a }), [a, useB()]);`, `const useGet = () => ({ a });`],
+      [
+        `${useMemo}const useGet = () => {\n  useB();\n  return «useMemo»(() => ({ a }), [a, b.c, d!.e]);\n};`,
+        `const useGet = () => {\n  useB();\n  return { a };\n};`,
+      ],
+      [
+        `${useMemo}function useTotal(a, b) {\n  useOther();\n  return «useMemo»(() => a + b, [a, b]);\n}`,
+        `function useTotal(a, b) {\n  useOther();\n  return a + b;\n}`,
+      ],
       [`${useMemo}const t = «useMemo»(() => new Date, []).getTime();`, `const t = (new Date).getTime();`],
       [`${useMemo}const t = «useMemo»(() => new Date(), []).getTime();`, `const t = new Date().getTime();`],
       [`${useMemo}«useMemo»(() => ({ a }), [a]);`, `({ a });`],
@@ -992,50 +1001,50 @@ const rules: Record<string, Case[]> = {
         `${memo}export default «memo»(function Row({ label }) {\n  return <li>{label}</li>;\n});`,
         `export default function Row({ label }) {\n  return <li>{label}</li>;\n}`,
       ],
-      [`${memo}export default «memo»(Row);`, `export default Row;`],
+      [`${memo}${row}export default «memo»(Row);`, `${row}export default Row;`],
       [
         `${memo}export default «memo»(Row);\nfunction Row() {\n  return <li />;\n}`,
         `export default Row;\nfunction Row() {\n  return <li />;\n}`,
       ],
-      [`import { memo as m } from "react";\nexport default «m»(Row);`, `export default Row;`],
+      [`import { memo as m } from "react";\n${row}export default «m»(Row);`, `${row}export default Row;`],
       [
-        `import React, { memo } from "react";\nexport default «memo»(Row);`,
-        `import React from "react";\nexport default Row;`,
+        `import React, { memo } from "react";\n${row}export default «memo»(Row);`,
+        `import React from "react";\n${row}export default Row;`,
       ],
       [
-        `import React, { memo, } from "react";\nexport default «memo»(Row);`,
-        `import React from "react";\nexport default Row;`,
+        `import React, { memo, } from "react";\n${row}export default «memo»(Row);`,
+        `import React from "react";\n${row}export default Row;`,
       ],
       [
-        `import React, {\n  memo,\n} from "react";\nexport default «memo»(Row);`,
-        `import React from "react";\nexport default Row;`,
+        `import React, {\n  memo,\n} from "react";\n${row}export default «memo»(Row);`,
+        `import React from "react";\n${row}export default Row;`,
       ],
       [
-        `import { memo, useState } from "react";\nexport default «memo»(Row);`,
-        `import { useState } from "react";\nexport default Row;`,
+        `import { memo, useState } from "react";\n${row}export default «memo»(Row);`,
+        `import { useState } from "react";\n${row}export default Row;`,
       ],
       [
-        `import { useState, memo } from "react";\nexport default «memo»(Row);`,
-        `import { useState } from "react";\nexport default Row;`,
+        `import { useState, memo } from "react";\n${row}export default «memo»(Row);`,
+        `import { useState } from "react";\n${row}export default Row;`,
       ],
       [
-        `import {\n  memo,\n  useState,\n} from "react";\nexport default «memo»(Row);`,
-        `import {\n  useState,\n} from "react";\nexport default Row;`,
+        `import {\n  memo,\n  useState,\n} from "react";\n${row}export default «memo»(Row);`,
+        `import {\n  useState,\n} from "react";\n${row}export default Row;`,
       ],
       [
-        `import { useState, memo, } from "react";\nexport default «memo»(Row);`,
-        `import { useState, } from "react";\nexport default Row;`,
+        `import { useState, memo, } from "react";\n${row}export default «memo»(Row);`,
+        `import { useState, } from "react";\n${row}export default Row;`,
       ],
-      [`const a = 1;\n${memo}\nexport default «memo»(Row);`, `const a = 1;\n\nexport default Row;`],
+      [`const a = 1;\n${memo}\n${row}export default «memo»(Row);`, `const a = 1;\n\n${row}export default Row;`],
       [`${react}const a = «React.useMemo»(() => 1, []);`, `${react}const a = 1;`],
       [`${react}const a = «React["useMemo"]»(() => 1, []);`, `${react}const a = 1;`],
       [`${react}const a = «React.useCallback»(f, []);`, `${react}const a = f;`],
-      [`${react}const Row = «React.memo»(Cell);`, `${react}const Row = Cell;`],
+      [`${react}${cell}const Row = «React.memo»(Cell);`, `${react}${cell}const Row = Cell;`],
       [
-        `import * as React from "react";\nconst Row = «React.memo»(Cell);`,
-        `import * as React from "react";\nconst Row = Cell;`,
+        `import * as React from "react";\n${cell}const Row = «React.memo»(Cell);`,
+        `import * as React from "react";\n${cell}const Row = Cell;`,
       ],
-      [`import R from "react";\nconst Row = «R.memo»(Cell);`, `import R from "react";\nconst Row = Cell;`],
+      [`import R from "react";\n${cell}const Row = «R.memo»(Cell);`, `import R from "react";\n${cell}const Row = Cell;`],
       // Only `"use no memo"` and `"use no forget"` at the start of the file or of the component or hook around the call
       // opt out, as for the compiler.
       [
@@ -1076,10 +1085,18 @@ const rules: Record<string, Case[]> = {
     ].map(([code, suggestion]) => ({ code, suggestions: [suggestion] })),
     // The rewrite keeps both uses. The import is removed once nothing refers to it.
     {
-      code: `${memo}const Row = «memo»(Cell);\nconst Line = «memo»(Cell);`,
+      code: `${memo}${cell}const Row = «memo»(Cell);\nconst Line = «memo»(Cell);`,
       suggestions: [
-        `${memo}const Row = Cell;\nconst Line = memo(Cell);`,
-        `${memo}const Row = memo(Cell);\nconst Line = Cell;`,
+        `${memo}${cell}const Row = Cell;\nconst Line = memo(Cell);`,
+        `${memo}${cell}const Row = memo(Cell);\nconst Line = Cell;`,
+      ],
+    },
+    // Each rewrite is offered while another hook call keeps `useTotal` a hook to the compiler.
+    {
+      code: `import { useCallback, useMemo } from "react";\nfunction useTotal(a, b) {\n  useOther();\n  const t = «useMemo»(() => a + b, [a, b]);\n  return «useCallback»(() => t, [t]);\n}`,
+      suggestions: [
+        `import { useCallback } from "react";\nfunction useTotal(a, b) {\n  useOther();\n  const t = a + b;\n  return useCallback(() => t, [t]);\n}`,
+        `import { useMemo } from "react";\nfunction useTotal(a, b) {\n  useOther();\n  const t = useMemo(() => a + b, [a, b]);\n  return () => t;\n}`,
       ],
     },
     { code: `import { «useMemo» } from "react";`, suggestions: [``] },
@@ -1103,6 +1120,11 @@ const rules: Record<string, Case[]> = {
     `${useMemo}const total = «useMemo»?.(() => a + b, [a, b]);`,
     `${useMemo}const total = «useMemo»(compute, [a]);`,
     `${useMemo}const compute = «useMemo»;`,
+    // The dependency list calls a hook.
+    `${useMemo}const useGet = () => «useMemo»(() => ({ a }), [a, useB()]);`,
+    `${useCallback}const useGet = () => «useCallback»(() => a, [a, useB()]);`,
+    // Nothing declares the component, so the compiler may not compile it.
+    `${memo}export default «memo»(Row);`,
     // Without `memo()` the compiler would not find a component that has no name it looks at.
     `${memo}export default «memo»(() => <li />);`,
     `${memo}export default «memo»(function () {\n  return <li />;\n});`,
@@ -1111,8 +1133,19 @@ const rules: Record<string, Case[]> = {
     `${memo}const row = «memo»(() => <li />);`,
     `${memo}export default «memo»(function Row() {\n  return <li />;\n} as FC);`,
     `import { memo } from "react";\nimport { Marker } from "leaflet";\nexport default «memo»(Marker);`,
-    // Without its only hook call, `useTotal` is no hook to the compiler.
+    // `bun build --react-compiler` compiles `.js`, `.jsx` and `.tsx` files only.
+    {
+      code: `${useMemo}function useTotal(a, b) {\n  useOther();\n  return «useMemo»(() => a + b, [a, b]);\n}`,
+      file: "useTotal.ts",
+      suggestions: [],
+    },
+    { code: `${memo}function Row() {\n  useOther();\n  return null;\n}\nexport default memo(Row);`, file: "Row.ts" },
+    // Without its hook calls, `useTotal` is no hook to the compiler.
     `${useMemo}function useTotal(a, b) {\n  return «useMemo»(() => a + b, [a, b]);\n}`,
+    {
+      code: `import { useCallback, useMemo } from "react";\nfunction useTotal(a, b) {\n  const t = «useMemo»(() => a + b, [a, b]);\n  return «useCallback»(() => t, [t]);\n}`,
+      suggestions: [],
+    },
     `${memo}export default («memo»(function Row() {\n  return <li />;\n}));`,
     // The compiler never finds these functions, so the rewrite would leave nothing memoized.
     `${useMemo}function withTotal(Wrapped) {\n  "use no memo";\n  return function Total({ a, b }) {\n    return <Wrapped total={«useMemo»(() => a + b, [a, b])} />;\n  };\n}`,

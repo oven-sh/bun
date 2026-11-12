@@ -43,7 +43,7 @@ const ESLINT_SUPPRESSION_RULES: [&str; 4] = [
 const OPT_IN_DIRECTIVES: [&str; 2] = ["use forget", "use memo"];
 
 /// Directives that opt a function out of memoization
-const OPT_OUT_DIRECTIVES: [&str; 2] = ["use no forget", "use no memo"];
+pub const OPT_OUT_DIRECTIVES: [&str; 2] = ["use no forget", "use no memo"];
 
 /// oxc's `get_react_compiler_runtime_module`
 const REACT_COMPILER_RUNTIME_MODULE: &str = "react/compiler-runtime";

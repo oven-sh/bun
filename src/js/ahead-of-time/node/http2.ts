@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d7806631fc2844f5ac517d1c55066c2dfc0c8e4266fa3729807438e355da51ff.
+// Written against that file with the SHA-256 0841e02cea5f77cf84db19451c7f5c244b8208e8b8234697c74934cac60e31de.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -152,7 +152,6 @@ function throwSettingTypeError(name: string, value: any) {
   throw err;
 }
 
-// The one check of SETTINGS values. The native session trusts it.
 function validateSettings(settings: any) {
   if (settings === undefined) return;
   if (typeof settings !== "object" || settings === null || $isArray(settings)) {

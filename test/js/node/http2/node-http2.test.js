@@ -3219,6 +3219,59 @@ it("http2 client.setNextStreamID validates input", async () => {
   });
 });
 
+it("settings that change after they were validated are refused, not sent", async () => {
+  const fixture = `
+    const http2 = require("node:http2");
+    const { duplexPair } = require("node:stream");
+    const many = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [1000 + i, 1]));
+    // validateSettings() reads a setting twice.
+    const changing = (name, valid, invalid, reads = 0) => ({ get [name]() { return ++reads > 2 ? invalid : valid; } });
+    const [transport, wire] = duplexPair();
+    const client = http2.connect("http://localhost", { createConnection: () => transport });
+    client.on("connect", () => {
+      let sent = 0;
+      wire.read();
+      wire.on("data", chunk => (sent += chunk.length));
+      for (const settings of [
+        changing("customSettings", {}, many),
+        changing("customSettings", {}, { 1000: -1 }),
+        changing("maxFrameSize", 16384, 1),
+        changing("maxFrameSize", 16384, 2 ** 24),
+        changing("initialWindowSize", 1, 2 ** 31),
+        changing("headerTableSize", 1, NaN),
+        changing("maxConcurrentStreams", 1, "1"),
+      ]) {
+        try {
+          client.settings(settings);
+          console.log("accepted");
+        } catch (err) {
+          console.log(err.code, err.message);
+        }
+      }
+      setImmediate(() => {
+        console.log(sent);
+        client.destroy();
+      });
+    });
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split(/\r?\n/), stderr }).toEqual({
+    stdout: [
+      "ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS",
+      'ERR_HTTP2_INVALID_SETTING_VALUE Invalid value for setting "1000"',
+      'ERR_HTTP2_INVALID_SETTING_VALUE Invalid value for setting "maxFrameSize"',
+      'ERR_HTTP2_INVALID_SETTING_VALUE Invalid value for setting "maxFrameSize"',
+      'ERR_HTTP2_INVALID_SETTING_VALUE Invalid value for setting "initialWindowSize"',
+      'ERR_HTTP2_INVALID_SETTING_VALUE Invalid value for setting "headerTableSize"',
+      'ERR_HTTP2_INVALID_SETTING_VALUE Invalid value for setting "maxConcurrentStreams"',
+      "0",
+    ],
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("http2 setNextStreamID at the edges of the id space does not overflow", async () => {
   // 0.5 passes the JS range check (> 0) and reaches the native setter as 0, which used to
   // underflow (node ends up on stream 1 too). A server parked at 2 ** 32 - 1 used to overflow

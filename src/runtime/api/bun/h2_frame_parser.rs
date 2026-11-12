@@ -3,6 +3,7 @@
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use core::mem::ManuallyDrop;
+use core::ops::RangeInclusive;
 use core::ptr::NonNull;
 use std::borrow::Cow;
 use std::collections::VecDeque;
@@ -20,7 +21,7 @@ use crate::webcore::AutoFlusher;
 use bstr::BStr;
 use bun_collections::{ByteVecExt, HiveArrayFallback, VecExt};
 use bun_http::lshpack;
-use bun_http_types::h2::flow_control::DEFAULT_WINDOW_SIZE;
+use bun_http_types::h2::flow_control::{DEFAULT_WINDOW_SIZE, MAX_WINDOW_SIZE};
 use bun_http_types::h2::frame::{
     CONNECTION_PREFACE, ErrorCode, FRAME_HEADER_SIZE, FrameHeader, FrameType, MAX_STREAM_ID, flags,
     unparsed_rest,
@@ -201,6 +202,24 @@ fn settings_to_js(settings: &Settings, global_object: &JSGlobalObject) -> JSValu
         JSValue::from(settings.enable_connect_protocol),
     );
     result
+}
+
+/// A number within `range`, as the value of the setting `name`.
+fn setting_value(
+    global_object: &JSGlobalObject,
+    name: &[u8],
+    value: JSValue,
+    range: RangeInclusive<u32>,
+) -> JsResult<u32> {
+    match value.get_number() {
+        Some(n) if n >= f64::from(*range.start()) && n <= f64::from(*range.end()) => Ok(n as u32),
+        _ => Err(global_object
+            .err(
+                bun_jsc::ErrorCode::HTTP2_INVALID_SETTING_VALUE_RangeError,
+                format_args!("Invalid value for setting \"{}\"", BStr::new(name)),
+            )
+            .throw()),
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2760,7 +2779,7 @@ impl H2FrameParser {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl H2FrameParser {
-    /// Reads the settings of a `settings()` call or of the session's options. JS has validated them (`validateSettings`).
+    /// Reads the settings of a `settings()` call or of the session's options. A getter can answer differently than it did to `validateSettings`.
     fn load_settings_from_js_value(
         &self,
         global_object: &JSGlobalObject,
@@ -2771,11 +2790,10 @@ impl H2FrameParser {
         let mut explicit_settings: u8 = 0;
 
         macro_rules! number_setting {
-            ($key:literal, $field:ident, $bit:expr) => {{
-                if let Some(v) = options.get(global_object, $key)?
-                    && v.is_number()
-                {
-                    local_settings.$field = v.as_number() as u32;
+            ($key:literal, $field:ident, $bit:expr, $range:expr) => {{
+                if let Some(v) = options.get(global_object, $key)? {
+                    local_settings.$field =
+                        setting_value(global_object, $key.as_bytes(), v, $range)?;
                     explicit_settings |= $bit;
                 }
             }};
@@ -2793,29 +2811,39 @@ impl H2FrameParser {
         number_setting!(
             "headerTableSize",
             header_table_size,
-            SETTING_BIT_HEADER_TABLE_SIZE
+            SETTING_BIT_HEADER_TABLE_SIZE,
+            0..=u32::MAX
         );
         bool_setting!("enablePush", enable_push, SETTING_BIT_ENABLE_PUSH);
         number_setting!(
             "initialWindowSize",
             initial_window_size,
-            SETTING_BIT_INITIAL_WINDOW_SIZE
+            SETTING_BIT_INITIAL_WINDOW_SIZE,
+            0..=MAX_WINDOW_SIZE
         );
-        number_setting!("maxFrameSize", max_frame_size, SETTING_BIT_MAX_FRAME_SIZE);
+        number_setting!(
+            "maxFrameSize",
+            max_frame_size,
+            SETTING_BIT_MAX_FRAME_SIZE,
+            settings::DEFAULT_MAX_FRAME_SIZE..=settings::MAX_MAX_FRAME_SIZE
+        );
         number_setting!(
             "maxConcurrentStreams",
             max_concurrent_streams,
-            SETTING_BIT_MAX_CONCURRENT_STREAMS
+            SETTING_BIT_MAX_CONCURRENT_STREAMS,
+            0..=u32::MAX
         );
         number_setting!(
             "maxHeaderListSize",
             max_header_list_size,
-            SETTING_BIT_MAX_HEADER_LIST_SIZE
+            SETTING_BIT_MAX_HEADER_LIST_SIZE,
+            0..=u32::MAX
         );
         number_setting!(
             "maxHeaderSize",
             max_header_list_size,
-            SETTING_BIT_MAX_HEADER_LIST_SIZE
+            SETTING_BIT_MAX_HEADER_LIST_SIZE,
+            0..=u32::MAX
         );
         bool_setting!(
             "enableConnectProtocol",
@@ -2837,12 +2865,24 @@ impl H2FrameParser {
                     ..Default::default()
                 },
             )?;
-            while let Some((id, value)) = iter.next()? {
-                if let Ok(id) = bun_core::parse_int::<u16>(id.to_utf8().slice(), 10)
-                    && value.is_number()
-                {
-                    staged_custom.push((id, value.as_number() as u32));
+            while let Some((name, value)) = iter.next()? {
+                let name = name.to_utf8();
+                let Ok(id) = bun_core::parse_int::<u16>(name.slice(), 10) else {
+                    continue;
+                };
+                // `write_settings_payload` has room for no more.
+                if staged_custom.len() == MAX_CUSTOM_SETTINGS {
+                    return Err(global_object
+                        .err(
+                            bun_jsc::ErrorCode::HTTP2_TOO_MANY_CUSTOM_SETTINGS,
+                            format_args!(
+                                "Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS"
+                            ),
+                        )
+                        .throw());
                 }
+                let value = setting_value(global_object, name.slice(), value, 0..=u32::MAX)?;
+                staged_custom.push((id, value));
             }
         }
 

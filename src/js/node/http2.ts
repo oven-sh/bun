@@ -143,7 +143,6 @@ function throwSettingTypeError(name: string, value: any) {
   throw err;
 }
 
-// The one check of SETTINGS values. The native session trusts it.
 function validateSettings(settings: any) {
   if (settings === undefined) return;
   if (typeof settings !== "object" || settings === null || $isArray(settings)) {

@@ -4619,6 +4619,72 @@ describe.concurrent("an ES module that got a mock from require() is evaluated ag
   });
 });
 
+describe.concurrent("a mock laid over a module that an earlier test file loaded", () => {
+  // Each of these keeps the module and exports a list. user.js adds to the list of each.
+  const holder = (load: string) => `
+    ${load}
+    export const seen = () => dep.name;
+    export const users = [];
+  `;
+  test.each([
+    ["mock.module()", `mock.module("./dep.cjs", () => ({ name: "mock" }));`],
+    ["vi.doMock()", `vi.doMock("./dep.cjs", () => ({ name: "mock" }));`],
+  ])("leaves one instance of each module that the running file has imported, with %s", async (_, lay) => {
+    await expectFixturesToPass(
+      {
+        "dep.cjs": `module.exports = { name: "real" };`,
+        // first.js is the first that requires the module.
+        "first.js": holder(`const dep = require("./dep.cjs");`),
+        "second.js": holder(`const dep = require("./dep.cjs");`),
+        "statement.js": holder(`import dep from "./dep.cjs";`),
+        "common.cjs": `
+          const dep = require("./dep.cjs");
+          exports.seen = () => dep.name;
+          exports.users = [];
+        `,
+        "unheld.js": `
+          const dep = require("./dep.cjs");
+          globalThis.unheldLoads = (globalThis.unheldLoads ?? 0) + 1;
+          export const seen = () => dep.name;
+        `,
+        "user.js": `
+          import { users as first } from "./first.js";
+          import { users as second } from "./second.js";
+          import { users as statement } from "./statement.js";
+          import { users as common } from "./common.cjs";
+          for (const users of [first, second, statement, common]) users.push("user");
+        `,
+        "1.test.js": `
+          import { expect, test } from "bun:test";
+          import { seen as first } from "./first.js";
+          import { seen as second } from "./second.js";
+          import { seen as statement } from "./statement.js";
+          import { seen as common } from "./common.cjs";
+          test("no mock", async () => {
+            const unheld = (await import("./unheld.js")).seen;
+            expect([first(), second(), statement(), common(), unheld()]).toEqual(Array(5).fill("real"));
+          });
+        `,
+        "2.test.js": `
+          import { expect, mock, test, vi } from "bun:test";
+          import { users as first } from "./first.js";
+          import { users as second } from "./second.js";
+          import { users as statement } from "./statement.js";
+          import { users as common } from "./common.cjs";
+          ${lay}
+          test("a module that the file imports later gets the same instances", async () => {
+            await import("./user.js");
+            expect([first, second, statement, common]).toEqual(Array(4).fill(["user"]));
+            // The file has not imported unheld.js, so it is evaluated again and gets the mock.
+            expect([(await import("./unheld.js")).seen(), globalThis.unheldLoads]).toEqual(["mock", 2]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+});
+
 describe.concurrent("a mocked module that exports then", () => {
   const files = {
     "real.ts": `

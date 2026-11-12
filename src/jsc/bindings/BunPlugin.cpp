@@ -3506,6 +3506,31 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         }
     }
 
+    // Whether the running test file holds `module`: that file loaded it, or loaded a module that imports or requires it, directly or through others.
+    UncheckedKeyHashSet<String> heldByNoRunningModule;
+    auto runningFileHolds = [&](const String& module) {
+        Vector<String> toWalk { module };
+        UncheckedKeyHashSet<String> walked;
+        walked.add(module);
+        for (size_t i = 0; i < toWalk.size(); ++i) {
+            String key = toWalk[i];
+            if (heldByNoRunningModule.contains(key))
+                continue;
+            if (plugins.testFileOfModule.get(key) == plugins.testFile)
+                return true;
+            auto importers = importersOf.find(key);
+            if (importers == importersOf.end())
+                continue;
+            for (auto& importer : importers->value) {
+                if (walked.add(importer).isNewEntry)
+                    toWalk.append(importer);
+            }
+        }
+        for (auto& key : toWalk)
+            heldByNoRunningModule.add(key);
+        return false;
+    };
+
     // A patched-in-place module that imports an evicted one goes after all, and is walked again for the rest of its importers.
     UncheckedKeyHashSet<String> evicted;
     keys.removeAllMatching([&](const String& key) { return !evicted.add(key).isNewEntry; });
@@ -3521,6 +3546,9 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             if (isExternalizedByVitest(globalObject, importer) && (evict.packagesToRestore.contains(key) || evict.packagesToStash.contains(key)))
                 continue;
             if (!testFile || importer == key || (stays && evict.onlyImportersFromEarlierTestFiles && testFile == plugins.testFile))
+                continue;
+            // Its mock of a module that an earlier file loaded leaves what the file has imported: a later import in the file gets the same instance.
+            if (evict.onlyImportersFromEarlierTestFiles && testFile != plugins.testFile && runningFileHolds(importer))
                 continue;
             bool stayed = staysInRegistry.remove(importer);
             stayed |= staysInRequireCache.remove(importer);

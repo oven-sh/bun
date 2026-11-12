@@ -5,6 +5,8 @@
 # when a later file mocks it. Compiled does not.
 # In these a test of the fixture fails for it: what the body of an importer took from the mocked module stays (`export const captured = value`,
 # `const dep = require("dep")`), two instances are wanted at one time, or the test counts the runs. What an importer reads late follows the mock.
+test/js/bun/test/mock/mock-module.test.ts: a mock laid over a module that an earlier test file loaded > leaves one instance of each module that the running file has imported, with mock.module()
+test/js/bun/test/mock/mock-module.test.ts: a mock laid over a module that an earlier test file loaded > leaves one instance of each module that the running file has imported, with vi.doMock()
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > files that mock it between files that don't
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > isn't evaluated again when a later file imports it, and keeps its exports

@@ -3315,6 +3315,11 @@ function closeUnreadServerStream(stream: ServerHttp2Stream) {
   // Checked again: 'finish' can come before a handler attaches its reader behind an await.
   if (!stream.readableDidRead && stream.readableFlowing === null) stream.close();
 }
+// After the PUSH_PROMISE, or a push that a subscriber makes would promise its higher id first.
+function publishPushedStream(stream: ServerHttp2Stream | undefined, headers: HeadersObject) {
+  if (onServerStreamCreatedChannel.hasSubscribers) onServerStreamCreatedChannel.publish({ stream, headers });
+  if (onServerStreamStartChannel.hasSubscribers) onServerStreamStartChannel.publish({ stream, headers });
+}
 class ServerHttp2Stream extends Http2Stream {
   headersSent = false;
   constructor(streamId, session, headers) {
@@ -3394,10 +3399,12 @@ class ServerHttp2Stream extends Http2Stream {
       headers[HTTP2_HEADER_AUTHORITY] = getAuthority(parentRequestHeaders);
     }
     // Like node, a repeated single-value field throws. The callback gets every other error. Neither reserves a stream id.
+    let wireHeaders;
     try {
       parser.validateRequest(headers);
+      wireHeaders = stringifyFields(headers);
     } catch (err: any) {
-      if (err.code === "ERR_HTTP2_HEADER_SINGLE_VALUE") throw err;
+      if (err?.code === "ERR_HTTP2_HEADER_SINGLE_VALUE") throw err;
       process.nextTick(callback, err);
       return;
     }
@@ -3413,16 +3420,11 @@ class ServerHttp2Stream extends Http2Stream {
       pushedStream[kRequestHeaders] = headers;
     }
     if (pushedStream) endInboundHalf(pushedStream);
-    if (onServerStreamCreatedChannel.hasSubscribers) {
-      onServerStreamCreatedChannel.publish({ stream: pushedStream, headers });
-    }
-    if (onServerStreamStartChannel.hasSubscribers) {
-      onServerStreamStartChannel.publish({ stream: pushedStream, headers });
-    }
     let pushResult;
     try {
-      pushResult = parser.pushPromise(this.id, pushId, headers, sensitiveNames);
+      pushResult = parser.pushPromise(this.id, pushId, wireHeaders, sensitiveNames);
     } catch (err) {
+      publishPushedStream(pushedStream, headers);
       // pushPromise() throws synchronously on an invalid header block. The pushed stream was
       // already created by getNextStream's streamStart; tear it down without an error so the
       // callback is the only error channel, matching node.
@@ -3436,6 +3438,7 @@ class ServerHttp2Stream extends Http2Stream {
       process.nextTick(callback, err);
       return;
     }
+    publishPushedStream(pushedStream, headers);
     if (pushResult === -1) {
       // Block not encodable: session failing with COMPRESSION_ERROR. Node still delivers the
       // reserved stream to the callback and lets session teardown error it (so it is Delivered:
@@ -3926,6 +3929,29 @@ function assertNoConnectionHeaders(headers): void {
       throw $ERR_HTTP2_INVALID_CONNECTION_HEADERS(`HTTP/1 Connection specific headers are forbidden: "${lower}"`);
     }
   }
+}
+
+function stringifyFieldValue(value: unknown) {
+  if (!$isObject(value)) return value;
+  if (!$isArray(value)) return `${value}`;
+  const values: string[] = [];
+  for (let i = 0; i < value.length; i++) $arrayPush(values, `${value[i]}`);
+  return values;
+}
+// Like node, runs every toString() before a stream id is taken. A stream opened from one afterwards would reach the wire ahead of a lower id.
+function stringifyFields(headers: HeadersObject | any[]) {
+  if ($isArray(headers)) {
+    const list: unknown[] = [];
+    for (let i = 0; i < headers.length; i++) $arrayPush(list, stringifyFieldValue(headers[i]));
+    return list;
+  }
+  let copy: HeadersObject | undefined;
+  const keys = ObjectKeys(headers);
+  for (let i = 0; i < keys.length; i++) {
+    const value = headers[keys[i]];
+    if ($isObject(value)) (copy ??= { ...headers })[keys[i]] = stringifyFieldValue(value);
+  }
+  return copy ?? headers;
 }
 
 function headerValueIsUnsendable(value: unknown): boolean {
@@ -6245,20 +6271,27 @@ class ClientHttp2Session extends Http2Session {
         }
       }
 
+      const wireHeaders = stringifyFields(rawHeadersList !== null ? rawHeadersList : headers);
       // A request made before the socket finished connecting, or while the peer's
       // SETTINGS_MAX_CONCURRENT_STREAMS limit leaves no slot, is not submitted yet — node returns
       // a "pending" stream (no id) and sends its HEADERS frame once the session connects / a slot
       // frees, keeping stream id allocation in submission order. Deferring until connect is what
       // lets a stream destroyed before connect never reach the wire.
       // 0 if the limit leaves no slot.
+      const parser = this.#parser;
       const stream_id: number =
-        this.#connected && (this.#pendingRequests === null || this.#pendingRequests.size === 0)
-          ? this.#parser!.getNextStream()
+        parser && this.#connected && (this.#pendingRequests === null || this.#pendingRequests.size === 0)
+          ? parser.getNextStream()
           : 0;
+      // A getter, a toString() or another session's transport has run since the check above.
+      if (!parser || this.destroyed) {
+        const req = new ClientHttp2Stream(undefined, this, headers);
+        process.nextTick(destroyWithInvalidSessionNT, req);
+        return req;
+      }
       if (stream_id === 0) {
-        const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
         // The encoder only sees the headers when the request is submitted, and request() has to throw now.
-        this.#parser!.validateRequest(wireHeaders);
+        parser.validateRequest(wireHeaders);
         const req = new ClientHttp2Stream(undefined, this, headers);
         req.authority = authority;
         req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
@@ -6291,13 +6324,13 @@ class ClientHttp2Session extends Http2Session {
       const req = new ClientHttp2Stream(stream_id, this, headers);
       req.authority = authority;
       req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
+      allocated = true;
+      parser.request(stream_id, req, wireHeaders, sensitiveNames, options);
+      allocated = false;
+      // Like node, after the HEADERS frame, so a request that a subscriber makes follows it.
       if (onClientStreamCreatedChannel.hasSubscribers) {
         onClientStreamCreatedChannel.publish({ stream: req, headers });
       }
-      const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
-      allocated = true;
-      this.#parser!.request(stream_id, req, wireHeaders, sensitiveNames, options);
-      allocated = false;
       if (onClientStreamStartChannel.hasSubscribers) {
         onClientStreamStartChannel.publish({ stream: req, headers });
       }

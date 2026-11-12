@@ -9,6 +9,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, isASAN, isDebug, normalizeBunSnapshot, tls as tlsCert } from "harness";
+import dc from "node:diagnostics_channel";
 import { EventEmitter, once } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
@@ -410,6 +411,110 @@ describe("stream-id rules (checklist §3)", () => {
     const goaway = await c.waitForGoaway();
     expect(goawayErrorCode(goaway)).toBe(ErrorCode.PROTOCOL_ERROR);
     c.destroy();
+  });
+});
+
+describe("streams opened from code that request() and pushStream() run (RFC 9113 §5.1.1)", () => {
+  type Open = (headers: any) => unknown;
+  /** Calls `nested` from the first stream published on `channel` while `outer` runs. */
+  function fromSubscriber(channel: string, outer: () => void, nested: () => void) {
+    const onMessage = () => (dc.unsubscribe(channel, onMessage), nested());
+    dc.subscribe(channel, onMessage);
+    try {
+      outer();
+    } finally {
+      dc.unsubscribe(channel, onMessage);
+    }
+  }
+  const value = (nested: () => void) => ({ toString: () => (nested(), "x") }) as any;
+  const values: [string, (open: Open, nested: () => void) => void][] = [
+    ["a field value's toString()", (open, nested) => open({ a: value(nested) })],
+    ["the toString() of an element of a field value", (open, nested) => open({ a: ["x", value(nested)] })],
+  ];
+
+  async function connected(settings = Buffer.alloc(0)) {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    await raw.waitFor(f => f.type === FrameType.SETTINGS);
+    raw.sendFrame(FrameType.SETTINGS, 0, 0, settings);
+    await once(client, "remoteSettings");
+    return {
+      raw,
+      client,
+      request: (headers?: any) => client.request(headers).on("error", () => {}),
+      [Symbol.dispose]() {
+        client.destroy();
+        raw.close();
+      },
+    };
+  }
+  const requests: typeof values = [
+    ...values,
+    ["a toString() in a raw header list", (open, nested) => open(["a", value(nested)])],
+    [
+      "a getter in a raw header list",
+      (open, nested) => {
+        // request() has all it needs from the list after three reads of each element.
+        let reads = 0;
+        const list = [":method", "GET", ":authority", "a", ":scheme", "http", ":path", "/", "a", "x"];
+        open(Object.defineProperty(list, 9, { get: () => (++reads === 2 && nested(), "x") }));
+      },
+    ],
+    ["a 'created' subscriber", (open, nested) => fromSubscriber("http2.client.stream.created", () => open({}), nested)],
+    ["a 'start' subscriber", (open, nested) => fromSubscriber("http2.client.stream.start", () => open({}), nested)],
+  ];
+
+  test.each(requests)("a request from %s keeps the ids in order", async (_, run) => {
+    using ctx = await connected();
+    run(ctx.request, ctx.request);
+    const opened = () => ctx.raw.frames.filter(f => f.type === FrameType.HEADERS).map(f => f.streamId);
+    await ctx.raw.waitFor(() => opened().length === 2);
+    expect(opened()).toEqual([1, 3]);
+  });
+
+  test("a request from the toString() of a queued request keeps the ids in order", async () => {
+    using ctx = await connected(Buffer.from([0, 3, 0, 0, 0, 0])); // MAX_CONCURRENT_STREAMS = 0
+    ctx.request({ a: value(ctx.request) });
+    ctx.raw.sendFrame(FrameType.SETTINGS, 0, 0, Buffer.from([0, 3, 0, 0, 0, 2]));
+    const opened = () => ctx.raw.frames.filter(f => f.type === FrameType.HEADERS).map(f => f.streamId);
+    await ctx.raw.waitFor(() => opened().length === 2);
+    expect(opened()).toEqual([1, 3]);
+  });
+
+  test.each(requests)("request() returns a stream that closes after session.destroy() from %s", async (_, run) => {
+    using ctx = await connected();
+    const closed = Promise.withResolvers<void>();
+    run(
+      headers => ctx.request(headers).on("close", closed.resolve),
+      () => ctx.client.destroy(),
+    );
+    await closed.promise;
+  });
+
+  test.each<(typeof values)[number]>([
+    ...values,
+    ["a 'created' subscriber", (open, nested) => fromSubscriber("http2.server.stream.created", () => open({}), nested)],
+    ["a 'start' subscriber", (open, nested) => fromSubscriber("http2.server.stream.start", () => open({}), nested)],
+  ])("a push from %s keeps the ids in order", async (_, run) => {
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      const push = (headers: any = {}) => stream.pushStream(headers, (_, pushed) => pushed.on("error", () => {}));
+      run(push, push);
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      const promised = () =>
+        c.frames.filter(f => f.type === FrameType.PUSH_PROMISE).map(f => f.payload.readUInt32BE(0));
+      await c.waitFor(() => promised().length === 2);
+      expect(promised()).toEqual([2, 4]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
   });
 });
 

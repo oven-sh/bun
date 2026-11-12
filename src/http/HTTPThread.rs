@@ -414,17 +414,24 @@ impl HttpThread {
             .expect("init_with_config sets `secure` or fails"))
     }
 
-    /// The `SSL_CTX` of this config's HTTP/3 connections. `None` if the config can't be loaded.
-    pub(crate) fn quic_ssl_ctx(&mut self, tls: &ssl_config::SharedPtr) -> Option<OwnedSslCtx> {
+    /// The `SSL_CTX` of this config's HTTP/3 connections. Fails like `custom_https_context`.
+    pub(crate) fn quic_ssl_ctx(
+        &mut self,
+        tls: &ssl_config::SharedPtr,
+    ) -> crate::Result<OwnedSslCtx> {
         let entry = self.ssl_context_cache_entry(tls);
+        let mut err = uws::create_bun_socket_error_t::none;
         if entry.quic.is_none() {
             entry.quic = tls
                 .get()
                 .as_usockets_for_client_verification()
-                .create_ssl_context(&mut uws::create_bun_socket_error_t::none)
+                .create_ssl_context(&mut err)
                 .inspect(uws::quic::context::prepare_client_ssl_ctx);
         }
-        entry.quic.clone()
+        entry.quic.clone().ok_or(match err {
+            uws::create_bun_socket_error_t::invalid_crl => crate::Error::InvalidCRL,
+            _ => crate::Error::FailedToOpenSocket,
+        })
     }
 
     /// The context of this config's TCP connections.

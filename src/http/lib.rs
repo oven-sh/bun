@@ -2902,11 +2902,10 @@ impl<'a> HTTPClient<'a> {
                     h3::alt_svc::lookup(self.url.hostname, self.url.get_port_auto())
                 {
                     if let Some(ctx) = h3::ClientContext::get_or_create() {
-                        if h3::ClientContext::as_mut(ctx).connect(
-                            self,
-                            strip_ipv6_brackets(self.url.hostname),
-                            alt_port,
-                        ) && !self.flags.h3_alt_svc_failed
+                        if h3::ClientContext::as_mut(ctx)
+                            .connect(self, strip_ipv6_brackets(self.url.hostname), alt_port)
+                            .is_ok()
+                            && !self.flags.h3_alt_svc_failed
                         {
                             self.complete_connecting_process();
                             return;
@@ -2958,12 +2957,12 @@ impl<'a> HTTPClient<'a> {
                 self.complete_connecting_process();
                 return;
             };
-            if !h3::ClientContext::as_mut(ctx).connect(
+            if let Err(err) = h3::ClientContext::as_mut(ctx).connect(
                 self,
                 strip_ipv6_brackets(self.url.hostname),
                 self.url.get_port_auto(),
             ) {
-                self.fail(crate::Error::ConnectionRefused);
+                self.fail(err);
             }
             self.complete_connecting_process();
             return;

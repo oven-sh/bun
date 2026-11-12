@@ -2007,6 +2007,21 @@ describe("per-request tls options over http3", () => {
     expect(await attempt(`${base}/hello`, { ca: tls.cert, maxVersion: 0x0303 })).toBe("HTTP3Unsupported");
   });
 
+  test("reports options that can't be loaded as HTTP/1.1 does", async () => {
+    const codes = (options: object) =>
+      Promise.all([
+        attempt(`${base}/hello`, options),
+        fetch(`${base}/hello`, { protocol: "http1.1", tls: options } as RequestInit).catch(e => e.code),
+      ]);
+    expect({
+      ca: await codes({ ca: "not a certificate" }),
+      crl: await codes({ ca: tls.cert, crl: "not a CRL" }),
+    }).toEqual({
+      ca: ["FailedToOpenSocket", "FailedToOpenSocket"],
+      crl: ["InvalidCRL", "InvalidCRL"],
+    });
+  });
+
   test("keep a request on TCP when Alt-Svc offers HTTP/3", async () => {
     const fixture = `
       import { fetchH3Internals } from "bun:internal-for-testing";

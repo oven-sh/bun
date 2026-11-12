@@ -257,8 +257,12 @@ const TAG_HANDLERS: [TagHandler; 16] = [
     TagHandler::new("script[src]", "src", ImportKind::Stmt),
     // CSS Stylesheets
     TagHandler::new("link[rel='stylesheet'][href]", "href", ImportKind::At),
-    // CSS Assets
-    TagHandler::new("link[as='style'][href]", "href", ImportKind::At),
+    // CSS Assets. The row above has the stylesheet links, so that one link gives one import record.
+    TagHandler::new(
+        "link[as='style'][href]:not([rel='stylesheet'])",
+        "href",
+        ImportKind::At,
+    ),
     // Font files
     TagHandler::new(
         "link[as='font'][href], link[type^='font/'][href]",

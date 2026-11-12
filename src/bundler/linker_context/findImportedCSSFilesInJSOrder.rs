@@ -122,20 +122,18 @@ pub(crate) fn find_css_files_of_html_page<'a>(
             && record.source_index.is_valid()
             && loaders[record.source_index.get() as usize].is_css()
     };
-    let mut media_of_links: Vec<Option<&'a ImportConditions>> = Vec::new();
-    if records.iter().any(is_bundled_media_link) {
-        for (i, record) in records.iter().enumerate() {
-            // A tag that matches two rows of `TAG_HANDLERS` has two records with one `range`.
-            let same_tag = i
-                .checked_sub(1)
-                .filter(|&i| records[i].range == record.range);
-            media_of_links.push(match same_tag {
-                _ if !is_bundled_media_link(record) => None,
-                Some(first_record) => media_of_links[first_record],
-                None => link_media_conditions(this, page, record),
-            });
-        }
-    }
+    let media_of_links: Vec<Option<&'a ImportConditions>> =
+        if records.iter().any(is_bundled_media_link) {
+            (records.iter())
+                .map(|record| {
+                    (is_bundled_media_link(record))
+                        .then(|| link_media_conditions(this, page, record))
+                        .flatten()
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
     // A link whose `media` gives no conditions loads its stylesheet as a link with no `media` does.
     if media_of_links.iter().all(Option::is_none) {
         return (

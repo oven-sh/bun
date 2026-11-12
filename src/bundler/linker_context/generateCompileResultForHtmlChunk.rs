@@ -266,7 +266,6 @@ impl<'a> HTMLLoader<'a> {
         for (i, link) in links.iter().enumerate() {
             let Some(media) = &link.media else { continue };
             let is_same = |other: &StylesheetLink| other.asset == link.asset;
-            // One link can match two rows of `TAG_HANDLERS`.
             let is_repeated = (links[..i].iter()).any(|it| is_same(it) && it.media == link.media);
             let applies_for_every_medium = links.iter().any(|it| is_same(it) && it.media.is_none());
             if is_repeated || applies_for_every_medium {

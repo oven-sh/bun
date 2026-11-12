@@ -1452,11 +1452,9 @@ impl MediaList {
 
     /// Parses all of `text` as a media query list, such as the value of an HTML `media` attribute.
     pub fn parse_string<'a>(text: &'a [u8], arena: &'a bun_alloc::Arena) -> Result<MediaList> {
-        let mut input = css::ParserInput::new(text, arena);
-        let mut parser = Parser::new(&mut input, None, Default::default(), None);
-        let list = MediaList::parse(&mut parser, &css::ParserOptions::default(None))?;
-        parser.expect_exhausted()?;
-        Ok(list)
+        css::parse_utility::parse_string(arena, text, |input| {
+            MediaList::parse(input, &css::ParserOptions::default(None))
+        })
     }
 }
 

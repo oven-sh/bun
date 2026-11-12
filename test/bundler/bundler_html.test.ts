@@ -1443,7 +1443,7 @@ body {
       ],
       "/preload-first.html": [cannotParse("print and")],
       "/loaded-twice.html": [cannotParse(",")],
-      // One warning for a link that matches two rows of the scanner.
+      // A stylesheet link with `as="style"` is one link, with one warning.
       "/two-rows.html": [cannotParse("print and")],
     },
     files: {
@@ -1820,6 +1820,7 @@ body {
   }
 
   // The import record of a link with `media` keeps the place of its tag for the linker, and an error shows that place.
+  // A stylesheet link with `as="style"` is one import, with one error.
   test("html/UnresolvedLinkWithMedia", async () => {
     using dir = tempDir("html-unresolved-link-media", {
       "index.html": `<!doctype html>
@@ -1827,6 +1828,7 @@ body {
   <head>
     <link rel="stylesheet" href="./missing.css">
     <link rel="stylesheet" href="./missing-print.css" media="print">
+    <link rel="stylesheet" as="style" href="./missing-with-as.css">
   </head>
   <body></body>
 </html>`,
@@ -1850,6 +1852,7 @@ body {
           column: 5,
           lineText: `    <link rel="stylesheet" href="./missing-print.css" media="print">`,
         },
+        { message: `Could not resolve: "./missing-with-as.css"`, line: -1, column: -1, lineText: "" },
       ],
     });
   });

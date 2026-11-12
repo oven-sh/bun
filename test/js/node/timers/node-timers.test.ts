@@ -704,6 +704,18 @@ describe.concurrent("a task that queues its successor each time it runs", () => 
     expect(await run(["-e", fixture])).toEqual(prints("SIGTERM\n"));
   });
 
+  test("the entry module runs while a chain that a preload started runs", async () => {
+    using dir = tempDir("task-chain-preload", {
+      "preload.ts": `${link}${observerChain}`,
+      "main.ts": `
+        console.log("entry module");
+        process.exit(0);
+      `,
+    });
+    const result = await run(["--preload", "./preload.ts", "main.ts"], { cwd: String(dir) });
+    expect(result).toEqual(prints("entry module\n"));
+  });
+
   // A Worker and a macro each drive a loop of their own. Serial: a debug build is slow to start them.
   test.serial("a Worker that runs the chain receives a message and runs its timer", async () => {
     const worker = `
@@ -909,6 +921,30 @@ describe.concurrent("a task that queues its successor each time it runs", () => 
       stdout: expect.stringMatching(/^(bun test .*\n)?$/),
       results: ["(fail) never settles", "this test timed out after 20ms", "(pass) runs next"],
       exitCode: 1,
+    });
+  });
+
+  test("the first test of a file runs while a chain that the file started runs", async () => {
+    using dir = tempDir("task-chain-test-top-level", {
+      "a.test.ts": `
+        import { test } from "bun:test";
+        ${link}
+        let stop = false;
+        new PerformanceObserver(() => {
+          link();
+          if (!stop) performance.mark("again");
+        }).observe({ entryTypes: ["mark"] });
+        performance.mark("first");
+        test("runs", () => {
+          stop = true;
+        });
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(["test", "a.test.ts"], { cwd: String(dir) });
+    expect({ stdout, passed: stderr.includes("(pass) runs"), exitCode }).toEqual({
+      stdout: expect.stringMatching(/^(bun test .*\n)?$/),
+      passed: true,
+      exitCode: 0,
     });
   });
 

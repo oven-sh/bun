@@ -3467,6 +3467,12 @@ describe("expect()", () => {
     );
     // A value that is the same as a taken value is not compared again.
     expect(callsOf(() => expect({ a: 5, b: 5 }).toContainAllValues([range(), range()]))).toEqual([5, 5]);
+    // The same with 128 values, one more than the marks that fit inline.
+    const many = Object.fromEntries(Array.from({ length: 128 }, (_, i) => [`k${i}`, 5]));
+    expect(callsOf(() => expect(many).toContainAllValues(Object.keys(many).map(() => range())))).toEqual(
+      Object.values(many),
+    );
+    expect({ ...many, k127: 6 }).not.toContainAllValues(Object.values(many));
 
     // A regex with the g flag keeps lastIndex, so a pair that matched is not compared again.
     expect({ a: "a" }).toContainAllValues([expect.stringMatching(/a/g)]);

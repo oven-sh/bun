@@ -2385,10 +2385,9 @@ impl Expect {
             if taken.is_set(i as usize) { continue; }
             let leftover = inner.get_index(global, i)?;
             // The same value as a taken element has the match of that element.
-            for j in 0..count {
-                if taken.is_set(j as usize) && inner.get_index(global, j)?.is_same_value(leftover, global)? {
-                    continue 'leftover;
-                }
+            let mut taken_indices = taken.iterator::<true, true>();
+            while let Some(j) = taken_indices.next() {
+                if inner.get_index(global, j as u32)?.is_same_value(leftover, global)? { continue 'leftover; }
             }
             for j in 0..count {
                 if first.equals(global, outer.get_index(global, j)?, leftover)? { continue 'leftover; }

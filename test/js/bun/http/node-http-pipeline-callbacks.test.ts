@@ -450,14 +450,14 @@ describe.each(["http", "https"])("%s: a response is the same whether or not it w
   const AHEAD = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
   async function exchange(waits: boolean, request: string, handler: Handler, options: ServerOptions = {}) {
     const log: string[] = [];
-    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<Socket>();
     const listener = (req: IncomingMessage, res: ServerResponse) => {
       res.sendDate = false;
       if (req.url === "/ahead") return void setImmediate(() => res.writeHead(200, { "Content-Length": 0 }).end());
       if (req.url === "/reused") return void res.end("reused");
       expect(res.socket === null).toBe(waits);
       for (const event of ["prefinish", "finish", "close"]) res.on(event, () => log.push(event));
-      res.on("close", onClose);
+      res.on("close", () => onClose(req.socket));
       handler(res, entry => log.push(String(entry)), req);
     };
     options = { keepAliveTimeout: 0, ...options };
@@ -466,8 +466,8 @@ describe.each(["http", "https"])("%s: a response is the same whether or not it w
       protocol === "https",
     );
     client.socket.write((waits ? get("/ahead") : "") + request);
-    await closed;
-    client.socket.write(get("/reused", "Connection: close\r\n"));
+    // A write to a closed connection is answered with a reset, for which Windows drops what the client hasn't read yet.
+    if (!(await closed).destroyed) client.socket.write(get("/reused", "Connection: close\r\n"));
     const received = await client.until();
     return { received: received.replace(/x{100,}/g, run => `<${run.length} x>`), log };
   }
@@ -554,7 +554,8 @@ describe("a response that waits for the connection", () => {
       createServer((req, res) => {
         responses.push(res);
         if (req.url === "/ahead") return;
-        const buffer = Buffer.allocUnsafeSlow(1024);
+        // All of them stay under the high water mark (16 KB on Windows). Over it the server stops reading and doesn't see the client leave.
+        const buffer = Buffer.allocUnsafeSlow(256);
         buffers.push(new WeakRef(buffer));
         res.end(buffer);
         if (buffers.length === 20) onDispatched();

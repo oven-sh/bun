@@ -210,8 +210,19 @@ fn is_unbounded_pipe(body: &HTTPRequestBody) -> bool {
     };
     stat.is_ok_and(|stat| {
         let mode = stat.st_mode as u32;
-        bun_sys::S::ISFIFO(mode) || bun_sys::S::ISSOCK(mode)
+        bun_sys::S::ISSOCK(mode) || (bun_sys::S::ISFIFO(mode) && can_poll_for_end_of_pipe(&stat))
     })
+}
+
+/// With kqueue, a FIFO in the file system reads as ended until it has a writer, and macOS doesn't report that the last one left.
+fn can_poll_for_end_of_pipe(stat: &bun_sys::Stat) -> bool {
+    if cfg!(target_os = "macos") {
+        stat.st_dev == 0
+    } else if cfg!(target_os = "freebsd") {
+        stat.st_nlink == 0
+    } else {
+        true
+    }
 }
 
 /// Returns the `TypeError` that `fetch("file:...")` rejects with if reading `file_blob` can only fail.

@@ -1072,7 +1072,18 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 int code = socket_error > 2 ? socket_error : LIBUS_ECONNRESET;
 #ifdef LIBUS_USE_KQUEUE
                 /* A unix peer that closed both directions is flagged like a reset. Its FIN was read and the socket has no error: epoll's hangup. */
-                if (socket_error <= 2 && s->read_eof) code = LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN;
+                if (socket_error <= 2 && s->read_eof) {
+                    code = LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN;
+                    /* The error flag skipped the retry from which a waiting write learns that it failed. */
+                    if (s->flags.last_write_failed && !s->send_rejected) {
+                        s = s->ssl ? us_internal_ssl_on_writable(s) : us_dispatch_writable(s);
+                        s = us_internal_socket_follow_adopted(s);
+                        if (!s || us_socket_is_closed(s)) {
+                            return;
+                        }
+                        if (s->send_rejected) code = LIBUS_ECONNRESET;
+                    }
+                }
 #endif
                 s = us_internal_socket_close_raw(s, code, NULL);
                 return;

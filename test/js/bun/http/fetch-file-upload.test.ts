@@ -323,7 +323,8 @@ describe.skipIf(isWindows)("a pipe is uploaded while it's being written", () => 
     if (kind === "a FIFO") {
       await using writer = await open(fifo, "w");
       await writer.write("first ");
-      await gotFirst.promise;
+      // kqueue doesn't report the end of a FIFO, so there it is read whole.
+      if (isLinux) await gotFirst.promise;
       await writer.write("second");
     } else {
       proc.stdin.write("first ");

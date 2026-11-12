@@ -130,6 +130,12 @@ public:
         return m_uncaughtExceptionCaptureCallback.get();
     }
 
+    inline void clearUncaughtExceptionCaptureCallback()
+    {
+        m_uncaughtExceptionCaptureCallback.clear();
+        m_reportOnUncaughtException = false;
+    }
+
     inline void setRunsWhenProcessExits(JSC::JSObject* function)
     {
         m_runsWhenProcessExits.setMayBeNull(vm(), this, function);

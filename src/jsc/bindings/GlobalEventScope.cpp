@@ -27,8 +27,7 @@ void GlobalEventScope::onDidChangeListenerImpl(EventTarget& self, const AtomStri
                 global.scriptExecutionContext()->unrefEventLoop();
             }
             break;
-        // I dont think clear in this context is ever called. If it is (search OnDidChangeListenerKind::Clear for the impl),
-        // it may actually call once per event, in a way the Remove code above would suffice.
+        // EventTarget::removeAllEventListeners() reports an event type once, however many listeners it had.
         case Clear:
             if (global.m_messageEventCount > 0) {
                 global.scriptExecutionContext()->unrefEventLoop();

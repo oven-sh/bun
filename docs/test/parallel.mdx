@@ -100,13 +100,14 @@ Keeps one global object for the whole run and gives each file its own copy of ev
 | The window of a [DOM environment](/test/dom)                         | new per file | new per file        |
 | Servers, sockets, watchers, subprocesses and timers a file left open | closed       | closed              |
 | `globalThis`, built-ins (`Array.prototype`, `console`, `Date.now`)   | new per file | changes are undone  |
+| Listeners on `globalThis`; listeners and entries of `performance`    | new per file | removed             |
 | `process.env`, `process.cwd()`, listeners on `process`               | restored     | restored            |
 | Built-in modules (`node:fs`, `bun:sqlite`)                           | new per file | shared              |
 | JIT-compiled code                                                    | discarded    | kept                |
 
 Use it with `--parallel` too: `bun test --parallel --isolate=modules`.
 
-Between files, Bun restores the properties of `globalThis`, of objects stored on `globalThis`, and of any function or prototype reachable from those. It doesn't restore a built-in module's exports (`fs.readFileSync = ...`) or state hidden inside a built-in object, so those changes carry over to the next file.
+Between files, Bun restores the properties of `globalThis`, of objects stored on `globalThis`, and of any function or prototype reachable from those. It also removes the listeners on `globalThis` and the callback of `process.setUncaughtExceptionCaptureCallback()`. On `performance`, it removes the listeners, the observers, the marks and the measures. It doesn't restore a built-in module's exports (`fs.readFileSync = ...`) or other state hidden inside a built-in object, so those changes carry over to the next file. `process.stdin`, `process.stdout` and `process.stderr` are shared too: a listener that a file adds to one of them stays for the next file.
 
 ## Concurrent tests within a file
 

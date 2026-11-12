@@ -325,13 +325,14 @@ const getOwnNonIndexProperties: (value: object, filter: number) => (string | sym
 // ---- process.addUncaughtExceptionCaptureCallback polyfill ----------------
 // Bun only implements the single-callback set/clear API; emulate Node's
 // additive API with a dispatcher list. The shim occupies the exclusive slot
-// for the process lifetime once the first REPL starts — see repl.js
-// setupExceptionCapture() for the rationale.
+// once the first REPL starts, and takes it again when it finds it empty. See
+// repl.js setupExceptionCapture() for the rationale.
 
 let captureCallbacks: ((err: unknown) => unknown)[] | null = null;
 
 function addUncaughtExceptionCaptureCallback(cb: (err: unknown) => unknown) {
-  if (!captureCallbacks) {
+  // An empty slot means that the dispatcher is gone, and the callbacks that it called with it.
+  if (!captureCallbacks || !process.hasUncaughtExceptionCaptureCallback()) {
     captureCallbacks = [];
     try {
       process.setUncaughtExceptionCaptureCallback((err: unknown) => {

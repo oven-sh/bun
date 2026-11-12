@@ -96,6 +96,8 @@ public:
     using StartOrMeasureOptions = std::variant<String, PerformanceMeasureOptions>;
     ExceptionOr<Ref<PerformanceMeasure>> measure(JSC::JSGlobalObject&, const String& measureName, std::optional<StartOrMeasureOptions>&&, const String& endMark);
     void clearMeasures(const String& measureName);
+    // Every mark and measure.
+    void clearUserTiming();
 
     size_t memoryCost() const;
 

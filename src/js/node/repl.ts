@@ -323,16 +323,18 @@ function loadImpl(): Loaded {
     // No active REPL context - let other handlers try
   }
 
-  // One-shot install per process. Node's `addUncaughtExceptionCaptureCallback`
-  // keeps a separate aux list that never counts against
+  // Installed when the first REPL starts, and again when a later one finds the
+  // slot empty: the program cleared it, or `bun test --isolate=modules` did
+  // between two test files. Node's `addUncaughtExceptionCaptureCallback` keeps a
+  // separate aux list that never counts against
   // `hasUncaughtExceptionCaptureCallback()`; Bun lacks that native API, so the
-  // shim occupies the exclusive slot for the process lifetime once the first
-  // REPL starts (uninstalling on 'exit' would drop async errors that fire after
-  // input close — see test-repl-uncaught-exception-after-input-ended). The
-  // shim's fallthrough re-emits `uncaughtException` with the origin arg so user
-  // listeners still see it.
+  // shim occupies the exclusive slot once a REPL has started (uninstalling on
+  // 'exit' would drop async errors that fire after input close, see
+  // test-repl-uncaught-exception-after-input-ended). The shim's fallthrough
+  // re-emits `uncaughtException` with the origin arg so user listeners still
+  // see it.
   function setupExceptionCapture() {
-    if (exceptionCaptureInstalled) return;
+    if (exceptionCaptureInstalled && process.hasUncaughtExceptionCaptureCallback()) return;
     exceptionCaptureInstalled = true;
     require("internal/repl/node-shims").addUncaughtExceptionCaptureCallback(replExceptionCaptureCallback);
   }

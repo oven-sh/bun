@@ -2245,8 +2245,8 @@ describe.concurrent("node:repl process-global side effects", () => {
   const env = { ...bunEnv, NO_COLOR: "1" };
 
   // Known limitation until process.addUncaughtExceptionCaptureCallback is
-  // implemented natively: the shim occupies the exclusive capture slot for the
-  // process lifetime. It must NOT displace a user callback installed BEFORE the
+  // implemented natively: the shim occupies the exclusive capture slot once a
+  // REPL has started. It must NOT displace a user callback installed BEFORE the
   // first repl.start().
   test(
     "uncaught-exception capture shim defers to a pre-installed user callback",
@@ -2270,6 +2270,37 @@ describe.concurrent("node:repl process-global side effects", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout).toContain("userGot=boom");
       expect(stderr).not.toContain("ALREADY_SET");
+      expect(exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
+
+  // A REPL that finds the slot empty takes it again, so it reports the errors of what it runs, as in Node. The other
+  // side of the limitation above: in Node the callback of a REPL does not count for hasUncaughtExceptionCaptureCallback().
+  test(
+    "a REPL that starts after the capture callback was cleared reports its errors",
+    async () => {
+      const script = `
+      const repl = require("node:repl");
+      const { PassThrough } = require("node:stream");
+      const ignored = new PassThrough(); ignored.resume();
+      repl.start({ input: new PassThrough(), output: ignored, terminal: false, prompt: "" }).close();
+      process.setUncaughtExceptionCaptureCallback(null);
+      const input = new PassThrough(), output = new PassThrough();
+      let printed = "";
+      output.on("data", chunk => {
+        printed += chunk;
+        if (!printed.includes("Uncaught")) return;
+        console.log("reported=" + printed.includes("thrown later") + " has=" + process.hasUncaughtExceptionCaptureCallback());
+        process.exit(0);
+      });
+      repl.start({ input, output, terminal: false, prompt: "" });
+      input.write('setTimeout(() => { throw new Error("thrown later"); })\\n');
+    `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("thrown later");
+      expect(stdout).toBe("reported=true has=true\n");
       expect(exitCode).toBe(0);
     },
     interactiveTimeout,

@@ -480,7 +480,7 @@ describe("findSourceMap", () => {
         import { findSourceMap, getSourceMapsSupport } from "node:module";
         test("a", async () => {
           await import("./src.ts");
-          console.log(JSON.stringify([findSourceMap(import.meta.resolve("./src.ts")) !== undefined]));
+          console.log(JSON.stringify({ aHasMap: findSourceMap(import.meta.resolve("./src.ts")) !== undefined }));
           process.setSourceMapsEnabled(!getSourceMapsSupport().enabled);
         });
       `,
@@ -488,7 +488,7 @@ describe("findSourceMap", () => {
         import { test } from "bun:test";
         import { getSourceMapsSupport } from "node:module";
         test("b", () => {
-          console.log(JSON.stringify([getSourceMapsSupport().enabled]));
+          console.log(JSON.stringify({ bEnabled: getSourceMapsSupport().enabled }));
         });
       `,
       });
@@ -500,6 +500,11 @@ describe("findSourceMap", () => {
           [true, true],
         ],
         [["--isolate"], [false, false]],
+        // Each worker process of --parallel gets the flag, and the setter of one does not reach another.
+        [
+          ["--enable-source-maps", "--parallel", "--max-concurrency=2"],
+          [true, true],
+        ],
       ]) {
         await using proc = Bun.spawn({
           cmd: [bunExe(), "test", ...args, "a.test.ts", "b.test.ts"],
@@ -516,12 +521,15 @@ describe("findSourceMap", () => {
           exitCode: 0,
         });
         expect(stderr).toContain(" 2 pass");
-        const [aHasMap, bEnabled] = stdout
-          .trim()
-          .split("\n")
-          .filter(line => line.startsWith("["))
-          .map(line => JSON.parse(line)[0]);
-        expect({ args, aHasMap, bEnabled }).toEqual({ args, aHasMap: expected[0], bEnabled: expected[1] });
+        // A worker of --parallel prints through the stream of its results.
+        const seen = Object.assign(
+          {},
+          ...(stdout + stderr)
+            .split("\n")
+            .filter(line => line.startsWith("{"))
+            .map(line => JSON.parse(line)),
+        );
+        expect({ args, ...seen }).toEqual({ args, aHasMap: expected[0], bEnabled: expected[1] });
       }
     },
   );

@@ -18,7 +18,8 @@ pub struct SavedSourceMap {
     /// Only accessed between [`Self::lock`] and [`Self::unlock`].
     map: HashTable,
     mutex: Mutex,
-    /// A [`SourceMapsSupport`] as bits, so a reader sees one whole write.
+    /// A [`SourceMapsSupport`] as bits, so a reader sees one whole write. `Relaxed`: the JS
+    /// thread of the VM is the only writer and reader.
     source_maps_support: AtomicU8,
 }
 

@@ -42,9 +42,10 @@ pub(crate) fn find_source_map<'a>(
     // SAFETY: `bun_vm()` returns the live per-thread VM for a Bun-owned global.
     let vm = global.bun_vm().as_mut();
 
-    // The table keys a module by its absolute path.
-    let has_scheme = strings::index_of(source_url_slice.slice(), b"://").is_some();
-    if has_scheme && source_url_slice.slice().starts_with(b"file://") {
+    // The table keys a file by its absolute path, and a `blob:` module by its URL.
+    let is_url = strings::index_of(source_url_slice.slice(), b"://").is_some()
+        || source_url_slice.slice().starts_with(b"blob:");
+    if source_url_slice.slice().starts_with(b"file://") {
         let path = bun_url::path_from_file_url(&source_url_string);
         if path.is_dead() {
             return Ok(None);
@@ -52,11 +53,13 @@ pub(crate) fn find_source_map<'a>(
         drop(source_url_slice);
         source_url_string = path;
         source_url_slice = source_url_string.to_utf8();
-    } else if !has_scheme {
+    } else if !is_url {
         let mut buf = bun_paths::path_buffer_pool::get();
-        let path = bun_paths::resolve_path::join_abs_string_buf::<
+        let Some(path) = bun_paths::resolve_path::join_abs_string_buf_checked::<
             bun_paths::resolve_path::platform::Auto,
-        >(vm.top_level_dir(), &mut *buf, &[source_url_slice.slice()]);
+        >(vm.top_level_dir(), &mut *buf, &[source_url_slice.slice()]) else {
+            return Ok(None);
+        };
         let path = bun_core::String::clone_utf8(path);
         drop(source_url_slice);
         source_url_string = path;

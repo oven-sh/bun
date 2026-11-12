@@ -1241,6 +1241,7 @@ describe("a response stream that ends without a FIN", () => {
 test.each([
   ["wholeData", "abc"],
   ["dataThenCutFrameHeader", "HTTP3ProtocolError"],
+  ["dataCutInItsPayload", "HTTP3ProtocolError"],
 ] as const)("a response with a FIN after %s reads as %j", async (frame, expected) => {
   const origin = await listen(
     (session: any) => {

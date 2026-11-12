@@ -251,6 +251,9 @@ export const lsquic: Dependency = {
     // its own. The peer read trailers as body bytes, or closed the connection
     // when the block didn't fit in that frame's packet.
     "patches/lsquic/headers-after-buffered-body.patch",
+    // A FIN in the middle of a DATA frame read as the end of the body. It is an
+    // H3_FRAME_ERROR, as lsquic already has it for every other frame type.
+    "patches/lsquic/fin-inside-data-frame.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

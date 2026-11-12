@@ -2392,6 +2392,7 @@ describe("an HTTP/3 request that ends early", () => {
   test.each([
     ["wholeData", "abc"],
     ["dataThenCutFrameHeader", "rejected"],
+    ["dataCutInItsPayload", "rejected"],
   ] as const)("a FIN after %s reads as %j", async (frame, expected) => {
     const { server, body } = await serve();
     using relay = await tamperingRelay(server.address!.port);

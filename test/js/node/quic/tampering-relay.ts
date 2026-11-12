@@ -60,5 +60,6 @@ export const frames = {
   post: [0x01, 16, 0, 0, 0xd4, 0xd7, 0xc1, 0x50, 9, ...Buffer.from("localhost")],
   status200: [0x01, 3, 0, 0, 0xd9],
   wholeData: [0x00, 3, ...Buffer.from("abc")],
+  dataCutInItsPayload: [0x00, 10, ...Buffer.from("abc")],
   dataThenCutFrameHeader: [0x00, 3, ...Buffer.from("abc"), 0x00],
 };

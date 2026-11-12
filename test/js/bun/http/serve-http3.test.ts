@@ -3204,6 +3204,7 @@ describe("Bun.serve HTTP/3 request that ends early", () => {
   test.each([
     ["wholeData", "abc"],
     ["dataThenCutFrameHeader", "AbortError"],
+    ["dataCutInItsPayload", "AbortError"],
   ] as const)("a FIN after %s reads as %j", async (frame, expected) => {
     const { server, body } = serve();
     using relay = await tamperingRelay(server.port!);

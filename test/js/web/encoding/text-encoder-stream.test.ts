@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, readableStreamFromArray } from "harness";
+import { compose, Duplex, Writable } from "node:stream";
 
 // META: global=window,worker
 // META: script=resources/readable-stream-from-array.js
@@ -184,6 +185,43 @@ test("pipeThrough(new TextEncoderStream()) pulls its source once before any read
   expect(await Promise.race([pulledTwice.then(() => "twice"), Bun.sleep(0).then(() => "once")])).toBe("once");
   expect(pulls).toBe(1);
   await encoded.cancel();
+});
+
+// Node.js sets the stream up the same way. So a write through a node:stream adapter completes
+// when the readable side is read, not before it (Node.js v26.3.0).
+describe("TextEncoderStream behind a node:stream adapter", () => {
+  const nextData = (readable: NodeJS.ReadableStream) =>
+    new Promise<Uint8Array>(resolve => readable.once("data", resolve));
+  test.each([
+    [
+      "Writable.fromWeb(stream.writable)",
+      (stream: TextEncoderStream) => ({
+        writable: Writable.fromWeb(stream.writable, { decodeStrings: false }),
+        read: async () => (await stream.readable.getReader().read()).value!,
+      }),
+    ],
+    [
+      "Duplex.fromWeb(stream)",
+      (stream: TextEncoderStream) => {
+        const duplex = Duplex.fromWeb(stream, { decodeStrings: false });
+        return { writable: duplex, read: () => nextData(duplex) };
+      },
+    ],
+    [
+      "compose(stream)",
+      (stream: TextEncoderStream) => {
+        const duplex = compose(stream);
+        return { writable: duplex, read: () => nextData(duplex) };
+      },
+    ],
+  ])("%s: the first write completes when the readable side is read", async (_label, adapt) => {
+    const { writable, read } = adapt(new TextEncoderStream());
+    const { promise: written, resolve, reject } = Promise.withResolvers<void>();
+    writable.write("a", error => (error ? reject(error) : resolve()));
+    expect(await Promise.race([written.then(() => "completed"), Bun.sleep(0).then(() => "pending")])).toBe("pending");
+    expect(Buffer.from(await read()).toString()).toBe("a");
+    await written;
+  });
 });
 
 // Native-sink output path: when the readable is consumed by a native sink

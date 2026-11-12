@@ -550,7 +550,12 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
             ));
         }
 
-        let entry = bun_core::handle_oom(duped_route_names.get_or_put(route_name));
+        // ServerRouteList names the parameter after the last ":" of its segment.
+        let property_name = match strings::rsplit_once_char(route_name, b':') {
+            Some((_, name)) if !name.is_empty() => name,
+            _ => route_name,
+        };
+        let entry = bun_core::handle_oom(duped_route_names.get_or_put(property_name));
         if entry.found_existing {
             return Err(global.throw_todo(
                 b"Support for duplicate route parameter names is not yet implemented.\n\n\

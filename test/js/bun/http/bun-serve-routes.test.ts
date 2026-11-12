@@ -732,15 +732,35 @@ it("throws a validation error when a route parameter name starts with a number",
   }).toThrow("Route parameter names cannot start with a number.");
 });
 
-it("throws a validation error when a route parameter name is duplicated", () => {
+it.each([
+  "/test/:a123/:a123",
+  // A parameter is named after the last ":" of its segment.
+  "/:a:b/:b",
+  "/:b/:a:b",
+  "/:a:b/:c:b",
+  "/x:b/:a:b",
+])("throws a validation error when a route parameter name is duplicated: %s", route => {
   expect(() => {
     Bun.serve({
-      routes: { "/test/:a123/:a123": () => new Response("test") },
+      port: 0,
+      routes: { [route]: () => new Response("test") },
       fetch(req) {
         return new Response("test");
       },
     });
   }).toThrow("Support for duplicate route parameter names is not yet implemented.");
+});
+
+it.each([
+  ["/:id:edit", "/1", { edit: "1" }],
+  ["/:a:b/:c", "/1/2", { b: "1", c: "2" }],
+  ["/:a:/:b:", "/1/2", {}],
+])("matches %s to its parameter names", async (route, path, params) => {
+  await using server = Bun.serve({
+    port: 0,
+    routes: { [route]: (req: BunRequest) => Response.json(req.params) },
+  });
+  expect(await (await fetch(new URL(path, server.url))).json()).toEqual(params);
 });
 
 it("fetch() is optional when routes are specified", async () => {

@@ -75,8 +75,8 @@ POST, unread, with 'error' listeners
   req _destroy getter throws: the request: get _destroy; the client: 200 ok
   req _destroy throws when called: the request: call _destroy; the client: 200 ok
   req @eofInProgress getter throws: the socket: get @eofInProgress, the request: get @eofInProgress; the client: 200 ok
-  req @eofInProgress setter throws: uncaught set @eofInProgress; the client: 200 ok
-  req @eofInProgress read-only: uncaught TypeError; the client: 200 ok
+  req @eofInProgress setter throws: uncaught set @eofInProgress, the request: set @eofInProgress; the client: 200 ok
+  req @eofInProgress read-only: uncaught TypeError, the request: TypeError; the client: 200 ok
   req @handle setter throws: the request: set @handle; the client: 200 ok
   req @handle read-only: the request: TypeError; the client: 200 ok
   req @handle a number: the request: TypeError; the client: 200 ok
@@ -222,8 +222,8 @@ POST, readable, with 'error' listeners
   req _destroy getter throws: read 4, end, the request: get _destroy; the client: 200 ok
   req _destroy throws when called: read 4, end, the request: call _destroy; the client: 200 ok
   req @eofInProgress getter throws: the socket: get @eofInProgress, the request: get @eofInProgress; the client: ECONNRESET
-  req @eofInProgress setter throws: uncaught set @eofInProgress, read 4, the socket: set @eofInProgress, the request: set @eofInProgress; the client: ECONNRESET
-  req @eofInProgress read-only: uncaught TypeError, read 4, the socket: TypeError, the request: TypeError; the client: ECONNRESET
+  req @eofInProgress setter throws: read 4, uncaught set @eofInProgress, the socket: set @eofInProgress, the request: set @eofInProgress; the client: ECONNRESET
+  req @eofInProgress read-only: read 4, uncaught TypeError, the socket: TypeError, the request: TypeError; the client: ECONNRESET
   req @handle setter throws: read 4, end, the request: set @handle; the client: 200 ok
   req @handle read-only: read 4, end, the request: TypeError; the client: 200 ok
   req @noBody getter throws: the socket: get @noBody, the request: get @noBody; the client: ECONNRESET
@@ -246,8 +246,8 @@ POST, readable, without 'error' listeners
   req _destroy getter throws: read 4, end, uncaught get _destroy; the client: 200 ok
   req _destroy throws when called: read 4, end, uncaught call _destroy; the client: 200 ok
   req @eofInProgress getter throws: nothing; the client: ECONNRESET
-  req @eofInProgress setter throws: uncaught set @eofInProgress, read 4; the client: ECONNRESET
-  req @eofInProgress read-only: uncaught TypeError, read 4; the client: ECONNRESET
+  req @eofInProgress setter throws: read 4, uncaught set @eofInProgress; the client: ECONNRESET
+  req @eofInProgress read-only: read 4, uncaught TypeError; the client: ECONNRESET
   req @handle setter throws: read 4, end, uncaught set @handle; the client: 200 ok
   req @handle read-only: read 4, end, uncaught TypeError; the client: 200 ok
   req @noBody getter throws: nothing; the client: ECONNRESET

@@ -662,6 +662,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
+    /// See `us_socket_set_owner_holds_tail`.
+    pub fn set_owner_holds_tail(&self) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).set_owner_holds_tail();
+        }
+    }
+
     /// A shutdown before the first handshake step sends its FIN after that step.
     pub fn set_first_flight_before_fin(&self) {
         if let InternalSocket::Connected(s) = self.socket {

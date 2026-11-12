@@ -3092,9 +3092,9 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     pub(crate) fn close(&self, _: &mut JsScope<'_>) {
-        // It lingers behind a tail, and holds the loop for the `close` to come.
+        // It lingers behind a tail, which closing now could drop.
         if !SSL && !self.closing.get().is_detached() {
-            return;
+            return self.js_unref();
         }
         let socket = self.socket.get();
         // `_handle.close()` is the net.Socket `_destroy()` path. Node closes the fd
@@ -3155,6 +3155,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     let _ = self.internal_flush();
                 } else if self.waits_to_send_tail() {
                     self.update_flags(|f| f.insert(Flags::QUEUED_TAIL));
+                    self.socket.get().set_owner_holds_tail();
                     self.arm_tail_timeout();
                 }
                 if queues_tail && wrote >= 0 {
@@ -3170,7 +3171,8 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// Returns false for a node:http connection that uWS owns: its server holds the loop for it, and `leave_http` applies the wish.
     fn holds_loop_when_reffed(&self) -> bool {
         let socket = self.socket.get();
-        socket.is_established() && !matches!(socket.socket, uws::InternalSocket::UwsHttp(_))
+        (socket.is_established() && !matches!(socket.socket, uws::InternalSocket::UwsHttp(_)))
+            || !self.closing.get().is_detached()
     }
 
     pub(crate) fn js_ref(&self) {

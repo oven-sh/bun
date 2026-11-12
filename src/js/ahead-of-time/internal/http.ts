@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 8d5502a395a168c7a96037f88ca9baf584928988f82509e6d169af0b5c27a427.
+// Written against that file with the SHA-256 416d6684b00bd0c8ee13102d907851f361b252d4ddd32cb3ce064940ccce4df7.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { isIPv4 } = require("internal/net/isIP");
@@ -234,6 +234,10 @@ const takeBodyDataInFull = function onDataIncomingMessage(
   if (isLast) {
     try {
       emitEOFIncomingMessage(req);
+    } catch (err) {
+      // No read is left to end this request.
+      req.destroy(err as Error);
+      throw err;
     } finally {
       // Like Node's parserOnMessageComplete: a readStop above left the socket not flowing, which would swallow the next request's 'pause'.
       if (!req.upgrade && socket && !socket._paused && socket.readable) {

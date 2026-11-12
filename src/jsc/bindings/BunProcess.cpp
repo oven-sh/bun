@@ -201,7 +201,7 @@ extern "C" void Bun__closeChildIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
 extern "C" void Bun__ensureProcessIPCInitialized(JSGlobalObject*);
-extern "C" void Bun__deliverHeldIPCMessage(JSGlobalObject*, EncodedJSValue);
+extern "C" void Bun__deliverHeldIPCMessage(JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" const char* Bun__githubURL;
 extern "C" const char* Bun__sqlite3_version();
 extern "C" const char* Bun__typescript_version();
@@ -6210,18 +6210,19 @@ void Process::openChannelOfClusterWorker(Zig::GlobalObject* global)
     JSC::callRemovable<Bun::Feature::Ipc, JSC::RemovedFeatureStub::ReturnDefault, Bun__ensureProcessIPCInitialized>(global);
 }
 
-bool Process::holdMessage(JSValue message)
+bool Process::holdMessage(JSValue message, JSValue fd)
 {
     if (!m_holdsChannelEvents) [[likely]]
         return false;
     Locker locker { cellLock() };
     m_heldChannelMessages.append(WriteBarrier<Unknown>(vm(), this, message));
+    m_heldChannelMessages.append(WriteBarrier<Unknown>(vm(), this, fd));
     return true;
 }
 
-extern "C" bool Process__holdMessage(Zig::GlobalObject* global, EncodedJSValue message)
+extern "C" bool Process__holdMessage(Zig::GlobalObject* global, EncodedJSValue message, EncodedJSValue fd)
 {
-    return global->processObject()->holdMessage(JSValue::decode(message));
+    return global->processObject()->holdMessage(JSValue::decode(message), JSValue::decode(fd));
 }
 
 // One event a task, so that ticks and microtasks run between them as they do between the messages of a read.
@@ -6238,13 +6239,14 @@ void Process::releaseChannelEvents()
                 Process__emitDisconnectEvent(global);
             return;
         }
-        JSValue message;
+        JSValue message, fd;
         {
             Locker locker { process->cellLock() };
             message = process->m_heldChannelMessages.takeFirst().get();
+            fd = process->m_heldChannelMessages.takeFirst().get();
         }
         process->releaseChannelEvents();
-        JSC::callRemovable<Bun::Feature::Ipc, JSC::RemovedFeatureStub::ReturnDefault, Bun__deliverHeldIPCMessage>(global, JSValue::encode(message));
+        JSC::callRemovable<Bun::Feature::Ipc, JSC::RemovedFeatureStub::ReturnDefault, Bun__deliverHeldIPCMessage>(global, JSValue::encode(message), JSValue::encode(fd));
     });
 }
 

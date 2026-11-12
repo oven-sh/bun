@@ -1547,6 +1547,9 @@ function takeEndOfBody(
   try {
     req[eofInProgress] = true;
     queueTick2(endBody, req, state);
+  } catch (err) {
+    req.destroy(err as Error);
+    throw err;
   } finally {
     if (!req.upgrade && socket && !socket._paused && socket.readable) {
       if (socket.$resumeUnlessFlowing !== undefined) http.requestRoad.resumeUnlessFlowing!(socket, false);

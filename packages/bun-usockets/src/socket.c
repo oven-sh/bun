@@ -356,6 +356,10 @@ struct us_socket_t *us_socket_close_now(struct us_socket_t *s) {
     return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, NULL);
 }
 
+void us_socket_set_owner_holds_tail(struct us_socket_t *s) {
+    s->owner_holds_tail = 1;
+}
+
 struct us_socket_t *us_socket_close_lingering(struct us_socket_t *s) {
     /* After the peer's FIN there is nothing to wait for. */
     if ((s->read_eof && !s->ssl) || us_socket_is_closed(s) || !us_socket_is_established(s)) {
@@ -363,7 +367,7 @@ struct us_socket_t *us_socket_close_lingering(struct us_socket_t *s) {
     }
     us_socket_timeout(s, LIBUS_LINGER_SECONDS);
     s->lingering = 1;
-    /* The process doesn't stay alive for it. */
+    /* The loop doesn't stay alive for it, unless its owner holds it. */
     us_socket_unref(s);
     /* The graceful TLS close waits for the peer's close_notify in the same way. */
     if (s->ssl) {

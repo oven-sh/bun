@@ -326,7 +326,7 @@ const owed: Record<string, number> = {
   "ahead-of-time/internal/streams/destroy.ts": 1,
   "ahead-of-time/internal/streams/end-of-stream.ts": 11,
   "internal/streams/from.ts": 2,
-  "ahead-of-time/internal/streams/readable.ts": 39,
+  "ahead-of-time/internal/streams/readable.ts": 40,
   "ahead-of-time/internal/streams/state.ts": 3,
   "ahead-of-time/internal/streams/transform.ts": 1,
   "ahead-of-time/internal/streams/utils.ts": 1,

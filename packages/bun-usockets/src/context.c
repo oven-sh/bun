@@ -123,7 +123,7 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
             continue;
         }
         /* A reset after a write that fell short: the owner may hold the rest. No close_notify from a thread that ends, whose answer nothing would read. */
-        const int cut_short = s->flags.last_write_failed && (s->ssl || (!thread_ends && us_socket_kind(s) == BUN_SOCKET_KIND_BUN_SOCKET_TCP));
+        const int cut_short = s->ssl ? s->flags.last_write_failed : !thread_ends && s->owner_holds_tail && !s->lingering;
         us_socket_close(s, cut_short ? LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET : thread_ends ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
         /* A TLS socket may have *deferred* that: us_internal_ssl_close with
          * code==0 sends close_notify and, on WANT_READ, waits for the peer's

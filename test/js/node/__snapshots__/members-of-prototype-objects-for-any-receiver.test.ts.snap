@@ -1334,7 +1334,7 @@ node:net.Socket.prototype connect()
   throws TypeError: null is not an object <- null
 node:net.Socket.prototype connect("a", 1)
   throws TypeError: what is called is not a function, stores connecting write _handle <- {}, an object without a prototype, an instance of another class, a proxy of {}
-  throws TypeError ERR_INVALID_ARG_TYPE: SocketOptions.socket is required, stores connecting _handle _sockname [closed] [ended] [kHungUp] <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  throws TypeError ERR_INVALID_ARG_TYPE: SocketOptions.socket is required, stores connecting _handle _sockname [closed] [ended] [kHungUp] [kLastBytesSent] <- an heir of the prototype object, a proxy of such an heir, the prototype object
   throws TypeError: Attempted to assign to readonly property. <- a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
@@ -2056,20 +2056,50 @@ node:http.Server.prototype _requestCert, read
   undefined <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
+node:http.Server.prototype _requestCert, stored to
+  undefined, stores _requestCert <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
+  undefined <- the prototype object
+  throws TypeError: Properties can only be defined on Objects. <- a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
 node:http.Server.prototype _rejectUnauthorized, read
   undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:http.Server.prototype _rejectUnauthorized, stored to
+  undefined, stores _rejectUnauthorized <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
+  undefined <- the prototype object
+  throws TypeError: Properties can only be defined on Objects. <- a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:http.Server.prototype _handshakeTimeout, read
   number <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
+node:http.Server.prototype _handshakeTimeout, stored to
+  undefined, stores _handshakeTimeout <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
+  undefined <- the prototype object
+  throws TypeError: Properties can only be defined on Objects. <- a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
 node:http.Server.prototype _ALPNCallback, read
   undefined <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
+node:http.Server.prototype _ALPNCallback, stored to
+  undefined, stores _ALPNCallback <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
+  undefined <- the prototype object
+  throws TypeError: Properties can only be defined on Objects. <- a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
 node:http.Server.prototype _SNICallback, read
   undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:http.Server.prototype _SNICallback, stored to
+  undefined, stores _SNICallback <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
+  undefined <- the prototype object
+  throws TypeError: Properties can only be defined on Objects. <- a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:http.Server.prototype listening, read
@@ -2087,12 +2117,12 @@ node:http.Server.prototype ref("a", 1)
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:http.Server.prototype unref()
-  throws TypeError: undefined is not an object, stores _unref <- every object
+  the receiver, stores _unref <- every object
   throws TypeError: Attempted to assign to readonly property. <- a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:http.Server.prototype unref("a", 1)
-  throws TypeError: undefined is not an object, stores _unref <- every object
+  the receiver, stores _unref <- every object
   throws TypeError: Attempted to assign to readonly property. <- a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
@@ -2105,10 +2135,12 @@ node:http.Server.prototype closeAllConnections("a", 1)
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:http.Server.prototype _emitCloseIfDrained()
-  throws TypeError: undefined is not an object <- every object, a number, a string, undefined
+  undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:http.Server.prototype _emitCloseIfDrained("a", 1)
-  throws TypeError: undefined is not an object <- every object, a number, a string, undefined
+  undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:http.Server.prototype getConnections()
   the receiver <- every object, a number, a string
@@ -2290,9 +2322,7 @@ node:http.ServerResponse.prototype end("a", 1)
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:http.ServerResponse.prototype write()
-  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
-  throws TypeError: undefined is not an object, stores statusMessage statusCode [kSnapshotStatusCode] [kSnapshotStatusMessage] <- an heir of the prototype object, a proxy of such an heir
-  throws TypeError: undefined is not an object, stores statusMessage [kSnapshotStatusCode] [kSnapshotStatusMessage] <- the prototype object
+  throws TypeError ERR_INVALID_ARG_TYPE: The "chunk" argument must be of type string or an instance of Buffer or Uint8Array. Received undefined <- every object, a number, a string
   throws TypeError: undefined is not an object <- undefined
   throws TypeError: null is not an object <- null
 node:http.ServerResponse.prototype write("a", 1)

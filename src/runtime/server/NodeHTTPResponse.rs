@@ -1495,7 +1495,8 @@ impl NodeHTTPResponse {
             // (on_data_or_aborted runs the ondata callback). Clearing the slot
             // alone would un-root `pinned_value` while it is still read later.
             self.clear_pending_pinned_write(vm_get().global(), js_this);
-            self.on_data_or_aborted(b"", true, AbortEvent::Abort, js_this);
+            let callback = js::on_data_get_cached(js_this);
+            self.on_data_or_aborted(b"", true, AbortEvent::Abort, callback);
         }
 
         // The connection is released before the guard's release because
@@ -1526,7 +1527,8 @@ impl NodeHTTPResponse {
         if flags.contains(Flags::SOCKET_CLOSED) {
             return;
         }
-        self.on_data_or_aborted(&[], false, AbortEvent::ReadParsed, self.get_this_value());
+        let callback = js::on_data_get_cached(self.get_this_value());
+        self.on_data_or_aborted(&[], false, AbortEvent::ReadParsed, callback);
     }
 
     pub(crate) fn notify_when_read_parsed(&self) -> bool {
@@ -1942,7 +1944,13 @@ impl NodeHTTPResponse {
     }
 
     /// The caller of a `last` call holds a ref.
-    fn on_data_or_aborted(&self, chunk: &[u8], last: bool, event: AbortEvent, this_value: JSValue) {
+    fn on_data_or_aborted(
+        &self,
+        chunk: &[u8],
+        last: bool,
+        event: AbortEvent,
+        callback: Option<JSValue>,
+    ) {
         scoped_log!(
             NodeHTTPResponse,
             "onDataOrAborted({}, {})",
@@ -1955,7 +1963,7 @@ impl NodeHTTPResponse {
             self.update_parked();
         }
 
-        if let Some(callback) = js::on_data_get_cached(this_value) {
+        if let Some(callback) = callback {
             if callback.is_cell() {
                 let vm = vm_get();
                 let global_this = vm.global();
@@ -1994,17 +2002,18 @@ impl NodeHTTPResponse {
             last as u8
         );
 
-        let this_value = self.get_this_value();
+        // Read once: a request that is destroyed over its last bytes is complete too.
+        let callback = js::on_data_get_cached(self.get_this_value());
         if !last {
-            return self.on_data_or_aborted(chunk, false, AbortEvent::None, this_value);
+            return self.on_data_or_aborted(chunk, false, AbortEvent::None, callback);
         }
         self.capture_request_trailers();
         let _guard = self.ref_guard();
         if !chunk.is_empty() {
             // Like llhttp's on_body and on_message_complete: ticks and promise jobs run between the last bytes and the end.
-            self.on_data_or_aborted(chunk, false, AbortEvent::None, this_value);
+            self.on_data_or_aborted(chunk, false, AbortEvent::None, callback);
         }
-        self.on_data_or_aborted(b"", true, AbortEvent::None, this_value);
+        self.on_data_or_aborted(b"", true, AbortEvent::None, callback);
     }
 
     /// Release the pin + GC root + byte owner taken by a zero-copy write.

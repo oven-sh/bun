@@ -37,6 +37,7 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSObject> m_onWarning;
     // A function of the library: it hands native code what it kept for a tick. No tick runs once the process exits.
     WriteBarrier<JSObject> m_runsWhenProcessExits;
+    // Pairs: a message, and the descriptor that came with it or undefined.
     WTF::Deque<WriteBarrier<Unknown>> m_heldChannelMessages;
     bool m_holdsChannelEvents = false;
     bool m_heldDisconnect = false;
@@ -90,7 +91,7 @@ public:
 
     // Opens the IPC channel ahead of the program. What arrives waits for the program's first listener, as if that had opened it.
     void openChannelOfClusterWorker(Zig::GlobalObject*);
-    bool holdMessage(JSValue);
+    bool holdMessage(JSValue message, JSValue fd);
     bool holdDisconnect() { return m_heldDisconnect = m_holdsChannelEvents; }
     void releaseChannelEvents();
 

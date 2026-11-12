@@ -163,6 +163,10 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
   if (isLast) {
     try {
       emitEOFIncomingMessage(this);
+    } catch (err) {
+      // No read is left to end this request.
+      this.destroy(err);
+      throw err;
     } finally {
       // Like Node's parserOnMessageComplete: a readStop above left the socket not flowing, which would swallow the next request's 'pause'.
       if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();

@@ -569,14 +569,10 @@ pub(crate) fn ensure_process_ipc_initialized(global: &JSGlobalObject) {
 }
 
 // HOST_EXPORT(Bun__deliverHeldIPCMessage, c)
-pub(crate) fn deliver_held_ipc_message(global: &JSGlobalObject, message: JSValue) {
-    if let Some(instance) = CHANNEL.get() {
-        let message = DecodedIPCMessage::Data(message);
-        crate::dispatch::fold(IPC::deliver_ipc_message(
-            instance.data(),
-            message,
-            global,
-            true,
-        ));
-    }
+pub(crate) fn deliver_held_ipc_message(global: &JSGlobalObject, message: JSValue, fd: JSValue) {
+    crate::dispatch::fold(if fd.is_undefined() {
+        IPCInstance::handle_ipc_message(&DecodedIPCMessage::Data(message), fd)
+    } else {
+        IPC::parse_held_handle(global, message, fd)
+    });
 }

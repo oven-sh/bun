@@ -3312,7 +3312,7 @@ impl<const SSL: bool, const DEBUG: bool> ServerDeinitTask<SSL, DEBUG> {
             // A listener turned the event loop, and the app's handler that called it goes on afterwards.
             return vm
                 .event_loop_mut()
-                .enqueue_task_after_yield(bun_event_loop::Task::init(this));
+                .enqueue_task_for_outermost_tick(bun_event_loop::Task::init(this));
         }
         NewServer::<SSL, DEBUG>::deinit(this.cast());
     }

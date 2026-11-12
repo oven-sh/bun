@@ -150,6 +150,13 @@ private:
         uint64_t m_updateCounter { 0 };
     };
 
+    // Whoever stores one of these describes a body of their own.
+    void willStore(const String& name)
+    {
+        if (m_bodyFacts && (equalLettersIgnoringASCIICase(name, "content-encoding"_s) || equalLettersIgnoringASCIICase(name, "content-length"_s)))
+            m_bodyFacts = 0;
+    }
+
     uint8_t m_bodyFacts { 0 };
     // How often fastRemove() ran. An iterator compares it with the counter to tell that nothing else changed the map.
     uint16_t m_nativeRemovals { 0 };

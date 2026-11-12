@@ -729,20 +729,18 @@ test.skipIf(isWindows).concurrent("a worker keeps a net.Server for a first liste
     worker.send("server", server, () => server.close());
     worker.send("behind");
     worker.disconnect();
-    fs.writeFileSync("disconnected", "");
   });`;
   const job = {
-    // Two more turns of the loop, which has everything that was sent to read by then.
     "job.js": `${whenDisconnected}
-    disconnected.then(() => setImmediate(setImmediate, () => {
+    disconnected.then(() => {
       process.on("message", (message, handle) => {
         console.log(message);
         handle?.close();
       });
-    }));`,
+    });`,
   };
   expect(await runWorker(send, job)).toEqual({
-    stdout: ["before", "server", "behind", "online, disconnect, exit 0"],
+    stdout: ["before", "server", "behind", "disconnect, exit 0"],
     stderr: "",
     exitCode: 0,
   });

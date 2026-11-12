@@ -196,7 +196,7 @@ pub(crate) trait Sink {
     /// The block is refused, so the fields `on_header` got for it are dropped.
     fn on_headers_refused(&self);
     /// The header block for `stream_id` is complete. `flags` are those of its HEADERS frame.
-    fn on_headers_complete(&self, stream_id: u32, flags: u8);
+    fn on_headers_complete(&self, stream_id: u32, flags: u8, is_request: bool);
     /// The payload of a DATA frame, or a part of it, without padding.
     fn on_data(&self, stream_id: u32, data: &[u8]);
     /// The peer's END_STREAM arrived. The owner applies it to the table once JS has seen what came before it.
@@ -1146,6 +1146,9 @@ impl Connection {
         }
         if is_request && target > self.goaway_last_id.get() {
             sink.on_headers_refused();
+            if self.note_glitch(sink) {
+                return true;
+            }
             self.reset_stream(sink, target, ErrorCode::REFUSED_STREAM);
             return false;
         }
@@ -1204,7 +1207,7 @@ impl Connection {
                 s.recv_final_headers.set(true);
             }
         }
-        sink.on_headers_complete(target, flags);
+        sink.on_headers_complete(target, flags, is_request);
         if end_stream && let Some(s) = stream.as_ref() {
             sink.on_stream_end(s);
         }

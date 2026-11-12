@@ -4432,6 +4432,13 @@ describe("the last stream id of a server's GOAWAY (RFC 9113 §6.8)", () => {
     expect(lastIds(ctx.c)).toEqual([1, 1]);
   });
 
+  test("20,000 requests above it end the session", async () => {
+    using ctx = await serve({}, stream => stream.session!.goaway());
+    ctx.c.send(Buffer.concat(Array.from({ length: 20_001 }, (_, i) => request(1 + 2 * i))));
+    const isCalm = (f: Frame) => f.type === FrameType.GOAWAY && goawayErrorCode(f) === ErrorCode.ENHANCE_YOUR_CALM;
+    expect((await ctx.c.waitFor(isCalm, 20_000)).payload.readUInt32BE(0)).toBe(1);
+  }, 30_000);
+
   test("requests below it are served", async () => {
     using ctx = await serve({}, stream => {
       if (stream.id === 1) stream.session!.goaway(0, 2 ** 31 - 1);
@@ -4472,6 +4479,32 @@ describe("maxSessionRejectedStreams", () => {
       );
       const goaway = await c.waitForGoaway();
       expect([goaway.payload.readUInt32BE(0), goawayErrorCode(goaway)]).toEqual([11, ErrorCode.ENHANCE_YOUR_CALM]);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  test("doesn't take trailers for an accepted request", async () => {
+    const server = http2.createServer({ maxSessionRejectedStreams: 2 });
+    server.on("stream", stream => stream.on("error", () => {}));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST")),
+          encodeFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET", CONNECTION)),
+          encodeFrame(FrameType.HEADERS, 0x5, 1, Buffer.from([0x00, 1, 0x78, 1, 0x79])),
+          encodeFrame(FrameType.HEADERS, 0x5, 5, requestHeaderBlock("GET", CONNECTION)),
+          encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8)),
+        ]),
+      );
+      const answer = await c.waitFor(f => f.type === FrameType.PING || f.type === FrameType.GOAWAY);
+      expect(answer.type).toBe(FrameType.GOAWAY);
+      expect(goawayErrorCode(answer)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
     } finally {
       c.destroy();
       server.close();

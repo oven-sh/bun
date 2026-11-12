@@ -532,32 +532,64 @@ describe.skipIf(!isLinux)("an origin that shuts its read side down during the up
     ["a stream", () => new Blob([content]).stream().pipeThrough(new TransformStream())],
   ];
 
-  async function upload(body: (path: string) => Bun.BodyInit, answer: string) {
+  test.concurrent.each(bodies)("%s ends there, and gets the answer as it comes", async (_, body) => {
     using dir = tempDir("fetch-upload-shut-rd", { body: content });
     const unix = join(String(dir), "origin.sock");
+    const accepted = Promise.withResolvers<Bun.Socket>();
     using _origin = Bun.listen({
       unix,
       allowHalfOpen: true,
       socket: {
         open(socket) {
-          socket.write(answer);
+          socket.write("HTTP/1.1 413 Payload Too Large\r\nContent-Length: 9\r\n\r\ntoo ");
           socket.shutdown(true);
+          accepted.resolve(socket);
         },
         data() {},
         end() {},
       },
     });
     const res = await fetch("http://localhost/", { unix, method: "PUT", body: body(join(String(dir), "body")) });
-    return `${res.status} ${await res.text()}`;
-  }
-
-  test.concurrent.each(bodies)("%s rejects if the origin has not answered", async (_, body) => {
-    await expect(upload(body, "")).rejects.toMatchObject({ code: "ECONNRESET" });
+    const reader = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+    const first = await reader.read();
+    (await accepted.promise).write("large");
+    expect([res.status, first.value, (await reader.read()).value]).toEqual([413, "too ", "large"]);
   });
 
-  test.concurrent.each(bodies)("%s gets the answer that was already sent", async (_, body) => {
-    expect(await upload(body, "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 2\r\n\r\nno")).toBe("413 no");
-  });
+  test.concurrent.each(["Bun.file(path)", "await Bun.file(path).bytes()"])(
+    "%s waits for the answer without trying again",
+    async body => {
+      using dir = tempDir("fetch-upload-shut-rd", { body: content });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const path = "body", unix = "origin.sock";
+           const accepted = Promise.withResolvers();
+           Bun.listen({
+             unix,
+             allowHalfOpen: true,
+             socket: { open: socket => (socket.shutdown(true), accepted.resolve(socket)), data() {}, end() {} },
+           });
+           const response = fetch("http://localhost/", { unix, method: "PUT", body: ${body} });
+           const socket = await accepted.promise;
+           const before = process.cpuUsage(), start = performance.now();
+           await Bun.sleep(500);
+           const { user, system } = process.cpuUsage(before);
+           console.log((user + system) / 1000 < (performance.now() - start) / 2 ? "idle" : "busy");
+           socket.write("HTTP/1.1 413 Payload Too Large\\r\\nContent-Length: 0\\r\\n\\r\\n");
+           console.log((await response).status);
+           process.exit();`,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "idle\n413\n", stderr: "", exitCode: 0 });
+    },
+  );
 });
 
 // Windows reads the whole file before it sends the head.

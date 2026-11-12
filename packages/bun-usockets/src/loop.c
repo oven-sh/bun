@@ -293,7 +293,8 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
             group->iterator = s;
 
             s->timeout = LIBUS_NO_TIMEOUT;
-            if (s->lingering) us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+            /* close(2) over unread input is a reset, which drops what the kernel hasn't sent. */
+            if (s->lingering) us_internal_socket_close_raw(s, us_socket_queued_input(s) == LIBUS_QUEUED_INPUT_DATA ? LIBUS_ETIMEDOUT : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
             else s->ssl ? us_internal_ssl_on_timeout(s) : us_dispatch_timeout(s);
             /* An owner must not deinit the embedding group from a timeout handler
              * (see us_socket_group_deinit). Survive one that closed every socket

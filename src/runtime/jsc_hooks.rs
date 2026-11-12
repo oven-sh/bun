@@ -1039,7 +1039,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
     // SAFETY: as above.
-    let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
+    let has_yielded_tasks =
+        unsafe { (*el).promote_yield_tasks(loop_.internal_loop_data.is_ticking()) };
     #[cfg(windows)]
     if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
         // SAFETY: `el` is the live per-thread event loop.
@@ -1202,7 +1203,8 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
     // SAFETY: as above.
-    let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
+    let has_yielded_tasks =
+        unsafe { (*el).promote_yield_tasks(loop_.internal_loop_data.is_ticking()) };
     #[cfg(windows)]
     if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
         // SAFETY: `el` is the live per-thread event loop.

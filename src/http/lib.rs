@@ -1451,6 +1451,16 @@ fn print_response(response: &picohttp::Response<'_>) {
     Output::flush();
 }
 
+/// After a send over a plain socket failed for good. What the peer answers is still delivered.
+fn stop_sending<const IS_SSL: bool>(socket: HttpSocket<IS_SSL>, send_error: i32) {
+    if cfg!(unix) && send_error == bun_errno::SystemErrno::EPIPE as i32 {
+        // The peer may only have shut its read side down. If it is gone, the reads say so.
+        socket.shutdown();
+    } else {
+        socket.reject_send(send_error);
+    }
+}
+
 /// Write data to the socket (Just a error wrapper to easly handle amount written and error handling)
 fn write_to_socket<const IS_SSL: bool>(
     socket: HttpSocket<IS_SSL>,
@@ -1462,7 +1472,7 @@ fn write_to_socket<const IS_SSL: bool>(
         let (amount, send_error) = socket.write_check_error(remaining);
         // The TLS layer has done this itself.
         if send_error != 0 && !IS_SSL {
-            socket.reject_send(send_error);
+            stop_sending(socket, send_error);
         }
         if amount < 0 {
             return Err(crate::Error::WriteFailed);
@@ -3535,11 +3545,10 @@ impl<'a> HTTPClient<'a> {
                                 uws::SocketTCP::from_any(socket.socket)
                                     .mark_needs_more_for_sendfile();
                             }
-                            // What the peer answered before it stopped reading is still delivered.
                             crate::send_file::Status::Err(crate::Error::Sys(
                                 errno @ (bun_errno::SystemErrno::EPIPE
                                 | bun_errno::SystemErrno::ECONNRESET),
-                            )) => socket.reject_send(errno as i32),
+                            )) => stop_sending(socket, errno as i32),
                             crate::send_file::Status::Err(err) => {
                                 self.close_and_fail::<IS_SSL>(err, socket);
                                 return;

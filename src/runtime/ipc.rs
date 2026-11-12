@@ -2118,10 +2118,33 @@ fn received_fd_to_js(fd: Fd) -> JSValue {
     }
 }
 
+/// A `NODE_HANDLE` message that `Process__holdMessage` kept, with what `received_fd_to_js` made of its descriptor.
+pub(crate) fn parse_held_handle(
+    global: &JSGlobalObject,
+    message: JSValue,
+    fd: JSValue,
+) -> JsResult<()> {
+    let _scope = global.bun_vm().enter_event_loop_scope();
+    ipc_parse(global, JSValue::NULL, message, fd)
+        .map(drop)
+        .inspect_err(|_| {
+            #[cfg(windows)]
+            let fd = Fd::from_system(fd.as_number() as usize as *mut c_void);
+            #[cfg(not(windows))]
+            let fd = Fd::from_uv(fd.as_int32());
+            let _ = fd.close_allowing_standard_io(None);
+        })
+}
+
 enum IPCCommand {
     Handle(JSValue),
     Ack,
     Nack,
+}
+
+unsafe extern "C" {
+    /// `fd`: the descriptor of a `NODE_HANDLE` message, or `undefined`.
+    safe fn Process__holdMessage(global: &JSGlobalObject, message: JSValue, fd: JSValue) -> bool;
 }
 
 /// One decoded message's delivery. A JS exception raised while inspecting or delivering it is this message's
@@ -2130,19 +2153,6 @@ fn handle_ipc_message(
     send_queue: &SendQueue,
     message: DecodedIPCMessage,
     global_this: &JSGlobalObject,
-) -> JsResult<()> {
-    deliver_ipc_message(send_queue, message, global_this, false)
-}
-
-unsafe extern "C" {
-    safe fn Process__holdMessage(global: &JSGlobalObject, message: JSValue) -> bool;
-}
-
-pub(crate) fn deliver_ipc_message(
-    send_queue: &SendQueue,
-    message: DecodedIPCMessage,
-    global_this: &JSGlobalObject,
-    was_held: bool,
 ) -> JsResult<()> {
     #[cfg(debug_assertions)]
     {
@@ -2186,16 +2196,6 @@ pub(crate) fn deliver_ipc_message(
                 }
             }
         }
-    }
-
-    // A handle waits with no ack, so its descriptor stays in `incoming_fd` and the sender holds what comes behind it.
-    if !was_held
-        && let DecodedIPCMessage::Data(data) = message
-        && matches!(send_queue.owner.get(), Some(SendQueueOwner::Instance))
-        && !matches!(internal_command, Some(IPCCommand::Ack | IPCCommand::Nack))
-        && Process__holdMessage(global_this, data)
-    {
-        return Ok(());
     }
 
     if let Some(icmd) = internal_command {
@@ -2246,10 +2246,14 @@ pub(crate) fn deliver_ipc_message(
                     SendQueueOwnerKind::VirtualMachine => JSValue::NULL,
                 };
 
+                let fd_js = received_fd_to_js(fd);
+                if target.is_null() && Process__holdMessage(global_this, msg_data, fd_js) {
+                    return Ok(());
+                }
+
                 // RAII: `enter()` now, `exit()` on drop — covers both the
                 // early-error return and the fall-through.
                 let _scope = global_this.bun_vm().enter_event_loop_scope();
-                let fd_js = received_fd_to_js(fd);
                 if let Err(e) = ipc_parse(global_this, target, msg_data, fd_js) {
                     // ack written already, that's okay.
                     let _ = fd.close_allowing_standard_io(None);
@@ -2273,6 +2277,12 @@ pub(crate) fn deliver_ipc_message(
             }
         }
     } else {
+        if let DecodedIPCMessage::Data(data) = message
+            && matches!(send_queue.owner.get(), Some(SendQueueOwner::Instance))
+            && Process__holdMessage(global_this, data, JSValue::UNDEFINED)
+        {
+            return Ok(());
+        }
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L33-L49
         let mut handle_js = JSValue::UNDEFINED;
         let mut received_fd: Option<Fd> = None;

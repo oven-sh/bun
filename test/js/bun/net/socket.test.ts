@@ -8246,6 +8246,106 @@ describe.concurrent("end(data) larger than the send buffer", () => {
     },
   );
 
+  it.skipIf(isWindows).each(["unref", "close"] as const)(
+    "the wait for the peer's FIN doesn't keep the process alive after %s()",
+    async call => {
+      const peerEnded = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        allowHalfOpen: true,
+        socket: { data() {}, end: () => peerEnded.resolve() },
+      });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+          const socket = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: ${server.port},
+            socket: { data() {}, close: () => console.log("close") },
+          });
+          socket.end(Buffer.alloc(16 << 20));
+          await Bun.stdin.text();
+          socket.${call}();
+          `,
+        ],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      await peerEnded.promise;
+      await proc.stdin.end();
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    },
+  );
+
+  // In its own process: the sweeps also advance every other socket's timeout on the thread.
+  it.skipIf(isWindows)("close() gets an error when that wait ends over unread input", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        import { sweepSocketTimers } from "bun:internal-for-testing";
+        const peerEnded = Promise.withResolvers();
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open: socket => void socket.end(Buffer.alloc(16 << 20)),
+            data() {},
+            close: (socket, error) => console.log("close", error?.code),
+          },
+        });
+        using peer = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          allowHalfOpen: true,
+          socket: { data() {}, end: () => peerEnded.resolve() },
+        });
+        await peerEnded.promise;
+        peer.write("more");
+        sweepSocketTimers(4);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "close ETIMEDOUT\n", stderr: "", exitCode: 0 });
+  });
+
+  it("stop(true) delivers what a write() that fell short took", async () => {
+    let taken = -1;
+    let received = 0;
+    const peerClosed = Promise.withResolvers<Error | undefined>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket) {
+          taken = socket.write(Buffer.alloc(16 << 20));
+          server.stop(true);
+        },
+      },
+    });
+    using _client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open: socket => void socket.write("request"),
+        data: (_socket, chunk) => void (received += chunk.length),
+        close: (_socket, error) => peerClosed.resolve(error),
+      },
+    });
+    expect({ error: await peerClosed.promise, received }).toEqual({ error: undefined, received: taken });
+  });
+
   // An ended socket takes no more writes. Windows queues no tail.
   describe.skipIf(isWindows).each(["tcp", "unix", "tls"] as const)("%s", transport => {
     it.each(["nothing", "flush", "shutdown", "close"] as const)(

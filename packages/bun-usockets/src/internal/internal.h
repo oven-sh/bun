@@ -109,6 +109,7 @@ static inline void *us_xcalloc(size_t count, size_t size) {
 #define LIBUS_ECONNRESET WSAECONNRESET
 #define LIBUS_ECONNREFUSED WSAECONNREFUSED
 #define LIBUS_EADDRINUSE WSAEADDRINUSE
+#define LIBUS_ETIMEDOUT WSAETIMEDOUT
 /* What libuv translates to UV_ECANCELED (uv_translate_sys_error). */
 #define LIBUS_ECANCELED WSAEINTR
 #else
@@ -119,6 +120,7 @@ static inline void *us_xcalloc(size_t count, size_t size) {
 #define LIBUS_ECONNRESET ECONNRESET
 #define LIBUS_ECONNREFUSED ECONNREFUSED
 #define LIBUS_EADDRINUSE EADDRINUSE
+#define LIBUS_ETIMEDOUT ETIMEDOUT
 #define LIBUS_ECANCELED ECANCELED
 #endif
 #include <stdbool.h>
@@ -450,6 +452,8 @@ struct us_socket_t {
   unsigned char ssl_shutdown_after_first_flight : 1;
   /* A send that no retry can save shut the write side down, not the owner (us_internal_socket_reject_send). */
   unsigned char send_rejected : 1;
+  /* us_socket_set_owner_holds_tail */
+  unsigned char owner_holds_tail : 1;
   union {
     /* Consecutive send() failures with an errno that is neither
      * would-block/transient nor a known peer-gone error (see

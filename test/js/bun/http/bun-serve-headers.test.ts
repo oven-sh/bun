@@ -683,6 +683,22 @@ describe("Content-Encoding of a fetch() Response returned from the handler", () 
         );
       }
     });
+
+    test.each<[string, (headers: Headers) => void]>([
+      ["set()", headers => (headers.set("Content-Encoding", "gzip"), headers.set("Content-Length", "35"))],
+      ["append()", headers => (headers.delete("content-length"), headers.append("content-length", "35"))],
+    ])("is kept when the handler describes a body of its own with %s", async (_, describeBody) => {
+      using upstream = serveEncoded("gzip", gzipped);
+      using proxy = Bun.serve({
+        port: 0,
+        async fetch() {
+          const headers = new Headers((await fetch(`http://127.0.0.1:${upstream.port}/`)).headers);
+          describeBody(headers);
+          return new Response(null, { status, headers });
+        },
+      });
+      expect(await readWire(proxy, method)).toEqual({ encoding: "gzip", length: "35", body: "" });
+    });
   });
 
   test("a 206 with all of the encoded bytes becomes a 200", async () => {

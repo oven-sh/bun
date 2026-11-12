@@ -307,6 +307,10 @@ impl us_socket_t {
         c::us_socket_release_held_flight(self);
     }
 
+    pub fn set_owner_holds_tail(&mut self) {
+        c::us_socket_set_owner_holds_tail(self);
+    }
+
     /// A shutdown before the first handshake step sends its FIN after that step.
     pub fn set_first_flight_before_fin(&mut self) {
         c::us_socket_set_first_flight_before_fin(self);
@@ -588,5 +592,6 @@ mod c {
         pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
         pub(super) safe fn us_socket_release_held_flight(s: &mut us_socket_t);
         pub(super) safe fn us_socket_set_first_flight_before_fin(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_set_owner_holds_tail(s: &mut us_socket_t);
     }
 }

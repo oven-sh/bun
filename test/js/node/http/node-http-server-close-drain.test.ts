@@ -1839,6 +1839,10 @@ test.concurrent.each([
             await new Promise(setImmediate);
             Bun.gc(true);
           }
+          const before = process.cpuUsage(), start = performance.now();
+          await Bun.sleep(300);
+          const { user, system } = process.cpuUsage(before);
+          console.log((user + system) / 1000 < (performance.now() - start) / 2 ? "idle" : "busy");
         }
         Bun.build({ entrypoints: ["entry.js"], plugins: [{ name: "waits", setup }] }).then(() => console.log("built"));
         console.log("returns");
@@ -1860,5 +1864,5 @@ test.concurrent.each([
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "returns\nbuilt\n", stderr: "", exitCode: 0 });
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "idle\nreturns\nbuilt\n", stderr: "", exitCode: 0 });
 });

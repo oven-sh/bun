@@ -75,6 +75,8 @@ pub struct EventLoop {
     /// until the queue is empty (a task that re-posts itself there never lets
     /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
     pub yield_tasks: Vec<Task>,
+    /// Like `yield_tasks`, for an iteration that no handler of the uws loop has on its stack.
+    outermost_tasks: Vec<Task>,
 
     pub concurrent_tasks: ConcurrentQueue,
     /// See `TaskTag::is_plugin_request`: as other threads post them, and as this thread has taken them.
@@ -132,6 +134,7 @@ impl Default for EventLoop {
             immediate_tasks: Vec::new(),
             next_immediate_tasks: Vec::new(),
             yield_tasks: Vec::new(),
+            outermost_tasks: Vec::new(),
             concurrent_tasks: ConcurrentQueue::default(),
             concurrent_plugin_requests: ConcurrentQueue::default(),
             plugin_requests: Queue::init(),
@@ -1053,7 +1056,7 @@ impl EventLoop {
         Self::take_concurrent_tasks(&mut self.tasks, batch);
         let batch = self.concurrent_plugin_requests.pop_batch();
         Self::take_concurrent_tasks(&mut self.plugin_requests, batch);
-        let _ = self.promote_yield_tasks();
+        let _ = self.promote_yield_tasks(false);
         while let Some(task) = self.next_task() {
             // SAFETY: JS thread, heap alive; `task` just left the queue.
             unsafe { self.release_task_unrun(task) };
@@ -1116,9 +1119,17 @@ impl EventLoop {
         self.yield_tasks.push(task);
     }
 
+    /// See [`EventLoop::outermost_tasks`]. For a task that is running, so the queue is open.
+    pub fn enqueue_task_for_outermost_tick(&mut self, task: Task) {
+        self.outermost_tasks.push(task);
+    }
+
     /// `auto_tick`, before it polls: last iteration's yielded tasks become
     /// runnable. Returns whether there are any, so the poll does not block.
-    pub fn promote_yield_tasks(&mut self) -> bool {
+    pub fn promote_yield_tasks(&mut self, is_nested: bool) -> bool {
+        if !is_nested && !self.outermost_tasks.is_empty() {
+            self.yield_tasks.append(&mut self.outermost_tasks);
+        }
         if self.yield_tasks.is_empty() {
             return false;
         }

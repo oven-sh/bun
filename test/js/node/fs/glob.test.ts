@@ -3,8 +3,9 @@
  * tested elsewhere. These tests check API compatibility with Node.js.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, nodeExeAtLeast, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
+import path from "node:path";
 
 let tmp: string;
 beforeAll(() => {
@@ -297,5 +298,207 @@ describe("fs.globSync exclude with withFileTypes", () => {
     const inners = results.filter(d => d.name === "inner.txt");
     expect(inners).toHaveLength(1);
     expect(String(inners[0].parentPath).replaceAll("\\", "/")).toEndWith("keep");
+  });
+});
+
+// glob-dirent-names-fixture.js prints the names of the Dirents of glob calls, most of them without `cwd`.
+// Bun and the Node.js that Bun reports print the same rows. Node.js before v24.1.0 has no URL `cwd`.
+for (const [runtimeName, runtime] of [
+  ["bun", bunExe()],
+  ["node", nodeExeAtLeast("24.1.0")],
+] as const) {
+  describe.skipIf(!runtime)(`withFileTypes: the name of a result Dirent (${runtimeName})`, () => {
+    let rows: Record<string, any>;
+
+    beforeAll(async () => {
+      // The fixture runs with its tree, `work`, as the working directory.
+      using dir = tempDir("glob-dirent-names", {
+        work: {
+          "top.ts": "",
+          src: { "index.ts": "", lib: { "util.ts": "" } },
+          links: {},
+        },
+      });
+      await using proc = Bun.spawn({
+        cmd: [runtime!, path.join(import.meta.dir, "glob-dirent-names-fixture.js")],
+        env: bunEnv,
+        cwd: path.join(String(dir), "work"),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      rows = JSON.parse(stdout);
+    });
+
+    const relative = ["src/lib | util.ts | file"];
+    const absolute = ["<cwd>/src/lib | util.ts | file"];
+
+    it("fs.globSync: from the cwd as given, which is '.' when there is none", () => {
+      expect(rows["fs.globSync"]).toEqual({
+        "src/lib/*.ts by cwd": {
+          "omitted": relative,
+          "undefined": relative,
+          "null": relative,
+          "''": relative,
+          "'.'": relative,
+          "'src'": relative,
+          "absolute": absolute,
+          "file URL": absolute,
+        },
+        "without cwd": {
+          "*": [". | links | directory", ". | src | directory", ". | top.ts | file"],
+          "src/*": ["src | index.ts | file", "src | lib | directory"],
+          "src/**": [
+            ". | src | directory",
+            "src | index.ts | file",
+            "src | lib | directory",
+            "src/lib | util.ts | file",
+          ],
+          "links/*": ["links | to-lib | link"],
+          "src/lib/util.ts": relative,
+          "src/**/..": [". | . | directory", ". | src | directory"],
+          "**/..": [". | . | directory", ". | .. | directory", ". | src | directory"],
+          "<cwd>/src/*.ts": ["<cwd>/src | index.ts | file"],
+          "../": [". | .. | directory"],
+          "../* and src/**/..": [". | . | directory", ". | src | directory", ".. | work | directory"],
+        },
+        "**/.. with cwd 'src'": [". | . | directory", ". | src | directory"],
+      });
+    });
+
+    // Node.js v27 names these from the cwd as given too (nodejs/node#65392). Then these rows change.
+    it.each(["fs.glob", "fs.promises.glob"])("%s: absolute, but for the parent that `**/..` adds", name => {
+      expect(rows[name]).toEqual({
+        "src/lib/*.ts by cwd": {
+          "omitted": absolute,
+          "undefined": absolute,
+          "null": absolute,
+          "''": absolute,
+          "'.'": absolute,
+          "'src'": absolute,
+          "absolute": absolute,
+          "file URL": absolute,
+        },
+        "without cwd": {
+          "*": ["<cwd> | links | directory", "<cwd> | src | directory", "<cwd> | top.ts | file"],
+          "src/*": ["<cwd>/src | index.ts | file", "<cwd>/src | lib | directory"],
+          "src/**": [
+            "<cwd> | src | directory",
+            "<cwd>/src | index.ts | file",
+            "<cwd>/src | lib | directory",
+            "<cwd>/src/lib | util.ts | file",
+          ],
+          "links/*": ["<cwd>/links | to-lib | link"],
+          "src/lib/util.ts": absolute,
+          "src/**/..": [". | . | directory", "<cwd> | src | directory"],
+          "**/..": [". | .. | directory", "<cwd> | src | directory", "<up> | work | directory"],
+          "<cwd>/src/*.ts": ["<cwd>/src | index.ts | file"],
+          // The lookup of the parent that an absolute `**/..` adds finds nothing. The fixture has this row on POSIX only.
+          ...(isWindows ? {} : { "<cwd>/src/**/..": ["<cwd> | src | directory", null] }),
+        },
+        "**/.. with cwd 'src'": [". | . | directory", "<cwd> | src | directory"],
+      });
+    });
+
+    // In Node.js v27 it is a Dirent.
+    it("fs.globSync: the Dirent of a literal pattern is a DirentFromStats", () => {
+      expect(rows["constructor.name for src/index.ts"]).toBe("DirentFromStats");
+    });
+
+    it("path.join(parentPath, name) is the string that fs.globSync returns without withFileTypes", () => {
+      const paths = ["src", "src/index.ts", "src/lib", "src/lib/util.ts"];
+      expect(rows["path.join(parentPath, name)"]).toEqual({ strings: paths, joined: paths });
+    });
+
+    it("the exclude function gets the Dirent of the walk path for a directory, and the entry for its children", () => {
+      const received = [
+        ". | src | directory",
+        "<cwd>/src | index.ts | file",
+        "<cwd>/src | lib | directory",
+        "<cwd>/src/lib | util.ts | file",
+        "src | lib | directory",
+      ];
+      expect(rows["exclude"]).toEqual({
+        "fs.globSync src/**/*.ts": { received, results: ["src | index.ts | file", "src/lib | util.ts | file"] },
+        "fs.promises.glob src/**/*.ts": {
+          received,
+          results: ["<cwd>/src | index.ts | file", "<cwd>/src/lib | util.ts | file"],
+        },
+        "fs.globSync ./src/*": {
+          received: [". | . | directory", ". | src | directory"],
+          results: ["src | index.ts | file", "src | lib | directory"],
+        },
+      });
+    });
+  });
+}
+
+// Node.js reads the entry of each result again from the file system, so it has no rows for these.
+describe("withFileTypes: the name of a result Dirent, in Bun only", () => {
+  it("fs.globSync reads the directory of a replaced process.cwd() and names the Dirent from '.'", () => {
+    const oldProcessCwd = process.cwd;
+    try {
+      process.cwd = () => tmp;
+      const dirents = fs.globSync("*.txt", { withFileTypes: true });
+      expect(dirents.map(dirent => [dirent.parentPath, dirent.name, dirent.isFile()])).toEqual([
+        [".", "foo.txt", true],
+      ]);
+    } finally {
+      process.cwd = oldProcessCwd;
+    }
+  });
+
+  it("fs.globSync without cwd keeps the type of each entry that fs.readdirSync returns", () => {
+    const predicates = [
+      "isFile",
+      "isDirectory",
+      "isSymbolicLink",
+      "isFIFO",
+      "isSocket",
+      "isCharacterDevice",
+      "isBlockDevice",
+    ] as const;
+    const root = process.cwd();
+    // An fs.Dirent of each fs.constants.UV_DIRENT_* type (0 is UV_DIRENT_UNKNOWN), and an entry that is not an fs.Dirent.
+    const Dirent = fs.Dirent as unknown as new (name: string, type: number, path: string) => fs.Dirent;
+    const entries: any[] = ["unknown", ...predicates].map((name, type) => new Dirent(name, type, root));
+    entries.push({
+      name: "plain",
+      parentPath: root,
+      ...Object.fromEntries(predicates.map(key => [key, () => key === "isFIFO"])),
+    });
+    const realReaddirSync = fs.readdirSync;
+    try {
+      // The walk lists a directory with the fs.readdirSync of the time of the call.
+      fs.readdirSync = ((dir: any, options: any) =>
+        dir === root ? entries : realReaddirSync(dir, options)) as typeof fs.readdirSync;
+      const dirents = fs.globSync("*", { withFileTypes: true }) as fs.Dirent[];
+      expect(
+        dirents.map(dirent => [dirent.parentPath, dirent.name, predicates.filter(key => dirent[key]()).join()]).sort(),
+      ).toEqual([[".", "unknown", ""], ...predicates.map(key => [".", key, key]), [".", "plain", "isFIFO"]].sort());
+    } finally {
+      fs.readdirSync = realReaddirSync;
+    }
+  });
+
+  it("fs.globSync without cwd: a result that is gone when its Dirent is made is null", () => {
+    using dir = tempDir("glob-dirent-gone", { "a.txt": "" });
+    const oldProcessCwd = process.cwd;
+    // With a relative process.cwd(), the entry of a result is not in the stat cache, and fs.lstatSync reads it again.
+    const relativeCwd = path.relative(process.cwd(), String(dir));
+    try {
+      process.cwd = () => relativeCwd;
+      const dirents = fs.globSync("**/*.txt", {
+        withFileTypes: true,
+        exclude: () => {
+          fs.rmSync(path.join(String(dir), "a.txt"), { force: true });
+          return false;
+        },
+      });
+      expect<(fs.Dirent | null)[]>(dirents).toEqual([null]);
+    } finally {
+      process.cwd = oldProcessCwd;
+    }
   });
 });

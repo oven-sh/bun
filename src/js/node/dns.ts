@@ -711,6 +711,7 @@ class Resolver {
     if (arguments.length > 2) {
       callback = arguments[2];
     }
+    validateStringWithoutNullBytes(ip, "name");
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
@@ -937,6 +938,7 @@ const promises = {
     return translateErrorCode(dns.resolveCname(hostname));
   },
   reverse(ip: string) {
+    validateStringWithoutNullBytes(ip, "name");
     return translateErrorCode(dns.reverse(ip));
   },
 
@@ -1030,6 +1032,7 @@ const promises = {
     }
 
     reverse(this: object | undefined, ip: string) {
+      validateStringWithoutNullBytes(ip, "name");
       return translateErrorCode(Resolver.#getResolver(this).reverse(ip));
     }
 

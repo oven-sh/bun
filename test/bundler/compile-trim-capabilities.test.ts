@@ -226,6 +226,12 @@ describe("in x64 code, the scan reports a call only where an instruction begins"
       "80 bytes that --trim filled are in front": placesThatCall(machO(at - 80, filled + expandCapacity), ["execvp"]),
       // With nothing to read the function from, the place is reported.
       "neither": placesThatCall(machO(at, expandCapacity), ["execvp"]),
+      // A function that begins in front of the section is in another one. What is in front of the section in the file
+      // is not in front of it in memory, so the scan reads nothing from there.
+      "the file says that a function begins 16 bytes in front of the section": placesThatCall(
+        machO(at, expandCapacity, [at - 16]),
+        ["execvp"],
+      ),
       // Where the file says where the function begins, only reading it from there can show that a place is none.
       "the function begins with an instruction that the scan cannot read": placesThatCall(
         machO(at - 38, unknown + expandCapacity, [at - 38]),
@@ -239,6 +245,7 @@ describe("in x64 code, the scan reports a call only where an instruction begins"
       "the file says where the function begins": [],
       "80 bytes that --trim filled are in front": [],
       "neither": [place],
+      "the file says that a function begins 16 bytes in front of the section": [place],
       "the function begins with an instruction that the scan cannot read": [place],
       "the function begins with `add al, al`": [],
     });
@@ -313,6 +320,41 @@ describe("in x64 code, the scan reports a call only where an instruction begins"
     const at = 0x105e36400;
     const { code, places } = assemble(at, [expandCapacity, zeros, ["e8", stub], "c3"]);
     expect(callsIn(machO(at, code))).toEqual(places);
+  });
+
+  // Forty times `mov al, 0xb0`. Read from the second byte of one, the bytes are the same instruction again, and the
+  // last one takes the `e8` of the call as its operand. The scan reads from each of 15 bytes in a row, and one reading
+  // that reaches the call shows that an instruction begins there.
+  test("a call that every second reading from ahead passes over", () => {
+    const at = 0x105e36400;
+    const readsTwoWays = Buffer.alloc(80, 0xb0).toString("hex");
+    const { code, places } = assemble(at, [expandCapacity, readsTwoWays, ["e8", stub], "c3"]);
+    expect(callsIn(machO(at, code))).toEqual(places);
+  });
+
+  // A function that is one `jmp` to the stub can be the first thing in a section, and in a piece that --trim left.
+  test.each([
+    ["a call", "e8"],
+    ["a jmp", "e9"],
+  ])("%s that is the first byte of a section", (_, opcode) => {
+    const at = 0x105e36400;
+    const { code, places } = assemble(at, [[opcode, stub], "c3"]);
+    expect({
+      "as code": callsIn(machO(at, code)),
+      "where the file says that the bytes are data": callsIn(machO(at, code, [], [[at, at + 5]])),
+    }).toEqual({ "as code": places, "where the file says that the bytes are data": [] });
+  });
+
+  test("a `je` that is the first two bytes of a section, and none whose first byte is in front of the section", () => {
+    const at = 0x105e36400;
+    const inside = assemble(at, [["0f84", stub], "c3"]);
+    const across = machO(at, assemble(at, [["84", stub, false], "c3"]).code);
+    // The section is at 0x400 of the file. The byte in front of it is of another range, so no instruction begins there.
+    across[0x400 - 1] = 0x0f;
+    expect({ inside: callsIn(machO(at, inside.code)), across: callsIn(across) }).toEqual({
+      inside: inside.places,
+      across: [],
+    });
   });
 });
 

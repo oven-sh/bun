@@ -236,15 +236,17 @@ function placesIn(elf: Image, wanted: (name: string) => boolean): Place[] {
       }
       continue;
     }
-    for (let at = offset + 2; at + 4 <= end; at++) {
+    // `call` and `jmp` have one byte in front of the distance, so theirs can begin at the second byte of a range. The others have two, and both are in the range.
+    for (let at = offset + 1; at + 4 <= end; at++) {
       const word = view.getInt32(at, true);
       const before = file[at - 1]!;
-      const isBranch = before === 0xe8 || before === 0xe9 || (file[at - 2] === 0x0f && (before & 0xf0) === 0x80);
+      const isCall = before === 0xe8 || before === 0xe9;
+      const isBranch = isCall || (file[at - 2] === 0x0f && (before & 0xf0) === 0x80);
       const isOperand = (before & 0xc7) === 0x05 && operandOpcodes.includes(file[at - 2]!);
       if (!isBranch && !isOperand) continue;
       const name = nameAt(base + at + 4 + word);
-      const opcode = before === 0xe8 || before === 0xe9 ? at - 1 : at - 2;
-      if (name !== undefined && isAnOpcode(elf, opcode, offset, base)) found(name, base + at);
+      const opcode = isCall ? at - 1 : at - 2;
+      if (name !== undefined && opcode >= offset && isAnOpcode(elf, opcode, offset, base)) found(name, base + at);
     }
   }
   return places;

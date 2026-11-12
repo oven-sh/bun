@@ -301,6 +301,15 @@ static JSPromise* transformChunk(JSGlobalObject* globalObject, JSTransformStream
     ASSERT(!stream->m_codecPromise);
     ASSERT(coder);
 
+    // A sink that detached abandoned the previous chunk, whose step still owns the coder on its pool thread.
+    if (stream->m_asyncCodecInFlight) [[unlikely]] {
+        RELEASE_AND_RETURN(scope, promiseFromSteps(globalObject, [&] -> JSPromise* {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            throwTypeError(globalObject, scope, "Cannot enqueue a chunk into a TransformStream whose readable side is closed or has already requested close"_s);
+            return nullptr;
+        }));
+    }
+
     if (inputLen > kAsyncCodecThreshold) {
         auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
         stream->m_codecPromise.set(vm, stream, promise);

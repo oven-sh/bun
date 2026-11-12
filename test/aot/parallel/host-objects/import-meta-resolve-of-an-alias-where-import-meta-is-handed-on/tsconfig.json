@@ -1,1 +1,1 @@
-{ "extends": "../../tsconfig.json", "compilerOptions": { "baseUrl": ".", "paths": { "@lib/*": ["./lib/*"] } } }
+{ "extends": "../../tsconfig.json", "compilerOptions": { "baseUrl": ".", "paths": { "~lib/*": ["./lib/*"] } } }

@@ -11,6 +11,8 @@
 
 #if defined(__APPLE__) && defined(__MACH__)
 #include <mach/mach.h>
+#include <mach/semaphore.h>
+#include <mach/task.h>
 #else
 #include <semaphore.h>
 #endif
@@ -500,7 +502,7 @@ UV_EXTERN int uv_cond_timedwait(uv_cond_t* cond, uv_mutex_t* mutex, uint64_t tim
     return UV_EINVAL; /* Satisfy the compiler. */
 }
 
-#if defined(__APPLE__) || !defined(PTHREAD_BARRIER_SERIAL_THREAD)
+#if defined(_AIX) || defined(__OpenBSD__) || !defined(PTHREAD_BARRIER_SERIAL_THREAD)
 
 // Copy-pasted from libuv. The guard matches uv_barrier_t's in uv/unix.h.
 UV_EXTERN int uv_barrier_init(uv_barrier_t* barrier, unsigned int count)

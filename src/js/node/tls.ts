@@ -45,6 +45,7 @@ const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertifi
 // Node warns at the first secure context; the once-per-process native load is what prints it.
 const maybeWarnAboutExtraCACerts = $newCppFunction("NodeTLS.cpp", "loadExtraCACertificates", 0);
 const getSystemCACertificates = $newCppFunction("NodeTLS.cpp", "getSystemCACertificates", 1);
+const getOpenSSLDefaultCertificates = $newCppFunction("NodeTLS.cpp", "getOpenSSLDefaultCertificates", 0);
 const canonicalizeIP = $bindgen("cares_jsc.bind.ts", "canonicalizeIP");
 const parseCACertificates = $newCppFunction("NodeTLS.cpp", "parseCACertificates", 1);
 
@@ -1369,6 +1370,15 @@ function cacheDefaultCACertificates() {
     const certs = getCACertificates(types[i]);
     for (let j = 0; j < certs.length; ++j) {
       ArrayPrototypePush.$call(defaultCACertificates, certs[j]);
+    }
+  }
+  // Node trusts these only with --use-openssl-ca, and then doesn't list them. Here they also come with the bundled roots.
+  if (ArrayPrototypeIncludes.$call(types, "bundled")) {
+    const certs = getOpenSSLDefaultCertificates();
+    for (let i = 0; i < certs.length; ++i) {
+      if (!ArrayPrototypeIncludes.$call(defaultCACertificates, certs[i])) {
+        ArrayPrototypePush.$call(defaultCACertificates, certs[i]);
+      }
     }
   }
 

@@ -474,6 +474,94 @@ describe.skipIf(!isLinux).concurrent("tls.getCACertificates('default') lists wha
   });
 });
 
+describe.skipIf(isWindows).concurrent("setDefaultCACertificates() with what getCACertificates() lists", () => {
+  const read = (name: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", name), "utf8");
+  const ca1 = read("ca1-cert.pem");
+  // What `openssl x509 -addtrust` and `-addreject` write: an X509_CERT_AUX follows the certificate.
+  const [trust, reject] = ["30", "a0"];
+  const [serverAuth, emailProtection] = ["01", "04"];
+  const withSetting = (setting: string, purpose: string) =>
+    `-----BEGIN TRUSTED CERTIFICATE-----\n${Buffer.concat([
+      new X509Certificate(ca1).raw,
+      Buffer.from(`300c${setting}0a06082b060105050703${purpose}`, "hex"),
+    ])
+      .toString("base64")
+      .replace(/.{64}/g, "$&\n")}\n-----END TRUSTED CERTIFICATE-----\n`;
+  const script = `
+    const tls = require("node:tls");
+    using server = Bun.serve({
+      port: 0,
+      tls: ${JSON.stringify({ key: read("agent1-key.pem"), cert: read("agent1-cert.pem") })},
+      fetch: () => new Response("ok"),
+    });
+    const trusted = () =>
+      fetch(server.url, { keepalive: false, tls: { serverName: "agent1" } }).then(() => true, () => false);
+    const before = await trusted();
+    const list = tls.getCACertificates("default");
+    tls.setDefaultCACertificates([...list, ${JSON.stringify(read("ca2-cert.pem"))}]);
+    console.log(JSON.stringify({
+      before,
+      after: await trusted(),
+      besidesBundled: list.slice(tls.rootCertificates.length).map(pem => pem === ${JSON.stringify(ca1)}),
+    }));`;
+
+  const file = { SSL_CERT_FILE: "ca.pem" };
+  const hashed = { SSL_CERT_DIR: "missing:certs" };
+  // `openssl x509 -subject_hash -subject_hash_old -in ca1-cert.pem`
+  const [hash, oldHash] = ["468820ba", "f4dabd2e"];
+  test.each([
+    ["in $SSL_CERT_FILE", file, { "ca.pem": ca1 }, true],
+    ["among bundled roots", file, { "ca.pem": `${rootCertificates[0]}\n${ca1}${rootCertificates[1]}\n` }, true],
+    [
+      "in a file with a bad block",
+      file,
+      { "ca.pem": ca1 + "-----BEGIN CERTIFICATE-----\n!\n-----END CERTIFICATE-----\n" },
+      false,
+    ],
+    ["trusted for servers", file, { "ca.pem": withSetting(trust, serverAuth) }, true],
+    ["trusted for mail only", file, { "ca.pem": withSetting(trust, emailProtection) }, false],
+    ["rejected for servers", file, { "ca.pem": withSetting(reject, serverAuth) }, false],
+    ["in $SSL_CERT_DIR under its hash", hashed, { [`certs/${hash}.0`]: ca1 }, true],
+    ["under its old hash", hashed, { [`certs/${oldHash}.0`]: ca1 }, true],
+    ["under both", hashed, { [`certs/${hash}.0`]: ca1, [`certs/${oldHash}.0`]: ca1 }, true],
+    ["under another hash", hashed, { "certs/00000000.0": ca1 }, false],
+    ["under a number with none before it", hashed, { [`certs/${hash}.1`]: ca1 }, false],
+    ["under its own name", hashed, { "certs/ca1.pem": ca1 }, false],
+    ["rejected for servers under its hash", hashed, { [`certs/${hash}.0`]: withSetting(reject, serverAuth) }, false],
+    [
+      "in every source",
+      { ...file, ...hashed, NODE_EXTRA_CA_CERTS: "ca.pem" },
+      { "ca.pem": ca1, [`certs/${hash}.0`]: ca1 },
+      true,
+    ],
+  ])("changes nothing for a CA %s", async (_, env, files, trusted) => {
+    using dir = tempDir("default-ca-appended", {
+      ...files,
+      "run.mjs": script.replace(/require\(/g, "import.meta.require("),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "run.mjs"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        NODE_USE_SYSTEM_CA: undefined,
+        NODE_EXTRA_CA_CERTS: undefined,
+        SSL_CERT_FILE: "",
+        SSL_CERT_DIR: "",
+        ...env,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({ before: trusted, after: trusted, besidesBundled: trusted ? [true] : [] }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe.concurrent("--use-openssl-ca", () => {
   const flag = "--use-openssl-ca";
   const ca1 = join(import.meta.dir, "../test/fixtures/keys/ca1-cert.pem");

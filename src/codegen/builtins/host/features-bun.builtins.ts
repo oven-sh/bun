@@ -499,6 +499,7 @@ export default b.declarations(
       "NodeTLS.cpp",
       "getBundledRootCertificates",
       "getExtraCACertificates",
+      "getOpenSSLDefaultCertificates",
       "getSystemCACertificates",
       "loadExtraCACertificates",
       "parseCACertificates",

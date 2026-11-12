@@ -313,6 +313,9 @@ export const calls: Record<string, string[]> = {
   "native:NewCppFunction:NodeTLS.cpp:getExtraCACertificates": [
     'import { getCACertificates } from "node:tls";\nconst list = getCACertificates("extra");\nlist',
   ],
+  "native:NewCppFunction:NodeTLS.cpp:getOpenSSLDefaultCertificates": [
+    'import { getCACertificates } from "node:tls";\nconst list = getCACertificates("default");\nlist',
+  ],
   "native:NewCppFunction:NodeTLS.cpp:getSystemCACertificates": [
     'import { getCACertificates } from "node:tls";\nconst list = getCACertificates("system");\nlist',
   ],

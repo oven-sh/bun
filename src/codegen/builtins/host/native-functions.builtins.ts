@@ -382,6 +382,7 @@ export default b.declarations(
   }),
   b.static(cpp("NodeTLS.cpp", "getBundledRootCertificates"), listsCertificates),
   b.static(cpp("NodeTLS.cpp", "getExtraCACertificates"), listsCertificates),
+  b.static(cpp("NodeTLS.cpp", "getOpenSSLDefaultCertificates"), listsCertificates),
   b.static(cpp("NodeTLS.cpp", "getSystemCACertificates"), listsCertificates),
   // The value under the name that fits best, of a Map that is walked without its iterator.
   b.static(cpp("NodeTLS.cpp", "selectServerName"), [

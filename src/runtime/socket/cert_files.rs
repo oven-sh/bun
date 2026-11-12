@@ -3,7 +3,7 @@
 
 use core::ffi::{c_char, c_int, c_void};
 
-use bun_core::{ZBox, ZStr, env_var};
+use bun_core::{ZBox, ZStr, env_var, strings};
 use bun_sys::O;
 
 /// Receives the whole contents of one file.
@@ -100,4 +100,43 @@ unsafe extern "C" fn Bun__readOpenSSLDefaultCertFile(
     // SAFETY: caller contract.
     let default_path = unsafe { ZStr::from_c_ptr(default_path) };
     read_openssl_default_cert_file(default_path, |bytes, _| hand_over(bytes, ctx, on_file));
+}
+
+/// The files of the directory half of OpenSSL's `X509_STORE_set_default_paths` that are named `<subject hash>.<n>`.
+///
+/// # Safety
+/// `default_path` must be a valid NUL-terminated C string; `ctx` whatever `on_file` expects.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__readOpenSSLDefaultCertDir(
+    default_path: *const c_char,
+    ctx: *mut c_void,
+    on_file: OnFile,
+) {
+    // SAFETY: caller contract.
+    let default_path = unsafe { ZStr::from_c_ptr(default_path) };
+    let dirs = env_var::SSL_CERT_DIR::get().unwrap_or(default_path.as_bytes());
+    let without_waiting = if cfg!(unix) { O::NONBLOCK } else { 0 };
+    let mut bytes = Vec::new();
+    for path in strings::tokenize(dirs, if cfg!(windows) { b";" } else { b":" }) {
+        let Ok(dir) = bun_sys::Dir::open(path) else {
+            continue;
+        };
+        let mut entries = bun_sys::dir_iterator::iterate(dir.fd());
+        while let Ok(Some(entry)) = entries.next() {
+            let name = entry.name.slice_u8();
+            let is_hashed = matches!(
+                name.split_at_checked(8),
+                Some((hash, [b'.', n @ ..]))
+                    if hash.iter().all(u8::is_ascii_hexdigit) && n.iter().all(u8::is_ascii_digit)
+            );
+            if is_hashed
+                && let Ok(file) = dir.open_file(name, O::RDONLY | O::CLOEXEC | without_waiting, 0)
+            {
+                bytes.clear();
+                if file.read_to_end_into(&mut bytes).is_ok() {
+                    hand_over(&bytes, ctx, on_file);
+                }
+            }
+        }
+    }
 }

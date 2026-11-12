@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tls.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 a72df9a54c4349c86d8a90d4ddb99802cd308fef32e4f334535dba07bb6f1832.
+// Written against that file with the SHA-256 182c9443caf3211e90fe458bc8a71d8954b3ff065009e08c79c3d224faefbf72.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:tls"
@@ -165,6 +165,11 @@ const getExtraCACertificates: () => string[] = $newCppFunction("NodeTLS.cpp", "g
 // Node warns at the first secure context; the once-per-process native load is what prints it.
 const maybeWarnAboutExtraCACerts: () => void = $newCppFunction("NodeTLS.cpp", "loadExtraCACertificates", 0);
 const getSystemCACertificates: () => string[] = $newCppFunction("NodeTLS.cpp", "getSystemCACertificates", 1);
+const getOpenSSLDefaultCertificates: () => string[] = $newCppFunction(
+  "NodeTLS.cpp",
+  "getOpenSSLDefaultCertificates",
+  0,
+);
 const canonicalizeIP: (ip: string) => string | undefined = $bindgen("cares_jsc.bind.ts", "canonicalizeIP");
 const parseCACertificates: (certs: CACertInput[]) => string[] = $newCppFunction(
   "NodeTLS.cpp",
@@ -1522,6 +1527,15 @@ function cacheDefaultCACertificates() {
     const certs = getCACertificates(types[i]);
     for (let j = 0; j < certs.length; ++j) {
       ArrayPrototypePush.$call(defaultCACertificates, certs[j]);
+    }
+  }
+  // Node trusts these only with --use-openssl-ca, and then doesn't list them. Here they also come with the bundled roots.
+  if (ArrayPrototypeIncludes.$call(types, "bundled")) {
+    const certs = getOpenSSLDefaultCertificates();
+    for (let i = 0; i < certs.length; ++i) {
+      if (!ArrayPrototypeIncludes.$call(defaultCACertificates, certs[i])) {
+        ArrayPrototypePush.$call(defaultCACertificates, certs[i]);
+      }
     }
   }
 

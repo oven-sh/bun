@@ -25,6 +25,7 @@ extern "C" void BUN__warn__extra_ca_load_failed(const char* filename, const char
 typedef void (*us_on_cert_file)(void *ctx, const uint8_t *data, size_t len);
 extern "C" int Bun__readCertificateFile(const char *path, void *ctx, us_on_cert_file on_file);
 extern "C" void Bun__readOpenSSLDefaultCertFile(const char *default_path, void *ctx, us_on_cert_file on_file);
+extern "C" void Bun__readOpenSSLDefaultCertDir(const char *default_path, void *ctx, us_on_cert_file on_file);
 
 // A read-only memory BIO over an owned copy of the file. (A writable BIO_s_mem() would memmove the rest of the buffer
 // on every line PEM reads.)
@@ -284,7 +285,8 @@ const us_system_certs_t &us_get_root_system_certs() {
   return system_certs;
 }
 
-extern "C" X509_STORE *us_get_default_ca_store() {
+// The default store but for the hashed directory, which a lookup only reads for a subject that the rest doesn't have.
+static X509_STORE *us_new_store_of_loaded_roots() {
   X509_STORE *store = X509_STORE_new();
   if (store == NULL) {
     return NULL;
@@ -301,8 +303,6 @@ extern "C" X509_STORE *us_get_default_ca_store() {
     }
   }
 
-  // What X509_STORE_set_default_paths(store) trusts: the default certificate file (above) and the default hashed
-  // certificate directory, which BoringSSL already consults lazily per lookup.
   const us_openssl_default_cert_file &file = us_get_openssl_default_cert_file();
   if (file.certs != nullptr && !X509_STORE_add_lazy_cert_set(store, file.certs)) {
     X509_STORE_free(store);
@@ -314,12 +314,6 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   for (size_t i = 0; file.crls != nullptr && i < sk_X509_CRL_num(file.crls); i++) {
     X509_STORE_add_crl(store, sk_X509_CRL_value(file.crls, i));
   }
-  X509_LOOKUP *hash_dir = X509_STORE_add_lookup(store, X509_LOOKUP_hash_dir());
-  if (hash_dir == NULL) {
-    X509_STORE_free(store);
-    return NULL;
-  }
-  X509_LOOKUP_add_dir(hash_dir, NULL, X509_FILETYPE_DEFAULT);
   ERR_clear_error();
 
   STACK_OF(X509) *root_extra_cert_instances = us_get_root_extra_cert_instances();
@@ -341,6 +335,80 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   }
 
   return store;
+}
+
+// The directory half of X509_STORE_set_default_paths. Frees `store` if it fails.
+static X509_STORE *us_add_openssl_default_cert_dir(X509_STORE *store) {
+  X509_LOOKUP *hash_dir = store ? X509_STORE_add_lookup(store, X509_LOOKUP_hash_dir()) : NULL;
+  if (hash_dir == NULL) {
+    X509_STORE_free(store);
+    return NULL;
+  }
+  X509_LOOKUP_add_dir(hash_dir, NULL, X509_FILETYPE_DEFAULT);
+  ERR_clear_error();
+  return store;
+}
+
+extern "C" X509_STORE *us_get_default_ca_store() {
+  return us_add_openssl_default_cert_dir(us_new_store_of_loaded_roots());
+}
+
+// What lookups in the default store find in the hashed directory, as of the first call. The files only say which
+// subjects to ask for: BoringSSL's own lookup decides which of them it opens.
+static const std::vector<X509 *> &us_get_openssl_default_cert_dir() {
+  static std::vector<X509 *> result;
+  static std::once_flag once;
+  std::call_once(once, []() {
+    struct lookups_t {
+      bssl::UniquePtr<X509_STORE> loaded{us_new_store_of_loaded_roots()};
+      bssl::UniquePtr<X509_STORE> hashed{us_add_openssl_default_cert_dir(X509_STORE_new())};
+      bssl::UniquePtr<X509_STORE_CTX> in_loaded{X509_STORE_CTX_new()};
+      bssl::UniquePtr<X509_STORE_CTX> in_hashed{X509_STORE_CTX_new()};
+      std::unordered_set<X509 *> seen;
+    } lookups;
+    if (!lookups.loaded || !lookups.hashed || !lookups.in_loaded || !lookups.in_hashed ||
+        !X509_STORE_CTX_init(lookups.in_loaded.get(), lookups.loaded.get(), nullptr, nullptr) ||
+        !X509_STORE_CTX_init(lookups.in_hashed.get(), lookups.hashed.get(), nullptr, nullptr)) {
+      Bun__outOfMemory();
+    }
+    Bun__readOpenSSLDefaultCertDir(X509_get_default_cert_dir(), &lookups, [](void *ctx, const uint8_t *data, size_t len) {
+      lookups_t *lookups = static_cast<lookups_t *>(ctx);
+      bssl::UniquePtr<BIO> in(BIO_new_mem_buf(data, len));
+      while (bssl::UniquePtr<X509> cert{PEM_read_bio_X509_AUX(in.get(), nullptr, us_no_password_callback, nullptr)}) {
+        const X509_NAME *subject = X509_get_subject_name(cert.get());
+        bssl::UniquePtr<STACK_OF(X509)> found(X509_STORE_CTX_get1_certs(lookups->in_loaded.get(), subject));
+        if (found) continue;
+        found.reset(X509_STORE_CTX_get1_certs(lookups->in_hashed.get(), subject));
+        for (size_t i = 0; i < sk_X509_num(found.get()); i++) {
+          X509 *root = sk_X509_value(found.get(), i);
+          if (!lookups->seen.insert(root).second) continue;
+          X509_up_ref(root);
+          result.push_back(root);
+        }
+      }
+    });
+    ERR_clear_error();
+  });
+  return result;
+}
+
+std::vector<X509 *> us_get_openssl_default_certs() {
+  const us_openssl_default_cert_file &file = us_get_openssl_default_cert_file();
+  std::vector<X509 *> certs;
+  for (size_t i = 0; file.certs != nullptr && i < X509_LAZY_CERT_SET_num(file.certs); i++) {
+    if (X509 *cert = X509_LAZY_CERT_SET_get0(file.certs, i)) certs.push_back(cert);
+  }
+  // A list has no place for the trust settings of a TRUSTED CERTIFICATE, so it must not hold one that they rule out.
+  auto add = [&](X509 *cert) {
+    if (i2d_X509_AUX(cert, nullptr) == i2d_X509(cert, nullptr) ||
+        X509_check_trust(cert, X509_TRUST_SSL_SERVER, 0) == X509_TRUST_TRUSTED) {
+      certs.push_back(cert);
+    }
+  };
+  for (size_t i = 0; i < sk_X509_num(file.trusted); i++) add(sk_X509_value(file.trusted, i));
+  for (X509 *cert : us_get_openssl_default_cert_dir()) add(cert);
+  ERR_clear_error();
+  return certs;
 }
 
 // Process-wide immutable default store. Safe to share across SSL_CTXs that

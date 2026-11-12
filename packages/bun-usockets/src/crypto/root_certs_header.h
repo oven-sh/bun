@@ -5,6 +5,7 @@
 #include <openssl/x509.h>
 
 #ifdef __cplusplus
+#include <vector>
 #define CPPDECL extern "C"
 
 STACK_OF(X509) *us_get_root_extra_cert_instances();
@@ -18,6 +19,9 @@ struct us_system_certs_t {
   STACK_OF(X509) *parsed = nullptr;
 };
 const us_system_certs_t &us_get_root_system_certs();
+
+// What the default store takes from OpenSSL's default file and hashed directory. The certificates live as long as the process.
+std::vector<X509 *> us_get_openssl_default_certs();
 
 #else
 #define CPPDECL extern

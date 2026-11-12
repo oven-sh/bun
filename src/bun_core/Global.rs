@@ -939,7 +939,7 @@ extern "C" fn Bun__defaultCASources() -> DefaultCASources {
     DefaultCASources { bundled, system }
 }
 
-/// The `tls.getCACertificates()` types that make up `"default"`. OpenSSL's default paths have no type, as in Node.
+/// The `tls.getCACertificates()` types that are part of `"default"`. OpenSSL's default paths have no type, as in Node.
 pub fn default_ca_certificate_types() -> impl Iterator<Item = &'static str> {
     let sources = Bun__defaultCASources();
     [

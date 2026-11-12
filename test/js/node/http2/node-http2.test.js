@@ -3272,6 +3272,130 @@ it("settings that change after they were validated are refused, not sent", async
   expect(exitCode).toBe(0);
 });
 
+describe("arguments that reach the native session unchecked", () => {
+  const native = session => session[Symbol.for("::bunhttp2native::")];
+  // :method GET, :scheme http and :path / from the static table, then a literal :authority.
+  const requestBlock = Buffer.from([0x82, 0x86, 0x84, 0x01, 0x01, 0x61]);
+  // `frames()` is what the session has written since it was handed over, as [type, stream id, length].
+  async function session(side) {
+    const [transport, wire] = duplexPair();
+    const session =
+      side === "client"
+        ? http2.connect("http://localhost", { createConnection: () => transport })
+        : http2.performServerHandshake(transport);
+    await once(session, "connect");
+    native(session).flush();
+    wire.read();
+    return {
+      session,
+      transport,
+      wire,
+      frames() {
+        native(session).flush();
+        const bytes = wire.read() ?? Buffer.alloc(0);
+        const frames = [];
+        for (let at = 0; at < bytes.length; at += 9 + bytes.readUIntBE(at, 3)) {
+          frames.push([bytes[at + 3], bytes.readUInt32BE(at + 5), bytes.readUIntBE(at, 3)]);
+        }
+        return frames;
+      },
+      [Symbol.dispose]: () => session.destroy(),
+    };
+  }
+
+  function acceptRequest({ session, wire }) {
+    const accepted = once(session, "stream");
+    wire.write(
+      Buffer.concat([
+        http2utils.kClientMagic,
+        new http2utils.SettingsFrame().data,
+        new http2utils.HeadersFrame(1, requestBlock, 0, true, true).data,
+      ]),
+    );
+    return accepted;
+  }
+
+  it.each([0, 9])("ping() refuses a payload of %d bytes that claims to have 8", async length => {
+    using ctx = await session("client");
+    const payload = Object.defineProperty(Buffer.alloc(length), "byteLength", { value: 8 });
+    expect(() => ctx.session.ping(payload, () => {})).toThrow(
+      expect.objectContaining({ code: "ERR_HTTP2_PING_LENGTH" }),
+    );
+    expect(ctx.frames()).toEqual([]);
+  });
+
+  it("goaway() sends nothing for more opaque data than a frame can hold", async () => {
+    using ctx = await session("client");
+    ctx.session.goaway(0, 0, Buffer.alloc(2 ** 24 - 8));
+    expect(ctx.transport.writableLength + ctx.wire.readableLength).toBe(0);
+  });
+
+  it("setNextStreamID() doesn't go back to an id in use", async () => {
+    using ctx = await session("client");
+    const first = ctx.session.request().on("error", () => {});
+    ctx.session.setNextStreamID(1);
+    const second = ctx.session.request().on("error", () => {});
+    expect([first.id, second.id]).toEqual([1, 3]);
+  });
+
+  it("setLocalWindowSize() refuses a window past 2^31-1", async () => {
+    using ctx = await session("client");
+    expect(() => native(ctx.session).setLocalWindowSize(2 ** 31)).toThrow(
+      expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }),
+    );
+    expect(ctx.frames()).toEqual([]);
+  });
+
+  it("pushPromise() takes an open request and a stream that isn't promised yet", async () => {
+    using ctx = await session("server");
+    const parser = native(ctx.session);
+    await acceptRequest(ctx);
+    ctx.frames();
+    const promised = parser.getNextStream();
+    const push = (parent, id) => () => parser.pushPromise(parent, id, { ":method": "GET" }, {});
+    for (const ids of [
+      [0, promised],
+      [3, promised],
+      [promised, promised],
+      [2 ** 32 - 1, promised],
+      [1, 0],
+      [1, 1],
+      [1, 4],
+      [1, 2 ** 32 - 1],
+    ]) {
+      expect(push(...ids)).toThrow(expect.objectContaining({ code: "ERR_HTTP2_INVALID_STREAM" }));
+    }
+    expect(push(1, promised)()).toBe(promised);
+    expect(push(1, promised)).toThrow(expect.objectContaining({ code: "ERR_HTTP2_INVALID_STREAM" }));
+    expect(ctx.frames()).toEqual([[5, 1, 5]]);
+  });
+
+  it("pushStream() fails when a field value's toString() destroys the session", async () => {
+    using ctx = await session("server");
+    const [stream] = await acceptRequest(ctx);
+    const value = { toString: () => (ctx.session.destroy(), "x") };
+    const err = await new Promise(resolve => stream.pushStream({ a: value }, resolve));
+    expect(err?.code).toBe("ERR_HTTP2_INVALID_STREAM");
+  });
+
+  it("a stream that ends after the transport closed isn't counted down twice", async () => {
+    using ctx = await session("client");
+    const parser = native(ctx.session);
+    const req = ctx.session.request();
+    // The END_STREAM of this frame is applied after the listener.
+    req.on("response", () => ctx.transport.emit("close"));
+    const closed = once(req, "close");
+    ctx.wire.write(
+      Buffer.concat([
+        new http2utils.SettingsFrame().data,
+        new http2utils.HeadersFrame(1, Buffer.from([0x88]), 0, true, true).data,
+      ]),
+    );
+    await closed;
+    expect(parser.hasOpenStreams()).toBe(false);
+  });
+});
+
 it("http2 setNextStreamID at the edges of the id space does not overflow", async () => {
   // 0.5 passes the JS range check (> 0) and reaches the native setter as 0, which used to
   // underflow (node ends up on stream 1 too). A server parked at 2 ** 32 - 1 used to overflow

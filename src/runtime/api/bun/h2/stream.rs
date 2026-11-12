@@ -373,8 +373,9 @@ impl StreamTable {
         }
     }
 
-    /// Forgets every stream, open or not.
+    /// Forgets every stream, open or not. An entry that a caller still holds is closed, so it isn't counted down again.
     pub(crate) fn clear(&self) {
+        self.for_each(|stream| stream.state.set(State::Closed));
         drop(self.map.take());
         drop(self.unread.take());
         self.open_local.set(0);

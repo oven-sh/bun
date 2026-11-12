@@ -3034,6 +3034,10 @@ impl H2FrameParser {
     ) {
         // Copied, because a write to a JS transport runs JavaScript, which can detach the buffer.
         let opaque_data = opaque_data.get(&cx.heap).to_vec();
+        // No frame header can declare it. Node sends nothing either.
+        if opaque_data.len() + 8 > settings::MAX_MAX_FRAME_SIZE as usize {
+            return;
+        }
         // As in node, 0 or less keeps the last processed id: Last-Stream-ID=0 tells the peer to retry every stream.
         let last_stream_id = u32::try_from(last_stream_id)
             .ok()
@@ -3043,13 +3047,21 @@ impl H2FrameParser {
     }
 
     /// Like node's Http2Session::AddPing, returns false once maxOutstandingPings are unanswered.
-    pub(crate) fn ping<'a>(&self, cx: &mut JsScope<'a>, payload: JsBytes<'a>) -> bool {
+    pub(crate) fn ping<'a>(&self, cx: &mut JsScope<'a>, payload: JsBytes<'a>) -> JsResult<bool> {
+        let Ok(payload) = <[u8; 8]>::try_from(payload.get(&cx.heap)) else {
+            return Err(cx
+                .global()
+                .err(
+                    bun_jsc::ErrorCode::HTTP2_PING_LENGTH,
+                    format_args!("HTTP2 ping payload must be 8 bytes"),
+                )
+                .throw());
+        };
         if self.out_standing_pings.get() >= self.max_outstanding_pings.get() {
-            return false;
+            return Ok(false);
         }
-        let payload = payload.get(&cx.heap).to_vec();
         self.send_ping(&payload);
-        true
+        Ok(true)
     }
 
     pub(crate) fn origin(&self, cx: &mut JsScope<'_>, origin: JsLocal<'_>) -> JsResult<()> {
@@ -3691,7 +3703,10 @@ impl H2FrameParser {
         } else {
             next_stream_id.saturating_sub(2)
         };
-        self.engine.last_stream_id.set(last_stream_id);
+        // Like nghttp2, ids never go back: a second stream would replace the entry of the first.
+        update(&self.engine.last_stream_id, |id| {
+            *id = last_stream_id.max(*id);
+        });
     }
 
     pub(crate) fn get_next_stream(&self, _: &mut JsScope<'_>) -> i32 {
@@ -3739,6 +3754,18 @@ impl H2FrameParser {
         )?;
 
         self.cork();
+        let Some(promised) = self.engine.streams.get(promised_id).filter(|promised| {
+            self.engine.is_server.get()
+                && promised.state() == State::Idle
+                && self.open_stream(parent_id).is_some_and(|p| !p.is_local)
+        }) else {
+            return Err(global_object
+                .err(
+                    bun_jsc::ErrorCode::HTTP2_INVALID_STREAM,
+                    format_args!("The stream has been destroyed"),
+                )
+                .throw());
+        };
         match self.encode_header_list(&mut scratch) {
             Ok(()) => {}
             Err(crate::Error::Alloc(bun_alloc::AllocError)) => {
@@ -3750,17 +3777,15 @@ impl H2FrameParser {
                 return Ok(JSValue::js_number(-1.0));
             }
         }
-        if let Some(promised) = self.engine.streams.get(promised_id) {
-            let _ = self
-                .engine
-                .streams
-                .apply(&promised, StreamEvent::SendPushPromise);
-        }
+        let _ = self
+            .engine
+            .streams
+            .apply(&promised, StreamEvent::SendPushPromise);
         self.write_header_block(
             FrameType::PushPromise,
             0,
             parent_id,
-            &(promised_id & MAX_STREAM_ID).to_be_bytes(),
+            &promised_id.to_be_bytes(),
             &scratch.encoded,
         );
 

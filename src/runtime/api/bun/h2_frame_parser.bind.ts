@@ -94,7 +94,7 @@ export const H2FrameParser = b.class({
     isStreamClosed: { args: { streamId: b.u32 }, returns: b.bool },
     noTrailers: { args: { streamId: b.u32 }, capability: "js" },
     origin: { ...js, args: { origin: b.any } },
-    ping: { args: { payload: buffer }, returns: b.bool, capability: "js" },
+    ping: { ...js, args: { payload: buffer }, returns: b.bool },
     pushPromise: {
       ...js,
       args: { parentId: b.u32, promisedId: b.u32, headers: b.any, sensitiveHeaders: b.any },
@@ -116,7 +116,7 @@ export const H2FrameParser = b.class({
     },
     rstStream: { args: { streamId: b.u32, code: b.u32 }, capability: "js" },
     sendTrailers: { ...js, args: { streamId: b.u32, headers: b.any, sensitiveHeaders: b.any } },
-    setLocalWindowSize: { args: { windowSize: b.u32 }, capability: "js" },
+    setLocalWindowSize: { args: { windowSize: b.u32.validateInteger(0, 0x7fffffff) }, capability: "js" },
     setNativeSocket: { args: { socket: b.any }, capability: "js" },
     setNextStreamID: { args: { streamId: b.u32.wrap }, capability: "js" },
     setStreamContext: { args: { streamId: b.u32, context: b.any }, capability: "js" },

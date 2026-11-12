@@ -3317,6 +3317,7 @@ function closeUnreadServerStream(stream: ServerHttp2Stream) {
 }
 // After the PUSH_PROMISE, or a push that a subscriber makes would promise its higher id first.
 function publishPushedStream(stream: ServerHttp2Stream | undefined, headers: HeadersObject) {
+  if (stream === undefined) return;
   if (onServerStreamCreatedChannel.hasSubscribers) onServerStreamCreatedChannel.publish({ stream, headers });
   if (onServerStreamStartChannel.hasSubscribers) onServerStreamStartChannel.publish({ stream, headers });
 }

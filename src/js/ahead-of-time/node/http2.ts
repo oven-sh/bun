@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 baa7f83ffefc1fa939767dbd2fd250b30bb86315a9b2da9d1087332109d852ae.
+// Written against that file with the SHA-256 ee47c09f6aed6b9acd8e445c57d1ec56d1c2f79b3b6fbc97ed9de0a82271c10f.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -3423,6 +3423,7 @@ function closeUnreadServerStream(stream: ServerHttp2Stream) {
 }
 // After the PUSH_PROMISE, or a push that a subscriber makes would promise its higher id first.
 function publishPushedStream(stream: ServerHttp2Stream | undefined, headers: HeadersObject) {
+  if (stream === undefined) return;
   if (onServerStreamCreatedChannel.hasSubscribers) onServerStreamCreatedChannel.publish({ stream, headers });
   if (onServerStreamStartChannel.hasSubscribers) onServerStreamStartChannel.publish({ stream, headers });
 }

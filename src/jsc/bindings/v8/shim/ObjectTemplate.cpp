@@ -37,10 +37,19 @@ void ObjectTemplate::finishCreation(JSC::VM& vm, FunctionTemplate* constructor)
     Base::finishCreation(vm);
     m_constructor.setMayBeNull(vm, this, constructor);
     m_objectStructure.initLater([](const LazyProperty<ObjectTemplate, Structure>::Initializer& init) {
+        auto* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(init.owner->globalObject());
+        // As in V8, instances of a template with a constructor get the constructor's prototype.
+        JSC::JSValue prototype = zigGlobal->objectPrototype();
+        if (auto* constructor = init.owner->m_constructor.get()) {
+            auto* function = constructor->makeFunction(init.vm, zigGlobal, zigGlobal->V8GlobalInternals());
+            JSC::JSValue functionPrototype = function->getDirect(init.vm, init.vm.propertyNames->prototype);
+            if (functionPrototype.isObject())
+                prototype = functionPrototype;
+        }
         init.set(JSC::Structure::create(
             init.vm,
-            init.owner->globalObject(),
-            init.owner->globalObject()->objectPrototype(),
+            zigGlobal,
+            prototype,
             JSC::TypeInfo(JSC::ObjectType, InternalFieldObject::StructureFlags),
             InternalFieldObject::info()));
     });
@@ -77,22 +86,11 @@ Structure* ObjectTemplate::createStructure(JSC::VM& vm, JSC::JSGlobalObject* glo
 
 InternalFieldObject* ObjectTemplate::newInstance()
 {
-    auto* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject());
-    auto& vm = JSC::getVM(zigGlobal);
+    auto& vm = globalObject()->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* structure = m_objectStructure.get(this);
     auto* newInstance = InternalFieldObject::create(vm, structure, this, m_internalFieldCount);
-    // As in V8, an instance of a template with a constructor gets the constructor's prototype.
-    if (auto* constructor = m_constructor.get()) {
-        auto* function = constructor->makeFunction(vm, zigGlobal, zigGlobal->V8GlobalInternals());
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        JSC::JSValue prototype = function->get(zigGlobal, vm.propertyNames->prototype);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-        if (prototype.isObject()) {
-            newInstance->setPrototypeDirect(vm, prototype);
-        }
-    }
-    applyTemplateProperties(zigGlobal, newInstance, m_properties, m_accessors);
+    applyTemplateProperties(globalObject(), newInstance, m_properties, m_accessors);
     RETURN_IF_EXCEPTION(scope, nullptr);
     return newInstance;
 }

@@ -325,7 +325,9 @@ pub(crate) struct Diagnostics {
     int32_flows: FxHashMap<(Vec<u8>, u32), Int32Flow>,
     ignore_comments: Vec<IgnoreComment>,
     withheld: Vec<Entry>,
-    /// The engine has run and nothing failed, so every warning of the build is here.
+    /// The engine has run and nothing failed, so every warning of the build is here or has asked the comments.
     pub(crate) has_run_to_end: bool,
     should_list_silenced: bool,
+    #[cfg(debug_assertions)]
+    has_read_ignore_comments: bool,
 }

@@ -697,7 +697,7 @@ pub struct FilesForFileSystem {
     embedded_manifests: Vec<Box<[u8]>>,
     /// `SourceProvider::note_reads_of_unknown_paths`.
     reads_unknown_paths: bool,
-    /// A data file's path and the warning if `node:fs` can't find it. Sorted, without duplicates.
+    /// A data file's path and the warning if `node:fs` can't find it, or the note of one that a comment silenced. Sorted, without duplicates.
     pub warnings_if_not_embedded: Vec<(Box<[u8]>, Msg)>,
 }
 

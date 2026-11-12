@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/bun-check-calls-no-comment-stale-that-a-build-needs.test.ts": {
+    "default": 5000,
+    "asan": 20000
+  },
   "aot/memory-of-builds-that-follow-a-path.test.ts": {
     "default": 60000,
     "asan": 240000

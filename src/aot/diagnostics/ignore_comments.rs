@@ -173,6 +173,14 @@ fn silence(comments: &mut [IgnoreComment], entry: &Entry) -> bool {
     is_silenced
 }
 
+/// How `--explain` lists a warning that a comment silenced.
+fn to_silenced_note(mut message: Msg) -> Msg {
+    message.kind = Kind::Note;
+    let text = [&b"Silenced by bun-ignore: "[..], &message.data.text].concat();
+    message.data.text = text.into();
+    message
+}
+
 impl Diagnostics {
     pub(crate) fn read_ignore_comments(
         &mut self,
@@ -180,6 +188,10 @@ impl Diagnostics {
         options: IgnoreCommentOptions,
     ) {
         self.should_list_silenced = options.should_list_silenced;
+        #[cfg(debug_assertions)]
+        {
+            self.has_read_ignore_comments = true;
+        }
         let files = view.files();
         for &file in files.compiled_files() {
             let hir = files.hir(file);
@@ -277,6 +289,22 @@ impl Diagnostics {
         }
     }
 
+    /// The caller emits or drops the warning when the comments are gone, so a comment on its line counts as used either way.
+    pub(crate) fn render_unless_silenced(
+        &mut self,
+        view: ProgramView<'_, '_>,
+        warning: Diagnostic,
+    ) -> Option<Msg> {
+        #[cfg(debug_assertions)]
+        assert!(self.has_read_ignore_comments, "the comments are read first");
+        let entry = Diagnostics::render_entry(view, warning)?;
+        if !silence(&mut self.ignore_comments, &entry) {
+            return Some(entry.message);
+        }
+        self.should_list_silenced
+            .then(|| to_silenced_note(entry.message))
+    }
+
     pub(crate) fn forgive_unasked_comments(&mut self, is_unasked: impl Fn(Span) -> bool) {
         for comment in &mut self.ignore_comments {
             if is_unasked(comment.silenced_code) {
@@ -302,12 +330,8 @@ impl Diagnostics {
             if !silence(&mut comments, &entry) {
                 self.entries.push(entry);
             } else if should_list_silenced {
-                let (number, mut message) = (entry.key.4, entry.message);
-                message.kind = Kind::Note;
-                let mut text = b"Silenced by bun-ignore: ".to_vec();
-                text.extend_from_slice(&message.data.text);
-                message.data.text = text.into();
-                self.entries.push(Entry::new(number, message));
+                let note = to_silenced_note(entry.message);
+                self.entries.push(Entry::new(entry.key.4, note));
             }
         }
         for code in comments.into_iter().flat_map(|it| it.codes) {

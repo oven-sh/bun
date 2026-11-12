@@ -23,8 +23,9 @@ use crate::load::{ProjectId, host_platform};
 use crate::report::ModuleOrigin;
 use crate::statistics::{LimitValues, Stage, StatisticId};
 use bstr::{BStr, ByteSlice};
-use bun_ast::{Kind, Loader, Log};
+use bun_ast::{Kind, Loader, Log, Msg};
 use bun_builtin_sources::Archive;
+use bun_options_types::aot_options::ExplainSet;
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::DiagnosticClass;
 use bun_sema::fold::FoldOptions;
@@ -32,6 +33,7 @@ use bun_sema::hir_from_data::{DataModule, DataValue};
 use bun_sema::program::{FileId, FileRole};
 use bun_sema::session::Arena;
 use bun_sema_driver::{Category, Demotion, Diagnostic, ThreadCaches, check_whole_files};
+use bun_threading::Guarded;
 use std::borrow::Cow;
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -1817,4 +1819,131 @@ fn library_module_that_is_evaluated_without_code_stops_the_build() {
     let (failed, log) = finish_build(true);
     assert!(failed.is_none());
     assert!(log.msgs.is_empty());
+}
+
+/// The build decides after the compiler whether the executable holds `data.json`.
+#[derive(Default)]
+struct DecidesEmbeddingLater {
+    link: Option<&'static [u8]>,
+    handed_on: Guarded<Vec<Msg>>,
+}
+
+impl SourceProvider for DecidesEmbeddingLater {
+    fn fold_options<'s>(
+        &self,
+        arena: &'s Arena,
+        atoms: &Interner<'s>,
+        log: &mut Log,
+    ) -> FoldOptions<'s> {
+        WithoutServices.fold_options(arena, atoms, log)
+    }
+
+    fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
+        WithoutServices.resolve(request, log)
+    }
+
+    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+        WithoutServices.load(request, log)
+    }
+
+    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+        WithoutServices.finish_deferred_loads(log)
+    }
+
+    fn is_embedding_undecided(&self, _module_path: &[u8], source_path: &[u8]) -> bool {
+        source_path.ends_with(b"/data.json")
+    }
+
+    fn find_symlink_in_asset(&self, _source_path: &[u8]) -> Option<Vec<u8>> {
+        self.link.map(<[u8]>::to_vec)
+    }
+
+    fn warn_if_not_embedded(&self, _source_path: &[u8], warning: Msg) {
+        self.handed_on.lock().push(warning);
+    }
+
+    fn parse_data<'s>(
+        &self,
+        file: &SourceFile<'_>,
+        arena: &'s Arena,
+        atoms: &Interner<'s>,
+        log: &mut Log,
+    ) -> Result<DataModule<'s>, DataFailure> {
+        WithoutServices.parse_data(file, arena, atoms, log)
+    }
+
+    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+        WithoutServices.check_embedded_files(log)
+    }
+}
+
+/// What a build that runs to its end says of a read of `data.json` under `comment`, and what it hands on.
+fn say_and_hand_on(
+    provider: &DecidesEmbeddingLater,
+    comment: &str,
+    explain: ExplainSet,
+) -> (String, Vec<String>) {
+    let read = "fs.readFileSync(new URL(\"./data.json\", import.meta.url));\n";
+    let text = format!("import fs from \"node:fs\";\n{comment}\n{read}");
+    let mut project = TestProject::new(&[("main.mjs", &text)], &default_settings());
+    project.aot.explain = explain;
+    let said = run_build(&project, BUNDLED_LIBS, provider, |build| {
+        with_bound_build(build, |build, _, _| {
+            let mut diagnostics = core::mem::replace(&mut build.diagnostics, Diagnostics::new());
+            diagnostics.has_run_to_end = true;
+            let mut log = Log::init();
+            diagnostics.write_to(&mut log);
+            describe_messages(&log)
+        })
+    });
+    let describe = |message: Msg| {
+        let line = message.data.location.map_or(0, |it| it.line);
+        let text = BStr::new(&message.data.text);
+        format!("line {line}: {:?} {text}", message.kind)
+    };
+    let handed_on = core::mem::take(&mut *provider.handed_on.lock());
+    (said, handed_on.into_iter().map(describe).collect())
+}
+
+#[test]
+fn a_comment_silences_a_warning_that_the_build_decides_later() {
+    let provider = DecidesEmbeddingLater::default();
+    let (quiet, listed) = (ExplainSet::empty(), ExplainSet::TEXT);
+    let warning = "TS100098: This reads \"data.json\", but the executable has no file at that path. Embed it with --asset data.json";
+    let warned = vec![format!("line 3: Warn {warning}")];
+    let nothing = (String::new(), Vec::new());
+    assert_eq!(
+        say_and_hand_on(&provider, "// a comment", quiet),
+        (String::new(), warned.clone())
+    );
+    let comment = "// bun-ignore TS100098";
+    assert_eq!(say_and_hand_on(&provider, comment, quiet), nothing);
+    let note = vec![format!("line 3: Note Silenced by bun-ignore: {warning}")];
+    assert_eq!(
+        say_and_hand_on(&provider, comment, listed),
+        (String::new(), note)
+    );
+    let stale = "/project/main.mjs:2:4: TS100073: This comment silences nothing: the build reports no TS100165 on the line that it applies to\n";
+    assert_eq!(
+        say_and_hand_on(&provider, "// bun-ignore TS100165", quiet),
+        (stale.to_owned(), warned)
+    );
+}
+
+#[test]
+fn a_comment_silences_a_read_behind_a_link_that_the_build_decides_later() {
+    let provider = DecidesEmbeddingLater {
+        link: Some(b"/project/link"),
+        ..Default::default()
+    };
+    let quiet = ExplainSet::empty();
+    let warning = "line 3: Warn TS100165: This reads \"data.json\", but the executable has no file at that path: --asset follows no links inside a folder. Embed it with --asset link";
+    assert_eq!(
+        say_and_hand_on(&provider, "// a comment", quiet),
+        (String::new(), vec![warning.to_owned()])
+    );
+    assert_eq!(
+        say_and_hand_on(&provider, "// bun-ignore TS100165", quiet),
+        (String::new(), Vec::new())
+    );
 }

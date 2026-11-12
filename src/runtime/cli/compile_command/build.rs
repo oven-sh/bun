@@ -764,6 +764,9 @@ fn emit_not_embedded_warnings(
     output_files: &[OutputFile],
     log: &mut bun_ast::Log,
 ) {
+    if files_for_file_system.warnings_if_not_embedded.is_empty() {
+        return;
+    }
     let root = with_forward_slashes(trim_trailing_separators(root_directory));
     let fs_only_paths = fs_only_paths.iter().filter(|it| !it.is_folder);
     let fs_only_paths = fs_only_paths.map(|it| &it.path_below_root[..]);
@@ -775,7 +778,7 @@ fn emit_not_embedded_warnings(
     for (path, warning) in &files_for_file_system.warnings_if_not_embedded {
         let spelled = with_forward_slashes(path);
         if !found.contains(spelled.get(root.len() + 1..).unwrap_or_default()) {
-            log.warnings += 1;
+            log.warnings += (warning.kind == bun_ast::Kind::Warn) as u32;
             log.add_msg(warning.clone());
         }
     }

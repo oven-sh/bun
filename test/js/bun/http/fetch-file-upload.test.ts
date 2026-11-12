@@ -470,6 +470,43 @@ test.skipIf(!isLinux)(
   },
 );
 
+// Only on a unix socket does the peer's shutdown(SHUT_RD) fail send() with EPIPE and leave the connection up.
+describe.skipIf(!isLinux)("an origin that shuts its read side down during the upload", () => {
+  const content = Buffer.alloc(4 * 1024 * 1024, "x");
+  const bodies: [string, (path: string) => Bun.BodyInit][] = [
+    ["a Bun.file()", path => Bun.file(path)],
+    ["bytes", () => content],
+    ["a stream", () => new Blob([content]).stream().pipeThrough(new TransformStream())],
+  ];
+
+  async function upload(body: (path: string) => Bun.BodyInit, answer: string) {
+    using dir = tempDir("fetch-upload-shut-rd", { body: content });
+    const unix = join(String(dir), "origin.sock");
+    using _origin = Bun.listen({
+      unix,
+      allowHalfOpen: true,
+      socket: {
+        open(socket) {
+          socket.write(answer);
+          socket.shutdown(true);
+        },
+        data() {},
+        end() {},
+      },
+    });
+    const res = await fetch("http://localhost/", { unix, method: "PUT", body: body(join(String(dir), "body")) });
+    return `${res.status} ${await res.text()}`;
+  }
+
+  test.concurrent.each(bodies)("%s rejects if the origin has not answered", async (_, body) => {
+    await expect(upload(body, "")).rejects.toMatchObject({ code: "ECONNRESET" });
+  });
+
+  test.concurrent.each(bodies)("%s gets the answer that was already sent", async (_, body) => {
+    expect(await upload(body, "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 2\r\n\r\nno")).toBe("413 no");
+  });
+});
+
 // Windows reads the whole file before it sends the head.
 describe.skipIf(isWindows)("a file that becomes shorter during the upload", () => {
   test.concurrent.each(["the first hop", "a redirected hop over TLS"])("rejects on %s", async hop => {

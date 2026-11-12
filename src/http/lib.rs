@@ -1459,7 +1459,11 @@ fn write_to_socket<const IS_SSL: bool>(
     let mut remaining = data;
     let mut total_written: usize = 0;
     while !remaining.is_empty() {
-        let amount = socket.write(remaining);
+        let (amount, send_error) = socket.write_check_error(remaining);
+        // The TLS layer has done this itself.
+        if send_error != 0 && !IS_SSL {
+            socket.reject_send(send_error);
+        }
         if amount < 0 {
             return Err(crate::Error::WriteFailed);
         }
@@ -3527,14 +3531,15 @@ impl<'a> HTTPClient<'a> {
                             }
                             // A short `socket.write()` already polls for writable.
                             crate::send_file::Status::Again if copy => {}
-                            // A peer that is gone is left to the close event, as `socket.write()` leaves it.
-                            crate::send_file::Status::Again
-                            | crate::send_file::Status::Err(crate::Error::Sys(
-                                bun_errno::SystemErrno::EPIPE | bun_errno::SystemErrno::ECONNRESET,
-                            )) => {
+                            crate::send_file::Status::Again => {
                                 uws::SocketTCP::from_any(socket.socket)
                                     .mark_needs_more_for_sendfile();
                             }
+                            // What the peer answered before it stopped reading is still delivered.
+                            crate::send_file::Status::Err(crate::Error::Sys(
+                                errno @ (bun_errno::SystemErrno::EPIPE
+                                | bun_errno::SystemErrno::ECONNRESET),
+                            )) => socket.reject_send(errno as i32),
                             crate::send_file::Status::Err(err) => {
                                 self.close_and_fail::<IS_SSL>(err, socket);
                                 return;

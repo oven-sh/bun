@@ -780,6 +780,11 @@ function detachSocket(self: $Node.Socket) {
   self._handle = null;
   self._sockname = null;
 }
+// The socket let go of `handle` and connected again. A close that waits (TLS records, a pipe) leaves the handle time to report more.
+function isOfEarlierConnection(self, handle) {
+  const current = self._handle;
+  return current !== handle && current != null && handle.onread === noop;
+}
 function destroyNT(self: $Node.Socket, err?: Error) {
   self.destroy(err);
 }
@@ -1234,7 +1239,7 @@ function onReadEnd(self: $Node.Socket, err?: NativeSocketError) {
 }
 
 function onHandleClose(self, handle, err) {
-  if (self[kclosed]) return;
+  if (self[kclosed] || isOfEarlierConnection(self, handle)) return;
   self[kclosed] = true;
   self[kHungUp] = self[kended];
   if (closeWithTLSSocket(self, handle)) return;
@@ -1306,6 +1311,7 @@ function onSNIResolution(state: SNIState, err: unknown, context?: unknown) {
 const SocketHandlers = {
   data(socket, buffer) {
     const self = socket.data;
+    if (isOfEarlierConnection(self, socket)) return;
     self._unrefTimer();
     // TLS took over the fd; the wrapped socket reads nothing: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L723-L727
     if (socket[kAdoptedTLSRaw]) return;
@@ -1330,7 +1336,8 @@ const SocketHandlers = {
     onWriteComplete(socket.data, socket, status);
   },
   end(socket) {
-    onReadEnd(socket.data);
+    const self = socket.data;
+    if (!isOfEarlierConnection(self, socket)) onReadEnd(self);
   },
   close(socket, err?: NativeSocketError) {
     onHandleClose(socket.data, socket, err);
@@ -1338,6 +1345,7 @@ const SocketHandlers = {
   // Node's onnewsessionclient: emit once the handshake is verified. Until then, the handshake handler emits it.
   session(socket: $Node.SocketHandle<$Node.TLSSocket>, session) {
     const self = socket.data;
+    if (isOfEarlierConnection(self, socket)) return;
     if (self._secureEstablished) {
       self.emit("session", session);
     } else {
@@ -1445,6 +1453,7 @@ const SocketHandlers = {
       listener.onconnection(0, socket);
       return;
     }
+    if (isOfEarlierConnection(self, socket)) return void socket.close();
     socket[owner_symbol] = self;
     // Ahead of `oncomplete`: a 'connect' listener that writes sends the ClientHello, which has to offer the session.
     const session = self[bunTLSConnectOptions]?.session;
@@ -1458,6 +1467,7 @@ const SocketHandlers = {
   },
   connectError(socket: SocketHandle, error: NativeConnectError) {
     const self = socket.data;
+    if (isOfEarlierConnection(self, socket)) return;
     const req = socket[kConnectReq];
     socket[owner_symbol] = self;
     // connect() or bind() failed inside doConnect(): kConnectDispatch returns the errno, as Node's handle.connect() does.
@@ -1476,6 +1486,7 @@ const SocketHandlers = {
   },
   handshake(socket: $Node.SocketHandle<$Node.TLSSocket>, success, verifyError) {
     const self = socket.data;
+    if (isOfEarlierConnection(self, socket)) return;
     if (!self.isServer) return onClientHandshake(self, socket, success, verifyError);
     // `server` is null for a standalone `new tls.TLSSocket(socket, { isServer: true })`
     // (no listening server owns it) — guard every server.emit / server option read.
@@ -1612,7 +1623,7 @@ const SocketHandlers = {
   },
   error(this: $Node.SocketHandle<$Node.TLSSocket>, socket: $Node.SocketHandle<$Node.TLSSocket>, error) {
     const self = socket.data;
-    if (!self || self._hadError) return;
+    if (!self || self._hadError || isOfEarlierConnection(self, socket)) return;
     self._hadError = true;
     if (typeof self[bunTlsSymbol] !== "function") {
       self.destroy(error);
@@ -1820,6 +1831,7 @@ const OnreadHandlers = {
   ...SocketHandlers,
   data(socket, buffer) {
     const self = socket.data;
+    if (isOfEarlierConnection(self, socket)) return;
     self._unrefTimer();
     if (socket[kAdoptedTLSRaw]) return;
     const tail = self[kOnreadTail];
@@ -2422,7 +2434,7 @@ Socket.prototype.connect = function connect(this: $Node.Socket, ...args) {
     this.write = socketWrite;
   }
   if (this.destroyed) {
-    this._handle = null;
+    detachSocket(this);
     this._peername = null;
     this._sockname = null;
   }
@@ -2449,6 +2461,7 @@ Socket.prototype.connect = function connect(this: $Node.Socket, ...args) {
 
 Socket.prototype[kReinitializeHandle] = function reinitializeHandle(this: $Node.Socket, handle: SocketHandle) {
   this._handle?.close();
+  detachSocket(this);
 
   this._handle = handle;
   this._handle[owner_symbol] = this;

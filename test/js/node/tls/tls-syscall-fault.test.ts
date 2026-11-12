@@ -987,6 +987,33 @@ describe.skipIf(skip)("node:tls close_notify / shutdown under faults", () => {
     expect(received().length).toBe(payload.length);
   });
 
+  // destroy() leaves the first connection open until the kernel has its ciphertext.
+  test.each([
+    ["sends data and ends", (peer: tls.TLSSocket) => new Promise<void>(resolve => peer.end("stale ", resolve))],
+    ["takes the ciphertext", (peer: tls.TLSSocket) => (fault.clear(), once(peer.resume(), "close"))],
+  ] as const)("a socket that connected again hears nothing when its first peer %s", async (_, act) => {
+    using p = await connectedTLSPair();
+    fault.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1, fd: fdOf(p.client) });
+    p.client.write("held", () => {});
+    p.client.destroy();
+    await once(p.client, "close");
+
+    const accepted = once(server, "secureConnection") as Promise<[tls.TLSSocket]>;
+    p.client.connect({ port, host: "127.0.0.1" });
+    const [[second]] = await Promise.all([accepted, once(p.client, "secureConnect")]);
+    try {
+      const { events, closed } = observe(p.client);
+      const received = collect(p.client);
+      await act(p.serverSock);
+      // Sent after whatever the first peer did, so read no earlier.
+      second.end("fresh");
+      await closed;
+      expect({ received: received().toString(), events }).toEqual({ received: "fresh", events: CLEAN_CLOSE });
+    } finally {
+      second.destroy();
+    }
+  });
+
   test("client.end() under 1-byte sends still delivers close_notify and peer sees clean 'end'", async () => {
     let serverSide!: ReturnType<typeof observe>;
     using p = await connectedTLSPair(s => (serverSide = observe(s)));

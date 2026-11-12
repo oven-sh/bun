@@ -766,6 +766,32 @@ describe.concurrent("a run that --bail stops", () => {
       });
     });
 
+    test("fails a test that it ended if a teardown hook of that test runs out of time", async () => {
+      const file = `
+        import { afterEach, expect, test } from "bun:test";
+        const never = new Promise(() => {});
+        let ended = 0;
+        // The second afterEach is the one of the test that the run ends.
+        afterEach(async () => { if (++ended === 2) await never; }, 20);
+        test.concurrent("in flight", async () => { await never; });
+        test.concurrent("fails", async () => { await 1; expect(1).toBe(2); });
+      `;
+      const { stderr, results, summary, exitCode } = await run({ "a.test.ts": file }, flags);
+      const note = "a beforeEach/afterEach hook timed out for this test";
+      expect({ note: stderr.includes(note), results, summary, exitCode }).toEqual({
+        note: true,
+        results: ["(fail) fails", "(fail) in flight"],
+        summary: [
+          " 0 pass",
+          " 2 fail",
+          " 1 expect() calls",
+          "Ran 2 tests across 1 file.",
+          "Bailed out after 1 failure",
+        ],
+        exitCode: 1,
+      });
+    });
+
     // The test has run its body and is in its afterEach when the run stops. The afterEach runs to its end.
     const inTeardown = (options: string, body: string) => `
       import { afterEach, test } from "bun:test";

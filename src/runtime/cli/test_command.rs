@@ -2760,6 +2760,10 @@ impl TestCommand {
         };
 
         jsc::virtual_machine::isBunTest.store(true, core::sync::atomic::Ordering::Relaxed);
+        run_compiled::TEST_FILES_RUN_AGAIN.store(
+            ctx.test_options.repeat_count > 1,
+            core::sync::atomic::Ordering::Relaxed,
+        );
 
         // Keep an owned `Box` local — `exec()` never returns before process
         // exit, so the heap allocation outlives all raw-pointer observers
@@ -3678,6 +3682,21 @@ impl TestCommand {
                 );
             }
         }
+        let (more_often, refused): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
+            (refused.into_iter()).partition(|line| line.starts_with(run_compiled::RAN_MORE_OFTEN));
+        if !more_often.is_empty() {
+            pretty_error!(
+                "<yellow>{} mocked file{} may have run more often, or shown other values,<r> during this run than under `bun test`:\n",
+                more_often.len(),
+                if more_often.len() == 1 { "" } else { "s" }
+            );
+            for line in &more_often {
+                pretty_error!(
+                    "  {}\n",
+                    bstr::BStr::new(&line[run_compiled::RAN_MORE_OFTEN.len()..])
+                );
+            }
+        }
         let (addons, refused): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
             (refused.into_iter()).partition(|line| line.starts_with(run_compiled::LOADED_ADDON));
         if !addons.is_empty() {
@@ -3900,17 +3919,22 @@ impl TestCommand {
         global: &jsc::JSGlobalObject,
         file_path: &[u8],
         next_load_shares_global: bool,
+        runs_again: bool,
     ) {
         unsafe extern "C" {
             safe fn JSMock__replaceModuleOfTestFile(
                 global: &jsc::JSGlobalObject,
                 path: &bun::String,
             );
+            safe fn JSMock__willRunTestFileAgain(global: &jsc::JSGlobalObject, path: &bun::String);
         }
         bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
         bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(global, next_load_shares_global);
         if !next_load_shares_global {
             return;
+        }
+        if runs_again {
+            JSMock__willRunTestFileAgain(global, &bun::StringView::from_bytes(file_path));
         }
         // Wait for in-flight modules to load and be evicted, or the next file would get them with this file's mocks.
         // Uses the hook timeout. A leaked timer or server keeps the loop alive, so a load that never settles would
@@ -4206,7 +4230,13 @@ impl TestCommand {
             if next_load_shares_global {
                 crate::test_runner::timers::fake_timers::on_test_file_end(vm.global());
             }
-            Self::undo_module_mocks(vm, global, file_path, next_load_shares_global);
+            Self::undo_module_mocks(
+                vm,
+                global,
+                file_path,
+                next_load_shares_global,
+                !failed_to_load && repeat_index + 1 < repeat_count,
+            );
             // Must run after the cleanup above, so rejections from JS it runs are reported in this file.
             let _ = vm.global().handle_rejected_promises();
 

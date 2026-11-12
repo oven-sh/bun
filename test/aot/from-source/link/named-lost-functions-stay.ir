@@ -1,0 +1,22 @@
+# -- source: named-lost-functions-stay.js
+# class Box { constructor(n) { this.count = n; this.note = 0; } }
+# function a() { return this.count + 1; }
+# function b() { return this.count + 2; }
+# function c() { return this.count + 3; }
+# function d() { return this.count + 4; }
+# function e() { return this.count + 5; }
+# function through(handed, box) { return handed.call(box); }
+# function pick(i) { return i === 0 ? a : i === 1 ? b : i === 2 ? c : i === 3 ? d : e; }
+# function all(box) { let sum = ""; for (let i = 0; i < 5; i++) sum += through(pick(i), box) + ","; return sum + box.count + "," + typeof box.count; }
+# function setName(named, name) { Object.defineProperty(named, "name", { value: name, enumerable: false, configurable: true }); }
+# for (let i = 0; i < 5; i++) setName(pick(i), "n" + i);
+# setName(globalThis.some, "some");
+# print(all(new Box(10)), a.name, e.name);
+# -- end of source
+# L0 = Box. The lost family itself is passed to be named: naming calls nobody and hands nobody on.
+# RUN(BOX): link why-gone L0
+# BOX: why-gone L0: it has not gone
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS: "count" proven=int[0, 2147483647] writers-known written-at-construction-alone
+# RUN(ANSWERS): run-in-shell globalThis.some = function () { };
+# ANSWERS: 11,12,13,14,15,10,number n0 n4

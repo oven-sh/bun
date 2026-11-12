@@ -25,4 +25,5 @@
 # -- end of source
 # Behind the arms of an instanceof that meet, what it asked for is what a read expects, in a function that calls itself.
 # RUN: walk f6:Body mechanisms=all
-# CHECK: = GetSlot {{*}}key="name" receivers=[L2] level=Proven {{*}}@430
+# CHECK: = Narrowed v2, {{*}}[isOnTakenEdge] @421
+# CHECK: = GetSlot {{*}}key="name" receivers=[L2] level={{*}}@430

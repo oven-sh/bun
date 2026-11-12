@@ -1,5 +1,5 @@
 // Loops that store counters and whole numbers, some of them beyond int32, into lists of every kind.
-// STATISTIC: WholeNumberListsAskedTwice >= 10
+// STATISTIC: IntegerArraysRechecked >= 10
 function counter(a, b, c) {
   for (let i = 0; i < c.length; i++) c[i] = i;
   return 0;

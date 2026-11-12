@@ -13,10 +13,10 @@
 # The end of a class's constructor is two blocks that hold a jump and a return: all its operations stand in its entry block. Where the guard of its copy fails in a loop, it is walked in line once more with the
 # parameter unknown: the reads by name at their sites, the birth typed as in the first walk; the copy around it is not left for a call.
 # RUN: walk f1 mechanisms=all
-# CHECK: = NewObject layout=L0
-# CHECK: = NewObject layout=L0
 # CHECK: = PropGet {{*}}key="id"
 # CHECK: = PropGet {{*}}key="score"
+# CHECK: = NewObject layout=L0
+# CHECK: = NewObject {{*}}layout=L0 fields=[0, 1, 2, 3, 4]
 # CHECK: PutSlotOrAdd {{*}}key="id" receivers=[L0] level=Proven
 # RUN(STAYS): walk f1 mechanisms=all
 # STAYS: code f1:Body

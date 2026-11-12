@@ -1,9 +1,10 @@
 // RUN: lower
-// The brand of the private method is laid first, then the fields in the order of their declarations, each with what the row stores: no initializer function, no store is left. The call amid the row stands in front of them all.
+// The brand of the private method is laid first, then the fields in the order of their declarations, each with what the row stores: no initializer function, no store is left. The call amid the row comes before the allocation.
 // CHECK-LABEL: function {{*}}name="Hidden" {{*}}kind=BaseConstructor
-// CHECK: [[allocated]] = NewObject
+// CHECK-NOT: NewObject
 // CHECK-NOT: CallDirect
 // CHECK: = Call {{*}}calleeName="between"
+// CHECK: = NewObject
 // CHECK: PrivateDefine
 // CHECK: PrivateDefine
 // CHECK: PropDefine {{*}}key="open"

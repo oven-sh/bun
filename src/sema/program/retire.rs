@@ -67,9 +67,11 @@ struct Tasks {
     running: Vec<u64>,
     taken: [u64; WORDS],
     unripe: Vec<(u64, *const ModuleCell<'static>)>,
+    /// In the order of their times.
     unread: VecDeque<UnreadBlock>,
 }
 
+/// A block that only the tasks that had begun by `time` may still be reading.
 struct UnreadBlock {
     time: u64,
     session: u64,
@@ -497,7 +499,12 @@ impl Drop for ReadingNoTrees {
     }
 }
 
-pub(crate) unsafe fn free_behind_tasks(session: u64, block: NonNull<u8>) {
+/// Frees `block` when every task that has begun by now has ended.
+///
+/// # Safety
+/// `block` was allocated in an arena of the session with this number, and only tasks that have begun by now may still be
+/// reading it.
+pub(crate) unsafe fn free_after_tasks(session: u64, block: NonNull<u8>) {
     let mut tasks = TASKS.lock();
     let time = tasks.time;
     tasks.time += 1;
@@ -511,8 +518,10 @@ pub(crate) unsafe fn free_behind_tasks(session: u64, block: NonNull<u8>) {
 
 static HAS_UNREAD_BLOCKS: AtomicBool = AtomicBool::new(false);
 
+/// The session with this number ends, and its blocks with it.
 pub(crate) fn forget_blocks_of(session: u64) {
     if HAS_UNREAD_BLOCKS.load(SeqCst) {
+        // Another program's task may be freeing some of them.
         let _nobody_frees = RELEASING_RIPE_CELLS.write();
         let mut tasks = TASKS.lock();
         tasks.unread.retain(|it| it.session != session);
@@ -594,7 +603,7 @@ impl Drop for ReadingTask {
             (ripe, unread)
         };
         for UnreadBlock { block, .. } in unread {
-            // SAFETY: `free_behind_tasks`: every task that could read it has ended, and its session hasn't.
+            // SAFETY: `free_after_tasks`: every task that could read it has ended, and its session hasn't.
             unsafe { bun_alloc::mimalloc::mi_free(block.as_ptr().cast()) };
         }
         for (_, module) in ripe {

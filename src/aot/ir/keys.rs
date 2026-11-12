@@ -46,6 +46,7 @@ pub enum LayoutKey {
         file: FileId,
         environment: u32,
     },
+    ModuleInstance(FileId),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -90,7 +91,13 @@ pub enum VariableKey {
     MockOfRuntimeModule(RuntimeModule),
     RequiresMadeForOwnFile(FileId),
     RequiresMadeForOtherFolders(FileId),
+    /// The requires that the real createRequire() made in the file for a written path other than the file's own.
     RequiresMadeForPaths(FileId),
+    InstanceOf(FileId),
+    InstanceAllocator(FileId),
+    HasSeveralInstances(FileId),
+    /// `true` as soon as a direct eval of the file has been handed a text.
+    EvaluationMark(FileId),
 }
 
 impl FunctionKey {
@@ -124,6 +131,7 @@ impl LayoutKey {
         )
     }
 
+    /// The second word of an identity tells files apart. True if it alone tells these two apart.
     pub fn differs_in_files_alone(&self, other: &LayoutKey) -> bool {
         match (*self, *other) {
             (
@@ -164,7 +172,8 @@ impl LayoutKey {
             },
             LayoutKey::UntypedLiteral { file, .. }
             | LayoutKey::CreatedObject { file, .. }
-            | LayoutKey::Environment { file, .. } => Some(file),
+            | LayoutKey::Environment { file, .. }
+            | LayoutKey::ModuleInstance(file) => Some(file),
             LayoutKey::Container(symbol) => Some(symbol.file),
         }
     }
@@ -179,10 +188,14 @@ impl VariableKey {
             | VariableKey::ModulePath { file, .. }
             | VariableKey::MockOf(file)
             | VariableKey::InstantiationState(file)
+            | VariableKey::EvaluationMark(file)
             | VariableKey::RequiresMadeForOwnFile(file)
             | VariableKey::RequiresMadeForOtherFolders(file)
             | VariableKey::RequiresMadeForPaths(file)
-            | VariableKey::EnvironmentMadeAhead(file) => Some(file),
+            | VariableKey::EnvironmentMadeAhead(file)
+            | VariableKey::InstanceOf(file)
+            | VariableKey::InstanceAllocator(file)
+            | VariableKey::HasSeveralInstances(file) => Some(file),
             VariableKey::InnerModuleExports(callback) => Some(callback.file),
             VariableKey::PrivateState { state, .. } => Some(state.file),
             VariableKey::RequiredAnswer(holder) => Some(holder.file),
@@ -277,6 +290,7 @@ mod tests {
                 file: FILE,
                 environment: 0,
             },
+            LayoutKey::ModuleInstance(FILE),
         ];
         keys.extend(origins.map(|origin| LayoutKey::ObjectType {
             origin,

@@ -215,6 +215,7 @@ for (const target of ["request", "response", "socket"] as const) {
     await once(server.listen(0, "127.0.0.1"), "listening");
     const { port } = server.address() as AddressInfo;
     const ended = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
     let request = http.request({ port, host: "127.0.0.1", method: "POST", agent: false }, givenResponse => {
       let response = givenResponse;
       watch("response", response, ["error", "end"]);
@@ -223,13 +224,16 @@ for (const target of ["request", "response", "socket"] as const) {
       if (target === "socket") close(response.socket);
       attempt("reading", () => response.resume());
     });
-    watch("request", request, ["close", "error", "finish"]);
+    request.on("close", () => (say("request", "close", ""), closed.resolve()));
+    watch("request", request, ["error", "finish"]);
     request.end("body");
     if (target === "request") request = close(request);
     await withinReason("the response's close", ended.promise);
     await turns();
     server.closeAllConnections();
     await withinReason("the server's close", new Promise<void>(resolve => void server.close(() => resolve())));
+    // Where the response is frozen, the request closes once the server has closed the connection.
+    await withinReason("the request's close", closed.promise);
   };
 }
 

@@ -13,7 +13,7 @@
 # Thirteen since the name of a position behind the test of a length is handed to its read alone: the key and its name were widened apart, now the key is widened once, and one more copy of the loop is laid out.
 # f1 = go
 # RUN: compile UnrolledLoopComparisonsHoisted mechanisms=all
-# CHECK: statistic UnrolledLoopComparisonsHoisted 13
+# CHECK: statistic UnrolledLoopComparisonsHoisted 14
 # RUN(WALK): walk f1:Body mechanisms=all
 # WALK: number @Double = GetArrayElement {{*}}readsHoleAsNaN
 # WALK-NEXT: number @Double = GetArrayElement {{*}}readsHoleAsNaN

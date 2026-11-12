@@ -181,6 +181,7 @@ impl<'h> Resolver<'h> {
             .unwrap_or(declared)
     }
 
+    /// The file that "main" names in `manifest`, if an import of its directory takes `module` for "module".
     fn find_main_beside_module(
         &self,
         manifest: &CodeManifest<'h>,

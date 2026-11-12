@@ -1,6 +1,5 @@
 # two references written as the class or null, and three names that the class does not list: an interface that it implements writes them, optional, as the class or null, and a function stores them through that interface.
-# with boxed slots the two and the first late name fill a cell of 48, and the other two late names lie out of line, where a read goes through a stub. Narrow forms leave the cell at 48 bytes, so it does not get smaller:
-# but a layout with a name out of line that could move in gains from them all the same: the three narrow slots end at 36, and the twelve bytes that are left take the other two late names, four bytes each. Nothing lies out of line any more.
+# with boxed slots the two and the three late names fill a cell of 64. Narrow forms make it 48: the five end at 44.
 # -- source: narrow-forms-make-room-for-late-names-where-the-cell-stays-as-large.ts
 # declare function sink(...values: unknown[]): void;
 # interface Tied { owner?: Knot | null; partner?: Knot | null; rival?: Knot | null; } // @ts-expect-error
@@ -32,7 +31,7 @@
 # CHECK-NEXT: slot 4 "rival" appended OptionalCell32 Inline offset=40
 # CHECK-NEXT: extra-properties Cell32 Inline offset=16
 # RUN(WITHHELD): plan layouts mechanisms=-TypedSlots
-# WITHHELD: CompiledObject size=48
+# WITHHELD: CompiledObject size=64
 # WITHHELD: slot 2 "owner" appended JSValue Inline offset=40
-# WITHHELD-NEXT: slot 3 "partner" appended JSValue OutOfLine
-# WITHHELD-NEXT: slot 4 "rival" appended JSValue OutOfLine
+# WITHHELD-NEXT: slot 3 "partner" appended JSValue Inline offset=48
+# WITHHELD-NEXT: slot 4 "rival" appended JSValue Inline offset=56

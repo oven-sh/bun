@@ -112,6 +112,7 @@ pub(super) struct ScopeWalk {
     pub(super) use_counts: Vec<u8>,
     pub(super) function_references: Vec<(WalkedFunctionId, FnId)>,
     pub(super) calls_by_name: Vec<(ExprId, FnId)>,
+    pub(super) functions_calling_themselves: Vec<FnId>,
     pub(super) made_at_first_read: Vec<(SymbolId, FnId)>,
     pub(super) functions_laid_in_literals: Vec<FnId>,
     pub(super) created_at_each_read: Vec<SymbolId>,

@@ -158,6 +158,9 @@ fn lower_in_parts<'s>(
     task: &mut TaskState,
     visit: &PartsOfVisit<'_, 's>,
 ) -> Option<Result<LoweredFile, NotInParts>> {
+    if visit.has_given_up() {
+        return None;
+    }
     let parts = plan_parts(inputs, queries, file)?;
     if !infer_types_for_all_parts(inputs, queries, &parts) {
         return None;

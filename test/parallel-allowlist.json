@@ -1872,6 +1872,7 @@
     "aot/a-few-of-every-sweep-5.test.ts",
     "aot/a-few-of-every-sweep-6.test.ts",
     "aot/a-few-of-every-sweep-7.test.ts",
-    "aot/a-few-of-every-sweep-8.test.ts"
+    "aot/a-few-of-every-sweep-8.test.ts",
+    "aot/wide-lists-in-parts.test.ts"
   ]
 }

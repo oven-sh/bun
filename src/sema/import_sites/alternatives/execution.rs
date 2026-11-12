@@ -1058,6 +1058,36 @@ impl Execution<'_, '_, '_, '_> {
         }
     }
 
+    fn compare_loosely(&mut self, state: State, left: &Value, right: &Value) -> Vec<(State, bool)> {
+        let is_missing = |value: &Value| {
+            matches!(
+                value,
+                Value::Held(Held::Primitive(Constant::Undefined | Constant::Null))
+            )
+        };
+        let kind = |value: &Value| match value {
+            Value::Held(Held::Primitive(constant)) => Some(std::mem::discriminant(constant)),
+            _ => None,
+        };
+        match (left, right) {
+            (left, right) if is_missing(left) && is_missing(right) => vec![(state, true)],
+            (variable @ Value::EnvironmentVariable(_), other)
+            | (other, variable @ Value::EnvironmentVariable(_))
+                if is_missing(other) =>
+            {
+                self.compare(state, variable, &undefined())
+            }
+            (left, right) if is_missing(left) || is_missing(right) => {
+                self.compare(state, left, right)
+            }
+            (
+                Value::EnvironmentVariable(_) | Value::Held(Held::Primitive(_)),
+                Value::EnvironmentVariable(_) | Value::Held(Held::Primitive(_)),
+            ) if kind(left) != kind(right) => vec![(state.clone(), true), (state, false)],
+            _ => self.compare(state, left, right),
+        }
+    }
+
     fn decide(&mut self, state: State, test: ExprId) -> Ways<bool> {
         let &ScanInputs { hir, bound, .. } = self.follower.inputs;
         let test = hir.skip_type_assertions(test);
@@ -1089,11 +1119,15 @@ impl Execution<'_, '_, '_, '_> {
                 right,
             } => {
                 let is_negated = matches!(op, BinOp::NotEqEq | BinOp::NotEq);
+                let is_loose = matches!(op, BinOp::EqEq | BinOp::NotEq);
                 let mut ways = Vec::new();
                 for (state, first) in self.evaluate(state, left)? {
                     for (state, second) in self.evaluate(state, right)? {
-                        let compared = self.compare(state, &first, &second).into_iter();
-                        ways.extend(compared.map(|it| (it.0, it.1 != is_negated)));
+                        let compared = match is_loose {
+                            true => self.compare_loosely(state, &first, &second),
+                            false => self.compare(state, &first, &second),
+                        };
+                        ways.extend(compared.into_iter().map(|it| (it.0, it.1 != is_negated)));
                     }
                 }
                 Some(ways)

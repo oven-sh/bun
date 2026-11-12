@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/wide-lists-in-parts.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/engine/from-source-49.test.ts": {
     "default": 60000,
     "asan": 240000

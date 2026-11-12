@@ -2345,7 +2345,9 @@ export const start = async (ask, terminate) => {
   said.push("a handle " + (await handle.readFile("utf8")));
   await handle.close();
   const written = fs.promises.writeFile(below("f"), "new");
-  while (fs.readFileSync(below("f"), "utf8") !== "new");
+  for (let seen, start = Date.now(); (seen = fs.readFileSync(below("f"), "utf8")) !== "new"; ) {
+    if (Date.now() - start > 30_000) throw new Error("the write that is not awaited: " + JSON.stringify(seen));
+  }
   said.push("not awaited " + read(f));
   await written;
   return said.join("\\n");
@@ -2874,6 +2876,63 @@ a blob third
     },
     120_000,
   );
+
+  test("a package chooses its file by a variable of the environment that it compares loosely", async () => {
+    const rows = {
+      "one": "process.env.CHOSEN == 1",
+      "one first": "1 == process.env.CHOSEN",
+      "a boolean": "process.env.CHOSEN == true",
+      "not one": "!(process.env.CHOSEN != 1)",
+      "zero": "process.env.EMPTY == 0",
+      "no truth": "process.env.EMPTY == false",
+      "null": "process.env.UNSET == null",
+      "undefined": "process.env.UNSET == undefined",
+      "not null": "process.env.CHOSEN != null",
+      "a number and a boolean": "one == true",
+      "nothing": "nothing == undefined",
+      "a string": "process.env.CHOSEN == '1'",
+    };
+    const names = Object.keys(rows);
+    using dir = tempDir("aot-loosely-compared-environment", {
+      "app/package.json": `{ "name": "app" }`,
+      "app/main.cjs": `const { read } = require("chooser");\nfor (const line of read()) console.log(line);\n`,
+      "app/node_modules/chooser/package.json": `{ "name": "chooser", "version": "1.0.0", "main": "./index.cjs" }`,
+      "app/node_modules/chooser/index.cjs": `exports.read = () => [
+${names.map((_, index) => `  require("./${index}.cjs"),`).join("\n")}
+];
+`,
+      ...Object.fromEntries(
+        Object.entries(rows).flatMap(([name, test], index) => [
+          [
+            `app/node_modules/chooser/${index}.cjs`,
+            `const fs = require("node:fs"), path = require("node:path");
+let one = 1, nothing = null;
+let file = path.join(__dirname, "files/${index}-first.txt");
+if (${test}) file = path.join(__dirname, "files/${index}-chosen.txt");
+module.exports = fs.readFileSync(file, "utf8");
+`,
+          ],
+          [`app/node_modules/chooser/files/${index}-first.txt`, `${name}: first`],
+          [`app/node_modules/chooser/files/${index}-chosen.txt`, `${name}: chosen`],
+        ]),
+      ),
+    });
+    const [app, outfile] = ["app", "built.exe"].map(it => join(String(dir), it));
+    const built = await run(app, [bunExe(), "build", "--compile", "--aot", "./main.cjs", "--outfile", outfile]);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
+    const environments = [{ CHOSEN: "1", EMPTY: "" }, { CHOSEN: "2", EMPTY: "some", UNSET: "set" }, {}];
+    const all = environments.map(it => ({ ...bunEnv, CHOSEN: undefined, EMPTY: undefined, UNSET: undefined, ...it }));
+    const plain = await Promise.all(all.map(env => run(app, [bunExe(), "run", "./main.cjs"], env)));
+    renameSync(app, join(String(dir), "moved-away"));
+    const compiled = await Promise.all(
+      all.map(env => run(String(dir), [outfile], { ...env, BUN_JSC_crashIfInterpreterIsUsed: "1" })),
+    );
+    expect(plain[0]).toEqual({ stdout: names.map(it => `${it}: chosen\n`).join(""), stderr: "", exitCode: 0 });
+    expect(compiled).toEqual(plain);
+  }, 120_000);
 
   test("a route of Bun.serve() may be a file that --asset embeds", async () => {
     using dir = tempDir("aot-route-of-embedded-file", {

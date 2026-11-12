@@ -614,15 +614,11 @@ impl ServerConfig {
             _ => {}
         }
 
-        // `[serve.static] define` comes last so it overrides a top-level define with the same key.
-        let mut define = o.define.clone().unwrap_or_default();
-        if let Some(serve_define) = &o.serve_define {
-            define.keys.extend_from_slice(&serve_define.keys);
-            define.values.extend_from_slice(&serve_define.values);
+        if let Some(define) = &o.serve_define {
+            user_options.bundler_options.client.define = define.clone();
+            user_options.bundler_options.server.define = define.clone();
+            user_options.bundler_options.ssr.define = define.clone();
         }
-        user_options.bundler_options.client.define = define.clone();
-        user_options.bundler_options.server.define = define.clone();
-        user_options.bundler_options.ssr.define = define;
 
         user_options
     }

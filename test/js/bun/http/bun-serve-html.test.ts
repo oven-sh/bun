@@ -2348,9 +2348,9 @@ describe("production headers and import.meta.env", () => {
   });
 });
 
-// https://github.com/oven-sh/bun/issues/40479
+// The top-level table is for the code that runs on the server, and can hold what a browser must not get.
 test.concurrent.each(["true", "false"])(
-  "bunfig [define] applies to an html route's scripts with development: %s",
+  "only [serve.static] define applies to an html route's scripts with development: %s",
   async development => {
     using dir = tempDir("bun-serve-html-define", {
       "bunfig.toml": `[define]\nTOP_LEVEL = '"top"'\nBOTH = '"top"'\n\n[serve.static.define]\nBOTH = '"serve"'\n`,
@@ -2366,6 +2366,6 @@ test.concurrent.each(["true", "false"])(
       `,
     });
     const { stdout, stderr, exitCode } = await runServeFixture(dir);
-    expect({ stdout, exitCode }, stderr).toEqual({ stdout: `"values:","top","serve")`, exitCode: 0 });
+    expect({ stdout, exitCode }, stderr).toEqual({ stdout: `"values:",TOP_LEVEL,"serve")`, exitCode: 0 });
   },
 );

@@ -3003,6 +3003,7 @@ pub struct FileIn<S: Storage> {
     pub functions_written_by_loader: S::Few<FunctionWrittenByLoader>,
     /// Sorted by call and by start.
     pub known_evaluations: S::Few<KnownEvaluation>,
+    pub settled_evals: S::Few<CallId>,
     /// Sorted by sequence and by start.
     pub copied_factories: S::Few<CopiedFactory>,
     /// Has a top-level `import` or `export`.
@@ -3506,6 +3507,11 @@ impl<S: Storage> FileIn<S> {
         &all[first..first + count]
     }
 
+    #[inline]
+    pub fn is_settled_eval(&self, call: CallId) -> bool {
+        !self.settled_evals.is_empty() && self.settled_evals.binary_search(&call).is_ok()
+    }
+
     /// The arguments of `call` that the program writes.
     pub fn written_args(&self, call: CallId) -> IdList<ExprId> {
         let args = self[call].args;
@@ -3818,6 +3824,7 @@ macro_rules! file_in_storage {
             texts_written_by_loader: $few!($this.texts_written_by_loader),
             functions_written_by_loader: $few!($this.functions_written_by_loader),
             known_evaluations: $few!($this.known_evaluations),
+            settled_evals: $few!($this.settled_evals),
             copied_factories: $few!($this.copied_factories),
             has_module_syntax: $this.has_module_syntax,
             has_errors: $this.has_errors,
@@ -3974,6 +3981,7 @@ impl FileBuilder {
             texts_written_by_loader,
             functions_written_by_loader,
             known_evaluations,
+            settled_evals,
             copied_factories,
             has_module_syntax,
             has_errors,
@@ -4086,6 +4094,7 @@ impl FileBuilder {
         texts_written_by_loader.clear();
         functions_written_by_loader.clear();
         known_evaluations.clear();
+        settled_evals.clear();
         copied_factories.clear();
         *has_module_syntax = Default::default();
         *has_errors = Default::default();

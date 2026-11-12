@@ -238,7 +238,13 @@ fn find_functions_of_parameter(
         None => Given::Unknown,
         Some(None) => Given::Nothing,
         Some(Some(given)) if is_undefined(given) => Given::Nothing,
-        Some(Some(given)) => find_named(given).map_or(Given::Another, Given::Function),
+        Some(Some(given)) => match find_named(given) {
+            Some(function) => Given::Function(function),
+            None => match hir[hir.skip_type_assertions(given)].kind {
+                ExprKind::Fn(_) | ExprKind::Class(_) => Given::Another,
+                _ => Given::Unknown,
+            },
+        },
     };
     let default = hir[parameter].default.some().and_then(find_named);
     Some(FunctionsOfParameter { given, default })

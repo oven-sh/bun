@@ -150,7 +150,7 @@ pub(super) fn call_method(text: &Rc<[u8]>, name: &[u8], args: &[Value]) -> Optio
             for arg in args {
                 joined.extend_from_slice(&arg.to_text()?);
             }
-            joined.into()
+            joined.is_ascii().then_some(joined)?.into()
         }
         b"toUpperCase" if is_ascii => text.to_ascii_uppercase().into(),
         b"toLowerCase" if is_ascii => text.to_ascii_lowercase().into(),
@@ -177,7 +177,7 @@ pub(super) fn call_method(text: &Rc<[u8]>, name: &[u8], args: &[Value]) -> Optio
             let byte = (index >= 0.0 && index.fract() == 0.0).then(|| text.get(index as usize))?;
             byte.map_or(&[][..], std::slice::from_ref).into()
         }
-        b"repeat" => {
+        b"repeat" if is_ascii => {
             let count = first?.as_number()?;
             let is_count = count >= 0.0 && count.fract() == 0.0 && count < 1024.0;
             is_count.then(|| text.repeat(count as usize))?.into()
@@ -186,13 +186,13 @@ pub(super) fn call_method(text: &Rc<[u8]>, name: &[u8], args: &[Value]) -> Optio
             let at = index_of(text, text_of_first()?);
             return Some(Value::Number(at.map_or(-1.0, |at| at as f64)));
         }
-        b"includes" if args.len() == 1 => {
+        b"includes" if is_ascii && args.len() == 1 => {
             return Some(Value::Boolean(index_of(text, text_of_first()?).is_some()));
         }
-        b"startsWith" if args.len() == 1 => {
+        b"startsWith" if is_ascii && args.len() == 1 => {
             return Some(Value::Boolean(text.starts_with(text_of_first()?)));
         }
-        b"endsWith" if args.len() == 1 => {
+        b"endsWith" if is_ascii && args.len() == 1 => {
             return Some(Value::Boolean(text.ends_with(text_of_first()?)));
         }
         _ => return None,

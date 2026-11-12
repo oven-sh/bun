@@ -1,4 +1,5 @@
 mod evaluator;
+mod settled;
 mod strings;
 mod values;
 
@@ -9,7 +10,7 @@ use bun_core::strings::{contains, index_of_any, split};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::hir::{
     CallId, Chain, ExprId, ExprKind, File, FileBuilder, FnBody, FnId, FnKind, Keyword,
-    KnownEvaluation, PatKind, TypeNodeKind,
+    KnownEvaluation, PatKind, StmtKind, TypeNodeKind, UnOp,
 };
 use bun_sema::resolve::TreeChange;
 use bun_sema::session::Arena;
@@ -17,6 +18,7 @@ use bun_sema_parser::{AppendedExpression, parse_appended_expressions};
 use rustc_hash::FxHashSet;
 
 use self::evaluator::{Evaluator, TEXT_PER_SOURCE};
+pub(crate) use self::settled::find_settled_evals;
 use crate::engine::describe_regexp_syntax_error;
 use crate::load::import_functions::declares;
 use crate::load::react_compiler::module_items::finish_file;
@@ -79,6 +81,26 @@ fn find_evaluating_calls(hir: &File<'_>) -> Vec<EvaluatingCall> {
         }
     });
     calls.collect()
+}
+
+fn find_ranges_of_classes(hir: &File<'_>) -> Vec<(u32, u32)> {
+    let statements = hir.stmts.iter().filter_map(|it| match it.kind {
+        StmtKind::Class(class) => Some((hir[class].text_start, it.loc.end)),
+        _ => None,
+    });
+    let expressions = hir.exprs.iter().filter_map(|it| match it.kind {
+        ExprKind::Class(class) => Some((hir[class].text_start, it.end)),
+        _ => None,
+    });
+    let mut ranges: Vec<(u32, u32)> = statements.chain(expressions).collect();
+    ranges.sort_unstable();
+    ranges.dedup_by(|inner, outer| inner.1 <= outer.1);
+    ranges
+}
+
+fn is_within(ranges: &[(u32, u32)], pos: u32) -> bool {
+    let after = ranges.partition_point(|it| it.0 <= pos);
+    after > 0 && pos < ranges[after - 1].1
 }
 
 fn start_of_code(hir: &File<'_>, function: FnId) -> u32 {
@@ -192,8 +214,27 @@ fn is_function_to_compile(
         let mut params = file[function].params.iter();
         params.any(|it| matches!(file[file[it].pat].kind, PatKind::Ident(own) if own == name))
     };
+    let is_call_target = |target: ExprId| matches!(file[target].kind, ExprKind::Call(_));
+    let (first, last) = (file[root].pos, file[root].end);
+    let own_statements = file.stmts.iter().rev().take_while(|it| it.start >= first);
+    let has_call_target = own_statements
+        .filter(|it| it.start < last)
+        .any(|it| match it.kind {
+            StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => {
+                matches!(file[left].kind, StmtKind::Expr(target) if is_call_target(target))
+            }
+            _ => false,
+        });
+    if has_call_target {
+        return false;
+    }
     let mut expressions = file.exprs[expressions_before..].iter();
     expressions.all(|it| match it.kind {
+        ExprKind::Assign { target, .. } if is_call_target(target) => false,
+        ExprKind::Unary {
+            op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+            operand,
+        } if is_call_target(operand) => false,
         ExprKind::Ident(known::eval) => false,
         ExprKind::Ident(name @ (known::require | known::module | known::exports)) => {
             is_parameter(name)
@@ -252,11 +293,14 @@ fn append_texts<'s>(
     found: Vec<(CallId, Vec<Rc<[u8]>>)>,
 ) -> TreeChange {
     let is_strict_file = hir.is_strict || is_module;
+    let classes = find_ranges_of_classes(hir);
     let strict_evals: FxHashSet<CallId> = calls
         .iter()
         .filter(|it| {
             let innermost = it.functions.last();
-            is_strict_file || innermost.is_some_and(|&function| hir[function].is_strict)
+            is_strict_file
+                || innermost.is_some_and(|&function| hir[function].is_strict)
+                || is_within(&classes, hir[hir[it.call].callee].pos)
         })
         .filter(|it| !it.is_of_function)
         .map(|it| it.call)

@@ -16,7 +16,7 @@ use bun_resolve_builtins::Alias;
 use bun_sema::atom::Interner;
 use bun_sema::bind::Bound;
 use bun_sema::fold::Decisions;
-use bun_sema::hir::{self, ExprId, File, NodeData};
+use bun_sema::hir::{self, CallId, ExprId, File, NodeData};
 use bun_sema::hir_from_data::{DataValue, FOLDER_OF_DATABASE, HostValue};
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{HostLoader, HostModuleId};
@@ -1922,6 +1922,18 @@ impl CodeHost for LoadHost<'_> {
         match self.write_known_evaluations(arena, atoms, file, source, false) {
             TreeChange::Unchanged => change,
             written => written,
+        }
+    }
+
+    fn find_settled_evals<'s>(
+        &self,
+        hir: &File<'s>,
+        bound: &Bound<'s>,
+        atoms: &Interner<'s>,
+    ) -> Vec<CallId> {
+        match self.input.options.load.runs_tests {
+            true => Vec::new(),
+            false => known_evaluations::find_settled_evals(hir, bound, atoms),
         }
     }
 

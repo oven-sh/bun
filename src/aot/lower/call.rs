@@ -117,10 +117,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if bound.eval_scope(call).is_some() {
             return scope::lower_direct_eval(self, call);
         }
-        if let ExprKind::Call(id) = hir[call].kind
-            && !hir.known_evaluations_of(id).is_empty()
-        {
-            return self.lower_known_function_call(call, id, evaluation.tail);
+        if let ExprKind::Call(id) = hir[call].kind {
+            if hir.is_settled_eval(id) {
+                return scope::lower_direct_eval(self, call);
+            }
+            if !hir.known_evaluations_of(id).is_empty() {
+                return self.lower_known_function_call(call, id, evaluation.tail);
+            }
         }
         if matches!(hir[site.callee].kind, ExprKind::Super) {
             return self.lower_super_call(call);

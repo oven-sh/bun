@@ -88,7 +88,10 @@ describe("Bun.CSRF", () => {
     const expiring = CSRF.generate(secret, { expiresIn: 100 });
     expect(CSRF.verify(lasting, { secret })).toBe(true);
 
-    while (CSRF.verify(expiring, { secret })) await Bun.sleep(1);
+    while (CSRF.verify(expiring, { secret })) {
+      if (performance.now() - start > 4000) throw new Error("The token is still valid 4 seconds after it was made.");
+      await Bun.sleep(1);
+    }
     // Not ahead of its time. The slack is for a wall clock that is adjusted meanwhile.
     expect(performance.now() - start).toBeGreaterThan(80);
     expect(CSRF.verify(expiring, { secret })).toBe(false);

@@ -27,7 +27,11 @@ function fileDescriptorLeakChecker(path: string) {
   const initial = descriptorsOfProcess ? 0 : getMaxFD();
   return {
     async [Symbol.asyncDispose]() {
-      while (openDescriptors(path) > initial) await Bun.sleep(1);
+      const start = performance.now();
+      while (openDescriptors(path) > initial) {
+        if (performance.now() - start > 4000) throw new Error(`${path} is still open 4 seconds after the test.`);
+        await Bun.sleep(1);
+      }
     },
   };
 }

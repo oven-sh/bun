@@ -2999,6 +2999,10 @@ const PATHS_OF_CHANGED_FILES: &[(&str, &[&str])] = &[
         &["/p/a.js"],
     ),
     (
+        "import { writeFileSync } from 'node:fs'; ((write = writeFileSync) => write('/p/a.js', text))(globalThis.writer);",
+        &["/p/a.js"],
+    ),
+    (
         "import { writeFileSync } from 'node:fs'; function save(text, write = writeFileSync) { write('/p/a.js', text); } save(text);",
         &["/p/a.js"],
     ),
@@ -3121,7 +3125,7 @@ const CALLS_THAT_CHANGE_NO_FILE_THAT_IS_KNOWN: &[&str] = &[
     "import { writeFileSync } from 'node:fs'; writeFileSync(...all);",
     "export {}; other.file('/p/a.js').write(text);",
     "import { writeFileSync } from 'node:fs'; (write => write('/p/a.js', text))(...others, writeFileSync);",
-    "import { writeFileSync } from 'node:fs'; ((write = writeFileSync) => write('/p/a.js', text))(other);",
+    "import { writeFileSync } from 'node:fs'; ((write = writeFileSync) => write('/p/a.js', text))(() => {});",
 ];
 
 fn describe_paths_of_changed_files(text: &str) -> Vec<String> {

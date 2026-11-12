@@ -4,8 +4,8 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Decl, Parent, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
-    self, BinOp, Chain, ExprId, ExprKind, FnBody, FnId, FnKind, IdList, MemberKey, PropId, PropKey,
-    PropKind, StmtId, StmtKind, UnOp,
+    self, BinOp, Chain, ExprId, ExprKind, FnBody, FnId, FnKind, IdList, MemberKey, PatKind, PropId,
+    PropKey, PropKind, StmtId, StmtKind, UnOp,
 };
 use bun_sema::util::FxHashMap;
 use smallvec::SmallVec;
@@ -125,12 +125,25 @@ impl Finder<'_, '_> {
             ExprKind::Unary {
                 op: UnOp::Typeof,
                 operand,
-            } => matches!(self.hir[operand].kind, ExprKind::Ident(_)),
+            } => self.is_same_name(operand, right),
             _ => false,
         };
         let is_text = |side: ExprId| matches!(self.hir[side].kind, ExprKind::String(_));
-        matches!(self.hir[right].kind, ExprKind::Ident(_))
-            && ((looks_at_name(one) && is_text(other)) || (looks_at_name(other) && is_text(one)))
+        (looks_at_name(one) && is_text(other)) || (looks_at_name(other) && is_text(one))
+    }
+
+    fn is_same_name(&self, looked_at: ExprId, read: ExprId) -> bool {
+        let (ExprKind::Ident(name), ExprKind::Ident(read_name)) =
+            (self.hir[looked_at].kind, self.hir[read].kind)
+        else {
+            return false;
+        };
+        let binding = self.bound.binding(read);
+        let never_throws = match binding {
+            Binding::Symbol(symbol) => self.has_no_dead_zone(symbol),
+            Binding::CommonJs(_) | Binding::Arguments(_) | Binding::Free => true,
+        };
+        name == read_name && self.bound.binding(looked_at) == binding && never_throws
     }
 
     fn requires_by_names_of_body(&self, function: FnId, loader: &Loader) -> bool {
@@ -392,7 +405,11 @@ impl Finder<'_, '_> {
         let is_stable = [load, modules, cache, entries]
             .iter()
             .all(|&symbol| bound.is_stable_binding(symbol));
+        let takes_plain_parameters = hir[function].params.iter().all(|it| {
+            hir[it].default.is_none() && matches!(hir[hir[it].pat].kind, PatKind::Ident(_))
+        });
         is_stable
+            && takes_plain_parameters
             && hir[function].kind == FnKind::Decl
             && self.is_plain_function(function)
             && others.iter().all(looks_at_require)

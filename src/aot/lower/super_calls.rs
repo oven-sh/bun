@@ -186,6 +186,7 @@ impl FileLowering<'_, '_, '_, '_> {
 
     fn evaluates_text(&self, call: ExprId) -> bool {
         self.bound.eval_scope(call).is_some()
+            || matches!(self.hir[call].kind, ExprKind::Call(id) if self.hir.is_settled_eval(id))
     }
 
     fn is_plain_parent(&mut self, parent: FunctionRef) -> bool {

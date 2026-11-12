@@ -1370,6 +1370,7 @@ async function run(program: Program): Promise<void> {
     // What compiled code lays in store ahead of a deed shows in nothing that a program prints. Of 8,046 programs the worst held 1.48 times what plain Bun held.
     // Not where a program grows its data on purpose, where collections are off for a count, or under a sanitizer.
     // Both sides are told with the driver's memory in them, and the watcher may look at neither at its most: what looks too much is run again.
+    // Then the largest process of each side is compared. What all processes of a run hold together is known by the watcher's looks alone.
     const isTooMuch = (most: number, mostOfPlain: number) => most > 2 * mostOfPlain + 64;
     if (
       !isASAN &&

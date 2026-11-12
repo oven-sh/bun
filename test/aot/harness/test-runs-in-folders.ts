@@ -87,9 +87,14 @@ const wordsOfAll = process.env.AOT_TEST_RUN_WORDS ?? "";
 // What a case asks for, and what it gets: ../supported raises the limit where Bun has assertions. Undefined: the flag of the runner says it there, and this file cannot read the flag.
 const limitOfACase = 180_000;
 const limitThatACaseGets = atLeastWhatTheRunnerGave(limitOfACase, isASAN || isDebug);
-// A run that has not ended half a minute before that is killed, and its case fails with what the run wrote up to there: a case that passes its own limit shows nothing of its runs, and
-// `bun test` ends no child of a case that ran beside others. Where the flag of the runner says the limit a run has none, as before.
-const limitOfARun = limitThatACaseGets === undefined ? undefined : limitThatACaseGets - 30_000;
+// A run that has not ended half a minute before its case does is killed, and the case fails with what the run wrote up to there: a case that passes its own limit shows nothing of its runs, and
+// `bun test` ends no child of a case that ran beside others. The time counts from where the case began: the run under under.txt starts when the other two have ended.
+// Where the flag of the runner says the limit a run has none, as before. `run` takes 0 for no limit, so a run that starts too late has a millisecond.
+const beforeTheCaseEnds = 30_000;
+const leftForARun = (caseBegan: number) =>
+  limitThatACaseGets === undefined
+    ? undefined
+    : Math.max(1, Math.round(limitThatACaseGets - beforeTheCaseEnds - (performance.now() - caseBegan)));
 // What `run` answers for a child that a signal ended: this much above the number of the signal. The limit ends a run with SIGKILL, which is 9.
 const endedBySignal = 128;
 
@@ -115,7 +120,7 @@ function saidBy(runs: Record<string, object>) {
     .join("\n");
 }
 
-async function outcomeOf(dir: string, words: string, ...flags: string[]) {
+async function outcomeOf(dir: string, words: string, caseBegan: number, ...flags: string[]) {
   layPackages(dir);
   // As users run it: whoever runs this file may have switched the thread off that reads the texts.
   const oneThread = !flags.includes("--aot") && existsSync(join(dir, "one-thread.txt")) ? "1" : "0";
@@ -125,13 +130,9 @@ async function outcomeOf(dir: string, words: string, ...flags: string[]) {
     BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: oneThread,
     BUN_DEBUG_TEST_AOT_WORDS: words,
   };
+  const limit = leftForARun(caseBegan);
   const started = performance.now();
-  const { stdout, stderr, exitCode } = await run(
-    [bunExe(), "test", ...flags, ...testFilesIn(dir)],
-    dir,
-    env,
-    limitOfARun,
-  );
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, ...testFilesIn(dir)], dir, env, limit);
   const lasted = performance.now() - started;
   const lines = stderr.split("\n");
   const outcome = {
@@ -142,8 +143,9 @@ async function outcomeOf(dir: string, words: string, ...flags: string[]) {
     // A run that dies says why here, and nowhere else.
     lastWords: exitCode > 1 ? lines.filter(Boolean).slice(-12) : [],
   };
-  const isKilledAtItsLimit = limitOfARun !== undefined && exitCode === endedBySignal + 9 && lasted >= limitOfARun;
-  stderrOf.set(outcome, isKilledAtItsLimit ? `${stderr}\nKILLED at its time limit of ${limitOfARun / 1000} s` : stderr);
+  const isKilledAtItsLimit = limit !== undefined && exitCode === endedBySignal + 9 && lasted >= limit;
+  const killed = `KILLED after ${Math.round(lasted / 1000)} s, ${beforeTheCaseEnds / 1000} s before the time limit of its case`;
+  stderrOf.set(outcome, isKilledAtItsLimit ? `${stderr}\n${killed}` : stderr);
   return outcome;
 }
 
@@ -155,6 +157,7 @@ export function testRunsInFolders(part: number, parts: number) {
   const stretch = Math.ceil(projects.length / parts);
   for (const [area, project] of projects.slice((part - 1) * stretch, part * stretch)) {
     test(`${area}/${project}`, async () => {
+      const began = performance.now();
       // See the head of this file: such a folder stays behind where the tree is carried, and the project then runs without its packages.
       expect(literalPackagesIn(join(root, area, project)).slice(0, 3)).toEqual([]);
       // See the head of this file: the runner would run such a file where it lies, by itself and without the packages of its project, and here it would be no test file that is named in its order.
@@ -162,7 +165,7 @@ export function testRunsInFolders(part: number, parts: number) {
       const said = saidOf(join(root, area, project));
       if (said) {
         using dir = tempDir("aot-test-run-in-folder", join(root, area, project));
-        const compiled = await outcomeOf(String(dir), wordsOfAll, "--aot", ...flagsOf(join(root, area, project)));
+        const compiled = await outcomeOf(String(dir), wordsOfAll, began, "--aot", ...flagsOf(join(root, area, project)));
         // The file says nothing of the counts.
         const { printed, tests, exitCode, lastWords } = compiled;
         expect({ printed, tests, exitCode, lastWords }, saidBy({ "bun test --aot": compiled })).toEqual(said);
@@ -173,8 +176,8 @@ export function testRunsInFolders(part: number, parts: number) {
       using compiledDir = tempDir("aot-test-run-in-folder", join(root, area, project));
       const flags = flagsOf(join(root, area, project));
       const [plain, compiled] = await Promise.all([
-        outcomeOf(String(plainDir), "", ...flags),
-        outcomeOf(String(compiledDir), wordsOfAll, "--aot", ...flags),
+        outcomeOf(String(plainDir), "", began, ...flags),
+        outcomeOf(String(compiledDir), wordsOfAll, began, "--aot", ...flags),
       ]);
       // Neither run is made again: where plain Bun has more than one answer the project fails, and what it races for is fixed in the project.
       const butForItsMark = markOf(join(root, area, project));
@@ -194,7 +197,7 @@ export function testRunsInFolders(part: number, parts: number) {
       if (!existsSync(join(root, area, project, "under.txt"))) return;
       using checkedDir = tempDir("aot-test-run-in-folder", join(root, area, project));
       const words = readFileSync(join(root, area, project, "under.txt"), "utf8").trim();
-      const checked = await outcomeOf(String(checkedDir), words, "--aot", ...flags);
+      const checked = await outcomeOf(String(checkedDir), words, began, "--aot", ...flags);
       expect(checked, saidBy({ [`bun test --aot, under ${words}`]: checked, "bun test": plain })).toEqual(plain);
     }, limitOfACase);
   }

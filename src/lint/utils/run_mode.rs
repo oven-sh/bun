@@ -10,8 +10,8 @@
 //! [`Report::fix_where_safe`]: crate::context::Report::fix_where_safe
 
 use crate::ast::{
-    Expr, ExprTag, File, Flags, Ident, Import, ImportEqualsTarget, ImportSpec, Name, Node, Stmt,
-    StmtKind, StmtTag,
+    BinOp, Expr, ExprKind, ExprTag, File, Flags, Ident, Import, ImportEqualsTarget, ImportSpec,
+    Name, Node, Stmt, StmtKind, StmtTag,
 };
 use crate::semantic::Reference;
 
@@ -267,28 +267,31 @@ fn has_use_strict<'a>(file: &'a File<'a>) -> bool {
     directives.any(|it| it == b"use strict")
 }
 
-/// True if a statement at the top level calls `require()` or assigns to `module.exports`. It runs, so a file without
-/// an `import` or `export` is CommonJS.
-fn has_commonjs_statement<'a>(file: &'a File<'a>) -> bool {
+/// True if the file calls `require()` where Bun can't drop the call as dead code, or a statement at the top level
+/// assigns to `module.exports`. Either one runs, so a file without an `import` or `export` is CommonJS.
+fn has_commonjs_code<'a>(file: &'a File<'a>) -> bool {
     let is_global = |name: &'static str| {
         move |it: Reference<'a>| it.expr().filter(|it| it.is_ident(name) && it.symbol().is_none())
     };
-    let is_top_level = |e: Expr<'a>| {
-        let statement = match e.parent() {
-            Node::VarDecl(declarator) => Node::VarDecl(declarator).parent(),
-            parent => parent,
-        };
-        matches!(statement, Node::Stmt(it) if matches!(it.parent(), Node::File(_)))
+    // Nothing around it is a condition, which can be a constant.
+    let always_counts = |e: Expr<'a>| {
+        Node::Expr(e).ancestors().all(|it| match it {
+            Node::Expr(it) => !matches!(
+                it.kind(),
+                ExprKind::Cond { .. }
+                    | ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. }
+            ),
+            Node::Stmt(it) => matches!(it.tag(), StmtTag::Expr | StmtTag::Var | StmtTag::Return),
+            _ => true,
+        })
     };
-    // `require("a")` and `const a = require("a")`
+    // `require("a")`
     let requires = file.unresolved_references_to(b"require");
     let is_called = |it: Expr<'a>| match it.parent() {
-        Node::Expr(call) => {
-            call.as_call().is_some_and(|call| call.callee() == it) && is_top_level(call)
-        }
+        Node::Expr(call) => call.as_call().is_some_and(|call| call.callee() == it),
         _ => false,
     };
-    if requires.filter_map(is_global("require")).any(is_called) {
+    if requires.filter_map(is_global("require")).any(|it| is_called(it) && always_counts(it)) {
         return true;
     }
     // `module.exports = a` and `module.exports.a = b`
@@ -302,8 +305,11 @@ fn has_commonjs_statement<'a>(file: &'a File<'a>) -> bool {
             target = member;
         }
         let is_assigned = |it: Expr<'a>| it.as_assign().is_some_and(|it| it.1 == target);
+        let is_statement = |it: Expr<'a>| {
+            matches!(it.parent(), Node::Stmt(it) if matches!(it.parent(), Node::File(_)))
+        };
         target != module
-            && matches!(target.parent(), Node::Expr(it) if is_assigned(it) && is_top_level(it))
+            && matches!(target.parent(), Node::Expr(it) if is_assigned(it) && is_statement(it))
     })
 }
 
@@ -324,7 +330,7 @@ pub fn keeps_module_format<'a>(file: &'a File<'a>, edit: Edit<'a>) -> bool {
         // A file without any of these is an ES module, until it has a `require()`.
         let has_module_syntax =
             imports().next().is_some() || file.has_stmts([StmtTag::ExportNamed]);
-        return !has_module_syntax && (has_use_strict(file) || has_commonjs_statement(file));
+        return !has_module_syntax && (has_use_strict(file) || has_commonjs_code(file));
     }
     // These make a file CommonJS whatever its package.json says. With an `import` that Bun keeps, it doesn't load.
     let is_top_level = |it: Stmt<'a>| Node::Stmt(it).enclosing_function().is_none();

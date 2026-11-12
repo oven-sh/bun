@@ -1990,43 +1990,45 @@ pub fn find_bin_conflicts(
     let dependencies = buffers.dependencies.as_slice();
     let resolutions = buffers.resolutions.as_slice();
     let string_buf = buffers.string_bytes.as_slice();
-    let bins = lockfile.packages.items_bin();
-
-    let package_id = resolutions[dependency_id as usize];
-    let rows = lockfile.packages.items_dependencies()[package_id as usize];
-    let is_own =
-        |owner: PackageID| (rows.begin()..rows.end()).any(|row| resolutions[row as usize] == owner);
-    if !(rows.begin()..rows.end()).any(|row| {
-        (bins.get(resolutions[row as usize] as usize)).is_some_and(|bin| bin.tag != Tag::None)
-    }) {
-        return Vec::new();
-    }
 
     // The trees that the package resolves its dependencies in, nearest first.
     let alias = dependencies[dependency_id as usize].name.slice(string_buf);
-    let nested = (trees.iter()).find(|tree| {
-        tree.parent == tree_id
-            && tree.folder_name(dependencies, string_buf) == alias
-            && !tree.is_unlinked_member(trees, hoisted, dependencies)
-    });
-    let mut ancestors: Vec<tree::Id> = nested.map(|tree| tree.id).into_iter().collect();
+    let nested_id = (trees.iter())
+        .find(|tree| {
+            tree.parent == tree_id
+                && tree.folder_name(dependencies, string_buf) == alias
+                && !tree.is_unlinked_member(trees, hoisted, dependencies)
+        })
+        .map(|tree| tree.id);
+    let mut ancestors: Vec<tree::Id> = nested_id.into_iter().collect();
     let mut current = tree_id;
     while current != tree::INVALID_ID {
         ancestors.push(current);
         current = trees[current as usize].parent;
     }
-    let nested_id = nested.map(|tree| tree.id);
-    let owners: Vec<StringHashMap<PackageID>> = (ancestors.iter())
-        .map(|&tree_id| {
-            let mut owners = bin_owners(lockfile, direct_packages, tree_id);
-            // The package that a tree is nested in may link its conflicts into the tree's `.bin`.
-            if Some(tree_id) != nested_id && !lockfile.is_importer_tree_id(tree_id) {
-                let tree = &trees[tree_id as usize];
-                for conflict in
-                    find_bin_conflicts(lockfile, direct_packages, tree.parent, tree.dependency_id)
-                {
-                    for name in &conflict.names {
-                        bun_core::handle_oom(owners.put(name, conflict.package_id));
+
+    let package_id = resolutions[dependency_id as usize];
+    let mut conflicts = dependency_bins(lockfile, package_id, &ancestors);
+    if conflicts.is_empty() {
+        return conflicts;
+    }
+
+    let rows = lockfile.packages.items_dependencies()[package_id as usize];
+    let is_own = |owner: PackageID| {
+        owner == package_id
+            || (rows.begin()..rows.end()).any(|row| resolutions[row as usize] == owner)
+    };
+    let owners: Vec<StringHashMap<PackageID>> = (ancestors.iter().enumerate())
+        .map(|(i, &id)| {
+            let mut owners = bin_owners(lockfile, direct_packages, id, package_id);
+            // The package that a tree is nested in may link its dependencies into the tree's `.bin`.
+            if Some(id) != nested_id && !lockfile.is_importer_tree_id(id) {
+                let parent_id = resolutions[trees[id as usize].dependency_id as usize];
+                for bins in dependency_bins(lockfile, parent_id, &ancestors[i..]) {
+                    if !is_own(bins.package_id) {
+                        for name in &bins.names {
+                            bun_core::handle_oom(owners.put(name, bins.package_id));
+                        }
                     }
                 }
             }
@@ -2034,7 +2036,35 @@ pub fn find_bin_conflicts(
         })
         .collect();
 
-    let mut conflicts = Vec::new();
+    conflicts.retain_mut(|conflict| {
+        conflict.names.retain(|name| {
+            (owners.iter())
+                .find_map(|owners| owners.get(&**name).copied())
+                .is_some_and(|owner| !is_own(owner))
+        });
+        !conflict.names.is_empty()
+    });
+    conflicts
+}
+
+/// All bins of the dependencies of `package_id`, which resolve in `ancestors`.
+fn dependency_bins(
+    lockfile: &Lockfile,
+    package_id: PackageID,
+    ancestors: &[tree::Id],
+) -> Vec<BinConflict> {
+    let buffers = &lockfile.buffers;
+    let trees = buffers.trees.as_slice();
+    let hoisted = buffers.hoisted_dependencies.as_slice();
+    let dependencies = buffers.dependencies.as_slice();
+    let resolutions = buffers.resolutions.as_slice();
+    let string_buf = buffers.string_bytes.as_slice();
+    let bins = lockfile.packages.items_bin();
+    let Some(rows) = (lockfile.packages.items_dependencies()).get(package_id as usize) else {
+        return Vec::new();
+    };
+
+    let mut result = Vec::new();
     for row in rows.begin()..rows.end() {
         let dependency_package_id = resolutions[row as usize];
         let Some(&bin) = bins.get(dependency_package_id as usize) else {
@@ -2067,30 +2097,24 @@ pub fn find_bin_conflicts(
             dependency_package_id,
             alias,
             node_modules.slice(),
-            |name| {
-                let owner = owners.iter().find_map(|owners| owners.get(name).copied());
-                if owner.is_some_and(|owner| owner != dependency_package_id && !is_own(owner)) {
-                    names.push(Box::from(name));
-                }
-            },
+            |name| names.push(Box::from(name)),
         );
-        if !names.is_empty() {
-            conflicts.push(BinConflict {
-                package_id: dependency_package_id,
-                alias,
-                node_modules: Box::from(node_modules.slice()),
-                names,
-            });
-        }
+        result.push(BinConflict {
+            package_id: dependency_package_id,
+            alias,
+            node_modules: Box::from(node_modules.slice()),
+            names,
+        });
     }
-    conflicts
+    result
 }
 
-/// The package that each name in a tree's `.bin` links to.
+/// The package other than `excluded` that is first in `LinkOrder` for each name in a tree's `.bin`.
 fn bin_owners(
     lockfile: &Lockfile,
     direct_packages: &DynamicBitSet,
     tree_id: tree::Id,
+    excluded: PackageID,
 ) -> StringHashMap<PackageID> {
     let buffers = &lockfile.buffers;
     let string_buf = buffers.string_bytes.as_slice();
@@ -2116,7 +2140,7 @@ fn bin_owners(
             package_resolutions[package_id as usize].tag,
             alias.slice(string_buf),
         );
-        (bin.tag != Tag::None).then_some((order, package_id, alias))
+        (bin.tag != Tag::None && package_id != excluded).then_some((order, package_id, alias))
     })
     .collect();
     packages.sort_by_key(|&(order, ..)| order);

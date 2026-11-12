@@ -5144,7 +5144,9 @@ class ClientHttp2Session extends Http2Session {
       process.nextTick(emitStreamErrorNT, self, stream, error, self.#isClosedAndIdle());
     }),
     streamError: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) => {
-      if (!self || typeof stream !== "object") return;
+      if (!self) return;
+      // A refused push has no Http2Stream, but it can be the last stream that close() waits for.
+      if (typeof stream !== "object") return self.#maybeDestroy();
       self.#flushPendingRequests();
       process.nextTick(emitStreamErrorNT, self, stream, error, self.#isClosedAndIdle());
     }),

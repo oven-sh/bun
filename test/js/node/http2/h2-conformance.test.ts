@@ -1429,6 +1429,28 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
     await once(client, "close");
   });
 
+  test.each([
+    ["it cancels", requestHeaderBlock("GET"), ErrorCode.CANCEL],
+    ["is malformed", Buffer.from([0x82]), ErrorCode.PROTOCOL_ERROR],
+  ])("session.close() completes when its last stream is a push that %s", async (_, block, code) => {
+    using ctx = await openRequest();
+    const { raw, client, req } = ctx;
+    raw.socket!.write(
+      Buffer.concat([
+        encodeFrame(FrameType.HEADERS, 0x5, 1, STATUS_200),
+        encodeFrame(FrameType.PUSH_PROMISE, 0, 1, Buffer.from([0, 0, 0, 2])),
+      ]),
+    );
+    await once(req, "close");
+    // The rest of that read.
+    await new Promise(resolve => setImmediate(resolve));
+    client.close();
+    expect((await raw.waitFor(f => f.type === FrameType.GOAWAY)).payload.readUInt32BE(0)).toBe(2);
+    raw.sendFrame(FrameType.CONTINUATION, 0x4, 1, block);
+    await once(client, "close");
+    expect((await raw.waitFor(f => f.type === FrameType.RST_STREAM)).payload.readUInt32BE(0)).toBe(code);
+  });
+
   test("the client's GOAWAY carries the last promised stream id, so the server finishes the push", async () => {
     using ctx = await openRequest();
     const { raw, client } = ctx;

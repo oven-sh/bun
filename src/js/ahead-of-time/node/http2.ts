@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 69ded6bcdcbe551348d75d148b77f62d4f7e93a4c4fe14c745bf65f037704166.
+// Written against that file with the SHA-256 93be3c0aefe189c368d034e48e5b57aed61e040eac8932230f4196300854bcde.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -5267,7 +5267,9 @@ class ClientHttp2Session extends Http2Session {
       process.nextTick(emitStreamErrorNT, self, stream, error, self.#isClosedAndIdle());
     }),
     streamError: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) => {
-      if (!self || typeof stream !== "object") return;
+      if (!self) return;
+      // A refused push has no Http2Stream, but it can be the last stream that close() waits for.
+      if (typeof stream !== "object") return self.#maybeDestroy();
       self.#flushPendingRequests();
       process.nextTick(emitStreamErrorNT, self, stream, error, self.#isClosedAndIdle());
     }),

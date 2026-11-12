@@ -40,7 +40,7 @@ async function createServer(settings: http2.Settings): Promise<TestContext> {
     settings,
   });
 
-  server.on("stream", (stream, _headers) => {
+  server.on("stream", (stream: http2.ServerHttp2Stream, _headers) => {
     const chunks: Buffer[] = [];
 
     stream.on("data", (chunk: Buffer) => {
@@ -257,7 +257,7 @@ describe("HTTP/2 small window size (flow control)", () => {
     await waitForSettings(client);
 
     // Send 3 parallel 32KB requests
-    const promises = [];
+    const promises: Promise<{ receivedBytes: number }>[] = [];
     for (let i = 0; i < 3; i++) {
       const data = Buffer.alloc(32 * 1024, String(i));
       promises.push(sendRequest(client, data));
@@ -321,7 +321,7 @@ describe("HTTP/2 small window size (flow control)", () => {
 
     // Send 3 parallel 18KB requests immediately (each > 16KB server window)
     // Total = 54KB < 65535 connection window
-    const promises = [];
+    const promises: Promise<{ receivedBytes: number }>[] = [];
     for (let i = 0; i < 3; i++) {
       const data = Buffer.alloc(18 * 1024, String(i));
       promises.push(sendRequest(client, data, `/test${i}`));
@@ -424,7 +424,7 @@ describe("HTTP/2 gRPC-style framing", () => {
       },
     });
 
-    server.on("stream", (stream, _headers) => {
+    server.on("stream", (stream: http2.ServerHttp2Stream, _headers) => {
       const chunks: Buffer[] = [];
 
       stream.on("data", (chunk: Buffer) => {
@@ -517,7 +517,7 @@ describe("HTTP/2 gRPC-style framing", () => {
 
     await waitForSettings(client);
 
-    const promises = [];
+    const promises: Promise<{ receivedBytes: number }>[] = [];
     for (let i = 0; i < 5; i++) {
       const payload = Buffer.alloc(32 * 1024, String.fromCharCode(97 + i));
       promises.push(sendGrpcRequest(client, payload, `/test.Service/Method${i}`));

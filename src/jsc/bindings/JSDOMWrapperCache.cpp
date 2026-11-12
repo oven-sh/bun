@@ -27,7 +27,7 @@
 
 namespace WebCore {
 
-void setSubclassStructure(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSC::JSObject* jsObject, JSC::Structure* (*baseStructure)(JSC::VM&, JSDOMGlobalObject&))
+JSC::Structure* subclassStructure(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, JSC::Structure* (*baseStructure)(JSC::VM&, JSDOMGlobalObject&))
 {
     JSC::JSObject* newTarget = callFrame->newTarget().getObject();
     JSC::JSObject* constructor = callFrame->jsCallee();
@@ -40,13 +40,11 @@ void setSubclassStructure(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFra
         newTarget = constructor;
 
     auto* functionGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);
-    RETURN_IF_EXCEPTION(scope, void());
+    RETURN_IF_EXCEPTION(scope, nullptr);
     auto* newTargetGlobalObject = defaultGlobalObject(functionGlobalObject);
     auto* structure = baseStructure(vm, *newTargetGlobalObject);
-    RETURN_IF_EXCEPTION(scope, void());
-    auto* subclassStructure = JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, structure);
-    RETURN_IF_EXCEPTION(scope, void());
-    jsObject->setStructure(vm, subclassStructure);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_AND_RETURN(scope, JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, structure));
 }
 
 } // namespace WebCore

@@ -44,7 +44,7 @@ async function getDevServerURL() {
     },
     stdio: ["ignore", "pipe", "inherit"],
   });
-  dev_server.stdout?.unref?.();
+  (dev_server.stdout as any)?.unref?.();
   var hasLoaded = false;
   dev_server_pid = dev_server.pid;
 

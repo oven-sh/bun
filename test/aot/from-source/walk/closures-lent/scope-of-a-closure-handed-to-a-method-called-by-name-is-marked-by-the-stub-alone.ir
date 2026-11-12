@@ -1,0 +1,23 @@
+# Nothing is known of `bus`, so the plan counts the arrow among what may keep the scope of `t`; the way past it keeps nothing, and `add` is entered itself: the cells are handed back.
+# The arrow is written into the frame and left to the stub of the call by name. `go` sets no mark: `twice` only calls its first argument, and behind that call the cell is the next call's. In front of `keep` the stub moves the arrow to the heap and marks the scope: the arrow that `keep` holds goes on adding to the `t` of its own call.
+# f1 = twice, f2 = keep, f3 = go
+# -- source: scope-of-a-closure-handed-to-a-method-called-by-name-is-marked-by-the-stub-alone.ts
+# declare function publish(...values: unknown[]): void;
+# let held: ((x: number) => number) | undefined;
+# function twice(job: (x: number) => number): number { return job(1) + job(2); }
+# function keep(job: (x: number) => number): number { held = job; return 1; }
+# function go(bus: any, k: number): number { let t = k; function add(x: number): void { t += x; } add(1); if (bus) bus.run((x: number) => t += x); return t; }
+# publish(go, twice, keep, () => held);
+# -- end of source
+# RUN: bytes f3 mechanisms=all-Inlining
+# CHECK: CallMethod{{*}}Lending.First count 1
+# RUN(FORM): walk f3 mechanisms=all-Inlining
+# FORM: ReleaseEnvironment
+# RUN(MARK): emit f3 mechanisms=all-Inlining
+# MARK-NOT: Store8({{*}}collectorState
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: handed-back link-at=8
+# RUN(SHELL): run-in-shell globalThis.publish = (go, twice, keep, held) => { const calls = { run: twice }, keeps = { run: keep }; print(go(calls, 10), go(undefined, 20), go(keeps, 30), go(calls, 40), held()(0), go(undefined, 50), held()(5), go(keeps, 60), held()(0)); const seen = []; for (let i = 0; i < 300; i++) { go(i % 3 ? calls : keeps, i); if (i % 3 === 0) seen.push(held()); if (i % 50 === 49) gc(); } let wrong = 0; for (let i = 0; i < seen.length; i++) { if (seen[i](0) !== 3 * i + 1) wrong++; } print(seen.length, wrong); const foreign = { run(job) { this.job = job; return job(1); } }; print(go(foreign, 70), go(calls, 80), foreign.job(0), go(new Proxy({ }, { get() { return keep; } }), 90), go(calls, 100), held()(0)); };
+# SHELL: 14 21 31 44 31 51 36 61 61
+# SHELL-NEXT: 100 0
+# SHELL-NEXT: 72 84 72 91 104 91

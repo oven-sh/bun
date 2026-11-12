@@ -1,0 +1,4 @@
+a(b, (c) => /* prettier-ignore */ (d) => { e( ); });
+a(b, (c) =>
+  // prettier-ignore
+  (d) => { e( ); });

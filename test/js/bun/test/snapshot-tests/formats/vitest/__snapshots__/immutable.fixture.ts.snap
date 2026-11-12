@@ -1,0 +1,138 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`immutable > List 1`] = `
+Immutable.List [
+  1,
+  "two",
+  {
+    "three": 3,
+  },
+]
+`;
+
+exports[`immutable > Map 1`] = `
+Immutable.Map {
+  "a": 1,
+  "b": Immutable.List [
+    2,
+  ],
+}
+`;
+
+exports[`immutable > Map with object keys 1`] = `
+Immutable.Map {
+  {
+    "k": 1,
+  }: "v",
+}
+`;
+
+exports[`immutable > OrderedMap 1`] = `
+Immutable.OrderedMap {
+  "z": 1,
+  "a": 2,
+}
+`;
+
+exports[`immutable > OrderedSet 1`] = `
+Immutable.OrderedSet [
+  "z",
+  "a",
+]
+`;
+
+exports[`immutable > Range 1`] = `Immutable.Seq […]`;
+
+exports[`immutable > Record 1`] = `
+Immutable.Record {
+  "a": 5,
+  "b": "two",
+}
+`;
+
+exports[`immutable > Seq indexed 1`] = `
+Immutable.Seq [
+  1,
+  2,
+]
+`;
+
+exports[`immutable > Seq keyed 1`] = `
+Immutable.Seq {
+  "a": 1,
+}
+`;
+
+exports[`immutable > Seq set 1`] = `
+Immutable.Seq [
+  1,
+]
+`;
+
+exports[`immutable > Set 1`] = `
+Immutable.Set [
+  1,
+  2,
+]
+`;
+
+exports[`immutable > Stack 1`] = `
+Immutable.Stack [
+  1,
+  2,
+]
+`;
+
+exports[`immutable > empty List 1`] = `Immutable.List []`;
+
+exports[`immutable > empty Map 1`] = `Immutable.Map {}`;
+
+exports[`immutable > empty Set 1`] = `Immutable.Set []`;
+
+exports[`immutable > holds plain values 1`] = `
+Immutable.List [
+  Map {
+    "a" => 1,
+  },
+  [
+    1,
+  ],
+  [Function],
+  1970-01-01T00:00:00.000Z,
+]
+`;
+
+exports[`immutable > in an object 1`] = `
+{
+  "list": Immutable.List [
+    1,
+  ],
+  "m": Immutable.Map {
+    "k": "v",
+  },
+}
+`;
+
+exports[`immutable > lazy Seq 1`] = `Immutable.Seq […]`;
+
+exports[`immutable > lazy keyed Seq 1`] = `Immutable.Seq {…}`;
+
+exports[`immutable > named Record 1`] = `
+Immutable.Point {
+  "x": 2,
+}
+`;
+
+exports[`immutable > nested 1`] = `
+Immutable.Map {
+  "a": Immutable.List [
+    1,
+    Immutable.Map {
+      "b": Immutable.List [
+        2,
+      ],
+    },
+  ],
+  "c": Immutable.Map {},
+}
+`;

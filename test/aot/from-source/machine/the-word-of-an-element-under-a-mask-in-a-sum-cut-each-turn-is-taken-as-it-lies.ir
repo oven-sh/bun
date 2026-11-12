@@ -1,0 +1,20 @@
+# -- source: main.cjs
+# 'use strict';
+# const k = new Array(8); for (let i = 0; i < 8; i++) k[i] = (i * 3 + 1) & 255;
+# function f(t) { let s = t & 7; for (let i = 0; i < 64; i++) s = (s + k[i & 7]) | 0; return s & 1023; }
+# let all = 0; for (let t = 0; t < 5; t++) all = (all + f(t)) % 1000003; console.log(all);
+# -- end of source
+# The list holds int32s by Link, and what it gives is cut to an int32. Whoever cuts takes the word as it lies in the list while it is no hole's. A number that is converted and held against itself to
+# show that it is whole counts as an integer found too, and costs four to seven instructions more.
+# The sizes are what the loops of f1 hold (the turns laid out, the written turn, the closed copy), and two more. While the number of the element was a join they held 130, 20 and 30:
+# every count of the road stayed as it was, and the loops were a third slower.
+# RUN(COUNT): compile TruncatedElementsReadAsInt32 mechanisms=all
+# COUNT-NOT: statistic TruncatedElementsReadAsInt32 0
+# The first: the turns laid out behind the question whether the list is longer than the mask, without their bound.
+# RUN(X64): loops most:52,93,17,32 f1 mechanisms=all
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 52
+# X64-NEXT: loop: at most 93
+# X64-NEXT: loop: at most 17
+# X64-NEXT: loop: at most 32

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -10,6 +10,17 @@ function enableEcho(terminal: Bun.Terminal) {
 }
 
 describe("Bun.Terminal", () => {
+  test("[Symbol.asyncDispose] is named [Symbol.asyncDispose], and is writable, configurable and not enumerable", () => {
+    const { value, ...attributes } = Object.getOwnPropertyDescriptor(Bun.Terminal.prototype, Symbol.asyncDispose)!;
+    expect({ name: value.name, length: value.length, ...attributes }).toEqual({
+      name: "[Symbol.asyncDispose]",
+      length: 0,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  });
+
   describe("constructor", () => {
     test("creates a PTY with default options", async () => {
       await using terminal = new Bun.Terminal({});
@@ -685,7 +696,7 @@ describe("Bun.Terminal", () => {
 
   describe("exit callback", () => {
     test("exit callback is called on close", async () => {
-      let exitCode: number | null = null;
+      let exitCode = null as number | null;
       const { promise, resolve } = Promise.withResolvers<void>();
 
       const terminal = new Bun.Terminal({
@@ -856,6 +867,70 @@ describe("Bun.Terminal", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(JSON.parse(stdout)).toEqual({ exits: 4, collected: 4, callbacksAfterExit: 0, leakedFds: 0 });
+      expect(exitCode).toBe(0);
+    });
+
+    // On Windows the child's exit leaves the writer open, and the next write()
+    // fails with EPIPE inside the call. The writer reports the error, the
+    // terminal closes itself, and the writer still holds the payload it could
+    // not send. That payload used to pass for input that waits for a drain:
+    // write() rooted the wrapper again, after the last callback that could
+    // release it. On POSIX the write is dropped (see the test above). On every
+    // platform the terminal must become collectable.
+    test("terminal is released after a write() that follows the child's exit", async () => {
+      const childSrc = /* js */ `
+        const N = 4;
+        let collected = 0;
+        const registry = new FinalizationRegistry(() => collected++);
+        let exits = 0;
+        const cmd = process.platform === "win32" ? ["cmd.exe", "/c", "exit 0"] : ["sh", "-c", "exit 0"];
+
+        async function one(i) {
+          const { promise: ptyClosed, resolve } = Promise.withResolvers();
+          let proc = Bun.spawn(cmd, {
+            terminal: {
+              data() {},
+              exit() {
+                exits++;
+                resolve();
+              },
+            },
+          });
+          let terminal = proc.terminal;
+          registry.register(terminal, i);
+          const procExited = proc.exited;
+          proc = null;
+          await procExited;
+          await ptyClosed;
+          try {
+            terminal.write("x");
+          } catch {}
+          terminal = null;
+        }
+
+        for (let i = 0; i < N; i++) await one(i);
+
+        let sink;
+        function churn() {
+          for (let i = 0; i < 500; i++) sink = { i, a: new Array(32).fill(i) };
+        }
+        for (let i = 0; i < 50 && collected < N; i++) {
+          churn();
+          Bun.gc(true);
+          await new Promise(r => setImmediate(r));
+        }
+        console.log(JSON.stringify({ exits, collected }));
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", childSrc],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ exits: 4, collected: 4 });
       expect(exitCode).toBe(0);
     });
   });
@@ -1127,7 +1202,7 @@ describe("Bun.Terminal", () => {
       });
 
       // Do multiple operations concurrently
-      const promises = [];
+      const promises: Promise<void>[] = [];
 
       for (let i = 0; i < 10; i++) {
         promises.push(
@@ -1573,4 +1648,59 @@ describe.concurrent("Bun.spawn with terminal option", () => {
     await Promise.all(Array.from({ length: N }, one));
     expect(outcomes).toEqual(Array.from({ length: N }, () => "data"));
   });
+
+  // https://github.com/oven-sh/bun/issues/42171
+  // On macOS a pty's session leader can't finish exiting until the parent reads what it wrote to the terminal.
+  // If it got that far before the parent's kqueue watch (ESRCH), the parent used to block in wait4() on the
+  // thread that reads the pty, forever. The worker and the garbage slow the parent down into that window.
+  const limit = isDebug || isASAN ? 60_000 : 20_000;
+  test.skipIf(isWindows)(
+    "a pty child that exits before the parent watches it is still reaped",
+    async () => {
+      using dir = tempDir("pty-early-exit", {
+        "churn.js": `
+          let keep = [];
+          (function churn() {
+            for (let i = 0; i < 2000; i++) {
+              keep.push(new Uint8Array(1 + ((i * 7919) % 65536)), { s: Buffer.alloc(i % 300, "x").toString() });
+              if (keep.length > 4000) keep = [];
+            }
+            setTimeout(churn, 0);
+          })();
+        `,
+        "spawn.js": `
+          new Worker(new URL("./churn.js", import.meta.url).href);
+          let exited = 0;
+          async function lane() {
+            for (let i = 0; i < 10; i++) {
+              const garbage = Array.from({ length: 20_000 }, (_, n) => ({ n }));
+              const proc = Bun.spawn({ cmd: ["sh", "-c", "echo hi"], terminal: { data() {} } });
+              if ((await proc.exited) === 0 && garbage.length) exited++;
+            }
+          }
+          await Promise.all([lane(), lane(), lane(), lane()]);
+          console.log(exited + " exited");
+          process.exit(0);
+        `,
+      });
+      // The deadlock blocks the event loop, so only another process can notice it.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "spawn.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: limit,
+        killSignal: "SIGKILL",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, signalCode: proc.signalCode }).toEqual({
+        stdout: "40 exited\n",
+        stderr: "",
+        signalCode: null,
+      });
+      expect(exitCode).toBe(0);
+    },
+    limit + 10_000,
+  );
 });

@@ -29,6 +29,7 @@ public:
         IsWasm = 16,
         IsFunction = 32,
         IsAsync = 64,
+        IsSloppyFunctionCall = 128,
     };
 
 private:
@@ -40,6 +41,9 @@ private:
     OrdinalNumber m_columnNumber;
     intptr_t m_sourceID;
     unsigned int m_flags;
+#if ENABLE(AOT)
+    JSC::AOT::Typed::ModuleID m_compiledModule;
+#endif
 
 public:
     using Base = JSC::JSNonFinalObject;
@@ -79,6 +83,7 @@ public:
     bool isStrict() const { return m_flags & static_cast<unsigned int>(Flags::IsStrict); }
     bool isNative() const { return m_flags & static_cast<unsigned int>(Flags::IsNative); }
     bool isAsync() const { return m_flags & static_cast<unsigned int>(Flags::IsAsync); }
+    bool isSloppyFunctionCall() const { return m_flags & static_cast<unsigned int>(Flags::IsSloppyFunctionCall); }
 
     void setLineNumber(OrdinalNumber lineNumber) { m_lineNumber = lineNumber; }
     void setColumnNumber(OrdinalNumber columnNumber) { m_columnNumber = columnNumber; }

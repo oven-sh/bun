@@ -218,10 +218,10 @@ static inline EncodedJSValue jsPerformanceServerTimingPrototypeFunction_toJSONBo
     result->putDirect(vm, vm.propertyNames->name, nameValue);
     auto durationValue = toJS<IDLDouble>(*lexicalGlobalObject, throwScope, impl.duration());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "duration"_s), durationValue);
+    Bun::putDirectNamed(vm, result, "duration"_s, durationValue);
     auto descriptionValue = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, impl.description());
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, Identifier::fromString(vm, "description"_s), descriptionValue);
+    Bun::putDirectNamed(vm, result, "description"_s, descriptionValue);
     return JSValue::encode(result);
 }
 
@@ -252,11 +252,12 @@ bool JSPerformanceServerTimingOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC:
     return false;
 }
 
-void JSPerformanceServerTimingOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSPerformanceServerTimingOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsPerformanceServerTiming = static_cast<JSPerformanceServerTiming*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, jsPerformanceServerTiming->protectedWrapped().ptr(), jsPerformanceServerTiming);
+    return FinalizeResult::KeepImpl;
 }
 
 #if ENABLE(BINDING_INTEGRITY)

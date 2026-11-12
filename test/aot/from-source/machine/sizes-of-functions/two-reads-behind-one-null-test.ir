@@ -1,0 +1,20 @@
+# f1 = sum
+# -- source: two-reads-behind-one-null-test.ts
+# class Point {
+#   x: number;
+#   y: number;
+#   constructor(x: number, y: number) { this.x = x; this.y = y; }
+# }
+# function sum(point: Point | null): number {
+#   if (point === null) return 0;
+#   return point.x + point.y;
+# }
+# declare const input: any;
+# (globalThis as any).answer = sum(input ? new Point(+input, +input) : null);
+# -- end of source
+# The compiler before this one: 6 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 6, patches 0, moves 1, unlikely or rare 0.
+# RUN(X64): steps most:7 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 7

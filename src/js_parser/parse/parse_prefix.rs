@@ -1,4 +1,3 @@
-#![allow(clippy::single_match)]
 #![warn(unused_must_use)]
 use bun_collections::VecExt;
 
@@ -694,7 +693,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if Self::IS_TYPESCRIPT_ENABLED {
             // Skip over TypeScript type arguments here if there are any
             if p.lexer.token == T::TLessThan {
-                let _ = p.try_skip_type_script_type_arguments_with_backtracking();
+                let _ = p.try_skip_type_script_type_arguments_with_backtracking()?;
             }
         }
 
@@ -963,7 +962,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // "<T>(x)"
             // "<T>(x) => {}"
-            match p.try_skip_type_script_type_parameters_then_open_paren_with_backtracking() {
+            match p.try_skip_type_script_type_parameters_then_open_paren_with_backtracking()? {
                 SkipTypeParameterResult::DidNotSkipAnything => {}
                 result => {
                     p.lexer.expect(T::TOpenParen)?;

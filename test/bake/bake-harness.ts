@@ -1,4 +1,4 @@
-/// <reference path="../../src/bake/bake.d.ts" />
+/// <reference path="../../src/runtime/bake/bake.d.ts" />
 /* Dev server tests can be run with `bun test` or in interactive mode with `bun run test.ts "name filter"`
  *
  * Env vars:
@@ -1731,7 +1731,6 @@ async function writeAll(root: string, files: FileObject) {
     fs.mkdirSync(path.dirname(filename), { recursive: true });
     const formattedContents =
       typeof contents === "string" ? dedent(contents).replaceAll("{{root}}", root.replaceAll("\\", "\\\\")) : contents;
-    // @ts-expect-error the type of Bun.write is too strict
     promises.push(Bun.write(filename, formattedContents));
   }
   await Promise.all(promises);

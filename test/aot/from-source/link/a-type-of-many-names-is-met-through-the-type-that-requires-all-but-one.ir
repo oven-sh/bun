@@ -1,0 +1,19 @@
+# T requires sixteen names, U those and b, V those and c too. A type of sixteen names and more that requires one name more than another type is met by those that meet the other and hold the name:
+# U through T, V through U or through the odd literal, which holds c and lacks b and meets T alone. The families are what a walk through all the names of each pair finds.
+# -- source: main.ts
+# declare function print(value: any): void;
+# type T = { a0: number; a1: number; a2: number; a3: number; a4: number; a5: number; a6: number; a7: number; a8: number; a9: number; a10: number; a11: number; a12: number; a13: number; a14: number; a15: number };
+# type U = { a0: number; a1: number; a2: number; a3: number; a4: number; a5: number; a6: number; a7: number; a8: number; a9: number; a10: number; a11: number; a12: number; a13: number; a14: number; a15: number; b: number };
+# type V = { a0: number; a1: number; a2: number; a3: number; a4: number; a5: number; a6: number; a7: number; a8: number; a9: number; a10: number; a11: number; a12: number; a13: number; a14: number; a15: number; b: number; c: number };
+# function base(): T { return { a0: 0, a1: 1, a2: 2, a3: 3, a4: 4, a5: 5, a6: 6, a7: 7, a8: 8, a9: 9, a10: 10, a11: 11, a12: 12, a13: 13, a14: 14, a15: 15 }; }
+# function ask(x: T | U | V): string { return ("b" in x ? "has" : "lacks") + " " + ("c" in x ? "deep" : "flat") + " " + x.a15; }
+# const odd: T = { ...base(), c: 9 } as T;
+# const plain: T = base(), full: U = { ...base(), b: 2 }, deep: V = { ...base(), b: 3, c: 4 };
+# print(ask(odd) + " | " + ask(plain) + " | " + ask(full) + " | " + ask(deep));
+# -- end of source
+# RUN(FAMILIES): link families mechanisms=all
+# FAMILIES: family F0 [L1, L2]
+# FAMILIES-NEXT: family F1 [L0, L1, L2]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: lacks deep 15 | lacks flat 15 | has flat 15 | has deep 15
+# ANSWERS-NEXT: exited with 0

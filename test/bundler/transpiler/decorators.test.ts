@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
 
@@ -1054,6 +1054,47 @@ test("decorator and declare", () => {
 
   new A();
   expect(counter).toBe(1);
+});
+
+test("removes decorated declare and abstract fields from a class expression", async () => {
+  const source = `
+    const A = class {
+      @dec declare a: number;
+      @dec static declare b: number;
+      @dec abstract c: string;
+      @dec declare [key]: number;
+      @dec declare private d: number;
+      e = 1;
+      @dec f = 2;
+      @dec m() {}
+    };
+  `;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const transpiler = new Bun.Transpiler({
+          loader: "ts",
+          tsconfig: { compilerOptions: { experimentalDecorators: true } },
+        });
+        process.stdout.write(transpiler.transformSync(${JSON.stringify(source)}));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "const A = class {
+      e = 1;
+      f = 2;
+      m() {}
+    };"
+  `);
+  expect(exitCode).toBe(0);
 });
 
 test("lowering many decorated instance fields into a large constructor body stays linear", async () => {

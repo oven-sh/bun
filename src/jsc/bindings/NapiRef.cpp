@@ -68,7 +68,7 @@ void NapiEnv::drainOneRefFinalizer(napi_env env, void*, void*)
     }
     Zig::NapiRef* ref = env->m_pendingRefFinalizers.takeFirst();
     if (!env->m_pendingRefFinalizers.isEmpty()) {
-        napi_internal_enqueue_finalizer(env, drainOneRefFinalizer, env, nullptr);
+        Bun__napi_enqueue_finalizer(env, drainOneRefFinalizer, env, nullptr);
     }
     // May delete `ref` and enqueue or delete other refs.
     ref->callFinalizer();

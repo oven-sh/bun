@@ -30,7 +30,6 @@ namespace WebCore {
 class WEBCORE_EXPORT JSMessagePort : public JSEventTarget {
 public:
     using Base = JSEventTarget;
-    using DOMWrapped = MessagePort;
     static JSMessagePort* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<MessagePort>&& impl)
     {
         JSMessagePort* ptr = new (NotNull, JSC::allocateCell<JSMessagePort>(globalObject->vm())) JSMessagePort(structure, *globalObject, WTF::move(impl));
@@ -76,7 +75,7 @@ protected:
 class WEBCORE_EXPORT JSMessagePortOwner final : public JSC::WeakHandleOwner {
 public:
     bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
+    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final;
 };
 
 inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, MessagePort*)

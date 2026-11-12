@@ -1,0 +1,58 @@
+# A slim closure is a word that names its function, and its captures: 16 bytes and 8 for each capture. A full one has the layout of a JSFunction: 48 bytes and up.
+# Either is a complete function object, whoever gets hold of it: a slim one gets storage of its own when it is asked for what it lacks. So the form is an expectation
+# that leans on no fact, and it is the same whatever is withheld. Slim: what is expected to be called and nothing else.
+# Full: what the stubs cannot make slim (a generator, a function that takes new.target or itself, more than eight captures, a class), and a function that is written to construct, whose `prototype` is read.
+# -- source: closure-forms.ts
+# declare function use(...values: unknown[]): void;
+# function makeAll(a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) {
+#   function plain(x: number) { return a + x; }
+#   const arrow = () => a;
+#   const capturesNothing = () => 1;
+#   const capturesEight = () => a + b + c + d + e + f + g + h;
+#   const capturesNine = () => a + b + c + d + e + f + g + h + i;
+#   async function later() { return a; }
+#   const holder = { method() { return a; }, get got() { return a; }, set got(value: number) { a = value; } };
+#   function* generator() { yield a; }
+#   function asksHowItWasCalled() { return new.target === undefined ? a : b; }
+#   const namesItself = function self(): unknown { return a ? self : null; };
+#   function Constructs(this: { x: number }) { this.x = a; }
+#   class Class { constructor() { use(a); } member() { return a; } static fixed() { return a; } }
+#   use(plain, arrow, capturesNothing, capturesEight, capturesNine, later, holder, generator, asksHowItWasCalled, namesItself, new (Constructs as any)(), Class);
+# }
+# makeAll(1, 2, 3, 4, 5, 6, 7, 8, 9);
+# -- end of source
+# RUN: walk f1 mechanisms=none
+# CHECK-LABEL: code f1:Body
+# CHECK: NewClosure {{*}}function=f7 closureForm=Slim
+# CHECK: NewClosure {{*}}function=f8 closureForm=Slim
+# CHECK: NewClosure {{*}}function=f9 closureForm=Slim
+# CHECK: NewClosure {{*}}function=f10 traits=
+# CHECK: NewClosure {{*}}function=f11 closureForm=Slim
+# CHECK: NewClosure {{*}}function=f12 closureForm=Slim
+# CHECK: NewClosure {{*}}function=f13 closureForm=Slim
+# CHECK: NewClosure {{*}}function=f14 traits=
+# CHECK: NewClosure {{*}}function=f15 traits=
+# CHECK: NewClosure {{*}}function=f16 closureForm=Slim
+# CHECK: NewClosure {{*}}function=f17 closureForm=Slim
+# CHECK: NewClosure {{*}}function=f2 closureForm=Slim
+# CHECK: NewClosure {{*}}function=f3 closureForm=Slim
+# CHECK: NewClosure {{*}}function=f4 traits=
+# CHECK: NewClosure {{*}}function=f5 traits=
+# CHECK: NewClosure {{*}}function=f6 traits=
+# The members of a class are made by its record then, in the form that the tables say.
+# RUN(ALL): walk f1 mechanisms=all
+# ALL-LABEL: code f1:Body
+# ALL: NewClosure {{*}}function=f7 closureForm=Slim
+# ALL: NewClosure {{*}}function=f8 closureForm=Slim
+# ALL: NewClosure {{*}}function=f9 closureForm=Slim
+# ALL: NewClosure {{*}}function=f10 traits=
+# ALL: NewClosure {{*}}function=f11 closureForm=Slim
+# ALL: NewClosure {{*}}function=f12 closureForm=Slim
+# ALL: NewClosure {{*}}function=f13 closureForm=Slim
+# ALL: NewClosure {{*}}function=f14 traits=
+# ALL: NewClosure {{*}}function=f15 traits=
+# ALL: NewClosure {{*}}function=f2 closureForm=Slim
+# ALL: NewClosure {{*}}function=f3 closureForm=Slim
+# ALL: NewClosure {{*}}function=f4 traits=
+# ALL: NewClosure {{*}}function=f5 traits=
+# ALL: NewClosure {{*}}function=f6 traits=

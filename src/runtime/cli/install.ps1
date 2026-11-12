@@ -29,7 +29,8 @@ $MinBuildName = "Windows 10 1809 / Windows Server 2019"
 
 $WinVer = [System.Environment]::OSVersion.Version
 if ($WinVer.Major -lt 10 -or ($WinVer.Major -eq 10 -and $WinVer.Build -lt $MinBuild)) {
-  Write-Warning "Bun requires at ${MinBuildName} or newer.`n`nThe install will still continue but it may not work.`n"
+  Write-Output "Install Failed:"
+  Write-Output "Bun requires ${MinBuildName} or newer.`n"
   return 1
 }
 
@@ -274,8 +275,8 @@ function Install-Bun {
 
   $hasExistingOther = $false;
   try {
-    $existing = Get-Command bun -ErrorAction
-    if ($existing.Source -ne "${BunBin}\bun.exe") {
+    $existing = Get-Command bun -ErrorAction SilentlyContinue
+    if ($existing -and $existing.Source -ne "${BunBin}\bun.exe") {
       Write-Warning "Note: Another bun.exe is already in %PATH% at $($existing.Source)`nTyping 'bun' in your terminal will not use what was just installed.`n"
       $hasExistingOther = $true;
     }

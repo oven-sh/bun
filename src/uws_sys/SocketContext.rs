@@ -161,18 +161,31 @@ impl Default for BunSocketContextOptions {
 
 impl BunSocketContextOptions {
     /// Build a BoringSSL `SSL_CTX` from these options. The passphrase is freed
-    /// inside this call once private-key load completes.
-    ///
-    /// Mode-neutral: the same `SSL_CTX*` may back client connects and server
-    /// accepts. CTX-level verify mode comes from `request_cert`/`ca`/
-    /// `reject_unauthorized` here; the per-socket client override (always run
-    /// chain validation, populate verify_error) is applied in
-    /// `us_internal_ssl_attach`, so a server reusing this ctx never sends
-    /// CertificateRequest unless these options asked it to.
+    /// inside this call once private-key load completes. The verify mode follows
+    /// `request_cert`/`reject_unauthorized` only; see `us_ssl_ctx_from_options`.
     pub fn create_ssl_context(self, err: &mut create_bun_socket_error_t) -> Option<OwnedSslCtx> {
         // SAFETY: FFI call; `self` is `#[repr(C)]` and passed by value, `err` is a valid out-param.
         // A non-null return carries the +1 from `SSL_CTX_new`.
         unsafe { OwnedSslCtx::from_raw(c::us_ssl_ctx_from_options(self, err)) }
+    }
+
+    /// Sets `digest` (this struct's `digest()`) as the session id context: see `us_ssl_apply_selected_ctx`.
+    pub fn create_ssl_context_with_digest(
+        self,
+        digest: &[u8; 32],
+        err: &mut create_bun_socket_error_t,
+    ) -> Option<OwnedSslCtx> {
+        let ctx = self.create_ssl_context(err)?;
+        // SAFETY: `ctx` is live and not shared yet; the call copies `digest`
+        // (32 bytes, the session id context maximum, so it cannot fail).
+        unsafe {
+            bun_boringssl_sys::SSL_CTX_set_session_id_context(
+                ctx.as_ptr(),
+                digest.as_ptr(),
+                digest.len(),
+            );
+        }
+        Some(ctx)
     }
 
     /// SHA-256 over every field this struct carries, dereferencing string
@@ -221,9 +234,7 @@ impl BunSocketContextOptions {
             hp.update(&[(!s.is_null()) as u8]);
             if !s.is_null() {
                 // SAFETY: NUL-terminated C string.
-                let bytes = unsafe { bun_core::ffi::cstr(s) }.to_bytes();
-                // SAFETY: `s[bytes.len()] == 0` (CStr invariant) and `s[..len]` is readable.
-                let path = unsafe { bun_core::ZStr::from_raw(s.cast::<u8>(), bytes.len()) };
+                let path = bun_core::ZStr::from_cstr(unsafe { bun_core::ffi::cstr(s) });
                 hp.update(path.as_bytes());
                 let mut meta: [i64; 3] = [0; 3];
                 if !path.as_bytes().is_empty() {

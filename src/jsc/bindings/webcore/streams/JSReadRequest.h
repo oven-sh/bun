@@ -28,12 +28,6 @@ public:
     static JSReadRequest* create(JSC::VM&, JSC::Structure*, Bun::WebStreams::ReadRequestKind, JSC::JSValue context);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
-    static size_t allocationSize(Checked<size_t> inlineCapacity)
-    {
-        ASSERT_UNUSED(inlineCapacity, inlineCapacity == 0U);
-        return sizeof(JSReadRequest);
-    }
-
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
@@ -55,9 +49,9 @@ public:
     // "chunk steps, given chunk"
     void chunkSteps(JSC::JSGlobalObject*, JSC::JSValue chunk);
     // "close steps"
-    void closeSteps(JSC::JSGlobalObject*);
+    void closeSteps(JSC::JSGlobalObject*, Bun::WebStreams::MayDefer = Bun::WebStreams::MayDefer::Yes);
     // "error steps, given e"
-    void errorSteps(JSC::JSGlobalObject*, JSC::JSValue error);
+    void errorSteps(JSC::JSGlobalObject*, JSC::JSValue error, Bun::WebStreams::MayDefer = Bun::WebStreams::MayDefer::Yes);
 
     const JSC::WriteBarrier<JSC::Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
     JSC::WriteBarrier<JSC::Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
@@ -87,12 +81,6 @@ public:
     static JSReadIntoRequest* create(JSC::VM&, JSC::Structure*, Bun::WebStreams::ReadIntoRequestKind, JSC::JSValue context);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
-    static size_t allocationSize(Checked<size_t> inlineCapacity)
-    {
-        ASSERT_UNUSED(inlineCapacity, inlineCapacity == 0U);
-        return sizeof(JSReadIntoRequest);
-    }
-
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
@@ -112,7 +100,7 @@ public:
     // "chunk steps, given chunk"
     void chunkSteps(JSC::JSGlobalObject*, JSC::JSArrayBufferView* chunk);
     // "close steps, given chunk" — chunk may be null (the spec's `undefined`).
-    void closeSteps(JSC::JSGlobalObject*, JSC::JSArrayBufferView* chunkOrNull);
+    void closeSteps(JSC::JSGlobalObject*, JSC::JSArrayBufferView* chunkOrNull, Bun::WebStreams::MayDefer = Bun::WebStreams::MayDefer::Yes);
     // "error steps, given e"
     void errorSteps(JSC::JSGlobalObject*, JSC::JSValue error);
 

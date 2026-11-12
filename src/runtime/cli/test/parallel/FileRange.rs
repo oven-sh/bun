@@ -3,7 +3,7 @@
 //! (furthest from the owner's hot region).
 
 #[derive(Copy, Clone)]
-pub struct FileRange {
+pub(crate) struct FileRange {
     pub(crate) lo: u32,
     pub(crate) hi: u32,
 }

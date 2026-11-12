@@ -7,7 +7,7 @@ test("http2 write() + end() pattern should only send two DATA frames (local serv
 
   const server = http2.createServer();
 
-  server.on("stream", (stream, headers) => {
+  server.on("stream", (stream: http2.ServerHttp2Stream, headers) => {
     stream.on("data", chunk => {
       // Track that we received data
       receivedDataFrames.push({
@@ -80,7 +80,7 @@ test("http2 end() without data should send END_STREAM with no DATA frames", asyn
 
   const server = http2.createServer();
 
-  server.on("stream", (stream, headers) => {
+  server.on("stream", (stream: http2.ServerHttp2Stream, headers) => {
     stream.on("data", chunk => {
       receivedDataFrames.push({ length: chunk.length });
     });
@@ -142,7 +142,7 @@ test("http2 end(data) should send data with END_STREAM in one frame", async () =
 
   const server = http2.createServer();
 
-  server.on("stream", (stream, headers) => {
+  server.on("stream", (stream: http2.ServerHttp2Stream, headers) => {
     stream.on("data", chunk => {
       receivedDataFrames.push({ length: chunk.length });
     });

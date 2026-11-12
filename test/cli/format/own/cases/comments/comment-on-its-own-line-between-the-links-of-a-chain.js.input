@@ -1,0 +1,7 @@
+await expect(foo()).rejects
+  // It would be great
+  .toThrow("x");
+a.b.c
+  // d
+  .e()
+  .f();

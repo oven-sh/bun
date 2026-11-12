@@ -1,0 +1,43 @@
+# -- source: main.js
+# import { link } from "./links.js";
+# globalThis.link = link;
+# class Chain {
+#   constructor() {
+#     this.first = undefined;
+#     this.last = undefined;
+#   }
+#   add(label, weight) {
+#     const link = globalThis["li" + "nk"](label, weight);
+#     if (this.last) this.last.after = link;
+#     else this.first = link;
+#     this.last = link;
+#   }
+#   each(visit) {
+#     let link = this.first;
+#     while (link) {
+#       visit(link.weight, link.label);
+#       link = link.after;
+#     }
+#   }
+# }
+# const chain = new Chain();
+# globalThis.kept = chain;
+# chain.add("a", 1);
+# chain.add("b", 2);
+# let said = "";
+# chain.each((weight, label) => {
+#   said += label + weight;
+# });
+# print(said);
+# -- source: links.js
+# export const link = (label, weight) => ({ label, weight, after: undefined });
+# -- end of source
+# RUN(EXPECTED): walk f5 mechanisms=all
+# EXPECTED-LABEL: code f5:Body
+# EXPECTED: = ShapeTest {{*}} layouts=[L0]
+# EXPECTED: = GetSlot {{*}} key="weight" receivers=[L0]
+# EXPECTED: = GetSlot {{*}} key="label" receivers=[L0]
+# EXPECTED: = GetSlot {{*}} key="after" receivers=[L0]
+# RUN(RIGHT): run-in-shell
+# RIGHT: a1b2
+# RIGHT-NEXT: exited with 0

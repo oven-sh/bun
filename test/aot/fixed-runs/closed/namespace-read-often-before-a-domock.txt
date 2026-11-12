@@ -1,0 +1,25 @@
+One function reads the object of import() fifty times, then under vi.doMock(), then behind vi.doUnmock().
+#### a.test.js
+import { test, vi } from "bun:test";
+const say = (...all) => console.log("| CASE", ...all);
+const read = object => object.who;
+test("t", async () => {
+  let last;
+  for (let i = 0; i < 50; i++) last = read(await import("./m.js"));
+  say(last);
+  vi.doMock("./m.js", () => { console.log("| CASE factory runs"); return { who: "mock", count: () => "mock" }; });
+  say(read(await import("./m.js")));
+  vi.doUnmock("./m.js");
+  say(read(await import("./m.js")));
+});
+#### m.js
+console.log("| CASE m runs");
+let n = 0;
+export const who = "real";
+export function count() { return ++n; }
+#### package.json
+{ "type": "module" }
+#### z.test.js
+import { test } from "bun:test";
+import "./m.js";
+test("other file", () => {});

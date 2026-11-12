@@ -85,9 +85,7 @@ server.listen(0, '127.0.0.1', common.mustCall(function() {
     assert.strictEqual(cipher.name, 'ECDHE-RSA-AES256-GCM-SHA384');
     assert.strictEqual(cipher.standardName,
                        'TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384');
-    assert.strictEqual(cipher.version, isBoringSSL ?
-      'TLSv1/SSLv3' :
-      'TLSv1.2');
+    assert.strictEqual(cipher.version, 'TLSv1.2');
     this.end();
   }));
 }));
@@ -112,9 +110,7 @@ tls.createServer({
       'TLS_AES_256_GCM_SHA384';
     assert.strictEqual(cipher.name, expectedCipher);
     assert.strictEqual(cipher.standardName, cipher.name);
-    assert.strictEqual(cipher.version, isBoringSSL ?
-      'TLSv1/SSLv3' :
-      'TLSv1.3');
+    assert.strictEqual(cipher.version, 'TLSv1.3');
     client.end();
   }));
 }));

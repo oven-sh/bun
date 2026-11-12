@@ -30,7 +30,6 @@ namespace WebCore {
 class JSPerformance : public JSEventTarget {
 public:
     using Base = JSEventTarget;
-    using DOMWrapped = Performance;
     static JSPerformance* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<Performance>&& impl)
     {
         JSPerformance* ptr = new (NotNull, JSC::allocateCell<JSPerformance>(globalObject->vm())) JSPerformance(structure, *globalObject, WTF::move(impl));
@@ -73,7 +72,7 @@ protected:
 class JSPerformanceOwner final : public JSC::WeakHandleOwner {
 public:
     bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
+    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final;
 };
 
 inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, Performance*)

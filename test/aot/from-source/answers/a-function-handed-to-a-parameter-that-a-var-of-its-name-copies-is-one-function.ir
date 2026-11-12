@@ -1,0 +1,30 @@
+# -- source: main.js
+# function hub() {
+#   const listeners = new Set();
+#   function on(cb, options = {}) { var cb = cb || null; listeners.add(cb); }
+#   function off(cb, options = {}) { var cb = cb || null; return listeners.delete(cb); }
+#   function handler() { return 1; }
+#   const add = () => on(handler), remove = () => off(handler);
+#   add();
+#   const gone = remove();
+#   return gone + ":" + listeners.size;
+# }
+# function handedOn() {
+#   const kept = [];
+#   function keep(what) { kept.push(what); }
+#   function take(what, times = 1) { var what; keep(what); }
+#   function worker() { return 2; }
+#   const first = () => take(worker), second = () => take(worker);
+#   first();
+#   second();
+#   return kept[0] === kept[1];
+# }
+# print(hub());
+# print(handedOn());
+# -- end of source
+# Beside a parameter with a default value a `var` of a parameter's name is a variable of its own, which starts as a copy of the parameter. Who looks at the variable looks at what was handed to the parameter:
+# so `handler` and `worker`, which inner functions read, are one function a run of their owner and are not made anew at each read.
+# RUN: run-in-shell
+# CHECK: true:0
+# CHECK-NEXT: true
+# CHECK-NEXT: exited with 0

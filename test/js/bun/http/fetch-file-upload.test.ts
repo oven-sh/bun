@@ -44,7 +44,7 @@ test("formData uploads roundtrip, with a call to .body", async () => {
     async fetch(req) {
       req.body;
 
-      return new Response(await req.formData());
+      return new Response((await req.formData()) as FormData);
     },
   });
 
@@ -108,7 +108,7 @@ test("formData uploads roundtrip, without a call to .body", async () => {
     port: 0,
     development: false,
     async fetch(req) {
-      return new Response(await req.formData());
+      return new Response((await req.formData()) as FormData);
     },
   });
 

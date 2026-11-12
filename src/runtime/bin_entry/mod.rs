@@ -52,6 +52,17 @@ static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
 #[global_allocator]
 static ALLOC: std::alloc::System = std::alloc::System;
 
+/// `alloc` calls this empty function before every allocation. rustc defines it only in the allocator shim it
+/// generates when rustc itself links the final artifact (`allocator_shim_contents`, rustc_codegen_ssa), as a
+/// tripwire against linking Rust libraries any other way (library/alloc/src/alloc.rs: "Make sure we don't
+/// accidentally allow omitting the allocator shim in stable code until it is actually stabilized"). This build
+/// links the rlibs itself, so it is defined here. Everything else a shim would hold already exists: the
+/// allocator symbols come from `#[global_allocator]` above, the allocation error handler from std.
+///
+/// A toolchain that renames the function (`_v2` → `_v3`) fails the link with an undefined symbol naming the new one.
+#[rustc_std_internal_symbol]
+fn __rust_no_alloc_shim_is_unstable_v2() {}
+
 /// ASAN runtime options override. Lives in the binary crate so it is a direct
 /// link input — the ASAN runtime weak-defines this symbol, and an rlib/archive
 /// member that only provides it would never be extracted, so the override in
@@ -121,11 +132,6 @@ pub(crate) extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_ch
         "leak:bun_runtime::node::fs_events::init_core_foundation\n",
         "leak:bun_runtime::node::fs_events::init_core_services\n",
         "leak:bun_runtime::node::fs_events::FSEventsLoop\n",
-        // Process-lifetime inspector thread. The debugger handles SIGINT and
-        // serves the WebSocket protocol up to (and during) `process.exit()`;
-        // joining it from `global_exit` would deadlock when the user is
-        // mid-breakpoint. The thread's stack/Arc are reclaimed by the OS.
-        "leak:bun_jsc::debugger::Debugger>::start_js_debugger_thread\n",
         "\0",
     )
     .as_ptr()
@@ -148,11 +154,31 @@ pub(crate) extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_ch
 /// the entire process — guaranteed by the C runtime that calls this symbol.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
+    // Before the first allocation. With glibc that one comes before `main`, and so does this call.
+    #[cfg(any(
+        target_os = "android",
+        all(target_os = "linux", not(target_env = "gnu"))
+    ))]
+    {
+        unsafe extern "C" {
+            safe fn Bun__askForAddressSpaceToStart();
+        }
+        Bun__askForAddressSpaceToStart();
+    }
+
     // 0. Capture argv FIRST — before the crash handler, whose panic path
     //    dumps the command line via `bun_core::argv()`.
     //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives
     //    for the entire process.
     unsafe { bun_core::init_argv(argc, argv) };
+
+    // Everything below calls into simdutf, including the crash handler.
+    if !bun_simdutf_sys::simdutf::has_any_implementation() {
+        unsafe extern "C" {
+            safe fn bun_abort_missing_simd() -> !;
+        }
+        bun_abort_missing_simd();
+    }
 
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();

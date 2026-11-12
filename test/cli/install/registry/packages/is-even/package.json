@@ -1,0 +1,23 @@
+{
+  "_id": "is-even",
+  "name": "is-even",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "is-even",
+      "version": "1.0.0",
+      "main": "index.js",
+      "dependencies": {
+        "is-odd": "^0.1.2"
+      },
+      "_id": "is-even@1.0.0",
+      "dist": {
+        "integrity": "sha512-6c3dxDk3p5tQpJ383S1xh+3jvVpJ6Gyz+2T/LA6m01qdHwrC4x1E3SUDMuK7DTEE5FaTtOZU2AjoPCfmvAdJDA==",
+        "shasum": "9a090613e9655b31626cae4828cfd16a1c3da0a7",
+        "tarball": "http://localhost:4873/is-even/-/is-even-1.0.0.tgz"
+      }
+    }
+  }
+}

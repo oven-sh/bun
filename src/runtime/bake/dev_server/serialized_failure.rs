@@ -17,7 +17,7 @@ use crate::bake::Side;
 /// key directly.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
-pub struct OwnerPacked(pub(crate) u32);
+pub(crate) struct OwnerPacked(pub(crate) u32);
 impl OwnerPacked {
     #[inline]
     pub(crate) fn new(side: Side, file: u32) -> Self {
@@ -40,7 +40,7 @@ impl OwnerPacked {
 /// The metaphorical owner of an incremental file error. The packed variant is
 /// given to the HMR runtime as an opaque handle.
 #[derive(Copy, Clone)]
-pub enum Owner {
+pub(crate) enum Owner {
     None,
     Route(route_bundle::Index),
     Client(ClientFileIndex),
@@ -61,11 +61,11 @@ impl Owner {
 /// Packed u32: `data` = bits 0..30, `kind` = bits 30..32.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct Packed(u32);
+pub(crate) struct Packed(u32);
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum PackedKind {
+pub(crate) enum PackedKind {
     None = 0,
     Route = 1,
     Client = 2,
@@ -120,7 +120,7 @@ const _: () = assert!(Packed::new(PackedKind::None, 1).bits() == 1);
 /// `bundling_failures` and the `failures_added`/`failures_removed` lists —
 /// profile if this shows up on a hot path.
 #[derive(Clone, Default)]
-pub struct SerializedFailure {
+pub(crate) struct SerializedFailure {
     /// Wire-format bytes (length-prefixed; first 4 bytes encode `Owner.Packed`).
     pub(crate) data: Box<[u8]>,
 }
@@ -173,29 +173,13 @@ impl SerializedFailure {
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum ErrorKind {
+pub(crate) enum ErrorKind {
     // A log message. The `logger.Kind` is encoded here.
     BundlerLogErr = 0,
     BundlerLogWarn = 1,
     BundlerLogNote = 2,
     BundlerLogDebug = 3,
     BundlerLogVerbose = 4,
-
-    /// new Error(message)
-    JsError,
-    /// new TypeError(message)
-    JsErrorType,
-    /// new RangeError(message)
-    JsErrorRange,
-    /// Other forms of `Error` objects, including when an error has a
-    /// `code`, and other fields.
-    JsErrorExtra,
-    /// Non-error with a stack trace
-    JsPrimitiveException,
-    /// Non-error JS values
-    JsPrimitive,
-    /// new AggregateError(errors, message)
-    JsAggregate,
 }
 
 // All "write" functions get a corresponding "read" function in ./client/error.ts

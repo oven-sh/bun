@@ -1,0 +1,12 @@
+# -- source: a-call-that-hands-a-written-text-is-left-a-call-where-nothing-is-held-of-the-holder.cjs
+# const rows = JSON.parse('[{"id":1,"age":2,"zip":3},{"id":2,"age":3,"zip":4}]');
+# function total(rows, key) { let s = 0; for (let i = 0; i < rows.length; i++) s += rows[i][key]; return s; }
+# globalThis.kept = total;
+# function both() { return total(rows, "age") + total(rows, "zip"); }
+# globalThis.alsoKept = both;
+# console.log(both());
+# -- end of source
+# The other side: of rows out of a parsed text the caller itself knows nothing at the call: a copy would buy a read by name at a site in place of a read by key at a site. The bytes are not spent: the calls stay calls.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK-COUNT-2: CallDirect

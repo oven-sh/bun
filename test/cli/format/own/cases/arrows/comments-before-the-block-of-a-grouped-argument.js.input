@@ -1,0 +1,19 @@
+a(b, (c) => // 1
+{ d; });
+a(b, (c) =>
+// 2
+{ d; });
+a((c) => /* 3 */
+{ d; }, b);
+a(b, (c) => /* 4 */ // 5
+{ d; });
+a(b, (c) => // prettier-ignore
+{ d( ); });
+a(b, (c) =>
+// prettier-ignore
+{ d( ); });
+a(b, (c) => (d) =>
+// 6
+{ e; });
+a(b, (c) => /* prettier-ignore */
+{ d( ); });

@@ -1,0 +1,11 @@
+# The same below a derived class: what super() answers with may be the literal that the base returns, so neither `this` behind super() nor `new Derived(..)` is proven to be a Derived.
+# RUN: link functions mechanisms=all
+# CHECK-NOT: result=L1 
+# -- source: a-literal-that-a-base-returns-below-super-is-no-object-of-the-construction-from-source.js
+# class Base { constructor(stop) { this.a = 1; if (stop) return { a: "x", b: "y", sum: Derived.prototype.sum }; } }
+# class Derived extends Base { constructor(stop, b) { super(stop); this.b = b; } sum() { return this.a + this.b; } }
+# function make(k) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return new Derived(k % 2 === 0, k); }
+# const seen = [];
+# for (let k = 0; k < 8; k++) { const made = make(k); seen.push(made.sum(), made instanceof Derived); }
+# console.log(seen.join(" "));
+# -- end of source

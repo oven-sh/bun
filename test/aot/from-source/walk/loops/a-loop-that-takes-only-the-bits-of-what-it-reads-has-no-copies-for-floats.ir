@@ -1,0 +1,19 @@
+# -- source: main.js
+# var key = JSON.parse('"go"');
+# var T = { go(d) { var h = 0; for (var i = 0; i < d.length; i++) h = (h ^ d[i]) * 31 | 0; return h; } };
+# print(T[key](new Uint8Array(3).fill(7)), T[key](new Float64Array(3).fill(7.5)), T[key](new Float32Array(2).fill(2.5)), T[key](new Int16Array(2).fill(-3)), T[key]([1, 2, 3]));
+# -- end of source
+# The front of a loop over what nobody has typed has a copy for each kind of floats (a-loop-over-what-nobody-knows-has-a-copy-for-each-kind-of-floats.ir).
+# Where every element that the loop reads or stores off the holder goes through an operator on bits, a fraction would be thrown away at once: the loop's own text says that floats are not what it is written for.
+# There they share the copy of the other views, as before: they are read rightly, by the kind of the cell.
+# f1 = go
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=Float32Array|Float64Array|Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8ClampedArray
+# CHECK-NOT: builtinClass=Float64Array
+# CHECK-NOT: builtinClass=Float32Array
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 213435 213435 1860 2914 27776
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 213435 213435 1860 2914 27776
+# NONE-NEXT: exited with 0

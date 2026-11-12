@@ -7,7 +7,7 @@ use bun_uws as uws;
 
 use crate::webcore::CookieMap;
 
-pub use super::request_context::AdditionalOnAbortCallback;
+pub(crate) use super::request_context::AdditionalOnAbortCallback;
 use super::request_context::RequestContext;
 use super::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
 
@@ -125,9 +125,9 @@ macro_rules! dispatch {
             CtxTag::DebugHttpsMux => arm!(DebugHttpsMuxCtx),
         }
     }};
-    // Raw-pointer variant: hands the typed `*mut T` to `$body` without forming
-    // a `&mut` reborrow. Use when the callee may re-enter while an outer frame
-    // already holds `&mut Self` (borrow = ptr).
+    // Raw-pointer variant: hands the typed `*mut T` to `$body`. For `end_chunk`,
+    // which adopts the pipe's ref through that pointer and may release the
+    // context in its own frame.
     ($self:expr, $default:expr, ptr |$T:ident, $ptr:ident| $body:expr) => {{
         let this = $self;
         macro_rules! arm {
@@ -222,28 +222,12 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.set_signal_aborted(reason))
     }
 
-    pub(crate) fn dev_server(self) -> Option<&'static crate::bake::DevServer::DevServer> {
-        dispatch!(self, None, |_T, ctx| ctx.dev_server().map(|r| {
-            // SAFETY: the server backref outlives any AnyRequestContext (held only
-            // for the duration of a request callback); `self` is a by-value tagged
-            // pointer, so there is no input lifetime to tie the borrow to.
-            unsafe { bun_ptr::detach_lifetime_ref(r) }
-        }))
-    }
-
-    /// Mutable access to the attached DevServer. The accessor above hands out
-    /// `&` only. The `Box` slot
-    /// inside `NewServer` has a stable address, so deriving `&mut` here is
-    /// sound as long as the caller upholds the usual single-writer rule on the
-    /// JS thread.
-    pub(crate) fn dev_server_mut(self) -> Option<*mut crate::bake::DevServer::DevServer> {
+    /// Address of the server that received this request. `None` once detached.
+    pub(crate) fn server_ptr(self) -> Option<*const ()> {
         dispatch!(self, None, |_T, ctx| {
-            let server = ctx.server.get()?.as_ptr();
-            // SAFETY: `ctx.server` is a non-null backref that outlives this context
-            // and `dev_server` is a `Box` field never moved while requests are in
-            // flight, so dereferencing for exclusive access on the JS thread is sound.
-            let ds = unsafe { (*server).dev_server.as_deref_mut()? };
-            Some(core::ptr::from_mut(ds))
+            ctx.server
+                .get()
+                .map(|server| server.as_const_ptr().cast::<()>())
         })
     }
 
@@ -251,25 +235,20 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.deref())
     }
 
+    pub(crate) fn end_with_internal_server_error(self) {
+        dispatch!(self, (), |_T, ctx| ctx.end_with_internal_server_error())
+    }
+
     pub fn on_request_body_stream_drained(self) {
-        dispatch!(
-            self,
-            (),
-            ptr | T,
-            ptr | T::on_request_body_stream_drained(ptr)
-        )
+        dispatch!(self, (), |_T, ctx| ctx.on_request_body_stream_drained())
     }
 
     pub fn write_chunk(
         self,
         data: &crate::webcore::streams::Result,
     ) -> crate::webcore::streams::Writable {
-        dispatch!(
-            self,
-            crate::webcore::streams::Writable::Done,
-            ptr | T,
-            ptr | T::write_chunk(ptr, data)
-        )
+        dispatch!(self, crate::webcore::streams::Writable::Done, |_T, ctx| ctx
+            .write_chunk(data))
     }
 
     pub fn end_chunk(self, err: Option<&crate::webcore::streams::StreamError>) {

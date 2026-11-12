@@ -21,12 +21,12 @@ const h2 = { protocol: "http2", tls } as const;
 async function one(i: number): Promise<number> {
   if (SCENARIO === "post") {
     const body = Buffer.alloc(1024, i & 0xff);
-    const r = await fetch(SERVER, { ...h2, method: "POST", body });
+    const r = await fetch(SERVER!, { ...h2, method: "POST", body });
     return (await r.arrayBuffer()).byteLength;
   }
   if (SCENARIO === "abort") {
     const ac = new AbortController();
-    const p = fetch(SERVER, { ...h2, signal: ac.signal }).then(r => r.arrayBuffer());
+    const p = fetch(SERVER!, { ...h2, signal: ac.signal }).then(r => r.arrayBuffer());
     ac.abort();
     try {
       await p;
@@ -34,7 +34,7 @@ async function one(i: number): Promise<number> {
     return 0;
   }
   if (SCENARIO === "stream-response") {
-    const r = await fetch(SERVER, h2);
+    const r = await fetch(SERVER!, h2);
     const reader = r.body!.getReader();
     let n = 0;
     while (true) {
@@ -58,7 +58,7 @@ async function one(i: number): Promise<number> {
         ctrl.close();
       },
     });
-    const r = await fetch(SERVER, { ...h2, method: "POST", body, duplex: "half" });
+    const r = await fetch(SERVER!, { ...h2, method: "POST", body, duplex: "half" });
     return (await r.arrayBuffer()).byteLength;
   }
   if (SCENARIO === "redirect") {
@@ -70,7 +70,7 @@ async function one(i: number): Promise<number> {
     return (await r.arrayBuffer()).byteLength;
   }
   // "get"
-  const r = await fetch(SERVER, h2);
+  const r = await fetch(SERVER!, h2);
   return (await r.arrayBuffer()).byteLength;
 }
 

@@ -1,0 +1,37 @@
+# -- source: main.ts
+# declare function print(...values: any[]): void;
+# const unseen = (x: any): any => (globalThis as any).nothingOfThisName ?? x;
+# class Point { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } sum(): number { return this.x + this.y; } }
+# const holder = unseen(Point);
+# function change(): void { holder.prototype.sum = function () { return 1000; }; }
+# class Picky { v: number; constructor(v: number) { this.v = v; if (v & 1) throw 7; } }
+# function straight(list: number[]): number {
+#   let total = 0;
+#   for (let i = 0; i < list.length; i++) { const got = new Picky(list[i] & ~1).v; const p = new Point(list[i], got); total = (total + p.sum()) | 0; }
+#   return total;
+# }
+# function caught(list: number[], at: number): number {
+#   let total = 0;
+#   for (let i = 0; i < list.length; i++) { let got = 0; try { got = new Picky(list[i]).v; } catch { got = -1; } const p = new Point(list[i], got); if (i === at) change(); total = (total + p.sum()) | 0; }
+#   return total;
+# }
+# const numbers: number[] = [];
+# for (let k = 0; k < 24; k++) numbers.push(k * 3);
+# print(straight(numbers), caught(numbers, -1));
+# print(caught(numbers, 5));
+# -- end of source
+# The net of effects puts the counts of deeds back behind a call that its row calls quiet, where the call returns. Where it throws they stay as the callee left them, so an edge that holds a turn to having done nothing
+# would stop a right program behind the catch. No such edge is built there: a handler is entered with an empty state (`Walker::noteStateAtThrowForHandler()`), so the mark of the turn is down behind the catch.
+# The one turn that begins again is that of `straight`, which has no handler; `caught` adds none. Whoever lets the mark through a handler has to put the counts back there too. f3 = straight, f4 = caught
+# RUN(COUNT): compile IterationRestartsEmitted testing=FailSpeculations:2 mechanisms=all
+# COUNT: statistic IterationRestartsEmitted 1
+# RUN(NET): run-in-shell testing=CheckEffectsAtRunTime,FailSpeculations:2 mechanisms=all
+# NET: 1644 1212
+# NET-NEXT: 19046
+# NET-NEXT: exited with 0
+# RUN(THIRD): run-in-shell testing=CheckEffectsAtRunTime,FailSpeculations:3 mechanisms=all
+# THIRD: 1644 1212
+# THIRD-NEXT: 19046
+# RUN(CALLED): run-in-shell testing=CheckEffectsAtRunTime,FailSpeculations:2 mechanisms=all-Inlining
+# CALLED: 1644 1212
+# CALLED-NEXT: 19046

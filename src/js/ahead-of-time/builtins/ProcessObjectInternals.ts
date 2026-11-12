@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 34b28730976f3729b1f08385ac19a7f622a31d5c76459e81ae77e00f2e40eba8.
+// Written against that file with the SHA-256 b668a4452a668e36414188d753fa2d61c43816629344d7aa60432ed0607789ca.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -126,13 +126,13 @@ export function getStdioWriteStream(
 }
 
 // node:worker_threads worker: process.stdout/stderr write to the parent Worker over a
-// MessagePort; process.stdin reads from one for { stdin: true }, else is already ended.
-export function getNodeWorkerStdioStream(process: NodeJS.Process, fd: number, ports: $Node.WorkerStdioPorts) {
+// MessagePort; process.stdin reads from it for { stdin: true }, else is already ended.
+export function getNodeWorkerStdioStream(process: NodeJS.Process, fd: number, port: MessagePort, hasStdin: boolean) {
   const stdio = require("internal/worker/stdio");
   if (fd === 0) {
-    return ports.stdin ? stdio.makePortReadable(ports.stdin, true) : stdio.makeEndedReadable();
+    return hasStdin ? stdio.ownStdioChannel(port).readable(0, true) : stdio.makeEndedReadable();
   }
-  const stream = stdio.makePortWritable(fd === 1 ? ports.stdout : ports.stderr);
+  const stream = stdio.ownStdioChannel(port).writable(fd);
   // A synchronous exit leaves no loop turn for the reader's ack; complete the parked
   // writev so buffered chunks are posted before the thread goes away (node's flushSync).
   process.on("exit", stream[stdio.kFlushSync]);

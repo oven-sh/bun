@@ -168,6 +168,7 @@ mod drain_result {
 unsafe extern "C" {
     safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> u8;
     safe fn Bun__noteEntryEvaluation(global: &JSGlobalObject);
+    safe fn WebWorker__releaseHeldPorts(global: &JSGlobalObject);
 }
 
 impl JSGlobalObject {
@@ -1507,6 +1508,52 @@ impl EventLoop {
         self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();
         self.tick();
+    }
+
+    /// [`wait_for_promise`](Self::wait_for_promise) for a preload of a
+    /// `node:worker_threads` worker, whose start sequence holds the ports of the
+    /// parent's `Worker`. Node runs a worker's preloads and its entry inside the
+    /// callback of the worker's first message, and the worker hears its parent when
+    /// that callback has returned and its ticks and microtasks have run. A preload
+    /// that still waits after the turn in which its graph began to execute
+    /// (`entry_evaluation_started`, see `preload_root`) is at that point: it waits
+    /// for the loop, perhaps for the parent itself. A preload that waits for a
+    /// module to load is not: its static imports, or an `import()`, which Node's
+    /// loader resolves without a turn of the loop.
+    pub fn wait_for_node_worker_preload(
+        &mut self,
+        promise: jsc::AnyPromise,
+    ) -> Result<(), jsc::Stopped> {
+        let jsc_vm = self.vm_ref().jsc_vm();
+        let mut hears_parent = false;
+        while promise.status() == PromiseStatus::Pending {
+            if jsc_vm.execution_forbidden()
+                || !self.vm_ref().script_allowed()
+                || self.global_ref().has_pending_termination_exception()
+            {
+                return Err(jsc::Stopped);
+            }
+            self.tick();
+            if crate::compiled_program::compiled_program().is_some() {
+                Bun__noteEntryEvaluation(self.global_ref());
+            }
+            if promise.status() != PromiseStatus::Pending {
+                break;
+            }
+            let vm = self.vm_ref();
+            if !hears_parent
+                && vm.entry_evaluation_started
+                && vm.transpiler_store.jobs_scheduled == vm.transpiler_store.jobs_completed
+            {
+                hears_parent = true;
+                WebWorker__releaseHeldPorts(self.global_ref());
+                // What waited for the worker is delivered ahead of the preload's
+                // immediates and timers, as in Node.
+                continue;
+            }
+            self.auto_tick();
+        }
+        Ok(())
     }
 
     /// Drive the loop while a worker's entry module graph is fetched and

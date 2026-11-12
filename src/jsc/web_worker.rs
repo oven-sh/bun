@@ -352,6 +352,12 @@ impl WebWorker {
         Some(unsafe { bun_core::ffi::slice(self.exec_argv_ptr, self.exec_argv_len) })
     }
 
+    /// Created by `node:worker_threads`' `Worker`: the start sequence holds the ports of that `Worker`.
+    #[inline]
+    pub fn is_node_worker(&self) -> bool {
+        self.is_node_worker
+    }
+
     /// Worker thread: its teardown has joined its own children, and what it had on other threads is back.
     pub(crate) fn will_wait_for_nothing_more(&self) {
         self.is_returning.store(true, Ordering::Release);

@@ -70,8 +70,12 @@ public:
 
     void start();
     bool hasMessageEventListener() const { return m_hasMessageEventListener; }
-    // The worker's entry module finished evaluating: a start() requested before that takes effect now.
-    void entrySettled();
+    // A port that the start sequence of a node:worker_threads worker takes from its parent (its stdio port,
+    // parentPort). Node's worker hears nothing from its parent before its entry point has run its first turn,
+    // so a start() of such a port waits for releaseStartHold(), and what the parent posted meanwhile stays in
+    // the pipe. Call it before script has the port.
+    void holdStart() { m_startHold = StartHold::Held; }
+    void releaseStartHold();
     void close();
     // Called on the entangled peer when this side closes: dispatches a
     // 'close' event and releases the event-loop ref so the loop can idle.
@@ -149,7 +153,13 @@ private:
     bool m_isDispatching { false };
     bool m_closeEventDispatched { false };
     bool m_hasMessageEventListener { false };
-    bool m_startDeferredUntilEntrySettled { false };
+    enum class StartHold : uint8_t {
+        None,
+        Held,
+        // start() was called while held: releaseStartHold() performs it.
+        StartRequested,
+    };
+    StartHold m_startHold { StartHold::None };
     // Read from the GC thread: a port whose only listener is 'close' must survive
     // until that event is delivered, or the peer's close is lost to a collection.
     std::atomic<bool> m_hasCloseEventListener { false };

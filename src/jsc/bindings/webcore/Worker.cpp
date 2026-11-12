@@ -147,6 +147,17 @@ void Worker::dispatchCloseEvent(Event& event)
 // The proxy of the worker whose global scope runs on `bunVM`'s thread, or null on the main thread.
 extern "C" WorkerMessagingProxy* WebWorker__getMessagingProxy(void* bunVM);
 
+// Node runs a worker's preloads and its entry point inside the callback of the first message on the worker's
+// internal port. So a node worker hears nothing from its parent before that callback has returned: behind the
+// first turn of the entry point (WebWorker__entrySettled), or where a preload first waits for the event loop
+// (EventLoop::wait_for_node_worker_preload). The ports that the start sequence holds start at the first of the
+// two, and their pipes deliver what the parent posted meanwhile in tasks of their own, behind the microtasks
+// and ticks of the turn that just ran.
+extern "C" void WebWorker__releaseHeldPorts(Zig::GlobalObject* globalObject)
+{
+    globalObject->releaseNodeWorkerPorts();
+}
+
 // The entry module just finished (or failed) its top-level evaluation. Flush the worker_threads
 // hub's deferred cross-thread deliveries: node's bootstrap runs the synchronous CJS main before any
 // port delivery, so a routed message must not observe "no listeners" while the entry that registers
@@ -154,8 +165,7 @@ extern "C" WorkerMessagingProxy* WebWorker__getMessagingProxy(void* bunVM);
 // leaves its sender's Atomics.waitAsync unresolved.
 extern "C" void WebWorker__entrySettled(Zig::GlobalObject* globalObject)
 {
-    // parentPort starts delivering now (whatever the parent posted meanwhile is buffered in the pipe).
-    globalObject->nodeWorkerEntryDidSettle();
+    globalObject->releaseNodeWorkerPorts();
     auto* hook = globalObject->nodeWorkerEntryEvaluatedHook();
     if (!hook)
         return;
@@ -217,9 +227,6 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
     proxy->postErrorToWorkerObject(*globalObject, messageStr, error);
 }
-
-JSC_DECLARE_HOST_FUNCTION(jsFunctionSetParentPort);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionSetNodeWorkerStdioPorts);
 
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -304,6 +311,8 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     JSValue workerData = jsNull();
     JSValue threadId = jsNumber(0);
     JSValue threadName = jsEmptyString(vm);
+    JSValue parentPort = jsUndefined();
+    JSValue hubPort = jsUndefined();
     JSMap* environmentData = nullptr;
 
     auto* proxy = WebWorker__getMessagingProxy(globalObject->bunVM());
@@ -334,6 +343,28 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
             } else {
                 ASSERT_NOT_REACHED_WITH_MESSAGE("createNodeWorkerThreadsBinding: deserialized is not JSArray");
             }
+        }
+
+        // The worker's ends of the channels that its parent's node:worker_threads Worker made. Taken once, like
+        // workerData. The stdio port and parentPort are held from before script has them (WebWorker__releaseHeldPorts).
+        // The postMessageToThread port is not: what it delivers waits in node:worker_threads until the entry point
+        // has evaluated, and is handled there on every path that ends the start (internal/worker/messaging).
+        if (options.nodePorts[WorkerOptions::Stdio].pipe) {
+            auto& context = *globalObject->scriptExecutionContext();
+            Ref stdio = MessagePort::entangle(context, WTF::move(options.nodePorts[WorkerOptions::Stdio]));
+            Ref parent = MessagePort::entangle(context, WTF::move(options.nodePorts[WorkerOptions::Parent]));
+            Ref hub = MessagePort::entangle(context, WTF::move(options.nodePorts[WorkerOptions::Hub]));
+            stdio->holdStart();
+            parent->holdStart();
+            // process.stdin, process.stdout and process.stderr are made over the stdio port on first use (BunProcess.cpp).
+            JSValue stdioPort = toJS(globalObject, globalObject, stdio.get());
+            RETURN_IF_EXCEPTION(scope, {});
+            globalObject->setNodeWorkerStdioPort(stdioPort.getObject(), options.nodeStdin);
+            parentPort = toJS(globalObject, globalObject, parent.get());
+            RETURN_IF_EXCEPTION(scope, {});
+            hubPort = toJS(globalObject, globalObject, hub.get());
+            RETURN_IF_EXCEPTION(scope, {});
+            globalObject->holdNodeWorkerPorts({ WTF::move(stdio), WTF::move(parent) });
         }
 
         // Main thread starts at 1
@@ -376,9 +407,10 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
     RETURN_IF_EXCEPTION(scope, {});
-    array->putDirectIndex(globalObject, 11, JSFunction::create(vm, globalObject, 1, "setParentPort"_s, jsFunctionSetParentPort, ImplementationVisibility::Public, NoIntrinsic));
+    // A worker that node:worker_threads made: parentPort, and the port to the main thread's postMessageToThread hub.
+    array->putDirectIndex(globalObject, 11, parentPort);
     RETURN_IF_EXCEPTION(scope, {});
-    array->putDirectIndex(globalObject, 12, JSFunction::create(vm, globalObject, 1, "setStdioPorts"_s, jsFunctionSetNodeWorkerStdioPorts, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 12, hubPort);
     RETURN_IF_EXCEPTION(scope, {});
     // The intrinsic constructors, so worker_threads keeps working when user code
     // replaces globalThis.MessagePort etc. before the module loads (#40268).
@@ -398,32 +430,12 @@ JSValue createNodeWorkerConstructor(Zig::GlobalObject* globalObject)
     return JSWorker::getConstructor(globalObject->vm(), globalObject);
 }
 
-// worker_threads (worker side): { stdin?, stdout, stderr } ports from the parent Worker.
-// process.stdin/stdout/stderr are created over them on first access (BunProcess.cpp).
-JSC_DEFINE_HOST_FUNCTION(jsFunctionSetNodeWorkerStdioPorts, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    if (auto* ports = callFrame->argument(0).getObject())
-        defaultGlobalObject(lexicalGlobalObject)->setNodeWorkerStdioPorts(ports);
-    return JSValue::encode(jsUndefined());
-}
-
 // A node:worker_threads worker loads node:worker_threads before preloads and the entry
-// point (it rebinds process stdio and registers parentPort / the postMessageToThread
-// port), as Node runs its worker bootstrap before user code. Throws like require() would.
+// point (it takes the ports of the parent's Worker and rebinds process stdio over them),
+// as Node runs its worker bootstrap before user code. Throws like require() would.
 extern "C" void Bun__Worker__loadNodeWorkerThreadsModule(Zig::GlobalObject* globalObject)
 {
     BUN_LOAD_INTERNAL_MODULE(globalObject, NodeWorkerThreads, "native:Cpp:Worker.cpp:createNodeWorkerConstructor");
-}
-
-// worker_threads (worker side): register the transferred port as this thread's parentPort.
-JSC_DEFINE_HOST_FUNCTION(jsFunctionSetParentPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
-{
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto* port = dynamicDowncast<JSMessagePort>(callFrame->argument(0));
-    if (!port)
-        return JSValue::encode(jsUndefined());
-    globalObject->setNodeParentPort(&port->wrapped());
-    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,

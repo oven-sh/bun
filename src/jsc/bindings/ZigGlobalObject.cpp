@@ -5018,20 +5018,20 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
 }
 
 extern "C" bool Bun__VM__entryEvaluationStarted(void*);
-extern "C" BunString Bun__VM__entryRootKey(void*);
+extern "C" BunString Bun__VM__startingRootKey(void*);
 extern "C" void Bun__VM__noteEntryEvaluationStarted(void*);
 
 // A module body is about to run. That means "the entry's graph is linked and executing" only if it is
 // part of the entry root's own evaluation — the root's record is Evaluating (or beyond) from the moment
 // linkAndEvaluateModule() enters it, and its dependencies run inside that (post-order). A module that
 // evaluates before then is some other root: a preload's un-awaited import() finishing while the entry is
-// still fetching.
+// still fetching. While a worker waits for a preload, the root is that preload.
 static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader)
 {
     void* bunVM = globalObject->bunVM();
     if (Bun__VM__entryEvaluationStarted(bunVM))
         return;
-    BunString rootKey = Bun__VM__entryRootKey(bunVM);
+    BunString rootKey = Bun__VM__startingRootKey(bunVM);
     auto* entry = moduleLoader->registryEntry(JSC::Identifier::fromString(globalObject->vm(), rootKey.toWTFString(BunString::ZeroCopy)));
     if (!entry)
         return;
@@ -5240,7 +5240,11 @@ void GlobalObject::adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal)
 }
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
-void GlobalObject::setNodeWorkerStdioPorts(JSObject* ports) { m_nodeWorkerStdioPorts.set(vm(), this, ports); }
+void GlobalObject::setNodeWorkerStdioPort(JSObject* port, bool hasStdin)
+{
+    m_nodeWorkerStdioPort.set(vm(), this, port);
+    m_nodeWorkerHasStdin = hasStdin;
+}
 void GlobalObject::setNodeWorkerEntryEvaluatedHook(JSObject* hook)
 {
     if (hook)
@@ -5251,16 +5255,17 @@ void GlobalObject::setNodeWorkerEntryEvaluatedHook(JSObject* hook)
 
 extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*);
 
-void GlobalObject::setNodeParentPort(WebCore::MessagePort* port)
+void GlobalObject::holdNodeWorkerPorts(std::array<RefPtr<WebCore::MessagePort>, 2>&& ports)
 {
-    m_nodeParentPort = port;
+    m_nodeWorkerHeldPorts = WTF::move(ports);
 }
 
-void GlobalObject::nodeWorkerEntryDidSettle()
+void GlobalObject::releaseNodeWorkerPorts()
 {
-    m_nodeWorkerEntrySettled = true;
-    if (m_nodeParentPort)
-        m_nodeParentPort->entrySettled();
+    for (auto& port : std::exchange(m_nodeWorkerHeldPorts, {})) {
+        if (port)
+            port->releaseStartHold();
+    }
 }
 
 void GlobalObject::prepareForDestruction()

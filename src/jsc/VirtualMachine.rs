@@ -279,10 +279,11 @@ pub struct VirtualMachine {
     pub has_loaded: bool,
     /// The current entry load reached module evaluation: the root's graph is
     /// linked and executing (set from the moduleLoaderEvaluate hook once the
-    /// root record — `Bun__VM__entryRootKey` — is Evaluating; a module some
+    /// root record — `Bun__VM__startingRootKey` — is Evaluating; a module some
     /// other root evaluates meanwhile, e.g. a preload's un-awaited import(),
     /// does not count). What is still pending on the entry promise after that
-    /// is a top-level await.
+    /// is a top-level await. While a worker waits for a preload (`preload_root`),
+    /// the same for that preload.
     pub entry_evaluation_started: bool,
 
     pub(crate) had_errors: bool,
@@ -309,6 +310,10 @@ pub struct VirtualMachine {
     pub is_in_preload: bool,
     /// `Watcher::get_hash()` of the preload script currently loading.
     pub preload_hash: u32,
+    /// The module-registry key of the preload that `load_preloads` waits for now. While it is set,
+    /// `entry_evaluation_started` says whether that preload's graph is executing. BACKREF: borrows
+    /// the resolver's process-lifetime `filename_store`.
+    pub preload_root: Option<bun_ptr::RawSlice<u8>>,
     /// True if `load_preloads` kept the preload list for a reload that was deferred while it ran.
     pub preloads_kept_for_reload: bool,
     pub has_patched_run_main: bool,
@@ -824,6 +829,18 @@ impl ExitHandler {
         } else {
             // With no entry module there is no root, and no key matches.
             bun_core::StringView::borrow_utf8(vm.main().unwrap_or_default())
+        }
+    }
+
+    /// The root whose evaluation `entry_evaluation_started` reports: the preload that
+    /// `load_preloads` waits for, else the entry (`Bun__VM__entryRootKey`). Borrowed.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__startingRootKey(
+        vm: &VirtualMachine,
+    ) -> bun_core::StringView<'_> {
+        match &vm.preload_root {
+            Some(preload) => bun_core::StringView::from_bytes(preload.slice()),
+            None => Self::Bun__VM__entryRootKey(vm),
         }
     }
 
@@ -3450,6 +3467,7 @@ impl VirtualMachine {
             // `log` is a fresh leaked Box; outlives the VM.
             addr_of_mut!((*vm).log).write(NonNull::new(log));
             addr_of_mut!((*vm).main).write(None);
+            addr_of_mut!((*vm).preload_root).write(None);
             addr_of_mut!((*vm).main_hash).write(0);
             addr_of_mut!((*vm).main_entry_point).write(MainEntryPoint::File);
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::EMPTY);

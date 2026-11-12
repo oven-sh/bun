@@ -505,6 +505,355 @@ describe("captured stdio backpressure", () => {
   });
 });
 
+// Node's worker hears nothing from its parent before its entry point has run its first turn: the start of the
+// entry point is the first message on the worker's one internal port, and what the parent posted on its streams
+// since waits behind it. Where a test says so, a preload holds the worker's thread until the parent has posted,
+// so that the order of the two does not depend on how fast the thread starts.
+describe("what the parent posted before a worker's entry point ran", () => {
+  const waitsForTheParent = join(import.meta.dir, "preload-that-waits-for-the-parent-fixture.cjs");
+
+  /** A worker that runs nothing behind its first preload before `early` has returned. */
+  function workerBehindItsParent(
+    entry: string,
+    options: Record<string, unknown>,
+    early: (worker: Worker) => void,
+  ): Worker {
+    const gate = new Int32Array(new SharedArrayBuffer(4));
+    const worker = new Worker(entry, {
+      ...options,
+      preload: [waitsForTheParent, ...((options.preload as string[] | undefined) ?? [])],
+      workerData: { ...(options.workerData as object | undefined), gate },
+    } as ConstructorParameters<typeof Worker>[1]);
+    early(worker);
+    Atomics.store(gate, 0, 1);
+    Atomics.notify(gate, 0);
+    return worker;
+  }
+
+  const head = `const { parentPort, workerData } = require("node:worker_threads"); let completed = false;`;
+  // One chunk of the reader's highWaterMark: the parent's stream asks for more only where a test does.
+  const write = (stream: string) => `process.${stream}.write(Buffer.alloc(65536, 120), () => { completed = true; });`;
+  const tellAtFirstImmediate = `setImmediate(() => parentPort.postMessage(completed));`;
+
+  describe.each([
+    ["stdout", { stdout: true }],
+    ["stderr", { stderr: true }],
+    ["stderr, with stdout captured too", { stdout: true, stderr: true }],
+  ] as const)("a request for more of %s", (name, captured) => {
+    const stream = name.slice(0, 6) as "stdout" | "stderr";
+
+    test.each([
+      ["in the first turn of the entry point", write(stream)],
+      ["in a process.nextTick() of that turn", `process.nextTick(() => { ${write(stream)} });`],
+      ["in a microtask of that turn", `queueMicrotask(() => { ${write(stream)} });`],
+    ])("completes a write made %s, before the worker's first immediate", async (_, writes) => {
+      const worker = workerBehindItsParent(
+        `${head}\n${writes}\n${tellAtFirstImmediate}`,
+        { eval: true, ...captured },
+        worker => void worker[stream].read(0),
+      );
+      const [completed] = await once(worker, "message");
+      await worker.terminate();
+      expect(completed).toBe(true);
+    });
+
+    // Node's order too: the request finds nothing written at the end of the first turn, and is dropped.
+    test("does not complete a write made from the worker's first immediate", async () => {
+      const worker = workerBehindItsParent(
+        `${head}
+         setImmediate(() => { ${write(stream)} });
+         parentPort.on("message", () => parentPort.postMessage(completed));`,
+        { eval: true, ...captured },
+        worker => void worker[stream].read(0),
+      );
+      // The chunk has arrived, so the worker has written. A 'readable' listener that reads nothing asks for nothing.
+      await once(worker[stream], "readable");
+      // Behind the second answer, nothing that the parent posted before is on its way to the worker.
+      let completed: unknown;
+      for (let round = 0; round < 2; round++) {
+        worker.postMessage("has it completed?");
+        [completed] = await once(worker, "message");
+      }
+      await worker.terminate();
+      expect(completed).toBe(false);
+    });
+  });
+
+  test("a request for more of stdout completes a first-turn write of an ES module with a static import", async () => {
+    using dir = tempDir("worker-early-request-esm", {
+      "entry.mjs": `import { parentPort } from "node:worker_threads";
+import { value } from "./dep.mjs";
+let completed = false;
+process.stdout.write(Buffer.alloc(65536, value), () => { completed = true; });
+setImmediate(() => parentPort.postMessage(completed));`,
+      "dep.mjs": `export const value = 120;\n${Buffer.alloc(30000, "// filler\n").toString()}`,
+    });
+    const worker = workerBehindItsParent(
+      join(String(dir), "entry.mjs"),
+      { stdout: true },
+      worker => void worker.stdout.read(0),
+    );
+    const [completed] = await once(worker, "message");
+    await worker.terminate();
+    expect(completed).toBe(true);
+  });
+
+  test.each([
+    ["behind a preload that waits for the parent's first request", true],
+    ["as the thread starts", false],
+  ])("one read() for each 'readable' reads all that a worker wrote in its first turn, %s", async (_, held) => {
+    const entry = `
+      const { parentPort } = require("node:worker_threads");
+      for (let k = 0; k < 3; k++) process.stdout.write(Buffer.alloc(100000, 120));
+      // Says how many of these bytes the parent has yet to ask for. Not a reason for the thread to stay.
+      parentPort.on("message", () => parentPort.postMessage(process.stdout.writableLength));
+      parentPort.unref();`;
+    let got = 0;
+    const gotTwoChunks = Promise.withResolvers<void>();
+    const readOneChunkForEachReadable = (worker: Worker) => {
+      worker.stdout.on("readable", () => {
+        const chunk = worker.stdout.read();
+        if (chunk !== null && (got += chunk.length) === 200000) gotTwoChunks.resolve();
+      });
+    };
+    let worker: Worker;
+    if (held) {
+      worker = workerBehindItsParent(entry, { eval: true, stdout: true }, worker => {
+        readOneChunkForEachReadable(worker);
+        worker.stdout.read(0);
+      });
+    } else {
+      worker = new Worker(entry, { eval: true, stdout: true });
+      readOneChunkForEachReadable(worker);
+    }
+    const exited = once(worker, "exit");
+    await gotTwoChunks.promise;
+    // The read of the first chunk asked for the rest. The worker answers behind that request, if it is still there.
+    worker.postMessage("how much waits?");
+    const waits = await Promise.race([once(worker, "message").then(([length]) => length), exited.then(() => 0)]);
+    if (waits !== 0) await worker.terminate();
+    const [code] = await exited;
+    expect({ waits, got, code }).toEqual({ waits: 0, got: 300000, code: 0 });
+  });
+
+  test("what the parent wrote to worker.stdin is in process.stdin behind the first turn of the entry point", async () => {
+    const worker = workerBehindItsParent(
+      `const { parentPort } = require("node:worker_threads");
+       const inTheFirstTurn = process.stdin.readableLength;
+       process.stdin.once("data", chunk => parentPort.postMessage({ inTheFirstTurn, read: String(chunk) }));`,
+      { eval: true, stdin: true },
+      worker => void worker.stdin!.write("hello"),
+    );
+    const [message] = await once(worker, "message");
+    await worker.terminate();
+    expect(message).toEqual({ inTheFirstTurn: 0, read: "hello" });
+  });
+
+  // Node runs a worker's preloads and its entry point in the callback of that first message. A preload that waits
+  // for a timer or an immediate lets the callback return: what waited for the worker is delivered then, and a
+  // request for more of stdout finds nothing written. A preload that waits for microtasks, for a tick or for a
+  // module to load does not: Node's loader needs no turn of the loop for a module.
+  describe("behind a preload", () => {
+    const preloads = {
+      "that waits for nothing": `export {};`,
+      "that waits for microtasks": `await null; await Promise.resolve();`,
+      "that waits for a process.nextTick()": `await new Promise(resolve => process.nextTick(resolve));`,
+      "that has a static import": `import "./dep.mjs";`,
+      "that waits for an import()": `await import("./dep.mjs");`,
+      "that waits for an immediate": `await new Promise(resolve => setImmediate(resolve));`,
+      "that has a static import and waits for an immediate": `import "./dep.mjs"; await new Promise(resolve => setImmediate(resolve));`,
+    };
+    // Long enough to be transpiled on another thread.
+    const dep = `export const value = 120;\n${Buffer.alloc(30000, "// filler\n").toString()}`;
+
+    test.each([
+      ["that waits for nothing", true],
+      ["that waits for microtasks", true],
+      ["that waits for a process.nextTick()", true],
+      ["that has a static import", true],
+      ["that waits for an import()", true],
+      ["that waits for an immediate", false],
+      ["that has a static import and waits for an immediate", false],
+    ] as const)("%s, a request for more of stdout completes a first-turn write: %p", async (preload, expected) => {
+      using dir = tempDir("worker-early-request-preload", { "preload.mjs": preloads[preload], "dep.mjs": dep });
+      const worker = workerBehindItsParent(
+        `${head}\n${write("stdout")}\n${tellAtFirstImmediate}`,
+        { eval: true, stdout: true, preload: [join(String(dir), "preload.mjs")] },
+        worker => void worker.stdout.read(0),
+      );
+      const [completed] = await once(worker, "message");
+      await worker.terminate();
+      expect(completed).toBe(expected);
+    });
+
+    test.each([
+      [
+        "the callback of a write to stdout",
+        `await new Promise(resolve => process.stdout.write("from the preload\\n", resolve));`,
+        (worker: Worker) => void worker,
+      ],
+      [
+        "'drain' of stdout",
+        `if (!process.stdout.write(Buffer.alloc(70000, 120))) await new Promise(resolve => process.stdout.once("drain", resolve));`,
+        (worker: Worker) => void worker.stdout.resume(),
+      ],
+      [
+        "data of stdin",
+        `await new Promise(resolve => process.stdin.once("data", resolve));`,
+        (worker: Worker) => void worker.stdin!.write("hello"),
+      ],
+    ])("that waits for %s, the entry point runs", async (_, preload, parent) => {
+      using dir = tempDir("worker-preload-waits", { "preload.mjs": preload });
+      const worker = new Worker(`require("node:worker_threads").parentPort.postMessage("the entry point ran");`, {
+        eval: true,
+        stdin: true,
+        stdout: true,
+        preload: [join(String(dir), "preload.mjs")],
+      } as ConstructorParameters<typeof Worker>[1]);
+      parent(worker);
+      const [message] = await once(worker, "message");
+      await worker.terminate();
+      expect(message).toBe("the entry point ran");
+    });
+
+    test("that waits for a message on parentPort, the message arrives and the entry point runs", async () => {
+      using dir = tempDir("worker-preload-waits-for-parentport", {
+        "preload.mjs": `import { parentPort, workerData } from "node:worker_threads";
+let heard = false;
+// Says whether the message has arrived, on a port that the start of the worker does not hold.
+workerData.side.on("message", () => workerData.side.postMessage(heard));
+await new Promise(resolve => parentPort.once("message", resolve));
+heard = true;`,
+      });
+      const { port1, port2 } = new MessageChannel();
+      const worker = new Worker(`require("node:worker_threads").parentPort.postMessage("the entry point ran");`, {
+        eval: true,
+        preload: [join(String(dir), "preload.mjs")],
+        workerData: { side: port2 },
+        transferList: [port2],
+      } as ConstructorParameters<typeof Worker>[1]);
+      const ran = once(worker, "message");
+      worker.postMessage("for the preload");
+      // The worker's first answer may come from the first turn of the preload. Its second comes behind the turn of
+      // the loop in which the preload still waited, and what waited for the worker has been delivered by then.
+      let heard: unknown;
+      for (let round = 0; round < 2; round++) {
+        port1.postMessage("has it arrived?");
+        [heard] = await once(port1, "message");
+      }
+      port1.close();
+      const message = heard === true ? (await ran)[0] : undefined;
+      await worker.terminate();
+      expect({ heard, message }).toEqual({ heard: true, message: "the entry point ran" });
+    });
+  });
+
+  // A worker's stdout and stderr ride one port, as in Node, so the parent reads them in the order of the writes.
+  // The parent blocks until the worker's first immediate: all that the worker posted by then waits for it at once.
+  describe("the parent reads what a worker wrote in the order of the writes", () => {
+    const tellWhenPosted = `setImmediate(() => { Atomics.store(workerData.posted, 0, 1); Atomics.notify(workerData.posted, 0); });`;
+
+    test.each([
+      ["log", "error", "log", "behind a preload that waits for the parent's requests"],
+      ["error", "log", "error", "behind a preload that waits for the parent's requests"],
+      ["log", "error", "log", "as the thread starts"],
+      ["error", "log", "error", "as the thread starts"],
+    ] as const)("console.%s(), console.%s() and console.%s() of a first turn, %s", async (first, second, _, start) => {
+      const posted = new Int32Array(new SharedArrayBuffer(4));
+      const entry = `const { workerData } = require("node:worker_threads");
+         console.${first}("a"); console.${second}("b"); console.${first}("c");
+         ${tellWhenPosted}`;
+      const options = { eval: true, stdout: true, stderr: true, workerData: { posted } };
+      const askForBoth = (worker: Worker) => {
+        worker.stdout.read(0);
+        worker.stderr.read(0);
+      };
+      let worker: Worker;
+      if (start === "as the thread starts") {
+        worker = new Worker(entry, options);
+        askForBoth(worker);
+      } else {
+        worker = workerBehindItsParent(entry, options, askForBoth);
+      }
+      const order: string[] = [];
+      worker.stdout.on("data", chunk => order.push(String(chunk).trim()));
+      worker.stderr.on("data", chunk => order.push(String(chunk).trim()));
+      Atomics.wait(posted, 0, 0);
+      await once(worker, "exit");
+      expect(order).toEqual(["a", "b", "c"]);
+    });
+
+    test.each([
+      ["behind the write", `process.stdout.write("line\\n"); parentPort.postMessage("written");`],
+      ["from the callback of the write", `process.stdout.write("line\\n", () => parentPort.postMessage("written"));`],
+    ])("a line, ahead of a message that the worker posted %s", async (_, writes) => {
+      const posted = new Int32Array(new SharedArrayBuffer(4));
+      const worker = workerBehindItsParent(
+        `const { parentPort, workerData } = require("node:worker_threads");
+         parentPort.postMessage("ready");
+         ${writes}
+         ${tellWhenPosted}`,
+        { eval: true, stdout: true, workerData: { posted } },
+        worker => void worker.stdout.read(0),
+      );
+      const { promise: read, resolve } = Promise.withResolvers<string>();
+      worker.on("message", message => {
+        if (message === "written") resolve(String(worker.stdout.read()));
+      });
+      Atomics.wait(posted, 0, 0);
+      const line = await read;
+      await worker.terminate();
+      expect(line).toBe("line\n");
+    });
+  });
+
+  // What postMessageToThread() routed to a worker keeps its own rule: node:worker_threads handles it when the entry
+  // point has evaluated, on every path that ends the start of the worker.
+  test("a postMessageToThread() message that waited for the worker is answered where the entry point throws", async () => {
+    let sent!: Promise<void>;
+    const worker = workerBehindItsParent(
+      `process.on("workerMessage", () => {}); throw new Error("from the entry point");`,
+      { eval: true },
+      worker => void (sent = wt.postMessageToThread(worker.threadId, "hello")),
+    );
+    const errored = new Promise<Error>(resolve => worker.on("error", resolve));
+    const exited = new Promise<number>(resolve => worker.on("exit", resolve));
+    const outcome = await Promise.race([
+      sent.then(
+        () => "answered",
+        error => error.code,
+      ),
+      exited.then(() => "the worker ended first"),
+    ]);
+    await exited;
+    expect({ outcome, error: (await errored).message }).toEqual({ outcome: "answered", error: "from the entry point" });
+  });
+
+  // As in Node, where the parent's end of worker.stdin exists from the start: a request that finds no write is dropped.
+  test("a request for more of worker.stdin that arrived before the parent wrote does not complete the write", async () => {
+    const worker = new Worker(
+      `const { parentPort } = require("node:worker_threads");
+       process.stdin.read(0);
+       parentPort.on("message", message => parentPort.postMessage(message));
+       parentPort.postMessage("asked");`,
+      { eval: true, stdin: true },
+    );
+    await once(worker, "message");
+    let completed = false;
+    worker.stdin!.write(Buffer.alloc(65536, 120), () => {
+      completed = true;
+    });
+    for (let round = 0; round < 2; round++) {
+      worker.postMessage("echo");
+      await once(worker, "message");
+    }
+    // Read before the worker ends: the end of the worker destroys worker.stdin, which completes the write.
+    const completedWhileTheWorkerRan = completed;
+    await worker.terminate();
+    expect(completedWhileTheWorkerRan).toBe(false);
+  });
+});
+
 // A synchronous worker exit leaves no loop turns for the reader's ack to release
 // the parked writev, so everything buffered behind it must be flushed from the
 // worker's process 'exit' (node's flushSync).

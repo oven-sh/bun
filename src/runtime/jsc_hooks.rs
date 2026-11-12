@@ -791,10 +791,19 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     let vm_for_guard = vm;
     scopeguard::defer! {
         // SAFETY: per fn contract.
-        unsafe { (*vm_for_guard).is_in_preload = false };
+        unsafe {
+            (*vm_for_guard).is_in_preload = false;
+            (*vm_for_guard).preload_root = None;
+        }
         // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
         bun_jsc::compiled_program::did_run_preloads(unsafe { &*(*vm_for_guard).global });
     }
+    // The start sequence of a `node:worker_threads` worker holds the ports of the parent's `Worker`:
+    // see `wait_for_node_worker_preload`.
+    // SAFETY: per fn contract.
+    let holds_ports = unsafe { &*vm }
+        .worker_ref()
+        .is_some_and(bun_jsc::web_worker::WebWorker::is_node_worker);
     // SAFETY: per fn contract.
     let kept_for_this_run = core::mem::take(unsafe { &mut (*vm).preloads_kept_for_reload });
 
@@ -838,6 +847,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
             .strip_prefix(b"file://".as_slice())
             .unwrap_or(preload_slice);
 
+        // SAFETY: per fn contract.
+        unsafe { (*vm).preload_root = None };
         // node: builtin specifiers bypass the file resolver — JSModuleLoader
         // resolves them internally, so `bun --import node:*` works like Node's.
         let module_name = if normalized.starts_with(b"node:") {
@@ -899,6 +910,10 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                 (*vm).preload_hash = bun_watcher::Watcher::get_hash(path_text);
                 (*vm).transpiler.options.test_file_imports_vitest =
                     crate::test_runner::jest::compiled_entry_point_imports_vitest(path_text);
+                if holds_ports {
+                    (*vm).preload_root = Some(bun_ptr::RawSlice::new(path_text));
+                    (*vm).entry_evaluation_started = false;
+                }
             }
             bun_core::StringView::from_bytes(path_text)
         };
@@ -939,6 +954,14 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
             if let Some(rejected) = never_loads {
                 return Ok(rejected);
             }
+        } else if holds_ports {
+            // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a live
+            // protected JSC heap cell.
+            let _ = unsafe {
+                (*vm)
+                    .event_loop_mut()
+                    .wait_for_node_worker_preload(AnyPromise::Internal(promise))
+            };
         } else {
             // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a live
             // protected JSC heap cell.

@@ -818,14 +818,6 @@ declare var Response: {
 };
 
 declare namespace $Node {
-  /** What a `node:worker_threads` worker finds in its `workerData`. The structured clone makes the object. */
-  interface WorkerStdioPorts {
-    /** Only for `{ stdin: true }`. */
-    stdin?: MessagePort;
-    stdout: MessagePort;
-    stderr: MessagePort;
-  }
-
   // src/runtime/webcore/Sink.bind.ts, src/runtime/webcore/FileSink.rs
   interface FileSink {
     /** The number of bytes written, or a promise for it while the write is pending. */

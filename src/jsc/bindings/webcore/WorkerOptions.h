@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include <array>
 #include "SerializedScriptValue.h"
 #include "SharedEnvStore.h"
 #include "TransferredMessagePort.h"
@@ -33,6 +34,22 @@ struct WorkerOptions {
     RefPtr<SerializedScriptValue> workerDataAndEnvironmentData;
     // Objects transferred for either data or environmentData in the transferList
     Vector<TransferredMessagePort> dataMessagePorts;
+    // Kind::Node: the worker's ends of the channels that node:worker_threads' Worker makes for it, in the order
+    // in which the worker hears them (Node reads its internal port, which carries stdio, ahead of the others).
+    enum NodePort : uint8_t {
+        // process.stdin, process.stdout and process.stderr
+        Stdio,
+        // parentPort
+        Parent,
+        // postMessageToThread: the port to the main thread's hub
+        Hub,
+        NodePortCount,
+    };
+    // In transit until the worker's start sequence entangles them. Without a pipe for a Web Worker, and for a
+    // worker that was made in a context that had stopped.
+    std::array<TransferredMessagePort, NodePortCount> nodePorts;
+    // Kind::Node: `{ stdin: true }`. Without it the worker's process.stdin has ended.
+    bool nodeStdin { false };
     Vector<String> preloadModules;
     std::optional<HashMap<String, String>> env;
     Vector<String> argv;

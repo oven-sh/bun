@@ -54,6 +54,7 @@ struct node_module;
 } // namespace node
 
 #include "root.h"
+#include <array>
 #include "headers-handwritten.h"
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSGlobalObject.h>
@@ -340,8 +341,10 @@ public:
 
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Ref<Bun::GlobalEventScope> globalEventScope;
-    RefPtr<WebCore::MessagePort> m_nodeParentPort;
-    bool m_nodeWorkerEntrySettled { false };
+    // A node:worker_threads worker: the ports that its start sequence holds, in the order in which they start
+    // (Node reads its internal port, which carries stdio, ahead of parentPort).
+    std::array<RefPtr<WebCore::MessagePort>, 2> m_nodeWorkerHeldPorts;
+    bool m_nodeWorkerHasStdin { false };
 
     void resetOnEachMicrotaskTick();
 
@@ -437,9 +440,9 @@ public:
     /* setupMainThreadPort's drain callback; run once by WebWorker__entrySettled */                          \
     /* after entry-module evaluation. Stored here (not on globalThis) so user code can't clobber it. */      \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerEntryEvaluatedHook)                                       \
-    /* node:worker_threads worker: { stdin?, stdout, stderr } MessagePorts from the parent Worker; */        \
-    /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
-    V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
+    /* node:worker_threads worker: the MessagePort to the parent Worker's stdio streams; */                  \
+    /* process.stdin/stdout/stderr are built over it lazily (BunProcess.cpp constructStd*). */               \
+    V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPort)                                                \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_moduleGraphFrameStructure)                           \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
@@ -650,18 +653,15 @@ public:
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
 
     JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }
-    JSObject* nodeWorkerStdioPorts() { return m_nodeWorkerStdioPorts.get(); }
-    void setNodeWorkerStdioPorts(JSObject* ports);
+    JSObject* nodeWorkerStdioPort() { return m_nodeWorkerStdioPort.get(); }
+    // Without `stdin: true` in the parent's Worker options, the worker's process.stdin has ended.
+    bool nodeWorkerHasStdin() const { return m_nodeWorkerHasStdin; }
+    void setNodeWorkerStdioPort(JSObject* port, bool hasStdin);
     void setNodeWorkerEnvironmentData(JSMap* data);
-    // node:worker_threads parentPort — the transferred MessagePort entangled with the parent
-    // Worker's public port. Messages it dispatches are mirrored onto globalEventScope so the
-    // Web Worker style (`self.onmessage` / global addEventListener) keeps working under a node Worker.
-    void setNodeParentPort(WebCore::MessagePort*);
-    WebCore::MessagePort* nodeParentPort() const { return m_nodeParentPort.get(); }
-    // A node worker's parentPort delivers nothing until the entry module has evaluated (node's
-    // ordering; a message must not run — or throw — while the entry that handles it is loading).
-    bool nodeWorkerEntrySettled() const { return m_nodeWorkerEntrySettled; }
-    void nodeWorkerEntryDidSettle();
+    // A node worker's stdio port and its parentPort deliver nothing before the worker hears its parent
+    // (WebWorker__releaseHeldPorts): each was given MessagePort::holdStart() before script had it.
+    void holdNodeWorkerPorts(std::array<RefPtr<WebCore::MessagePort>, 2>&&);
+    void releaseNodeWorkerPorts();
     JSObject* nodeWorkerEntryEvaluatedHook() { return m_nodeWorkerEntryEvaluatedHook.get(); }
     void setNodeWorkerEntryEvaluatedHook(JSObject* hook);
 

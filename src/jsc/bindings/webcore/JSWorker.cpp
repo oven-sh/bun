@@ -53,6 +53,7 @@
 #include "JSDOMURL.h"
 #include "JSDOMWrapperCache.h"
 #include "JSEventListener.h"
+#include "JSMessagePort.h"
 #include "NodeValidator.h"
 #include "StructuredSerializeOptions.h"
 #include "WorkerOptions.h"
@@ -171,9 +172,14 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     // every option has validated (below).
     bool shareEnv = false;
     JSValue nodeWorkerObject {};
-    if (callFrame->argumentCount() == 3) {
+    // node:worker_threads' Worker adds itself, the worker's ends of the channels it made (in WorkerOptions::NodePort
+    // order), and whether it was given `stdin: true`.
+    JSArray* nodePorts = nullptr;
+    if (callFrame->argumentCount() >= 3) {
         nodeWorkerObject = callFrame->argument(2);
         options.kind = WorkerOptions::Kind::Node;
+        nodePorts = dynamicDowncast<JSArray>(callFrame->argument(3));
+        options.nodeStdin = callFrame->argument(4).isTrue();
     }
     JSValue workerData = jsUndefined();
     Vector<JSC::Strong<JSC::JSObject>> transferList;
@@ -361,12 +367,13 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
 
     // A worker made by script of a Bun.ModuleGraph that was already disposed is terminated at birth
     // and reports nothing (Worker::create), so nothing is sent to it. The ports node:worker_threads
-    // made for it in that context (in the transfer list, and inside workerData) were closed at
+    // made for it in that context (its channel ends, and those in the transfer list) were closed at
     // birth the same way: serializing them would throw from the constructor, into a loop that may
     // be retrying without ever yielding.
     if (context->isStopped()) {
         transferList.clear();
         workerData = jsUndefined();
+        nodePorts = nullptr;
     }
 
     Vector<RefPtr<MessagePort>> ports;
@@ -402,6 +409,20 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
 
     options.workerDataAndEnvironmentData = serialized.releaseReturnValue();
     options.dataMessagePorts = WTF::move(transferredPorts);
+
+    if (nodePorts) {
+        for (unsigned i = 0; i < WorkerOptions::NodePortCount; i++) {
+            auto* port = dynamicDowncast<JSMessagePort>(nodePorts->getIndex(lexicalGlobalObject, i));
+            RETURN_IF_EXCEPTION(throwScope, {});
+            if (!port || port->wrapped().isDetached() || port->wrapped().isClosing()) {
+                WebCore::propagateException(*lexicalGlobalObject, throwScope, Exception { DataCloneError });
+                RELEASE_AND_RETURN(throwScope, {});
+            }
+            auto transferred = port->wrapped().disentangle();
+            options.nodePorts[i].pipe = WTF::move(transferred.pipe);
+            options.nodePorts[i].side = transferred.side;
+        }
+    }
 
     auto object = Worker::create(*context, WTF::move(scriptUrl), WTF::move(options));
     if constexpr (IsExceptionOr<decltype(object)>)

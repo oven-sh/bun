@@ -1932,7 +1932,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteWarning, (JSC::JSGlobalObject * le
     unsigned stderrAttributes = 0;
     JSValue stderrProperty = process->getDirect(vm, stderrName, stderrAttributes);
     bool isStderrPlaceholder = stderrProperty && stderrAttributes & PropertyAttribute::CustomValue;
-    bool shouldWriteThroughStream = holdsEveryModule || globalObject->nodeWorkerStdioPorts() || process->staticPropertiesReified() || (stderrProperty && !isStderrPlaceholder);
+    bool shouldWriteThroughStream = holdsEveryModule || globalObject->nodeWorkerStdioPort() || process->staticPropertiesReified() || (stderrProperty && !isStderrPlaceholder);
     if (!shouldWriteThroughStream) {
         readMembersThatMakingStandardErrorReads(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -3251,8 +3251,8 @@ extern "C" BunProcessStdinFdType Bun__Process__getStdinFdType(void*, int fd);
 extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 // node:worker_threads worker: process.stdout/stderr forward to the parent Worker's
 // worker.stdout/stderr over a MessagePort; process.stdin is port-fed for { stdin: true }
-// and otherwise an already-ended Readable (never the process-wide fd 0). fd 0/1/2 selects the port.
-static JSValue constructNodeWorkerStdioStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, JSObject* ports, int fd)
+// and otherwise an already-ended Readable (never the process-wide fd 0). fd 0/1/2 selects the stream.
+static JSValue constructNodeWorkerStdioStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, JSObject* port, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -3260,7 +3260,8 @@ static JSValue constructNodeWorkerStdioStream(JSC::JSGlobalObject* globalObject,
     JSC::MarkedArgumentBuffer args;
     args.append(processObject);
     args.append(JSC::jsNumber(fd));
-    args.append(ports);
+    args.append(port);
+    args.append(JSC::jsBoolean(defaultGlobalObject(globalObject)->nodeWorkerHasStdin()));
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, getStream, JSC::getCallData(getStream), globalObject->globalThis(), args);
     if (auto* exception = scope.exception()) {
         if (JSC::AOT::isFunctionDisallowed(getStream))
@@ -4036,8 +4037,8 @@ static JSValue constructLightStdioWriteStream(JSC::JSGlobalObject* globalObject,
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
-    if (auto* ports = defaultGlobalObject(globalObject)->nodeWorkerStdioPorts())
-        return constructNodeWorkerStdioStream(globalObject, processObject, ports, fd);
+    if (auto* port = defaultGlobalObject(globalObject)->nodeWorkerStdioPort())
+        return constructNodeWorkerStdioStream(globalObject, processObject, port, fd);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
@@ -4191,8 +4192,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsStandardOutputStream, (JSGlobalObject * lex
 static JSValue constructStdin(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    if (auto* ports = defaultGlobalObject(globalObject)->nodeWorkerStdioPorts())
-        return constructNodeWorkerStdioStream(globalObject, processObject, ports, 0);
+    if (auto* port = defaultGlobalObject(globalObject)->nodeWorkerStdioPort())
+        return constructNodeWorkerStdioStream(globalObject, processObject, port, 0);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;

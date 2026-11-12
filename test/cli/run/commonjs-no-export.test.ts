@@ -257,7 +257,7 @@ describe("a function declaration as the body of a label, if or else", () => {
     });
   });
 
-  // A CommonJS file cannot take an import that the parser generates: the load fails with
+  // A CommonJS file cannot take the import of the JSX runtime that the parser generates: the load fails with
   // "SyntaxError: Unexpected token '{'. import call expects one or two arguments." (#12812).
   test.failing("runs a file that also needs the JSX runtime import", async () => {
     using dir = tempDir("sloppy-fn-decl-jsx", {
@@ -272,8 +272,7 @@ describe("a function declaration as the body of a label, if or else", () => {
     expect(await spawn(String(dir), ["a.jsx"])).toEqual({ stdout: "sloppy g div\n", stderr: "", exitCode: 0 });
   });
 
-  // The same failure as for the JSX runtime import (#12812).
-  test.failing("runs a file that also needs a decorator helper import", async () => {
+  test("runs a file that also needs a decorator helper", async () => {
     const files = {
       "legacy-decorator.ts":
         label + "function d(value: any, context: any) {}\nclass A { @d m() {} }\n" + named("decorator in .ts", "g()"),
@@ -294,9 +293,7 @@ describe("a function declaration as the body of a label, if or else", () => {
     });
   });
 
-  // A plugin source that is CommonJS does not run: the module loader evaluates it as an ES module,
-  // where the CommonJS wrapper is an unused function expression.
-  test.failing("runs a Bun.plugin source", async () => {
+  test("runs a Bun.plugin source", async () => {
     const source = (name: string) => JSON.stringify(label + named(name, "g()"));
     using dir = tempDir("sloppy-fn-decl-plugin", {
       "imported.js": "// The plugin gives the source.\n",

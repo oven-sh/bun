@@ -227,13 +227,13 @@ impl Checker<'_, '_> {
             + self.circular_before_parameter_symbol.len()
     }
 
-    /// Runs every check that queries `file`. Diagnostics it causes in other files, or that other files cause in this
-    /// one, go to the sink.
-    pub fn check_file(&mut self, file: FileId) -> Checked {
-        let _work = current_work::working_on(
-            current_work::Step::Check,
-            self.files().module(file).file_name(),
-        );
+    /// Begins a visit for questions about a file that another task checks.
+    pub fn begin_questions(&mut self, file: FileId) {
+        self.begin_visit(file);
+        self.is_type_checked = true;
+    }
+
+    fn begin_visit(&mut self, file: FileId) {
         if let Some(previous) = self.task.file
             && previous != file
             && self.files().module(previous).is_leaf
@@ -276,10 +276,20 @@ impl Checker<'_, '_> {
         self.release_provisional_shapes();
         self.is_type_checked = false;
         self.reads_types_alone = self.expected == Requested::All && self.files().is_compile_build();
-        let hir = self.hir(file);
-        if hir.ran_out_of_stack {
+        if self.hir(file).ran_out_of_stack {
             self.ran_out_of_stack.set(true);
         }
+    }
+
+    /// Runs every check that queries `file`. Diagnostics it causes in other files, or that other files cause in this
+    /// one, go to the sink.
+    pub fn check_file(&mut self, file: FileId) -> Checked {
+        let _work = current_work::working_on(
+            current_work::Step::Check,
+            self.files().module(file).file_name(),
+        );
+        self.begin_visit(file);
+        let hir = self.hir(file);
         // `GetSyntacticDiagnostics` and `getBindAndCheckDiagnosticsWithChecker` are separate. Only the second depends
         // on whether the file is checked.
         self.report_hir_diagnostics(file, &[DiagnosticKind::Parse, DiagnosticKind::Js]);
@@ -478,6 +488,10 @@ impl Checker<'_, '_> {
             return Some(d);
         }
         let hir = self.hir(d.file);
+        // What a string holds is the run's. The tree may be gone before the build sorts what it reports.
+        if hir.is_in_known_evaluation(d.start) {
+            return None;
+        }
         let is_unconditional = self.is_unconditional_error(&d);
         // `SkipTypeChecking`
         if hir.check_directive == Some(false) && !is_unconditional {

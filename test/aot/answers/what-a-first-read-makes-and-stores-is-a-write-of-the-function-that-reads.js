@@ -15,10 +15,10 @@
 // # RUN: run-in-shell $SHELL
 // # CHECK: 2 of 2 of 2
 // # CHECK-NEXT: exited with 0
-function wire(options, depth) { if (depth) return wire(options, depth - 1); const { onDone, onError } = options; return () => onDone() + (onError ? 1 : 0); }
+function wire(options, depth) { if (depth > 0) return wire(options, -depth); const { onDone, onError } = options; return () => onDone() + (onError ? 1 : 0); }
 function start(tag) { let count = tag; const step = wire({ onDone: () => ++count, onError: () => --count }, 2); return step() + count; }
 const table = [10, 20, 30];
-function list(depth) { return depth ? list(depth - 1) : table; }
+function list(depth) { return depth > 0 ? list(-depth) : table; }
 function both(at) { return (list(2) === table ? 100 : 0) + at; }
 let sum = 0;
 for (let turn = 0; turn < 3; turn++) sum += start(turn) + both(turn);

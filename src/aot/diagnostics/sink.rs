@@ -76,6 +76,7 @@ impl Diagnostics {
         self.add_with_locator(locator.as_mut(), diagnostic);
     }
 
+    /// Renders a warning as `add` would, for a caller that may emit it later.
     pub(crate) fn render(view: ProgramView<'_, '_>, warning: Diagnostic) -> Option<Msg> {
         let mut kept = Diagnostics::new();
         kept.add(Some(view), warning);
@@ -89,6 +90,13 @@ impl Diagnostics {
         diagnostic: Diagnostic,
     ) {
         let code = diagnostic.code;
+        // The program has no place for a warning about a string that it evaluates.
+        if let (Some(locator), Some(span)) = (locator.as_deref(), diagnostic.span)
+            && diagnostic.severity != Severity::Error
+            && (locator.view().files().hir(span.file)).is_in_known_evaluation(span.start)
+        {
+            return;
+        }
         let origin = match (locator.as_deref(), diagnostic.span) {
             (Some(locator), Some(span)) => locator.view().origin(span.file),
             (None, Some(_)) | (Some(_) | None, None) => FileOrigin::NoFile,

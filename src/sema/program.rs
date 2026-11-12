@@ -22,7 +22,7 @@ pub use self::code_file::byte_range_of_node;
 pub use self::code_graph::*;
 pub use self::code_load::CompileInputs;
 pub use self::retire::{ModuleCell, ReadingNoTrees, ReadingTask};
-pub(crate) use self::retire::{forget_blocks_of, free_behind_tasks};
+pub(crate) use self::retire::{forget_blocks_of, free_after_tasks};
 
 use self::code_load::{
     BuildFile, CodeFiles, CodeLoadContext, CompileLoad, RootTables, TypesQuestion,
@@ -792,7 +792,7 @@ pub struct ModuleSymbolLinks<'s> {
     pub export_collisions: &'s [ExportCollision],
     /// The modules that `visit` came to, in its order, if there are several and `Resolve::finished_visit` may take `resolved_exports` for what `visit` returns for the module.
     visited: &'s [Sym],
-    /// A clone that nothing was merged into has the same links. See `Files::module_behind_clone`.
+    /// A clone that nothing was merged into has the same links. See `Files::module_of_clone`.
     is_shared_by_clones: bool,
 }
 
@@ -11065,7 +11065,7 @@ impl<'s> Files<'s> {
     pub fn module_links(&self, module: Sym) -> &ModuleSymbolLinks<'s> {
         debug_assert!(self.is_linked);
         let links = self.memo.module_links.get_ref(&module).or_else(|| {
-            let cloned = self.module_behind_clone(module)?;
+            let cloned = self.module_of_clone(module)?;
             self.memo.module_links.get_ref(&cloned)
         });
         // `link` stores them for every symbol that has a flag of `SymFlags::MODULE`, or for the module that it clones.
@@ -11213,7 +11213,7 @@ impl<'s> Files<'s> {
 
     /// The module that `clone` was created from, unless something was merged into the clone. `getExportsOfModule` does
     /// the same for both. Every `import * as ns` has a clone: a table for each would take imports x exports.
-    fn module_behind_clone(&self, clone: Sym) -> Option<Sym> {
+    fn module_of_clone(&self, clone: Sym) -> Option<Sym> {
         if !self.flags(clone).contains(SymFlags::TRANSIENT)
             || self.merged_exports.contains_key(&clone)
             || self.merged_parts.contains_key(&clone)
@@ -11373,7 +11373,7 @@ impl<'a, 's> AliasResolver<'a, 's> {
 
     /// The module whose links are the links of `module`: see `ModuleSymbolLinks::is_shared_by_clones`.
     fn links_holder(&self, module: Sym) -> Sym {
-        match self.module_behind_clone(module) {
+        match self.module_of_clone(module) {
             Some(cloned) if self.with_module_links(cloned, |it| it.is_shared_by_clones) => cloned,
             _ => module,
         }

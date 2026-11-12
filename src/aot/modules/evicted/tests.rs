@@ -10,6 +10,24 @@ fn files_that_run_again<'a>(files: &[(&'a str, &str)]) -> Vec<&'a str> {
 }
 
 #[test]
+fn import_cycle_swallows_commonjs_error() {
+    let files = [
+        ("main.mjs", "import './first.cjs';"),
+        (
+            "first.cjs",
+            "require('./cycle.mjs');\nrequire('./thrower.cjs');",
+        ),
+        ("cycle.mjs", "import './imported.cjs';"),
+        ("imported.cjs", "require('./thrower.cjs');"),
+        ("thrower.cjs", "(() => require('./cycle.mjs'))();"),
+    ];
+    assert_eq!(files_that_run_again(&files), ["thrower.cjs"]);
+    let mut without_cycle = files;
+    without_cycle[4].1 = "exports.value = 1;";
+    assert!(files_that_run_again(&without_cycle).is_empty());
+}
+
+#[test]
 fn a_function_that_a_file_hands_out_may_ask_for_the_file_behind_its_throw() {
     let files = [
         ("main.cjs", "require('./flaky.cjs');"),
@@ -111,7 +129,7 @@ fn a_finalizer_may_drop_what_the_handler_throws() {
 #[test]
 fn the_job_of_an_import_call_may_ask_for_the_running_file_behind_its_throw() {
     let main = ("main.cjs", "require('./flaky.cjs');");
-    let calls_import = "import('./flaky.cjs');\nif (globalThis.first) throw 0;";
+    let calls_import = "exports.load = import('./flaky.cjs');\nif (globalThis.first) throw 0;";
     assert_eq!(
         files_that_run_again(&[main, ("flaky.cjs", calls_import)]),
         ["flaky.cjs"]

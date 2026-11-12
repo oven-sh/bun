@@ -13,7 +13,7 @@
 # sink(at(text()), at("b"), at(text()), give("a"));
 # -- end of source
 # RUN: link fields mechanisms=all
-# CHECK: field L0.0 "v" proven=i32
+# CHECK: field L0.0 "v" proven=int[0, 2147483647]
 # CHECK-NOT: field L1.0 "y" proven=
 # RUN(SHELL): run-in-shell const all = ["a", "nothing"]; let at = 0; globalThis.text = () => all[at++]; globalThis.sink = (...values) => print(values.join(" "));
 # SHELL: 3 5 -1 5

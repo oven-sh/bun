@@ -1414,6 +1414,25 @@ _ZN3bun11N_AVX3_ZEN413OddBlocksImplEPKhmPm         [AVX, AVX2, AVX512BW, AVX512D
 
 
 # ----------------------------------------------------------------------------
+# The ahead-of-time compiler's search of an array for a value. Gate: findBox() asks
+# CPUFeatureSet::host() for AVX2 (CPUID and XGETBV).
+# (1 symbols)
+# ----------------------------------------------------------------------------
+_ZN3JSC3AOTL12findWithAVX2EPKmmm  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# The ahead-of-time compiler's products of BigInts. Gate: BigIntArithmetic::hasMULX()
+# (CPUID).
+# (4 symbols)
+# ----------------------------------------------------------------------------
+_ZN3JSC3AOTL24tryMulUsualBigIntsByMULXEllPv                  [BMI2]
+_ZN3JSC3AOTL31tryMulUsualBigIntsInFrameByMULXEllPv           [BMI2]
+_ZN3JSC3AOTL32tryRemainderOfUsualFactorsByMULXElllPv         [BMI2]
+_ZN3JSC3AOTL39tryRemainderOfUsualFactorsInFrameByMULXElllPv  [BMI2]
+
+
+# ----------------------------------------------------------------------------
 # The ahead-of-time compiler's count of instructions per pass. Gate: cap_user_rdpmc
 # of the perf_event_open() page, which the kernel sets where user code may read the
 # counter; otherwise the count comes from read(). Every x86-64 processor has RDPMC.

@@ -11,10 +11,12 @@
 # -- end of source
 # The compiler before this one: 10 instructions, 0 of them patches, a turn of the written loop steps by 8.
 # When the bound was taken: loop: operations 12, patches 0, moves 0, unlikely 6 ; loop: operations 36, patches 0, moves 2, unlikely 12 ; loop: operations 14, patches 1, moves 1, unlikely 0 ; loop: operations 27, patches 2, moves 0, unlikely 2.
-# RUN(X64): loops most:12,38,15,27 f1 mechanisms=all-Inlining
+# RUN(X64): loops most:13,12,6,28,7,24 f1 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 13
 # X64-NEXT: loop: at most 12
-# X64-NEXT: loop: at most 38
-# X64-NEXT: loop: at most 15
-# X64-NEXT: loop: at most 27
+# X64-NEXT: loop: at most 6
+# X64-NEXT: loop: at most 28
+# X64-NEXT: loop: at most 7
+# X64-NEXT: loop: at most 24

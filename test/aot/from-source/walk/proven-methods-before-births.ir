@@ -1,0 +1,12 @@
+# -- source: main.cjs
+# function P(x, y) { this.init(x, y); }
+# P.prototype.init = function (x, y) { this.x = x; this.y = y; };
+# P.prototype.sum = function () { return this.x + this.y; };
+# function run(k) { var n = 0; for (var i = 0; i < k; i++) { var p = new P(i, 1); n = (n + p.sum()) | 0; } return n; }
+# print(run(40));
+# -- end of source
+# The file lays both methods before anything can use the function, so no allocation asks whether they are unchanged.
+# RUN: walk f2:Body mechanisms=all
+# CHECK-NOT: AreMembersUnchanged
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 820

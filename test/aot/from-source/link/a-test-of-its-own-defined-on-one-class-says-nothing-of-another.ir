@@ -8,8 +8,8 @@
 # print(o instanceof Other, t instanceof Other, 1 instanceof Tagged, o.m(), t.y);
 # -- end of source
 # RUN: link fields mechanisms=all
-# CHECK: field {{*}} "x" proven=i32
-# CHECK: field {{*}} "y" proven=i32
+# CHECK: field {{*}} "x" proven=int[0, 2147483647]
+# CHECK: field {{*}} "y" proven=int[0, 2147483647]
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: true false true 1 2
 # RUN(NONE): run-in-shell mechanisms=none

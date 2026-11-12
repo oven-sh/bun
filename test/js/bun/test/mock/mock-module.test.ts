@@ -5864,6 +5864,57 @@ describe.concurrent("a running factory's imports don't wait for its own mock", (
     );
   });
 
+  // The load shares no turn with the factory that runs meanwhile, although the factory's file called import() for it.
+  for (const [name, shared, uses] of [
+    ["a module that waits for a factory which the test ends later", `export const shared = () => "real";`, "./shared"],
+    [
+      "a module that waits for that and imports the mock too",
+      `import { rate } from "./rate"; export const shared = () => rate;`,
+      "./link",
+    ],
+  ]) {
+    test(`while the test loads ${name}`, async () => {
+      const files: Record<string, string> = {
+        "rate.ts": `export const rate = "real";`,
+        "shared.ts": shared,
+        "late.ts": `export const late = "real";`,
+        "uses.ts": `import { shared } from "${uses}"; export { late } from "./late"; export { shared };`,
+        "chain.ts": `import { shared } from "./link"; export { shared };`,
+        "link.ts": `import { shared } from "./shared"; export { shared };`,
+      };
+      const factories = {
+        "a factory that waits": `async () => { await null; return { shared: () => "mock" }; }`,
+        "a factory that takes the original": `async original => ({ ...(await original()) })`,
+        "a factory that imports the original": `async () => ({ ...(await vi.importActual("./link")) })`,
+      };
+      let count = 0;
+      for (const [name, factory] of Object.entries(factories)) {
+        files[`${count++}.test.ts`] = `
+          import { expect, test, vi } from "bun:test";
+          const started = Promise.withResolvers();
+          const late = Promise.withResolvers();
+          vi.mock("./rate", async original => {
+            const chain = import("./chain");
+            started.resolve();
+            await chain;
+            return { rate: "mock" };
+          });
+          vi.mock("./link", ${factory});
+          vi.doMock("./late", async () => (await late.promise, { late: "mock" }));
+          test("${name}", async () => {
+            const rate = import("./rate");
+            await started.promise;
+            const uses = import("./uses");
+            expect((await rate).rate).toBe("mock");
+            late.resolve();
+            expect((await uses).late).toBe("mock");
+          });
+        `;
+      }
+      await expectFixturesToPass(files, count);
+    });
+  }
+
   test("through another mock whose original imports the mocked module", async () => {
     await expectFixturesToPass(
       {
@@ -7386,6 +7437,36 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
       1,
     );
   });
+});
+
+// jest.requireActual() requires the original through a module object that nothing else holds.
+test.concurrent("a mock evicts the importers of a required original, also after a garbage collection", async () => {
+  await expectFixturesToPass(
+    {
+      "tax.ts": `export const rate = "original";`,
+      "sale.ts": `import { rate } from "./tax"; export const sold = () => rate;`,
+      "a.test.ts": `
+        import { expect, jest, mock, test } from "bun:test";
+        mock.module("./tax", () => ({ rate: "first" }));
+        test("requires the original of a mocked module", async () => {
+          expect((await import("./sale")).sold()).toBe("first");
+          expect(jest.requireActual("./tax").rate).toBe("original");
+        });
+      `,
+      "b.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        import { sold } from "./sale";
+        test("a later mock is seen by what imports the module", async () => {
+          Bun.gc(true);
+          vi.doMock("./tax", async original => ({ ...(await original()), rate: "second" }));
+          await import("./tax");
+          expect((await import("./sale")).sold()).toBe("second");
+          expect(sold()).toBe("original");
+        });
+      `,
+    },
+    2,
+  );
 });
 
 // In a URL, the "%de" in "50%deposit.ts" escapes the byte 0xDE, which isn't valid UTF-8. Windows decodes it to U+FFFD.

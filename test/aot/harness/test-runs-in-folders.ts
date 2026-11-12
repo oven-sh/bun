@@ -3,11 +3,14 @@
 // A project needs no expectation of its own. It prints what a wrong answer would change, or expects it in a test, which then fails in one run alone. A preload is named by a bunfig.toml in the folder.
 // The test files of a project end in _test, which `bun test` finds: scripts/runner.node.ts takes every name that holds ".test" for a test of the repository.
 // The packages of a project lie in a folder `installed`, which the copy has as `node_modules`: git ignores a folder of that name, and so does whatever carries this tree to another machine.
+// A project waits for events, never for a time: on a busy machine every time is too short. A factory waits for a gate that the test opens, and a factory, a body or a timer that is waited for resolves a promise.
+// Where nothing can say that nothing more comes, the test runs the event loop some 20 times (spinEventLoop): what a failure or a settled factory brings about comes in the first of them.
 // A file flags.txt in the folder holds flags for both runs: `--isolate`.
 // A file todo.txt in the folder, lines of the form `"<words>" | "<the words for them>": <why>`: the two runs differ today, and in that alone: one says the first words of a line where the other says the second.
 // The project is run all the same. It fails by any other difference, and once the two runs agree: the file goes out.
 // A file says.json in the folder, { why, printed, tests, exitCode }: `bun test` has more than one answer here, by how busy the machine is: the tests leave a call in flight that nobody awaits, and the run ends
 // when they have ended. A compiled run has one answer, the one that `bun test` gives most often: it alone is run, and held to what the file says.
+// A file one-thread.txt in the folder says why plain Bun reads the files of the project on one thread: with threads, files complete in the order in which the threads finish.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, readFileSync, readdirSync, renameSync } from "node:fs";
@@ -83,7 +86,13 @@ const wordsOfAll = process.env.AOT_TEST_RUN_WORDS ?? "";
 async function outcomeOf(dir: string, words: string, ...flags: string[]) {
   layPackages(dir);
   // As users run it: whoever runs this file may have switched the thread off that reads the texts.
-  const env = { ...bunEnv, NO_COLOR: "1", BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "0", BUN_DEBUG_TEST_AOT_WORDS: words };
+  const oneThread = !flags.includes("--aot") && existsSync(join(dir, "one-thread.txt")) ? "1" : "0";
+  const env = {
+    ...bunEnv,
+    NO_COLOR: "1",
+    BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: oneThread,
+    BUN_DEBUG_TEST_AOT_WORDS: words,
+  };
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, ...testFilesIn(dir)], dir, env);
   return {
     printed: stdout.split("\n").filter(line => line && !line.startsWith("bun test v")),
@@ -120,21 +129,12 @@ export function testRunsInFolders(part: number, parts: number) {
       using plainDir = tempDir("aot-test-run-in-folder", join(root, area, project));
       using compiledDir = tempDir("aot-test-run-in-folder", join(root, area, project));
       const flags = flagsOf(join(root, area, project));
-      const [first, compiled] = await Promise.all([
+      const [plain, compiled] = await Promise.all([
         outcomeOf(String(plainDir), "", ...flags),
         outcomeOf(String(compiledDir), wordsOfAll, "--aot", ...flags),
       ]);
-      // `bun test` itself answers otherwise once in some hundred runs of some folders. Where the two part it is run again,
-      // twice at most, and the run that says what the compiled run said is the one that counts. The compiled run is not run again: what it said stands.
-      let plain = first;
+      // Neither run is made again: where plain Bun has more than one answer the project fails, and what it races for is fixed in the project.
       const butForItsMark = markOf(join(root, area, project));
-      for (let asked = 0; asked < 2 && !butForItsMark && !Bun.deepEquals(compiled, plain); asked++) {
-        using againDir = tempDir("aot-test-run-in-folder", join(root, area, project));
-        const again = await outcomeOf(String(againDir), "", ...flags);
-        if (!Bun.deepEquals(compiled, again)) continue;
-        console.error(`THE REFERENCE WAVERED: ${area}/${project}: plain Bun said ${JSON.stringify(first)} at first, and asked again what the compiled run said`);
-        plain = again;
-      }
       // A run in which plain says nothing would pass for the wrong reason: it prints, or a test of it passes by what it expects.
       expect(plain.printed.length + plain.tests.filter(line => line.startsWith("(pass) ")).length).toBeGreaterThan(0);
       expect(plain.tests.length).toBeGreaterThan(0);

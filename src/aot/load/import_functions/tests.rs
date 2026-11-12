@@ -28,7 +28,7 @@ fn count_imports_written(path: &str, text: &str) -> usize {
 }
 
 #[test]
-fn functions_that_import_are_written() {
+fn importing_functions_are_recognized() {
     let written = [
         r#"var load = new Function("path", "return import(path)");"#,
         r#"const load = Function("path", "return import(path);");"#,
@@ -49,6 +49,10 @@ fn other_calls_stay() {
     let left = [
         r#"new Function("path", "return import(other)");"#,
         r#"new Function("path", "return  import(path)");"#,
+        r#"new Function("path", "return\nimport(path)");"#,
+        r#"new Function("path", "return\rimport(path)");"#,
+        "new Function('path', `return\nimport(path)`);",
+        r#"new Function("return\nimport('a')");"#,
         r#"new Function("path", "return import(path) + 1");"#,
         r#"new Function("path", "import(path)");"#,
         r#"new Function("a, b", "return import(a)");"#,

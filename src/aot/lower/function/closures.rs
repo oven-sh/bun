@@ -37,6 +37,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         arguments: EntryArguments<'_>,
     ) -> ValueId {
         let key = self.file.function_key(function);
+        super::header::complete_header(self.file, function);
         let header = self.file.function_header(function);
         let flags = header.flags;
         let this_type = header.this_type;

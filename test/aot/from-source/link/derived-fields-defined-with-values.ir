@@ -14,10 +14,10 @@
 # A derived class defines its parameter properties, and the fields that plain stores fill right after super(), with their values: no field ever holds undefined, and the reads give numbers.
 # RUN: walk f4 mechanisms=all
 # CHECK-LABEL: code f4:Body
-# CHECK: : i32 {{*}}= GetSlot {{*}}key="side"
+# CHECK: : int[0, 2147483647] {{*}}= GetSlot {{*}}key="side"
 # RUN(BOX): walk f6 mechanisms=all
 # BOX-LABEL: code f6:Body
-# BOX: : i32 {{*}}= GetSlot {{*}}key="width"
+# BOX: : int[0, 2147483647] {{*}}= GetSlot {{*}}key="width"
 # BOX: : number {{*}}= GetSlot {{*}}key="height"
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 14

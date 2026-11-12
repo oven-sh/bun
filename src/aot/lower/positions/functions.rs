@@ -205,7 +205,7 @@ fn compute_this_position(
         return expect_type(file.fragment.types.intern_layout(layout));
     }
     if let Some(constructor) = file.queries.find_constructor_of_prototype_function(source)
-        && let Some(layout) = find_layout_made_by(file, constructor)
+        && let Some(layout) = find_allocated_layout(file, constructor)
     {
         return expect_type(file.fragment.types.intern_layout(layout));
     }
@@ -271,10 +271,10 @@ fn find_layout_whose_prototype_holds(
     let Binding::Symbol(symbol) = bound.binding(obj) else {
         return None;
     };
-    find_layout_made_by(file, symbol)
+    find_allocated_layout(file, symbol)
 }
 
-fn find_layout_made_by(
+fn find_allocated_layout(
     file: &mut FileLowering<'_, '_, '_, '_>,
     constructor: SymbolId,
 ) -> Option<LayoutId> {
@@ -284,6 +284,10 @@ fn find_layout_made_by(
         BindingInitializer::Function(constructor) => constructor,
         BindingInitializer::Expression(initializer) => match hir[initializer].kind {
             ExprKind::Fn(constructor) => constructor,
+            ExprKind::Ident(_) => {
+                let class = file.queries.only_class_stored_in_variable(initializer)?;
+                return Some(file.class_layout(class));
+            }
             _ => return None,
         },
         _ => return None,

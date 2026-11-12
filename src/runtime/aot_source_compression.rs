@@ -16,25 +16,30 @@ pub(crate) extern "C" fn Bun__AOT__maxCompressedSourceSize(text_size: usize) -> 
     bun_zstd::compress_bound(text_size)
 }
 
-/// Compresses `text` to `compressed`. Returns the size of the frame, or 0 if it fails.
+/// Compresses the `text_size` bytes at `text` to `compressed`, which is `compressed_capacity` bytes that only this call
+/// uses and that need not be initialized. Returns the size of the frame, or 0 if it fails.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__AOT__compressSource(
     compressed: *mut u8,
     compressed_capacity: usize,
     text: *const u8,
     text_size: usize,
+    level: core::ffi::c_int,
 ) -> usize {
-    // SAFETY: the caller's contract.
+    // More room than the bound changes nothing in the frame.
+    let room = compressed_capacity.min(bun_zstd::compress_bound(text_size));
+    // SAFETY: what the caller says of the two ranges.
     let (compressed, text) = unsafe {
         (
-            zeroed(compressed, compressed_capacity),
+            zeroed(compressed, room),
             bun_core::ffi::slice(text, text_size),
         )
     };
-    bun_zstd::compress(compressed, text, 3).unwrap_or(0)
+    bun_zstd::compress(compressed, text, level).unwrap_or(0)
 }
 
-/// Decompresses `compressed` to `text`. False unless it fills `text`.
+/// Decompresses the `compressed_size` bytes at `compressed` to `text`, which is `text_size` bytes that only this call
+/// uses and that need not be initialized. False unless it fills `text`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__AOT__decompressSource(
     text: *mut u8,
@@ -42,7 +47,7 @@ pub(crate) extern "C" fn Bun__AOT__decompressSource(
     compressed: *const u8,
     compressed_size: usize,
 ) -> bool {
-    // SAFETY: the caller's contract.
+    // SAFETY: what the caller says of the two ranges.
     let (text, compressed) = unsafe {
         (
             zeroed(text, text_size),

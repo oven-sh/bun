@@ -5,7 +5,7 @@
 # let chain: any = null; for (let i = 0; i < 5; i++) chain = { next: chain, word: "w" + i };
 # function counts(bag: any) { let work = 0; for (let i = 0; i < 4000; i++) work = (work + bag.tint) | 0; return "" + work + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine; }
 # function follows(bag: any) { let node = chain; let word = ""; while (node) { word = node.word; node = node.next; } return "" + word + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine; }
-# print(kept.length, counts(JSON.parse('{"twine":1,"tint":2}')), follows(JSON.parse('{"twine":1}')));
+# print(kept.length, counts(kept[3]).length, follows(kept[3]).length, counts(JSON.parse('{"twine":1,"tint":2}')), follows(JSON.parse('{"twine":1}')));
 # -- end of source
 # Both functions have a guard that a parsed record fails, and a slow version that holds a loop. The loop of counts() has a counter, a relation and a sum: there the walk has something to reckon, so that slow version is walked. The loop of
 # follows() only reads names and asks for truth: no operator on numbers, no relation: a walk would reckon nothing there and only cost bytes and time of the build: that slow version is written straight, as one without a loop is.
@@ -16,4 +16,4 @@
 # RUN(COUNTS): walk f1:SlowBody mechanisms=all
 # COUNTS: Increment {{*}} form=
 # RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
-# ANSWERS: 20 8000111111111111 w0111111111111
+# ANSWERS: 20 13 14 8000111111111111 w0111111111111

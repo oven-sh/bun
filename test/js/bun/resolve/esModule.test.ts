@@ -59,11 +59,12 @@ describe.concurrent("a site that the JIT compiled on a namespace without an `__e
   };
 
   // With BUN_JSC_useConcurrentJIT=0 the JIT compiles a function on the thread that runs it, after a fixed number of calls.
+  // BUN_JSC_useJIT=1 keeps the JIT on when the environment of the test run turns it off: `bunEnv` hands that on.
   async function run(cmd: string[], fixture: Record<string, string>, env: Record<string, string> = {}) {
     using dir = tempDir("esmodule-jit", { ...files, ...fixture });
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...cmd],
-      env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0", ...env },
+      env: { ...bunEnv, BUN_JSC_useJIT: "1", BUN_JSC_useConcurrentJIT: "0", ...env },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",

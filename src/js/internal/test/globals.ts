@@ -136,8 +136,7 @@ function isSameWithAttributes(current: PropertyDescriptor, saved: PropertyDescri
 function restoreProperty(object: object, key: PropertyKey, current: PropertyDescriptor, saved: PropertyDescriptor) {
   if (!$getByIdDirect(current, "configurable")) {
     const isWritable = $getByIdDirect(current, "writable");
-    // A file made the property non-configurable, or made it read-only. Object.defineProperty() then refuses the saved
-    // descriptor, until the property has the saved attributes again.
+    // Object.defineProperty() refuses the saved descriptor until the property has its saved attributes again.
     if (saved.configurable || (!isWritable && saved.writable)) {
       if (!setAttributes(object, key, saved)) return;
     }

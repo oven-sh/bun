@@ -120,8 +120,7 @@ static JSC::JSObject* withoutProxy(JSC::JSObject* object)
     return object->type() == JSC::GlobalProxyType ? uncheckedDowncast<JSC::JSGlobalProxy>(object)->target() : object;
 }
 
-// The indexes of the objects that have changed, or may have. An object that is not extensible has the complement of its index: Object.freeze() and
-// Object.seal() change the attributes of its properties, and not their values.
+// The indexes of the objects that have changed, or may have. For an object that is not extensible it is ~index.
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionIndexesOfChangedObjects, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* objects = uncheckedDowncast<JSC::JSArray>(callFrame->uncheckedArgument(0));
@@ -158,8 +157,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionDeleteOwnProperty, __attribut
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsBoolean(JSC::JSCell::deleteProperty(object, globalObject, key))));
 }
 
-// Gives a property the attributes of a descriptor and keeps what it holds. Object.defineProperty() refuses that for a property that a test file
-// made non-configurable, and then refuses the saved descriptor. After this it takes it. False if the property stays as it is.
+// Gives a property the attributes of a descriptor and keeps what it holds, also when the property is not configurable. False if it can't.
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionSetOwnPropertyAttributes, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -173,8 +171,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionSetOwnPropertyAttributes, __a
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsBoolean(setOwnPropertyAttributes(globalObject, object, key, descriptor.attributes()))));
 }
 
-// Object.defineProperty() for a property that the object doesn't have. An object that is not extensible refuses that, so there the property is first
-// stored below that level, as the restore of a spy does.
+// Object.defineProperty() for a property that the object doesn't have, also when the object is not extensible.
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionAddOwnProperty, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -187,8 +184,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionAddOwnProperty, __attribute__
     RETURN_IF_EXCEPTION(scope, {});
     auto* target = withoutProxy(object);
     if (!target->isStructureExtensible()) {
-        // A structure keeps the transition that adds a property, and a plain assignment to another object of that structure takes a transition that
-        // is there. A dictionary keeps none.
+        // Otherwise the structure keeps the transition that adds the property, and a plain assignment to another object of that structure takes it.
         if (!target->structure()->isDictionary())
             target->convertToDictionary(vm);
         putOwnProperty(globalObject, target, key, descriptor);

@@ -1190,9 +1190,7 @@ fn get_assumed_invoked_functions_impl(
                     // Recursively traverse into other function expressions
                     // TS passes the shared temporaries map to the recursive call
                     let inner_func = &env.functions[lowered_func.func.0 as usize];
-                    // Not in upstream: see `collect_non_nulls_in_blocks`. What such a function may
-                    // invoke is not looked for: an element that only its kept read uses would make
-                    // a handler in a prop of that element count as invoked.
+                    // Not in upstream: a handler of an element that only a kept read uses would count as invoked.
                     if inner_func.keeps_unread_reads {
                         continue;
                     }
@@ -1318,9 +1316,7 @@ fn collect_non_nulls_in_blocks(
             // Handle assumed-invoked inner functions
             if let InstructionValue::FunctionExpression { lowered_func, .. } = &instr.value {
                 let inner_func = &env.functions[lowered_func.func.0 as usize];
-                // Not in upstream, where DeadCodeElimination takes the read away: a function that
-                // keeps a read of a property that nothing uses is taken as a whole, and what it
-                // reads does not tell the code around it that a value is not null.
+                // Not in upstream: a function that keeps a read that nothing uses gives no non-null fact.
                 if ctx.assumed_invoked_fns.contains(&lowered_func.func)
                     && !inner_func.keeps_unread_reads
                 {
@@ -2152,9 +2148,7 @@ fn visit_inner_function_blocks(
         return;
     }
 
-    // Not in upstream, where DeadCodeElimination takes the read away: a function that keeps a read
-    // of a property that nothing uses is taken as a whole. What makes it depends on each variable
-    // that it captures, and not on a path into one, which a guard would read at render.
+    // Not in upstream: a function that keeps a read that nothing uses is a dependency by its captures, not by paths.
     if env.functions[func_id.0 as usize].keeps_unread_reads {
         let func = std::mem::replace(
             &mut env.functions[func_id.0 as usize],

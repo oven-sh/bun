@@ -35,14 +35,7 @@ pub(crate) fn dead_code_elimination(func: &mut HirFunction, env: &Environment) {
     eliminate(func, env, may_keep_unread_reads);
 }
 
-/// For a nested function: an effect, a handler, any callback. Not in upstream, which prunes a read
-/// of a property that nothing uses as "read-only", and so takes the `el.offsetHeight;` that flushes
-/// the layout out of an effect. Here the read stays. The body of a component or hook is render
-/// code, which has to be pure: there it goes as in upstream. So it does in SSR output, which
-/// renders once and has no effects, and for the linter.
-///
-/// `HirFunction::keeps_unread_reads` is then set on the function, and on each nested function
-/// around it. PropagateScopeDependenciesHIR takes such a function as a whole.
+/// Not in upstream: in client output, a nested function keeps a read of a property that nothing uses (`el.offsetHeight;`).
 pub(crate) fn dead_code_elimination_in_nested_function(func: &mut HirFunction, env: &Environment) {
     eliminate(func, env, env.output_mode == OutputMode::Client);
 }
@@ -222,8 +215,7 @@ fn is_caught(terminal: &Terminal) -> bool {
     )
 }
 
-/// A read of a property runs a getter or a proxy trap. A pattern, a coercion and a spread can run
-/// the user's code too: they go as in upstream.
+/// What a nested function keeps. A pattern, a coercion and a spread run the user's code too, and go as in upstream.
 fn is_member_read(value: &InstructionValue) -> bool {
     matches!(
         value,

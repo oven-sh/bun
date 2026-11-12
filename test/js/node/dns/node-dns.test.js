@@ -103,9 +103,9 @@ test("dns.resolveSrv (_test._tcp.invalid.localhost)", () => {
 // rejected these responses with EBADRESP. c-ares 1.34.9 accepts them again
 // (RFC 3597 section 4); make sure it stays that way.
 //
-// Serves one answer of the given type for every query. The answer's RDATA is
-// built by `rdata`, which receives a compression pointer to QNAME so the name
-// it emits decompresses to <label>.<query-name>.
+// Serves one or more answers of the given type for every query. Each answer's
+// RDATA is built by `rdata`, which receives a compression pointer to QNAME.
+// Returning an array of RDATA buffers serves multiple DNS resource records.
 async function withCompressedAnswerServer(type, rdata, fn) {
   const socket = dgram.createSocket("udp4");
   try {
@@ -122,15 +122,17 @@ async function withCompressedAnswerServer(type, rdata, fn) {
       header[2] = 0x81; // QR=1, RD=1
       header[3] = 0x80; // RA=1
       header[5] = 1; // QDCOUNT
-      header[7] = 1; // ANCOUNT
-
-      const body = rdata(Buffer.from([0xc0, 0x0c])); // pointer -> QNAME at offset 12
-      const answer = Buffer.concat([
-        Buffer.from([0xc0, 0x0c, 0x00, type, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c]),
-        Buffer.from([body.length >> 8, body.length & 0xff]),
-        body,
-      ]);
-      socket.send(Buffer.concat([header, question, answer]), rinfo.port, rinfo.address);
+      const reply = rdata(Buffer.from([0xc0, 0x0c])); // pointer -> QNAME at offset 12
+      const bodies = Array.isArray(reply) ? reply : [reply];
+      header[7] = bodies.length; // ANCOUNT
+      const answers = bodies.map(body =>
+        Buffer.concat([
+          Buffer.from([0xc0, 0x0c, 0x00, type, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c]),
+          Buffer.from([body.length >> 8, body.length & 0xff]),
+          body,
+        ]),
+      );
+      socket.send(Buffer.concat([header, question, ...answers]), rinfo.port, rinfo.address);
     });
     socket.bind(0, "127.0.0.1");
     await once(socket, "listening");
@@ -143,6 +145,29 @@ async function withCompressedAnswerServer(type, rdata, fn) {
     socket.close();
   }
 }
+
+test.skipIf(isWindows)("DNS TXT resource records preserve individual string chunks", async () => {
+  // Three DNS resource records: a split DKIM-sized key, a single string and
+  // an empty character-string followed by another chunk. Each is one record.
+  const expected = [["a".repeat(255), "b".repeat(155)], ["independent"], ["", "tail"]];
+  const rdata = () =>
+    expected.map(chunks =>
+      Buffer.concat(chunks.map(chunk => Buffer.concat([Buffer.from([Buffer.byteLength(chunk)]), Buffer.from(chunk)]))),
+    );
+
+  await withCompressedAnswerServer(0x10, rdata, async resolver => {
+    const hostname = "chunks.example.test";
+    const callbackRecords = await new Promise((resolve, reject) => {
+      resolver.resolveTxt(hostname, (err, records) => (err ? reject(err) : resolve(records)));
+    });
+    expect(callbackRecords).toEqual(expected);
+
+    const promiseResolver = new dns.promises.Resolver({ timeout: 1000, tries: 1 });
+    promiseResolver.setServers(resolver.getServers());
+    expect(await promiseResolver.resolveTxt(hostname)).toEqual(expected);
+    expect(await promiseResolver.resolveAny(hostname)).toEqual(expected.map(entries => ({ type: "TXT", entries })));
+  });
+});
 
 test.skipIf(isWindows)("dns.resolveSrv accepts compressed target in RDATA", async () => {
   // priority=10, weight=50, port=80, target = "srv" + pointer to QNAME.

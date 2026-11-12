@@ -1175,18 +1175,20 @@ impl AresReply for struct_ares_mx_reply {
 }
 
 #[repr(C)]
-pub struct struct_ares_txt_reply {
-    pub next: *mut struct_ares_txt_reply,
+pub struct struct_ares_txt_ext {
+    pub next: *mut struct_ares_txt_ext,
     pub(crate) txt: *mut u8,
     pub(crate) length: usize,
+    /// True for the first character-string of each DNS TXT resource record.
+    pub record_start: u8,
 }
 
-impl AresReply for struct_ares_txt_reply {
+impl AresReply for struct_ares_txt_ext {
     const PARSE: unsafe extern "C" fn(*const u8, c_int, *mut *mut Self) -> c_int =
-        ares_parse_txt_reply;
+        ares_parse_txt_reply_ext;
 }
 
-impl struct_ares_txt_reply {
+impl struct_ares_txt_ext {
     /// Safe view of the c-ares-owned TXT record bytes.
     #[inline]
     pub fn txt_bytes(&self) -> &[u8] {
@@ -1237,7 +1239,7 @@ pub struct struct_any_reply {
     pub aaaa_reply: Option<Box<hostent_with_ttls>>,
     pub mx_reply: *mut struct_ares_mx_reply,
     pub ns_reply: *mut struct_hostent,
-    pub txt_reply: *mut struct_ares_txt_reply,
+    pub txt_reply: *mut struct_ares_txt_ext,
     pub srv_reply: *mut struct_ares_srv_reply,
     pub ptr_reply: *mut struct_hostent,
     pub naptr_reply: *mut struct_ares_naptr_reply,
@@ -1341,7 +1343,7 @@ impl struct_any_reply {
         }
 
         // SAFETY: see `ares_parse_mx_reply` call above.
-        result = unsafe { ares_parse_txt_reply(abuf, alen, &raw mut reply.txt_reply) };
+        result = unsafe { ares_parse_txt_reply_ext(abuf, alen, &raw mut reply.txt_reply) };
         if result == ARES_SUCCESS {
             any_success = true;
         } else {
@@ -1481,10 +1483,10 @@ unsafe extern "C" {
         alen: c_int,
         mx_out: *mut *mut struct_ares_mx_reply,
     ) -> c_int;
-    pub fn ares_parse_txt_reply(
+    pub fn ares_parse_txt_reply_ext(
         abuf: *const u8,
         alen: c_int,
-        txt_out: *mut *mut struct_ares_txt_reply,
+        txt_out: *mut *mut struct_ares_txt_ext,
     ) -> c_int;
     pub fn ares_parse_naptr_reply(
         abuf: *const u8,

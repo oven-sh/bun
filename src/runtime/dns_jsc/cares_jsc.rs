@@ -245,7 +245,7 @@ impl_cares_linked!(
     c_ares::struct_ares_caa_reply,
     c_ares::struct_ares_srv_reply,
     c_ares::struct_ares_mx_reply,
-    c_ares::struct_ares_txt_reply,
+    c_ares::struct_ares_txt_ext,
     c_ares::struct_ares_naptr_reply,
 );
 
@@ -367,35 +367,86 @@ fn mx_reply_to_js(
     Ok(obj)
 }
 
-// ── struct_ares_txt_reply ──────────────────────────────────────────────────
+// ── struct_ares_txt_ext ────────────────────────────────────────────────────
 pub(crate) fn txt_reply_to_js_response(
-    this: &mut c_ares::struct_ares_txt_reply,
+    this: &mut c_ares::struct_ares_txt_ext,
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    cares_list_to_js_array(this, global_this, txt_reply_to_js)
+    txt_reply_records_to_js(this, global_this, false)
 }
 
-fn txt_reply_to_js(
-    this: &c_ares::struct_ares_txt_reply,
+// c-ares returns one node per character-string, not one node per DNS resource
+// record. `record_start` distinguishes the records; Node exposes one inner
+// array per record, preserving the original chunks (important for DKIM keys).
+fn txt_reply_records_to_js(
+    this: &c_ares::struct_ares_txt_ext,
     global_this: &JSGlobalObject,
+    for_any: bool,
 ) -> JsResult<JSValue> {
-    let array = JSValue::create_empty_array(global_this, 1)?;
-    let value = this.txt_bytes();
-    array.put_index(global_this, 0, utf8_to_js(global_this, value)?)?;
-    Ok(array)
+    // Count distinct resource records to allocate the outer array once.
+    let mut p: *const c_ares::struct_ares_txt_ext = this;
+    let mut record_count = 0;
+    while !p.is_null() {
+        // SAFETY: `p` traverses a c-ares-owned linked list of TXT chunks.
+        let chunk = unsafe { &*p };
+        if record_count == 0 || chunk.record_start != 0 {
+            record_count += 1;
+        }
+        p = chunk.next;
+    }
+    let records = JSValue::create_empty_array(global_this, record_count)?;
+
+    p = this;
+    let mut record_index = 0u32;
+    while !p.is_null() {
+        let start = p;
+        let mut chunk_count = 0usize;
+        // Walk until the next TXT RR starts, counting its character-strings.
+        loop {
+            // SAFETY: `p` is non-null here and each next pointer belongs to
+            // the same c-ares allocation, which outlives this conversion.
+            let chunk = unsafe { &*p };
+            if chunk_count != 0 && chunk.record_start != 0 {
+                break;
+            }
+            chunk_count += 1;
+            p = chunk.next;
+            if p.is_null() {
+                break;
+            }
+        }
+        let entries = JSValue::create_empty_array(global_this, chunk_count)?;
+        let mut chunk_ptr = start;
+        for i in 0..chunk_count {
+            // SAFETY: the previous traversal counted `chunk_count` nodes.
+            let chunk = unsafe { &*chunk_ptr };
+            entries.put_index(
+                global_this,
+                i as u32,
+                utf8_to_js(global_this, chunk.txt_bytes())?,
+            )?;
+            chunk_ptr = chunk.next;
+        }
+        let record = if for_any {
+            let obj = JSValue::create_empty_object(global_this, 1);
+            obj.put(global_this, b"entries", entries);
+            obj
+        } else {
+            entries
+        };
+        records.put_index(global_this, record_index, record)?;
+        record_index += 1;
+    }
+    Ok(records)
 }
 
 fn txt_reply_to_js_for_any(
-    this: &mut c_ares::struct_ares_txt_reply,
+    this: &mut c_ares::struct_ares_txt_ext,
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    let array =
-        cares_list_to_js_array(this, global_this, |node, g| utf8_to_js(g, node.txt_bytes()))?;
-    let obj = JSValue::create_empty_object(global_this, 1);
-    obj.put(global_this, b"entries", array);
-    Ok(obj)
+    txt_reply_records_to_js(this, global_this, true)
 }
 
 // ── struct_ares_naptr_reply ────────────────────────────────────────────────

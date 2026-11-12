@@ -3528,6 +3528,63 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
       });
     });
 
+    // These keep what is stored on them outside their target, so the read behind the traps finds no spy and the trap is asked.
+    test("a Proxy whose trap throws for that read, or makes a spy in it", async () => {
+      using dir = tempDir("spies-of-a-file", {
+        "a.test.ts": `
+          import { expect, spyOn, test } from "bun:test";
+          globalThis.madeByTrap = [];
+          const keptElsewhere = whenArmed => {
+            const kept = {};
+            const state = { armed: false };
+            const proxy = new Proxy({ method: () => "original" }, {
+              get: (target, key) => (key in kept ? kept[key] : target[key]),
+              set: (_, key, value) => ((kept[key] = value), true),
+              defineProperty: (_, key, descriptor) => ((kept[key] = descriptor.value), true),
+              getOwnPropertyDescriptor(target, key) {
+                if (state.armed) whenArmed();
+                return Reflect.getOwnPropertyDescriptor(target, key);
+              },
+            });
+            return { proxy, state };
+          };
+          const throwing = (globalThis.throwing = keptElsewhere(() => {
+            throw new Error("no descriptor");
+          }));
+          const spying = (globalThis.spying = keptElsewhere(() => {
+            const object = { method: () => "original" };
+            madeByTrap.push(object);
+            spyOn(object, "method");
+          }));
+          test("a", () => {
+            // Left on its property: restored without an answer, and without an error.
+            spyOn(throwing.proxy, "method").mockReturnValue("spied");
+            // Replaced by the test: asked when the file ends, and again after its undos.
+            spyOn(spying.proxy, "method");
+            spying.proxy.method = globalThis.assigned = () => "assigned";
+            expect([throwing.proxy.method(), spying.proxy.method()]).toEqual(["spied", "assigned"]);
+            throwing.state.armed = spying.state.armed = true;
+          });
+        `,
+        "b.test.ts": `
+          import { expect, jest, test } from "bun:test";
+          test("b", () => {
+            throwing.state.armed = spying.state.armed = false;
+            expect({
+              throwing: [jest.isMockFunction(throwing.proxy.method), throwing.proxy.method()],
+              spying: spying.proxy.method === assigned,
+              madeByTrap: [madeByTrap.length, madeByTrap.filter(object => jest.isMockFunction(object.method)).length],
+            }).toEqual({ throwing: [false, "original"], spying: true, madeByTrap: [2, 0] });
+          });
+        `,
+      });
+      const { stderr, exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts"]);
+      expect({ results: results(stderr), exitCode }, stderr).toEqual({
+        results: ["(pass) a", "(pass) b"],
+        exitCode: 0,
+      });
+    });
+
     // `unstubGlobals` takes the stub of the preload off before each test, and the end of a file puts it back for the next file.
     test("a stub of a preload saves what the end of the file left, not a spy or a fake that the end takes off", async () => {
       using dir = tempDir("spies-of-a-file", {

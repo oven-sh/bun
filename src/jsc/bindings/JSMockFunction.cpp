@@ -977,6 +977,7 @@ private:
 
     template<typename Functor> static void forEachIn(Zig::GlobalObject*, List, const Functor&);
     static bool restoreInstalledSpies(Zig::GlobalObject*, List, MarkedArgumentBuffer& spiesOfPreload);
+    static bool restoreSpiesOfTestFile(Zig::GlobalObject*, List first);
 
     ALWAYS_INLINE void enter(List list)
     {
@@ -1286,10 +1287,15 @@ __attribute__((minsize)) bool JSMockFunction::restoreInstalledSpies(Zig::GlobalO
         auto scope = DECLARE_THROW_SCOPE(vm);
         auto* target = spy->m_spyTarget.get();
         bool isDisplaced = target && !spy->isStillInstalled(globalObject, target);
-        // Only this file gets the error. Forget the spy, so later files don't retry it.
-        if (scope.exception()) [[unlikely]]
-            spy->didUninstall();
-        else if (isDisplaced)
+        // A trap that throws for the read says nothing about the spy, so the spy is restored without an answer.
+        if (scope.exception()) [[unlikely]] {
+            if (!scope.tryClearException()) {
+                spy->didUninstall();
+                return;
+            }
+            isDisplaced = false;
+        }
+        if (isDisplaced)
             spy->enter(List::Displaced);
         else
             installed.append(spy);
@@ -1305,6 +1311,7 @@ __attribute__((minsize)) bool JSMockFunction::restoreInstalledSpies(Zig::GlobalO
         auto* spy = uncheckedDowncast<JSMockFunction>(installed.at(i));
         spy->clearSpy(globalObject, !spy->isVitest);
         if (auto* exception = scope.exception()) [[unlikely]] {
+            // Only this file gets the error. Forget the spy, so later files don't retry it.
             spy->didUninstall();
             if (!scope.tryClearException())
                 return true;
@@ -1319,18 +1326,23 @@ __attribute__((minsize)) bool JSMockFunction::restoreInstalledSpies(Zig::GlobalO
 
 // The next test file shares the global object, so this file's spies and recorded calls have to go.
 // Configured mocks stay registered, because a module shared with the next file may own them.
-__attribute__((minsize)) void JSMockFunction::didFinishTestFile(Zig::GlobalObject* globalObject)
+// `first` is List::Spies when the file ends. It is List::Displaced once the stubs, fake timers and module mocks of the
+// file are undone: what lay over a displaced spy has put the spy back by then. Returns whether a displaced spy was restored.
+__attribute__((minsize)) bool JSMockFunction::restoreSpiesOfTestFile(Zig::GlobalObject* globalObject, List first)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBuffer spiesOfPreload;
     JSC::Exception* firstException = nullptr;
+    bool hasRestoredDisplaced = false;
     // Loop, because a Proxy trap hit while restoring one spy may install another.
-    while (globalObject->mockModule.activeSpies) {
-        restoreInstalledSpies(globalObject, List::Spies, spiesOfPreload);
+    for (List list = first; list == List::Displaced || globalObject->mockModule.activeSpies; list = List::Spies) {
+        bool hasRestored = restoreInstalledSpies(globalObject, list, spiesOfPreload);
+        if (list == List::Displaced)
+            hasRestoredDisplaced = hasRestored;
         if (auto* exception = scope.exception()) [[unlikely]] {
             if (!scope.tryClearException())
-                return;
+                return hasRestoredDisplaced;
             if (!firstException)
                 firstException = exception;
         }
@@ -1348,17 +1360,21 @@ __attribute__((minsize)) void JSMockFunction::didFinishTestFile(Zig::GlobalObjec
         else
             mock->clear();
     });
-    RETURN_IF_EXCEPTION(scope, );
+    RETURN_IF_EXCEPTION(scope, hasRestoredDisplaced);
     if (firstException)
         throwException(globalObject, scope, firstException);
+    return hasRestoredDisplaced;
 }
 
-// For after the end of a test file has undone its stubs, fake timers and module mocks: what lay over a displaced spy
-// has put the spy back by then. Returns whether a spy was restored, which can put back another one.
+void JSMockFunction::didFinishTestFile(Zig::GlobalObject* globalObject)
+{
+    restoreSpiesOfTestFile(globalObject, List::Spies);
+}
+
+// A restore here can put back another displaced spy, so the caller repeats this while it returns true.
 bool JSMockFunction::restoreDisplacedSpies(Zig::GlobalObject* globalObject)
 {
-    MarkedArgumentBuffer spiesOfPreload;
-    return restoreInstalledSpies(globalObject, List::Displaced, spiesOfPreload);
+    return restoreSpiesOfTestFile(globalObject, List::Displaced);
 }
 
 // A spy that is still displaced after that was assigned over or deleted by the test. The property stays as the test

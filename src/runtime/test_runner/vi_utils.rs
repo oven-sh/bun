@@ -83,6 +83,10 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global:
     run(global, JSMock__didFinishTestFile);
     run(global, ViUtils__unstubAllEnvs);
     run(global, ViUtils__unstubAllGlobals);
+    // With a displaced spy, `on_test_file_undone` does this, once the spy is off the global that a stub would save.
+    if !JSMock__hasDisplacedSpies(global) {
+        run(global, ViUtils__stubWhatPreloadStubbed);
+    }
     ViUtils__forgetDynamicImports(global);
 }
 
@@ -93,6 +97,9 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global:
 /// fake timer back, and taking the fake off can put another spy back, so both repeat until neither writes. A spy that
 /// is still off its property then is one that the test replaced, and it is forgotten.
 pub(crate) fn on_test_file_undone(global: &JSGlobalObject) {
+    if !JSMock__hasDisplacedSpies(global) {
+        return;
+    }
     while JSMock__hasDisplacedSpies(global) {
         let restored =
             bun_jsc::from_js_host_call_generic(global, || JSMock__restoreDisplacedSpies(global));
@@ -103,7 +110,7 @@ pub(crate) fn on_test_file_undone(global: &JSGlobalObject) {
             run(global, JSMock__forgetDisplacedSpies);
         }
     }
-    // Last, so that a stub of a preload saves what the undos leave, and not a fake or a spy that they take off.
+    // Only now, so that a stub of a preload saves what the undos leave, and not a fake or a spy that they take off.
     run(global, ViUtils__stubWhatPreloadStubbed);
 }
 

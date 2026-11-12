@@ -366,11 +366,9 @@ pub struct VirtualMachine {
     hot_run_failed: bool,
     /// The watcher's loop turned after an unhandled error, so that error did not stop the timers.
     pub timers_ran_after_error: bool,
-    /// The loop driving this VM does not stop at an unhandled error: the interactive REPL reads its next line.
-    /// Read by [`Self::uncaught_exception_ends_run`].
+    /// The loop driving this VM does not stop at an unhandled error: the interactive REPL reads its next line. Read by [`Self::uncaught_exception_ends_run`].
     pub keeps_running_after_unhandled_error: bool,
-    /// The innermost [`Self::wait_for_promise`] that has not returned. It turns the loop until its promise settles,
-    /// unhandled error or not.
+    /// The innermost [`Self::wait_for_promise`] that has not returned. It turns the loop until its promise settles, unhandled error or not.
     promise_waits: Cell<*const PromiseWait>,
     /// [`Self::uncaught_exception_ends_run`] answered `true`. Immediates no longer keep the loop alive.
     run_ends_at_unhandled_error: Cell<bool>,
@@ -2337,42 +2335,35 @@ impl VirtualMachine {
         handled
     }
 
-    /// Whether the report that [`Self::uncaught_exception`] answered with `handled` ends this VM's run. What
-    /// delivered that exception then delivers nothing more, as nothing runs in Node after a fatal exception.
-    ///
-    /// Unhandled alone does not say so. It depends on what turns this VM's loop:
-    /// - a worker: its `on_unhandled_rejection` requests the worker's termination, `--hot` or not. Ends.
-    /// - `bun run`, `bun -e`, `bun repl -e`, once the entry has settled: the loop stops turning when the error is
-    ///   counted, unless an immediate is queued (`is_event_loop_alive`). Ends, or stays while one is queued.
-    /// - [`Self::wait_for_promise`] with its promise pending (a top-level `await` of the entry, of a preload or of
-    ///   `bun repl -e`, a macro, a plugin's `setup()`): it turns the loop until the promise settles, and what
-    ///   settles it may need what delivered the exception. Stays.
-    /// - `--hot`, `--watch`: it waits for the next save. Stays.
-    /// - the interactive REPL: it reads the next line. Stays.
-    /// - a VM that is neither the process's nor a worker's: the linter's is turned while its program's promise is
-    ///   pending and resets the error count (`lint_js.rs`), the debugger's never stops (`Debugger::start`), a
-    ///   macro's in `bun build` is turned by `wait_for_promise`. Stays.
-    ///
-    /// `bun test` answers `handled` to every report: the runner records the error and goes on.
-    ///
-    /// `true` holds the VM to it: an immediate queued from then on does not keep the loop alive. Script that waits
-    /// in a `setImmediate` loop for what stopped would spin.
+    /// Whether the report that [`Self::uncaught_exception`] answered with `handled` ends this VM's run: what delivered that exception then delivers nothing more, as nothing runs in Node after a fatal exception. Unhandled alone does not say so: it depends on what turns this VM's loop.
     pub fn uncaught_exception_ends_run(&self, handled: bool) -> bool {
+        // `bun test` answers `handled` to every report: the runner records the error and goes on.
         if handled {
             return false;
         }
+        // A worker's `on_unhandled_rejection` requests its termination, `--hot` or not.
         if self.worker.is_some() {
             return true;
         }
-        let ends = self.is_main_thread
-            && !self.is_watcher_enabled()
-            && !self.keeps_running_after_unhandled_error
-            && !self.is_waiting_for_promise()
-            && !self.has_immediates();
-        if ends {
-            self.run_ends_at_unhandled_error.set(true);
+        // Neither the process's VM nor a worker's. The linter's loop resets the error count (`lint_js.rs`), the debugger's never stops (`Debugger::start`), a macro's in `bun build` is turned by `wait_for_promise`.
+        if !self.is_main_thread {
+            return false;
         }
-        ends
+        // `--hot` and `--watch` wait for the next save. The interactive REPL reads the next line.
+        if self.is_watcher_enabled() || self.keeps_running_after_unhandled_error {
+            return false;
+        }
+        // `wait_for_promise` turns the loop until its promise settles: a top-level `await` of the entry, of a preload or of `bun repl -e`, a macro, a plugin's `setup()`. What settles it may need what delivered the exception.
+        if self.is_waiting_for_promise() {
+            return false;
+        }
+        // `bun run`, `bun -e` and `bun repl -e` stop turning the loop once the error is counted, unless an immediate is queued (`is_event_loop_alive`).
+        if self.has_immediates() {
+            return false;
+        }
+        // Held to it: an immediate queued from here on would turn the loop again, and script that waits in a `setImmediate` loop for what stopped would spin.
+        self.run_ends_at_unhandled_error.set(true);
+        true
     }
 
     /// Whether a [`Self::wait_for_promise`] that has not returned still has a pending promise.
@@ -3727,13 +3718,11 @@ impl VirtualMachine {
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
-    /// `promise` settles. The body lives in
-    /// [`crate::event_loop::EventLoop::wait_for_promise`], which nothing else calls: the wait is listed here for
-    /// [`Self::uncaught_exception_ends_run`].
+    /// `promise` settles. Thin forwarder; body lives in
+    /// [`crate::event_loop::EventLoop::wait_for_promise`].
     #[inline]
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
-        // R-2 noalias mitigation — see `EventLoop::run_callback`. Script the wait runs reads `promise_waits`
-        // through `VirtualMachine::get()`, so LLVM must not drop the first write as dead.
+        // Every wait comes through here (nothing else calls `EventLoop::wait_for_promise`) and is listed for `uncaught_exception_ends_run`. Script that the wait runs asks that through `VirtualMachine::get()`, so the list is written through a laundered pointer: LLVM may otherwise drop the first write (the R-2 note in `EventLoop::run_callback`).
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` is the live per-thread VM. `wait` is unlisted before it goes out of scope.
         unsafe {

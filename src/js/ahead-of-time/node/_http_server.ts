@@ -2595,7 +2595,8 @@ function executeParser(
 }
 
 class UpgradeStream extends Duplex {
-  declare [kSocket]: $Node.HttpSocket;
+  // As wide as a message's: the narrowest type under a name holds for every stream.
+  declare [kSocket]: $Node.HttpSocket | $Node.SubstituteSocket;
   declare [kIncomingMessage]: $Node.IncomingMessage | null;
 
   constructor(socket: $Node.HttpSocket, req: $Node.IncomingMessage) {

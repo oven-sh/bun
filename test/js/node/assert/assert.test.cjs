@@ -1,5 +1,6 @@
 const assert = require("assert");
 const { bunEnv, bunExe } = require("harness");
+const cycles = require("./partial-deep-equal-cycles-fixture.cjs");
 
 test("assert from require as a function does not throw", () => assert(true));
 test("assert from require as a function does throw", () => {
@@ -62,7 +63,7 @@ describe("assert.partialDeepStrictEqual", () => {
     assert.partialDeepStrictEqual(oa, ob);
   });
 
-  test("a circular actual still fails against a non-circular expected", () => {
+  test("a value that differs still fails when only one side is circular", () => {
     const circularArr = [];
     circularArr.push(circularArr);
     expect(() => assert.partialDeepStrictEqual(circularArr, [[1]])).toThrow(assert.AssertionError);
@@ -93,19 +94,10 @@ describe("assert.partialDeepStrictEqual", () => {
     assert.partialDeepStrictEqual([arr], arr);
   });
 
-  // Every answer below is the answer of a new Node.js 26 process.
+  // An answer below is that of a new Node.js process, but where a test says that Bun gives another one. The fixture
+  // says how to check that with Node.js.
   describe("cycles", () => {
-    const ring = (length, value = 1) => {
-      const nodes = Array.from({ length }, () => ({ v: value }));
-      nodes.forEach((node, i) => (node.next = nodes[(i + 1) % length]));
-      return nodes[0];
-    };
-    const tree = () => {
-      const ast = { type: "Program", body: [] };
-      ast.body.push({ type: "Return", parent: ast });
-      return ast;
-    };
-    const partOfTree = type => ({ body: [{ type: "Return", parent: { type } }] });
+    const { answerOf, partOfTree, ring, tree } = cycles;
     const fails = fn => expect(fn).toThrow(assert.AssertionError);
 
     test("a parent link in actual does not fail a part that matches", () => {
@@ -157,7 +149,7 @@ describe("assert.partialDeepStrictEqual", () => {
       assert.partialDeepStrictEqual({ v: 1, self: { v: 1, self: expected } }, expected);
     });
 
-    test("objects met again at other depths are compared, not taken for a cycle", () => {
+    test("objects met again at other depths are compared while no pair repeats", () => {
       const tail = { v: 2 };
       tail.next = tail;
       const expected = { v: 1 };
@@ -298,25 +290,34 @@ describe("assert.partialDeepStrictEqual", () => {
         ]),
         new Map([[key, ring(1)]]),
       );
+      // The entry of a key that both Maps hold is found by lookup, behind another candidate.
+      assert.partialDeepStrictEqual(
+        new Map([
+          [later, 1],
+          [key, ring(1)],
+        ]),
+        new Map([[key, ring(1)]]),
+      );
       expect(reads).toEqual([]);
 
       // What follows the search is read, in the second run only.
       assert.partialDeepStrictEqual([ring(1), later, later], [ring(1), { v: 1 }]);
-      expect(reads).toEqual(["later"]);
+      assert.partialDeepStrictEqual(new Set([ring(1), later, { v: 2 }]), new Set([ring(1), { v: 1 }]));
+      assert.partialDeepStrictEqual(
+        new Map([
+          [{ k: 1 }, ring(1)],
+          [{ k: 2 }, later],
+          [{ k: 3 }, 1],
+        ]),
+        new Map([
+          [{ k: 1 }, ring(1)],
+          [{ k: 2 }, { v: 1 }],
+        ]),
+      );
+      expect(reads).toEqual(["later", "later", "later"]);
     });
 
     test("the end of the stack is an error only when the second run reaches it too", () => {
-      // An Error as the message is thrown as it is: no text is made of values this deep.
-      const unequal = new Error("unequal");
-      const answer = (actual, expected) => {
-        try {
-          assert.partialDeepStrictEqual(actual, expected, unequal);
-          return "equal";
-        } catch (error) {
-          return error === unequal ? "unequal" : error.name;
-        }
-      };
-
       // A new object for each read: no pair of objects comes twice, and the comparison cannot end.
       const fresh = () => ({
         v: 1,
@@ -324,9 +325,9 @@ describe("assert.partialDeepStrictEqual", () => {
           return fresh();
         },
       });
-      expect(answer(fresh(), ring(1))).toBe("unequal");
+      expect(answerOf(fresh(), ring(1))).toBe("fail");
       // The same pair comes again after 10,100 levels.
-      expect(answer(ring(100), ring(101))).toBe("unequal");
+      expect(answerOf(ring(100), ring(101))).toBe("fail");
 
       let deep = {};
       let deepToo = {};
@@ -336,7 +337,68 @@ describe("assert.partialDeepStrictEqual", () => {
         deep = deep.x = {};
         deepToo = deepToo.x = {};
       }
-      expect(answer(actual, expected)).toBe("RangeError");
+      expect(answerOf(actual, expected)).toBe("RangeError");
+    });
+
+    // Node.js has less stack than Bun, so its answers differ from these where its first run does not fit.
+    test("a deep comparison with no pair that repeats is never left to the memos", () => {
+      // A list with links in both directions, against its part that goes to the last item and one link back. The
+      // memos fail that link back, because only `actual` was there before.
+      const answers = new Set();
+      for (let depth = 64; !answers.has("RangeError"); depth += 32) {
+        const items = Array.from({ length: depth }, (_, v) => ({ v }));
+        items.forEach((item, i) => {
+          if (i > 0) item.previous = items[i - 1];
+          if (i < depth - 1) item.next = items[i + 1];
+        });
+        let expected = { v: depth - 1, previous: { v: depth - 2 } };
+        for (let v = depth - 2; v >= 0; v--) expected = { v, next: expected };
+        answers.add(answerOf(items[0], expected));
+      }
+      expect([...answers]).toEqual(["pass", "RangeError"]);
+    });
+
+    test("the depth of the caller does not change an answer", () => {
+      // With little stack left, the first run has no room. The memos then give other answers for these three.
+      const inActual = { p: { q: { p: {} } } };
+      const loop = { v: 2 };
+      loop.next = loop;
+      const expectedRing = { v: 1 };
+      expectedRing.next = { v: 2, next: expectedRing };
+      const pairs = [
+        [tree(), partOfTree("Program")],
+        [{ p: { q: inActual } }, inActual],
+        [{ v: 1, next: loop }, expectedRing],
+      ];
+      const answers = pairs.map(() => new Set());
+      const down = level => {
+        if (level % 32 === 0) pairs.forEach((pair, i) => answers[i].add(answerOf(...pair)));
+        down(level + 1);
+      };
+      expect(() => down(0)).toThrow(RangeError);
+      expect(answers.map(answersOfPair => [...answersOfPair].filter(answer => answer !== "RangeError"))).toEqual([
+        ["pass"],
+        ["pass"],
+        ["fail"],
+      ]);
+    });
+
+    describe("as the first comparison of a new Node.js process", () => {
+      for (const { name, node, pair, bun, bug } of cycles.rows) {
+        const title = bug ? `${name} (Bun ${bug})` : bun ? `${name} (Node.js: ${node}, Bun: ${bun})` : name;
+        (bug ? test.failing : test)(title, () => {
+          expect(answerOf(...pair())).toBe(bun ?? node);
+        });
+      }
+
+      test.each(Object.keys(cycles.generated.node))("%s: generated pairs", kinds => {
+        const differences = {};
+        for (let seed = 0; seed < cycles.generated.seeds; seed++) {
+          const answer = answerOf(...cycles.build(seed, kinds));
+          if (answer !== cycles.answerOfNode(kinds, seed)) differences[seed] = answer;
+        }
+        expect(differences).toEqual(cycles.generated.bun[kinds] ?? {});
+      });
     });
   });
 });

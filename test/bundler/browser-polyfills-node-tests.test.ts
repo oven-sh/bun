@@ -1,7 +1,7 @@
 // Runs alone: it starts hundreds of processes, twenty at a time.
 import { afterAll, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isLinux, tempDir } from "harness";
 import { availableParallelism } from "os";
 import { basename, dirname, join } from "path";
 import { failing, passing } from "./browser-polyfills-node-tests.list";
@@ -162,8 +162,10 @@ async function bundle(names: string[]) {
     if (unbuilt.size === before) throw new AggregateError(result.logs, "the build fails outside of a test file");
   }
 }
-// A debug or ASAN build takes seconds for one process, so there only `passing` is built and run.
-const known = isDebug || isASAN ? passing : [...passing, ...failing];
+// `failing` is built and run where a process costs least: a release build on Linux. What a bundle does is the same
+// on every platform, so that is enough to see that a file passes now.
+const runsFailing = isLinux && !isDebug && !isASAN;
+const known = runsFailing ? [...passing, ...failing] : passing;
 const names = updating ? candidates() : [...known, ...Object.keys(mustFail)];
 const unbuilt = await bundle(names);
 
@@ -178,12 +180,16 @@ async function run(name: string) {
     // A test has no time limit on a debug build (below), so a bundle that never exits has one here.
     timeout: (isDebug ? 10 : 1) * 60_000,
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { exitCode, signalCode: proc.signalCode, stdout, stderr };
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Not what `proc.exited` gives: that is 128 plus the signal for a process that a signal ended, and this is null.
+  return { exitCode: proc.exitCode, signalCode: proc.signalCode, stdout, stderr };
 }
+// A failed Node.js test exits with 1, or with 7 when its `uncaughtException` listener throws. A process that the time
+// limit or a crash ends has another code, or none.
+const codesOfAFailedTest: (number | null)[] = [1, 7];
 
-// A debug build takes seconds to start one process. As for itBundled, a test has no time limit there.
-const timeout = isDebug ? Infinity : undefined;
+// A debug build takes seconds to start one process. As for itBundled, a test has no time limit there outside CI.
+const timeout = isCI ? undefined : isDebug ? Infinity : undefined;
 
 if (!updating) {
   test.concurrent.each(passing)(
@@ -196,14 +202,12 @@ if (!updating) {
     timeout,
   );
 
-  // A failed Node.js test exits by itself, with a code other than 0.
-  test.concurrent.skipIf(isDebug || isASAN).each(failing)(
+  test.concurrent.skipIf(!runsFailing).each(failing)(
     "%s fails",
     async name => {
-      const { exitCode, signalCode, stdout, stderr } = await run(name);
+      const { exitCode, stdout, stderr } = await run(name);
       const hint = `${name} failed as a browser bundle. If it passes now, this moves it to \`passing\`: ${update}`;
-      expect(exitCode, `${stdout}${stderr}\n${hint}`).not.toBe(0);
-      expect(signalCode, stdout + stderr).toBeNull();
+      expect(codesOfAFailedTest, `${stdout}${stderr}\n${hint}`).toContain(exitCode);
     },
     timeout,
   );
@@ -250,14 +254,15 @@ if (updating) {
       let last = "";
       for (const [index, { exitCode, signalCode, stdout, stderr }] of verdicts.entries()) {
         const name = built[index];
-        if (exitCode === null) leftOut.push(`${name}: is killed by ${signalCode}`);
-        else if (exitCode !== 0) {
+        if (codesOfAFailedTest.includes(exitCode)) {
           const line = firstLine(stderr + stdout);
           if (line !== last) nowFailing.push(`  // ${line}`);
           nowFailing.push(`  ${JSON.stringify(name)},`);
           last = line;
           failed++;
-        } else if (/^1\.\.0 # Skipped/m.test(stdout)) leftOut.push(`${name}: skips itself`);
+        } else if (exitCode === null) leftOut.push(`${name}: is killed by ${signalCode}`);
+        else if (exitCode !== 0) leftOut.push(`${name}: exits with ${exitCode}`);
+        else if (/^1\.\.0 # Skipped/m.test(stdout)) leftOut.push(`${name}: skips itself`);
         else nowPassing.push(`  ${JSON.stringify(name)},`);
       }
       writeFileSync(

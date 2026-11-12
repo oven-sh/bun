@@ -544,6 +544,14 @@ pub enum LiteralValue<'a> {
     },
 }
 
+/// What a declaration states of a class member or a parameter that has no annotation.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct StatedType {
+    /// The type as a declaration beside the member writes it: `Map<string, Item>`. Or its value: `"circle"`, `Unit.Px`.
+    pub text: Vec<u8>,
+    pub is_value: bool,
+}
+
 /// A type's components, where they aren't just a list of types.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Structure<'a> {

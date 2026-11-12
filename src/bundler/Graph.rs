@@ -152,6 +152,8 @@ bitflags::bitflags! {
         const IS_EXPORT_STAR_TARGET = 1 << 1;
         /// `source.contents` is what an `onLoad` plugin returned, not what is in the file.
         const IS_LOADED_BY_PLUGIN = 1 << 2;
+        /// The file was parsed with `useDefineForClassFields: false`: a class field is a store in the constructor.
+        const ASSIGNS_CLASS_FIELDS = 1 << 3;
     }
 }
 

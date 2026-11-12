@@ -2626,6 +2626,77 @@ impl<'p, 's> Checker<'p, 's> {
         }
         result
     }
+
+    /// `IsSymbolAccessible` for text in the file of `at`: a name of that file counts, an `import("..")` type does not.
+    pub(super) fn is_symbol_named_at(
+        &mut self,
+        symbol: Sym,
+        at: Enclosing,
+        meaning: Meaning,
+    ) -> bool {
+        self.is_any_symbol_named_at(&[symbol], at, symbol, meaning)
+    }
+
+    fn is_any_symbol_named_at(
+        &mut self,
+        symbols: &[Sym],
+        at: Enclosing,
+        initial: Sym,
+        meaning: Meaning,
+    ) -> bool {
+        if self.is_stack_low() {
+            return false;
+        }
+        for &symbol in symbols {
+            if !self.accessible_symbol_chain(symbol, at, meaning).is_empty() {
+                return true;
+            }
+            if self.is_external_module_symbol(symbol) {
+                continue;
+            }
+            let containers = self.containers_of_symbol(symbol, at, meaning);
+            let next = if initial == symbol {
+                meaning.left()
+            } else {
+                meaning
+            };
+            if self.is_any_symbol_named_at(&containers, at, initial, next) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// `DeclarationEmit::literal_const_type` for a node of `file`.
+    pub(super) fn literal_const_type(&mut self, file: FileId, node: Node) -> Option<TypeId> {
+        let hir = self.hir(file);
+        let ty = match hir.data(node) {
+            NodeData::VarDecl(d) if hir[d].kind == VarKind::Const && hir[d].init.is_some() => {
+                self.type_of_pat(file, hir[d].pat)
+            }
+            NodeData::Member(m)
+                if hir[m].flags.contains(Flags::READONLY) && hir[m].init.is_some() =>
+            {
+                self.iso_type_of_member(file, m)
+            }
+            _ => return None,
+        };
+        self.is_fresh_literal(ty).then_some(ty)
+    }
+
+    /// `DeclarationEmit::create_literal_const_value` where `at` encloses the declaration.
+    pub(super) fn literal_const_value(&mut self, literal: TypeId, at: Enclosing) -> Vec<u8> {
+        if let TypeData::StringLit { value, .. } = *self.data(literal) {
+            let text: &[u8] = if value.is_none() {
+                b""
+            } else {
+                self.atoms().bytes(value)
+            };
+            return super::print::quoted(text, b'"', true);
+        }
+        let flags = DECLARATION_EMIT_NODE_BUILDER_FLAGS;
+        self.type_to_type_node(literal, Some(at), flags, None)
+    }
 }
 
 // ───────────────────────────── `SymbolTracker` ─────────────────────────────
@@ -5542,30 +5613,13 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
 
     /// `shouldPrintWithInitializer`: the literal type of a constant that's emitted with its value.
     fn literal_const_type(&mut self, node: Node) -> Option<TypeId> {
-        let hir = self.c.hir(self.file());
-        let ty = match hir.data(node) {
-            NodeData::VarDecl(d) if hir[d].kind == VarKind::Const && hir[d].init.is_some() => {
-                self.c.type_of_pat(self.file(), hir[d].pat)
-            }
-            NodeData::Member(m)
-                if hir[m].flags.contains(Flags::READONLY) && hir[m].init.is_some() =>
-            {
-                self.c.iso_type_of_member(self.file(), m)
-            }
-            _ => return None,
-        };
-        self.c.is_fresh_literal(ty).then_some(ty)
+        self.c.literal_const_type(self.file(), node)
     }
 
     /// `CreateLiteralConstValue` for a type that isn't `TypeFlagsEnumLike`. Its string literal doesn't have
     /// `EFNoAsciiEscaping`, unlike the node builder's.
     fn create_literal_const_value(&mut self, literal: TypeId) -> Vec<u8> {
-        if let TypeData::StringLit { value, .. } = *self.c.data(literal) {
-            return super::print::quoted(self.name(value), b'"', true);
-        }
-        let flags = DECLARATION_EMIT_NODE_BUILDER_FLAGS;
-        self.c
-            .type_to_type_node(literal, Some(self.enclosing), flags, None)
+        self.c.literal_const_value(literal, self.enclosing)
     }
 
     /// `ensureType`, `ensureNoInitializer`

@@ -319,6 +319,41 @@ export class Named extends Counter {
     });
   });
 
+  // The repro of the brief: the bundle has `this.n = 1` in the constructor and no field.
+  test("useDefineForClassFields: false: a member with a value is declared with the type of the sources", async () => {
+    const options = { strict: true, useDefineForClassFields: false };
+    using dir = tempDir("build-dts-assigned-field", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...options, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [] },
+      }),
+      "package.json": JSON.stringify({ name: "box", version: "1.0.0", compilerOptions: options }),
+      "src/index.ts": `export class Box {
+  n = 1;
+  label(): string {
+    return String(this.n);
+  }
+}
+`,
+    });
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(readdirSync(join(String(dir), "out")).sort()).toEqual(["index.aot.ts", "index.d.ts", "index.js"]);
+    expect(written(dir, "index.aot.ts")).toBe(`// src/index.ts
+class Box {
+  constructor() {
+    this.n = 1;
+  }
+  declare n: number;
+  label(): string {
+    return String(this.n);
+  }
+}
+export {
+  Box
+};
+`);
+  });
+
   test("experimentalDecorators: a line that index.aot.ts adds for a member has none of its decorators", async () => {
     const options = { strict: true, experimentalDecorators: true, useDefineForClassFields: false };
     using dir = tempDir("build-dts-decorated-members", {
@@ -445,7 +480,7 @@ export class Trace {
     });
   });
 
-  test("a member is written with the type of the sources only where that type names nothing", async () => {
+  test("a member is written with the type of the sources, and a name in it is the name that index.aot.ts has", async () => {
     using dir = tempDir(
       "build-dts-member-types",
       only(`declare const __DEV__: boolean;
@@ -499,14 +534,14 @@ export class Rows {
       "either: string | null;",
       "flag: false | undefined;",
       "both: boolean | undefined;",
-      // The type checker prints `Mode | undefined` for it, and `Mode` can be the name of another type in a bundle.
-      'picked: "fast" | "slow" | undefined;',
+      // index.aot.ts declares the alias.
+      "picked: Mode | undefined;",
       // `Infinity` is the name of a value.
       "far: number | undefined;",
       "kept: string;",
-      // The member of an enum and a class are names. These two are as the bundle has them.
-      "color;",
-      "entries;",
+      // index.aot.ts declares the type of an enum under a name of its own.
+      "color: Color2 | undefined;",
+      "entries: Map<string, number> | undefined;",
       "valued = 1;",
     ]);
   });

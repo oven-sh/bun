@@ -712,7 +712,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
     let by_extension = script_kinds_by_extension(loaders);
     // The bundler knows each file's loader. Files in `node_modules` always go by their extension.
     let mut script_kinds: Vec<(Vec<u8>, ScriptKind)> = Vec::new();
-    let mut sources = sources.map(|(path, text, loader)| {
+    let mut sources = sources.map(|(path, text, loader, _)| {
         let script_kind = script_kind_of(loader).filter(|it| it.differs_from_name(path));
         if !bun_core::strings::contains(path, bun_paths::NODE_MODULES_NEEDLE) {
             script_kinds.extend(script_kind.map(|it| (path.to_vec(), it)));

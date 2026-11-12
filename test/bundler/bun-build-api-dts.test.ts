@@ -247,6 +247,73 @@ export function sizes(): Sizes {
     expect(readFileSync(join(root, "b/out/index.d.ts"), "utf8")).toBe("export declare const other: number;\n");
   });
 
+  test.each([
+    ["written to outdir", true],
+    ["in outputs", false],
+  ])(
+    "a class field that useDefineForClassFields: false moves into the constructor is declared with its type, %s",
+    async (_, hasOutdir) => {
+      using dir = tempDir("build-api-dts-assigned-field", {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: {
+            strict: true,
+            useDefineForClassFields: false,
+            module: "esnext",
+            moduleResolution: "bundler",
+            target: "esnext",
+            types: [],
+          },
+        }),
+        "package.json": JSON.stringify({
+          name: "box",
+          version: "1.0.0",
+          compilerOptions: { strict: true, useDefineForClassFields: false },
+        }),
+        "src/index.ts": `export class Box {
+  n = 1;
+  readonly kind = "box";
+  label(): string {
+    return this.kind + this.n;
+  }
+}
+`,
+      });
+      const root = String(dir);
+      const built = await Bun.build({
+        entrypoints: [join(root, "src/index.ts")],
+        outdir: hasOutdir ? join(root, "out") : undefined,
+        tsconfig: join(root, "tsconfig.json"),
+        dts: true,
+      });
+      // Without an outdir, the build finds no package.json that states the options of the sources.
+      expect(built.logs.map(log => log.message)).toEqual(
+        hasOutdir
+          ? []
+          : [
+              `package.json needs "compilerOptions": {"strict":true,"useDefineForClassFields":false}: --aot type checks a package's .aot.ts files under them, and as strict without them`,
+            ],
+      );
+      const typed = built.outputs.find(output => output.path.endsWith("index.aot.ts"));
+      expect(await typed?.text()).toContain(`
+class Box {
+  constructor() {
+    this.n = 1;
+    this.kind = "box";
+  }
+  declare n: number;
+  declare readonly kind = "box";
+  label(): string {
+    return this.kind + this.n;
+  }
+}
+export {
+  Box
+};
+`);
+      expect(filesIn(root).includes("out/index.aot.ts")).toBe(hasOutdir);
+    },
+  );
+
   test("cannot be used with compile", () => {
     expect(() => Bun.build({ entrypoints: ["./index.ts"], compile: true, dts: true })).toThrow(
       "dts cannot be used with compile",

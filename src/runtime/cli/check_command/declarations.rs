@@ -50,10 +50,15 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
     } = checked;
     let by_extension = script_kinds_by_extension(loaders);
     let mut script_kinds: Vec<(Vec<u8>, ScriptKind)> = Vec::new();
-    let mut sources = sources.map(|(path, text, loader)| {
+    // The sources whose class fields the bundle assigns in the constructor, as the checker names them.
+    let mut assigning: Vec<Vec<u8>> = Vec::new();
+    let mut sources = sources.map(|(path, text, loader, assigns_class_fields)| {
         let script_kind = script_kind_of(loader).filter(|it| it.differs_from_name(path));
         if !bun_core::strings::contains(path, bun_paths::NODE_MODULES_NEEDLE) {
             script_kinds.extend(script_kind.map(|it| (path.to_vec(), it)));
+        }
+        if assigns_class_fields {
+            assigning.push(from_native(join_abs_string::<Auto>(cwd, &[path])));
         }
         (path, text)
     });
@@ -61,6 +66,7 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
         already_read: already_read(cwd, &mut sources),
         ..Default::default()
     };
+    assigning.sort_unstable();
     let is_source = |path: &&[u8]| {
         has_types_with(&by_extension, path) || script_kinds.iter().any(|it| it.0 == **path)
     };
@@ -82,7 +88,13 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
     // A task of the checker can run again: the last time counts.
     let module_types = NotedModuleTypes::default();
     let emit = |checker: &mut Checker<'_, '_>, file: FileId| {
-        module_types.note(checker, file);
+        let assigns_class_fields = !assigning.is_empty() && {
+            let source = checker.p.files.module(file).file_name();
+            assigning
+                .binary_search_by(|path| path[..].cmp(source))
+                .is_ok()
+        };
+        module_types.note(checker, file, assigns_class_fields);
         let text = checker.emit_declaration_file(file);
         let source = checker.p.files.module(file).file_name();
         let mut emitted = emitted.lock();

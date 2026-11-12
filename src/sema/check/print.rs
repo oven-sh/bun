@@ -38,6 +38,8 @@ pub(super) const MULTILINE_OBJECT_LITERALS: u32 = 1 << 13;
 const FORBID_INDEXED_ACCESS_SYMBOL_REFERENCES: u32 = 1 << 14;
 pub(super) const WRITE_TYPE_PARAMETERS_IN_QUALIFIED_NAME: u32 = 1 << 15;
 pub(super) const WRITE_ARRAY_AS_GENERIC_TYPE: u32 = 1 << 16;
+/// Not a flag of the node builder: `ELIDED` stands for a part that is left out, in a text for no declaration file too.
+pub(super) const MARK_ELISIONS: u32 = 1 << 17;
 /// The flags that `typeToString` passes to `typeToStringEx`.
 pub(super) const TYPE_TO_STRING: u32 =
     ALLOW_UNIQUE_ES_SYMBOL_TYPE | USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE;
@@ -54,7 +56,7 @@ pub(super) const IGNORE_ERRORS: u32 =
 const DEFAULT_MAXIMUM_TRUNCATION_LENGTH: usize = 160;
 const NO_TRUNCATION_MAXIMUM_TRUNCATION_LENGTH: usize = 1_000_000;
 /// `any` with the synthetic leading comment of `createElidedInformationPlaceholder`.
-const ELIDED: &[u8] = b"/*elided*/ any";
+pub(super) const ELIDED: &[u8] = b"/*elided*/ any";
 
 /// `ast.TypePrecedence`
 const CONDITIONAL: u8 = 0;
@@ -1595,11 +1597,8 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 ..Node::simple(b"...")
             };
         }
-        Node::simple(if self.indent.is_some() {
-            ELIDED
-        } else {
-            &b"any"[..]
-        })
+        let is_marked = self.indent.is_some() || self.flags & MARK_ELISIONS != 0;
+        Node::simple(if is_marked { ELIDED } else { &b"any"[..] })
     }
 
     /// `... n more ...`

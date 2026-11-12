@@ -2556,7 +2556,12 @@ pub mod bv2_impl {
                         && !(flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
                             && bun_sys::exists(source.path.text))
                 })
-                .map(|((source, loader), _)| (source.path.text, source.contents(), *loader));
+                .map(|((source, loader), flags)| {
+                    let assigns_class_fields =
+                        flags.contains(crate::Graph::InputFileFlags::ASSIGNS_CLASS_FIELDS);
+                    let text = source.contents();
+                    (source.path.text, text, *loader, assigns_class_fields)
+                });
             let checked = options::TypeChecked {
                 cwd: Fs::FileSystem::get().top_level_dir(),
                 tsconfig: self.transpiler.options.tsconfig_override.as_deref(),
@@ -7598,6 +7603,10 @@ pub mod bv2_impl {
                         .input_files
                         .items_content_hash_for_additional_file_mut()[result_source_index] =
                         result.content_hash_for_additional_file;
+                    if result.assigns_class_fields {
+                        this.graph.input_files.items_flags_mut()[result_source_index]
+                            .insert(crate::Graph::InputFileFlags::ASSIGNS_CLASS_FIELDS);
+                    }
                     if !result.unique_key_for_additional_file.is_empty()
                         && result.loader == Loader::Text
                     {

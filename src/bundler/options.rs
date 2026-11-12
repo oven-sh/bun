@@ -1284,7 +1284,8 @@ pub struct TypeChecked<'a, 'i> {
     pub entry_points: &'i mut dyn Iterator<Item = &'a [u8]>,
     /// The path, the text and the loader of each JavaScript, TypeScript and JSON file of the
     /// bundle, which the type checker takes instead of reading the file again.
-    pub sources: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8], Loader)>,
+    /// Last: the file was parsed with `useDefineForClassFields: false`.
+    pub sources: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8], Loader, bool)>,
 }
 
 /// `BundleOptions::type_check`. Errors are added to `log`, or reported in another way. Returns

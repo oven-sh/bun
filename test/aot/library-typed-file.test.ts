@@ -154,7 +154,7 @@ console.log(wrong);
       exitCode: 1,
     });
     const typed = readFileSync(join(String(dir), "app/node_modules/shapes/index.aot.ts"), "utf8");
-    expect(typed).toContain('  unit: "cm" | "in" | undefined;\n');
+    expect(typed).toContain('type Unit = "cm" | "in";\nclass Ruler {\n  unit: Unit | undefined;\n');
   });
 
   // The bundle calls the decorator behind the class. A decorator that index.aot.ts states too runs a second time.
@@ -192,6 +192,60 @@ console.log(seen.join());
     await install(String(dir));
     // The program is compiled from app.ts and index.aot.ts.
     expect(await compile(String(dir))).toEqual({ ...USED, typedFiles: 2, stdout: "id,name\n" });
+  });
+
+  // With "useDefineForClassFields": false the bundle stores a field in the constructor, where index.js has no field.
+  // A program is judged by the type that the sources have for the field.
+  test.each([
+    [
+      "is compiled with the type of the sources",
+      `const count: number = tally.count;
+const unit: "cm" = tally.unit;
+console.log(count, unit, tally.last?.kind);
+`,
+      { ...USED, typedFiles: 2, stdout: "1 cm square\n" },
+    ],
+    [
+      "refuses what the sources refuse",
+      `const wrong: string = tally.count;
+console.log(wrong);
+`,
+      { said: ["error: TS2322: Type 'number' is not assignable to type 'string'."], exitCode: 1 },
+    ],
+  ])("a program that reads a field that the package assigns in the constructor %s", async (_, reads, expected) => {
+    const options = { ...JSON.parse(tsconfig).compilerOptions, useDefineForClassFields: false };
+    using dir = tempDir("aot-library-typed-file-assigned-fields", {
+      ...library,
+      "library/tsconfig.json": JSON.stringify({ compilerOptions: options }),
+      "library/src/index.ts": library["library/src/index.ts"] + `export { Tally } from "./tally";\n`,
+      "library/src/tally.ts": `import type { Shape } from "./index";
+export class Tally {
+  count = 0;
+  readonly unit = "cm";
+  last = null as Shape | null;
+  add(shape: Shape): number {
+    this.last = shape;
+    return ++this.count;
+  }
+}
+`,
+      "app/app.ts": `import { Tally } from "shapes";
+const tally = new Tally();
+tally.add({ kind: "square", size: 2 });
+${reads}`,
+    });
+    await install(String(dir));
+    const installed = join(String(dir), "app/node_modules/shapes");
+    expect(JSON.parse(readFileSync(join(installed, "package.json"), "utf8")).compilerOptions).toEqual({
+      strict: true,
+      lib: ["esnext", "dom"],
+      useDefineForClassFields: false,
+    });
+    const typed = readFileSync(join(installed, "index.aot.ts"), "utf8");
+    expect(typed).toContain(
+      '  declare count: number;\n  declare readonly unit = "cm";\n  declare last: Shape | null;\n',
+    );
+    expect(await compile(String(dir))).toMatchObject(expected);
   });
 
   test("does not read index.js, so a change to it reaches plain Bun alone", async () => {

@@ -737,11 +737,12 @@ describe.concurrent(
         messages(files),
         lint({ "bunfig.toml": bunfig, ...files }, ["-f", "json"]),
       ]);
+      // `byEslintFile` only lists a file that has a message of some rule.
       const purity = (found: ReturnType<typeof byEslintFile>) =>
         Object.fromEntries(
-          Object.entries(found).map(([name, it]) => [
+          Object.keys(files).map(name => [
             name,
-            it.messages.filter(message => message.ruleId === "react-hooks/purity").map(message => message.line),
+            (found[name]?.messages ?? []).flatMap(it => (it.ruleId === "react-hooks/purity" ? [it.line] : [])),
           ]),
         );
       expect({

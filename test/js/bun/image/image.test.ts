@@ -1212,8 +1212,10 @@ describe("Bun.Image", () => {
       ["a comment of length 1", [0xff, 0xfe, 0, 1]],
       ["TEM", [0xff, 0x01]],
     ])("%s before it", (_, before) => {
-      test("is decoded", async () => {
-        expect(await applied(afterSoi(blocks, [...before, ...exif()]), { autoOrient: false })).toBe(1);
+      test("is decoded, and turned as the segment says or not at all", async () => {
+        const file = afterSoi(blocks, [...before, ...exif()]);
+        expect(await applied(file, { autoOrient: false })).toBe(1);
+        expect([1, 6]).toContain(await applied(file));
       });
 
       test.failing("Orientation 6", async () => {

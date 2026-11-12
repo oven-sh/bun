@@ -511,7 +511,7 @@ Module mocks are removed when the test file ends. The next file gets the real mo
 
 So a test file can find modules loaded that an earlier file imported. `mock.module()`, `jest.mock()` and `jest.doMock()` still reach the test file and the modules it imports, as they do when the file runs by itself: a module that the file imports is updated in place, whichever file loaded it first. Other modules that import the mocked module are evaluated again at their next import.
 
-Some cases still differ from a run of the file by itself. A module that the file only got from `import()`, `createRequire()`, `vi.importActual()` or `jest.requireActual()` is evaluated again when one of its imports is mocked, and so is every module that the file imports once `jest.unmock()`, `vi.doUnmock()` or the end of a `using` block has evaluated the file's imports again. A module that an earlier file loaded keeps what it computed when it loaded. Run with `--isolate` if a file needs every module evaluated for it.
+Some cases still differ from a run of the file by itself. A module that the file only got from `import()`, `createRequire()`, `vi.importActual()` or `jest.requireActual()` is evaluated again when one of its imports is mocked. So are the modules that the file imports, once `jest.unmock()`, `vi.doUnmock()` or the end of a `using` block has ended a mock of another import of the file. A module that an earlier file loaded keeps what it computed when it loaded, and a mock that updates it in place adds no exports to it. Run with `--isolate` if a file needs every module evaluated for it.
 
 Mocks made in a `--preload` script apply to every test file.
 

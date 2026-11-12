@@ -555,6 +555,7 @@ test("permutations of valid route values", {
 });
 
 test("#48646 static route values under a method key", {
+  port: 0,
   routes: {
     "/page": { GET: html },
     "/file": { GET: Bun.file(import.meta.file), POST: new Response("posted") },
@@ -573,6 +574,7 @@ test("#48646 static route values under a method key", {
 });
 
 test("#48646 static route values under a method key with websocket", {
+  port: 0,
   websocket: {
     message: console.log,
   },

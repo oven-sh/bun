@@ -780,7 +780,7 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject, const napi_
     auto* meta = new Bun::NapiModuleMeta(dlopenHandle);
 
     // TODO: think about the finalizer here
-    Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, nullptr, nullptr, env.ptr());
+    Bun::NapiExternal* napi_external = Bun::NapiExternal::create(vm, globalObject->NapiExternalStructure(), meta, env.ptr());
 
     bool success = resultValue.getObject()->putDirect(vm, WebCore::builtinNames(vm).napiDlopenHandlePrivateName(), napi_external, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     ASSERT(success);
@@ -866,7 +866,7 @@ extern "C" napi_status napi_wrap(napi_env env,
         napi_instance->napiRef = ref;
     } else {
         // wrap the ref in an external so that it can serve as a JSValue
-        auto* external = Bun::NapiExternal::create(JSC::getVM(globalObject), globalObject->NapiExternalStructure(), ref, nullptr, nullptr, env);
+        auto* external = Bun::NapiExternal::create(JSC::getVM(globalObject), globalObject->NapiExternalStructure(), ref, env);
         jsc_object->putDirect(vm, propertyName, JSValue(external));
     }
 
@@ -2783,7 +2783,11 @@ extern "C" napi_status napi_create_external(napi_env env, void* data,
     JSC::VM& vm = JSC::getVM(globalObject);
 
     auto* structure = globalObject->NapiExternalStructure();
-    JSValue value = Bun::NapiExternal::create(vm, structure, data, finalize_hint, finalize_cb, env);
+    auto* external = Bun::NapiExternal::create(vm, structure, data, env);
+    if (finalize_cb) {
+        external->m_finalizer = env->trackFinalizer(finalize_cb, data, finalize_hint);
+    }
+    JSValue value = external;
     JSC::EnsureStillAliveScope ensureStillAlive(value);
     *result = toNapi(value, globalObject);
     NAPI_RETURN_SUCCESS(env);
@@ -3364,9 +3368,14 @@ extern "C" void NapiEnv__unregisterThreadSafeFunction(napi_env env, void* tsfn)
     env->unregisterThreadSafeFunction(tsfn);
 }
 
-extern "C" void NapiEnv__runPendingFinalizer(napi_env env)
+extern "C" bool NapiEnv__takePendingFinalizer(napi_env env, napi_finalize* callback, void** data, void** hint)
 {
-    env->runPendingFinalizerFromLoop();
+    bool another;
+    auto call = env->takePendingFinalizer(another);
+    *callback = call.callback;
+    *data = call.data;
+    *hint = call.hint;
+    return another;
 }
 
 extern "C" void NapiEnv__pendingFinalizersTurnReleased(napi_env env)
@@ -3457,6 +3466,48 @@ extern "C" void NapiEnv__deref(napi_env env)
     env->deref();
 }
 
+}
+
+Bun::NapiTrackedFinalizer* NapiEnv::trackFinalizer(napi_finalize callback, void* data, void* hint)
+{
+    auto* finalizer = new Bun::NapiTrackedFinalizer(callback, data, hint);
+    m_trackedFinalizers.push(finalizer);
+    return finalizer;
+}
+
+void NapiEnv::finalizerValueCollected(Bun::NapiTrackedFinalizer* finalizer, FinalizerHolder holder)
+{
+    assertFinalizerListsAreStable();
+    finalizer->hasHolder = holder == FinalizerHolder::Kept;
+    if (!finalizer->callback || m_isTornDown) {
+        // cleanup() has run it, or has finished.
+        finalizer->callback = nullptr;
+        if (finalizer->isOnList())
+            finalizer->remove();
+        if (!finalizer->hasHolder)
+            delete finalizer;
+        return;
+    }
+    if (mustQueueFinalizer()) {
+        if (finalizer->isOnList())
+            finalizer->remove();
+        m_pendingFinalizers.append(finalizer);
+        schedulePendingFinalizers();
+        return;
+    }
+    runFinalizer(*finalizer);
+    throwPendingException();
+}
+
+void NapiEnv::postFinalizer(napi_finalize callback, void* data, void* hint)
+{
+    assertFinalizerListsAreStable();
+    if (m_isTornDown)
+        return;
+    auto* finalizer = new Bun::NapiTrackedFinalizer(callback, data, hint);
+    finalizer->hasHolder = false;
+    m_pendingFinalizers.append(finalizer);
+    schedulePendingFinalizers();
 }
 
 // Defined out-of-line so its uses of DECLARE_TOP_EXCEPTION_SCOPE (whose

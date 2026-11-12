@@ -48,11 +48,11 @@ public:
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static NapiExternal* create(JSC::VM& vm, JSC::Structure* structure, void* value, void* finalizer_hint, napi_finalize callback, WTF::RefPtr<NapiEnv> env = nullptr)
+    static NapiExternal* create(JSC::VM& vm, JSC::Structure* structure, void* value, WTF::RefPtr<NapiEnv> env = nullptr)
     {
         NapiExternal* accessor = new (NotNull, JSC::allocateCell<NapiExternal>(vm)) NapiExternal(vm, structure, env);
 
-        accessor->finishCreation(vm, value, finalizer_hint, callback);
+        accessor->finishCreation(vm, value);
 
 #if ASSERT_ENABLED
         if (auto* callFrame = vm.topCallFrame) {
@@ -76,13 +76,10 @@ public:
         return accessor;
     }
 
-    void finishCreation(JSC::VM& vm, void* value, void* finalizer_hint, napi_finalize callback)
+    void finishCreation(JSC::VM& vm, void* value)
     {
         Base::finishCreation(vm);
         m_value = value;
-        if (callback && m_env) {
-            m_finalizer = m_env->trackFinalizer(callback, value, finalizer_hint);
-        }
     }
 
     static void destroy(JSC::JSCell* cell);
@@ -99,7 +96,7 @@ public:
     }
 
     void* m_value;
-    // The finalize_cb of napi_create_external. This cell is its holder.
+    // The finalize_cb of napi_create_external, which sets it. This cell is its holder.
     NapiTrackedFinalizer* m_finalizer { nullptr };
     WTF::RefPtr<NapiEnv> m_env;
 

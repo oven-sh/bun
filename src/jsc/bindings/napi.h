@@ -343,12 +343,7 @@ public:
 
     // Registers `callback` for a value. The caller is the finalizer's holder: it keeps the pointer, and gives it
     // back through finalizerValueCollected() or releaseFinalizer().
-    Bun::NapiTrackedFinalizer* trackFinalizer(napi_finalize callback, void* data, void* hint)
-    {
-        auto* finalizer = new Bun::NapiTrackedFinalizer(callback, data, hint);
-        m_trackedFinalizers.push(finalizer);
-        return finalizer;
-    }
+    Bun::NapiTrackedFinalizer* trackFinalizer(napi_finalize callback, void* data, void* hint);
 
     enum class FinalizerHolder : bool {
         // The holder is gone, or goes with its value.
@@ -360,29 +355,7 @@ public:
 
     // The holder's value was collected, or its bytes were freed: runs the finalizer now, or on a later turn of the
     // loop, whichever the module's Node-API version asks for. Also called from the collector thread.
-    void finalizerValueCollected(Bun::NapiTrackedFinalizer* finalizer, FinalizerHolder holder)
-    {
-        assertFinalizerListsAreStable();
-        finalizer->hasHolder = holder == FinalizerHolder::Kept;
-        if (!finalizer->callback || m_isTornDown) {
-            // cleanup() has run it, or has finished.
-            finalizer->callback = nullptr;
-            if (finalizer->isOnList())
-                finalizer->remove();
-            if (!finalizer->hasHolder)
-                delete finalizer;
-            return;
-        }
-        if (mustQueueFinalizer()) {
-            if (finalizer->isOnList())
-                finalizer->remove();
-            m_pendingFinalizers.append(finalizer);
-            schedulePendingFinalizers();
-            return;
-        }
-        runFinalizer(*finalizer);
-        throwPendingException();
-    }
+    void finalizerValueCollected(Bun::NapiTrackedFinalizer*, FinalizerHolder);
 
     // The holder goes away while its value is alive (napi_delete_reference), or takes its callback back
     // (napi_remove_wrap). A finalizer that has not run yet does not run.
@@ -402,29 +375,24 @@ public:
     }
 
     // node_api_post_finalizer, and the deferred finalizer of a value that the env does not track.
-    void postFinalizer(napi_finalize callback, void* data, void* hint)
-    {
-        assertFinalizerListsAreStable();
-        if (m_isTornDown)
-            return;
-        auto* finalizer = new Bun::NapiTrackedFinalizer(callback, data, hint);
-        finalizer->hasHolder = false;
-        m_pendingFinalizers.append(finalizer);
-        schedulePendingFinalizers();
-    }
+    void postFinalizer(napi_finalize callback, void* data, void* hint);
 
-    // The event loop's turn for this env (NapiEnv::run_pending_finalizer in napi_body.rs): one finalizer. The next
-    // turn is queued before the call, because the finalizer can do anything, including end the VM.
-    void runPendingFinalizerFromLoop()
+    struct FinalizerCall {
+        napi_finalize callback = nullptr;
+        void* data = nullptr;
+        void* hint = nullptr;
+    };
+
+    // The event loop's turn for this env (NapiEnv::run_pending_finalizer in napi_body.rs): the one finalizer that
+    // the turn runs, if any is left. `another` says whether the caller has to queue the next turn, which takes
+    // over this turn's ref to the env. Otherwise the caller drops that ref.
+    FinalizerCall takePendingFinalizer(bool& another)
     {
-        m_pendingFinalizersScheduled = false;
         auto* finalizer = first(m_pendingFinalizers);
-        if (!finalizer)
-            return;
-        finalizer->remove();
-        if (!m_pendingFinalizers.isEmpty())
-            schedulePendingFinalizers();
-        runFinalizer(*finalizer);
+        FinalizerCall call = finalizer ? takeForCall(*finalizer) : FinalizerCall {};
+        another = !m_isCleaningUp && !m_pendingFinalizers.isEmpty();
+        m_pendingFinalizersScheduled = another;
+        return call;
     }
 
     // The queued turn was released without running. Its finalizers stay here for cleanup().
@@ -598,10 +566,13 @@ public:
     }
 
     // Whether a finalizer whose value the collector just found has to wait for a turn of the loop. A collection's
-    // end phase can run on the collector thread; an addon's finalizer only ever runs on the JS thread.
+    // end phase can run on the collector thread; an addon's finalizer only ever runs on the JS thread. The mutator's
+    // state answers for the JS thread, which spares it the read of a thread-local.
     inline bool mustQueueFinalizer() const
     {
-        return inGC() && (mustDeferFinalizers() || WTF::Thread::mayBeGCThread());
+        if (mustDeferFinalizers() && m_vm.heap.mutatorState() != JSC::MutatorState::Running)
+            return true;
+        return WTF::Thread::mayBeGCThread();
     }
 
     inline bool isFinishingFinalizers() const { return m_isFinishingFinalizers; }
@@ -716,18 +687,22 @@ private:
         }
     }
 
-    // The finalizer leaves its list before the call. The callback can release it (napi_delete_reference), and can
-    // register or post other finalizers.
-    void runFinalizer(Bun::NapiTrackedFinalizer& finalizer)
+    // The finalizer leaves its list before its callback is called. The callback can release it
+    // (napi_delete_reference), and can register or post other finalizers.
+    FinalizerCall takeForCall(Bun::NapiTrackedFinalizer& finalizer)
     {
-        napi_finalize callback = std::exchange(finalizer.callback, nullptr);
-        void* data = finalizer.data;
-        void* hint = finalizer.hint;
+        FinalizerCall call { std::exchange(finalizer.callback, nullptr), finalizer.data, finalizer.hint };
         if (finalizer.isOnList())
             finalizer.remove();
         if (!finalizer.hasHolder)
             delete &finalizer;
-        callback(this, data, hint);
+        return call;
+    }
+
+    void runFinalizer(Bun::NapiTrackedFinalizer& finalizer)
+    {
+        FinalizerCall call = takeForCall(finalizer);
+        call.callback(this, call.data, call.hint);
     }
 
     // cleanup() runs every finalizer of `lists`, and what those finalizers add to them: the first of the first

@@ -602,11 +602,15 @@ pub(crate) fn run_task(
                 ThreadSafeFunction::on_dispatch(function);
             })
         }
-        task_tag::NapiPendingFinalizers => {
-            feature_arm!([NativeAddons], |env: NapiEnv| -> JsResult<()> {
-                NapiEnv::run_pending_finalizer(env)
-            })?
-        }
+        task_tag::NapiPendingFinalizers => in_features!(
+            [NativeAddons],
+            (
+                env: *mut NapiEnv = cast_ptr!(NapiEnv),
+                event_loop: &mut EventLoop = el,
+            ) -> JsResult<()> {
+                NapiEnv::run_pending_finalizer(env, event_loop)
+            }
+        )?,
         task_tag::UvLoopDispatch => {
             #[cfg(unix)]
             {

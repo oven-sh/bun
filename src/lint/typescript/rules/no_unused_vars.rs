@@ -1170,8 +1170,34 @@ fn are_all_specifiers_unused(declaration: Import, reported: &SymbolSet) -> bool 
     imported_variables(declaration).all(|it| reported.contains(it))
 }
 
-/// True if Bun runs the file in another way without the unused names of the import that `def` is in: see
-/// [`run_mode`]. Bun keeps an import that nothing uses, or that only types use, unless it says `type`.
+/// True if Bun runs the file in another way without the `require()` calls in the initializer of `declarator`, which
+/// go with an unused variable: see [`run_mode`].
+fn loses_require<'a>(file: &'a File<'a>, declarator: VarDecl<'a>) -> bool {
+    let Some(within) = declarator.init().map(|it| it.span()) else {
+        return false;
+    };
+    let requires = file.unresolved_references_to(b"require");
+    let mut calls = requires
+        .filter_map(Reference::expr)
+        .filter(|it| within.contains(it.span()))
+        .peekable();
+    if calls.peek().is_none() {
+        return false;
+    }
+    let edit = Edit::RemovesRequire;
+    let source = |it: Expr<'a>| match it.parent() {
+        Node::Expr(call) => call.as_call()?.args().first()?.as_string(),
+        _ => None,
+    };
+    calls
+        .filter_map(source)
+        .any(|it| run_mode::changes_globals(file, edit, it.bytes(), |_| false))
+        || !run_mode::keeps_module_format(file, edit)
+}
+
+/// True if Bun runs the file in another way without the unused names of the import that `def` is in, or without the
+/// `require()` of an unused variable: see [`run_mode`]. Bun keeps an import that nothing uses, or that only types
+/// use, unless it says `type`.
 #[cold]
 fn removal_changes_run_mode<'a>(
     file: &'a File<'a>,
@@ -1184,6 +1210,9 @@ fn removal_changes_run_mode<'a>(
         Declaration::ImportEquals(it) => {
             let is_require = matches!(it.target(), ImportEqualsTarget::Require(_));
             return is_require && !run_mode::keeps_run_mode_without(file, it.stmt());
+        }
+        Declaration::Var(_) => {
+            return matches!(def.node(), Some(Node::VarDecl(it)) if loses_require(file, it));
         }
         _ => return false,
     };

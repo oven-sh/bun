@@ -212,6 +212,8 @@ pub enum Edit<'a> {
     Retypes(Stmt<'a>),
     /// Removes an `import`, an `import a = require()` or an `export {}`.
     Removes(Stmt<'a>),
+    /// Removes a `require()`.
+    RemovesRequire,
 }
 
 /// True if `bun test` gives the file other globals once `edit` makes a statement start or stop loading `source`.
@@ -230,6 +232,7 @@ pub fn changes_globals<'a>(
         Edit::AddsImport | Edit::AddsRequire => (None, false),
         Edit::Keeps(it) => (Some(it), false),
         Edit::Retypes(it) | Edit::Removes(it) => (Some(it), true),
+        Edit::RemovesRequire => (None, true),
     };
     let loads_elsewhere = |is_wanted: fn(&[u8]) -> bool| {
         let mut others = file.body().iter().filter(|it| Some(*it) != except);
@@ -253,6 +256,19 @@ fn is_export(statement: Stmt<'_>) -> bool {
             false
         }
         _ => statement.is_exported(),
+    }
+}
+
+/// True if the file has a single `export {}`, which isn't `except`, and no fix removes it: the file would run in
+/// another way without it.
+fn has_lasting_empty_export<'a>(file: &'a File<'a>, except: Option<Stmt<'a>>) -> bool {
+    let is_empty = |it: &Stmt<'a>| {
+        matches!(it.kind(), StmtKind::ExportNamed(export) if export.items().is_empty())
+    };
+    let mut empty = file.body().iter().filter(is_empty);
+    match (empty.next(), empty.next()) {
+        (Some(only), None) => Some(only) != except && !keeps_run_mode_without(file, only),
+        _ => false,
     }
 }
 
@@ -319,13 +335,17 @@ fn has_commonjs_code<'a>(file: &'a File<'a>) -> bool {
 pub fn keeps_module_format<'a>(file: &'a File<'a>, edit: Edit<'a>) -> bool {
     let except = match edit {
         Edit::Keeps(it) | Edit::Retypes(it) | Edit::Removes(it) => Some(it),
-        Edit::AddsImport | Edit::AddsRequire => None,
+        Edit::AddsImport | Edit::AddsRequire | Edit::RemovesRequire => None,
     };
     let others = || file.body().iter().filter(move |it| Some(*it) != except);
-    if others().any(is_export) {
+    if others().any(is_export) || has_lasting_empty_export(file, except) {
         return true;
     }
     let imports = || others().filter_map(Stmt::as_import);
+    // It can be the last thing that asks for CommonJS, in a file that isn't an ES module by any statement.
+    if let Edit::RemovesRequire = edit {
+        return imports().any(has_runtime_use);
+    }
     if let Edit::AddsRequire = edit {
         // A file without any of these is an ES module, until it has a `require()`.
         let has_module_syntax =
@@ -348,7 +368,7 @@ pub fn keeps_module_format<'a>(file: &'a File<'a>, edit: Edit<'a>) -> bool {
         || has_use_strict(file)
         || file.stmts_of_kind(StmtTag::ImportEquals).any(is_require);
     match edit {
-        Edit::AddsRequire => false,
+        Edit::AddsRequire | Edit::RemovesRequire => false,
         // With `"type": "commonjs"`, a file is an ES module only if it has an `import` or an `export`.
         Edit::AddsImport => {
             imports().next().is_some() && (imports().any(is_kept) || !asks_for_commonjs)

@@ -200,9 +200,10 @@ describe.skipIf(isWindows)("Glob path length", () => {
   // separator after it, it names the directory. 4094 bytes is 2 below the Linux limit.
   test.skipIf(!isLinux)("a final `.` or `..` after `**/name` lists nothing below a 4094-byte path", async () => {
     const root = tmpdirSync("bun-glob-overflow-final-dots-");
-    const short = "b".repeat(250);
-    await buildDeepTree(root, 15, "a".repeat(255));
-    const deepest = path.join(root, ...Array(15).fill("a".repeat(255)));
+    const long = Buffer.alloc(255, "a").toString();
+    const short = Buffer.alloc(250, "b").toString();
+    await buildDeepTree(root, 15, long);
+    const deepest = path.join(root, ...Array(15).fill(long));
     await using mkdirProc = Bun.spawn({
       cmd: ["bash", "-c", `cd "${deepest}" && mkdir ${short} && cd ${short} && mkdir sub`],
       env: bunEnv,
@@ -221,8 +222,13 @@ describe.skipIf(isWindows)("Glob path length", () => {
       };
       console.log(JSON.stringify({ up: scan("**/sub/.."), here: scan("**/sub/."), dir: scan("**/sub/../") }));
     `;
-    await using scanProc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "inherit" });
-    const [scanStdout, scanCode] = await Promise.all([scanProc.stdout.text(), scanProc.exited]);
+    await using scanProc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+    const [scanStdout, scanStderr, scanCode] = await Promise.all([
+      scanProc.stdout.text(),
+      scanProc.stderr.text(),
+      scanProc.exited,
+    ]);
+    expect(scanStderr).toBe("");
     expect(JSON.parse(scanStdout)).toEqual({ up: [], here: [], dir: [4097] });
     expect(scanCode).toBe(0);
   });

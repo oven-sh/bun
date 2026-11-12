@@ -741,7 +741,12 @@ impl FileLowering<'_, '_, '_, '_> {
                         if let ExprKind::Ident(name) | ExprKind::Dot { name, .. } = hir[callee].kind
                             && let called = self.queries.atom_bytes(name)
                             && WORDS[1..].iter().any(|word| called.ends_with(word))
-                            && hir[id].chain != Chain::Start
+                            && match hir[id].chain {
+                                Chain::Start => false,
+                                Chain::Continue => true,
+                                // `(vi?.importActual)(path)`: the printer keeps the parentheses.
+                                Chain::No => !self.is_chain_root(callee),
+                            }
                             && let Some(first) = first
                             && let Some(module) = self.find_name_that_search_reads(first, consts)
                         {

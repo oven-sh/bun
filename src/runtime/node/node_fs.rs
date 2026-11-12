@@ -7343,6 +7343,12 @@ impl NodeFS {
         matches!(errno, E::ENOENT | E::ENOTDIR | E::EPERM)
     }
 
+    /// `openat(root_fd, rel)` can only answer ENAMETOOLONG. The entry is listed and not entered.
+    #[inline]
+    fn readdir_rel_too_long(rel: &[u8]) -> bool {
+        rel.len() >= paths::MAX_PATH_BYTES
+    }
+
     /// `basename` is the path below the root of the directory that failed, unless that is the root itself.
     fn readdir_error(
         buf: &mut PathBuffer,
@@ -7468,29 +7474,25 @@ impl NodeFS {
                     sys::FileKind::SymLink |
                     // we know for sure it's a directory
                     sys::FileKind::Directory => {
-                        // if the name is too long, we can't enqueue it regardless
-                        // the operating system would just return ENAMETOOLONG
-                        //
-                        // Technically, we could work around that due to the
-                        // usage of openat, but then we risk leaving too many
-                        // file descriptors open.
-                        if utf8_name.len() + 1 + name_to_copy.len() > paths::MAX_PATH_BYTES { break 'enqueue; }
+                        if Self::readdir_rel_too_long(name_to_copy) { break 'enqueue; }
                         async_task.enqueue(name_to_copy_z);
                     }
                     // Some filesystems (e.g., Docker bind mounts, FUSE, NFS) return
                     // DT_UNKNOWN for d_type. Use lstatat to determine the actual type.
                     sys::FileKind::Unknown => {
-                        if utf8_name.len() + 1 + name_to_copy.len() > paths::MAX_PATH_BYTES { break 'enqueue; }
+                        let too_long = Self::readdir_rel_too_long(name_to_copy);
+                        // Only a Dirent reports the kind of an entry that is not descended into.
+                        if too_long && !T::IS_DIRENT { break 'enqueue; }
                         // Lazy stat to determine the actual kind (lstatat to not follow symlinks)
                         match sys::lstatat(fd, current.name_assume_z()) {
                             Ok(st) => {
                                 let real_kind = sys::kind_from_mode(st.st_mode as Mode);
                                 effective_kind = real_kind;
-                                if matches!(real_kind, sys::FileKind::Directory | sys::FileKind::SymLink) {
+                                if !too_long && matches!(real_kind, sys::FileKind::Directory | sys::FileKind::SymLink) {
                                     async_task.enqueue(name_to_copy_z);
                                 }
                             }
-                            Err(_) => {} // Skip entries we can't stat
+                            Err(_) => {} // listed with an unknown kind, not entered
                         }
                     }
                     _ => {}
@@ -7640,7 +7642,7 @@ impl NodeFS {
                         sys::FileKind::SymLink |
                         // we know for sure it's a directory
                         sys::FileKind::Directory => {
-                            if utf8_name.len() + 1 + name_to_copy.len() > paths::MAX_PATH_BYTES { break 'enqueue; }
+                            if Self::readdir_rel_too_long(name_to_copy) { break 'enqueue; }
                             // Store with trailing NUL so the next iteration can
                             // hand it to `openat` as a `&ZStr`.
                             let mut owned = Vec::with_capacity(name_to_copy.len() + 1);
@@ -7651,19 +7653,21 @@ impl NodeFS {
                         // Some filesystems (e.g., Docker bind mounts, FUSE, NFS) return
                         // DT_UNKNOWN for d_type. Use lstatat to determine the actual type.
                         sys::FileKind::Unknown => {
-                            if utf8_name.len() + 1 + name_to_copy.len() > paths::MAX_PATH_BYTES { break 'enqueue; }
+                            let too_long = Self::readdir_rel_too_long(name_to_copy);
+                            // Only a Dirent reports the kind of an entry that is not descended into.
+                            if too_long && !T::IS_DIRENT { break 'enqueue; }
                             match sys::lstatat(fd, current.name_assume_z()) {
                                 Ok(st) => {
                                     let real_kind = sys::kind_from_mode(st.st_mode as Mode);
                                     effective_kind = real_kind;
-                                    if matches!(real_kind, sys::FileKind::Directory | sys::FileKind::SymLink) {
+                                    if !too_long && matches!(real_kind, sys::FileKind::Directory | sys::FileKind::SymLink) {
                                         let mut owned = Vec::with_capacity(name_to_copy.len() + 1);
                                         owned.extend_from_slice(name_to_copy);
                                         owned.push(0);
                                         stack.push_back(owned);
                                     }
                                 }
-                                Err(_) => {} // Skip entries we can't stat
+                                Err(_) => {} // listed with an unknown kind, not entered
                             }
                         }
                         _ => {}

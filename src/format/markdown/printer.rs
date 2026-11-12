@@ -849,6 +849,7 @@ impl<'a> Printer<'a, '_> {
         let mut decisions = vec![None];
         let mut content_column = 0;
         let mut is_alone = false;
+        let mut marker_before: &[u8] = b"";
         let mut offset = 0;
         while offset <= source.len() {
             let rest = &source[offset..];
@@ -865,7 +866,13 @@ impl<'a> Printer<'a, '_> {
             let word = Self::list_marker_at_start(&line[indent..]);
             let is_first = offset == 0;
             let decision = match word {
-                _ if !is_first && is_alone && column >= content_column => Some(false),
+                // Behind the marker, the text is an item of a list that the next run prints with `-` or `N.`, or
+                // a paragraph again, `2) b`.
+                _ if !is_first && is_alone && column >= content_column => {
+                    (matches!(marker_before, [b'-'] | [.., b'.'])
+                        || (marker_before.ends_with(b")") && marker_before != b"1)"))
+                        .then_some(false)
+                }
                 Some(_) if is_first || column < content_column.min(code_column) => Some(true),
                 _ if !is_first && is_alone => Some(true),
                 _ => None,
@@ -880,6 +887,7 @@ impl<'a> Printer<'a, '_> {
                 let blanks = text.len() - text.trim_ascii_start().len();
                 let width = self.visual_column(after + blanks as u32) - self.visual_column(after);
                 is_alone = blanks == text.len();
+                marker_before = marker;
                 content_column = self.visual_column(after)
                     + if (1..=4).contains(&width) && !is_alone {
                         width

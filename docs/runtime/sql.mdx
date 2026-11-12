@@ -1401,7 +1401,7 @@ Bun sends several queries on one connection without waiting for each answer. A P
 - Bun sends a query that never ran again on another connection of the pool.
 - The query that the server was running fails with the server's error, such as `57P01`, or with `ERR_POSTGRES_CONNECTION_CLOSED`. It may have run.
 - Inside `sql.begin` and on a reserved connection, every query that has not finished fails with the error that closed the connection. The server rolls back an open transaction. Retry the whole transaction.
-- With `max: 1`, Bun does not send a query again, because a manual `BEGIN` on that connection would not apply to it. Bun also does not send a `COPY` again. A query that never ran rejects with `ERR_POSTGRES_CONNECTION_CLOSED` and the message `Connection closed before the query ran`, and its `cause` is the error that closed the connection. Such a query is safe to retry.
+- With `max: 1`, Bun does not send a query again, because a manual `BEGIN` on that connection would not apply to it. Bun also does not send a `COPY` again, nor any query once `sql.close()` has been called. A query that never ran rejects with `ERR_POSTGRES_CONNECTION_CLOSED` and the message `Connection closed before the query ran`, and its `cause` is the error that closed the connection. Such a query is safe to retry.
 
 ### Hot reloading
 

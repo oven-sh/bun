@@ -1060,6 +1060,102 @@ describe.concurrent("Bun REPL", () => {
   });
 });
 
+// What an uncaught error ends depends on what turns the event loop when it is reported. `bun repl -e`, `bun -e` and
+// `bun <file>` turn it until the entry settles, unhandled error or not, and after that for as long as an immediate is
+// queued. A child's stdout whose 'data' listener threw goes on for as long as the run does: script that waits for the
+// child's 'close' would otherwise wait forever. Node ends the process at the throw.
+describe.concurrent("a child's stdout whose 'data' listener threw, with no 'uncaughtException' handler", () => {
+  const commands = {
+    "bun repl -e": (source: string) => [bunExe(), "repl", "-e", source],
+    "bun -e": (source: string) => [bunExe(), "-e", source],
+    "bun entry.mjs": () => [bunExe(), "entry.mjs"],
+  };
+  type Command = keyof typeof commands;
+
+  async function run(command: Command, source: string) {
+    using dir = tempDir("child-data-throw", { "entry.mjs": source });
+    await using proc = Bun.spawn({
+      cmd: commands[command](source),
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, errors: stripAnsi(stderr).match(/^error: .*$/gm), exitCode, signalCode: proc.signalCode };
+  }
+
+  // The child says in the working directory that its chunk is in the pipe.
+  const writer = `const fs = require("fs"); fs.writeSync(1, "hi"); fs.writeFileSync("written", "");`;
+  const spawnsChild = `const child = spawn(process.execPath, ["-e", ${JSON.stringify(writer)}], { stdio: ["ignore", "pipe", "ignore"] });`;
+  // Ends a loop that would otherwise spin for good when the child or its 'close' never comes.
+  const deadline = `const deadline = Date.now() + 20_000;`;
+
+  // `written`: the event loop first turns once the chunk is in the pipe, so the first read returns it. Otherwise the
+  // chunk comes to a read that is waiting for it.
+  const awaitsClose = (written: boolean) =>
+    [
+      `import { spawn } from "node:child_process";`,
+      `import { existsSync } from "node:fs";`,
+      spawnsChild,
+      `let calls = 0;`,
+      `process.on("exit", code => console.log(JSON.stringify({ code, calls })));`,
+      `child.stdout.on("data", () => { calls++; throw new Error("boom"); });`,
+      written ? `${deadline} while (!existsSync("written") && Date.now() < deadline);` : ``,
+      `await new Promise(resolve => child.on("close", resolve));`,
+      `console.log("closed");`,
+    ].join(" ");
+
+  test.each(
+    (Object.keys(commands) as Command[]).flatMap(command => [
+      [command, "comes to a waiting read", false] as const,
+      [command, "is in the pipe before the first read", true] as const,
+    ]),
+  )("%s: a top-level await of the child's 'close' resumes (the chunk %s)", async (command, _, written) => {
+    expect(await run(command, awaitsClose(written))).toEqual({
+      stdout: 'closed\n{"code":1,"calls":1}\n',
+      errors: ["error: boom"],
+      exitCode: 1,
+      signalCode: null,
+    });
+  });
+
+  // `startedByListener`: the loop of immediates starts in a tick that the listener queues before it throws, which
+  // runs after the error was reported.
+  const pollsForClose = (startedByListener: boolean) =>
+    [
+      `const { spawn } = require("node:child_process");`,
+      spawnsChild,
+      `let calls = 0, closed = false;`,
+      `child.on("close", () => { closed = true; });`,
+      `process.on("exit", code => console.log(JSON.stringify({ code, calls, closed })));`,
+      deadline,
+      `function poll() { if (!closed && Date.now() < deadline) setImmediate(poll); }`,
+      `child.stdout.on("data", () => { calls++; ${startedByListener ? `process.nextTick(poll);` : ``} throw new Error("boom"); });`,
+      startedByListener ? `` : `poll();`,
+    ].join(" ");
+
+  test("a setImmediate loop that is running when the listener throws sees the child's 'close'", async () => {
+    expect(await run("bun -e", pollsForClose(false))).toEqual({
+      stdout: '{"code":1,"calls":1,"closed":true}\n',
+      errors: ["error: boom"],
+      exitCode: 1,
+      signalCode: null,
+    });
+  });
+
+  // The error has ended the run by then, and the stream with it. The loop must not keep the process alive: nothing
+  // is left that would stop it.
+  test("a setImmediate loop that starts after the listener threw ends with the run", async () => {
+    expect(await run("bun -e", pollsForClose(true))).toEqual({
+      stdout: '{"code":1,"calls":1,"closed":false}\n',
+      errors: ["error: boom"],
+      exitCode: 1,
+      signalCode: null,
+    });
+  });
+});
+
 // Interactive terminal-based REPL tests. Each test drives its own pty, so they run concurrently.
 describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
   test("shows welcome message and prompt", async () => {

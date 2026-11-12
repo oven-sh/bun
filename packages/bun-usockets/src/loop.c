@@ -975,6 +975,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     us_poll_stop(&s->p, loop);
                     /* Sync the recorded mask with the DEL (a pause from on_data leaves WRITABLE) so end() is a no-op. */
                     s->p.state.poll_type = us_internal_poll_type(&s->p);
+                    /* No writable event comes for its sealed records now. */
+                    if (s->ssl) us_internal_ssl_spill_release_loop(s);
                 }
 #endif
                 eof = 0;

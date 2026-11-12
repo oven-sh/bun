@@ -6274,6 +6274,144 @@ it.concurrent(
   30_000,
 ); // eight full GCs over 60k live objects take several seconds on a debug build
 
+// write() counts a record once it is sealed, also when the kernel has not taken it yet. Such records are a write in
+// flight: they hold the event loop until the kernel has them, whatever unref() did to the socket.
+describe.concurrent("sealed TLS records that the kernel has not taken", () => {
+  // No event tells that a process stays. This timer does not hold the event loop, so it only runs in one that does.
+  const exitWith4IfItStays = "setTimeout(() => process.exit(4), 3000).unref();";
+  // Once the peer has stopped reading, it fills the connection, says "short", and has nothing else to do.
+  const client = (address: string, beforeWrites = "", afterWrites = "") => `
+    const step = Buffer.alloc(1024 * 1024, "a");
+    let counted = 0;
+    process.on("exit", () => console.log(counted));
+    // A process that cannot exit must not outlive the test.
+    setTimeout(() => process.exit(3), 60_000).unref();
+    Bun.connect({
+      ${address},
+      tls: { rejectUnauthorized: false },
+      socket: {
+        data(socket) {
+          ${beforeWrites}
+          socket.unref();
+          for (let wrote = step.length; wrote === step.length; counted += Math.max(wrote, 0)) wrote = socket.write(step);
+          ${afterWrites}
+          console.log("short");
+        },
+      },
+    });
+  `;
+  // Runs `onLine` when the child has printed its first line. Resolves with all that it printed, and how it exited.
+  async function run(script: string, onLine: (line: string) => unknown) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+    let stdout = "";
+    for await (const chunk of proc.stdout) {
+      const hadLine = stdout.includes("\n");
+      stdout += Buffer.from(chunk).toString();
+      if (!hadLine && stdout.includes("\n")) await onLine(stdout.slice(0, stdout.indexOf("\n")));
+    }
+    return { lines: stdout.trim().split("\n"), exitCode: await proc.exited, signalCode: proc.signalCode };
+  }
+  // Stops reading when its handshake is done, and then tells the client to go on.
+  const pausedPeer = () => {
+    const peer = Promise.withResolvers<Socket>();
+    const closed = Promise.withResolvers<void>();
+    let received = 0;
+    const socket: SocketHandler = {
+      handshake(socket) {
+        socket.pause();
+        socket.write("go");
+        peer.resolve(socket);
+      },
+      data(_socket, chunk) {
+        received += chunk.length;
+      },
+      close: () => closed.resolve(),
+    };
+    return { socket, peer: peer.promise, closed: closed.promise, received: () => received };
+  };
+
+  it.each([
+    ["write()", ""],
+    ["write() and end()", "socket.end();"],
+  ])("hold the process of an unref'd socket until the kernel has them: %s", async (_name, afterWrites) => {
+    const { socket, peer, closed, received } = pausedPeer();
+    using server = Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket });
+    const address = `hostname: "127.0.0.1", port: ${server.port}`;
+    const { lines, exitCode } = await run(client(address, "", afterWrites), async () => (await peer).resume());
+    await closed;
+    expect({ said: lines[0], received: received(), exitCode }).toEqual({
+      said: "short",
+      received: Number(lines[1]),
+      exitCode: 0,
+    });
+  });
+
+  // Linux takes a paused socket whose peer hung up out of epoll, so no writable event comes for its records.
+  it.skipIf(!isLinux)("hold it no longer when the peer hangs up while the socket is paused", async () => {
+    using dir = tempDir("tls-unref-hangup", {});
+    const unix = join(String(dir), "tls.sock");
+    const { socket, peer } = pausedPeer();
+    using server = Bun.listen({ unix, tls, socket });
+    const script = client(`unix: ${JSON.stringify(unix)}`, "socket.pause();", exitWith4IfItStays);
+    const { lines, exitCode, signalCode } = await run(script, async () => {
+      // Both directions, and the descriptor stays open.
+      (await peer).shutdown();
+      (await peer).shutdown(true);
+    });
+    expect({ said: lines[0], exitCode, signalCode }).toEqual({ said: "short", exitCode: 0, signalCode: null });
+  });
+
+  // The count of the event loop is the same after every connection, however it ended.
+  it("give the event loop back once", async () => {
+    const endings = ["end() after the drain", "end()", "close()", "terminate()", "the peer's terminate()"];
+    await using proc = Bun.spawn({
+      // Twice: the first connection also sets up what a process has once.
+      cmd: [bunExe(), join(import.meta.dir, "tls-spill-loop-count-fixture.ts"), ...endings, ...endings],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const counts: number[] = JSON.parse(stdout);
+    expect({ counts, exitCode }).toEqual({ counts: Array(2 * endings.length).fill(counts[0]), exitCode: 0 });
+  });
+
+  // Only the sockets of Bun.connect() and Bun.listen() hold it.
+  it("do not hold the process of an unref'd Bun.serve()", async () => {
+    const script = `
+      const server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: ${JSON.stringify(tls)},
+        fetch() {
+          server.unref();
+          ${exitWith4IfItStays}
+          return new Response(Buffer.alloc(16 * 1024 * 1024, "a"));
+        },
+      });
+      console.log(server.port);
+    `;
+    let client: Socket | undefined;
+    const { exitCode, signalCode } = await run(script, async port => {
+      // Asks for the response and reads nothing of it.
+      client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: Number(port),
+        tls: { rejectUnauthorized: false },
+        socket: {
+          handshake(socket) {
+            socket.pause();
+            socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+          },
+          data() {},
+        },
+      });
+    });
+    client?.end();
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
+});
+
 describe.concurrent("TLS session/keylog handlers", () => {
   // `session`/`keylog` dispatch from the event loop after the SSL stack
   // unwinds. These pin the delivery contract for those native dispatch paths:

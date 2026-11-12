@@ -190,6 +190,8 @@ struct us_ssl_spill_t {
   unsigned int length, offset;
   /* Counted in loop_ssl_data::ssl_batch_spills. */
   unsigned char is_batch;
+  /* Counted in the event loop: ssl_spill_hold_loop. */
+  unsigned char holds_loop;
   char data[];
 };
 
@@ -632,8 +634,26 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
   return length;
 }
 
+/* Sealed records that the kernel has not taken are a write in flight. Like a write request of libuv, they keep the
+ * event loop alive whatever ref() and unref() did to the socket, and node:tls completes such a write before the
+ * process exits: https://github.com/libuv/libuv/blob/v1.52.0/src/unix/core.c#L393-L398
+ * Only for the sockets of Bun.connect and Bun.listen, which node:tls and node:http2 ride on. */
+static void ssl_spill_hold_loop(struct us_socket_t *s, struct us_ssl_spill_t *spill) {
+  spill->holds_loop = us_socket_kind(s) == BUN_SOCKET_KIND_BUN_SOCKET_TLS;
+  if (spill->holds_loop) us_internal_loop_ref(s->group->loop);
+}
+
+void us_internal_ssl_spill_release_loop(struct us_socket_t *s) {
+  if (!s->ssl_spilled) return;
+  struct us_ssl_spill_t *spill = us_ssl_rare(s_ssl(s))->spill;
+  if (!spill->holds_loop) return;
+  spill->holds_loop = 0;
+  us_internal_loop_unref(s->group->loop);
+}
+
 static void ssl_discard_spill(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s) {
   if (!s->ssl_spilled) return;
+  us_internal_ssl_spill_release_loop(s);
   struct us_ssl_rare_t *rare = us_ssl_rare(s_ssl(s));
   loop_ssl_data->ssl_batch_spills -= rare->spill->is_batch;
   if (rare->spill->offset != rare->spill->length) s->ssl_spill_dropped = 1;
@@ -664,6 +684,7 @@ static void ssl_emit(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s,
   if (!held) {
     spill->offset = 0;
     spill->is_batch = 0;
+    ssl_spill_hold_loop(s, spill);
   }
   memcpy(spill->data + held, data, length);
   spill->length = held + length;
@@ -2292,6 +2313,8 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
       /* Resume with the SAME code: a graceful close must not come back as a
        * forceful FAST_SHUTDOWN (on_close would see an abortive teardown). */
       s->ssl_pending_close_code = (unsigned char) code;
+      /* destroy() lets go of the socket with this code: the process does not wait for the rest of the spill. */
+      if (code == LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN) us_internal_ssl_spill_release_loop(s);
       /* The owner let go, so its timeouts are over and nobody else bounds this wait. */
       us_socket_timeout(s, LIBUS_LINGER_SECONDS);
       return s;

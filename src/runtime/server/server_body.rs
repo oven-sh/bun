@@ -718,9 +718,7 @@ impl AnyRoute {
                 .global
                 .throw_invalid_arguments(format_args!("Bundled file path is too long")));
         }
-        // `dir` holds the page only where the bundle was built next to its other outputs. A
-        // re-bundle, a copy of the server file, or a CommonJS bundle moved to another machine
-        // has no page there. The paths then resolve against the cwd, as without `dir`.
+        // A copied or re-bundled server file has no page under `dir`: then the cwd, as without `dir`.
         let bundle_dir = dir
             .filter(|dir| {
                 !strings::contains_char(index.slice(), 0)

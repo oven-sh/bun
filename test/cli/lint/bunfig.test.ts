@@ -1078,6 +1078,11 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
     async (name, config) => {
       const files = { ...dead, ...config({ src: ["."], ignoreExports: ["**/entry.js"] }) };
       expect(await lintIn(".", files, ["src/b"])).toMatchObject({ found: [], exitCode: 0 });
+      const without = { ...dead, ...config({ src: ["."] }) };
+      expect(await lintIn(".", without, ["src/b"])).toMatchObject({
+        found: ["src/b/entry.js:1 import/no-unused-modules"],
+        exitCode: 1,
+      });
     },
   );
 

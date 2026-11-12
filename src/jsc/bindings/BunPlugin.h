@@ -145,6 +145,8 @@ public:
         WTF::ListHashSet<String> loadRoots = {};
         // Those of them that a factory's file, but not the factory, called import() for while the factory ran.
         WTF::UncheckedKeyHashSet<String> loadRootsDuringFactories = {};
+        // The keys of the private copies that factories got of modules in this test file. See redirectedModuleKey().
+        WTF::UncheckedKeyHashSet<String> privateCopies = {};
         // Fetch promises for those modules, kept until JSC registers them.
         WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSObject>> loadRootFetches = {};
         // Preload mocks that the running test file replaced or removed. Restored when the file ends.
@@ -196,6 +198,7 @@ public:
             modulesGivenTimeToRequestImports.clear();
             loadRoots.clear();
             loadRootsDuringFactories.clear();
+            privateCopies.clear();
             loadRootFetches.clear();
             moduleMocksBeingLoaded.clear();
             loadedByImportActual.clear();

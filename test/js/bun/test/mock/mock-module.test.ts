@@ -4068,11 +4068,13 @@ describe.concurrent("a module that a factory loads while the module awaits impor
     await expectFixturesToPass({ ...files, "copy.test.js": hoisted(imports, mockIt) }, 1);
   });
 
-  test.each(["vi.doMock", "jest.doMock", "mock.module"])("also when a test calls %s() and then loads the module", async mockIt => {
-    await expectFixturesToPass(
-      {
-        ...files,
-        "copy.test.js": `
+  test.each(["vi.doMock", "jest.doMock", "mock.module"])(
+    "also when a test calls %s() and then loads the module",
+    async mockIt => {
+      await expectFixturesToPass(
+        {
+          ...files,
+          "copy.test.js": `
           import { expect, jest, mock, test, vi } from "bun:test";
           test("the copy sees the original, the module itself the mock", async () => {
             ${mockIt}("./dep.js", ${importsIt});
@@ -4081,10 +4083,11 @@ describe.concurrent("a module that a factory loads while the module awaits impor
             expect([waits.seen, dep.name, dep.inFactory, globalThis.runs]).toEqual(["mock", "mock", "real", 2]);
           });
         `,
-      },
-      1,
-    );
-  });
+        },
+        1,
+      );
+    },
+  );
 
   test.each([
     ["then()", `const name = await import("./dep.js").then(dep => dep.name);`],
@@ -4152,14 +4155,16 @@ describe.concurrent("a module that a factory loads while the module awaits impor
   });
 
   // The factory is called a few jobs after the first import() of the mocked module. The module calls import() in one of those jobs.
-  test.each([0, 1, 2])("a module that calls import() %d jobs after another module has asked for the mock", async jobs => {
-    await expectFixturesToPass(
-      {
-        ...files,
-        "first.js": `export const first = import("./dep.js");`,
-        "waits.js": `${Array(jobs).fill("await null;").join(" ")} const { name } = await import("./dep.js"); ${counted}`,
-        "entry.js": `import "./first.js"; export { seen } from "./waits.js";`,
-        "turn.test.js": `
+  test.each([0, 1, 2])(
+    "a module that calls import() %d jobs after another module has asked for the mock",
+    async jobs => {
+      await expectFixturesToPass(
+        {
+          ...files,
+          "first.js": `export const first = import("./dep.js");`,
+          "waits.js": `${Array(jobs).fill("await null;").join(" ")} const { name } = await import("./dep.js"); ${counted}`,
+          "entry.js": `import "./first.js"; export { seen } from "./waits.js";`,
+          "turn.test.js": `
           import { expect, test, vi } from "bun:test";
           import { seen } from "./entry.js";
           vi.mock("./dep.js", ${importsIt});
@@ -4168,10 +4173,11 @@ describe.concurrent("a module that a factory loads while the module awaits impor
             expect([seen, dep.name, dep.inFactory, globalThis.runs]).toEqual(["mock", "mock", "real", 2]);
           });
         `,
-      },
-      1,
-    );
-  });
+        },
+        1,
+      );
+    },
+  );
 
   test("a module whose import statements follow a hoisted mock of its own", async () => {
     await expectFixturesToPass(
@@ -4220,12 +4226,14 @@ describe.concurrent("a module that a factory loads while the module awaits impor
   test.each([
     ["an import statement", `import { name } from "./dep.js";`],
     ["await import()", `const { name } = await import("./dep.js");`],
-  ])("a factory that does not await its import() of a module that waits through %s gets a copy too", async (_, waits) => {
-    await expectFixturesToPass(
-      {
-        ...files,
-        "waits.js": `${waits} ${counted}`,
-        "unawaited.test.js": `
+  ])(
+    "a factory that does not await its import() of a module that waits through %s gets a copy too",
+    async (_, waits) => {
+      await expectFixturesToPass(
+        {
+          ...files,
+          "waits.js": `${waits} ${counted}`,
+          "unawaited.test.js": `
           import { expect, test, vi } from "bun:test";
           import * as waits from "./waits.js";
           vi.mock("./dep.js", () => {
@@ -4237,10 +4245,11 @@ describe.concurrent("a module that a factory loads while the module awaits impor
             expect([waits.seen, inFactory.seen, inFactory === waits, globalThis.runs]).toEqual(["mock", "mock", false, 2]);
           });
         `,
-      },
-      1,
-    );
-  });
+        },
+        1,
+      );
+    },
+  );
 
   // The module has called import() for the mocked module, and no body waits for that promise.
   test.each([
@@ -4383,13 +4392,15 @@ describe.concurrent("a module that a factory loads while the module awaits impor
         export const seen = name;
       `,
     ],
-  ])("a mock that the module made with %s stays the module's when the factory gets a copy of the module", async (_, helper) => {
-    await expectFixturesToPass(
-      {
-        ...files,
-        "lays.js": `import { mock } from "bun:test"; export const lay = factory => mock.module("./other.js", factory);`,
-        "waits.js": helper,
-        "owner.test.js": `
+  ])(
+    "a mock that the module made with %s stays the module's when the factory gets a copy of the module",
+    async (_, helper) => {
+      await expectFixturesToPass(
+        {
+          ...files,
+          "lays.js": `import { mock } from "bun:test"; export const lay = factory => mock.module("./other.js", factory);`,
+          "waits.js": helper,
+          "owner.test.js": `
           import { expect, test, vi } from "bun:test";
           import * as waits from "./waits.js";
           vi.mock("./dep.js", ${importsIt});
@@ -4399,10 +4410,11 @@ describe.concurrent("a module that a factory loads while the module awaits impor
             expect([waits.seen, dep.inFactory, other.call(), waits.calls, globalThis.runs]).toEqual(["mock", "real", 2, [2], 2]);
           });
         `,
-      },
-      1,
-    );
-  });
+        },
+        1,
+      );
+    },
+  );
 
   test("a copy of the module that made the mock whose factory runs leaves that mock", async () => {
     await expectFixturesToPass(

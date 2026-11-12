@@ -2496,7 +2496,8 @@ impl<'a> Parser<'a> {
                                 // The dev server prints each module alone, so an import item
                                 // has to print as a member of its namespace.
                                 if p.options.features.hot_module_reloading {
-                                    let symbol = &mut p.symbols[item.name.ref_.inner_index() as usize];
+                                    let symbol =
+                                        &mut p.symbols[item.name.ref_.inner_index() as usize];
                                     if symbol.namespace_alias.is_none() {
                                         symbol.namespace_alias =
                                             Some(bun_alloc::ast_box(js_ast::NamespaceAlias {

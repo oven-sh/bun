@@ -4054,6 +4054,7 @@ impl TestCommand {
             let next_load_shares_global = !vm.test_isolation_enabled.get()
                 || vm.test_isolation_state.shares_global.get()
                 || repeat_index + 1 < repeat_count;
+            bun_jsc::cpp::JSMock__setNextTestFileSharesGlobal(global, next_load_shares_global);
             let _entered_file = EnteredFile {
                 bun_test_root: bun_test_root_ptr,
                 global,

@@ -2967,6 +2967,91 @@ if (isBun) {
       expect(vi.isMockFunction(spied.nested.method)).toBe(true);
     });
 
+    test("{ spy: true } runs the traps, getters and setters of an object once, for the mock", () => {
+      const log = [];
+      const logged = (name, target) =>
+        new Proxy(
+          target,
+          Object.fromEntries(
+            Object.getOwnPropertyNames(Reflect).map(trap => [
+              trap,
+              (...args) => {
+                const key =
+                  typeof args[1] === "symbol" ? args[1].description : typeof args[1] === "string" ? args[1] : "";
+                log.push(`${name}.${trap}(${key})`);
+                return Reflect[trap](...args);
+              },
+            ]),
+          ),
+        );
+      class Base {
+        inherited() {}
+      }
+      class Klass extends Base {
+        constructor() {
+          super();
+          return logged("instance", this);
+        }
+        method() {}
+      }
+      const facade = logged("facade", { method() {} });
+      let run = function run() {};
+      const lib = Object.defineProperties(
+        {},
+        {
+          __esModule: { value: true },
+          run: {
+            enumerable: true,
+            get() {
+              log.push("get run");
+              return run;
+            },
+            set(value) {
+              log.push("set run");
+              run = value;
+            },
+          },
+        },
+      );
+
+      const spied = vi.mockObject({ Klass, facade, lib }, { spy: true });
+      log.push("new");
+      new spied.Klass();
+      log.push("again");
+      vi.mockObject({ Klass, facade, lib }, { spy: true });
+      log.push("restoreAllMocks");
+      vi.restoreAllMocks();
+      expect(log).toEqual([
+        "facade.get(Symbol.toStringTag)",
+        "get run",
+        "set run",
+        "facade.get(__esModule)",
+        "facade.ownKeys()",
+        "facade.getOwnPropertyDescriptor(method)",
+        "facade.set(method)",
+        "facade.getOwnPropertyDescriptor(method)",
+        "facade.defineProperty(method)",
+        "facade.getPrototypeOf()",
+        "new",
+        "instance.get(method)",
+        "instance.set(method)",
+        "instance.getOwnPropertyDescriptor(method)",
+        "instance.defineProperty(method)",
+        "instance.get(inherited)",
+        "instance.set(inherited)",
+        "instance.getOwnPropertyDescriptor(inherited)",
+        "instance.defineProperty(inherited)",
+        "again",
+        "facade.get(Symbol.toStringTag)",
+        "get run",
+        "facade.get(__esModule)",
+        "facade.ownKeys()",
+        "facade.getOwnPropertyDescriptor(method)",
+        "facade.getPrototypeOf()",
+        "restoreAllMocks",
+      ]);
+    });
+
     test("methods called name, length and caller are mocked too", () => {
       const mocked = vi.mockObject({ name() {}, length() {}, caller() {}, arguments() {} });
       expect(Object.keys(mocked)).toEqual(["name", "length", "caller", "arguments"]);
@@ -3361,6 +3446,2864 @@ if (isBun) {
       });
     });
 
+    describe.concurrent("{ spy: true } puts its spies on the objects themselves, until the test file ends", () => {
+      async function runTestFiles(files, args, env = {}) {
+        const { bunEnv, bunExe, tempDir } = require("harness");
+        using dir = tempDir("mock-object-spy", files);
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", ...args],
+          env: { ...bunEnv, ...env },
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const results = stderr.split("\n").filter(line => /^\((pass|fail)\)/.test(line));
+        return { results: results.map(line => line.replace(/ \[[\d.]+ms\]$/, "")), stderr, exitCode };
+      }
+
+      // A mock of ./barrel is made of an instance of its own. What ./barrel imports from ./models, ./holder, node:path,
+      // node:module and node:events is not: every test file has it.
+      const modules = {
+        "models.js": `
+          import { EventEmitter } from "node:events";
+
+          class Base {
+            inherited() { return "inherited"; }
+          }
+          export class Plain extends Base {
+            static tools = { format() { return "formatted"; } };
+            hello() { return "real"; }
+          }
+          // A mock of it has EventEmitter as a static member, and so reaches EventEmitter.prototype.
+          export class Bus extends EventEmitter {}
+          export const handlers = [function first() { return "first"; }];
+          export const config = {
+            load() { return "loaded"; },
+            0() { return "index key"; },
+            [Symbol.for("config")]() { return "symbol key"; },
+            handlers,
+            routes: [["/", function index() { return "index"; }]],
+          };
+          export class Service {
+            #secret = "secret";
+            reveal() { return this.#secret; }
+          }
+          export const service = new Service();
+
+          let only;
+          export class Registry {
+            constructor() {
+              if (only) return only;
+              only = this;
+            }
+            lookup() { return "found"; }
+          }
+          export const registry = new Registry();
+          export const kept = [];
+          // An array that two arrays have, and an array that has itself.
+          const both = [function shared() { return "shared"; }];
+          const loop = [both];
+          loop.push(loop);
+          export const nested = { first: [both, loop], second: [both] };
+        `,
+        "holder.js": `
+          import Module from "node:module";
+          import path from "node:path";
+          import * as models from "./models";
+          // \`require\` is a property that Module.prototype serves with a getter and a setter of Bun's own.
+          export const holder = {
+            models,
+            spaces: [models],
+            path,
+            ofModule: Module.prototype,
+            extensions: Module._extensions,
+            lib: require("./lib.cjs"),
+          };
+        `,
+        "lib.cjs": `
+          // What a transpiler makes of an exported function: a getter and a setter over a variable.
+          let run = function run() { return "ran"; };
+          Object.defineProperty(exports, "__esModule", { value: true });
+          Object.defineProperty(exports, "run", { enumerable: true, get() { return run; }, set(value) { run = value; } });
+        `,
+        "barrel.js": `
+          import { Plain } from "./models";
+          export { Bus, Plain, Registry, config, service } from "./models";
+          export { holder } from "./holder";
+          export default Plain;
+        `,
+        "barrel.cjs": `
+          const { Bus, Plain, Registry, config, service } = require("./models");
+          const { holder } = require("./holder");
+          module.exports = { Bus, Plain, Registry, config, service, holder };
+        `,
+        "spied.js": `
+          import { expect, vi } from "bun:test";
+          import { EventEmitter } from "node:events";
+          import Module from "node:module";
+          import path from "node:path";
+          import * as models from "./models";
+          import { holder } from "./holder";
+
+          export function spyOnIt(value) {
+            const spied = vi.mockObject(value, { spy: true });
+            globalThis.spiedLast = spied;
+            return spied;
+          }
+
+          export function expectSpies(spied) {
+            const { Plain, config, kept, nested, registry, service } = models;
+            expect(new spied.Plain().hello()).toBe("real");
+            expect(Plain.prototype.hello).toHaveBeenCalledTimes(1);
+            // The constructor returns the instance that ./models made, and ./models keeps an instance that the mock made.
+            expect(new spied.Registry()).toBe(registry);
+            kept.length = 0;
+            kept.push(new spied.Plain());
+            expect({
+              "the mock has the objects of ./models": [
+                spied.Plain.prototype === Plain.prototype,
+                spied.config === config,
+                spied.service === service,
+                spied.holder === holder,
+              ],
+              "Plain.prototype.inherited": Object.hasOwn(Plain.prototype, "inherited"),
+              "Plain.prototype.constructor": Plain.prototype.constructor === spied.Plain,
+              "Plain.tools.format": vi.isMockFunction(Plain.tools.format),
+              "config.load": vi.isMockFunction(config.load),
+              "config[0], config[symbol]": [config[0], config[Symbol.for("config")]].map(vi.isMockFunction),
+              "config.handlers[0]": vi.isMockFunction(config.handlers[0]),
+              "config.routes[0][1]": vi.isMockFunction(config.routes[0][1]),
+              "nested.first": [
+                vi.isMockFunction(nested.first[0][0]),
+                nested.second[0] === nested.first[0],
+                nested.first[1][1] === nested.first[1],
+              ],
+              "service.reveal()": [service.reveal(), vi.isMockFunction(service.reveal)],
+              "registry.lookup()": [registry.lookup(), Object.hasOwn(registry, "lookup")],
+              "kept[0].hello": Object.hasOwn(kept[0], "hello"),
+              "holder.models": [holder.models.Plain === spied.Plain, holder.spaces[0] === holder.models],
+              "holder.lib.run": vi.isMockFunction(holder.lib.run),
+              "path.basename": vi.isMockFunction(path.basename),
+              "Module.prototype.require": vi.isMockFunction(Module.prototype.require),
+              "Module._extensions": Object.values(Module._extensions).every(vi.isMockFunction),
+              "EventEmitter.prototype.emit": vi.isMockFunction(EventEmitter.prototype.emit),
+            }).toEqual({
+              "the mock has the objects of ./models": [true, true, true, true],
+              "Plain.prototype.inherited": true,
+              "Plain.prototype.constructor": true,
+              "Plain.tools.format": true,
+              "config.load": true,
+              "config[0], config[symbol]": [true, true],
+              "config.handlers[0]": true,
+              "config.routes[0][1]": true,
+              "nested.first": [true, true, true],
+              "service.reveal()": ["secret", true],
+              "registry.lookup()": ["found", true],
+              "kept[0].hello": true,
+              "holder.models": [true, true],
+              "holder.lib.run": true,
+              "path.basename": true,
+              "Module.prototype.require": true,
+              "Module._extensions": true,
+              "EventEmitter.prototype.emit": true,
+            });
+
+            // As in Vitest, restoreAllMocks() leaves an automock as it is.
+            Plain.prototype.hello.mockReturnValue("mocked by an earlier file");
+            config.load.mockReturnValue("mocked by an earlier file");
+            vi.restoreAllMocks();
+            expect([new Plain().hello(), config.load()]).toEqual(Array(2).fill("mocked by an earlier file"));
+            // These are restored when the file ends. Only then are the spies of the mock back in the properties, to be taken out.
+            vi.spyOn(config, "load", "get");
+            vi.spyOn(Plain.prototype, "inherited", "get");
+            // This one is the spy of the mock itself. It goes too.
+            vi.spyOn(Plain.tools, "format");
+            // What goes back at the end of the file has to outlive a collection.
+            Bun.gc(true);
+          }
+        `,
+        "graph.js": `
+          import { EventEmitter } from "node:events";
+          import * as models from "./models";
+          import { holder } from "./holder";
+
+          // A number for each object, the same one in every test file.
+          const numbers = (globalThis.numbers ??= new Map());
+          const numberOf = value => {
+            if (Object(value) !== value) return String(value);
+            if (!numbers.has(value)) numbers.set(value, numbers.size);
+            return "#" + numbers.get(value);
+          };
+
+          // Every property that the modules reach, through values and prototypes, with what it holds.
+          export function properties() {
+            const rows = {};
+            const seen = new Set();
+            const walk = (value, path) => {
+              if (Object(value) !== value || seen.has(value)) return;
+              seen.add(value);
+              const prototype = Object.getPrototypeOf(value);
+              rows[path + ".__proto__"] = numberOf(prototype);
+              for (const key of Reflect.ownKeys(value)) {
+                const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+                const at = path + "." + String(key);
+                rows[at] = Object.entries(descriptor).map(([part, held]) => part + " " + numberOf(held)).join(", ");
+                walk(descriptor.value, at);
+              }
+              if (prototype !== Object.prototype && prototype !== Function.prototype) walk(prototype, path + ".__proto__");
+            };
+            walk({ models, holder, EventEmitter }, "");
+            return rows;
+          }
+
+          export function changedSince(before) {
+            const after = properties();
+            const paths = new Set([...Object.keys(before), ...Object.keys(after)]);
+            return [...paths].filter(path => before[path] !== after[path]).map(path => path + ": " + before[path] + " -> " + after[path]);
+          }
+        `,
+      };
+      const spies = {
+        "vi.mockObject()": `
+          import { test, vi } from "bun:test";
+          import { Bus, Plain, Registry, config, service } from "./models";
+          import { holder } from "./holder";
+          import { expectSpies } from "./spied";
+
+          test("vi.mockObject()", () => {
+            expectSpies(vi.mockObject({ Bus, Plain, Registry, config, service, holder }, { spy: true }));
+          });
+        `,
+        "vi.mockObject() twice": `
+          import { test, vi } from "bun:test";
+          import { Bus, Plain, Registry, config, service } from "./models";
+          import { holder } from "./holder";
+          import { expectSpies } from "./spied";
+
+          test("vi.mockObject() twice", () => {
+            const spied = vi.mockObject({ Bus, Plain, Registry, config, service, holder }, { spy: true });
+            // It finds the spies of the first one, and copies the copies of the arrays and of the module namespace object.
+            vi.mockObject({ Bus, Plain, Registry, config, service, holder }, { spy: true });
+            expectSpies(spied);
+          });
+        `,
+        "vi.mock()": `
+          import { test, vi } from "bun:test";
+          import * as barrel from "./barrel";
+          import { expectSpies } from "./spied";
+
+          vi.mock("./barrel", { spy: true });
+
+          test("vi.mock()", () => expectSpies(barrel));
+        `,
+        "vi.doMock()": `
+          import { test, vi } from "bun:test";
+          import { expectSpies } from "./spied";
+
+          test("vi.doMock()", async () => {
+            vi.doMock("./barrel", { spy: true });
+            expectSpies(await import("./barrel"));
+          });
+        `,
+        "jest.mock()": `
+          import { jest, test } from "bun:test";
+          import { expectSpies } from "./spied";
+
+          jest.mock("./barrel.cjs", { spy: true });
+
+          test("jest.mock()", () => expectSpies(require("./barrel.cjs")));
+        `,
+        // The call to vi.mockObject() is in a function of another module, which does more after it.
+        "a factory": `
+          import { test, vi } from "bun:test";
+          import { expectSpies, spyOnIt } from "./spied";
+          import * as barrel from "./barrel";
+
+          vi.mock("./barrel", async importOriginal => spyOnIt(await importOriginal()));
+
+          test("a factory", () => expectSpies(barrel));
+        `,
+        "vi.mockObject() that throws": `
+          import { expect, test, vi } from "bun:test";
+          import { config } from "./models";
+
+          test("vi.mockObject() that throws", () => {
+            const error = new Error("thrown by ownKeys");
+            config.broken = new Proxy({}, { ownKeys() { throw error; } });
+            expect(() => vi.mockObject(config, { spy: true })).toThrow(error);
+            delete config.broken;
+            // The mock has stored its spies and the copies of the two arrays, and has not got to the elements of the arrays.
+            expect([vi.isMockFunction(config.load), config.handlers, config.routes]).toEqual([true, [], []]);
+          });
+        `,
+        // A module that a test file loaded before is not mocked in place: the mock is made of a copy of its exports.
+        loads: `
+          import { expect, test } from "bun:test";
+          import { Plain } from "./barrel";
+
+          test("loads", () => expect(new Plain().hello()).toBe("real"));
+        `,
+        "vi.mock() of a loaded module": `
+          import { expect, test, vi } from "bun:test";
+          import * as barrel from "./barrel";
+          import { kept } from "./models";
+
+          vi.mock("./barrel", { spy: true });
+
+          test("vi.mock() of a loaded module", () => {
+            expect(new barrel.Plain().hello()).toBe("real");
+            expect(barrel.Plain.prototype.hello).toHaveBeenCalledTimes(1);
+            barrel.config.load.mockReturnValue("mocked by an earlier file");
+            expect(barrel.config.load()).toBe("mocked by an earlier file");
+            // The class gives an instance mocks of its own, and ./models keeps the instance.
+            kept.push(new barrel.Plain());
+            expect(Object.hasOwn(kept[0], "hello")).toBe(true);
+          });
+        `,
+      };
+      // With its own modules, a file doesn't get the instance that the file before stored in ./models, and every object is another one.
+      const declared = (sharesModules, keptByFileBefore = sharesModules) => `
+        import { expect, test, vi } from "bun:test";
+        import { generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
+        import { EventEmitter } from "node:events";
+        import Module from "node:module";
+        import path from "node:path";
+        import * as models from "./models";
+        import { holder } from "./holder";
+        ${sharesModules ? `import { changedSince } from "./graph";` : ""}
+        ${require("harness").Heap}
+
+        test("declared", () => {
+          const { Plain, config, handlers, kept, registry, service } = models;
+          // Nothing holds a mock of the file before. The one object of that kind is the prototype of the mocks.
+          Bun.gc(true);
+          // The runner copies OnStack.outer (bun_test.rs) into the frame below this callback with bytes that it never set.
+          // They can be the address of a spy, which the collection then keeps. The heap snapshot has what a root reaches.
+          const held = (heapStats().objectTypeCounts.Mock ?? 0) > 1 ? new Heap().pathsTo("Mock") : [];
+          expect(held.length > 1 ? held : []).toEqual([]);
+          expect({
+            "Plain.prototype": Reflect.ownKeys(Plain.prototype),
+            "Plain.prototype.constructor": Plain.prototype.constructor === Plain,
+            "new Plain()": [new Plain().hello(), new Plain().inherited()],
+            "Plain.tools.format": vi.isMockFunction(Plain.tools.format),
+            "config.load()": [config.load(), vi.isMockFunction(config.load)],
+            "config[0], config[symbol]": [config[0], config[Symbol.for("config")]].map(vi.isMockFunction),
+            "config.handlers": [config.handlers === handlers, vi.isMockFunction(handlers[0])],
+            "config.routes[0][1]": vi.isMockFunction(config.routes[0][1]),
+            service: [Reflect.ownKeys(service), service.reveal()],
+            registry: [Reflect.ownKeys(registry), registry.lookup()],
+            kept: kept.map(instance => [Reflect.ownKeys(instance), instance.hello()]),
+            "holder.models": [holder.models === models, holder.spaces[0] === models],
+            "holder.lib.run()": [holder.lib.run(), vi.isMockFunction(holder.lib.run)],
+            "path.basename": vi.isMockFunction(path.basename),
+            "Module.prototype.require": vi.isMockFunction(Module.prototype.require),
+            "EventEmitter.prototype.emit": vi.isMockFunction(EventEmitter.prototype.emit),
+          }).toEqual({
+            "Plain.prototype": ["constructor", "hello"],
+            "Plain.prototype.constructor": true,
+            "new Plain()": ["real", "inherited"],
+            "Plain.tools.format": false,
+            "config.load()": ["loaded", false],
+            "config[0], config[symbol]": [false, false],
+            "config.handlers": [true, false],
+            "config.routes[0][1]": false,
+            service: [[], "secret"],
+            registry: [[], "found"],
+            kept: ${keptByFileBefore ? `[[[], "real"]]` : "[]"},
+            "holder.models": [true, true],
+            "holder.lib.run()": ["ran", false],
+            "path.basename": false,
+            "Module.prototype.require": false,
+            "EventEmitter.prototype.emit": false,
+          });
+          // A spy on the class reaches the instance that the file before made through its mock: nothing of the mock is left between the two.
+          vi.spyOn(Plain.prototype, "hello").mockReturnValue("spied by this file");
+          expect(kept.map(instance => instance.hello())).toEqual(${keptByFileBefore ? `["spied by this file"]` : "[]"});
+          vi.restoreAllMocks();
+          ${sharesModules ? `kept.length = 0;\n          expect(changedSince(globalThis.before)).toEqual([]);` : ""}
+        });
+      `;
+
+      test("an EventEmitter of the next file delivers its events after a file stubbed emit() of a mocked subclass", async () => {
+        const { results, exitCode } = await runTestFiles(
+          {
+            "bus.js": `
+              import { EventEmitter } from "node:events";
+              export class Bus extends EventEmitter {}
+            `,
+            "1-stubs.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { Bus } from "./bus";
+
+              vi.mock("./bus", { spy: true });
+
+              test("stubs", () => {
+                const bus = new Bus();
+                bus.emit.mockReturnValue(false);
+                expect(bus.emit("x")).toBe(false);
+                vi.restoreAllMocks();
+              });
+            `,
+            "2-plain.test.js": `
+              import { expect, test } from "bun:test";
+              import { EventEmitter } from "node:events";
+
+              test("plain", () => {
+                const emitter = new EventEmitter();
+                let delivered = 0;
+                emitter.on("x", () => delivered++);
+                emitter.emit("x");
+                expect(delivered).toBe(1);
+              });
+            `,
+          },
+          ["./1-stubs.test.js", "./2-plain.test.js"],
+        );
+        expect({ results, exitCode }).toEqual({ results: ["(pass) stubs", "(pass) plain"], exitCode: 0 });
+      });
+
+      test.each([
+        [["vi.mockObject()"]],
+        [["vi.mockObject() twice"]],
+        [["vi.mockObject() that throws"]],
+        [["vi.mock()"]],
+        [["vi.doMock()"]],
+        [["jest.mock()"]],
+        [["a factory"]],
+        [["loads", "vi.mock() of a loaded module"]],
+      ])("the next file gets what the modules declared %j", async names => {
+        const files = {
+          ...modules,
+          "00-before.test.js": `
+            import { test } from "bun:test";
+            import { properties } from "./graph";
+
+            test("before", () => {
+              globalThis.before = properties();
+            });
+          `,
+        };
+        const order = ["./00-before.test.js"];
+        for (const name of names) {
+          for (const source of [spies[name], declared(true, /expectSpies\(|kept\.push\(/.test(spies[name]))]) {
+            const file = `./${String(order.length).padStart(2, "0")}.test.js`;
+            files[file] = source;
+            order.push(file);
+          }
+        }
+        const { results, exitCode } = await runTestFiles(files, order);
+        expect({ results, exitCode }).toEqual({
+          results: ["(pass) before", ...names.flatMap(name => [`(pass) ${name}`, "(pass) declared"])],
+          exitCode: 0,
+        });
+      });
+
+      test.each([[["--rerun-each=2"]], [["--isolate", "--rerun-each=2"]]])(
+        "the next run of the file gets it too %j",
+        async args => {
+          const { results, exitCode } = await runTestFiles({ ...modules, "spy.test.js": spies["vi.mock()"] }, args);
+          expect({ results, exitCode }).toEqual({ results: ["(pass) vi.mock()", "(pass) vi.mock()"], exitCode: 0 });
+        },
+      );
+
+      test.each([
+        ["", {}],
+        [", with a collection after every 10 allocations on a slow path", { BUN_JSC_slowPathAllocsBetweenGCs: "10" }],
+      ])("what the file stored in an array or over a spy stays, without the spies%s", async (_, env) => {
+        const { results, exitCode } = await runTestFiles(
+          {
+            "bus.js": `
+              import { EventEmitter } from "node:events";
+              import * as tools from "./tools";
+              export const bus = new EventEmitter();
+              bus.on("one", function first() {});
+              bus.on("two", function first() {});
+              bus.on("two", function second() {});
+              export const cart = {
+                items: [],
+                count: 0,
+                add(item) {
+                  this.items.push(item);
+                  this.count++;
+                },
+                last() {
+                  return this.items[this.count - 1];
+                },
+              };
+              export const flags = { check() { return "real"; } };
+              export const kit = { tools, hooks: [function hook() { return "hook"; }] };
+              const row = [function cell() {}];
+              export const table = {
+                rows: [row],
+                same: [row],
+                far: [],
+                swapped: [function a() {}, function b() {}],
+                middle: [function a() {}, function b() {}, function c() {}],
+              };
+              table.far[500_000] = function near() { return "near"; };
+              table.far[1_000_000] = function far() {};
+              // The module changes the array through a variable of its own.
+              const plugins = [function first() {}];
+              export const registry = {
+                plugins,
+                register(plugin) {
+                  plugins.push(plugin);
+                },
+                names: () => plugins.map(plugin => plugin.name),
+              };
+              class Base {
+                run() { return "base"; }
+              }
+              export class Sub extends Base {}
+              export const plain = Object.create({ inherited() { return "inherited"; } });
+              plain.own = function own() { return "own"; };
+              // A module makes a list of a handler and one more, as an emitter does of its listeners. One object has the handler, and another one serves it with a setter.
+              export const state = { handler: function first() {} };
+              export const served = Object.defineProperties(
+                {},
+                { __esModule: { value: true }, handler: { enumerable: true, get: () => state.handler, set: value => void (state.handler = value) } },
+              );
+              // The other module shows a Proxy of its list.
+              export const watched = { handler: function first() {} };
+              export function addHandlers() {
+                state.handler = [state.handler, function second() {}];
+                watched.handler = new Proxy([watched.handler, function second() {}], {});
+              }
+            `,
+            "tools.js": `
+              export function helper() { return "helper"; }
+              export const steps = [function step() { return "step"; }];
+            `,
+            "listener.js": `
+              import { bus, kit } from "./bus";
+              export const heard = [];
+              bus.on("one", function later(value) { heard.push("one: " + value); });
+              bus.on("two", function later(value) { heard.push("two: " + value); });
+              // The copies that the mock has put in the place of the module namespace object and of the arrays.
+              export const taken = { tools: kit.tools, hooks: kit.hooks, steps: kit.tools.steps };
+            `,
+            "barrel.js": `export { bus, cart, flags, kit, plain, registry, Sub, table } from "./bus";`,
+            "1-spy.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import * as barrel from "./barrel";
+              import { addHandlers, bus, cart, flags, kit, plain, served, state, Sub, watched } from "./bus";
+
+              vi.mock("./barrel", { spy: true });
+
+              test("spy", async () => {
+                // It loads for the first time, and stays loaded for the next file.
+                await import("./listener");
+                barrel.cart.add("a");
+                barrel.registry.register(function added() {});
+                // A change in the copy of an array that is an element of two arrays, and an element that goes from an array with few of them.
+                barrel.table.rows[0].push("added");
+                delete barrel.table.far[1_000_000];
+                barrel.table.swapped[1] = function c() {};
+                // An element that is not the last one: the elements after it are the ones that the copy got.
+                barrel.table.middle[1] = function d() {};
+                // A mock of the file's own over a spy is no spy of the automock: it stays, as a mock.
+                barrel.registry.register = vi.fn(function own() { return "own"; });
+                // The copy that a mock returns is the file's. The file puts it where the next file finds it.
+                flags.list = vi.mockObject([function item() { return "item"; }], { spy: true });
+                barrel.kit.tools.helper.mockReturnValue("mocked by an earlier file");
+                expect(barrel.bus.listeners("two").map(vi.isMockFunction)).toEqual([true, true, false]);
+                expect(barrel.cart.add).toHaveBeenCalledWith("a");
+
+                flags.check = function own() { return "own"; };
+                expect(Object.hasOwn(Sub.prototype, "run")).toBe(true);
+                Sub.prototype.run = function own() { return "own"; };
+                delete plain.own;
+                vi.mockObject({ served, watched }, { spy: true });
+                addHandlers();
+                // A second mock of the same objects spies on what the file stored, and copies the copies: the one that the file
+                // changed, and the ones that ./listener took. It also copies each list that a module made of a spy and a function.
+                vi.mockObject({ bus, cart, flags, kit, plain, state, Sub, watched }, { spy: true });
+                expect([flags.check, Sub.prototype.run].map(vi.isMockFunction)).toEqual([true, true]);
+              });
+            `,
+            "2-stored.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { bus, cart, flags, plain, registry, state, Sub, table, watched } from "./bus";
+              import { heard, taken } from "./listener";
+
+              test("stored", () => {
+                bus.emit("one", "x");
+                bus.emit("two", "y");
+                cart.add("b");
+                const listeners = event => bus.listeners(event).map(listener => [listener.name, vi.isMockFunction(listener)]);
+                expect({
+                  heard,
+                  one: listeners("one"),
+                  two: listeners("two"),
+                  "bus.emit": [Object.hasOwn(bus, "emit"), vi.isMockFunction(bus.emit)],
+                  "lists that a module made of a spy": [state.handler, watched.handler].map(list => list.map(each => [each.name, vi.isMockFunction(each)])),
+                  cart: [cart.items, cart.count, cart.last(), vi.isMockFunction(cart.add)],
+                  registry: [registry.plugins.map(plugin => plugin.name), registry.names(), registry.plugins.some(vi.isMockFunction)],
+                  table: [table.rows[0].map(cell => cell.name ?? cell), table.same[0] === table.rows[0], vi.isMockFunction(table.rows[0][0]), table.far.length, 1_000_000 in table.far],
+                  "an element that stays in an array with few of them": [vi.isMockFunction(table.far[500_000]), table.far[500_000]()],
+                  "table.swapped": [table.swapped.map(each => each.name), table.swapped.some(vi.isMockFunction)],
+                  "table.middle": [table.middle.map(each => each.name), table.middle.some(vi.isMockFunction)],
+                  "registry.register": [vi.isMockFunction(registry.register), registry.register()],
+                  "flags.list[0]": [flags.list[0](), vi.isMockFunction(flags.list[0])],
+                  "flags.check": [flags.check(), vi.isMockFunction(flags.check)],
+                  "Sub.prototype.run": [Object.hasOwn(Sub.prototype, "run"), new Sub().run(), vi.isMockFunction(Sub.prototype.run)],
+                  plain: Reflect.ownKeys(plain),
+                  taken: [taken.tools.helper(), taken.hooks[0](), taken.steps[0](), [taken.tools.helper, taken.hooks[0], taken.steps[0]].some(vi.isMockFunction)],
+                }).toEqual({
+                  heard: ["one: x", "two: y"],
+                  one: [["first", false], ["later", false]],
+                  two: [["first", false], ["second", false], ["later", false]],
+                  "bus.emit": [false, false],
+                  "lists that a module made of a spy": Array(2).fill([["first", false], ["second", false]]),
+                  cart: [["a", "b"], 2, "b", false],
+                  registry: [["first", "added"], ["first", "added"], false],
+                  table: [["cell", "added"], true, false, 1_000_001, false],
+                  "an element that stays in an array with few of them": [false, "near"],
+                  "table.swapped": [["a", "c"], false],
+                  "table.middle": [["a", "d", "c"], false],
+                  "registry.register": [true, "own"],
+                  "flags.list[0]": ["item", false],
+                  "flags.check": ["own", false],
+                  "Sub.prototype.run": [true, "own", false],
+                  plain: [],
+                  taken: ["helper", "hook", "step", false],
+                });
+              });
+            `,
+          },
+          ["./1-spy.test.js", "./2-stored.test.js"],
+          env,
+        );
+        expect({ results, exitCode }).toEqual({ results: ["(pass) spy", "(pass) stored"], exitCode: 0 });
+      });
+
+      test("a Proxy or a setter that does not take its function back keeps the spy, and so does an index of a frozen object", async () => {
+        const check = name => `
+          import { expect, test, vi } from "bun:test";
+          import { Frozen, backed, binding, frozen, inheriting, keeping, refusing, shared, unwritable } from "./shared";
+
+          test("${name}", () => {
+            expect({
+              keeping: vi.isMockFunction(keeping.method),
+              binding: binding.method === globalThis.madeOfSpy,
+              "the others": [refusing.method, shared.method, frozen.method, backed.method, unwritable.method, inheriting.method].map(vi.isMockFunction),
+              "inheriting has the method": Object.hasOwn(inheriting, "method"),
+              "Frozen.prototype": Reflect.ownKeys(Frozen.prototype),
+              "still frozen": [frozen, Frozen.prototype].map(Object.isFrozen),
+            }).toEqual({
+              keeping: ${name !== "next"},
+              binding: true,
+              "the others": Array(6).fill(false),
+              "inheriting has the method": false,
+              "Frozen.prototype": ["constructor", "method"],
+              "still frozen": [true, true],
+            });
+          });
+        `;
+        // A Proxy that has its properties in another object than its target.
+        const backedBy = (backing, set) => `new Proxy(
+          {},
+          {
+            get: (target, key) => ${backing}[key],
+            set: ${set},
+            has: (target, key) => key in ${backing},
+            ownKeys: () => Reflect.ownKeys(${backing}),
+            getOwnPropertyDescriptor: (target, key) => ({ ...Reflect.getOwnPropertyDescriptor(${backing}, key), configurable: true }),
+          },
+        )`;
+        const files = {
+          "shared.js": `
+              const method = () => function method() { return "real"; };
+              export const shared = { method: method() };
+              // Throws when a property is defined. Its target has the spy, and gives it back without the Proxy. What the trap threw is an error of the file.
+              export const refusing = new Proxy(
+                { method: method() },
+                {
+                  defineProperty(target, key, descriptor) {
+                    if (globalThis.refuses) throw new Error("thrown by the trap");
+                    return Reflect.defineProperty(target, key, descriptor);
+                  },
+                },
+              );
+              const backing = { method: method() };
+              export const backed = ${backedBy("backing", "(target, key, value) => ((backing[key] = value), true)")};
+              // Says that it took a value, and keeps the one that it has. Only the Proxy knows where that is, so the spy stays.
+              const kept = { method: method() };
+              export const keeping = ${backedBy("kept", "(target, key, value) => globalThis.keeps || ((kept[key] = value), true)")};
+              // Stores a function that it makes of the value. No spy is found in the property, so that function stays.
+              export const binding = new Proxy({ method: method() }, { set: (target, key, value) => Reflect.set(target, key, value.bind(target)) });
+              // Refuses an assignment. Its target gives the spy back.
+              export const unwritable = new Proxy({ method: method() }, { set: (...args) => !globalThis.refuses && Reflect.set(...args) });
+              // Refuses to delete the property that the spy added. Its target loses the property all the same.
+              export const inheriting = new Proxy(Object.create({ method: method() }), { deleteProperty: () => false });
+              class Base {
+                inherited() { return "inherited"; }
+              }
+              export class Frozen extends Base {
+                method() { return "real"; }
+              }
+              export const frozen = { method: method() };
+              // An index of a frozen object keeps what it has, as it does when a vi.spyOn() spy is restored.
+              export const frozenElements = { 0: method(), list: [method()] };
+              // The file freezes the copy of this array and changes nothing in it, so the array itself comes back.
+              export const onlyFrozenList = [method()];
+              export const onlyFrozen = { list: onlyFrozenList };
+              // What a transpiler makes of an exported function: a getter and a setter over a variable. The setter takes no value once the file says so.
+              // The mock stores through the setter, and so the setter gets the function back. vi.spyOn() gives the property a getter of its own, and neither its install nor its restore calls the setter.
+              export const setterCalls = { settable: 0, settableForSpyOn: 0 };
+              const settableAs = (name, configurable) => {
+                let run = method();
+                return Object.defineProperties(
+                  {},
+                  {
+                    __esModule: { value: true },
+                    run: {
+                      enumerable: true,
+                      configurable,
+                      get: () => run,
+                      set(value) {
+                        if (globalThis.takesNoValue) return void setterCalls[name]++;
+                        run = value;
+                      },
+                    },
+                  },
+                );
+              };
+              export const settable = settableAs("settable", false);
+              export const settableForSpyOn = settableAs("settableForSpyOn", true);
+            `,
+          "1-spy.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { Frozen, backed, binding, frozen, inheriting, refusing, shared, unwritable } from "./shared";
+
+              test("spy", () => {
+                vi.mockObject({ Frozen, backed, binding, frozen, inheriting, refusing, shared, unwritable }, { spy: true });
+                const spied = [refusing.method, shared.method, frozen.method, backed.method, unwritable.method, inheriting.method];
+                expect(spied.map(vi.isMockFunction)).toEqual(Array(6).fill(true));
+                expect([vi.isMockFunction(binding.method), binding.method.name]).toEqual([false, "bound method"]);
+                globalThis.madeOfSpy = binding.method;
+                expect(Reflect.ownKeys(Frozen.prototype)).toEqual(["constructor", "method", "inherited"]);
+                globalThis.refuses = true;
+                // A frozen object gives back what a property with a name has.
+                Object.freeze(frozen);
+                Object.freeze(Frozen.prototype);
+              });
+            `,
+          "2-next.test.js": check("next"),
+          "3-keeps.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { keeping } from "./shared";
+
+              test("keeps", () => {
+                vi.mockObject({ keeping }, { spy: true });
+                expect(vi.isMockFunction(keeping.method)).toBe(true);
+                globalThis.keeps = true;
+              });
+            `,
+          "4-last.test.js": check("last"),
+          "5-setter.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { settable, settableForSpyOn } from "./shared";
+
+              test("setter", () => {
+                vi.mockObject({ settable }, { spy: true });
+                vi.spyOn(settableForSpyOn, "run");
+                expect([settable.run, settableForSpyOn.run].map(vi.isMockFunction)).toEqual([true, true]);
+                globalThis.takesNoValue = true;
+              });
+            `,
+          "6-elements.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { frozenElements, onlyFrozen, setterCalls, settable, settableForSpyOn } from "./shared";
+
+              test("elements", () => {
+                const { get, set } = Object.getOwnPropertyDescriptor(settable, "run");
+                expect([typeof get, typeof set, vi.isMockFunction(settable.run)]).toEqual(["function", "function", true]);
+                // The setter of the mock got the function once and did not take it. The spy of vi.spyOn() went, and its setter was not asked.
+                expect([setterCalls, vi.isMockFunction(settableForSpyOn.run)]).toEqual([{ settable: 1, settableForSpyOn: 0 }, false]);
+
+                vi.mockObject({ frozenElements, onlyFrozen }, { spy: true });
+                frozenElements.list.push(function added() {});
+                Object.freeze(frozenElements.list);
+                Object.freeze(frozenElements);
+                expect(vi.isMockFunction(onlyFrozen.list[0])).toBe(true);
+                Object.freeze(onlyFrozen.list);
+              });
+            `,
+          "7-end.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { frozenElements, onlyFrozen, onlyFrozenList } from "./shared";
+
+              test("end", () => {
+                expect([frozenElements[0], frozenElements.list[0]].map(vi.isMockFunction)).toEqual([true, true]);
+                expect([onlyFrozen.list === onlyFrozenList, vi.isMockFunction(onlyFrozenList[0]), Object.isFrozen(onlyFrozenList)]).toEqual([true, false, false]);
+              });
+            `,
+          // Nothing holds the object when the file ends. The file ends in the same way with a collection before that and without one.
+          "8-local.test.js": `
+              import { afterAll, test, vi } from "bun:test";
+
+              if (process.env.COLLECTS) afterAll(() => Bun.gc(true));
+
+              test("local", () => {
+                const local = { 0() {} };
+                vi.mockObject(local, { spy: true });
+                Object.freeze(local);
+              });
+            `,
+        };
+        const errorsOf = stderr => stderr.split("\n").filter(line => /^(\w*Error|error): /.test(line));
+        const { results, stderr, exitCode } = await runTestFiles(files, [
+          "./1-spy.test.js",
+          "./2-next.test.js",
+          "./3-keeps.test.js",
+          "./4-last.test.js",
+          "./5-setter.test.js",
+          "./6-elements.test.js",
+          "./7-end.test.js",
+        ]);
+        // No object that keeps a spy is an error. What the trap of \`refusing\` threw is one, of the file that spied on it.
+        const ofTrap = stderr.indexOf("error: thrown by the trap");
+        expect({
+          results,
+          errors: errorsOf(stderr),
+          "the file with the error":
+            ofTrap > stderr.indexOf("\n1-spy.test.js:") && ofTrap < stderr.indexOf("\n2-next.test.js:"),
+          exitCode,
+        }).toEqual({
+          results: ["spy", "next", "keeps", "last", "setter", "elements", "end"].map(name => `(pass) ${name}`),
+          errors: ["error: thrown by the trap"],
+          "the file with the error": true,
+          exitCode: 1,
+        });
+
+        // A file that runs alone and keeps a spy passes, as with vi.spyOn().
+        for (const [file, name, env] of [
+          ["./3-keeps.test.js", "keeps", {}],
+          ["./8-local.test.js", "local", {}],
+          ["./8-local.test.js", "local", { COLLECTS: "1" }],
+        ]) {
+          const alone = await runTestFiles(files, [file], env);
+          expect({ results: alone.results, errors: errorsOf(alone.stderr), exitCode: alone.exitCode }).toEqual({
+            results: [`(pass) ${name}`],
+            errors: [],
+            exitCode: 0,
+          });
+        }
+      });
+
+      test("a spy that another module stores ends with the test file too, as its vi.spyOn() does", async () => {
+        const uses = name => `
+          import { expect, test, vi } from "bun:test";
+          import { spyOnIt, spyOnItAndCount } from "./helper";
+          import "./mocking-helper";
+          import "./importing-helper";
+          import * as barrel from "./barrel";
+          import { Plain, brake, first, gear, lever, second, tools } from "./models";
+
+          vi.mock("./barrel");
+
+          test("${name}", () => {
+            // The helper and the __mocks__ file ran once, for the first file. What they stored went with that file.
+            // A module that makes a module mock runs again for each test file that imports it, and so makes its spies again.
+            // So does a module that imports what the file before mocked.
+            expect({
+              runs: globalThis.runs,
+              "the helper's vi.mockObject()": vi.isMockFunction(Plain.prototype.hello),
+              "the helper's vi.spyOn()": vi.isMockFunction(tools.cut),
+              "the __mocks__ file's vi.mockObject()": vi.isMockFunction(barrel.config.load),
+              "what the helper with a module mock spies on": [gear.turn, brake.stop].map(vi.isMockFunction),
+              "what the helper that imports a mocked module spies on": vi.isMockFunction(lever.pull),
+            }).toEqual({
+              runs: { helper: 1, mocks: 1, mocking: ${name === "first" ? 1 : 2}, importing: ${name === "first" ? 1 : 2} },
+              "the helper's vi.mockObject()": ${name === "first"},
+              "the helper's vi.spyOn()": ${name === "first"},
+              "the __mocks__ file's vi.mockObject()": ${name === "first"},
+              "what the helper with a module mock spies on": [true, true],
+              "what the helper that imports a mocked module spies on": true,
+            });
+            // A function of the helper spies for the file that calls it, whatever the function does after the call.
+            spyOnIt(first);
+            spyOnItAndCount(second);
+            expect([first.run, second.run].map(vi.isMockFunction)).toEqual([true, true]);
+          });
+        `;
+        const { results, exitCode } = await runTestFiles(
+          {
+            "models.js": `
+              export class Plain {
+                hello() { return "real"; }
+              }
+              export const config = { load() { return "loaded"; } };
+              export const tools = { cut() { return "cut"; } };
+              export const first = { run() { return "ran"; } };
+              export const second = { run() { return "ran"; } };
+              export const gear = { turn() { return "turned"; } };
+              export const brake = { stop() { return "stopped"; } };
+              export const lever = { pull() { return "pulled"; } };
+            `,
+            "barrel.js": `export { config } from "./models";`,
+            "unrelated.js": `export {};`,
+            "helper.js": `
+              import { vi } from "bun:test";
+              import { Plain, tools } from "./models";
+              (globalThis.runs ??= { helper: 0, mocks: 0, mocking: 0, importing: 0 }).helper++;
+              vi.mockObject({ Plain }, { spy: true });
+              vi.spyOn(tools, "cut");
+              export const spyOnIt = value => vi.mockObject(value, { spy: true });
+              export function spyOnItAndCount(value) {
+                const spied = vi.mockObject(value, { spy: true });
+                globalThis.spiedByHelper = (globalThis.spiedByHelper ?? 0) + 1;
+                return spied;
+              }
+            `,
+            "mocking-helper.js": `
+              import { vi } from "bun:test";
+              import { brake, gear } from "./models";
+              globalThis.runs.mocking++;
+              vi.mock("./unrelated", () => ({}));
+              vi.mockObject(gear, { spy: true });
+              vi.spyOn(brake, "stop");
+            `,
+            "importing-helper.js": `
+              import { vi } from "bun:test";
+              import "./barrel";
+              import { lever } from "./models";
+              globalThis.runs.importing++;
+              vi.mockObject(lever, { spy: true });
+            `,
+            "__mocks__/barrel.js": `
+              import { vi } from "bun:test";
+              import { config } from "../models";
+              globalThis.runs.mocks++;
+              vi.mockObject(config, { spy: true });
+              export { config };
+            `,
+            "1-first.test.js": uses("first"),
+            "2-second.test.js": uses("second"),
+            "3-later.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { Plain, brake, config, first, gear, lever, second, tools } from "./models";
+
+              test("later", () => {
+                expect(
+                  [Plain.prototype.hello, tools.cut, config.load, first.run, second.run, gear.turn, brake.stop, lever.pull].map(vi.isMockFunction),
+                ).toEqual(Array(8).fill(false));
+              });
+            `,
+          },
+          ["./1-first.test.js", "./2-second.test.js", "./3-later.test.js"],
+        );
+        expect({ results, exitCode }).toEqual({
+          results: ["(pass) first", "(pass) second", "(pass) later"],
+          exitCode: 0,
+        });
+      });
+
+      test.each([[["--rerun-each=2"]], [["--isolate", "--rerun-each=2"]]])(
+        "the spy of a helper that stays loaded is gone in the next run of the file %j",
+        async args => {
+          const { results, exitCode } = await runTestFiles(
+            {
+              "models.js": `
+                export const config = { load() { return "loaded"; } };
+                export const tools = { cut() { return "cut"; } };
+              `,
+              // It runs once for all the runs of the file, so it spies once. Both of its spies end with the first run, as its vi.spyOn() spy does on main.
+              "helper.js": `
+                import { vi } from "bun:test";
+                import { config, tools } from "./models";
+                globalThis.runsOfHelper = (globalThis.runsOfHelper ?? 0) + 1;
+                vi.mockObject({ config }, { spy: true });
+                vi.spyOn(tools, "cut");
+              `,
+              "only.test.js": `
+                import { expect, test, vi } from "bun:test";
+                import "./helper";
+                import { config, tools } from "./models";
+
+                const run = (globalThis.runsOfFile = (globalThis.runsOfFile ?? 0) + 1);
+
+                test("run", () => {
+                  expect([runsOfHelper, ...[config.load, tools.cut].map(vi.isMockFunction)]).toEqual([1, run === 1, run === 1]);
+                });
+              `,
+            },
+            [...args, "./only.test.js"],
+          );
+          expect({ results, exitCode }).toEqual({ results: ["(pass) run", "(pass) run"], exitCode: 0 });
+        },
+      );
+
+      test("a module that stays loaded keeps the spy that it copied", async () => {
+        // The mock gives back what it put in properties. What copied a spy from there still calls it, with what the file stubbed: a variable, a table, a bound function,
+        // the named import of a CommonJS module. A property that the file wrote on a spy stays on that spy.
+        const spy = name => `
+          import { expect, test, vi } from "bun:test";
+          import * as barrel from "./barrel";
+          import { bound, load, named, table, viaNamedImport, viaVariable } from "./keeps";
+          import { config, lib } from "./models";
+
+          vi.mock("./barrel", { spy: true });
+
+          test("${name}", () => {
+            expect([viaVariable(), table.load(), bound()]).toEqual(Array(3).fill(${name === "first" ? `"loaded"` : `"stubbed by the first file"`}));
+            expect({
+              "the variable has the spy of the first file": [vi.isMockFunction(load), load === barrel.config.load, table.load === load],
+              "calls that the spy of this file has": barrel.config.load.mock.calls.length,
+              "the named import of a CommonJS module": [vi.isMockFunction(named.run), named.run === barrel.lib.run, viaNamedImport()],
+              "a property that the first file wrote on its spy": [load.calls, config.load.calls],
+            }).toEqual({
+              "the variable has the spy of the first file": [true, ${name === "first"}, true],
+              "calls that the spy of this file has": ${name === "first" ? 3 : 0},
+              "the named import of a CommonJS module": [true, ${name === "first"}, ${name === "first" ? `"ran"` : `"stubbed by the first file"`}],
+              "a property that the first file wrote on its spy": ${name === "first" ? `[undefined, undefined]` : `[1, undefined]`},
+            });
+            load.mockReturnValue("stubbed by the first file");
+            lib.run.mockReturnValue("stubbed by the first file");
+            config.load.calls = 1;
+          });
+        `;
+        const { results, exitCode } = await runTestFiles(
+          {
+            "models.js": `
+              export const config = { load() { return "loaded"; } };
+              // Loaded with require(), so no ES module has its named exports yet.
+              export const lib = require("./lib.cjs");
+            `,
+            "lib.cjs": `exports.run = function run() { return "ran"; };`,
+            "barrel.js": `export { config, lib } from "./models";`,
+            "keeps.js": `
+              import { config } from "./models";
+              import { run } from "./lib.cjs";
+              export const { load } = config;
+              export const viaVariable = () => load();
+              export const table = { load: config.load };
+              export const bound = config.load.bind(config);
+              export const named = { run };
+              export const viaNamedImport = () => run();
+            `,
+            "1-first.test.js": spy("first"),
+            "2-second.test.js": spy("second"),
+          },
+          ["./1-first.test.js", "./2-second.test.js"],
+        );
+        expect({ results, exitCode }).toEqual({ results: ["(pass) first", "(pass) second"], exitCode: 0 });
+      });
+
+      test("a mock of a package, a mock in a file that fails to load, and a Proxy that nothing holds", async () => {
+        const { results, exitCode } = await runTestFiles(
+          {
+            "node_modules/widgets/package.json": JSON.stringify({ name: "widgets", type: "module", main: "index.js" }),
+            "node_modules/widgets/index.js": `export { Widget, tools } from "./lib.js";`,
+            "node_modules/widgets/lib.js": `
+              export class Widget {
+                draw() { return "drawn"; }
+              }
+              export const tools = { cut() { return "cut"; } };
+            `,
+            "models.js": `
+              export const config = { load() { return "loaded"; } };
+              export const target = { method() { return "real"; } };
+            `,
+            "1-package.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import * as widgets from "widgets";
+
+              vi.mock("widgets", { spy: true });
+
+              test("package", () => {
+                widgets.tools.cut.mockReturnValue("mocked by an earlier file");
+                expect([new widgets.Widget().draw(), widgets.tools.cut()]).toEqual(["drawn", "mocked by an earlier file"]);
+                expect(widgets.Widget.prototype.draw).toHaveBeenCalledTimes(1);
+              });
+            `,
+            "2-fails.test.js": `
+              import { test, vi } from "bun:test";
+              import { config } from "./models";
+
+              vi.mockObject(config, { spy: true }).load.mockReturnValue("mocked by an earlier file");
+              throw new Error("thrown while the file loads");
+              test("never runs", () => {});
+            `,
+            "3-proxy.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { target } from "./models";
+
+              test("proxy", () => {
+                // The spy is stored through the Proxy, and only the mock has the Proxy.
+                (() => vi.mockObject({ facade: new Proxy(target, {}) }, { spy: true }))();
+                target.method.mockReturnValue("mocked by an earlier file");
+                Bun.gc(true);
+                expect(target.method()).toBe("mocked by an earlier file");
+              });
+            `,
+            "4-declared.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { Widget, tools } from "widgets";
+              import { config, target } from "./models";
+
+              test("declared", () => {
+                expect([new Widget().draw(), tools.cut(), config.load(), target.method()]).toEqual(["drawn", "cut", "loaded", "real"]);
+                expect([Widget.prototype.draw, Widget.prototype.constructor, tools.cut, config.load, target.method].map(vi.isMockFunction)).toEqual(Array(5).fill(false));
+              });
+            `,
+          },
+          ["./1-package.test.js", "./2-fails.test.js", "./3-proxy.test.js", "./4-declared.test.js"],
+        );
+        expect({ results, exitCode }).toEqual({
+          results: ["(pass) package", "(pass) proxy", "(pass) declared"],
+          exitCode: 1,
+        });
+      });
+
+      test("what a setter does and queues when it takes a function back ends with the file too", async () => {
+        const { results, exitCode } = await runTestFiles(
+          {
+            // A write queues the watchers of the store, as a reactive object does.
+            // When the store gets its function back, it spies on another object, and so does the watcher.
+            "store.js": `
+              import { vi } from "bun:test";
+              export const seen = [];
+              export const spiedByTrap = { run() { return "ran"; } };
+              export const spiedByJob = { run() { return "ran"; } };
+              // What the store calls for each write.
+              export const api = { persist() { return "persisted"; } };
+              export const persisted = [];
+              export const store = new Proxy(
+                { load() { return "loaded"; } },
+                {
+                  set(target, key, value, receiver) {
+                    const isSpy = vi.isMockFunction(value);
+                    persisted.push(api.persist());
+                    queueMicrotask(() => {
+                      seen.push([isSpy, globalThis.storage, process.env.STORAGE]);
+                      if (!isSpy) vi.mockObject(spiedByJob, { spy: true });
+                    });
+                    if (!isSpy) vi.mockObject(spiedByTrap, { spy: true });
+                    return Reflect.set(target, key, value, receiver);
+                  },
+                },
+              );
+            `,
+            "1-spy.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { api, persisted, seen, store } from "./store";
+
+              test("spy", async () => {
+                // What the file stubbed with vi.stubGlobal() and vi.stubEnv() is still in place when the store takes its function back.
+                vi.stubGlobal("storage", "stubbed");
+                vi.stubEnv("STORAGE", "stubbed");
+                // The spy of a vi.spyOn() is restored before that, so the store then calls the function itself.
+                vi.spyOn(api, "persist").mockReturnValue("stubbed");
+                vi.mockObject({ store }, { spy: true });
+                await Promise.resolve();
+                expect(seen).toEqual([[true, "stubbed", "stubbed"]]);
+                expect(persisted).toEqual(["stubbed"]);
+              });
+            `,
+            "2-next.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { persisted, seen, spiedByJob, spiedByTrap, store } from "./store";
+
+              test("next", () => {
+                expect([globalThis.storage, process.env.STORAGE]).toEqual([undefined, undefined]);
+                expect(seen).toEqual([[true, "stubbed", "stubbed"], [false, "stubbed", "stubbed"]]);
+                expect(persisted).toEqual(["stubbed", "persisted"]);
+                expect([store.load, spiedByTrap.run, spiedByJob.run].map(vi.isMockFunction)).toEqual([false, false, false]);
+              });
+            `,
+          },
+          ["./1-spy.test.js", "./2-next.test.js"],
+        );
+        expect({ results, exitCode }).toEqual({ results: ["(pass) spy", "(pass) next"], exitCode: 0 });
+      });
+
+      test("the end of the file goes by what each object has then", async () => {
+        // What a transpiler makes of \`export * from "./impl"\`: a getter for each name, and no setter.
+        const impl = `
+          Object.defineProperty(exports, "__esModule", { value: true });
+          exports.greet = function greet(name) { return "hi " + name; };
+        `;
+        const utils = name => `
+          Object.defineProperty(exports, "__esModule", { value: true });
+          const impl = require("./impl-${name}.cjs");
+          Object.defineProperty(exports, "greet", { enumerable: true, get: function () { return impl.greet; } });
+        `;
+        const index = (name, ...modules) => `
+          Object.defineProperty(exports, "__esModule", { value: true });
+          ${modules.map(module => `exports.${module} = require("./${module}-${name}.cjs");`).join("\n")}
+        `;
+        const { results, stderr, exitCode } = await runTestFiles(
+          {
+            "impl-a.cjs": impl,
+            "impl-b.cjs": impl,
+            "utils-a.cjs": utils("a"),
+            "utils-b.cjs": utils("b"),
+            // The mock gets to the getters before the module that has the function, and after it.
+            "index-a.cjs": index("a", "utils", "impl"),
+            "index-b.cjs": index("b", "impl", "utils"),
+            "models.js": `
+              const method = () => function method() { return "real"; };
+              export const store = { method: method() };
+              // Takes no value.
+              export const view = new Proxy(store, { set: () => false, defineProperty: () => false });
+              // Says that it took the value, and stores nothing.
+              export const pretending = new Proxy(store, { set: () => true });
+              export const storeToo = { method: method() };
+              export const viewToo = new Proxy(storeToo, { set: () => false, defineProperty: () => false });
+              export const pretendingToo = new Proxy(storeToo, { set: () => true });
+
+              // The module takes from its own array.
+              export const ids = [1, 2, 3];
+              export const pool = { ids, take: () => ids.pop() };
+
+              export class Base {
+                run() { return "base"; }
+              }
+              export class Sub extends Base {
+                describe() { return "sub"; }
+              }
+              export const Mixin = { run() { return "mixin"; }, describe() { return "mixin"; } };
+              export const applyMixin = () => Object.assign(Sub.prototype, Mixin);
+
+              export const config = { load() { return "loaded"; } };
+              export const state = { run() { return "ran"; } };
+              export const app = { routes: [["/", function index() { return "index"; }]] };
+
+              // The instance takes the method through a setter of its own.
+              export class Lazy {
+                #run;
+                constructor() {
+                  Object.defineProperty(this, "run", { configurable: true, get: () => this.#run ?? Lazy.prototype.run, set: value => void (this.#run = value) });
+                }
+                run() { return "ran"; }
+              }
+              // The instance has the method as a property of its own. The second class gives a Proxy of the instance.
+              export class Own {
+                constructor() {
+                  this.run = this.run;
+                }
+                run() { return "ran"; }
+              }
+              export class Wrapped extends Own {
+                constructor() {
+                  super();
+                  return new Proxy(this, {});
+                }
+              }
+              export const kept = {};
+
+              export const cart = { items: ["a"], count: 1, add(item) { this.items.push(item); this.count++; } };
+              export const kit = { hooks: [function hook() { return "hook"; }] };
+              export const steps = [function first() { return "first"; }, "second"];
+              export const flow = { steps };
+              export const stepsAgain = [function first() { return "first"; }, "second"];
+              export const flowAgain = { steps: stepsAgain };
+
+              // Puts a Proxy of each array that it gets in the place of the array, as a store that watches its arrays does.
+              const watching = value => (Array.isArray(value) ? new Proxy(value, {}) : value);
+              export const watcher = new Proxy(
+                { handlers: watching([function handler() { return "handled"; }]) },
+                { set: (target, key, value) => Reflect.set(target, key, watching(value)) },
+              );
+
+              // A store that keeps one Proxy for each array that it gets, and counts how often that Proxy is asked for its keys.
+              export const askedForKeys = { once: 0, often: 0 };
+              const keeping = name => {
+                const proxies = new WeakMap();
+                const proxyOf = array => proxies.get(array) ?? proxies.set(array, new Proxy(array, { ownKeys: target => (askedForKeys[name]++, Reflect.ownKeys(target)) })).get(array);
+                return new Proxy({}, { set: (target, key, value) => Reflect.set(target, key, Array.isArray(value) ? proxyOf(value) : value) });
+              };
+              const entries = () => [function entry() { return "entry"; }];
+              // One store has its array in one property, and the other one in eight.
+              export const keptOnce = keeping("once");
+              keptOnce.list = entries();
+              export const keptOften = keeping("often");
+              const inEight = entries();
+              for (let i = 0; i < 8; i++) keptOften["list" + i] = inEight;
+
+              export const resets = { restored() { return "restored"; }, reset() { return "reset"; }, cleared() { return "cleared"; } };
+
+              // Objects that each have an array of their own around one array, which all of them have.
+              const declared = new WeakMap();
+              const around = count => {
+                const shared = entries();
+                const graph = { shared, objects: Array.from({ length: count }, () => ({ list: [shared] })) };
+                declared.set(graph, shared);
+                return graph;
+              };
+              export const aroundOne = around(1);
+              export const aroundEight = around(8);
+              export const isAsDeclared = graph => [graph.shared, ...graph.objects.map(object => object.list[0])].every(array => array === declared.get(graph));
+
+              // Shows a Proxy in the place of each array that it gets. That Proxy keeps what is written to it in a Map of its own, and leaves the array alone.
+              const keptInMap = value => {
+                if (!Array.isArray(value)) return value;
+                const written = new Map();
+                return new Proxy(value, {
+                  get: (target, key, receiver) => (written.has(key) ? written.get(key) : Reflect.get(target, key, receiver)),
+                  set: (target, key, next) => (written.set(key, next), true),
+                  has: (target, key) => written.has(key) || Reflect.has(target, key),
+                  ownKeys: target => [...new Set([...Reflect.ownKeys(target), ...written.keys()])],
+                  getOwnPropertyDescriptor(target, key) {
+                    const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+                    if (!written.has(key)) return descriptor;
+                    return descriptor ? { ...descriptor, value: written.get(key) } : { value: written.get(key), writable: true, enumerable: true, configurable: true };
+                  },
+                });
+              };
+              export const signals = new Proxy(
+                { listeners: [], samples: [1, 2, 3], onChange() { return "original"; } },
+                { set: (target, key, value) => Reflect.set(target, key, keptInMap(value)) },
+              );
+
+              // The mock gets to this Proxy after it has filled the copies of the two arrays. Its trap gives the first copy a getter that throws once, where the mock makes the record of that copy.
+              export const recorded = { first: [function first() { return "first"; }], second: [function second() { return "second"; }] };
+              export const lateThrower = new Proxy(
+                {},
+                {
+                  get(target, key) {
+                    if (key !== "__esModule" || !globalThis.throwsInRecord) return undefined;
+                    globalThis.throwsInRecord = false;
+                    let throws = true;
+                    Object.defineProperty(recorded.first, 1, {
+                      configurable: true,
+                      enumerable: true,
+                      get() {
+                        if (!throws) return 1;
+                        throws = false;
+                        throw new Error("thrown by a getter of the copy");
+                      },
+                    });
+                  },
+                },
+              );
+            `,
+            "listener.js": `
+              import { kit } from "./models";
+              export const taken = { hooks: kit.hooks };
+            `,
+            "1-spy.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { Lazy, Mixin, Own, Sub, Wrapped, app, applyMixin, aroundEight, aroundOne, askedForKeys, cart, config, flow, flowAgain, kept, keptOften, keptOnce, kit, lateThrower, pool, pretending, pretendingToo, recorded, resets, signals, state, steps, stepsAgain, store, storeToo, view, viewToo, watcher } from "./models";
+
+              vi.mock("./index-a.cjs", { spy: true });
+              vi.mock("./index-b.cjs", { spy: true });
+
+              test("spy", async () => {
+                for (const index of [require("./index-a.cjs"), require("./index-b.cjs")]) {
+                  expect(index.utils.greet("x")).toBe("hi x");
+                  expect([index.impl.greet, index.utils.greet].map(vi.isMockFunction)).toEqual([true, true]);
+                }
+                vi.mockObject({ pretending, view, store }, { spy: true });
+                vi.mockObject({ storeToo, viewToo, pretendingToo }, { spy: true });
+                expect([store.method, storeToo.method].map(vi.isMockFunction)).toEqual([true, true]);
+
+                // The copy stores its numbers in another form from here on, and has the numbers that it got.
+                vi.mockObject({ pool }, { spy: true });
+                pool.ids.push(0.5);
+                pool.ids.pop();
+                pool.take();
+
+                // The module stores the spies of one object in another: in a property that the mock added, and in one that it replaced.
+                vi.mockObject({ Sub, Mixin }, { spy: true });
+                applyMixin();
+
+                vi.mockObject({ config }, { spy: true });
+                const revoked = Proxy.revocable([], {});
+                config.load = revoked.proxy;
+                revoked.revoke();
+                const draft = Proxy.revocable(state, {});
+                vi.mockObject({ draft: draft.proxy }, { spy: true });
+                expect(vi.isMockFunction(state.run)).toBe(true);
+                draft.revoke();
+
+                vi.mockObject({ app }, { spy: true });
+                app.routes[0][1].mockReturnValue("mocked by an earlier file");
+                app.routes = app.routes.map(row => [...row, "added"]);
+
+                const spied = vi.mockObject({ Lazy, Own, Wrapped }, { spy: true });
+                for (const name of ["Lazy", "Own", "Wrapped"]) {
+                  kept[name] = new spied[name]();
+                  expect(vi.isMockFunction(kept[name].run)).toBe(true);
+                }
+
+                vi.mockObject({ watcher }, { spy: true });
+                expect(vi.isMockFunction(watcher.handlers[0])).toBe(true);
+
+                // The file puts a spy in two arrays of a store that keeps such a write elsewhere than in the array.
+                vi.mockObject({ signals }, { spy: true });
+                signals.listeners.push(signals.onChange);
+                signals.samples[0] = signals.onChange;
+                expect([signals.listeners[0], signals.samples[0]].map(vi.isMockFunction)).toEqual([true, true]);
+
+                // A spy that the file restores, resets or clears is still the mock's, and goes with the file.
+                vi.mockObject({ resets }, { spy: true });
+                for (const spy of Object.values(resets)) spy.mockReturnValue("stubbed by an earlier file");
+                resets.restored.mockRestore();
+                resets.reset.mockReset();
+                resets.cleared.mockClear();
+                expect(Object.values(resets).map(vi.isMockFunction)).toEqual([true, true, true]);
+
+                // The end of the file asks a Proxy for its keys once, in however many properties the store shows it.
+                vi.mockObject({ keptOnce, keptOften }, { spy: true });
+                expect([keptOnce.list[0], keptOften.list7[0]].map(vi.isMockFunction)).toEqual([true, true]);
+                askedForKeys.once = askedForKeys.often = 0;
+
+                // A second mock compares each copy of an array with what the copy got. It reads the array that many arrays have as often as the array that one has.
+                vi.mockObject({ aroundOne, aroundEight }, { spy: true });
+                const read = { one: 0, eight: 0 };
+                for (const [name, graph] of [["one", aroundOne], ["eight", aroundEight]]) {
+                  const [spy] = graph.shared;
+                  Object.defineProperty(graph.shared, 0, { configurable: true, enumerable: true, get: () => (read[name]++, spy) });
+                }
+                vi.mockObject({ aroundOne, aroundEight }, { spy: true });
+                expect([read.one > 0, read.eight - read.one]).toEqual([true, 0]);
+
+                // The thrower comes first, so the mock gets to it last: by then it has spied on cart and kit, and has filled the copies of both arrays.
+                const error = new Error("thrown by ownKeys");
+                expect(() => vi.mockObject({ broken: new Proxy({}, { ownKeys() { throw error; } }), cart, kit }, { spy: true })).toThrow(error);
+                expect([vi.isMockFunction(cart.add), cart.items, vi.isMockFunction(kit.hooks[0])]).toEqual([true, ["a"], true]);
+                cart.add("b");
+                await import("./listener");
+
+                // This mock throws while it fills the copy of an array. The copy has a part of the elements, and gives way to the array.
+                // Whoever took the copy has it after the file, without the spy.
+                kept.copies = [];
+                for (const [holder, array] of [[flow, steps], [flowAgain, stepsAgain]]) {
+                  Object.defineProperty(array, 1, { configurable: true, enumerable: true, get() { throw error; } });
+                  expect(() => vi.mockObject({ holder }, { spy: true })).toThrow(error);
+                  Object.defineProperty(array, 1, { configurable: true, enumerable: true, writable: true, value: "second" });
+                  expect([holder.steps === array, vi.isMockFunction(holder.steps[0])]).toEqual([false, true]);
+                  holder.steps[0].mockReturnValue("stubbed by an earlier file");
+                  kept.copies.push(holder.steps);
+                }
+                // A second mock puts a copy of its own in the place of the copy that was not filled.
+                vi.mockObject({ flowAgain }, { spy: true });
+                kept.copies.push(flowAgain.steps);
+                expect([new Set(kept.copies).size, kept.copies.map(copy => copy[0]())]).toEqual([3, Array(3).fill("stubbed by an earlier file")]);
+                // What the file does to a copy that was not filled goes with the copy.
+                flow.steps.push("pushed by the file");
+
+                // A copy whose record could not be made gives way to the array too, and so do the copies after it. Whoever took them has them without the spies.
+                globalThis.throwsInRecord = true;
+                expect(() => vi.mockObject({ lateThrower, recorded }, { spy: true })).toThrow("thrown by a getter of the copy");
+                kept.recorded = [recorded.first, recorded.second];
+                expect(kept.recorded.map(copy => vi.isMockFunction(copy[0]))).toEqual([true, true]);
+              });
+            `,
+            "2-next.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { taken } from "./listener";
+              import { Sub, app, aroundEight, aroundOne, askedForKeys, cart, flow, flowAgain, ids, isAsDeclared, kept, keptOften, keptOnce, kit, pool, pretending, pretendingToo, recorded, resets, signals, state, steps, stepsAgain, store, storeToo, view, viewToo, watcher } from "./models";
+
+              test("next", () => {
+                const modules = ["impl-a", "utils-a", "impl-b", "utils-b"].map(name => require("./" + name + ".cjs"));
+                expect({
+                  "a getter for what another module exports": modules.map(module => vi.isMockFunction(module.greet)),
+                  "a Proxy that shows what its target has": [store, view, pretending, storeToo, viewToo, pretendingToo].map(each => vi.isMockFunction(each.method)),
+                  "numbers in another form": [pool.ids === ids, ids],
+                  "spies that a module moved": [Object.hasOwn(Sub.prototype, "run"), ...["run", "describe"].flatMap(name => [new Sub()[name](), vi.isMockFunction(Sub.prototype[name])])],
+                  "through a Proxy that is revoked": [state.run(), vi.isMockFunction(state.run)],
+                  "rows that the file made": app.routes.map(([path, handler, added]) => [path, handler(), vi.isMockFunction(handler), added]),
+                  "an instance with a setter": [kept.Lazy.run(), vi.isMockFunction(kept.Lazy.run)],
+                  "an instance with the method as its own": [kept.Own, kept.Wrapped].map(instance => [Object.hasOwn(instance, "run"), vi.isMockFunction(instance.run)]),
+                  "after a mock that threw": [cart.items, cart.count, [cart.add, kit.hooks[0], taken.hooks[0]].map(vi.isMockFunction)],
+                  "an array behind a Proxy": [watcher.handlers[0](), vi.isMockFunction(watcher.handlers[0])],
+                  "arrays that a store keeps in a Map of its own": [[signals.onChange, signals.listeners[0], signals.samples[0]].map(vi.isMockFunction), signals.listeners[0](), signals.samples[0]()],
+                  "after a mock that threw in an array": [flow.steps === steps, flowAgain.steps === stepsAgain, steps[0](), steps[1]],
+                  "the copies of that array that were taken": kept.copies.map(copy => [vi.isMockFunction(copy[0]), copy[0]()]),
+                  "copies whose record could not be made": [kept.recorded.map((copy, index) => copy !== Object.values(recorded)[index]), kept.recorded.map(copy => vi.isMockFunction(copy[0]))],
+                  "an array that a store shows in eight properties": [askedForKeys.once > 0, askedForKeys.often - askedForKeys.once, keptOnce.list[0](), keptOften.list7[0]()],
+                  "an array that many arrays have": [isAsDeclared(aroundOne), isAsDeclared(aroundEight), aroundEight.shared[0]()],
+                  "spies that the file restored, reset and cleared": [Object.values(resets).map(each => each()), Object.values(resets).some(vi.isMockFunction)],
+                }).toEqual({
+                  "a getter for what another module exports": [false, false, false, false],
+                  "a Proxy that shows what its target has": Array(6).fill(false),
+                  "numbers in another form": [true, [1, 2]],
+                  "spies that a module moved": [true, "mixin", false, "mixin", false],
+                  "through a Proxy that is revoked": ["ran", false],
+                  "rows that the file made": [["/", "index", false, "added"]],
+                  "an instance with a setter": ["ran", false],
+                  "an instance with the method as its own": [[true, false], [true, false]],
+                  "after a mock that threw": [["a", "b"], 2, [false, false, false]],
+                  "an array behind a Proxy": ["handled", false],
+                  "arrays that a store keeps in a Map of its own": [[false, false, false], "original", "original"],
+                  "after a mock that threw in an array": [true, true, "first", "second"],
+                  "the copies of that array that were taken": Array(3).fill([false, "first"]),
+                  "copies whose record could not be made": [[true, true], [false, false]],
+                  "an array that a store shows in eight properties": [true, 0, "entry", "entry"],
+                  "an array that many arrays have": [true, true, "entry"],
+                  "spies that the file restored, reset and cleared": [["restored", "reset", "cleared"], false],
+                });
+              });
+            `,
+          },
+          ["./1-spy.test.js", "./2-next.test.js"],
+        );
+        expect({ results, errors: stderr.split("rror").length - 1, exitCode }).toEqual({
+          results: ["(pass) spy", "(pass) next"],
+          errors: 0,
+          exitCode: 0,
+        });
+      });
+
+      test("the objects give their functions back in the order of their first stores, and those with a record under a Proxy last", async () => {
+        const { results, exitCode } = await runTestFiles(
+          {
+            "models.js": `
+              export const order = [];
+              const named = name => ({ [name]() {} })[name];
+              // Keeps its properties elsewhere than in its target, so the record is under the Proxy itself.
+              const elsewhere = name => {
+                const backing = { run: named(name) };
+                return new Proxy(
+                  {},
+                  {
+                    get: (target, key) => backing[key],
+                    has: (target, key) => key in backing,
+                    ownKeys: () => Reflect.ownKeys(backing),
+                    getOwnPropertyDescriptor: (target, key) => ({ ...Reflect.getOwnPropertyDescriptor(backing, key), configurable: true }),
+                    set(target, key, value) {
+                      if (globalThis.fileIsOver) order.push(name);
+                      backing[key] = value;
+                      return true;
+                    },
+                  },
+                );
+              };
+              // What a transpiler makes of an export: a getter and a setter over a variable.
+              const settable = name => {
+                let run = named(name);
+                return Object.defineProperties(
+                  {},
+                  {
+                    __esModule: { value: true },
+                    run: { enumerable: true, get: () => run, set(value) { if (globalThis.fileIsOver) order.push(name); run = value; } },
+                  },
+                );
+              };
+              // Stores in its target, which holds the record. The Proxy gets each function first, key by key in the order of the record: indexes, then names as they were stored.
+              const watching = (name, target) =>
+                new Proxy(target, {
+                  set(target, key, value, receiver) {
+                    if (globalThis.fileIsOver) order.push(name + "." + key);
+                    return Reflect.set(target, key, value, receiver);
+                  },
+                });
+              export const first = elsewhere("1 elsewhere");
+              export const second = settable("2 setter");
+              export const third = watching("3 watching", { b() {}, a() {}, 1() {}, 0() {} });
+              export const fourth = settable("4 setter");
+              export const fifth = elsewhere("5 elsewhere");
+            `,
+            "1-spy.test.js": `
+              import { afterAll, expect, test, vi } from "bun:test";
+              import { fifth, first, fourth, second, third } from "./models";
+
+              afterAll(() => {
+                globalThis.fileIsOver = true;
+              });
+
+              test("spy", () => {
+                for (const each of [first, second, third, fourth, fifth]) vi.mockObject({ each }, { spy: true });
+                expect([first.run, second.run, third.a, fourth.run, fifth.run].map(vi.isMockFunction)).toEqual(Array(5).fill(true));
+              });
+            `,
+            "2-next.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { fifth, first, fourth, order, second, third } from "./models";
+
+              test("next", () => {
+                expect(order).toEqual(["2 setter", "3 watching.0", "3 watching.1", "3 watching.b", "3 watching.a", "4 setter", "1 elsewhere", "5 elsewhere"]);
+                expect([first.run, second.run, third.a, third[0], fourth.run, fifth.run].some(vi.isMockFunction)).toBe(false);
+              });
+            `,
+          },
+          ["./1-spy.test.js", "./2-next.test.js"],
+        );
+        expect({ results, exitCode }).toEqual({ results: ["(pass) spy", "(pass) next"], exitCode: 0 });
+      });
+
+      test("an instance ends its mocks with the file, whatever the prototype of its class is", async () => {
+        const { results, exitCode } = await runTestFiles(
+          {
+            "models.js": `
+              import { vi } from "bun:test";
+              const method = () => function method() { return "real"; };
+              export function Plain() {}
+              Plain.prototype.method = method();
+              // An array. The mock of the function has a copy of it.
+              export function Listed() {}
+              Listed.prototype = [method()];
+              // A Proxy that stores in its target.
+              export function Through() {}
+              Through.prototype = new Proxy({ method: method() }, {});
+              // A Proxy that has its properties in another object than its target.
+              export const backing = { method: method() };
+              export function Backed() {}
+              Backed.prototype = new Proxy(
+                {},
+                {
+                  get: (target, key) => backing[key],
+                  has: (target, key) => key in backing,
+                  ownKeys: () => Reflect.ownKeys(backing),
+                  getOwnPropertyDescriptor: (target, key) =>
+                    Object.hasOwn(backing, key) ? { ...Reflect.getOwnPropertyDescriptor(backing, key), configurable: true } : undefined,
+                  defineProperty: (target, key, descriptor) => Reflect.defineProperty(backing, key, descriptor),
+                  deleteProperty: (target, key) => delete backing[key],
+                },
+              );
+              // Makes an instance of its class when it gets a function back: at that time the file's spies are on their way out.
+              export const pool = [];
+              export function Pooled() {}
+              Pooled.prototype = new Proxy(
+                { first() {}, second() {} },
+                {
+                  set(target, key, value, receiver) {
+                    const taken = Reflect.set(target, key, value, receiver);
+                    if (globalThis.spiedPooled && !vi.isMockFunction(value) && !pool.length) pool.push(new spiedPooled());
+                    return taken;
+                  },
+                },
+              );
+              export const kept = {};
+            `,
+            "1-spy.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { Backed, Listed, Plain, Pooled, Through, kept } from "./models";
+
+              test("spy", () => {
+                const spied = vi.mockObject({ Backed, Listed, Plain, Pooled, Through }, { spy: true });
+                for (const name of ["Plain", "Through", "Backed"]) {
+                  kept[name] = new spied[name]();
+                  expect([Object.hasOwn(kept[name], "method"), kept[name].method()]).toEqual([true, "real"]);
+                }
+                kept.Listed = new spied.Listed();
+                Object.getPrototypeOf(kept.Listed)[0].mockReturnValue("stubbed by an earlier file");
+                expect([Reflect.ownKeys(kept.Listed), kept.Listed[0]()]).toEqual([["0"], "stubbed by an earlier file"]);
+                globalThis.spiedPooled = spied.Pooled;
+              });
+            `,
+            "2-next.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { Backed, Plain, Pooled, Through, backing, kept, pool } from "./models";
+
+              test("next", () => {
+                expect({
+                  prototypes: [Plain.prototype.method, Through.prototype.method, backing.method, Pooled.prototype.first, Pooled.prototype.second].map(vi.isMockFunction),
+                  instances: [kept.Plain, kept.Through, kept.Backed, ...pool].map(instance => Reflect.ownKeys(instance)),
+                  "an instance whose prototype is the copy of an array": [Reflect.ownKeys(kept.Listed), vi.isMockFunction(kept.Listed[0]), kept.Listed[0]()],
+                }).toEqual({
+                  prototypes: Array(5).fill(false),
+                  instances: [[], [], [], []],
+                  "an instance whose prototype is the copy of an array": [[], false, "real"],
+                });
+              });
+            `,
+          },
+          ["./1-spy.test.js", "./2-next.test.js"],
+        );
+        expect({ results, exitCode }).toEqual({ results: ["(pass) spy", "(pass) next"], exitCode: 0 });
+      });
+
+      test("what a watcher throws when its store takes a function back is an error of the file, in the trap and in a job", async () => {
+        const error = "error: the watcher has nothing left to read";
+        const { results, stderr, exitCode } = await runTestFiles(
+          {
+            "store.js": `
+              const watchers = new Set();
+              export const watch = watcher => watchers.add(watcher);
+              const watched = tell =>
+                new Proxy(
+                  { load() { return "loaded"; } },
+                  {
+                    set(target, key, value, receiver) {
+                      const taken = Reflect.set(target, key, value, receiver);
+                      tell(() => watchers.forEach(watcher => watcher(key)));
+                      return taken;
+                    },
+                  },
+                );
+              // One store tells its watchers in the trap. The other one tells them in a job, as a reactive store does.
+              export const store = watched(tell => tell());
+              export const later = watched(queueMicrotask);
+              export const hooks = { list: [function hook() { return "hook"; }] };
+            `,
+            "1-spy.test.js": `
+              import { afterAll, expect, test, vi } from "bun:test";
+              import { hooks, later, store, watch } from "./store";
+
+              let isOver = false;
+              afterAll(() => {
+                isOver = true;
+              });
+
+              test("spy", async () => {
+                vi.mockObject({ store, later }, { spy: true });
+                await Promise.resolve();
+                watch(() => {
+                  if (!isOver) return;
+                  globalThis.watchedAfterTheFile = (globalThis.watchedAfterTheFile ?? 0) + 1;
+                  throw new Error("the watcher has nothing left to read");
+                });
+                expect([store.load, later.load].map(vi.isMockFunction)).toEqual([true, true]);
+
+                // The file puts two arrays of its own in the copy of a list. A getter of the first one throws once the file is over. The second one gives its spy back all the same.
+                // The file reports the first error of the undo only, which is the watcher's.
+                vi.mockObject({ hooks }, { spy: true });
+                const throwing = [hooks.list[0]];
+                Object.defineProperty(throwing, 1, { configurable: true, enumerable: true, get() { if (isOver) throw new Error("thrown by a getter of the file"); } });
+                hooks.list.push(throwing, [hooks.list[0]]);
+              });
+            `,
+            "2-next.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { hooks, later, store } from "./store";
+
+              test("next", () => {
+                expect([watchedAfterTheFile, store.load(), later.load(), [store.load, later.load].some(vi.isMockFunction)]).toEqual([2, "loaded", "loaded", false]);
+                expect([hooks.list[0], hooks.list[1][0], hooks.list[2][0]].map(vi.isMockFunction)).toEqual([false, false, false]);
+              });
+            `,
+          },
+          ["./1-spy.test.js", "./2-next.test.js"],
+        );
+        expect({
+          results,
+          errors: stderr.split("\n").filter(line => line === error).length,
+          "the file with the errors": stderr.lastIndexOf(error) < stderr.indexOf("\n2-next.test.js:"),
+          exitCode,
+        }).toEqual({
+          results: ["(pass) spy", "(pass) next"],
+          errors: 2,
+          "the file with the errors": true,
+          exitCode: 1,
+        });
+      });
+
+      test("a store that answers in its own way gives the spy back", async () => {
+        const { results, stderr, exitCode } = await runTestFiles(
+          {
+            "models.js": `
+              import { vi } from "bun:test";
+              // The trap stores the value and says nothing of it.
+              export const quiet = new Proxy(
+                { save() { return "saved"; }, list: [function item() { return "item"; }] },
+                { set(target, key, value) { target[key] = value; } },
+              );
+              export class Quiet {
+                constructor() {
+                  return new Proxy(this, { set(target, key, value) { target[key] = value; } });
+                }
+                run() { return "ran"; }
+              }
+              // Stores what it is given in a job.
+              const pending = { load() { return "loaded"; } };
+              export const deferred = new Proxy(
+                {},
+                {
+                  get: (target, key) => pending[key],
+                  set(target, key, value) {
+                    queueMicrotask(() => {
+                      pending[key] = value;
+                    });
+                    return true;
+                  },
+                  ownKeys: () => Reflect.ownKeys(pending),
+                  getOwnPropertyDescriptor: (target, key) => ({ ...Reflect.getOwnPropertyDescriptor(pending, key), configurable: true }),
+                },
+              );
+              // The file freezes the object. It is spied through a Proxy.
+              export const target = { run() { return "ran"; } };
+              export const facade = new Proxy(target, {});
+              // The mock gets to an object by itself, and through a Proxy that says what it is given.
+              export const given = [];
+              const says = (name, object) =>
+                new Proxy(object, {
+                  set(target, key, value, receiver) {
+                    given.push(name + "." + key);
+                    return Reflect.set(target, key, value, receiver);
+                  },
+                });
+              export const lists = [[function item() { return "item"; }], [function item() { return "item"; }]];
+              export const raw = { save() { return "saved"; }, list: lists[0] };
+              export const watched = says("watched", raw);
+              export const rawToo = { save() { return "saved"; }, list: lists[1] };
+              export const watchedToo = says("watchedToo", rawToo);
+              export const kept = [];
+              // Each of these takes the value and then throws, as a store does whose watcher throws.
+              const throwsAfter = store => {
+                store();
+                if (globalThis.throws) throw new Error("thrown after the store");
+                return true;
+              };
+              const throwing = object => new Proxy(object, { set: (target, key, value) => throwsAfter(() => void (target[key] = value)) });
+              export const thrower = throwing({ save() { return "saved"; } });
+              export const listOfThrower = [function item() { return "item"; }];
+              export const throwerOfList = throwing({ list: listOfThrower });
+              export class Thrower {
+                constructor() {
+                  kept.push(this);
+                  return throwing(this);
+                }
+                run() { return "ran"; }
+              }
+              let run = function run() { return "ran"; };
+              export const throwingSetter = Object.defineProperties(
+                {},
+                {
+                  __esModule: { value: true },
+                  run: { enumerable: true, get: () => run, set: value => void throwsAfter(() => void (run = value)) },
+                },
+              );
+              // Each of these refuses the value by throwing. It took nothing, so nothing asks it for the property once the file is over.
+              export const askedOfReadOnly = [];
+              const refusing = object =>
+                new Proxy(object, {
+                  set() { throw new Error("this store is read-only"); },
+                  get(target, key, receiver) {
+                    if (globalThis.fileIsOver) askedOfReadOnly.push(key);
+                    return Reflect.get(target, key, receiver);
+                  },
+                });
+              export const readOnly = refusing({ load() { return "loaded"; } });
+              export class ReadOnly {
+                constructor() {
+                  const instance = refusing(this);
+                  kept.push(instance);
+                  return instance;
+                }
+                run() { return "ran"; }
+              }
+              // Takes the value. Then its subscriber spies on the store again and throws, once.
+              export const listOfNested = [function item() { return "item"; }];
+              export const nested = new Proxy(
+                { list: listOfNested },
+                {
+                  set(target, key, value) {
+                    target[key] = value;
+                    if (!globalThis.nests) return true;
+                    globalThis.nests = false;
+                    vi.mockObject(nested, { spy: true });
+                    throw new Error("thrown by a subscriber");
+                  },
+                },
+              );
+              let walk = function walk() { return "walked"; };
+              export const readOnlySetter = Object.defineProperties(
+                {},
+                {
+                  __esModule: { value: true },
+                  walk: {
+                    enumerable: true,
+                    get() {
+                      if (globalThis.fileIsOver) askedOfReadOnly.push("walk");
+                      return walk;
+                    },
+                    set() { throw new Error("this store is read-only"); },
+                  },
+                },
+              );
+            `,
+            "1-spy.test.js": `
+              import { afterAll, expect, test, vi } from "bun:test";
+              import { Quiet, ReadOnly, Thrower, deferred, facade, given, kept, nested, quiet, raw, rawToo, readOnly, readOnlySetter, target, thrower, throwerOfList, throwingSetter, watched, watchedToo } from "./models";
+
+              afterAll(() => {
+                globalThis.fileIsOver = true;
+              });
+
+              test("spy", async () => {
+                const spied = vi.mockObject({ Quiet, ReadOnly, Thrower, quiet }, { spy: true });
+                quiet.save.mockReturnValue("stubbed by an earlier file");
+                kept.push(new spied.Quiet());
+                expect([quiet.save(), vi.isMockFunction(quiet.list[0]), Object.hasOwn(kept[0], "run")]).toEqual(["stubbed by an earlier file", true, true]);
+
+                vi.mockObject({ deferred }, { spy: true });
+                await Promise.resolve();
+                expect(vi.isMockFunction(deferred.load)).toBe(true);
+
+                vi.mockObject({ facade }, { spy: true });
+                expect(vi.isMockFunction(target.run)).toBe(true);
+                Object.freeze(target);
+
+                // The mock takes the last one first.
+                vi.mockObject({ watched, raw, rawToo, watchedToo }, { spy: true });
+                expect([raw.save, raw.list[0], rawToo.save, rawToo.list[0]].map(vi.isMockFunction)).toEqual(Array(4).fill(true));
+                given.length = 0;
+
+                // The mock ends where the store throws. What the store took by then goes with the file all the same.
+                globalThis.throws = true;
+                for (const spies of [() => vi.mockObject({ thrower }, { spy: true }), () => vi.mockObject({ throwerOfList }, { spy: true }), () => vi.mockObject({ throwingSetter }, { spy: true }), () => new spied.Thrower()])
+                  expect(spies).toThrow("thrown after the store");
+                globalThis.throws = false;
+                for (const spies of [() => vi.mockObject({ readOnly }, { spy: true }), () => vi.mockObject({ readOnlySetter }, { spy: true }), () => new spied.ReadOnly()])
+                  expect(spies).toThrow("this store is read-only");
+                globalThis.nests = true;
+                expect(() => vi.mockObject(nested, { spy: true })).toThrow("thrown by a subscriber");
+                thrower.save.mockReturnValue("stubbed by an earlier file");
+                throwingSetter.run.mockReturnValue("stubbed by an earlier file");
+                expect([thrower.save(), throwerOfList.list, throwingSetter.run(), Reflect.ownKeys(kept[1])]).toEqual(["stubbed by an earlier file", [], "stubbed by an earlier file", ["run"]]);
+              });
+            `,
+            "2-next.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { Thrower, askedOfReadOnly, deferred, given, kept, listOfNested, listOfThrower, lists, nested, quiet, raw, rawToo, target, thrower, throwerOfList, throwingSetter } from "./models";
+
+              test("next", () => {
+                vi.spyOn(Thrower.prototype, "run").mockReturnValue("spied by this file");
+                expect({
+                  "what a store that refused by throwing was asked when the file ended": askedOfReadOnly,
+                  "a store that throws after it took the value": [thrower.save(), throwerOfList.list === listOfThrower, listOfThrower[0](), throwingSetter.run(), Reflect.ownKeys(kept[1]), kept[1].run()],
+                  "a trap that says nothing": [quiet.save(), vi.isMockFunction(quiet.list[0]), Reflect.ownKeys(kept[0])],
+                  "a store that stores later": [deferred.load(), vi.isMockFunction(deferred.load)],
+                  "an object that the file froze": [target.run(), vi.isMockFunction(target.run), Object.isFrozen(target)],
+                  "what the Proxies were given when the file ended": given.toSorted(),
+                  "the objects behind them": [raw.save, raw.list[0], rawToo.save, rawToo.list[0]].map(vi.isMockFunction),
+                  "the arrays behind them": [raw.list === lists[0], rawToo.list === lists[1]],
+                  "a store whose subscriber spied on it again and threw": [nested.list === listOfNested, nested.list.map(vi.isMockFunction)],
+                }).toEqual({
+                  "what a store that refused by throwing was asked when the file ended": [],
+                  "a store that throws after it took the value": ["saved", true, "item", "ran", [], "spied by this file"],
+                  "a trap that says nothing": ["saved", false, []],
+                  "a store that stores later": ["loaded", false],
+                  "an object that the file froze": ["ran", false, true],
+                  "what the Proxies were given when the file ended": ["watched.list", "watched.save", "watchedToo.list", "watchedToo.save"],
+                  "the objects behind them": Array(4).fill(false),
+                  "the arrays behind them": [true, true],
+                  "a store whose subscriber spied on it again and threw": [true, [false]],
+                });
+              });
+            `,
+          },
+          ["./1-spy.test.js", "./2-next.test.js"],
+        );
+        expect({ results, errors: stderr.split("rror").length - 1, exitCode }).toEqual({
+          results: ["(pass) spy", "(pass) next"],
+          errors: 0,
+          exitCode: 0,
+        });
+      });
+
+      test("a module that stays loaded gets the functions back in what a mock of a loaded module or of a builtin copied", async () => {
+        const { results, exitCode } = await runTestFiles(
+          {
+            "models.js": `
+              export const config = { load() { return "loaded"; }, nested: { deep() { return "deep"; } }, handlers: [function handler() { return "handled"; }] };
+              export const list = [function item() { return "item"; }];
+              export function direct() { return "direct"; }
+              export function tool() {}
+              tool.steps = [function step() { return "step"; }];
+              export class Plain {
+                hello() { return "real"; }
+                get label() { return "plain"; }
+              }
+              Plain.prototype.ready = true;
+              Plain.prototype.hooks = [function hook() { return "hook"; }, [function inner() { return "inner"; }], { run() { return "ran"; } }];
+            `,
+            "list.cjs": `module.exports = [function first() { return "first"; }];`,
+            // It is no part of the mock, and stays loaded.
+            "keeper.js": `export const kept = {};`,
+            "0-loads.test.js": `
+              import { test } from "bun:test";
+              import "./list.cjs";
+              import "./models";
+
+              test("loads", () => {});
+            `,
+            "1-spy.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { EventEmitter } from "node:events";
+              import fs from "node:fs";
+              import http from "node:http";
+              import { kept } from "./keeper";
+              import listOfCjs from "./list.cjs";
+              import * as models from "./models";
+
+              vi.mock("./models", { spy: true });
+              vi.mock("./list.cjs", { spy: true });
+              vi.mock("node:events", { spy: true });
+              vi.mock("node:fs", { spy: true });
+              vi.mock("node:http", { spy: true });
+
+              test("spy", () => {
+                Object.assign(kept, { config: models.config, list: models.list, deep: models.config.nested, instance: new models.Plain() });
+                // An object of the exports of its own, an array in each kind of copy, and an array that is the exports.
+                Object.assign(kept, { required: require("./models"), handlers: models.config.handlers, hooks: kept.instance.hooks, steps: models.tool.steps, listOfCjs });
+                Object.assign(kept, { fs, promises: fs.promises, emitter: new EventEmitter() });
+                // A spy calls the function that it spies on, so each of these says whether it is still there.
+                const stubbed = [kept.config.load, kept.instance.hooks[0], kept.required.direct, kept.handlers[0], kept.steps[0], kept.listOfCjs[0], kept.promises.readFile];
+                for (const spy of stubbed) spy.mockReturnValue("mocked by an earlier file");
+                expect([kept.config.load(), kept.list[0], kept.deep.deep, kept.instance.hello, kept.instance.hooks[1][0], kept.instance.hooks[2].run].map(each => (typeof each === "string" ? each : vi.isMockFunction(each)))).toEqual(
+                  ["mocked by an earlier file", true, true, true, true, true],
+                );
+                expect([kept.fs.readFileSync, kept.emitter.emit].map(vi.isMockFunction)).toEqual([true, true]);
+                expect(Object.hasOwn(kept.emitter, "emit")).toBe(true);
+                // An instance that a builtin exports is the builtin's own, without a spy. vi.spyOn() spies on it.
+                expect([http.request, new http.Agent().createConnection, http.globalAgent.createConnection].map(vi.isMockFunction)).toEqual([true, true, false]);
+                vi.spyOn(http.globalAgent, "createConnection");
+                expect(vi.isMockFunction(http.globalAgent.createConnection)).toBe(true);
+              });
+            `,
+            "2-next.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { EventEmitter } from "node:events";
+              import fs from "node:fs";
+              import { kept } from "./keeper";
+              import { Plain } from "./models";
+
+              test("next", () => {
+                const { config, deep, emitter, handlers, hooks, instance, list, listOfCjs, required, steps } = kept;
+                expect({
+                  "what the copies have": [config.load(), list[0](), deep.deep(), [config.load, list[0], deep.deep].some(vi.isMockFunction)],
+                  "what the instance has between itself and the class": Reflect.ownKeys(Object.getPrototypeOf(instance)),
+                  "what the instance reads": [instance.hello(), instance.label, instance.ready, instance.hooks === Plain.prototype.hooks, instance.hooks[0]()],
+                  "what the other copies have": [required.direct(), handlers[0](), hooks[0](), steps[0](), listOfCjs[0]()],
+                  "what the copies of a builtin have": [kept.fs.readFileSync === fs.readFileSync, kept.promises.readFile === fs.promises.readFile],
+                  "what the instance of a builtin class has": [
+                    Reflect.ownKeys(emitter).filter(key => vi.isMockFunction(emitter[key])),
+                    Reflect.ownKeys(Object.getPrototypeOf(emitter)),
+                    emitter.emit === EventEmitter.prototype.emit,
+                  ],
+                }).toEqual({
+                  "what the copies have": ["loaded", "item", "deep", false],
+                  "what the instance has between itself and the class": [],
+                  "what the instance reads": ["real", "plain", true, true, "hook"],
+                  "what the other copies have": ["direct", "handled", "hook", "step", "first"],
+                  "what the copies of a builtin have": [true, true],
+                  "what the instance of a builtin class has": [[], [], true],
+                });
+              });
+            `,
+          },
+          ["./0-loads.test.js", "./1-spy.test.js", "./2-next.test.js"],
+        );
+        expect({ results, exitCode }).toEqual({ results: ["(pass) loads", "(pass) spy", "(pass) next"], exitCode: 0 });
+      });
+
+      test("what the undo calls of a preload's mock is no call for the next file, and what the restore of a vi.spyOn() spy calls is one", async () => {
+        const { results, exitCode } = await runTestFiles(
+          {
+            "preload.js": `
+              import { vi } from "bun:test";
+              globalThis.log = vi.fn();
+              // Only a store that takes its function back calls this one.
+              globalThis.late = vi.fn();
+            `,
+            "store.js": `
+              import { vi } from "bun:test";
+              export const store = new Proxy(
+                { load() { return "loaded"; } },
+                {
+                  set(target, key, value, receiver) {
+                    log("set " + key);
+                    if (!vi.isMockFunction(value)) {
+                      late(key);
+                      queueMicrotask(() => log("job"));
+                      process.nextTick(() => log("tick"));
+                    }
+                    return Reflect.set(target, key, value, receiver);
+                  },
+                },
+              );
+              // A vi.spyOn() spy goes in and out through this trap.
+              export const defined = new Proxy(
+                { run() { return "ran"; } },
+                {
+                  defineProperty(target, key, descriptor) {
+                    log("define " + key);
+                    // The restore queues a job. It runs before the undo, so its call of the preload's mock stays too.
+                    if (!vi.isMockFunction(descriptor.value)) queueMicrotask(() => log("job of the restore"));
+                    return Reflect.defineProperty(target, key, descriptor);
+                  },
+                },
+              );
+            `,
+            "1-spy.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { defined, store } from "./store";
+
+              test("spy", () => {
+                vi.spyOn(defined, "run");
+                vi.mockObject({ store }, { spy: true });
+                log("by the test");
+                expect(log.mock.calls).toEqual([["define run"], ["set load"], ["by the test"]]);
+                expect(late).not.toHaveBeenCalled();
+              });
+            `,
+            "2-next.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { defined, store } from "./store";
+
+              test("next", () => {
+                expect([store.load, defined.run].map(vi.isMockFunction)).toEqual([false, false]);
+                const recorded = ({ calls, contexts, instances, invocationCallOrder, results }) => [calls, contexts, instances, invocationCallOrder, results].map(each => each.length);
+                // The restore of the spy defined the property once more, as in a file without a { spy: true } mock.
+                expect(log.mock.calls).toEqual([["define run"], ["set load"], ["by the test"], ["define run"], ["job of the restore"]]);
+                expect([recorded(log.mock), recorded(late.mock)]).toEqual([Array(5).fill(5), Array(5).fill(0)]);
+              });
+            `,
+          },
+          ["--preload", "./preload.js", "./1-spy.test.js", "./2-next.test.js"],
+        );
+        expect({ results, exitCode }).toEqual({ results: ["(pass) spy", "(pass) next"], exitCode: 0 });
+      });
+
+      test.each([
+        ["without a { spy: true } mock the job runs after the cleanup, as on main", "", [["by the job"]], "spied"],
+        [
+          "with a { spy: true } mock in the file the job runs before the cleanup ends",
+          `vi.mockObject({ unrelated() {} }, { spy: true });`,
+          [],
+          "original",
+        ],
+      ])("a job that the restore of a vi.spyOn() spy queues: %s", async (_, mock, calls, method) => {
+        const { results, exitCode } = await runTestFiles(
+          {
+            "1-spy.test.js": `
+              import { jest, test, vi } from "bun:test";
+
+              test("spy", () => {
+                globalThis.other = { method: () => "original" };
+                globalThis.called = jest.fn();
+                let isOver = false;
+                // The restore of the spy stores through the trap, which queues a job, as a reactive object queues its watchers.
+                const target = new Proxy(
+                  { method() {} },
+                  {
+                    defineProperty(...args) {
+                      if (isOver) {
+                        isOver = false;
+                        queueMicrotask(() => {
+                          called("by the job");
+                          vi.spyOn(other, "method").mockReturnValue("spied");
+                        });
+                      }
+                      return Reflect.defineProperty(...args);
+                    },
+                  },
+                );
+                vi.spyOn(target, "method");
+                ${mock}
+                isOver = true;
+              });
+            `,
+            "2-next.test.js": `
+              import { expect, test } from "bun:test";
+
+              test("next", () => {
+                expect([called.mock.calls, other.method()]).toEqual(${JSON.stringify([calls, method])});
+              });
+            `,
+          },
+          ["./1-spy.test.js", "./2-next.test.js"],
+        );
+        expect({ results, exitCode }).toEqual({ results: ["(pass) spy", "(pass) next"], exitCode: 0 });
+      });
+
+      test("a vi.spyOn() spy that a store installs while it takes its function back is restored in the next round", async () => {
+        const { results, exitCode } = await runTestFiles(
+          {
+            "preload.js": `
+              import { vi } from "bun:test";
+              globalThis.log = vi.fn();
+            `,
+            "store.js": `
+              import { vi } from "bun:test";
+              // A vi.spyOn() spy goes in and out through this trap, which tells the preload's mock.
+              export const defined = new Proxy(
+                { run() { return "ran"; } },
+                {
+                  defineProperty(target, key, descriptor) {
+                    log(vi.isMockFunction(descriptor.value) ? "spy in" : "spy out");
+                    return Reflect.defineProperty(target, key, descriptor);
+                  },
+                },
+              );
+              export const store = new Proxy(
+                { load() { return "loaded"; } },
+                {
+                  set(target, key, value, receiver) {
+                    if (!vi.isMockFunction(value)) vi.spyOn(defined, "run");
+                    return Reflect.set(target, key, value, receiver);
+                  },
+                },
+              );
+            `,
+            "1-spy.test.js": `
+              import { test, vi } from "bun:test";
+              import { store } from "./store";
+
+              test("spy", () => {
+                vi.mockObject({ store }, { spy: true });
+              });
+            `,
+            "2-next.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { defined, store } from "./store";
+
+              test("next", () => {
+                expect([store.load, defined.run].map(vi.isMockFunction)).toEqual([false, false]);
+                // The undo forgets what it calls of a preload's mock in its own round: the call of the spy that went in. The restore of the round after it is no part of the undo.
+                expect(log.mock.calls).toEqual([["spy out"]]);
+              });
+            `,
+          },
+          ["--preload", "./preload.js", "./1-spy.test.js", "./2-next.test.js"],
+        );
+        expect({ results, exitCode }).toEqual({ results: ["(pass) spy", "(pass) next"], exitCode: 0 });
+      });
+
+      test("a collection while the spies go out changes nothing", async () => {
+        const { results, exitCode } = await runTestFiles(
+          {
+            "models.js": `
+              const row = [function cell() { return "cell"; }];
+              export const table = { rows: [row, [function other() { return "other"; }]] };
+              // Each of these collects when it takes its function back.
+              export const store = new Proxy(
+                { load() { return "loaded"; } },
+                {
+                  set(...args) {
+                    Bun.gc(true);
+                    queueMicrotask(() => Bun.gc(true));
+                    return Reflect.set(...args);
+                  },
+                },
+              );
+              let run = function run() { return "ran"; };
+              export const lib = Object.defineProperties(
+                {},
+                {
+                  __esModule: { value: true },
+                  run: {
+                    enumerable: true,
+                    get: () => run,
+                    set(value) {
+                      Bun.gc(true);
+                      run = value;
+                    },
+                  },
+                },
+              );
+            `,
+            "listener.js": `
+              import { table } from "./models";
+              // Arrays among the elements of the copy that the mock has put in the place of table.rows. Nothing else holds them once the file ends.
+              export const taken = [table.rows[0], table.rows[1]];
+            `,
+            "1-spy.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { lib, store, table } from "./models";
+
+              test("spy", async () => {
+                vi.mockObject({ store, table, lib }, { spy: true });
+                const { taken } = await import("./listener");
+                expect(taken.map(row => vi.isMockFunction(row[0]))).toEqual([true, true]);
+              });
+            `,
+            "2-next.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { taken } from "./listener";
+              import { lib, store, table } from "./models";
+
+              test("next", () => {
+                expect({
+                  spies: [store.load, lib.run, table.rows[0][0], table.rows[1][0], taken[0][0], taken[1][0]].map(vi.isMockFunction),
+                  "what the listener took": taken.map(row => row[0]()),
+                }).toEqual({ spies: Array(6).fill(false), "what the listener took": ["cell", "other"] });
+              });
+            `,
+          },
+          ["./1-spy.test.js", "./2-next.test.js"],
+        );
+        expect({ results, exitCode }).toEqual({ results: ["(pass) spy", "(pass) next"], exitCode: 0 });
+      });
+
+      test("a test file's factory that runs under the factory of a preload spies for the file", async () => {
+        const { results, exitCode } = await runTestFiles(
+          {
+            "inner.js": `export const inner = { run() { return "ran"; } };`,
+            "late.js": `export const late = { run() { return "ran"; } };`,
+            "outer.js": `export { inner as outer } from "./inner";`,
+            "preload.js": `
+              import { vi } from "bun:test";
+
+              // The first test file mocks ./inner, so this factory runs the factory of that file.
+              vi.mock("./outer", async () => {
+                // What a promise of this factory runs after the factory has settled is not the factory.
+                globalThis.afterFactory = new Promise(resolve => {
+                  globalThis.runAfterFactory = resolve;
+                }).then(run => run());
+                const { inner } = await import("./inner");
+                return { outer: inner };
+              });
+            `,
+            "1-first.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { late } from "./late";
+              import { outer } from "./outer";
+
+              vi.mock("./inner", async importOriginal => vi.mockObject(await importOriginal(), { spy: true }));
+
+              test("first", async () => {
+                expect(vi.isMockFunction(outer.run)).toBe(true);
+                runAfterFactory(() => vi.mockObject(late, { spy: true }));
+                await afterFactory;
+                expect(vi.isMockFunction(late.run)).toBe(true);
+              });
+            `,
+            "2-later.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { late } from "./late";
+              import { outer } from "./outer";
+
+              // The mock of the preload still has the object that the factory of the first file spied on.
+              test("later", () => {
+                expect([outer.run, late.run].map(vi.isMockFunction)).toEqual([false, false]);
+              });
+            `,
+          },
+          ["--preload", "./preload.js", "./1-first.test.js", "./2-later.test.js"],
+        );
+        expect({ results, exitCode }).toEqual({ results: ["(pass) first", "(pass) later"], exitCode: 0 });
+      });
+
+      test("what a preload spies on stays spied on for every file, and what it finds of a test file ends with that file", async () => {
+        const { results, exitCode } = await runTestFiles(
+          {
+            "models.js": `
+              export class Plain {
+                hello() { return "real"; }
+              }
+              export const config = { load() { return "loaded"; } };
+
+              let only;
+              export class Registry {
+                constructor() {
+                  if (only) return only;
+                  only = this;
+                }
+                lookup() { return "found"; }
+              }
+              export const registry = new Registry();
+              export const kept = [];
+              export const hooks = { ready() { return "ready"; } };
+              export const logger = { error() { return "logged"; } };
+              export const once = { run() { return "ran"; } };
+              export const each = { run() { return "ran"; } };
+              export const eachToo = { run() { return "ran"; } };
+              export const byFactory = { run() { return "ran"; } };
+              export const nested = { run() { return "ran"; } };
+              export const required = { run() { return "ran"; } };
+              export const imported = { run() { return "ran"; } };
+              export const manual = { run() { return "ran"; } };
+              export const inHook = { run() { return "ran"; } };
+              export class Hooked {
+                hello() { return "real"; }
+              }
+            `,
+            "lib.cjs": modules["lib.cjs"],
+            "barrel-a.js": `export { Plain } from "./models";`,
+            "barrel-b.js": `export { Plain } from "./models";`,
+            "made.js": `export const tools = { run() { return "ran"; } };`,
+            "nested.js": `export { nested } from "./models";`,
+            "hooked.js": `export { Hooked } from "./models";`,
+            "manual.js": `export { manual } from "./models";`,
+            "__mocks__/manual.js": `
+              import { vi } from "bun:test";
+              import { manual } from "../models";
+              vi.mockObject(manual, { spy: true });
+              export { manual };
+            `,
+            "late.js": `export {};`,
+            "required.cjs": `require("bun:test").vi.mockObject(require("./models").required, { spy: true });`,
+            "imported.js": `
+              import { vi } from "bun:test";
+              import { imported } from "./models";
+              vi.mockObject(imported, { spy: true });
+            `,
+            "preload.js": `
+              import { beforeAll, beforeEach, vi } from "bun:test";
+              import lib from "./lib.cjs";
+              import { Registry, byFactory, each, eachToo, hooks, logger, once } from "./models";
+
+              // It runs once, before the tests of the first file. Its vi.spyOn() gets the spies that this file's own mock has put there, one of them through a setter.
+              // Those are the file's, and end with it, as a vi.spyOn() spy of the file does.
+              beforeAll(() => {
+                vi.spyOn(hooks, "ready").mockReturnValue("stubbed by the preload");
+                vi.spyOn(lib, "run").mockReturnValue("stubbed by the preload");
+                vi.mockObject(once, { spy: true }).run.mockReturnValue("stubbed by the preload");
+              });
+              // The first file mocks ./late with a factory. This hook runs that factory before the first test, so what the factory spies on stays too,
+              // as its vi.spyOn() spy does on main.
+              beforeAll(async () => {
+                await import("./late");
+              });
+              // These run before each test, so what they spy on is the test file's.
+              beforeEach(() => {
+                vi.spyOn(logger, "error");
+                vi.mockObject(each, { spy: true });
+              });
+              beforeEach(() => vi.mockObject(eachToo, { spy: true }));
+              // A module mock that a hook of the preload makes is the preload's, as on main. It stays for every file, and its spies with it.
+              beforeEach(async () => {
+                vi.doMock("./hooked", { spy: true });
+                await import("./hooked");
+              });
+              // Each of these three mocks is made when a test file imports the module.
+              vi.mock("./barrel-b", { spy: true });
+              // The factory runs for the first test file that imports the module. The spies of its vi.mockObject() stay. Its vi.spyOn() spy ends with that file.
+              // So does a module mock that it makes, as on main, and the { spy: true } spies of that mock go with it.
+              // A module that it loads with require() runs in the factory. One that it loads with import() runs as a module of that first file.
+              vi.mock("./made", async importOriginal => {
+                vi.spyOn(byFactory, "run");
+                vi.doMock("./nested", { spy: true });
+                await import("./nested");
+                require("./required.cjs");
+                await import("./imported");
+                return vi.mockObject(await importOriginal(), { spy: true });
+              });
+              vi.mock("node:events", { spy: true });
+              // The __mocks__ file of this mock runs as a module of the first file that imports ./manual.
+              vi.mock("./manual");
+              globalThis.spied = vi.mockObject({ Registry }, { spy: true });
+            `,
+            "1-first.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { EventEmitter } from "node:events";
+              import * as a from "./barrel-a";
+              import lib from "./lib.cjs";
+              import { tools } from "./made";
+              import "./manual";
+              import { Hooked, Plain, byFactory, config, each, eachToo, hooks, imported, inHook, kept, logger, manual, nested, once, registry, required } from "./models";
+
+              vi.mock("./barrel-a", { spy: true });
+              vi.mock("./late", () => {
+                vi.mockObject(inHook, { spy: true });
+                return {};
+              });
+              vi.mockObject({ hooks, logger, lib }, { spy: true });
+
+              test("first", async () => {
+                // The preload's mock is made after the file's own, and finds its spies on Plain.prototype. They stay the file's.
+                const hello = Plain.prototype.hello;
+                expect(vi.isMockFunction(hello)).toBe(true);
+                const b = await import("./barrel-b");
+                expect(b.Plain).not.toBe(a.Plain);
+                expect(Plain.prototype.hello).toBe(hello);
+
+                kept.push(new b.Plain(), new EventEmitter());
+                expect(new spied.Registry()).toBe(registry);
+                for (const mock of [logger.error, each.run, eachToo.run]) mock.mockReturnValue("stubbed by the first file");
+                expect([tools.run(), hooks.ready(), lib.run(), once.run(), logger.error(), each.run(), eachToo.run()]).toEqual([
+                  "ran",
+                  ...Array(3).fill("stubbed by the preload"),
+                  ...Array(3).fill("stubbed by the first file"),
+                ]);
+                vi.mockObject(config, { spy: true });
+                expect(
+                  [config.load, byFactory.run, nested.run, Hooked.prototype.hello, required.run, imported.run, manual.run, inHook.run].map(vi.isMockFunction),
+                ).toEqual(Array(8).fill(true));
+              });
+            `,
+            "2-later.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import * as b from "./barrel-b";
+              import lib from "./lib.cjs";
+              import { tools } from "./made";
+              import "./manual";
+              import { Hooked, Plain, Registry, byFactory, config, each, eachToo, hooks, imported, inHook, kept, logger, manual, nested, once, registry, required } from "./models";
+
+              // Before a hook of the preload runs for this file.
+              const atLoad = [nested.run, Hooked.prototype.hello].map(vi.isMockFunction);
+
+              test("later", () => {
+                expect({
+                  "a module mock of the preload's factory, and one of its beforeEach()": atLoad,
+                  "Plain.prototype.hello": vi.isMockFunction(Plain.prototype.hello),
+                  "Plain.prototype.constructor": Plain.prototype.constructor === Plain,
+                  "new b.Plain().hello": Object.hasOwn(new b.Plain(), "hello"),
+                  "kept[0].hello, kept[1].emit": [Object.hasOwn(kept[0], "hello"), Object.hasOwn(kept[1], "emit")],
+                  "Registry.prototype.lookup": vi.isMockFunction(Registry.prototype.lookup),
+                  "registry.lookup": Object.hasOwn(registry, "lookup"),
+                  "tools.run": vi.isMockFunction(tools.run),
+                  "the vi.spyOn() spy of the factory": vi.isMockFunction(byFactory.run),
+                  "what the factory loaded with require(), and with import()": [required.run, imported.run].map(vi.isMockFunction),
+                  "what the __mocks__ file of a mock of the preload spied on": vi.isMockFunction(manual.run),
+                  "what a factory of the first file spied on in a beforeAll() of the preload": vi.isMockFunction(inHook.run),
+                  "hooks.ready(), lib.run(), once.run()": [hooks.ready(), lib.run(), once.run()],
+                  // The spies of this test are the ones that the preload's beforeEach() made for it.
+                  "logger.error, each.run, eachToo.run": [logger.error, each.run, eachToo.run].map(mock => [mock(), mock.mock.calls.length]),
+                  // Only a mock that was made while the preload ran keeps its calls.
+                  calls: [spied.Registry, tools.run].map(mock => mock.mock.calls.length),
+                  "the file's own config.load": vi.isMockFunction(config.load),
+                }).toEqual({
+                  "a module mock of the preload's factory, and one of its beforeEach()": [false, true],
+                  "Plain.prototype.hello": false,
+                  "Plain.prototype.constructor": true,
+                  "new b.Plain().hello": false,
+                  "kept[0].hello, kept[1].emit": [false, true],
+                  "Registry.prototype.lookup": true,
+                  "registry.lookup": true,
+                  "tools.run": true,
+                  "the vi.spyOn() spy of the factory": false,
+                  "what the factory loaded with require(), and with import()": [true, false],
+                  "what the __mocks__ file of a mock of the preload spied on": false,
+                  "what a factory of the first file spied on in a beforeAll() of the preload": true,
+                  "hooks.ready(), lib.run(), once.run()": ["ready", "ran", "stubbed by the preload"],
+                  "logger.error, each.run, eachToo.run": [
+                    ["logged", 1],
+                    ["ran", 1],
+                    ["ran", 1],
+                  ],
+                  calls: [1, 0],
+                  "the file's own config.load": false,
+                });
+              });
+            `,
+          },
+          ["--preload", "./preload.js", "./1-first.test.js", "./2-later.test.js"],
+        );
+        expect({ results, exitCode }).toEqual({ results: ["(pass) first", "(pass) later"], exitCode: 0 });
+      });
+
+      test.each([
+        [["--rerun-each=3", "./1.test.js"], 3],
+        [["--parallel=2", "--parallel-delay=600000", "--no-isolate", "./1.test.js", "./2.test.js", "./3.test.js"], 3],
+      ])("a preload's beforeAll() spies for every file only before the first test starts %j", async (args, runs) => {
+        // The hook runs again for each run of the first file with --rerun-each, and for each file in a worker of --parallel that gives its files one global object.
+        // A later run is after the first test, so what it spies on ends with its file, as what a test file spies on does.
+        const file = `
+          import { expect, test, vi } from "bun:test";
+          import { always, objects } from "./models";
+
+          test("run", () => {
+            const run = runsOfBeforeAll;
+            expect([vi.isMockFunction(always.run), objects.map(each => vi.isMockFunction(each.run))]).toEqual([
+              true,
+              objects.map((each, index) => index === 0 || index === run - 1),
+            ]);
+          });
+        `;
+        const { results, exitCode } = await runTestFiles(
+          {
+            "models.js": `
+              export const always = { run() { return "ran"; } };
+              export const objects = Array.from({ length: 3 }, () => ({ run() { return "ran"; } }));
+            `,
+            "preload.js": `
+              import { beforeAll, vi } from "bun:test";
+              import { always, objects } from "./models";
+
+              let runs = 0;
+              beforeAll(() => {
+                globalThis.runsOfBeforeAll = ++runs;
+                // One object that each run spies on, and one that only this run does.
+                vi.mockObject({ always, next: objects[runs - 1] }, { spy: true });
+              });
+            `,
+            "1.test.js": file,
+            "2.test.js": file,
+            "3.test.js": file,
+          },
+          ["--preload", "./preload.js", ...args],
+        );
+        expect({ results, exitCode }).toEqual({ results: Array(runs).fill("(pass) run"), exitCode: 0 });
+      });
+
+      describe("an object that gets a spy again each time it gives one back", () => {
+        const error =
+          "TypeError: Cannot take the spies of the test file out because each time they go, another spy is installed";
+        const next = `
+          import { expect, test, vi } from "bun:test";
+
+          test("next", () => {
+            expect([spiedByPreload.run(), vi.isMockFunction(spiedByPreload.run)]).toEqual(["stubbed by the preload", true]);
+          });
+        `;
+        // The error ends the cleanup of the file. The spy that the object has then stays, and so does what a preload spies on.
+        const preload = `
+          import { vi } from "bun:test";
+          globalThis.spiedByPreload = { run() { return "ran"; } };
+          vi.spyOn(spiedByPreload, "run").mockReturnValue("stubbed by the preload");
+        `;
+
+        test.each([
+          [
+            "a { spy: true } mock",
+            `
+              // What a transpiler makes of an exported function: a getter and a setter over a variable. This setter spies on the export again.
+              let load = function load() { return "loaded"; };
+              const store = Object.defineProperties(
+                {},
+                {
+                  __esModule: { value: true },
+                  load: {
+                    enumerable: true,
+                    get: () => load,
+                    set(value) {
+                      load = value;
+                      if (!vi.isMockFunction(value)) vi.mockObject(store, { spy: true });
+                    },
+                  },
+                },
+              );
+              vi.mockObject(store, { spy: true });
+              expect(vi.isMockFunction(store.load)).toBe(true);
+            `,
+          ],
+          [
+            "vi.spyOn()",
+            `
+              let isOver = false;
+              const store = new Proxy(
+                { load() { return "loaded"; } },
+                {
+                  defineProperty(target, key, descriptor) {
+                    const taken = Reflect.defineProperty(target, key, descriptor);
+                    if (isOver && !vi.isMockFunction(descriptor.value)) vi.spyOn(store, "load");
+                    return taken;
+                  },
+                },
+              );
+              vi.spyOn(store, "load");
+              isOver = true;
+            `,
+          ],
+        ])("ends the cleanup of the file with an error: %s", async (_, spies) => {
+          const { results, stderr, exitCode } = await runTestFiles(
+            {
+              "preload.js": preload,
+              "1-spy.test.js": `
+                import { expect, test, vi } from "bun:test";
+
+                test("spy", () => {${spies}});
+              `,
+              "2-next.test.js": next,
+            },
+            ["--preload", "./preload.js", "./1-spy.test.js", "./2-next.test.js"],
+          );
+          expect({ results, errors: stderr.split(error).length - 1, exitCode }).toEqual({
+            results: ["(pass) spy", "(pass) next"],
+            errors: 1,
+            exitCode: 1,
+          });
+        });
+
+        test.each([
+          [
+            "a { spy: true } mock",
+            // Each object spies on the next one when it takes its function back, so each round of the cleanup undoes one of them.
+            length => `
+              const chain = Array.from({ length: ${length} }, (_, i) => {
+                let run = function run() {};
+                return Object.defineProperties(
+                  {},
+                  {
+                    __esModule: { value: true },
+                    run: {
+                      enumerable: true,
+                      get: () => run,
+                      set(value) {
+                        run = value;
+                        if (!vi.isMockFunction(value) && chain[i + 1]) vi.mockObject(chain[i + 1], { spy: true });
+                      },
+                    },
+                  },
+                );
+              });
+              (globalThis.chains ??= []).push(chain);
+              vi.mockObject(chain[0], { spy: true });
+            `,
+          ],
+          [
+            "vi.spyOn()",
+            // The same with spies that go in and out through a trap. Each round of the cleanup restores one of them.
+            length => `
+              let isOver = false;
+              const chain = Array.from({ length: ${length} }, (_, i) =>
+                new Proxy(
+                  { run() {} },
+                  {
+                    defineProperty(target, key, descriptor) {
+                      const taken = Reflect.defineProperty(target, key, descriptor);
+                      if (isOver && !vi.isMockFunction(descriptor.value) && chain[i + 1]) vi.spyOn(chain[i + 1], "run");
+                      return taken;
+                    },
+                  },
+                ),
+              );
+              (globalThis.chains ??= []).push(chain);
+              vi.spyOn(chain[0], "run");
+              isOver = true;
+            `,
+          ],
+        ])("the cleanup takes 1000 rounds and no more: %s", async (_, links) => {
+          const chainOf = length => `
+            import { expect, test, vi } from "bun:test";
+
+            test("a chain of ${length}", () => {${links(length)}});
+          `;
+          const { results, stderr, exitCode } = await runTestFiles(
+            {
+              "1-at.test.js": chainOf(1000),
+              "2-over.test.js": chainOf(1001),
+              "3-next.test.js": `
+                import { expect, test, vi } from "bun:test";
+
+                test("next", () => {
+                  expect(chains.map(chain => chain.findIndex(link => vi.isMockFunction(link.run)))).toEqual([-1, 1000]);
+                });
+              `,
+            },
+            ["./1-at.test.js", "./2-over.test.js", "./3-next.test.js"],
+          );
+          expect({
+            results,
+            errors: stderr.split(error).length - 1,
+            "the file with the error": stderr.indexOf(error) > stderr.indexOf("\n2-over.test.js:"),
+            exitCode,
+          }).toEqual({
+            results: ["(pass) a chain of 1000", "(pass) a chain of 1001", "(pass) next"],
+            errors: 1,
+            "the file with the error": true,
+            exitCode: 1,
+          });
+        });
+      });
+
+      test("an accessor for an index on Array.prototype changes nothing", async () => {
+        const { results, exitCode } = await runTestFiles(
+          {
+            "models.js": `
+              export const config = { load() { return "loaded"; }, handlers: [function first() { return "first"; }] };
+              export const target = { method() { return "real"; } };
+            `,
+            "1-spy.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { config, target } from "./models";
+
+              test("spy", () => {
+                // Every array that is not made for such an accessor gives it what is stored at a new index.
+                for (const index of [0, 1, 2]) {
+                  Object.defineProperty(Array.prototype, index, {
+                    configurable: true,
+                    get() {},
+                    set(value) {
+                      Object.defineProperty(this, index, { value, writable: true, enumerable: true, configurable: true });
+                    },
+                  });
+                }
+                vi.mockObject({ config, facade: new Proxy(target, {}) }, { spy: true });
+                expect([config.load, config.handlers[0], target.method].map(vi.isMockFunction)).toEqual([true, true, true]);
+              });
+            `,
+            "2-next.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { config, target } from "./models";
+
+              test("next", () => {
+                for (const index of [0, 1, 2]) delete Array.prototype[index];
+                expect([config.load, config.handlers[0], target.method].map(vi.isMockFunction)).toEqual([false, false, false]);
+                expect([config.load(), config.handlers[0](), target.method()]).toEqual(["loaded", "first", "real"]);
+              });
+            `,
+          },
+          ["./1-spy.test.js", "./2-next.test.js"],
+        );
+        expect({ results, exitCode }).toEqual({ results: ["(pass) spy", "(pass) next"], exitCode: 0 });
+      });
+
+      test("with --isolate nothing is recorded, because the next file gets another global object", async () => {
+        const { results, exitCode } = await runTestFiles(
+          {
+            "models.js": `
+              export class Plain {
+                hello() { return "real"; }
+              }
+              export const config = { load() { return "loaded"; }, handlers: [function first() {}] };
+            `,
+            "spy.test.js": `
+              import { expect, test, vi } from "bun:test";
+              import { heapStats } from "bun:jsc";
+              import { Plain, config } from "./models";
+
+              test("spy", () => {
+                const weakMaps = () => (Bun.gc(true), heapStats().objectTypeCounts.WeakMap ?? 0);
+                const before = weakMaps();
+                const spied = vi.mockObject({ Plain, config }, { spy: true });
+                new spied.Plain().hello();
+                expect(Plain.prototype.hello).toHaveBeenCalledTimes(1);
+                expect(weakMaps() - before).toBe(0);
+              });
+            `,
+          },
+          ["--isolate", "./spy.test.js"],
+        );
+        expect({ results, exitCode }).toEqual({ results: ["(pass) spy"], exitCode: 0 });
+      });
+
+      test("also with --isolate=modules, where the files share the objects of Bun", async () => {
+        const { results, exitCode } = await runTestFiles(
+          { ...modules, "1-spy.test.js": spies["vi.mock()"], "2-declared.test.js": declared(false) },
+          ["--isolate=modules", "./1-spy.test.js", "./2-declared.test.js"],
+        );
+        expect({ results, exitCode }).toEqual({ results: ["(pass) vi.mock()", "(pass) declared"], exitCode: 0 });
+      });
+
+      test("with --isolate=modules, what a later run of a preload spies on ends with that file", async () => {
+        const file = (name, isSpied) => `
+          import { expect, test, vi } from "bun:test";
+          import url from "node:url";
+
+          test("${name}", () => {
+            expect(vi.isMockFunction(url.parse)).toBe(${isSpied});
+          });
+        `;
+        const { results, exitCode } = await runTestFiles(
+          {
+            // In this mode the preload runs again for each file. The counter is on an object that the runs share.
+            "preload.js": `
+              import { vi } from "bun:test";
+              import path from "node:path";
+              import url from "node:url";
+
+              path.runsOfPreload = (path.runsOfPreload ?? 0) + 1;
+              if (path.runsOfPreload === 2) vi.mockObject(url, { spy: true });
+            `,
+            "1-before.test.js": file("before", false),
+            "2-spied.test.js": file("spied", true),
+            "3-after.test.js": file("after", false),
+          },
+          [
+            "--isolate=modules",
+            "--preload",
+            "./preload.js",
+            "./1-before.test.js",
+            "./2-spied.test.js",
+            "./3-after.test.js",
+          ],
+        );
+        expect({ results, exitCode }).toEqual({
+          results: ["(pass) before", "(pass) spied", "(pass) after"],
+          exitCode: 0,
+        });
+      });
+
+      test("also in a worker of --parallel that gives its files one global object", async () => {
+        // One worker runs both files, in the order of their names: the second worker starts after a delay that is longer than the run.
+        const { results, exitCode } = await runTestFiles(
+          { ...modules, "1-spy.test.js": spies["vi.mock()"], "2-declared.test.js": declared(false, true) },
+          ["--parallel=2", "--parallel-delay=600000", "--no-isolate", "./1-spy.test.js", "./2-declared.test.js"],
+        );
+        expect({ results, exitCode }).toEqual({ results: ["(pass) vi.mock()", "(pass) declared"], exitCode: 0 });
+      });
+    });
+
     test("an error thrown while reading the value propagates", () => {
       const error = new Error("trap");
       const proxy = new Proxy({}, { ownKeys: () => { throw error; } }); // prettier-ignore
@@ -3402,6 +6345,25 @@ if (isBun) {
         expect(vi.isMockFunction(entry.method)).toBe(true);
         expect(new entry.klass().method()).toBeUndefined();
       }
+    });
+
+    test("{ spy: true } leaves what it spied on to the garbage collector", () => {
+      const { heapStats } = require("bun:jsc");
+      const count = () => {
+        Bun.gc(true);
+        const { Mock = 0, ProxyObject = 0 } = heapStats().objectTypeCounts;
+        return [Mock, ProxyObject];
+      };
+      const before = count();
+      (function () {
+        for (let i = 0; i < 500; i++) {
+          const spied = vi.mockObject({ method() {}, Klass: class { method() {} }, facade: new Proxy({ method() {} }, {}) }, { spy: true }); // prettier-ignore
+          new spied.Klass().method();
+        }
+      })();
+      const after = count();
+      expect(after[0] - before[0]).toBeLessThan(100);
+      expect(after[1] - before[1]).toBeLessThan(100);
     });
   });
 

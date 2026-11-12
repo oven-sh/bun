@@ -1424,14 +1424,21 @@ console.log("survived", require("./late.js"));`,
 
           const frozen = fresh("frozen");
           Object.freeze(frozen.resolve);
-          out.frozen = where(frozen.resolve.paths("./x"));
+          out.frozen = [where(frozen.resolve.paths("./x")), Object.isFrozen(frozen.resolve)];
+
+          // Reflect.get() names a receiver that the read does not go through.
+          const named = fresh("named");
+          Object.defineProperty(named.resolve, "paths", { value: "kept" });
+          Reflect.get(fresh("reader").resolve, "paths", named.resolve);
+          Reflect.get(fresh("reader").resolve, "paths", named);
+          out.namedReceiverIsUntouched = [named.resolve.paths, Object.hasOwn(named, "paths")];
 
           out.boundResolveHasNone = typeof fresh("bound").resolve.bind(null).paths;
           out.aboveResolveHasNone = typeof Object.getPrototypeOf(require.resolve).paths;
 
-          const kept = fresh("kept").resolve.paths;
+          const kept = Array.from({ length: 500 }, (_, i) => fresh("kept" + i).resolve.paths);
           collect();
-          out.outlivesItsRequire = where(kept("./x"));
+          out.eachOutlivesItsRequire = kept.every((paths, i) => where(paths("./x"))[0] === "kept" + i);
 
           const { paths } = require.resolve;
           out.name = paths.name;
@@ -1476,10 +1483,11 @@ console.log("survived", require("./late.js"));`,
         assignCopiesOnceRead: ["read"],
         stored: ["stored", ownData],
         defined: "defined",
-        frozen: ["frozen"],
+        frozen: [["frozen"], true],
+        namedReceiverIsUntouched: ["kept", false],
         boundResolveHasNone: "undefined",
         aboveResolveHasNone: "undefined",
-        outlivesItsRequire: ["kept"],
+        eachOutlivesItsRequire: true,
         name: "paths",
         length: 1,
         builtin: [null, null],

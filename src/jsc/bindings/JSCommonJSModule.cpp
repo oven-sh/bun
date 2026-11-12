@@ -526,8 +526,10 @@ JSC_DEFINE_CUSTOM_GETTER(jsRequireResolvePathsGetter, (JSC::JSGlobalObject * glo
     // `globalObject` can be a node:vm context. See jsRequireCacheGetter.
     auto* paths = JSFunctionWithFields::create(vm, resolve->globalObject(), executable);
     paths->setField(vm, moduleOfPathsFunction, requirer);
+    // Reflect.get() can name a receiver whose `paths` is not this accessor: `require`, or a `require.resolve` with a `paths` of its own.
+    bool inheritsThisAccessor = !resolve->getDirect(vm, propertyName) && dynamicDowncast<RequireResolveFunctionPrototype>(resolve->getPrototypeDirect());
     // The next read finds it on the `require.resolve` itself.
-    if (resolve->structure()->isStructureExtensible())
+    if (inheritsThisAccessor && resolve->structure()->isStructureExtensible())
         resolve->putDirect(vm, propertyName, paths, 0);
     return JSValue::encode(paths);
 }

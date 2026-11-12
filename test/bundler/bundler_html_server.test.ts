@@ -210,7 +210,15 @@ describe.concurrent("bundler", () => {
       output: "../server.js",
       cwd: "dist",
     },
-  ])("HTMLServerRunFromOutdir/$name", async ({ name, setup, output, cwd }) => {
+    // The source page is under the copy's folder at the manifest's path, but the built files are not.
+    {
+      name: "copied-server-file-beside-source-page",
+      entrypoints: ["src/server.ts"],
+      setup: (dir: string) => copyFileSync(join(dir, "dist/server.js"), join(dir, "src/server.js")),
+      output: "../src/server.js",
+      cwd: "dist",
+    },
+  ])("HTMLServerRunFromOutdir/$name", async ({ name, setup, output, cwd, ...options }) => {
     using dir = tempDir("html-server-outdir", {
       ...htmlServerFiles,
       "src/server.ts":
@@ -218,7 +226,7 @@ describe.concurrent("bundler", () => {
           ? `import original from "./pages/about.html"; const about = { ...original };${serveAbout}`
           : `import about from "./pages/about.html";${serveAbout}`,
     });
-    await build(String(dir), inSubfolder);
+    await build(String(dir), { ...inSubfolder, ...options });
     setup(String(dir));
     const { stdout, stderr, exitCode } = await run(String(dir), output, cwd);
     expect(stdout, stderr).toBe(served);
@@ -310,7 +318,7 @@ describe.concurrent("bundler", () => {
   const maxPathBytes = isWindows ? 32767 * 3 + 1 : isLinux ? 4096 : 1024;
   test.each([
     { name: "dir", dirLength: 200_000, pathLength: 1 },
-    { name: "dir-and-path", dirLength: 0, pathLength: maxPathBytes - 8 },
+    { name: "dir-and-path", dirLength: 0, pathLength: maxPathBytes - 1 - process.cwd().length },
   ])("HTMLServerManifestPathTooLong/$name", async ({ dirLength, pathLength }) => {
     await using proc = Bun.spawn({
       cmd: [

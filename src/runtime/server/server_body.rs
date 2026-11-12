@@ -621,17 +621,17 @@ impl AnyRoute {
             base_dir
         };
 
-        let Some(abs_path) =
-            paths::resolve_path::join_abs_string_checked::<paths::platform::Loose>(
-                base_dir,
-                &[path_slice],
-            )
-            .filter(|abs_path| abs_path.len() < paths::MAX_PATH_BYTES)
-        else {
+        let mut long_path: Vec<u8> = Vec::new();
+        let abs_path = paths::resolve_path::join_abs_string_spill::<paths::platform::Loose>(
+            base_dir,
+            &mut long_path,
+            &[path_slice],
+        );
+        if abs_path.len() >= paths::MAX_PATH_BYTES {
             return Err(init_ctx
                 .global
                 .throw_invalid_arguments(format_args!("Bundled file path is too long")));
-        };
+        }
         if bundle_dir.is_some() && !paths::is_absolute(path_slice) {
             path = Node::PathOrFileDescriptor::Path(Node::PathLike::owned(abs_path.to_vec()));
         }
@@ -718,22 +718,33 @@ impl AnyRoute {
                 .global
                 .throw_invalid_arguments(format_args!("Bundled file path is too long")));
         }
-        // A copied or re-bundled server file has no page under `dir`: then the cwd, as without `dir`.
-        let bundle_dir = dir
-            .filter(|dir| {
-                !strings::contains_char(index.slice(), 0)
-                    && sys::exists(
+        // A copied or re-bundled server file has none of its files under `dir`: then the cwd, as
+        // without `dir`.
+        let mut bundle_dir = dir.map(|dir| {
+            Box::<[u8]>::from(
+                paths::resolve_path::join_abs_string::<paths::platform::Loose>(&dir, &[b"."]),
+            )
+        });
+        if let Some(dir) = bundle_dir.as_deref() {
+            let mut iter = files.array_iterator(init_ctx.global)?;
+            while let Some(file_entry) = iter.next()? {
+                let Some(file_path) = file_entry.get_optional_slice(init_ctx.global, b"path")?
+                else {
+                    continue;
+                };
+                if strings::contains_char(file_path.slice(), 0)
+                    || !sys::exists(
                         paths::resolve_path::join_abs_string::<paths::platform::Loose>(
                             dir,
-                            &[index.slice()],
+                            &[file_path.slice()],
                         ),
                     )
-            })
-            .map(|dir| {
-                Box::<[u8]>::from(
-                    paths::resolve_path::join_abs_string::<paths::platform::Loose>(&dir, &[b"."]),
-                )
-            });
+                {
+                    bundle_dir = None;
+                    break;
+                }
+            }
+        }
         let mut iter = files.array_iterator(init_ctx.global)?;
         let mut html_route: Option<AnyRoute> = None;
         while let Some(file_entry) = iter.next()? {

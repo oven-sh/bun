@@ -1797,7 +1797,6 @@ function stopReadingSharedStdio(stdio) {
     if (typeof readStop !== "function") continue;
     readStop.$call(stream);
     stream.pause();
-    stream._readableState.reading = false;
   }
 }
 

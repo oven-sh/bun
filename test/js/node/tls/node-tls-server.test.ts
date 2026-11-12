@@ -5223,6 +5223,24 @@ describe("an accepted socket whose stream state changes before or during its han
     await endBothSides(client, socket);
   });
 
+  // Bun only, like the 'connection' row above.
+  it.each([
+    ["resume()", (socket: TLSSocket) => socket.resume()],
+    ["read(0)", (socket: TLSSocket) => socket.read(0)],
+  ] as const)(
+    "pauseOnConnect: resume() starts reading after a %s in the 'connection' listener",
+    async (_, connection) => {
+      using t = await accept({ pauseOnConnect: true, on: { connection } });
+      const { client, socket } = t;
+      expect(socket.isPaused()).toBe(true);
+      const received = once(socket, "data");
+      socket.resume();
+      client.write("hello");
+      expect(String((await received)[0])).toBe("hello");
+      await endBothSides(client, socket);
+    },
+  );
+
   // Node's TLSWrap reads ahead. Ours stops reading once the handshake completed (#39830).
   it.todo("pauseOnConnect: a socket still paused emits 'end' when the peer ends", async () => {
     using t = await accept({ pauseOnConnect: true });

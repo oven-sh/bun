@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { once } from "node:events";
+import { connect, createServer, type AddressInfo } from "node:net";
 
 // connect_finish must tear down a still-live previous native socket before
 // reusing the wrapper, not alias two native sockets onto one ext slot.
@@ -97,6 +99,28 @@ describe.concurrent("socket.connect() on an already-connected socket", () => {
       stderr,
       exitCode: 0,
     });
+  });
+
+  it("resume() reads the new connection of a socket that was paused while it read the previous one", async () => {
+    let connections = 0;
+    await using server = createServer(socket => {
+      socket.on("error", () => {});
+      if (++connections === 2) socket.end("hello");
+    }).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const socket = connect(port, "127.0.0.1");
+    try {
+      await once(socket, "connect");
+      socket.pause();
+      socket.connect(port, "127.0.0.1");
+      await once(socket, "connect");
+      const received = once(socket, "data");
+      socket.resume();
+      expect(String((await received)[0])).toBe("hello");
+    } finally {
+      socket.destroy();
+    }
   });
 
   it("does not crash when reconnecting while the first connect is still in flight", async () => {

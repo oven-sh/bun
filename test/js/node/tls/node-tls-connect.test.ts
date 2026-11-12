@@ -6876,6 +6876,14 @@ describe("a dialed socket paused before its handshake completed", () => {
     await roundTripAfterResume(client, socket);
   });
 
+  it("pauseOnConnect: resume() starts reading after a read(0) in the 'connect' listener", async () => {
+    using t = await dial({ pauseOnConnect: true, onConnect: client => client.read(0) });
+    const { client, socket } = t;
+    expect(client.isPaused()).toBe(true);
+    await writeReply(socket);
+    await roundTripAfterResume(client, socket);
+  });
+
   it("pauseOnConnect: a resume() before 'secureConnect' is not undone by the handshake", async () => {
     const received = Promise.withResolvers<string>();
     using t = await dial({

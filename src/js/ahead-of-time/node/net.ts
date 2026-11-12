@@ -1084,7 +1084,8 @@ function onClientHandshake(
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1697-L1698
     self.secureConnecting = false;
     // pauseOnConnect stopped the handle as the handshake completed, whatever resume() did before that.
-    if (!self.isPaused()) readStart(self, socket);
+    if (self.isPaused()) self._readableState.reading = false;
+    else readStart(self, socket);
     self.emit(kSecureConnectDone);
     self.emit("secureConnect", verifyError);
     const pendingSession = self[kpendingSession];
@@ -1145,6 +1146,8 @@ function establishedTLSError(self: $Node.Socket, error: SystemError | undefined)
 
 function readStop(self: $Node.Socket, handle: SocketHandle | null) {
   handle?.pause?.();
+  // Without onread only _read() starts the handle again, and a read in progress keeps read() from calling it.
+  if (self[kOnreadBuffer] === undefined) self._readableState.reading = false;
   // A socket over a generic duplex has no fd and never held the loop.
   if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return;
   self[kPausedUnref] = true;

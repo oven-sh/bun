@@ -400,7 +400,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // the global `Loader` would let user code dereference a non-object
             // and trip JSValue::synthesizePrototype's isSymbol() debug assert.
             JSC::Options::exposeInternalModuleLoader() = false;
-            JSC::Options::useSharedArrayBuffer() = true;
+            JSC::Options::alwaysUseSharedArrayBuffer() = true;
             JSC::Options::useJITCage() = false;
 #if defined(BUN_DISABLE_SHADOW_REALM)
             JSC::Options::useShadowRealm() = false;
@@ -1675,7 +1675,7 @@ JSC_DEFINE_CUSTOM_SETTER(errorConstructorPrepareStackTraceSetter,
 
 // onmessage/onerror are CustomValue properties, so JSC invokes these callbacks
 // with the property receiver as thisValue, which is not necessarily the global
-// object: `new Proxy(globalThis, {}).onmessage = fn` passes the Proxy.
+// object: the global of `vm.createContext(globalThis)` as a Reflect.set receiver.
 static Zig::GlobalObject* globalObjectForEventHandler(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue thisValue)
 {
     if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(JSValue::decode(thisValue)))

@@ -4695,10 +4695,20 @@ describe.concurrent("a spy on an export of a module that a mock patches in place
           export function spyOnModuleObjectThatNothingKeeps(path) {
             const require = createRequire(import.meta.url);
             const own = require(path);
-            const spy = spyOn(require.cache[require.resolve(path)], "exports");
+            const moduleObject = require.cache[require.resolve(path)];
+            const spy = spyOn(moduleObject, "exports");
             mock.module(path, () => ({ greet: () => "mocked" }));
             delete require.cache[require.resolve(path)];
-            return { own, spy };
+            return { own, spy, moduleObject: new WeakRef(moduleObject) };
+          }
+          // A WeakRef keeps its object to the end of the job that made it or read it.
+          export async function isCollected(ref) {
+            for (let turns = 0; turns < 10; turns++) {
+              await new Promise(resolve => setImmediate(resolve));
+              Bun.gc(true);
+              if (!ref.deref()) return true;
+            }
+            return false;
           }
         `,
         "preload.ts": `
@@ -4707,10 +4717,10 @@ describe.concurrent("a spy on an export of a module that a mock patches in place
         `,
         "1.test.ts": `
           import { expect, jest, test, vi } from "bun:test";
-          import { spyOnModuleObjectThatNothingKeeps } from "./spied.ts";
+          import { isCollected, spyOnModuleObjectThatNothingKeeps } from "./spied.ts";
           test("requireActual() and importActual() give the spy until its restore", async () => {
-            const { own, spy } = spyOnModuleObjectThatNothingKeeps("./of-file.cjs");
-            Bun.gc(true);
+            const { own, spy, moduleObject } = spyOnModuleObjectThatNothingKeeps("./of-file.cjs");
+            expect([await isCollected(moduleObject), await isCollected(globalThis.ofPreload.moduleObject)]).toEqual([true, true]);
             expect(jest.requireActual("./of-file.cjs")).toBe(spy);
             expect((await vi.importActual("./of-file.cjs")).default).toBe(spy);
             expect(jest.requireActual("./of-preload.cjs")).toBe(globalThis.ofPreload.spy);

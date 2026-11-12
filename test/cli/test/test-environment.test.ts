@@ -974,6 +974,8 @@ describe.concurrent("test environment", () => {
           constructor(...args) {
             super(...args);
             open.add(this);
+            // In a file, \`window\` is the file's global. This is the way to the window itself.
+            this.document.ownerWindow = this;
             const { close } = this.happyDOM;
             this.happyDOM.close = async () => {
               await close();
@@ -988,7 +990,7 @@ describe.concurrent("test environment", () => {
           import { afterAll, test } from "bun:test";
           import { heapStats } from "bun:jsc";
           test("the window reaches the file's global", () => {
-            window.file = globalThis;
+            document.ownerWindow.file = globalThis;
           });
           afterAll(() => {
             Bun.gc(true);
@@ -1003,6 +1005,38 @@ describe.concurrent("test environment", () => {
     // The count is measured before the file's own window closes, so only the earlier files' globals can be gone.
     expect(Math.max(...globals)).toBeLessThanOrEqual(globals[0] + 1);
     expect(summary(stderr)).toEqual([`${files} pass`, "0 fail"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // happy-dom before 13.6 has no happyDOM.close(), and before 13 no happyDOM.abort() either.
+  test.each([
+    [
+      "13.0",
+      `this.happyDOM = { abort: this.happyDOM.abort }; this.close = () => console.log("close", this.environment);`,
+      ["abort", "close"],
+    ],
+    ["12", `this.happyDOM = { cancelAsync: () => console.log("cancelAsync", this.environment) };`, ["cancelAsync"]],
+  ])("--isolate: a window of happy-dom %s is closed as that version allows", async (_, patch, steps) => {
+    using dir = tempDir("test-environment", {
+      ...fakePackages,
+      "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
+        const { Window } = exports;
+        exports.Window = class extends Window {
+          constructor(...args) {
+            super(...args);
+            ${patch}
+          }
+        };`,
+      "1.test.js": `// ${VITEST} happy-dom\n${logEnvironment}`,
+      "2.test.js": logEnvironment,
+    });
+    const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate");
+    expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
+      "1.test.js happy-dom#1 http://localhost:3000",
+      ...steps.map(step => `${step} happy-dom#1`),
+      "2.test.js node ",
+    ]);
+    expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
     expect(exitCode).toBe(0);
   });
 

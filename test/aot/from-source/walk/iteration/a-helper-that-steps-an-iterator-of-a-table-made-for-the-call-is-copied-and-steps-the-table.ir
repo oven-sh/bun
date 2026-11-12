@@ -1,0 +1,35 @@
+# -- source: main.cjs
+# 'use strict';
+# function listOf(steps, change) { const list = []; for (const step of steps) list.push(change ? change(step) : step); return list; }
+# function ofValues(first) { const table = new Map([['a', first], ['b', 2]]); return listOf(table.values()); }
+# function ofMembers(first) { const members = new Set([first, 6]); return listOf(members.values(), member => member + 1); }
+# function keptBeside(first) { const table = new Map([['a', first]]); const steps = table.values(); const list = listOf(steps); return list.length + (steps.next().done ? 0 : 1); }
+# function madeInFront(first) { const table = new Map([['a', first]]); const steps = table.keys(); let count = 0; for (let turn = 0; turn < 2; turn++) count += listOf(steps).length; return count; }
+# globalThis.kept = listOf;
+# print([ofValues(1).join(), ofMembers(5).join(), keptBeside(1), madeInFront(1), listOf('xy').join(), listOf([7]).join()].join(' '));
+# -- end of source
+# A helper whose for-of opens its parameter, handed `table.values()`: the call made an iterator through the run time and every step went through the library's stepIterator().
+# The helper is copied where the iterator was made for that call alone, and the copy steps the table: no iterator is made. An iterator that the caller names again is stepped as before.
+# f1 = listOf, f2 = ofValues, f3 = ofMembers, f4 = keptBeside, f5 = madeInFront
+# RUN(COUNT): compile IteratorAllocationsElidedInInlinees mechanisms=all
+# COUNT: statistic IteratorAllocationsElidedInInlinees 2
+# RUN(VALUES): walk f2 mechanisms=all
+# VALUES-LABEL: code f2:Body
+# VALUES-NOT: inlineBuiltin=MapIterator
+# VALUES: = MapNext
+# VALUES-NOT: function=f1
+# RUN(MEMBERS): walk f3 mechanisms=all
+# MEMBERS-LABEL: code f3:Body
+# MEMBERS-NOT: inlineBuiltin=SetIterator
+# MEMBERS: = SetNext
+# MEMBERS-NOT: function=f1
+# RUN(BESIDE): walk f4 mechanisms=all
+# BESIDE-LABEL: code f4:Body
+# BESIDE: inlineBuiltin=MapIterator
+# BESIDE-NOT: = MapNext
+# RUN(FRONT): walk f5 mechanisms=all
+# FRONT-LABEL: code f5:Body
+# FRONT: inlineBuiltin=MapIterator
+# FRONT-NOT: = MapNext
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1,2 6,7 1 1 x,y 7

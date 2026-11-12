@@ -1,0 +1,17 @@
+# what arrives is a generator or an object with a next of its own: nothing is proven of it, and a generator is what is written. The step is tried all the same, and asks for the class too: the whole question, IsUnmodifiedGenerator, which is the one that is not printed
+# -- source: next-written-by-hand-on-what-is-only-expected-to-be-a-generator-asks-for-the-class.ts
+# declare function sink(...values: unknown[]): void;
+# function* count(n: number): Generator<number, string, number | undefined> { let sum = 0; for (let i = 0; i < n; i++) sum += (yield i) ?? 0; return "sum " + sum; }
+# function drive(walk: Generator<number, string, number | undefined>) { let n = 0; while (!walk.next(1).done) n++; return n; }
+# let k = 0; const other = { next() { return { value: k, done: k++ > 2 }; } } as any;
+# sink(drive(count(4)), drive(other));
+# -- end of source
+# f1 = count, f2 = drive
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: b0([[walk]]: L{{*}}|Generator 
+# CHECK: = StepGenerator [[walk]], 
+# RUN(WHOLE): walk f2 mechanisms=all
+# WHOLE-NOT: check=IsUnmodified 
+# RUN(NONE): walk f2 mechanisms=all
+# NONE-NOT: = NewObject

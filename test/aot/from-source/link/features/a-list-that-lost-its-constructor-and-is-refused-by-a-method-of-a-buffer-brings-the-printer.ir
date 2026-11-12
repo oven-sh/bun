@@ -1,0 +1,7 @@
+# equals() goes by its name: no row is applied; its refusal finds no constructor in the list and hands it to the formatter, which calls the method of the address: util.inspect measures texts by Bun.stringWidth
+# -- source: a-list-that-lost-its-constructor-and-is-refused-by-a-method-of-a-buffer-brings-the-printer.ts
+# const list = [new URL("http://made.up/a")]; (list as any).constructor = undefined; (globalThis as any).kept = Buffer.alloc(1); try { (globalThis as any).kept.equals(list as any); } catch (error) { console.log(String(error)); }
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by NativeNewCppFunctionStringWidthCppJsFunctionBunStringWidth

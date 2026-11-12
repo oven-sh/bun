@@ -1,0 +1,12 @@
+# -- source: the-lie-that-an-element-beside-a-sum-comes-off-a-list-of-numbers-is-refused-by-the-form-of-the-code.cjs
+# "use strict";
+# function lastLabel(list, names, t) { let last = "", sum = t & 1; for (let k = 0; k < 40; k++) { sum += list[k & 1] * 2; last = list[k & 3] + names[0]; } return sum + "|" + last; }
+# print(lastLabel([1.5, 2.5, 3.5], ["x", "y"], 3));
+# -- end of source
+# The program is that of the neighboring file, beside-an-element-off-a-list-that-holds-a-text-the-left-side-of-a-sum-keeps-its-hole.ir.
+# Fault injection, testing=AssumeNumericAddends: the fault drops one safeguard of the lookahead at an addition and keeps the others.
+# The dropped safeguard requires that the element on the other side comes from an array of numbers that a hoisted guard has tested.
+# The left read is then built as a read that returns NaN for a hole, so this program does reach that safeguard.
+# The check of the form of the code rejects the build: such a read may feed no operation that distinguishes NaN from undefined.
+# DIAGNOSTIC: OpcodeNotInForm
+# RUN: walk f1 mechanisms=all testing=AssumeNumericAddends

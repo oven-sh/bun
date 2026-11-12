@@ -142,102 +142,66 @@ console.log(lines.join("\n"));
 
 // GENERATED: Application create status whatIsThis newRes
 // CHECK-LABEL: function {{*}}name="Application"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
 // CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_1]] flags=[IsExpected]}
-// CHECK-NEXT: v5 = Builtin builtin=Object
-// CHECK-NEXT: v6 = Builtin builtin=ObjectCreate
-// CHECK-NEXT: v7 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v8 = CheckInitialized v7 name="answers"
-// CHECK-NEXT: v9 = Call v6, v5, v8 calleeName="Object.create"
-// CHECK-NEXT: PropSet v4, v9 key="answers"
-// CHECK-NEXT: v11 = Undefined
-// CHECK-NEXT: v12 = TypeTest v11 testedType=object
-// CHECK-NEXT: Branch v12 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v13):
-// CHECK-NEXT: Jump -> next b4(v13)
-// CHECK-NEXT: b3(v14):
-// CHECK-NEXT: Jump -> next b4(v3)
-// CHECK-NEXT: b4(v15):
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="create"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=2 thisType={type=[[L_1]] flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|number|string|symbol|bigint|[[L_3]] flags=[IsExpected]}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: [[L_1]], v1: anything, v2: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = Builtin builtin=Object
-// CHECK-NEXT: v4 = Builtin builtin=ObjectCreate
-// CHECK-NEXT: v5 = Convert v0 declared={type=undefined|null|[[L_1]] flags=[IsExpected]}
-// CHECK-NEXT: v6 = PropGet v5 key="answers"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v8 = Call v4, v3, v7 calleeName="Object.create"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|number|string|symbol|bigint|[[L_3]] flags=[IsExpected]}
-// CHECK-NEXT: v10 = Convert v0 declared={type=undefined|null|[[L_1]] flags=[IsExpected]}
-// CHECK-NEXT: PropSet v9, v10 key="app"
-// CHECK-NEXT: PropSet v9, v1 key="req"
-// CHECK-NEXT: PropSet v9, v2 key="res"
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="status"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_5]] flags=[IsExpected]}
-// CHECK-NEXT: v2 = PropGet v1 key="res"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|number|string|symbol|bigint|[[L_6]] flags=[IsExpected]}
-// CHECK-NEXT: v4 = PropGet v3 key="code"
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="status"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Convert v0 declared={type=undefined|null|[[L_5]] flags=[IsExpected]}
-// CHECK-NEXT: v3 = PropGet v2 key="sent"
-// CHECK-NEXT: v4 = ToBoolean v3
-// CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v5):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v6 = Undefined
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: b4(v7):
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v8 = Convert v0 declared={type=undefined|null|[[L_5]] flags=[IsExpected]}
-// CHECK-NEXT: v9 = Boolean boolean=true
-// CHECK-NEXT: PropSet v8, v9 key="_explicitStatus"
-// CHECK-NEXT: v11 = Convert v0 declared={type=undefined|null|[[L_5]] flags=[IsExpected]}
-// CHECK-NEXT: v12 = PropGet v11 key="res"
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|number|string|symbol|bigint|[[L_6]] flags=[IsExpected]}
-// CHECK-NEXT: PropSet v13, v1 key="code"
-// CHECK-NEXT: v15 = Undefined
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="whatIsThis"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_5]] flags=[IsExpected]}
-// CHECK-NEXT: v2 = TypeOf v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]}
+// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]]}
+// CHECK-NEXT: v4 = Builtin builtin=Object
+// CHECK-NEXT: v5 = Builtin builtin=ObjectCreate
+// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_2]]
+// CHECK-NEXT: v7 = CheckInitialized v6 name="answers"
+// CHECK-NEXT: v8 = Call v5, v4, v7 calleeName="Object.create"
+// CHECK-NEXT: PropSet v3, v8 key="answers"
+// CHECK-NEXT: v10 = Undefined
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="newRes"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=undefined|null|[[L_8]] flags=[IsExpected]}] functionTypes={{*}}[[f_9]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Data data=[[d_10]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_8]] flags=[IsExpected]}
+// CHECK-LABEL: function {{*}}name="create"
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasThis, HasExplicitName] length=2 thisType={type=[[L_1]] flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: [[L_1]], v1: anything, v2: anything):
+// CHECK-NEXT: v3 = Builtin builtin=ObjectCreate
+// CHECK-NEXT: v4 = PropGet v0 key="answers"
+// CHECK-NEXT: v5 = NewObject layout=[[L_3]]
+// CHECK-NEXT: SetLiteralPrototype v5, v4 [refusesOtherValues]
+// CHECK-NEXT: v7 = FinishObject v5
+// CHECK-NEXT: PropSet v7, v0 key="app"
+// CHECK-NEXT: PropSet v7, v1 key="req"
+// CHECK-NEXT: PropSet v7, v2 key="res"
+// CHECK-NEXT: Return v7
+// CHECK-NEXT: }
+// CHECK-LABEL: function {{*}}name="status"
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: anything):
+// CHECK-NEXT: v1 = PropGet v0 key="res"
+// CHECK-NEXT: v2 = PropGet v1 key="code"
+// CHECK-NEXT: Return v2
+// CHECK-NEXT: }
+// CHECK-LABEL: function {{*}}name="status"
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: anything, v1: anything):
+// CHECK-NEXT: v2 = PropGet v0 key="sent"
+// CHECK-NEXT: v3 = ToBoolean v2
+// CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+// CHECK-NEXT: b1(v4):
+// CHECK-NEXT: v5 = Undefined
+// CHECK-NEXT: Return v5
+// CHECK-NEXT: b2(v6):
+// CHECK-NEXT: v7 = Boolean boolean=true
+// CHECK-NEXT: PropSet v0, v7 key="_explicitStatus"
+// CHECK-NEXT: v9 = PropGet v0 key="res"
+// CHECK-NEXT: PropSet v9, v1 key="code"
+// CHECK-NEXT: v11 = Undefined
+// CHECK-NEXT: Return v11
+// CHECK-NEXT: }
+// CHECK-LABEL: function {{*}}name="whatIsThis"
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: anything):
+// CHECK-NEXT: v1 = TypeOf v0
 // CHECK-NEXT: Return v1
+// CHECK-NEXT: }
+// CHECK-LABEL: function {{*}}name="newRes"
+// CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0():
+// CHECK-NEXT: v0 = Data data=[[d_4]]
+// CHECK-NEXT: Return v0
 // CHECK-NEXT: }

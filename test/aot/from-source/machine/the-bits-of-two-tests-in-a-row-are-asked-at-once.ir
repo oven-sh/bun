@@ -1,0 +1,141 @@
+# -- source: the-bits-of-two-tests-in-a-row-are-asked-at-once.ts
+# declare function print(line: unknown): void;
+# function kindOf(flags: number): number { flags |= 0; return flags & 1 ? 1 : flags & 6 ? 2 : flags & 8 ? 3 : flags & 48 ? 4 : flags & 64 ? 5 : 6; }
+# (globalThis as any).keep = [kindOf];
+# const asked: (flags: number) => number = (globalThis as any).keep[0];
+# let said = "";
+# for (let flags = 0; flags < 128; flags++) said += asked(flags);
+# print(said);
+# -- end of source
+# f1 = kindOf
+# `flags & A ? .. : flags & B ? .. : ..`: two tests of bits of one word that stand in a row are asked at once: `flags & (A | B)`. Where no bit of the two is set, which is one test in place of two, the
+# way goes on behind both; where one is set, the first test by itself tells the two apart. No test more is written: the two masks are changed where they stand. A test that asks for two may be joined
+# again: 1 | 6 | 8 = 15, 48 | 64 = 112: whoever has none of the seven bits is asked twice in place of five times.
+# The answers: every word of seven bits, so each way out alone, several bits at once (the first written wins), and none.
+# RUN: allocate f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK-NOT: BitAnd({{*}}, 8)
+# CHECK-NOT: BitAnd({{*}}, 64)
+# CHECK: Branch BitAnd({{*}}, 15) -> unlikely
+# CHECK: Branch BitAnd({{*}}, 112) -> unlikely
+# CHECK: Branch BitAnd({{*}}, 48)
+# CHECK: Branch BitAnd({{*}}, 1)
+# CHECK: Branch BitAnd({{*}}, 6)
+# CHECK-NOT: BitAnd({{*}}, 8)
+# CHECK-NOT: BitAnd({{*}}, 64)
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 61212121312121214121212131212121412121213121212141212121312121215121212131212121412121213121212141212121312121214121212131212121
+
+module m0 path="the-bits-of-two-tests-in-a-row-are-asked-at-once.ts" displayPath="the-bits-of-two-tests-in-a-row-are-asked-at-once.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @193
+    v3 = PropGet v2 key="globalThis" [isFreeName] @193
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]} @193
+    v5 = NewArray v1 contents=anything @219
+    PropSet v4, v5 key="keep" @193
+    v7 = Builtin builtin=GlobalThis @271
+    v8 = PropGet v7 key="globalThis" [isFreeName] @271
+    v9 = Convert v8 declared={type=builtin(GlobalThis) flags=[IsExpected]} @271
+    v10 = PropGet v9 key="keep" @271
+    v11 = Integer @270
+    v12 = ElemGet v10, v11 @290
+    v13 = Convert v12 declared={type=undefined|null|function flags=[OmitsNull, OmitsUndefined]} @270
+    v14 = String string="" @310
+    v15 = Convert v14 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @310
+    v16 = Integer @331
+    v17 = Convert v16 declared={type=number} @331
+    Jump -> next b1(v15, v17) @323
+  b1(v18: undefined|null|string, v19: number):
+    LoopHint @323
+    v21 = Integer integer=128 @342
+    v22 = Less v19, v21 @342
+    Branch v22 -> taken b2(), notTaken b3() @342
+  b2():
+    v23 = Call v13, -, v19 calleeName="asked" @364
+    v24 = Add v18, v23 @364
+    v25 = Convert v24 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @356
+    v26 = Increment v19 @347
+    v27 = Convert v26 declared={type=number} @347
+    Jump -> next b1(v25, v27) @347
+  b3():
+    v28 = Builtin builtin=GlobalThis @378
+    v29 = PropGet v28 key="print" [isFreeName] @378
+    v30 = Call v29, -, v18 calleeName="print" @378
+    v31 = Undefined @378
+    Return v31 @378
+}
+function f1 name="kindOf" module=m0 position=45 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer @95
+    v2 = BitOr v0, v1 @95
+    v3 = Convert v2 declared={type=number} @86
+    v4 = Integer integer=1 @113
+    v5 = BitAnd v3, v4 @113
+    v6 = ToBoolean v5 @105
+    Branch v6 -> taken b1(| 0), notTaken b2(| 0) @105
+  b1(v7):
+    v8 = Integer integer=1 @117
+    Jump -> next b11(v8) @117
+  b2(v9):
+    v10 = Integer integer=6 @129
+    v11 = BitAnd v3, v10 @129
+    v12 = ToBoolean v11 @121
+    Branch v12 -> taken b3(| 0), notTaken b4(| 0) @121
+  b3(v13):
+    v14 = Integer integer=2 @133
+    Jump -> next b11(v14) @133
+  b4(v15):
+    v16 = Integer integer=8 @145
+    v17 = BitAnd v3, v16 @145
+    v18 = ToBoolean v17 @137
+    Branch v18 -> taken b5(| 0), notTaken b6(| 0) @137
+  b5(v19):
+    v20 = Integer integer=3 @149
+    Jump -> next b11(v20) @149
+  b6(v21):
+    v22 = Integer integer=48 @161
+    v23 = BitAnd v3, v22 @161
+    v24 = ToBoolean v23 @153
+    Branch v24 -> taken b7(| 0), notTaken b8(| 0) @153
+  b7(v25):
+    v26 = Integer integer=4 @166
+    Jump -> next b11(v26) @166
+  b8(v27):
+    v28 = Integer integer=64 @178
+    v29 = BitAnd v3, v28 @178
+    v30 = ToBoolean v29 @170
+    Branch v30 -> taken b9(| 0), notTaken b10(| 0) @170
+  b9(v31):
+    v32 = Integer integer=5 @183
+    Jump -> next b11(v32) @183
+  b10(v33):
+    v34 = Integer integer=6 @187
+    Jump -> next b11(v34) @187
+  b11(v35):
+    v36 = Convert v35 declared={type=number} @187
+    Return v36 @187
+}
+function f2 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f3 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f3 visibility=Private

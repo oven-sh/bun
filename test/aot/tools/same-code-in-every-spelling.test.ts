@@ -43,6 +43,15 @@ describe("respell-property-names", () => {
     });
   });
 
+  test("what is updated is never named by a template", () => {
+    expect(inEach("a.b += a.c; a[`b`]++; --super.d; (a.e as number) ||= 1; a.f = 2;")).toEqual({
+      names: "a.b += a.c; a.b++; --super.d; (a.e as number) ||= 1; a.f = 2;",
+      strings: 'a["b"] += a["c"]; a["b"]++; --super["d"]; (a["e"] as number) ||= 1; a["f"] = 2;',
+      computed: 'a["b"] += a["c"]; a["b"]++; --super["d"]; (a["e"] as number) ||= 1; a["f"] = 2;',
+      templates: 'a["b"] += a[`c`]; a["b"]++; --super["d"]; (a["e"] as number) ||= 1; a[`f`] = 2;',
+    });
+  });
+
   test("keys of literals, classes and patterns", () => {
     expect(inEach('const { p, q: r } = { p, "q": 1, m() {} }; class C { f = 1; static ["s"]() {} }')).toEqual({
       names: "const { p, q: r } = { p, q: 1, m() {} }; class C { f = 1; static s() {} }",

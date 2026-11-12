@@ -1,0 +1,358 @@
+// Cut by a script from the declaration files of json-schema-to-ts 3.1.1 and ts-algebra 2.0.0, both by Thomas Aribart, both under the MIT License: see LICENSE beside
+// this file. What FromSchema and JSONSchema reach is in one file, the names of ts-algebra begin with M_, and `unknown` stands for the body of every alias without which the
+// checker of before still did not end. Not for use as types.
+export type FromSchema<SCHEMA extends JSONSchema, OPTIONS extends unknown = FromSchemaDefaultOptions> = M_$Resolve<
+  ParseSchema<SCHEMA, ParseOptions<SCHEMA, OPTIONS>>
+>;
+export type FromSchemaDefaultOptions = {
+  parseNotKeyword: false;
+  parseIfThenElseKeywords: false;
+  keepDefaultedPropertiesOptional: false;
+  references: false;
+  deserialize: false;
+};
+export type JSONSchema =
+  | boolean
+  | Readonly<{
+      $id?: string | undefined;
+      $ref?: string | undefined;
+      $schema?: string | undefined;
+      $comment?: string | undefined;
+      type?: unknown | readonly unknown[];
+      const?: unknown;
+      enum?: unknown;
+      multipleOf?: number | undefined;
+      maximum?: number | undefined;
+      exclusiveMaximum?: number | undefined;
+      minimum?: number | undefined;
+      exclusiveMinimum?: number | undefined;
+      maxLength?: number | undefined;
+      minLength?: number | undefined;
+      pattern?: string | undefined;
+      items?: JSONSchema | readonly JSONSchema[];
+      additionalItems?: JSONSchema;
+      contains?: JSONSchema;
+      maxItems?: number | undefined;
+      minItems?: number | undefined;
+      uniqueItems?: boolean | undefined;
+      maxProperties?: number | undefined;
+      minProperties?: number | undefined;
+      required?: readonly string[];
+      properties?: Readonly<Record<string, JSONSchema>>;
+      patternProperties?: Readonly<Record<string, JSONSchema>>;
+      additionalProperties?: JSONSchema;
+      unevaluatedProperties?: JSONSchema;
+      dependencies?: Readonly<Record<string, JSONSchema | readonly string[]>>;
+      propertyNames?: JSONSchema;
+      if?: JSONSchema;
+      then?: JSONSchema;
+      else?: JSONSchema;
+      allOf?: readonly JSONSchema[];
+      anyOf?: readonly JSONSchema[];
+      oneOf?: readonly JSONSchema[];
+      not?: JSONSchema;
+      format?: string | undefined;
+      contentMediaType?: string | undefined;
+      contentEncoding?: string | undefined;
+      definitions?: Readonly<Record<string, JSONSchema>>;
+      title?: string | undefined;
+      description?: string | undefined;
+      default?: unknown;
+      readOnly?: boolean | undefined;
+      writeOnly?: boolean | undefined;
+      examples?: readonly unknown[];
+      nullable?: boolean;
+    }>;
+export type M_$Intersect<META_TYPE_A, META_TYPE_B> = META_TYPE_A extends M_NeverType
+  ? META_TYPE_A
+  : META_TYPE_A extends M_AnyType
+    ? M_IntersectAny<META_TYPE_A, META_TYPE_B>
+    : META_TYPE_A extends M_ConstType
+      ? unknown
+      : META_TYPE_A extends M_EnumType
+        ? unknown
+        : META_TYPE_A extends M_PrimitiveType
+          ? unknown
+          : META_TYPE_A extends M_ArrayType
+            ? unknown
+            : META_TYPE_A extends M_TupleType
+              ? unknown
+              : META_TYPE_A extends M_ObjectType
+                ? unknown
+                : META_TYPE_A extends M_UnionType
+                  ? unknown
+                  : M_Never;
+export type M_$Resolve<META_TYPE, OPTIONS extends unknown = unknown> = META_TYPE extends M_AnyType
+  ? M_ResolveAny<META_TYPE, OPTIONS>
+  : META_TYPE extends M_NeverType
+    ? unknown
+    : META_TYPE extends M_ConstType
+      ? unknown
+      : META_TYPE extends M_EnumType
+        ? unknown
+        : META_TYPE extends M_PrimitiveType
+          ? unknown
+          : META_TYPE extends M_ArrayType
+            ? unknown
+            : META_TYPE extends M_TupleType
+              ? unknown
+              : META_TYPE extends M_ObjectType
+                ? unknown
+                : META_TYPE extends M_UnionType
+                  ? unknown
+                  : never;
+export type M_$Union<VALUES> = M_If<
+  unknown,
+  M_Never,
+  unknown extends true
+    ? M_Never
+    : {
+        type: unknown;
+        values: VALUES;
+      }
+>;
+export type M_And<BOOL_A, BOOL_B> = BOOL_A extends true ? (BOOL_B extends true ? true : false) : false;
+export type M_Any<IS_SERIALIZED extends boolean = false, DESERIALIZED = never> = {
+  type: unknown;
+  isSerialized: IS_SERIALIZED;
+  deserialized: DESERIALIZED;
+};
+export type M_AnyType = {
+  type: unknown;
+  isSerialized: boolean;
+  deserialized: unknown;
+};
+export type M_ArrayType = {
+  type: unknown;
+  values: M_Type;
+  isSerialized: boolean;
+  deserialized: unknown;
+};
+export type M_ConstType = {
+  type: unknown;
+  value: unknown;
+  isSerialized: boolean;
+  deserialized: unknown;
+};
+export type M_Deserialized<SERIALIZABLE_META_TYPE extends unknown> = SERIALIZABLE_META_TYPE["deserialized"];
+export type M_EnumType = {
+  type: unknown;
+  values: unknown;
+  isSerialized: boolean;
+  deserialized: unknown;
+};
+export type M_If<CONDITION extends boolean, THEN, ELSE = never> = CONDITION extends true ? THEN : ELSE;
+export type M_IntersectAny<META_ANY extends M_AnyType, META_TYPE> = META_TYPE extends M_Type
+  ? META_TYPE extends M_NeverType
+    ? META_TYPE
+    : META_TYPE extends M_AnyType
+      ? M_Any<unknown, unknown>
+      : META_TYPE extends M_ConstType
+        ? unknown
+        : META_TYPE extends M_EnumType
+          ? unknown
+          : META_TYPE extends M_PrimitiveType
+            ? unknown
+            : META_TYPE extends M_ArrayType
+              ? unknown
+              : META_TYPE extends M_TupleType
+                ? unknown
+                : META_TYPE extends M_ObjectType
+                  ? unknown
+                  : META_TYPE extends M_UnionType
+                    ? unknown
+                    : M_Never
+  : M_Never;
+export type M_Never = {
+  type: M_NeverTypeId;
+};
+export type M_NeverType = M_Never;
+export type M_NeverTypeId = "never";
+export type M_ObjectType = {
+  type: unknown;
+  values: Record<string, M_Type>;
+  required: string;
+  isOpen: boolean;
+  openProps: M_Type;
+  closeOnResolve: boolean;
+  isSerialized: boolean;
+  deserialized: unknown;
+};
+export type M_PrimitiveType = {
+  type: unknown;
+  value: null | boolean | number | string;
+  isSerialized: boolean;
+  deserialized: unknown;
+};
+export type M_ResolveAny<META_ANY extends M_AnyType, OPTIONS extends unknown> = M_If<
+  M_And<OPTIONS["deserialize"], unknown>,
+  M_Deserialized<META_ANY>,
+  unknown
+>;
+export type M_TupleType = {
+  type: unknown;
+  values: M_Type[];
+  isOpen: boolean;
+  openProps: M_Type;
+  isSerialized: boolean;
+  deserialized: unknown;
+};
+export type M_Type =
+  | M_NeverType
+  | M_AnyType
+  | M_ConstType
+  | M_EnumType
+  | M_PrimitiveType
+  | M_ArrayType
+  | M_TupleType
+  | M_ObjectType
+  | M_UnionType;
+export type M_UnionType = {
+  type: unknown;
+  values: M_Type;
+};
+export type MergeSubSchema<
+  PARENT_SCHEMA extends JSONSchema,
+  SUB_SCHEMA extends JSONSchema,
+  CLEANED_SUB_SCHEMA extends JSONSchema = RemoveInvalidAdditionalProperties<RemoveInvalidAdditionalItems<SUB_SCHEMA>>,
+> = Omit<
+  PARENT_SCHEMA,
+  | keyof CLEANED_SUB_SCHEMA
+  | "additionalProperties"
+  | "patternProperties"
+  | "unevaluatedProperties"
+  | "required"
+  | "additionalItems"
+> &
+  CLEANED_SUB_SCHEMA;
+export type ParseExternalReferenceSchema<
+  REF_SCHEMA extends ReferencingSchema,
+  OPTIONS extends unknown,
+  EXTERNAL_REFERENCE_ID extends string,
+  SUB_PATH extends string | undefined,
+> = OPTIONS["references"] extends {
+  [KEY in EXTERNAL_REFERENCE_ID]: JSONSchema;
+}
+  ? ParseReference<Omit<REF_SCHEMA, "$ref">, OPTIONS, OPTIONS["references"][EXTERNAL_REFERENCE_ID], SUB_PATH>
+  : OPTIONS extends {
+        rootSchema: unknown;
+      }
+    ? unknown
+    : M_Never;
+export type ParseNullableSchema<
+  NULLABLE_SCHEMA extends unknown,
+  OPTIONS extends unknown,
+  PARSED_REST_SCHEMA = ParseSchema<Omit<NULLABLE_SCHEMA, "nullable">, OPTIONS>,
+> =
+  NULLABLE_SCHEMA extends Readonly<{
+    nullable: true;
+  }>
+    ? M_$Union<unknown | PARSED_REST_SCHEMA>
+    : PARSED_REST_SCHEMA;
+export type ParseOptions<ROOT_SCHEMA extends JSONSchema, OPTIONS extends unknown> = {
+  parseNotKeyword: OPTIONS["parseNotKeyword"] extends boolean
+    ? OPTIONS["parseNotKeyword"]
+    : FromSchemaDefaultOptions["parseNotKeyword"];
+  parseIfThenElseKeywords: OPTIONS["parseIfThenElseKeywords"] extends boolean
+    ? OPTIONS["parseIfThenElseKeywords"]
+    : FromSchemaDefaultOptions["parseIfThenElseKeywords"];
+  keepDefaultedPropertiesOptional: OPTIONS["keepDefaultedPropertiesOptional"] extends boolean
+    ? OPTIONS["keepDefaultedPropertiesOptional"]
+    : FromSchemaDefaultOptions["keepDefaultedPropertiesOptional"];
+  rootSchema: ROOT_SCHEMA;
+  references: OPTIONS["references"] extends unknown[] ? unknown : {};
+  deserialize: OPTIONS["deserialize"] extends unknown[] | false
+    ? OPTIONS["deserialize"]
+    : FromSchemaDefaultOptions["deserialize"];
+};
+export type ParseReference<
+  SCHEMA extends JSONSchema,
+  OPTIONS extends unknown,
+  REFERENCE_SOURCE extends JSONSchema,
+  PATH_IN_SOURCE extends string | undefined,
+  MATCHING_REFERENCE extends JSONSchema = PATH_IN_SOURCE extends string ? unknown : REFERENCE_SOURCE,
+> = M_$Intersect<
+  ParseSchema<MATCHING_REFERENCE, OPTIONS>,
+  ParseSchema<MergeSubSchema<MATCHING_REFERENCE, SCHEMA>, OPTIONS>
+>;
+export type ParseReferenceSchema<
+  REFERENCING_SCHEMA extends ReferencingSchema,
+  OPTIONS extends unknown,
+  REFERENCE_ID_AND_PATH extends string[] = unknown,
+> = REFERENCE_ID_AND_PATH[0] extends ""
+  ? unknown
+  : ParseExternalReferenceSchema<REFERENCING_SCHEMA, OPTIONS, REFERENCE_ID_AND_PATH[0], REFERENCE_ID_AND_PATH[1]>;
+export type ParseSchema<
+  SCHEMA extends JSONSchema,
+  OPTIONS extends unknown,
+  RESULT = JSONSchema extends SCHEMA
+    ? M_Any
+    : SCHEMA extends true | string
+      ? M_Any
+      : SCHEMA extends false
+        ? M_Never
+        : SCHEMA extends unknown
+          ? ParseNullableSchema<SCHEMA, OPTIONS>
+          : SCHEMA extends ReferencingSchema
+            ? ParseReferenceSchema<SCHEMA, OPTIONS>
+            : unknown extends true
+              ? SCHEMA extends unknown
+                ? unknown
+                : never
+              : unknown extends true
+                ? SCHEMA extends unknown
+                  ? unknown
+                  : never
+                : SCHEMA extends unknown
+                  ? unknown
+                  : SCHEMA extends unknown
+                    ? unknown
+                    : SCHEMA extends unknown
+                      ? unknown
+                      : SCHEMA extends unknown
+                        ? unknown
+                        : SCHEMA extends unknown
+                          ? unknown
+                          : SCHEMA extends unknown
+                            ? unknown
+                            : SCHEMA extends unknown
+                              ? unknown
+                              : M_Any,
+> = OPTIONS extends {
+  deserialize: unknown[];
+}
+  ? M_$Intersect<unknown, RESULT>
+  : RESULT;
+export type ReferencingSchema = JSONSchema & {
+  $ref: string;
+};
+export type RemoveInvalidAdditionalItems<SCHEMA extends JSONSchema> =
+  SCHEMA extends Readonly<{
+    items: JSONSchema | readonly JSONSchema[];
+  }>
+    ? SCHEMA extends Readonly<{
+        additionalItems: JSONSchema;
+      }>
+      ? SCHEMA
+      : SCHEMA &
+          Readonly<{
+            additionalItems: true;
+          }>
+    : SCHEMA extends boolean
+      ? SCHEMA
+      : Omit<SCHEMA, "additionalItems">;
+export type RemoveInvalidAdditionalProperties<SCHEMA extends JSONSchema> =
+  SCHEMA extends Readonly<{
+    additionalProperties: JSONSchema;
+  }>
+    ? SCHEMA extends Readonly<{
+        properties: Readonly<Record<string, JSONSchema>>;
+      }>
+      ? SCHEMA
+      : SCHEMA &
+          Readonly<{
+            properties: {};
+          }>
+    : SCHEMA extends boolean
+      ? SCHEMA
+      : Omit<SCHEMA, "additionalProperties">;

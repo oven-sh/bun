@@ -1,0 +1,20 @@
+# function use(x) { return Bun.inspect(x.console); } use(globalThis);
+# RUN: features
+# CHECK: feature Interpreter by ConsoleConsole unnamed at f1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = Call v0, -, v1 calleeName="use"
+    Return v2
+}
+function f1 name="use" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="console"
+    v2 = Builtin builtin=Bun
+    v3 = Builtin builtin=BunInspect
+    v4 = Call v3, v2, v1 calleeName="Bun.inspect"
+    Return v4
+}

@@ -1,0 +1,24 @@
+Behind vi.doUnmock() the file is the one that was loaded: no body runs again, the namespace object is the same.
+#### a.test.js
+import { test, vi } from "bun:test";
+const say = (...all) => console.log("| CASE", ...all);
+import { who, count } from "./m.js";
+import * as ns from "./m.js";
+test("t", async () => {
+  vi.doMock("./m.js", () => { console.log("| CASE factory runs"); return { who: "mock", count: () => "mock" }; });
+  say((await import("./m.js")).who);
+  vi.doUnmock("./m.js");
+  const back = await import("./m.js");
+  say(who, count(), back.who, back.count(), back === ns);
+});
+#### m.js
+console.log("| CASE m runs");
+let n = 0;
+export const who = "real";
+export function count() { return ++n; }
+#### package.json
+{ "type": "module" }
+#### z.test.js
+import { test } from "bun:test";
+import "./m.js";
+test("other file", () => {});

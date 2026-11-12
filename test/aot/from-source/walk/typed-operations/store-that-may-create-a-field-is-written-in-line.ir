@@ -1,0 +1,20 @@
+# -- source: store-that-may-create-a-field-is-written-in-line.ts
+# declare function report(value: unknown): void;
+# interface Parcel { weight: number; sent: boolean; sentAt?: number; carrier?: string; }
+# function Parcel(this: Parcel, weight: number) { this.weight = weight; this.sent = false; }
+# function mark(parcel: Parcel, at: number) { parcel.sent = true; parcel.sentAt = at; parcel.carrier = "van" + at; }
+# for (let i = 0; i < 6; i++) {
+#   const parcel = new (Parcel as any)(i) as Parcel;
+#   if (i & 1) parcel.sentAt = -1;
+#   if (i === 4) Object.freeze(parcel);
+#   if (i === 5) delete (parcel as any).sent;
+#   try { mark(parcel, i); mark(parcel, i + 10); } catch (e) { report((e as Error).constructor.name); }
+#   report(parcel);
+#   report(Object.keys(parcel).join() + ":" + JSON.stringify(parcel));
+# }
+# -- end of source
+# OPTIONS: report=Flow mechanisms=all
+# RUN: bytes-by-form
+# CHECK-NOT: the build failed
+# CHECK: PutSlotOrAdd Always Anywhere Open
+# CHECK-NOT: not named: PutSlotOrAdd

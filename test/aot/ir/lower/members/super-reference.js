@@ -18,14 +18,14 @@
 // CHECK-LABEL: function {{*}}name="updateComputed"
 // CHECK: [[updateBase]] = GetSuperBase
 // CHECK: [[called]] = Call {{*}}calleeName="k"
-// CHECK: [[isObject]] = TypeTest [[called]] testedType=object @
+// CHECK: RequireObjectCoercible [[updateBase]] nullishAccess=Update
+// CHECK-NEXT: [[isObject]] = TypeTest [[called]] testedType=object @
 // CHECK-NEXT: Branch [[isObject]] -> taken [[convert]](| 0), notTaken [[keep]](| 0)
 // CHECK: [[convert]]([[objectKey]]):
-// CHECK: RequireObjectCoercible [[updateBase]] nullishAccess=Update
 // CHECK: [[converted]] = ToPropertyKey [[objectKey]]
 // CHECK: Jump -> next [[join]]([[converted]])
 // CHECK: [[join]]([[key]]):
-// CHECK: [[before]] = SuperGet [[updateBase]], [[updateThis]], [[key]] @{{*}} callers
+// CHECK: [[before]] = SuperGet [[updateBase]], [[updateThis]], [[key]] @
 // CHECK: [[after]] = Increment [[before]]
 // CHECK: SuperSet [[updateBase]], [[updateThis]], [[after]], [[key]] @
 
@@ -61,3 +61,6 @@ export class Derived extends Base {
     super[k()]++;
   }
 }
+
+// A method has its body once reached code reads its name.
+export function readsTheNames(o) { return [o.addToName, o.readComputed, o.readName, o.storeName, o.updateComputed]; }

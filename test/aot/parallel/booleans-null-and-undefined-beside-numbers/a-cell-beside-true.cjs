@@ -1,0 +1,10 @@
+'use strict';
+const given = JSON.parse('[true,false,null,"3","x",[2]]'), k = JSON.parse('"plus"'), m = JSON.parse('"times"'), l = JSON.parse('"less"');
+const T = { plus(x, y) { return x + y; }, times(x, y) { return x * y; }, less(x, y) { return x < y; } };
+let calls = 0;
+const counted = { valueOf() { calls++; return 4; } };
+const others = [counted, 5n, Symbol('s'), undefined, given[3], given[5]];
+const n = Number(process.argv[2] ?? 3), out = [];
+const tried = (f, x, y) => { try { const value = f(x, y); return typeof value + ' ' + String(value); } catch (error) { return error.name + ' ' + error.message; } };
+for (let t = 0; t < n; t++) for (const x of given) for (const y of others) for (const name of [k, m, l]) out.push(tried(T[name], x, y), tried(T[name], y, x));
+console.log(out.join('\n') + '\n' + calls);

@@ -1,3 +1,5 @@
+// Flags: --minify-syntax
+// `bun run` minifies syntax, and a message quotes what the same build prints without --aot.
 const framesOf = error =>
   String(error.stack)
     .split("\n")

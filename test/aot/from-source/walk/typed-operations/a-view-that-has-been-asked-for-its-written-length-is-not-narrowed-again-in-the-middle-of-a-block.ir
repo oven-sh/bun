@@ -1,0 +1,12 @@
+# -- source: a-view-that-has-been-asked-for-its-written-length-is-not-narrowed-again-in-the-middle-of-a-block.ts
+# declare function sink(...values: unknown[]): void;
+# declare function key(): number;
+# function view(s: string, row: Uint32Array, turns: number): number { let t = 0; for (let i = 0; i < turns; i++) { row[7] = row[7]! + 1; const c = s.charCodeAt(i); row[i & 3] = c === c ? c : 1000; t += row[i & 3]!; } return t; }
+# sink(view("abc", new Uint32Array(8), key()));
+# -- end of source
+# The view is asked once whether it is as long as was written, and the length is narrowed at the head of the block behind that question. Where a later read meets the same question already answered, no block
+# begins: the length was narrowed again where the read stood, behind other operations of its block, and the verifier stopped the build under check=Validate and in every build with assertions.
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetTypedArrayElement {{*}}isInsideView

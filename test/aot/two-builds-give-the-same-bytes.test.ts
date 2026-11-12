@@ -2,11 +2,12 @@
 // the order in which threads finish or the folder that holds the program. The functions here keep more numbers alive across a loop than
 // there are registers, so each of them moves several values between the stack and registers at the ends of its loop: the order of such
 // moves once followed addresses.
-import { afterAll, describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported } from "./harness/commands";
+import { afterAll, test } from "./harness/default-timeout";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const numberOfFunctions = 150;
@@ -89,6 +90,88 @@ describe.skipIf(!!unsupported)("compile/aot/two-builds-give-the-same-bytes", () 
         rmSync(executable);
       }
       expect(hashes).toEqual([hashes[0], hashes[0], hashes[0]]);
+    });
+  }, 600_000);
+
+  const importsUnderMadeName = `export const which = "right.ts";\nif (process.argv[2]) setTimeout(() => import([".", process.argv[2]].join("/")), 0);\n`;
+  test.each([
+    ["a program that loads nothing", `console.log("right");\n`, isWindows ? "right.exe" : "right", []],
+    ["a program that imports under a made name", importsUnderMadeName, isWindows ? "right.exe" : "right", []],
+    ["the same, and the executable has an extension", importsUnderMadeName, "right.exe", ["--outfile", "right.exe"]],
+    [
+      "a program that loads nothing, and the names differ in case",
+      `console.log("right");\n`,
+      "Right.exe",
+      ["--outfile", "Right.exe"],
+    ],
+    [
+      "the same without an extension",
+      `console.log("right");\n`,
+      isWindows ? "Right.exe" : "Right",
+      ["--outfile", "Right"],
+    ],
+    [
+      "a program whose computed path ends as the metafile does",
+      `if (process.argv[2]) console.log(require("./" + process.argv[2] + ".json"));\n`,
+      isWindows ? "right.exe" : "right",
+      ["--metafile=meta.json"],
+    ],
+    [
+      "a program whose computed path may name what lies beside an external source map",
+      `if (process.argv[2]) import("./" + process.argv[2]);\n`,
+      isWindows ? "right.exe" : "right",
+      ["--sourcemap=external"],
+    ],
+  ])(
+    "a build over the executable of the build before, which is named as the entry point, is equal: %s",
+    async (_, text, executable, flags) => {
+      await slot(async () => {
+        using dir = tempDir("aot-same-bytes-over-the-first", { "right.ts": text });
+        const hashes: string[] = [];
+        for (let build = 0; build < 2; build++) {
+          built(
+            await spawned(
+              [bunExe(), "build", "--compile", ...withoutDebugInformation, "--aot", "./right.ts", ...flags],
+              String(dir),
+              bunEnv,
+            ),
+          );
+          hashes.push(Bun.hash(readFileSync(join(String(dir), executable))).toString(16));
+        }
+        expect(hashes[1]).toBe(hashes[0]);
+      });
+    },
+    600_000,
+  );
+
+  test("an executable takes the place of no file of its program", async () => {
+    await slot(async () => {
+      const reads = `import data from "./app" with { type: "file" };\nconsole.log((await Bun.file(data).text()).trim());\n`;
+      const files: Record<string, string> = {
+        "beside/app.mjs": reads,
+        "beside/app": "the data\n",
+        "script/cli": `console.log("cli");\n`,
+      };
+      using dir = tempDir("aot-the-file-at-the-outfile-is-kept", files);
+      const printed: string[] = [];
+      for (const [folder, entry, name, role] of [
+        ["beside", "./app.mjs", "app", "part of the program"],
+        ["script", "./cli", "cli", "an entry point"],
+      ]) {
+        const directory = join(String(dir), folder);
+        const command = [bunExe(), "build", "--compile", ...withoutDebugInformation, "--aot", entry];
+        // The default path ends with ".exe" on Windows.
+        if (!isWindows) {
+          const refused = await spawned(command, directory, bunEnv);
+          expect(refused.stderr).toContain(`error: the executable would overwrite ${name}, which is ${role}.`);
+          expect(refused.exitCode).toBe(1);
+        }
+        built(await spawned([...command, "--outfile", "out"], directory, bunEnv));
+        expect(readFileSync(join(directory, name), "utf8")).toBe(files[`${folder}/${name}`]);
+        const ran = await spawned([join(directory, isWindows ? "out.exe" : "out")], directory, bunEnv);
+        printed.push(ran.stdout.trim());
+      }
+      expect(printed).toEqual(["the data", "cli"]);
     });
   }, 600_000);
 

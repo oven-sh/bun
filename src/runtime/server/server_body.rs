@@ -4,6 +4,7 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use crate::api::js_bundler::PluginJscExt as _;
+use crate::api::standalone_graph_jsc::is_asset;
 use crate::api::{SocketAddress, js_bundler as JSBundler};
 use crate::bake::router as FrameworkRouter;
 use crate::bake::{self as bake};
@@ -883,10 +884,16 @@ impl AnyRoute {
         if let Some(file_route) = FileRoute::from_js(global, argument)? {
             return Ok(Some(AnyRoute::File(file_route)));
         }
-        match StaticRoute::from_js(global, argument)? {
-            Some(s) => Ok(Some(AnyRoute::Static(s))),
-            None => Ok(None),
+        if let Some(s) = StaticRoute::from_js(global, argument)? {
+            return Ok(Some(AnyRoute::Static(s)));
         }
+        // Like a file on disk.
+        let Some(file) = argument.as_class_ref::<Blob>().filter(|it| is_asset(it)) else {
+            return Ok(None);
+        };
+        let file = AnyBlob::Blob(file.dupe());
+        let route = StaticRoute::init_from_any_blob_with_headers(global, file, None, 200)?;
+        Ok(Some(AnyRoute::Static(route)))
     }
 }
 

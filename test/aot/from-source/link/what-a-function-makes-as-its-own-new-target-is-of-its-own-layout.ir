@@ -1,0 +1,16 @@
+# `this` in the body of Base may be an object of whatever is written below Base, or one that nobody has seen: whoever stands below brings its own. If `new Base(i)` were taken for all of that,
+# the call by name on it would have a receiver that holds what is unseen, would call unseen code, and would hand it the receiver: every layout of the row would be let go, and no method laid on a prototype would be known.
+# The construct call that has Base for its own new.target makes an object of the layout of Base, and of no other: the callee of `.first()` is the one function, and both layouts stay with compiled code.
+# -- source: why.js
+# function Base(a) { this.a = a; }
+# Base.prototype.first = function () { return this.a; };
+# function Below(a, b) { Base.call(this, a); this.b = b; }
+# Below.prototype = Object.create(Base.prototype);
+# function run(n) { let t = 0; for (let i = 0; i < n; i++) { t += new Below(i, 2).b + new Base(i).first(); } return t; }
+# sink(run(5));
+# -- end of source
+# RUN: link layouts members calls mechanisms=all
+# CHECK: layout L0 family=F0 changes=[] stays-with-compiled-code
+# CHECK: layout L1 family=F0 changes=[] stays-with-compiled-code
+# CHECK: on-prototype L0 "first" function=f4
+# CHECK: call f3 v16 -> f4

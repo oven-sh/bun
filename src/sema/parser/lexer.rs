@@ -16,7 +16,8 @@ use bun_core::strings::{
 use bun_highway::ScannerStops;
 use bun_sema::atom::{Atom, Intern};
 use bun_sema::hir::{
-    Comment, CommentDirective, CommentDirectiveKind, Diagnostic, DiagnosticKind, NodeOrName,
+    Comment, CommentDirective, CommentDirectiveKind, Diagnostic, DiagnosticKind,
+    IGNORE_COMMENT_MARKER, NodeOrName,
 };
 
 mod runtime_text;
@@ -49,6 +50,8 @@ pub(crate) struct Lexer<'a> {
     pub(crate) private_names: Vec<Atom>,
     /// `hir::File::comment_directives`
     pub(crate) comment_directives: Vec<CommentDirective>,
+    /// `hir::File::ignore_comments`
+    pub(crate) ignore_comments: Vec<(u32, u32)>,
     /// The comments before the first token.
     pub(crate) leading_comments: Vec<(u32, u32)>,
     /// `hir::File::comments`
@@ -100,6 +103,10 @@ pub(crate) struct Lexer<'a> {
     pub(crate) attach_comments: bool,
     /// `hir::rare::LEGACY_OCTAL`
     pub(crate) has_legacy_octal: bool,
+    /// A contextual keyword is written with an escape: `let`.
+    pub(crate) has_escaped_keyword: bool,
+    /// `Options::accepts_legacy_octal`
+    pub(crate) accepts_legacy_octal: bool,
     /// `Options::recovers`
     pub(crate) recovers: bool,
     /// `skipJSDocLeadingAsterisks`: the lexer is inside a type in a JSDoc comment.
@@ -303,6 +310,7 @@ impl<'a> Lexer<'a> {
             atoms,
             names,
             comment_directives: Vec::new(),
+            ignore_comments: Vec::new(),
             leading_comments: Vec::new(),
             comments: Vec::new(),
             newline_since_comment: false,
@@ -310,6 +318,8 @@ impl<'a> Lexer<'a> {
             max_relevant_node_start: 0,
             flagged: Vec::new(),
             has_legacy_octal: false,
+            has_escaped_keyword: false,
+            accepts_legacy_octal: false,
             recovers: false,
             errors: Vec::new(),
             skips_jsdoc_asterisks: false,
@@ -460,8 +470,8 @@ impl<'a> Lexer<'a> {
         if self.is_ecmascript && !self.compiles() {
             self.flagged.push((code, start as u32, end as u32));
         }
-        self.has_legacy_octal |= self.compiles();
-        self.is_ecmascript
+        self.has_legacy_octal |= self.compiles() || self.accepts_legacy_octal;
+        self.is_ecmascript || self.accepts_legacy_octal
     }
 
     /// Drops the comments from `pos` on. That text is scanned again, possibly as something else.
@@ -578,7 +588,12 @@ impl<'a> Lexer<'a> {
                     pos = next;
                     continue;
                 }
-                First::LineFeed => return self.scan_after_line_feed(next),
+                // How far a line is indented is hard to predict, so the indentation isn't skipped byte by byte.
+                First::LineFeed => {
+                    self.newline_before = true;
+                    pos = self.stops.after_blanks.next(next);
+                    continue;
+                }
                 First::CarriageReturn => {
                     self.newline_before = true;
                     pos = next;
@@ -713,23 +728,6 @@ impl<'a> Lexer<'a> {
                 }
             }
             return;
-        }
-    }
-
-    /// Scans the token after the line feed that precedes `pos`, skipping indentation and empty lines. How far a line is
-    /// indented is hard to predict, so the indentation isn't skipped byte by byte.
-    #[inline(never)]
-    fn scan_after_line_feed(&mut self, mut pos: usize) {
-        self.newline_before = true;
-        loop {
-            pos = self.stops.after_blanks.next(pos);
-            match FIRST[usize::from(self.at(pos))] {
-                // Most lines start with one of these.
-                First::Name => return self.name(pos),
-                First::CloseBrace => return self.set(T::CloseBrace, pos, pos + 1),
-                First::LineFeed | First::CarriageReturn | First::Blank => pos += 1,
-                _ => return self.scan_after_comments(pos),
-            }
         }
     }
 
@@ -958,8 +956,8 @@ impl<'a> Lexer<'a> {
 
     // ───────────────────────────── names ─────────────────────────────
 
-    /// Scans a name or keyword that starts at `start` with an ASCII letter, `_` or `$`. It's inlined into `scan` and
-    /// `scan_after_line_feed`, and like them doesn't save any registers.
+    /// Scans a name or keyword that starts at `start` with an ASCII letter, `_` or `$`. It's inlined into `scan`, and
+    /// like it doesn't save any registers.
     #[inline(always)]
     fn name(&mut self, start: usize) {
         self.has_escape = false;
@@ -972,7 +970,7 @@ impl<'a> Lexer<'a> {
         };
         let len = self.stops.after_name.run(start);
         if len >= 16 {
-            return self.long_name(start);
+            return self.long_name(start, len as usize);
         }
         let after = chunk[(len & 15) as usize];
         if after >= 0x80 || after == b'\\' {
@@ -984,19 +982,15 @@ impl<'a> Lexer<'a> {
                 self.atom = atom;
                 self.set(kind, start, start + len as usize);
             }
-            None => self.new_short_name(start, len),
+            None => self.new_short_name(start, len, words),
         }
     }
 
     /// The slow path of `name`, for a name of `len` bytes that isn't in its first slot of the table.
     #[cold]
     #[inline(never)]
-    fn new_short_name(&mut self, start: usize, len: u32) {
+    fn new_short_name(&mut self, start: usize, len: u32, words: [u64; 2]) {
         let src = self.src;
-        let Some(chunk) = src.get(start..).and_then(|rest| rest.first_chunk::<16>()) else {
-            return self.name_of_any_length(start);
-        };
-        let words = crate::names::short_words(chunk, len);
         let (atom, kind) = (self.names).short_name_slow(words, src, (start, len), self.atoms);
         self.atom = atom;
         self.set(kind, start, start + len as usize);
@@ -1004,12 +998,12 @@ impl<'a> Lexer<'a> {
 
     /// `name` for a name of 16 bytes or more.
     #[inline(never)]
-    fn long_name(&mut self, start: usize) {
+    fn long_name(&mut self, start: usize, len: usize) {
         let src = self.src;
         let Some(chunk) = (src.get(start + 16..)).and_then(|rest| rest.first_chunk::<16>()) else {
             return self.name_of_any_length(start);
         };
-        let len = self.stops.after_name.run(start) as usize;
+
         if len >= 32 {
             return self.name_of_any_length(start);
         }
@@ -1127,7 +1121,10 @@ impl<'a> Lexer<'a> {
             // wherever it can.
             kind = match kind.is_reserved_word() {
                 true => T::EscapedReservedWord,
-                false if self.is_ecmascript => T::Identifier,
+                false if self.is_ecmascript => {
+                    self.has_escaped_keyword = true;
+                    T::Identifier
+                }
                 false => return self.reject(Rejection::EscapedKeyword),
             };
         }
@@ -1356,6 +1353,16 @@ impl<'a> Lexer<'a> {
             pos += 1;
         }
         self.comment_directive(last_line, pos, end);
+        if last_line != start {
+            // A `bun-ignore` comment may go on below its first line.
+            let mut first = start + 2;
+            while first < end && matches!(src[first], b'*' | b' ' | b'\t') {
+                first += 1;
+            }
+            if first < end && src[first] == b'b' {
+                self.ignore_comment_at(first, end);
+            }
+        }
         Some(end)
     }
 
@@ -1368,6 +1375,18 @@ impl<'a> Lexer<'a> {
         }
         if pos < end && src[pos] == b'@' {
             self.comment_directive_at(start, pos + 1, end);
+        } else if pos < end && src[pos] == b'b' {
+            self.ignore_comment_at(pos, end);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn ignore_comment_at(&mut self, name: usize, end: usize) {
+        // After a lookahead, the same comment is scanned again.
+        let is_new = (self.ignore_comments.last()).is_none_or(|last| last.1 < end as u32);
+        if is_new && self.src[name..end].starts_with(IGNORE_COMMENT_MARKER) {
+            self.ignore_comments.push((name as u32, end as u32));
         }
     }
 
@@ -1479,7 +1498,7 @@ impl<'a> Lexer<'a> {
         if !self.flag(code, pos, end) {
             return None;
         }
-        if is_reported_by_bun_run && self.compiles() {
+        if is_reported_by_bun_run && (self.compiles() || self.accepts_legacy_octal) {
             self.flagged.push((code, pos as u32, end as u32));
         }
         push_codepoint_wtf8_joined(text, c);
@@ -1949,7 +1968,11 @@ impl<'a> Lexer<'a> {
         let is_bigint = is_integer && src.get(end) == Some(&b'n');
         let mut text = std::mem::take(&mut self.buffer);
         text.clear();
-        text.extend(src[start..end].iter().filter(|&&c| c != b'_'));
+        for &c in &src[start..end] {
+            if c != b'_' {
+                text.push(c);
+            }
+        }
         let token = if is_bigint {
             end += 1;
             let decimal = match radix {

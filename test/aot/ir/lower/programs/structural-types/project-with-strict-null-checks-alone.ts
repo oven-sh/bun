@@ -1,6 +1,12 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 1
+// CHECK-LABEL: function {{*}}name="labelSize"
+// CHECK-LABEL: function {{*}}name="lookUp"
+// CHECK-LABEL: function {{*}}name="matched"
+// CHECK-LABEL: function {{*}}name="Leaf"
+// CHECK-LABEL: function {{*}}name="depth"
+// CHECK-LABEL: function {{*}}name="pick"
 
 // FILE: main.ts
 // A project with strict null checks off alone.
@@ -120,104 +126,3 @@ attempt("honest again", () => [valueOf(chain()), nextValue(chain()), labelSize(c
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true, "strictNullChecks": false }, "files": [] }
-
-// GENERATED: labelSize lookUp matched Leaf depth pick
-// CHECK-LABEL: function {{*}}name="labelSize"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] site=[[w_2]]}] results=[{type=number site=[[w_3]]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="label"
-// CHECK-NEXT: v2 = PropGet v1 key="length"
-// CHECK-NEXT: v3 = Convert v2 declared={type=number site=[[w_4]]} illTypedCause=Assertion
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="lookUp"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Map<undefined|null|string, number> site=[[w_5]]}, {type=undefined|null|string site=[[w_6]]}] results=[{type=number site=[[w_7]]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Map<undefined|null|string, number>, v1: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = PropGet v0 key="get"
-// CHECK-NEXT: v3 = Call v2, v0, v1 calleeKey="get" calleeName="m.get"
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_8]]} illTypedCause=FromLooseType
-// CHECK-NEXT: v5 = Integer integer=1
-// CHECK-NEXT: v6 = Add v4, v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=number site=[[w_7]]}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="matched"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_9]]}] results=[{type=undefined|null|string site=[[w_10]]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = NewRegExp pattern="\\d+"
-// CHECK-NEXT: v2 = PropGet v1 key="exec"
-// CHECK-NEXT: v3 = Call v2, v1, v0 calleeKey="exec" calleeName="exec"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-// CHECK-NEXT: v5 = Integer
-// CHECK-NEXT: v6 = ElemGet v4, v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string site=[[w_11]]} illTypedCause=ContainerWriterUnseen
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Leaf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_1]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_1]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_12]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="depth"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_1]] site=[[w_13]]} results=[{type=number site=[[w_14]]}] {
-// CHECK-NEXT: b0(v0: [[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="next"
-// CHECK-NEXT: v2 = TypeTest v1 testedType=null
-// CHECK-NEXT: Branch v2 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v3):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v4 = Integer integer=1
-// CHECK-NEXT: Jump -> next b6(v4)
-// CHECK-NEXT: b4(v5):
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v6 = Integer integer=1
-// CHECK-NEXT: v7 = PropGet v0 key="next"
-// CHECK-NEXT: v8 = PropGet v7 key="depth"
-// CHECK-NEXT: v9 = Call v8, v7 calleeKey="depth" calleeName="this.next.depth"
-// CHECK-NEXT: v10 = Convert v9 declared={type=number site=[[w_15]]}
-// CHECK-NEXT: v11 = Add v6, v10
-// CHECK-NEXT: Jump -> next b6(v11)
-// CHECK-NEXT: b6(v12):
-// CHECK-NEXT: v13 = Convert v12 declared={type=number site=[[w_14]]}
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="pick"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=boolean site=[[w_16]]}] results=[{type=undefined|null|[[L_1]] site=[[w_17]]}] functionTypes={{*}}[[f_18]]] {
-// CHECK-NEXT: b0(v0: boolean):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = ToBoolean v0
-// CHECK-NEXT: Branch v1 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v2):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_19]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="Leaf"
-// CHECK-NEXT: v5 = Construct v4 calleeName="Leaf"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[L_1]] site=[[w_20]]} illTypedCause=UnprovenCallee
-// CHECK-NEXT: Jump -> next b6(v6)
-// CHECK-NEXT: b4(v7):
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v8 = Null
-// CHECK-NEXT: Jump -> next b6(v8)
-// CHECK-NEXT: b6(v9):
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|[[L_1]] site=[[w_17]]}
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }

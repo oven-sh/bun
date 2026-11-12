@@ -1,18 +1,11 @@
 use crate::builtins::id::{BuiltinId, Feature};
-use crate::ir::generated::{SourceLocation, Witness as WitnessRecord};
-use crate::ir::ids::{FunctionId, ModuleId, ValueId, optional_id_from_word};
+use crate::ir::generated::SourceLocation;
+use crate::ir::ids::{ModuleId, optional_id_from_word};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Position {
     pub module: ModuleId,
     pub offset: u32,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct Witness {
-    pub function: Option<FunctionId>,
-    pub value: Option<ValueId>,
-    pub position: Option<Position>,
 }
 
 pub fn position_of(location: SourceLocation) -> Option<Position> {
@@ -21,14 +14,6 @@ pub fn position_of(location: SourceLocation) -> Option<Position> {
         module,
         offset: location.position,
     })
-}
-
-pub fn witness_of(record: &WitnessRecord) -> Witness {
-    Witness {
-        function: record.function_id(),
-        value: record.value_id(),
-        position: position_of(record.location),
-    }
 }
 
 pub fn builtin_of(word: u32) -> Option<BuiltinId> {
@@ -74,24 +59,6 @@ mod tests {
         };
         assert!(at(0, 9) < at(1, 0));
         assert!(at(1, 0) < at(1, 1));
-    }
-
-    #[test]
-    fn witness_decodes_each_word() {
-        let record = WitnessRecord {
-            function: 2,
-            value: ABSENT_WORD,
-            location: SourceLocation {
-                module: ABSENT_WORD,
-                position: 0,
-            },
-        };
-        let expected = Witness {
-            function: Some(FunctionId::new(2)),
-            value: None,
-            position: None,
-        };
-        assert_eq!(witness_of(&record), expected);
     }
 
     #[test]

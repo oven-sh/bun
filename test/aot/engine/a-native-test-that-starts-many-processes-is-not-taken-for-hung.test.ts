@@ -6,7 +6,8 @@ import { run, whyNoTestaot } from "./testaot";
 
 test.skipIf(whyNoTestaot !== undefined)("a line follows each process that a native test started", async () => {
   // This one starts `testaot` twice.
-  const { stderr, exitCode } = await run("native", "--single-process", "child-process/exit-codes");
+  const name = "child-process/heap-without-memory-ends-build-with-error";
+  const { stderr, exitCode } = await run("native", "--single-process", name);
   expect({
     lines: stderr.split(/\r?\n/).filter(line => line === "a child process has ended").length,
     exitCode,

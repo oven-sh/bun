@@ -1,0 +1,15 @@
+# -- source: what-comes-round-is-shown-to-be-what-the-read-it-stands-for-was.js
+# function each(list, f) { for (let i = 0; i < list.length; i++) f(list[i]); }
+# function joinOf(list) { let all = 0; each(list, x => { all += x; }); return all; }
+# print(joinOf([1, 2, "a", 3]) + "!", joinOf([1, 2]) + 1);
+# print(joinOf([1, 2, "a", 3]) + "!", joinOf([1, 2]) + 1);
+# -- end of source
+# `all` is a number or a text, so it comes round in a box. A read of the slot is shown to hold what the doors at its stores let in. The parameter that stands for the read is shown to hold the same: every edge into the head hands over what is shown to, or what has passed the door at its store and stands under an AssumeType, or a read.
+# So the sum made of it is shown to fit the slot, as it was when the operand was read, and no door stands at the store of a turn.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: @JSValue{{*}}) isInLoop=true isLoopHead=true:
+# RUN(DOORS): walk f2 mechanisms=all
+# DOORS-NOT: CheckProof {{*}}source=SlotOfScope
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

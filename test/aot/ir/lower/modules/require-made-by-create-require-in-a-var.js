@@ -47,6 +47,8 @@
 // VALUE: Return
 
 import { createRequire } from "node:module";
+// The file has run when somebody calls one of the functions. A file that a function is the first to load may run again, and has an object.
+import "./imports/common.cjs";
 
 var load = createRequire(import.meta.url);
 var meta = import.meta.require;

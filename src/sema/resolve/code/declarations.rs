@@ -7,14 +7,12 @@ const DECLARATION_EXTENSIONS: [(&[u8], &[&[u8]]); 3] = [
     (b".cjs", &[b".d.cts", b".d.ts"]),
 ];
 
-// `./dist/index.js` is declared by `./dist/types/index.d.ts`: what lies in `./dist/` is declared in `./dist/types/`.
 struct DeclarationFolder<'h> {
     code: &'h [u8],
     declarations: &'h [u8],
 }
 
 impl<'h> Resolver<'h> {
-    /// The declaration file that a package ships for one of its JavaScript files.
     pub fn declaration_file_of(&self, path: &[u8]) -> Option<&'h [u8]> {
         let (stem, extensions) = DECLARATION_EXTENSIONS
             .into_iter()
@@ -61,7 +59,6 @@ fn find_declaration_folders<'h>(exports: &ExportsEntry<'h>) -> Vec<DeclarationFo
         .collect()
 }
 
-// The folder with its last slash, and the name up to its first dot.
 fn split_file_name(path: &[u8]) -> Option<(&[u8], &[u8])> {
     let slash = bun_core::strings::last_index_of_char(path, b'/')?;
     let (folder, name) = path.split_at(slash + 1);

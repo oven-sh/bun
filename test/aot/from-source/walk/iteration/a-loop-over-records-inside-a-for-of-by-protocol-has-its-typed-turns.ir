@@ -1,0 +1,13 @@
+# -- source: main.js
+# const zero = sink(), hide = x => [x][zero];
+# function nearest(points, centers) { let total = 0; for (const p of points) { let best = -1, least = Infinity; for (let c = 0; c < centers.length; c++) { const q = centers[c], dx = p.x - q.x, dy = p.y - q.y, v = dx * dx + dy * dy; if (v < least) { least = v; best = c; } } total += best; } return total; }
+# const points = [{ x: 1, y: 0.5 }, { x: 2, y: 0.5 }, { x: 3, y: 0.5 }, { x: 4, y: 0.5 }], centers = [{ x: 1, y: 0.5 }, { x: 3, y: 0.5 }, { x: 5, y: 0.5 }];
+# sink(hide(nearest)(hide(points), hide(centers)));
+# -- end of source
+# The for-of steps by protocol, so the counted loop stands under the handler that closes the iterator. That handler reads nothing of the loop.
+# The loop's own text subtracts what it reads off its records, so its turns may begin again under such a handler, and looks may count on that, as they do where the outer loop goes by index.
+# Two doors had to open together: the turns alone, or the looks alone, left every read of a field to a stub: four times the instructions.
+# With the typed turns the counter of the loop is a known induction; under a handler that shuts them none is.
+# STATISTIC: KnownInductionsUsed >= 1
+# RUN: compile mechanisms=all
+# CHECK: image not empty

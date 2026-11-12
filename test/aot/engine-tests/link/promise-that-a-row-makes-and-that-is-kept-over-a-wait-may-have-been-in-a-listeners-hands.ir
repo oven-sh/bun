@@ -1,0 +1,44 @@
+# process.on("unhandledRejection", (reason, promise) => {});  async function use() { const held = new Response("made up").text(); await 0; later(await held); }  function later(v) { return v; }  use();
+# RUN: link functions mechanisms=all
+# CHECK: function f2 callers-known
+# CHECK-NEXT: parameter 0
+# CHECK-NOT: proven=string
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="on"
+    v2 = String string="unhandledRejection"
+    v3 = NewClosure function=f3
+    v4 = Call v1, v0, v2, v3 calleeKey="on"
+    v5 = NewClosure function=f1
+    v6 = Call v5, - calleeName="use"
+    v7 = Undefined
+    Return v7
+}
+function f1 name="use" module=m0 flags=[IsAsync] length=0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Response" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(Response) flags=[IsExpected]}
+    v3 = String string="made up"
+    v4 = Construct v2, -, v3 calleeName="Response"
+    v5 = PropGet v4 key="text"
+    v6 = Call v5, v4 calleeKey="text"
+    v7 = Integer integer=0
+    v8 = Await v7
+    v9 = Await v6
+    v10 = NewClosure function=f2
+    v11 = Call v10, -, v9 calleeName="later"
+    Return v11
+}
+function f2 name="later" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Undefined
+    Return v2
+}

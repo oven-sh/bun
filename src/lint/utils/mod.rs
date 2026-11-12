@@ -30,6 +30,7 @@
 //! | a fix that renames a variable or declares a new one | [`names`] | `names::is_free(name, scope, uses)` |
 //! | a fix that's only correct for an array, a string or a regular expression, in a rule without type information | [`visible`] | `report.fix_where_safe(\|\| visible::is_visibly_array(e), fix)` |
 //! | a fix that changes how a test file gets `jest`, `vi` or `vitest`: a global, an import, `require()`, a namespace | [`bun_test`] | `report.fix_where_safe(\|\| !bun_test::has_module_mock_call(references, b"vi"), fix)` |
+//! | a fix that adds, removes or retypes an `import`, an `export` or a `require()`, which can change how Bun runs the file | [`run_mode`] | `report.fix_where_safe(\|\| run_mode::keeps_module_format(file, Edit::Removes(statement)), fix)` |
 //! | a loop over `node.parent` from each of many nodes | [`ancestor_memo`] | `AncestorMemo::default()` in the state, `cx.state.find(node, \|child, parent\| ..)` |
 //!
 //! A function that takes two handles uses one lifetime for both, `fn f<'a>(a: Expr<'a>, b: Expr<'a>)`, because a
@@ -56,6 +57,7 @@ pub mod names;
 pub mod node;
 pub mod oxlint;
 pub mod regular_expressions;
+pub mod run_mode;
 pub mod sort;
 pub mod string_utils;
 pub mod text;

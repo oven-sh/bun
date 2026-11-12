@@ -3,6 +3,7 @@ use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::bun_test;
+use bun_lint::utils::run_mode::{self, Edit};
 use bun_lint_oxlint::hash_order::HashOrder;
 use bun_lint_oxlint::import::{ImportEntry, ImportImportName, import_entries};
 use rustc_hash::FxBuildHasher;
@@ -120,7 +121,10 @@ fn run_once(cx: &Cx<'_, PreferImportingVitestGlobals>) {
             format!("Import global functions `{globals_founds}` from `vitest` package instead of using globals.")
         })
         .fix_where_safe(
-            || !changes_module_mock_calls(file, &missing_globals),
+            || {
+                !changes_module_mock_calls(file, &missing_globals)
+                    && !changes_run_mode(file, &missing_globals)
+            },
             |fixer| build_fix(file, &globals_imports(), fixer),
         );
 }
@@ -172,15 +176,41 @@ fn changes_module_mock_calls<'a>(file: &'a File<'a>, missing_globals: &[&str]) -
     })
 }
 
-/// The `{ .. }` of the `const { .. } = require("vitest")` that the fix adds the names to if the file has no `import` for them.
-fn required_pattern<'a>(file: &'a File<'a>) -> Option<(Pat<'a>, List<'a, PatProp<'a>>)> {
-    for (call, _) in vitest_requires(file) {
+/// True if the fix changes how Bun runs the file, or what `bun test` takes one of the names for: see [`run_mode`].
+#[cold]
+fn changes_run_mode<'a>(file: &'a File<'a>, missing_globals: &[&str]) -> bool {
+    let import = vitest_import(file);
+    let extends_import = adds_to_import(import);
+    let required = (!extends_import).then(|| required_pattern(file)).flatten();
+    let required = required.map(|it| it.2.bytes());
+    // `bun test` has no module for the other two packages, so a global and a name from one of them differ.
+    if required.unwrap_or_else(|| import_source(file, import)) != b"vitest" {
+        return true;
+    }
+    // A name that the module lacks is `undefined` if it comes from `require()`, like the global. An `import` of it doesn't link.
+    if required.is_some() {
+        return false;
+    }
+    let is_lacking = |it: &&str| !run_mode::has_export(b"vitest", it.as_bytes());
+    // A new statement is the file's first load of `vitest`, which changes its globals, or an `import` in a CommonJS file.
+    let is_new = || {
+        !run_mode::loads_vitest_elsewhere(file, None)
+            || !run_mode::keeps_module_format(file, Edit::AddsImport)
+    };
+    missing_globals.iter().any(is_lacking) || (!extends_import && is_new())
+}
+
+/// The `{ .. }` of the `const { .. } = require("vitest")` that the fix adds the names to if the file has no `import` for them, its properties, and the module.
+fn required_pattern<'a>(
+    file: &'a File<'a>,
+) -> Option<(Pat<'a>, List<'a, PatProp<'a>>, Name<'a>)> {
+    for (call, source) in vitest_requires(file) {
         let declarator = Node::Expr(call).ancestors().find_map(|it| match it {
             Node::VarDecl(declarator) => Some(declarator),
             _ => None,
         })?;
         if let PatKind::Object(properties) = declarator.pat().kind() {
-            return Some((declarator.pat(), properties));
+            return Some((declarator.pat(), properties, source));
         }
     }
     None
@@ -217,7 +247,7 @@ fn build_fix<'a>(file: &'a File<'a>, globals_imports: &str, fixer: Fixer<'a>) ->
         _ => {}
     }
     // `const { .. } = require("vitest")`
-    if let Some((pattern, properties)) = required_pattern(file) {
+    if let Some((pattern, properties, _)) = required_pattern(file) {
         let mut text = b"{ ".to_vec();
         for property in properties.iter().filter(|it| !it.is_rest()) {
             text.extend_from_slice(property.text());

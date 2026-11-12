@@ -2,6 +2,7 @@ use crate::jest::{self, is_vitest_import_source};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::bun_test;
+use bun_lint::utils::run_mode;
 use smallvec::SmallVec;
 
 /// The rule disallows importing any Vitest global functions.
@@ -84,7 +85,7 @@ fn check_import<'a>(node: Stmt<'a>, import_decl: Import<'a>, cx: &Cx<'a, NoImpor
             let export = if bun_test::is_mock_api(local) { local } else { imported };
             bun_test::is_known_import(source, imported) != bun_test::is_mock_api(local)
                 && Node::Stmt(node).scope().get_name(it.local().name()).is_some_and(|it| bun_test::has_module_mock_call(it.references(), export))
-        })
+        }) && !import_changes_run_mode(import_decl, is_global)
     };
     others.fold(report, |report, it| report.label(it, REMOVE_THIS)).fix_where_safe(is_safe, |fixer| {
         let others = usize::from(import_decl.default().is_some()) + usize::from(import_decl.namespace().is_some());
@@ -101,6 +102,19 @@ fn check_import<'a>(node: Stmt<'a>, import_decl: Import<'a>, cx: &Cx<'a, NoImpor
         let start = start.or_else(|| import_decl.named().first().map(ImportSpec::span))?.start;
         Some(fixer.replace(Span::new(start, import_decl.named().last()?.span().end), import_text))
     });
+}
+
+/// True if the fix changes how Bun runs the file, or what `bun test` takes one of the names for: see [`run_mode`].
+#[cold]
+fn import_changes_run_mode<'a>(import_decl: Import<'a>, is_global: impl Fn(&ImportSpec<'a>) -> bool) -> bool {
+    // The fix also drops a name that is imported under a string.
+    let is_removed = |it: &ImportSpec<'a>| is_global(it) || (!it.is_type_only() && it.imported().is_string());
+    let mut removed = import_decl.named().iter().filter(|it| is_global(it));
+    // `bun test` has no module for the other two packages, and no global `assert` or `chai`. `{ vi as test }` is not the global `test`.
+    import_decl.spec().bytes() != b"vitest"
+        || removed.any(|it| it.is_renamed() || !run_mode::is_global_of_vitest(it.local().bytes()))
+        // The file has the globals of `vitest` while it loads it, so the statement has to stay, with a name that no fix removes.
+        || !run_mode::has_runtime_use_without(import_decl, is_removed)
 }
 
 /// Matches `{ .. } = require("vitest")` with no rest element and no `default` key. Returns the properties and the
@@ -130,6 +144,25 @@ fn changes_module_mock_calls<'a>(declarations: List<'a, VarDecl<'a>>) -> bool {
     removed.any(bun_test::changes_as_global)
 }
 
+/// [`import_changes_run_mode`] for the names from `require()`.
+#[cold]
+fn require_changes_run_mode<'a>(declarations: List<'a, VarDecl<'a>>) -> bool {
+    declarations.iter().filter_map(vitest_require).any(|(properties, source)| {
+        // The fix keeps a property if its key is a name that isn't a global.
+        let is_kept = |it: PatProp<'a>| !is_global_property(&it) && it.key().is_some_and(|key| key.name().is_some());
+        // `{ test: t }` leaves `t` undeclared.
+        let becomes_global = |it: PatProp<'a>| {
+            let key = it.key().and_then(|it| it.name());
+            let name = it.value().as_ident().filter(|it| Some(*it) == key);
+            name.is_some_and(|it| run_mode::is_global_of_vitest(it.bytes()))
+        };
+        source.bytes() != b"vitest"
+            // Without a name left the `require()` goes. It can be the file's only one, and its only load of `vitest`.
+            || !properties.iter().any(is_kept)
+            || properties.iter().filter(is_global_property).any(|it| !becomes_global(it))
+    })
+}
+
 fn check_variable_declaration<'a>(
     node: Stmt<'a>,
     declarations: List<'a, VarDecl<'a>>,
@@ -147,7 +180,7 @@ fn check_variable_declaration<'a>(
         }
         None => cx.report_file(NO_IMPORTING_VITEST_GLOBALS),
     };
-    report.fix_where_safe(|| !changes_module_mock_calls(declarations), |fixer| {
+    report.fix_where_safe(|| !changes_module_mock_calls(declarations) && !require_changes_run_mode(declarations), |fixer| {
         let variable_modifier = match declarations.first()?.var_kind() {
             VarKind::Const => "const",
             VarKind::Let => "let",

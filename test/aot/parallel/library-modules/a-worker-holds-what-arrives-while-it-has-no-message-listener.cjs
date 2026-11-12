@@ -29,6 +29,8 @@ if (isMainThread) {
     await post(["end"]);
     await ended;
     console.log("the next listener heard:", heard.join(" "));
+    // Plain Bun is the reference of this program. A message that both lose prints alike, so the program fails by itself.
+    if (heard.join(" ") !== "a b c end") throw new Error("a held message did not arrive");
     side.close();
     await worker.terminate();
   })();

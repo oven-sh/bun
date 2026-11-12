@@ -667,6 +667,8 @@ declare var ReadableStreamDefaultReader: {
 
 // src/jsc/bindings/webcore/JSMessagePort.cpp
 interface MessagePort extends EventTarget {
+  /** The setter refs the port for a function and unrefs it for any other value. */
+  onmessage: ((event: MessageEvent) => void) | null;
   postMessage(message: unknown, transfer?: Iterable<object> | { transfer?: Iterable<object> }): void;
   start(): void;
   /** `node:worker_threads` replaces it with a function that takes a listener for "close". */

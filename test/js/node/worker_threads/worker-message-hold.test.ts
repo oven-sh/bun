@@ -412,7 +412,8 @@ if (typeof Bun !== "undefined") {
   const node = nodeExeAtLeast("26.3.0");
 
   describe("Node.js compatibility", () => {
-    (node ? test : test.skip)("all tests pass in Node.js", { timeout: 60_000 }, async () => {
+    const skip = node ? false : "this machine has no Node.js 26.3.0 or later";
+    test("all tests pass in Node.js", { skip }, async () => {
       // A direct run, not `node --test`: the runner mode forks a second node
       // process per file. node:test still exits non-zero on any failure.
       await using proc = Bun.spawn({

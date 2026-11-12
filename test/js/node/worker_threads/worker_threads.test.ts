@@ -411,7 +411,8 @@ test("an `eval: true` Worker and its ports are collected once it has exited", as
              await once(worker, "exit");
            })();
          }
-         for (let i = 0; i < 100 && (collected < 4 || ports() > before); i++) {
+         const deadline = Date.now() + 5000;
+         while ((collected < 4 || ports() > before) && Date.now() < deadline) {
            Bun.gc(true);
            await new Promise(resolve => setImmediate(resolve));
          }

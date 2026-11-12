@@ -2156,6 +2156,10 @@ impl NodeHTTPResponse {
             }
             return true;
         }
+        if response.get_buffered_amount() > 0 {
+            // The kernel took the tail without the CRLF that ends its chunk.
+            return false;
+        }
 
         // Drained: disarm so onEnd's `onWritable != nullptr` probe does not see
         // a stale shim (callOnWritable would restore it); writes re-arm.

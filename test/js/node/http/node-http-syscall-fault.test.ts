@@ -210,6 +210,37 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
   );
 });
 
+test.skipIf(skip).concurrent("'drain' waits for the CRLF that ends a chunk", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      /* js */ `
+      const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+      const http = require("node:http");
+      const server = http.createServer(async (req, res) => {
+        res.flushHeaders();
+        await new Promise(setImmediate);
+        // Two such writes take "9c3a\\r\\n" and the 0x9c3a bytes behind it.
+        fault.set({ syscall: "writev", action: "short", bytes: 20000, repeat: 2 });
+        res.write(Buffer.alloc(0x9c3a));
+        res.on("drain", () => (console.log("drain", res.writableLength), res.end("!")));
+      });
+      server.listen(0, "127.0.0.1", async () => {
+        const res = await fetch("http://127.0.0.1:" + server.address().port);
+        console.log("received", (await res.bytes()).length);
+        server.close();
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "drain 0\nreceived 39995\n", stderr: "", exitCode: 0 });
+});
+
 describe.skipIf(skip)("node:http pipelining under short sends", () => {
   // Every send() takes at most 12 KB, so each 16 KB response leaves a tail in
   // userspace, and the flush that follows a drain callback sends the next

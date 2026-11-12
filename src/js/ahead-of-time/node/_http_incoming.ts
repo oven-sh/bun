@@ -1539,14 +1539,18 @@ function takeBodyData(stream: $Node.IncomingMessage, bytes: Buffer | undefined, 
   }
 }
 
+const queueEndOfBody = function emitEOFIncomingMessage(req: $Node.IncomingMessage, state: $Node.ReadableState) {
+  req[eofInProgress] = true;
+  queueTick2(endBody, req, state);
+};
+
 function takeEndOfBody(
   req: $Node.IncomingMessage,
   state: $Node.ReadableState,
   socket: $Node.HttpServerSocket | null | undefined,
 ) {
   try {
-    req[eofInProgress] = true;
-    queueTick2(endBody, req, state);
+    queueEndOfBody(req, state);
   } catch (err) {
     req.destroy(err as Error);
     throw err;

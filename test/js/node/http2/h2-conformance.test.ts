@@ -4359,6 +4359,63 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
 
 // nghttp2 charges every frame it drops without a reply to one token bucket per session: 10,000
 // tokens, 330 back per second. An empty bucket ends the session with GOAWAY(ENHANCE_YOUR_CALM).
+describe("the last stream id of a server's GOAWAY (RFC 9113 §6.8)", () => {
+  const request = (id: number, extra?: Buffer) =>
+    encodeFrame(FrameType.HEADERS, 0x5, id, requestHeaderBlock("GET", extra));
+  const lastIds = (c: RawH2) => c.frames.filter(f => f.type === FrameType.GOAWAY).map(f => f.payload.readUInt32BE(0));
+
+  async function serve(options: http2.ServerOptions, onStream: (stream: http2.ServerHttp2Stream) => void) {
+    const server = http2.createServer(options);
+    server.on("stream", stream => onStream(stream.on("error", () => {})));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    c.sendPreface();
+    c.sendEmptySettings();
+    return {
+      c,
+      [Symbol.dispose]() {
+        c.destroy();
+        server.close();
+      },
+    };
+  }
+
+  test("a request above it is refused, and a later GOAWAY doesn't raise it", async () => {
+    const streams: http2.ServerHttp2Stream[] = [];
+    using ctx = await serve({}, stream => {
+      streams.push(stream);
+      stream.session!.goaway();
+    });
+    ctx.c.send(Buffer.concat([request(1), request(3), encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8))]));
+    await ctx.c.waitFor(f => f.type === FrameType.PING);
+    expect(streams.map(stream => stream.id)).toEqual([1]);
+    const rst = await ctx.c.waitFor(f => f.type === FrameType.RST_STREAM);
+    expect([rst.streamId, rst.payload.readUInt32BE(0)]).toEqual([3, ErrorCode.REFUSED_STREAM]);
+    streams[0].session!.destroy();
+    await ctx.c.waitClosed();
+    expect(lastIds(ctx.c)).toEqual([1, 1]);
+  });
+
+  test("requests below it are served", async () => {
+    using ctx = await serve({}, stream => {
+      if (stream.id === 1) stream.session!.goaway(0, 2 ** 31 - 1);
+      stream.respond({ ":status": 204 });
+    });
+    ctx.c.send(Buffer.concat([request(1), request(3)]));
+    expect((await ctx.c.waitFor(f => f.streamId === 3)).type).toBe(FrameType.HEADERS);
+  });
+
+  test("is not a pushed stream's when maxSessionRejectedStreams ends the session", async () => {
+    using ctx = await serve({ maxSessionRejectedStreams: 1 }, stream => {
+      for (let i = 0; i < 3; i++) stream.pushStream({}, (_, pushed) => pushed.on("error", () => {}));
+    });
+    ctx.c.send(request(1));
+    await ctx.c.waitFor(f => f.type === FrameType.PUSH_PROMISE);
+    ctx.c.send(request(3, Buffer.concat([Buffer.from([0x00]), hpackLiteral("connection"), hpackLiteral("close")])));
+    expect((await ctx.c.waitForGoaway()).payload.readUInt32BE(0)).toBe(3);
+  });
+});
+
 describe("ignored frames count against nghttp2's glitch rate limit", () => {
   const BURST = 10_000;
   const originEntry = Buffer.concat([Buffer.from([0, 1]), Buffer.from("x")]);

@@ -272,6 +272,8 @@ pub(crate) struct Connection {
     pub last_peer_id: Cell<u32>,
     /// We sent a GOAWAY.
     pub goaway_sent: Cell<bool>,
+    /// The lowest last stream id of our GOAWAY frames. The peer may retry what is above it elsewhere (§6.8).
+    goaway_last_id: Cell<u32>,
 }
 
 impl Default for Connection {
@@ -311,6 +313,7 @@ impl Default for Connection {
             last_stream_id: Cell::new(0),
             last_peer_id: Cell::new(0),
             goaway_sent: Cell::new(false),
+            goaway_last_id: Cell::new(frame::MAX_STREAM_ID),
         }
     }
 }
@@ -358,15 +361,13 @@ impl Connection {
         debug: &[u8],
     ) {
         self.goaway_sent.set(true);
+        let last_stream_id = last_stream_id.min(self.goaway_last_id.get());
+        self.goaway_last_id.set(last_stream_id);
         sink.write_frame(
             FrameType::GoAway,
             0,
             0,
-            &[
-                &(last_stream_id & frame::MAX_STREAM_ID).to_be_bytes(),
-                &code.0.to_be_bytes(),
-                debug,
-            ],
+            &[&last_stream_id.to_be_bytes(), &code.0.to_be_bytes(), debug],
         );
     }
 
@@ -1141,6 +1142,11 @@ impl Connection {
             }
             BlockDisposition::StreamClosed => return self.note_glitch(sink),
             BlockDisposition::Deliver => {}
+        }
+        if is_request && target > self.goaway_last_id.get() {
+            sink.on_headers_refused();
+            self.reset_stream(sink, target, ErrorCode::REFUSED_STREAM);
+            return false;
         }
         checks.finish();
         if push_parent.is_none()

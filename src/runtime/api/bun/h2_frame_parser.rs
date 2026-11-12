@@ -2717,7 +2717,7 @@ impl Sink for H2FrameParser {
             self.send_go_away(
                 ErrorCode::ENHANCE_YOUR_CALM,
                 b"ENHANCE_YOUR_CALM",
-                self.engine.last_stream_id.get(),
+                self.engine.last_peer_id.get(),
                 true,
             );
         }

@@ -160,6 +160,19 @@ describe("a Buffer path is read when its argument is parsed", () => {
     expect(await Promise.all(jobs)).toEqual(names.map(name => join(String(dir), name)));
   });
 
+  // A view made by a length keeps its bytes outside its cell above 1000 bytes, and has no ArrayBuffer until it is asked for one: a transfer then frees the bytes.
+  // 1020 bytes still fit the 1024-byte path limit of macOS. "/." segments make every byte part of the name.
+  const longPathOf = `
+      const longPathOf = name => {
+        const cwd = process.cwd();
+        const pad = 1020 - cwd.length - 1 - name.length;
+        const view = new Uint8Array(1020);
+        view.set(new TextEncoder().encode(cwd + (pad & 1 ? "/" : "") + Buffer.alloc((pad >> 1) * 2, "/.").toString() + "/" + name));
+        return view;
+      };`;
+  // Malloc=1: those bytes come from JavaScriptCore's allocator, which hides a read of freed memory from ASAN.
+  const systemMalloc = { Malloc: "1" };
+
   // The unfixed build opens a name that a NUL cut short, and a build with assertions aborts: each of these runs in a child.
   async function runInChild(dir: string, script: string, env: Record<string, string> = {}) {
     await using proc = Bun.spawn({
@@ -218,6 +231,7 @@ describe("a Buffer path is read when its argument is parsed", () => {
       import path from "node:path";
       const dir = process.cwd();
       const at = name => Buffer.from(path.join(dir, name));
+      ${longPathOf}
       const parked = Array.from({ length: 4 }, () => fs.promises.open("fifo", "r"));
 
       const promise = at("a.txt");
@@ -240,6 +254,10 @@ describe("a Buffer path is read when its argument is parsed", () => {
       const cutRead = fs.promises.readFile(cut, "utf8").catch(err => err.code);
       cut[cut.length - 4] = 0;
 
+      const freed = longPathOf("a.txt");
+      const freedRead = fs.promises.readFile(freed, "utf8").catch(err => err.code);
+      freed.buffer.transfer(0);
+
       const writer = fs.openSync("fifo", "w"); // the pool threads run again
       for (const handle of await Promise.all(parked)) await handle.close();
       fs.closeSync(writer);
@@ -249,10 +267,14 @@ describe("a Buffer path is read when its argument is parsed", () => {
         unlink: await unlink,
         errorPath: await errorPath,
         cut: await cutRead,
+        freed: await freedRead,
         left: fs.readdirSync(dir).filter(name => name === "gone" || name === "keep"),
       }));
     `;
-    const { stdout, stderr, exitCode } = await runInChild(String(dir), script, { UV_THREADPOOL_SIZE: "2" });
+    const { stdout, stderr, exitCode } = await runInChild(String(dir), script, {
+      UV_THREADPOOL_SIZE: "2",
+      ...systemMalloc,
+    });
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
       promise: "AAAA",
@@ -260,6 +282,7 @@ describe("a Buffer path is read when its argument is parsed", () => {
       unlink: "ok",
       errorPath: "missing-a",
       cut: "PNG",
+      freed: "AAAA",
       left: ["keep"],
     });
     expect(exitCode).toBe(0);
@@ -336,21 +359,16 @@ describe("a Buffer path is read when its argument is parsed", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Above 1000 bytes a view made by a length has its bytes outside its cell and no ArrayBuffer yet. 1020 still fits the 1024-byte path limit of macOS.
   it("a sync call has read a long path before a getter frees its bytes", async () => {
     using dir = tempDir("fs-buffer-path-transfer", { "target": "call-time" });
     const script = `
       import fs from "node:fs";
-      const N = 1020;
-      const cwd = process.cwd();
-      const pad = N - cwd.length - "/target".length;
-      const p = new Uint8Array(N);
-      p.set(new TextEncoder().encode(cwd + (pad & 1 ? "/" : "") + Buffer.alloc(pad >> 1 << 1, "/.").toString() + "/target"));
-      const stats = fs.statSync(p, { get throwIfNoEntry() { p.buffer.transfer(0); return true; } });
-      console.log(JSON.stringify({ size: stats.size, byteLength: p.byteLength }));
+      ${longPathOf}
+      const path = longPathOf("target");
+      const stats = fs.statSync(path, { get throwIfNoEntry() { path.buffer.transfer(0); return true; } });
+      console.log(JSON.stringify({ size: stats.size, byteLength: path.byteLength }));
     `;
-    // Malloc=1: the bytes come from JavaScriptCore's allocator, which hides a read of freed memory from ASAN.
-    expect(await runInChild(String(dir), script, { Malloc: "1" })).toEqual({
+    expect(await runInChild(String(dir), script, systemMalloc)).toEqual({
       stdout: JSON.stringify({ size: "call-time".length, byteLength: 0 }),
       stderr: "",
       exitCode: 0,

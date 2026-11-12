@@ -17,8 +17,9 @@ test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > require() of a module that imports the mock
 test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > gets from a mock what it gets when it runs alone > where earlier files have required the modules ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > gets from a mock what it gets when it runs alone > where earlier files have required the modules []
-# The next one: in some runs compiled runs a CommonJS package ahead of the package that it requires in a function. Every test passes.
+# The next two: in some runs compiled runs a CommonJS package ahead of the package that it requires in a function. Every test passes.
 ~ test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > gets from a mock what it gets when it runs alone > where its imports are calls of import() []
+~ test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > gets from a mock what it gets when it runs alone > where only a package imports the mocked package []
 # The next one: a require() gives up on a mock whose factory has not settled, an import() of the same file is in flight, and the modules are reset. Every test of the fixture passes. Compiled, one body runs
 # behind the last line of the test and races the end of the process: some lists hold it and some do not. With a wait as the last line of the test every list holds it. The list of plain is the same in every run.
 ~ test/js/bun/test/mock/mock-module.test.ts: an automock is built from the copy of its original module that a running factory was given

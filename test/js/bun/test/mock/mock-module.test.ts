@@ -7706,7 +7706,6 @@ describe.concurrent("a test file that is linked to modules that an earlier test 
       import * as service from "./service";
       import { sentAtLoad } from "./at-load";
       import * as library from "uses-esm-mail";
-      import "requires-cjs-mail";
       import "./unrelated";
       test("nothing is mocked", async () => {
         expect([service.sent(), sentAtLoad, library.sent()]).toEqual([["real", "real", "real"], ["real", "real", "real"], "real"]);
@@ -8360,7 +8359,8 @@ describe.concurrent("a test file that is linked to modules that an earlier test 
     test.each(withAndWithoutIsolate)("where only a package imports the mocked package %j", async args => {
       await expectToPassAfterFilesThatMockNothing(
         modules,
-        plain,
+        `${plain}
+         import "requires-cjs-mail";`,
         "ts",
         [
           [

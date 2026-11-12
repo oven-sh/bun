@@ -2,6 +2,7 @@ mod birth_targets;
 mod classes;
 mod containers;
 mod dictionaries;
+mod namespace_literals;
 mod object_types;
 mod own_fields;
 mod reached;
@@ -9,6 +10,7 @@ mod reached;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use bun_sema::atom::Atom;
 use bun_sema::check::aot::ClassRef;
 use bun_sema::hir::ExprId;
 use bun_sema::program::FileId;
@@ -44,7 +46,9 @@ pub(crate) struct LayoutState {
     literals: FxHashMap<ExprId, LayoutId>,
     written_types_of_literals: FxHashMap<ExprId, (LayoutId, CheckerTypeId)>,
     literals_in_progress: SmallVec<[ExprId; 2]>,
+    first_namespace_literals: Option<FxHashMap<ExprId, ExprId>>,
     literals_opened_at_once: FxHashSet<ExprId>,
+    names_on_literals: Option<FxHashMap<ExprId, SmallVec<[Atom; 2]>>>,
     variables_that_leave_whole: Option<Rc<FxHashSet<bun_sema::bind::SymbolId>>>,
     class_types: Vec<(ClassRef, CheckerTypeId)>,
     layouts_seen_as_objects: FxHashSet<LayoutId>,

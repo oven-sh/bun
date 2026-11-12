@@ -2,7 +2,6 @@
 // Each row names a file of ./everyday-twins, two of its loops, and how many times the instructions of the first the second may take. `list.map(x => x * 1.2)` once took 249 instructions an element over fractions and
 // 36 over whole numbers: every pin was met, and no count of calls could see it.
 // A row that is not met yet stands in gap(), with what it takes today: it is measured at every run and is red once it is met.
-import { isMusl } from "harness";
 import { join } from "path";
 import { describeTwins, type Row } from "./twins";
 
@@ -12,24 +11,14 @@ const rows: Row[] = [
   ["filter.ts", "filter over whole numbers", "filter over fractions", 1.6],
   ["filter.ts", "some over whole numbers", "some over fractions", 1.5],
   ["filter.ts", "a fold over whole numbers", "a fold over fractions", 1.5],
-  ["sort-by-a-table.js", "a sort by a comparator with a name", "a sort by a comparator out of a table", 1.3],
   ["sort-by-a-table.js", "a sort by a comparator with a name", "a search for what a table answers", 1],
-  // It makes a view over the storage of another. Under glibc it takes 4.17 times the instructions of its twin, under musl 4.59.
-  // The words of the new object are copied by the memcpy of the C library, which is taken to be what differs: that is read, and was not run on a machine with musl.
-  ["parts-of-views.js", "a view between two positions", "a part of a view", isMusl ? 5 : 4.5],
-  // These two make a view with storage of its own, of 32 and of 64 bytes, and fill it. Under glibc they take 5.69 and 5.4 times the instructions of their twin, under musl 6.15 and 6.13.
-  // The compiled code is the same text on both, so what differs is taken to be the memmove and the memset of the C library: that is read, and was not run on a machine with musl.
-  ["parts-of-views.js", "a view between two positions", "a copy of a part of a view", isMusl ? 6.5 : 6],
-  ["parts-of-views.js", "a view between two positions", "a view that from makes", isMusl ? 6.5 : 6],
   ["a-compound-assignment.js", "a sum written out", "a sum by a compound assignment", 1.2],
   ["a-compound-assignment.js", "a sum written out", "a sum with a default", 1.6],
   ["a-field-that-is-counted.ts", "a total in a local", "a total in a field", 2.8],
   ["a-field-that-is-counted.ts", "a counter in a local", "a counter in a field", 2.5],
   ["a-field-that-is-counted.ts", "the greatest, from a number on", "the greatest, from the first on", 1.5],
   ["a-record-spread.ts", "a record written out", "a record spread", 2],
-  ["two-records-in-one-literal.ts", "both written out", "two records in one literal", 4],
   ["a-record-without-one-of-its-names.ts", "the other names written out", "a record without one of its names", 8],
-  ["a-row-without-two-of-its-names.js", "the other names written out", "the rest of a pattern", 3.3],
   ["texts-compared.js", "texts of the program", "texts out of data", 1.7],
   ["texts-compared.js", "texts of the program", "texts that were cut out", 2],
   ["characters.js", "characters by index, the caller seen", "characters by code", 2],

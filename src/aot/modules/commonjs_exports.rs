@@ -7,7 +7,7 @@ mod tests;
 
 use self::facades::Facades;
 pub(super) use self::facades::collect_seen_namespaces;
-use self::inline_star::{InlineStar, InlineStarInput, find_inline_stars};
+use self::inline_star::{InlineStar, InlineStarInput, find_inline_stars, read_list_of_names};
 use self::summary::{ExportsSummary, StoredName, summarize_file, summarize_inner_modules};
 use super::bindings::SyntheticExportId;
 use super::exports::{ExportTables, Resolution};
@@ -158,6 +158,9 @@ struct Star {
     statement: StmtId,
     start: u32,
     is_in_line: bool,
+    redefines_names: bool,
+    leaves_listed_names: bool,
+    copies_hidden_names: bool,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -202,11 +205,14 @@ struct ModuleText {
     erased: Vec<StmtId>,
     evaluated_at_store: Option<StmtId>,
     stars: Vec<Star>,
+    names_left_by_stars: Vec<Atom>,
     holders_in_erased_getters: Vec<ExprId>,
     names_read: Vec<Atom>,
     names_called: Vec<Atom>,
     marker: Option<bool>,
     is_marker_fixed: bool,
+    is_marker_hidden_from_loops: bool,
+    is_marker_left_to_stars: bool,
     is_marker_ignored_by_imports: bool,
     runs_in_place: bool,
     names_hidden_from_loops: Vec<Atom>,
@@ -756,6 +762,31 @@ fn find_call_of_helper_with_argument(
     .then_some((user, call.args.len()))
 }
 
+// `__exportStar(require("./a"), exports);`: the helper reads the names and lays getters elsewhere.
+fn is_read_only_by_star(text: &Text<'_, '_>, required: ExprId) -> bool {
+    let hir = text.hir;
+    let (_, Parent::Expr(user)) = text.parent(required) else {
+        return false;
+    };
+    let Some(user) = user.some() else {
+        return false;
+    };
+    let ExprKind::Call(call) = hir[user].kind else {
+        return false;
+    };
+    let helpers = text.bind.known_helpers;
+    let known = helpers.certain_callee(text.bind.files, text.file, hir[call].callee);
+    let is_star = known.is_some_and(|known| {
+        matches!(
+            known.shape,
+            HelperShape::ExportStarBindsNamesTheTargetLacks
+                | HelperShape::ExportStarOfKeysIfMissing
+                | HelperShape::ReExportCopiesAllButDefault
+        )
+    });
+    is_star && text.statement_of(user).is_some()
+}
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Held {
     Object,
@@ -850,6 +881,9 @@ impl TakenObjects {
         module: ModuleRef,
         holders: &mut Vec<(SymbolId, Held, ModuleRef)>,
     ) {
+        if is_read_only_by_star(text, call) {
+            return;
+        }
         let (answer, held) = match find_call_of_helper_with_argument(text, call) {
             Some((answer, 1)) => (answer, Held::Answer),
             Some((answer, _)) => (answer, Held::AnswerPastMarker),
@@ -974,8 +1008,18 @@ fn find_taken_objects(
             .iter()
             .take_while(move |holder| holder.0 == name)
     };
+    let stars = find_inline_stars(&InlineStarInput {
+        file: text.file,
+        atoms: text.atoms,
+        hir,
+        bound,
+        builtins: text.builtins,
+        known_helpers: text.bind.known_helpers,
+    });
     for reference in (0..hir.exprs.len() as u32).map(ExprId) {
-        if !bound.is_evaluated_ident(reference) {
+        if !bound.is_evaluated_ident(reference)
+            || stars.iter().any(|star| star.holds(hir, reference))
+        {
             continue;
         }
         for &(_, held, module) in held_by(bound.binding(reference)) {
@@ -1473,16 +1517,29 @@ impl Scan<'_, '_, '_> {
         let call = hir[call];
         if self.body.callback.is_some()
             || call.chain != Chain::No
-            || call.args.len() != 2
-            || hir.id_at::<ExprId>(call.args, 1) != exports
-            || (self.certain_helper)(call.callee)
-                != Some(HelperShape::ExportStarBindsNamesTheTargetLacks)
             || !self.is_statement_in_order(call_node)
-            || !self.star_binds_getters(call.callee)
         {
             return None;
         }
-        let required = hir.skip_type_assertions(hir.id_at(call.args, 0));
+        let arguments: Vec<ExprId> = hir.ids(call.args).collect();
+        let shape = (self.certain_helper)(call.callee)?;
+        let source = match (shape, &arguments[..]) {
+            (HelperShape::ExportStarBindsNamesTheTargetLacks, &[source, target])
+                if target == exports && self.star_binds_getters(call.callee) =>
+            {
+                source
+            }
+            (HelperShape::ExportStarOfKeysIfMissing, &[source, target]) if target == exports => {
+                source
+            }
+            (HelperShape::ReExportCopiesAllButDefault, &[copied, source, target])
+                if target == exports && self.is_copied_to_exports(copied) =>
+            {
+                source
+            }
+            _ => return None,
+        };
+        let required = hir.skip_type_assertions(source);
         let module = self.module_of_call(required)?;
         let statement = text.statement_of(call_node)?;
         self.found.stars.push(Star {
@@ -1492,8 +1549,36 @@ impl Scan<'_, '_, '_> {
             statement,
             start: hir[call_node].pos,
             is_in_line: false,
+            redefines_names: false,
+            leaves_listed_names: false,
+            copies_hidden_names: shape == HelperShape::ReExportCopiesAllButDefault,
         });
         Some(())
+    }
+
+    // `module.exports = __toCommonJS(index_exports)`: the summary has found every mention of the object.
+    fn is_copied_to_exports(&self, object: ExprId) -> bool {
+        let (hir, bound) = (self.text.hir, self.text.bound);
+        let binding_of = |name: ExprId| bound.binding(hir.skip_type_assertions(name));
+        let [replacement] = self.replacements[..] else {
+            return false;
+        };
+        let ExprKind::Assign {
+            op: None, value, ..
+        } = hir[replacement.node].kind
+        else {
+            return false;
+        };
+        let ExprKind::Call(copy) = hir[hir.skip_type_assertions(value)].kind else {
+            return false;
+        };
+        let copy = hir[copy];
+        let shape = (self.certain_helper)(copy.callee);
+        shape == Some(HelperShape::ToCommonJsCopiesOntoNewMarkedObject)
+            && copy.chain == Chain::No
+            && copy.args.len() == 1
+            && matches!(binding_of(object), Binding::Symbol(_))
+            && binding_of(hir.id_at(copy.args, 0)) == binding_of(object)
     }
 
     fn add_inline_star(&mut self, star: InlineStar) -> bool {
@@ -1512,6 +1597,12 @@ impl Scan<'_, '_, '_> {
         {
             return false;
         }
+        if let Some(list) = star.list {
+            let Some(names) = read_list_of_names(hir, text.bound, &self.inline_stars, list) else {
+                return false;
+            };
+            self.found.names_left_by_stars.extend(names);
+        }
         let names = (0..hir.exprs.len() as u32).map(ExprId);
         let in_star = names.filter(|&name| {
             matches!(hir[name].kind, ExprKind::Ident(_))
@@ -1527,6 +1618,9 @@ impl Scan<'_, '_, '_> {
             statement: star.statement,
             start: star.start,
             is_in_line: true,
+            redefines_names: star.redefines_names,
+            leaves_listed_names: star.list.is_some(),
+            copies_hidden_names: false,
         });
         true
     }
@@ -2029,16 +2123,20 @@ impl Scan<'_, '_, '_> {
             _ => None,
         };
         let marker = written.filter(|_| written == self.summary.marker);
+        let is_left_to_stars =
+            written == Some(false) && self.summary.marker.is_none() && !found.stars.is_empty();
         let is_defined_without_store = creations.iter().any(is_marked_by_call)
-            || (written == Some(false) && self.summary.marker != Some(false));
+            || (written == Some(false) && self.summary.marker != Some(false) && !is_left_to_stars);
         if is_defined_without_store && marker != Some(true) {
             self.found.has_names = false;
             return;
         }
         let found = &mut self.found;
         found.marker = marker;
+        found.is_marker_left_to_stars = is_left_to_stars;
         if let (Some(true), [creation]) = (marker, &creations[..]) {
             found.is_marker_fixed = creation.is_fixed;
+            found.is_marker_hidden_from_loops = !creation.is_enumerable;
             found.marker_nodes.push(creation.node);
             found.erased.extend(text.statement_of(creation.node));
             found.creations.retain(|it| it.name != known::__esModule);
@@ -2180,11 +2278,14 @@ fn begin_scan<'t, 'a, 's>(
             erased: Vec::new(),
             evaluated_at_store: None,
             stars: Vec::new(),
+            names_left_by_stars: Vec::new(),
             holders_in_erased_getters: Vec::new(),
             names_read: Vec::new(),
             names_called: Vec::new(),
             marker: None,
             is_marker_fixed: false,
+            is_marker_hidden_from_loops: false,
+            is_marker_left_to_stars: false,
             is_marker_ignored_by_imports: false,
             runs_in_place: false,
             names_hidden_from_loops: Vec::new(),
@@ -2383,7 +2484,8 @@ pub(super) fn scan_commonjs_modules(input: &CommonJsInput<'_, '_, '_>) -> Common
         };
         let scan = scans.of(file);
         let certain_helper = |callee: ExprId| {
-            let known = bind.known_helpers.certain_callee(files, file, callee)?;
+            let own = bind.known_helpers.certain_callee(files, file, callee);
+            let known = own.or_else(|| modules.wrapped.helper_of_member(files, file, callee))?;
             Some(known.shape)
         };
         let inner_modules = modules.wrapped.of_file(file).iter();
@@ -2570,12 +2672,13 @@ impl CommonJsTexts {
 
     fn find_names_of_stars(&self, number: usize) -> Option<Vec<Alias>> {
         let text = &self.modules[number];
-        if !text.has_names || text.is_half || text.marker != Some(true) {
+        let knows_marker = text.marker.is_some() || text.is_marker_left_to_stars;
+        if !text.has_names || text.is_half || !knows_marker {
             return None;
         }
         let mut stars = text.stars.clone();
         stars.shared_sort_by_key(|star| star.start);
-        let some_star_is_in_line = stars.iter().any(|star| star.is_in_line);
+        let some_star_redefines_names = stars.iter().any(|star| star.redefines_names);
         let mut found: Vec<Alias> = Vec::new();
         let mut taken: FxHashSet<Atom> = FxHashSet::default();
         let own_reads = text.own_accesses.iter().filter(|it| !it.is_store_only);
@@ -2590,9 +2693,25 @@ impl CommonJsTexts {
             {
                 return None;
             }
+            let brings_no_marker = match source.marker {
+                Some(is_marked) => !is_marked || source.is_marker_hidden_from_loops,
+                None => false,
+            };
+            let is_followed_unmarked =
+                brings_no_marker && !star.copies_hidden_names && !star.redefines_names;
+            if text.marker != Some(true) && !is_followed_unmarked {
+                return None;
+            }
             let names = create_entries(source).names;
             for (order, entry) in (0u32..).zip(names) {
                 let name = entry.name;
+                if star.leaves_listed_names && text.names_left_by_stars.contains(&name) {
+                    continue;
+                }
+                let is_marker_or_default = name == known::default || name == known::__esModule;
+                if star.copies_hidden_names && !entry.is_enumerable && !is_marker_or_default {
+                    return None;
+                }
                 let hidden = &source.names_hidden_from_loops;
                 let is_hidden = hidden.binary_search_by_key(&name.0, |it| it.0).is_ok();
                 let creations = source.creations_of(name);
@@ -2601,10 +2720,9 @@ impl CommonJsTexts {
                 {
                     return None;
                 }
-                let is_asked =
-                    entry.is_enumerable && name != known::default && name != known::__esModule;
+                let is_asked = entry.is_enumerable && !is_marker_or_default;
                 let is_laid = is_asked && taken.insert(name);
-                if is_asked && !is_laid && some_star_is_in_line {
+                if is_asked && !is_laid && some_star_redefines_names {
                     return None;
                 }
                 if !is_laid {
@@ -2618,7 +2736,7 @@ impl CommonJsTexts {
                 }
                 let own = text.creations_of(name);
                 let getter = text.alias_of(name);
-                if star.is_in_line && (!own.is_empty() || getter.is_some()) {
+                if star.redefines_names && (!own.is_empty() || getter.is_some()) {
                     return None;
                 }
                 if !own.is_empty() || getter.is_some() {

@@ -61,6 +61,9 @@ fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules, left_out_fi
     for &module in &reached.naming_ways {
         graph.set_reaches_module_objects(module);
     }
+    for &module in &reached.exposing_global_object {
+        graph.set_exposes_global_object(module);
+    }
     for &module in reached
         .found_by_name
         .iter()
@@ -709,6 +712,36 @@ fn list_excluded_own_files(
         !is_hidden && !is_code(path) && provider.is_embeddable_only_by_asset(module, path)
     });
     found.iter().map(|path| from_native(path)).collect()
+}
+
+/// The run time finds compiled WebAssembly by its bytes, whatever read them.
+fn find_adjacent_web_assembly(
+    files: &Files<'_>,
+    left_out: &LeftOutCode,
+    provider: &dyn SourceProvider,
+) -> Vec<(FileId, Vec<u8>)> {
+    let is_kept = |file: FileId| left_out.files.binary_search(&file).is_err();
+    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+    let mut found = Vec::new();
+    for &file in files.compiled_files().iter().filter(|&&file| is_kept(file)) {
+        let analysis = files.analysis(file);
+        let folder = dirname::<Posix>(files.module(file).file_name());
+        let read = analysis.module_relative_reads.iter();
+        let handed_on = analysis.named_paths.iter().map(|it| (it.operand, it.path));
+        let named = read.copied().chain(handed_on);
+        let named = named.filter(|it| files.atoms.bytes(it.1).ends_with(b".wasm"));
+        for (operand, name) in named.chain(analysis.web_assembly_names.iter().copied()) {
+            let path = from_argument(folder, files.atoms.bytes(name));
+            if files.by_path.get(&path).is_some()
+                || is_in_left_out_code(files, left_out, file, operand)
+                || !seen.insert(path.clone())
+            {
+                continue;
+            }
+            found.extend((provider.read_web_assembly(to_native(&path))).map(|bytes| (file, bytes)));
+        }
+    }
+    found
 }
 
 fn warn_about_unembedded_reads(
@@ -1615,6 +1648,8 @@ impl Build<'_> {
                     self.started_workers.names_followed =
                         collect_names_followed(view.files(), view.sources, &graph, &left_out.files);
                 }
+                self.adjacent_web_assembly =
+                    find_adjacent_web_assembly(view.files(), &left_out, self.provider);
                 for &module in &reached.looked_at {
                     if let crate::modules::ModuleRef::File(file) = module {
                         assert!(

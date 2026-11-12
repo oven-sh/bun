@@ -19,5 +19,5 @@
 # CHECK: 3,3 1,5,3
 # CHECK-NEXT: exited with 0
 # RUN(COUNT): compile WalkLoopsVersioned LoopVersioningAttemptsFailed mechanisms=all
-# COUNT: statistic WalkLoopsVersioned 7
+# COUNT: statistic WalkLoopsVersioned 8
 # COUNT: statistic LoopVersioningAttemptsFailed 0

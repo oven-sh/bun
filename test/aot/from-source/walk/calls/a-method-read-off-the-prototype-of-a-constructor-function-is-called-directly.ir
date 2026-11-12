@@ -11,8 +11,8 @@
 # The idiom of an ES5 heir. Behind the guard of the member the method is a constant and the reads of `prototype` and `on` are not made. f4 = heirOn
 # RUN(WALK): walk f4 mechanisms=all
 # WALK-LABEL: code f4:Body
+# WALK: frame 1 callee=f3
 # WALK: AreMembersUnchanged conditions=[{layout=L0 key="on"}
-# WALK: NewClosure function=f3
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 500501
 # ANSWERS-NEXT: exited with 0

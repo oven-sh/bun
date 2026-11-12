@@ -59,6 +59,8 @@ enum Action {
 struct Blocked {
     dep_id: DependencyID,
     package_id: PackageID,
+    /// The id in the install tree, for a hoisted package.
+    tree_id: Option<tree::Id>,
     /// Scripts run deepest first, like during an install.
     depth: usize,
     scripts_list: ScriptsList,
@@ -99,7 +101,7 @@ impl Blocked {
 
         let mut scripts = packages.items_scripts()[package_id];
         // Pass `true` to get the scripts that will run once the package is trusted.
-        match scripts.get_list(log, lockfile, folder, alias, resolution, true) {
+        match scripts.get_list(log, folder, alias, resolution, true) {
             Ok(list) => Ok(list.filter(|list| list.total > 0)),
             Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => Ok(None),
             Err(e) => Err(e.into()),
@@ -151,6 +153,7 @@ impl Blocked {
             blocked.push(Blocked {
                 dep_id: folder.dep_id,
                 package_id: folder.pkg_id,
+                tree_id: None,
                 depth: folder.depth,
                 scripts_list,
                 in_global_store: !is_link
@@ -200,6 +203,7 @@ impl Blocked {
                     blocked.push(Blocked {
                         dep_id,
                         package_id,
+                        tree_id: Some(node_modules.tree_id),
                         depth: node_modules.depth,
                         scripts_list,
                         in_global_store: false,
@@ -209,6 +213,28 @@ impl Blocked {
             }
         }
         Ok(blocked)
+    }
+
+    fn find_bin_conflicts(pm: &mut PackageManager, blocked: &mut [Blocked]) -> crate::Result<()> {
+        if blocked.iter().all(|info| info.tree_id.is_none()) {
+            return Ok(());
+        }
+        bun_install::prune::with_install_tree(pm, |pm| {
+            let direct_packages = bun_install::bin::LinkOrder::direct_packages(&pm.lockfile)?;
+            for info in blocked {
+                if let Some(tree_id) = info.tree_id
+                    && info.action == Action::Run
+                {
+                    info.scripts_list.bin_conflicts = bun_install::bin::find_bin_conflicts(
+                        &pm.lockfile,
+                        &direct_packages,
+                        tree_id,
+                        info.dep_id,
+                    );
+                }
+            }
+            Ok(())
+        })?
     }
 
     /// (dependency name, the name `trustedDependencies` knows the package by)
@@ -477,6 +503,8 @@ impl TrustCommand {
             Self::print_dry_run(lockfile, &blocked, &package_names_to_add);
             return Ok(());
         }
+
+        Blocked::find_bin_conflicts(pm, &mut blocked)?;
 
         // Opened before any script runs: a script whose trust cannot be recorded must not run.
         let root_package_json_path = pm.root_package_json_path;

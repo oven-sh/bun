@@ -12,8 +12,7 @@
 // # FORM-LABEL: code f5:Body
 // # FORM: = GetTypedArrayElement {{*}}isInsideView
 // # FORM-LABEL: code f1:Body
-// # FORM: = GetTypedArrayElement {{*}}isInsideView
-// # FORM: = PutTypedArrayElement {{*}}isInsideView
+// # FORM: = CopyElements
 // # FORM-LABEL: code f6:Body
 // # FORM: = GetTypedArrayElement {{*}}isInsideView
 // # FORM: = GetTypedArrayElement {{*}}isInsideView

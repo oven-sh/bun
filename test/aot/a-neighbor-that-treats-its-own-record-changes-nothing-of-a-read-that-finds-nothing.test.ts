@@ -18,8 +18,10 @@ export function make(i: number): Payload;
 export function read(o: Payload): string;
 `;
 const asks = `import { make, read } from "./reader.js";
-globalThis.kept = [read, make(1)];
-console.log(read(make(JSON.parse("2"))), "|", globalThis.neighbor ? read(globalThis.neighbor) : "alone");
+const hidden = JSON.parse('["kept", "neighbor"]');
+globalThis[hidden[0]] = [read, make(1)];
+const neighbor = globalThis[hidden[1]];
+console.log(read(make(JSON.parse("2"))), "|", neighbor ? read(neighbor) : "alone");
 `;
 
 async function buildAloneAndBeside(neighbor: string) {

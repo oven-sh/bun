@@ -139,6 +139,11 @@ impl BindInput<'_, '_> {
     pub(in crate::modules) fn is_plain_name(&self, name: Atom) -> bool {
         let atoms = &self.files.atoms;
         let is_index = atoms.bytes(name).first().is_some_and(u8::is_ascii_digit);
+        !is_index && !self.every_object_has(name)
+    }
+
+    pub(in crate::modules) fn every_object_has(&self, name: Atom) -> bool {
+        let atoms = &self.files.atoms;
         let listed = self.builtin_names.get(name);
         let is_member = listed
             .is_some_and(|name| table::own_member(BuiltinId::ObjectPrototype, name).is_some());
@@ -147,7 +152,7 @@ impl BindInput<'_, '_> {
         let is_added = added
             .binary_search_by(|&(holder, laid)| (holder, atoms.bytes(laid)).cmp(&sought))
             .is_ok();
-        !is_index && !is_member && !is_added && name != known::__proto__
+        is_member || is_added || name == known::__proto__
     }
 }
 
@@ -733,6 +738,7 @@ fn bind_scanned_modules(
             namespace_values: imports.namespace_values,
             evaluating_sites,
             unread_sites: imports.unread_sites,
+            destructured_holders: imports.destructured_holders,
             holders: imports.holders,
             holders_by_call: OnceLock::new(),
             answer_members: imports.answer_members,
@@ -1053,7 +1059,8 @@ fn find_statements_of_inner_modules(modules: &ModuleSet) -> Vec<(FileId, StmtId)
     let mut statements = Vec::new();
     for &file in &modules.compiled_files {
         let inner_modules = modules.wrapped.of_file(file).iter();
-        statements.extend(inner_modules.map(|inner| (file, inner.statement)));
+        let statements_of_file = inner_modules.filter_map(|inner| inner.statement.some());
+        statements.extend(statements_of_file.map(|statement| (file, statement)));
     }
     statements.shared_sort_unstable();
     statements.dedup();

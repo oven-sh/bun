@@ -2948,6 +2948,21 @@ pub struct KnownEvaluation {
     pub is_in_global_scope: bool,
 }
 
+/// `call` enters `function`, a copy of `factory` with all that is in it, where its callee is a closure of `factory`. `sequence`
+/// is the copy and then the call. The text of the copy follows the text of the file. Set by the loader.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct CopiedFactory {
+    pub sequence: ExprId,
+    pub call: CallId,
+    pub function: ExprId,
+    pub factory: FnId,
+    /// Where the copy is in the text of the file.
+    pub start: u32,
+    pub end: u32,
+    /// Where `factory` is.
+    pub written_start: u32,
+}
+
 /// The parser's output for one source file.
 #[derive(Default)]
 pub struct FileIn<S: Storage> {
@@ -2988,6 +3003,10 @@ pub struct FileIn<S: Storage> {
     pub functions_written_by_loader: S::Few<FunctionWrittenByLoader>,
     /// Sorted by call and by start.
     pub known_evaluations: S::Few<KnownEvaluation>,
+    /// The direct evals that evaluate no other strings than those of `known_evaluations`, sorted. Set by the loader.
+    pub settled_evals: S::Few<CallId>,
+    /// Sorted by sequence and by start.
+    pub copied_factories: S::Few<CopiedFactory>,
     /// Has a top-level `import` or `export`.
     pub has_module_syntax: bool,
     /// The parser rejected the file, so the HIR is partial or empty. Only parse errors are reported for it.
@@ -3412,9 +3431,9 @@ impl<S: Storage> FileIn<S> {
             .any(|&(start, end)| (start..end).contains(&pos))
     }
 
-    /// Where the text that was read ends. The texts of `known_evaluations` follow it.
+    /// Where the text that was read ends. The texts of `known_evaluations` and of `copied_factories` follow it.
     pub fn written_text_end(&self) -> u32 {
-        match self.known_evaluations.is_empty() {
+        match self.known_evaluations.is_empty() && self.copied_factories.is_empty() {
             true => self.text.len() as u32,
             false => self.source_len,
         }
@@ -3423,11 +3442,58 @@ impl<S: Storage> FileIn<S> {
     /// The build replaces no names there: the program evaluates the text as it is.
     #[inline]
     pub fn is_in_known_evaluation(&self, pos: u32) -> bool {
-        !self.known_evaluations.is_empty() && pos >= self.source_len
+        !self.known_evaluations.is_empty()
+            && pos >= self.source_len
+            && !self.is_in_copied_factory(pos)
     }
 
-    /// Where the call that evaluates what is at `pos` is. `pos` itself in the text that was read.
+    #[inline]
+    pub fn is_in_copied_factory(&self, pos: u32) -> bool {
+        (self.copied_factories.first()).is_some_and(|first| pos >= first.start)
+    }
+
+    /// The program enters copies of the factory that is written there.
+    pub fn is_in_factory_with_copies(&self, pos: u32) -> bool {
+        (self.copied_factories.iter())
+            .any(|it| (it.written_start..it.written_start + (it.end - it.start)).contains(&pos))
+    }
+
+    fn copied_factory_at(&self, pos: u32) -> Option<&CopiedFactory> {
+        let all = &self.copied_factories[..];
+        all[..all.partition_point(|it| it.start <= pos)].last()
+    }
+
+    /// Where the file has what is at `pos`, if that is in a copy.
+    #[inline]
+    pub fn written_position(&self, pos: u32) -> u32 {
+        match self.copied_factories.is_empty() {
+            true => pos,
+            false => self.find_written_position(pos),
+        }
+    }
+
+    fn find_written_position(&self, pos: u32) -> u32 {
+        let copied = self.copied_factory_at(pos);
+        copied.map_or(pos, |it| pos - it.start + it.written_start)
+    }
+
+    #[inline]
+    pub fn copied_factory_of(&self, sequence: ExprId) -> Option<&CopiedFactory> {
+        let all = &self.copied_factories[..];
+        match all.is_empty() {
+            true => None,
+            false => {
+                let found = all.binary_search_by_key(&sequence, |it| it.sequence);
+                found.ok().map(|index| &all[index])
+            }
+        }
+    }
+
+    /// Where the call is that evaluates what is at `pos`, or enters the copy there. `pos` itself in the text that was read.
     pub fn position_of_evaluation(&self, pos: u32) -> u32 {
+        if let Some(copied) = self.copied_factory_at(pos) {
+            return self[self[copied.call].callee].pos;
+        }
         let all = &self.known_evaluations[..];
         match all.partition_point(|it| it.start <= pos) {
             0 => pos,
@@ -3440,6 +3506,11 @@ impl<S: Storage> FileIn<S> {
         let first = all.partition_point(|it| it.call < call);
         let count = all[first..].partition_point(|it| it.call == call);
         &all[first..first + count]
+    }
+
+    #[inline]
+    pub fn is_settled_eval(&self, call: CallId) -> bool {
+        !self.settled_evals.is_empty() && self.settled_evals.binary_search(&call).is_ok()
     }
 
     /// The arguments of `call` that the program writes.
@@ -3754,6 +3825,8 @@ macro_rules! file_in_storage {
             texts_written_by_loader: $few!($this.texts_written_by_loader),
             functions_written_by_loader: $few!($this.functions_written_by_loader),
             known_evaluations: $few!($this.known_evaluations),
+            settled_evals: $few!($this.settled_evals),
+            copied_factories: $few!($this.copied_factories),
             has_module_syntax: $this.has_module_syntax,
             has_errors: $this.has_errors,
             ran_out_of_stack: $this.ran_out_of_stack,
@@ -3909,6 +3982,8 @@ impl FileBuilder {
             texts_written_by_loader,
             functions_written_by_loader,
             known_evaluations,
+            settled_evals,
+            copied_factories,
             has_module_syntax,
             has_errors,
             ran_out_of_stack,
@@ -4020,6 +4095,8 @@ impl FileBuilder {
         texts_written_by_loader.clear();
         functions_written_by_loader.clear();
         known_evaluations.clear();
+        settled_evals.clear();
+        copied_factories.clear();
         *has_module_syntax = Default::default();
         *has_errors = Default::default();
         *ran_out_of_stack = Default::default();

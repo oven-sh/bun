@@ -132,6 +132,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn get_derived_constructor_this(&mut self, owner: ScopeId) -> ValueId {
         let value = self.get_slot(owner, ScopeSlot::This);
+        if self.scopes.initialized_this.contains(&value) {
+            return value;
+        }
         let split = self.split_on_type(value, TypeTable::ABSENT);
         self.builder.switch_to(split.taken);
         self.emit_throw_runtime_error(RuntimeErrorKind::UninitializedThis, None);
@@ -140,6 +143,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(local) = self.scopes.find_local(binding) {
             self.builder
                 .write_variable(local.variable, split.not_taken_value);
+            self.scopes.initialized_this.push(split.not_taken_value);
         }
         split.not_taken_value
     }
@@ -155,11 +159,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
         };
         let old = self.get_slot(owner, ScopeSlot::This);
-        let split = self.split_on_type(old, TypeTable::ABSENT);
-        self.builder.switch_to(split.not_taken);
-        self.emit_throw_runtime_error(RuntimeErrorKind::ThisAlreadyBound, None);
-        self.builder.switch_to(split.taken);
+        if !self.builder.is_absent(old) {
+            let split = self.split_on_type(old, TypeTable::ABSENT);
+            self.builder.switch_to(split.not_taken);
+            self.emit_throw_runtime_error(RuntimeErrorKind::ThisAlreadyBound, None);
+            self.builder.switch_to(split.taken);
+        }
         self.set_slot(owner, ScopeSlot::This, value);
+        self.scopes.initialized_this.push(value);
     }
 
     pub(crate) fn get_new_target(&mut self) -> ValueId {

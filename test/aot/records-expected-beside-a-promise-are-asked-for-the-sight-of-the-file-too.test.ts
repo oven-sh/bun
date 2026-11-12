@@ -28,40 +28,40 @@ export declare function settle(source: Source, value: unknown): Promise<unknown>
 `,
   "alone.ts": `import { settle } from "parcels/checks.js";
 const source = { run(parcel: any) { return JSON.parse("1") ? parcel : Promise.resolve(parcel); } };
-(globalThis as any).kept = [settle, source];
+(globalThis as any)[JSON.parse('"kept"')] = [settle, source];
 console.log(await settle(source, 5));
 `,
 };
 const neighbors: Record<string, string> = {
   "typed-as-the-package-types.ts": `import type { Parcel } from "parcels/shapes.js";
 export const made: Parcel[] = [{ value: 1, faults: [] }, { value: 2, faults: [] }];
-(globalThis as any).neighbor = made;
+(globalThis as any)[JSON.parse('"neighbor"')] = made;
 `,
-  "the-same-names.js": `export const made = { value: 1, faults: [] };\nglobalThis.neighbor = made;\n`,
-  "one-more-name.ts": `export const made = { value: 1, faults: [] as string[], extra: 7 };\n(globalThis as any).neighbor = made;\n`,
-  "one-more-name.js": `export const made = { value: 1, faults: [], extra: 7 };\nglobalThis.neighbor = made;\n`,
-  "one-of-its-names-by-a-later-store.js": `export const made = { faults: [], extra: 7 };\nmade.value = 1;\nglobalThis.neighbor = made;\n`,
+  "the-same-names.js": `export const made = { value: 1, faults: [] };\nglobalThis[JSON.parse('"neighbor"')] = made;\n`,
+  "one-more-name.ts": `export const made = { value: 1, faults: [] as string[], extra: 7 };\n(globalThis as any)[JSON.parse('"neighbor"')] = made;\n`,
+  "one-more-name.js": `export const made = { value: 1, faults: [], extra: 7 };\nglobalThis[JSON.parse('"neighbor"')] = made;\n`,
+  "one-of-its-names-by-a-later-store.js": `export const made = { faults: [], extra: 7 };\nmade.value = 1;\nglobalThis[JSON.parse('"neighbor"')] = made;\n`,
   "the-same-names-under-another-prototype.js": `const base = { kind: "crate" };
 export const made = { __proto__: base, value: 1, faults: [] };
-globalThis.neighbor = made;
+globalThis[JSON.parse('"neighbor"')] = made;
 `,
   "the-same-names-on-a-created-object.js": `export const made = Object.create({ kind: "crate" });
 made.value = 1;
 made.faults = [];
-globalThis.neighbor = made;
+globalThis[JSON.parse('"neighbor"')] = made;
 `,
-  "the-optional-name.js": `export const made = { value: 1, faults: [], note: "late" };\nglobalThis.neighbor = made;\n`,
+  "the-optional-name.js": `export const made = { value: 1, faults: [], note: "late" };\nglobalThis[JSON.parse('"neighbor"')] = made;\n`,
   "a-type-of-the-same-names-that-requires-none.ts": `interface Loose { value?: unknown; faults?: string[]; note?: string; }
 export const made: Loose = JSON.parse("{}");
-(globalThis as any).neighbor = [made, made.value, made.faults, made.note];
+(globalThis as any)[JSON.parse('"neighbor"')] = [made, made.value, made.faults, made.note];
 `,
   "a-type-of-the-same-names-that-requires-all.ts": `interface Strict { value: unknown; faults: string[]; note: string; }
 export const made: Strict = JSON.parse('{"value":1,"faults":[],"note":"late"}');
-(globalThis as any).neighbor = [made, made.value, made.faults, made.note];
+(globalThis as any)[JSON.parse('"neighbor"')] = [made, made.value, made.faults, made.note];
 `,
   "the-optional-name.ts": `import type { Parcel } from "parcels/shapes.js";
 export const made: Parcel = { value: 1, faults: [], note: "late" };
-(globalThis as any).neighbor = made;
+(globalThis as any)[JSON.parse('"neighbor"')] = made;
 `,
 };
 

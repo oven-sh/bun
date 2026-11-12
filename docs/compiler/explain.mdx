@@ -152,6 +152,10 @@ The reads inside `readItem` are still lookups, but they run once per item and no
 
 The compiler can't tell which function a call reaches, as in `handlers[name](request)` or a method of an [unknown object](#unknown-object). The call is indirect and its result has no type. Call the function directly. If you can't, narrow the result so that the code after it is typed.
 
+### unknown
+
+The compiler recorded no reason. That's a bug in Bun. [Report it](https://github.com/oven-sh/bun/issues) with the entry.
+
 ### lost-track
 
 An operator such as `+`, `<` or `===` runs on a value whose type the compiler doesn't know. The entry goes away when the type of the value is known, for example with typeof.

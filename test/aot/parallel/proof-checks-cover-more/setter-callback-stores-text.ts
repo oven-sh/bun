@@ -1,5 +1,6 @@
 // Flags: --aot-harden=proof-checks
 // STATISTIC: HoistedCallProofsChecked >= 1
+const outside: any = JSON.parse("{}");
 const loose = (text: string): any => JSON.parse(process.env.MADE_UP_TEXT ?? text);
 const attempt = (run: () => unknown): string => {
   try {
@@ -30,7 +31,7 @@ function run(
   }
   return n;
 }
-(globalThis as any).kept = run;
+outside.kept = run;
 let warm = 0;
 for (let i = 0; i < 2000; i++) warm += run(list, " aBc ", "z", 2);
 console.log(warm);

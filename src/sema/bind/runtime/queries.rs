@@ -34,7 +34,16 @@ fn symbol_at(column: &[SymbolId], index: usize) -> SymbolId {
 
 pub fn is_among_parameters(hir: &File<'_>, function: FnId, from: ScopeKind, pos: u32) -> bool {
     match hir[function].body {
-        FnBody::Expr(body) => hir.position_of_evaluation(pos) < hir[body].pos,
+        FnBody::Expr(body) => {
+            let body = hir[body].pos;
+            let is_evaluated = hir.position_of_evaluation(body) != body;
+            let pos = if is_evaluated {
+                pos
+            } else {
+                hir.position_of_evaluation(pos)
+            };
+            pos < body
+        }
         FnBody::Block(_) | FnBody::None => matches!(from, ScopeKind::Param(_)),
     }
 }
@@ -536,6 +545,14 @@ impl Bound<'_> {
 
     pub fn initialized_binding(&self, name: PatId) -> Binding {
         self.binding_under_goal(self.initialized_pattern_binding(name))
+    }
+
+    /// The binding of a name that no object of a `with` and no variable of a direct eval may hide.
+    pub fn static_binding(&self, ident: ExprId) -> Option<Binding> {
+        match self.dynamic_lookup_scope(NodeData::Expr(ident)) {
+            None => Some(self.binding(ident)),
+            Some(_) => None,
+        }
     }
 
     #[inline]

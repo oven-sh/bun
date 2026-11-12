@@ -412,8 +412,17 @@ impl Declarations<'_, '_> {
             (
                 Kind::Var | Kind::Parameter | Kind::TopLevelFunction,
                 Kind::Var | Kind::Parameter | Kind::TopLevelFunction,
-            )
-            | (Kind::BlockFunction, Kind::BlockFunction) => Conflict::No,
+            ) => Conflict::No,
+            (Kind::BlockFunction, Kind::BlockFunction) => match later.decl {
+                // The rest of the file is printed anew, without its directives.
+                Decl::Fn(f)
+                    if self.hir.is_in_known_evaluation(self.hir[f].start)
+                        && self.hir[f].is_strict =>
+                {
+                    Conflict::Always
+                }
+                _ => Conflict::No,
+            },
             (
                 Kind::BlockFunction | Kind::Lexical | Kind::Import | Kind::SimpleCatchParameter,
                 _,

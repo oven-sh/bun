@@ -6,11 +6,13 @@
 // # RUN(ROUND): emit f1 mechanisms=all
 // # ROUND-LABEL: unit f1:Body
 // # ROUND: = Load8Z({{*}}offset = 7, TypedArrayProperties
+// # ROUND: Jump() -> #[[round]]
+// # ROUND: #[[round]]: <-
 // # ROUND-NOT: effects = ExitsSideways|ControlDependent|MayCollect
 // # ROUND: = Branch(
 // # the end of a stretch: 2^20 turns on, or the bound of the turns laid out where that is nearer: chosen at the entry, and again behind the poll
 // # RUN(STRETCH): emit f1 mechanisms=all
-// # STRETCH-COUNT-2: = Select(
+// # STRETCH-COUNT-3: = Select(
 // # STRETCH-NOT: = Select(
 // # sixteen turns by the types: no stretch, and one poll in all, that of the written loop, which the turns laid out come to
 // # RUN(FEW): emit f4 mechanisms=all

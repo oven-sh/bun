@@ -126,6 +126,9 @@ pub mod api {
         pub serve_hmr: Option<bool>,
         pub serve_define: Option<StringMap>,
         pub serve_sourcemap: Option<SourceMapMode>,
+        /// `[serve.static] reactCompiler = true`: compile the browser bundle
+        /// of an HTML route with the React Compiler.
+        pub serve_react_compiler: bool,
 
         /// from `--no-addons`. `None` == `true`.
         pub allow_addons: Option<bool>,

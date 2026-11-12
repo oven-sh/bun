@@ -27,6 +27,8 @@ pub(crate) struct BuildConfigSubset {
     pub(crate) minify_syntax: Option<bool>,
     pub(crate) minify_identifiers: Option<bool>,
     pub(crate) minify_whitespace: Option<bool>,
+    /// `[serve.static] reactCompiler`. Only the client graph reads it.
+    pub(crate) react_compiler: bool,
 }
 
 impl Default for BuildConfigSubset {
@@ -41,6 +43,7 @@ impl Default for BuildConfigSubset {
             minify_syntax: None,
             minify_identifiers: None,
             minify_whitespace: None,
+            react_compiler: false,
         }
     }
 }

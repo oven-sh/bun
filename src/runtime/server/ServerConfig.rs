@@ -958,6 +958,8 @@ impl ServerConfig {
                         user_options.bundler_options.ssr.define = define.clone();
                     }
 
+                    user_options.bundler_options.client.react_compiler = o.serve_react_compiler;
+
                     args.bake = Some(user_options);
                 } else {
                     if !init_ctx.framework_router_list.is_empty() {

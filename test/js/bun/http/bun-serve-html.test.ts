@@ -2009,4 +2009,55 @@ describe("production headers and import.meta.env", () => {
     );
     expect(results).toEqual(cases.map(([, , expected]) => expected));
   });
+
+  // https://github.com/oven-sh/bun/issues/48638
+  test("bunfig [serve.static] reactCompiler compiles the components of a production html route", async () => {
+    const run = async (bunfig: string) => {
+      const dir = tempDirWithFiles("html-react-compiler", {
+        "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.tsx"></script></body></html>`,
+        "app.tsx": `
+          import { useState } from "react";
+          function App({ x }: { x: number }) {
+            const [n] = useState(x);
+            const items = [n, n + 1];
+            return <ul>{items.map(i => <li key={i}>{i}</li>)}</ul>;
+          }
+          console.log(App({ x: 1 }));
+        `,
+        "node_modules/react/package.json": `{ "name": "react", "version": "19.0.0" }`,
+        "node_modules/react/index.js": `exports.useState = x => [x, () => {}];`,
+        "node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (t, p) => ({ t, p });`,
+        // Only the compiled output imports the compiler runtime.
+        "node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill("compiler-runtime-stub");`,
+        "bunfig.toml": bunfig,
+        "serve.ts": /*js*/ `
+          import index from "./index.html";
+          const server = Bun.serve({ port: 0, development: false, routes: { "/": index } });
+          const base = server.url.href;
+          const html = await (await fetch(base)).text();
+          const jsPath = html.match(/src="([^"]+\\.js)"/)[1];
+          const js = await (await fetch(new URL(jsPath, base))).text();
+          console.log(JSON.stringify({ compiled: js.includes("compiler-runtime-stub") }));
+          await server.stop(true);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "serve.ts"],
+        env: { ...bunEnv, NODE_ENV: undefined },
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) throw new Error(stdout + "\n" + stderr);
+      return JSON.parse(stdout) as { compiled: boolean };
+    };
+
+    const results = await Promise.all([
+      run(`[serve.static]\nreactCompiler = true`),
+      run(`[serve.static]\nreactCompiler = false`),
+      run(``),
+    ]);
+    expect(results).toEqual([{ compiled: true }, { compiled: false }, { compiled: false }]);
+  });
 });

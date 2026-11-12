@@ -1268,12 +1268,7 @@ void JSMockFunction::resetAll(Zig::GlobalObject* globalObject)
     forEachIn(globalObject, List::Configured, [globalObject](JSMockFunction* mock) { mock->resetConfiguration(globalObject); });
 }
 
-// Restores the spies in `list` that are still on their property. A spy that is not there is displaced: nothing is
-// written for it, and it goes to List::Displaced. The test may have assigned over it, or a stub, the fake clock, a
-// module mock or another spy lies over it and puts it back when that one is undone.
-// Every spy is asked before the first restore, because a restore of one writes the property of another.
-// Spies of a preload go to `spiesOfPreload` as they are. Returns whether a spy was restored.
-// Keeps going after an exception and rethrows the first one at the end.
+// Asks every spy in `list` before the first restore, because a restore of one writes the property of another.
 __attribute__((minsize)) bool JSMockFunction::restoreInstalledSpies(Zig::GlobalObject* globalObject, List list, MarkedArgumentBuffer& spiesOfPreload)
 {
     auto& vm = globalObject->vm();
@@ -1326,8 +1321,6 @@ __attribute__((minsize)) bool JSMockFunction::restoreInstalledSpies(Zig::GlobalO
 
 // The next test file shares the global object, so this file's spies and recorded calls have to go.
 // Configured mocks stay registered, because a module shared with the next file may own them.
-// `first` is List::Spies when the file ends. It is List::Displaced once the stubs, fake timers and module mocks of the
-// file are undone: what lay over a displaced spy has put the spy back by then. Returns whether a displaced spy was restored.
 __attribute__((minsize)) bool JSMockFunction::restoreSpiesOfTestFile(Zig::GlobalObject* globalObject, List first)
 {
     auto& vm = globalObject->vm();
@@ -1371,14 +1364,13 @@ void JSMockFunction::didFinishTestFile(Zig::GlobalObject* globalObject)
     restoreSpiesOfTestFile(globalObject, List::Spies);
 }
 
-// A restore here can put back another displaced spy, so the caller repeats this while it returns true.
+// The pass after the undos of a file, which have put back the spies that they lay over.
 bool JSMockFunction::restoreDisplacedSpies(Zig::GlobalObject* globalObject)
 {
     return restoreSpiesOfTestFile(globalObject, List::Displaced);
 }
 
-// A spy that is still displaced after that was assigned over or deleted by the test. The property stays as the test
-// left it. The spy is not reset, because what the test left there may call it.
+// Not reset: what the test left on the property may call the spy.
 void JSMockFunction::forgetDisplacedSpies(Zig::GlobalObject* globalObject)
 {
     forEachIn(globalObject, List::Displaced, [](JSMockFunction* spy) { spy->didUninstall(); });

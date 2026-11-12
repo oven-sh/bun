@@ -90,12 +90,7 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global:
     ViUtils__forgetDynamicImports(global);
 }
 
-/// Call once the fake timers and the module mocks of the file are undone too.
-///
-/// `on_test_file_end` writes nothing for a spy that is no longer on its property. If a stub, a fake timer, a module
-/// mock or another spy lay over it, that one has put it back by now, and it is restored here. That can put a stale
-/// fake timer back, and taking the fake off can put another spy back, so both repeat until neither writes. A spy that
-/// is still off its property then is one that the test replaced, and it is forgotten.
+/// Restores the spies that the undos of the file put back. Repeats, because a restore can put a stale fake back.
 pub(crate) fn on_test_file_undone(global: &JSGlobalObject) {
     if !JSMock__hasDisplacedSpies(global) {
         return;

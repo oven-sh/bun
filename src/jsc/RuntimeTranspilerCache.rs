@@ -86,7 +86,8 @@ bun_core::declare_scope!(cache, visible);
 /// binding that holds what the decorators return.
 /// Version 51: A `bun:` specifier that names no builtin is printed as it is written.
 /// Version 52: a single-use `let`/`const` in one `switch` case is no longer inlined away while another case still references it.
-const EXPECTED_VERSION: u32 = 52;
+/// Version 53: A function declared in a case clause stays a declaration in a module and in a class body.
+const EXPECTED_VERSION: u32 = 53;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

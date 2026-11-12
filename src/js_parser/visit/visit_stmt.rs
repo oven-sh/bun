@@ -2265,6 +2265,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .expect("unreachable");
                 bodies.push(_stmts);
             }
+            // SAFETY: current_scope is a valid arena ptr for the parse.
+            if p.current_scope().members.len() != 0
+                && !p.is_strict_mode()
+                && p.keeps_case_clause_function()
+            {
+                p.finish_kept_case_fns(&mut bodies);
+            }
             // Every case body is visited before any of them is minified: they
             // share one scope, so use counts aren't final until then.
             for (case, mut body) in cases.iter_mut().zip(bodies) {

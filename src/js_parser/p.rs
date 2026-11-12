@@ -291,6 +291,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) has_top_level_function_merged_with_var: bool,
 
     pub(crate) is_file_considered_to_have_esm_exports: bool,
+    /// The file has an `export`, a top-level `await`, or an import statement that TypeScript cannot remove,
+    /// so the loader runs it as a module or not at all.
+    pub(crate) runs_as_module: bool,
 
     pub(crate) has_called_runtime: bool,
 
@@ -3286,6 +3289,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.is_file_considered_to_have_esm_exports = !self.top_level_await_keyword.is_empty()
             || !self.esm_export_keyword.is_empty()
             || self.options.module_type == options::ModuleType::Esm;
+        // Before the visit: it sets `esm_export_keyword` for CommonJS named exports too.
+        self.runs_as_module = !self.top_level_await_keyword.is_empty()
+            || !self.esm_export_keyword.is_empty()
+            || (!TYPESCRIPT
+                && self.import_records.items().iter().any(|record| {
+                    record.kind == ImportKind::Stmt
+                        && !record.flags.intersects(
+                            bun_ast::ImportRecordFlags::IS_INTERNAL
+                                | bun_ast::ImportRecordFlags::IS_UNUSED,
+                        )
+                }));
 
         self.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, loc_module_scope)?;
         self.fn_or_arrow_data_visit.is_outside_fn_or_arrow = true;
@@ -3437,6 +3451,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn will_use_renamer(&self) -> bool {
         self.options.bundle || self.options.features.minify_identifiers
+    }
+
+    /// Whether a plain function declared directly in a case clause stays a declaration. The engine then
+    /// creates it where the switch is entered, so every clause can call it. As a `let` at the head of its
+    /// clause, it is in its dead zone for the other clauses.
+    pub(crate) fn keeps_case_clause_function(&self) -> bool {
+        // The Fast Refresh statements of a function have to run before its first call.
+        if self.options.features.react_fast_refresh {
+            return false;
+        }
+        // Sloppy output gives the declaration an Annex B `var` in the enclosing function. A renamer names the
+        // function for that scope, so nothing else reads the `var`.
+        if self.will_use_renamer() {
+            return true;
+        }
+        // With no renamer that `var` has a name of the source, so the text has to be strict for sure: a
+        // class body, or a file that the loader runs as a module. A "use strict" does not say so, because
+        // the text can lose it.
+        // SAFETY: current_scope is a valid arena ptr for the parse.
+        match self.current_scope().strict_mode {
+            js_ast::StrictModeKind::SloppyMode => false,
+            js_ast::StrictModeKind::ImplicitStrictModeClass => true,
+            _ => self.options.features.commonjs_at_runtime && self.runs_as_module,
+        }
+    }
+
+    /// Names a function that stays a declaration in a case clause for the enclosing function scope.
+    pub(crate) fn name_kept_case_clause_function(&mut self, name: Ref) {
+        if self.will_use_renamer() {
+            self.declare_temp_var(name);
+        }
     }
 
     fn hoist_symbols(&mut self, mut scope: js_ast::StoreRef<js_ast::Scope>) {
@@ -9758,6 +9803,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_with_scope: false,
             has_top_level_function_merged_with_var: false,
             is_file_considered_to_have_esm_exports: false,
+            runs_as_module: false,
             has_called_runtime: false,
             symbol_uses,
             part_uses: Vec::new(),

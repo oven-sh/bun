@@ -1499,6 +1499,60 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         shadow_ref
     }
 
+    /// For the functions that stay declarations in the case bodies of a sloppy switch, what the lowering gives
+    /// a `let`: `var twin = f` for the readers outside the switch. It follows the declaration, because Annex B
+    /// assigns the `var` there.
+    pub(crate) fn finish_kept_case_fns(&mut self, bodies: &mut [ListManaged<'a, Stmt>]) {
+        let p = self;
+        // SAFETY: current_scope is a valid arena ptr for the parse.
+        let has_direct_eval = p.current_scope().contains_direct_eval;
+        for body in bodies {
+            let mut i = body.len();
+            while i > 0 {
+                i -= 1;
+                let StmtData::SFunction(declared) = body[i].data else {
+                    continue;
+                };
+                let Some(name) = declared.func.name else {
+                    continue;
+                };
+                if p.symbols[name.ref_.inner_index() as usize].kind != SymbolKind::HoistedFunction {
+                    continue;
+                }
+                let Some(&twin) = p.hoisted_ref_for_sloppy_mode_block_fn.get(&name.ref_) else {
+                    continue;
+                };
+                if has_direct_eval {
+                    // Direct "eval": neither name can change, so the two are one binding again.
+                    p.symbols[twin.inner_index() as usize].link.set(name.ref_);
+                    continue;
+                }
+                p.record_usage(name.ref_);
+                let decl = G::Decl {
+                    binding: p.b(B::Identifier { r#ref: twin }, name.loc),
+                    value: Some(Expr::init_identifier(name.ref_, name.loc)),
+                };
+                let relocated = p.maybe_relocate_vars_to_top_level(
+                    core::slice::from_ref(&decl),
+                    RelocateVarsMode::Normal,
+                );
+                if !relocated.ok {
+                    let assign = p.s(
+                        S::Local {
+                            kind: LocalKind::KVar,
+                            decls: G::DeclList::from_slice(&[decl]),
+                            ..Default::default()
+                        },
+                        name.loc,
+                    );
+                    body.insert(i + 1, assign);
+                } else if let Some(assign) = relocated.stmt {
+                    body.insert(i + 1, assign);
+                }
+            }
+        }
+    }
+
     // Try separating the list for appending, so that it's not a pointer.
     pub(crate) fn visit_stmts(
         &mut self,
@@ -1595,7 +1649,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .kind
                                     == SymbolKind::HoistedFunction
                             {
-                                break 'list_getter &mut before;
+                                // Another clause can call a function of a case clause (evanw/esbuild#4533).
+                                if kind != StmtsKind::SwitchStmt || !p.keeps_case_clause_function()
+                                {
+                                    break 'list_getter &mut before;
+                                }
+                                p.name_kept_case_clause_function(data.func.name.unwrap().ref_);
                             }
                         }
                         StmtData::SEnum(_) => {

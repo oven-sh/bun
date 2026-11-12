@@ -2030,3 +2030,60 @@ it.concurrent("a child stdio 'data' listener that throws keeps the chunk from th
     exitCode: 0,
   });
 });
+
+// Node hands each chunk of child.stdout and child.stderr to 'data' from the pipe's read callback. After each chunk the
+// listener's ticks run, then its promise jobs, and only then the next chunk or 'end'.
+describe("child stdio 'data' comes from the read callback", () => {
+  // An unhandled error does not end a --hot run, so the stream has to go on: the second chunk, 'end' and 'close'
+  // all come after the throw. On POSIX no timer runs after the error there, but immediates do: they wait for 'close'.
+  // Not concurrent: a --hot run stays even with nothing left to do, and `bun test` kills what a timed-out test
+  // spawned only when that test ran alone.
+  it("under --hot a throwing 'data' listener with no 'uncaughtException' handler does not stop the stream", async () => {
+    const writer = `const fs = require("fs"); let k = 0; process.stdin.on("data", () => { fs.writeSync(1, String(++k)); if (k === 2) process.exit(0); });`;
+    using dir = tempDir("child-stdout-hot", {
+      "reader.js": `
+        const { spawn } = require("node:child_process");
+        const seen = [];
+        // The child writes a chunk for each line it reads and exits after the second.
+        const child = spawn(process.execPath, ["-e", ${JSON.stringify(writer)}], { stdio: ["pipe", "pipe", "inherit"] });
+        // 'resume' comes after the stream's first read request, so chunk 1 is written to a pipe that is being waited on.
+        child.stdout.once("resume", () => child.stdin.write("go\\n"));
+        child.stdout.on("data", chunk => {
+          seen.push("data " + chunk);
+          if (seen.length > 1) return;
+          child.stdin.write("go\\n");
+          throw new Error("data-throw-hot");
+        });
+        child.stdout.on("end", () => seen.push("end"));
+        let closed = false;
+        child.on("exit", () => {
+          const deadline = Date.now() + 2000;
+          (function wait() {
+            if (closed) return;
+            if (Date.now() < deadline) return setImmediate(wait);
+            console.log("no 'close' after: " + seen.join(", "));
+            process.exit(2);
+          })();
+        });
+        child.on("close", code => {
+          closed = true;
+          console.log(seen.join(", ") + ", close " + code);
+          process.exit(0);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", "reader.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.includes("error: data-throw-hot"), exitCode }).toEqual({
+      stdout: "data 1, data 2, end, close 0",
+      stderr: true,
+      exitCode: 0,
+    });
+  });
+});

@@ -1,0 +1,15 @@
+A constant that holds a literal rises with the hoisted mocks, so that their factories can read it, also where the literal has a type mark on it or stands under a minus.
+#### a.test.ts
+import { test, vi } from "bun:test";
+const NAME = "mocked" as const;
+vi.mock("./dep", () => ({ name: NAME }));
+import { name } from "./dep";
+test("as const", () => console.log("| CASE as const", name));
+#### b.test.ts
+import { test, vi } from "bun:test";
+const A = 5 as number, B = -1 as const, C = -(2 as number), D = -3n as bigint, E = <string>"e", F = "f"!, G = "g" satisfies string;
+vi.mock("./dep", () => ({ name: [A, B, C, String(D), E, F, G].join() }));
+import { name } from "./dep";
+test("other marks", () => console.log("| CASE other marks", name));
+#### dep.ts
+export const name = "real";

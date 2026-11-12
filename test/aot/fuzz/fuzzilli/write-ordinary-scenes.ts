@@ -4,6 +4,38 @@
 // A scene prints one text at its end, and nothing in it calls the host before that.
 import { combinations, conversions, predicates } from "./hand-over-built-ins.ts";
 import { randomFrom } from "./print-members-of-objects.ts";
+import { writeSceneOfAllocationsBeforeLoops } from "./write-allocations-before-loops.ts";
+import { writeSceneOfCallbacksInLoops } from "./write-callbacks-in-loops.ts";
+import { writeSceneOfCalls } from "./write-calls.ts";
+import { writeSceneOfAChange } from "./write-changes.ts";
+import { writeSceneOfClassChains } from "./write-class-chains.ts";
+import { writeSceneOfCoroutines } from "./write-coroutines.ts";
+import { writeSceneOfDispatch } from "./write-dispatch.ts";
+import { writeSceneOfFieldLoops } from "./write-field-loops.ts";
+import { writeSceneOfAHand } from "./write-hands.ts";
+import { writeSceneOfHiddenEffects } from "./write-hidden-effects.ts";
+import { writeSceneOfLayouts } from "./write-layouts.ts";
+import { writeSceneOfLinkedObjects } from "./write-linked-objects.ts";
+import { writeSceneOfALoop } from "./write-loops.ts";
+import { writeSceneOfHeirsOfTheLibrary } from "./write-heirs-of-the-library.ts";
+import { writeSceneOfWhatIsLaidAbove } from "./write-laid-above.ts";
+import { writeSceneOfMakers } from "./write-makers.ts";
+import { writeSceneOfNumberLoops } from "./write-number-loops.ts";
+import { writeSceneOfASingleDeed } from "./write-single-deeds.ts";
+import { writeSceneOfSparseLists } from "./write-sparse-lists.ts";
+import { writeSceneOfStringWork } from "./write-string-work.ts";
+import { writeSceneOfBuiltinCalls } from "./write-builtin-calls.ts";
+import { writeSceneOfChangedRecords } from "./write-changed-records.ts";
+import { writeSceneOfWideFunctions } from "./write-wide-functions.ts";
+import { writeSceneOfHierarchies } from "./write-hierarchies.ts";
+import { writeSceneOfIterations } from "./write-iterations.ts";
+import { writeSceneOfKeyedObjects } from "./write-keyed-objects.ts";
+import { writeSceneOfListAlgorithms } from "./write-list-algorithms.ts";
+import { writeSceneOfLoopExits } from "./write-loop-exits.ts";
+import { writeSceneOfOptionalResults } from "./write-optional-results.ts";
+import { writeSceneOfReplacedMethods } from "./write-replaced-methods.ts";
+import { writeSceneOfMistypedValues } from "./write-mistyped-values.ts";
+import { writeSceneOfTypedPlaces } from "./write-typed-places.ts";
 
 class Scenes {
   readonly lines: string[] = [];
@@ -3630,6 +3662,192 @@ class Scenes {
     this.lines.push("}");
   }
 
+  /** TypeScript. A lookup, a conversion or a protocol runs code that writes what a neighbor in the expression reads (write-hidden-effects.ts). In JavaScript the change is written out. */
+  sceneOfHiddenEffects() {
+    if (!this.isTypeScript) return this.sceneOfChangesInTheMiddle();
+    this.lines.push(...writeSceneOfHiddenEffects(this.random, ++this.count));
+  }
+
+  /** What a program hands to node's library watches what it is asked for and answers back (write-hands.ts). It ends guards of the library's classes for the whole process: one to a program, and by its name alone. */
+  sceneOfAHand() {
+    const { imports, lines } = writeSceneOfAHand(this.random, ++this.count, this.isTypeScript);
+    for (const line of imports) if (!this.imports.includes(line)) this.imports.push(line);
+    this.lines.push(...lines, "process.exit(0);");
+  }
+
+  /** Heirs of the library's classes, in the old way and the new (write-heirs-of-the-library.ts). */
+  sceneOfHeirsOfTheLibrary() {
+    const lines = writeSceneOfHeirsOfTheLibrary(this.random, ++this.count, this.isTypeScript);
+    this.imports.push(...lines.filter(line => line.startsWith("import ")));
+    this.lines.push(...lines.filter(line => !line.startsWith("import ")));
+  }
+
+  /** A function of the program's own above an object of the library (write-laid-above.ts). Drawn by name alone: it changes what every other scene would meet. */
+  sceneOfWhatIsLaidAbove() {
+    const lines = writeSceneOfWhatIsLaidAbove(this.random, ++this.count, this.isTypeScript);
+    this.imports.push(...lines.filter(line => line.startsWith("import ")));
+    this.lines.push(...lines.filter(line => !line.startsWith("import ")));
+  }
+
+  /** How objects are made and filled (write-makers.ts). */
+  sceneOfMakers() {
+    this.lines.push(...writeSceneOfMakers(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** One call site, many kinds of receivers (write-dispatch.ts). */
+  sceneOfDispatch() {
+    this.lines.push(...writeSceneOfDispatch(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** One function, called from places that are unlike each other (write-calls.ts). */
+  sceneOfUnlikeCallSites() {
+    this.lines.push(...writeSceneOfCalls(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Ask, change, ask again (write-changes.ts). */
+  sceneOfAChange() {
+    this.lines.push(...writeSceneOfAChange(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** One function with one loop, put together from tables that do not know of each other (write-loops.ts). */
+  sceneOfALoop() {
+    this.lines.push(...writeSceneOfALoop(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Objects of several layouts and primitives in one list, read behind tests (write-layouts.ts). */
+  sceneOfLayouts() {
+    this.lines.push(...writeSceneOfLayouts(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Array methods with callbacks in loops, and elements under any numeric key (write-callbacks-in-loops.ts). */
+  sceneOfCallbacksInLoops() {
+    this.lines.push(...writeSceneOfCallbacksInLoops(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Objects that are allocated before loops and used after them (write-allocations-before-loops.ts). */
+  sceneOfAllocationsBeforeLoops() {
+    this.lines.push(...writeSceneOfAllocationsBeforeLoops(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Async functions and generators that call each other (write-coroutines.ts). */
+  sceneOfCoroutines() {
+    this.lines.push(...writeSceneOfCoroutines(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Walks over linked objects while one of them changes (write-linked-objects.ts). */
+  sceneOfLinkedObjects() {
+    this.lines.push(...writeSceneOfLinkedObjects(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Classes that extend each other (write-class-chains.ts). */
+  sceneOfClassChains() {
+    this.lines.push(...writeSceneOfClassChains(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Functions that compute with numbers in nested loops (write-number-loops.ts). */
+  sceneOfNumberLoops() {
+    this.lines.push(...writeSceneOfNumberLoops(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Functions that build, search and cut strings (write-string-work.ts). */
+  sceneOfStringWork() {
+    this.lines.push(...writeSceneOfStringWork(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Everyday loops over lists (write-list-algorithms.ts). */
+  sceneOfListAlgorithms() {
+    this.lines.push(...writeSceneOfListAlgorithms(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Functions that hold many values at once (write-wide-functions.ts). */
+  sceneOfWideFunctions() {
+    this.lines.push(...writeSceneOfWideFunctions(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Records that loops make and change (write-changed-records.ts). */
+  sceneOfChangedRecords() {
+    this.lines.push(...writeSceneOfChangedRecords(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Constructor functions and classes over each other (write-hierarchies.ts). */
+  sceneOfHierarchies() {
+    this.lines.push(...writeSceneOfHierarchies(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Lists that get holes (write-sparse-lists.ts). */
+  sceneOfSparseLists() {
+    this.lines.push(...writeSceneOfSparseLists(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Members by computed keys (write-keyed-objects.ts). */
+  sceneOfKeyedObjects() {
+    this.lines.push(...writeSceneOfKeyedObjects(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Functions that walk iterators (write-iterations.ts). */
+  sceneOfIterations() {
+    this.lines.push(...writeSceneOfIterations(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Functions that give a small object or nothing (write-optional-results.ts). */
+  sceneOfOptionalResults() {
+    this.lines.push(...writeSceneOfOptionalResults(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Classes whose methods are replaced (write-replaced-methods.ts). */
+  sceneOfReplacedMethods() {
+    this.lines.push(...writeSceneOfReplacedMethods(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Functions that call built-ins in loops (write-builtin-calls.ts). */
+  sceneOfBuiltinCalls() {
+    this.lines.push(...writeSceneOfBuiltinCalls(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Nested loops that end early (write-loop-exits.ts). */
+  sceneOfLoopExits() {
+    this.lines.push(...writeSceneOfLoopExits(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** Places that hold values which their types do not allow (write-mistyped-values.ts): TypeScript alone. */
+  sceneOfMistypedValues() {
+    if (!this.isTypeScript) return this.sceneOfLayouts();
+    this.lines.push(...writeSceneOfMistypedValues(this.random, ++this.count));
+  }
+
+  /** Loops over fields that classes share (write-field-loops.ts). */
+  sceneOfFieldLoops() {
+    this.lines.push(...writeSceneOfFieldLoops(this.random, ++this.count, this.isTypeScript));
+  }
+
+  /** A few lines around one deed (write-single-deeds.ts). */
+  sceneOfASingleDeed(only?: "graphsOfModules" | "deepVisitors") {
+    const [own, ...others] = writeSceneOfASingleDeed(this.random, ++this.count, this.isTypeScript, only)
+      .join("\n")
+      .split(/^\/\/ @filename: (\S+)\n/m);
+    this.lines.push(...own.trimEnd().split("\n"));
+    for (let other = 0; other < others.length; other += 2)
+      this.files.push([others[other], others[other + 1].trimEnd() + "\n"]);
+  }
+
+  /** A few files that import each other. For run-alone.ts, which knows when an order of loads counts: no table draws it. */
+  sceneOfAGraphOfModules() {
+    this.sceneOfASingleDeed("graphsOfModules");
+  }
+
+  /** A function that calls itself a few thousand times. For run-alone.ts, which judges it as it is built and under no word that makes frames larger: no table draws it. */
+  sceneOfADeepVisitor() {
+    this.sceneOfASingleDeed("deepVisitors");
+  }
+
+  /** TypeScript. A place of a declared type is given what the type does not allow (write-typed-places.ts). In JavaScript there are no such types, and the scene is one of steps on an object. */
+  sceneOfTypedPlaces() {
+    if (!this.isTypeScript) return this.sceneOfStepsOnOneObject();
+    const lines = writeSceneOfTypedPlaces(this.random, ++this.count);
+    if (this.chance(30)) this.lines.push("{", ...lines.map(line => "  " + line), "}");
+    else this.lines.push(...lines);
+  }
+
   /**
    * TypeScript. A value of a built-in that the build can follow by its name is declared as unknown, cast to a function type, and goes where an honest function goes too: a parameter, a variable,
    * a field, an element, an answer, a capture. There it is called, constructed, handed to map, compared and asked for its type. In JavaScript the scene is one of built-in callees.
@@ -4923,7 +5141,8 @@ class Scenes {
       const reads = [
         `note(${s}.m);`,
         `note(typeof ${s}.m);`,
-        `note(${s}.m + 1);`,
+        // A function, or a list that holds one, added to a number gives the function's text, which plain Bun prints as its transpiler wrote it.
+        `note(typeof ${s}.m === "number" ? ${s}.m + 1 : typeof (${s}.m + 1));`,
         `note(${s}.list?.length);`,
         `note(${s}.count);`,
         `note(${s}.count + 1);`,
@@ -8112,14 +8331,19 @@ class Scenes {
  * `text` with one to three scenes of ordinary code. In six programs of ten they are the whole program: what the compiler knows about a function of the library depends on all its callers.
  * What is drawn depends on `text` alone.
  */
-export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: string) {
+export function writeOrdinaryScenes(
+  text: string,
+  isTypeScript: boolean,
+  only?: string | readonly string[],
+  howMany?: number,
+) {
   const [program, ...otherFiles] = text.split(/^(?=\/\/ @filename: )/m);
   const first = "const printValue = console.log;\n";
   if (!program.startsWith(first)) return text;
   const random = randomFrom("ordinary" + text);
   const scenes = new Scenes(random, isTypeScript);
-  for (let count = scenes.pick([1, 1, 1, 2, 2, 3]); count > 0; count--)
-    if (only) (scenes as unknown as Record<string, () => void>)[only]();
+  for (let count = howMany ?? scenes.pick([1, 1, 1, 2, 2, 3]); count > 0; count--)
+    if (only) (scenes as unknown as Record<string, () => void>)[typeof only === "string" ? only : scenes.pick(only)]();
     else
       scenes.pick([
         () => scenes.sceneOfParsedData(),
@@ -8247,6 +8471,135 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: 
         () => scenes.sceneOfBuiltInValuesDeclaredAsFunctions(),
         () => scenes.sceneOfBuiltInValuesDeclaredAsFunctions(),
         () => scenes.sceneOfBuiltInValuesDeclaredAsFunctions(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfUnlikeCallSites(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfDispatch(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfMakers(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfAChange(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfALoop(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfTypedPlaces(),
+        () => scenes.sceneOfHiddenEffects(),
+        () => scenes.sceneOfHiddenEffects(),
+        () => scenes.sceneOfHiddenEffects(),
+        () => scenes.sceneOfHiddenEffects(),
+        () => scenes.sceneOfHiddenEffects(),
+        () => scenes.sceneOfHiddenEffects(),
+        () => scenes.sceneOfHiddenEffects(),
+        () => scenes.sceneOfHiddenEffects(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        () => scenes.sceneOfASingleDeed(),
+        ...Array.from({ length: 10 }, () => () => scenes.sceneOfLayouts()),
+        ...Array.from({ length: 10 }, () => () => scenes.sceneOfFieldLoops()),
+        ...Array.from({ length: 5 }, () => () => scenes.sceneOfCallbacksInLoops()),
+        ...Array.from({ length: 10 }, () => () => scenes.sceneOfCoroutines()),
+        ...Array.from({ length: 8 }, () => () => scenes.sceneOfLinkedObjects()),
+        ...Array.from({ length: 8 }, () => () => scenes.sceneOfNumberLoops()),
+        ...Array.from({ length: 8 }, () => () => scenes.sceneOfStringWork()),
+        ...Array.from({ length: 10 }, () => () => scenes.sceneOfListAlgorithms()),
+        ...Array.from({ length: 10 }, () => () => scenes.sceneOfMistypedValues()),
+        ...Array.from({ length: 10 }, () => () => scenes.sceneOfLoopExits()),
+        ...Array.from({ length: 10 }, () => () => scenes.sceneOfBuiltinCalls()),
+        ...Array.from({ length: 10 }, () => () => scenes.sceneOfOptionalResults()),
+        ...Array.from({ length: 10 }, () => () => scenes.sceneOfReplacedMethods()),
+        ...Array.from({ length: 10 }, () => () => scenes.sceneOfIterations()),
+        ...Array.from({ length: 10 }, () => () => scenes.sceneOfKeyedObjects()),
+        ...Array.from({ length: 10 }, () => () => scenes.sceneOfSparseLists()),
+        ...Array.from({ length: 10 }, () => () => scenes.sceneOfHierarchies()),
+        ...Array.from({ length: 14 }, () => () => scenes.sceneOfChangedRecords()),
+        ...Array.from({ length: 8 }, () => () => scenes.sceneOfWideFunctions()),
+        ...Array.from({ length: 8 }, () => () => scenes.sceneOfClassChains()),
+        ...Array.from({ length: 5 }, () => () => scenes.sceneOfAllocationsBeforeLoops()),
         () => scenes.sceneOfHostObjectsReadUnderMadeKeys(),
         () => scenes.sceneOfHostObjectsReadUnderMadeKeys(),
         () => scenes.sceneOfHostObjectsReadUnderMadeKeys(),

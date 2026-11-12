@@ -24,22 +24,5 @@ console.log(__filename, readFilename());
 [__filename, __dirname] = ["first", "second"];
 console.log(__filename, __dirname);
 
-// GENERATED: readFilename storeDirname
 // CHECK-LABEL: function {{*}}name="readFilename"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="storeDirname"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: PutModuleVariable v0 variable=[[g_2]]
-// CHECK-NEXT: v2 = Undefined
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

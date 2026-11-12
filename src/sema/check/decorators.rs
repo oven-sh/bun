@@ -64,7 +64,7 @@ impl<'p, 's> Checker<'p, 's> {
             rest: false,
             declaration: None,
         });
-        self.types().intern_sig(SigData::Synth {
+        self.types().intern_synth_sig(SynthSig {
             type_params: ArenaBox::empty(),
             params: self.list_of(params),
             ret,

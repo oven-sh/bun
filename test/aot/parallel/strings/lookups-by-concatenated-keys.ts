@@ -1,5 +1,4 @@
 // A key that is put together for one lookup, `table.get(a + ":" + b)`, is looked up by its parts and never becomes a string. Every such lookup answers what the lookup of the finished key answers: with parts that are 8-bit, 16-bit, ropes, slices, empty or integers, with keys that entered the table in another form, with keys under, at and over the length that is looked up by parts, and in a Map or a Set whose `get` or `has` is not the built-in one.
-// STATISTIC: KeyPartsLookupGroups >= 17
 // CALLS+ getOfTwo operationAOTMapGetByKeyParts
 // CALLS+ getOfThree operationAOTMapGetByKeyParts
 // CALLS+ getOfTemplate operationAOTMapGetByKeyParts

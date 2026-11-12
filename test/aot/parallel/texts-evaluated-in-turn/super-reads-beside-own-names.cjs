@@ -1,0 +1,2 @@
+const text = "const lines = []; class P { name() { return \"P\"; } } P.prototype.word = \"above\"; class C extends P { name() { return \"C\"; } ask() { return super.word + super.missing; } } const c = new C(); c.word = \"own\"; c.missing = \"found\"; const others = [c, { word: 1, z: 2 }, { y: 1, word: 3 }, c]; const read = o => o.word; const readMissing = o => o.missing; for (let n = 0; n < 60; n++) { for (const o of others) { read(o); readMissing(o); } lines.push(c.ask()); } lines.join();";
+for (let t = 0; t < 2; t++) console.log((0, eval)("{" + text + "}//" + t));

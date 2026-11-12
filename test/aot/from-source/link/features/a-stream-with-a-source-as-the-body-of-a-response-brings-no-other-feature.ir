@@ -1,0 +1,10 @@
+# enqueue() and close() are found by their names on both controllers; none of their rows prints an operand
+# -- source: a-stream-with-a-source-as-the-body-of-a-response-brings-no-other-feature.ts
+# Bun.serve({ port: 0, fetch() { return new Response(new ReadableStream({ start(controller) { controller.enqueue("a"); controller.close(); } })); } });
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by ReadableStream
+# RUN(NEVER): features
+# NEVER-NOT: feature Interpreter
+# NEVER-NOT: by BunTranspiler

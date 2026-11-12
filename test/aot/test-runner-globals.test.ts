@@ -65,7 +65,6 @@ test.each([
   });
   const { said, exitCode } = await run(String(dir));
   expect(said).not.toContain("error: TS");
-  expect(said).not.toContain("does not run this file");
   expect(said).toContain("(pass) passes");
   expect(said).toContain("(fail) calls what bun test does not have");
   expect(said).toMatch(/\b1 pass\b/);

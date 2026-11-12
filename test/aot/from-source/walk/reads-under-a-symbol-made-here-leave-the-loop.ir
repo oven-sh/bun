@@ -1,0 +1,13 @@
+# -- source: main.mjs
+# const s = Symbol("s"); const o = { [s]: 1, a: 2 };
+# function repeat(turns) {
+#   let n = 0;
+#   for (let k = 0; k < turns; k++) { n += o[s] + o.a; }
+#   return n;
+# }
+# console.log(repeat(process.argv.length * 9));
+# -- end of source
+# The literal defines its property under the symbol that the same body has made, once: nothing is missing and nothing is read in the loop.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: GetSlotOrUndefined

@@ -1,0 +1,16 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# let kept: any = null;
+# function keep(o: any): void { kept = o; }
+# function make(i: number): number { const o = { lid: i, spout: "s" }; keep(o); return i; }
+# print(make(1));
+# print(kept.lid);
+# print("went on");
+# -- end of source
+# a read that counts on a proof asks no shape: it finds the slot of the overwritten cell empty, and its own check stops under the place of the read
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeCalleesRetainNothing
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: bun: internal AOT error: type check failed
+# CALL-NEXT: found an empty slot, undefined or null in a property
+# CALL-NOT: went on
+# CALL: crashed with

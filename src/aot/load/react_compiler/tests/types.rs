@@ -1,8 +1,9 @@
 use bstr::BStr;
 use bun_ast::runtime::ReactCompilerMode;
+use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
 use bun_sema::hir::{Flags, Func, Keyword, Param, TypeNodeId, TypeNodeKind};
 use bun_sema::program::{FileId, FileRole};
-use bun_sema_driver::{check_and_lower, decide_roles};
+use bun_sema_driver::{Diagnostic, check_whole_files, decide_roles};
 
 use super::{
     HELLO, MAIN_PATH, Tree, UNTYPED_HELLO, production_settings, with_compiled_tree, with_project,
@@ -76,14 +77,15 @@ fn check_project(files: &[(&str, &str)], mode: ReactCompilerMode) -> Vec<Reporte
     with_project(files, &default_settings(), mode, |project| {
         let (loaded, host, request) = (project.loaded, project.host, project.request);
         let files_to_check = loaded.files().compiled_files();
-        let roles = decide_roles(loaded, host, request, files_to_check);
-        let checked = check_and_lower(loaded, host, request, &roles, files_to_check, &|_, _| {
-            Some(())
-        });
-        let reported = roles.diagnostics.iter().chain(&checked.diagnostics);
+        let report = check_whole_files(loaded, host, request, files_to_check);
+        let is_error_of_the_program = |diagnostic: &&Diagnostic| {
+            let file = diagnostic.file;
+            let origin = file.map_or(FileOrigin::NoFile, |file| loaded.origin(file));
+            effect_of(origin, diagnostic.class, diagnostic.category) == Effect::StopsBuild
+        };
+        let reported = report.diagnostics.iter().filter(is_error_of_the_program);
         reported
-            .map(|reported| {
-                let diagnostic = &reported.diagnostic;
+            .map(|diagnostic| {
                 let path = BStr::new(&diagnostic.path).to_string();
                 (diagnostic.code, path, diagnostic.line)
             })

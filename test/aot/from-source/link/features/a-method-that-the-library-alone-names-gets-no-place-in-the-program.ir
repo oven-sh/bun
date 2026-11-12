@@ -1,0 +1,6 @@
+# the control: the program reads no name of a built-in off a value: no record gets a place from this rule
+# -- source: a-method-that-the-library-alone-names-gets-no-place-in-the-program.ts
+# console.log({ price: 1234.5 });
+# -- end of source
+# RUN(NEVER): features
+# NEVER-NOT: by NumberPrototypeToLocaleString named at f0

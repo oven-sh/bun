@@ -1239,8 +1239,14 @@ pub(crate) fn bin_subpath<'a>(
     (!is_package_root_or_outside(subpath) && !never_packed()).then_some(subpath)
 }
 
+/// A NUL ends the path that the OS gets, so a path that has one counts as outside.
 pub(crate) fn is_package_root_or_outside(p: &[u8]) -> bool {
-    p.is_empty() || p == b"." || path::is_absolute_loose(p) || p == b".." || p.starts_with(b"../")
+    p.is_empty()
+        || p == b"."
+        || path::is_absolute_loose(p)
+        || p == b".."
+        || p.starts_with(b"../")
+        || strings::contains_char(p, 0)
 }
 
 /// `Unknown` if `bin_path` is missing or a parent component is not a real directory.

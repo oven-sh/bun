@@ -1,0 +1,25 @@
+The object of import() is first made under vi.doMock(): behind vi.doUnmock() it is another, with the file's keys.
+#### a.test.js
+import { test, vi } from "bun:test";
+const say = (...all) => console.log("| CASE", ...all);
+import { count } from "./m.js";
+const keys = object => Object.keys(object).sort().join("+");
+test("t", async () => {
+  vi.doMock("./m.js", () => ({ who: "mock", other: 1 }));
+  const under = await import("./m.js");
+  say(keys(under), under.who);
+  vi.doUnmock("./m.js");
+  const back = await import("./m.js");
+  say(keys(back), back.who, back.count(), count(), back === under);
+});
+#### m.js
+console.log("| CASE m runs");
+let n = 0;
+export const who = "real";
+export function count() { return ++n; }
+#### package.json
+{ "type": "module" }
+#### z.test.js
+import { test } from "bun:test";
+import "./m.js";
+test("other file", () => {});

@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
-import { connect, createServer, rootCertificates, type PeerCertificate } from "node:tls";
+import { connect, createServer, rootCertificates, type PeerCertificate, type TLSSocket } from "node:tls";
 
 // Self-signed, valid until 2126. Subject CN=wildcard-san.example.com,
 // subjectAltName: DNS:*.wildcard.example.com, DNS:exact.example.com
@@ -263,18 +263,19 @@ describe("the legacy infoAccess", () => {
     const directory = path.join(import.meta.dir, "..", "test", "fixtures", "x509-escaping");
     const cert = readFileSync(path.join(directory, "info-1-cert.pem"));
     const server = createServer({ key: readFileSync(path.join(directory, "server-key.pem")), cert });
+    let socket: TLSSocket | undefined, serverSocket: TLSSocket | undefined;
     try {
       await once(server.listen(0), "listening");
       const accepted = once(server, "secureConnection");
       let checked: PeerCertificate | undefined;
-      const socket = connect({
+      socket = connect({
         port: (server.address() as AddressInfo).port,
         ca: cert,
         servername: "example.com",
         checkServerIdentity: (_, peer) => void (checked = peer),
       });
       await once(socket, "secureConnect");
-      const [serverSocket] = await accepted;
+      [serverSocket] = await accepted;
       const infoAccess = {
         "CA Issuers - URI": ["http://ca.example.com/\nOCSP - URI:http://evil.example.com"],
         "OCSP - DNS": ["good.example.com\nOCSP - URI:http://ca.nodejs.org/ca.cert"],
@@ -282,11 +283,11 @@ describe("the legacy infoAccess", () => {
       expect({
         checkServerIdentity: checked?.infoAccess,
         getPeerCertificate: socket.getPeerCertificate().infoAccess,
-        getCertificate: serverSocket.getCertificate().infoAccess,
+        getCertificate: (serverSocket!.getCertificate() as PeerCertificate).infoAccess,
       }).toEqual({ checkServerIdentity: infoAccess, getPeerCertificate: infoAccess, getCertificate: infoAccess });
-      socket.destroy();
-      serverSocket.destroy();
     } finally {
+      socket?.destroy();
+      serverSocket?.destroy();
       server.close();
     }
   });

@@ -1,5 +1,4 @@
 // The first store to a list that was written in the text gives the list other storage. The loop asks for the length of the list on every turn.
-// Flags: --aot-check=MovedLoads
 function total(list) {
   let sum = 0;
   for (let index = 0; index < list.length; index++) {

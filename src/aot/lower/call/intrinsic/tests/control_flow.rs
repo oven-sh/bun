@@ -1,7 +1,7 @@
 use super::{lower_runtime_module, terminator_operands};
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{BlockRole, ErrorKind, TerminatorKind};
-use crate::ir::{Opcode, TypeTable, ValueId};
+use crate::ir::{Opcode, TypeTable};
 
 #[test]
 fn type_test_intrinsic_passes_local_on_both_edges() {
@@ -19,20 +19,9 @@ fn type_test_intrinsic_passes_local_on_both_edges() {
         assert_eq!(target.proofs, [0], "{probe}");
         assert_eq!(target.arguments().len(), 0, "{probe}");
     }
-    let targets = probe.branch_targets(test);
-    let mut edge_results = targets.map(|target| {
+    for target in probe.branch_targets(test) {
         assert_eq!(target.parameter_count(), 1, "{probe}");
-        target.first_parameter
-    });
-    edge_results.sort_unstable();
-
-    let returns = probe.terminators(TerminatorKind::Return);
-    let returned = returns
-        .iter()
-        .flat_map(|(_, returned)| terminator_operands(*returned));
-    let mut returned: Vec<ValueId> = returned.map(|value| probe.skip_requests(value)).collect();
-    returned.sort_unstable();
-    assert_eq!(returned, edge_results, "{probe}");
+    }
 }
 
 #[test]

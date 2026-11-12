@@ -1,1 +1,0 @@
-(globalThis.loaded ??= []).push("never");

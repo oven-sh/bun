@@ -1,5 +1,3 @@
-//! Finds the end of a function's block without parsing it, and tells whether the rest of a module names no file.
-
 use bun_core::strings;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -62,8 +60,6 @@ fn find_what_stands_before(code: &[u8]) -> Before {
     }
 }
 
-/// True if `word` stands in `text` as a name of its own that is no member's, with one of `starts` behind it, or with
-/// whatever behind it if there are none. Without `starts`: with what `may_export_from_a_file` behind it.
 #[inline(never)]
 fn holds_word(text: &[u8], word: &[u8], starts: Option<&[u8]>) -> bool {
     let mut from = 0;
@@ -98,7 +94,6 @@ fn without_blanks_in_front(text: &[u8]) -> &[u8] {
     &text[text.iter().take_while(|&it| is_blank(it)).count()..]
 }
 
-/// True if the statement that starts with `export` and goes on with `rest` may name a file, or can't be told from one that does.
 pub(crate) fn may_export_from_a_file(rest: &[u8]) -> bool {
     let Some(rest) = rest.strip_prefix(b" ") else {
         return true;
@@ -120,9 +115,7 @@ pub(crate) fn may_export_from_a_file(rest: &[u8]) -> bool {
     }
 }
 
-/// False if no statement in `text` names a file and none declares what other files see, whatever is code in it.
 pub(crate) fn may_reach_beyond_the_module(text: &[u8]) -> bool {
-    // A comment may stand behind the word.
     names_what_loads_modules_in_statements(text)
         || holds_word(text, b"module", Some(b"'\"/"))
         || holds_word(text, b"global", Some(b"{/"))

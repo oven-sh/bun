@@ -1496,6 +1496,9 @@ describe("CONNECT pipelined behind a pending response", () => {
           server.unref();
           return void (first = res);
         }
+        // The test ends this process: a connection that an exit leaves open is reset on Windows, with what the client has
+        // not read of it.
+        server.ref();
         first.end("first");
         res.end("released");
       });

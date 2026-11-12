@@ -1,0 +1,8 @@
+import { test, vi } from "bun:test";
+const word = load => Promise.resolve(load).then(it => String(it.x), error => error.name);
+const asked = name => { try { return String(require(name).x); } catch (error) { return error.name; } };
+test("a", async () => {
+  const said = asked("./part.js");
+  vi.doUnmock("./part.js");
+  console.log("SAID a", said, globalThis.calls, asked("./part.js"));
+});

@@ -252,7 +252,18 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `isStartOfDeclaration`
     pub(crate) fn is_start_of_declaration(&mut self) -> bool {
         // Fast path for the most common case, where the text is enough to know the scan's answer.
-        if self.token() == T::Import && self.is_followed_by(b" {") {
+        let is_known_by_text = match self.token() {
+            T::Import => self.is_followed_by_bytes(b" {"),
+            T::Export => {
+                self.is_followed_by_bytes(b" const ")
+                    || self.is_followed_by_bytes(b" function ")
+                    || self.is_followed_by_bytes(b" class ")
+                    || self.is_followed_by_bytes(b" default ")
+                    || self.is_followed_by_bytes(b" {")
+            }
+            _ => false,
+        };
+        if is_known_by_text {
             return true;
         }
         // The scan steps over one modifier at a time and keeps no state, so it gives the same answer from each of them.
@@ -340,8 +351,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     }
                 }
                 T::Global => {
+                    // `bun run` reads a `global` that begins a statement of code that runs as a name, and the next line as a statement of its own.
+                    let is_name_at_end_of_line =
+                        *last == first && self.options.compiles && !self.has_context(ctx::AMBIENT);
                     self.next();
                     return !self.is_ecmascript
+                        && !(is_name_at_end_of_line && self.newline_before())
                         && matches!(self.token(), T::OpenBrace | T::Identifier | T::Export);
                 }
                 T::Import => {
@@ -752,6 +767,121 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             },
         });
         id
+    }
+
+    /// Adds `statement` to the list that is parsed. In compiled JavaScript `a, b;` is the statements `a;` and `b;`.
+    #[inline]
+    pub(crate) fn push_statement(&mut self, statement: StmtId) {
+        self.s.ids.push(statement.0);
+        if self.is_ecmascript
+            && self.options.compiles
+            && let Some(StmtKind::Expr(expression)) =
+                self.f.stmts.get(statement.idx()).map(|it| it.kind)
+            && self.is_comma(expression)
+        {
+            self.split_comma_statement(statement, expression);
+        }
+    }
+
+    fn is_comma(&self, expression: ExprId) -> bool {
+        let written = self.f.exprs.get(expression.idx()).map(|it| it.kind);
+        matches!(
+            written,
+            Some(ExprKind::Binary {
+                op: BinOp::Comma,
+                ..
+            })
+        )
+    }
+
+    /// `bun run` leaves out what only reads, and the text of a function and the module format go by the whole list.
+    fn is_kept(&self, operand: ExprId) -> bool {
+        let mut waiting = vec![operand];
+        while let Some(part) = waiting.pop() {
+            // An operand that is missing has been reported as a syntax error.
+            let Some(expression) = self.f.exprs.get(part.idx()) else {
+                continue;
+            };
+            match expression.kind {
+                ExprKind::Call(_)
+                | ExprKind::Assign { .. }
+                | ExprKind::Await(_)
+                | ExprKind::Yield { .. }
+                | ExprKind::Unary {
+                    op: UnOp::Delete | UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+                    ..
+                } => return true,
+                ExprKind::Unary { operand, .. } => waiting.push(operand),
+                ExprKind::Binary { left, right, .. } => waiting.extend([left, right]),
+                ExprKind::Cond { test, branches } => {
+                    let Branches { yes, no } = self.f.branches(branches);
+                    waiting.extend([test, yes, no]);
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    fn keeps_all_operands(&self, expression: ExprId) -> bool {
+        let mut waiting = vec![expression];
+        while let Some(operand) = waiting.pop() {
+            let Some(part) = self.f.exprs.get(operand.idx()) else {
+                return false;
+            };
+            match part.kind {
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    left,
+                    right,
+                } => waiting.extend([left, right]),
+                _ if self.is_kept(operand) => {}
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    fn split_comma_statement(&mut self, statement: StmtId, expression: ExprId) {
+        if !self.keeps_all_operands(expression) {
+            return;
+        }
+        let end = self.f.stmts[statement.idx()].loc.end;
+        let mut waiting = vec![expression];
+        let mut last = statement;
+        let mut is_first = true;
+        while let Some(operand) = waiting.pop() {
+            if let Expr {
+                kind:
+                    ExprKind::Binary {
+                        op: BinOp::Comma,
+                        left,
+                        right,
+                    },
+                ..
+            } = self.f.exprs[operand.idx()]
+            {
+                self.f.exprs[operand.idx()].kind = ExprKind::Null;
+                // An operand that is missing has been reported as a syntax error.
+                waiting.extend([right, left].into_iter().filter(|it| it.is_some()));
+                continue;
+            }
+            let Expr { pos, end, .. } = self.f.exprs[operand.idx()];
+            if std::mem::take(&mut is_first) {
+                let first = &mut self.f.stmts[statement.idx()];
+                first.kind = StmtKind::Expr(operand);
+                first.loc.end = end;
+                continue;
+            }
+            last = StmtId(self.f.stmts.len() as u32);
+            self.f.stmts.push(Stmt {
+                kind: StmtKind::Expr(operand),
+                start: pos,
+                loc: TextRange { pos, end },
+            });
+            self.s.ids.push(last.0);
+        }
+        self.f.stmts[last.idx()].loc.end = end;
     }
 
     /// Parses `Options::part`, at its first token, into the file's only statement. Nothing after it is read.
@@ -1262,7 +1392,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 self.statement_jsdoc(statement);
                 self.list_reparsed(reparsed);
             }
-            self.s.ids.push(statement.0);
+            self.push_statement(statement);
         }
         self.leave_list(lists);
         self.f.has_module_syntax = was_module;

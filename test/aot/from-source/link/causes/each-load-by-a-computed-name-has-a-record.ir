@@ -1,0 +1,9 @@
+# a computed require and a computed import: a record each
+# -- source: each-load-by-a-computed-name-has-a-record.ts
+# declare const input: any;
+# require(input);
+# await import(input);
+# -- end of source
+# OPTIONS: report=Uses
+# RUN: causes
+# CHECK-COUNT-2: cause Loads{{*}}ByName at f0 v

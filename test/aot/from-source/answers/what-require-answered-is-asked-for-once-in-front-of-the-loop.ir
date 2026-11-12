@@ -1,0 +1,46 @@
+# -- source: main.cjs
+# "use strict";
+# var __create = Object.create;
+# var __getProtoOf = Object.getPrototypeOf;
+# var __defProp = Object.defineProperty;
+# var __getOwnPropNames = Object.getOwnPropertyNames;
+# var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+# var __hasOwnProp = Object.prototype.hasOwnProperty;
+# var __copyProps = (to, from, except, desc) => {
+#   if (from && typeof from === "object" || typeof from === "function") {
+#     for (let key of __getOwnPropNames(from))
+#       if (!__hasOwnProp.call(to, key) && key !== except)
+#         __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+#   }
+#   return to;
+# };
+# var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+#   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+#   mod
+# ));
+# var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+# var require_gauge = __commonJS((exports) => {
+#   exports.add = function (a, b) { return a + b | 0; };
+#   exports.rate = 3;
+# });
+# var import_gauge = __toESM(require_gauge());
+# function read(n) { let s = 0; for (let i = 0; i < n; i++) s = s + (import_gauge.default.rate + import_gauge.default.rate) | 0; return s; }
+# function call(n) { let s = 0; for (let i = 0; i < n; i++) s = s + import_gauge.default.add(i, n) | 0; return s; }
+# print(read(4), call(4));
+# -- end of source
+# f2 = read, f3 = call
+# `import_gauge.default.rate` behind esbuild's __toESM(require_gauge()): the front end keeps what `require` answered in a place of its own, which stays ABSENT where the helper has to run,
+# and writes every read as `place absent ? import_gauge.default : place`. The arm as written may run any code, so the turns of a loop were never quiet: the place, the shape of the answer and its slot were asked each turn.
+# A variable that may be absent and is HELD to be objects of one layout is asked for that layout once in front of the loop. Where the test passes the written test folds, its arm is gone and the reads leave the turns;
+# where it fails the loop runs as written.
+# RUN(READ): walk f2 mechanisms=all
+# READ: = TypeTest {{*}}testedType=L
+# READ: isLoopHead=true
+# READ: isInLoop=true isLoopHead=true
+# READ-NOT: testedType=absent
+# RUN(ANSWER): run-in-shell
+# ANSWER: 24 22
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 24 22
+# CHECKED-NEXT: exited with 0

@@ -677,12 +677,12 @@ pub(crate) fn execute_simple_s3_request(
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
         context: Default::default(),
     });
-    // SAFETY: `task_ptr` is a freshly heap-allocated pointer; shared reads only, and `task` is not
-    // used once `task_ptr` is dereferenced. `'static`: `url`, `headers_buf`, `body` and
+    // SAFETY: `task_ptr` is a freshly heap-allocated pointer, and `task` is not used once
+    // `task_ptr` is dereferenced. `'static`: `url`, `headers_buf`, `body` and
     // `http_proxy` borrow heap buffers that `*task` owns and never writes again. They are stored in
     // `task.http`, an `AsyncHTTP<'static>` that the HTTP thread reads, and remain valid until
     // `task` is dropped in `on_response`.
-    let task: &'static S3HttpSimpleTask = unsafe { &*task_ptr };
+    let task: &'static mut S3HttpSimpleTask = unsafe { &mut *task_ptr };
     let url = URL::parse(&task.sign_result.url);
     let headers_buf: &'static [u8] = task.headers.buf.as_slice();
     let body: &'static [u8] = &task.body;
@@ -713,29 +713,21 @@ pub(crate) fn execute_simple_s3_request(
             verbose: Some(verbose),
             reject_unauthorized: Some(reject_unauthorized),
             tls_props: crate::socket::http_client_defaults(vm),
-            // SAFETY: `task_ptr` outlives the request; the store is only read
-            // through these pointers by the HTTP client.
-            signals: Some(unsafe { (*task_ptr).signal_store.to() }),
+            signals: Some(task.signal_store.to()),
             ..Default::default()
         },
     );
-    // SAFETY: `task_ptr` is still the sole pointer (the HTTP thread only sees it after
-    // `schedule` below); scoped exclusive write of the `http` field.
-    unsafe { (*task_ptr).http.write(async_http) };
+    let http = task.http.write(async_http);
     // queue http request
     bun_http::http_thread::init(&Default::default());
     let mut batch = thread_pool::Batch::default();
-    // SAFETY: `http` was initialised immediately above; scoped exclusive access.
-    unsafe { (*task_ptr).http.assume_init_mut() }.schedule(&mut batch);
+    http.schedule(&mut batch);
     // Out on the HTTP thread until its final callback: its context aborts it
     // when it stops, and the VM waits for it (the ticket).
-    // SAFETY: as above; the task is heap-allocated and drops its handle with itself.
-    unsafe {
-        let vm = VirtualMachine::get();
-        (*task_ptr).http_ticket = Some(vm.ticket());
-        (*task_ptr).context = context.id();
-        bun_jsc::AbortHandle::arm_owner(task_ptr, context);
-    }
+    task.http_ticket = Some(VirtualMachine::get().ticket());
+    task.context = context.id();
+    // SAFETY: the task is heap-allocated and drops its handle with itself.
+    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
     bun_http::HTTPThread::schedule(batch);
     Ok(())
 }

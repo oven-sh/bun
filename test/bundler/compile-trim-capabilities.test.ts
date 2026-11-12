@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isASAN, isLinux, isMacOS, isWindows } from "harness";
+import { isASAN, isLinux, isMacOS, isMusl, isWindows } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/compiler";
@@ -14,7 +14,7 @@ import {
   trimFeatureNamed,
   withoutFeatures,
 } from "./compile-trim-features";
-import { placesThatCall, placesThatMakeSystemCalls } from "./what-an-executable-can-call";
+import { addressesOf, placesThatCall, placesThatMakeSystemCalls } from "./what-an-executable-can-call";
 
 const featuresOf = (...names: string[]) => names.flatMap(name => trimFeatureNamed(name).features);
 
@@ -175,7 +175,7 @@ describe("in x64 code, the scan reports a call only where an instruction begins"
     return { code, places };
   }
 
-  const addressesOf = (file: Uint8Array) => placesThatCall(file, ["execvp"]).map(place => place.address);
+  const callsIn = (file: Uint8Array) => placesThatCall(file, ["execvp"]).map(place => place.address);
 
   // The first 79 bytes of WTF::Vector<Bun::NodeData>::expandCapacity() and a `ret`. Build 137163 of CI had the function
   // at 0x105e364c0 in the executable for macOS x64, and the pointer to `execvp` at 0x107dce840. Read from the second
@@ -257,7 +257,7 @@ describe("in x64 code, the scan reports a call only where an instruction begins"
       "909090",
       "c3",
     ]);
-    expect(addressesOf(machO(at, code, [at, at + 88, at + 96], [[at + 80, at + 88]]))).toEqual(places);
+    expect(callsIn(machO(at, code, [at, at + 88, at + 96], [[at + 80, at + 88]]))).toEqual(places);
   });
 
   test("each kind of instruction that names an import, and not its bytes inside `mov rax, imm64`", () => {
@@ -287,7 +287,7 @@ describe("in x64 code, the scan reports a call only where an instruction begins"
       ["e8", stub],
       "c3", // ret
     ]);
-    expect(addressesOf(machO(at, code))).toEqual(places);
+    expect(callsIn(machO(at, code))).toEqual(places);
   });
 
   // The processor takes any number of REX and legacy prefixes in any order, and uses a REX prefix only directly in
@@ -300,7 +300,7 @@ describe("in x64 code, the scan reports a call only where an instruction begins"
   ])("%s", (_, parts) => {
     const at = 0x105e36400;
     const { code, places } = assemble(at, [expandCapacity.slice(0, -2), ...parts, "c3"]);
-    expect(addressesOf(machO(at, code))).toEqual(places);
+    expect(callsIn(machO(at, code))).toEqual(places);
   });
 
   // Read as an instruction, a zero byte is the opcode of `add r/m8, r8`, and it takes the `e8` of the call behind it
@@ -312,7 +312,7 @@ describe("in x64 code, the scan reports a call only where an instruction begins"
   ])("a call behind %s", (_, zeros) => {
     const at = 0x105e36400;
     const { code, places } = assemble(at, [expandCapacity, zeros, ["e8", stub], "c3"]);
-    expect(addressesOf(machO(at, code))).toEqual(places);
+    expect(callsIn(machO(at, code))).toEqual(places);
   });
 });
 
@@ -353,6 +353,25 @@ describe("in x64 code, the scan reports a call only where an instruction begins"
 (isWindows || isASAN || !canTrim ? describe.skip : describe.concurrent)(
   "an executable without what loads native code",
   () => {
+    test.skipIf(!isLinux || isMusl)(
+      "a word of the data is a place only where the address of the import is taken",
+      async () => {
+        const { file } = await build([]);
+        const free = (file.indexOf(Buffer.alloc(24), 1 << 20) + 15) & ~7;
+        const newPlaces = (name: string) => {
+          const before = placesThatCall(file, [name]).length;
+          return addressesOf(file, name).map(address => {
+            const changed = Buffer.from(file);
+            changed.writeBigUInt64LE(BigInt(address), free);
+            return placesThatCall(changed, [name]).length - before;
+          });
+        };
+        // Bun takes the address of dlopen. It only calls execve.
+        expect(newPlaces("dlopen")).toEqual([1, 1]);
+        expect(newPlaces("execve")).toEqual([0, 0]);
+      },
+    );
+
     test("holds no place that calls dlopen", async () => {
       const whole = await build([]);
       expect(namesOf(placesThatCall(whole.file, loadsNativeCode.functions))).toEqual(["dlopen"]);
@@ -368,3 +387,53 @@ describe("in x64 code, the scan reports a call only where an instruction begins"
     });
   },
 );
+
+// A Mach-O file for arm64 of 1.5 KB: a stub for posix_spawn, a section of code that calls it, and a section of constants
+// with the same four bytes. All three lie in __TEXT, the segment that is mapped for execution.
+function machOWithOneStub() {
+  const file = Buffer.alloc(0x600);
+  const base = 0x1_0000_0000;
+  const [text, stubs, constants, symbols, strings, indirect] = [0x200, 0x300, 0x400, 0x500, 0x520, 0x540];
+  const segment = 32;
+  const section = (index: number, offset: number, size: number, flags: number, stubSize = 0) => {
+    const at = segment + 72 + index * 80;
+    file.writeBigUInt64LE(BigInt(base + offset), at + 32);
+    file.writeBigUInt64LE(BigInt(size), at + 40);
+    file.writeUInt32LE(offset, at + 48);
+    file.writeUInt32LE(flags, at + 64);
+    file.writeUInt32LE(stubSize, at + 72);
+  };
+  file.writeUInt32LE(0xfeedfacf, 0);
+  file.writeUInt32LE(0x0100000c, 4);
+  file.writeUInt32LE(3, 16);
+  // LC_SEGMENT_64: __TEXT, read and execute.
+  file.writeUInt32LE(0x19, segment);
+  file.writeUInt32LE(72 + 3 * 80, segment + 4);
+  file.writeBigUInt64LE(BigInt(base), segment + 24);
+  file.writeBigUInt64LE(BigInt(file.length), segment + 48);
+  file.writeUInt32LE(5, segment + 60);
+  file.writeUInt32LE(3, segment + 64);
+  section(0, text, 16, 0x80000400); // __text: S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
+  section(1, stubs, 12, 0x80000408, 12); // __stubs: the same, and S_SYMBOL_STUBS
+  section(2, constants, 16, 0); // __const
+  // LC_SYMTAB, LC_DYSYMTAB: the one stub is for symbol 0, whose name is at 1 in the strings.
+  const symtab = segment + 72 + 3 * 80;
+  file.writeUInt32LE(2, symtab);
+  file.writeUInt32LE(24, symtab + 4);
+  file.writeUInt32LE(symbols, symtab + 8);
+  file.writeUInt32LE(strings, symtab + 16);
+  file.writeUInt32LE(11, symtab + 24);
+  file.writeUInt32LE(80, symtab + 28);
+  file.writeUInt32LE(indirect, symtab + 24 + 56);
+  file.writeUInt32LE(1, symbols);
+  file.write("_posix_spawn", strings + 1, "latin1");
+  const callOfStub = (from: number) => (0x94000000 | (((stubs - from) / 4) & 0x03ffffff)) >>> 0; // bl
+  file.writeUInt32LE(callOfStub(text + 4), text + 4);
+  file.writeUInt32LE(callOfStub(constants + 4), constants + 4);
+  return { file, call: base + text + 4 };
+}
+
+test("in a Mach-O file a word of the constants that reads as a call of a stub is no place", () => {
+  const { file, call } = machOWithOneStub();
+  expect(placesThatCall(file, ["posix_spawn"]).map(place => place.address)).toEqual([call]);
+});

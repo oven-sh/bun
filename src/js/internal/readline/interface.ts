@@ -2,7 +2,6 @@
 // Attribution: derived from Node.js, MIT licensed (Node.js contributors).
 // prettier-ignore
 const primordials = require("internal/repl/node-primordials");
-var __node_module__ = { exports: {} as Exports };
 
 const {
   ArrayFrom,
@@ -32,9 +31,9 @@ const {
   StringPrototypeSlice,
   StringPrototypeSplit,
   StringPrototypeStartsWith,
-  SymbolAsyncIterator,
   SymbolDispose,
 } = primordials;
+const SymbolAsyncIterator = Symbol.asyncIterator;
 
 const {
   AbortError,
@@ -1671,7 +1670,7 @@ interface Exports {
   kLastCommandErrored: typeof kLastCommandErrored;
 }
 
-__node_module__.exports = {
+export default {
   Interface,
   InterfaceConstructor,
   kAddHistory,
@@ -1713,6 +1712,5 @@ __node_module__.exports = {
   kMultilinePrompt,
   kAddNewLineOnTTY,
   kLastCommandErrored,
-};
+} as Exports;
 
-export default __node_module__.exports;

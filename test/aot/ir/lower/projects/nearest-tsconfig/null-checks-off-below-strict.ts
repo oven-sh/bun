@@ -1,5 +1,6 @@
 // RUN: lower
 // ENTRY: strict/main.ts
+// STATISTIC: SourceFilesDemoted = 1
 
 // FILE: strict/tsconfig.json
 {"compilerOptions":{"target":"ESNext","module":"Preserve","moduleResolution":"bundler","noEmit":true,"types":[],"strict":true}}

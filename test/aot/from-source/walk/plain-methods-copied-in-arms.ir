@@ -1,0 +1,22 @@
+# -- source: main.cjs
+# "use strict";
+# function Base(n) { this.n = n; this.i = 0; }
+# Base.prototype.step = function () { this.i = (this.i + 1) & 1023; return this.i; };
+# Base.prototype.get = function () { return this.n; };
+# function First(n) { Base.call(this, n); }
+# First.prototype = Object.create(Base.prototype);
+# First.prototype.own = function () { return this.get(); };
+# function Second(n) { Base.call(this, n); }
+# Second.prototype = Object.create(Base.prototype);
+# Second.prototype.own = function () { return this.get() + 1; };
+# const all = [new First(1), new Second(2), new First(3), new Second(4)];
+# function run(count) { let sum = 0; for (let i = 0; i < count; i++) { const object = all[i & 3]; sum = (sum + object.step() + object.own()) | 0; } return sum; }
+# print(run(10));
+# -- end of source
+# Each arm of the loop copies the method that the prototype of its constructor function holds.
+# f7, f8 = own.
+# RUN(COPIED): walk f4 mechanisms=all
+# COPIED: frame {{*}} callee=f7
+# COPIED: frame {{*}} callee=f8
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 46

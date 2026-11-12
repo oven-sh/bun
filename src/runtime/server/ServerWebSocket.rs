@@ -515,18 +515,19 @@ impl ServerWebSocket {
         Ok(op(self.websocket(), topic.to_utf8().slice()))
     }
 
-    /// Initialize a ServerWebSocket with the given handler, data value, and signal.
+    /// Initialize a ServerWebSocket with the given handler, data value, signal, and flags.
     /// The signal will not be ref'd inside the ServerWebSocket init function, but will unref itself when the ServerWebSocket is destroyed.
     pub(crate) fn init(
         handler: &WebSocketServerHandler,
         data_value: JSValue,
         signal: Option<NonNull<AbortSignal>>,
+        flags: Flags,
     ) -> *mut ServerWebSocket {
         let global_object = handler.global_object();
         let this_value = ServerWebSocket {
             handler: bun_ptr::BackRef::new(handler),
             this_value: JsCell::new(JsRef::empty()),
-            flags: Cell::new(Flags::default()),
+            flags: Cell::new(flags),
             signal: Cell::new(signal),
         }
         .into_js_wrapper(global_object);
@@ -556,10 +557,9 @@ impl ServerWebSocket {
         handler: &WebSocketServerHandler,
         websocket: JSValue,
     ) -> *mut ServerWebSocket {
-        let this = Self::init(handler, websocket, None);
-        // SAFETY: `init` just made it. See the SAFETY comments there.
-        unsafe { &*this }.update_flags(Flags::set_ws_package);
-        this
+        let mut flags = Flags::default();
+        flags.set_ws_package();
+        Self::init(handler, websocket, None, flags)
     }
 
     /// The JS wrapper. `None` once the socket has closed and the wrapper was collected.
@@ -802,10 +802,7 @@ impl ServerWebSocket {
                     return Err(bun_jsc::JsError::OutOfMemory);
                 }
                 bytes.extend_from_slice(data);
-                let blob = Blob::new(Blob::init(bytes, global_this));
-                // SAFETY: `blob` is the live allocation `Blob::new` just made. `BlobExt::to_js`
-                // reports the payload size to the GC, which the by-value `JsClass::to_js` skips.
-                Ok(unsafe { BlobExt::to_js(&*blob, global_this) })
+                Ok(Blob::init(bytes, global_this).into_js(global_this))
             }
         }
     }

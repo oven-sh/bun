@@ -1,0 +1,11 @@
+# `i < point[key]`, key: "x" | "y", both int32: the read is an operand and enters no position. The front end states the int32 behind it, and the relation cuts the variable by it: the step is proven.
+# Once: "i++ might not be an int32".
+# f1 = countTo
+# -- source: bound-of-a-loop-read-under-one-of-two-names.ts
+# declare function sink(...values: unknown[]): void;
+# class Point { x: Bun.int32 = 7; y: Bun.int32 = 12; }
+# function countTo(point: Point, key: "x" | "y"): Bun.int32 { let sum: Bun.int32 = 0; for (let i: Bun.int32 = 0; i < point[key]; i++) sum = (sum + i) | 0; return sum; }
+# sink(countTo);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK: code f1:Body

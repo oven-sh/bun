@@ -1,0 +1,43 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# type Box = { lid: number; rim: number };
+# const holder: { inner: Box | null } = { inner: null };
+# let kept: (() => string) | null = null;
+# function keep(box: Box): number { holder.inner = box; return 1; }
+# function keeps(job: () => string): number { kept = job; return 0; }
+# function keepsAndThrows(job: () => string): number { kept = job; throw new RangeError("full"); }
+# const takers: ((job: () => string) => number)[] = [keeps, keepsAndThrows];
+# function onArms(i: number): number { let n = 0; if (i & 1) { const box = { lid: i, rim: i + 1 }; n = keep(box); } else { const box = { lid: -i, rim: i + 2 }; n = keep(box); } return n + i; }
+# function inTry(i: number): number { let n = 0; try { const box = { lid: i, rim: i + 1 }; n = keep(box); } catch (e) { n = -1; } return n + i; }
+# function inTurns(turns: number): number { let n = 0; for (let i = 0; i < turns; i++) { const box = { lid: i, rim: i + 1 }; n += keep(box); } return n; }
+# function byThrow(i: number): number { const box = { lid: i, rim: i + 1 }; const n = keep(box); if (i > 3) throw new RangeError("full"); return n + i; }
+# function byTailCall(i: number): number { const box = { lid: i, rim: i + 1 }; const n = keep(box); return onArms(n + i); }
+# function byValue(take: (job: () => string) => number, n: number): number { const label = "n" + n; let got = 0; try { got = take(() => label); } catch (e) { got = 4; } return got + label.length; }
+# print(onArms(4)); print(holder.inner!.rim);
+# print(inTry(4)); print(holder.inner!.rim);
+# print(inTurns(3)); print(holder.inner!.rim);
+# try { print(byThrow(4)); } catch (e) { print("caught"); }
+# print(holder.inner!.rim);
+# print(byTailCall(4)); print(holder.inner!.rim);
+# print(byValue(takers[0], 3)); print(kept!());
+# print(byValue(takers[1], 14)); print(kept!());
+# print("went on");
+# -- end of source
+# This is the passing control of the seven tests next to it. It takes the same paths without the fault: whatever a callee retains has escaped, and none of it is overwritten.
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: 5
+# CALL: 6
+# CALL: 5
+# CALL: 5
+# CALL: 3
+# CALL: 3
+# CALL: caught
+# CALL: 5
+# CALL: 6
+# CALL: 6
+# CALL: 2
+# CALL: n3
+# CALL: 7
+# CALL: n14
+# CALL: went on

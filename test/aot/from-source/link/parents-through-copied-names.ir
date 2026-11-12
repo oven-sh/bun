@@ -1,0 +1,28 @@
+# -- source: main.cjs
+# var extend = function (child, parent) { for (var key in parent) { if (hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; }, hasProp = {}.hasOwnProperty;
+# var __extends = function (d, b) {
+#   for (var p in b) if (b.hasOwnProperty(p)) d[p] = b[p];
+#   function __() { this.constructor = d; }
+#   __.prototype = b.prototype;
+#   d.prototype = new __();
+# };
+# function A(n) { this.n = n; }
+# A.prototype.get = function () { return this.n; };
+# A.kind = 4;
+# function B(n) { this.m = n; }
+# B.prototype.get = function () { return this.m; };
+# function OfA(n) { A.call(this, n); this.k = 1; }
+# extend(OfA, A);
+# function OfB(n) { B.call(this, n); }
+# __extends(OfB, B);
+# var all = [new OfA(1), new OfB(2)];
+# print(all[0].get() + all[0].k + all[1].get() + OfA.kind);
+# -- end of source
+# The names that a helper copies from one function onto another let neither go.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L1 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L2 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L3 {{*}}changes=[] stays-with-compiled-code
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 8

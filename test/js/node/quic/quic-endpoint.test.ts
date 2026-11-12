@@ -1117,6 +1117,56 @@ describe("maxConnectionsPerHost", () => {
       acceptedAtLimit: 2,
     });
   });
+
+  const limitedToOne = (onsession: () => void = () => {}) =>
+    listen(
+      session => {
+        session.opened.catch(() => {});
+        session.closed.catch(() => {});
+        onsession();
+      },
+      { endpoint: { maxConnectionsPerHost: 1 }, sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"] },
+    );
+  const dialTo = async (address: object, endpoint = new QuicEndpoint()) => {
+    const options = { endpoint, alpn: "quic-test", verifyPeer: "manual" } as SessionOptions;
+    const session = await connect(address as SocketAddress, options);
+    session.closed.catch(() => {});
+    const outcome = session.opened.then(
+      () => "opened",
+      err => err.code,
+    );
+    return { session, outcome };
+  };
+
+  test("doesn't count a handshake whose sender never answered from its address", async () => {
+    const announced = Promise.withResolvers<void>();
+    const server = await limitedToOne(announced.resolve);
+    // What a sender with a forged source address does: its packets arrive, and it never sees the replies.
+    using oneWay = await Bun.udpSocket({
+      hostname: "127.0.0.1",
+      socket: {
+        data(socket, packet, port) {
+          if (port !== server.address!.port) socket.send(packet, server.address!.port, "127.0.0.1");
+        },
+      },
+    });
+    const forged = await dialTo(new SocketAddress({ address: "127.0.0.1", port: oneWay.port }));
+    await announced.promise;
+    const real = await dialTo(server.address!);
+    const outcome = await real.outcome;
+    for (const { session } of [forged, real]) session.destroy();
+    server.destroy();
+    expect(outcome).toBe("opened");
+  });
+
+  test("holds for handshakes that run at the same time", async () => {
+    const server = await limitedToOne();
+    const dials = await Promise.all([dialTo(server.address!), dialTo(server.address!), dialTo(server.address!)]);
+    const outcomes = await Promise.all(dials.map(dial => dial.outcome));
+    for (const { session } of dials) session.destroy();
+    server.destroy();
+    expect(outcomes.sort()).toEqual(["ERR_QUIC_TRANSPORT_ERROR", "ERR_QUIC_TRANSPORT_ERROR", "opened"]);
+  });
 });
 
 // With nothing else to wake it, a loop that overlooks this work sleeps until the two-second timer.

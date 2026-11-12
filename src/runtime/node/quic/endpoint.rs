@@ -942,35 +942,38 @@ impl QuicEndpoint {
         // SAFETY: see doc comment.
         self.sessions.get().contains(&p).then(|| unsafe { &*p })
     }
-    /// Counts the server sessions from one IP address. Like Node, it ignores the port.
-    fn server_sessions_from_host(&self, family: u16, ip: &[u8]) -> usize {
-        self.sessions
-            .get()
-            .iter()
-            // SAFETY: a registered session is live on the JS thread, see `live_session`.
-            .map(|&session| unsafe { &*session })
-            .filter(|session| {
-                session.is_server()
-                    && session
-                        .remote_addr
+    /// Returns true if `peer`'s IP address has `maxConnectionsPerHost` server sessions. Like Node, it ignores the port.
+    /// Anyone can forge the address of a handshake's first packet, so only a finished handshake counts.
+    fn host_is_at_limit(&self, peer: Option<&StoredAddr>) -> bool {
+        let max = self.with_state(|s| s.max_connections_per_host) as usize;
+        max > 0
+            && peer
+                .and_then(StoredAddr::decode)
+                .is_none_or(|(family, _, ip)| {
+                    self.sessions
                         .get()
-                        .decode()
-                        .is_some_and(|(f, _, addr)| f == family && addr == ip)
-            })
-            .count()
+                        .iter()
+                        // SAFETY: a registered session is live on the JS thread, see `live_session`.
+                        .map(|&session| unsafe { &*session })
+                        .filter(|session| {
+                            session.is_server()
+                                && session.conn.get().is_some()
+                                && session
+                                    .remote_addr
+                                    .get()
+                                    .decode()
+                                    .is_some_and(|(f, _, addr)| f == family && addr == ip)
+                        })
+                        .count()
+                        >= max
+                })
     }
     /// Returns true if `busy` or a connection limit refuses a new server session from `peer`.
     fn refuses_new_session(&self, peer: Option<&StoredAddr>) -> bool {
-        let (busy, max_total, max_per_host) =
-            self.with_state(|s| (s.busy, s.max_connections_total, s.max_connections_per_host));
+        let (busy, max_total) = self.with_state(|s| (s.busy, s.max_connections_total));
         busy != 0
             || (max_total > 0 && self.sessions.get().len() >= max_total as usize)
-            || (max_per_host > 0
-                && peer
-                    .and_then(StoredAddr::decode)
-                    .is_none_or(|(family, _, ip)| {
-                        self.server_sessions_from_host(family, ip) >= max_per_host as usize
-                    }))
+            || self.host_is_at_limit(peer)
     }
     fn write_stat(&self, idx: usize, value: u64) {
         if !self.stats.is_null() && idx < ENDPOINT_STATS_FIELDS.len() {
@@ -1373,9 +1376,16 @@ impl QuicEndpoint {
         };
         // `connect()` binds a client conn itself.
         if session.is_server() {
+            // The host's other handshakes can have finished since this one started.
+            let refused = self.host_is_at_limit(Some(&session.remote_addr.get()));
             session.bind_conn(new_conn);
-            // lsquic only promotes a server conn once its handshake is done, and never calls `on_hsk_done` for it.
-            session.note_handshake_ok(new_conn);
+            if refused {
+                self.add_stat(IDX_STATS_SERVER_BUSY_COUNT, 1);
+                new_conn.abort_error(false, QUIC_TRANSPORT_CONNECTION_REFUSED, c"");
+            } else {
+                // lsquic only promotes a server conn once its handshake is done, and never calls `on_hsk_done` for it.
+                session.note_handshake_ok(new_conn);
+            }
         }
         ctx.cast()
     }

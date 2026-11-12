@@ -31,7 +31,7 @@ import { join, resolve } from "path";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
 import { on, once } from "node:events";
-import { createServer as createHttpServer, type IncomingMessage, type Server as HttpServer } from "node:http";
+import { createServer as createHttpServer, type Server as HttpServer, type IncomingMessage } from "node:http";
 import net, { type AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
 import { Duplex } from "node:stream";

@@ -781,7 +781,8 @@ describe.concurrent("beforeAll and afterAll", () => {
 });
 
 // Vitest skips a suite, hooks included, only if it has tests or suites and none of them runs. The logs of the "vitest" files are Vitest 5.1.0's.
-// Unlike Bun, Vitest then fails a suite that has no test, and runs the hooks of a file that has no test only with --passWithNoTests.
+// Unlike Bun, Vitest then fails a suite that has no test ("No test found in suite"). A file with no test and no describe() fails
+// before its hooks run ("No test suite found in file"). --passWithNoTests turns both off.
 describe.concurrent("beforeAll, afterAll and aroundAll in a scope with no tests", () => {
   test("run, and one that throws fails the run", async () => {
     const { log, results, errors, exitCode } = await runTests({
@@ -962,6 +963,10 @@ describe.concurrent("beforeAll, afterAll and aroundAll in a scope with no tests"
           beforeAll(() => console.log("unreachable"));
           afterAll(() => console.log("unreachable"));
           describe("throws", () => { throw new Error("in describe"); });
+          describe("throws after a describe()", () => {
+            describe("inner", () => {});
+            throw new Error("in describe, after a describe()");
+          });
         });
         test("test", () => {});
       `,
@@ -969,8 +974,31 @@ describe.concurrent("beforeAll, afterAll and aroundAll in a scope with no tests"
     expect({ log, results, errors, exitCode }).toEqual({
       log: [],
       results: ["(pass) test"],
-      errors: ["error: in describe"],
+      errors: ["error: in describe", "error: in describe, after a describe()"],
       exitCode: 1,
+    });
+  });
+
+  // Before "vitest" was its own module, these hooks ran. The "(unnamed)" entry should not be there: a todo block that has a test
+  // reports the same one with --todo when a "vitest" beforeAll returns nothing.
+  test("run in an empty describe.todo() with --todo", async () => {
+    const { log, results, exitCode } = await runTests(
+      {
+        "a.test.js": `
+          import { test, describe, beforeAll, afterAll } from "vitest";
+          describe.todo("empty", () => {
+            beforeAll(() => console.log("beforeAll"));
+            afterAll(() => console.log("afterAll"));
+          });
+          test("test", () => {});
+        `,
+      },
+      ["--todo"],
+    );
+    expect({ log, results, exitCode }).toEqual({
+      log: ["beforeAll", "afterAll"],
+      results: ["(todo) empty > (unnamed)", "(pass) test"],
+      exitCode: 0,
     });
   });
 });
@@ -1677,6 +1705,19 @@ describe.concurrent("hooks", () => {
         log: ["file beforeAll", "teardown"],
         results: ["(pass) function > test"],
         summary: [" 1 pass", " 0 fail", "Ran 1 test across 1 file."],
+        exitCode: 0,
+      });
+    });
+
+    // Vitest 5.1.0 runs the empty block's beforeAll and its teardown here, then fails "No test found in suite empty".
+    test("with .only on the empty block", async () => {
+      const { log, results, stderr, exitCode } = await runTests({
+        "a.test.js": file.replace(`describe("empty"`, `describe.only("empty"`),
+      });
+      expect({ log, results, summary: summary(stderr), exitCode }).toEqual({
+        log: ["file beforeAll"],
+        results: [],
+        summary: [" 0 pass", " 0 fail", "Ran 0 tests across 1 file."],
         exitCode: 0,
       });
     });

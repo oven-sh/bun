@@ -916,7 +916,8 @@ declare module "bun:test" {
    * `runSuite()` runs the block's `beforeAll` hooks, its tests and nested blocks, and its `afterAll` hooks, in the
    * async context `runSuite()` is called in. If the hook fails before it calls `runSuite()`, none of them run.
    *
-   * Nesting, failures and the timeout work as in {@link aroundEach}. The hook doesn't run if every test in the block is skipped.
+   * Nesting, failures and the timeout work as in {@link aroundEach}. The hook doesn't run in a block that has tests or
+   * nested blocks if none of them runs.
    *
    * @example
    * ```ts

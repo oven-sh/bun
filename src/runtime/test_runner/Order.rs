@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 
 use bun_jsc::JsResult;
 
-use super::bun_test::{AddedInPhase, DescribeScope, ExecutionEntry, Only, ScopeMode, TestScheduleEntry};
+use super::bun_test::{AddedInPhase, DescribeScope, ExecutionEntry, Only, TestScheduleEntry};
 use super::execution::{ConcurrentGroup, ExecutionSequence};
 
 pub(crate) struct Order {
@@ -346,9 +346,9 @@ struct TestLessScope<'a> {
 }
 
 impl<'a> TestLessScope<'a> {
-    /// Nothing runs in a scope that is skipped, is todo or failed, so its children are left out.
+    /// Nothing runs in a scope that failed or whose mode drops its callbacks, so its children are left out.
     fn enter(scope: &'a mut DescribeScope) -> TestLessScope<'a> {
-        let skipped = scope.failed || matches!(scope.base.mode, ScopeMode::Skip | ScopeMode::Todo);
+        let skipped = scope.failed || scope.base.mode.drops_callbacks();
         scope.runs_without_test = Some(!skipped && scope.entries.is_empty());
         let children = if skipped { Default::default() } else { scope.entries.iter_mut() };
         TestLessScope { children, runs: &mut scope.runs_without_test }

@@ -2047,6 +2047,15 @@ impl ScopeMode {
             Self::FilteredOut => "filtered_out",
         }
     }
+
+    /// Whether nothing registered in a scope of this mode runs. `--todo` runs what is in a todo scope.
+    pub(crate) fn drops_callbacks(self) -> bool {
+        match self {
+            Self::Skip => true,
+            Self::Todo => !Jest::runner().is_some_and(|runner| runner.run_todo),
+            _ => false,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -2406,14 +2415,7 @@ impl ExecutionEntry {
         });
 
         if let Some(c) = cb {
-            entry.callback = match entry.base.mode {
-                ScopeMode::Skip => None,
-                ScopeMode::Todo => {
-                    let run_todo = Jest::runner().is_some_and(|runner| runner.run_todo);
-                    if run_todo { Some(strong_create(c)) } else { None }
-                }
-                _ => Some(strong_create(c)),
-            };
+            entry.callback = if entry.base.mode.drops_callbacks() { None } else { Some(strong_create(c)) };
         }
         if entry.callback.is_some() {
             entry.fixtures = cfg.fixtures.map(strong_create);

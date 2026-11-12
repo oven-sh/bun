@@ -472,8 +472,9 @@ function addResult(query: QueryType<any, any>, result: SQLResultArray<unknown>) 
 /// `neverRan`: the server never ran it. On a pool of one connection
 /// a transaction by hand is in order (see createQueryHandle()), which a query sent again would run outside of.
 function onRejectQuery(query: QueryType<any, any>, err: Error, neverRan?: boolean) {
-  if (neverRan === true) {
-    const adapter = query[_adapter] as BaseSQLAdapter<any, any>;
+  // A ListenQuery has no adapter: nothing sends it again.
+  const adapter = query[_adapter] as BaseSQLAdapter<any, any> | undefined;
+  if (neverRan === true && adapter !== undefined) {
     if (adapter.connectionInfo.max !== 1 && !adapter.closed && query.requeue()) {
       return;
     }

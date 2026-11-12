@@ -1002,6 +1002,19 @@ test("postgres: a socket that closes fails the query that was written, and says 
   }
 });
 
+test("postgres: a socket that closes fails every LISTEN that waits on it", async () => {
+  const { port, server } = await pgMockServer((type, _, socket) => void (type === "Q" && socket.destroy()));
+  try {
+    await using sql = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1 });
+    const failures = await Promise.all(
+      ["a", "b", "c"].map(channel => sql.listen(channel, () => {}).then(String, (err: any) => [err.code, err.message])),
+    );
+    expect(failures).toEqual(Array(3).fill(["ERR_POSTGRES_CONNECTION_CLOSED", "Connection closed"]));
+  } finally {
+    server.close();
+  }
+});
+
 // A real server does not say how many logins it refused. Not concurrent: a login is 4096 rounds of PBKDF2 on this thread.
 describe("a password that SASLprep changes: one login finds out which form the server has", () => {
   const typed = "\u00aa\u2168";

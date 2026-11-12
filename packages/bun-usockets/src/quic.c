@@ -852,7 +852,7 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
         /* lsquic resets a request above the id of a GOAWAY without on_reset,
          * and calls on_read on every tick until the stream is closed. */
         lsquic_stream_close(stream);
-    } else if (r < 0 && errno == EBADMSG && lsquic_conn_status(lsquic_stream_conn(stream), NULL, 0) != LSCONN_ST_ERROR) {
+    } else if (r < 0 && errno == EBADMSG && !us_quic_stream_connection_failed(s)) {
         /* No frame error, which closes the connection: there's no header block where one belongs (RFC 9114 §4.1). lsquic calls on_read on every tick for this too. */
         us_quic_stream_reset(s, US_QUIC_H3_MESSAGE_ERROR);
     }
@@ -1473,6 +1473,10 @@ uint64_t us_quic_stream_reset_code(us_quic_stream_t *s) {
 
 int us_quic_stream_reset_received(us_quic_stream_t *s) {
     return s->stream && lsquic_stream_reset_received(s->stream);
+}
+
+int us_quic_stream_connection_failed(us_quic_stream_t *s) {
+    return s->stream && lsquic_conn_status(lsquic_stream_conn(s->stream), NULL, 0) == LSCONN_ST_ERROR;
 }
 
 int us_quic_stream_refused_by_goaway(us_quic_stream_t *s) {

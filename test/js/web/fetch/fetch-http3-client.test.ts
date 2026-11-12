@@ -5,6 +5,7 @@ import { bunEnv, bunExe, expiredTls, isDebug, isLinux, tempDir, tls } from "harn
 import { createPrivateKey } from "node:crypto";
 import { join } from "node:path";
 import { listen, QuicError } from "node:quic";
+import { frames, tamperingRelay } from "../../node/quic/tampering-relay";
 
 // In-process server with `http1: false` so the build under test binds UDP only.
 // A fetch that silently fell back to HTTP/1.1 would get ECONNREFUSED, which
@@ -1235,6 +1236,30 @@ describe("a response stream that ends without a FIN", () => {
     );
     expect(result).toEqual({ status: 200, first: "partial", rest: "ECONNRESET" });
   });
+});
+
+test.each([
+  ["wholeData", "abc"],
+  ["dataThenCutFrameHeader", "HTTP3ProtocolError"],
+] as const)("a response with a FIN after %s reads as %j", async (frame, expected) => {
+  const origin = await listen(
+    (session: any) => {
+      session.onstream = (stream: any) => stream.closed.catch(() => {});
+      session.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+      keylog: true,
+      onkeylog: (line: string) => relay.keylog(line),
+      onheaders: () => relay.sendStream0("client", Buffer.from([...frames.status200, ...frames[frame]])),
+    } as any,
+  );
+  using relay = await tamperingRelay(origin.address!.port);
+  const received = await fetch(`https://127.0.0.1:${relay.port}/`, h3)
+    .then(res => res.text())
+    .catch(e => e.code);
+  origin.destroy();
+  expect(received).toBe(expected);
 });
 
 // fetch() follows a redirect from inside lsquic's callback for the connection

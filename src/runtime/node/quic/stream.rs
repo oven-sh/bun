@@ -150,6 +150,8 @@ pub(crate) struct QuicStream {
     was_pending: Cell<bool>,
     wrote_to_lsquic: Cell<bool>,
     headers_received: Cell<bool>,
+    /// The content-length of the request this server stream carries.
+    request_length: Cell<Option<u64>>,
     headers_sent: Cell<bool>,
     headers_refused: Cell<bool>,
     /// RFC 9218 (urgency, incremental).
@@ -201,6 +203,7 @@ impl QuicStream {
             was_pending: Cell::new(false),
             wrote_to_lsquic: Cell::new(false),
             headers_received: Cell::new(false),
+            request_length: Cell::new(None),
             headers_sent: Cell::new(false),
             headers_refused: Cell::new(false),
             priority: Cell::new(DEFAULT_PRIORITY),
@@ -1297,12 +1300,11 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
     let claim_header_sets = || -> bool {
         while let Some(hset) = stream.take_header_set() {
             let pairs = hset.pairs();
-            let has_status = pairs
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .find(|kv| kv[0] == b":status")
-                .map(|kv| kv[1].len() == 3 && kv[1][0] == b'1');
+            let field = |name: &[u8]| {
+                let mut fields = pairs.as_chunks::<2>().0.iter();
+                fields.find(|kv| kv[0] == name).map(|kv| kv[1].as_slice())
+            };
+            let has_status = field(b":status").map(|status| status.len() == 3 && status[0] == b'1');
             // A :status in a request is malformed: node's nghttp3 resets the
             // stream (RFC 9114 §4.1.2), and routing it to `oninfo` would leave
             // the request unanswered until the idle timeout.
@@ -1316,6 +1318,12 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
             let kind = if is_interim {
                 QUIC_STREAM_HEADERS_KIND_HINTS
             } else if qs.mark_headers_received() {
+                if peer_is_client {
+                    qs.request_length.set(
+                        field(b"content-length")
+                            .and_then(bun_http_types::parse_content_length_strict),
+                    );
+                }
                 QUIC_STREAM_HEADERS_KIND_INITIAL
             } else {
                 QUIC_STREAM_HEADERS_KIND_TRAILING
@@ -1329,6 +1337,11 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
             }
         }
         true
+    };
+    let connection_failed = || {
+        qs.session_ref()
+            .and_then(|session| session.conn())
+            .is_none_or(|conn| conn.status().0 == lsquic::LSCONN_ST_ERROR)
     };
     if stream.received_early_data() {
         qs.with_state(|s| s.received_early_data = 1);
@@ -1351,6 +1364,20 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
             0 => {
                 // lsquic returns 0 even if this read decoded one more header block.
                 if !claim_header_sets() {
+                    break;
+                }
+                // lsquic also returns 0 for the FIN of a message it closes the connection over.
+                if connection_failed() {
+                    stream.want_read(false);
+                    break;
+                }
+                // RFC 9114 §4.1.2. lsquic lets a request with no DATA at all through.
+                if qs
+                    .request_length
+                    .get()
+                    .is_some_and(|length| length != qs.read_stat(IDX_STATS_BYTES_RECEIVED))
+                {
+                    qs.reset_malformed();
                     break;
                 }
                 qs.push_inbound(&[], true);
@@ -1379,12 +1406,7 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
                         });
                     }
                     got_any = true;
-                } else if bun_core::ffi::errno() == libc::EBADMSG
-                    && qs
-                        .session_ref()
-                        .and_then(|session| session.conn())
-                        .is_some_and(|conn| conn.status().0 != lsquic::LSCONN_ST_ERROR)
-                {
+                } else if bun_core::ffi::errno() == libc::EBADMSG && !connection_failed() {
                     // No frame error, which closes the connection: there's no header block where one belongs (RFC 9114 §4.1). lsquic calls on_read on every tick for this too.
                     qs.reset_malformed();
                 }

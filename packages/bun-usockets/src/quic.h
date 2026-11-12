@@ -226,6 +226,8 @@ void us_quic_stream_reset(us_quic_stream_t *s, uint64_t error_code);
 uint64_t us_quic_stream_reset_code(us_quic_stream_t *s);
 /* The peer sent RESET_STREAM. on_stream_close can still read it. */
 int us_quic_stream_reset_received(us_quic_stream_t *s);
+/* lsquic is closing the stream's connection over an error. on_stream_data still gets the FIN of the message that caused it. */
+int us_quic_stream_connection_failed(us_quic_stream_t *s);
 /* The server did not process a request above the id in its GOAWAY (RFC 9114 §5.2).
  * The RFC says the same of the request at the id, but servers on stock lsquic name
  * the last request they accepted. on_stream_close can still read it. */

@@ -22,6 +22,7 @@ unsafe extern "C" {
     safe fn us_quic_stream_reset(s: &mut Stream, error_code: u64);
     safe fn us_quic_stream_reset_code(s: &mut Stream) -> u64;
     safe fn us_quic_stream_reset_received(s: &mut Stream) -> c_int;
+    safe fn us_quic_stream_connection_failed(s: &mut Stream) -> c_int;
     safe fn us_quic_stream_refused_by_goaway(s: &mut Stream) -> c_int;
     safe fn us_quic_stream_header_count(s: &mut Stream) -> c_uint;
     safe fn us_quic_stream_header(s: &mut Stream, i: c_uint) -> *const Header;
@@ -69,6 +70,11 @@ impl Stream {
     /// Returns true if the peer sent RESET_STREAM.
     pub fn reset_received(&mut self) -> bool {
         us_quic_stream_reset_received(self) != 0
+    }
+
+    /// lsquic is closing the connection over an error. It still reports the FIN of the message that caused it.
+    pub fn connection_failed(&mut self) -> bool {
+        us_quic_stream_connection_failed(self) != 0
     }
 
     /// The server did not process a request above the id in its GOAWAY (RFC 9114 §5.2).

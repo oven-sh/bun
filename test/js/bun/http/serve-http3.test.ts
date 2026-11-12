@@ -9,6 +9,7 @@ import type { SocketAddress } from "node:net";
 import { connect, QuicEndpoint, type SessionOptions } from "node:quic";
 import { connect as connectTLS } from "node:tls";
 import { join } from "path";
+import { frames, tamperingRelay } from "../../node/quic/tampering-relay";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
 // `protocol: "http3"` so a regression that silently falls back to TCP
@@ -3148,6 +3149,70 @@ describe("Bun.serve HTTP/3 request body that isn't read yet", () => {
     client.close({ type: "application", code: 0x100 }).catch(() => {});
 
     expect(await seen.promise).toEqual({ length: body.length, sha: sha(body) });
+  });
+});
+
+describe("Bun.serve HTTP/3 request that ends early", () => {
+  function serve() {
+    const body = Promise.withResolvers<string>();
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls,
+      http3: true,
+      http1: false,
+      async fetch(req) {
+        body.resolve(req.text().catch(e => e.name));
+        return new Response(await body.promise);
+      },
+    });
+    return { server, body: body.promise };
+  }
+  const dial = async (port: number, options?: object) => {
+    const client = await connect(`127.0.0.1:${port}`, {
+      endpoint: new QuicEndpoint(),
+      servername: "localhost",
+      verifyPeer: "manual",
+      onerror() {},
+      ...options,
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    await client.opened;
+    return client;
+  };
+
+  test.each([
+    [3, "abc", "abc"],
+    [0, "", ""],
+    [10, "", "AbortError"],
+    [10, "abc", "AbortError"],
+    [2, "abc", "AbortError"],
+  ])("content-length %d with the body %j reads as %j", async (length, sent, expected) => {
+    const { server, body } = serve();
+    const client = await dial(server.port!);
+    const stream = await client.createBidirectionalStream({
+      headers: requestHeaders("/", { ":method": "POST", "content-length": String(length) }),
+      body: Buffer.from(sent),
+    });
+    stream.closed.catch(() => {});
+    const received = await body;
+    client.destroy();
+    await server.stop(true);
+    expect(received).toBe(expected);
+  });
+
+  test.each([
+    ["wholeData", "abc"],
+    ["dataThenCutFrameHeader", "AbortError"],
+  ] as const)("a FIN after %s reads as %j", async (frame, expected) => {
+    const { server, body } = serve();
+    using relay = await tamperingRelay(server.port!);
+    const client = await dial(relay.port, { keylog: true, onkeylog: relay.keylog });
+    relay.sendStream0("server", Buffer.from([...frames.post, ...frames[frame]]));
+    const received = await body;
+    client.destroy();
+    await server.stop(true);
+    expect(received).toBe(expected);
   });
 });
 

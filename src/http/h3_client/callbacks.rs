@@ -280,6 +280,19 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
     // SAFETY: lsquic guarantees `data` points to `len` valid bytes (or `(null,0)`).
     let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
     stream.body_buffer.extend_from_slice(slice);
+    // Without Content-Length, only the FIN says that the body is whole.
+    if fin != 0
+        && stream.headers_delivered
+        && s.connection_failed()
+        && stream.client.is_some_and(|client| {
+            let client = super::client_session::client_mut(client);
+            client.state.content_length.is_none()
+        })
+    {
+        return stream
+            .session_mut()
+            .fail(stream, crate::Error::HTTP3ProtocolError);
+    }
     stream.session_mut().deliver(stream, fin != 0);
 
     let Some(stream) = stream_of(s) else { return };

@@ -465,6 +465,8 @@ struct us_socket_t {
     struct us_socket_t *connect_next;
     /* connect_state == NULL, still connecting: the DNS cache entry this socket's address came from. */
     struct addrinfo_request *connect_addrinfo_req;
+    /* lingering, so established: bytes read since. */
+    size_t lingered_bytes;
   };
   struct us_connecting_socket_t *connect_state;
 };

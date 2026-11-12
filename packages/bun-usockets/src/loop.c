@@ -828,6 +828,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     #endif
 
                     if (length > 0) {
+                        if (UNLIKELY(s->lingering) && (s->lingered_bytes += length) >= LIBUS_LINGER_MAX_BYTES) {
+                            us_socket_pause(s);
+                        }
                         s = s->ssl ? us_internal_ssl_on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length)
                                    : s->lingering ? s : us_dispatch_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
                         /* After socket adoption, track the new socket; the old one becomes invalid */

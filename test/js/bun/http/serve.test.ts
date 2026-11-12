@@ -4036,6 +4036,33 @@ describe("idle timeout with a forced sweep", () => {
         client.destroy();
       }
     });
+
+    it("stops reading an upload that it refused", async () => {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        tls: secure ? tls : undefined,
+        maxRequestBodySize: 1000,
+        fetch: () => new Response(),
+      });
+      const client = halfOpenClient(server.port!, secure);
+      try {
+        let reply = "";
+        client.on("data", data => (reply += data));
+        client.write(upload);
+        await once(client, "end");
+        // 8 MiB, and what the kernel buffers on both sides.
+        const blocked = await writeUntilBlocked(client, 64 * 1024 * 1024);
+        expect({ status: reply.slice(0, 12), blocked, reset: client.destroyed }).toEqual({
+          status: "HTTP/1.1 413",
+          blocked: true,
+          reset: false,
+        });
+        expect(await sweepUntilClosed(client)).toBe(true);
+      } finally {
+        client.destroy();
+      }
+    });
   });
 
   it.each([

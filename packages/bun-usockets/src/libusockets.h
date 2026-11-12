@@ -720,6 +720,8 @@ struct us_socket_t *us_socket_close(us_socket_r s, int code, void *reason) __att
 struct us_socket_t *us_socket_close_now(us_socket_r s) nonnull_fn_decl;
 /* How long a socket whose owner let go waits for its peer: to answer the FIN, or over TLS to take the unsent ciphertext and then to answer the close_notify. */
 #define LIBUS_LINGER_SECONDS 10
+/* How much input us_socket_close_lingering drops. Past it the socket stops reading, so the peer's send blocks and it turns to what it hasn't read yet. */
+#define LIBUS_LINGER_MAX_BYTES (8 * 1024 * 1024)
 /* For an owner that has sent its last byte: sends the FIN, drops input, and closes at the peer's FIN or after LIBUS_LINGER_SECONDS. close(2) over input that is unread or still arrives would reset the connection, and a reset can take what the peer hasn't read yet. No us_socket_timeout() moves that deadline. The owner of a plain socket only gets on_close. Over TLS it has to drop what comes ahead of the peer's close_notify. */
 struct us_socket_t *us_socket_close_lingering(us_socket_r s) nonnull_fn_decl;
 

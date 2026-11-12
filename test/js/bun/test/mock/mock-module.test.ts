@@ -7644,26 +7644,24 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
       );
     });
 
-    // As in Vitest, which leaves a package to the real module.
+    // As in Vitest, which leaves a package to the real module. The module is a builtin: for a loaded package, vi.mock() calls no factory at the call.
     test("still waits where vi.mock() leaves the module that is linked to the real module", async () => {
       await expectFixturesToPass(
         {
           "node_modules/lib-a/package.json": JSON.stringify({ name: "lib-a", type: "module", main: "index.js" }),
-          "node_modules/lib-a/index.js": `import { send } from "dep-a"; export const notify = () => send();`,
-          "node_modules/dep-a/package.json": JSON.stringify({ name: "dep-a", type: "module", main: "index.js" }),
-          "node_modules/dep-a/index.js": mail,
+          "node_modules/lib-a/index.js": `import { hostname } from "node:os"; export const notify = () => hostname();`,
           "mocks.ts": `
             import { vi } from "bun:test";
             const impl = () => "mock";
-            vi.mock("dep-a", () => ({ send: impl }));
+            vi.mock("node:os", () => ({ hostname: impl }));
           `,
           "library.test.ts": `
             import { expect, test } from "bun:test";
             import "./mocks";
             import { notify } from "lib-a";
             test("a package that imports the module", async () => {
-              expect(notify()).toBe("real");
-              expect((await import("dep-a")).send()).toBe("mock");
+              expect(notify()).not.toBe("mock");
+              expect((await import("node:os")).hostname()).toBe("mock");
             });
           `,
         },

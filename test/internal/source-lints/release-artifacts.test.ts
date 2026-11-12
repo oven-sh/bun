@@ -1,6 +1,6 @@
 /**
  * The files of a release are named in four places. A name that only one of them has is a release step that fails on
- * main, where alone it runs, or a package that is published without its binary:
+ * main or a release branch, where alone it runs, or a package that is published without its binary:
  *
  * - .buildkite/ci.ts decides which builds there are and which zips the steps behind them ask for. It can't be imported
  *   (it generates the pipeline on import), so it is read as text.

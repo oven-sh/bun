@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# upload-release.sh canary: replaces the files of the canary release, on main.
+# upload-release.sh draft: replaces the draft releases of a release branch.
+
 set -eo pipefail
 
 function assert_main() {
@@ -262,12 +265,13 @@ function download_buildkite_artifact() {
   if [ -z "$dir" ]; then
     dir="."
   fi
-  # When signing ran, Windows zips exist in two steps with the same name
-  # (build-bun unsigned, windows-sign signed). Pin to the sign step to
-  # guarantee we get the signed one.
+  # A signed zip has the name of the unsigned one that build-bun uploaded.
   local step_args=()
-  if [[ -n "$WINDOWS_ARTIFACT_STEP" && "$name" == bun-windows-* ]]; then
-    step_args=(--step "$WINDOWS_ARTIFACT_STEP")
+  if [ "$kind" == "draft" ]; then
+    case "$name" in
+      bun-windows-*) step_args=(--step "windows-sign") ;;
+      bun-darwin-*) step_args=(--step "darwin-sign") ;;
+    esac
   fi
   run_command buildkite-agent artifact download "$name" "$dir" "${step_args[@]}"
   if [ ! -f "$dir/$name" ]; then
@@ -347,15 +351,8 @@ EOF
   fi
 }
 
-function create_release() {
-  assert_main
-  assert_buildkite_agent
-  assert_archive_tools
-  assert_github
-  assert_aws
-  assert_sentry
-
-  local tag="$1" # 'canary' or 'x.y.z'
+# Puts the files of a release in the current directory, and their names in $files.
+function download_release_files() {
   local artifacts=(
     bun-darwin-aarch64.zip
     bun-darwin-aarch64-profile.zip
@@ -395,6 +392,10 @@ function create_release() {
       bun-linux-x64-profile.zip)       echo "bun-linux-x64-baseline-profile.zip" ;;
       bun-linux-x64-musl.zip)          echo "bun-linux-x64-musl-baseline.zip" ;;
       bun-linux-x64-musl-profile.zip)  echo "bun-linux-x64-musl-baseline-profile.zip" ;;
+      bun-linux-x64-android.zip)       echo "bun-linux-x64-android-baseline.zip" ;;
+      bun-linux-x64-android-profile.zip) echo "bun-linux-x64-android-baseline-profile.zip" ;;
+      bun-freebsd-x64.zip)             echo "bun-freebsd-x64-baseline.zip" ;;
+      bun-freebsd-x64-profile.zip)     echo "bun-freebsd-x64-baseline-profile.zip" ;;
       bun-windows-x64.zip)             echo "bun-windows-x64-baseline.zip" ;;
       bun-windows-x64-profile.zip)     echo "bun-windows-x64-baseline-profile.zip" ;;
       *)                               echo "" ;;
@@ -404,7 +405,7 @@ function create_release() {
   # Repack `$src_zip` (inner dir = basename of $src_zip) as `$dst_zip` with the
   # inner dir renamed to match `$dst_zip`'s basename, which is what install.sh
   # extracts. Not done in the build step's makeZip, where the staging dir is
-  # already in hand: the Windows zips are re-uploaded by the signing step, so
+  # already in hand: signed zips are re-uploaded by the signing steps, so
   # an alias built there would carry the unsigned binary. Runs in a fresh
   # mktemp dir so a caller-CWD change can't collide with the extracted names.
   function rezip_as() {
@@ -420,7 +421,8 @@ function create_release() {
 
   # Fetch everything up front so the GitHub release can take all assets in one
   # `gh release upload`; per-file uploads raced on the same release.
-  local files=() pids=() artifact
+  files=()
+  local pids=() artifact
   for artifact in "${artifacts[@]}"; do
     download_buildkite_artifact "$artifact" & pids+=("$!")
     files+=("$artifact")
@@ -441,20 +443,148 @@ function create_release() {
       files+=("$alias")
     fi
   done
-
-  upload_github_assets "$tag" "${files[@]}"
-  update_github_release "$tag"
-  create_sentry_release "$tag"
-  send_discord_announcement "$tag"
-  upload_s3_files "$tag" "${files[@]}"
 }
 
-function assert_canary() {
-  if [ -z "$CANARY" ] || [ "$CANARY" == "0" ]; then
-    echo "warn: Skipping release because this is not a canary build"
-    exit 0
+function create_canary() {
+  assert_main
+  assert_buildkite_agent
+  assert_archive_tools
+  assert_github
+  assert_aws
+  assert_sentry
+
+  download_release_files
+  upload_github_assets "canary" "${files[@]}"
+  update_github_release "canary"
+  create_sentry_release "canary"
+  send_discord_announcement "canary"
+  upload_s3_files "canary" "${files[@]}"
+}
+
+function print_release_notes() {
+  local version="$1" previous_tag="$2"
+  # From commits, because GitHub's generated notes find no pull request behind a cherry-picked commit.
+  local contributors
+  contributors="$(
+    gh api --paginate "repos/oven-sh/bun/compare/$previous_tag...$BUILDKITE_COMMIT?per_page=100" \
+      --jq '.commits[].author | select(.type == "User") | .login' | LC_ALL=C sort --unique --ignore-case
+  )"
+  cat << EOF
+To install Bun v$version
+\`\`\`bash
+curl -fsSL https://bun.com/install | bash
+# or you can use npm
+# npm install -g bun
+\`\`\`
+
+Windows:
+\`\`\`bash
+powershell -c "irm bun.com/install.ps1|iex"
+\`\`\`
+
+To upgrade to Bun v$version:
+\`\`\`bash
+bun upgrade
+\`\`\`
+
+### [Read Bun v$version's release notes on Bun's blog](https://bun.com/blog/bun-v$version)
+
+### Thanks to $(wc -w <<< "$contributors") contributors!
+
+EOF
+  local login
+  for login in $contributors; do
+    echo "- [@$login](https://github.com/$login)"
+  done
+}
+
+function list_drafts() {
+  local repo="$1" tag="$2"
+  gh api --paginate "repos/$repo/releases?per_page=100" \
+    --jq ".[] | select(.draft and .tag_name == \"$tag\") | .id"
+}
+
+# By id: the `gh release` commands that take a tag also match a published release.
+function delete_drafts() {
+  local repo="$1" tag="$2" ids id
+  ids="$(list_drafts "$repo" "$tag")"
+  for id in $ids; do
+    run_command gh api --method DELETE "repos/$repo/releases/$id"
+  done
+}
+
+# Prints the id of the draft, once it is known to hold the expected files.
+function verify_draft() {
+  local repo="$1" tag="$2" expected="$3" id actual
+  id="$(list_drafts "$repo" "$tag")" || return
+  if ! [[ "$id" =~ ^[0-9]+$ ]]; then
+    echo "error: Expected one draft of $tag on $repo, found:" ${id:-none} >&2
+    return 1
   fi
+  actual="$(
+    gh api --paginate "repos/$repo/releases/$id/assets?per_page=100" \
+      --jq '.[] | "\(.digest)  \(.name)"' | sort
+  )" || return
+  if [ "$actual" != "$expected" ]; then
+    echo "error: The files of the draft on $repo are not the files of this build" >&2
+    diff <(echo "$expected") <(echo "$actual") >&2
+    return 1
+  fi
+  echo "$id"
 }
 
-assert_canary
-create_release "canary"
+# Prints the URL of the draft.
+function rename_draft() {
+  local repo="$1" tag="$2" id="$3" title="$4"
+  # Editing a draft without its tag_name clears the tag.
+  gh api --method PATCH "repos/$repo/releases/$id" -f tag_name="$tag" -f name="$title" --jq ".html_url"
+}
+
+function create_drafts() {
+  assert_buildkite_agent
+  assert_archive_tools
+  download_release_files
+  assert_github
+
+  # Checked when the build started, but the branch and the tags can have moved since.
+  local previous_tag
+  previous_tag="$(node scripts/check-release.ts)"
+
+  local tag="${BUILDKITE_BRANCH#release/}"
+  local version="${tag#bun-v}"
+  local repo="oven-sh/bun" updater_repo="oven-sh/bun-releases-for-updater"
+  local notes
+  notes="$(mktemp)"
+  print_release_notes "$version" "$previous_tag" > "$notes"
+
+  delete_drafts "$repo" "$tag"
+  delete_drafts "$updater_repo" "$tag"
+
+  local title="Bun v$version"
+  run_command gh release create "$tag" "${files[@]}" --repo "$repo" --draft \
+    --title "$title (incomplete, do not publish)" --target "$BUILDKITE_COMMIT" --notes-file "$notes"
+  run_command gh release create "$tag" "${files[@]}" --repo "$updater_repo" --draft \
+    --title "$title (incomplete, do not publish)" --notes "bunbunbun"
+
+  local digests id updater_id url updater_url
+  digests="$(sha256sum "${files[@]}" | sed "s/^/sha256:/" | sort)"
+  id="$(verify_draft "$repo" "$tag" "$digests")"
+  updater_id="$(verify_draft "$updater_repo" "$tag" "$digests")"
+  # The draft that is published first is the last to look ready.
+  updater_url="$(rename_draft "$updater_repo" "$tag" "$updater_id" "$title")"
+  url="$(rename_draft "$repo" "$tag" "$id" "$title")"
+
+  buildkite-agent annotate --context "release" --style "success" --priority 10 << EOF
+The drafts of $title are ready. Check the tests of this build, then publish them in this order:
+
+1. [$repo]($url)
+2. [$updater_repo]($updater_url)
+EOF
+}
+
+kind="$1"
+case "$kind" in
+  canary) create_canary ;;
+  draft) create_drafts ;;
+  *) echo "error: Expected canary or draft, got: $kind"; exit 1 ;;
+esac

@@ -2412,7 +2412,9 @@ pub mod parse_worker {
             ..Default::default()
         });
 
-        let target = (if task.source_index.get() == 1 {
+        // With a framework, source index 1 is any file of any graph.
+        let is_first_entry_point = task.source_index.get() == 1 && topts.framework.is_none();
+        let target = (if is_first_entry_point {
             target_from_hashbang(entry_contents)
         } else {
             None

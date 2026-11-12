@@ -63,8 +63,8 @@ pub struct Graph<'a> {
     /// holds comes back answered as cancelled) and the pass fails at its next checkpoint.
     pub(crate) cancelled: bool,
 
-    /// A map of build targets to their corresponding module graphs.
-    pub build_graphs: EnumMap<options::Target, PathToSourceIndexMap>,
+    /// The module graphs of the build, see `BuildGraphs`.
+    pub build_graphs: BuildGraphs,
 
     /// When Server Components is enabled, this holds a list of all boundary
     /// files. This happens for all files with a "use <side>" directive.
@@ -156,7 +156,8 @@ bitflags::bitflags! {
 }
 
 impl<'a> Graph<'a> {
-    pub(crate) fn new(heap: &'a ThreadLocalArena) -> Self {
+    /// `target` is the target of the build's main transpiler.
+    pub(crate) fn new(heap: &'a ThreadLocalArena, target: options::Target) -> Self {
         Self {
             // Self-referential arena pointer; real value wired in
             // `BundleV2::init` before any use.
@@ -170,7 +171,7 @@ impl<'a> Graph<'a> {
             deferred_pending: 0,
             defer_epoch: 0,
             cancelled: false,
-            build_graphs: EnumMap::default(),
+            build_graphs: BuildGraphs::new(target),
             server_component_boundaries: server_component_boundary::List::default(),
             html_imports: HtmlImports::default(),
             estimated_file_loader_count: 0,
@@ -219,6 +220,69 @@ impl<'a> Graph<'a> {
         target: options::Target,
     ) -> &mut PathToSourceIndexMap {
         &mut self.build_graphs[target]
+    }
+}
+
+/// One path map per module graph. A `Target` picks its graph as `BundleV2::transpiler_for_target` picks its transpiler.
+pub struct BuildGraphs {
+    maps: EnumMap<options::Target, PathToSourceIndexMap>,
+    /// The target of the build's main transpiler.
+    main: options::Target,
+}
+
+impl BuildGraphs {
+    fn new(main: options::Target) -> Self {
+        Self {
+            maps: EnumMap::default(),
+            main,
+        }
+    }
+
+    /// The target of the graph that the imports of a file for `target` are in.
+    #[inline]
+    pub(crate) fn graph(&self, target: options::Target) -> options::Target {
+        match target {
+            options::Target::Browser | options::Target::ServerComponentsSsr => target,
+            _ => self.main,
+        }
+    }
+
+    /// The map for an import with `loader`. An HTML manifest module has the path of its HTML file, so it stays out of a browser graph.
+    pub(crate) fn for_import(
+        &mut self,
+        target: options::Target,
+        loader: Option<options::Loader>,
+    ) -> &mut PathToSourceIndexMap {
+        let graph = self.graph(target);
+        if loader == Some(options::Loader::Html)
+            && target.is_server_side()
+            && !graph.is_server_side()
+        {
+            &mut self.maps[target]
+        } else {
+            &mut self.maps[graph]
+        }
+    }
+
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut PathToSourceIndexMap> {
+        self.maps.values_mut()
+    }
+}
+
+impl core::ops::Index<options::Target> for BuildGraphs {
+    type Output = PathToSourceIndexMap;
+
+    #[inline]
+    fn index(&self, target: options::Target) -> &PathToSourceIndexMap {
+        &self.maps[self.graph(target)]
+    }
+}
+
+impl core::ops::IndexMut<options::Target> for BuildGraphs {
+    #[inline]
+    fn index_mut(&mut self, target: options::Target) -> &mut PathToSourceIndexMap {
+        let graph = self.graph(target);
+        &mut self.maps[graph]
     }
 }
 

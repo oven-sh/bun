@@ -2666,7 +2666,13 @@ pub mod bv2_impl {
                 ) {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
-                    let entry = self.graph.build_graphs[target]
+                    // SAFETY: see `transpiler` note above.
+                    let path_loader = Fs::Path::init(path_primary.text)
+                        .loader(unsafe { &(*transpiler).options.loaders });
+                    let entry = self
+                        .graph
+                        .build_graphs
+                        .for_import(target, path_loader)
                         .get_or_put(path_primary.text)
                         .expect("oom");
                     if !entry.found_existing {
@@ -2699,10 +2705,10 @@ pub mod bv2_impl {
                                 file_map_result.path_pair.primary,
                                 &mut tmp_source,
                                 loader,
-                                import_record.original_target,
+                                self.graph.build_graphs.graph(import_record.original_target),
                             )
                             .expect("oom");
-                        // SAFETY: nothing has touched `build_graphs[target]` since `get_or_put`.
+                        // SAFETY: nothing has touched the map of `entry` since `get_or_put`.
                         unsafe { *value_ptr = idx };
                         let record: &mut ImportRecord =
                             &mut self.graph.ast.items_import_records_mut()
@@ -2909,9 +2915,16 @@ pub mod bv2_impl {
             path.assert_pretty_is_valid();
             path.assert_file_path_is_absolute();
 
+            // SAFETY: see `transpiler` note above.
+            let path_loader = path.loader(unsafe { &(*transpiler).options.loaders });
             // borrowck: get-then-put (instead of a single get-or-put) so the map
             // borrow doesn't span `enqueue_parse_task` (which needs `&mut self`).
-            if let Some(existing) = self.path_to_source_index_map(target).get(path.text) {
+            let existing = self
+                .graph
+                .build_graphs
+                .for_import(target, path_loader)
+                .get(path.text);
+            if let Some(existing) = existing {
                 out_source_index = Some(Index::init(existing));
             } else {
                 let path = self
@@ -2941,10 +2954,12 @@ pub mod bv2_impl {
                         self.parse_task_path(&resolve_result, path),
                         &mut tmp_source,
                         loader,
-                        import_record.original_target,
+                        self.graph.build_graphs.graph(import_record.original_target),
                     )
                     .expect("oom");
-                self.path_to_source_index_map(target)
+                self.graph
+                    .build_graphs
+                    .for_import(target, path_loader)
                     .put(path.text, idx)
                     .expect("oom");
                 out_source_index = Some(Index::init(idx));
@@ -3214,6 +3229,7 @@ pub mod bv2_impl {
             // SAFETY: `ssr_transpiler` intentionally aliases `transpiler` via a
             // raw `*mut` until bake installs a separate SSR transpiler; all
             // derefs go through the centralized accessors.
+            let main_target = transpiler.options.target;
             let ssr_alias: *mut Transpiler<'a> = std::ptr::from_mut(transpiler);
             let mut this = Box::new(BundleV2 {
                 transpiler,
@@ -3226,7 +3242,7 @@ pub mod bv2_impl {
                     heap,
                     kit_referenced_server_data: false,
                     kit_referenced_client_data: false,
-                    ..Graph::new(heap)
+                    ..Graph::new(heap, main_target)
                 },
                 linker: LinkerContext {
                     r#loop: event_loop,
@@ -5209,8 +5225,11 @@ pub mod bv2_impl {
                         path.namespace = &result.namespace;
                     }
                     if !result.external {
-                        let existing = this.graph.build_graphs
-                            [resolve.import_record.original_target]
+                        let path_loader = path.loader(&this.transpiler.options.loaders);
+                        let existing = this
+                            .graph
+                            .build_graphs
+                            .for_import(resolve.import_record.original_target, path_loader)
                             .get_or_put(path.text)
                             .expect("oom");
                         if !existing.found_existing {
@@ -5270,7 +5289,10 @@ pub mod bv2_impl {
                                 source_index: bun_ast::Index::init(source_index.get()),
                                 module_type: options::ModuleType::Unknown,
                                 loader: Some(loader),
-                                known_target: resolve.import_record.original_target,
+                                known_target: this
+                                    .graph
+                                    .build_graphs
+                                    .graph(resolve.import_record.original_target),
                                 is_entry_point: resolve.import_record.kind
                                     == ImportKind::EntryPointBuild,
                                 ..Default::default()
@@ -6729,7 +6751,7 @@ pub mod bv2_impl {
                             self,
                         );
                         let resolve_task: &mut ParseTask = self.arena().alloc(resolve_task_val);
-                        resolve_task.known_target = target;
+                        resolve_task.known_target = self.graph.build_graphs.graph(target);
                         // Use transpiler JSX options, applying force_node_env like the disk path does
                         resolve_task.jsx = transpiler.options.jsx.clone();
                         resolve_task.jsx.development = transpiler.options.forced_jsx_development();
@@ -7074,7 +7096,12 @@ pub mod bv2_impl {
                     && target.is_server_side()
                     && self.dev_server.is_none();
 
-                if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
+                let existing = self
+                    .graph
+                    .build_graphs
+                    .for_import(target, Some(import_record_loader))
+                    .get(path.text);
+                if let Some(id) = existing {
                     if self.dev_server.is_some() && loader != Loader::Html {
                         import_record.path =
                             self.graph.input_files.items_source()[id as usize].path;
@@ -7114,7 +7141,7 @@ pub mod bv2_impl {
                 resolve_task.known_target = if import_record.kind == ImportKind::HtmlManifest {
                     Target::Browser
                 } else {
-                    target
+                    self.graph.build_graphs.graph(target)
                 };
 
                 resolve_task.jsx = resolve_result.jsx.clone();
@@ -7324,13 +7351,15 @@ pub mod bv2_impl {
                 drop(value);
             }
 
-            // Inlined `self.path_to_source_index_map(ctx.target)` (== `&mut self.graph.build_graphs[target]`)
-            // so borrowck sees it as disjoint from `self.graph.input_files` above.
-            let path_to_source_index_map = &mut self.graph.build_graphs[ctx.target];
             for (i, record) in import_records.as_mut_slice().iter_mut().enumerate() {
                 if !only_selected_record(ctx.only_records, i) {
                     continue;
                 }
+                // The `self.graph.build_graphs` field, so borrowck sees it as disjoint from `self.graph.input_files` above.
+                let path_to_source_index_map = self
+                    .graph
+                    .build_graphs
+                    .for_import(ctx.target, record.loader);
                 if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()
@@ -7427,7 +7456,9 @@ pub mod bv2_impl {
 
             import_record.source_index = Index::init(fake_source_index.0);
             let _ = self
-                .path_to_source_index_map(target)
+                .graph
+                .build_graphs
+                .for_import(target, Some(Loader::Html))
                 .put(path_text, fake_source_index.0); // OOM-only Result
             self.graph
                 .html_imports

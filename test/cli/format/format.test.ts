@@ -2672,6 +2672,9 @@ describe.concurrent("bun fmt", () => {
       // Prettier measures a comment after the value of a tagged key against the key, not the tag.
       ["!!str a: 1\n  # x\n# y\n", "!!str a: 1\n# y\n# x\n"],
       ["a:\n  !!str b: 1\n    # x\n", "a:\n  !!str b: 1\n  # x\n"],
+      // A value that is only a tag or an anchor keeps the comments after it.
+      ["a:\n  b: !!str\n # x\n", "a:\n  b: !!str\n  # x\n"],
+      ["a:\n  b: &n\n # x\n", "a:\n  b: &n\n  # x\n"],
       // A tab doesn't count as indentation.
       ["a: 1\n\t# x\n", "a: 1\n# x\n"],
       ["a:\n  b: 1\n \t# x\n", "a:\n  b: 1\n# x\n"],

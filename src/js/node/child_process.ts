@@ -1183,14 +1183,15 @@ class ChildProcess extends EventEmitter {
         this.#stdioOptions[0] = "destroyed";
       }
 
-      // If there was an error while spawning the subprocess, then we will never have any IO to drain.
-      if (err) {
-        if (this.#stdioOptions[1] === "pipe") this.#stdioOptions[1] = "destroyed";
-        if (this.#stdioOptions[2] === "pipe") this.#stdioOptions[2] = "destroyed";
-      }
-
       const stdout = this.#stdout,
         stderr = this.#stderr;
+
+      // If there was an error while spawning the subprocess, then we will never have any IO to drain.
+      // A stream that is already built is drained below all the same: 'close' waits for it.
+      if (err) {
+        if (stdout === undefined && this.#stdioOptions[1] === "pipe") this.#stdioOptions[1] = "destroyed";
+        if (stderr === undefined && this.#stdioOptions[2] === "pipe") this.#stdioOptions[2] = "destroyed";
+      }
 
       if (stdout === undefined) {
         this.#stdout = this.#getBunSpawnIo(1, true);

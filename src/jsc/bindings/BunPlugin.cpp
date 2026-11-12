@@ -5830,8 +5830,7 @@ static std::optional<size_t> recordBodyMock(Zig::GlobalObject* globalObject, JSC
 }
 #endif
 
-// Whether the private copy that a running factory got of a module calls, itself or through a function that it called. See redirectedModuleKey().
-// A module and its copy under another key have one source origin, so callerPath() names both alike. Their source texts are two.
+// Whether a frame of the stack runs the private copy (redirectedModuleKey()) of a module. callerPath() names a module and its copy alike, their source text does not.
 static bool isCalledByCopyForRunningFactory(Zig::GlobalObject* globalObject, JSC::CallFrame* callframe)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -5944,8 +5943,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     }
 #endif
 
-    // The private copy that a running factory gets of a module makes the mock calls of that module a second time. A mock that the module itself
-    // has made stays the module's, as it does where the module makes the call after its copy. vi.doMock() returns what ends its mock, so it is made.
+    // A private copy repeats its module's mock calls: the mock that the module made stays. vi.doMock() returns what ends its mock, so that one is made.
     if (function != ModuleMockFunction::ViDoMock && isCalledByCopyForRunningFactory(globalObject, callframe)) [[unlikely]] {
         if (auto* made = registeredModuleMock(globalObject, specifier); made && isSameFactory(made, factory)) {
             bool returnsJest = function == ModuleMockFunction::JestMock || function == ModuleMockFunction::JestDoMock;
@@ -7985,8 +7983,7 @@ static bool isCompiledFileNotImporting(Zig::GlobalObject* globalObject, const St
 #endif
 }
 
-// The import() calls that have yet to settle: the loader's promise of each, and the key that it asked for. didStartDynamicImport() keeps them
-// for vi.dynamicImportSettled(), with a key while there are module mocks.
+// The loader's promise and the key of each import() that has yet to settle. didStartDynamicImport() keeps them, with a key while there are module mocks.
 static Vector<std::pair<JSC::JSPromise*, String>, 4> pendingImportCalls(Zig::GlobalObject* globalObject)
 {
     Vector<std::pair<JSC::JSPromise*, String>, 4> pending;
@@ -8043,8 +8040,7 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
         } else if (auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key)); !isAwaitedImport && entry && isBeingFetchedWithoutFactory(globalObject, entry) && (!isInNodeModules(key) || isInNodeModules(target)) && !isCompiledFileNotImporting(globalObject, key, target)) {
             // Another load is fetching it, and it may import the mock. In the chain it would get the original, for that load too, so treat it as waiting.
             // A package doesn't import the project's modules. A copy of it would only run its side effects a second time.
-            // Not so for what a module awaits an import() of: its copy would call import() under the module's own name (importChainWithoutQuery),
-            // and the module itself would get the original from then on.
+            // Not what a module awaits an import() of: its copy would call import() under the module's own name, and the module would get the original from then on.
             running.waitingModules.add(key);
             waiting.append(key);
             return;
@@ -8070,8 +8066,7 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
             addImporter(importersOf, importer, key);
             add(key);
         }
-        // The record has no request for an import() that its body awaits. The promise of the call leads to the body: JSC asks the same of it to
-        // find an import() cycle. The factory's own file is left out: JSC lets what the factory imports go on without that file.
+        // What the body awaits an import() of: the promise of the call leads to the body. The factory's own file is left out, as JSC's import() cycle check leaves it.
         auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
         if (!cyclic || cyclic->status() < JSC::CyclicModuleRecord::Status::Evaluating || importer == running.file)
             continue;

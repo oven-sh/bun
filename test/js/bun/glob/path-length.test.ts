@@ -206,7 +206,7 @@ describe.skipIf(isWindows)("Glob path length", () => {
     await using mkdirProc = Bun.spawn({
       cmd: ["bash", "-c", `cd "${deepest}" && mkdir ${short} && cd ${short} && mkdir sub`],
       env: bunEnv,
-      stderr: "pipe",
+      stderr: "inherit",
     });
     expect(await mkdirProc.exited).toBe(0);
 
@@ -221,7 +221,7 @@ describe.skipIf(isWindows)("Glob path length", () => {
       };
       console.log(JSON.stringify({ up: scan("**/sub/.."), here: scan("**/sub/."), dir: scan("**/sub/../") }));
     `;
-    await using scanProc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+    await using scanProc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "inherit" });
     const [scanStdout, scanCode] = await Promise.all([scanProc.stdout.text(), scanProc.exited]);
     expect(JSON.parse(scanStdout)).toEqual({ up: [], here: [], dir: [4097] });
     expect(scanCode).toBe(0);

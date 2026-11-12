@@ -939,6 +939,16 @@ impl Response {
 
     #[inline(always)]
     fn json_text_of(global_this: &JSGlobalObject, json_value: JSValue) -> JsResult<BunString> {
+        if json_value.is_big_int()
+            && !json_value
+                .get_prototype(global_this)?
+                .get(global_this, "toJSON")?
+                .is_some_and(JSValue::is_callable)
+        {
+            return Err(
+                global_this.throw_type_error(format_args!("Do not know how to serialize a BigInt"))
+            );
+        }
         // Use jsonStringifyFast which passes undefined for the space parameter, triggering JSC's FastStringifier optimization.
         let text = json_value.json_stringify_fast(global_this)?;
         // An empty string means `JSON.stringify` returned undefined.

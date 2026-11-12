@@ -1191,8 +1191,10 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     for (operand, is_query, mut found) in found_reads {
         let texts = texts_of_file.get_or_insert_with(create_texts);
         if let Some(paths) = executed.get(&operand) {
-            found.paths.clone_from(paths);
-            found.patterns.clear();
+            let text = |atom: Atom| inputs.atoms.bytes(atom);
+            found.paths.extend(paths.iter().copied());
+            (found.paths).shared_sort_unstable_by_key(|it| text(*it));
+            found.paths.dedup();
         }
         if entered_operands.contains(&operand) {
             folders_entered.extend(found.paths.iter().map(|&path| (operand, path)));

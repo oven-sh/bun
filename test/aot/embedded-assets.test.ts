@@ -2877,6 +2877,119 @@ a blob third
     120_000,
   );
 
+  test("a package chooses its file by what JavaScript answers", async () => {
+    const rows = {
+      "added numbers": `let v = 0; if (process.env.A) v += 1;`,
+      "a sum of numbers": `let v = 0; if (process.env.A) v = v + 1 + 1;`,
+      "steps up": `let v = 0; if (process.env.A) v++;`,
+      "steps down": `let v = 0; if (process.env.A) --v;`,
+      "subtracted": `let v = 2; if (process.env.A) v -= 1;`,
+      "booleans": `let v = false; if (process.env.A) v = true;`,
+      "nothing": `let v; if (process.env.A) v = null;`,
+      "a number and a string": `let v = 1; if (process.env.A) v = "a"; v = v + 1;`,
+      "added booleans": `let v = true; if (process.env.A) v += true;`,
+      "minus zero": `let v = -0; if (process.env.A) v = 1;`,
+      "no number": `let v = NaN; if (process.env.A) v = Infinity;`,
+      "fractions": `let v = 0.5; if (process.env.A) v += 1;`,
+      "a large number": `let v = 1e21; if (process.env.A) v = 1;`,
+      "bigints": `let v = 1n; if (process.env.A) v += 1n;`,
+      "compared bigints": `let n = 16n, v = "a"; if (process.env.A) n = 0x10n; if (n === 0x10n) v = "b";`,
+      "or": `let v = ""; if (process.env.A) v = "b"; v ||= "a";`,
+      "and": `let v = ""; if (process.env.A) v = "b"; v &&= "a"; v ||= "c";`,
+      "missing": `let v = null; if (process.env.A) v = ""; v ??= "a"; v ||= "b";`,
+      "zero as a string": `let v = "a"; const zero = process.env.A ? "0" : ""; if (zero) v = "b";`,
+      "a default of a pattern": `const { A = "a" } = process.env; let v = "b"; if (A === "a") v = "c";`,
+      "a default of a parameter": `function choose(x = "a") { return x === "a" ? "b" : "c"; } let v = choose(process.env.A);`,
+      "a thrown error": `let v = "a"; try { if (process.env.A) null.x; v = "b"; } catch { v = "c"; }`,
+      "an error of a call": `let v = "a"; try { v = "b"; JSON.parse(process.env.A ? "{" : "{}"); v = "ab"; } catch { v += "c"; }`,
+      "an error after a store": `let v = "a"; try { v = "b"; process.env.A.x.y; } catch { v += "c"; }`,
+      "finally": `let v = "a"; function f() { try { if (process.env.A) throw 1; v = "b"; } finally { v += "c"; } } try { f(); } catch {}`,
+      "thrown in catch": `let v = "a"; try { try { throw 1; } catch { v = "b"; if (process.env.A) throw 2; } } catch { v = "c"; }`,
+      "a variable of each iteration": `let v = "a"; for (const x of ["one", "two"]) { let y; if (x === "one") y = "b"; y ??= "c"; v = y; }`,
+      "a constant of each iteration": `let v = "a"; for (const x of JSON.parse("[1,0]")) { if (x) v = "b"; else if (v === "b") v = "c"; }`,
+      "closures of calls": `function make(n) { return () => n; } const one = make("a"), two = make("b"); let v = one();`,
+      "closures of a loop": `const all = []; for (const n of ["a", "b"]) all.push(() => n); let v = all[0]();`,
+      "methods of classes of calls": `function make(n) { return class { get() { return n; } }; } const One = make("a"), Two = make("b"); let v = new One().get();`,
+      "a variable of an earlier call": `function pick(flag) { var f; if (flag) f = "b"; return f || "a"; } pick(true); let v = pick(false);`,
+      "this": `function f() { return this ? "a" : "b"; } let v = f();`,
+      "this of an arrow": `class A { constructor() { this.n = "a"; this.get = () => this.n; } } class B { constructor(run) { this.n = "b"; this.run = run; } call() { return this.run(); } } let v = new B(new A().get).call();`,
+      "an optional call": `let v = "a"; const o = process.env.A ? { set() {} } : undefined; o?.set((v = "b"));`,
+      "an inherited name": `let v = "b"; const o = {}; if (o.toString) v = "a";`,
+      "super": `class P { get() { return "a"; } } class C extends P { get() { return super.get(); } } let v = new C().get();`,
+      "the order of a store": `let o = { n: "a" }; const p = o; o.n = (o = { n: "c" }, "b"); let v = p.n;`,
+      "new of a function": `let v = "c"; function F(n) { v = n; } F("a"); new F("b");`,
+      "a switch": `let v; switch (process.env.A) { default: v = "a"; case "2": v = (v ?? "") + "b"; break; case "1": v = "c"; }`,
+      "a label": `let v = "a"; outer: for (;;) { for (;;) { v = "b"; break outer; } }`,
+      "the kind of a value": `let v = "a"; if (typeof process.env.A === "string") v = "b";`,
+      "an order of numbers": `let v = "a"; if (process.env.A < 2) v = "b";`,
+      "a getter": `const o = { get n() { return process.env.A ? "a" : "b"; } }; let v = o.n;`,
+      "a spread object": `const o = { n: "a", ...(process.env.A && { n: "b" }) }; let v = o.n;`,
+      "a joined list": `let v = ["a", process.env.A ? "b" : "c"].join("");`,
+      "a method of a string": `let v = (process.env.A ? "A" : "B").toLowerCase();`,
+      "a deleted field": `const o = { n: "a" }; if (process.env.A) delete o.n; let v = o.n ?? "b";`,
+      "a converted object": `let v = "a"; const o = { valueOf() { v = "b"; return 1; } }; if (process.env.A) +o;`,
+      "a loop": `let v = 0; while (v < 2) v += 1;`,
+      "a variable that is set": `let v = "a"; const key = "SET_" + "LATER"; if (!process.env.SET_LATER) { process.env[key] = "1"; v = "b"; } if (process.env.SET_LATER) v += "c";`,
+    };
+    const values = [
+      "0",
+      "1",
+      "2",
+      "-1",
+      "0.5",
+      "1.5",
+      "01",
+      "true",
+      "false",
+      "null",
+      "undefined",
+      "NaN",
+      "Infinity",
+      "1e+21",
+    ];
+    values.push("a", "b", "c", "ab", "ac", "bc", "a1");
+    const names = Object.keys(rows);
+    using dir = tempDir("aot-executed-choices", {
+      "app/package.json": `{ "name": "app" }`,
+      "app/main.cjs": `const { read } = require("chooser");\nfor (const line of read()) console.log(line);\n`,
+      "app/node_modules/chooser/package.json": `{ "name": "chooser", "version": "1.0.0", "main": "./index.cjs" }`,
+      "app/node_modules/chooser/index.cjs": `const attempt = (name, load) => {
+  try { return name + ": " + load(); } catch (error) { return name + ": " + error.code; }
+};
+exports.read = () => [
+${names.map((name, index) => `  attempt(${JSON.stringify(name)}, () => require("./${index}.cjs")),`).join("\n")}
+];
+`,
+      ...Object.fromEntries(
+        Object.values(rows).flatMap((code, index) => [
+          [
+            `app/node_modules/chooser/${index}.cjs`,
+            `const fs = require("node:fs"), path = require("node:path");
+${code}
+module.exports = fs.readFileSync(path.join(__dirname, \`files/${index}/\${v}.txt\`), "utf8");
+`,
+          ],
+          ...values.map(value => [`app/node_modules/chooser/files/${index}/${value}.txt`, value]),
+        ]),
+      ),
+    });
+    const [app, outfile] = ["app", "built.exe"].map(it => join(String(dir), it));
+    const built = await run(app, [bunExe(), "build", "--compile", "--aot", "./main.cjs", "--outfile", outfile]);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
+    const environments = [{ A: "1" }, { A: "2" }, { A: undefined }];
+    const all = environments.map(it => ({ ...bunEnv, SET_LATER: undefined, ...it }));
+    const plain = await Promise.all(all.map(env => run(app, [bunExe(), "run", "./main.cjs"], env)));
+    renameSync(app, join(String(dir), "moved-away"));
+    const compiled = await Promise.all(all.map(env => run(String(dir), [outfile], env)));
+    for (const { stdout, exitCode } of plain) {
+      expect({ lines: stdout.split("\n").length, exitCode }).toEqual({ lines: names.length + 1, exitCode: 0 });
+    }
+    expect(compiled).toEqual(plain);
+  }, 120_000);
+
   test("a package chooses its file by a variable of the environment that it compares loosely", async () => {
     const rows = {
       "one": "process.env.CHOSEN == 1",

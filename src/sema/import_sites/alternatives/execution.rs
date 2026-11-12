@@ -1590,6 +1590,21 @@ impl Execution<'_, '_, '_, '_> {
         }
     }
 
+    fn add(&self, left: &Value, right: &Value) -> Value {
+        let (Value::Held(left), Value::Held(right)) = (left, right) else {
+            return Value::Unknown;
+        };
+        let is_known = |it: &Held| matches!(it, Held::Text(_) | Held::Primitive(_));
+        if !is_known(left) || !is_known(right) {
+            return Value::Unknown;
+        }
+        let (left, right) = (vec![left.clone()], vec![right.clone()]);
+        match self.follower.add_values(&left, &right).as_deref() {
+            Some([sum]) => Value::Held(sum.clone()),
+            _ => Value::Unknown,
+        }
+    }
+
     fn evaluate_binary(
         &mut self,
         state: State,
@@ -1628,7 +1643,7 @@ impl Execution<'_, '_, '_, '_> {
                 for (state, first) in self.evaluate(state, left)? {
                     for (state, second) in self.evaluate(state, right)? {
                         let value = match op {
-                            BinOp::Add => self.join_texts(&[first.clone(), second]),
+                            BinOp::Add => self.add(&first, &second),
                             _ => Value::Unknown,
                         };
                         ways.push((state, value));
@@ -1726,7 +1741,7 @@ impl Execution<'_, '_, '_, '_> {
                 for (state, held) in self.evaluate(state, target)? {
                     for (state, value) in self.evaluate(state, value)? {
                         let value = match op {
-                            BinOp::Add => self.join_texts(&[held.clone(), value]),
+                            BinOp::Add => self.add(&held, &value),
                             _ => Value::Unknown,
                         };
                         let states = self.store(state, target, value.clone())?.into_iter();

@@ -1,13 +1,14 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, ScopeId};
 use bun_sema::fold::Constant;
-use bun_sema::hir::{CallId, ExprId, ExprKind, KnownEvaluation, NodeData};
+use bun_sema::hir::{CallId, ExprId, ExprKind, FnKind, KnownEvaluation, NodeData};
 use rustc_hash::FxHashMap;
 
 use super::{Arguments, Callee};
 use crate::builtins::EvaluatedText;
 use crate::builtins::id::BuiltinId;
 use crate::ir::{BlockId, Edge, StringId, ValueId};
+use crate::load::known_evaluations::may_need_scope_around;
 use crate::lower::expression::Tail;
 use crate::lower::{FileLowering, FunctionLowering};
 
@@ -28,26 +29,48 @@ impl FileLowering<'_, '_, '_, '_> {
             return false;
         };
         let own_scope = bound.fns[function.idx()].scope;
+        // `Function` doesn't take over that the code around the call is strict. All functions of a module are.
+        let is_strict = hir[function].is_strict;
+        is_strict == hir[function].is_strict_by_syntax
+            && is_strict == bound.is_strict_scope(own_scope)
+            && self.names_only_globals(evaluation, root, own_scope)
+    }
+
+    pub(in crate::lower) fn needs_no_scope(&self, evaluation: &KnownEvaluation) -> bool {
+        let hir = self.hir;
+        let root = hir.skip_type_assertions(evaluation.function);
+        let ExprKind::Fn(function) = hir[root].kind else {
+            return false;
+        };
+        let may_need_scope = |text: Atom| may_need_scope_around(self.queries.atom_bytes(text));
+        hir[function].kind != FnKind::Arrow
+            && !(hir.ids(evaluation.arguments)).any(may_need_scope)
+            && self.names_only_globals(evaluation, root, self.bound.fns[function.idx()].scope)
+    }
+
+    fn names_only_globals(
+        &self,
+        evaluation: &KnownEvaluation,
+        root: ExprId,
+        own_scope: ScopeId,
+    ) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
         let is_own = |scope: ScopeId| {
             let parent_of = |scope: &ScopeId| bound.scopes[scope.idx()].parent.some();
             std::iter::successors(scope.some(), parent_of).any(|it| it == own_scope)
         };
         let mut expressions = (evaluation.first_expression.0..root.0).map(ExprId);
-        // `Function` doesn't take over that the code around the call is strict. All functions of a module are.
-        let is_strict = hir[function].is_strict;
-        is_strict == hir[function].is_strict_by_syntax
-            && is_strict == bound.is_strict_scope(own_scope)
-            && expressions.all(|e| match hir[e].kind {
-                ExprKind::Ident(_) => {
-                    bound.dynamic_lookup_scope(NodeData::Expr(e)).is_none()
-                        && match bound.binding(e) {
-                            Binding::Free | Binding::Arguments(_) => true,
-                            Binding::CommonJs(_) => false,
-                            Binding::Symbol(symbol) => is_own(bound.symbol_scope(symbol)),
-                        }
-                }
-                _ => true,
-            })
+        expressions.all(|e| match hir[e].kind {
+            ExprKind::Ident(_) => {
+                bound.dynamic_lookup_scope(NodeData::Expr(e)).is_none()
+                    && match bound.binding(e) {
+                        Binding::Free | Binding::Arguments(_) => true,
+                        Binding::CommonJs(_) => false,
+                        Binding::Symbol(symbol) => is_own(bound.symbol_scope(symbol)),
+                    }
+            }
+            _ => true,
+        })
     }
 }
 

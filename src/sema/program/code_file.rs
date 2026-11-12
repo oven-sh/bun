@@ -549,8 +549,14 @@ fn analyze_with_host<'s>(
             }
         }
         if !std::mem::replace(&mut are_factories_copied, true)
-            && host.copy_factories(arena, atoms, &mut tree.hir, &bound, &mut tree.payload)
-                == TreeChange::Changed
+            && host.copy_factories(
+                arena,
+                atoms,
+                &mut tree.hir,
+                &bound,
+                &analysis.decisions,
+                &mut tree.payload,
+            ) == TreeChange::Changed
         {
             continue;
         }

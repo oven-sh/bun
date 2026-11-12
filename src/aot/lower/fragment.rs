@@ -629,6 +629,11 @@ impl FragmentBuilder {
         })
     }
 
+    pub(in crate::lower) fn is_function_named(&self, key: FunctionKey) -> bool {
+        let id = self.function_keys.ids.get(&key);
+        id.is_some_and(|&id| self.function_keys.named_in[id as usize] == self.visit)
+    }
+
     pub(in crate::lower) fn is_function_defined(&self, key: FunctionKey) -> bool {
         let id = self.function_keys.ids.get(&key);
         id.is_some_and(|&id| self.function_keys.defined_in[id as usize] == self.visit)

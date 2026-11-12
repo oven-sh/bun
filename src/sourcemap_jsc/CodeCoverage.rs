@@ -1184,7 +1184,9 @@ impl ByteRangeMapping {
 }
 
 /// The `InternalSourceMap` from parsing and printing `text`, if both succeed.
+#[inline(never)]
 fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<bun_core::MutableString> {
+    bun_removable_features::removable_definition!(TestCommand, print_for_coverage);
     let arena = bun_alloc::Arena::new();
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
     let _ast_scope = ast_memory_allocator.enter();

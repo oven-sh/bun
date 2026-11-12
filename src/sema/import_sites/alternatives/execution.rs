@@ -15,6 +15,7 @@ use crate::import_sites::is_process;
 use crate::util::{FxBuild, FxHashMap, FxHashSet};
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::ops::Range;
+use std::rc::Rc;
 
 const MOST_STEPS: u32 = 1 << 15;
 const SIZE_OF_STEP: usize = 16;
@@ -31,6 +32,7 @@ enum Value {
     Class(ClassId),
     Environment,
     EnvironmentVariable(Atom),
+    OfEnvironment(ExprId),
     Unknown,
 }
 
@@ -50,10 +52,10 @@ struct EnvironmentVariable {
     differs: Vec<Vec<u8>>,
 }
 
-#[derive(Clone, PartialEq, Default)]
+#[derive(Clone, Default)]
 struct State {
-    variables: FxHashMap<SymbolId, Value>,
-    objects: Vec<Object>,
+    variables: Rc<FxHashMap<SymbolId, Rc<Value>>>,
+    objects: Rc<Vec<Rc<Object>>>,
     environment: Vec<(Atom, EnvironmentVariable)>,
     constants: Vec<(SymbolId, bool)>,
 }
@@ -115,8 +117,16 @@ pub(super) struct Execution<'f, 'i, 'a, 's> {
     functions_running: Vec<FnId>,
     constructions_running: usize,
     receivers: Vec<Value>,
-    thrown: Vec<Vec<State>>,
+    attempts: Vec<Attempt>,
     steps_left: u32,
+}
+
+struct Attempt {
+    before: State,
+    thrown: Vec<State>,
+    has_calls: bool,
+    variables: FxHashSet<SymbolId>,
+    objects: FxHashSet<usize>,
 }
 
 pub(super) fn find_executed_values(
@@ -145,7 +155,7 @@ pub(super) fn find_executed_values(
         functions_running: Vec::new(),
         constructions_running: 0,
         receivers: Vec::new(),
-        thrown: Vec::new(),
+        attempts: Vec::new(),
         steps_left: MOST_STEPS,
     };
     if execution.run_file().is_none() {
@@ -240,6 +250,15 @@ fn undefined() -> Value {
     Value::Held(Held::Primitive(Constant::Undefined))
 }
 
+impl PartialEq for State {
+    fn eq(&self, other: &State) -> bool {
+        self.environment == other.environment
+            && self.constants == other.constants
+            && (Rc::ptr_eq(&self.variables, &other.variables) || self.variables == other.variables)
+            && (Rc::ptr_eq(&self.objects, &other.objects) || self.objects == other.objects)
+    }
+}
+
 impl Hash for State {
     fn hash<H: Hasher>(&self, hasher: &mut H) {
         let variables = self.variables.iter().map(|it| FxBuild.hash_one(it));
@@ -255,12 +274,26 @@ impl State {
     }
 
     fn add_object(&mut self, object: Object) -> Value {
-        self.objects.push(object);
+        Rc::make_mut(&mut self.objects).push(Rc::new(object));
         Value::Object(self.objects.len() - 1)
     }
 
+    fn object_mut(&mut self, object: usize) -> &mut Object {
+        Rc::make_mut(&mut Rc::make_mut(&mut self.objects)[object])
+    }
+
+    fn mark_read(&mut self, object: usize) {
+        if !self.objects[object].is_read {
+            self.object_mut(object).is_read = true;
+        }
+    }
+
+    fn set_variable(&mut self, symbol: SymbolId, value: Value) {
+        Rc::make_mut(&mut self.variables).insert(symbol, Rc::new(value));
+    }
+
     fn set_field(&mut self, object: usize, key: &[u8], value: Value) {
-        let fields = &mut self.objects[object].fields;
+        let fields = &mut self.object_mut(object).fields;
         match fields.iter_mut().find(|it| it.0 == key) {
             Some(field) => field.1 = value,
             None => fields.push((key.to_vec(), value)),
@@ -271,9 +304,10 @@ impl State {
         let mut pending = vec![value.clone()];
         while let Some(value) = pending.pop() {
             if let Value::Object(object) = value {
-                let object = &mut self.objects[object];
-                if !std::mem::replace(&mut object.is_shared, true) {
-                    pending.extend(object.fields.iter().map(|it| it.1.clone()));
+                if !self.objects[object].is_shared {
+                    self.object_mut(object).is_shared = true;
+                    let fields = self.objects[object].fields.iter();
+                    pending.extend(fields.map(|it| it.1.clone()));
                 }
             }
         }
@@ -299,7 +333,7 @@ impl Execution<'_, '_, '_, '_> {
         for (state, _) in &ends {
             let exported: Vec<Value> = (state.variables.iter())
                 .filter(|it| self.follower.is_exported(*it.0))
-                .map(|it| it.1.clone())
+                .map(|it| Value::clone(it.1))
                 .collect();
             for value in exported {
                 self.escape(state, &value);
@@ -472,7 +506,7 @@ impl Execution<'_, '_, '_, '_> {
         };
         bound.stores_to(symbol).is_empty()
             && self.ends.iter().all(|it| {
-                matches!(it.variables.get(&symbol), Some(&Value::Object(list))
+                matches!(it.variables.get(&symbol).map(|it| &**it), Some(&Value::Object(list))
                     if it.objects[list].is_list && !it.objects[list].is_read)
             })
     }
@@ -604,7 +638,6 @@ impl Execution<'_, '_, '_, '_> {
         }
     }
 
-    /// `class`, the class it extends, and so on. Each class comes once, so a ring of classes ends.
     fn lineage(&self, class: ClassId) -> impl Iterator<Item = ClassId> {
         let mut met: FxHashSet<ClassId> = FxHashSet::default();
         std::iter::successors(Some(class), |it| self.find_class_extended(*it))
@@ -656,6 +689,38 @@ impl Execution<'_, '_, '_, '_> {
         Some(ended)
     }
 
+    fn limit<T: PartialEq + Hash>(&mut self, ways: Vec<(State, T)>) -> Ways<T> {
+        if ways.len() <= MOST_STATES {
+            return Some(ways);
+        }
+        self.merge(ways).filter(|it| it.len() <= MOST_STATES)
+    }
+
+    fn set_variable(&mut self, state: &mut State, symbol: SymbolId, value: Value) {
+        if let Some(around) = self.attempts.last_mut() {
+            around.variables.insert(symbol);
+        }
+        state.set_variable(symbol, value);
+    }
+
+    fn set_field(&mut self, state: &mut State, object: usize, key: &[u8], value: Value) {
+        self.note_change(object);
+        state.set_field(object, key, value);
+    }
+
+    fn note_change(&mut self, object: usize) {
+        if let Some(around) = self.attempts.last_mut() {
+            around.objects.insert(object);
+        }
+    }
+
+    fn share(&mut self, state: &mut State, value: &Value) {
+        if let Value::Object(object) = value {
+            self.note_change(*object);
+        }
+        state.share(value);
+    }
+
     fn run(&mut self, state: State, statement: StmtId) -> Ways<Flow> {
         self.steps_left = self.steps_left.checked_sub(1)?;
         let hir = self.follower.inputs.hir;
@@ -673,14 +738,21 @@ impl Execution<'_, '_, '_, '_> {
                             && let Some(symbol) = self.declared_symbol(declared.pat)
                         {
                             for state in &mut states {
-                                state.variables.entry(symbol).or_insert_with(undefined);
+                                if !state.variables.contains_key(&symbol) {
+                                    self.set_variable(state, symbol, undefined());
+                                }
                             }
                         }
                         continue;
                     }
                     let mut bound = Vec::new();
+                    let is_name = matches!(hir[declared.pat].kind, PatKind::Ident(_));
                     for state in states {
-                        for (state, value) in self.evaluate(state, declared.init)? {
+                        let ways = match is_name {
+                            true => self.evaluate_member(state, declared.init)?,
+                            false => self.evaluate(state, declared.init)?,
+                        };
+                        for (state, value) in ways {
                             bound.extend(self.bind(state, declared.pat, value)?);
                         }
                     }
@@ -771,9 +843,15 @@ impl Execution<'_, '_, '_, '_> {
                 handler,
                 finalizer,
             } => {
-                self.thrown.push(Vec::new());
+                self.attempts.push(Attempt {
+                    before: state.clone(),
+                    thrown: Vec::new(),
+                    has_calls: false,
+                    variables: FxHashSet::default(),
+                    objects: FxHashSet::default(),
+                });
                 let ways = self.run(state, block);
-                let thrown = self.thrown.pop().unwrap_or_default();
+                let thrown = self.end_attempt(handler.is_some());
                 let mut ways = ways?;
                 if let Some(handler) = handler.some() {
                     let thrown = thrown.into_iter().map(|it| (it, ())).collect();
@@ -805,9 +883,7 @@ impl Execution<'_, '_, '_, '_> {
             StmtKind::Throw(thrown) => {
                 for (state, value) in self.evaluate(state, thrown)? {
                     self.escape(&state, &value);
-                    if let Some(around) = self.thrown.last_mut() {
-                        around.push(state);
-                    }
+                    self.note_throw(state)?;
                 }
                 Some(Vec::new())
             }
@@ -840,6 +916,46 @@ impl Execution<'_, '_, '_, '_> {
         }
     }
 
+    fn note_throw(&mut self, state: State) -> Option<()> {
+        let Some(around) = self.attempts.last_mut() else {
+            return Some(());
+        };
+        around.thrown.push(state);
+        if around.thrown.len() > 2 * MOST_STATES {
+            let thrown = std::mem::take(&mut around.thrown).into_iter();
+            let thrown = self.limit(thrown.map(|it| (it, ())).collect())?.into_iter();
+            if let Some(around) = self.attempts.last_mut() {
+                around.thrown = thrown.map(|it| it.0).collect();
+            }
+        }
+        Some(())
+    }
+
+    fn end_attempt(&mut self, is_caught: bool) -> Vec<State> {
+        let Some(attempt) = self.attempts.pop() else {
+            return Vec::new();
+        };
+        let mut thrown = attempt.thrown;
+        if attempt.has_calls && is_caught {
+            let mut state = attempt.before;
+            for &symbol in &attempt.variables {
+                state.set_variable(symbol, Value::Unknown);
+            }
+            let count = state.objects.len();
+            for &object in attempt.objects.iter().filter(|it| **it < count) {
+                state.share(&Value::Object(object));
+            }
+            (state.constants).retain(|it| !attempt.variables.contains(&it.0));
+            thrown.push(state);
+        }
+        if let Some(around) = self.attempts.last_mut() {
+            around.variables.extend(attempt.variables);
+            around.objects.extend(attempt.objects);
+            around.has_calls |= attempt.has_calls && !is_caught;
+        }
+        thrown
+    }
+
     fn run_for_of(
         &mut self,
         state: State,
@@ -851,7 +967,7 @@ impl Execution<'_, '_, '_, '_> {
         for (mut state, list) in self.evaluate(state, expr)? {
             let items = match list {
                 Value::Object(object) if state.objects[object].is_list && !is_await => {
-                    state.objects[object].is_read = true;
+                    state.mark_read(object);
                     state.objects[object].fields.clone()
                 }
                 _ => {
@@ -1008,11 +1124,15 @@ impl Execution<'_, '_, '_, '_> {
     }
 
     fn compare(&mut self, mut state: State, left: &Value, right: &Value) -> Vec<(State, bool)> {
+        let atoms = self.follower.inputs.atoms;
         let text = |value: &Value| match value {
             Value::Held(Held::Text(text))
                 if text.end.is_none() && !text.starts_at_own_directory && !text.is_file_url =>
             {
                 Some(text.start.clone())
+            }
+            Value::Held(Held::Primitive(Constant::String(text))) => {
+                Some(atoms.bytes(*text).to_vec())
             }
             _ => None,
         };
@@ -1066,6 +1186,7 @@ impl Execution<'_, '_, '_, '_> {
             )
         };
         let kind = |value: &Value| match value {
+            Value::Held(Held::Primitive(Constant::String(_))) => None,
             Value::Held(Held::Primitive(constant)) => Some(std::mem::discriminant(constant)),
             _ => None,
         };
@@ -1111,7 +1232,7 @@ impl Execution<'_, '_, '_, '_> {
                         false => ways.push((state, truth)),
                     }
                 }
-                Some(ways)
+                self.limit(ways)
             }
             ExprKind::Binary {
                 op: op @ (BinOp::EqEqEq | BinOp::NotEqEq | BinOp::EqEq | BinOp::NotEq),
@@ -1165,7 +1286,8 @@ impl Execution<'_, '_, '_, '_> {
                 Constant::Undefined | Constant::Null => Some(false),
                 Constant::Boolean(truth) => Some(*truth),
                 Constant::Number(number) => Some(*number != 0.0 && !number.is_nan()),
-                _ => None,
+                Constant::String(text) => Some(!self.follower.inputs.atoms.bytes(*text).is_empty()),
+                Constant::BigInt(_) => None,
             },
             Value::Held(Held::Url(_) | Held::Resolved(..)) => Some(true),
             Value::Object(_) | Value::Function(_) | Value::Class(_) | Value::Environment => {
@@ -1181,7 +1303,7 @@ impl Execution<'_, '_, '_, '_> {
                 }
                 variable.is_set
             }
-            Value::Held(_) | Value::Unknown => None,
+            Value::Held(_) | Value::OfEnvironment(_) | Value::Unknown => None,
         };
         if let Some(truth) = truth {
             return vec![(state, truth)];
@@ -1203,7 +1325,13 @@ impl Execution<'_, '_, '_, '_> {
     fn evaluate(&mut self, state: State, e: ExprId) -> Ways<Value> {
         self.steps_left = self.steps_left.checked_sub(1)?;
         let hir = self.follower.inputs.hir;
-        let mut ways = self.evaluate_written(state, hir.skip_type_assertions(e))?;
+        let mut ways = Vec::new();
+        for (state, value) in self.evaluate_written(state, hir.skip_type_assertions(e))? {
+            match value {
+                Value::OfEnvironment(written) => ways.extend(self.evaluate(state, written)?),
+                value => ways.push((state, value)),
+            }
+        }
         for (state, value) in &mut ways {
             if matches!(value, Value::Object(object) if state.objects[*object].is_shared) {
                 *value = Value::Unknown;
@@ -1216,12 +1344,12 @@ impl Execution<'_, '_, '_, '_> {
         if self.operands.contains(&e) {
             for (_, value) in &ways {
                 let seen = self.seen.entry(e).or_insert_with(|| Some(Values::new()));
-                match value {
+                match with_text(self.follower, value) {
                     Value::Held(held @ (Held::Text(_) | Held::Url(_) | Held::Resolved(..))) => {
                         if let Some(values) = seen
-                            && !values.contains(held)
+                            && !values.contains(&held)
                         {
-                            values.push(held.clone());
+                            values.push(held);
                         }
                     }
                     _ => *seen = None,
@@ -1231,10 +1359,88 @@ impl Execution<'_, '_, '_, '_> {
         Some(ways)
     }
 
+    fn evaluate_member(&mut self, state: State, e: ExprId) -> Ways<Value> {
+        let hir = self.follower.inputs.hir;
+        let e = hir.skip_type_assertions(e);
+        let chooses = matches!(
+            hir[e].kind,
+            ExprKind::Binary { .. } | ExprKind::Cond { .. } | ExprKind::Template { .. }
+        );
+        match chooses && self.is_of_environment(e) {
+            true => Some(vec![(state, Value::OfEnvironment(e))]),
+            false => self.evaluate(state, e),
+        }
+    }
+
+    fn is_of_environment(&self, e: ExprId) -> bool {
+        let &ScanInputs {
+            hir,
+            atoms,
+            decisions,
+            ..
+        } = self.follower.inputs;
+        let mut pending = vec![e];
+        while let Some(e) = pending.pop() {
+            let e = hir.skip_type_assertions(e);
+            if !matches!(decisions.constant(hir, e), FoldedValue::Unknown) {
+                continue;
+            }
+            match hir[e].kind {
+                ExprKind::Binary {
+                    op:
+                        BinOp::Or
+                        | BinOp::And
+                        | BinOp::Nullish
+                        | BinOp::Add
+                        | BinOp::EqEq
+                        | BinOp::NotEq
+                        | BinOp::EqEqEq
+                        | BinOp::NotEqEq,
+                    left,
+                    right,
+                } => pending.extend([left, right]),
+                ExprKind::Cond { test, branches } => {
+                    let Branches { yes, no } = hir.branches(branches);
+                    pending.extend([test, yes, no]);
+                }
+                ExprKind::Template { exprs } => pending.extend(hir.ids(exprs)),
+                ExprKind::Unary {
+                    op: UnOp::Not,
+                    operand,
+                } => pending.push(operand),
+                ExprKind::Dot { .. } | ExprKind::Index { .. } => match hir.member_key(e) {
+                    Some((environment, MemberKey::Name(name)))
+                        if self.names_environment(hir.skip_type_assertions(environment))
+                            && !self.sets_member(atoms.bytes(name)) => {}
+                    _ => return false,
+                },
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    fn evaluate_members(
+        &mut self,
+        state: State,
+        all: impl Iterator<Item = ExprId>,
+    ) -> Ways<Vec<Value>> {
+        self.evaluate_each(state, all, true)
+    }
+
     fn evaluate_all(
         &mut self,
         state: State,
         all: impl Iterator<Item = ExprId>,
+    ) -> Ways<Vec<Value>> {
+        self.evaluate_each(state, all, false)
+    }
+
+    fn evaluate_each(
+        &mut self,
+        state: State,
+        all: impl Iterator<Item = ExprId>,
+        are_members: bool,
     ) -> Ways<Vec<Value>> {
         let hir = self.follower.inputs.hir;
         let mut ways = vec![(state, Vec::new())];
@@ -1245,11 +1451,15 @@ impl Execution<'_, '_, '_, '_> {
                     ExprKind::Spread(list) => (list, true),
                     _ => (e, false),
                 };
-                for (mut state, value) in self.evaluate(state, written)? {
+                let written = match are_members && !is_spread {
+                    true => self.evaluate_member(state, written)?,
+                    false => self.evaluate(state, written)?,
+                };
+                for (mut state, value) in written {
                     let mut values = values.clone();
                     match (is_spread, &value) {
                         (true, Value::Object(object)) if state.objects[*object].is_list => {
-                            state.objects[*object].is_read = true;
+                            state.mark_read(*object);
                             let items = state.objects[*object].fields.iter();
                             values.extend(items.map(|it| it.1.clone()));
                         }
@@ -1259,7 +1469,7 @@ impl Execution<'_, '_, '_, '_> {
                     longer.push((state, values));
                 }
             }
-            ways = longer;
+            ways = self.limit(longer)?;
         }
         Some(ways)
     }
@@ -1275,7 +1485,7 @@ impl Execution<'_, '_, '_, '_> {
         let one = |state: State, value: Value| Some(vec![(state, value)]);
         match decisions.constant(hir, e) {
             FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
-                return one(state, Value::Held(self.follower.held_constant(constant)));
+                return one(state, Value::Held(Held::Primitive(constant)));
             }
             FoldedValue::Unknown => {}
         }
@@ -1338,7 +1548,7 @@ impl Execution<'_, '_, '_, '_> {
                         let Binding::Symbol(symbol) = bound.binding(written) else {
                             return None;
                         };
-                        state.variables.insert(symbol, Value::Unknown);
+                        self.set_variable(&mut state, symbol, Value::Unknown);
                     }
                     ways.push((state, Value::Unknown));
                 }
@@ -1372,7 +1582,7 @@ impl Execution<'_, '_, '_, '_> {
                                 PropKind::Init | PropKind::Shorthand | PropKind::Method,
                                 PropKey::Name(name),
                             ) => {
-                                for (state, value) in self.evaluate(state, property.value)? {
+                                for (state, value) in self.evaluate_member(state, property.value)? {
                                     let mut fields = fields.clone();
                                     let key = atoms.bytes(name).to_vec();
                                     fields.retain(|it| it.0 != key);
@@ -1383,7 +1593,7 @@ impl Execution<'_, '_, '_, '_> {
                             _ => return None,
                         }
                     }
-                    ways = longer;
+                    ways = self.limit(longer)?;
                 }
                 let made = ways.into_iter().map(|(mut state, fields)| {
                     let object = state.add_object(Object {
@@ -1404,7 +1614,7 @@ impl Execution<'_, '_, '_, '_> {
                 {
                     return None;
                 }
-                let ways = self.evaluate_all(state, hir.ids(items))?;
+                let ways = self.evaluate_members(state, hir.ids(items))?;
                 let made = ways.into_iter().map(|(mut state, values)| {
                     let list = state.add_object(list_of(values));
                     (state, list)
@@ -1465,7 +1675,7 @@ impl Execution<'_, '_, '_, '_> {
         };
         self.symbols_read.insert(symbol);
         if let Some(value) = state.variables.get(&symbol) {
-            return value.clone();
+            return Value::clone(value);
         }
         if !bound.stores_to(symbol).is_empty() {
             return Value::Unknown;
@@ -1517,7 +1727,7 @@ impl Execution<'_, '_, '_, '_> {
         };
         let value = match object {
             Value::Object(id) => {
-                state.objects[*id].is_read = true;
+                state.mark_read(*id);
                 let held = &state.objects[*id];
                 let field = held.fields.iter().find(|it| it.0 == key);
                 match (field, held.class) {
@@ -1594,11 +1804,13 @@ impl Execution<'_, '_, '_, '_> {
         let (Value::Held(left), Value::Held(right)) = (left, right) else {
             return Value::Unknown;
         };
-        let is_known = |it: &Held| matches!(it, Held::Text(_) | Held::Primitive(_));
-        if !is_known(left) || !is_known(right) {
+        let held = |it: &Held| match with_text(self.follower, &Value::Held(it.clone())) {
+            Value::Held(held @ (Held::Text(_) | Held::Primitive(_))) => Some(vec![held]),
+            _ => None,
+        };
+        let (Some(left), Some(right)) = (held(left), held(right)) else {
             return Value::Unknown;
-        }
-        let (left, right) = (vec![left.clone()], vec![right.clone()]);
+        };
         match self.follower.add_values(&left, &right).as_deref() {
             Some([sum]) => Value::Held(sum.clone()),
             _ => Value::Unknown,
@@ -1696,7 +1908,7 @@ impl Execution<'_, '_, '_, '_> {
                 let Value::Object(list) = value else {
                     return None;
                 };
-                state.objects[list].is_read = true;
+                state.mark_read(list);
                 let items = state.objects[list].fields.clone();
                 let mut states = vec![state];
                 for (place, target) in hir.ids(targets).enumerate() {
@@ -1759,9 +1971,7 @@ impl Execution<'_, '_, '_, '_> {
         match hir[target].kind {
             ExprKind::Ident(_) => {
                 match bound.binding(target) {
-                    Binding::Symbol(symbol) => {
-                        state.variables.insert(symbol, value);
-                    }
+                    Binding::Symbol(symbol) => self.set_variable(&mut state, symbol, value),
                     _ => self.escape(&state, &value),
                 }
                 Some(vec![state])
@@ -1781,7 +1991,7 @@ impl Execution<'_, '_, '_, '_> {
                                 if setter.is_some() {
                                     return None;
                                 }
-                                state.set_field(*object, &key, value.clone());
+                                self.set_field(&mut state, *object, &key, value.clone());
                             }
                             (Value::Object(_), None) => return None,
                             _ => self.escape(&state, &value),
@@ -1811,7 +2021,7 @@ impl Execution<'_, '_, '_, '_> {
         match hir[pattern].kind {
             PatKind::Ident(_) => {
                 if let Some(symbol) = self.declared_symbol(pattern) {
-                    state.variables.insert(symbol, value);
+                    self.set_variable(&mut state, symbol, value);
                 }
                 Some(vec![state])
             }
@@ -1882,6 +2092,13 @@ impl Execution<'_, '_, '_, '_> {
     }
 
     fn or_default(&mut self, state: State, value: Value, default: ExprId) -> Ways<Value> {
+        if let Value::OfEnvironment(written) = value {
+            let mut ways = Vec::new();
+            for (state, value) in self.evaluate(state, written)? {
+                ways.extend(self.or_default(state, value, default)?);
+            }
+            return Some(ways);
+        }
         match default.some() {
             Some(default) if value == undefined() => self.evaluate(state, default),
             Some(default) if value == Value::Unknown => {
@@ -1964,7 +2181,8 @@ impl Execution<'_, '_, '_, '_> {
             }
         };
         for (state, function, receiver) in called {
-            for (state, passed) in self.evaluate_all(state, hir.ids(call.args))? {
+            let is_known = matches!(function, Value::Function(_));
+            for (state, passed) in self.evaluate_each(state, hir.ids(call.args), !is_known)? {
                 ways.extend(match function {
                     Value::Function(function) => {
                         self.call_function(state, function, receiver.clone(), &passed)?
@@ -1984,16 +2202,19 @@ impl Execution<'_, '_, '_, '_> {
     ) -> Vec<(State, Value)> {
         for value in passed.iter().chain([receiver]) {
             self.escape(&state, value);
-            state.share(value);
+            self.share(&mut state, value);
         }
-        if let Some(around) = self.thrown.last_mut() {
-            around.push(state.clone());
+        if let Some(around) = self.attempts.last_mut() {
+            around.has_calls = true;
         }
         vec![(state, Value::Unknown)]
     }
 
     fn join_path(&self, parts: &[Value], is_join: bool) -> Value {
-        match join_whole_texts(parts, is_join) {
+        let parts: Vec<Value> = (parts.iter())
+            .map(|it| with_text(self.follower, it))
+            .collect();
+        match join_whole_texts(&parts, is_join) {
             Some(path) => Value::Held(Held::Text(path)),
             None => Value::Unknown,
         }
@@ -2010,9 +2231,10 @@ impl Execution<'_, '_, '_, '_> {
                 match source {
                     Value::Object(source) => {
                         for (key, value) in state.objects[*source].fields.clone() {
-                            state.set_field(target, &key, value);
+                            self.set_field(&mut state, target, &key, value);
                         }
                     }
+                    Value::Held(Held::Primitive(Constant::String(_))) => return None,
                     Value::Held(Held::Primitive(_)) => {}
                     _ => return None,
                 }
@@ -2034,15 +2256,16 @@ impl Execution<'_, '_, '_, '_> {
         for (mut state, passed) in self.evaluate_all(state, hir.ids(call.args))? {
             match (method, passed.first()) {
                 (b"push", _) => {
+                    self.note_change(list);
                     for value in passed {
                         let place = state.objects[list].fields.len();
                         let field = (place.to_string().into_bytes(), value);
-                        state.objects[list].fields.push(field);
+                        state.object_mut(list).fields.push(field);
                     }
                     ways.push((state, Value::Unknown));
                 }
                 (b"forEach" | b"map", Some(&Value::Function(function))) => {
-                    state.objects[list].is_read = true;
+                    state.mark_read(list);
                     let items = state.objects[list].fields.clone();
                     let mut running = vec![(state, Vec::new())];
                     for (_, item) in items {
@@ -2099,7 +2322,7 @@ impl Execution<'_, '_, '_, '_> {
             self.escape(&state, &Value::Function(function));
             for value in passed.iter().chain([&receiver]) {
                 self.escape(&state, value);
-                state.share(value);
+                self.share(&mut state, value);
             }
             return Some(vec![(state, Value::Unknown)]);
         }
@@ -2171,7 +2394,8 @@ impl Execution<'_, '_, '_, '_> {
         let hir = self.follower.inputs.hir;
         let mut ways = Vec::new();
         for (state, callee) in self.evaluate(state, call.callee)? {
-            for (mut state, passed) in self.evaluate_all(state, hir.ids(call.args))? {
+            let is_known = matches!(callee, Value::Class(_));
+            for (mut state, passed) in self.evaluate_each(state, hir.ids(call.args), !is_known)? {
                 let Value::Class(class) = callee else {
                     ways.extend(self.call_unknown(state, &undefined(), &passed));
                     continue;
@@ -2308,7 +2532,7 @@ impl Execution<'_, '_, '_, '_> {
             let mut after = Vec::new();
             for mut state in states {
                 let Some(initial) = member.init.some() else {
-                    state.set_field(id, &key, undefined());
+                    self.set_field(&mut state, id, &key, undefined());
                     after.push(state);
                     continue;
                 };
@@ -2316,7 +2540,7 @@ impl Execution<'_, '_, '_, '_> {
                 let ways = self.evaluate(state, initial);
                 self.receivers.pop();
                 for (mut state, value) in ways? {
-                    state.set_field(id, &key, value);
+                    self.set_field(&mut state, id, &key, value);
                     after.push(state);
                 }
             }
@@ -2347,6 +2571,15 @@ impl Execution<'_, '_, '_, '_> {
             }
         }
         Some(ways)
+    }
+}
+
+fn with_text(follower: &Follower<'_, '_, '_>, value: &Value) -> Value {
+    match value {
+        &Value::Held(Held::Primitive(text @ Constant::String(_))) => {
+            Value::Held(follower.held_constant(text))
+        }
+        value => value.clone(),
     }
 }
 

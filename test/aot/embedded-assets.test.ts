@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
-import { chmodSync, cpSync, mkdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { without } from "./harness/capabilities";
 import { run as runCommand } from "./harness/run";
@@ -2877,6 +2877,53 @@ a blob third
     120_000,
   );
 
+  test("a path that is passed on is warned of, also where a read of it is ruled out", async () => {
+    using dir = tempDir("aot-path-passed-on", {
+      "app/package.json": `{ "name": "app" }`,
+      "app/big.bin": "big",
+      "app/other.txt": "other",
+      "app/main.cjs": `const fs = require("node:fs"), path = require("node:path");
+const { load } = require("loader");
+const o = { file: path.join(__dirname, "big.bin") };
+console.log(load(path.join(__dirname, "big.bin")));
+Object.assign(o, { file: path.join(__dirname, "other.txt") });
+console.log(fs.readFileSync(o.file, "utf8"));
+`,
+      "app/node_modules/loader/package.json": `{ "name": "loader", "version": "1.0.0", "main": "./index.cjs" }`,
+      "app/node_modules/loader/index.cjs": `const fs = require("node:fs");
+exports.load = file => fs.existsSync(file);
+`,
+    });
+    const { plain, built } = await bothWays(String(dir), "./main.cjs");
+    expect(plain).toEqual({ stdout: "true\nother\n", stderr: "", exitCode: 0 });
+    expect(warnings(built)).toEqual(["warn TS100098 other.txt", "warn TS100172 big.bin"]);
+  }, 120_000);
+
+  test("a package reads with what its caller passes in place of a function that writes", async () => {
+    using dir = tempDir("aot-functions-passed-for-defaults", {
+      "app/package.json": `{ "name": "app" }`,
+      "app/main.cjs": `const fs = require("node:fs");
+const passed = require("passed");
+const read = file => fs.readFileSync(file, "utf8");
+console.log(passed.one(read), passed.two(read), passed.three(), passed.four(), passed.five(read));
+`,
+      "app/node_modules/passed/package.json": `{ "name": "passed", "version": "1.0.0", "main": "./index.cjs" }`,
+      "app/node_modules/passed/index.cjs": `const fs = require("node:fs"), path = require("node:path");
+exports.one = (write = Bun.write) => write(path.join(__dirname, "one.txt"));
+exports.two = function (write = fs.writeFileSync) { return write(path.join(__dirname, "two.txt")); };
+exports.three = (read = fs.readFileSync) => read(path.join(__dirname, "three.txt"), "utf8");
+exports.four = () => ((write = fs.writeFileSync) => write(path.join(__dirname, "four.txt"), "utf8"))(fs.readFileSync);
+exports.five = use => use(path.join(__dirname, "five.txt"));
+`,
+      ...Object.fromEntries(
+        ["one", "two", "three", "four", "five"].map(name => [`app/node_modules/passed/${name}.txt`, name]),
+      ),
+    });
+    const { plain, compiled } = await bothWays(String(dir), "./main.cjs");
+    expect(plain).toEqual({ stdout: "one two three four five\n", stderr: "", exitCode: 0 });
+    expect(compiled).toEqual(plain);
+  }, 120_000);
+
   test("a package chooses its file by what JavaScript answers", async () => {
     const rows = {
       "added numbers": `let v = 0; if (process.env.A) v += 1;`,
@@ -3570,6 +3617,53 @@ say("a package below the program", asker.ownName);
 });
 
 describe.concurrent("--asset", () => {
+  test("a folder is as new as the newest file in it, and above the entry point it has no time", async () => {
+    using dir = tempDir("aot-times-of-embedded-folders", {
+      "app/src/main.cjs": `const fs = require("node:fs");
+const { basename, join } = require("node:path");
+for (const path of ["data", "data/deep", "data/old.txt", "data/deep/new.txt", "other", "..", "../shared", "../shared/deep", "../shared/deep/one.txt"]) {
+  const found = fs.statSync(join(__dirname, path));
+  fs.accessSync(join(__dirname, path));
+  const listed = path === ".." ? "-" : found.isDirectory() ? fs.readdirSync(join(__dirname, path)).sort().join() : fs.readFileSync(join(__dirname, path), "utf8");
+  console.log(path, found.mtimeMs, fs.existsSync(join(__dirname, path)), basename(fs.realpathSync(join(__dirname, path))) === basename(join(__dirname, path)), listed);
+}
+`,
+      "app/src/data/old.txt": "old",
+      "app/src/data/deep/new.txt": "new",
+      "app/src/other/one.txt": "other",
+      "app/shared/deep/one.txt": "one",
+    });
+    const times = {
+      "src/data/old.txt": 1_000_000,
+      "src/data/deep/new.txt": 2_000_000,
+      "src/other/one.txt": 1_500_000,
+      "shared/deep/one.txt": 1_700_000,
+      "src/data/deep": 500_000,
+      "src/data": 3_000_000,
+      "src/other": 4_000_000,
+      "shared/deep": 5_000_000,
+      "shared": 6_000_000,
+      "": 7_000_000,
+    };
+    for (const [path, time] of Object.entries(times)) utimesSync(join(String(dir), "app", path), time, time);
+    const flags = ["data", "other/one.txt", "../shared/deep/one.txt"].flatMap(path => ["--asset", path]);
+    const { compiled } = await bothWaysIn(String(dir), "app/src", "./main.cjs", ...flags);
+    expect(compiled).toEqual({
+      stdout: `data 2000000000 true true deep,old.txt
+data/deep 2000000000 true true new.txt
+data/old.txt 1000000000 true true old
+data/deep/new.txt 2000000000 true true new
+other 1500000000 true true one.txt
+.. 0 true true -
+../shared 0 true true deep
+../shared/deep 0 true true one.txt
+../shared/deep/one.txt 0 true true one
+`,
+      stderr: "",
+      exitCode: 0,
+    });
+  }, 120_000);
+
   test("an asset in a folder of a folder keeps its path", async () => {
     using dir = tempDir("aot-asset-in-a-folder-of-a-folder", {
       "app/main.cjs": `const fs = require("node:fs");

@@ -573,7 +573,7 @@ const FILE_FOR_FILE_SYSTEM_RECORD: usize =
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PathForFileSystemAlone {
     pub path_below_root: Vec<u8>,
-    /// When it was last changed on the disk of the build, in milliseconds.
+    /// When it was last changed on the disk of the build, in milliseconds. A folder is as new as the newest file in it that the executable holds.
     pub modified_at: i64,
     pub is_folder: bool,
     /// Passed as `--asset`, so `Bun.embeddedFiles` lists it.

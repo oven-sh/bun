@@ -15,7 +15,7 @@ pub(crate) mod hoisted_mocks;
 pub(crate) mod host;
 pub(crate) mod import_functions;
 pub(crate) mod import_meta_glob;
-mod known_evaluations;
+pub(crate) mod known_evaluations;
 pub(crate) mod loader_aliases;
 pub(crate) mod loaders;
 pub(crate) mod locked_builtin_defines;

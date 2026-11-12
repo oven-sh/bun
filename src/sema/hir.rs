@@ -3003,7 +3003,6 @@ pub struct FileIn<S: Storage> {
     pub functions_written_by_loader: S::Few<FunctionWrittenByLoader>,
     /// Sorted by call and by start.
     pub known_evaluations: S::Few<KnownEvaluation>,
-    /// The direct evals that evaluate no other strings than those of `known_evaluations`, sorted. Set by the loader.
     pub settled_evals: S::Few<CallId>,
     /// Sorted by sequence and by start.
     pub copied_factories: S::Few<CopiedFactory>,

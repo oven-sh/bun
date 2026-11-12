@@ -3,11 +3,13 @@ use crate::builtins::id::BuiltinId;
 use crate::builtins::table;
 use crate::known_helpers::{Helper, KnownFunction, KnownReference};
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, BindingInitializer, CodeUnit, Decl, FnOwner, Parent, SymbolId};
+use bun_sema::bind::{
+    Binding, BindingInitializer, BindingKind, CodeUnit, Decl, FnOwner, Parent, SymbolId,
+};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
     self, BinOp, Chain, ExprId, ExprKind, FnBody, FnId, FnKind, MemberKey, PatKind, PropId,
-    PropKey, PropKind, Span, StmtId, StmtKind, UnOp, VarDeclId,
+    PropKey, PropKind, Span, StmtId, StmtKind, UnOp, VarDeclId, VarKind,
 };
 use bun_sema::util::FxHashMap;
 use smallvec::SmallVec;
@@ -114,11 +116,23 @@ impl Finder<'_, '_> {
 
     pub(super) fn read_variable(&self, declaration: VarDeclId) -> Option<(SymbolId, ExprId)> {
         let record = self.hir[declaration];
-        if !matches!(self.hir[record.pat].kind, PatKind::Ident(_)) {
+        let is_disposed = matches!(record.kind, VarKind::Using | VarKind::AwaitUsing);
+        if is_disposed || !matches!(self.hir[record.pat].kind, PatKind::Ident(_)) {
             return None;
         }
         let symbol = self.bound.declared_symbol(Decl::Var(record.pat)).some()?;
         Some((symbol, record.init.some()?))
+    }
+
+    pub(super) fn has_no_dead_zone(&self, symbol: SymbolId) -> bool {
+        matches!(
+            self.bound.binding_kind(symbol),
+            BindingKind::Var
+                | BindingKind::Function
+                | BindingKind::FunctionName
+                | BindingKind::Parameter
+                | BindingKind::SimpleCatchParameter
+        )
     }
 
     fn is_undefined(&self, expression: ExprId) -> bool {
@@ -170,7 +184,9 @@ impl Finder<'_, '_> {
                 }
                 PropKind::Init => {
                     !hir::is_proto_setter(&property)
-                        && (self.symbol_of(value).is_some()
+                        && (self
+                            .symbol_of(value)
+                            .is_some_and(|it| self.has_no_dead_zone(it))
                             || matches!(
                                 self.decisions.constant(self.hir, value),
                                 FoldedValue::Constant(_)
@@ -261,6 +277,9 @@ impl Finder<'_, '_> {
             || record.params.len() != 1
             || body.len() < 4
             || body.len() > 6
+            || record
+                .flags
+                .intersects(hir::Flags::ASYNC | hir::Flags::GENERATOR)
         {
             return None;
         }

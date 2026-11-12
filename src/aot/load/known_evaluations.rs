@@ -10,7 +10,7 @@ use bun_core::strings::{contains, index_of_any, split};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::hir::{
     CallId, Chain, ExprId, ExprKind, File, FileBuilder, FnBody, FnId, FnKind, Keyword,
-    KnownEvaluation, PatKind, TypeNodeKind,
+    KnownEvaluation, PatKind, StmtKind, TypeNodeKind, UnOp,
 };
 use bun_sema::resolve::TreeChange;
 use bun_sema::session::Arena;
@@ -24,6 +24,10 @@ use crate::load::import_functions::declares;
 use crate::load::react_compiler::module_items::finish_file;
 
 const MAX_NESTED_TEXTS: u32 = 8;
+
+pub(crate) fn may_need_scope_around(code: &[u8]) -> bool {
+    contains(code, b"#") || contains(code, b"eval")
+}
 
 pub(crate) struct CodeBeside<'a> {
     pub path: &'a [u8],
@@ -62,7 +66,8 @@ fn find_evaluating_calls(hir: &File<'_>) -> Vec<EvaluatingCall> {
     }
     found.sort_unstable();
     let functions = (0..hir.fns.len() as u32).map(FnId);
-    let with_end = functions.filter_map(|it| Some((hir[it].start, end_of_body(hir, it)?, it)));
+    let with_end =
+        functions.filter_map(|it| Some((start_of_code(hir, it), end_of_body(hir, it)?, it)));
     let mut ranges: Vec<(u32, u32, FnId)> = with_end.collect();
     ranges.sort_unstable_by_key(|range| (range.0, Reverse(range.1)));
     let mut ranges = ranges.into_iter().peekable();
@@ -82,15 +87,51 @@ fn find_evaluating_calls(hir: &File<'_>) -> Vec<EvaluatingCall> {
     calls.collect()
 }
 
+fn find_ranges_of_classes(hir: &File<'_>) -> Vec<(u32, u32)> {
+    let statements = hir.stmts.iter().filter_map(|it| match it.kind {
+        StmtKind::Class(class) => Some((hir[class].text_start, it.loc.end)),
+        _ => None,
+    });
+    let expressions = hir.exprs.iter().filter_map(|it| match it.kind {
+        ExprKind::Class(class) => Some((hir[class].text_start, it.end)),
+        _ => None,
+    });
+    let mut ranges: Vec<(u32, u32)> = statements.chain(expressions).collect();
+    ranges.sort_unstable();
+    ranges.dedup_by(|inner, outer| inner.1 <= outer.1);
+    ranges
+}
+
+fn is_within(ranges: &[(u32, u32)], pos: u32) -> bool {
+    let after = ranges.partition_point(|it| it.0 <= pos);
+    after > 0 && pos < ranges[after - 1].1
+}
+
+fn start_of_code(hir: &File<'_>, function: FnId) -> u32 {
+    match hir[function].kind {
+        FnKind::Arrow => hir[function].start,
+        _ => hir[function].anchor.max(hir[function].start),
+    }
+}
+
 fn end_of_body(hir: &File<'_>, function: FnId) -> Option<u32> {
     match hir[function].body {
         FnBody::None => None,
         FnBody::Expr(expression) => Some(hir[expression].end),
-        FnBody::Block(statements) => {
-            let last = hir.ids(statements).next_back()?;
-            Some(hir[last].loc.end)
-        }
+        FnBody::Block(statements) => match hir.ids(statements).next_back() {
+            Some(last) => Some(hir[last].loc.end),
+            None => end_of_parameters(hir, function),
+        },
     }
+}
+
+fn end_of_parameters(hir: &File<'_>, function: FnId) -> Option<u32> {
+    let last = hir[function].params.iter().last()?;
+    if hir[function].kind == FnKind::Arrow {
+        return Some(hir[function].anchor);
+    }
+    let default = hir[last].default.some();
+    Some(default.map_or(0, |it| hir[it].end).max(hir[last].loc.end))
 }
 
 fn begins_with_parenthesis(text: &[u8]) -> bool {
@@ -177,8 +218,27 @@ fn is_function_to_compile(
         let mut params = file[function].params.iter();
         params.any(|it| matches!(file[file[it].pat].kind, PatKind::Ident(own) if own == name))
     };
+    let is_call_target = |target: ExprId| matches!(file[target].kind, ExprKind::Call(_));
+    let (first, last) = (file[root].pos, file[root].end);
+    let own_statements = file.stmts.iter().rev().take_while(|it| it.start >= first);
+    let has_call_target = own_statements
+        .filter(|it| it.start < last)
+        .any(|it| match it.kind {
+            StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => {
+                matches!(file[left].kind, StmtKind::Expr(target) if is_call_target(target))
+            }
+            _ => false,
+        });
+    if has_call_target {
+        return false;
+    }
     let mut expressions = file.exprs[expressions_before..].iter();
     expressions.all(|it| match it.kind {
+        ExprKind::Assign { target, .. } if is_call_target(target) => false,
+        ExprKind::Unary {
+            op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+            operand,
+        } if is_call_target(operand) => false,
         ExprKind::Ident(known::eval) => false,
         ExprKind::Ident(name @ (known::require | known::module | known::exports)) => {
             is_parameter(name)
@@ -237,11 +297,14 @@ fn append_texts<'s>(
     found: Vec<(CallId, Vec<Rc<[u8]>>)>,
 ) -> TreeChange {
     let is_strict_file = hir.is_strict || is_module;
+    let classes = find_ranges_of_classes(hir);
     let strict_evals: FxHashSet<CallId> = calls
         .iter()
         .filter(|it| {
             let innermost = it.functions.last();
-            is_strict_file || innermost.is_some_and(|&function| hir[function].is_strict)
+            is_strict_file
+                || innermost.is_some_and(|&function| hir[function].is_strict)
+                || is_within(&classes, hir[hir[it.call].callee].pos)
         })
         .filter(|it| !it.is_of_function)
         .map(|it| it.call)

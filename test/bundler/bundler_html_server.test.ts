@@ -234,6 +234,7 @@ describe.concurrent("bundler", () => {
   });
 
   // A second bundle of the server file keeps the manifest, with its own `import.meta.dir`, which holds no page.
+  // A CommonJS re-bundle inlines the build machine's outdir instead, which is gone once the outdir is moved.
   test.each(["esm", "cjs"] as const)("HTMLServerRebundled/%s", async format => {
     using dir = tempDir("html-server-rebundled", {
       ...htmlServerFiles,
@@ -247,7 +248,8 @@ describe.concurrent("bundler", () => {
       format,
     });
     expect(second.success).toBe(true);
-    const { stdout, stderr, exitCode } = await run(String(dir), "../rebundled/server.js", "dist");
+    renameSync(join(String(dir), "dist"), join(String(dir), "deployed"));
+    const { stdout, stderr, exitCode } = await run(String(dir), "../rebundled/server.js", "deployed");
     expect(stdout, stderr).toBe(served);
     expect(exitCode).toBe(0);
   });

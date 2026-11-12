@@ -466,6 +466,40 @@ describe("addAbortSignal() on a ReadableStream that Bun drives", () => {
     expect(cancelled).toEqual([error]);
   });
 
+  it.each(["resolves", "rejects", "throws"])("calls the cancel() of a transformer once, which %s", async how => {
+    const reasons = [];
+    const rejection = new Error("cancel() failed");
+    const transform = new TransformStream({
+      cancel(reason) {
+        reasons.push(reason);
+        if (how === "throws") throw rejection;
+        return how === "rejects" ? Promise.reject(rejection) : undefined;
+      },
+    });
+    const controller = new AbortController();
+    addAbortSignal(controller.signal, transform.readable);
+    const reader = transform.readable.getReader();
+    const writer = transform.writable.getWriter();
+    const write = writer.write("x").then(
+      () => undefined,
+      e => e,
+    );
+    const queued = writer.write("y").then(
+      () => undefined,
+      e => e,
+    );
+    expect(await reader.read()).toEqual({ value: "x", done: false });
+    controller.abort();
+    const error = await reader.closed.catch(e => e);
+    expect(error).toMatchObject({ name: "AbortError" });
+    expect(reasons).toEqual([error]);
+    expect(await write).toBeUndefined();
+    expect(await queued).toBe(how === "resolves" ? error : rejection);
+    await writer.abort().catch(() => {});
+    await writer.closed.catch(() => {});
+    expect(reasons).toEqual([error]);
+  });
+
   it("leaves a JavaScript source and the other branch of a tee() alone, as controller.error() does", async () => {
     const cancelled = [];
     let sourceController;

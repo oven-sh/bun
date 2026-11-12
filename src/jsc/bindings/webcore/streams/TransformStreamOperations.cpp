@@ -142,7 +142,15 @@ void transformStreamReadableError(JSGlobalObject* globalObject, JSTransformStrea
     // As in the source cancel algorithm: a codec chunk or flush still being drained into the readable can no longer finish.
     nativeCodecAbandon(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, void());
-    RELEASE_AND_RETURN(scope, transformStreamError(globalObject, stream, error));
+    const auto* controller = stream->m_controller.get();
+    if (!controller->m_cancelMethod || controller->m_finishPromise)
+        RELEASE_AND_RETURN(scope, transformStreamError(globalObject, stream, error));
+    // The transformer's cancel() runs as readable.cancel() runs it, and the writable side is errored when that is done.
+    readableStreamDefaultControllerError(globalObject, transformReadableController(stream), error);
+    RETURN_IF_EXCEPTION(scope, void());
+    auto* finishPromise = transformStreamDefaultSourceCancelAlgorithm(globalObject, stream, error);
+    RETURN_IF_EXCEPTION(scope, void());
+    markPromiseAsHandled(vm, finishPromise);
 }
 
 void transformStreamErrorWritableAndUnblockWrite(JSGlobalObject* globalObject, JSTransformStream* stream, JSValue error)

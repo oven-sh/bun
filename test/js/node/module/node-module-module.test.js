@@ -1492,7 +1492,9 @@ console.log("survived", require("./late.js"));`,
           console.log(this === Module);
         };
       `;
-      expect(await run(preload)).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+      const expected = { stdout: "true\n", stderr: "", exitCode: 0 };
+      expect(await run(preload)).toEqual(expected);
+      expect(await run(preload, true)).toEqual(expected);
     });
 
     test("to a function that throws", async () => {

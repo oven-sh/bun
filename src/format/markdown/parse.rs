@@ -1877,6 +1877,11 @@ impl RendererImpl for Builder<'_> {
         };
         let node = self.enter(kind);
         match kind {
+            Kind::Emphasis | Kind::Strong => {
+                if let Some(node) = self.tree.get_mut(node) {
+                    node.number = u32::from(detail.is_kept_as_written);
+                }
+            }
             Kind::Link | Kind::Image => {
                 let url = if detail.autolink_email {
                     self.tree.owned(|out| {

@@ -2022,6 +2022,12 @@ describe.concurrent("bun fmt", () => {
       ["_*a *b** c_\n", "_*a *b** c_\n"],
       ["**a *b** c*\n", "_*a *b** c_\n"],
       ["_*a *b** c_ and **a *b** c*\n", "_*a *b** c_ and _*a *b** c_\n"],
+      // The `*` after `c` looks at `*****` again once `**` has taken two stars from it, although the `*` after `a`
+      // found nothing there.
+      ["_x*****a* b** c* e_\n", "_x*****a\\* b** c* e_\n"],
+      // An escaped star and the marker of a block quote are not part of a run.
+      ["x *b\\**.\n", "x _b\\*_.\n"],
+      [">**(a)* x\n", "> *_(a)_ x\n"],
     ])("the rule of 3 counts what is left of a run: %j", async (before, after) => {
       expect(rendered(after)).toBe(rendered(before));
       const result = await format({ "a.md": before, "b.md": after }, [], { reads: ["a.md", "b.md"] });
@@ -2034,9 +2040,6 @@ describe.concurrent("bun fmt", () => {
     // them apart from `*foo_bar*`, where `_foo_bar_` is correct, requires the delimiter run rules.
     test.each([
       ["**a****a**\n", "**a\\****a**\n"],
-      // To micromark the `**` after `d` pairs with what is left of `****` once the `*` after `c` has taken one star,
-      // although the `**` after `b` found nothing there.
-      ["x****a b** c* d**\n", "x***_a b\\** c_ d**\n"],
       ["*b **a*b*** c*\n", "*b \\**a*b*** c*\n"],
       ["*b _a_*b* c*\n", "*b *a**b* c*\n"],
       ["*b _*a*_ c*\n", "*b _*a*\\_ c*\n"],
@@ -2427,10 +2430,30 @@ describe.concurrent("bun fmt", () => {
         ["**a*(*) x\n", "**a*(*) x\n", "_*a*(_) x\n"],
         ["**a*{{*: x\n", "**a*{{*: x\n", "_*a*{{_: x\n"],
         ["*a**(*) x\n", "*a**(*) x\n", "_a_*(*) x\n"],
+        ["a***b* c*\n", "a***b* c*\n", "a**_b_ c*\n"],
+        ["**a*(*)**b* x\n", "**a*(*)**b* x\n", "_*a*(_)*_b_ x\n"],
         // Nothing here for the star to pair with, and Prettier is right.
         ["**a* b\n", "*_a_ b\n", null],
         ["**a* b * c\n", "*_a_ b * c\n", null],
         ["****a*\n", "***_a_\n", null],
+      ])("%j", async (before, after, byPrettier) => {
+        expect(after).not.toBe(byPrettier);
+        expect(rendered(after)).toBe(rendered(before));
+        const result = await format({ "a.md": before, "b.md": after }, [], { reads: ["a.md", "b.md"] });
+        expect(result.files).toEqual({ "a.md": after, "b.md": after });
+        expect(result.exitCode).toBe(0);
+      });
+    });
+
+    describe("a run that CommonMark's rule of 3 refuses as written", () => {
+      // Each row is the text, Bun's output and Prettier 3.9.9's output. To micromark what is left of a run counts for
+      // the rule of 3, so it pairs runs that CommonMark does not, and Prettier prints them as a pair. Every run that
+      // such a pair uses, or that shares a pair with one, keeps its marker, so that CommonMark reads the text as before.
+      test.each([
+        ["__a_(_) x\n", "__a_(_) x\n", "_*a*(_) x\n"],
+        ["*a****a**\n", "*a****a**\n", "_a_***a**\n"],
+        ["*bax****c**\n", "*bax****c**\n", "_bax_***c**\n"],
+        ['x ____a b__ c."__".\n', 'x ____a b__ c."__".\n', 'x ****a b** c."**".\n'],
       ])("%j", async (before, after, byPrettier) => {
         expect(after).not.toBe(byPrettier);
         expect(rendered(after)).toBe(rendered(before));

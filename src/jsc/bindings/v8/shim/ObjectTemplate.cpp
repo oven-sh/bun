@@ -39,7 +39,6 @@ void ObjectTemplate::finishCreation(JSC::VM& vm, FunctionTemplate* constructor)
     m_objectStructure.initLater([](const LazyProperty<ObjectTemplate, Structure>::Initializer& init) {
         auto* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(init.owner->globalObject());
         // As in V8, instances of a template with a constructor get the constructor's prototype.
-        // newInstance() made the function first, so no template is materialized in here.
         JSC::JSValue prototype = zigGlobal->objectPrototype();
         if (auto* constructor = init.owner->m_constructor.get()) {
             auto* function = constructor->cachedFunction();

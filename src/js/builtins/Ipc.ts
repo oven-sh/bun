@@ -38,6 +38,8 @@ export function serialize(message: unknown, handle: unknown, options: unknown) {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L120-L148
       const { server } = handle;
       if (server) server._connections--;
+      // node:http destroys the socket once its handle has gone out, which must not count again.
+      handle._server = undefined;
       handle.setTimeout(0);
       (native as $Node.SocketHandle<unknown>).data = undefined;
       handle._handle = null;

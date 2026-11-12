@@ -389,6 +389,7 @@ declare module "node:net" {
       connectionListener?: () => void,
     ): this;
     server: Server | null;
+    _server: Server | undefined;
   }
 
   interface Server {

@@ -615,7 +615,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                          * EWOULDBLOCK for the rare case where the defer timed out with no data.
                          * Once the handshake budget is spent that dispatch parks the socket, and only
                          * a socket with input may be parked, so check for input first. */
-                        if (listen_socket->deferred_accept && s && !us_socket_is_closed(s) &&
+                        if (listen_socket->deferred_accept && s && !us_socket_is_closed(s) && !s->flags.is_paused &&
                             (!handshake_budget_spent || us_socket_queued_input(s) == LIBUS_QUEUED_INPUT_DATA)) {
                             us_internal_dispatch_ready_poll((struct us_poll_t *) s, 0, 0, LIBUS_SOCKET_READABLE);
                         }

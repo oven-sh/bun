@@ -323,7 +323,9 @@ pub enum CallbackOutcome {
     Threw {
         handled: bool,
     },
-    /// Not called (an exception is pending, or the VM or the entered context calls nobody), or the VM's termination landed in the call.
+    /// Not called: an exception is pending, or `JSValue::call` answered `undefined` and one of its reasons to drop a call holds afterwards (the VM is stopping, the entered context is stopped, the callback is of a realm `bun test --isolate` retired). Or the VM's termination landed in the call.
+    ///
+    /// One reason is not looked at: the callback's own async context (`with_async_context_if_needed`) names a disposed `Bun.ModuleGraph` whose context was not entered. That dropped call is `Returned(undefined)`.
     Stopped,
 }
 
@@ -640,6 +642,8 @@ impl EventLoop {
     }
 
     /// As [`run_callback`](Self::run_callback), but `after_call` is told the outcome ahead of the checkpoint, which follows every call, also inside a task.
+    ///
+    /// Only for a dispatcher the loop calls (a poll, a uv callback, a task), never for a host function: the checkpoint runs at any depth, so beneath the script that called the host function it would run nextTicks and promise reactions in the middle of that script's frame.
     pub fn run_callback_then<R>(
         &mut self,
         context: crate::ContextId,

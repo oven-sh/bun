@@ -40,7 +40,7 @@ pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Res
 
 /// [`report_error_or_terminate`], answering `Ok(handled)`: what `VirtualMachine::uncaught_exception` said of the exception.
 #[cold]
-pub fn report_error_or_terminate_handled(
+pub(crate) fn report_error_or_terminate_handled(
     global: &JSGlobalObject,
     proof: JsError,
 ) -> Result<bool, Stopped> {

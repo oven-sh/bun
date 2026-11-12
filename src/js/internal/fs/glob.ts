@@ -13,6 +13,8 @@
 const { validateObject, validateString, validateBoolean, validateArray } = require("internal/validators");
 const { join, resolve, basename, dirname, isAbsolute } = require("node:path");
 const { kEmptyObject } = require("internal/shared");
+// The class behind `fs.Dirent`, from the binding: a program can assign to `fs.Dirent`.
+const { Dirent } = require("internal/fs/binding");
 
 const isWindows = process.platform === "win32";
 const isMacOS = process.platform === "darwin";
@@ -71,11 +73,9 @@ function statParentForFileTypes(cache: Cache, root: string, cwdOmitted: boolean,
 }
 
 const kStats = Symbol("stats");
-let _Dirent: (new (name: string, type: number, path: string) => Dirent) | undefined;
 let _DirentFromStats: (new (name: string, stats: Stats | Dirent, path: string) => Dirent) | undefined;
 function lazyDirentFromStats() {
   if (_DirentFromStats === undefined) {
-    const { Dirent } = require("node:fs");
     class DirentFromStats extends Dirent {
       declare [kStats]: Stats | Dirent;
       constructor(name: string, stats: Stats | Dirent, path: string) {
@@ -109,7 +109,7 @@ function direntNamedFrom(entry: (Dirent & { $data?: unknown; [kStats]?: Stats | 
   $assert(!isAbsolute(path), "path is relative");
   const type = entry.$data;
   if (typeof type === "number") {
-    return new (_Dirent ??= require("node:fs").Dirent)(basename(path), type, dirname(path));
+    return new Dirent(basename(path), type, dirname(path));
   }
   // An entry of fs.lstat(), or one that a replaced fs.readdirSync() returned.
   return new (lazyDirentFromStats())(basename(path), entry[kStats] ?? entry, dirname(path));

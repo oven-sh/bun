@@ -5,6 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows, nodeExeAtLeast, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 let tmp: string;
@@ -303,9 +304,18 @@ describe("fs.globSync exclude with withFileTypes", () => {
 
 // glob-dirent-names-fixture.js prints the names of the Dirents of glob calls, most of them without `cwd`.
 // Bun and the Node.js that Bun reports print the same rows. Node.js before v24.1.0 has no URL `cwd`.
+// A later major than the one Bun reports is not a reference: from v27 on, fs.glob and fs.promises.glob name
+// their Dirents like fs.globSync (nodejs/node#65392).
+function referenceNode() {
+  const node = nodeExeAtLeast("24.1.0");
+  if (!node) return null;
+  const probe = Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
+  return parseInt(probe.stdout.toString()) <= parseInt(process.versions.node) ? node : null;
+}
+
 for (const [runtimeName, runtime] of [
   ["bun", bunExe()],
-  ["node", nodeExeAtLeast("24.1.0")],
+  ["node", referenceNode()],
 ] as const) {
   describe.skipIf(!runtime)(`withFileTypes: the name of a result Dirent (${runtimeName})`, () => {
     let rows: Record<string, any>;
@@ -406,6 +416,39 @@ for (const [runtimeName, runtime] of [
       expect(rows["constructor.name for src/index.ts"]).toBe("DirentFromStats");
     });
 
+    // The classes are cached on first use, so this needs a process of its own.
+    it("fs.globSync: its Dirents are of the class that fs.Dirent was, not of one that a program assigns", async () => {
+      using dir = tempDir("glob-dirent-assigned", { "a.txt": "" });
+      await using proc = Bun.spawn({
+        cmd: [
+          runtime!,
+          "-e",
+          `const fs = require("node:fs");
+          const { Dirent } = fs;
+          fs.Dirent = class {};
+          // A wildcard result is from an entry of fs.readdirSync, a literal one from fs.lstatSync.
+          const dirents = [
+            ...fs.globSync("*.txt", { withFileTypes: true }),
+            ...fs.globSync("a.txt", { withFileTypes: true }),
+          ];
+          console.log(JSON.stringify(dirents.map(d => [d instanceof Dirent, d.parentPath, d.name, d.isFile()])));`,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify([
+          [true, ".", "a.txt", true],
+          [true, ".", "a.txt", true],
+        ]),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     it("path.join(parentPath, name) is the string that fs.globSync returns without withFileTypes", () => {
       const paths = ["src", "src/index.ts", "src/lib", "src/lib/util.ts"];
       expect(rows["path.join(parentPath, name)"]).toEqual({ strings: paths, joined: paths });
@@ -482,7 +525,10 @@ describe("withFileTypes: the name of a result Dirent, in Bun only", () => {
     }
   });
 
-  it("fs.globSync without cwd: a result that is gone when its Dirent is made is null", () => {
+  // path.relative() between two Windows drives is an absolute path. Then the test has no relative process.cwd().
+  const otherDrive = path.isAbsolute(path.relative(process.cwd(), fs.realpathSync.native(os.tmpdir())));
+
+  it.skipIf(otherDrive)("fs.globSync without cwd: a result that is gone when its Dirent is made is null", () => {
     using dir = tempDir("glob-dirent-gone", { "a.txt": "" });
     const oldProcessCwd = process.cwd;
     // With a relative process.cwd(), the entry of a result is not in the stat cache, and fs.lstatSync reads it again.

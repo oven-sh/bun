@@ -239,6 +239,33 @@ const filler = net.connect(port, "127.0.0.1");
 await new Promise((resolve, reject) => filler.on("connect", resolve).on("error", reject));
 `;
 
+/**
+ * Source for a fixture, for Bun and for Node: `waitUntilZombie(pid)` returns once the child `pid` has
+ * exited and is not reaped yet. It blocks the thread, so the loop of the fixture does not turn
+ * meanwhile. Not on Windows.
+ *
+ * It throws if the child is gone: a waiter thread (Linux without pidfd) reaps what it watches.
+ */
+export const waitUntilZombieSource = `
+function waitUntilZombie(pid) {
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    let state;
+    if (process.platform === "linux" || process.platform === "android") {
+      const stat = require("node:fs").readFileSync("/proc/" + pid + "/stat", "latin1");
+      state = stat[stat.lastIndexOf(")") + 2];
+    } else {
+      const ps = require("node:child_process").spawnSync("ps", ["-o", "stat=", "-p", String(pid)]);
+      state = String(ps.stdout).trim()[0];
+      if (state === undefined) throw new Error("child " + pid + " is gone");
+    }
+    if (state === "Z") return;
+    if (Date.now() > deadline) throw new Error("child " + pid + " did not exit");
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1);
+  }
+}
+`;
+
 export function nodeExe(): string | null {
   return which("node") || null;
 }

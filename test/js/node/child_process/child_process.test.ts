@@ -14,6 +14,7 @@ import {
   tempDir,
   tls as tlsCert,
   tmpdirSync,
+  waitUntilZombieSource,
 } from "harness";
 import {
   ChildProcess,
@@ -1810,4 +1811,153 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
     // several seconds, and the fixtures give up on their markers after 15 s so
     // their own error, not a test timeout, is what gets reported.
   }, 30_000);
+});
+
+// After unref() the exit of a child does not hold the loop. Node's loop polls while a stdio
+// pipe of the child is open or closing, and that poll reports an exit that is ready:
+// https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/core.c#L393-L398
+// Each row waits until the child is a zombie, and expects what Node prints.
+describe.skipIf(!isPosix)("exit of an unref'd child whose stdio closes", () => {
+  const fixture = /* js */ `
+    const { spawn, execFile } = require("node:child_process");
+    const fs = require("node:fs");
+    ${waitUntilZombieSource}
+
+    const events = [];
+    let child;
+
+    function sh(script, stdio = ["ignore", "pipe", "ignore"]) {
+      child = spawn("/bin/sh", ["-c", script], { stdio });
+      child.on("exit", (code, signal) => events.push("exit " + (signal ?? code)));
+      child.on("close", (code, signal) => events.push("close " + (signal ?? code)));
+      return child;
+    }
+    const read = stream => stream.on("data", chunk => events.push("data " + String(chunk).trim()));
+
+    const rows = {
+      // The first read finds the data and the end, before the loop turns.
+      "a stdout 'data' listener"() {
+        read(sh("echo hi").stdout);
+        child.unref();
+        waitUntilZombie(child.pid);
+      },
+      "the execFile() callback"() {
+        child = execFile("/bin/sh", ["-c", "echo hi"], (error, stdout) => {
+          events.push("callback " + error + " " + stdout.trim());
+        });
+        child.unref();
+        waitUntilZombie(child.pid);
+      },
+      "stdin.end()"() {
+        sh("exit 0", ["pipe", "ignore", "ignore"]).unref();
+        waitUntilZombie(child.pid);
+        child.stdin.end();
+      },
+      // With less than three stdio entries, Bun makes each stream at its first use.
+      "stdin.end() of a stdin that is first used after unref()"() {
+        sh("exit 0", ["pipe"]).unref();
+        waitUntilZombie(child.pid);
+        child.stdin.end();
+      },
+      "stdout.destroy()"() {
+        sh("exit 0").unref();
+        waitUntilZombie(child.pid);
+        child.stdout.destroy();
+      },
+      // The child writes once the read of the parent is pending, so a poll delivers 'data'. The child
+      // dies inside the listener, and the next read from JS finds the end, many turns after the unref().
+      "the child dies inside a 'data' listener that a poll delivered"() {
+        read(sh("read line; echo hi; exec sleep 1000", ["pipe", "pipe", "ignore"]).stdout).on("data", () => {
+          child.kill("SIGKILL");
+          waitUntilZombie(child.pid);
+          child.stdin.destroy();
+        });
+        child.unref();
+        setImmediate(() => child.stdin.write("go\\n"));
+      },
+      "a child that a 'beforeExit' listener starts"() {
+        process.on("beforeExit", () => {
+          events.push("beforeExit");
+          if (child) return;
+          read(sh("echo hi").stdout);
+          child.unref();
+          waitUntilZombie(child.pid);
+        });
+      },
+      // The child lives until this process ends. The close gives the loop a turn, so 'beforeExit' comes again.
+      "a 'beforeExit' listener that destroys the stdout of a child that still runs"() {
+        read(sh("exec sleep 1000").stdout);
+        child.unref();
+        setImmediate(() => child.stdout.unref());
+        process.on("beforeExit", () => {
+          events.push("beforeExit");
+          child.stdout.destroy();
+        });
+        process.on("exit", () => child.kill("SIGKILL"));
+      },
+      // No stdio closes, so nothing gives the loop a turn.
+      "a child that has no stdio"() {
+        sh("exit 0", "ignore").unref();
+        process.on("beforeExit", () => events.push("beforeExit"));
+        waitUntilZombie(child.pid);
+      },
+      // The child closes its stdout and lives until this process ends.
+      "a child that closed its stdout and still runs is not waited for"() {
+        read(sh("echo hi; exec 1>&-; read line", ["pipe", "pipe", "ignore"]).stdout);
+        child.stdout.on("end", () => events.push("end"));
+        child.unref();
+      },
+    };
+
+    process.on("exit", () => {
+      const { exitCode, signalCode } = child;
+      fs.writeSync(1, JSON.stringify({ events, exitCode, signalCode }) + "\\n");
+    });
+    rows[process.argv[2]]();
+  `;
+
+  const exited = (...events: string[]) => ({ events: [...events, "exit 0", "close 0"], exitCode: 0, signalCode: null });
+  const running = (...events: string[]) => ({ events, exitCode: null, signalCode: null });
+  // The keys are the rows of the fixture.
+  const rows = {
+    "a stdout 'data' listener": exited("data hi"),
+    "the execFile() callback": { events: ["callback null hi"], exitCode: 0, signalCode: null },
+    "stdin.end()": exited(),
+    "stdin.end() of a stdin that is first used after unref()": exited(),
+    "stdout.destroy()": exited(),
+    "the child dies inside a 'data' listener that a poll delivered": {
+      events: ["data hi", "exit SIGKILL", "close SIGKILL"],
+      exitCode: null,
+      signalCode: "SIGKILL",
+    },
+    "a child that a 'beforeExit' listener starts": {
+      events: ["beforeExit", "data hi", "exit 0", "close 0", "beforeExit"],
+      exitCode: 0,
+      signalCode: null,
+    },
+    "a 'beforeExit' listener that destroys the stdout of a child that still runs": running("beforeExit", "beforeExit"),
+    "a child that has no stdio": running("beforeExit"),
+    "a child that closed its stdout and still runs is not waited for": running("data hi", "end"),
+  };
+  const node = nodeExe();
+  const runtimes = node ? { bun: bunExe(), node } : { bun: bunExe() };
+
+  describe.each(Object.entries(runtimes))("%s", (_, exe) => {
+    it.concurrent.each(Object.entries(rows))("%s", async (row, expected) => {
+      using dir = tempDir("child-unref-stdio-close", { "fixture.js": fixture });
+      await using proc = Bun.spawn({
+        cmd: [exe, "fixture.js", row],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: JSON.stringify(expected) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 });

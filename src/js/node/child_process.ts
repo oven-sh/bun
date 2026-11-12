@@ -1130,6 +1130,8 @@ function checkExecSyncError(ret: SpawnSyncResult, args: string[] | undefined, cm
   }
   return err;
 }
+function noop() {}
+
 function parseEnvPairs(envPairs: string[] | undefined): Record<string, string> | undefined {
   if (!envPairs) return undefined;
   const resEnv = {};
@@ -1149,6 +1151,7 @@ class ChildProcess extends EventEmitter {
   #handle: $Bindgen.Subprocess | null | undefined;
   #closesNeeded = 1;
   #closesGot = 0;
+  #unrefCalled = false;
 
   declare send?: (message, handle?, options?, callback?) => boolean;
   declare disconnect?: () => void;
@@ -1268,6 +1271,7 @@ class ChildProcess extends EventEmitter {
             }
             const result = require("internal/fs/streams").writableFromFileSink(stdin as $Node.FileSink);
             result.readable = false;
+            if (this.#unrefCalled) result.once("close", () => this.#holdLoopAfterStdioClose());
             return result;
           }
           case "inherit":
@@ -1310,7 +1314,10 @@ class ChildProcess extends EventEmitter {
               {},
             );
             this.#closesNeeded++;
-            pipe.once("close", () => this.#maybeClose());
+            pipe.once("close", () => {
+              this.#holdLoopAfterStdioClose();
+              this.#maybeClose();
+            });
             if (autoResume) pipe.resume();
             return pipe;
           }
@@ -1677,7 +1684,20 @@ class ChildProcess extends EventEmitter {
   }
 
   unref() {
+    if (!this.#unrefCalled) {
+      this.#unrefCalled = true;
+      this.#stdin?.once("close", () => this.#holdLoopAfterStdioClose());
+    }
     if (this.#handle) this.#handle.unref();
+  }
+
+  // After unref() the exit of the child does not hold the loop. Bun can find the end of a pipe with no poll
+  // in between, so a stdio stream that closes first holds the loop one turn, and the poll of that turn reports
+  // an exit that is ready. Node's loop polls while a pipe is open or closing, but not after a close that its
+  // poll or check phase made, so this reports in more cases than Node:
+  // https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/core.c#L393-L398
+  #holdLoopAfterStdioClose() {
+    if (this.#unrefCalled && this.exitCode === null && this.signalCode === null) setImmediate(noop);
   }
 
   // Static initializer to make stdio properties enumerable on the prototype

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 47b0c788a2a4ffd9eafb3f4e9d2fa22a61c74cc9a5b297420ad683fa6913f442.
+// Written against that file with the SHA-256 5d2e54412edf0315a72ea9aedcc4ca9810840ed1b73c1615d6214d4a089ff747.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -573,6 +573,11 @@ function appendTlsKeylog(path: string, line: Uint8Array) {
 // The equivalent flags reach us through process.execArgv; apply them once at
 // module load so getDefaultAutoSelectFamily*() reflect the command line.
 {
+  // Node reads the leading digits. What the setter would throw for is ignored, so that the module loads.
+  const setAttemptTimeoutFromFlag = (flag: string) => {
+    const value = Number.parseInt(flag, 10);
+    if (value >= 1 && value <= 2 ** 31 - 1) setDefaultAutoSelectFamilyAttemptTimeout(value);
+  };
   const execArgv: string[] = process.execArgv;
   for (let i = 0; i < execArgv.length; i++) {
     const arg = execArgv[i];
@@ -581,13 +586,9 @@ function appendTlsKeylog(path: string, line: Uint8Array) {
     } else if (arg === "--network-family-autoselection" || arg === "--enable-network-family-autoselection") {
       setDefaultAutoSelectFamily(true);
     } else if (arg.startsWith("--network-family-autoselection-attempt-timeout=")) {
-      const value = Number(arg.slice(arg.indexOf("=") + 1));
-      // The setter validates >= 1 and clamps < 10 to 10, like Node's; ignore
-      // degenerate CLI values rather than throwing at module load.
-      if (Number.isFinite(value) && value >= 1) setDefaultAutoSelectFamilyAttemptTimeout(value);
+      setAttemptTimeoutFromFlag(arg.slice(arg.indexOf("=") + 1));
     } else if (arg === "--network-family-autoselection-attempt-timeout" && i + 1 < execArgv.length) {
-      const value = Number(execArgv[i + 1]);
-      if (Number.isFinite(value) && value >= 1) setDefaultAutoSelectFamilyAttemptTimeout(value);
+      setAttemptTimeoutFromFlag(execArgv[i + 1]);
     } else if (arg.startsWith("--tls-keylog=")) {
       tlsKeylogPath = arg.slice("--tls-keylog=".length);
     } else if (arg === "--tls-keylog" && i + 1 < execArgv.length) {

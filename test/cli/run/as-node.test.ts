@@ -133,6 +133,21 @@ describe("fake node cli", () => {
   });
 });
 
+test.concurrent.each([
+  [["--network-family-autoselection-attempt-timeout=25.9"], "25"],
+  [["--network-family-autoselection-attempt-timeout", "25.9"], "25"],
+  [["--network-family-autoselection-attempt-timeout=3000000000"], "500"],
+])("node:net loads with %j", async (flags, timeout) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...flags, "-e", `console.log(require("net").getDefaultAutoSelectFamilyAttemptTimeout() + "")`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: timeout + "\n", stderr: "", exitCode: 0 });
+});
+
 test.concurrent.each(["--tls-keylog", "--network-family-autoselection-attempt-timeout"])(
   "%s takes the next argument as its value",
   async flag => {

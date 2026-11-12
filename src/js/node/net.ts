@@ -252,6 +252,11 @@ function appendTlsKeylog(path: string, line: Buffer) {
 // The equivalent flags reach us through process.execArgv; apply them once at
 // module load so getDefaultAutoSelectFamily*() reflect the command line.
 {
+  // Node reads the leading digits. What the setter would throw for is ignored, so that the module loads.
+  const setAttemptTimeoutFromFlag = (flag: string) => {
+    const value = Number.parseInt(flag, 10);
+    if (value >= 1 && value <= 2 ** 31 - 1) setDefaultAutoSelectFamilyAttemptTimeout(value);
+  };
   const execArgv = process.execArgv;
   for (let i = 0; i < execArgv.length; i++) {
     const arg = execArgv[i];
@@ -260,13 +265,9 @@ function appendTlsKeylog(path: string, line: Buffer) {
     } else if (arg === "--network-family-autoselection" || arg === "--enable-network-family-autoselection") {
       setDefaultAutoSelectFamily(true);
     } else if (arg.startsWith("--network-family-autoselection-attempt-timeout=")) {
-      const value = Number(arg.slice(arg.indexOf("=") + 1));
-      // The setter validates >= 1 and clamps < 10 to 10, like Node's; ignore
-      // degenerate CLI values rather than throwing at module load.
-      if (Number.isFinite(value) && value >= 1) setDefaultAutoSelectFamilyAttemptTimeout(value);
+      setAttemptTimeoutFromFlag(arg.slice(arg.indexOf("=") + 1));
     } else if (arg === "--network-family-autoselection-attempt-timeout" && i + 1 < execArgv.length) {
-      const value = Number(execArgv[i + 1]);
-      if (Number.isFinite(value) && value >= 1) setDefaultAutoSelectFamilyAttemptTimeout(value);
+      setAttemptTimeoutFromFlag(execArgv[i + 1]);
     } else if (arg.startsWith("--tls-keylog=")) {
       tlsKeylogPath = arg.slice("--tls-keylog=".length);
     } else if (arg === "--tls-keylog" && i + 1 < execArgv.length) {

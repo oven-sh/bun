@@ -770,6 +770,38 @@ impl FileReader {
         ret && !self.done.get() && !self.reader().is_done()
     }
 
+    /// Whether `Source::set_read_callback` can take this source: a live pipe that nothing has read from or attached to. Every read of it completes on the event loop, and it holds nothing that a read would not bring. Bytes, an end or an error that are already here (`from_bytes_then_error`, a reader `Bun.spawn` could not leave lazy) have no read completion to reach the callback with, so such a source keeps the pull path.
+    fn can_enter_handle_mode(&self) -> bool {
+        if self.started.get()
+            || self.done.get()
+            || self.read_error.get().is_some()
+            || self.sink.get().is_some()
+            || self.pending.get().state == streams::PendingState::Pending
+            || !matches!(self.lazy.get(), Lazy::None)
+            || !self.buffered.get().is_empty()
+        {
+            return false;
+        }
+        let reader = self.reader();
+        #[cfg(unix)]
+        let reads_on_the_loop = reader
+            .flags
+            .contains(bun_io::pipe_reader::PosixFlags::POLLABLE);
+        #[cfg(windows)]
+        let reads_on_the_loop = reader.source.is_some();
+        reads_on_the_loop && !reader.is_done() && reader.buffer().is_empty()
+    }
+
+    /// `on_start`'s setup without its read. The reader is stopped until `set_flowing(true)`.
+    fn enter_handle_mode(&self) {
+        self.read_callback.set(true);
+        self.flowing.set(false);
+        let started = self.on_start();
+        debug_assert!(matches!(started, streams::Start::Ready));
+        // A reader `Bun.spawn` could not leave lazy is waiting for bytes already.
+        self.reader().pause();
+    }
+
     /// Handle mode's read start. `set_flowing(true)` has JS on the stack, so a task starts the reader: what the pipe holds by then comes on the next turn of the event loop, ahead of what the loop polls for, the child's exit included.
     fn queue_read_start(&self) {
         if self.read_start_queued.replace(true) {
@@ -889,38 +921,6 @@ impl FileReader {
                 CallbackOutcome::Threw { .. } | CallbackOutcome::Stopped => parent.cancel(),
             },
         );
-    }
-
-    /// Whether `Source::set_read_callback` can take this source: a live pipe that nothing has read from or attached to. Every read of it completes on the event loop, and it holds nothing that a read would not bring. Bytes, an end or an error that are already here (`from_bytes_then_error`, a reader `Bun.spawn` could not leave lazy) have no read completion to reach the callback with, so such a source keeps the pull path.
-    fn can_enter_handle_mode(&self) -> bool {
-        if self.started.get()
-            || self.done.get()
-            || self.read_error.get().is_some()
-            || self.sink.get().is_some()
-            || self.pending.get().state == streams::PendingState::Pending
-            || !matches!(self.lazy.get(), Lazy::None)
-            || !self.buffered.get().is_empty()
-        {
-            return false;
-        }
-        let reader = self.reader();
-        #[cfg(unix)]
-        let reads_on_the_loop = reader
-            .flags
-            .contains(bun_io::pipe_reader::PosixFlags::POLLABLE);
-        #[cfg(windows)]
-        let reads_on_the_loop = reader.source.is_some();
-        reads_on_the_loop && !reader.is_done() && reader.buffer().is_empty()
-    }
-
-    /// `on_start`'s setup without its read. The reader is stopped until `set_flowing(true)`.
-    fn enter_handle_mode(&self) {
-        self.read_callback.set(true);
-        self.flowing.set(false);
-        let started = self.on_start();
-        debug_assert!(matches!(started, streams::Start::Ready));
-        // A reader `Bun.spawn` could not leave lazy is waiting for bytes already.
-        self.reader().pause();
     }
 
     pub(crate) fn drain(&self) -> Vec<u8> {

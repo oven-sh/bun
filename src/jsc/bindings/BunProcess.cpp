@@ -4335,7 +4335,7 @@ void Process::resetForTestFile(Zig::GlobalObject* globalObject)
 
     // process.stdin reads Bun.stdin.stream(), which is one stream for as long as that Blob lives. The last file's reader
     // holds its lock, and what it was reading from is cancelled.
-    if (JSValue bunStdin = globalObject->bunObject()->getDirect(vm, Identifier::fromString(vm, standardStreamNames[0]))) {
+    if (JSValue bunStdin = globalObject->bunObject()->getDirect(vm, Identifier::fromString(vm, "stdin"_s))) {
         if (auto* blob = dynamicDowncast<Bun::Bindgen::Generated::JSBlob>(bunStdin))
             blob->m_stream.clear();
     }

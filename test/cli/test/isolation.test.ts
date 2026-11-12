@@ -1808,9 +1808,12 @@ describe.concurrent("bun test --isolate=modules", () => {
         console._stdout.write("b, console._stdout\\n");
         process.stdout.end();
         process.stderr.end();
+        process.stdout = {};
+        Object.defineProperty(process, "stderr", { value: {} });
+        delete process.stdin;
       });`,
       "c.test.js": `test("c", async () => {
-        console.log(console._stdout === process.stdout, console._stderr === process.stderr);
+        console.log(console._stdout === process.stdout, console._stderr === process.stderr, typeof process.stdin.on);
         for (const stream of [process.stdout, process.stderr]) {
           const { promise, resolve, reject } = Promise.withResolvers();
           stream.write("c, written\\n", error => (error ? reject(error) : resolve()));
@@ -1823,7 +1826,9 @@ describe.concurrent("bun test --isolate=modules", () => {
       ["--isolate=modules"],
       ["./a.test.js", "./b.test.js", "./c.test.js"],
     );
-    expect(printed(stdout)).toBe("a, console._stdout\nb, process.stdout\nb, console._stdout\ntrue true\nc, written\n");
+    expect(printed(stdout)).toBe(
+      "a, console._stdout\nb, process.stdout\nb, console._stdout\ntrue true function\nc, written\n",
+    );
     expect(stderr.split("\n").filter(line => /^[bc], /.test(line))).toEqual([
       "b, process.stderr",
       "b, console._stderr",

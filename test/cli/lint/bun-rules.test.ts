@@ -1003,6 +1003,14 @@ const rules: Record<string, Case[]> = {
       ],
       [`${memo}${row}export default «memo»(Row);`, `${row}export default Row;`],
       [
+        `${memo}const Row = ((props) => <li />) as FC;\nexport default «memo»(Row);`,
+        `const Row = ((props) => <li />) as FC;\nexport default Row;`,
+      ],
+      [
+        `${useMemo}const Total = (({ a, b }) => <b>{«useMemo»(() => a + b, [a, b])}</b>) as FC;`,
+        `const Total = (({ a, b }) => <b>{a + b}</b>) as FC;`,
+      ],
+      [
         `import { forwardRef, memo } from "react";\nconst Input = forwardRef((props, ref) => <input ref={ref} />);\nexport default «memo»(Input);`,
         `import { forwardRef } from "react";\nconst Input = forwardRef((props, ref) => <input ref={ref} />);\nexport default Input;`,
       ],
@@ -1221,7 +1229,11 @@ const rules: Record<string, Case[]> = {
     `import { forwardRef, memo } from "react";\nconst Input = forwardRef((props, r) => <input ref={r} />);\nexport default memo(Input);`,
     `import { forwardRef, memo } from "react";\nconst Input = forwardRef((props, r) => <input ref={r} />) as Ref;\nexport default memo(Input);`,
     `import { forwardRef, memo } from "react";\nconst Input = forwardRef(((props, r) => <input ref={r} />) satisfies Fn)!;\nexport default memo(Input);`,
-    // The build looks for JSX and hook calls in the function itself, not in the methods of an object in it.
+    // The build drops the casts on the initializer of a variable and names the function after the variable.
+    `${useMemo}const Total = (({ a, b }) => {\n  "use no memo";\n  return <b>{useMemo(() => a + b, [a, b])}</b>;\n}) satisfies FC;`,
+    // The build looks for JSX and hook calls in the function itself, not in the methods of an object in it, and not
+    // in the default of a parameter.
+    `${memo}function List({ empty = <Empty /> }) {\n  return render(empty);\n}\nexport default memo(List);`,
     `${memo}function Toolbar({ onSave }) {\n  const actions = {\n    save() {\n      return <Button onClick={onSave} />;\n    },\n  };\n  return render(actions);\n}\nexport default memo(Toolbar);`,
     // The build's lexer is a token ahead of its parser, so a comment right after a function marks that function.
     `${useMemo}function Total({ a, b }) {\n  return <b>{useMemo(() => a + b, [a, b])}</b>;\n}\n// was eslint-disable-next-line react-hooks/rules-of-hooks\nfunction Other() {\n  return <b />;\n}`,

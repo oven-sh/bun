@@ -120,6 +120,16 @@ fn build_checks_callback_by_name<'a>(func: Func<'a>) -> bool {
     })
 }
 
+/// The function whose body `e` is in. The build searches the body, not the default of a parameter.
+fn body_function<'a>(e: Expr<'a>) -> Option<Func<'a>> {
+    let level = Node::Expr(e).ancestors().find_map(|it| match it {
+        Node::Func(func) => Some(Some(func)),
+        Node::Param(_) => Some(None),
+        _ => None,
+    });
+    level.flatten()
+}
+
 /// A comment that `bun build --react-compiler` takes for a `react-hooks` suppression. Its lexer looks for
 /// `eslint-disable` or `eslint-disable-next-line` anywhere in a comment, and for a `react-hooks` rule anywhere after.
 struct BuildSuppression {
@@ -189,12 +199,10 @@ impl<'a> Found<'a> {
     fn new(file: &'a File<'a>) -> Self {
         let mut hook_calls: FxHashMap<Func<'a>, u32> = FxHashMap::default();
         let hooks = file.exprs_of_kind(ExprTag::Call).filter(|e| e.as_call().is_some_and(|it| is_hook_call(it, FLAVOR)));
-        for e in hooks {
-            if let Some(func) = Node::Expr(e).enclosing_function() {
-                *hook_calls.entry(func).or_default() += 1;
-            }
+        for func in hooks.filter_map(body_function) {
+            *hook_calls.entry(func).or_default() += 1;
         }
-        let jsx = file.exprs_of_kind(ExprTag::Jsx).filter_map(|e| Node::Expr(e).enclosing_function());
+        let jsx = file.exprs_of_kind(ExprTag::Jsx).filter_map(body_function);
         let mut found = Found { discovered: FxHashMap::default(), hook_calls, with_jsx: jsx.collect() };
         let suppressions = build_suppressions(file);
         let mut consumers: Vec<u32> = match suppressions.is_empty() {
@@ -213,6 +221,29 @@ impl<'a> Found<'a> {
             (it.func, it)
         });
         found.discovered = discovered.collect();
+        // The build drops the casts on the initializer of a variable and names the function after the variable.
+        for func in file.funcs() {
+            let Node::Expr(e) = func.owner() else {
+                continue;
+            };
+            let init = through_casts(e);
+            if init == e || found.discovered.contains_key(&func) {
+                continue;
+            }
+            let Node::VarDecl(declaration) = init.parent() else {
+                continue;
+            };
+            let Some(name) = declaration.pat().as_ident().filter(|_| declaration.init() == Some(init)) else {
+                continue;
+            };
+            if !would_compile(func, Some(name), FLAVOR) {
+                continue;
+            }
+            let skipped = has_directive(func.body_statements().into_iter().flatten(), &OPT_OUT_DIRECTIVES)
+                || !found.build_finds(func)
+                || build_skips(func, &suppressions, &consumers);
+            found.discovered.insert(func, Discovered { func, skipped });
+        }
         found
     }
 

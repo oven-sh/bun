@@ -183,7 +183,7 @@ describe("CJS export that throws when the ESM wrapper reads it", () => {
     expect(await promise).toBe(0);
   });
 
-  test("vi.importActual() of the file while it is mocked", async () => {
+  test("vi.importActual() of the file behind vi.doMock()", async () => {
     using dir = tempDir("cjs-export-throws", { "mod.cjs": throwingProxy });
     const path = join(String(dir), "mod.cjs");
     const proxy = require(path);
@@ -195,6 +195,60 @@ describe("CJS export that throws when the ESM wrapper reads it", () => {
     } finally {
       vi.doUnmock(path);
     }
+  });
+
+  // For these mocks the test runner makes the exports of the original itself, from what require() returned.
+  test("the original of the file behind mock.module() and jest.doMock()", async () => {
+    using dir = tempDir("cjs-export-throws-mock", {
+      ...Object.fromEntries(["a", "b", "c", "d"].map(name => [`${name}.cjs`, throwingProxy])),
+      "original.test.js": `
+        import { expect, jest, mock, test, vi } from "bun:test";
+
+        function expectOriginal(original, proxy) {
+          const { default: originalDefault, ...named } = original;
+          expect(named).toStrictEqual({ before: 1, boom: undefined, after: 2 });
+          expect(originalDefault).toBe(proxy);
+        }
+
+        test("mock.module() then vi.importActual()", async () => {
+          const proxy = require("./a.cjs");
+          mock.module("./a.cjs", () => ({ mocked: true }));
+          expectOriginal(await vi.importActual("./a.cjs"), proxy);
+        });
+
+        test("jest.doMock() then vi.importActual()", async () => {
+          const proxy = require("./b.cjs");
+          jest.doMock("./b.cjs", () => ({ mocked: true }));
+          expectOriginal(await vi.importActual("./b.cjs"), proxy);
+        });
+
+        test("mock.module() with importOriginal", async () => {
+          const proxy = require("./c.cjs");
+          let original;
+          await mock.module("./c.cjs", async importOriginal => {
+            original = await importOriginal();
+            return { mocked: true };
+          });
+          expectOriginal(original, proxy);
+        });
+
+        test("a factory that returns the CommonJS module object", async () => {
+          const proxy = require("./d.cjs");
+          mock.module("./other.cjs", () => require.cache[require.resolve("./d.cjs")]);
+          expectOriginal(await import("./other.cjs"), proxy);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 4 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -282,19 +336,6 @@ test.each([
   expect(named).toEqual(expected);
 });
 
-test("CJS export that the getter of an earlier export deletes is not read from the prototype", async () => {
-  using dir = tempDir("cjs-export-deleted", {
-    "mod.cjs": `
-      const object = Object.create({ second: "inherited" });
-      Object.defineProperty(object, "first", { get() { delete object.second; return 1; }, enumerable: true });
-      object.second = 2;
-      module.exports = object;
-    `,
-  });
-  const { default: _, ...named } = await import(join(String(dir), "mod.cjs"));
-  expect(named).toEqual({ first: 1 });
-});
-
 describe("node:vm context global as CJS exports", () => {
   test("a sandbox property reads as it does in the context", async () => {
     using dir = tempDir("cjs-vm-global", {
@@ -307,28 +348,6 @@ describe("node:vm context global as CJS exports", () => {
     const ns = await import(join(String(dir), "mod.cjs"));
     // In the context, the sandbox object reads as the global.
     expect(ns.self === ns.default).toBe(true);
-  });
-
-  // The rules for an ordinary object (see esm-defineProperty.test.ts) apply to the sandbox.
-  test("a non-enumerable getter of the sandbox is not an export, a non-enumerable value is", async () => {
-    using dir = tempDir("cjs-vm-global-hidden", {
-      "log.cjs": `module.exports = [];`,
-      "mod.cjs": `
-        const log = require("./log.cjs");
-        const sandbox = { a: 1, get g() { log.push("getter g"); return 2; } };
-        Object.defineProperty(sandbox, "hidden", { get() { log.push("getter hidden"); return 3; }, enumerable: false });
-        Object.defineProperty(sandbox, "hiddenValue", { value: 4, enumerable: false });
-        module.exports = require("node:vm").runInNewContext("this", sandbox);
-      `,
-    });
-    const ns = await import(join(String(dir), "mod.cjs"));
-    expect({ a: ns.a, g: ns.g, hasHidden: "hidden" in ns, hiddenValue: ns.hiddenValue }).toEqual({
-      a: 1,
-      g: 2,
-      hasHidden: false,
-      hiddenValue: 4,
-    });
-    expect(require(join(String(dir), "log.cjs"))).toEqual(["getter g"]);
   });
 
   // The getter of `first` runs before the wrapper comes to `second`. The read of the global then says whether

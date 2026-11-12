@@ -87,7 +87,6 @@
 #include "wtf/text/StringImpl.h"
 #include "JSCommonJSExtensions.h"
 #include "BunCompiledModules.h"
-#include "NodeVM.h"
 
 #include "ErrorCode.h"
 #include "GeneratedJest.h"
@@ -1285,6 +1284,19 @@ JSCommonJSModule::~JSCommonJSModule()
     recordsBesideModuleObjects().remove(this);
 }
 
+// For a Proxy and the global of a node:vm context, the Get-kind lookup is the read. A read that throws exports
+// `undefined`, as in Node. An object that cannot look the key up either (a revoked Proxy) fails the import.
+static bool exportUndefinedAfterThrowingRead(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSObject* exports, const Identifier& property, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues)
+{
+    TRY_CLEAR_EXCEPTION(scope, false);
+    PropertySlot own(exports, PropertySlot::InternalMethodType::GetOwnProperty);
+    exports->methodTable()->getOwnPropertySlot(exports, globalObject, property, own);
+    RETURN_IF_EXCEPTION(scope, false);
+    exportNames.append(property);
+    exportValues.append(jsUndefined());
+    return true;
+}
+
 void populateESMExports(
     JSC::JSGlobalObject* globalObject,
     JSValue result,
@@ -1360,88 +1372,98 @@ void populateESMExports(
             exportValues.append(value);
         });
 
-        if (!didFastEnumeration) {
+        if (hasESModuleMarker) {
+            if (!didFastEnumeration) {
+                JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+                exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
+                RETURN_IF_EXCEPTION(scope, );
+
+                for (auto property : properties) {
+                    if (property.isEmpty() || property.isNull() || property == esModuleMarker || property.isPrivateName() || property.isSymbol()) [[unlikely]]
+                        continue;
+
+                    // ignore constructor
+                    if (property == vm.propertyNames->constructor)
+                        continue;
+
+                    JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
+                    auto has = exports->getPropertySlot(globalObject, property, slot);
+                    if (scope.exception()) [[unlikely]] {
+                        if (!exportUndefinedAfterThrowingRead(globalObject, scope, exports, property, exportNames, exportValues))
+                            return;
+                        needsToAssignDefault = needsToAssignDefault && property != vm.propertyNames->defaultKeyword;
+                        continue;
+                    }
+                    if (!has) continue;
+
+                    // Allow DontEnum properties which are not getter/setters
+                    // https://github.com/oven-sh/bun/issues/4432
+                    if (slot.attributes() & PropertyAttribute::DontEnum) {
+                        if (!(slot.isValue() || slot.isCustom())) {
+                            continue;
+                        }
+                    }
+
+                    exportNames.append(property);
+
+                    JSValue getterResult = slot.getValue(globalObject, property);
+
+                    // If it throws, we keep them in the exports list, but mark it as undefined
+                    // This is consistent with what Node.js does.
+                    if (scope.exception()) [[unlikely]] {
+                        (void)scope.tryClearException();
+                        getterResult = jsUndefined();
+                    }
+
+                    exportValues.append(getterResult);
+
+                    needsToAssignDefault = needsToAssignDefault && property != vm.propertyNames->defaultKeyword;
+                }
+            }
+
+        } else if (!didFastEnumeration) {
             JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-            exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, hasESModuleMarker ? DontEnumPropertiesMode::Exclude : DontEnumPropertiesMode::Include);
+            exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
             RETURN_IF_EXCEPTION(scope, );
 
-            // A Proxy and the global of a node:vm context have their own [[Get]]: the slot does not read their value.
-            auto* globalProxy = dynamicDowncast<JSGlobalProxy>(exports);
-            auto* contextGlobal = globalProxy ? dynamicDowncast<NodeVMGlobalObject>(globalProxy->target()) : nullptr;
-            const bool readsWithGet = exports->type() == ProxyObjectType || contextGlobal;
-            // The lookup of a context asks its sandbox, and that can be the global of another context.
-            JSObject* lookedUp = exports;
-            for (auto* global = contextGlobal; global && global->contextifiedObject();) {
-                lookedUp = global->contextifiedObject();
-                auto* inner = dynamicDowncast<JSGlobalProxy>(lookedUp);
-                global = inner ? dynamicDowncast<NodeVMGlobalObject>(inner->target()) : nullptr;
-            }
-            // The lookup of a Proxy can call a trap: it waits for a read that throws.
-            const bool looksUpAfterRead = lookedUp->type() == ProxyObjectType;
-            const bool overridesGetOwnPropertySlot = TypeInfo::overridesGetOwnPropertySlot(exports->inlineTypeFlags());
-
             for (auto property : properties) {
-                if (property.isEmpty() || property.isNull() || property == skippedKey || property.isPrivateName() || property.isSymbol()) [[unlikely]]
+                if (property.isEmpty() || property.isNull() || property == vm.propertyNames->defaultKeyword || property.isPrivateName() || property.isSymbol()) [[unlikely]]
                     continue;
 
                 // ignore constructor
                 if (property == vm.propertyNames->constructor)
                     continue;
 
-                // Node's order: an own-property lookup that can fail the import, then a read that cannot.
-                // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/esm/translators.js#L259-L272
-                JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::GetOwnProperty);
-                bool isOwn = false;
-                if (!overridesGetOwnPropertySlot)
-                    isOwn = JSObject::getOwnPropertySlot(exports, globalObject, property, slot);
-                else if (!looksUpAfterRead) {
-                    if (std::optional<uint32_t> index = parseIndex(property))
-                        isOwn = exports->methodTable()->getOwnPropertySlotByIndex(exports, globalObject, index.value(), slot);
-                    else
-                        isOwn = exports->methodTable()->getOwnPropertySlot(exports, globalObject, property, slot);
+                JSC::PropertySlot slot(exports, PropertySlot::InternalMethodType::Get);
+                auto has = exports->getPropertySlot(globalObject, property, slot);
+                if (scope.exception()) [[unlikely]] {
+                    if (!exportUndefinedAfterThrowingRead(globalObject, scope, exports, property, exportNames, exportValues))
+                        return;
+                    continue;
                 }
-                RETURN_IF_EXCEPTION(scope, );
+                if (!has) continue;
 
-                if (isOwn) {
+                if (slot.attributes() & PropertyAttribute::DontEnum) {
                     // Allow DontEnum properties which are not getter/setters
                     // https://github.com/oven-sh/bun/issues/4432
-                    if ((slot.attributes() & PropertyAttribute::DontEnum) && !(slot.isValue() || slot.isCustom()))
+                    if (!(slot.isValue() || slot.isCustom())) {
                         continue;
-                } else if (!readsWithGet)
-                    continue;
-
-                JSValue value;
-                if (readsWithGet) [[unlikely]] {
-                    // JSObject::get(), which does not say whether [[Get]] found the key. The getter of an earlier export can
-                    // delete it, and a Proxy sandbox can list a key that nothing has.
-                    PropertySlot read(exports, PropertySlot::InternalMethodType::Get);
-                    bool isFound = exports->getPropertySlot(globalObject, property, read);
-                    if (!scope.exception()) {
-                        if (!isFound)
-                            continue;
-                        value = read.getValue(globalObject, property);
                     }
-                } else
-                    value = slot.getValue(globalObject, property);
+                }
+
+                exportNames.append(property);
+
+                JSValue getterResult = slot.getValue(globalObject, property);
 
                 // If it throws, we keep them in the exports list, but mark it as undefined
                 // This is consistent with what Node.js does.
                 if (scope.exception()) [[unlikely]] {
-                    TRY_CLEAR_EXCEPTION(scope, );
-                    if (looksUpAfterRead) {
-                        // A Proxy that cannot look the key up either (a revoked Proxy) fails the import.
-                        exports->methodTable()->getOwnPropertySlot(exports, globalObject, property, slot);
-                        RETURN_IF_EXCEPTION(scope, );
-                    }
-                    value = jsUndefined();
+                    (void)scope.tryClearException();
+                    getterResult = jsUndefined();
                 }
 
-                exportNames.append(property);
-                exportValues.append(value);
+                exportValues.append(getterResult);
             }
-
-            if (hasESModuleMarker)
-                needsToAssignDefault = !exportNames.contains(vm.propertyNames->defaultKeyword);
         }
     }
 

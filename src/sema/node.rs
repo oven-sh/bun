@@ -3028,8 +3028,22 @@ impl File<'_> {
             positions.dedup();
             let mut found = Vec::new();
             let mut children = Vec::new();
+            let count_before = |end: u32| positions.partition_point(|&position| position < end);
+            let written = match self.known_evaluations.is_empty() {
+                true => positions.len(),
+                false => count_before(self.written_text_end()),
+            };
             // Descend from the file, for each position at each level into the last child that doesn't start after it.
-            let mut entered = vec![(Node::FILE, 0..positions.len())];
+            let mut entered = vec![(Node::FILE, 0..written)];
+            // The texts follow the file, and their functions the arguments of calls in it.
+            for evaluation in self.known_evaluations.iter() {
+                let within = count_before(evaluation.start)..count_before(evaluation.end);
+                if !within.is_empty() {
+                    // In TypeScript, a type that is written nowhere is beside the function.
+                    let function = self.skip_type_assertions(evaluation.function);
+                    entered.push((self.node(function), within));
+                }
+            }
             while let Some((node, leading_here)) = entered.pop() {
                 children.clear();
                 self.for_each_child(node, &mut |child| {

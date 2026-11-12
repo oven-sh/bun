@@ -1244,11 +1244,11 @@ export const shapes: Shape[] = [
     }),
   },
   // Each read asks a guard of every class of the family, and the list of what is asked was searched from its head for each class: classes x classes for each name. 4,000 classes and 64 names: 15.6 G instructions over 5.9.
-  // With as many names as classes the guards themselves are left, one a class and a name, in the walk and in the image.
+  // With as many names as classes the guards were one a class and a name, in the walk and in the image.
   ...(
     [
       ["sixty-four names", "classes", 2000, {}],
-      ["as many names", "classes, and names", 500, { growsSoFar: "3.99 times in GuardsOfClassGuardCounts" }],
+      ["as many names", "classes, and names", 500, { growsSoFarInInstructions: "2.19 times in instructions" }],
     ] as const
   ).map(
     ([names, counted, size, mark]): Shape => ({
@@ -5922,6 +5922,26 @@ console.log(typeof outmost.inner);
     entry: "main.js",
     write: size => ({
       "main.js": `class Wide {\n  constructor(v) {\n${lines(size, index => `    this.f${index} += v;`)}  }\n}\nconsole.log(String(new Wide(1).f0));\n`,
+    }),
+  },
+  // What is filled is not sorted again at each call.
+  {
+    name: "methods that a constructor calls, each storing a field of its own",
+    counted: "methods",
+    size: 2000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `class Wide {\n  constructor(v) {\n${lines(size, index => `    this.m${index}(v);`)}  }\n${lines(size, index => `  m${index}(v) { this.f${index} = v; }`)}}\nconsole.log(String(new Wide(1).f0));\n`,
+    }),
+  },
+  // The keys of the methods below are not listed again for each method.
+  {
+    name: "methods that a constructor calls, each storing a field and calling the next",
+    counted: "methods",
+    size: 3000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `class Wide {\n  constructor(v) {\n    this.m0(v);\n  }\n${lines(size, index => `  m${index}(v) {\n    this.f${index} = v;\n${index + 1 < size ? `    this.m${index + 1}(v);\n` : ""}  }`)}}\nconsole.log(String(new Wide(1).f0));\n`,
     }),
   },
   // The same of static fields: the static blocks were sought among all members anew for each. 32,000 took 29 G instructions, and take 5.8.

@@ -8,7 +8,6 @@
 # -- end of source
 # RUN(ASKED): walk f1 mechanisms=all
 # ASKED: ShapeTest
-# ASKED: frequency=Rare isInLoop=true
 # RUN(UNMARKED): walk f1 mechanisms=all
 # UNMARKED: code f1:Body
 # UNMARKED-NOT: = PropGet

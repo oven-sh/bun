@@ -210,6 +210,8 @@ impl<'s> Folder<'_, 's> {
                 };
                 self.fold_logical(e, operator, left, right)
             }
+            // A copy of a factory is called.
+            BinOp::Comma if self.hir.copied_factory_of(e).is_some() => self.folded(right),
             BinOp::Comma => {
                 self.copy_condition(e, right);
                 let right = self.folded(right);
@@ -421,7 +423,7 @@ impl<'s> Folder<'_, 's> {
         let callee = hir.skip_type_assertions(call.callee);
         hir.ids(call.args).next() == Some(argument)
             && matches!(hir[callee].kind, ExprKind::Ident(known::RegExp))
-            && matches!(self.bound.binding(callee), Binding::Free)
+            && self.bound.static_binding(callee) == Some(Binding::Free)
     }
 
     fn fold_conditional(&mut self, e: ExprId, test: ExprId, branches: Branches) -> Folded {

@@ -310,6 +310,7 @@ impl OrderedKey for ProgramFunctionKey {
             FunctionKey::AccessorGetter { file, member } => (11, file, member.0),
             FunctionKey::AccessorSetter { file, member } => (12, file, member.0),
             FunctionKey::PrivateNameTest { file, member } => (13, file, member.0),
+            FunctionKey::ModuleRequest { file, call } => (14, file, call.0),
         };
         join_rank(self.project, variant, [file.0, second, 0])
     }
@@ -382,6 +383,7 @@ impl OrderedKey for ProgramVariableKey {
             VariableKey::InstanceAllocator(file) => (18, file.0, 0),
             VariableKey::HasSeveralInstances(file) => (19, file.0, 0),
             VariableKey::EvaluationMark(file) => (20, file.0, 0),
+            VariableKey::AddedStatic(it) => (21, it.file.0, it.id.0),
         };
         join_rank(declared.project, variant, [first, second, 0])
     }

@@ -11,7 +11,7 @@
 # publish(run);
 # -- end of source
 # RUN: compile LoopsRevisitedWithoutSumGuards mechanisms=all
-# CHECK: statistic LoopsRevisitedWithoutSumGuards 2
+# CHECK: statistic LoopsRevisitedWithoutSumGuards 1
 # RUN(LOOP): walk f2 mechanisms=all
 # LOOP: code f2:Body
 # LOOP: (v{{*}}: i32 @Int32, v{{*}}) isInLoop=true isLoopHead=true

@@ -515,6 +515,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             if let Some(evaluated) = self.try_lower_inner_module_call(call) {
                 return Some(evaluated);
             }
+            if let Some(request) = self.try_lower_module_request(call) {
+                return Some(request);
+            }
             let is_module_named = hir.ids(arguments).next().is_some_and(|argument| {
                 self.find_whether_file_names_library_modules()
                     && names_library_module(self.file.queries.files(), self.file.file, argument)
@@ -1535,6 +1538,27 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         })?;
         self.set_position(self.file.hir[call].pos);
         Some(self.emit_planned_require(plan))
+    }
+
+    /// `require.bind(require, id)`
+    fn try_lower_module_request(&mut self, call: ExprId) -> Option<ValueId> {
+        let (modules, file) = (self.file.inputs.modules, self.file.file);
+        modules.requested_module(file, call)?;
+        self.set_position(self.file.hir[call].pos);
+        let request = self.file.declare_module_request(call);
+        Some(self.emit_closure(request, None))
+    }
+
+    pub(in crate::lower) fn emit_requested_module(&mut self, call: ExprId) -> ValueId {
+        let (modules, file) = (self.file.inputs.modules, self.file.file);
+        let plan = create_plan(modules.requested_module(file, call), false, || true);
+        match plan {
+            Some(plan) => self.emit_planned_require(plan),
+            None => {
+                debug_assert!(false, "a request is planned");
+                self.builder.undefined()
+            }
+        }
     }
 
     fn emit_planned_require(&mut self, plan: PlannedSite) -> ValueId {

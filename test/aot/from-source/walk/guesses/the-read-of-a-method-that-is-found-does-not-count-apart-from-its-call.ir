@@ -11,9 +11,12 @@
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: isInLoop=true isLoopHead=true:
-# CHECK-NOT: InitializeBuiltin builtin=DataViewPrototypeGetUint8
-# CHECK: PropGet {{*}}key="getUint8"
-# CHECK: Call {{*}}calleeKey="getUint8" {{*}}methodOfReceiverAsMade=DataViewPrototypeGetUint8
+# Here it counts with its call: the call enters the built-in with whatever `at(i)` answered, and none goes by value.
+# CHECK-NOT: key="getUint8"
+# CHECK: InitializeBuiltin builtin=DataViewPrototypeGetUint8
+# CHECK-NOT: calleeKey="getUint8"
+# CHECK: CallBuiltin {{*}}overload=DataViewPrototypeGetUint8/0 builtinCallForm=AnyReceiver
+# CHECK-NOT: calleeKey="getUint8"
 # RUN(ANSWER): run-in-shell
 # ANSWER: 1 2
 # ANSWER-NEXT: exited with 0

@@ -1447,14 +1447,26 @@ _ZN3JSC3AOTL12findWithAVX2EPKmmm  [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
-# The ahead-of-time compiler's products of BigInts. Gate: BigIntArithmetic::hasMULX()
-# (CPUID).
-# (4 symbols)
+# The ahead-of-time compiler's search of a Latin-1 string for another. Gate:
+# operationAOTStringFind8() asks CPUFeatureSet::host() for AVX2 (CPUID and XGETBV).
+# (1 symbols)
 # ----------------------------------------------------------------------------
-_ZN3JSC3AOTL24tryMulUsualBigIntsByMULXEllPv                  [BMI2]
-_ZN3JSC3AOTL31tryMulUsualBigIntsInFrameByMULXEllPv           [BMI2]
-_ZN3JSC3AOTL32tryRemainderOfUsualFactorsByMULXElllPv         [BMI2]
-_ZN3JSC3AOTL39tryRemainderOfUsualFactorsInFrameByMULXElllPv  [BMI2]
+_ZN3JSC3AOTL18findStringWithAVX2EPKN3WTF15Latin1CharacterEjS4_jj  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# The ahead-of-time compiler's products and remainders of BigInts. Gate:
+# BigIntArithmetic::hasMULX() asks CPUID for BMI2 and LZCNT.
+# (8 symbols)
+# ----------------------------------------------------------------------------
+_ZN3JSC3AOTL24tryModUsualBigIntsByMULXILj4EEElllPv           [BMI2, LZCNT]
+_ZN3JSC3AOTL24tryModUsualBigIntsByMULXILj8EEElllPv           [BMI2, LZCNT]
+_ZN3JSC3AOTL31tryModUsualBigIntsInFrameByMULXILj4EEElllPv    [BMI2, LZCNT]
+_ZN3JSC3AOTL31tryModUsualBigIntsInFrameByMULXILj8EEElllPv    [BMI2, LZCNT]
+_ZN3JSC3AOTL24tryMulUsualBigIntsByMULXEllPv                  [BMI2, LZCNT]
+_ZN3JSC3AOTL31tryMulUsualBigIntsInFrameByMULXEllPv           [BMI2, LZCNT]
+_ZN3JSC3AOTL32tryRemainderOfUsualFactorsByMULXElllPv         [BMI2, LZCNT]
+_ZN3JSC3AOTL39tryRemainderOfUsualFactorsInFrameByMULXElllPv  [BMI2, LZCNT]
 
 
 # ----------------------------------------------------------------------------

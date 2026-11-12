@@ -253,6 +253,7 @@ pub(crate) struct ImportScan<'s> {
     pub reads_below_working_folder: &'s [(ExprId, Atom)],
     pub named_paths: &'s [NamedPath],
     pub paths_created: &'s [Atom],
+    pub web_assembly_names: &'s [(ExprId, Atom)],
     pub reading_functions: &'s [SymbolId],
     /// What leads to the file's own folder and is passed to a function, as in `find(__dirname)`, each with the function, or is handed on otherwise, as in `{ cwd: __dirname }`. Not the operand of a read that is known, the text that such a read gives, or what a started process is passed.
     pub own_folder_arguments: &'s [(ExprId, Option<ExprId>)],

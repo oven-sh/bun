@@ -102,6 +102,7 @@ pub(super) struct Memo<'c> {
     names_of_accessors: FxHashSet<MemberName>,
     pub(super) names_of_fields_asked_about: FxHashMap<u32, (crate::hir::ClassId, Atom)>,
     pub(super) reads_of_fields_off_this: Option<Arc<ReadsOfFields>>,
+    pub(super) typed_arrays_in_fields: Option<Rc<FxHashMap<Atom, Option<TypeId>>>>,
     inherited_accessors: FxHashMap<(ClassDeclaration, MemberName), bool>,
     places_of_classes: FxHashMap<ClassDeclaration, PlaceInRow>,
     highest_places_of_fields: FxHashMap<MemberName, PlaceInRow>,
@@ -120,6 +121,7 @@ pub(super) struct Memo<'c> {
     pub(super) alias_forms: FxHashMap<Sym, AliasForm>,
     pub(super) reference_index: ReferenceIndex<'c>,
     pub(super) first_spread_arguments: FxHashMap<ExprId, u32>,
+    pub(super) methods_by_name: Option<Rc<super::inferred_from_use::MethodsByName>>,
     pub(super) exported_symbols: Option<FxHashSet<Sym>>,
     pub(super) parameters_taking_elements: FxHashMap<(Atom, usize), u8>,
     pub(super) usages: FxHashMap<Subject, UsageState>,
@@ -1146,6 +1148,43 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
+    /// What the stores in other functions of a class say of a field.
+    pub fn type_from_later_field_stores(
+        &mut self,
+        shape: &ClassShape<'_>,
+        member: &ClassMember,
+    ) -> CheckedType {
+        match (self.can_ask_about_field(shape, member), member.name) {
+            (true, MemberName::String(field)) => {
+                self.find_type_stored_later(shape.declaration, field)
+            }
+            _ => Ok(TypeId::ANY),
+        }
+    }
+
+    /// The typed array that classes of the file store into their fields of the same name.
+    pub fn typed_array_in_named_fields(
+        &mut self,
+        shape: &ClassShape<'_>,
+        member: &ClassMember,
+    ) -> CheckedType {
+        match (self.can_ask_about_field(shape, member), member.name) {
+            (true, MemberName::String(field)) => {
+                let found = self.typed_arrays_in_fields().get(&field).copied().flatten();
+                Ok(found.unwrap_or(TypeId::ANY))
+            }
+            _ => Ok(TypeId::ANY),
+        }
+    }
+
+    fn can_ask_about_field(&self, shape: &ClassShape<'_>, member: &ClassMember) -> bool {
+        let is_stored = matches!(
+            member.source,
+            ClassMemberSource::ThisStore(_) | ClassMemberSource::Member(_)
+        );
+        is_stored && !member.is_static && shape.declaration.file() == self.file
+    }
+
     pub fn uses_say_what_read_is(&mut self, pattern: PatId, is_element: bool) -> bool {
         let Ok(said) = self.ask(|queries| Ok(queries.infer_binding_type(pattern, TypeId::ANY)))
         else {
@@ -1771,6 +1810,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             |answers| &mut answers.listed_members,
             |queries| queries.compute_listed_members(object_type),
         )
+    }
+
+    pub fn creation_places(&mut self, object_type: TypeId) -> Vec<u32> {
+        let places = self.ask(|queries| queries.compute_creation_places(object_type));
+        places.unwrap_or_default()
     }
 
     pub fn listed_member_types(

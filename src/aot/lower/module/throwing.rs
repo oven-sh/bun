@@ -66,7 +66,8 @@ fn lower_function_of_throwing_file(
         | FunctionKey::StaticInitializer(_)
         | FunctionKey::AccessorGetter { .. }
         | FunctionKey::AccessorSetter { .. }
-        | FunctionKey::PrivateNameTest { .. } => {
+        | FunctionKey::PrivateNameTest { .. }
+        | FunctionKey::ModuleRequest { .. } => {
             lower_function_that_throws(file, function, message);
         }
         FunctionKey::Signature(_) | FunctionKey::ClassSignature(_) => {

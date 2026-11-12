@@ -1,5 +1,5 @@
-use bun_sema::bind::{CodeUnit, CommonJsVariable, ScopeId};
-use bun_sema::hir::{FnBody, FnId};
+use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, ScopeId, SymbolId};
+use bun_sema::hir::{ExprId, FnBody, FnId};
 use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
@@ -86,6 +86,34 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
+    fn find_require_of_body(&self, callback: FnId) -> Option<(SymbolId, SymbolId)> {
+        let wrapped = self.inputs.modules.wrapped();
+        let parameter = wrapped
+            .of_callback(self.file, callback)?
+            .require_parameter?;
+        Some((parameter, wrapped.require_function(self.file)?))
+    }
+
+    pub(in crate::lower) fn declare_module_request(&mut self, call: ExprId) -> FunctionId {
+        let file = self.file;
+        let key = FunctionKey::ModuleRequest { file, call };
+        self.declare_function(key, |file| {
+            let position = file.hir[call].pos;
+            let mut header = function::create_header(file, key, FunctionKind::Arrow, position);
+            header.flags |= FunctionFlags::IS_HIDDEN_IN_STACK_TRACES;
+            header.syntax |= FunctionSyntax::IS_SHOWN_AS_NATIVE_CODE;
+            header
+        })
+    }
+
+    pub(in crate::lower) fn lower_module_request(&mut self, function: FunctionId, call: ExprId) {
+        let mut lowering = FunctionLowering::begin(self, function);
+        lowering.set_position(lowering.file.hir[call].pos);
+        let exports = lowering.emit_requested_module(call);
+        lowering.emit_return(exports, None);
+        lowering.finish();
+    }
+
     pub(in crate::lower) fn lower_inner_module_body(
         &mut self,
         function: FunctionId,
@@ -111,6 +139,13 @@ impl FileLowering<'_, '_, '_, '_> {
                 (false, _) => lowering.builder.undefined(),
             };
             entry_values.push((BindingRef::Symbol(symbol), value));
+        }
+        if let Some((parameter, function)) = lowering.file.find_require_of_body(callback)
+            && lowering.file.scopes.form(parameter) == BindingForm::Stored
+        {
+            let name = lowering.file.bound.symbol(function).name;
+            let value = lowering.get_binding(Binding::Symbol(function), name);
+            entry_values.push((BindingRef::Symbol(parameter), value));
         }
         entry_values.shared_sort_by_key(|entry| entry.0);
         entry_values.dedup_by_key(|entry| entry.0);
@@ -163,6 +198,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     return None;
                 }
                 self.file.module_exports_layout(file)
+            }
+            ModuleRef::Inner { callback, .. } => {
+                Some(self.file.inner_module_exports_layout(callback))
             }
             _ => None,
         };

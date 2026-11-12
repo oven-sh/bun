@@ -36,6 +36,8 @@ pub struct CopiedExports {
     pub runs_once: bool,
     pub is_of_ordinary_object: bool,
     pub has_marker: bool,
+    pub passes_over_marker: bool,
+    pub reads_own_default: bool,
     pub may_hold_answer: bool,
     pub is_looked_at: bool,
     pub is_called_through: bool,

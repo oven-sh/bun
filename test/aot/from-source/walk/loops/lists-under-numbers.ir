@@ -12,9 +12,9 @@
 # RUN: walk f1 mechanisms=all
 # CHECK: = CallInline {{*}} inlineBuiltin=MathFloor
 # CHECK: = GetArrayElement {{*}} level=Proven [keyIsIntegral
-# A key that stores too is asked for an int32 once a turn.
+# A key that stores too is asked for an index once a turn.
 # RUN(STORES): walk f2 mechanisms=all
-# STORES: = TypeTest {{*}} testedType=i32
+# STORES: = TypeTest {{*}} testedType=int[0, 2147483647]
 # STORES: = PutContiguousIndex
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 840 920

@@ -165,6 +165,8 @@ pub(crate) struct Build<'a> {
     /// Found while the host of the load is there. Said once it is known which code is left out.
     resolves_that_miss: Vec<Diagnostic>,
     missing_node_workers: Vec<Diagnostic>,
+    /// WebAssembly files that no import brings, each with the file that names it.
+    adjacent_web_assembly: Vec<(FileId, Vec<u8>)>,
     /// The files that are compiled only because a Worker may start from one of them. Sorted.
     files_of_guesses: Vec<FileId>,
     /// Those of them that failed to load, and what failed. Sorted.
@@ -503,6 +505,7 @@ impl<'a> Build<'a> {
             written_function_names: Vec::new(),
             resolves_that_miss: Vec::new(),
             missing_node_workers: Vec::new(),
+            adjacent_web_assembly: Vec::new(),
             files_of_guesses: Vec::new(),
             refused_guessed_files: Vec::new(),
             started_workers: StartedWorkers::default(),

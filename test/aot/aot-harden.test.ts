@@ -395,14 +395,13 @@ strip(all[5], "rank");
 console.log(shelf[at[0]](all));
 `;
 
-// The same for a slot that holds a 32-bit reference. `goesWrong`: without the hardening, the injected fault shows in what the program prints or in how it exits.
+// The same for a slot that holds a 32-bit reference.
 const takesAway = `const strip: (o: object, k: string) => boolean = (Reflect as any)[JSON.parse('"deleteProperty"')];
 const at: number[] = JSON.parse("[0, 1]");
 class Badge { text: string; constructor(text: string) { this.text = text; } }
 `;
 const readsReferenceTakenAway = {
   "which some members of a union have": {
-    goesWrong: true,
     printsFirst: "64\n",
     source: `${takesAway}interface Core { mark: number }
 interface Bare { kind: number; size: number }
@@ -417,7 +416,6 @@ console.log(shelf[at[0]](rows));
 `,
   },
   "which may be null": {
-    goesWrong: true,
     printsFirst: "true false true\n",
     source: `${takesAway}class Member {
   rank: number; active: boolean; name: string; badge: Badge; before: Member | null; score: number; done: boolean;
@@ -432,7 +430,6 @@ console.log(shelf[at[0]](hurt));
 `,
   },
   "which is asked for its truth": {
-    goesWrong: false,
     printsFirst: "friend badge\n",
     source: `${takesAway}class Member {
   rank: number; active: boolean; name: string; badge: Badge; friend: Member | undefined; score: number; done: boolean;
@@ -821,7 +818,7 @@ describe.concurrent("--aot-harden=ignore-told-ranges", () => {
 
   test.each(Object.entries(readsReferenceTakenAway))(
     "proof-checks stops the program by name where a slot that is told filled has lost a reference %s",
-    async (_, { goesWrong, printsFirst, source }) => {
+    async (_, { printsFirst, source }) => {
       using sound = tempDir("aot-harden", { "program.ts": source });
       await build(String(sound), ["--aot-harden=proof-checks"]);
       const expected = await runPlain(String(sound));
@@ -830,7 +827,7 @@ describe.concurrent("--aot-harden=ignore-told-ranges", () => {
 
       using unhardened = tempDir("aot-harden", { "program.ts": source });
       await build(String(unhardened), [passesOverMarks]);
-      expect((await runBuilt(String(unhardened))).stdout !== expected.stdout).toBe(goesWrong);
+      expect((await runBuilt(String(unhardened))).stdout).not.toBe(expected.stdout);
 
       using hardened = tempDir("aot-harden", { "program.ts": source });
       await build(String(hardened), ["--aot-harden=proof-checks", passesOverMarks]);

@@ -1,0 +1,19 @@
+# -- source: main.cjs
+# "use strict";
+# function P(a) { this.a = a; }
+# P.prototype.get = function () { return this.a; };
+# function C(a) { P.call(this, a); this.b = 1; }
+# C.prototype = Object.create(P.prototype, { constructor: { value: C } });
+# C.prototype.get = function () { return P.prototype.get.call(this) + this.b; };
+# let n = 0;
+# for (let k = 0; k < 10; k++) n += new C(k & 3).get();
+# print(n);
+# -- end of source
+# The closure that the table holds, and whether it has names of its own, are asked once in front of the loop.
+# RUN: walk f0 mechanisms=all
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: ():
+# CHECK-NOT: isInLoop=true
+# CHECK: IsPristine {{*}} builtinClass=Function aspects=[Names]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 23

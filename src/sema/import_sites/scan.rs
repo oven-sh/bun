@@ -58,6 +58,7 @@ pub(crate) fn collect_import_sites<'s>(
         reads_below_working_folder: slice_in(&calls.reads_below_working_folder, arena),
         named_paths: slice_in(&calls.named_paths, arena),
         paths_created: slice_in(&calls.paths_created, arena),
+        web_assembly_names: slice_in(&calls.web_assembly_names, arena),
         reading_functions: slice_in(&calls.reading_functions, arena),
         own_folder_arguments: slice_in(&calls.own_folder_arguments, arena),
         known_load_names: slice_in(&calls.known_load_names, arena),

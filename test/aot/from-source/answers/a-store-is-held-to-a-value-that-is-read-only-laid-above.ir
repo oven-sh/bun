@@ -5,7 +5,7 @@
 # function make(weight: number, marks: boolean) { const parcel = new Parcel(weight); try { if (marks) parcel.fragile = true; } catch (error) { return (error as Error).name; } return String(Object.hasOwn(parcel, "fragile")); }
 # const makes = id(make);
 # print(makes(1, true));
-# Object.defineProperty(Parcel.prototype, "fragile", { value: false, writable: false, configurable: true });
+# Object.defineProperty(id(Parcel.prototype), "fragile", { value: false, writable: false, configurable: true });
 # print(makes(2, true));
 # -- end of source
 # LIBRARY: own

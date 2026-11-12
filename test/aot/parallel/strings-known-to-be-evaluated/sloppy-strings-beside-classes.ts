@@ -25,6 +25,7 @@ attempt(5, () => new Function("x", "return (function (a, a) { return a; })(1, 2)
 attempt(6, () => new Function("x", "var static = 1, let = 2; return (() => static + let)();"));
 attempt(7, () => new Function("x", "eval: for (;;) break eval; return (() => x)();"));
 attempt(8, () => eval("(function (x) { return delete x; })"));
+attempt(9, () => eval("(function (x) { arguments = 1; return x; })"));
 attempt(10, () => eval("(function (x, x) { return x; })"));
 attempt(11, () => eval("(function (x) { return x + 1; })"));
 attempt(12, () => new Function("x", "if (x) function f() { return 3; } return (() => f())();"));

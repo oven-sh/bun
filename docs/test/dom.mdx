@@ -57,7 +57,7 @@ If a comment names a package that isn't installed or an environment that isn't s
 
 By default, test files share one global object and one module registry. Files with the same environment and options also share one window, so a module that read `document.body` when it was imported still has the right element in the next file. Bun restores the globals after each file, so a file that runs in `node` doesn't see `document`.
 
-Options are the same when they are the same JSON value: spacing and the order of keys don't matter, and `null` counts as no options. A file with any other options gets its own window, also when they are `{}` or only set a default.
+Options are the same when they are the same JSON value: spacing and the order of keys don't matter, and `null`, `false`, `0` and `""` count as no options. A file with any other options gets its own window, also when they are `{}` or only set a default.
 
 With [`--isolate` or `--parallel`](/test/parallel), every file gets its own window and its own copy of every module. Use them when files in different environments, or with different options, import the same DOM library, because a shared module stays bound to the first window it saw.
 

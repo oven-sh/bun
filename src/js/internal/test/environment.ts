@@ -380,8 +380,7 @@ function createHappyDOM(_: NodeJS.Require, exports: any, options: any): Environm
 // Without --isolate, modules outlive a file and hold on to DOM nodes, so the window has to outlive it too.
 const kept = new $Map<string, Environment>();
 // The kept windows that have options. `value` is a parse of `text` that no package was given, so nothing changes it.
-type KeptWithOptions = { packagePath: string; text: string; value?: unknown; environment: Environment };
-let keptWithOptions: KeptWithOptions[] | undefined;
+let keptWithOptions: { packagePath: string; text: string; value: unknown; environment: Environment }[] | undefined;
 let isDeepStrictEqual: ((actual: unknown, expected: unknown) => boolean) | undefined;
 // require() of a module with top-level await throws only the first time, so rethrow that error for every file.
 const failedToLoad = new $Map<string, unknown>();
@@ -459,13 +458,15 @@ function open(
       for (let i = 0; i < keptWithOptions.length; i++) {
         const other = keptWithOptions[i];
         if (other.packagePath !== packagePath) continue;
-        // Options nested too deeply to compare get a window of their own.
+        let isSame: boolean;
         try {
           isDeepStrictEqual ??= $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsDeepStrictEqual", 3);
-          if (!isDeepStrictEqual!(options, (other.value ??= JSON.parse(other.text)))) continue;
+          isSame = isDeepStrictEqual!(options, other.value);
         } catch {
-          continue;
+          // Options nested too deeply to compare are the same only if their text is.
+          isSame = other.text === optionsText;
         }
+        if (!isSame) continue;
         if (!isClosed(other.environment.window)) {
           kept.$set(id, other.environment);
           return other.environment;
@@ -484,11 +485,11 @@ function open(
     kept.$set(id, environment);
     if (optionsText !== undefined) {
       $arrayPush((keptWithOptions ??= []), {
-        __proto__: null,
         packagePath,
         text: optionsText,
+        value: JSON.parse(optionsText),
         environment,
-      } as KeptWithOptions);
+      });
     }
   }
   return environment;

@@ -7,7 +7,7 @@ use bun_core::strings;
 use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::{VirtualMachine, runtime_hooks};
 use bun_jsc::{
-    EncodedSliceJsc as _, JSInternalPromise, JSPromise, JSValue, JsError, JsResult,
+    JSInternalPromise, JSPromise, JSValue, JsError, JsResult,
     StringJsc as _, Strong, bun_string_jsc, js_promise,
 };
 use bun_options_types::context::TestEnvironment;
@@ -156,8 +156,12 @@ impl Environment {
         path: &[u8],
     ) -> crate::Result<Option<*mut JSInternalPromise>> {
         // Vitest does `envOptions ? ... : null` with the parsed options.
-        if self.options.as_deref().is_some_and(|text| is_falsy(vm, text)) {
-            self.options = None;
+        if let Some(text) = self.options.as_deref() {
+            match is_falsy(vm, text) {
+                Ok(true) => self.options = None,
+                Ok(false) => {}
+                Err(err) => return rejected(vm, err).map(Some),
+            }
         }
         let kind = match &self.comment {
             None => self.project,
@@ -219,21 +223,15 @@ pub(crate) fn is_in_preload() -> bool {
     VirtualMachine::get().is_in_preload
 }
 
-/// Whether options are JSON for a falsy value. A text that begins an object or an array never is, so it is not parsed.
+/// Whether options are JSON for a falsy value. What begins an object or an array never is, and what is not JSON is left for environment.ts to report.
 #[optimize(size)]
-fn is_falsy(vm: &VirtualMachine, options: &[u8]) -> bool {
+fn is_falsy(vm: &VirtualMachine, options: &[u8]) -> JsResult<bool> {
     if matches!(options.first(), Some(b'{' | b'[')) {
-        return false;
+        return Ok(false);
     }
-    let global = vm.global();
-    match EncodedSlice::from_bytes(options).to_json_object(global) {
-        Ok(value) => !value.to_boolean(),
-        // environment.ts reports options that are not JSON.
-        Err(err) => {
-            let _ = global.take_exception(err);
-            false
-        }
-    }
+    let text = EncodedSlice::from_bytes(options);
+    // SAFETY: `text` borrows `options` and lives until the call returns.
+    unsafe { bun_jsc::cpp::Bun__TestEnvironment__isFalsyJSON(vm.global(), &raw const text) }
 }
 
 fn rejected(vm: &VirtualMachine, err: JsError) -> crate::Result<*mut JSInternalPromise> {

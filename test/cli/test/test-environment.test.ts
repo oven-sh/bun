@@ -784,9 +784,9 @@ describe.concurrent("test environment", () => {
           Bun.gc(true);
           console.log(...process.windows.map(window => window.deref()?.environment ?? "collected"));
         });`;
+      const closes = `import { afterAll } from "bun:test";\nafterAll(() => window.close());\n`;
 
       test("a window that a file closed is replaced for every spelling of its options, and not kept", async () => {
-        const closes = `import { afterAll } from "bun:test";\nafterAll(() => window.close());\n`;
         using dir = tempDir("test-environment", {
           ...fakePackages,
           "node_modules/happy-dom/index.js": closableHappyDOM,
@@ -814,7 +814,6 @@ describe.concurrent("test environment", () => {
       });
 
       test("of two closed windows, the one that a file asks for again is replaced and not kept", async () => {
-        const closes = `import { afterAll } from "bun:test";\nafterAll(() => window.close());\n`;
         using dir = tempDir("test-environment", {
           ...fakePackages,
           "node_modules/happy-dom/index.js": closableHappyDOM,
@@ -838,7 +837,7 @@ describe.concurrent("test environment", () => {
         expect(exitCode).toBe(0);
       });
 
-      test("options nested too deeply to compare get a window each", async () => {
+      test("options nested too deeply to compare share a window only with their own text", async () => {
         const nested = (depth: number) => Buffer.alloc(depth, "[").toString() + Buffer.alloc(depth, "]").toString();
         const isComparable = (text: string) => {
           try {
@@ -854,17 +853,21 @@ describe.concurrent("test environment", () => {
         const deep = (space: string) => options(`{${space}"console":${nested(depth * 2)}}`);
         using dir = tempDir("test-environment", {
           ...fakePackages,
-          "1.test.js": deep("") + logEnvironment,
+          "node_modules/happy-dom/index.js": closableHappyDOM,
+          "1.test.js": deep("") + closes + logEnvironment,
           "2.test.js": deep(" ") + logEnvironment,
           "3.test.js": deep("") + logEnvironment,
+          "4.test.js": `${deep("")}${logEnvironment}${printsWindows}`,
         });
         const { stdout, stderr, exitCode } = await bunTest(String(dir), "--environment=happy-dom");
-        expect(windowOf(stdout)).toEqual({
-          "1.test.js": "happy-dom#1",
-          "2.test.js": "happy-dom#2",
-          "3.test.js": "happy-dom#1",
-        });
-        expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
+        expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
+          "1.test.js happy-dom#1 http://localhost:3000",
+          "2.test.js happy-dom#2 http://localhost:3000",
+          "3.test.js happy-dom#3 http://localhost:3000",
+          "4.test.js happy-dom#3 http://localhost:3000",
+          "collected happy-dom#2 happy-dom#3",
+        ]);
+        expect(summary(stderr)).toEqual(["5 pass", "0 fail"]);
         expect(exitCode).toBe(0);
       });
 

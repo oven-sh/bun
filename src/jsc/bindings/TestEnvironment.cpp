@@ -7,7 +7,9 @@
 #include "InternalModuleRegistry.h"
 #include "ScriptExecutionContext.h"
 #include "ZigGlobalObject.h"
+#include "helpers.h"
 #include <JavaScriptCore/AOTRealmStartup.h>
+#include <JavaScriptCore/JSONObject.h>
 
 const JSC::GlobalObjectMethodTable& methodTableOfProgram(int32_t executionContextId);
 
@@ -23,6 +25,15 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__TestGlobals__g
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(Bun::DeclaredModuleLoad::requireForCommandLine(globalObject, Bun::InternalModuleRegistry::InternalTestGlobals)));
+}
+
+// Whether `text` is JSON for a falsy value. Text that is not JSON is none, and nothing is thrown for it: environment.ts reports it.
+extern "C" [[ZIG_EXPORT(check_slow)]] bool Bun__TestEnvironment__isFalsyJSON(JSC::JSGlobalObject* globalObject, const EncodedSlice* text)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSC::JSValue parsed = JSC::JSONParse(globalObject, Zig::toString(*text));
+    RETURN_IF_EXCEPTION(scope, false);
+    return parsed && !parsed.toBoolean(globalObject);
 }
 
 namespace Bun {

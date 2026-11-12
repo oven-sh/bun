@@ -1219,6 +1219,55 @@ test("hasRef() tracks unref() and listener changes made between close() and 'clo
   });
 });
 
+// node has no rule of its own for a closing port: until 'close', unref() and listener
+// changes act on its handle as on an open one, and hasRef() reads the same flag. So
+// calls give, on a port that close() was called on part-way, what they give on a port
+// that stays open. ref() and a function `onmessage =` are left out after close(): bun
+// ignores them on a closing port, node honours them.
+test("between close() and 'close', hasRef() is what the same calls give on an open port", () => {
+  const f = () => {};
+  const g = () => {};
+  const calls: [name: string, call: (port: MessagePort) => unknown, takesRef?: true][] = [
+    ["ref", port => port.ref(), true],
+    ["unref", port => port.unref()],
+    ["on f", port => port.on("message", f)],
+    ["off f", port => port.off("message", f)],
+    ["once g", port => port.once("message", g)],
+    ["addEventListener g", port => port.addEventListener("message", g)],
+    ["removeEventListener g", port => port.removeEventListener("message", g)],
+    ["onmessage = f", port => (port.onmessage = f), true],
+    ["onmessage = null", port => (port.onmessage = null)],
+  ];
+  // Every order of up to three calls, with close() before each call in turn and after the last.
+  const orders: number[][] = [[]];
+  for (const order of orders) {
+    if (order.length < 3) for (let call = 0; call < calls.length; call++) orders.push([...order, call]);
+  }
+  let compared = 0;
+  const differing: string[] = [];
+  for (const order of orders) {
+    for (let closeAt = 0; closeAt <= order.length; closeAt++) {
+      if (order.slice(closeAt).some(call => calls[call][2])) continue;
+      const { port1: closing } = new MessageChannel();
+      const { port1: open } = new MessageChannel();
+      for (let i = 0; i < order.length; i++) {
+        if (i === closeAt) closing.close();
+        calls[order[i]][1](closing);
+        calls[order[i]][1](open);
+      }
+      closing.close();
+      compared++;
+      if (closing.hasRef() !== open.hasRef()) {
+        const names = order.map(call => calls[call][0]);
+        names.splice(closeAt, 0, "close");
+        differing.push(`${names.join("; ")}: ${closing.hasRef()}, on an open port: ${open.hasRef()}`);
+      }
+      open.close();
+    }
+  }
+  expect({ compared, differing }).toEqual({ compared: 2290, differing: [] });
+});
+
 // The refs close() leaves in place for hasRef() are dropped when 'close' fires, so a
 // closed port cannot keep the process alive. Spawned: the failure mode is a hang.
 test.concurrent("a closed port stops keeping the process alive once 'close' has fired", async () => {

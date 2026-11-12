@@ -815,10 +815,34 @@ impl<'a> Printer<'a, '_> {
         let line = &source
             [..bun_core::strings::index_of_char_usize(source, b'\n').unwrap_or(source.len())];
         let line = bun_core::strings::trim_js_whitespace_end(line);
-        match is_text_behind_definition(self.source(previous), line) {
+        let definition = self.source(previous);
+        let is_text = match bun_core::strings::contains_char(definition, b'\n') {
+            false => is_text_behind_definition(definition, line),
+            true => is_text_behind_definition(&Self::without_quote_markers(definition), line),
+        };
+        match is_text {
             true => KeptLineBreaks::First,
             false => KeptLineBreaks::None,
         }
+    }
+
+    /// The lines of `source` without the markers of the block quotes around it, which are on every line but the
+    /// first. A line of a definition after the first holds its destination or its title, neither starts with `>`.
+    fn without_quote_markers(source: &[u8]) -> Vec<u8> {
+        let mut lines = bun_core::strings::split(source, b"\n");
+        let mut out = Vec::with_capacity(source.len());
+        if let Some(first) = lines.next() {
+            out.extend_from_slice(first);
+        }
+        for line in lines {
+            let indent = line
+                .iter()
+                .take_while(|&&byte| matches!(byte, b' ' | b'\t' | b'>'))
+                .count();
+            out.push(b'\n');
+            out.extend_from_slice(&line[indent..]);
+        }
+        out
     }
 
     /// For each line of `block`, a block whose lines are items, whether the line break before it stays,

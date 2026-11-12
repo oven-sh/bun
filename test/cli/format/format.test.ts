@@ -2059,6 +2059,7 @@ describe.concurrent("bun fmt", () => {
         ["    a\n-\n  b\n", "    a\n\n- b\n", "    a\n\n-\nb\n"],
         ["[a]: /url\n<x-y> \n", "[a]: /url\n<x-y>\n", "[a]: /url\n\n<x-y>\n"],
         [">     a\n> 2. b\n> 3. c\n", ">     a\n>\n> 2. b\n> 3. c\n", ">     a\n>\n> 2. b 3. c\n"],
+        ["> [a]:\n> /url\n> 9. c\n", "> [a]: /url\n> 9. c\n", "> [a]: /url\n>\n> 9. c\n"],
       ] as const;
 
       test.each(rows)("%j", async (before, after, byPrettier) => {

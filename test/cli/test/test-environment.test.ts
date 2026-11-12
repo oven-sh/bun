@@ -871,7 +871,7 @@ describe.concurrent("test environment", () => {
         expect(exitCode).toBe(0);
       });
 
-      test("what a package does to JSON.parse, or a test to the options that the package was given, changes nothing", async () => {
+      test("what a package or a test does to the options it was given changes nothing", async () => {
         using dir = tempDir("test-environment", {
           ...fakePackages,
           "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
@@ -880,10 +880,6 @@ describe.concurrent("test environment", () => {
               constructor(options) {
                 super(options);
                 this.given = options;
-                // Until the runner has this window, JSON.parse is the package's own.
-                const { parse } = JSON;
-                JSON.parse = () => ({});
-                queueMicrotask(() => void (JSON.parse = parse));
               }
             };`,
           "1.test.js": `${options(`{"url":"https://example.com/x","viewport":{"width":100}}`)}
@@ -897,6 +893,38 @@ describe.concurrent("test environment", () => {
         expect(windowOf(stdout)).toEqual({
           "1.test.js": "happy-dom#1",
           "2.test.js": "happy-dom#1",
+          "3.test.js": "happy-dom#2",
+        });
+        expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
+        expect(exitCode).toBe(0);
+      });
+
+      test("another spelling of a window's options finds it even if the package replaced JSON.parse to make it", async () => {
+        using dir = tempDir("test-environment", {
+          ...fakePackages,
+          "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
+            const { Window } = exports;
+            exports.Window = class extends Window {
+              constructor(options) {
+                super(options);
+                process.whileWindowOpens?.();
+              }
+            };`,
+          // The first file says what the package does: with --aot, a built-in can only be replaced where a test file spells it out.
+          "1.test.js": `
+            process.whileWindowOpens = () => {
+              const { parse } = JSON;
+              JSON.parse = () => ({});
+              queueMicrotask(() => void (JSON.parse = parse));
+            };
+            ${logEnvironment}`,
+          "2.test.js": options(`{"url":"https://example.com/x"}`) + logEnvironment,
+          "3.test.js": options(`{ "url": "https://example.com/x" }`) + logEnvironment,
+        });
+        const { stdout, stderr, exitCode } = await bunTest(String(dir), "--environment=happy-dom");
+        expect(windowOf(stdout)).toEqual({
+          "1.test.js": "happy-dom#1",
+          "2.test.js": "happy-dom#2",
           "3.test.js": "happy-dom#2",
         });
         expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);

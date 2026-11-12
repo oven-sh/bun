@@ -502,6 +502,58 @@ test.concurrent("pause() and resume() churn while data is in flight never destro
   expect(exitCode).toBe(0);
 });
 
+// A 'data' handler that pauses, removes itself and attaches a 'readable' listener in
+// one turn: the 'pause' tick releases the native reader after the listener is on, and
+// _read must take it back when the Readable asks for data on the listener's behalf.
+test.concurrent("switching from 'data' to 'readable' inside a 'data' handler keeps reading", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const seen = [];
+      const onData = chunk => {
+        seen.push("data:" + chunk);
+        process.stdin.pause();
+        process.stdin.removeListener("data", onData);
+        process.stdin.on("readable", () => {
+          let c;
+          while ((c = process.stdin.read()) !== null) seen.push("readable:" + c);
+        });
+        console.log("GOT1");
+      };
+      process.stdin.on("data", onData);
+      process.stdin.on("end", () => seen.push("end"));
+      process.on("exit", () => console.log(JSON.stringify(seen)));`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  proc.stdin.write("hello");
+  await proc.stdin.flush();
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let stdout = "";
+  for (let r; !(r = await reader.read()).done;) {
+    stdout += decoder.decode(r.value, { stream: true });
+    if (stdout.includes("GOT1")) break;
+  }
+  // A child that let go of stdin has exited by now. The EPIPE is swallowed so the
+  // comparison below shows what the child saw.
+  try {
+    proc.stdin.write("world");
+    await proc.stdin.end();
+  } catch {}
+  for (let r; !(r = await reader.read()).done;) stdout += decoder.decode(r.value, { stream: true });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode, ...(exitCode === 0 ? {} : { stderr }) }).toEqual({
+    stdout: "GOT1\n" + JSON.stringify(["data:hello", "readable:world", "end"]) + "\n",
+    exitCode: 0,
+  });
+});
+
 // The native FileReader source over a pollable pipe used to drain the fd to
 // EAGAIN regardless of JS demand, so an idle consumer still ingested the whole
 // pipe into an internal buffer. The kernel pipe buffer filling up is the

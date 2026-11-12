@@ -125,6 +125,12 @@ devTest("react in html", {
 devTest("[serve.static] reactCompiler compiles the client graph and keeps Fast Refresh", {
   fixture: "react-spa-compiler",
   async test(dev) {
+    // Each module prints alone, so the compiler's import has to print as a member of its namespace.
+    const html = await dev.fetch("/").text();
+    const chunk = await dev.fetch(html.match(/src="([^"]+\.js)"/)![1]).text();
+    expect(chunk).toContain("react_compiler_runtime.c(");
+    expect(chunk).not.toContain(" _c(");
+
     await using c = await dev.client();
     await c.click("button");
     await c.click("button");

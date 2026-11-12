@@ -510,14 +510,14 @@ See [HTML & static sites](/bundler/html-static#inline-environment-variables) for
 
 ## React Compiler
 
-Bun can compile your components and hooks with its built-in [React Compiler](https://react.dev/learn/react-compiler) when it bundles the scripts of an HTML route. Set `reactCompiler` in your `bunfig.toml`. This option is experimental.
+Bun can run its built-in [React Compiler](https://react.dev/learn/react-compiler) over the `.jsx` and `.tsx` files of an HTML route, like `bun build --react-compiler`. Set `reactCompiler` in your `bunfig.toml`. This option is experimental.
 
 ```toml title="bunfig.toml" icon="settings"
 [serve.static]
 reactCompiler = true # default false
 ```
 
-The compiler runs in development and in production (`development: false`). In development it works together with hot reloading and Fast Refresh. The compiled code imports `react/compiler-runtime`, which React 19 has. Files in `node_modules` are not compiled.
+The compiler runs in development and in production (`development: false`). In development it works together with hot reloading and Fast Refresh. The compiled code imports `react/compiler-runtime`, which React 19 has. Files in `node_modules` are not compiled, and neither is a hook in a `.ts` file: give it the `.tsx` extension.
 
 ## Sourcemaps
 

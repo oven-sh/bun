@@ -86,6 +86,8 @@ pub(crate) struct Stream {
     pub close_delivered: Cell<bool>,
     /// `StreamTable::read_count` when the stream closed, or 0 if no read was being parsed.
     closed_in_read: Cell<u32>,
+    /// What the request that opened the stream adds to `StreamTable::open_request_bytes`.
+    request_bytes: Cell<usize>,
 
     pub recv_window: Cell<RecvWindow>,
     /// The id is in `Connection::half_used_windows`.
@@ -131,6 +133,7 @@ impl Stream {
             released: Cell::new(false),
             close_delivered: Cell::new(false),
             closed_in_read: Cell::new(0),
+            request_bytes: Cell::new(0),
             replenish_queued: Cell::new(false),
             recv_window: Cell::new(RecvWindow::new(initial_recv)),
             reading_paused: Cell::new(false),
@@ -239,6 +242,8 @@ pub(crate) struct StreamTable {
     /// The entries that aren't closed, by who opened them (RFC 9113 §5.1.2).
     open_local: Cell<u32>,
     open_peer: Cell<u32>,
+    /// The header list sizes of the requests the peer has open.
+    open_request_bytes: Cell<usize>,
     /// The reads that are being parsed, one inside the other. Nothing is forgotten meanwhile.
     read_depth: Cell<u32>,
     read_count: Cell<u32>,
@@ -268,6 +273,18 @@ impl StreamTable {
 
     pub(crate) fn open_peer(&self) -> u32 {
         self.open_peer.get()
+    }
+
+    pub(crate) fn open_request_bytes(&self) -> usize {
+        self.open_request_bytes.get()
+    }
+
+    /// The peer's request for `stream` was delivered. It counts until the stream closes.
+    pub(crate) fn note_request(&self, stream: &Stream, list_size: usize) {
+        if !stream.is_closed() {
+            stream.request_bytes.set(list_size);
+            update(&self.open_request_bytes, |bytes| *bytes += list_size);
+        }
     }
 
     fn open_count(&self, stream: &Stream) -> &Cell<u32> {
@@ -305,6 +322,9 @@ impl StreamTable {
         }
         let open = self.open_count(stream);
         open.set(open.get() - 1);
+        update(&self.open_request_bytes, |bytes| {
+            *bytes -= stream.request_bytes.get();
+        });
         if self.is_reading() {
             stream.closed_in_read.set(self.read_count.get());
         }
@@ -380,6 +400,7 @@ impl StreamTable {
         drop(self.unread.take());
         self.open_local.set(0);
         self.open_peer.set(0);
+        self.open_request_bytes.set(0);
         self.has_forgettable.set(false);
     }
 

@@ -3625,6 +3625,42 @@ describe("inbound stream lifecycle", () => {
     }
   });
 
+  test("counts the header fields of open requests against maxSessionMemory", async () => {
+    const open: http2.ServerHttp2Stream[] = [];
+    const server = http2.createServer({ maxSessionMemory: 1 });
+    server.on("stream", stream => open.push(stream.on("error", () => {})));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      // One field of 3,000 bytes goes into the dynamic table. Each later request names it 15 times, one byte each.
+      const field = Buffer.concat([
+        Buffer.from([0x40]),
+        hpackLiteral("a"),
+        hpackLiteral(Buffer.alloc(3000, "b").toString()),
+      ]);
+      const request = (id: number) =>
+        encodeFrame(
+          FrameType.HEADERS,
+          0x5,
+          id,
+          requestHeaderBlock("GET", id === 1 ? field : Buffer.alloc(15, 0x80 | 62)),
+        );
+      c.send(Buffer.concat(Array.from({ length: 30 }, (_, i) => request(1 + 2 * i))));
+      c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+      await c.waitFor(f => f.type === FrameType.PING);
+      const refused = c.frames.filter(f => f.type === FrameType.RST_STREAM);
+      expect(refused.map(f => f.payload.readUInt32BE(0))).toEqual(Array(6).fill(ErrorCode.ENHANCE_YOUR_CALM));
+      for (const stream of open.splice(0)) stream.respond({ ":status": 204 });
+      c.send(request(61));
+      await once(server, "stream");
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
   test("maxSessionMemory doesn't hold back a client's own requests", async () => {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`, { maxSessionMemory: 1 });

@@ -1359,10 +1359,10 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// Frees the bytes the socket will never take. node:net hears how its write ended. For anyone else, `close(socket, error)` reports a failure.
     fn discard_queued_writes(&self) {
-        if self.flags.get().contains(Flags::SENDING_QUEUE) {
-            return;
+        // Otherwise `send_queue` frees them when its send returns.
+        if !self.flags.get().contains(Flags::SENDING_QUEUE) {
+            self.buffered_data_for_node_net.with_mut(|b| b.clear());
         }
-        self.buffered_data_for_node_net.with_mut(|b| b.clear());
         let status = match self.buffered_data_for_node_net.get().completion() {
             Completion::None => return,
             Completion::Owed | Completion::Reset => sys::SystemErrno::ECANCELED,
@@ -1371,7 +1371,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         if let Some(handlers) = self.handlers.get()
             && !handlers.on_write_complete().is_empty()
         {
-            self.buffered_data_for_node_net.with_mut(|b| b.take());
+            self.buffered_data_for_node_net
+                .with_mut(|b| b.take_completion());
             self.complete_write_later(handlers, Some(uv_status(status)));
         }
     }

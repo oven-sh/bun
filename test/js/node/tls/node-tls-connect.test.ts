@@ -1650,6 +1650,41 @@ describe("application data written over a Duplex transport before the handshake 
     });
   });
 
+  it.each([
+    [
+      "throws",
+      () => {
+        throw new Error("quota");
+      },
+    ],
+    ["destroys the TLS socket", (client: TLSSocket) => client.destroy(new Error("quota"))],
+  ] as const)("a pending write is failed when the transport's write() %s as it is sent", async (_, fail) => {
+    let secure = false;
+    const { clientSide, serverSide } = inMemoryPair(
+      push => setImmediate(push),
+      () => {
+        if (secure) fail(client);
+      },
+    );
+    const server = new TLSSocket(serverSide, serverContext());
+    server.on("error", () => {}).resume();
+
+    const log: string[] = [];
+    // TLS 1.2: the client's last flight has left by the time the handshake completes.
+    const client = tls.connect({ socket: clientSide, rejectUnauthorized: false, maxVersion: "TLSv1.2" });
+    client.on("secureConnect", () => (secure = true));
+    client.on("error", err => log.push(`error ${err.message}`));
+    const settled = (name: string) => (err?: NodeJS.ErrnoException | null) =>
+      void log.push(`${name} ${err?.code ?? err?.message}`);
+    client.write("one", settled("first write"));
+    client.write("two", settled("second write"));
+    client.end(settled("end"));
+    await new Promise(resolve => client.on("close", resolve));
+    server.destroy();
+
+    expect(log).toEqual(["error quota", "first write ECANCELED", "second write quota", "end quota"]);
+  });
+
   it("a pending write is failed, not delivered, when the server's certificate is rejected", async () => {
     const { clientSide, serverSide } = inMemoryPair(synchronously);
     const received: Buffer[] = [];

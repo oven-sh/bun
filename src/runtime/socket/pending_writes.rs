@@ -108,6 +108,11 @@ impl PendingWrites {
     /// Frees the bytes and hands the completion to the caller, who delivers it.
     pub(crate) fn take(&mut self) -> Completion {
         self.clear();
+        self.take_completion()
+    }
+
+    /// `take()` that leaves the bytes to a send that is reading them.
+    pub(crate) fn take_completion(&mut self) -> Completion {
         core::mem::take(&mut self.completion)
     }
 }

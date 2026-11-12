@@ -163,6 +163,36 @@ describe("shows first arg name correctly in test output", () => {
     expect(fullOutput).toInclude("MyClass > should pass");
     expect(fullOutput).not.toInclude("[object Object] > should pass");
   });
+
+  // JavaScriptCore binds an anonymous default export to the private name `*default*`, whose text is
+  // "starDefault". The name of the class is "default".
+  test("describe block shows an anonymous default class as default in test output", async () => {
+    await using test_dir = tempDir(".", {
+      "anonymous-default-class.js": `export default class {}`,
+      "describe-test.test.js": `
+      import { describe, test, expect } from "bun:test";
+      import AnonymousDefaultClass from "./anonymous-default-class.js";
+
+      describe(AnonymousDefaultClass, () => {
+        test("should pass", () => {
+          expect(true).toBe(true);
+        });
+      });
+      `,
+    });
+    const { stdout, stderr } = spawnSync({
+      cmd: [bunExe(), "test", "describe-test.test.js"],
+      cwd: test_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const fullOutput = stdout.toString() + stderr.toString();
+
+    expect(fullOutput).toInclude("default > should pass");
+    expect(fullOutput).not.toInclude("starDefault > should pass");
+  });
 });
 
 describe("passing arrow function as args", () => {

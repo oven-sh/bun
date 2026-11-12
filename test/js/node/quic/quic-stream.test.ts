@@ -2056,6 +2056,26 @@ describe("a stream that's still open when its connection closes", () => {
     });
   });
 
+  test("rejects the read of a truncated body when the connection idles out", async () => {
+    const { server, stream, peer } = await openPair();
+    await using _ = server;
+    peer.stream.writer.writeSync(Uint8Array.of(2, 3));
+    // The server's read is pending when the connection goes. The client's starts after.
+    const early = Array.fromAsync(peer.stream).catch(err => err.code);
+    const closed = await settle(stream.closed);
+    const late = stream[Symbol.asyncIterator]();
+
+    expect({
+      closed,
+      early: await early,
+      late: [await settleRead(late.next()), await settleRead(late.next())],
+    }).toEqual({
+      closed: "resolved",
+      early: "ERR_QUIC_STREAM_ABORTED",
+      late: ["returned data", "rejected ERR_QUIC_STREAM_ABORTED"],
+    });
+  });
+
   test("rejects closed with the peer's reset code when the connection then idles out", async () => {
     const { server, client, stream, peer } = await openPair();
     await using _ = server;

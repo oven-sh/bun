@@ -627,6 +627,10 @@ impl FileReader {
         self.reader().update_ref(false);
         if !self.reader().is_done() {
             self.reader().close();
+        } else if self.waiting_for_on_reader_done.replace(false) {
+            // The reader is closed and this comes from inside its last delivery, ahead of the release in `on_reader_done`. `done` means the across-read ref is released, which `wrapper_finalized` relies on if that script ends the process.
+            // SAFETY: see `parent()`; the wrapper's ref keeps the count > 0.
+            unsafe { Source::decrement_count(self.parent()) };
         }
     }
 

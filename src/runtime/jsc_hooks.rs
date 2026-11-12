@@ -1492,10 +1492,11 @@ fn load_standalone_sourcemap(
 /// Called on the JS thread (the `CHILD_SINGLETON` static is JS-thread-only).
 pub(crate) fn ipc_child_singleton_deinit() {
     // `InternalMsgHolder`'s owned fields (`Strong`s, map, `Vec`) all impl
-    // `Drop`; taking the `Option` runs them.
+    // `Drop`; taking the `Option` runs them. What node:cluster hasn't read yet stays for it.
     // SAFETY: JS-thread-only mutable static (see `child_singleton()` doc).
     unsafe {
-        (*crate::node::node_cluster_binding::CHILD_SINGLETON.get()).take();
+        (*crate::node::node_cluster_binding::CHILD_SINGLETON.get())
+            .take_if(|holder| holder.is_ready());
     }
 }
 

@@ -633,6 +633,133 @@ process.send("ready");
   30_000,
 );
 
+// Forks job.*, runs `act` on the worker, and prints what the primary saw of it. Both sides log to stdout.
+async function runWorker(act: string, job: Record<string, string>) {
+  using dir = tempDir("cluster-one-worker", {
+    "primary.js": `
+const cluster = require("node:cluster");
+const fs = require("node:fs");
+cluster.setupPrimary({ exec: require("node:path").join(__dirname, ${JSON.stringify(Object.keys(job)[0])}) });
+const worker = cluster.fork();
+const events = [];
+worker.on("online", () => events.push("online"));
+worker.on("message", message => events.push(message));
+worker.on("disconnect", () => {
+  events.push("disconnect");
+  fs.writeFileSync("disconnected", "");
+});
+worker.on("exit", (code, signal) => events.push("exit " + (signal ?? code)));
+process.on("exit", () => console.log(events.join(", ")));
+${act}
+`,
+    ...job,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "primary.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+}
+const whenDisconnected = `
+const disconnected = new Promise(function poll(resolve) {
+  if (require("node:fs").existsSync("disconnected")) resolve();
+  else setImmediate(poll, resolve);
+});`;
+
+describe.concurrent("worker.disconnect() right after fork()", () => {
+  test("lets the worker say that it is online and send", async () => {
+    const job = { "job.js": `require("node:cluster"); process.send("ready");` };
+    expect(await runWorker(`worker.disconnect();`, job)).toEqual({
+      stdout: ["online, ready, disconnect, exit 0"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.each(["job.js", "job.mjs"])("delivers what was sent before it, to %s without node:cluster too", async name => {
+    const send = `worker.send(Buffer.alloc(2 << 20, "x").toString()); worker.disconnect();`;
+    const job = { [name]: `process.on("message", message => console.log(message.length)); process.send("ready");` };
+    expect(await runWorker(send, job)).toEqual({
+      stdout: [String(2 << 20), "ready, disconnect, exit 0"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.each([
+    ["job.js", `${whenDisconnected} disconnected.then(() => console.log(process.connected));`],
+    [
+      "job.mjs",
+      `import { createRequire } from "node:module"; const require = createRequire(import.meta.url);
+      ${whenDisconnected} await disconnected; console.log(process.connected);`,
+    ],
+  ])("reaches a worker that never uses its channel: %s", async (name, source) => {
+    expect(await runWorker(`worker.disconnect();`, { [name]: source })).toEqual({
+      stdout: ["false", "disconnect, exit 0"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("keeps the events of the channel for a first listener that comes late", async () => {
+    const job = {
+      "job.js": `${whenDisconnected}
+      disconnected.then(async () => {
+        const { once } = require("node:events");
+        process.on("disconnect", () => console.log("worker: disconnect"));
+        for (let i = 0; i < 2; i++) console.log((await once(process, "message"))[0]);
+      });`,
+    };
+    expect(await runWorker(`worker.send("a"); worker.send("b"); worker.disconnect();`, job)).toEqual({
+      stdout: ["a", "b", "worker: disconnect", "disconnect, exit 0"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+test.skipIf(isWindows).concurrent("a worker keeps a net.Server for a first listener that comes late", async () => {
+  const send = `
+  worker.send("before");
+  const server = require("node:net").createServer().listen(0, "127.0.0.1", () => {
+    worker.send("server", server, () => server.close());
+    worker.send("behind");
+    worker.disconnect();
+    fs.writeFileSync("disconnected", "");
+  });`;
+  const job = {
+    // Two more turns of the loop, which has everything that was sent to read by then.
+    "job.js": `${whenDisconnected}
+    disconnected.then(() => setImmediate(setImmediate, () => {
+      process.on("message", (message, handle) => {
+        console.log(message);
+        handle?.close();
+      });
+    }));`,
+  };
+  expect(await runWorker(send, job)).toEqual({
+    stdout: ["before", "server", "behind", "online, disconnect, exit 0"],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("a worker whose primary closed the channel exits when it loads node:cluster", async () => {
+  const job = {
+    "job.js": `${whenDisconnected}
+    disconnected.then(() => require("node:http").createServer().listen(0, "127.0.0.1"));`,
+  };
+  expect(await runWorker(`worker.process.disconnect();`, job)).toEqual({
+    stdout: ["disconnect, exit 0"],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
   // `kHandle` is a private symbol that only `cluster.fork()` sets, so a
   // `cluster.Worker({ process })` built around a plain object (how Node's own

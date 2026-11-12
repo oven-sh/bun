@@ -806,11 +806,12 @@ impl ExitHandler {
         vm.entry_evaluation_started = true;
     }
 
-    /// Only a worker's start waits on this (`wait_for_worker_entry_evaluation`);
+    /// Only a worker's start (`wait_for_worker_entry_evaluation`) and the channel of a cluster worker wait on this;
     /// any other VM answers `true` so the hook's registry probe never runs there.
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__entryEvaluationStarted(vm: &VirtualMachine) -> bool {
-        vm.entry_evaluation_started || vm.worker.is_none()
+        vm.entry_evaluation_started
+            || (vm.worker.is_none() && !vm.pending_ipc.is_some_and(|ipc| ipc.of_cluster_worker))
     }
 
     /// The module-registry key of the current entry load's root: the
@@ -4262,6 +4263,8 @@ pub struct Options {
 pub struct PendingIpc {
     pub fd: bun_sys::Fd,
     pub advanced: bool,
+    /// The primary waits for this side to close it, so it opens when the entry point starts to run.
+    pub of_cluster_worker: bool,
 }
 
 /// Caller intent for runtime module resolution.
@@ -4698,6 +4701,7 @@ impl VirtualMachine {
                         self.pending_ipc = Some(PendingIpc {
                             fd: bun_sys::Fd::from_uv(fd),
                             advanced,
+                            of_cluster_worker: map.get(b"NODE_UNIQUE_ID").is_some(),
                         })
                     }
                     None => bun_core::warn!(

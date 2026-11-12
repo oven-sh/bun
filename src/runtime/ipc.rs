@@ -2131,6 +2131,19 @@ fn handle_ipc_message(
     message: DecodedIPCMessage,
     global_this: &JSGlobalObject,
 ) -> JsResult<()> {
+    deliver_ipc_message(send_queue, message, global_this, false)
+}
+
+unsafe extern "C" {
+    safe fn Process__holdMessage(global: &JSGlobalObject, message: JSValue) -> bool;
+}
+
+pub(crate) fn deliver_ipc_message(
+    send_queue: &SendQueue,
+    message: DecodedIPCMessage,
+    global_this: &JSGlobalObject,
+    was_held: bool,
+) -> JsResult<()> {
     #[cfg(debug_assertions)]
     {
         // The `Formatter` runs its deinit in `Drop`.
@@ -2173,6 +2186,16 @@ fn handle_ipc_message(
                 }
             }
         }
+    }
+
+    // A handle waits with no ack, so its descriptor stays in `incoming_fd` and the sender holds what comes behind it.
+    if !was_held
+        && let DecodedIPCMessage::Data(data) = message
+        && matches!(send_queue.owner.get(), Some(SendQueueOwner::Instance))
+        && !matches!(internal_command, Some(IPCCommand::Ack | IPCCommand::Nack))
+        && Process__holdMessage(global_this, data)
+    {
+        return Ok(());
     }
 
     if let Some(icmd) = internal_command {

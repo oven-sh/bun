@@ -65,6 +65,16 @@ pub(crate) fn handle_internal_message_child(
 ) -> JsResult<()> {
     bun_output::scoped_log!(IPC, "handleInternalMessageChild");
 
+    // A worker that hasn't loaded node:cluster has no server to close first. If it loads later, it finds the message.
+    if !child_singleton().is_ready()
+        && message.is_object()
+        && let Some(act) = message.get(global, "act")?
+        && act.is_string()
+        && act.to_bun_string(global)?.eq_ascii(b"disconnect")
+    {
+        crate::hw_exports::close_child_ipc(global);
+    }
+
     child_singleton().dispatch(message, handle, global)
 }
 

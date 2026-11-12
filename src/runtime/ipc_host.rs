@@ -567,3 +567,16 @@ pub(crate) fn global_object_has_ipc(global: &JSGlobalObject) -> bool {
 pub(crate) fn ensure_process_ipc_initialized(global: &JSGlobalObject) {
     let _ = get_ipc_instance(global.bun_vm().as_mut());
 }
+
+// HOST_EXPORT(Bun__deliverHeldIPCMessage, c)
+pub(crate) fn deliver_held_ipc_message(global: &JSGlobalObject, message: JSValue) {
+    if let Some(instance) = CHANNEL.get() {
+        let message = DecodedIPCMessage::Data(message);
+        crate::dispatch::fold(IPC::deliver_ipc_message(
+            instance.data(),
+            message,
+            global,
+            true,
+        ));
+    }
+}

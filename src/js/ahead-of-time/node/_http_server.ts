@@ -2992,16 +2992,14 @@ function completeWithoutBody(req: $Node.IncomingMessage, socket: $Node.HttpServe
   req.complete = true;
   if (socket._paused) return;
   if (
-    IS_COMPILED_AHEAD_OF_TIME &&
-    $findsDeclaredMember(socket, "isPaused") &&
-    readsFlowUnseen(socket) &&
-    socket._readableState === socket.$ownReadableState &&
-    (flagsOf(socket._readableState) & (kFlowing | kPaused)) === kFlowing
+    !(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(socket, "isPaused")) ||
+    !readsFlowUnseen(socket) ||
+    socket._readableState !== socket.$ownReadableState ||
+    (flagsOf(socket._readableState) & (kFlowing | kPaused)) !== kFlowing
   ) {
-    return;
+    ("unlikely");
+    if (socket.readable && socket.isPaused()) socket.resume();
   }
-  ("unlikely");
-  if (socket.readable && socket.isPaused()) socket.resume();
 }
 
 function resetSocketTimeout(server: $Node.HttpServer, socket: $Node.HttpSocket) {

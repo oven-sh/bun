@@ -34,7 +34,6 @@ test/cli/install/npmrc.test.ts  # 2 of 80 builds; debian, ubuntu
 test/cli/install/public-hoist-pattern.test.ts  # 2 of 80 builds; ubuntu
 test/cli/run/cpu-prof.test.ts  # 4 of 80 builds; windows
 test/cli/run/filter-workspace.test.ts  # 1 of 80 builds; windows
-test/cli/run/no-orphans.test.ts  # 8 of 80 builds
 test/cli/run/require-cache.test.ts  # 16 of 80 builds; error: Memory leak detected
 test/cli/run/run-crash-handler.test.ts  # 1 of 80 builds; windows; pid 2220 invoked crashbypanic() handler
 test/cli/update_interactive_formatting.test.ts  # 1 of 80 builds; ubuntu

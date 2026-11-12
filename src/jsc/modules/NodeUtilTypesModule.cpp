@@ -548,13 +548,13 @@ static bool arraySubsequence(JSC::JSGlobalObject* globalObject, JSC::MarkedArgum
             RETURN_IF_EXCEPTION(scope, false);
             bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualElement, expectedElement);
             RETURN_IF_EXCEPTION(scope, false);
-            if (cycles.endless)
-                return false;
             actualPos++;
             if (equal) {
                 matched = true;
                 break;
             }
+            if (cycles.endless)
+                return false;
         }
         if (!matched)
             return false;
@@ -642,8 +642,6 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
                 RETURN_IF_EXCEPTION(scope, false);
                 bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, actualValue, expectedValue);
                 RETURN_IF_EXCEPTION(scope, false);
-                if (cycles.endless)
-                    return false;
                 if (equal) {
                     usedIdentityKeys.append(expectedKey);
                     if (identityIndex != SIZE_MAX)
@@ -654,6 +652,8 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
         }
         if (consumed)
             continue;
+        if (cycles.endless)
+            return false;
         if (!expectedKey.isObject())
             return false;
         if (!materialize())
@@ -670,19 +670,20 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
                 continue;
             bool keyEqual = compareBranch(globalObject, gcBuffer, cycles, scope, candidateKey, expectedKey);
             RETURN_IF_EXCEPTION(scope, false);
-            if (cycles.endless)
-                return false;
-            if (!keyEqual)
+            if (!keyEqual) {
+                if (cycles.endless)
+                    return false;
                 continue;
+            }
             bool valueEqual = compareBranch(globalObject, gcBuffer, cycles, scope, gcBuffer.at(entriesStart + i * 2 + 1), expectedValue);
             RETURN_IF_EXCEPTION(scope, false);
-            if (cycles.endless)
-                return false;
             if (valueEqual) {
                 usedIndices[i] = true;
                 matched = true;
                 break;
             }
+            if (cycles.endless)
+                return false;
         }
         if (!matched)
             return false;
@@ -723,13 +724,13 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
                 continue;
             bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, gcBuffer.at(itemsStart + i), expectedItem);
             RETURN_IF_EXCEPTION(scope, false);
-            if (cycles.endless)
-                return false;
             if (equal) {
                 usedIndices[i] = true;
                 matched = true;
                 break;
             }
+            if (cycles.endless)
+                return false;
         }
         if (!matched)
             return false;

@@ -84,8 +84,10 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
         throw new Error("Unsupported function in " + name);
       }
 
+      // The build drops a marked binding that nothing uses. Only a binding that is still there needs its mark.
       const built = pureBindings(outfile);
-      const lost = [...pureBindings(source)].filter(binding => !built.has(binding));
+      const words = new Set(outfile.match(/[\w$]+/g));
+      const lost = [...pureBindings(source)].filter(binding => words.has(binding) && !built.has(binding));
       if (lost.length > 0) {
         throw new Error(`The build removed /* @__PURE__ */ from ${lost.join(", ")} in ${name}`);
       }

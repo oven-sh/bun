@@ -1,0 +1,19 @@
+# -- source: a-field-that-reaches-its-sum-over-a-join-beside-a-written-number-asks-its-site-in-line.cjs
+# "use strict";
+# const whole = JSON.parse('[{"x":0.25,"y":1},{"x":0.5,"y":2},{"x":0.75,"y":3}]'), mixed = JSON.parse('[{"x":0.25,"y":1},{"y":2},{"x":null,"y":3},{"x":0,"y":4},{"x":"9","y":5},{"x":1.5,"y":6}]');
+# function sumEven(d, k) { let total = k & 3; for (let i = 0; i < d.length; i++) total += i & 1 ? 0 : d[i].x; return total; }
+# function sumOrNone(d, k) { let total = k & 3; for (let i = 0; i < d.length; i++) total += d[i].x ?? 0; return total; }
+# const shelf = { sumEven, sumOrNone }, words = JSON.parse('["sumEven","sumOrNone"]');
+# for (const word of words) print(word, shelf[word](whole, 1), shelf[word](mixed, 2), shelf[word](whole, 3));
+# -- end of source
+# f1 = sumEven. In `total += d[i].x` the read by name asks its site in line and is asked for a number, because the sum is its only user. Out of the arm of a ternary the field is handed on as
+# it is and reaches the sum over a join beside a written number: it is reckoned with as a number there too. f2 = sumOrNone: NOT behind the test of `??` or `||`: that is written where the
+# field is often missing or null: the read at its site would fail and the typed copy of the loop be left at the first such record.
+# RUN: walk f1 mechanisms=all
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="x"
+# RUN(NONE): walk f2 mechanisms=all
+# NONE-NOT: = GetValueAtSiteOrAbsent {{*}} key="x"
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: sumEven 2 2.2590 4
+# ANSWER-NEXT: sumOrNone 2.5 2.2591.5 4.5
+# ANSWER-NEXT: exited with 0

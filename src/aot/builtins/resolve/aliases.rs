@@ -1,3 +1,4 @@
+use super::module_cache::name_of_module_cache;
 use super::resolver::{AliasSource, ExprState, HolderKind, ResolvedValue, Resolver};
 use super::{BuiltinPath, ResolveInput};
 use crate::builtins::table::{self, BuiltinFlags, BuiltinId, BuiltinKind, Scope};
@@ -212,6 +213,9 @@ impl Resolver<'_, '_> {
                 initializer,
                 members,
             } => {
+                if let Some(cache) = self.find_module_cache_taken_off(source) {
+                    return Some(cache.stored());
+                }
                 let mut value = match self.value_of(*initializer) {
                     Some(value) => value,
                     None => self.find_object_only_held_by(*initializer)?,
@@ -221,6 +225,23 @@ impl Resolver<'_, '_> {
                 }
                 Some(value.stored())
             }
+        }
+    }
+
+    fn find_module_cache_taken_off(&self, source: &AliasSource) -> Option<ResolvedValue> {
+        match source {
+            AliasSource::Initializer {
+                initializer,
+                members,
+            } => match members[..] {
+                [name]
+                    if name == name_of_module_cache() && self.value_of(*initializer).is_none() =>
+                {
+                    self.find_module_cache_of_made_require(*initializer)
+                }
+                _ => None,
+            },
+            AliasSource::Known(_) => None,
         }
     }
 
@@ -258,6 +279,7 @@ impl Resolver<'_, '_> {
                 held.filter(|held| {
                     table::canonical_id(held.path.id) == BuiltinId::ModuleObject
                         || is_prototype_object(held.path.id)
+                        || super::module_cache::is_module_cache(held.path.id)
                 })
             }
             _ => self.find_module_object_behind_tests(initializer),
@@ -272,7 +294,8 @@ impl Resolver<'_, '_> {
     fn is_source_of_object_only_held(&self, source: &AliasSource) -> bool {
         match source {
             AliasSource::Initializer { initializer, .. } => {
-                self.find_object_only_held_by(*initializer).is_some()
+                self.find_module_cache_taken_off(source).is_some()
+                    || self.find_object_only_held_by(*initializer).is_some()
             }
             AliasSource::Known(_) => false,
         }
@@ -317,6 +340,30 @@ impl Resolver<'_, '_> {
                     ..
                 })
                 | None => {}
+            }
+        }
+        paths.shared_sort_unstable_by_key(|entry| entry.0);
+        paths
+    }
+
+    pub(super) fn collect_paths_read_by_patterns(&self) -> Vec<(SymbolId, BuiltinPath)> {
+        let mut paths = Vec::new();
+        for (&symbol, source) in &self.aliases {
+            let AliasSource::Initializer {
+                initializer,
+                members,
+            } = source
+            else {
+                continue;
+            };
+            let (Some(holder), false) = (self.value_of(*initializer), members.is_empty()) else {
+                continue;
+            };
+            let read = members.iter().try_fold(holder, |holder, &name| {
+                self.find_member(holder, name).map(ResolvedValue::object)
+            });
+            if let Some(read) = read {
+                paths.push((symbol, read.path));
             }
         }
         paths.shared_sort_unstable_by_key(|entry| entry.0);

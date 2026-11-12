@@ -1,19 +1,23 @@
+use std::cell::OnceCell;
 use std::ops::Range;
 
+use bun_sema::atom::Atom;
 use bun_sema::bind::SymbolId;
 use bun_sema::fold::{Constant, Decision, FoldedValue};
 use bun_sema::hir::{BinOp, ExprId, ExprKind, File, PropKey};
 use bun_sema::hir_from_data::DataValue;
+use bun_sema::import_sites::ExportedNames;
 use bun_sema::resolve::FinishedFile;
-use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashMap, SharedSort};
 
 use super::FileContents;
 use super::load_names::{find_modules_spelled_as_keys_in_data, find_modules_spelled_in_data};
 use crate::builtins::table::{self, ExportLookup};
-use crate::builtins::{BuiltinId, ResolvedBuiltins};
+use crate::builtins::{BuiltinId, BuiltinNames, ResolvedBuiltins};
 use crate::load::runtime_modules::RuntimeModules;
 
 pub(crate) struct ScanInput<'a> {
+    pub builtin_names: &'a BuiltinNames,
     pub runtime_modules: &'a RuntimeModules,
     pub runs_tests: bool,
     pub loads_code_from_disk: bool,
@@ -31,6 +35,8 @@ pub(super) struct ContentsScan<'a, 's> {
     pub(super) found: FileContents,
     pub(super) holders_of_own_file: Vec<SymbolId>,
     pub(super) levels_above_root: Option<usize>,
+    pub(super) exported_names: OnceCell<ExportedNames>,
+    pub(super) written_names: OnceCell<FxHashMap<Atom, Vec<ExprId>>>,
 }
 
 #[derive(Copy, Clone)]
@@ -121,6 +127,7 @@ impl ContentsScan<'_, '_> {
                 self.look_at_folded_text(expression);
             }
             ExprKind::New(_) => self.look_at_construction(expression),
+            ExprKind::Assign { op, target, .. } => self.look_at_path_stored(op, target),
             ExprKind::Object(properties) => self.look_at_keys(properties),
             ExprKind::Call(call) => {
                 self.look_at_folded_text(expression);
@@ -150,7 +157,6 @@ impl ContentsScan<'_, '_> {
             | ExprKind::Class(_)
             | ExprKind::Unary { .. }
             | ExprKind::Binary { .. }
-            | ExprKind::Assign { .. }
             | ExprKind::Cond { .. }
             | ExprKind::Spread(_)
             | ExprKind::Await(_)
@@ -194,6 +200,8 @@ pub(crate) fn scan_file(
         found: FileContents::default(),
         holders_of_own_file: Vec::new(),
         levels_above_root: None,
+        exported_names: OnceCell::new(),
+        written_names: OnceCell::new(),
     };
     for index in 0..analysis.import_sites.len() {
         scan.look_at_site(index);

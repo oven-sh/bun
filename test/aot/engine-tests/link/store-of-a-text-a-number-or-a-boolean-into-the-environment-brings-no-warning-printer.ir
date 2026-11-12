@@ -1,0 +1,35 @@
+# process.env.MODE = "test"; process.env.LIMIT = 5; process.env.FLAG = true; delete process.env.MODE
+# The object warns about a value that is stored into it and is no string, number or boolean. What is written at these stores is one of the three, and a deletion stores nothing: native code calls neither function of the library.
+# Link does not know the object: the row of process.env answers `object`. So a store through an object that nobody knows is asked the same.
+# The control: store-into-the-environment-brings-the-warning-printer.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f1 unreached
+# CHECK: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/ProcessObjectInternals.ts" displayPath="/$bun/js/builtins/ProcessObjectInternals.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ProcessObjectInternalsCreateOnWarning function=f1
+runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="env"
+    v2 = String string="test"
+    PropSet v1, v2 key="MODE"
+    v4 = Integer integer=5
+    PropSet v1, v4 key="LIMIT"
+    v6 = Boolean boolean=true
+    PropSet v1, v6 key="FLAG"
+    v8 = PropDelete v1 key="MODE"
+    Return v8
+}
+function f1 name="createOnWarning" module=m1 kind=Method role=Library flags=[HasExplicitName] length=4 enclosingRuntimeFunction=ProcessObjectInternalsCreateOnWarning thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}
+function f2 name="initializeNextTickQueue" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=ProcessObjectInternalsInitializeNextTickQueue thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}

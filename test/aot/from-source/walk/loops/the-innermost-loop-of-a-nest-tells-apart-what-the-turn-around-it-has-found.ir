@@ -1,0 +1,28 @@
+# -- source: the-innermost-loop-of-a-nest-tells-apart-what-the-turn-around-it-has-found.cjs
+# const hold = JSON.parse('{"weights":[1.5,2.5],"rows":[[1.5,2.5],[3.5,4.5]],"points":[[1.5,2.5],[5.5,5.5],[9.5,0.5]],"centers":[[1.5,2.5],[4.5,4.5]]}');
+# function between(t) { let p = hold.weights; if (t < 0) p = null; const rows = hold.rows; let c = 0; for (let j = 0; j < rows.length; j++) { const r = rows[j]; for (let i = 0; i < p.length; i++) c = c + p[i] * r[i]; } return c; }
+# function nearest(points, centers) { let out = 0; for (const p of points) { let best = 0, least = Infinity; for (let c = 0; c < centers.length; c++) { let v = 0; const r = centers[c]; for (let k = 0; k < p.length; k++) { const e = p[k] - r[k]; v += e * e; } if (v < least) { least = v; best = c; } } out = out * 2 + best; } return out; }
+# function nearestOfTwo(points, centers) { let out = 0; for (const p of points) { let best = 0, least = Infinity; for (let c = 0; c < centers.length; c++) { const dx = p[0] - centers[c][0], dy = p[1] - centers[c][1], v = dx * dx + dy * dy; if (v < least) { least = v; best = c; } } out = out * 2 + best; } return out; }
+# function said(run) { try { return String(run()); } catch (error) { return error.constructor.name; } }
+# const found = [said(() => between(1)), said(() => nearest(hold.points, hold.centers)), said(() => nearestOfTwo(hold.points, hold.centers))];
+# const kinds = [r => Float64Array.from(r), r => Uint8Array.from(r), r => r.map(String), r => r.join(""), r => ({ length: r.length, 0: r[0], 1: r[1] }), r => [r[0], , r[1]], () => null];
+# for (const kind of kinds) {
+#     const rows = hold.rows, weights = hold.weights;
+#     hold.rows = rows.map(kind); found.push(said(() => between(1)));
+#     hold.weights = kind(weights); found.push(said(() => between(1)));
+#     hold.rows = rows; found.push(said(() => between(1)));
+#     hold.weights = weights;
+#     found.push(said(() => nearest(hold.points.map(kind), hold.centers)), said(() => nearest(hold.points, hold.centers.map(kind))), said(() => nearest(hold.points.map(kind), hold.centers.map(kind))));
+#     found.push(said(() => nearestOfTwo(hold.points.map(kind), hold.centers)), said(() => nearestOfTwo(hold.points, hold.centers.map(kind))));
+# }
+# found.push(said(() => between(-1)), said(() => nearest([[1.5, 2.5], Float64Array.of(5.5, 5.5), "95"], [[1.5, 2.5], Uint8Array.of(4, 4)])));
+# sink(found.join(" "));
+# -- end of source
+# `nearest`: use alone says that `p` is a list of numbers, so the loop over the centers is built once for a list and once for every view. In a copy of a loop that is told apart no loop was ("one level at
+# a time, else k^depth"), and `r`, which the turn around finds, was read by key in every turn of the innermost loop: 24,240 > 60,261 instructions a call. The innermost loop holds no loop to multiply: it
+# tells apart what the turn around it has found; what stood in front of the loop around had its chance there.
+# f1 = between, f2 = nearest, f3 = nearestOfTwo
+# RUN(COUNT): compile LoopsVersionedInsideOuterVersions
+# COUNT-NOT: statistic LoopsVersionedInsideOuterVersions 0
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 25 3 3 25 25 25 3 3 3 3 3 21 16 19 3 3 3 3 3 25 25 25 3 3 3 3 3 NaN NaN NaN 0 0 0 0 0 25 25 25 3 3 3 3 3 NaN NaN NaN 0 0 0 0 0 TypeError TypeError TypeError TypeError TypeError TypeError TypeError TypeError TypeError 3

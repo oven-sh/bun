@@ -1,0 +1,20 @@
+# f1 = linkIfHeavier
+# -- source: store-a-reference-on-one-of-two-paths.ts
+# type Entry = { follower: Entry | null; weight: number };
+# function linkIfHeavier(entry: Entry, follower: Entry): void {
+#   if (follower.weight > entry.weight) entry.follower = follower;
+#   else entry.weight = follower.weight;
+# }
+# declare const input: any;
+# const first: Entry = { follower: null, weight: +input };
+# const second: Entry = { follower: null, weight: 1.5 };
+# linkIfHeavier(first, second);
+# linkIfHeavier(second, first);
+# (globalThis as any).answer = [first.follower, second.follower, first.weight + second.weight];
+# -- end of source
+# The compiler before this one: 9 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 28, patches 0, moves 2, unlikely or rare 29.
+# RUN(X64): steps most:30 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 30

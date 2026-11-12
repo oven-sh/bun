@@ -194,6 +194,19 @@ const programs: Record<string, Program> = {
     },
     plain: "[ 1 ]\n",
   },
+  "minizlib": {
+    files: {
+      "main.js": `
+        const { Buffer } = require("buffer");
+        const OriginalBufferConcat = Buffer.concat;
+        function write(chunks) {
+          Buffer.concat = (args) => args;
+          try { return Buffer.concat(chunks).length; } finally { Buffer.concat = OriginalBufferConcat; }
+        }
+        console.log(write([Buffer.from("a"), Buffer.from("b")]));`,
+    },
+    plain: "2\n",
+  },
   "prototype": {
     files: {
       "main.js": `

@@ -277,6 +277,8 @@ const nativeFiles = [
   "NodeURL.cpp",
   "NodeUtilTypesModule.cpp",
   "NodeV8.cpp",
+  "NodeValidator.cpp",
+  "Path.cpp",
   "ProcessBindingTTYWrap.cpp",
   "StructuredClone.cpp",
   "TestEnvironment.cpp",

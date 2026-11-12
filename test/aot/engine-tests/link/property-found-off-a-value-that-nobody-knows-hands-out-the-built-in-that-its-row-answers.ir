@@ -1,0 +1,30 @@
+# Buffer.alloc(1)[Symbol.species].from("hi")
+# Link cannot tell what the read under @@species finds, so the key counts as read off a value that nobody knows, and `from` as called on one. On Buffer.prototype the key finds a property whose row says
+# what a read of it answers: `Buffer` itself. Whoever reads it holds `Buffer`: it is let go, `from` is looked for on it, and the function of the library behind Buffer.from is in the program.
+# If only the property's own entry counted as found, the executable would stop: "Buffer.from was left out".
+# The control: name-called-on-a-value-that-nobody-knows-finds-nothing-on-a-class-that-nobody-holds.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/JSBufferConstructor.ts" displayPath="/$bun/js/builtins/JSBufferConstructor.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=JSBufferConstructorFrom function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Buffer
+    v1 = PropGet v0 key="alloc"
+    v2 = Convert v1 declared={type=builtin(BufferAlloc) flags=[IsExpected]}
+    v3 = Integer integer=1
+    v4 = Call v2, v0, v3 calleeKey="alloc" calleeName="Buffer.alloc"
+    v5 = PropGet v4 key=@@species
+    v6 = PropGet v5 key="from"
+    v7 = String string="hi"
+    v8 = Call v6, v5, v7 calleeKey="from"
+    Return v8
+}
+function f1 name="from" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=JSBufferConstructorFrom thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

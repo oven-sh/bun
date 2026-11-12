@@ -1,0 +1,30 @@
+# Fault injection, testing=TreatEqualIntegersAsLess: the code generator compiles `<` of two integers as `<=`, so a value equal to the bound passes and counts as proven to be below it.
+# The switch testing=CheckBoundsInEmittersOnly enables the checks that the emitters make with --aot-harden=proof-checks, and none of the walk's own checks.
+# So the fault is not caught at its branch and reaches the emitter's check.
+# A boxed number that is proven to fit in an int32, but is in its box as a double, is truncated to a 32-bit integer by taking its low half.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly
+# RIGHT: 0 2147483646 2147483647 2147483647 2147483647 2147483647
+# RIGHT-NEXT: exited with 0
+# RUN(UNHELD): run-in-shell mechanisms=all testing=TreatEqualIntegersAsLess
+# UNHELD: 0 2147483646 2147483647 -2147483648 -2147483648 -2147483648
+# UNHELD-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly,TreatEqualIntegersAsLess
+# HELD: bun: internal AOT error: type check failed at {{*}} (tally)
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function tally(low: number, add: number, step: number, by: number, turns: number): unknown[] {
+#   const out: unknown[] = [];
+#   let kept = 0;
+#   let held: number | undefined = undefined;
+#   for (let turn = 0; turn !== turns; turn++) {
+#     if (held !== undefined && held >= 0 && held < 2147483648) kept = held;
+#     out.push(kept);
+#     held = (low | 0) + ((add + turn * step) | 0);
+#   }
+#   return out;
+# }
+# const given: number[] = JSON.parse("[2147483647, -1, 1, 0, 6]");
+# print(tally(given[0]!, given[1]!, given[2]!, given[3]!, given[4]!).join(" "));
+# -- end of source

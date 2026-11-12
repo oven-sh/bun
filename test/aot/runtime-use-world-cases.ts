@@ -449,7 +449,8 @@ group("what is done with the exports of the entry point does not depend on how t
     [
       "an object that says what is read of it",
       {
-        "main.ts": `export default new Proxy({}, { get(_, name) { console.log("read", String(name)); return undefined; } });`,
+        // No `fetch`, so `app` is read; an `app`, so `stop` is read; a `stop` that can be called, so this is no server and nothing more is read.
+        "main.ts": `export default new Proxy({}, { get(_, name) { console.log("read", String(name)); return name === "fetch" ? undefined : () => {}; } });`,
       },
       readsOfNamesOfServer,
     ],
@@ -609,32 +610,16 @@ group("what --trim removes", () => {
     ).toEqual({ stdout: "hello\n", exitCode: 0, removesUnusedFeatures: false });
   });
 
-  const builtOnceWith = new Map<string, ReturnType<typeof built>>();
-  const builtWith = (option: string) => {
-    let once = builtOnceWith.get(option);
-    if (!once) builtOnceWith.set(option, (once = built({ "main.ts": main }, ["main.ts", "--compile-exec-argv=" + option])));
-    return once;
-  };
-  const removesWhatIsUnusedWith = async (option: string) => {
-    expect(await builtWith(option)).toEqual({
-      stdout: "hello\n",
-      exitCode: 0,
-      removesUnusedFeatures: true,
-    });
-  };
-  test.each(["--smol", "--stack-trace-limit=3"])(
+  test.each(["--smol", "--stack-trace-limit=3", "--sql-preconnect"])(
     "--compile-exec-argv=%s: the features the program does not use",
-    removesWhatIsUnusedWith,
+    async option => {
+      expect(await built({ "main.ts": main }, ["main.ts", "--compile-exec-argv=" + option])).toEqual({
+        stdout: "hello\n",
+        exitCode: 0,
+        removesUnusedFeatures: true,
+      });
+    },
   );
-  test.failing(
-    "--compile-exec-argv=--sql-preconnect: the features the program does not use: HTMLRewriter stays, 1 feature for 0",
-    () => removesWhatIsUnusedWith("--sql-preconnect"),
-  );
-  // A case that is marked fails for whatever reason. That the program is built and answers is asked here, of the same build.
-  test("--compile-exec-argv=--sql-preconnect: the program is built and answers all the same", async () => {
-    const { stdout, exitCode } = await builtWith("--sql-preconnect");
-    expect({ stdout, exitCode }).toEqual({ stdout: "hello\n", exitCode: 0 });
-  });
 
   test("--compile-exec-argv=--trace-exitx takes a module of the library that the image does not have: no build", async () => {
     expect(built({ "main.ts": main }, ["main.ts", "--compile-exec-argv=--trace-exitx"])).rejects.toThrow(

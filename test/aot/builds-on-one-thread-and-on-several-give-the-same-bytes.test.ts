@@ -1,4 +1,4 @@
-// A build with --aot gives the same executable, byte for byte, whatever the number of threads. The flow analysis goes in rounds, on one lane at one thread and on 32 at several.
+// A build with --aot gives the same executable, byte for byte, whatever the number of threads. The flow analysis goes in rounds, on 32 lanes; when this fault stood it had one lane at one thread.
 // The library lays accessors in fields, and each waits until its field is asked. Who asked a field of another lane once woke it a round later than who asked a field of its own,
 // so calls saw other types on the way, and what they had asked for on the way stood in the tables: two executables of this program.
 import { describe, expect } from "bun:test";

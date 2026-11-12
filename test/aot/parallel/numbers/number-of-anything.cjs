@@ -1,0 +1,9 @@
+"use strict";
+// Number called on anything: numbers of every kind as they are, everything else as the language converts it, in loops and outside, with a list that its own conversions change.
+const out = [], hide = v => [v][JSON.parse("0")], s = v => (Object.is(v, -0) ? "-0" : typeof v + ":" + String(v)), log = [];
+const values = [0, 1, -1, 2147483647, -2147483648, 0.5, -0, NaN, Infinity, 5e-324, 1e308, "", " 12 ", "x", "0x1f", "1e3", "-0", "\u0661", null, undefined, true, false, 10n, -(2n ** 70n), Symbol("s"), [], [5], [1, 2], {}, { valueOf() { log.push("v"); return 7.5; } }, { valueOf() { return 8n; } }, { valueOf() { return Symbol(); } }, { valueOf() { throw new RangeError("r"); } }, { [Symbol.toPrimitive](h) { log.push(h); return "9"; } }, new Number(3), new Date(5), () => 1, Object.create(null)];
+const one = x => Number(x), two = x => Number(x) + 1, three = (x, y) => Number(x, y), list = l => { let a = 0; for (let i = 0; i < l.length; i++) a += Number(l[i]); return a; };
+for (let r = 0; r < 4; r++) for (const v of values) for (const f of [one, two, three, x => list([x, 1, x]), x => new Number(x) + 0, x => { const { price = 2 } = hide({ price: x }); return Number(price) * 2; }, x => Number.call(null, x), x => +Number(x)]) { try { out.push(s(f(hide(v), 1))); } catch (e) { out.push(e.name); } }
+const grows = [1, 2, { valueOf() { if (grows.length < 8) grows.push(5); return 1; } }]; out.push(list(grows), grows.length); out.push(Number(), s(Number(hide(-0))), Number(...hide([])), Number(...hide([4, 5])));
+try { (function f() { return Number(hide({ valueOf() { throw new Error("deep"); } })); })(); } catch (e) { out.push(e.message); }
+let h = 7; for (const x of out) { const v = String(x); for (let i = 0; i < v.length; i++) h = (Math.imul(h, 31) + v.charCodeAt(i)) | 0; } console.log(out.length, log.length, h, out.slice(0, 16).join());

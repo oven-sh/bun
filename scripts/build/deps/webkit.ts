@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "5a61071f79134bf41844e7ea31a8449147d85dd4";
+export const WEBKIT_VERSION = "7f020d2818998a359eafb1c40c274550c1b5140a";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -374,6 +374,8 @@ const rows: Row[] = [
   ["ENABLE_LAYOUT_TESTS", 0],
   ["ENABLE_LEGACY_CUSTOM_PROTOCOL_MANAGER", 0],
   ["ENABLE_LEGACY_ENCRYPTED_MEDIA", 0],
+  // WebKitFeatures.cmake exposes it where it is off, which is everywhere but Apple. PlatformEnable.h turns it on for macOS.
+  ["ENABLE_LIB_JSC_TOOLS", c => (c.darwin ? undefined : 0)],
   ["ENABLE_LLVM_PROFILE_GENERATION", 0],
   ["ENABLE_MAC_GESTURE_EVENTS", 0],
   ["ENABLE_MALLOC_HEAP_BREAKDOWN", 0],
@@ -452,6 +454,7 @@ const rows: Row[] = [
   ["ENABLE_WEBXR", 0],
   ["ENABLE_WEBXR_HIT_TEST", 0],
   ["ENABLE_WEBXR_LAYERS", 0],
+  ["ENABLE_WEBXR_PLANE_DETECTION", 0],
   ["ENABLE_WEB_API_STATISTICS", 0],
   ["ENABLE_WEB_AUDIO", 1],
   ["ENABLE_WEB_AUTHN", 0],
@@ -718,6 +721,8 @@ function webkitLists(wk: WebKitBuild): WebKitLists {
     ...flag("UNIX", cfg.unix),
     ...flag("APPLE", cfg.darwin),
     ...flag("ANDROID", cfg.abi === "android"),
+    // WebKitFeatures.cmake: on for Apple targets. It is not in cmakeconfig.h. The lists take the corpse headers by it.
+    ...flag("ENABLE_JAVASCRIPTCORE_TOOLS", cfg.darwin),
     ...flag("WTF_CPU_X86_64", cfg.x64),
     ...flag("WTF_CPU_ARM64", cfg.arm64),
     COMPILER_IS_GCC_OR_CLANG: "ON",
@@ -776,6 +781,8 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
   const aotGenerated = [
     ...aotRuntimeFactsStep(wk, lists.jsc),
     ...aotReadsThatAssumeStep(wk),
+    ...aotLateStoresStep(wk),
+    ...aotForcedJumpsStep(wk),
     ...aotGeneratedFiles(lists.jsc, "SCHEMA"),
     ...aotGeneratedFiles(lists.jsc, "BUILTIN_TABLE"),
   ];
@@ -941,6 +948,8 @@ function icuBuild(wk: WebKitBuild): { libs: string[]; outputs: string[] } {
  */
 const webkitWarningFlags: readonly string[] = [
   "-Wcast-align",
+  "-Wvla",
+  "-Walloca",
   "-Wformat-security",
   "-Wmissing-format-attribute",
   "-Wpointer-arith",
@@ -1478,6 +1487,49 @@ function aotReadsThatAssumeStep(wk: WebKitBuild): string[] {
     cmd: [wk.cfg.bun, script, "--javascriptcore", wk.JSC, "--out", aotGeneratedDirectory(wk)],
     inputs: [script, join(wk.JSC, "aot", "codegen", "AOTReadsThatAssume.txt"), ...handwrittenAotFiles(wk.JSC)],
     desc: "AOTReadsThatAssumeChecked.h",
+  });
+  return outputs;
+}
+
+/** AOT_CHECK_LATE_STORES of aot/AOT.cmake, with Bun's own files of the compiler beside the engine's. */
+function aotLateStoresStep(wk: WebKitBuild): string[] {
+  const script = join(wk.JSC, "aot", "runtime", "generator", "late-stores.ts");
+  const bindings = join(wk.cfg.cwd, "src", "jsc", "bindings");
+  const outputs = [join(aotGeneratedDirectory(wk), "AOTLateStoresChecked.h")];
+  gen(wk, {
+    outputs,
+    cmd: [wk.cfg.bun, script, "--javascriptcore", wk.JSC, "--bindings", bindings, "--out", aotGeneratedDirectory(wk)],
+    inputs: [
+      script,
+      join(wk.JSC, "aot", "runtime", "AOTLateStores.txt"),
+      ...handwrittenAotFiles(wk.JSC),
+      ...readdirSync(bindings)
+        .filter(name => /^Bun(?:AOT|Compiled|WithoutAOT)\w*\.(?:cpp|h)$/.test(name))
+        .sort()
+        .map(name => join(bindings, name)),
+    ],
+    desc: "AOTLateStoresChecked.h",
+  });
+  return outputs;
+}
+
+/** AOT_CHECK_FORCED_JUMPS of aot/AOT.cmake. What it writes says only that the sources have passed. */
+function aotForcedJumpsStep(wk: WebKitBuild): string[] {
+  const script = join(wk.JSC, "aot", "runtime", "generator", "forced-jumps.py");
+  const fixtures = join(wk.JSC, "aot", "runtime", "generator", "forced-jumps-fixtures");
+  const outputs = [join(aotGeneratedDirectory(wk), "AOTForcedJumpsChecked.h")];
+  gen(wk, {
+    outputs,
+    cmd: [wk.python, script, "--javascriptcore", wk.JSC, "--out", aotGeneratedDirectory(wk)],
+    inputs: [
+      script,
+      join(wk.JSC, "aot", "runtime", "AOTForcedJumps.txt"),
+      ...readdirSync(fixtures)
+        .sort()
+        .map(name => join(fixtures, name)),
+      ...handwrittenAotFiles(wk.JSC),
+    ],
+    desc: "AOTForcedJumpsChecked.h",
   });
   return outputs;
 }

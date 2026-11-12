@@ -13,6 +13,9 @@ pub(crate) fn lower_await(
         unreachable!("lower_await takes an Await expression");
     };
     let awaited = lowering.lower_expression(operand);
+    if let Some(position) = lowering.file.awaited_position(operand) {
+        lowering.set_position(position);
+    }
     let value = lowering.emit_await(awaited);
     lowering.set_position(hir[expression].pos);
     value

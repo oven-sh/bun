@@ -1,0 +1,17 @@
+# -- source: main.cjs
+# "use strict";
+# const rows = [{ ip: "a", at: 0 }, { ip: "b", at: 1 }, { ip: "a", at: 2 }];
+# const cache = {};
+# for (const r of rows) cache[r.ip] = { x: r.at, y: 1 };
+# function look(k) { const hit = cache[k]; return hit ? hit.x + hit.y : 0; }
+# function kernel(list) { let s = 0; for (const r of list) s += look(r.ip); return s; }
+# globalThis.keep = [look, kernel];
+# print(kernel(rows));
+# -- end of source
+# Of what a read under a key that nobody knows gives, Link's held reading lists primitives and a function of the library; the records that the file stores under such keys it does not list.
+# Tested for that function, `hit` failed at every turn. The function's own text reads `x` and `y` off it, and one record in sight has both: the text speaks in front of what was seen. f2 = kernel
+# RUN(WALK): walk f2 mechanisms=all
+# WALK: = GetSlot {{*}}key="x" receivers=[L
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 8
+# ANSWERS-NEXT: exited with 0

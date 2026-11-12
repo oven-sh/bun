@@ -1,5 +1,6 @@
 // RUN: lower
 // OPTIONS: builtin-modules
+// DIAGNOSTIC: TS100093 1
 // STATISTIC: SourceFilesInferred = 5
 
 // FILE: main.js

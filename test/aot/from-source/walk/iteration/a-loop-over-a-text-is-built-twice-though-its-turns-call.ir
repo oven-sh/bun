@@ -1,0 +1,20 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# const closers: ((code: number) => boolean)[] = [];
+# function width(text: string): number {
+#   let sum = 0;
+#   for (const letter of text) {
+#     const code = letter.codePointAt(0)!;
+#     if (code > 0x2ff && closers[0]!(code)) sum++;
+#     sum += code;
+#   }
+#   return sum;
+# }
+# sink(width, closers);
+# -- end of source
+# f1 = width
+# The closure may run anything, and no call changes a text: the copy behind the test for a text steps it by index and asks nothing of it behind the call.
+# STATISTIC: StringForOfLoopsVersioned >= 1
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}}testedType=string

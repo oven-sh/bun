@@ -2,8 +2,9 @@ use super::code_barrels::ImportRequests;
 use super::code_load::{Analyzed, CodeTarget, LoadKey, LoadedCode};
 use super::*;
 use crate::import_sites::{
-    ImportSite, ImportSiteKind, ImportSpecifier, ResolvedFrom, find_written_arms,
-    is_linked_by_bundler, is_name_read_by_transpiler, is_name_written_out,
+    ImportSite, ImportSiteKind, ImportSpecifier, ResolvedFrom, find_names_folded_by_transpiler,
+    find_written_arms, is_linked_by_bundler, is_name_read_by_transpiler, is_name_written_out,
+    is_site_of_handed_url,
 };
 use crate::resolve::{
     CodeFailure, CodeFile, CodeImportForm, CodeImportKind, CodeRequest, CodeResolution,
@@ -45,7 +46,17 @@ pub(super) fn resolve_code_imports<'s, 'r>(
         };
         let alternatives = analyzed.analysis.alternatives_of(&site.specifier);
         let decisions = &analyzed.analysis.decisions;
-        let names = match is_name_read_by_transpiler(hir, bound, decisions, site.kind) {
+        let is_folded = match site.specifier {
+            ImportSpecifier::Constant(name)
+                if !site.specifier_node.is_none()
+                    && context.host.is_name_for_transpiler_alone(atoms.bytes(name)) =>
+            {
+                find_names_folded_by_transpiler(hir, decisions, site.specifier_node).contains(&name)
+            }
+            _ => true,
+        };
+        let is_read = is_folded && is_name_read_by_transpiler(hir, bound, decisions, site.kind);
+        let names = match is_read {
             true => NamesKnown::ToTranspiler,
             false => NamesKnown::ToLoader,
         };
@@ -61,14 +72,44 @@ pub(super) fn resolve_code_imports<'s, 'r>(
                     .analysis
                     .find_resolved_form(site.specifier_node)
                     .is_none(),
+            starts_at_own_folder: analyzed
+                .analysis
+                .is_path_from_own_directory(site.specifier_node),
             type_attribute: loader_attribute(hir, site).map(|value| atoms.bytes(value)),
+            is_written_in_load: !may_have_unread_type(hir, site)
+                && is_path_written_in_load(hir, site, names),
         };
         let resolution = resolve_site(context, key, hir, site, alternatives, names, written);
+        let is_json = |path: &[u8]| path.ends_with(b".json");
+        let resolution = match site.kind {
+            ImportSiteKind::Require(call)
+                if alternatives.iter().all(|it| {
+                    matches!(*it, ImportSpecifier::Constant(name) if is_json(atoms.bytes(name)))
+                }) && !files_of(resolution).all(|file| is_json(file.path))
+                    && is_site_of_handed_url(hir, bound, decisions, call) =>
+            {
+                let not_found = CodeResolution::NotFound(CodeFailure::ModuleNotFound);
+                match resolution {
+                    SiteResolution::Constant(_) => SiteResolution::Constant(not_found),
+                    SiteResolution::Computed(_) => {
+                        SiteResolution::Computed(ComputedResolution::Candidates {
+                            candidates: &[],
+                            spellings: &[],
+                        })
+                    }
+                }
+            }
+            _ => resolution,
+        };
         let arms = match site.specifier {
             ImportSpecifier::Unknown => find_written_arms(hir, bound, decisions, site),
             _ => SmallVec::new(),
         };
         let resolution = add_written_arms(context, key, site, &arms, resolution);
+        let written_count = files_of(resolution).count();
+        let followed = analyzed.analysis.known_load_names_at(site.specifier_node);
+        let followed: SmallVec<[Atom; 2]> = followed.collect();
+        let resolution = add_written_arms(context, key, site, &followed, resolution);
         resolutions.push(resolution);
         let origin = TargetOrigin {
             kind: loader_kind(site),
@@ -85,13 +126,15 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             ),
             increases_depth: (alternatives.iter())
                 .any(|&specifier| !is_relative(constant_prefix(atoms, specifier))),
+            is_name_followed: false,
         };
-        for file in files_of(resolution) {
+        for (place, file) in files_of(resolution).enumerate() {
             let increases_depth = origin.increases_depth
                 && (file.host_module.is_some()
                     || !context.resolver.is_same_package(key.path, file.path));
             let origin = TargetOrigin {
                 increases_depth,
+                is_name_followed: place >= written_count,
                 ..origin
             };
             add_target(context, &mut targets, origin, file);
@@ -174,6 +217,29 @@ impl<'s, 'r> LoadedCode<'s, 'r> {
             self.implied.push(resolution);
             if let Some(file) = file_of(resolution) {
                 add_target(context, &mut self.targets, IMPLIED_IMPORT, file);
+            }
+        }
+        let sites = self.analyzed.analysis.import_sites.iter();
+        let asked_under_unread_types: Vec<CodeFile<'r>> = sites
+            .zip(&self.resolutions)
+            .filter(|(site, _)| {
+                may_have_unread_type(hir, site) && !writes_out_options_without_type(hir, site)
+            })
+            .filter_map(|(_, &resolution)| match resolution {
+                SiteResolution::Constant(resolution) => file_of(resolution),
+                SiteResolution::Computed(_) => None,
+            })
+            .collect();
+        for file in asked_under_unread_types {
+            for &type_attribute in host.types_asked_where_options_are_unread(file.path) {
+                let origin = TargetOrigin {
+                    is_linked_by_bundler: false,
+                    type_attribute: Some(type_attribute),
+                    is_statement: false,
+                    ..IMPLIED_IMPORT
+                };
+                self.implied.push(CodeResolution::File(file));
+                add_target(context, &mut self.targets, origin, file);
             }
         }
     }
@@ -296,9 +362,9 @@ fn resolve_site<'r>(
         .unwrap_or(resolution);
     let resolution =
         resolve_file_loaded_another_way(context, key, hir, site, specifier, resolution);
-    let resolution = resolve_data_url(context, hir, site, resolution).unwrap_or(resolution);
+    let resolution = resolve_data_url(context, hir, site, names, resolution).unwrap_or(resolution);
     let resolution =
-        resolve_database(context, hir, site, specifier, resolution).unwrap_or(resolution);
+        resolve_database(context, hir, site, written, specifier, resolution).unwrap_or(resolution);
     let resolution =
         resolve_at_run_time(context, site, specifier, resolution).unwrap_or(resolution);
     SiteResolution::Constant(match is_get_builtin_module(site.kind) {
@@ -387,6 +453,7 @@ fn resolve_data_url<'r>(
     context: &CodeLoadContext<'_, '_, 'r>,
     hir: &hir::File<'_>,
     site: &ImportSite,
+    names: NamesKnown,
     resolution: CodeResolution<'r>,
 ) -> Option<CodeResolution<'r>> {
     let CodeResolution::External {
@@ -396,18 +463,35 @@ fn resolve_data_url<'r>(
     else {
         return None;
     };
-    let type_attribute = context.atoms.bytes(loader_attribute(hir, site)?);
-    let path = (context.host).create_file_from_data_url(specifier, type_attribute)?;
+    let has_type = loader_attribute(hir, site).is_some() || may_have_unread_type(hir, site);
+    if has_type || !is_path_written_in_load(hir, site, names) {
+        return None;
+    }
+    let path = context.host.create_module_from_data_url(specifier)?;
     Some(CodeResolution::File(CodeFile {
         path: context.resolver.keep(&path),
         host_module: None,
     }))
 }
 
+fn is_path_written_in_load(hir: &hir::File<'_>, site: &ImportSite, names: NamesKnown) -> bool {
+    match site.kind {
+        ImportSiteKind::Import(_)
+        | ImportSiteKind::ExportFrom(_)
+        | ImportSiteKind::ExportStar(_)
+        | ImportSiteKind::ImportEquals(_) => true,
+        ImportSiteKind::ImportCall(_) | ImportSiteKind::Require(_) => {
+            names == NamesKnown::ToTranspiler && is_name_written_out(hir, site.specifier_node)
+        }
+        _ => false,
+    }
+}
+
 fn resolve_database<'r>(
     context: &CodeLoadContext<'_, '_, 'r>,
     hir: &hir::File<'_>,
     site: &ImportSite,
+    written: SiteOfComputedLoad<'_>,
     specifier: &[u8],
     resolution: CodeResolution<'r>,
 ) -> Option<CodeResolution<'r>> {
@@ -415,19 +499,21 @@ fn resolve_database<'r>(
         value.is_some_and(|value| context.atoms.bytes(value) == text)
     };
     let is_path = specifier.starts_with(b"./") || specifier.starts_with(b"../");
-    let is_file_or_absent = match resolution {
-        CodeResolution::File(file) => file.host_module.is_none(),
-        CodeResolution::NotFound(CodeFailure::ModuleNotFound) => true,
+    let is_opened_at_run = match resolution {
+        CodeResolution::File(file) => file.host_module.is_none() && written.opens_database,
+        CodeResolution::NotFound(CodeFailure::ModuleNotFound) => {
+            has_text(loader_attribute(hir, site), b"sqlite")
+                && !has_text(embed_attribute(hir, site), b"true")
+        }
         _ => false,
     };
-    if !is_path
-        || !is_file_or_absent
-        || !has_text(loader_attribute(hir, site), b"sqlite")
-        || has_text(embed_attribute(hir, site), b"true")
-    {
+    if !is_path || !is_opened_at_run {
         return None;
     }
-    let path = context.host.create_file_of_database(specifier)?;
+    let path = match written.starts_at_own_folder {
+        true => (context.host).create_file_of_database(&join(written.folder, specifier))?,
+        false => context.host.create_file_of_database(specifier)?,
+    };
     Some(CodeResolution::File(CodeFile {
         path: context.resolver.keep(&path),
         host_module: None,
@@ -581,6 +667,53 @@ fn may_have_unread_type(hir: &hir::File<'_>, site: &ImportSite) -> bool {
     has_options && type_attribute(hir, site).is_none()
 }
 
+enum WrittenMember {
+    Unread,
+    Absent,
+    Value(ExprId),
+}
+
+fn written_member(hir: &hir::File<'_>, object: ExprId, name: Atom) -> WrittenMember {
+    let Some(ExprKind::Object(props)) = hir.exprs.get(object.idx()).map(|it| it.kind) else {
+        return WrittenMember::Unread;
+    };
+    let mut found = WrittenMember::Absent;
+    for prop in props.iter().map(|prop| &hir[prop]) {
+        match (prop.kind, prop.key) {
+            (PropKind::Spread, _) | (_, PropKey::Computed(_)) => return WrittenMember::Unread,
+            (_, PropKey::Name(key)) if key == known::__proto__ => return WrittenMember::Unread,
+            (PropKind::Init, PropKey::Name(key)) if key == name => {
+                found = WrittenMember::Value(prop.value);
+            }
+            (_, PropKey::Name(key)) if key == name => return WrittenMember::Unread,
+            _ => {}
+        }
+    }
+    found
+}
+
+fn writes_out_options_without_type(hir: &hir::File<'_>, site: &ImportSite) -> bool {
+    let ImportSiteKind::ImportCall(call) = site.kind else {
+        return false;
+    };
+    let ExprKind::ImportCall { args } = hir[call].kind else {
+        return false;
+    };
+    let Some(options) = hir.ids(args).nth(1) else {
+        return false;
+    };
+    match written_member(hir, options, known::with) {
+        WrittenMember::Unread => false,
+        WrittenMember::Absent => true,
+        WrittenMember::Value(with) => {
+            matches!(
+                written_member(hir, with, known::r#type),
+                WrittenMember::Absent
+            )
+        }
+    }
+}
+
 fn embed_attribute(hir: &hir::File<'_>, site: &ImportSite) -> Option<Atom> {
     let attributes = site.attributes.some()?;
     hir.import_attribute(attributes, known::embed)
@@ -604,6 +737,7 @@ struct TargetOrigin<'a> {
     embed_attribute: Option<&'a [u8]>,
     is_statement: bool,
     increases_depth: bool,
+    is_name_followed: bool,
 }
 
 const IMPLIED_IMPORT: TargetOrigin<'static> = TargetOrigin {
@@ -614,6 +748,7 @@ const IMPLIED_IMPORT: TargetOrigin<'static> = TargetOrigin {
     embed_attribute: None,
     is_statement: true,
     increases_depth: false,
+    is_name_followed: false,
 };
 
 fn add_target<'r>(
@@ -631,6 +766,7 @@ fn add_target<'r>(
         embed_attribute,
         is_statement,
         increases_depth,
+        is_name_followed,
     } = origin;
     let request = LoaderRequest {
         is_linked_by_bundler,
@@ -653,6 +789,7 @@ fn add_target<'r>(
         is_loaded_with_importer: is_statement,
         has_shared_type: is_statement && has_type_of_shared_kind,
         has_type_of_shared_kind,
+        is_name_followed,
     });
     index
 }

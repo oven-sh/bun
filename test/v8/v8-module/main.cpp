@@ -2335,6 +2335,31 @@ void test_v8_function_template_has_instance(
   info.GetReturnValue().Set(Array::New(isolate, results, 3));
 }
 
+// Bun only: V8 overflows its stack on a template whose properties hold an
+// instance of the template itself, so there is no Node output to compare.
+void test_v8_template_holds_its_own_instance(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate);
+  tpl->Set(String::NewFromUtf8Literal(isolate, "sample"),
+           tpl->InstanceTemplate());
+  tpl->PrototypeTemplate()->Set(String::NewFromUtf8Literal(isolate, "proto"),
+                                ObjectTemplate::New(isolate, tpl));
+  // An instance before the function exists, then the function.
+  Local<Object> early =
+      tpl->InstanceTemplate()->NewInstance(context).ToLocalChecked();
+  Local<Function> ctor = tpl->GetFunction(context).ToLocalChecked();
+  LOG_EXPR(tpl->HasInstance(early));
+  Local<Value> sample =
+      ctor->Get(context, String::NewFromUtf8Literal(isolate, "sample"))
+          .ToLocalChecked();
+  LOG_EXPR(tpl->HasInstance(sample));
+  Local<Value> results[] = {ctor, early};
+  info.GetReturnValue().Set(Array::New(isolate, results, 2));
+}
+
 void has_instance(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   info.GetReturnValue().Set(
@@ -2835,6 +2860,8 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_function_template_has_instance",
                   test_v8_function_template_has_instance);
   NODE_SET_METHOD(exports, "has_instance", has_instance);
+  NODE_SET_METHOD(exports, "test_v8_template_holds_its_own_instance",
+                  test_v8_template_holds_its_own_instance);
   NODE_SET_METHOD(exports, "test_v8_node_buffer", test_v8_node_buffer);
   NODE_SET_METHOD(exports, "buffer_data_is_stable", buffer_data_is_stable);
   NODE_SET_METHOD(exports, "utf8_value_with_pending_exception",

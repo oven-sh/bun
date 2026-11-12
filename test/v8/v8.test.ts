@@ -521,6 +521,25 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     });
   });
 
+  describe("a template whose properties hold its own instances", () => {
+    // V8 overflows its stack on this shape, so Bun alone is checked.
+    it("makes the instances and the function without re-entering the template", async () => {
+      const expected = [
+        "tpl->HasInstance(early) = 1",
+        "tpl->HasInstance(sample) = 1",
+        "early instanceof F = true",
+        "F.sample instanceof F = true",
+        "F.prototype.proto instanceof F = true",
+      ].join("\n");
+      for (const buildMode of [BuildMode.release, BuildMode.debug]) {
+        const output = await runOn(Runtime.bun, buildMode, "test_v8_template_holds_its_own_instance");
+        expect(output.replaceAll(/^\[\w+\].+$/gm, "").trim(), `addon built in ${BuildMode[buildMode]} mode`).toBe(
+          expected,
+        );
+      }
+    });
+  });
+
   describe("node::Buffer", () => {
     it("HasInstance, Data, Length, Copy and New match Node", async () => {
       const output = await checkSameOutput("test_v8_node_buffer");

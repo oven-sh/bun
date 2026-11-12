@@ -394,6 +394,13 @@ module.exports = debugMode => {
       console.log("string =", nativeModule.has_instance("s"));
     },
 
+    test_v8_template_holds_its_own_instance() {
+      const [ctor, early] = nativeModule.test_v8_template_holds_its_own_instance();
+      console.log("early instanceof F =", early instanceof ctor);
+      console.log("F.sample instanceof F =", ctor.sample instanceof ctor);
+      console.log("F.prototype.proto instanceof F =", ctor.prototype.proto instanceof ctor);
+    },
+
     test_v8_node_buffer() {
       const u16 = new Uint16Array([0x6162, 0x6364, 0x6566]);
       const copy = nativeModule.test_v8_node_buffer(

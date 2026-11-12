@@ -18,6 +18,7 @@ const deeds = [
   "a transform passes a chunk on",
   "a tick under a hook",
   "a file is written through a stream",
+  "a glob calls back",
 ];
 // What is owed, by the name of what is counted. Whatever else parts in such a deed is red.
 const owed: Record<string, { names: string[]; why: string }> = {};

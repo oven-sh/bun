@@ -83,6 +83,18 @@ describe("fs.glob", () => {
       // @ts-expect-error
       expect(() => fs.glob("*.txt", { cwd: tmp }, undefined)).toThrow(TypeError);
     });
+
+    // Node checks the callback with makeCallback(), which names the argument "cb".
+    it("names the callback as node does", () => {
+      // @ts-expect-error
+      expect(() => fs.glob("*.txt", { cwd: tmp }, 5)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: 'The "cb" argument must be of type function. Received type number (5)',
+        }),
+      );
+    });
   });
 
   it("matches directories", () => {

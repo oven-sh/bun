@@ -64,6 +64,9 @@ const deeds = {
     const stream = fs.createWriteStream(devNull);
     await new Promise(resolve => stream.end("a", resolve));
   },
+  "a glob calls back": async () => {
+    await new Promise(resolve => fs.glob([], resolve));
+  },
 };
 test("census", async () => {
   const told = [];

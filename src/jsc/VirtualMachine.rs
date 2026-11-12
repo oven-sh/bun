@@ -4617,6 +4617,13 @@ impl VirtualMachine {
         )
     }
 
+    /// Changes when `tls.DEFAULT_CIPHERS` or `tls.setDefaultCACertificates()` does.
+    pub fn tls_defaults_version(&self) -> u64 {
+        self.rare_data
+            .as_deref()
+            .map_or(0, |rare| rare.tls_defaults_version)
+    }
+
     /// Returns true if `tls.DEFAULT_CIPHERS` or `tls.setDefaultCACertificates()` overrides what a client with no TLS options uses.
     pub fn tls_client_defaults_set(&self) -> bool {
         self.tls_default_ciphers().is_some() || self.tls_default_ca().is_some()

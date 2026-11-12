@@ -596,21 +596,23 @@ fn fetch_impl(
                 return Ok(None);
             }
             request_has_tls = true;
-            let parsed = fetch_session::parse_tls(vm, global_this, tls)?;
+            let parsed = fetch_session::parse_tls(global_this, tls)?;
             if let Some(reject) = parsed.reject_unauthorized {
                 reject_unauthorized = reject;
             }
             if let Some(callback) = parsed.check_server_identity {
                 check_server_identity = callback;
             }
-            Ok(parsed.ssl_config)
+            Ok(parsed
+                .given
+                .map(|given| fetch_session::resolve_tls(vm, given)))
         })?;
     // A per-request closure has no identity a pool key could compare.
     let bypass_pool = !check_server_identity.is_empty();
     // The session's callbacks stay on the session, which the request keeps alive.
     let mut session_check_server_identity = false;
     if let Some(session) = session.filter(|_| !request_has_tls) {
-        ssl_config = session.ssl_config();
+        ssl_config = session.ssl_config(vm);
         reject_unauthorized = session.reject_unauthorized().unwrap_or(reject_unauthorized);
         session_check_server_identity = session.check_server_identity().is_some();
     }

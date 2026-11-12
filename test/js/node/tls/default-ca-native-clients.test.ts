@@ -230,6 +230,48 @@ test.concurrent("TLS options without ca still use the default list", async () =>
   expect(result).toEqual({ fetch: "OK", ws: "OK" });
 });
 
+test.concurrent("a FetchSession with TLS options follows the list", async () => {
+  const result = await run(
+    `
+    const create = ca => new Bun.FetchSession({ tls: { rejectUnauthorized: true, ca } });
+    const [used, unused, ownCA] = [create(), create(), create(good)];
+    const all = async () => [await viaFetch({ session: used }), await viaFetch({ session: unused }), await viaFetch({ session: ownCA })];
+    const before = await viaFetch({ session: used });
+    tls.setDefaultCACertificates([]);
+    const emptied = await all();
+    tls.setDefaultCACertificates([good]);
+    console.log(JSON.stringify({ before, emptied, filled: await all() }));
+  `,
+    { SSL_CERT_FILE: "good" },
+  );
+  expect(result).toEqual({ before: "OK", emptied: [refused.fetch, refused.fetch, "OK"], filled: ["OK", "OK", "OK"] });
+});
+
+test.concurrent("a RedisClient with TLS options follows the list when it connects", async () => {
+  const result = await run(
+    `
+    const redis = Bun.listen({
+      hostname: "localhost",
+      port: 0,
+      tls: { cert: good, key },
+      socket: { data: socket => void socket.write("+OK\\r\\n") },
+    });
+    const create = ca =>
+      new Bun.RedisClient("rediss://localhost:" + redis.port, { tls: { rejectUnauthorized: true, ca }, autoReconnect: false });
+    const connect = client => client.connect().then(() => (client.close(), "OK"), () => "REFUSED");
+    const [used, unused, ownCA] = [create(), create(), create(good)];
+    const all = async () => [await connect(used), await connect(unused), await connect(ownCA)];
+    const before = await connect(used);
+    tls.setDefaultCACertificates([]);
+    const emptied = await all();
+    tls.setDefaultCACertificates([good]);
+    console.log(JSON.stringify({ before, emptied, filled: await all() }));
+  `,
+    { SSL_CERT_FILE: "good" },
+  );
+  expect(result).toEqual({ before: "OK", emptied: ["REFUSED", "REFUSED", "OK"], filled: ["OK", "OK", "OK"] });
+});
+
 test.concurrent("a worker has its own default list", async () => {
   const result = await run(`
     tls.setDefaultCACertificates([good]);

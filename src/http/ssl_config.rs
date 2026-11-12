@@ -89,6 +89,7 @@ impl core::ops::Deref for SharedPtr {
 }
 
 /// The TLS options a caller gave. `VirtualMachine::tls_config` fills in the rest, and is the only way to an [`SSLConfig`].
+#[derive(Clone)]
 pub struct Builder {
     config: SSLConfig,
     pub reject_unauthorized: Option<bool>,

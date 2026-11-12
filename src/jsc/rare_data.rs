@@ -234,6 +234,7 @@ pub struct RareData {
     pub default_client_ssl_ctx: Option<boring::OwnedSslCtx>,
     /// The config of a `fetch` without TLS options, kept so each request doesn't copy and hash the default CA list.
     pub http_client_tls_defaults: Option<bun_http::ssl_config::SharedPtr>,
+    pub(crate) tls_defaults_version: u64,
 
     /// `bun_runtime::node::StatWatcherScheduler` — erased `RefPtr` payload;
     /// lazy-init in `bun_runtime::node::node_fs_stat_watcher`.
@@ -304,6 +305,7 @@ impl Default for RareData {
             socket_groups: SocketGroups::default(),
             default_client_ssl_ctx: None,
             http_client_tls_defaults: None,
+            tls_defaults_version: 0,
             node_fs_stat_watcher_scheduler: None,
             memory_pressure_watcher: None,
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
@@ -833,6 +835,7 @@ impl RareData {
     pub(crate) fn drop_client_tls_defaults(&mut self) {
         self.default_client_ssl_ctx = None;
         self.http_client_tls_defaults = None;
+        self.tls_defaults_version += 1;
     }
 
     pub fn push_cleanup_hook(

@@ -167,6 +167,15 @@ impl ParsedTls {
         generated: &generated::TLSOptions,
         is_server: bool,
     ) -> JsResult<Self> {
+        let given = Self::given(global, generated)?;
+        Ok(Self(given.map(|given| vm.tls_config(given, is_server))))
+    }
+
+    /// The options without the defaults, for an owner that outlives a change of them.
+    pub(crate) fn given(
+        global: &JSGlobalObject,
+        generated: &generated::TLSOptions,
+    ) -> JsResult<Option<bun_http::ssl_config::Builder>> {
         let mut result = bun_http::ssl_config::Builder::default();
         // `result` cleanup handled by Drop on error-path `?`
         let mut any = false;
@@ -277,10 +286,7 @@ impl ParsedTls {
             || result.client_renegotiation_limit != 0
             || generated.client_renegotiation_window != 0;
 
-        if !any {
-            return Ok(Self(None));
-        }
-        Ok(Self(Some(vm.tls_config(result, is_server))))
+        Ok(any.then_some(result))
     }
 }
 

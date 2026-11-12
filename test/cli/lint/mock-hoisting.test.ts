@@ -442,8 +442,7 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         prints: ["mock"],
         dangerously: ["runs dep.js", "mock"],
       },
-      // Without the renamed import, `vi.mock()` in the place of `vitest.mock()` is a call on the global. With it,
-      // both calls are on the import.
+      // One fix renames the import and the calls on it. A file with only one of the two renamed runs differently.
       "an import from @effect/vitest with a mock, and the global vi": {
         text:
           'import { vitest, test } from "@effect/vitest";\n' +
@@ -453,6 +452,21 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
           greets(),
         prints: ["runs dep.js", "mock"],
         dangerously: ["runs dep.js", "mock"],
+      },
+      // The call would be on another `vi` than the one that the renamed import declares.
+      "an import that has another vi": {
+        text: 'import { test as vi, vitest } from "vitest";\n' + importGreet + mock("vitest") + greets("vi"),
+        prints: ["mock"],
+        dangerously: ["runs dep.js"],
+      },
+      "a call in a function that has another vi": {
+        text:
+          'import { vitest, test } from "vitest";\n' +
+          'function register(vi) {\n  vitest.doMock("./dep.js", () => ({ greet: () => "mock" }));\n}\n' +
+          "register({ doMock() {} });\n" +
+          'test("greets", () => {\n  console.log(TAG, require("./dep.js").greet());\n});\n',
+        prints: ["mock"],
+        dangerously: ["runs dep.js", "real"],
       },
 
       "vitest.fn()": {
@@ -502,6 +516,29 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         dangerously: ["mock"],
       },
       "two globals": {
+        text: 'const { test } = require("vitest");\n' + requireGreet + mock("vi") + greets(),
+        prints: ["mock"],
+      },
+    },
+  },
+  {
+    name: "vitest/prefer-import-in-mock",
+    rule: "vitest/prefer-import-in-mock",
+    config: { "bunfig.toml": '[lint.rules]\n"vitest/prefer-import-in-mock" = "warn"\n' },
+    cases: {
+      // `bun test` reads the path from `vi.mock(import("./dep.js"))` for a `vi` that it knows. For another, the
+      // `import()` runs, and `vi.mock()` throws.
+      "an import from @effect/vitest": {
+        text: 'import { vi, test } from "@effect/vitest";\n' + importGreet + mock("vi") + greets(),
+        prints: ["runs dep.js", "mock"],
+        dangerously: ["runs dep.js"],
+      },
+
+      "an import from vitest": {
+        text: 'import { vi, test } from "vitest";\n' + importGreet + mock("vi") + greets(),
+        prints: ["mock"],
+      },
+      "the global vi": {
         text: 'const { test } = require("vitest");\n' + requireGreet + mock("vi") + greets(),
         prints: ["mock"],
       },

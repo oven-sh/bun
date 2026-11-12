@@ -501,15 +501,13 @@ enum class ModuleMockFunction : uint8_t {
     JestDoMock,
 };
 
-// A mock that patches a loaded module saves what it writes over, and its end puts that back. A spy that stands there may be restored first, and then
-// what the spy had replaced goes back, not the spy. So such a spy is saved as a tuple of itself and what it replaced.
+// A spy on an export may be restored before the mock over it ends, so the mock saves the spy as a tuple with what it replaced. No tuple is handed to script.
 static JSValue savedSpy(Zig::GlobalObject* globalObject, const Bun::InstalledSpy& spy)
 {
     return JSC::InternalFieldTuple::create(globalObject->vm(), globalObject->internalFieldTupleStructure(), spy.spy, spy.replaced);
 }
 
-// What a mock saved is read through these: the spy until its restore, then what it replaced. No tuple is handed to script.
-// Where the value is written back, `isOnThatPlace` also asks whether the spy is on the place written to. Its restore reaches no other.
+// Of what a mock saved: the spy until its restore and while it `isOnThatPlace`, then what it replaced.
 template<typename IsOnThatPlace>
 static JSValue whatStandsOfSaved(JSValue saved, const IsOnThatPlace& isOnThatPlace)
 {
@@ -520,6 +518,7 @@ static JSValue whatStandsOfSaved(JSValue saved, const IsOnThatPlace& isOnThatPla
     return spy && isOnThatPlace(*spy) ? JSValue(spy->spy) : spyAndReplaced->getInternalField(1);
 }
 
+// For a reader. Where the value is written back, the caller also asks whether the spy is on the place written to: its restore reaches no other.
 static JSValue whatStandsOfSaved(JSValue saved)
 {
     return whatStandsOfSaved(saved, [](const Bun::InstalledSpy&) { return true; });

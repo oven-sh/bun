@@ -789,7 +789,9 @@ impl BunxCommand {
         let bin = [SEP, b"node_modules", SEP, b".bin"].concat();
         let (bin_dirs, mut entries): (Vec<&[u8]>, Vec<&[u8]>) =
             strings::tokenize(added, &[DELIMITER]).partition(|entry| entry.ends_with(&bin));
-        entries.extend(strings::tokenize(inherited, &[DELIMITER]));
+        if !inherited.is_empty() {
+            entries.push(inherited);
+        }
         entries.extend(bin_dirs);
         entries.join(&DELIMITER)
     }
@@ -1004,9 +1006,13 @@ impl BunxCommand {
 
         let search_path: Vec<u8> = env_loader.get(b"PATH").unwrap().to_vec();
 
-        let skip_shared = is_node_gyp && env_loader.has(b"BUN_INTERNAL_NODE_GYP_SKIP_SHARED");
+        // Set by `bun install` to the only directories to look for node-gyp in.
+        let node_gyp_path: Option<Vec<u8>> = (env_loader.get(b"BUN_INTERNAL_NODE_GYP_PATH"))
+            .filter(|_| is_node_gyp)
+            .map(<[u8]>::to_vec);
+        let skip_project = node_gyp_path.is_some();
         // `bun install` has ordered the PATH of its scripts, and node-gyp keeps that order.
-        let path: Vec<u8> = if is_node_gyp && (skip_shared || !ignore_cwd.is_empty()) {
+        let path: Vec<u8> = if is_node_gyp && (skip_project || !ignore_cwd.is_empty()) {
             let path = Self::path_with_bin_dirs_last(&search_path, &inherited_path);
             env_loader.map.put(b"PATH", &path)?;
             path
@@ -1087,11 +1093,8 @@ impl BunxCommand {
         };
         bun_output::scoped_log!(bunx, "install_param: {}", BStr::new(&install_param));
 
-        let path_for_bin_dirs: Vec<u8> = if skip_shared {
-            // The shared directories follow the temp node-gyp script.
-            let entries: Vec<&[u8]> = strings::tokenize(&inherited_path, &[DELIMITER]).collect();
-            let end = entries.iter().position(|entry| **entry == *ignore_cwd);
-            entries[..end.unwrap_or(0)].join(&DELIMITER)
+        let path_for_bin_dirs: Vec<u8> = if let Some(node_gyp_path) = node_gyp_path {
+            node_gyp_path
         } else if ignore_cwd.is_empty() {
             search_path
         } else {
@@ -1166,7 +1169,7 @@ impl BunxCommand {
 
         // 2. The project's installed copy of the package. It is skipped when the user typed a
         // version, a tag, or a URL, because that says where the package must come from.
-        if !is_versioned && !skip_shared {
+        if !is_versioned && !skip_project {
             let project = bun_install::package_manager_real::project_directory(top_level_dir);
             let found = match Self::find_in_project(
                 this_transpiler,

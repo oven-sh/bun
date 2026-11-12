@@ -1985,6 +1985,12 @@ pub struct BinConflicts {
     pub(crate) node_gyp: bool,
 }
 
+impl BinConflicts {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.links.is_empty() && !self.node_gyp
+    }
+}
+
 const NODE_GYP: &[u8] = b"node-gyp";
 
 /// Finds the bins of `dependency_id`'s dependencies that its scripts would find in a package that
@@ -2293,25 +2299,16 @@ fn for_each_bin_name(
     }
 }
 
-/// Links `conflicts` into the `node_modules/.bin` of `cwd`, except for names in `env_path` outside
-/// of `node_gyp_shim_dir`.
+/// Links `conflicts` into the `node_modules/.bin` of `cwd`, except for names in `env_path`.
 pub(crate) fn link_conflicting_bins(
     lockfile: &Lockfile,
     conflicts: &BinConflicts,
     cwd: &[u8],
     env_path: &[u8],
-    node_gyp_shim_dir: Option<&[u8]>,
 ) -> Result<(), Error> {
     if conflicts.links.is_empty() {
         return Ok(());
     }
-    let mut commands_path = path::EnvPath::init_capacity(env_path.len())?;
-    for entry in strings::split(env_path, &[path::DELIMITER]) {
-        if Some(entry) != node_gyp_shim_dir {
-            commands_path.append(entry)?;
-        }
-    }
-    let env_path = commands_path.slice();
     let mut node_modules_path = AbsPath::from(cwd)?;
     node_modules_path.append(b"node_modules")?;
     let bin_dir = [node_modules_path.slice(), &[SEP][..], b".bin"].concat();

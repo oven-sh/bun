@@ -431,6 +431,46 @@ describe("findSourceMap", () => {
   });
 
   test.concurrent(
+    "a module transpiled again to a text with nothing to map has no map until it has one again",
+    async () => {
+      using dir = tempDir("find-source-map-rewrite", {
+        "lib.cjs": "exports.n = /** @type {number} */ (1);\n",
+        "main.cjs": `
+        const { findSourceMap } = require("node:module");
+        const fs = require("node:fs");
+        process.setSourceMapsEnabled(true);
+        const path = require.resolve("./lib.cjs");
+        const lineCount = () => findSourceMap(path)?.lineLengths?.length ?? null;
+        const loadedAs = text => {
+          fs.writeFileSync(path, text);
+          delete require.cache[path];
+          require(path);
+          return lineCount();
+        };
+        require(path);
+        console.log(JSON.stringify([lineCount(), loadedAs("// only a comment\\n"), loadedAs("exports.n = 2;\\nexports.m = 3;\\n")]));
+      `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+        stdout: expect.any(String),
+        stderrIfFailed: "",
+        exitCode: 0,
+      });
+      const [first, commentOnly, rewritten] = JSON.parse(stdout);
+      // The map of the first text stays for its errors, and is not paired with the text of the comment.
+      expect([first > 0, commentOnly, rewritten > first]).toEqual([true, null, true]);
+    },
+  );
+
+  test.concurrent(
     "bun test --enable-source-maps reaches each file, and a file's setter stays with the file under --isolate",
     async () => {
       using dir = tempDir("find-source-map-test", {

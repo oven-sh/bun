@@ -35,17 +35,26 @@ pub use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 /// `has_exception()`, or this fold runs beneath script) is taken now if no script is left to unwind.
 #[cold]
 pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
+    report_error_or_terminate_handled(global, proof).map(|_| ())
+}
+
+/// [`report_error_or_terminate`], answering `Ok(handled)`: what `VirtualMachine::uncaught_exception` said of the exception.
+#[cold]
+pub fn report_error_or_terminate_handled(
+    global: &JSGlobalObject,
+    proof: JsError,
+) -> Result<bool, Stopped> {
     let ex = global.take_exception(proof);
     if ex.is_termination_exception() {
         crate::top_exception_scope::thrown(global);
         return Err(Stopped);
     }
     let vm = global.bun_vm();
-    let _ = vm.as_mut().uncaught_exception(global, ex, false);
-    if vm.is_shutting_down() {
-        return Ok(());
+    let handled = vm.as_mut().uncaught_exception(global, ex, false);
+    if !vm.is_shutting_down() {
+        vm.event_loop_mut().maybe_drain_microtasks()?;
     }
-    vm.event_loop_mut().maybe_drain_microtasks()
+    Ok(handled)
 }
 
 // The full ~96-arm `match` (previously in this file) has been hoisted to

@@ -316,6 +316,17 @@ enum EnterJs<'a> {
     CannotEnter,
 }
 
+/// What became of the call [`EventLoop::run_callback_then`] was asked to make.
+pub enum CallbackOutcome {
+    Returned(JSValue),
+    /// Reported as uncaught. `handled`: what [`VirtualMachine::uncaught_exception`] answered.
+    Threw {
+        handled: bool,
+    },
+    /// Not called (an exception is pending, or the VM or the entered context calls nobody), or the VM's termination landed in the call.
+    Stopped,
+}
+
 impl EventLoop {
     /// Before your code enters JavaScript at the top of the event loop, call
     /// `loop.enter()`. If running a single callback, prefer `runCallback` instead.
@@ -625,6 +636,50 @@ impl EventLoop {
         // SAFETY: as above.
         unsafe { (*this).exit() };
         // Note: reshaped for borrowck — `defer this.exit()` moved to tail
+        result
+    }
+
+    /// As [`run_callback`](Self::run_callback), but `after_call` is told the outcome ahead of the checkpoint, which follows every call, also inside a task.
+    pub fn run_callback_then<R>(
+        &mut self,
+        context: crate::ContextId,
+        callback: JSValue,
+        global_object: &JSGlobalObject,
+        this_value: JSValue,
+        arguments: &[JSValue],
+        after_call: impl FnOnce(CallbackOutcome) -> R,
+    ) -> R {
+        let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
+            return after_call(CallbackOutcome::Stopped);
+        };
+        // R-2 noalias mitigation — see `run_callback` above.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY: `this` is the unique live `EventLoop`; short-lived `&mut`.
+        unsafe { (*this).enter() };
+        let outcome = match callback.call(global_object, this_value, arguments) {
+            // `call` answers `undefined` for a callback it did not call.
+            Ok(value)
+                if value.is_undefined() && callback.call_may_have_been_dropped(global_object) =>
+            {
+                CallbackOutcome::Stopped
+            }
+            Ok(value) => CallbackOutcome::Returned(value),
+            Err(err) => match crate::task::report_error_or_terminate_handled(global_object, err) {
+                Ok(handled) => CallbackOutcome::Threw { handled },
+                Err(Stopped) => CallbackOutcome::Stopped,
+            },
+        };
+        let result = after_call(outcome);
+        let this: *mut Self = core::hint::black_box(this);
+        // SAFETY: as above.
+        unsafe {
+            // `exit()` checkpoints only at the outermost level, which a task's frame is not: `tick()` holds the count.
+            if !(*this).vm_ref().is_inside_deferred_task_queue.get() {
+                let _ = (*this).drain_microtasks();
+            }
+            // Held until here, as in `exit()`: a callback that the checkpoint's script dispatches must not checkpoint mid-frame.
+            (*this).exit_without_checkpoint();
+        }
         result
     }
 

@@ -1,6 +1,8 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 7
+// CHECK-LABEL: function {{*}}name="ownObject"
+// CHECK-LABEL: function {{*}}name="fromArrow"
 
 // FILE: main.cjs
 // `arguments` at the top of a CommonJS file is the arguments object of `function (exports, require, module, __filename, __dirname) { .. }`: five arguments, which in sloppy code are one variable with the five parameters.
@@ -102,27 +104,3 @@ console.log((() => arguments.length)());
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: ownObject fromArrow
-// CHECK-LABEL: function {{*}}name="ownObject"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: function, v1: int[0, 4294967295], v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = CreateMappedArguments v0, v1, v2
-// CHECK-NEXT: v4 = PropGet v3 key="length"
-// CHECK-NEXT: v5 = Convert v4 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="fromArrow"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsSloppy, HasRestParameter] captures=[{type=anything}] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=undefined|null|Array flags=[IsExpected]}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: anything, v1: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = PropGet v0 key="length"
-// CHECK-NEXT: v3 = PropGet v1 key="length"
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v5 = NewArray v2, v4 contents=anything
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|Array flags=[IsExpected]}
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }

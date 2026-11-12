@@ -1,1 +1,0 @@
-{ "name": "dual", "version": "1.0.0", "exports": { ".": { "import": "./esm/index.mjs", "require": "./cjs/index.cjs" } } }

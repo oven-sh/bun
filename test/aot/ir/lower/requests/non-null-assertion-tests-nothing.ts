@@ -1,15 +1,14 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="asserted"
-// CHECK: results=[{type=undefined|null|string site=[[assertedResult]] flags=[OmitsNull, OmitsUndefined]}]
+// CHECK: results=[{type=anything}]
 // CHECK: b0([[value]]: {{*}}):
 // CHECK-NOT: Convert
-// CHECK: [[returned]] = Convert [[value]] declared={type=undefined|null|string site=[[assertedResult]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @
-// CHECK-NEXT: Return [[returned]]
+// CHECK: Return [[value]]
 // CHECK-LABEL: function {{*}}name="nothingElse"
-// CHECK: results=[{type=undefined|null|string site=[[writtenResult]] flags=[OmitsNull, OmitsUndefined]}]
+// CHECK: results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}]
 // CHECK-NOT: never
 // CHECK: [[nothing]] = Undefined
-// CHECK-NEXT: [[result]] = Convert [[nothing]] declared={type=undefined|null|string site=[[writtenResult]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @
+// CHECK-NEXT: [[result]] = Convert [[nothing]] declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion @
 // CHECK-NEXT: Return [[result]]
 // CHECK-NOT: never
 // CHECK-LABEL: function {{*}}name="unknownValue"
@@ -21,7 +20,7 @@
 // TAIL-LABEL: function {{*}}name="tailCall"
 // TAIL: ReturnCall
 
-// `x!` converts nothing: the value passes unchanged, `undefined` and `null` too. The only conversion in `asserted` and in `nothingElse` is the one to the result of the function, whose type takes them. It says that it rests on an assertion: the checker has not shown that the value is there. A call under `!` is still a tail call.
+// `x!` converts nothing: the value passes unchanged, `undefined` and `null` too. `asserted` writes no result, so nothing in it is converted. The only conversion in `nothingElse` is the one to the written result of the function, whose type takes them. It says that it rests on an assertion: the checker has not shown that the value is there. A call under `!` is still a tail call.
 declare function make(): string | undefined;
 
 export function asserted(value: string | undefined) {

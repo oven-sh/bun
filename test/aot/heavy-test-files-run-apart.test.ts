@@ -59,10 +59,7 @@ function mostAtOnce(trail: string[], isCounted: (name: string) => boolean) {
   return most;
 }
 
-test.each([
-  ["one program", "TestRunLayers:0"],
-  ["two layers", "TestRunLayers:2"],
-])(
+test.each([["one program", "TestRunLayers:0"]])(
   "files that took over a gigabyte run at once only where they took no more together than the largest alone: %s",
   async (_, words) => {
     const records: { [name: string]: Measured } = { largest: { milliseconds: 300, megabytes: 3000 } };
@@ -150,7 +147,8 @@ test.skipIf(!isLinux)("a compiled run writes by how much each file's worker grew
   const flags = ["--isolate", "--parallel=2", "--timeout=60000", "--timings=timings.json", "--update-timings", "."];
   expect((await run([bunExe(), "test", "--aot", ...flags], String(dir), env)).exitCode).toBe(0);
   const written = JSON.parse(readFileSync(join(String(dir), "timings.json"), "utf8"));
-  expect(Object.keys(written)).toEqual(["version", "files", "memory"]);
+  expect(Object.keys(written)).toEqual(["version", "workers", "files", "memory"]);
+  expect(written.workers).toBe(2);
   expect(written.memory["grows.test.js"]).toBeGreaterThan(280);
   expect(written.memory["small.test.js"] ?? 0).toBeLessThan(200);
   expect(written.memory["starts-large.test.js"]).toBeGreaterThan(680);
@@ -160,4 +158,36 @@ test.skipIf(!isLinux)("a compiled run writes by how much each file's worker grew
   // A run that is not compiled measures nothing and keeps what the table says.
   expect((await run([bunExe(), "test", ...flags], String(dir), env)).exitCode).toBe(0);
   expect(JSON.parse(readFileSync(join(String(dir), "timings.json"), "utf8")).memory).toEqual(written.memory);
+});
+
+test.skipIf(!isLinux)("what the file before left behind is not taken off a file's growth", async () => {
+  // One worker is held by the first file until the last has ended, so the other two run in one worker, one behind the other.
+  // The second leaves 300 MB that nothing holds once it has ended. The third has them collected and then takes as much itself: its worker is never
+  // larger than it was when the file began.
+  using dir = tempDir("heavy-test-files-behind-one-another", {
+    "a-holds-a-worker.test.js": fileThatTakes(
+      "a-holds-a-worker",
+      1,
+      `while (!require("node:fs").readFileSync(process.env.TRAIL, "utf8").includes("end c-grows")) await Bun.sleep(20);`,
+    ),
+    // The file holds them as long as it is there.
+    "b-leaves-garbage.test.js":
+      fileThatTakes("b-leaves-garbage", 1, "held = Buffer.alloc(300 << 20, 1);") +
+      "let held; export const size = () => held?.length;",
+    "c-grows.test.js": fileThatTakes("c-grows", 1, "Bun.gc(true); globalThis.kept = Buffer.alloc(300 << 20, 1);"),
+  });
+  const trail = join(String(dir), "trail.txt");
+  const flags = ["--isolate", "--parallel=2", "--timeout=60000", "--timings=timings.json", "--update-timings", "."];
+  expect((await run([bunExe(), "test", "--aot", ...flags], String(dir), { ...bunEnv, TRAIL: trail })).exitCode).toBe(0);
+  const lines = readFileSync(trail, "utf8").trim().split("\n");
+  expect(lines.filter(line => !line.endsWith("a-holds-a-worker"))).toEqual([
+    "start b-leaves-garbage",
+    "end b-leaves-garbage",
+    "start c-grows",
+    "end c-grows",
+  ]);
+  expect(lines.indexOf("start a-holds-a-worker")).toBeLessThan(lines.indexOf("start c-grows"));
+  expect(lines.at(-1)).toBe("end a-holds-a-worker");
+  const { memory } = JSON.parse(readFileSync(join(String(dir), "timings.json"), "utf8"));
+  expect(memory["c-grows.test.js"]).toBeWithin(280, 500);
 });

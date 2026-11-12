@@ -1,4 +1,5 @@
 // RUN: lower
+// OPTIONS: builtin-modules
 // CHECK-LABEL: function {{*}}name="eachResource"
 // CHECK: [[iterator]] = IteratorOpen
 // CHECK: LoopHint

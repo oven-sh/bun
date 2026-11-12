@@ -1,25 +1,30 @@
 use bun_sema::atom::known;
 use bun_sema::bind::Decl;
+use bun_sema::erasure::ReplacedText;
 use bun_sema::fold::Constant;
-use bun_sema::hir::{self, EnumId, EnumMemberId, Flags};
+use bun_sema::hir::{
+    self, EnumId, EnumMemberId, ExprId, Flags, end_of_expr, is_parenthesized, start_of,
+};
 use smallvec::SmallVec;
 
 use super::enum_values::EnumMemberValue;
-use crate::ir::ValueId;
+use crate::ir::{FunctionKey, ValueId};
+use crate::lower::function::{print_number, print_string};
 use crate::lower::member::PropertyName;
-use crate::lower::{FunctionLowering, object};
+use crate::lower::{FileLowering, FunctionLowering, object};
 
-fn can_define_members(hir: &hir::File<'_>, members: &[(EnumMemberId, EnumMemberValue)]) -> bool {
-    members.iter().all(|&(id, value)| match value {
-        EnumMemberValue::Number(_) | EnumMemberValue::String(_) | EnumMemberValue::Missing => {
-            // `Object.prototype` has a setter of this name.
-            hir[id].name != known::__proto__
-        }
-        _ => false,
+#[cfg(test)]
+mod tests;
+
+fn has_only_constant_members(members: &[(EnumMemberId, EnumMemberValue)]) -> bool {
+    members.iter().all(|&(_, value)| {
+        matches!(
+            value,
+            EnumMemberValue::Number(_) | EnumMemberValue::String(_) | EnumMemberValue::Missing
+        )
     })
 }
 
-// An integer key precedes every name in the order of an object's keys, wherever it is defined.
 fn has_only_index_reverse_keys(members: &[(EnumMemberId, EnumMemberValue)]) -> bool {
     members.iter().all(|&(_, value)| match value {
         EnumMemberValue::Number(number) => {
@@ -28,6 +33,84 @@ fn has_only_index_reverse_keys(members: &[(EnumMemberId, EnumMemberValue)]) -> b
         EnumMemberValue::String(_) => true,
         _ => false,
     })
+}
+
+fn end_in_front_of_types(hir: &hir::File<'_>, mut expression: ExprId) -> u32 {
+    while !is_parenthesized(hir, expression)
+        && let Some(operand) = hir.type_assertion_operand(expression)
+    {
+        expression = operand;
+    }
+    end_of_expr(hir, expression)
+}
+
+impl FileLowering<'_, '_, '_, '_> {
+    fn note_enum_as_code(
+        &mut self,
+        declaration: EnumId,
+        members: &[(EnumMemberId, EnumMemberValue)],
+    ) -> Option<()> {
+        let (hir, bound) = (self.hir, self.bound);
+        let data = hir[declaration];
+        if !self.inputs.options.embeds_function_source || members.len() != data.members.len() {
+            return None;
+        }
+        let atoms = &self.queries.files().atoms;
+        let name = atoms.bytes(data.name);
+        let (start, end) = (hir[data.stmt].start, hir[data.stmt].loc.end);
+        let symbol = bound.symbol(bound.declared_symbol(Decl::Enum(declaration)));
+        let head = match symbol.decls.first() == Some(&Decl::Enum(declaration)) {
+            true => [&b"let "[..], name, b"; ((", name, b") => ["].concat(),
+            false => [&b";(("[..], name, b") => ["].concat(),
+        };
+        let end_of_head = members.first().map_or(end - 1, |first| hir[first.0].pos);
+        let mut parts = vec![
+            (start, end_of_head, head),
+            (end - 1, end, [&b"])("[..], name, b" ||= {});"].concat()),
+        ];
+        let mut previous = Vec::new();
+        for &(id, value) in members {
+            let member = hir[id];
+            let key = print_string(atoms.bytes(member.name));
+            let slot = [name, b"[", &key, b"]"].concat();
+            let stored_both_ways =
+                |value: &[u8]| [name, b"[", &slot, b" = ", value, b"] = ", &key].concat();
+            let whole = match value {
+                EnumMemberValue::Number(number) => stored_both_ways(&print_number(number, false)),
+                EnumMemberValue::String(text) => {
+                    [&slot[..], b" = ", &print_string(atoms.bytes(text))].concat()
+                }
+                EnumMemberValue::Missing => stored_both_ways(b"void 0"),
+                EnumMemberValue::PreviousPlusOne => {
+                    stored_both_ways(&[&previous[..], b" + 1"].concat())
+                }
+                EnumMemberValue::Computed(initializer)
+                | EnumMemberValue::ComputedNumber(initializer) => {
+                    let in_front = [name, b"[", &slot, b" = "].concat();
+                    parts.push((member.pos, start_of(hir, initializer), in_front));
+                    let behind = end_in_front_of_types(hir, initializer);
+                    parts.push((behind, behind, [&b"] = "[..], &key].concat()));
+                    previous = slot;
+                    continue;
+                }
+                EnumMemberValue::ComputedString(initializer) => {
+                    let in_front = [&slot[..], b" = "].concat();
+                    parts.push((member.pos, start_of(hir, initializer), in_front));
+                    previous = slot;
+                    continue;
+                }
+            };
+            parts.push((member.pos, member.loc.end, whole));
+            previous = slot;
+        }
+        let parts = parts.into_iter().map(|(start, end, text)| ReplacedText {
+            start,
+            end,
+            text: text.into_boxed_slice(),
+        });
+        self.enums_written_as_code.extend(parts);
+        Some(())
+    }
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -39,11 +122,25 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let container = self.find_container(Decl::Enum(declaration), data.name);
         let members = self.file.compute_enum_member_values(declaration);
-        if self.has_single_declaration(container) && can_define_members(hir, &members) {
+        let is_in_function = !matches!(
+            self.key,
+            FunctionKey::ModuleBody(_) | FunctionKey::WrappedModuleBody(_)
+        );
+        if is_in_function {
+            self.file.note_enum_as_code(declaration, &members);
+        }
+        let can_define_members = has_only_constant_members(&members)
+            && !(members.iter())
+                .any(|&(id, _)| self.file.is_name_on_object_prototype(hir[id].name));
+        if self.has_single_declaration(container) && can_define_members {
             let layout = self.file.container_layout(container.merged);
             let mut builder = self.begin_object(layout);
             let mut reverse_keys: SmallVec<[(PropertyName, ValueId); 16]> = SmallVec::new();
-            let defines_names_first = has_only_index_reverse_keys(&members);
+            let defines_names_first = has_only_index_reverse_keys(&members)
+                && !members.iter().any(|&(id, _)| {
+                    let name = self.file.name_key(hir[id].name);
+                    self.file.find_element_index(name).is_some()
+                });
             self.lower_enum_members(&members, &mut |lowering, name, value| match name {
                 PropertyName::Computed(_) if defines_names_first => {
                     reverse_keys.push((name, value));
@@ -58,42 +155,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.set_position(data.name_pos);
             let created = object::finish_object(self, builder);
             self.initialize_container(container, created);
-            self.record_call_behind_members(declaration, &members);
             return;
         }
         let container_object = self.ensure_container(container);
         let scope = bound.enum_scope[declaration.idx()];
-        self.enter_scope(scope);
+        self.enter_container_scope(scope, container_object);
         self.lower_enum_members(&members, &mut |lowering, name, value| {
             lowering.emit_set(container_object, name, value);
         });
         self.leave_scope(scope);
-        self.record_call_behind_members(declaration, &members);
-    }
-
-    // Bun's transpiler prints the members in a function, which it calls behind them. The source map takes the call back to the last token of the members:
-    // the name that a number is mapped back to, which stands where the member does, or the text of a member that is a string.
-    fn record_call_behind_members(
-        &mut self,
-        declaration: EnumId,
-        members: &[(EnumMemberId, EnumMemberValue)],
-    ) {
-        let hir = self.file.hir;
-        let Some(&(last, value)) = members.last() else {
-            self.builder
-                .record_position(hir[hir[declaration].stmt].start);
-            return;
-        };
-        let member = hir[last];
-        let is_text = matches!(
-            value,
-            EnumMemberValue::String(_) | EnumMemberValue::ComputedString(_)
-        );
-        let position = match member.init.some() {
-            Some(initializer) if is_text => self.file.last_mapped_position(initializer),
-            _ => member.pos,
-        };
-        self.builder.record_position(position);
     }
 
     fn lower_enum_members(

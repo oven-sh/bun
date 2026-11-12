@@ -1,7 +1,7 @@
 # answer	plain	minified	difference	configuration	extension	source
 # answer: + `Removable` says that the statement with MARK in it can be left out when nothing uses it, - that it cannot. Of a statement with several declarations, the one with MARK answers.
 # plain, minified: + `bun build` and `bun build --minify-syntax` leave the statement out, - they keep it, . not asked: nothing of the statement would show in the output.
-# difference: why answer and plain differ. The answer removes more: folded (the folder has a constant or dead code there), table (the table of built-ins knows the value that is read), inert (the statement compiles to nothing), minified (`bun run` leaves it out, as `bun build --minify-syntax` does). The bundler removes more: read (a variable, a field or an export takes a member of a built-in object, which `bun run` reads and the object lists from then on), missed (all else).
+# difference: why answer and plain differ. The answer removes more: folded (the folder has a constant or dead code there), table (the table of built-ins knows the value that is read), inert (the statement compiles to nothing), minified (`bun run` leaves it out, as `bun build --minify-syntax` does). The bundler removes more: read (a variable, a field or an export takes a member that its holder lists from its first read on, and `bun run` reads it), missed (all else).
 # literals and functions
 +	+	+	-	-	ts	const MARK = 1;
 +	+	+	-	-	ts	const MARK = "a";
@@ -33,7 +33,7 @@
 -	-	-	-	-	ts	const MARK = import.meta.env.X;
 -	-	-	-	-	ts	const MARK = import.meta?.url;
 +	+	+	-	-	ts	const MARK = import.meta.main;
--	-	-	-	-	ts	const MARK = import.meta.hot;
++	-	-	folded	-	ts	const MARK = import.meta.hot;
 # names
 +	+	+	-	-	ts	const a = 1; const MARK = a;
 +	+	+	-	-	ts	function f(...a: any[]): any {} let a = f(); const MARK = a;
@@ -123,15 +123,24 @@
 +	+	+	-	-	ts	const MARK = Function;
 +	+	+	-	-	ts	const MARK = Date;
 +	+	+	-	-	ts	const MARK = self;
-+	-	-	table	-	ts	const MARK = Buffer;
+-	-	-	-	-	ts	const MARK = Buffer;
 +	-	-	table	-	ts	const MARK = process;
 +	-	-	table	-	ts	const MARK = Bun;
-+	-	-	table	-	ts	const MARK = WeakRef;
-+	-	-	table	-	ts	const MARK = structuredClone;
-+	-	-	table	-	ts	const MARK = setImmediate;
-+	-	-	table	-	ts	const MARK = SharedArrayBuffer;
-+	-	-	table	-	ts	const MARK = TransformStream;
-+	-	-	table	-	ts	const MARK = global;
+-	-	-	-	-	ts	const MARK = WeakRef;
+-	-	-	-	-	ts	const MARK = structuredClone;
+-	-	-	-	-	ts	const MARK = setImmediate;
+-	-	-	-	-	ts	const MARK = SharedArrayBuffer;
+-	-	-	-	-	ts	const MARK = TransformStream;
+-	-	-	-	-	ts	const MARK = global;
++	.	.	-	-	ts	Date, "MARK";
++	.	.	-	-	ts	Promise, URL, "MARK";
++	.	.	-	-	ts	process, "MARK";
+-	.	.	-	-	ts	structuredClone, "MARK";
+-	.	.	-	-	ts	Buffer, "MARK";
++	+	+	-	-	ts	const MARK = { when: Date };
++	+	+	-	-	ts	const MARK = [URL];
++	+	+	-	-	ts	export default [URL, "MARK"];
++	+	+	-	-	ts	const MARK = { table: Map };
 -	-	-	-	-	ts	const MARK = window;
 -	-	-	-	-	ts	const MARK = gc;
 -	-	-	-	-	ts	const MARK = $vm;
@@ -168,30 +177,37 @@
 -	+	+	read	-	ts	const MARK = Object.keys;
 +	+	+	-	-	ts	const MARK = Math.PI;
 +	+	+	-	-	ts	const MARK = Math.max;
-+	+	+	-	-	ts	const MARK = Math.random;
--	+	+	read	-	ts	const MARK = JSON.parse;
-+	+	+	-	-	ts	const MARK = console.log;
+-	+	+	missed	-	ts	const MARK = Math.random;
+-	+	+	missed	-	ts	const MARK = JSON.parse;
+-	+	+	missed	-	ts	const MARK = console.log;
 +	+	+	-	-	ts	const MARK = Symbol.iterator;
 -	+	+	read	-	ts	const MARK = Reflect.get;
--	+	+	read	-	ts	const MARK = Promise.resolve;
+-	+	+	missed	-	ts	const MARK = Promise.resolve;
 +	+	+	-	-	ts	const MARK = Object.prototype.hasOwnProperty;
 +	+	+	-	-	ts	const MARK = Array.isArray;
 -	+	+	read	-	ts	const MARK = Number.isNaN;
 -	+	+	read	-	ts	const MARK = Symbol.for;
 -	+	+	read	-	ts	const MARK = Object.defineProperty;
--	-	-	-	-	ts	const MARK = Array.prototype.slice;
++	-	-	table	-	ts	const MARK = Array.prototype.slice;
 -	-	-	-	-	ts	const MARK = Date.now;
--	-	-	-	-	ts	const MARK = Number.MAX_SAFE_INTEGER;
++	-	-	table	-	ts	const MARK = Number.MAX_SAFE_INTEGER;
 +	-	-	table	-	ts	const MARK = Object.prototype;
 -	-	-	-	-	ts	const MARK = process.cwd;
 -	-	-	-	-	ts	const MARK = Function.prototype.call;
-+	-	-	table	-	ts	const MARK = globalThis.Object;
+-	-	-	-	-	ts	const MARK = globalThis.Object;
 -	-	-	-	-	ts	const MARK = globalThis.Object.keys;
 -	-	-	-	-	ts	const MARK = String.fromCharCode;
 -	-	+	-	-	ts	const MARK = Object["keys"];
 -	+	+	read	-	ts	class MARK { static a = Object.keys; }
 -	+	+	read	-	ts	const MARK = [Object.keys];
 -	+	+	read	-	ts	const MARK = { a: Object.keys };
+-	+	+	read	-	ts	export default [Reflect.get, "MARK"];
+-	+	+	read	-	ts	function f(...a: any[]): any {} class MARK extends (/* @__PURE__ */ f(Reflect.get)) {}
+-	+	+	read	-	ts	enum MARK { A = typeof Reflect.get === "function" ? 1 : 2 }
+-	-	-	-	-	ts	function f(...a: any[]): any {} class MARK { static { if (!Reflect.get) { f(); } } }
++	+	+	-	-	ts	class MARK { static { Reflect.get; } }
++	+	+	-	-	ts	const MARK = (Reflect.get, 1);
++	+	+	-	-	ts	const MARK = void Reflect.get;
 -	-	-	-	-	ts	const MARK = Buffer.from;
 -	-	-	-	-	ts	const MARK = Bun.serve;
 -	-	-	-	-	ts	const MARK = performance.now;
@@ -249,16 +265,18 @@
 +	-	+	minified	-	ts	const MARK = new Map();
 +	-	+	minified	-	ts	const MARK = new Set();
 +	-	+	minified	-	ts	const MARK = new Set([1]);
-+	-	+	minified	-	ts	const MARK = new WeakMap();
+-	-	+	-	-	ts	const MARK = new WeakMap();
+-	.	.	-	-	ts	new WeakMap(), "MARK";
 -	-	-	-	-	ts	const MARK = new Error("x");
-+	-	+	minified	-	ts	const MARK = new Date();
+-	-	+	-	-	ts	const MARK = new Date();
+-	.	.	-	-	ts	new Date(), "MARK";
 -	-	-	-	-	ts	const MARK = new Array(1);
 -	-	+	-	-	ts	const MARK = new Object();
 -	-	+	-	-	ts	const MARK = Symbol.for("x");
 -	-	-	-	-	ts	const MARK = Symbol("x");
 -	-	-	-	-	ts	const MARK = Object.freeze({});
 -	-	-	-	-	ts	const MARK = Object.create(null);
--	+	+	missed	-	ts	const MARK = "abc".charCodeAt(1);
++	+	+	-	-	ts	const MARK = "abc".charCodeAt(1);
 -	-	-	-	-	ts	const MARK = Math.max(1, 2);
 -	-	-	-	-	ts	const MARK = String(1);
 -	-	-	-	-	ts	const MARK = Number("1");
@@ -825,7 +843,7 @@
 +	+	+	-	-	ts	enum MARK { A = Math.PI }
 -	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; let a = 1; enum MARK { A = f() }
 -	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; let a = 1; enum MARK { A, B = f(), C = 1 }
--	-	+	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; let a = 1; enum MARK { A = "a".length }
++	-	+	folded	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; let a = 1; enum MARK { A = "a".length }
 -	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; let a = 1; enum MARK { A = o.x }
 -	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; let a = 1; enum MARK { A = unknownGlobal }
 -	-	-	-	-	ts	function f(...a: any[]): any {} const o: any = { a: 1 }; let a = 1; enum MARK { A = f(), B = A }

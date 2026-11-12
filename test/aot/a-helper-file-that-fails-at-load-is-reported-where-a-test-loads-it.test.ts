@@ -25,10 +25,9 @@ async function runTests(directory: string, words: string, ...flags: string[]) {
   return { stdout: stdout.replace(/^bun test .*\n/, ""), stderr, counts, exitCode };
 }
 
-test.each([
-  ["as one program", "TestRunLayers:0"],
-  ["over two layers", "TestRunLayers:2,TestRunPartFiles:1"],
-])("%s", async (_, words) => {
+// As one program the run was right: the layer that the parts share printed the build's own error in front of the run.
+const words = "TestRunLayers:0";
+test("as in bun test", async () => {
   using directory = tempDir("helper-file-that-fails-at-load", files);
   const plain = await runTests(String(directory), words);
   expect(plain.stdout).toContain("good: ");

@@ -202,14 +202,14 @@ impl Drop for ReportedLog<'_> {
     }
 }
 
-/// Invariant: `TSXParser::init` has filled the slot.
-struct InitializedParser<'a>(core::mem::MaybeUninit<js_parser::TSXParser<'a>>);
+/// Invariant: what `TSXParser::init` returned, the value in a slot that does not drop it.
+struct InitializedParser<'s, 'a>(&'s mut js_parser::TSXParser<'a>);
 
-impl Drop for InitializedParser<'_> {
+impl Drop for InitializedParser<'_, '_> {
     #[optimize(size)]
     fn drop(&mut self) {
-        // SAFETY: only constructed from an initialized slot.
-        unsafe { self.0.assume_init_drop() };
+        // SAFETY: this holds the only reference to the value, so it is dropped once and not used afterwards.
+        unsafe { core::ptr::drop_in_place(self.0) };
     }
 }
 
@@ -924,10 +924,7 @@ impl Snapshots {
                     // (that macro is crate-local).
                     let mut __parser_slot =
                         core::mem::MaybeUninit::<js_parser::TSXParser<'_>>::uninit();
-                    // `P::init` writes a fully-initialized value on `Ok`. On `Err` we
-                    // `?`-return before arming the drop guard, so the slot stays
-                    // uninitialized and untouched.
-                    js_parser::TSXParser::init(
+                    let __parser = js_parser::TSXParser::init(
                         &mut __parser_slot,
                         &arena,
                         core::ptr::NonNull::new(log_ptr).expect("log_ptr derived from &mut *log"),
@@ -935,10 +932,9 @@ impl Snapshots {
                         &vm.transpiler.options.define,
                         lexer,
                         opts,
-                    )?;
-                    let mut __parser_guard = InitializedParser(__parser_slot);
-                    // SAFETY: `init` returned `Ok`, so the slot is initialized.
-                    let parser: &mut js_parser::TSXParser<'_> = unsafe { __parser_guard.0.assume_init_mut() };
+                    );
+                    let __parser_guard = InitializedParser(__parser);
+                    let parser: &mut js_parser::TSXParser<'_> = &mut *__parser_guard.0;
 
                     parser.lexer.expect(js_lexer::T::TOpenParen)?;
                     let after_open_paren_loc = parser.lexer.loc().start;

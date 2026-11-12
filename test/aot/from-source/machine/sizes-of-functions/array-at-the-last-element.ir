@@ -1,0 +1,16 @@
+# f1 = last
+# -- source: array-at-the-last-element.ts
+# function last(list: number[]): number {
+#   return list.at(-1) ?? 0;
+# }
+# declare const input: any;
+# const list: number[] = [];
+# list.push(input | 0);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = last(list);
+# -- end of source
+# The compiler before this one: 7 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 11, patches 2, moves 4, unlikely or rare 18.
+# RUN(X64): steps most:15 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 15

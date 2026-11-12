@@ -1,0 +1,20 @@
+# f1 = firstOf, f2 = secondOf, f3 = thirdOf, f4 = fourthOf
+# -- source: names-out-of-line-move-into-the-room-behind-narrow-slots.ts
+# declare function sink(...values: unknown[]): void;
+# const enum Flags { None = 0, A = 1, B = 2 }
+# class Mark { tag: string; constructor(tag: string) { this.tag = tag; } }
+# interface Links { flags: Flags; more: Flags; last: Flags; first?: Mark; second?: Mark; third?: Mark; fourth?: Mark; }
+# const LinksMaker = function (this: Links) { this.flags = Flags.None; this.more = Flags.A; this.last = Flags.B; } as unknown as new () => Links;
+# function firstOf(links: Links): Mark { return links.first || links.first || (links.first = new Mark("first")); }
+# function secondOf(links: Links): Mark { return links.second || (links.second = new Mark("second")); }
+# function thirdOf(links: Links): Mark { return links.third || (links.third = new Mark("third")); }
+# function fourthOf(links: Links) { links.fourth = new Mark("fourth"); }
+# sink(firstOf, secondOf, thirdOf, fourthOf, new LinksMaker());
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: size=48
+# CHECK: "last" OptionalInt32 Inline offset=32
+# CHECK: "first" appended OptionalCell32 Inline
+# CHECK: "second" appended OptionalCell32 Inline
+# CHECK: "third" appended OptionalCell32 Inline
+# CHECK: "fourth" appended JSValue OutOfLine

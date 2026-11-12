@@ -1,10 +1,14 @@
-use super::Reference;
 use super::canonical::{CanonicalInput, canonical_function};
 use super::find::{
     BindingValues, Certainty, FileHelpers, FindInput, KnownReference, find, find_global,
 };
 use super::published::{Helper, PUBLISHED_FUNCTIONS, Shape};
+use super::resolve::{KnownCallee, ResolveInput, resolve_callee, resolve_reference};
 use super::table::{Table, analyze, find_published_function};
+use super::{KnownHelpers, Reference};
+use crate::ir::run_serially;
+use crate::modules::testing::{file_named, with_graph};
+use bun_sema::hir::{ExprKind, StmtKind};
 
 pub(super) const CREATE_BINDING: &str = r#"var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -78,6 +82,46 @@ fn the_export_helper_of_swc_is_known() {
     );
 }
 
+const TYPEOF_THAT_REPLACES_ITSELF: &str = r#"function _typeof(o) {
+  "@babel/helpers - typeof";
+  return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) {
+    return typeof o;
+  } : function (o) {
+    return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o;
+  }, _typeof(o);
+}
+"#;
+
+#[test]
+fn whoever_reads_the_name_of_a_helper_that_replaces_itself_sees_which_function_it_holds() {
+    let is_only_called = |path: &str, head: &str, more: &str| -> Vec<bool> {
+        let found = find_in(path, &format!("{head}{TYPEOF_THAT_REPLACES_ITSELF}{more}"));
+        let functions = found.functions();
+        functions
+            .map(|(_, known)| known.is_named_only_to_be_called)
+            .collect()
+    };
+    let classic = "/** @jsxRuntime classic */\n/** @jsx pick */\n";
+    let pick = "function pick(tag) { return tag; }\n";
+    assert_eq!(is_only_called("/a.mjs", "", "_typeof(1);"), [true]);
+    let element = format!("{pick}_typeof(<a />);");
+    assert_eq!(is_only_called("/a.jsx", classic, &element), [true]);
+    let fragment = format!("{classic}/** @jsxFrag _typeof */\n");
+    let reads_fragment = format!("{pick}<></>;");
+    for (path, head, more) in [
+        ("/a.mjs", "", "const held = _typeof;"),
+        ("/a.jsx", fragment.as_str(), reads_fragment.as_str()),
+        (
+            "/a.jsx",
+            "/** @jsxRuntime classic */\n/** @jsx _typeof.toString */\n",
+            "<a />;",
+        ),
+        ("/a.ts", "", "import held = _typeof;\nheld;"),
+    ] {
+        assert_eq!(is_only_called(path, head, more), [false], "{head}{more}");
+    }
+}
+
 fn with_file<R>(path: &str, source: &str, then: impl FnOnce(&FindInput<'_, '_>) -> R) -> R {
     analyze(path, source, |input| {
         assert!(
@@ -108,6 +152,41 @@ fn certainties_in(path: &str, source: &str) -> Vec<Certainty> {
 
 fn holds_in(path: &str, source: &str) -> Vec<bool> {
     bindings_in(path, source, |values| values.holds_from_the_start)
+}
+
+const TYPEOF: &str = r#"function _typeof(o) {
+  "@babel/helpers - typeof";
+  return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) {
+    return typeof o;
+  } : function (o) {
+    return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o;
+  }, _typeof(o);
+}"#;
+
+#[test]
+fn the_name_that_a_function_expression_gives_itself_takes_no_store() {
+    let known = [Shape::TypeofAnswersSymbolForSymbols];
+    assert_eq!(shapes_in("/a.mjs", TYPEOF), known);
+    for keyword in ["var", "let", "const"] {
+        let held = format!("{keyword} _typeof = {TYPEOF};");
+        assert_eq!(shapes_in("/a.mjs", &held), [], "{keyword}");
+        assert_eq!(shapes_in("/a.cjs", &held), [], "{keyword}");
+    }
+    let export = SWC_EXPORT.trim_end();
+    let held = format!("var _export = {export};");
+    assert_eq!(shapes_in("/a.cjs", &held), [Shape::ExportDefinesGetters]);
+}
+
+#[test]
+fn a_helper_that_replaces_the_exports_of_its_file_too_is_an_ordinary_function() {
+    let changes = [
+        ("return _typeof = ", "return module.exports = _typeof = "),
+        (
+            "}, _typeof(o);",
+            "}, module.exports.__esModule = true, module.exports[\"default\"] = module.exports, _typeof(o);",
+        ),
+    ];
+    assert_eq!(shapes_in("/a.cjs", &replace_each(TYPEOF, &changes)), []);
 }
 
 fn tree_of(function: &str) -> Vec<u8> {
@@ -168,6 +247,7 @@ fn every_reference_of_a_published_function_can_be_verified() {
             let can_be_verified = match reference {
                 Reference::Helper(helper) => published.contains(&helper),
                 Reference::Global(path) => find_global(path).is_some(),
+                Reference::Holder => true,
             };
             assert!(
                 can_be_verified,
@@ -240,6 +320,10 @@ fn one_changed_place_makes_an_ordinary_function() {
             "Object.defineProperty(o, k2, desc); return o;",
         ),
         (
+            "Object.defineProperty(o, k2, desc);",
+            "Object.defineProperty(o, k2, desc); return undefined;",
+        ),
+        (
             "if (k2 === undefined) k2 = k;\n    var desc",
             "if (k2 == undefined) k2 = k;\n    var desc",
         ),
@@ -265,6 +349,31 @@ fn one_changed_place_makes_an_ordinary_function() {
 }
 
 #[test]
+fn an_export_star_that_differs_in_one_place_is_an_ordinary_function() {
+    let below = [
+        Shape::CreateBindingReusesDescriptor,
+        Shape::CreateBindingCopiesValue,
+    ];
+    for (from, to) in [
+        ("p !== \"default\" && ", ""),
+        ("var p in m", "var p of Object.keys(m)"),
+        (" && !Object.prototype.hasOwnProperty.call(exports, p)", ""),
+        (
+            "hasOwnProperty.call(exports, p)",
+            "hasOwnProperty.call(m, p)",
+        ),
+        (
+            "__createBinding(exports, m, p)",
+            "__createBinding(exports, m, p, \"last\")",
+        ),
+    ] {
+        let changed = replace_each(EXPORT_STAR, &[(from, to)]);
+        let source = format!("{CREATE_BINDING}{changed}");
+        assert_eq!(shapes_in("/a.cjs", &source), below, "{to}");
+    }
+}
+
+#[test]
 fn a_global_that_is_shadowed_is_no_global() {
     let source = format!("function outer(Object) {{ {CREATE_BINDING} return __createBinding; }}");
     assert_eq!(
@@ -273,6 +382,9 @@ fn a_global_that_is_shadowed_is_no_global() {
     );
     let source = format!("var undefined = 1; {CREATE_BINDING}");
     assert_eq!(shapes_in("/a.mjs", &source), []);
+    let source =
+        format!("function outer(undefined) {{ {CREATE_BINDING} return __createBinding; }}");
+    assert_eq!(shapes_in("/a.cjs", &source), []);
 }
 
 #[test]
@@ -583,7 +695,6 @@ fn a_helper_around_a_require_that_differs_in_one_place_is_an_ordinary_function()
     let copy = Shape::CopyPropertiesDefinesGettersForOwnNamesTheTargetLacks;
     let re_export = Shape::ReExportCopiesAllButDefault;
     let to_es_module = Shape::ToEsModuleShowsUnmarkedValueAsDefault;
-    // What calls the copying helper goes with it.
     for (from, to) in [
         ("from && typeof", "from || typeof"),
         ("=== \"object\"", "=== \"symbol\""),
@@ -815,22 +926,6 @@ fn a_helper_of_typescript_around_a_require_that_differs_in_one_place_is_an_ordin
 }
 
 #[test]
-fn the_require_of_an_es_module_is_the_require_of_the_published_text() {
-    let source = r#"var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
-  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
-}) : x)(function(x) {
-  if (typeof require !== "undefined") return require.apply(this, arguments);
-  throw Error('Dynamic require of "' + x + '" is not supported');
-});
-export {};
-"#;
-    assert_eq!(
-        shapes_in("/a.mjs", source),
-        [Shape::RequireFactoryPrefersRequire]
-    );
-}
-
-#[test]
 fn helpers_of_bun_are_recognized() {
     let source = r#"var __defProp = Object.defineProperty;
 var __returnValue = (v) => v;
@@ -902,6 +997,47 @@ fn a_branch_that_a_locked_built_in_rules_out_is_no_alternative() {
 }
 
 #[test]
+fn a_guard_that_gives_undefined_is_dropped_only_where_the_operator_behind_it_goes_on() {
+    let held = |source: &str| {
+        bindings_in("/a.cjs", source, |values| {
+            (values.functions.len(), values.certainty)
+        })
+    };
+    let once = (1, Certainty::OnceInitialized);
+    let uncertain = (1, Certainty::MayHoldOtherValues);
+    assert_eq!(held(CREATE_BINDING), [once]);
+    let guard = "(this && this.__createBinding)";
+    let joined =
+        |by: &str| CREATE_BINDING.replace(&format!("{guard} ||"), &format!("{guard} {by}"));
+    assert_eq!(held(&joined("??")), [once]);
+    assert_eq!(held(&joined("&&")), []);
+    assert_eq!(held(&joined("&& 1 ||")), [once]);
+    assert_eq!(held(&joined("|| 1 &&")), [uncertain]);
+    assert_eq!(held(&joined("|| 1 ? null :")), []);
+    assert_eq!(held(&joined("|| this.nothing ? null :")), [uncertain]);
+    let chosen = CREATE_BINDING.replace(
+        &format!("{guard} ||"),
+        &format!("!this.nothing ? {guard} :"),
+    );
+    assert_eq!(held(&chosen), [uncertain]);
+    let behind = CREATE_BINDING.replace(&format!("{guard} ||"), &format!("1 && {guard} ||"));
+    assert_eq!(held(&behind), [uncertain]);
+    let in_es_module = |source: String| {
+        bindings_in("/a.mjs", &format!("{source}export {{}};"), |values| {
+            (values.functions.len(), values.certainty)
+        })
+    };
+    assert_eq!(in_es_module(CREATE_BINDING.to_string()), [once]);
+    assert_eq!(in_es_module(joined("&&")), []);
+    assert_eq!(in_es_module(joined("&& 1 ||")), [once]);
+    let star_over_nothing = format!("{}{EXPORT_STAR}", joined("&&"));
+    let relies = find_in("/a.cjs", &star_over_nothing);
+    assert!(relies.functions().all(|(_, known)| known.shape
+        != Shape::ExportStarBindsNamesTheTargetLacks
+        || !known.relies_on_facts));
+}
+
+#[test]
 fn a_definition_in_the_head_holds_from_the_start() {
     let wrapper = "var __returnValue = (v) => v;\n";
     assert_eq!(
@@ -960,4 +1096,169 @@ fn exports_that_the_statement_has_handed_out_are_not_untouched() {
     );
     let behind_a_call = format!("var touched = globalThis.touch(this), {helper};");
     assert_eq!(certainty(&behind_a_call), [Certainty::MayHoldOtherValues]);
+}
+
+const TSLIB_ES_MODULE: &str = r#"export var __createBinding = Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+        desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+});
+
+export function __exportStar(m, o) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(o, p)) __createBinding(o, m, p);
+}
+"#;
+
+const MAIN_THAT_IMPORTS_EXPORT_STAR: &str =
+    "import { __exportStar } from \"./tslib.mjs\";\n__exportStar({ a: 1 }, {});";
+
+fn with_callee_of_last_call<R>(
+    files: &[(&str, &str)],
+    then: impl FnOnce(&ResolveInput<'_, '_>, KnownCallee) -> R,
+) -> R {
+    with_graph(files, |graph, bind_input| {
+        let helpers = KnownHelpers::compute(bind_input.files, &run_serially);
+        let input = ResolveInput {
+            files: bind_input.files,
+            modules: graph,
+            helpers: &helpers,
+        };
+        let file = file_named(bind_input, files[0].0);
+        let hir = input.files.hir(file);
+        let last = hir.ids(hir.body).last().expect("the file has a statement");
+        let StmtKind::Expr(call) = hir[last].kind else {
+            panic!("the last statement of the first file is a call");
+        };
+        let ExprKind::Call(site) = hir[call].kind else {
+            panic!("the last statement of the first file is a call");
+        };
+        let callee = resolve_callee(&input, file, hir[site].callee);
+        then(&input, callee.expect("the callee is a known helper"))
+    })
+}
+
+fn last_call_needs_guard(files: &[(&str, &str)]) -> bool {
+    with_callee_of_last_call(files, |_, callee| callee.needs_guard())
+}
+
+#[test]
+fn resolves_imported_function_declaration() {
+    let named = "import { __exportStar as star } from \"./tslib.mjs\";\nstar({ a: 1 }, {});";
+    let namespace = "import * as tslib from \"./tslib.mjs\";\ntslib.__exportStar({ a: 1 }, {});";
+    for main in [named, namespace] {
+        let files = [("main.mjs", main), ("tslib.mjs", TSLIB_ES_MODULE)];
+        with_callee_of_last_call(&files, |input, callee| {
+            let helper = callee.helper(input.helpers);
+            assert_eq!(helper, Some(Helper::ExportStar), "{main}");
+            assert_eq!(callee.certainty, Certainty::Always, "{main}");
+            let path = input.files.module(callee.file).file_name();
+            assert!(path.ends_with(b"/tslib.mjs"), "{main}");
+        });
+    }
+}
+
+#[test]
+fn a_variable_of_another_file_may_still_be_empty() {
+    let variable = replace_each(
+        TSLIB_ES_MODULE,
+        &[
+            (
+                "export function __exportStar(m, o)",
+                "export var __exportStar = function(m, o)",
+            ),
+            (
+                "__createBinding(o, m, p);\n}",
+                "__createBinding(o, m, p);\n};",
+            ),
+        ],
+    );
+    let files = [
+        ("main.mjs", MAIN_THAT_IMPORTS_EXPORT_STAR),
+        ("tslib.mjs", variable.as_str()),
+    ];
+    with_callee_of_last_call(&files, |input, callee| {
+        let found = input.helpers.file(callee.file);
+        let mut bindings = found.expect("the file has helpers").bindings();
+        let at_home = bindings.find(|(_, values)| values.functions == callee.functions);
+        let (_, at_home) = at_home.expect("a variable of the file holds the helper");
+        assert_eq!(at_home.certainty, Certainty::OnceInitialized);
+        assert!(at_home.holds_from_the_start);
+        assert_eq!(callee.certainty, Certainty::OnceInitialized);
+        assert!(!callee.holds_from_the_start);
+        assert!(callee.needs_guard());
+    });
+    let declaration = [
+        ("main.mjs", MAIN_THAT_IMPORTS_EXPORT_STAR),
+        ("tslib.mjs", TSLIB_ES_MODULE),
+    ];
+    assert!(!last_call_needs_guard(&declaration));
+    let own = replace_each(&variable, &[("export var", "var")]);
+    let own = format!("{own}__exportStar({{ a: 1 }}, {{}});");
+    assert!(!last_call_needs_guard(&[("main.mjs", own.as_str())]));
+}
+
+#[test]
+fn a_declaration_that_another_file_may_call_early_guards_the_variable_that_it_names() {
+    let variable_needs_guard = |tslib: &str| {
+        let files = [
+            ("main.mjs", MAIN_THAT_IMPORTS_EXPORT_STAR),
+            ("tslib.mjs", tslib),
+        ];
+        with_callee_of_last_call(&files, |input, callee| {
+            assert!(!callee.needs_guard());
+            let [held] = callee.functions[..] else {
+                panic!("the binding holds one function");
+            };
+            let known = input.helpers.function(callee.file, held.definition);
+            let [named] = known.expect("the function is a helper").references[..] else {
+                panic!("the helper names one helper");
+            };
+            let accepts = |shape: Shape| shape.helper() == Helper::CreateBinding;
+            let resolved = resolve_reference(input, callee.file, named, &accepts);
+            resolved.expect("the variable holds the helper").needs_guard
+        })
+    };
+    assert!(!variable_needs_guard(TSLIB_ES_MODULE));
+    let on_a_cycle = format!("import \"./main.mjs\";\n{TSLIB_ES_MODULE}");
+    assert!(variable_needs_guard(&on_a_cycle));
+}
+
+const REQUIRE_OF_ESBUILD: &str = r#"var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+  get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+}) : x)(function(x) {
+  if (typeof require !== "undefined") return require.apply(this, arguments);
+  throw Error('Dynamic require of "' + x + '" is not supported');
+});
+"#;
+
+#[test]
+fn the_require_of_an_es_module_is_the_require_of_the_published_text() {
+    assert_eq!(
+        shapes_in("/a.mjs", &format!("{REQUIRE_OF_ESBUILD}export {{}};")),
+        [Shape::RequireFactoryPrefersRequire]
+    );
+}
+
+#[test]
+fn a_definition_behind_the_call_that_makes_the_require_of_esbuild_holds_from_the_start() {
+    let wrapper = "var __returnValue = (v) => v;\nexport {};";
+    assert_eq!(
+        holds_in("/a.mjs", &format!("{REQUIRE_OF_ESBUILD}{wrapper}")),
+        [true]
+    );
+    let gets_another_function = REQUIRE_OF_ESBUILD.replace(
+        ": x)(function(x) {",
+        ": x)(globalThis.start() || function(x) {",
+    );
+    assert_ne!(gets_another_function, REQUIRE_OF_ESBUILD);
+    assert_eq!(
+        holds_in("/a.mjs", &format!("{gets_another_function}{wrapper}")),
+        [false]
+    );
 }

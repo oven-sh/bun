@@ -1,0 +1,33 @@
+# -- source: main.js
+# function Root(n) { this.a = n; }
+# class Middle extends Root { constructor(n) { super(n); this.b = n + 1; } }
+# let last;
+# const holder = { item: undefined };
+# const all = [];
+# function kindOf(value) { return typeof value; }
+# class Low extends Middle {
+#   constructor(n) {
+#     super(n);
+#     this.c = n + 2;
+#     last = this;
+#     holder.item = this;
+#     all.push(this);
+#     this.seen = kindOf(this);
+#   }
+# }
+# class Stranger { describe() { return "stranger" + this.c; } }
+# const numbers = JSON.parse("[1,2,3]");
+# let text = "";
+# for (let turn = 0; turn < 200; turn++) {
+#   all.length = 0;
+#   for (const n of numbers) {
+#     const made = Reflect.construct(Low, [n], Stranger);
+#     text = made.seen + " " + typeof last + " " + typeof holder.item + " " + (last === undefined) + " " + last.a + last.b + last.c + " " + all[all.length - 1].describe();
+#   }
+# }
+# print(text, kindOf(numbers), all.length);
+# -- end of source
+# `Low` stands two classes below a plain constructor function and is only ever made for a new target from outside its row. What `this` flows into, a variable, a field, a list and a parameter, holds the object that is made.
+# RUN: run-in-shell
+# CHECK: object object object false 345 stranger5 object 3
+# CHECK-NEXT: exited with 0

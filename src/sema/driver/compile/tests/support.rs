@@ -92,10 +92,6 @@ impl<T> CheckedBuild<T> {
             .chain(&self.program.diagnostics)
     }
 
-    pub(super) fn demoted_files(&self) -> Vec<FileId> {
-        self.roles.demoted.iter().map(|it| it.file).collect()
-    }
-
     pub(super) fn reported(&self, file: FileId, code: u32) -> Vec<(DiagnosticClass, Effect)> {
         self.diagnostics()
             .filter(|it| it.diagnostic.file == Some(file) && it.diagnostic.code == code)
@@ -188,6 +184,21 @@ pub(super) fn check_only(program: &TestProgram<'_, '_>) -> CheckedBuild<()> {
     check(program, &|_, _| ())
 }
 
+pub(super) fn check_whole_files(program: &TestProgram<'_, '_>) -> CheckedBuild<()> {
+    let (loaded, host, request) = (program.loaded, program.host, program.request);
+    let compiled_files = program.files().compiled_files();
+    let report = crate::check_whole_files(loaded, host, request, compiled_files);
+    CheckedBuild {
+        roles: keep_verified_roles(loaded, &[]),
+        program: CheckedProgram {
+            lowered: Vec::new(),
+            diagnostics: loaded.program_origins().apply_effects(report.diagnostics),
+            incomplete: report.incomplete,
+            rounds: report.rounds,
+        },
+    }
+}
+
 pub(super) fn project_disk(files: &[(&str, &str)], threads: usize) -> host::Disk {
     let defaults = [("tsconfig.json", TSCONFIG), ("globals.d.ts", GLOBAL_TYPES)];
     let mut already_read = host::AlreadyRead::default();
@@ -200,6 +211,7 @@ pub(super) fn project_disk(files: &[(&str, &str)], threads: usize) -> host::Disk
 pub(super) fn disk(threads: usize, already_read: host::AlreadyRead, root: &[u8]) -> host::Disk {
     static OUTPUT: Once = Once::new();
     OUTPUT.call_once(bun_core::output::stdio::init);
+    bun_core::Output::Source::configure_thread_no_js();
     host::Disk::with_already_read(threads, already_read, root)
 }
 
@@ -211,6 +223,37 @@ pub(super) fn with_program<R>(
 ) -> R {
     let (disk, code) = (project_disk(files, threads), CodeOptions::bun_run(PROJECT));
     try_load(&disk, &code, Roots::Written(entry_points), &[], |loaded| {
+        then(loaded.expect("load_program failed"))
+    })
+}
+
+pub(super) fn with_look_for_type_errors<R>(
+    files: &[(&str, &str)],
+    entry_points: &[&str],
+    then: impl FnOnce(&TestProgram<'_, '_>) -> R,
+) -> R {
+    let code = CodeOptions {
+        looks_for_type_errors: true,
+        ..CodeOptions::bun_run(PROJECT)
+    };
+    let roots = Roots::Written(entry_points);
+    try_load(&project_disk(files, 1), &code, roots, &[], |loaded| {
+        then(loaded.expect("load_program failed"))
+    })
+}
+
+pub(super) fn with_check_of_dependencies<R>(
+    files: &[(&str, &str)],
+    entry_points: &[&str],
+    then: impl FnOnce(&TestProgram<'_, '_>) -> R,
+) -> R {
+    let code = CodeOptions {
+        looks_for_type_errors: true,
+        checks_dependency_sources: true,
+        ..CodeOptions::bun_run(PROJECT)
+    };
+    let roots = Roots::Written(entry_points);
+    try_load(&project_disk(files, 1), &code, roots, &[], |loaded| {
         then(loaded.expect("load_program failed"))
     })
 }
@@ -287,14 +330,29 @@ pub(super) fn load_with_tsconfig_override<R>(
     files: &[(&str, &str)],
     entry_point: &str,
     tsconfig_override: &str,
+    builds_executable: bool,
     then: impl FnOnce(Result<&TestProgram<'_, '_>, LoadFailure>) -> R,
 ) -> R {
     let code = CodeOptions {
         tsconfig_override: Some(inside(PROJECT, tsconfig_override.as_bytes())),
+        builds_executable,
         ..CodeOptions::bun_run(PROJECT)
     };
     let entry_points = [entry_point];
     let roots = Roots::Written(&entry_points);
+    try_load(&project_disk(files, 1), &code, roots, &[], then)
+}
+
+pub(super) fn load_in_place<R>(
+    files: &[(&str, &str)],
+    working_directory: &[u8],
+    then: impl FnOnce(Result<&TestProgram<'_, '_>, LoadFailure>) -> R,
+) -> R {
+    let code = CodeOptions {
+        transpiles_by_working_directory: true,
+        ..CodeOptions::bun_run(working_directory)
+    };
+    let roots = Roots::Written(&["./main.ts"]);
     try_load(&project_disk(files, 1), &code, roots, &[], then)
 }
 
@@ -337,6 +395,7 @@ fn try_load<R>(
         threads: NonZeroUsize::new(host.threads()).unwrap_or(NonZeroUsize::MIN),
         progress: None,
         left_out_bodies: None,
+        discards_first_visits: false,
     };
     match load_program(&session, host, &request) {
         Ok(loaded) => then(Ok(&TestProgram {
@@ -593,6 +652,24 @@ impl CodeHost for LacksBunTypes<'_> {
 
     fn declarations_in_place_of_bun_types(&self) -> Option<Vec<u8>> {
         Some(inside(PROJECT, Self::DECLARATIONS.as_bytes()))
+    }
+}
+
+pub(super) struct BringsBunTypes<'a>(pub &'a host::Disk);
+
+impl BringsBunTypes<'_> {
+    pub(super) const TYPE_ROOT: &'static str = "brought";
+}
+
+impl Host for BringsBunTypes<'_> {
+    delegate_host_to_disk!();
+}
+
+impl CodeHost for BringsBunTypes<'_> {
+    delegate_parsers_to_disk!();
+
+    fn type_root_in_place_of_bun_types(&self) -> Option<Vec<u8>> {
+        Some(inside(PROJECT, Self::TYPE_ROOT.as_bytes()))
     }
 }
 

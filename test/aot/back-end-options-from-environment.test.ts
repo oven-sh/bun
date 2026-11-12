@@ -1,10 +1,11 @@
 // The environment does not change the code a release build of Bun compiles: with BUN_JSC_* options of B3, Air and the macro assembler set, the
 // executable is the same, byte for byte.
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { mkdirSync } from "fs";
 import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 import { spawned, unsupported } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const program = join(import.meta.dir, "parallel/classes-and-closures/structural-subtypes.ts");

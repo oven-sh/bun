@@ -1,0 +1,41 @@
+# -- source: main.ts
+# // @ts-nocheck
+# class Box { x; constructor(x) { this.x = x; } }
+# const other = { y: 0, x: 2 };
+# function tell(f) { try { print(f()); } catch (thrown) { print(thrown.name); } }
+# function each(f) { tell(() => f(new Box(2))); tell(() => f(other)); tell(() => f(null)); tell(() => f(7)); tell(() => f({ x: "2" })); }
+# function bump(p, o, n) { let s = 0; p.n = p.n + 1; for (let i = 0;i < n; i++) s += o.x; return s; }
+# const last = JSON.parse("0");
+# each((o) => { const p = { n: 0 }; let got = 0; for (let round = 0; ; round++) { got = bump(p, o, 3); if (round >= last) break; } return p.n * 100 + got; });
+# each((o) => { const q = { n: 4 }; let got = 0; for (let round = 0; ; round++) { got = bump(q, o, 2); if (round >= last) break; } return q.n * 100 + got; });
+# -- end of source
+# The edge of what a-birth-that-moves-down-to-where-a-copy-leaves-is-no-deed-in-the-net-of-effects.ir lets by. The literal is born in front of the copy of bump(), and the copy stores into it: that store is seen if
+# it runs again. The walk knows, so no copy leaves for the call behind it. UnderstateEffects:RestartMark/all/RunsOtherCode lays the mark false: as built bump() then runs twice on one cell, in silence; under the net
+# the store is counted, though it fills a cell that its own unit has made, because the beginning of what may run again stands between the birth and the store. f5 = the first arrow
+# RUN(SHAPE): walk f5 testing=CheckEffectsAtRunTime,UnderstateEffects:RestartMark/all/RunsOtherCode mechanisms=all
+# SHAPE-LABEL: code f5:Body
+# SHAPE: = NewObject
+# SHAPE: = BeginEffectsCheck
+# SHAPE: PutSlot {{*}}key="n"
+# SHAPE: CheckInlineeFallback
+# RUN(NET): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# NET: 106
+# NET-NEXT: 106
+# NET-NEXT: TypeError
+# NET-NEXT: NaN
+# NET-NEXT: 1000222
+# NET-NEXT: 504
+# NET-NEXT: 504
+# NET-NEXT: TypeError
+# NET-NEXT: NaN
+# NET-NEXT: 500022
+# NET-NEXT: exited with 0
+# RUN(SILENT): run-in-shell testing=UnderstateEffects:RestartMark/all/RunsOtherCode mechanisms=all
+# SILENT: 2000222
+# SILENT: 600022
+# SILENT-NEXT: exited with 0
+# RUN(STOPPED): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:RestartMark/all/RunsOtherCode mechanisms=all
+# STOPPED: an inlined call falls back to the real call, so the compiler's state says that nothing observable happened in it, but an operation that is observable if repeated has run since it began
+# STOPPED-NOT: 000222
+# STOPPED: crashed
+# STOPPED: with

@@ -22,10 +22,10 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 //     ("deallocating while item is strongly protected") and Tree Borrows (the
 //     model `bun run rust:miri` uses), even if `self` is never touched again.
 //     The free has to go through the raw pointer the owner actually holds,
-//     which is why the tree's functions that end in a free take
-//     `this: *mut Self` (see `ReadBytesHandler::on_read_bytes` in
-//     src/runtime/webcore/Blob.rs, `ReadFileCompletion::run` in
-//     src/runtime/webcore/blob/read_file.rs, and the comments on `deinit` in
+//     which is why the tree's functions that end in a free take the `Box`
+//     (`ReadBytesHandler::on_read_bytes` in src/runtime/webcore/Blob.rs,
+//     `ReadFileCompletion::run` in src/runtime/webcore/blob/read_file.rs) or
+//     `this: *mut Self` (see the comments on `deinit` in
 //     src/sql_jsc/postgres/PostgresSQLConnection.rs).
 //
 // Scope: the single-expression spellings below, with `self` as the receiver.

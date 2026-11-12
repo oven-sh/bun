@@ -295,7 +295,7 @@ JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& 
 {
 #if ENABLE(AOT)
     // The JavaScript of a module stays when its feature is removed. Its native functions throw.
-    if (JSC::AOT::hasBuiltinModule(globalObject, id)) {
+    if (vm.hasCompiledCode() && JSC::AOT::hasBuiltinModule(globalObject, id)) {
         Bun::ModuleGraphContextScope realmContext(*defaultGlobalObject(globalObject)->scriptExecutionContext());
         return JSC::AOT::evaluateBuiltinModule(globalObject, id);
     }
@@ -305,7 +305,7 @@ JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& 
         return {};
     }
 #if ENABLE(AOT)
-    if (JSC::AOT::refusesLibraryText(globalObject)) [[unlikely]] {
+    if (vm.hasCompiledCode() && JSC::AOT::rejectsLibrarySource(globalObject)) [[unlikely]] {
         throwModuleNotCompiledError(globalObject, id, Bun::ErrorCode::ERR_MODULE_NOT_FOUND);
         return {};
     }
@@ -393,7 +393,8 @@ JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, 
         value = createInternalModuleById(globalObject, vm, id);
         RETURN_IF_EXCEPTION(throwScope, {});
         internalField(id).set(vm, this, value);
-        JSC::AOT::hostDidLoadBuiltinModule(globalObject, id, value);
+        if (vm.hasCompiledCode()) [[unlikely]]
+            JSC::AOT::hostDidLoadBuiltinModule(globalObject, id, value);
     }
     return value;
 }
@@ -403,11 +404,16 @@ JSValue DeclaredModuleLoad::requireField(Zig::GlobalObject* globalObject, Intern
     return globalObject->internalModuleRegistry()->requireId(globalObject, globalObject->vm(), field);
 }
 
+bool DeclaredModuleLoad::canLoad(Zig::GlobalObject* globalObject, InternalModuleRegistry::Field field)
+{
+    uint32_t id = field;
+    return id >= InternalModuleRegistryConstants::moduleCount || !globalObject->vm().hasCompiledCode() || !JSC::AOT::rejectsLibrarySource(globalObject) || JSC::AOT::hasBuiltinModule(globalObject, id);
+}
+
 // The build compiles the module for a program that uses the built-in, whether or not the program can import the module by name.
 JSValue DeclaredModuleLoad::requireOnBehalfOf(Zig::GlobalObject* globalObject, InternalModuleRegistry::Field field, ASCIILiteral builtin)
 {
-    uint32_t id = field;
-    if (id < InternalModuleRegistryConstants::moduleCount && JSC::AOT::refusesLibraryText(globalObject) && !JSC::AOT::hasBuiltinModule(globalObject, id)) [[unlikely]] {
+    if (!canLoad(globalObject, field)) [[unlikely]] {
         // What is loaded for a method that prints its own object is the printer of node:util.
         JSC::AOT::throwBuiltinNotCompiled(globalObject, builtin == "Startup"_s ? "util.inspect"_s : builtin);
         return {};
@@ -415,20 +421,43 @@ JSValue DeclaredModuleLoad::requireOnBehalfOf(Zig::GlobalObject* globalObject, I
     return requireField(globalObject, field);
 }
 
+JSValue DeclaredModuleLoad::requireModuleOnBehalfOf(Zig::GlobalObject* globalObject, InternalModuleRegistry::Field field, ASCIILiteral builtin)
+{
+    JSValue module = requireOnBehalfOf(globalObject, field, builtin);
+    if (module && globalObject->vm().hasCompiledCode()) [[unlikely]]
+        JSC::AOT::willExposeBuiltinModuleToNativeCode(globalObject, field);
+    return module;
+}
+
+JSValue DeclaredModuleLoad::requireExportOnBehalfOf(Zig::GlobalObject* globalObject, InternalModuleRegistry::Field field, ASCIILiteral builtin, ASCIILiteral exportName)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue module = requireOnBehalfOf(globalObject, field, builtin);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_ASSERT(module.isObject());
+    if (vm.hasCompiledCode()) [[unlikely]]
+        JSC::AOT::willExposeBuiltinExportToNativeCode(globalObject, field, exportName);
+    RELEASE_AND_RETURN(scope, asObject(module)->get(globalObject, Identifier::fromString(vm, exportName)));
+}
+
 JSValue DeclaredModuleLoad::requireNamedAtRunTime(Zig::GlobalObject* globalObject, InternalModuleRegistry::Field field, ErrorCode ifNotInExecutable)
 {
     uint32_t id = field;
-    if (id < InternalModuleRegistryConstants::moduleCount && !JSC::AOT::hasBuiltinModule(globalObject, id)) {
+    if (id < InternalModuleRegistryConstants::moduleCount && !(globalObject->vm().hasCompiledCode() && JSC::AOT::hasBuiltinModule(globalObject, id))) {
         if (auto feature = InternalModuleRegistryConstants::moduleFeatures[id]; feature && JSC::isFeatureRemoved(*feature)) [[unlikely]] {
             throwRemovedModuleError(globalObject, *feature, id, ifNotInExecutable);
             return {};
         }
-        if (JSC::AOT::refusesLibraryText(globalObject)) [[unlikely]] {
+        if (globalObject->vm().hasCompiledCode() && JSC::AOT::rejectsLibrarySource(globalObject)) [[unlikely]] {
             throwModuleNotCompiledError(globalObject, id, ifNotInExecutable);
             return {};
         }
     }
-    return requireField(globalObject, field);
+    JSValue module = requireField(globalObject, field);
+    if (module && globalObject->vm().hasCompiledCode()) [[unlikely]]
+        JSC::AOT::willExposeBuiltinModuleToNativeCode(globalObject, field);
+    return module;
 }
 
 JSValue DeclaredModuleLoad::requireForCommandLine(Zig::GlobalObject* globalObject, InternalModuleRegistry::Field field)

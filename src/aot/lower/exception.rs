@@ -28,12 +28,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         finalizer: StmtId,
     ) {
         if finalizer.is_some() {
-            self.begin_cleanup(BlockRole::CleanupHandler, None);
+            self.begin_cleanup_that_reads_fields(BlockRole::CleanupHandler);
         }
         if catch_body.is_some() {
             let hir = self.file.hir;
             let after = self.create_block();
-            let handler = self.begin_handler(BlockRole::CatchHandler, None);
+            let handler = self.begin_handler_that_reads_fields(BlockRole::CatchHandler);
             self.lower_statement(block);
             self.end_handler(handler);
             self.jump(after);
@@ -41,11 +41,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.continue_in(handler.block());
             self.set_position(hir[catch_body].start);
             let caught = self.builder.catch_value();
+            self.read_what_was_stored_under_handlers(statement);
             let scope = self.enter_own_scope(statement);
             if param.is_some() {
-                // The `catch`.
-                let mapped = self.file.next_token_position(hir[block].loc.end);
-                self.bind_pattern(hir[param].pat, caught, None, mapped);
+                self.bind_pattern(hir[param].pat, caught, None);
             }
             self.lower_statement(catch_body);
             self.leave_own_scope(scope);
@@ -55,7 +54,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.lower_statement(block);
         }
         if finalizer.is_some() {
-            self.end_cleanup_shared(&mut |lowering| lowering.lower_statement(finalizer));
+            self.end_cleanup_shared(&mut |lowering| {
+                lowering.read_what_was_stored_under_handlers(statement);
+                lowering.lower_statement(finalizer);
+            });
         }
     }
 }

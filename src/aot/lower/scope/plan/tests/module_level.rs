@@ -4,13 +4,14 @@ use bun_sema::program::Sym;
 
 use super::super::Context;
 use super::super::storage::find_initial_functions;
-use super::{COPIED, Probe, analyze_source, is_field, storage_in};
+use super::{COPIED, Probe, analyze_source, analyze_source_that_runs_again, is_field, storage_in};
 use crate::ir::VariableKey;
 use crate::lower::captures::{Capture, CaptureList, CapturePlan};
 use crate::lower::scope::testing::{functions_of_kind, walk_scopes, with_scope_input};
 use crate::lower::scope::{BindingRef, Placement, ScopeSlot, Storage};
 
 const MODULE: ScopeSlot = ScopeSlot::CommonJs(CommonJsVariable::Module);
+const EXPORTS: ScopeSlot = ScopeSlot::CommonJs(CommonJsVariable::Exports);
 
 fn is_symbol(binding: &BindingRef) -> bool {
     match binding {
@@ -49,14 +50,33 @@ fn unshared_top_level_binding_is_local() {
 }
 
 #[test]
+fn names_of_a_commonjs_file_that_runs_once_are_variables() {
+    let source = "let a = 1; const b = {}; function f() { return [a, b, module, helper]; } \
+                  function helper() {} module.exports = f; a = 2;";
+    analyze_source("main.cjs", source, |probe| {
+        for name in ["a", "b", "helper"] {
+            let storage = probe.placement_of(name).storage;
+            assert!(matches!(storage, Storage::Variable(_)), "{name}");
+        }
+        assert!(probe.captures_of("f").is_empty());
+        assert!(probe.environment_fields(probe.file_scope()).is_empty());
+        assert!(probe.initial_function(probe.symbol("helper")).is_some());
+    });
+    let in_a_loop = "for (let i = 0; i < 2; i++) { exports[i] = function f() { return i; }; }";
+    analyze_source("main.cjs", in_a_loop, |probe| {
+        assert!(!probe.captures_of("f").is_empty());
+    });
+}
+
+#[test]
 fn commonjs_top_level_binding_is_captured() {
     let immutable = "let a = 1; module.exports = function f() { return a; };";
-    analyze_source("main.cjs", immutable, |probe| {
+    analyze_source_that_runs_again("main.cjs", immutable, |probe| {
         assert_eq!(probe.placement_of("a").storage, Storage::Local);
         assert_eq!(probe.captures_of("f"), [probe.copy_of("a")]);
     });
     let stored = "let a = 1; module.exports = function f() { return a; }; a = 2;";
-    analyze_source("main.cjs", stored, |probe| {
+    analyze_source_that_runs_again("main.cjs", stored, |probe| {
         let scope = probe.file_scope();
         let field = Storage::Field { scope, field: 0 };
         assert_eq!(probe.placement_of("a").storage, field);
@@ -66,8 +86,8 @@ fn commonjs_top_level_binding_is_captured() {
 
 #[test]
 fn commonjs_hoisted_function_takes_the_environment() {
-    let source = "const a = 1; function f() { return a; } module.exports = f;";
-    analyze_source("main.cjs", source, |probe| {
+    let source = "const a = {}; function f() { return a; } module.exports = f;";
+    analyze_source_that_runs_again("main.cjs", source, |probe| {
         let scope = probe.file_scope();
         assert_eq!(probe.captures_of("f"), [Capture::Environment(scope)]);
         assert_eq!(probe.environment_fields(scope), [probe.binding("a")]);
@@ -162,7 +182,7 @@ fn initial_function_of_module_variable() {
 #[test]
 fn commonjs_function_is_not_initial() {
     let source = "function helper() { return 1; } module.exports = () => helper();";
-    analyze_source("main.cjs", source, |probe| {
+    analyze_source_that_runs_again("main.cjs", source, |probe| {
         assert_eq!(probe.placement_of("helper").storage, Storage::Local);
         assert_eq!(probe.initial_function(probe.symbol("helper")), None);
         assert_eq!(probe.captures(probe.arrow()), [probe.copy_of("helper")]);
@@ -203,7 +223,6 @@ fn function_with_captures_is_not_initial() {
         let mut plan = CapturePlan {
             captures: vec![CaptureList::new(); walk.functions.len()],
             fields: Vec::new(),
-            functions_over_limit: Vec::new(),
         };
         let mut both = [(symbol_of(first), first), (symbol_of(second), second)];
         both.sort_unstable();
@@ -220,7 +239,7 @@ fn function_with_captures_is_not_initial() {
 }
 
 #[test]
-fn commonjs_name_is_no_binding_without_wrapper_parameters() {
+fn commonjs_name_other_than_exports_is_no_binding_without_wrapper_parameters() {
     for source in [
         "function f() { return module; } f();",
         "function f() { return [require, exports, __filename, __dirname]; } f();",
@@ -229,10 +248,10 @@ fn commonjs_name_is_no_binding_without_wrapper_parameters() {
     ] {
         analyze_source("main.cjs", source, |probe| {
             assert!(!probe.has_wrapper_parameters(), "{source}");
-            assert!(
-                probe.bindings(probe.file_scope()).iter().all(is_symbol),
-                "{source}"
-            );
+            let exports = probe.file_slot(EXPORTS);
+            let bindings = probe.bindings(probe.file_scope());
+            let mut slots = bindings.iter().filter(|binding| !is_symbol(binding));
+            assert!(slots.all(|&binding| binding == exports), "{source}");
             for kind in [FnKind::Decl, FnKind::Expr] {
                 for function in probe.functions(kind) {
                     assert!(probe.captures(function).is_empty(), "{source}");
@@ -267,21 +286,21 @@ fn text_that_needs_the_five_parameters_keeps_them() {
 #[test]
 fn commonjs_slot_is_captured_when_shared() {
     let shared = "'use strict'; arguments; function f() { return module; } f();";
-    analyze_source("main.cjs", shared, |probe| {
+    analyze_source_that_runs_again("main.cjs", shared, |probe| {
         let module = BindingRef::Slot(probe.file_scope(), MODULE);
         assert_eq!(probe.placement(module), COPIED);
         assert_eq!(probe.captures_of("f"), [Capture::Value(module)]);
     });
 
     let unshared = "'use strict'; arguments; module.exports = 1;";
-    analyze_source("main.cjs", unshared, |probe| {
+    analyze_source_that_runs_again("main.cjs", unshared, |probe| {
         let placement = probe.placement(BindingRef::Slot(probe.file_scope(), MODULE));
         assert_eq!(placement.storage, Storage::Local);
         assert!(!placement.is_shared);
     });
 
     let stored = "function f() { return module; } module = f;";
-    analyze_source("main.cjs", stored, |probe| {
+    analyze_source_that_runs_again("main.cjs", stored, |probe| {
         let scope = probe.file_scope();
         let placement = probe.placement(BindingRef::Slot(scope, MODULE));
         assert_eq!(placement.storage, Storage::Field { scope, field: 0 });

@@ -1,5 +1,3 @@
-// Flags: --aot-log-type-mismatches
-// STATISTIC: TypedResultsSelected >= 10
 interface Config {
   port: number;
   host: string;

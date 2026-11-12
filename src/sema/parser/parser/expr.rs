@@ -7,6 +7,7 @@ use crate::token::T;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
 
+#[inline]
 fn binary_operator(token: T) -> BinOp {
     match token {
         T::Plus => BinOp::Add,
@@ -387,7 +388,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let kind = match self.token() {
             T::Identifier => ExprKind::Ident(self.note_identifier(self.lx.atom, self.lx.start)),
             T::String => ExprKind::String(self.lx.atom),
-            T::Number => ExprKind::Number(self.f.number(self.lx.number)),
+            T::Number => {
+                let number = self.f.numbers.len() as u32;
+                self.f.numbers.push(self.lx.number);
+                ExprKind::Number(number)
+            }
             T::This => ExprKind::This,
             T::True => ExprKind::True,
             T::False => ExprKind::False,
@@ -397,6 +402,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         Some(self.token_expr(kind))
     }
 
+    #[inline(never)]
     fn assignment_expression_slow(&mut self, allow_return_type: bool) -> ExprId {
         if self.is_too_deep() {
             return ExprId::NONE;
@@ -426,7 +432,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             }
             _ => {}
         }
-        let expression = self.binary_expression(0);
+        let expression = match self.token().opens_primary_expression() {
+            true => {
+                let operand = self.operand_from_primary_expression(start);
+                self.binary_expression_rest(0, operand, start)
+            }
+            false => self.binary_expression(0),
+        };
         self.assignment_expression_rest(expression, (start, full), allow_return_type)
     }
 
@@ -527,6 +539,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// At an `await` or `yield` that could be a name here. It's still parsed as the keyword if a word or a literal
     /// follows. TypeScript's checker reports that. oxc's parser reports it too, even in JavaScript, but treats the
     /// `await` of `await in a` as a name.
+    #[inline(never)]
     fn suspends_outside_context(&mut self) -> bool {
         if !self.options.dialect.oxc {
             return !self.is_ecmascript && self.next_is_word_or_literal_on_same_line();
@@ -570,6 +583,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `parseYieldExpression`
+    #[inline(never)]
     fn yield_expression(&mut self) -> ExprId {
         let start = self.pos();
         self.next();
@@ -732,11 +746,15 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                         };
                     left = self.finish_expr(kind, start);
                     // "Stop if the precedence of the next operator is too high": in `a + b as T * c`
-                    // the `as T` could not be erased.
+                    // the `as T` could not be erased, and typescript-go reports the `*`. `bun run` reads
+                    // `(a + b) * c`, as TypeScript 6 does.
                     if self.token() == T::GreaterThan {
                         self.lx.rescan_greater_than();
                     }
-                    if self.token().binary_precedence() > last_precedence && !self.is_flow() {
+                    if self.token().binary_precedence() > last_precedence
+                        && !self.is_flow()
+                        && !self.options.compiles
+                    {
                         return left;
                     }
                 }
@@ -865,6 +883,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             | T::Void
             | T::Await => {}
             T::LessThan if !self.options.is_jsx => {}
+            token if token.opens_primary_expression() => {
+                return self.operand_from_primary_expression(start);
+            }
             _ => {
                 let expression = self.update_expression();
                 return self.rest_of_power(start, expression);
@@ -910,6 +931,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             return self.binary_expression_rest(precedence, base, start);
         }
         base
+    }
+
+    /// `parseUnaryExpressionOrHigher`, where `T::opens_primary_expression`: the functions between it and
+    /// `parsePrimaryExpression` only look at the token, and each would be on the stack once per level of nesting.
+    #[inline(always)]
+    fn operand_from_primary_expression(&mut self, start: u32) -> ExprId {
+        let primary = self.primary_expression();
+        self.rest_of_operand(start, primary)
     }
 
     /// What `parseUnaryExpressionOrHigher` does after `parsePrimaryExpression`.
@@ -1935,7 +1964,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 self.call_specifier(argument, SpecifierKind::RequireCall);
             }
         }
-        let type_args = self.f.store_list(type_args);
+        let type_args = match type_args.is_empty() {
+            true => ListAt::EMPTY,
+            false => self.f.store_list(type_args),
+        };
         let call = self.f.add_call(Call {
             callee,
             args,
@@ -2031,7 +2063,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// `parsePrimaryExpression`
+    /// `parsePrimaryExpression`. What nests is kept out of line, so this has no frame while it's parsed.
     #[inline]
     pub(crate) fn primary_expression(&mut self) -> ExprId {
         match self.token() {
@@ -2097,6 +2129,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `parseParenthesizedExpression`
+    #[inline(never)]
     fn parenthesized_expression(&mut self) -> ExprId {
         let open = self.pos();
         self.next();
@@ -2137,6 +2170,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `parseArrayLiteralExpression`
+    #[inline(never)]
     fn array_literal(&mut self) -> ExprId {
         let start = self.pos();
         self.next();
@@ -2168,6 +2202,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `parseTemplateExpression`, and a template without substitutions.
+    #[inline(never)]
     fn template_expression(&mut self) -> ExprId {
         // A `NoSubstitutionTemplateLiteral` is a string.
         if self.token() == T::NoSubstitutionTemplate {
@@ -2266,8 +2301,16 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let parts = self.s.ids.get(base..).unwrap_or_default();
         let start = self.f.ids.len() as u32;
-        self.f.ids.extend(parts.iter().skip(1).step_by(2));
-        self.f.ids.extend(parts.iter().step_by(2));
+        if let Some((&head, spans)) = parts.split_first() {
+            let (spans, _) = spans.as_chunks::<2>();
+            for &[expression, _] in spans {
+                self.f.ids.push(expression);
+            }
+            self.f.ids.push(head);
+            for &[_, text] in spans {
+                self.f.ids.push(text);
+            }
+        }
         let count = (parts.len() / 2) as u32;
         self.s.ids.truncate(base);
         self.take_template_parts(parts_base);
@@ -2353,6 +2396,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `parseNewExpressionOrNewDotTarget`
+    #[inline(never)]
     fn new_expression(&mut self) -> ExprId {
         if self.is_too_deep() {
             return ExprId::NONE;
@@ -2360,15 +2404,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let start = self.pos();
         self.next();
         if self.eat(T::Dot) {
-            // `checkGrammarMetaProperty`
-            if self.lx.text() != b"target" && !self.lx.has_escape {
-                let at = (self.lx.start, self.lx.end);
-                let args = [self.lx.text(), b"new", b"target"];
-                self.flag_early_error(17012, at, &args);
-            }
-            let (name, _) = self.identifier_name();
-            self.f.rare_syntax |= rare::NEW_TARGET;
-            return self.finish_expr(ExprKind::NewTarget(name), start);
+            return self.new_target(start);
         }
         let callee_start = self.pos();
         let is_import_call = self.token() == T::Import && self.peek() == T::OpenParen;
@@ -2412,6 +2448,20 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             oxc::new_import(&mut self.f.diagnostics, at);
         }
         self.finish_expr(ExprKind::New(call), start)
+    }
+
+    /// `parseNewExpressionOrNewDotTarget`, after the dot of the `new.` at `start`.
+    #[inline(never)]
+    fn new_target(&mut self, start: u32) -> ExprId {
+        // `checkGrammarMetaProperty`
+        if self.lx.text() != b"target" {
+            let at = (self.lx.start, self.lx.end);
+            let args = [self.lx.text(), b"new", b"target"];
+            self.flag_early_error(17012, at, &args);
+        }
+        let (name, _) = self.identifier_name();
+        self.f.rare_syntax |= rare::NEW_TARGET;
+        self.finish_expr(ExprKind::NewTarget(name), start)
     }
 
     /// `parseNewExpressionOrNewDotTarget`, at the `?.` after `new callee`.

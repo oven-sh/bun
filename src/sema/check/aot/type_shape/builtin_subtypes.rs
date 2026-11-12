@@ -1,5 +1,4 @@
 use super::{BuiltinShape, ShapeKind, TypeShape};
-use crate::atom::Atom;
 use crate::check::aot::answers::{ClassRef, GaveUp, MemberName};
 use crate::check::aot::builtin_types::{BuiltinClassIndex, Denotation};
 use crate::check::aot::queries::Queries;
@@ -116,7 +115,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok(self.list(&accepted))
     }
 
-    /// Whether `ty` is written for instances of the built-in class: the class, a class that extends it, or an object type that they fit. A type that every object fits says nothing.
     pub fn is_type_of_builtin(
         &mut self,
         ty: TypeId,
@@ -140,8 +138,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 let Some(members) = self.c.members(ty) else {
                     return Ok(false);
                 };
-                let mut props = members.shape().props.iter();
-                if !props.any(|prop| !prop.flags.contains(PropFlags::OPTIONAL)) {
+                if self.requires_only_what_every_object_has(ty) {
                     return Ok(false);
                 }
                 let types: SmallVec<[Sym; 1]> = self.inputs.builtin_types.types_of(class).collect();
@@ -150,7 +147,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     let Some(instance_members) = self.c.members(instance) else {
                         continue;
                     };
-                    // Nearly every type names a member that the other lacks, and is told apart without a type being made.
                     let fits = self.has_required_properties(instance, members.shape());
                     let extends = self.has_required_properties(ty, instance_members.shape());
                     if !fits && !extends {
@@ -170,20 +166,42 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// Whether the types of the built-in class declare the member themselves.
-    pub(in crate::check::aot) fn is_member_of_builtin(
-        &mut self,
-        name: Atom,
-        class: BuiltinClassIndex,
-    ) -> bool {
-        let types: SmallVec<[Sym; 1]> = self.inputs.builtin_types.types_of(class).collect();
-        types.into_iter().any(|symbol| {
-            let instance = self.c.declared_type(symbol);
-            let Some(members) = self.c.members(instance) else {
-                return false;
-            };
-            members.shape().props.iter().any(|prop| prop.name == name)
+    fn requires_only_what_every_object_has(&mut self, ty: TypeId) -> bool {
+        let Some(members) = self.c.members(ty) else {
+            return true;
+        };
+        members.shape().props.iter().all(|prop| {
+            prop.flags.contains(PropFlags::OPTIONAL)
+                || self
+                    .c
+                    .get_property_of_type(TypeId::EMPTY_OBJECT, prop.name)
+                    .is_some()
         })
+    }
+
+    pub(in crate::check::aot) fn is_type_of_every_object(
+        &mut self,
+        ty: TypeId,
+    ) -> Result<bool, GaveUp> {
+        match self.type_shape(ty)?.kind {
+            ShapeKind::Anything(_) | ShapeKind::AnyObject => Ok(true),
+            ShapeKind::TypeVariable { constraint, .. } => match constraint {
+                Some(constraint) => self.is_type_of_every_object(constraint),
+                None => Ok(true),
+            },
+            ShapeKind::Union(members) => {
+                for &member in members {
+                    if self.is_type_of_every_object(member)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            ShapeKind::Class(_) | ShapeKind::Object => {
+                Ok(self.requires_only_what_every_object_has(ty))
+            }
+            _ => Ok(false),
+        }
     }
 
     pub(in crate::check::aot) fn compute_accepted_class_constructors(

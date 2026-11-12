@@ -1,0 +1,43 @@
+# `number[]` says nothing of fractions, and most such lists hold integers: a read names no storage and goes by the kind that it finds, and the list is made as an empty list of the engine is
+# made with storage for doubles, each integer was asked at every read whether it is an int32 before it was boxed: nine to twelve instructions more at every read than without the type
+# f1 = total: a list of numbers. f3 = inner: a list of lists and then a list of numbers. Of the outer list Link says that it stays as made (LinkTables::receiversThatStayAsMade): the read asks it nothing and goes by the kind that it finds
+# LoopInvariants is withheld in the runs on f1 and f3: with it a row of tests stands in front of a loop that leaves its list alone, and behind it the read names the storage and the sum is raw
+# RUN(NUMBERS): walk f1 mechanisms=all-Inlining-LoopInvariants
+# NUMBERS-LABEL: code f1:Body
+# NUMBERS: = GetArrayElement {{*}} level=Expected
+# RUN(NEVER): walk f1 mechanisms=all-Inlining-LoopInvariants
+# NEVER-NOT: arrayStorage=Double
+# RUN(LISTS): walk f3 mechanisms=all-Inlining-LoopInvariants
+# LISTS-LABEL: code f3:Body
+# LISTS: = GetArrayElement {{*}} level=Proven
+# RUN(INNER): walk f3 mechanisms=all-Inlining-LoopInvariants
+# INNER-NOT: arrayStorage=Double
+# -- source: tally.ts
+# function total(list: number[]): number {
+#   let s = 0;
+#   for (let i = 0; i < list.length; i++) s += list[i];
+#   return s;
+# }
+# function less(list: number[]): number {
+#   let s = 100;
+#   for (let i = 0; i < list.length; i++) s -= list[i];
+#   return s;
+# }
+# function inner(lists: number[][]): number {
+#   let s = 0;
+#   for (let k = 0; k < lists.length; k++) {
+#     const list = lists[k];
+#     for (let i = 0; i < list.length; i++) s += list[i];
+#   }
+#   return s;
+# }
+# function halves(n: number): number {
+#   let s = 0.5;
+#   for (let i = 0; i < n; i++) s += 0.25;
+#   return s;
+# }
+# const list: number[] = [];
+# for (let i = 0; i < 10; i++) list.push(i & 7);
+# (globalThis as any).kept = list;
+# console.log(total(list), less(list), inner([list, list]), halves(4));
+# -- end of source

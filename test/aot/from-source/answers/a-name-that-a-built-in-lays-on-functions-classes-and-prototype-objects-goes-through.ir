@@ -1,0 +1,24 @@
+# -- source: main.js
+# class Failure { static make() { return "make"; } say() { return "say"; } }
+# function plain() { return "plain"; }
+# function Maker(n) { this.tag = n; }
+# Maker.prototype.weigh = function () { return "weigh " + this.tag; };
+# const made = new Maker(1);
+# new Failure();
+# Error.captureStackTrace(Failure);
+# Error.captureStackTrace(Failure.prototype);
+# Error.captureStackTrace(plain);
+# Error.captureStackTrace(Maker);
+# Error.captureStackTrace(Maker.prototype);
+# print(typeof Failure.stack, typeof new Failure().stack, typeof plain.stack, typeof Maker.stack, typeof made.stack);
+# print(Failure.make(), new Failure().say(), plain(), made.weigh(), Object.keys(Failure).length, Object.hasOwn(Failure.prototype, "stack"));
+# -- end of source
+# Error.captureStackTrace() lays `stack` on what it is handed without a descriptor and without a store: native code puts the property straight on the object. Here that is a class object, its prototype object, a closure, a constructor function and its prototype object behind its first object.
+# RUN: run-in-shell
+# CHECK: string string string string string
+# CHECK-NEXT: make say plain weigh 1 0 true
+# CHECK-NEXT: exited with 0
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: string string string string string
+# CALLED-NEXT: make say plain weigh 1 0 true
+# CALLED-NEXT: exited with 0

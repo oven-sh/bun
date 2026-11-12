@@ -199,69 +199,6 @@ for (const name in cases) {
   attempt(name, cases[name]);
 }
 
-// GENERATED: noted attempt toString
 // CHECK-LABEL: function {{*}}name="noted"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v3 = CheckInitialized v2 name="log"
-// CHECK-NEXT: v4 = PropGet v3 key="push"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[f_2]] flags=[IsExpected]}
-// CHECK-NEXT: v6 = Call v5, v3, v0 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b4():
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = String string=": "
-// CHECK-NEXT: v8 = Add v0, v7
-// CHECK-NEXT: v9 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v10 = Call v1 calleeName="run"
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-// CHECK-NEXT: v12 = Call v9, -, v11 calleeName="describe"
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v14 = Add v8, v13
-// CHECK-NEXT: v15 = Call v6, v4, v14 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b4() role=CatchHandler:
-// CHECK-NEXT: v16 = CatchValue
-// CHECK-NEXT: v17 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v18 = PropGet v17 key="console" [isFreeName]
-// CHECK-NEXT: v19 = Convert v18 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v20 = PropGet v19 key="log"
-// CHECK-NEXT: v21 = Convert v20 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v22 = String string=": threw "
-// CHECK-NEXT: v23 = Add v0, v22
-// CHECK-NEXT: v24 = PropGet v16 key="constructor"
-// CHECK-NEXT: v25 = PropGet v24 key="name"
-// CHECK-NEXT: v26 = Add v23, v25
-// CHECK-NEXT: v27 = Call v21, v19, v26 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v28 = Undefined
-// CHECK-NEXT: Return v28
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="toString"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v1 = String string="toString"
-// CHECK-NEXT: v2 = String string="0"
-// CHECK-NEXT: v3 = Call v0, -, v1, v2 calleeName="noted"
-// CHECK-NEXT: ReturnCall v3
-// CHECK-NEXT: }

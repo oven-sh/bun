@@ -1,3 +1,4 @@
+use super::answers::QueryLimit;
 use super::queries::Queries;
 use crate::atom::known;
 use crate::bind::{PatParent, SymFlags};
@@ -9,8 +10,6 @@ use smallvec::SmallVec;
 use std::rc::Rc;
 
 pub(super) type DeclaredSignatures = FxHashMap<FnId, SmallVec<[SigId; 1]>>;
-
-const MAX_DEPTH: u32 = 3;
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub(super) fn find_declared_parameter_type(&mut self, name: PatId) -> TypeId {
@@ -106,7 +105,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         depth: u32,
         signatures: &mut DeclaredSignatures,
     ) {
-        if depth == MAX_DEPTH || self.c.is_stack_low() {
+        if u64::from(depth) >= self.limit(QueryLimit::DeclaredSignatureDepth) {
+            self.note_walk_ended_by(QueryLimit::DeclaredSignatureDepth);
+            return;
+        }
+        if self.c.is_stack_low() {
             return;
         }
         if self.c.is_any(written) || self.c.is_any(declared) {

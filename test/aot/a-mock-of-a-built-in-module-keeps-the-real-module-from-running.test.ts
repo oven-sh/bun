@@ -168,12 +168,12 @@ runsAsPlain(
   },
 );
 
-// The mock has its own names alone, so the file does not link.
+// The mock has its own names alone. A name that it lacks is undefined.
 runsAsPlain(
   "a file imports a name that the real module has and the mock lacks",
   `
           mock.module("node:zlib", () => ({ crc32: mocked }));
-          console.log(typeof (await import("./helper.js")).gzipSync);`,
+          console.log(mocked(), typeof (await import("./helper.js")).gzipSync);`,
   { "helper.js": `import { gzipSync } from "node:zlib";\nexport { gzipSync };` },
 );
 
@@ -181,7 +181,7 @@ runsAsPlain(
   "a file imports the default export, which the mock lacks",
   `
           mock.module("node:zlib", () => ({ crc32: mocked }));
-          console.log(typeof (await import("./helper.js")).whole);`,
+          console.log(mocked(), typeof (await import("./helper.js")).whole);`,
   { "helper.js": `import whole from "node:zlib";\nexport { whole };` },
 );
 
@@ -189,6 +189,6 @@ runsAsPlain(
   "a file hands on a name that the real module has and the mock lacks",
   `
           mock.module("node:zlib", () => ({ crc32: mocked }));
-          console.log(typeof (await import("./helper.js")).gzipSync);`,
+          console.log(mocked(), typeof (await import("./helper.js")).gzipSync);`,
   { "helper.js": `export { gzipSync } from "node:zlib";` },
 );

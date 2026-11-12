@@ -1190,7 +1190,9 @@ fn get_assumed_invoked_functions_impl(
                     // Recursively traverse into other function expressions
                     // TS passes the shared temporaries map to the recursive call
                     let inner_func = &env.functions[lowered_func.func.0 as usize];
-                    // Not in upstream: see `collect_non_nulls_in_blocks`.
+                    // Not in upstream: see `collect_non_nulls_in_blocks`. What such a function may
+                    // invoke is not looked for: an element that only its kept read uses would make
+                    // a handler in a prop of that element count as invoked.
                     if inner_func.keeps_unread_reads {
                         continue;
                     }

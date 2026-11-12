@@ -984,6 +984,14 @@ describe("bundler", () => {
         const za = [(z = ["k"])]; mutate(za);
         return <div state={f()} zi={zi} />;
       }
+      // A local that its memo block does not give out, and that code after the block reads: a captured local that dead
+      // code reads after a store, and the receiver of an optional chain that nothing uses.
+      function HandlerNextToADeadRead({ c, node }) {
+        let v = pick(node); const h = () => { node.x; }; const g = () => v;
+        v = mk("w" + c); const unused = [v];
+        return <div onClick={h} />;
+      }
+      function useRestNextToAnOptional({ node, ...rest }) { useEffect(() => { node?.x; }); useEffect(() => { rest.el.x; }); }
       // A dependency array that names the receiver, and one that names a path of it.
       function useCallbackRootDeps(node) { useNothing(); return useCallback(() => { node.x; }, [node]); }
       function useCallbackPathDeps(props) { useNothing(); return useCallback(() => { props.node.x; }, [props.node]); }
@@ -1024,6 +1032,8 @@ describe("bundler", () => {
       row("HandlerInnerFunction", HandlerInnerFunction, [{}, {}]);
       row("HandlerElement", HandlerElement, [{ node: {} }, { node: {} }]);
       row("HandlerNextToAStore", HandlerNextToAStore, [{ c: 1 }, { c: 1 }, { c: 2 }]);
+      row("HandlerNextToADeadRead", HandlerNextToADeadRead, [{ c: 1, node: a }, { c: 1, node: a }, { c: 2, node: b }]);
+      row("useRestNextToAnOptional", useRestNextToAnOptional, [{ node: a, el }, { node: a, el }]);
       row("useCallbackRootDeps", useCallbackRootDeps, [a, a, b], h => h());
       row("useCallbackPathDeps", useCallbackPathDeps, [{ node: a }, { node: a }, { node: b }], h => h());
       for (const [name, fn] of Object.entries({ useRenderBare, useRenderUnusedConst, useMemoCallback, usePattern, useCoercion, useSpread })) row(name, fn, ds);
@@ -1062,6 +1072,8 @@ describe("bundler", () => {
       ["HandlerInnerFunction", "- | -", 2],
       ["HandlerElement", "- | -", 9],
       ["HandlerNextToAStore", "w1.x | w1.x | w2.x", 10],
+      ["HandlerNextToADeadRead", each("-"), 8],
+      ["useRestNextToAnOptional", "a.x el.x | a.x el.x", 6],
       ["useCallbackRootDeps", followed, 2],
       // Left as written: the compiler takes the root for the dependency, and the array names a path of it.
       ["useCallbackPathDeps", followed, "-"],

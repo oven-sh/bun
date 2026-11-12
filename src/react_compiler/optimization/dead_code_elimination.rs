@@ -49,14 +49,14 @@ pub(crate) fn dead_code_elimination_in_nested_function(func: &mut HirFunction, e
 
 fn eliminate(func: &mut HirFunction, env: &Environment, may_keep_unread_reads: bool) {
     // Phase 1: Find/mark all referenced identifiers
-    let mut state = find_referenced_identifiers(func, env, true, false);
+    let mut state = find_referenced_identifiers(func, env, Keeps::CaughtThrows);
     let mut keeps_a_read = false;
     // The walk of upstream comes first: where it leaves no read of a property, it is the answer.
     if may_keep_unread_reads
         && state.has_unmarked_instruction
         && has_unread_member_read(func, &state, env)
     {
-        state = find_referenced_identifiers(func, env, true, true);
+        state = find_referenced_identifiers(func, env, Keeps::CaughtThrowsAndUnreadReads);
         keeps_a_read = true;
     }
 
@@ -242,15 +242,23 @@ fn has_unread_member_read(func: &HirFunction, state: &State, env: &Environment) 
     })
 }
 
+/// What the walk keeps that the walk of upstream takes for nothing.
+#[derive(Clone, Copy)]
+enum Keeps {
+    Nothing,
+    /// What `try { props.a.b; } catch { return null; }` reads: that it throws can be seen.
+    CaughtThrows,
+    /// And a read of a property that nothing uses: see `dead_code_elimination_in_nested_function`.
+    CaughtThrowsAndUnreadReads,
+}
+
 /// Phase 1: Find all referenced identifiers via fixed-point iteration.
-/// `preserve_caught_throws`: upstream takes `try { props.a.b; } catch { return null; }` for nothing.
-/// `keeps_unread_reads`: see `dead_code_elimination_in_nested_function`.
-fn find_referenced_identifiers(
-    func: &HirFunction,
-    env: &Environment,
-    preserve_caught_throws: bool,
-    keeps_unread_reads: bool,
-) -> State {
+fn find_referenced_identifiers(func: &HirFunction, env: &Environment, keeps: Keeps) -> State {
+    let (preserve_caught_throws, keeps_unread_reads) = match keeps {
+        Keeps::Nothing => (false, false),
+        Keeps::CaughtThrows => (true, false),
+        Keeps::CaughtThrowsAndUnreadReads => (true, true),
+    };
     let has_loop = has_back_edge(func);
     let mut state = State::new(env);
     let mut size;
@@ -356,7 +364,7 @@ pub(crate) fn find_semantic_only_caught_instructions(
         return None;
     }
 
-    let state = find_referenced_identifiers(func, env, false, false);
+    let state = find_referenced_identifiers(func, env, Keeps::Nothing);
     let mut semantic_only = vec![false; func.instructions.len()];
     for instr_id in candidates {
         let lvalue = func.instructions[instr_id.0 as usize].lvalue.identifier;

@@ -678,6 +678,84 @@ describe("source map remapping of the printed stack", () => {
       });
       expect(exitCode).toBe(0);
     });
+
+    // `toMatchInlineSnapshot()` takes the file and the position of its call
+    // from the frame. With an empty name the frame was in the directory, and
+    // the matcher refused to write. Now the frame is in the test file, and the
+    // value is written where the map points, as for a map that names its own file.
+    //
+    // Runs `bun test` on snap.test.js for each of the two names, and returns the file as it is afterwards.
+    async function snapshotsWritten(files, ...args) {
+      const written = async name => {
+        using dir = tempDir("inspect-error-inline-snapshot", files(name));
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", ...args, "./snap.test.js"],
+          cwd: String(dir),
+          env: { ...bunEnv, CI: "false" },
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        const exitCode = await proc.exited;
+        return { file: await Bun.file(`${dir}/snap.test.js`).text(), exitCode };
+      };
+      const [emptyName, ownName] = await Promise.all([written(""), written("snap.test.js")]);
+      return { emptyName, ownName };
+    }
+
+    test.concurrent("an inline snapshot is written to the file on disk that a plugin rewrote", async () => {
+      const onDisk = value =>
+        [
+          'import { test, expect } from "bun:test";',
+          "",
+          'test("a", () => {',
+          `  expect("A").toMatchInlineSnapshot(${value});`,
+          "});",
+          "",
+        ].join("\n");
+      // What the plugin makes of it. Line 3 -> 4:15 of the file on disk, where the name of the matcher starts.
+      const rewritten = name =>
+        [
+          "// @bun",
+          'import { test, expect } from "bun:test";',
+          'test("a", () => { expect("A").toMatchInlineSnapshot(); });',
+          "",
+        ].join("\n") + inline({ ...map, sources: [name], mappings: ";;AAGc" });
+      const files = name => ({
+        "snap.test.js": onDisk(""),
+        "plugin.js": [
+          `const rewritten = ${JSON.stringify(rewritten(name))};`,
+          "Bun.plugin({",
+          '  name: "plugin",',
+          "  setup(build) {",
+          '    build.onLoad({ filter: /snap\\.test\\.js$/ }, () => ({ contents: rewritten, loader: "js" }));',
+          "  },",
+          "});",
+          "",
+        ].join("\n"),
+      });
+      const expected = { file: onDisk('`"A"`'), exitCode: 0 };
+      expect(await snapshotsWritten(files, "--preload", "./plugin.js")).toEqual({
+        emptyName: expected,
+        ownName: expected,
+      });
+    });
+
+    // A map that describes another text than the file: the value goes into the call that the map names.
+    test.concurrent("an inline snapshot is written where the map of a prebuilt file points", async () => {
+      // Line 4 -> 3:31, where the name of the matcher of test "a" starts.
+      const prebuilt = (name, value) =>
+        [
+          "// @bun",
+          'import { test, expect } from "bun:test";',
+          `test("a", () => { expect("A").toMatchInlineSnapshot(${value}); });`,
+          'test("b", () => { expect("B").toMatchInlineSnapshot(); });',
+          "",
+        ].join("\n") + inline({ ...map, sources: [name], mappings: ";;;AAE8B" });
+      expect(await snapshotsWritten(name => ({ "snap.test.js": prebuilt(name, '`"A"`') }))).toEqual({
+        emptyName: { file: prebuilt("", '`"B"`'), exitCode: 0 },
+        ownName: { file: prebuilt("snap.test.js", '`"B"`'), exitCode: 0 },
+      });
+    });
   });
 });
 

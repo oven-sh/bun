@@ -298,15 +298,20 @@ napi_get_last_error_info(napi_env env, const napi_extended_error_info** result)
 JSC::WeakHandleOwner::FinalizeResult Napi::NapiRefWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
 {
     auto* weakValue = reinterpret_cast<NapiRef*>(context);
-    weakValue->callFinalizerFromGC();
+    // The finalizer can delete the ref.
+    if (auto* finalizer = weakValue->finalizer) {
+        weakValue->env->finalizerValueCollected(finalizer, NapiEnv::FinalizerHolder::Kept);
+    }
     return FinalizeResult::KeepImpl;
 }
 
 JSC::WeakHandleOwner::FinalizeResult Napi::NapiRefSelfDeletingWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown>, void* context)
 {
     auto* weakValue = reinterpret_cast<NapiRef*>(context);
-    // The ref goes away right here, so the finalizer is queued as a copy that does not need it.
-    weakValue->callFinalizer();
+    // The ref goes away right here, and its finalizer runs without it.
+    if (auto* finalizer = std::exchange(weakValue->finalizer, nullptr)) {
+        weakValue->env->finalizerValueCollected(finalizer, NapiEnv::FinalizerHolder::Released);
+    }
     delete weakValue;
     return FinalizeResult::KeepImpl;
 }
@@ -805,15 +810,6 @@ extern "C" void napi_module_register(napi_module* mod)
     }
 }
 
-static void wrap_cleanup(napi_env env, void* data, void* hint)
-{
-    auto* ref = reinterpret_cast<NapiRef*>(data);
-    ASSERT(ref->boundCleanup != nullptr);
-    ref->boundCleanup->deactivate(*env);
-    ref->boundCleanup = nullptr;
-    ref->callFinalizer();
-}
-
 static inline NapiRef* getWrapContentsIfExists(VM& vm, JSGlobalObject* globalObject, JSObject* object)
 {
     if (auto* napi_instance = dynamicDowncast<NapiPrototype>(object)) {
@@ -860,11 +856,11 @@ extern "C" napi_status napi_wrap(napi_env env,
     NAPI_RETURN_EARLY_IF_FALSE(env, existing_wrap == nullptr, napi_invalid_arg);
 
     // create a new weak reference (refcount 0)
-    auto* ref = new NapiRef(*env, 0, Bun::NapiFinalizer { finalize_cb, finalize_hint });
-    // In case the ref's finalizer is never called, we'll add a finalizer to execute on exit.
-    const auto& bound_cleanup = env->addFinalizer(wrap_cleanup, native_object, ref);
-    ref->boundCleanup = &bound_cleanup;
+    auto* ref = new NapiRef(*env, 0);
     ref->nativeObject = native_object;
+    if (finalize_cb) {
+        ref->finalizer = env->trackFinalizer(finalize_cb, native_object, finalize_hint);
+    }
 
     if (napi_instance) {
         napi_instance->napiRef = ref;
@@ -912,7 +908,9 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
         *result = ref->nativeObject;
     }
 
-    ref->finalizer.clear();
+    if (auto* finalizer = std::exchange(ref->finalizer, nullptr)) {
+        NapiEnv::releaseFinalizer(finalizer);
+    }
 
     // don't delete the ref: if weak, it'll delete itself when the JS object is deleted;
     // if strong, native addon needs to clean it up.
@@ -1117,7 +1115,7 @@ extern "C" napi_status napi_create_reference(napi_env env, napi_value value,
         can_be_weak = false;
     }
 
-    auto* ref = new NapiRef(*env, initial_refcount, Bun::NapiFinalizer {});
+    auto* ref = new NapiRef(*env, initial_refcount);
     ref->setValueInitial(val, can_be_weak);
 
     *result = toNapi(ref);
@@ -1152,18 +1150,20 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
     JSC::JSObject* object = objectValue.getObject();
     NAPI_RETURN_EARLY_IF_FALSE(env, object, napi_invalid_arg);
 
+    auto* finalizer = env->trackFinalizer(finalize_cb, native_object, finalize_hint);
     if (result) {
         // If they're expecting a Ref, use the ref.
-        auto* ref = new NapiRef(*env, 0, Bun::NapiFinalizer { finalize_cb, finalize_hint });
+        auto* ref = new NapiRef(*env, 0);
         // TODO(@heimskr): consider detecting whether the value can't be weak, as we do in napi_create_reference.
         ref->setValueInitial(object, true);
         ref->nativeObject = native_object;
+        ref->finalizer = finalizer;
         *result = toNapi(ref);
     } else {
         // Otherwise, it's cheaper to just call .addFinalizer.
-        vm.heap.addFinalizer(object, [env = WTF::Ref<NapiEnv>(*env), finalize_cb, native_object, finalize_hint](JSCell* cell) -> void {
-            NAPI_LOG("finalizer %p", finalize_hint);
-            env->doFinalizer(finalize_cb, native_object, finalize_hint);
+        vm.heap.addFinalizer(object, [env = WTF::Ref<NapiEnv>(*env), finalizer](JSCell* cell) -> void {
+            NAPI_LOG("finalizer %p", finalizer->hint);
+            env->finalizerValueCollected(finalizer, NapiEnv::FinalizerHolder::Released);
         });
     }
 
@@ -1176,7 +1176,9 @@ extern "C" JS_EXPORT napi_status node_api_post_finalizer(napi_env env,
     void* finalize_hint)
 {
     NAPI_PREAMBLE_NO_THROW_SCOPE(env);
-    Bun__napi_enqueue_finalizer(env, finalize_cb, finalize_data, finalize_hint);
+    if (finalize_cb) {
+        env->postFinalizer(finalize_cb, finalize_data, finalize_hint);
+    }
     return napi_set_last_error(env, napi_ok);
 }
 
@@ -2347,56 +2349,35 @@ extern "C" napi_status napi_create_buffer_copy(napi_env env, size_t length,
 // disarmed and skips finalize_cb so the caller retains ownership.
 // Once armed, the addon's finalizer runs exactly once: when the buffer's contents die, or —
 // if the env is torn down first (a Worker exiting while the addon still holds the buffer) —
-// from NapiEnv::cleanup() together with the other bound finalizers, as Node's env teardown
+// from NapiEnv::cleanup() together with the env's other finalizers, as Node's env teardown
 // finalizes every remaining reference (test_worker_buffer_callback/test-free-called).
 // Neither survives a transfer to another thread, hence the untransferable mark, as in Node: https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L484-L490
 class NapiExternalBufferDestructor final : public SharedTask<void(void*)> {
 public:
-    NapiExternalBufferDestructor(WTF::Ref<NapiEnv>&& env, napi_finalize cb, void* hint)
+    explicit NapiExternalBufferDestructor(WTF::Ref<NapiEnv>&& env)
         : m_env(WTF::move(env))
-        , m_cb(cb)
-        , m_hint(hint)
     {
     }
 
     // The contents died (GC, or the heap going away).
-    void run(void* data) override
+    void run(void*) override
     {
-        if (!m_armed || m_finalized)
-            return;
-        m_finalized = true;
-        if (m_bound) {
-            m_bound->deactivate(m_env.get());
-            m_bound = nullptr;
+        if (auto* finalizer = std::exchange(m_finalizer, nullptr)) {
+            NAPI_LOG("external buffer finalizer");
+            m_env->finalizerValueCollected(finalizer, NapiEnv::FinalizerHolder::Released);
         }
-        NAPI_LOG("external buffer finalizer");
-        m_env->doFinalizer(m_cb, data, m_hint);
     }
 
-    void arm(void* data)
+    void arm(napi_finalize cb, void* data, void* hint)
     {
-        m_armed = true;
-        if (m_cb)
-            m_bound = &m_env->addFinalizer(finalizeAtEnvCleanup, this, data);
+        if (cb)
+            m_finalizer = m_env->trackFinalizer(cb, data, hint);
     }
 
 private:
-    // NapiEnv::cleanup(): the env goes before the buffer did. `hint` is this destructor, alive
-    // because the contents it belongs to still are (run() unbinds it before they go).
-    static void finalizeAtEnvCleanup(napi_env env, void* data, void* hint)
-    {
-        auto* self = static_cast<NapiExternalBufferDestructor*>(hint);
-        self->m_bound = nullptr;
-        self->m_finalized = true;
-        self->m_cb(env, data, self->m_hint);
-    }
-
     WTF::Ref<NapiEnv> m_env;
-    napi_finalize m_cb;
-    void* m_hint;
-    const NapiEnv::BoundFinalizer* m_bound { nullptr };
-    bool m_armed { false };
-    bool m_finalized { false };
+    // Null until arm(), and once the contents died.
+    Bun::NapiTrackedFinalizer* m_finalizer { nullptr };
 };
 
 // Creates the `.buffer` wrapper (JSC would do so lazily) and marks it. The caller checks for an exception.
@@ -2435,10 +2416,12 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
         NAPI_RETURN_STATUS_IF_EXCEPTION(env, napi_generic_failure);
         buffer->existingBuffer()->detach(vm);
 
-        vm.heap.addFinalizer(buffer, [env = WTF::Ref<NapiEnv>(*env), finalize_cb, data, finalize_hint](JSCell* cell) -> void {
-            NAPI_LOG("external buffer finalizer (empty buffer)");
-            env->doFinalizer(finalize_cb, data, finalize_hint);
-        });
+        if (finalize_cb) {
+            vm.heap.addFinalizer(buffer, [env = WTF::Ref<NapiEnv>(*env), finalizer = env->trackFinalizer(finalize_cb, data, finalize_hint)](JSCell* cell) -> void {
+                NAPI_LOG("external buffer finalizer (empty buffer)");
+                env->finalizerValueCollected(finalizer, NapiEnv::FinalizerHolder::Released);
+            });
+        }
 
         *result = toNapi(buffer, globalObject);
         NAPI_RETURN_SUCCESS(env);
@@ -2446,7 +2429,7 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
 
     // Uses NapiExternalBufferDestructor instead of createSharedTask because
     // JSUint8Array::create can throw, and we must not call finalize_cb on failure.
-    Ref<NapiExternalBufferDestructor> destructor = adoptRef(*new NapiExternalBufferDestructor(WTF::Ref<NapiEnv>(*env), finalize_cb, finalize_hint));
+    Ref<NapiExternalBufferDestructor> destructor = adoptRef(*new NapiExternalBufferDestructor(WTF::Ref<NapiEnv>(*env)));
     // Get pointer before using WTF::move
     auto* destructorPtr = destructor.ptr();
     auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(data), length }, WTF::move(destructor));
@@ -2459,7 +2442,7 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
 
     // Arm only after successful creation: if anything above threw, the destructor
     // runs disarmed and skips finalize_cb (caller retains ownership).
-    destructorPtr->arm(data);
+    destructorPtr->arm(finalize_cb, data, finalize_hint);
 
     *result = toNapi(buffer, globalObject);
     NAPI_RETURN_SUCCESS(env);
@@ -2484,7 +2467,7 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
     // reachable failure between createFromBytes and arm() today; the
     // pattern is kept for parity with napi_create_external_buffer and to
     // guard any future early return added in between.
-    Ref<NapiExternalBufferDestructor> destructor = adoptRef(*new NapiExternalBufferDestructor(WTF::Ref<NapiEnv>(*env), finalize_cb, finalize_hint));
+    Ref<NapiExternalBufferDestructor> destructor = adoptRef(*new NapiExternalBufferDestructor(WTF::Ref<NapiEnv>(*env)));
     // Get pointer before using WTF::move
     auto* destructorPtr = destructor.ptr();
     auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, WTF::move(destructor));
@@ -2494,7 +2477,7 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
     WebCore::markAsUntransferable(vm, *buffer);
     // Arm only after successful creation so that if a future change makes
     // create() throw, the destructor runs disarmed and skips finalize_cb.
-    destructorPtr->arm(external_data);
+    destructorPtr->arm(finalize_cb, external_data, finalize_hint);
 
     *result = toNapi(buffer, globalObject);
     NAPI_RETURN_SUCCESS(env);
@@ -3381,9 +3364,14 @@ extern "C" void NapiEnv__unregisterThreadSafeFunction(napi_env env, void* tsfn)
     env->unregisterThreadSafeFunction(tsfn);
 }
 
-extern "C" void Bun__napi_remove_finalizer(napi_env env, napi_finalize callback, void* hint, void* data)
+extern "C" void NapiEnv__runPendingFinalizer(napi_env env)
 {
-    env->removeFinalizer(callback, hint, data);
+    env->runPendingFinalizerFromLoop();
+}
+
+extern "C" void NapiEnv__pendingFinalizersTurnReleased(napi_env env)
+{
+    env->pendingFinalizersTurnReleased();
 }
 
 extern "C" void Bun__napi_check_gc(napi_env env)
@@ -3404,6 +3392,11 @@ extern "C" void NapiEnv__asyncWorkEnteredThreadPool(napi_env env)
 extern "C" void NapiEnv__asyncWorkLeftThreadPool(napi_env env)
 {
     env->asyncWorkLeftThreadPool();
+}
+
+extern "C" void NapiEnv__asyncWorkCompleted(napi_env env)
+{
+    env->asyncWorkCompleted();
 }
 
 extern "C" void NapiEnv__runFinalizers(void* env)

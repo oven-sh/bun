@@ -259,10 +259,6 @@ pub struct VirtualMachine {
     pub(crate) hide_bun_stackframes: bool,
 
     pub is_shutting_down: bool,
-    /// Set once `on_exit()` is past `RareData::cleanup_hooks`, run or not
-    /// (`exit_tears_down_napi_envs`). The list is never walked again, so a hook
-    /// pushed after this (a finalizer deferred from the final collection) would only leak.
-    pub(crate) has_run_cleanup_hooks: bool,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
 
@@ -1788,10 +1784,6 @@ impl VirtualMachine {
         self.is_shutting_down
     }
 
-    pub fn has_run_cleanup_hooks(&self) -> bool {
-        self.has_run_cleanup_hooks
-    }
-
     /// Exported to C++ as `Bun__VM__scriptExecutionStatus` via virtual_machine_exports.rs.
     pub fn script_execution_status(&self) -> crate::ScriptExecutionStatus {
         if self.is_shutting_down || !self.script_allowed() {
@@ -2452,7 +2444,6 @@ impl VirtualMachine {
         if self.exit_tears_down_napi_envs() {
             self.run_cleanup_hooks();
         }
-        self.has_run_cleanup_hooks = true;
 
         // Persist the Node compile cache (NODE_COMPILE_CACHE /
         // module.enableCompileCache()) after user exit handlers ran.
@@ -2469,14 +2460,17 @@ impl VirtualMachine {
     /// like a worker's, and that teardown expects the envs to be gone, so it tears them
     /// down on every exit too.
     fn exit_tears_down_napi_envs(&self) -> bool {
-        !self.is_main_thread()
-            || !self.exit_handler.requested
-            || self.should_destruct_main_thread_on_exit()
+        !self.exit_handler.requested || self.exit_runs_teardown()
     }
 
-    /// Drains `RareData::cleanup_hooks`, repeating while the hooks push more (an env's
-    /// cleanup defers finalizers onto this list once shutdown has begun). The `Vec` is
-    /// taken out of `rare_data` before the hooks run: they re-enter the VM.
+    /// Whether [`teardown`](Self::teardown) follows `on_exit()`: always for a worker, and
+    /// for the main thread under `BUN_DESTRUCT_VM_ON_EXIT`.
+    pub fn exit_runs_teardown(&self) -> bool {
+        !self.is_main_thread() || self.should_destruct_main_thread_on_exit()
+    }
+
+    /// Drains `RareData::cleanup_hooks`, repeating while the hooks push more. The `Vec`
+    /// is taken out of `rare_data` before the hooks run: they re-enter the VM.
     fn run_cleanup_hooks(&mut self) {
         loop {
             let hooks = match self.rare_data.as_deref_mut() {
@@ -2685,7 +2679,8 @@ impl VirtualMachine {
             (*this).release_queued_work();
             let _ = Self::stop_phase_sweep(this, kind);
         });
-        // Node-API finalizers that `NapiEnv::cleanup` held back for an `execute()` on the pool.
+        // Node-API finalizers that `NapiEnv::cleanup` held back for an `execute()` on the pool
+        // or a `complete()` that was still queued.
         // SAFETY: fn contract (statement-scoped exclusive access).
         unsafe {
             if let Some(rare) = (*this).rare_data.as_deref_mut() {

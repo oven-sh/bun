@@ -80,15 +80,27 @@ public:
     {
         Base::finishCreation(vm);
         m_value = value;
-        m_finalizer = NapiFinalizer { callback, finalizer_hint };
+        if (callback && m_env) {
+            m_finalizer = m_env->trackFinalizer(callback, value, finalizer_hint);
+        }
     }
 
     static void destroy(JSC::JSCell* cell);
 
     void* value() const { return m_value; }
 
+    // Other threads read value() for as long as this cell is alive, so the env's cleanup must not run the
+    // finalizer while it is.
+    void finalizeOnlyWhenCollected()
+    {
+        if (m_finalizer) {
+            NapiEnv::finalizeOnlyWhenCollected(m_finalizer);
+        }
+    }
+
     void* m_value;
-    NapiFinalizer m_finalizer;
+    // The finalize_cb of napi_create_external. This cell is its holder.
+    NapiTrackedFinalizer* m_finalizer { nullptr };
     WTF::RefPtr<NapiEnv> m_env;
 
 #if ASSERT_ENABLED

@@ -5215,10 +5215,10 @@ napi_env GlobalObject::makeNapiEnvForFFI()
 }
 
 // `bun test --isolate`: the old global is about to be gcUnprotect()'d and
-// collected, but its NapiEnvs may outlive it — GC-enqueued NapiFinalizerTasks
-// hold Ref<NapiEnv> and run on the event loop while loading the *next* file.
-// NapiEnv::m_globalObject is a raw pointer; Finalizer.run opens a
-// NapiHandleScope through it, which writes m_currentHandleScopeImpl on the
+// collected, but its NapiEnvs may outlive it — the turn queued for an env's
+// pending finalizers holds a Ref<NapiEnv> and runs on the event loop while
+// loading the *next* file. NapiEnv::m_globalObject is a raw pointer; that turn
+// opens a NapiHandleScope through it, which writes m_currentHandleScopeImpl on the
 // dead old global and trips `ASSERT(isMarked(cell))` in
 // Heap::addToRememberedSet (release: the concurrent marker later visits it and
 // segfaults at offset 0x68/0xD0). Retarget every env to the new global and

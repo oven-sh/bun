@@ -95,7 +95,7 @@ pub mod task_tag {
         JSBundleCompletionTask,
         JSCDeferredWorkTask,
         NapiAsyncWork,            // napi_async_work
-        NapiFinalizerTask,
+        NapiPendingFinalizers,    // NapiEnv (a turn for the finalizers of its collected values)
         NativePromiseContextDeferredDerefTask,
         NativeBrotli,
         NativeZlib,

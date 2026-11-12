@@ -444,8 +444,12 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
     if (thisObject->plugin.filtersFrozen) [[unlikely]]
         return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE, "onBeforeParse() called after the build started"_s);
 
-    if (externalPtr)
+    if (externalPtr) {
+        // Bundler threads read the external's data until the build ends, which can be after the addon's env is
+        // torn down.
+        externalPtr->finalizeOnlyWhenCollected();
         thisObject->plugin.onBeforeParseExternals.append(vm, thisObject, externalPtr);
+    }
 
     thisObject->plugin.onBeforeParse.append(vm, newRegexp, namespaceStr, callback, native_plugin_name ? *native_plugin_name : nullptr, externalPtr);
 

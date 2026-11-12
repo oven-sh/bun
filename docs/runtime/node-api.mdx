@@ -17,3 +17,7 @@ Alternatively, use `process.dlopen`:
 let mod = { exports: {} };
 process.dlopen(mod, "./my-node-module.node");
 ```
+
+## Finalizers when the environment ends
+
+Bun ends an add-on's environment when a `Worker` exits or is terminated, and when the main thread exits because its event loop is empty. As in Node.js, it then runs the finalizers of the values that are still alive (`napi_wrap`, `napi_add_finalizer`, `napi_create_external`, external buffers), and the finalizer of `napi_set_instance_data` after them. `process.exit()` on the main thread ends no environment, so no finalizer runs there.

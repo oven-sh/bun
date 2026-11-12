@@ -20,7 +20,6 @@
 #include "napi_macros.h"
 
 #include <wtf/HashSet.h>
-#include <wtf/ListHashSet.h>
 #include <wtf/Lock.h>
 
 #include <optional>
@@ -31,6 +30,12 @@
 extern "C" void Bun__napi_register_cleanup_zig(napi_env env);
 extern "C" void Bun__napi_threadsafe_function_env_teardown(void* tsfn);
 extern "C" void Bun__napi_run_finalizers_after_teardown_wait(napi_env env);
+// False if the VM no longer takes tasks.
+extern "C" bool Bun__napi_schedule_pending_finalizers(napi_env env);
+// Whether the VM's teardown, with its wait for other threads, follows the exit that runs NapiEnv::cleanup().
+extern "C" bool Bun__napi_teardown_follows_exit(napi_env env);
+// Whether an addon's uv_close callback was still queued when the VM began to exit.
+extern "C" bool Bun__napi_uv_close_was_queued_at_exit(napi_env env);
 extern "C" void Bun__napi_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
@@ -191,6 +196,12 @@ public:
 
     ~NapiEnv()
     {
+        // A holder keeps its env alive, so what is left has none: finalizers that were queued and never got a turn.
+        while (auto* finalizer = first(m_pendingFinalizers)) {
+            ASSERT(!finalizer->hasHolder);
+            releaseFinalizer(finalizer);
+        }
+        ASSERT(m_trackedFinalizers.isEmpty());
         delete[] filename;
         Bun__VmHandle__release(m_vmHandle);
     }
@@ -214,6 +225,14 @@ public:
         // finalizer) fails with napi_pending_exception and the addon's
         // error path escalates to napi_fatal_error. See #30286.
         clearExceptionsBetweenFinalizers();
+
+        m_isCleaningUp = true;
+        // Asked before the cleanup hooks run: the close callback of a handle that a hook closes runs after the
+        // instance data finalizer, in Node too.
+        bool uvCloseQueued = Bun__napi_uv_close_was_queued_at_exit(this);
+        // Node runs the finalizers that a collection queued before the env's cleanup hooks: they are immediates,
+        // which its environment cleanup runs first.
+        drainFinalizers(m_pendingFinalizers);
 
         while (!m_cleanupHooks.empty()) {
             drain();
@@ -239,61 +258,48 @@ public:
         m_cleanupHooks = Napi::HookSet();
         clearExceptionsBetweenFinalizers();
 
-        // An execute() that is still running can use what a finalizer frees. The VM's teardown waits for the thread
-        // pool, so the finalizers run after that wait. Node settles its thread pool requests before them too.
-        if (m_asyncWorkOnThreadPool.load()) {
+        // An execute() that is still running can use what a finalizer frees, and a complete() or a uv_close
+        // callback that is still queued reads the instance data. The VM's teardown waits for the thread pool and
+        // runs the queued callbacks, so the finalizers run after that wait. Node settles its thread pool requests
+        // and closes its handles before them too.
+        if (m_asyncWorkOnThreadPool.load() || ((m_asyncWorkAwaitingComplete || uvCloseQueued) && Bun__napi_teardown_follows_exit(this))) {
             Bun__napi_run_finalizers_after_teardown_wait(this);
             return;
         }
         runFinalizers();
     }
 
+    // The end of cleanup(): every finalizer the env still has, then the instance data finalizer. Node keeps the
+    // instance data on the same list as the values, at the place where napi_set_instance_data was called. Here it
+    // is always last, so that no finalizer of the addon finds its instance data freed.
     void runFinalizers()
     {
-        m_isFinishingFinalizers = true;
         // A cleanup hook may itself have leaked an exception; the first
         // finalizer starts clean too.
         clearExceptionsBetweenFinalizers();
-        // Drain to empty, last first, so children are torn down before parents (Node.js
-        // LIFO) and a finalizer that registers another finalizer while running (an addon
-        // creating an external buffer from a finalizer) has it run in this same cleanup
-        // rather than left behind. The entry being called stays in the set until it
-        // returns — its owner (NapiRef / external-buffer destructor) holds a pointer to that
-        // node and may deactivate() it from inside the call — and is removed afterwards; no
-        // iterator is held across a call, so inserts and removals during one are plain.
-        while (!m_finalizers.isEmpty()) {
-            const BoundFinalizer* current = &m_finalizers.last();
-            m_currentFinalizer = current;
-            {
-                Bun::NapiHandleScope handle_scope(m_globalObject);
-                current->call(this);
-            }
-            m_currentFinalizer = nullptr;
-            // Whatever the call appended sits after `current`; remove `current` itself by value
-            // (still a live node: deactivate() only marks the running entry).
-            m_finalizers.remove(*current);
-            // Each finalizer starts from a clean exception state: Node.js
-            // never propagates one finalizer's throw into the next (there
-            // is no JS frame to catch in between). Leaving a pending
-            // exception also breaks later finalizers in subtle ways --
-            // napi_is_exception_pending skips the VM check during cleanup
-            // for safety, so user code thinks there is no exception, but
-            // the next napi call with a throw scope sees it. See #30286.
-            clearExceptionsBetweenFinalizers();
-        }
-        m_isFinishingFinalizers = false;
+        drainFinalizers(m_pendingFinalizers, m_trackedFinalizers);
 
-        instanceDataFinalizer.call(this, instanceData, true);
+        instanceDataFinalizer.call(this, instanceData);
         instanceDataFinalizer.clear();
         // napi_get_instance_data is ungated: never hand out the finalized pointer.
         instanceData = nullptr;
         clearExceptionsBetweenFinalizers();
+
+        // What the instance data finalizer posted or registered still runs, as in Node.
+        drainFinalizers(m_pendingFinalizers, m_trackedFinalizers);
+        m_isTornDown = true;
     }
 
     // JS thread, when async work goes to the thread pool.
-    void asyncWorkEnteredThreadPool() { m_asyncWorkOnThreadPool++; }
+    void asyncWorkEnteredThreadPool()
+    {
+        m_asyncWorkOnThreadPool++;
+        m_asyncWorkAwaitingComplete++;
+    }
     // Pool thread, once execute() has returned or the work was cancelled.
     void asyncWorkLeftThreadPool() { m_asyncWorkOnThreadPool--; }
+    // JS thread, once complete() has returned.
+    void asyncWorkCompleted() { m_asyncWorkAwaitingComplete--; }
 
     // Threadsafe-function registry. Entries are raw ThreadSafeFunction* owned
     // by the Rust side, added and removed on the JS thread only: at creation,
@@ -329,42 +335,103 @@ public:
         }
     }
 
-    struct BoundFinalizer;
+    // The env owns each finalize_cb from the call that registers it until the callback has run, as Node's env
+    // does. `m_trackedFinalizers` (Node's finalizing_reflist) has the finalizers of the values that are alive,
+    // newest first. When a value is collected its finalizer moves to `m_pendingFinalizers` (Node's
+    // pending_finalizers), and the event loop runs one of those per turn. cleanup() runs what both lists still
+    // hold before the instance data finalizer. After that nothing of the addon runs.
 
-    // The entry cleanup() is currently calling stays in the set until its call returns (its
-    // owner holds a pointer to that node); asking to remove it marks it instead. Any other
-    // entry is removed outright.
-    void removeFinalizer(const BoundFinalizer& finalizer)
+    // Registers `callback` for a value. The caller is the finalizer's holder: it keeps the pointer, and gives it
+    // back through finalizerValueCollected() or releaseFinalizer().
+    Bun::NapiTrackedFinalizer* trackFinalizer(napi_finalize callback, void* data, void* hint)
     {
-        if (m_currentFinalizer && *m_currentFinalizer == finalizer) {
-            m_currentFinalizer->active = false;
+        auto* finalizer = new Bun::NapiTrackedFinalizer(callback, data, hint);
+        m_trackedFinalizers.push(finalizer);
+        return finalizer;
+    }
+
+    enum class FinalizerHolder : bool {
+        // The holder is gone, or goes with its value.
+        Released,
+        // A napi_ref that the addon owns: it still calls releaseFinalizer(), and that cancels a queued finalizer
+        // (Node's ~ReferenceWithFinalizer).
+        Kept,
+    };
+
+    // The holder's value was collected, or its bytes were freed: runs the finalizer now, or on a later turn of the
+    // loop, whichever the module's Node-API version asks for. Also called from the collector thread.
+    void finalizerValueCollected(Bun::NapiTrackedFinalizer* finalizer, FinalizerHolder holder)
+    {
+        assertFinalizerListsAreStable();
+        finalizer->hasHolder = holder == FinalizerHolder::Kept;
+        if (!finalizer->callback || m_isTornDown) {
+            // cleanup() has run it, or has finished.
+            finalizer->callback = nullptr;
+            if (finalizer->isOnList())
+                finalizer->remove();
+            if (!finalizer->hasHolder)
+                delete finalizer;
             return;
         }
-        m_finalizers.remove(finalizer);
+        if (mustQueueFinalizer()) {
+            if (finalizer->isOnList())
+                finalizer->remove();
+            m_pendingFinalizers.append(finalizer);
+            schedulePendingFinalizers();
+            return;
+        }
+        runFinalizer(*finalizer);
+        throwPendingException();
     }
 
-    void removeFinalizer(napi_finalize callback, void* hint, void* data)
+    // The holder goes away while its value is alive (napi_delete_reference), or takes its callback back
+    // (napi_remove_wrap). A finalizer that has not run yet does not run.
+    static void releaseFinalizer(Bun::NapiTrackedFinalizer* finalizer)
     {
-        removeFinalizer(BoundFinalizer { callback, hint, data });
+        if (finalizer->isOnList())
+            finalizer->remove();
+        delete finalizer;
     }
 
-    const auto& addFinalizer(napi_finalize callback, void* hint, void* data)
+    // Stops cleanup() from running the finalizer of a value that is still alive: it runs only when the value is
+    // collected. For a value whose data other threads read for as long as it is alive.
+    static void finalizeOnlyWhenCollected(Bun::NapiTrackedFinalizer* finalizer)
     {
-        return *m_finalizers.add({ callback, hint, data }).iterator;
+        if (finalizer->isOnList())
+            finalizer->remove();
     }
 
-    // Node's pending_finalizers: refs whose value was swept during GC and whose finalizer runs on a later event-loop turn; ~NapiRef removes itself.
-    void enqueueRefFinalizer(Zig::NapiRef* ref)
+    // node_api_post_finalizer, and the deferred finalizer of a value that the env does not track.
+    void postFinalizer(napi_finalize callback, void* data, void* hint)
     {
-        bool wasEmpty = m_pendingRefFinalizers.isEmpty();
-        m_pendingRefFinalizers.add(ref);
-        if (wasEmpty)
-            Bun__napi_enqueue_finalizer(this, drainOneRefFinalizer, this, nullptr);
+        assertFinalizerListsAreStable();
+        if (m_isTornDown)
+            return;
+        auto* finalizer = new Bun::NapiTrackedFinalizer(callback, data, hint);
+        finalizer->hasHolder = false;
+        m_pendingFinalizers.append(finalizer);
+        schedulePendingFinalizers();
     }
 
-    void dequeueRefFinalizer(Zig::NapiRef* ref)
+    // The event loop's turn for this env (NapiEnv::run_pending_finalizer in napi_body.rs): one finalizer. The next
+    // turn is queued before the call, because the finalizer can do anything, including end the VM.
+    void runPendingFinalizerFromLoop()
     {
-        m_pendingRefFinalizers.remove(ref);
+        m_pendingFinalizersScheduled = false;
+        auto* finalizer = first(m_pendingFinalizers);
+        if (!finalizer)
+            return;
+        finalizer->remove();
+        if (!m_pendingFinalizers.isEmpty())
+            schedulePendingFinalizers();
+        runFinalizer(*finalizer);
+    }
+
+    // The queued turn was released without running. Its finalizers stay here for cleanup().
+    void pendingFinalizersTurnReleased()
+    {
+        m_pendingFinalizersScheduled = false;
+        deref();
     }
 
     /// Will abort the process if a duplicate entry would be added.
@@ -452,15 +519,15 @@ public:
         }
     }
 
+    // The finalizer of a value that the env does not track: an external string.
     void doFinalizer(napi_finalize finalize_cb, void* data, void* finalize_hint)
     {
         if (!finalize_cb) {
             return;
         }
 
-        // A collection's end phase can run on the collector thread; an addon's finalizer only ever runs on the JS thread.
-        if (inGC() && (mustDeferFinalizers() || WTF::Thread::mayBeGCThread())) {
-            Bun__napi_enqueue_finalizer(this, finalize_cb, data, finalize_hint);
+        if (mustQueueFinalizer()) {
+            postFinalizer(finalize_cb, data, finalize_hint);
         } else {
             finalize_cb(this, data, finalize_hint);
             throwPendingException();
@@ -501,8 +568,8 @@ public:
     inline Zig::GlobalObject* globalObject() const { return m_globalObject; }
     // `bun test --isolate` creates a fresh Zig::GlobalObject per file and
     // gcUnprotect()s the previous one. NapiEnv outlives its owning global —
-    // GC-enqueued NapiFinalizerTasks hold a Ref<NapiEnv> and run on the event
-    // loop *after* the swap. Finalizer.run opens a NapiHandleScope via
+    // the queued turn for its pending finalizers holds a Ref<NapiEnv> and runs
+    // on the event loop *after* the swap. It opens a NapiHandleScope via
     // env->globalObject(), which would write m_currentHandleScopeImpl on
     // the now-dead old global and trip a write barrier on an unmarked cell
     // (debug: `ASSERT(isMarked(cell))` in Heap::addToRememberedSet; release:
@@ -527,15 +594,14 @@ public:
     // Returns true if finalizers from this module need to be scheduled for the next tick after garbage collection, instead of running during garbage collection
     inline bool mustDeferFinalizers() const
     {
-        // The deferred path (NapiFinalizerTask::schedule) is responsible for the
-        // shutdown case: once is_shutting_down() it either pushes a cleanup hook
-        // (if those haven't run yet) or drops the task (if they have). Running a
-        // non-EXPERIMENTAL finalizer immediately during the final collectNow() is
-        // never safe — by then on_exit() has already run cleanup hooks (including
-        // the napi_set_instance_data finalizer that frees per-addon state the
-        // object finalizer reads), the heap is sweeping (no allocation, no handle
-        // scope), and napi_call_function returns the termination exception.
         return m_napiModule.nm_version != NAPI_VERSION_EXPERIMENTAL;
+    }
+
+    // Whether a finalizer whose value the collector just found has to wait for a turn of the loop. A collection's
+    // end phase can run on the collector thread; an addon's finalizer only ever runs on the JS thread.
+    inline bool mustQueueFinalizer() const
+    {
+        return inGC() && (mustDeferFinalizers() || WTF::Thread::mayBeGCThread());
     }
 
     inline bool isFinishingFinalizers() const { return m_isFinishingFinalizers; }
@@ -591,73 +657,20 @@ public:
     // +N/-N addon pattern only observes its own deltas.
     int64_t m_externalMemory = 0;
 
-    struct BoundFinalizer {
-        napi_finalize callback = nullptr;
-        void* hint = nullptr;
-        void* data = nullptr;
-        // The running entry cannot leave the set until its call returns; deactivating it from
-        // inside the call marks it instead. Not part of the hash.
-        mutable bool active = true;
-
-        BoundFinalizer() = default;
-
-        BoundFinalizer(const Bun::NapiFinalizer& finalizer, void* data)
-            : callback(finalizer.callback())
-            , hint(finalizer.hint())
-            , data(data)
-        {
-        }
-
-        BoundFinalizer(napi_finalize callback, void* hint, void* data)
-            : callback(callback)
-            , hint(hint)
-            , data(data)
-        {
-        }
-
-        void call(napi_env env) const
-        {
-            if (callback && active) {
-                callback(env, data, hint);
-            }
-        }
-
-        void deactivate(NapiEnv& env) const
-        {
-            // `*this` may be the set's own node: nothing is touched after the removal.
-            // https://isocpp.org/wiki/faq/freestore-mgmt#delete-this
-            env.removeFinalizer(*this);
-        }
-
-        bool operator==(const BoundFinalizer& other) const
-        {
-            return this == &other || (callback == other.callback && hint == other.hint && data == other.data);
-        }
-
-        struct Hash {
-            static unsigned hash(const BoundFinalizer& bound)
-            {
-                return WTF::computeHash(reinterpret_cast<uintptr_t>(bound.callback), reinterpret_cast<uintptr_t>(bound.hint), reinterpret_cast<uintptr_t>(bound.data));
-            }
-            static bool equal(const BoundFinalizer& a, const BoundFinalizer& b)
-            {
-                return a == b;
-            }
-            static constexpr bool safeToCompareToEmptyOrDeleted = false;
-        };
-    };
-
 private:
     Zig::GlobalObject* m_globalObject = nullptr;
     napi_module m_napiModule;
-    // ListHashSet preserves insertion order so cleanup() can run finalizers in reverse
-    // (LIFO), matching Node.js teardown semantics for napi_wrap references.
-    WTF::ListHashSet<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
-    static void drainOneRefFinalizer(napi_env, void*, void*);
-    WTF::ListHashSet<Zig::NapiRef*> m_pendingRefFinalizers;
-    // The entry cleanup() is currently calling, if any (see BoundFinalizer::deactivate).
-    const BoundFinalizer* m_currentFinalizer = nullptr;
+    using FinalizerList = WTF::SentinelLinkedList<Bun::NapiTrackedFinalizer, WTF::BasicRawSentinelNode<Bun::NapiTrackedFinalizer>>;
+    FinalizerList m_trackedFinalizers;
+    FinalizerList m_pendingFinalizers;
+    // A turn of the event loop is queued for `m_pendingFinalizers`. It holds a ref to this env.
+    bool m_pendingFinalizersScheduled = false;
     bool m_isFinishingFinalizers = false;
+    // cleanup() has started. It runs the pending finalizers itself, so no more turns are queued for them
+    // (Node's `destructing`).
+    bool m_isCleaningUp = false;
+    // cleanup() has run the instance data finalizer.
+    bool m_isTornDown = false;
 
 public:
     // Set while a completion (async work's complete, a threadsafe function's call_js) runs for a
@@ -676,6 +689,74 @@ private:
     WTF::HashSet<void*> m_threadSafeFunctions WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock);
     bool m_threadSafeFunctionsTornDown WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock) = false;
     std::atomic<unsigned> m_asyncWorkOnThreadPool { 0 };
+    // Async work that was queued and whose complete() has not returned yet. JS thread only.
+    unsigned m_asyncWorkAwaitingComplete { 0 };
+
+    static Bun::NapiTrackedFinalizer* first(FinalizerList& list)
+    {
+        return list.isEmpty() ? nullptr : &*list.begin();
+    }
+
+    // The collector thread changes the lists too, while it finishes a collection. The JS thread is stopped then,
+    // or waits for its access to the heap.
+    void assertFinalizerListsAreStable() const
+    {
+        ASSERT(!WTF::Thread::mayBeGCThread() || m_vm.heap.worldIsStopped());
+    }
+
+    void schedulePendingFinalizers()
+    {
+        if (m_pendingFinalizersScheduled || m_isCleaningUp)
+            return;
+        m_pendingFinalizersScheduled = true;
+        ref();
+        if (!Bun__napi_schedule_pending_finalizers(this)) {
+            m_pendingFinalizersScheduled = false;
+            deref();
+        }
+    }
+
+    // The finalizer leaves its list before the call. The callback can release it (napi_delete_reference), and can
+    // register or post other finalizers.
+    void runFinalizer(Bun::NapiTrackedFinalizer& finalizer)
+    {
+        napi_finalize callback = std::exchange(finalizer.callback, nullptr);
+        void* data = finalizer.data;
+        void* hint = finalizer.hint;
+        if (finalizer.isOnList())
+            finalizer.remove();
+        if (!finalizer.hasHolder)
+            delete &finalizer;
+        callback(this, data, hint);
+    }
+
+    // cleanup() runs every finalizer of `lists`, and what those finalizers add to them: the first of the first
+    // list that has one. For the tracked list that is the newest registration, so children go before parents
+    // (Node.js LIFO).
+    template<typename... Lists>
+    void drainFinalizers(Lists&... lists)
+    {
+        m_isFinishingFinalizers = true;
+        for (;;) {
+            Bun::NapiTrackedFinalizer* finalizer = nullptr;
+            ((finalizer = first(lists)) || ...);
+            if (!finalizer)
+                break;
+            {
+                Bun::NapiHandleScope handle_scope(m_globalObject);
+                runFinalizer(*finalizer);
+            }
+            // Each finalizer starts from a clean exception state: Node.js
+            // never propagates one finalizer's throw into the next (there
+            // is no JS frame to catch in between). Leaving a pending
+            // exception also breaks later finalizers in subtle ways --
+            // napi_is_exception_pending skips the VM check during cleanup
+            // for safety, so user code thinks there is no exception, but
+            // the next napi call with a throw scope sees it. See #30286.
+            clearExceptionsBetweenFinalizers();
+        }
+        m_isFinishingFinalizers = false;
+    }
 
     // Drop any pending exception -- VM-scope or env-scope -- between
     // finalizers run from cleanup(). Used by cleanup() only. Defined
@@ -724,7 +805,6 @@ private:
 };
 
 extern "C" void Bun__napi_cleanup_env_cpp(napi_env);
-extern "C" void Bun__napi_remove_finalizer(napi_env, napi_finalize callback, void* hint, void* data);
 
 namespace Napi {
 
@@ -844,12 +924,10 @@ class NapiRef {
 public:
     void ref();
     void unref();
-    void clear();
 
-    NapiRef(Ref<NapiEnv>&& env, uint32_t count, Bun::NapiFinalizer finalizer)
+    NapiRef(Ref<NapiEnv>&& env, uint32_t count)
         : env(env)
         , globalObject(JSC::Weak<JSC::JSGlobalObject>(env->globalObject()))
-        , finalizer(WTF::move(finalizer))
         , refCount(count)
     {
     }
@@ -888,26 +966,11 @@ public:
         }
     }
 
-    // Queues a copy when in GC, which a later delete of this ref cannot cancel: only for runtime-owned refs and env cleanup.
-    void callFinalizer()
-    {
-        // Calling the finalizer may delete `this`, so we have to do state changes on `this` before
-        // calling the finalizer
-        Bun::NapiFinalizer saved_finalizer = this->finalizer;
-        this->finalizer.clear();
-        saved_finalizer.call(env.ptr(), nativeObject, !env->mustDeferFinalizers() || !env->inGC());
-    }
-
-    // For a ref the addon owns: napi_delete_reference before the queued finalizer runs cancels it (Node's ~ReferenceWithFinalizer).
-    void callFinalizerFromGC();
-
     ~NapiRef()
     {
         NAPI_LOG("destruct napi ref %p", this);
-        env->dequeueRefFinalizer(this);
-        if (boundCleanup) {
-            boundCleanup->deactivate(env);
-            boundCleanup = nullptr;
+        if (finalizer) {
+            NapiEnv::releaseFinalizer(finalizer);
         }
 
         if (!m_isEternal) {
@@ -923,8 +986,8 @@ public:
     JSC::Weak<JSC::JSGlobalObject> globalObject;
     NapiWeakValue weakValueRef;
     JSC::Strong<JSC::Unknown> strongRef;
-    Bun::NapiFinalizer finalizer;
-    const NapiEnv::BoundFinalizer* boundCleanup = nullptr;
+    // The finalize_cb of napi_wrap or napi_add_finalizer. This ref is its holder.
+    Bun::NapiTrackedFinalizer* finalizer = nullptr;
     void* nativeObject = nullptr;
     uint32_t refCount = 0;
     bool releaseOnWeaken = false;

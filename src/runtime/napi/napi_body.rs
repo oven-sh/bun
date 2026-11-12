@@ -70,14 +70,17 @@ impl Taskable for ThreadSafeFunction {
         bun_event_loop::ContextId::NONE
     }
 }
-impl Taskable for NapiFinalizerTask {
-    const TAG: TaskTag = task_tag::NapiFinalizerTask;
-    /// A finalizer queued before the loop stopped: Node runs an addon's
-    /// finalizers during environment cleanup (script already forbidden), and
-    /// an addon counts on them (external buffers freed when a Worker exits).
+/// The loop's turn for an env that has finalizers of collected values waiting
+/// (`NapiEnv::schedulePendingFinalizers` in napi.h). The task is the env, and it
+/// holds one reference to it.
+impl Taskable for NapiEnv {
+    const TAG: TaskTag = task_tag::NapiPendingFinalizers;
+    /// Runs nothing: the finalizers stay with the env, and its cleanup (an
+    /// exit handler, before the queue is released) has run them ahead of its
+    /// instance data finalizer.
     unsafe fn release_unrun(this: *mut Self) {
-        // `Err` is left pending for the release dispatcher's fold.
-        let _ = NapiFinalizerTask::run_on_js_thread(this);
+        // SAFETY: fn contract — the env the task held a reference to.
+        unsafe { NapiEnv__pendingFinalizersTurnReleased(this) };
     }
     /// An addon counts on its finalizers running.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
@@ -109,9 +112,15 @@ unsafe extern "C" {
     fn NapiEnv__setCompletingForStoppedContext(env: *mut NapiEnv, value: bool) -> bool;
     /// `NapiStatus::ok`, or the status Node's `NAPI_PREAMBLE` returns at entry (`NapiEnv::entryStatus`).
     fn NapiEnv__entryStatus(env: *mut NapiEnv) -> napi_status;
-    /// `NapiEnv::cleanup` runs no finalizer until each of these has its `NapiEnv__asyncWorkLeftThreadPool`.
+    /// `NapiEnv::cleanup` runs no finalizer until each of these has its `NapiEnv__asyncWorkLeftThreadPool`,
+    /// and, where the VM's teardown follows, its `NapiEnv__asyncWorkCompleted`.
     fn NapiEnv__asyncWorkEnteredThreadPool(env: *mut NapiEnv);
     fn NapiEnv__asyncWorkLeftThreadPool(env: *mut NapiEnv);
+    fn NapiEnv__asyncWorkCompleted(env: *mut NapiEnv);
+    /// Runs the env's next pending finalizer.
+    fn NapiEnv__runPendingFinalizer(env: *mut NapiEnv);
+    /// Gives back the reference of a queued turn that will not run.
+    fn NapiEnv__pendingFinalizersTurnReleased(env: *mut NapiEnv);
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
     /// The reference to its VM's handle the env holds (`BunVmHandleRef`).
@@ -131,6 +140,18 @@ impl NapiEnv {
     pub(crate) fn vm_handle(&self) -> bun_jsc::vm_handle::BorrowedRef {
         // SAFETY: the env holds a reference for its whole lifetime.
         unsafe { bun_jsc::VmHandle::borrow_ref(NapiEnv__vmHandle(self.as_mut_ptr())) }
+    }
+
+    /// The loop's turn for an env that has finalizers waiting: runs one of
+    /// them. What it raised through napi (latched on the env) or left on the VM
+    /// is the `Err`, for the dispatcher to fold.
+    pub(crate) fn run_pending_finalizer(this: *mut NapiEnv) -> JsResult<()> {
+        // SAFETY: the queued task held this reference.
+        let env = unsafe { NapiEnvRef::adopt(this) };
+        let _hs = NapiHandleScope::open_scoped(&env);
+        // SAFETY: live env, on its JS thread.
+        unsafe { NapiEnv__runPendingFinalizer(env.get()) };
+        env.surface_exception(env.to_js())
     }
 
     /// Convert err to an extern napi_status, and store the error code in env so that it can be
@@ -2062,12 +2083,16 @@ impl napi_async_work {
         // generically; this is a genuine one-off cleanup.
         scopeguard::defer! { poll_ref.unref(bun_io::js_vm_ctx()); }
 
+        let env = self.env.get();
+        // The env's cleanup holds its finalizers back until here.
+        // SAFETY: the env outlives its completions (it goes with its VM).
+        scopeguard::defer! { unsafe { NapiEnv__asyncWorkCompleted(env) }; }
+
         // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201
         let Some(complete) = self.complete else {
             return Ok(());
         };
 
-        let env = self.env.get();
         // SAFETY: env is held alive by NapiEnvRef for the duration of this call.
         let env_ref = unsafe { &*env };
         let _hs = NapiHandleScope::open_scoped(env_ref);
@@ -2503,15 +2528,6 @@ extern "C" fn Bun__napi_suppress_crash_on_abort_if_desired() {
     }
 }
 
-unsafe extern "C" {
-    fn Bun__napi_remove_finalizer(
-        env: napi_env,
-        fun: napi_finalize,
-        hint: *mut c_void,
-        data: *mut c_void,
-    );
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Finalizer
 // ──────────────────────────────────────────────────────────────────────────
@@ -2532,42 +2548,66 @@ impl Finalizer {
         let _hs = NapiHandleScope::open_scoped(env_ref);
 
         (self.fun)(env, self.data, self.hint);
-        // SAFETY: env is valid; passes the C finalizer back for bookkeeping.
-        unsafe { Bun__napi_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
 
         env_ref.surface_exception(env_ref.to_js())
     }
 
     // `deinit` is handled by Drop on NapiEnvRef.
-
-    /// Takes ownership of `this`.
-    pub(crate) fn enqueue(self) {
-        NapiFinalizerTask::init(self).schedule();
-    }
 }
 
-/// For Node-API modules not built with NAPI_EXPERIMENTAL, finalizers should be deferred to the
-/// immediate task queue instead of run immediately. This lets finalizers perform allocations,
-/// which they couldn't if they ran immediately while the garbage collector is still running.
+/// For Node-API modules not built with NAPI_EXPERIMENTAL, the finalizer of a collected value waits on
+/// its env for a turn of the loop instead of running inside the collection. This lets finalizers
+/// perform allocations, which they couldn't while the garbage collector is still running. Queues that
+/// turn; the caller gave it a reference to `env`. Returns false if the VM no longer takes tasks.
 #[unsafe(no_mangle)]
-extern "C" fn Bun__napi_enqueue_finalizer(
-    env: Option<&NapiEnv>,
-    fun: napi_finalize,
-    data: *mut c_void,
-    hint: *mut c_void,
-) {
-    let Some(fun) = fun else { return };
-    let Some(env_ref) = env else {
-        return;
-    };
-    let this = Finalizer {
-        fun,
-        // SAFETY: env_ref points to a live C++-owned napi_env.
-        env: unsafe { NapiEnvRef::clone_from_raw(env_ref.as_mut_ptr()) },
-        data,
-        hint,
-    };
-    this.enqueue();
+extern "C" fn Bun__napi_schedule_pending_finalizers(env: &NapiEnv) -> bool {
+    let task = Task::init(env.as_mut_ptr());
+    // `bun_vm()` reads a thread-local that is null on a GC thread, so check the thread first.
+    if VirtualMachine::get_or_null().is_none() {
+        // A collection that ends on the collector thread (an external buffer freed while the JS
+        // thread is idle): post through the env's VM handle.
+        let task = ConcurrentTask::create(task);
+        if let bun_jsc::vm_handle::Posted::Refused(task) =
+            env.vm_handle().post(bun_jsc::LoopKind::Regular, task)
+        {
+            // SAFETY: a refused task was never queued, so we own it.
+            unsafe { ConcurrentTask::release_refused(task) };
+            return false;
+        }
+        return true;
+    }
+    // Always the regular loop: the loop of a macro stops turning when the macro returns.
+    env.to_js()
+        .bun_vm()
+        .as_mut()
+        .regular_event_loop
+        .enqueue_task(task);
+    true
+}
+
+/// Whether `VirtualMachine::teardown` follows the exit handlers that run `NapiEnv::cleanup`: its wait
+/// brings back what is on other threads and runs the completions that are still queued.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__napi_teardown_follows_exit(env: &NapiEnv) -> bool {
+    env.to_js().bun_vm().exit_runs_teardown()
+}
+
+/// Whether an addon's `uv_close` callback was still queued when the VM of `env` began to exit
+/// (`UvLoop::had_closes_queued_at_exit`). On Windows the handles are libuv's own.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__napi_uv_close_was_queued_at_exit(env: &NapiEnv) -> bool {
+    #[cfg(unix)]
+    {
+        // SAFETY: the env's VM is alive while the env is.
+        let uv_loop = unsafe { super::uv_posix::UvLoop::of_vm(env.to_js().bun_vm()) };
+        // SAFETY: a non-null loop lives as long as its VM; this is the VM's JS thread.
+        !uv_loop.is_null() && unsafe { &*uv_loop }.had_closes_queued_at_exit()
+    }
+    #[cfg(windows)]
+    {
+        let _ = env;
+        false
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -5425,85 +5465,4 @@ pub(crate) fn fix_dead_code_elimination() {
     );
 
     keep_symbols!(crate::node::buffer::BufferVectorized::fill);
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// NapiFinalizerTask
-// ──────────────────────────────────────────────────────────────────────────
-
-pub(crate) struct NapiFinalizerTask {
-    pub(crate) finalizer: Finalizer,
-}
-
-impl NapiFinalizerTask {
-    pub(crate) fn init(finalizer: Finalizer) -> Box<NapiFinalizerTask> {
-        Box::new(NapiFinalizerTask { finalizer })
-    }
-
-    pub(crate) fn schedule(self: Box<Self>) {
-        // `bun_vm()` reads a thread-local that is null on a GC thread, so check the thread first.
-        if VirtualMachine::get_or_null().is_none() {
-            // Off the JS thread (e.g. an external buffer finalized from a GC
-            // helper thread): post through the env's VM handle. If the VM is
-            // already torn down the finalizer can never run; free the task but
-            // not the env ref — the env's count is not atomic and the env goes
-            // with its VM — as the cleanup-hooks-already-ran case below does.
-            let handle = self.finalizer.env.vm_handle().clone();
-            let this = bun_core::heap::into_raw(self);
-            let ct = ConcurrentTask::create(Task::init(this));
-            if let bun_jsc::vm_handle::Posted::Refused(ct) =
-                handle.post(bun_jsc::LoopKind::Regular, ct)
-            {
-                // SAFETY: refused ⇒ we own both boxes.
-                unsafe {
-                    drop(bun_core::heap::take(ct.as_ptr()));
-                    let task = bun_core::heap::take(this);
-                    let _ = core::mem::ManuallyDrop::new(task.finalizer.env);
-                }
-            }
-            return;
-        }
-
-        let vm: &VirtualMachine = self.finalizer.env.to_js().bun_vm();
-
-        if vm.is_shutting_down() {
-            if vm.has_run_cleanup_hooks() {
-                // `on_exit()` already drained cleanup hooks; we are inside the
-                // final `collectNow()` (Heap::sweepArrayBuffers) and the JSC
-                // VM is being torn down. The cleanup-hook list will never be
-                // walked again, and running the user finalizer here (mid-GC,
-                // with the global about to be freed) is unsafe. Drop the task
-                // so the `Box<NapiFinalizerTask>` and its `NapiEnvRef` are
-                // released; the addon's external data is reclaimed by the OS
-                // at process exit.
-                drop(self);
-                return;
-            }
-            // Immediate tasks won't run, so we run this as a cleanup hook instead
-            let this = bun_core::heap::into_raw(self);
-            vm.as_mut().rare_data().push_cleanup_hook(
-                vm.global(),
-                this.cast::<c_void>(),
-                Self::run_as_cleanup_hook,
-            );
-        } else {
-            let this = bun_core::heap::into_raw(self);
-            vm.event_loop_ref().enqueue_task(Task::init(this));
-        }
-    }
-
-    pub(crate) fn run_on_js_thread(this: *mut NapiFinalizerTask) -> JsResult<()> {
-        // SAFETY: `this` was created by heap::alloc in `schedule`.
-        let this_box = unsafe { bun_core::heap::take(this) };
-        this_box.finalizer.run()
-        // finalizer.deinit() runs via Drop on NapiEnvRef when this_box drops.
-    }
-
-    extern "C" fn run_as_cleanup_hook(opaque_this: *mut c_void) {
-        // SAFETY: opaque_this is the *mut NapiFinalizerTask we registered above (non-null).
-        let this: *mut NapiFinalizerTask = opaque_this.cast();
-        // A cleanup hook returns nothing: `Err` is left pending for the hook
-        // runner's fold.
-        let _ = Self::run_on_js_thread(this);
-    }
 }

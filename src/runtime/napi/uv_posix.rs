@@ -178,6 +178,10 @@ pub(crate) struct UvLoop {
     idles: WatcherList,
     prepares: WatcherList,
     checks: WatcherList,
+    /// `uv_close` calls whose `close_cb` has not run yet. JS thread only.
+    closes_queued: Cell<u32>,
+    /// [`Self::had_closes_queued_at_exit`], once asked.
+    closes_queued_at_exit: Cell<Option<bool>>,
 }
 
 const _: () = assert!(core::mem::offset_of!(UvLoop, data) == 0);
@@ -273,7 +277,21 @@ impl UvLoop {
             idles: WatcherList::new(),
             prepares: WatcherList::new(),
             checks: WatcherList::new(),
+            closes_queued: Cell::new(0),
+            closes_queued_at_exit: Cell::new(None),
         }
+    }
+
+    /// Whether a `close_cb` was still queued when the VM began to exit. The first Node-API env
+    /// that is torn down asks before it runs its cleanup hooks, and every env gets that answer:
+    /// a handle that a cleanup hook closes is not waited for, as in Node. JS thread only.
+    pub(crate) fn had_closes_queued_at_exit(&self) -> bool {
+        if let Some(queued) = self.closes_queued_at_exit.get() {
+            return queued;
+        }
+        let queued = self.closes_queued.get() > 0;
+        self.closes_queued_at_exit.set(Some(queued));
+        queued
     }
 
     /// Runs the idle handles, then the prepare handles. `auto_tick` calls this before
@@ -1131,7 +1149,11 @@ impl UvHandle {
         };
         bun_output::scoped_log!(uv, "uv_handle_t {:?}: close_cb", handle);
         // SAFETY: the VM owns the loop, so it outlives its handles.
-        let global = unsafe { &*loop_ }.global();
+        let loop_ = unsafe { &*loop_ };
+        loop_
+            .closes_queued
+            .set(loop_.closes_queued.get().saturating_sub(1));
+        let global = loop_.global();
         if let Some(close_cb) = close_cb {
             let _handles = CallbackScope::open(global);
             // SAFETY: calls the addon's callback on the loop thread with its handle.
@@ -1183,7 +1205,9 @@ pub(crate) unsafe extern "C" fn uv_close(handle: *mut UvHandle, close_cb: Option
     if let Posted::Refused(task) = loop_.handle.post(LoopKind::Regular, task) {
         // SAFETY: a refused task was never queued, so we own it.
         unsafe { ConcurrentTask::release_refused(task) };
+        return;
     }
+    loop_.closes_queued.set(loop_.closes_queued.get() + 1);
 }
 
 /// Implements `void uv_ref(uv_handle_t*)`. Idempotent. Only matters while the handle

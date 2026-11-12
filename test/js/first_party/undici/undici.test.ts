@@ -338,17 +338,12 @@ describe("undici", () => {
     });
 
     // https://github.com/nodejs/undici/blob/v6.21.3/lib/api/api-request.js#L141-L147
-    it("gives trailers, opaque and context as undici does", async () => {
+    it("gives opaque and context as undici does", async () => {
       const opaque = { mine: true };
       const first = await request(`${hostUrl}/get`);
       const second = await request(`${hostUrl}/get`, { opaque });
 
-      expect({ trailers: first.trailers, opaque: first.opaque, context: first.context }).toEqual({
-        trailers: {},
-        opaque: null,
-        context: undefined,
-      });
-      expect(second.trailers).not.toBe(first.trailers);
+      expect({ opaque: first.opaque, context: first.context }).toEqual({ opaque: null, context: undefined });
       expect(second.opaque).toBe(opaque);
     });
 
@@ -362,8 +357,8 @@ describe("undici", () => {
     });
 
     it("a write to a result does not reach the headers of the next request", async () => {
-      const { trailers, opaque, context } = await request(`${hostUrl}/headers`, { maxRedirections: 2 });
-      for (const part of [trailers, opaque, context]) {
+      const { opaque, context } = await request(`${hostUrl}/headers`, { maxRedirections: 2 });
+      for (const part of [opaque, context]) {
         if (part != null) (part as Record<string, string>)["x-written-to-a-result"] = "yes";
       }
 

@@ -133,7 +133,7 @@ class BodyReadable extends ReadableFromWeb {
  *   statusCode: number;
  *   headers: IncomingHttpHeaders;
  *   body: ResponseBody;
- *   trailers: Object<string, string>;
+ *   trailers: undefined;
  *   opaque: *;
  *   context?: Object<string, *>;
  * }}
@@ -244,7 +244,8 @@ async function request(
     statusCode,
     headers: headers.toJSON(),
     body,
-    trailers: {},
+    // Not implemented: fetch() does not report the trailers of a response.
+    trailers: undefined,
     opaque: opaque || null,
     // undici keeps the `history` of the redirects here. fetch() does not report them.
     context: followRedirects ? {} : undefined,

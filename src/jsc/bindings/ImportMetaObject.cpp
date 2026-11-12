@@ -657,11 +657,16 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
 // function of the prototype did. No trap runs here.
 static NEVER_INLINE ImportMetaObject* importMetaBehind(JSObject* receiver)
 {
+    // A Proxy can be the prototype of its own target, which closes the chain into a ring. Prototypes alone cannot.
+    Vector<ProxyObject*, 4> proxies;
     for (JSObject* object = receiver; object;) {
         if (auto* meta = dynamicDowncast<ImportMetaObject>(object))
             return meta;
         if (auto* proxy = dynamicDowncast<ProxyObject>(object)) {
-            object = proxy->isRevoked() ? nullptr : proxy->target();
+            if (proxy->isRevoked() || proxies.contains(proxy))
+                return nullptr;
+            proxies.append(proxy);
+            object = proxy->target();
             continue;
         }
         JSValue prototype = object->getPrototypeDirect();

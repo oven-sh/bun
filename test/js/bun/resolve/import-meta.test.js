@@ -123,6 +123,10 @@ it.concurrent(
       const path = [import.meta.dir, "..", "lib", "locate.mjs"].join("/");
       const inAClosure = name => [from(resolve(name)), from(resolveSync(name)), path.endsWith("locate.mjs")];
 
+      // A Proxy that is the prototype of its own target: the objects below it are a ring.
+      const ring = {};
+      Object.setPrototypeOf(ring, new Proxy(ring, {}));
+
       const worker = new Worker(new URL("./worker.mjs", import.meta.url));
       const fromWorker = await new Promise((done, failed) => {
         worker.onmessage = event => done(event.data);
@@ -146,12 +150,16 @@ it.concurrent(
           Object.create(Object.create(import.meta)).resolveSync("./logo.txt"),
           new Proxy(import.meta, {}).resolve("./logo.txt"),
           new Proxy(Object.create(import.meta), {}).resolveSync("./logo.txt"),
+          new Proxy(new Proxy(import.meta, {}), {}).resolve("./logo.txt"),
           Object.create(helperMeta).resolve("./logo.txt"),
         ].map(from),
         sameThroughOtherReceivers: [
           Object.create(import.meta).resolve === resolve,
           new Proxy(import.meta, {}).resolveSync === resolveSync,
         ],
+        aReadWithARingAsReceiver: (
+          Reflect.get(import.meta, "resolve", ring), Reflect.get(import.meta, "resolveSync", ring), "ends"
+        ),
         commonJS: createRequire(import.meta.url)("../lib/common.cjs"),
         calledInAnotherRealm: from(
           runInNewContext("const { resolve } = meta; resolve(name)", { meta: import.meta, name: "./logo.txt" }),
@@ -200,8 +208,16 @@ it.concurrent(
         ofTheOtherModule: ["lib/logo.txt", "lib/logo.txt"],
         onePerModule: [true, true],
         besideAnExportedPath: ["lib/logo.txt", "lib/logo.txt"],
-        throughOtherReceivers: ["app/logo.txt", "app/logo.txt", "app/logo.txt", "app/logo.txt", "lib/logo.txt"],
+        throughOtherReceivers: [
+          "app/logo.txt",
+          "app/logo.txt",
+          "app/logo.txt",
+          "app/logo.txt",
+          "app/logo.txt",
+          "lib/logo.txt",
+        ],
         sameThroughOtherReceivers: [true, true],
+        aReadWithARingAsReceiver: "ends",
         commonJS: ["lib/logo.txt", "lib/logo.txt"],
         calledInAnotherRealm: "app/logo.txt",
         worker: ["app/logo.txt", "app/logo.txt"],

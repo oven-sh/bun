@@ -78,3 +78,12 @@ Test file at A's version (120 tests). Runs with a failure outside the rows of A:
 - User CPU of a whole-file run is the same for both (0.93 to 1.18 s).
 - Not settled: whether the credit and flush patches raise these rates. It needs about 1,100 runs per build to tell
   3.8% from 1.9%.
+
+### Second batch (2026-11-12 01:40Z), 247 more whole-file runs per build, interleaved
+
+- A': 8 runs with a failure ("still draining" 4, "maxRequestBodySize" 3, "graceful stop" 1).
+- A' + B': 5 runs with a failure ("still draining" 5, "h3-only server exits naturally after stop() drains" 2, and one
+  run where 10 lifecycle tests reached their 5 s limit together).
+- Totals: A' 15 of 619, A' + B' 19 of 619 (Fisher two-sided p about 0.6). "still draining" 8 and 11,
+  "maxRequestBodySize" 4 and 3, "sends CONNECTION_CLOSE on an idle H3 connection" 1 and 4.
+- Read: these are flaky tests of the tree. The runs show no effect of the credit and flush patches on their rate.

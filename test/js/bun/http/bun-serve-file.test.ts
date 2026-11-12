@@ -2297,7 +2297,10 @@ test.concurrent.each([true, false])(
     ];
     // Windows reports a path below a regular file as ENOENT.
     const codes = ["ENOENT", ...(isWindows ? ["ENOENT"] : ["ENOTDIR", "EISDIR"]), ...(canDeny ? ["EACCES"] : [])];
-    expect({ stdout: stdout.split("\n"), stderr }).toEqual({
+    expect({
+      stdout: stdout.split("\n"),
+      stderr: development ? stderr.match(/(?<=code: ")\w+/g) : stderr,
+    }).toEqual({
       stdout: [
         ...defaults("none"),
         ...defaults("undefined"),
@@ -2307,7 +2310,7 @@ test.concurrent.each([true, false])(
         codes.join(),
         "",
       ],
-      stderr: "",
+      stderr: development ? [...codes, ...codes, ...codes] : "",
     });
     expect(exitCode).toBe(0);
   },

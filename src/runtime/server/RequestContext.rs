@@ -3674,8 +3674,11 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         // `NewServer::vm()` is the process-static VM `BackRef`; `as_mut()` is
         // the single audited `&mut VirtualMachine` accessor.
         let vm = server.vm().as_mut();
-        // A missing or unreadable `Bun.file()` isn't a bug in the handler, so skip the report and the dev error page.
+        // A missing or unreadable `Bun.file()` isn't an unhandled error, so it gets no dev error page and leaves the exit code alone.
         if matches!(status, 403 | 404) {
+            if DEBUG_MODE {
+                vm.run_error_handler(value, None);
+            }
             self.render_production_error(status);
             vm.log_mut().unwrap().reset();
             return;

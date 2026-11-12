@@ -205,13 +205,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // module linking just to rewrite these EDot expressions.
                     if p.options.bundle {
                         if p.import_items_for_namespace.contains_key(&id.ref_) {
+                            // A callee that keeps `ns` as `this` stays `ns.a(...)`. It takes an item of its own, so
+                            // no call decides what a read of `ns.a` is. The linker never keeps `this` for a local
+                            // that holds an `import()` / `require()` namespace.
+                            let is_callee = (identifier_opts.is_call_target()
+                                || identifier_opts.is_template_tag())
+                                && dynamic_record.is_none();
                             // Note: split into lookup → (maybe new_symbol) → re-borrow for borrowck.
-                            let existing = p
-                                .import_items_for_namespace
-                                .get(&id.ref_)
-                                .unwrap()
-                                .get(name)
-                                .copied();
+                            let existing = if is_callee {
+                                p.import_call_items_for_namespace
+                                    .get(&id.ref_)
+                                    .and_then(|items| items.get(name))
+                                    .copied()
+                            } else {
+                                p.import_items_for_namespace
+                                    .get(&id.ref_)
+                                    .unwrap()
+                                    .get(name)
+                                    .copied()
+                            };
                             let ref_ = match existing {
                                 Some(loc_ref) => loc_ref.ref_,
                                 None => {
@@ -224,11 +236,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     // SAFETY: module_scope is arena-owned and valid for the parser lifetime.
                                     VecExt::append(&mut p.module_scope_mut().generated, new_ref);
 
-                                    p.import_items_for_namespace
-                                        .get_mut(&id.ref_)
-                                        .unwrap()
-                                        .put(name, new_item)
-                                        .expect("unreachable");
+                                    if is_callee {
+                                        p.import_call_items_for_namespace
+                                            .entry(id.ref_)
+                                            .or_default()
+                                    } else {
+                                        p.import_items_for_namespace
+                                            .get_mut(&id.ref_)
+                                            .unwrap()
+                                    }
+                                    .put(name, new_item)
+                                    .expect("unreachable");
                                     p.is_import_item.insert(new_ref, ());
 
                                     let symbol = &mut p.symbols[new_ref.inner_index() as usize];

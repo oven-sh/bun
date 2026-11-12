@@ -207,6 +207,11 @@ impl<'a> ImportScanner<'a> {
                                         has_any = true;
                                     }
                                 }
+                                if !has_any {
+                                    has_any = p
+                                        .import_call_items_for_namespace
+                                        .contains_key(&st.namespace_ref);
+                                }
 
                                 if !has_any {
                                     st.star_name_loc = bun_ast::Loc::EMPTY;
@@ -376,19 +381,27 @@ impl<'a> ImportScanner<'a> {
                     // below. `None` stands in for `ImportItemForNamespaceMap.init()`.
                     let existing_items: Option<&ImportItemForNamespaceMap> =
                         p.import_items_for_namespace.get(&namespace_ref);
-                    let existing_count = existing_items.map(|m| m.count()).unwrap_or(0);
+                    let call_items: Option<&ImportItemForNamespaceMap> =
+                        if st.star_name_loc.is_empty() {
+                            None
+                        } else {
+                            p.import_call_items_for_namespace.get(&namespace_ref)
+                        };
 
                     // SAFETY: arena-owned slice; valid for AST arena lifetime.
                     let st_items: &[js_ast::ClauseItem] = st.items.slice();
 
                     if p.options.bundle {
-                        if !st.star_name_loc.is_empty() && existing_count > 0 {
-                            let existing = existing_items.unwrap();
+                        // The reads of `ns.name`, then the callees `ns.name(...)`.
+                        for existing in [existing_items, call_items].into_iter().flatten() {
+                            if st.star_name_loc.is_empty() || existing.count() == 0 {
+                                continue;
+                            }
                             // Map keys are Box<[u8]> that drop with the parser; copy into the
                             // AST arena so the `StoreStr` stored on NamedImport / NamespaceAlias
                             // stays valid through linking and printing.
                             let arena = p.arena;
-                            let mut sorted: Vec<&[u8]> = Vec::with_capacity(existing_count);
+                            let mut sorted: Vec<&[u8]> = Vec::with_capacity(existing.count());
                             for alias in existing.keys() {
                                 sorted.push(arena.alloc_slice_copy(alias));
                             }

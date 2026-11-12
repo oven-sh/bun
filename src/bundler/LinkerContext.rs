@@ -4233,7 +4233,8 @@ impl<'a> LinkerContext<'a> {
             || self.is_esm_namespace_ref(result.source_index, result.r#ref)
     }
 
-    /// Must `X.name()` keep `X` as `this`, where `X.name` is export `ref_`?
+    /// Must `X.name()` keep `X` as `this`, where `X.name` resolved to `ref_` of file `source_index`?
+    /// A lifted CommonJS function can read `this`. A module namespace object is not a function.
     fn method_call_needs_this(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
         self.graph.ast.items_flags()[source_index as usize]
             .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
@@ -4242,9 +4243,10 @@ impl<'a> LinkerContext<'a> {
                 .symbols
                 .get_const(ref_)
                 .is_some_and(|symbol| symbol.call_ignores_this())
+            && !self.is_esm_namespace_ref(source_index, ref_)
     }
 
-    /// `ns.name()` for `import * as ns`. An unbound item prints as `ns.name`.
+    /// The item of a callee `ns.name(...)` for `import * as ns`. An unbound item prints as `ns.name`.
     fn method_call_item_needs_this(
         &self,
         import_ref: Ref,
@@ -4551,6 +4553,13 @@ impl<'a> LinkerContext<'a> {
         if !method_call_items.is_empty() {
             let mut namespace_uses: Vec<(Ref, u32)> = Vec::new();
             for part in self.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice() {
+                // Every use of such an item is a callee, so `symbol_uses` counts each of them.
+                debug_assert!(part.import_symbol_property_uses.as_ref().is_none_or(|uses| {
+                    !uses
+                        .keys()
+                        .iter()
+                        .any(|base| method_call_items.contains_key(base))
+                }));
                 namespace_uses.clear();
                 for (item, item_use) in part
                     .symbol_uses

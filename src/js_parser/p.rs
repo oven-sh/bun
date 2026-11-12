@@ -491,6 +491,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) esm_export_keyword: bun_ast::Range,
     pub(crate) enclosing_class_keyword: bun_ast::Range,
     pub(crate) import_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
+    /// The items of `ns.name(...)` callees of a star import. A callee that keeps `ns` as `this` stays a property of
+    /// `ns`, so it has an item apart from the reads of `ns.name`, which bind to the export.
+    pub(crate) import_call_items_for_namespace: HashMap<Ref, ImportItemForNamespaceMap>,
     pub(crate) is_import_item: RefMap,
     /// See `Ast::export_default_alias_of_import`.
     pub(crate) export_default_alias_of_import: Ref,
@@ -9814,6 +9817,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             esm_export_keyword: bun_ast::Range::NONE,
             enclosing_class_keyword: bun_ast::Range::NONE,
             import_items_for_namespace: Default::default(),
+            import_call_items_for_namespace: Default::default(),
             is_import_item: Default::default(),
             export_default_alias_of_import: Ref::NONE,
             scope_order_to_visit: &[],

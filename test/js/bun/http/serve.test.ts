@@ -31,13 +31,14 @@ import { join, resolve } from "path";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
 import { on, once } from "node:events";
-import { createServer as createHttpServer } from "node:http";
+import { createServer as createHttpServer, type IncomingMessage, type Server as HttpServer } from "node:http";
 import net, { type AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
 import { Duplex } from "node:stream";
 import nodeTls from "node:tls";
 import { Worker } from "node:worker_threads";
 import { tmpdir } from "os";
+import { WebSocketServer } from "ws";
 
 let renderToReadableStream: any = null;
 let app_jsx: any = null;
@@ -1083,6 +1084,93 @@ describe("a handler that runs the event loop", () => {
     using socket = await open(server.port!, false);
     socket.write(Buffer.concat([Buffer.from(upgrade), frame("frame")]));
     expect((await socket.has("<frame>")).match(/<.*?>/g)).toEqual(["<frame>"]);
+  });
+
+  async function listen(server: HttpServer) {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return (server.address() as AddressInfo).port;
+  }
+
+  // A close of its connection must not wait for the handler: the handler may be what waits for it.
+  it.each([
+    ["socket.destroy() in the handler of another request", "destroy", "request"],
+    ["closeAllConnections() in the handler of another request", "closeAll", "request"],
+    ["socket.destroy() after another request", "destroy", "timer"],
+  ])("node:http: its connection is closed at once by %s", async (_name, how, when) => {
+    const closed = Promise.withResolvers<void>();
+    const returned = Promise.withResolvers<void>();
+    let outer: IncomingMessage | undefined;
+    let other: Awaited<ReturnType<typeof open>>;
+    const close = () => (how === "destroy" ? outer!.socket.destroy() : server.closeAllConnections());
+    const server = createHttpServer((req, res) => {
+      if (outer) {
+        if (when === "request") close();
+        return void res.end("<other>");
+      }
+      outer = req;
+      req.socket.on("close", () => closed.resolve());
+      runEventLoop(async () => {
+        other.write(request("/other", "other"));
+        if (when === "timer") {
+          await other.has("<other>");
+          setImmediate(close);
+        }
+        // The test's own timeout cannot end this nested wait.
+        await Promise.race([closed.promise, Bun.sleep(4000).then(() => Promise.reject(new Error("not closed")))]);
+      });
+      returned.resolve();
+    });
+    try {
+      const port = await listen(server);
+      other = await open(port, false);
+      const socket = net.connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      socket.write(request("/first", "socket"));
+      await returned.promise;
+      socket.destroy();
+    } finally {
+      other![Symbol.dispose]();
+      server.close();
+      server.closeAllConnections();
+    }
+  });
+
+  // The nested tick parses the next request of the connection whose handler runs it.
+  it("node:http: is told of an upgrade of its connection by the next request of it", async () => {
+    const upgraded = Promise.withResolvers<void>();
+    const wss = new WebSocketServer({ noServer: true });
+    const server = createHttpServer((_req, res) => {
+      res.end("<first>");
+      runEventLoop(() =>
+        Promise.race([upgraded.promise, Bun.sleep(4000).then(() => Promise.reject(new Error("not upgraded")))]),
+      );
+    });
+    server.on("upgrade", (req, socket, head) => {
+      wss.handleUpgrade(req, socket, head, ws => {
+        ws.on("message", message => ws.send("<" + message + ">"));
+        upgraded.resolve();
+      });
+    });
+    try {
+      using socket = await open(await listen(server), false);
+      socket.write(request("/first", "socket"));
+      await socket.has("<first>");
+      socket.write(upgrade);
+      await socket.has("101 Switching Protocols");
+      // A fragmented message: where the parser of the outer parse kept its state, the WebSocket now keeps its fragments.
+      const [first, last] = [frame("frag"), frame("mented")];
+      first[0] = 0x01;
+      last[0] = 0x80;
+      socket.write(first);
+      await new Promise(resolve => setImmediate(resolve));
+      socket.write(last);
+      await socket.has("<fragmented>");
+    } finally {
+      wss.close();
+      server.close();
+      server.closeAllConnections();
+    }
   });
 });
 

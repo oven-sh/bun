@@ -67,7 +67,7 @@ private:
     };
 
     /* An onData() that is parsing, on its stack. A handler that runs the event
-     * loop puts the parse of another connection on top of it. The close gates
+     * loop puts another parse, rarely one of the same socket, on top of it. The close gates
      * in internalEnd need the per-socket identity: a DIFFERENT socket's response
      * can complete inside this window (a microtask drained during a request
      * dispatch), and its close must not be deferred to a post-parse gate that
@@ -77,6 +77,10 @@ private:
         Parse *outer;
         /* Set by upgrade() of the socket. */
         void *upgradedWebSocket = nullptr;
+        /* Its read holds the request that upgraded. */
+        bool readHoldsUpgrade = false;
+        /* Its handler has run the event loop, and may be waiting there for a close: nothing is deferred to its end any more. */
+        bool interrupted = false;
     };
     Parse *innermostParse = nullptr;
 
@@ -113,14 +117,8 @@ public:
     
     HttpFlags flags;
 
-    Parse *parseOf(struct us_socket_t *s) const {
-        for (Parse *parse = innermostParse; parse; parse = parse->outer) {
-            if (parse->socket == s) return parse;
-        }
-        return nullptr;
-    }
-
-    bool isParsing(struct us_socket_t *s) const { return parseOf(s); }
+    bool isInnermostParse(struct us_socket_t *s) const { return innermostParse && innermostParse->socket == s; }
+    bool isParsing(struct us_socket_t *s) const { return isInnermostParse(s) && !innermostParse->interrupted; }
 };
 
 }

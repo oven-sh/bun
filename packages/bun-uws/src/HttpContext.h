@@ -433,6 +433,9 @@ private:
 
         /* Mark that we are inside the parser now */
         typename HttpContextData<SSL>::Parse parse{s, httpContextData->innermostParse};
+        if (parse.outer) [[unlikely]] {
+            parse.outer->interrupted = true;
+        }
         httpContextData->innermostParse = &parse;
         const bool wasIdle = httpResponseData->isIdle;
         httpResponseData->isIdle = false;
@@ -865,7 +868,7 @@ private:
              * a body, the parser counts the whole read as consumed, so what this read holds of the
              * body is not taken for frames. Nothing remembers the rest: a later read is all frames. */
             unsigned int consumed = result.consumedBytes();
-            if (consumed < (unsigned int) length && (us_socket_t *) asyncSocket == s /* upgrade() adopts in place */
+            if (parse.readHoldsUpgrade && consumed < (unsigned int) length && (us_socket_t *) asyncSocket == s /* upgrade() adopts in place */
                 && !us_socket_is_closed(s) && !us_socket_is_shut_down(s)) {
                 return us_dispatch_data(s, data + consumed, (int) ((unsigned int) length - consumed));
             }

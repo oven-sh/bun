@@ -263,6 +263,9 @@ fn resolve_kept_code(
     if source.builtins.is_told_that_tests_lay_names_above() {
         resolved.note_that_tests_lay_names_above();
     }
+    if source.builtins.are_receivers_exposed() {
+        resolved.expose_receivers();
+    }
     resolved.uses().clone()
 }
 

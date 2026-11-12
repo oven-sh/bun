@@ -661,6 +661,49 @@ fn build_outside_the_root_directory_looks_from_the_working_directory_first() {
 }
 
 #[test]
+fn name_like_text_leads_only_to_root_directory_files() {
+    let rows: [(&str, &[&str], &[&str], &str); 8] = [
+        ("./w.ts", &["src/w.ts"], &["w.ts"], ""),
+        ("./w.ts", &["w.ts"], &[], "w.ts (named \"./w.ts\" at "),
+        ("./w.ts", &["w.ts", "src/w.ts"], &["w.ts"], ""),
+        ("./src/w.ts", &["src/w.ts"], &["w.ts"], ""),
+        ("../w.ts", &["w.ts"], &[], "w.ts (named \"../w.ts\" at "),
+        ("../src/w.ts", &["src/w.ts"], &["w.ts"], ""),
+        (
+            "./lib/w.ts",
+            &["lib/w.ts"],
+            &[],
+            "lib/w.ts (named \"./lib/w.ts\" at ",
+        ),
+        ("./absent.ts", &["w.ts", "src/w.ts"], &[], ""),
+    ];
+    for (text, on_disk, found, left_out) in rows {
+        let main = format!("import {{ start }} from \"./pool.ts\";\nstart(\"{text}\");\n");
+        let pool = "export const start = (entry: string) => new Worker(entry);\n";
+        let mut files = vec![("src/main.ts", &main[..]), ("src/pool.ts", pool)];
+        files.extend(on_disk.iter().map(|&file| (file, WORKER)));
+        let mut project = executable(&files);
+        project.root_directory = Some(b"/project/src");
+        load_from(&project, &EmbedsFiles, |build, loaded| {
+            let expected = found.iter().map(|name| format!("{name} MayStartWorker"));
+            assert_eq!(
+                describe_found(&loaded.contents.found_entry_points),
+                expected.collect::<Vec<String>>(),
+                "{text} beside {on_disk:?}"
+            );
+            let said = &build.started_workers.names_left_out;
+            assert_eq!(
+                said.is_empty(),
+                left_out.is_empty(),
+                "{text} beside {on_disk:?}"
+            );
+            let said = BStr::new(said).to_string();
+            assert!(said.contains(left_out), "{text} beside {on_disk:?}: {said}");
+        });
+    }
+}
+
+#[test]
 fn what_is_left_of_a_path_that_goes_up_past_the_root_is_written_down_in_each_form() {
     let job = ("/jobs/job.ts", "one/jobs/job.ts");
     let rows: [(&str, &[(&str, &str)]); 8] = [
@@ -1656,7 +1699,7 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
                 ("setup.cjs", NO_KIND),
             ],
             "setup.cjs",
-            Esm,
+            CommonJs,
         ),
         (
             &[

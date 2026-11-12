@@ -83,7 +83,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         &mut self,
         ty: TypeId,
     ) -> Result<&'c [BuiltinShape], GaveUp> {
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         if !matches!(self.type_shape(ty)?.kind, ShapeKind::Object) {
             return Ok(&[]);
         }
@@ -208,7 +208,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         &mut self,
         ty: TypeId,
     ) -> Result<&'c [ClassRef], GaveUp> {
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         if !matches!(self.type_shape(ty)?.kind, ShapeKind::Object) {
             return Ok(&[]);
         }

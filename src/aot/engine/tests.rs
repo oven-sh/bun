@@ -49,6 +49,7 @@ fn request_for(options: &AotOptions, thread_count: NonZeroUsize) -> EngineReques
         identity: IDENTITY,
         image_form: None,
         thread_count,
+        lists_inlined_strings: false,
     }
 }
 
@@ -324,6 +325,16 @@ fn thread_count_saturates() {
 #[test]
 fn default_options_ask_for_no_report() {
     assert_eq!(reports_of(&AotOptions::default()), ReportSet::default());
+}
+
+#[test]
+fn metafile_lists_inlined_strings() {
+    let options = AotOptions::default();
+    let mut request = request_for(&options, NonZeroUsize::MIN);
+    request.lists_inlined_strings = true;
+    let mut record = default_record();
+    fill_record(&mut record, &request);
+    assert_eq!(record.reports, ReportSet::INLINED_STRINGS);
 }
 
 #[test]

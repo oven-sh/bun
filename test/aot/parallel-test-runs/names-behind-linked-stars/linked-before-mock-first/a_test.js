@@ -1,0 +1,3 @@
+import { test, vi } from "bun:test";
+import "./user.js";
+test("a", async () => { vi.doMock("./part.cjs", () => ({ both: "mock", mockAndOther: "mock", mockAlone: "mock" })); const user = await import("./user.js"); console.log("SAID under", user.look("both", "mockAndOther", "fileAndOther", "mockAlone", "fileAlone", "otherAlone"), (globalThis.ran ?? []).join()); vi.doUnmock("./part.cjs"); console.log("SAID ended", user.look("both", "mockAndOther", "fileAndOther", "mockAlone", "fileAlone", "otherAlone"), (globalThis.ran ?? []).join()); });

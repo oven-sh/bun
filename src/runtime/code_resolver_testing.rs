@@ -634,6 +634,7 @@ pub(crate) fn describe_code_graph(
         progress: None,
         left_out_bodies: None,
         discards_first_visits: false,
+        order: 1,
     };
     let description = match load_program(&session, &host, &request) {
         Ok(loaded) => {

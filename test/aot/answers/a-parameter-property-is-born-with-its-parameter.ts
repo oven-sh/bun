@@ -9,7 +9,7 @@
 // # FORM-LABEL: code f3:Body
 // # FORM: : boolean @{{*}} = GetSlot {{*}}key="open"
 // # FORM: : string @JSValue = GetSlot {{*}}key="name"
-// # FORM: : i32 @{{*}} = GetSlot {{*}}key="size"
+// # FORM: : int[0, 2147483647] @{{*}} = GetSlot {{*}}key="size"
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 16 of 16 of 16

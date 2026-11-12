@@ -247,7 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn packed_functions_come_back() {
+    fn packed_functions_round_trip() {
         let mut scratch = PackScratch::default();
         for number in 0..60 {
             let expected = function(number);

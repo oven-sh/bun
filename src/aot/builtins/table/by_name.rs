@@ -62,6 +62,7 @@ pub fn is_of_expect(id: BuiltinId) -> bool {
     false
 }
 
+/// `Bun.resolveSync` or `Bun.resolve`
 pub fn is_path_resolver(id: BuiltinId) -> bool {
     found().path_resolvers.contains(&Some(canonical_id(id)))
 }

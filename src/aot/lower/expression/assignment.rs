@@ -26,6 +26,7 @@ impl FileLowering<'_, '_, '_, '_> {
         self.find_assigned_function_name(target).is_some()
     }
 
+    /// A name in parentheses names no function that is assigned to it. Bun's printer drops the parentheses, and the type syntax in them, so the engine sees them only in a file marked `// @bun`, which runs as it stands.
     pub(in crate::lower) fn is_parenthesized_for_the_engine(&self, target: ExprId) -> bool {
         let is_parenthesized = (self.hir.expr_flags(target)).contains(ExprFlags::PARENTHESIZED);
         is_parenthesized && find_transpiled_mark(&self.hir.text).is_some()

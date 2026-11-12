@@ -51,6 +51,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
+    /// The signature of a function type that has only one.
     pub fn only_signature(&mut self, signatures: FunctionSignatures<'_>) -> Option<SigId> {
         match signatures.declared {
             &[signature] => Some(self.c.instantiate_sig(signature, signatures.mapper)),
@@ -128,7 +129,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     pub fn member_presence(&mut self, object_type: TypeId) -> Result<&'c [MemberPresence], GaveUp> {
         self.ask(|queries| {
-            let ty = queries.declared_type_of_this(object_type);
+            let ty = queries.resolve_object_type(object_type);
             let ty = queries.resolved(ty)?;
             let Some(members) = queries.c.members(ty) else {
                 return Ok(&[][..]);

@@ -1881,6 +1881,11 @@ impl FilePollRef {
         self.inner().owner = owner;
     }
     #[inline]
+    #[cfg(not(windows))]
+    pub(crate) fn owner_tag(self) -> PollTag {
+        self.inner().owner.tag()
+    }
+    #[inline]
     pub(crate) fn deinit_force_unregister(self) {
         self.inner().deinit_force_unregister();
     }

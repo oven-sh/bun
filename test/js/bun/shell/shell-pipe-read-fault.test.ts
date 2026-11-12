@@ -248,10 +248,8 @@ console.log(JSON.stringify({ exitCode: r.exitCode }));
 // has to register its poll (the stdout/stderr readers register theirs right
 // after). Runs the command several times and lists the parent's fds that were
 // not open before: a spawn that fails part way through setup must not leave a
-// stdio end open. An fd held by a registered poll is closed on the thread pool,
-// so the list is polled until it drains (bounded). A command that never
-// finishes shows up as a test timeout. `argv[2]` selects the single-command or
-// the pipeline form.
+// stdio end open. A command that never finishes shows up as a test timeout.
+// `argv[2]` selects the single-command or the pipeline form.
 const STDIN_BLOB_FIXTURE = /* js */ `
 import { $ } from "bun";
 import { readdirSync, readlinkSync } from "node:fs";
@@ -265,12 +263,7 @@ await run();
 const before = fds();
 let last;
 for (let i = 0; i < 5; i++) last = await run();
-const deadline = Date.now() + 2000;
-let leaked = [...fds()].filter(fd => !before.has(fd));
-while (leaked.length > 0 && Date.now() < deadline) {
-  await Bun.sleep(10);
-  leaked = [...fds()].filter(fd => !before.has(fd));
-}
+const leaked = [...fds()].filter(fd => !before.has(fd));
 console.log(JSON.stringify({ exitCode: last.exitCode, stderr: last.stderr.toString().trim(), leaked }));
 `;
 

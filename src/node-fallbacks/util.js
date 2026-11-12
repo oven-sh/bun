@@ -669,5 +669,7 @@ export function callbackify(original) {
   return callbackified;
 }
 
-export const TextEncoder = /* @__PURE__ */ globalThis.TextEncoder;
-export const TextDecoder = /* @__PURE__ */ globalThis.TextDecoder;
+// Not named `TextEncoder` and `TextDecoder`: see "Names of top-level bindings" in README.md.
+const utilTextEncoder = /* @__PURE__ */ globalThis.TextEncoder;
+const utilTextDecoder = /* @__PURE__ */ globalThis.TextDecoder;
+export { utilTextDecoder as TextDecoder, utilTextEncoder as TextEncoder };

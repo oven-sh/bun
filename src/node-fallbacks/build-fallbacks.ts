@@ -102,11 +102,27 @@ for (const name of allFiles) {
   // An ES module without a default export gets one that has every named export.
   const named = new Bun.Transpiler().scan(source).exports;
   const needsDefault = format === "esm" && !named.includes("default");
+  // `export { local as name }` has no binding called `name`, so that default reads `local`.
+  const localOf = new Map<string, string>();
+  for (const [, clause] of source.matchAll(/^export\s*\{([^}]*)\}(?!\s*from\b)/gm)) {
+    for (const item of clause.split(",")) {
+      const [local, exported = local] = item.trim().split(/\s+as\s+/);
+      if (local) localOf.set(exported, local);
+    }
+  }
+  // A name that another module exports has no binding here at all. The default would read a global.
+  if (needsDefault && /^export\s*(\*|\{[^}]*\}\s*from\b)/m.test(source)) {
+    throw new Error(`${name} exports names of another module. Write its \`export default\` by hand.`);
+  }
+  const defaultExport = `export default { ${named.map(exported => {
+    const local = localOf.get(exported) ?? exported;
+    return local === exported ? exported : `${exported}: ${local}`;
+  })} };`;
 
   commands.push(
     Bun.build({
       entrypoints: [name],
-      files: needsDefault ? { [path.resolve(name)]: `${source}\nexport default { ${named} };` } : {},
+      files: needsDefault ? { [path.resolve(name)]: `${source}\n${defaultExport}` } : {},
       outdir,
       target: "browser",
       format,

@@ -49,7 +49,9 @@ export function nextTick(fun, ...args) {
 }
 
 export const title = "browser";
-export const browser = true;
+// Not named `browser`: see "Names of top-level bindings" in README.md.
+const processBrowser = true;
+export { processBrowser as browser };
 export const env = {};
 export const argv = [];
 export const version = ""; // empty string to avoid regexp issues

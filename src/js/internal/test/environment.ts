@@ -12,9 +12,9 @@ const lastingCopyOfThisModule: () => typeof setup = $newCppFunction(
   0,
 );
 // See src/js/internal/test/globals.ts.
-const customValueOf: (object: object, key: PropertyKey) => unknown = $newCppFunction(
+const customValuesOf: (objects: object[], indexes: number[]) => unknown[] = $newCppFunction(
   "TestEnvironment.cpp",
-  "jsFunctionCustomValueOf",
+  "jsFunctionCustomValuesOfObjects",
   2,
 );
 const restoreCustomValue: (object: object, key: PropertyKey, customValue: unknown, value: unknown) => void =
@@ -466,10 +466,19 @@ function open(
 // Bun's `onerror` and `onmessage` are native getters and setters that a descriptor shows as a value. Defining that value
 // would leave a plain property, which no later `onerror = fn` registers a handler through.
 type OwnProperty = PropertyDescriptor & { customValue?: unknown };
+type CustomValues = Map<string, unknown>;
 
-function ownProperty(key: string): OwnProperty | undefined {
+// The ones that globalThis has now, by key.
+function customValuesOfGlobal(): CustomValues {
+  const customValues: CustomValues = new $Map();
+  const found = customValuesOf([globalThis], [0]);
+  for (let i = 0; i < found.length; i += 3) customValues.$set(found[i + 1] as string, found[i + 2]);
+  return customValues;
+}
+
+function ownProperty(key: string, customValues?: CustomValues): OwnProperty | undefined {
   const descriptor = $Object.$getOwnPropertyDescriptor(globalThis, key);
-  return descriptor && ({ __proto__: null, ...descriptor, customValue: customValueOf(globalThis, key) } as OwnProperty);
+  return descriptor && ({ __proto__: null, ...descriptor, customValue: customValues?.$get(key) } as OwnProperty);
 }
 
 function putBack(key: string, original: OwnProperty | undefined) {
@@ -490,12 +499,13 @@ let left: { environment: Environment; teardown(isLoadingFileAgain: boolean): unk
 function enter(name: string, environment: Environment, keep: boolean) {
   const { properties, keys } = environment;
   const defined: string[] = [];
-  const originals: (PropertyDescriptor | undefined)[] = [];
+  const originals: (OwnProperty | undefined)[] = [];
+  const customValues = customValuesOfGlobal();
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     const descriptor = properties.$get(key);
     if (!descriptor) continue;
-    const original = ownProperty(key);
+    const original = ownProperty(key, customValues);
     if (original?.configurable === false) continue;
     try {
       $Object.$defineProperty(globalThis, key, descriptor);
@@ -551,7 +561,7 @@ function enter(name: string, environment: Environment, keep: boolean) {
 // forwards to the current file's window.
 let currentWindowProperties: Properties | undefined;
 const forwarders = new $Map<string, PropertyDescriptor>();
-const originalDescriptors = new $Map<string, PropertyDescriptor | undefined>();
+const originalDescriptors = new $Map<string, OwnProperty | undefined>();
 
 function forwarder(key: string) {
   let descriptor = forwarders.$get(key);
@@ -580,12 +590,13 @@ function uninstallFromSharedGlobal() {
 
 function installOnSharedGlobal(environment: Environment) {
   const { properties, keys } = environment;
+  const customValues = customValuesOfGlobal();
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     const windowDescriptor = properties.$get(key);
     if (!windowDescriptor) continue;
     const descriptor = windowDescriptor.get ? forwarder(key) : windowDescriptor;
-    const current = ownProperty(key);
+    const current = ownProperty(key, customValues);
     if (current?.configurable === false) continue;
     if (current && current.get === descriptor.get && current.value === descriptor.value) continue;
     if (!originalDescriptors.$has(key)) originalDescriptors.$set(key, current);

@@ -21,9 +21,10 @@ const deleteOwnProperty: (object: object, key: PropertyKey) => boolean = $newCpp
 );
 // A custom value is a native getter and setter that script sees as a data property, like `globalThis.onerror` and
 // `Error.prepareStackTrace`. defineProperty() would replace the pair with the value.
-const customValueOf: (object: object, key: PropertyKey) => unknown = $newCppFunction(
+// Returns an index into `objects`, a key and what restoreCustomValue() takes, for each one that has a setter.
+const customValuesOf: (objects: object[], indexes: number[]) => unknown[] = $newCppFunction(
   "TestEnvironment.cpp",
-  "jsFunctionCustomValueOf",
+  "jsFunctionCustomValuesOfObjects",
   2,
 );
 const restoreCustomValue: (object: object, key: PropertyKey, customValue: unknown, value: unknown) => void =
@@ -63,7 +64,7 @@ const seen = new Map<object, true>();
 // Nearly all of the objects are untouched by a test file. Native code tells which ones may not be.
 let shapes: unknown[];
 let alwaysComparedCount: number;
-// For each custom value: its object, its key, what customValueOf() returned and its value.
+// For each custom value: its object, its key, what customValuesOf() returned for it and its value.
 const customValues: unknown[] = [];
 let env: Map<string, string | undefined>;
 let listeners: Map<string | symbol, Function[]>;
@@ -182,16 +183,15 @@ function saveShapes() {
 
 // An object that has a custom value is always compared.
 function saveCustomValues(alwaysCompared: number[]) {
-  for (let i = 0; i < alwaysCompared.length; i++) {
-    const object = objects[alwaysCompared[i]];
-    savedProperties[alwaysCompared[i]].$forEach((saved, key) => {
-      const customValue = saved.get || saved.set ? undefined : customValueOf(object, key);
-      if (!customValue) return;
-      $arrayPush(customValues, object);
-      $arrayPush(customValues, key);
-      $arrayPush(customValues, customValue);
-      $arrayPush(customValues, saved.value);
-    });
+  const found = customValuesOf(objects, alwaysCompared);
+  for (let i = 0; i < found.length; i += 3) {
+    const index = found[i] as number;
+    const saved = savedProperties[index].$get(found[i + 1] as string);
+    if (!saved) continue;
+    $arrayPush(customValues, objects[index]);
+    $arrayPush(customValues, found[i + 1]);
+    $arrayPush(customValues, found[i + 2]);
+    $arrayPush(customValues, saved.value);
   }
 }
 

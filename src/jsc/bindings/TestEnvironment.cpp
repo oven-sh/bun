@@ -175,20 +175,34 @@ static JSC::JSObject* holderOfProperties(JSC::JSValue value)
 }
 
 // A custom value is a native getter and setter that script sees as a data property, like globalThis.onerror and
-// Error.prepareStackTrace. For one that has a setter, returns what jsFunctionRestoreCustomValue takes. Script cannot read
-// the pair out of it. Only the object's own storage is looked at: reifying a static table makes every lazy property.
-JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionCustomValueOf, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// Error.prepareStackTrace. For each one with a setter that the objects at `indexes` hold, returns the index, the key and
+// what jsFunctionRestoreCustomValue takes. Script cannot read the pair out of that. Only an object's own storage is
+// looked at: reifying a static table makes every lazy property.
+JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionCustomValuesOfObjects, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* holder = holderOfProperties(callFrame->uncheckedArgument(0));
-    auto key = callFrame->uncheckedArgument(1).toPropertyKey(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    unsigned attributes = 0;
-    JSC::JSValue customValue = parseIndex(key) ? JSC::JSValue() : holder->getDirect(vm, key, attributes);
-    if (!customValue || !(attributes & JSC::PropertyAttribute::CustomValue) || !uncheckedDowncast<JSC::CustomGetterSetter>(customValue)->setter())
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    return JSC::JSValue::encode(JSC::InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), customValue, JSC::jsNumber(attributes)));
+    auto* objects = uncheckedDowncast<JSC::JSArray>(callFrame->uncheckedArgument(0));
+    auto* indexes = uncheckedDowncast<JSC::JSArray>(callFrame->uncheckedArgument(1));
+    JSC::MarkedArgumentBuffer found;
+    for (unsigned i = 0, length = indexes->length(); i < length; ++i) {
+        JSC::JSValue index = indexes->getIndexQuickly(i);
+        auto* holder = holderOfProperties(objects->getIndexQuickly(index.asUInt32()));
+        // Nothing is allocated while the structure's table is walked.
+        WTF::Vector<std::pair<RefPtr<WTF::UniquedStringImpl>, unsigned>, 2> customValues;
+        holder->structure()->forEachProperty(vm, [&](const auto& entry) {
+            if (entry.attributes() & JSC::PropertyAttribute::CustomValue && !entry.key()->isSymbol()
+                && uncheckedDowncast<JSC::CustomGetterSetter>(holder->getDirect(entry.offset()))->setter())
+                customValues.append({ entry.key(), entry.attributes() });
+            return true;
+        });
+        for (auto& [key, attributes] : customValues) {
+            JSC::JSValue customValue = holder->getDirect(vm, JSC::PropertyName(key.get()));
+            found.append(index);
+            found.append(JSC::jsString(vm, WTF::String(key.get())));
+            found.append(JSC::InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), customValue, JSC::jsNumber(attributes)));
+        }
+    }
+    return JSC::JSValue::encode(JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), found));
 }
 
 // Defining a value over a custom value replaces the pair, and then no write reaches the native setter. This puts the pair

@@ -8,7 +8,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionTestEnvironmentModuleOfLastingRealm);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionShapesOfObjects);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIndexesOfChangedObjects);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDeleteOwnProperty);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionCustomValueOf);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionCustomValuesOfObjects);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionRestoreCustomValue);
 
 } // namespace Bun

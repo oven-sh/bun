@@ -1136,13 +1136,19 @@ const rules: Record<string, Case[]> = {
     `${memo}const row = «memo»(() => <li />);`,
     `${memo}export default «memo»(function Row() {\n  return <li />;\n} as FC);`,
     `import { memo } from "react";\nimport { Marker } from "leaflet";\nexport default «memo»(Marker);`,
-    // `bun build --react-compiler` compiles `.js`, `.jsx` and `.tsx` files only.
+    // `bun build --react-compiler` compiles `.js`, `.jsx` and `.tsx` files only, so the calls in other files are what
+    // memoizes.
     {
-      code: `${useMemo}function useTotal(a, b) {\n  useOther();\n  return «useMemo»(() => a + b, [a, b]);\n}`,
+      code: `${useMemo}function useTotal(a, b) {\n  useOther();\n  return useMemo(() => a + b, [a, b]);\n}`,
       file: "useTotal.ts",
-      suggestions: [],
     },
     { code: `${memo}function Row() {\n  useOther();\n  return null;\n}\nexport default memo(Row);`, file: "Row.ts" },
+    { code: `${useMemo}const total = useMemo(() => a + b, [a, b]);`, file: "total.mts" },
+    {
+      code: `${useMemo}const total = «useMemo»(() => a + b, [a, b]);`,
+      file: "total.js",
+      suggestions: [`const total = a + b;`],
+    },
     // Without its hook calls, `useTotal` is no hook to the compiler.
     `${useMemo}function useTotal(a, b) {\n  return «useMemo»(() => a + b, [a, b]);\n}`,
     {

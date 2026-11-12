@@ -28,6 +28,10 @@ const FLAVOR: Flavor = Flavor::Oxlint;
 /// The extensions whose default loader is JSX. `bun build --react-compiler` compiles only those files.
 const JSX_EXTENSIONS: [&str; 3] = [".js", ".jsx", ".tsx"];
 
+fn is_built_with_jsx(file: &File<'_>) -> bool {
+    JSX_EXTENSIONS.iter().any(|it| file.path().ends_with(it.as_bytes()))
+}
+
 /// A use of one of the memoizers.
 struct Use<'a> {
     /// `useMemo`, `React.useMemo`, or the `useMemo` of an import that nothing refers to.
@@ -68,11 +72,7 @@ struct Found<'a> {
 
 impl<'a> Found<'a> {
     fn new(file: &'a File<'a>) -> Self {
-        let is_built_with_jsx = JSX_EXTENSIONS.iter().any(|it| file.path().ends_with(it.as_bytes()));
-        let discovered = match is_built_with_jsx {
-            true => discover(file, FLAVOR).into_iter().map(|it| (it.func, it)).collect(),
-            false => FxHashMap::default(),
-        };
+        let discovered = discover(file, FLAVOR).into_iter().map(|it| (it.func, it)).collect();
         let mut hook_calls: FxHashMap<Func<'a>, u32> = FxHashMap::default();
         let hooks = file.exprs_of_kind(ExprTag::Call).filter(|e| e.as_call().is_some_and(|it| is_hook_call(it, FLAVOR)));
         for e in hooks {
@@ -404,6 +404,7 @@ impl Rule for ReactNoManualMemoization {
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("react")
             || !file.mentions_any(&MEMOIZERS)
+            || !is_built_with_jsx(file)
             || has_directive(file.body().iter(), &OPT_OUT_DIRECTIVES)
         {
             return None;

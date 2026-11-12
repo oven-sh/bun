@@ -5675,6 +5675,84 @@ maybe(() => { return f; });
         expect(exitCode).toBe(1);
       });
 
+      // `bun lint` has no `--runExternalCode`, so a content mapper it may not run isn't a broken tsconfig.json: like
+      // TypeScript, it drops the mappers and builds the program. A mapped file is an unknown file to it.
+      describe("a tsconfig.json with contentMappers", () => {
+        const floating = `async function save(): Promise<void> {}\nsave();\n`;
+        const withMappers = (more: object = {}, mappers: object[] = [{ package: "vize", extensions: [".vue"] }]) =>
+          JSON.stringify({
+            compilerOptions: { strict: true, lib: ["esnext"], ...more },
+            contentMappers: mappers,
+            include: ["src"],
+          });
+        const forOxlint = { ".oxlintrc.json": rc({ rules: { "typescript/no-floating-promises": "error" } }) };
+        const forEslint = {
+          "eslint.config.js": `export default [{
+            files: ["**/*.ts"],
+            plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
+            languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } }, parserOptions: { projectService: true } },
+            rules: { "@typescript-eslint/no-floating-promises": "error" },
+          }];`,
+        };
+        // Each problem as `path:line:column rule`. The ESLint formats print the full path and the rule's own text.
+        const problems = (stdout: string) =>
+          [...stdout.matchAll(/^(?:<dir>\/)?(\S+:\d+:\d+): .*\[Error\/(.*)\]$/gm)].map(it => `${it[1]} ${it[2]}`);
+        const withTypes = (stderr: string) => Number(/linted with types: (\d+) files/.exec(stderr)?.[1]);
+
+        test.each([
+          ["an .oxlintrc.json", forOxlint, "typescript(no-floating-promises)"],
+          ["an ESLint config", forEslint, "@typescript-eslint/no-floating-promises"],
+        ])("with %s, the files are linted with types", async (_, config, rule) => {
+          const { stdout, stderr, exitCode } = await lint(
+            {
+              ...config,
+              "tsconfig.json": withMappers(),
+              "src/main.ts": floating,
+              // Without the mapper, what's imported from a .vue file is `any`.
+              "src/use.ts": `import { load } from "./Form.vue";\nload();\n`,
+              "src/Form.vue": `<script lang="ts">\nexport const load = async () => {};\n</script>\n`,
+            },
+            ["-f", "unix", "--type-aware", "--timing", "src/main.ts", "src/use.ts"],
+          );
+          expect(problems(stdout)).toEqual([`src/main.ts:2:1 ${rule}`]);
+          expect(stdout + stderr).not.toContain("runExternalCode");
+          expect(withTypes(stderr)).toBe(2);
+          expect(exitCode).toBe(1);
+        });
+
+        // Like every other error in the file on this path.
+        test("a malformed entry is an error, and only the entry is reported", async () => {
+          const { raw, stderr, exitCode } = await lint(
+            {
+              ...forOxlint,
+              "tsconfig.json": withMappers({}, [{ package: "vize", extensions: ["vue"] }]),
+              "src/main.ts": floating,
+            },
+            ["-f", "json", "--type-aware", "--timing"],
+          );
+          const found = JSON.parse(raw).diagnostics.map((it: any) => {
+            const { line, column } = it.labels[0].span;
+            return `${it.filename}:${line}:${column} ${it.code} ${it.help}`;
+          });
+          expect(found).toEqual([
+            "tsconfig.json:1:103 typescript(tsconfig-error) Content mapper file extension 'vue' must begin with a '.'.",
+          ]);
+          expect(withTypes(stderr)).toBe(0);
+          expect(exitCode).toBe(1);
+        });
+
+        test("an error elsewhere in the file still rejects it, and only that error is reported", async () => {
+          const { stdout, stderr, exitCode } = await lint(
+            { ...forOxlint, "tsconfig.json": withMappers({ lib: ["es1"] }), "src/main.ts": floating },
+            ["-f", "unix", "--type-aware", "--timing"],
+          );
+          expect(problems(stdout)).toEqual(["tsconfig.json:1:42 typescript(tsconfig-error)"]);
+          expect(stdout + stderr).not.toContain("runExternalCode");
+          expect(withTypes(stderr)).toBe(0);
+          expect(exitCode).toBe(1);
+        });
+      });
+
       // This is oxlint 1.87.0's order with --fix and without types.
       test.each([[["--fix"]], [["--fix", "--type-aware"]]])(
         "the problems that remain after %j are printed in the order the rules ran",

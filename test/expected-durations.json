@@ -51251,6 +51251,10 @@
     "default": 200,
     "asan": 900
   },
+  "aot/harness/where-a-child-is.test.ts": {
+    "default": 300,
+    "asan": 1200
+  },
   "aot/heavy-javascript-files-begin-behind-what-they-import.test.ts": {
     "default": 3800,
     "asan": 37900

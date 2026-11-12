@@ -3284,8 +3284,7 @@ static void addImporter(ModuleImporters& importersOf, const String& importer, co
 // After moveLoadedModule() a module's filename is not its key in the require cache.
 using RequireKeys = UncheckedKeyHashMap<Bun::JSCommonJSModule*, String>;
 
-// Calls `functor` with each module that a statement of `importer` imports, in the order in which an evaluation comes to them, and with whether the
-// statement is an `import defer`.
+// Calls `functor` with each module that a statement of `importer` imports, in evaluation order, and with whether it is an `import defer`.
 template<typename Functor>
 static void forEachImport(JSC::AbstractModuleRecord* importer, const Functor& functor)
 {
@@ -3448,8 +3447,7 @@ extern "C" bool JSMock__isInPreload(Zig::GlobalObject*);
 
 void BunPlugin::OnLoad::didImportByCall(Zig::GlobalObject* globalObject, const String& importer, const String& key)
 {
-    // Only a module mock of a test run reads these. A module names itself with one string for all of its calls, and the loader names a module
-    // with one string: the same call as the last one records nothing new.
+    // Only a module mock of a test run reads these, and the same call as the last one adds nothing.
     if (!Bun::isBunTest || (importer.impl() == lastImporterByCall.impl() && key.impl() == lastKeyOfImportByCall.impl()))
         return;
     modulesImportedSinceTestFileStarted.add(key);
@@ -4585,8 +4583,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDisposeModuleMock, (JSC::JSGlobalObject * lex
     return JSValue::encode(jsUndefined());
 }
 
-// Whether an evaluation is still at the imports of `module`. The status does not say: a module stays Status::Evaluating behind its body until its
-// import cycle has run.
+// Whether an evaluation is still at the imports of `module`: behind its body a module stays Status::Evaluating until its import cycle has run.
 static bool isAtItsImports(JSC::CyclicModuleRecord* module)
 {
     if (module->status() != JSC::CyclicModuleRecord::Status::Evaluating)
@@ -4598,9 +4595,7 @@ static bool isAtItsImports(JSC::CyclicModuleRecord* module)
     return state.isInt32() && state.asInt32() == static_cast<int32_t>(JSC::AbstractModuleRecord::State::Init);
 }
 
-// Without --isolate an evaluation is linked to modules that an earlier test file evaluated. Alone, the running test file evaluates them itself, so
-// the ones that the evaluation has yet to reach import `record` after this call, and get the mock. Whether there is such a module. Where that is
-// not certain the answer is no, and the call leaves the loaded module as it is, as it did before.
+// Whether the evaluation in flight has yet to reach a module that an earlier test file evaluated and that imports `record`. Not certain: no.
 __attribute__((minsize)) static bool hasImporterThatEvaluationHasYetToReach(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record)
 {
     using Status = JSC::CyclicModuleRecord::Status;
@@ -4636,8 +4631,7 @@ __attribute__((minsize)) static bool hasImporterThatEvaluationHasYetToReach(Zig:
             functor(evicted);
     };
 
-    // What import() has given to this test file has run, and nothing says how far: unless it is being evaluated, as the evaluation is that
-    // makes this call.
+    // What import() has given to this test file has run, unless it is being evaluated as the evaluation is that makes this call.
     for (auto& key : plugins.modulesImportedSinceTestFileStarted) {
         bool isBeingEvaluated = false;
         forEachEvaluatedModule(key, [&](JSC::CyclicModuleRecord* module) {
@@ -4666,8 +4660,7 @@ __attribute__((minsize)) static bool hasImporterThatEvaluationHasYetToReach(Zig:
     if (roots.isEmpty())
         return false;
 
-    // From a module that evaluate() was called on, the evaluation is at the last import that is being evaluated too, and goes on into it while
-    // that one is at its imports. An import back to a module of the path is being evaluated as well, and is not where the evaluation is.
+    // The evaluation is at the last import that is being evaluated too, unless that one is an import back to a module of the path.
     UncheckedKeyHashSet<JSC::AbstractModuleRecord*> path;
     for (auto* root : roots) {
         UncheckedKeyHashSet<JSC::AbstractModuleRecord*> pathFromRoot;
@@ -4703,8 +4696,7 @@ __attribute__((minsize)) static bool hasImporterThatEvaluationHasYetToReach(Zig:
     if (path.size() != atTheirImports || isYetToRun.isEmpty())
         return false;
 
-    // Adds `modules` and what statements make them import to `all`, nearest first, until `all` holds all of `importers`: whether it does. An
-    // evaluation is at the imports of the modules on the path. An `import defer` is followed only for what has run: nothing is left out of that.
+    // Adds `modules` and what their statements import to `all`, but no module of the path. Whether `all` then holds all of `importers`.
     UncheckedKeyHashSet<JSC::AbstractModuleRecord*> importers;
     auto addWithImports = [&](UncheckedKeyHashSet<JSC::AbstractModuleRecord*>& all, Vector<JSC::AbstractModuleRecord*, 16>& modules, bool withDeferred, bool untilAllImporters) {
         unsigned found = 0;
@@ -4749,8 +4741,7 @@ __attribute__((minsize)) static bool hasImporterThatEvaluationHasYetToReach(Zig:
         if (module->status() > Status::Evaluating && plugins.testFileOfModule.get(key) == plugins.testFile)
             hasRun.append(module);
     });
-    // require() has run what it loaded. Nothing says when it ran an ES module, or for which test file: each one counts. The module object that
-    // require() made for it is under its key, and holds its namespace unless the module exports "module.exports".
+    // What require() has loaded has run, in whichever test file: its module object is under the key of the ES module.
     auto hasRunUnderKey = [&](const String& key) {
         forEachEvaluatedModule(key, [&](JSC::CyclicModuleRecord* module) {
             hasRun.append(module);
@@ -4779,9 +4770,7 @@ __attribute__((minsize)) static bool hasImporterThatEvaluationHasYetToReach(Zig:
     if (addWithImports(reached, hasRun, true, true))
         return false;
 
-    // A module that an earlier test file evaluated made its calls of import() then, and stays loaded. Alone, this test file evaluates it, and it
-    // makes them before this call if it is among what has run. A call counts for nothing if its module has left the registry since, or was
-    // fetched again: that one makes its own calls.
+    // A call of import() in an earlier test file counts if its module is still the same one and is among what has run.
     for (bool hasMore = true; hasMore;) {
         hasMore = false;
         for (auto& [call, importerTestFile] : plugins.importCallsOfOtherModules) {
@@ -4804,8 +4793,7 @@ __attribute__((minsize)) static bool hasImporterThatEvaluationHasYetToReach(Zig:
             return false;
     }
 
-    // Alone, a module waits for an import that awaits at its top level, and what its importer imports next runs ahead of it. Where an earlier
-    // test file has evaluated the import that awaits, nothing waits for it: the module that makes this call may run ahead of its turn.
+    // Alone, a module waits for an import with a top-level await. Where an earlier test file has evaluated that import, nothing waits.
     UncheckedKeyHashSet<JSC::AbstractModuleRecord*> importedByWhatHasBegun;
     for (size_t i = 0; i < hasBegun.size(); ++i) {
         auto* module = hasBegun[i];
@@ -6107,8 +6095,7 @@ static std::optional<size_t> recordBodyMock(Zig::GlobalObject* globalObject, JSC
 }
 #endif
 
-// vi.mock() keeps the loaded module at `specifier` as the original: see stashLoadedModule(). What an earlier test file linked to it is loaded again
-// at its next import, and gets the mock.
+// vi.mock() keeps the loaded module at `specifier` as the original: see stashLoadedModule().
 __attribute__((minsize)) static void stashLoadedModuleForMock(Zig::GlobalObject* globalObject, JSModuleMock* mock, [[maybe_unused]] JSModuleMock* previous, const String& specifier, unsigned loadedByTestFile, bool wasLoadedByImportActual)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -6349,8 +6336,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     // In Vitest a module that has yet to run imports it after this call, and gets the mock. Here it is linked already, so only a patch reaches it.
     if (keepsLoadedModule && loaded.esmNamespace && hasUnevaluatedImporter(globalObject, loaded.esmNamespace->moduleRecord(), callerPath(vm, callframe)))
         keepsLoadedModule = false;
-    // So it is with a module that an earlier test file evaluated, for a package. vi.doMock() of a module of the project counts what an earlier
-    // test file loaded as not loaded. Nothing else changes for such a call: what it evicts, and what it does if the patch fails.
+    // So it is with a package that a module of an earlier test file imports. The call evicts what it evicts without this.
     bool patchesForEarlierTestFiles = false;
     if (keepsLoadedModule && remainsOriginal && loaded.esmNamespace && isInNodeModules(specifier) && !(previous && previous->isFromPreload)) {
         patchesForEarlierTestFiles = hasImporterThatEvaluationHasYetToReach(globalObject, loaded.esmNamespace->moduleRecord());

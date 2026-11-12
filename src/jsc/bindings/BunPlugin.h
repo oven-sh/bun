@@ -159,10 +159,9 @@ public:
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
         // Data files that a reset has evicted under a mock whose end restores their original, with the test file in which their next load does not show it yet.
         WTF::UncheckedKeyHashMap<String, unsigned> dataFilesResetUnderMocks = {};
-        // What import() has given since the running test file started: its evaluation does not reach these a second time. And, for the run,
-        // which other module asked import() for which, with the test file that had fetched the asking module: 0 where none had fetched it as
-        // an ES module, and its calls count for every test file. See hasImporterThatEvaluationHasYetToReach().
+        // What import() has given since the running test file started. See hasImporterThatEvaluationHasYetToReach().
         WTF::UncheckedKeyHashSet<String> modulesImportedSinceTestFileStarted = {};
+        // Which other module asked import() for which, with the test file that fetched the asking ES module, or 0: then the call counts for every file.
         WTF::UncheckedKeyHashMap<std::pair<String, String>, unsigned> importCallsOfOtherModules = {};
         String lastImporterByCall;
         String lastKeyOfImportByCall;

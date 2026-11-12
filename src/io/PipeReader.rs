@@ -214,6 +214,10 @@ bitflags::bitflags! {
         const KEEP_ALIVE               = 1 << 10; // default true
         /// A read failed with a non-retry errno. Set before the bytes read ahead of the failure are delivered, so a pull from inside that delivery cannot read the fd past the error. Never cleared: `start()`, `unpause()` and `from()` keep it, and only a reader from `init()` reads again.
         const READ_FAILED              = 1 << 11;
+        /// The last read came up short: it found the fd empty, or it took less than a full pipe from a blocking pipe. The next bytes come from the poll callback (see `request_read`).
+        const SHORT_READ               = 1 << 12;
+        /// A consumer asked for bytes (`request_read`, `resume_reading`) and waits for the poll callback to bring them. Cleared when the read loop delivers a chunk.
+        const CONSUMER_WAITING         = 1 << 13;
     }
 }
 
@@ -511,6 +515,21 @@ impl PosixBufferedReader {
         }
     }
 
+    /// A consumer waits for the poll callback: marks it (`CONSUMER_WAITING`) and arms the poll unless it already watches the fd.
+    ///
+    /// # Safety
+    /// Same contract as [`Self::register_poll`].
+    unsafe fn wait_for_poll(this: *mut Self) -> bool {
+        // SAFETY: caller contract; borrows end at each `;`.
+        unsafe {
+            (*this).flags.insert(PosixFlags::CONSUMER_WAITING);
+            if (*this).has_pending_read() {
+                return true;
+            }
+            Self::register_poll(this)
+        }
+    }
+
     fn try_register_poll(&mut self) -> Result<(), sys::Error> {
         // pause() may land from inside on_read_chunk's JS re-entry while the
         // loop's own re-arm is still ahead on the stack.
@@ -801,15 +820,22 @@ impl PosixBufferedReader {
             let use_scratch = unsafe {
                 (*this)._buffer.is_empty() && (streaming || (*this)._buffer.capacity() == 0)
             };
+            let mut armed_early = None;
             let (stop, keep_going) = match (use_scratch, scratch.as_mut()) {
                 (true, Some(scratch)) => {
                     // SAFETY: caller contract; the borrow ends before the dispatch.
                     let (filled, stop) = unsafe { (*this).fill_scratch(file_type, fd, scratch) };
-                    // SAFETY: caller contract; borrow ends at `;`.
-                    unsafe { (*this).close_if_final(stop.as_ref()) };
+                    // SAFETY: caller contract; borrows end at each `;`.
+                    let short = unsafe {
+                        (*this).close_if_final(stop.as_ref());
+                        (*this).note_read(file_type, filled, stop.as_ref())
+                    };
                     let keep_going = if filled == 0 {
                         true
                     } else if streaming {
+                        // SAFETY: caller contract; the borrow ends before the dispatch.
+                        armed_early =
+                            unsafe { (*this).arm_before_delivery(short, file_type, received_hup) };
                         vtable.on_read_chunk(
                             Chunk::Scratch(&scratch[..filled]),
                             Self::read_state(stop.as_ref()),
@@ -824,12 +850,18 @@ impl PosixBufferedReader {
                 _ => {
                     // SAFETY: caller contract; the borrow ends before the dispatch.
                     let stop = unsafe { (*this).fill_buffer(file_type, fd, streaming) };
-                    // SAFETY: caller contract; borrow ends at `;`.
-                    unsafe { (*this).close_if_final(stop.as_ref()) };
+                    // SAFETY: caller contract; borrows end at each `;`.
+                    let short = unsafe {
+                        (*this).close_if_final(stop.as_ref());
+                        (*this).note_read(file_type, (*this)._buffer.len(), stop.as_ref())
+                    };
                     // SAFETY: caller contract; borrow ends at `;`.
                     let keep_going = if !streaming || unsafe { (*this)._buffer.is_empty() } {
                         true
                     } else {
+                        // SAFETY: caller contract; the borrow ends before the dispatch.
+                        armed_early =
+                            unsafe { (*this).arm_before_delivery(short, file_type, received_hup) };
                         // Moved out so a re-entrant read cannot alias or reallocate it under the consumer.
                         // SAFETY: caller contract; borrow ends at `;`.
                         let mut buffer = unsafe { mem::take(&mut (*this)._buffer) };
@@ -873,6 +905,13 @@ impl PosixBufferedReader {
             // Re-entrant JS inside on_read_chunk can close the reader (nested on_pull -> read -> EOF); the captured `fd` is then stale.
             // SAFETY: caller contract (re-entry never frees `*this`).
             if unsafe { (*this).is_done() } {
+                return;
+            }
+            if let Some(armed) = armed_early {
+                if let Err(err) = armed {
+                    // SAFETY: caller contract; `on_error` is the tail.
+                    unsafe { Self::on_error(this, err) };
+                }
                 return;
             }
             if let Some(Stop::WouldBlock) = stop {
@@ -922,6 +961,40 @@ impl PosixBufferedReader {
         }
     }
 
+    /// Records whether a read of `len` bytes that ended with `stop` came up short (`SHORT_READ`). A read that stopped at `EAGAIN` did. A blocking pipe is read once per wakeup and never reports `EAGAIN`, so there a read of less than a full pipe counts. Returns whether it did.
+    fn note_read(&mut self, file_type: FileType, len: usize, stop: Option<&Stop>) -> bool {
+        let short = match stop {
+            Some(Stop::WouldBlock) => true,
+            None => file_type == FileType::Pipe && len < FULL_PIPE_READ,
+            Some(Stop::Eof | Stop::OverBudget | Stop::Error(_)) => return false,
+        };
+        self.flags.set(PosixFlags::SHORT_READ, short);
+        short
+    }
+
+    /// Called before a chunk goes to `on_read_chunk`. When a consumer waits for it (`CONSUMER_WAITING`) and the read came up `short`, this wakeup reads no more and the consumer's next request waits too (`request_read`). The poll is then armed now and not after the delivery, and the result is returned for the caller to report once the consumer has the chunk. That consumer's code runs inside the delivery. Armed only after it, the fd would queue behind every fd that became ready in the meantime, and a child's exit would be dispatched before the bytes the child wrote first.
+    fn arm_before_delivery(
+        &mut self,
+        short: bool,
+        file_type: FileType,
+        received_hup: bool,
+    ) -> Option<Result<(), sys::Error>> {
+        if !self.flags.contains(PosixFlags::CONSUMER_WAITING) {
+            return None;
+        }
+        self.flags.remove(PosixFlags::CONSUMER_WAITING);
+        // A blocking pipe that hung up is read on to EOF in this wakeup.
+        if !short || !self.is_poll_driven() || (file_type == FileType::Pipe && received_hup) {
+            return None;
+        }
+        // A pull inside an earlier delivery of this wakeup may have armed it already.
+        Some(if self.has_pending_read() {
+            Ok(())
+        } else {
+            self.try_register_poll()
+        })
+    }
+
     fn read_state(stop: Option<&Stop>) -> ReadState {
         match stop {
             Some(Stop::Eof | Stop::OverBudget) => ReadState::Eof,
@@ -930,15 +1003,37 @@ impl PosixBufferedReader {
         }
     }
 
-    /// One non-blocking read straight into `dst` for a consumer pulling synchronously; arms the poll when nothing is available. EOF and errors are reported through `on_reader_done` / `on_reader_error` like any other read.
+    /// Whether the poll callback alone reads this fd after a short read. Not so for a source that is never polled (a regular file, a used-up limit: see `start`). Outside Linux only a socket qualifies: kqueue does not report the last writer's close on an empty named pipe, so there only a read finds that EOF.
+    fn is_poll_driven(&self) -> bool {
+        self.flags.contains(PosixFlags::POLLABLE)
+            && !self.limit.reached()
+            && (cfg!(any(target_os = "linux", target_os = "android"))
+                || self.flags.contains(PosixFlags::SOCKET))
+    }
+
+    /// A consumer wants bytes in `dst`: one non-blocking read straight into it, and the poll is armed when nothing is available. EOF and errors are reported through `on_reader_done` / `on_reader_error` like any other read.
+    ///
+    /// After a short read (`SHORT_READ`) a poll-driven source is not read here. The poll is armed, `(0, Progress)` is returned, and the next bytes arrive through `on_read_chunk` in a later turn of the event loop, also when they are in the fd already. libuv has this rule: `uv__read` reads again after a read that filled its buffer and returns to the loop after a shorter one (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1147-L1155), and `readStart()` only starts the watcher (https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1447-L1470). One difference stays: Bun runs `setImmediate` callbacks before it polls and libuv after, so bytes requested from a timer arrive after the immediates that timer queued, and in Node before them.
     ///
     /// # Safety
-    /// Same contract as [`Self::read`]: those dispatches may free the parent.
-    pub unsafe fn read_into(this: *mut Self, dst: &mut [u8]) -> (usize, ReadState) {
-        // SAFETY: caller contract — `this` is live; borrow ends at `;`.
+    /// Same contract as [`Self::read`]: those dispatches, and the one a failed arm makes, may free the parent.
+    pub unsafe fn request_read(this: *mut Self, dst: &mut [u8]) -> (usize, ReadState) {
+        // SAFETY: caller contract — `this` is live; borrows end at each `;`.
+        unsafe { (*this).unpause() };
+        // SAFETY: caller contract; borrow ends at `;`.
         let Some((fd, file_type, vtable)) = (unsafe { (*this).begin_read() }) else {
             return (0, ReadState::Progress);
         };
+        // SAFETY: caller contract; borrows end at each `;`.
+        let wait = unsafe {
+            (*this).has_pending_read()
+                || ((*this).is_poll_driven() && (*this).flags.contains(PosixFlags::SHORT_READ))
+        };
+        if wait {
+            // SAFETY: caller contract; `this` is not touched after the arm, whose error dispatch may free the parent.
+            unsafe { Self::wait_for_poll(this) };
+            return (0, ReadState::Progress);
+        }
         if dst.is_empty() {
             return (0, ReadState::Progress);
         }
@@ -949,8 +1044,11 @@ impl PosixBufferedReader {
             match bun_core::is_readable(fd) {
                 bun_core::Pollable::Ready | bun_core::Pollable::Hup => {}
                 bun_core::Pollable::NotReady => {
-                    // SAFETY: caller contract.
-                    unsafe { Self::register_poll(this) };
+                    // SAFETY: caller contract; borrows end at each `;`.
+                    unsafe {
+                        (*this).flags.insert(PosixFlags::SHORT_READ);
+                        Self::wait_for_poll(this);
+                    }
                     return (0, ReadState::Progress);
                 }
             }
@@ -960,6 +1058,16 @@ impl PosixBufferedReader {
             ReadOnce::Read(n, stop) => (n, stop),
             ReadOnce::Stop(stop) => (0, Some(stop)),
         };
+        let short = match &stop {
+            Some(Stop::WouldBlock) => Some(true),
+            // A read that did not fill `dst` took all the fd had, unless it took a full pipe.
+            None => Some(n < dst.len() && (file_type != FileType::Pipe || n < FULL_PIPE_READ)),
+            Some(Stop::Eof | Stop::OverBudget | Stop::Error(_)) => None,
+        };
+        if let Some(short) = short {
+            // SAFETY: caller contract; borrow ends at `;`.
+            unsafe { (*this).flags.set(PosixFlags::SHORT_READ, short) };
+        }
         match stop {
             None => (n, ReadState::Progress),
             Some(Stop::Eof | Stop::OverBudget) => {
@@ -975,7 +1083,7 @@ impl PosixBufferedReader {
             Some(Stop::WouldBlock) => {
                 if file_type != FileType::File {
                     // SAFETY: caller contract.
-                    unsafe { Self::register_poll(this) };
+                    unsafe { Self::wait_for_poll(this) };
                 }
                 (0, ReadState::Drained)
             }
@@ -986,7 +1094,34 @@ impl PosixBufferedReader {
             }
         }
     }
+
+    /// A consumer that had stopped the reader wants bytes again and has no destination for them (a resumed stream). A poll-driven source is only unpaused and armed, as in [`Self::request_read`] after a short read: Node's `resume()` reads nothing either. Any other source is read now, through `on_read_chunk`, unless its poll already waits for it.
+    ///
+    /// # Safety
+    /// Same contract as [`Self::read`], and a failed arm dispatches `on_reader_error` too.
+    pub unsafe fn resume_reading(this: *mut Self) {
+        // SAFETY: caller contract — `this` is live; borrows end at each `;`.
+        unsafe { (*this).unpause() };
+        // SAFETY: caller contract; borrow ends at `;`.
+        if !unsafe { (*this).is_poll_driven() } {
+            // SAFETY: caller contract; borrow ends at `;`.
+            if !unsafe { (*this).has_pending_read() } {
+                // SAFETY: caller contract.
+                unsafe { Self::read(this) };
+            }
+            return;
+        }
+        // SAFETY: caller contract; borrow ends at `;`.
+        if unsafe { (*this).begin_read().is_none() } {
+            return;
+        }
+        // SAFETY: caller contract; `this` is not touched after the arm, whose error dispatch may free the parent.
+        unsafe { Self::wait_for_poll(this) };
+    }
 }
+
+/// The default capacity of a Linux pipe, and the size of libuv's read buffer. A read of a blocking pipe that returns less than this left the pipe empty.
+const FULL_PIPE_READ: usize = 64 * 1024;
 
 enum Stop {
     Eof,
@@ -1936,10 +2071,23 @@ impl WindowsBufferedReader {
     ///
     /// # Safety
     /// `this` is the live reader.
-    pub unsafe fn read_into(this: *mut Self, _dst: &mut [u8]) -> (usize, ReadState) {
+    pub unsafe fn request_read(this: *mut Self, _dst: &mut [u8]) -> (usize, ReadState) {
         // SAFETY: caller contract; borrow scoped to the call.
         unsafe { (*this).unpause() };
         (0, ReadState::Progress)
+    }
+
+    /// [`Self::request_read`] for a consumer with no destination; a read in flight is left as it is.
+    ///
+    /// # Safety
+    /// `this` is the live reader.
+    pub unsafe fn resume_reading(this: *mut Self) {
+        // SAFETY: caller contract; borrows scoped to the calls.
+        unsafe {
+            if !(*this).has_pending_read() {
+                (*this).unpause();
+            }
+        }
     }
 }
 

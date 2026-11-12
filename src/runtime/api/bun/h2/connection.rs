@@ -5,8 +5,8 @@ use super::stream::{PaddingStrategy, RequestMethod, ResetBy, Stream, StreamTable
 use bun_http::lshpack;
 use bun_http_types::h2::flow_control::{DEFAULT_WINDOW_SIZE, RecvWindow, SendWindow};
 use bun_http_types::h2::frame::{
-    self, CONNECTION_PREFACE, ErrorCode, FRAME_HEADER_SIZE, Frame, FrameHeader, FrameType,
-    NextFrame, flags,
+    self, CONNECTION_PREFACE, ErrorCode, FRAME_HEADER_SIZE, Frame, FrameError, FrameHeader,
+    FrameType, NextFrame, flags,
 };
 use bun_http_types::h2::header_block::{HeaderBlockAssembler, HeaderBlockError};
 use bun_http_types::h2::settings::{Entries, SettingId, Settings};
@@ -637,10 +637,7 @@ impl Connection {
                 self.send_go_away(sink, e.code, e.reason.as_bytes());
                 return true;
             }
-            Err(e) => {
-                self.reset_stream(sink, e.stream_id, e.code);
-                return false;
-            }
+            Err(e) => return self.handle_stream_error(sink, &e),
         };
         match frame {
             Frame::Settings(entries) => self.handle_settings(sink, entries),
@@ -674,6 +671,21 @@ impl Connection {
             Frame::Origin => self.handle_origin(sink, hdr, payload),
             // Both are ignored (§4.1 for unknown types). nghttp2 charges each one as a glitch.
             Frame::Priority | Frame::Unknown => self.note_glitch(sink),
+        }
+    }
+
+    /// A frame that is invalid by itself only resets a stream that can still be reset (§5.1).
+    fn handle_stream_error(&self, sink: &impl Sink, e: &FrameError) -> bool {
+        match self.streams.inbound(e.stream_id) {
+            Some(s) if !s.was_reset() => {
+                self.reset_stream(sink, e.stream_id, e.code);
+                false
+            }
+            None if !self.has_existed(e.stream_id) => {
+                self.send_go_away(sink, e.code, e.reason.as_bytes());
+                true
+            }
+            _ => self.note_glitch(sink),
         }
     }
 
@@ -1222,7 +1234,8 @@ impl Connection {
             .get()
             .max(self.local_settings.get().initial_window_size);
         let verdict = match stream {
-            // §5.1: DATA for a stream nobody opened is a STREAM_CLOSED error.
+            // DATA for a stream nobody opened. Its reset closes nothing, so the peer can ask for it again and again.
+            None if self.note_glitch(sink) => return DataAdmission::Fatal,
             None => Verdict::Reset(ErrorCode::STREAM_CLOSED),
             Some(s) => {
                 if let Some(code) = s.data_refusal(self.is_server.get()) {

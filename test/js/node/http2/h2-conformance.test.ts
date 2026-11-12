@@ -364,6 +364,51 @@ describe("WINDOW_UPDATE (checklist §6)", () => {
   });
 });
 
+describe("WINDOW_UPDATE with a 0 increment on a stream (RFC 9113 §5.1, §6.9)", () => {
+  const zero = encodeFrame(FrameType.WINDOW_UPDATE, 0, 1, Buffer.alloc(4));
+  const PING = encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
+
+  test.each<[string, (c: RawH2) => unknown, { resets: number[]; goaway?: number }]>([
+    ["is a connection error while it's idle", () => {}, { resets: [], goaway: ErrorCode.PROTOCOL_ERROR }],
+    [
+      "resets it once",
+      c => c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST")),
+      { resets: [ErrorCode.PROTOCOL_ERROR] },
+    ],
+    [
+      "is ignored once it's closed",
+      c => {
+        c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+        return c.waitFor(f => f.type === FrameType.HEADERS);
+      },
+      { resets: [] },
+    ],
+  ])("%s", async (_, prepare, expected) => {
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      if (stream.endAfterHeaders) stream.respond({ ":status": 204 });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      await prepare(c);
+      c.send(Buffer.concat([zero, zero, PING]));
+      await c.waitFor(f => f.type === FrameType.PING || f.type === FrameType.GOAWAY);
+      const goaway = c.frames.find(f => f.type === FrameType.GOAWAY);
+      expect({
+        resets: c.frames.filter(f => f.type === FrameType.RST_STREAM).map(f => f.payload.readUInt32BE(0)),
+        goaway: goaway && goawayErrorCode(goaway),
+      }).toEqual(expected);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+});
+
 describe("frame structure (checklist §2,§3)", () => {
   test("an unknown frame type is ignored, not an error (§2.4)", async () => {
     const c = await RawH2.connect(port);
@@ -4323,6 +4368,8 @@ describe("ignored frames count against nghttp2's glitch rate limit", () => {
   const ORIGIN = encodeFrame(0x0c, 0, 0, originEntry);
   const ORIGIN_ON_STREAM = encodeFrame(0x0c, 0, 1, originEntry);
   const ORIGIN_RESERVED_FLAG = encodeFrame(0x0c, 0x10, 0, originEntry);
+  const DATA_ON_IDLE_STREAM = encodeFrame(FrameType.DATA, 0x1, 1001);
+  const ZERO_WINDOW_UPDATE_ON_CLOSED_STREAM = encodeFrame(FrameType.WINDOW_UPDATE, 0, 1, Buffer.alloc(4));
   const PING = encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8));
   const PROTOCOL_ERROR_SESSION = { code: "ERR_HTTP2_ERROR", message: "Protocol error" };
   const isPingAck = (f: Frame) => f.type === FrameType.PING && (f.flags & 0x1) !== 0;
@@ -4335,16 +4382,23 @@ describe("ignored frames count against nghttp2's glitch rate limit", () => {
   test.each([
     ["PRIORITY and unknown frame types", [PRIORITY, UNKNOWN]],
     ["ALTSVC and ORIGIN", [ALTSVC, ORIGIN]],
+    [
+      "DATA on an idle stream and WINDOW_UPDATE(0) on a closed one",
+      [DATA_ON_IDLE_STREAM, ZERO_WINDOW_UPDATE_ON_CLOSED_STREAM],
+    ],
   ])("a server tolerates 10,000 and ends the session before 20,000: %s", async (_, kinds) => {
     const sessionError = Promise.withResolvers<NodeJS.ErrnoException>();
     const server = http2.createServer();
     server.on("sessionError", sessionError.resolve);
+    server.on("stream", stream => stream.respond({ ":status": 204 }));
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const c = await RawH2.connect((server.address() as net.AddressInfo).port);
     try {
       c.sendPreface();
       c.sendEmptySettings();
+      // Closes the id below it.
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
       c.send(Buffer.concat([flood(kinds, BURST), PING]));
       await c.waitFor(isPingAck, 10_000);
       expect(c.frames.filter(isGoaway)).toEqual([]);
@@ -4361,6 +4415,7 @@ describe("ignored frames count against nghttp2's glitch rate limit", () => {
   test.each([
     ["PRIORITY and unknown frame types", [PRIORITY, UNKNOWN]],
     ["ORIGIN on a stream and ORIGIN with a reserved flag", [ORIGIN_ON_STREAM, ORIGIN_RESERVED_FLAG]],
+    ["DATA on an idle stream", [DATA_ON_IDLE_STREAM]],
   ])("a client tolerates 10,000 and ends the session before 20,000: %s", async (_, kinds) => {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);

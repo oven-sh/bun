@@ -51,7 +51,7 @@ pub struct FileReader {
     pub(crate) event_loop: Cell<EventLoopHandle>,
     pub(crate) lazy: JsCell<Lazy>,
     pub(crate) buffered: JsCell<Vec<u8>>,
-    /// A read error that arrived with no pending pull. The next `on_pull` returns it.
+    /// A read error that arrived with no pending pull. The next `on_pull` returns it. In handle mode: one that arrived while the read callback had the reader stopped, for the next read start.
     pub(crate) read_error: JsCell<Option<sys::Error>>,
     /// Read-only after construction.
     pub(crate) highwater_mark: usize,
@@ -796,6 +796,11 @@ impl FileReader {
     fn enter_handle_mode(&self) {
         self.read_callback.set(true);
         self.flowing.set(false);
+        // The callback takes each chunk as it is read, so when it stops the reader no read may follow, not even to drain a pipe that hung up.
+        #[cfg(unix)]
+        self.reader()
+            .flags
+            .insert(bun_io::pipe_reader::PosixFlags::PAUSE_ENDS_READ_LOOP);
         let started = self.on_start();
         debug_assert!(matches!(started, streams::Start::Ready));
         // A reader `Bun.spawn` could not leave lazy is waiting for bytes already.
@@ -819,8 +824,15 @@ impl FileReader {
     /// The task of `queue_read_start`.
     fn start_reader(&self) {
         self.read_start_queued.set(false);
+        if !self.read_callback.get() || !self.flowing.get() {
+            return;
+        }
+        // A read failed while the reader was stopped. The callback asks for more only now, as a pull would.
+        if let Some(err) = self.read_error.replace(None) {
+            return self.end_read_callback(Some(err));
+        }
         // Closed with the callback still registered: a tick of the event loop nested in the call for the last chunk ran this before the end was reported. There is no fd left to read.
-        if !self.read_callback.get() || !self.flowing.get() || self.reader().is_done() {
+        if self.reader().is_done() {
             return;
         }
         #[cfg(unix)]
@@ -874,7 +886,10 @@ impl FileReader {
             }
         };
         self.call_read_callback(this_value, callback, &[buffer]);
-        if let Some(err) = self.read_error.replace(None) {
+        // A reader the callback stopped keeps the failure for the next read start.
+        if self.flowing.get()
+            && let Some(err) = self.read_error.replace(None)
+        {
             self.end_read_callback(Some(err));
         }
         // `false` from the callback stopped the reader. A `destroy()` in it, or a throw that ends the run, cancelled the source and closed the fd the io caller captured.

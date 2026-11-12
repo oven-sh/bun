@@ -214,6 +214,8 @@ bitflags::bitflags! {
         const KEEP_ALIVE               = 1 << 10; // default true
         /// A read failed with a non-retry errno. Set before the bytes read ahead of the failure are delivered, so a pull from inside that delivery cannot read the fd past the error. Never cleared: `start()`, `unpause()` and `from()` keep it, and only a reader from `init()` reads again.
         const READ_FAILED              = 1 << 11;
+        /// A `pause()` from inside `on_read_chunk` ends that read loop even on a pipe that hung up, which the loop otherwise reads to its end whatever `on_read_chunk` returns. For a parent that hands each chunk on as it is read, and so has nowhere to keep one that comes after it stopped the reader.
+        const PAUSE_ENDS_READ_LOOP     = 1 << 12;
     }
 }
 
@@ -667,6 +669,12 @@ impl PosixBufferedReader {
         Some((self.get_fd(), self.get_file_type(), self.vtable))
     }
 
+    /// Paused by a parent whose `pause()` also ends the read loop (`PAUSE_ENDS_READ_LOOP`).
+    fn is_stopped(&self) -> bool {
+        self.flags
+            .contains(PosixFlags::IS_PAUSED | PosixFlags::PAUSE_ENDS_READ_LOOP)
+    }
+
     /// Charges `bytes_read` against the `maxBuffer` budget; `true` once it is gone. The overflow callback only kills the child, so the caller must also stop reading.
     fn charge_max_buffer(&mut self, bytes_read: usize) -> bool {
         let Some(maxbuf) = self.maxbuf else {
@@ -886,7 +894,8 @@ impl PosixBufferedReader {
                 }
                 return;
             }
-            if streaming && !keep_going && !received_hup {
+            // SAFETY: caller contract; borrow ends at `;`.
+            if streaming && !keep_going && (!received_hup || unsafe { (*this).is_stopped() }) {
                 return;
             }
             if file_type != FileType::Pipe {

@@ -18,7 +18,7 @@ BUMP = "https://github.com/oven-sh/bun/issues/33082#issuecomment-4849840143"
 NODE_QUIC_PLAN = "https://github.com/oven-sh/bun/pull/46528#issuecomment-6397987907"
 
 visible = f"""### Problem
-- Behind a 100 Continue, `Bun.serve` loses HTTP/3 responses. Stock curl 8.14.1 gets 3 to 16 of 40 POSTs with `Expect: 100-continue` answered by 1.4.3 (30 ms round trip, default windows). The others end with `ERR_QPACK_FATAL` or `ERR_QPACK_DECOMPRESSION_FAILED`.
+- Behind a 100 Continue, `Bun.serve` loses HTTP/3 responses. Stock curl 8.14.1 gets 10 to 15 of 40 POSTs with `Expect: 100-continue` answered by Bun 1.4.4 (30 ms round trip, default windows). The others end with `ERR_QPACK_FATAL` or `ERR_QPACK_DECOMPRESSION_FAILED`.
 - lsquic 4.9.4 takes a body write while the final header block still waits, and puts the bytes into that block's HEADERS frame (`COMMON_WRITE_CHECKS` in `lsquic_stream.c`).
 - It also calls the writer while such a block waits for the QPACK encoder stream: the block never leaves, and one core stays busy.
 
@@ -45,15 +45,15 @@ notes = f"""<details><summary>Notes</summary>
 | Edit | Without it | Test |
 | --- | --- | --- |
 | the condition in `COMMON_WRITE_CHECKS` | the body goes into the HEADERS frame of the block that waits | "keep the body out of a header block that waits" (2 rows) |
-| `sm_write_avail` after `send_headers_ietf` keeps a block | a final header block that waits for the QPACK encoder stream never leaves, and lsquic calls the writer without end (16 s of CPU in 18 s) | "arrive when the client's SETTINGS come with the request's content" |
+| `sm_write_avail` after `send_headers_ietf` keeps a block | a final header block that waits for the QPACK encoder stream never leaves, and lsquic calls the writer without end (13 to 15 s of CPU in 17 s on a release build) | "arrive when the client's SETTINGS come with the request's content" |
 | the reset check comes first | a write after STOP_SENDING returns 0 and not an error | none. Upstream's `tests/test_send_headers.c` |
 
 **Reach.** No user has reported this. It needs an `Expect` header (or another 1xx in front of the final response), a final header block of more than about 1,150 bytes, a first body write of 1 to about 1,150 bytes, and a connection that is busy.
 
-- curl 8.14.1 (nghttp3 1.8.0) through a UDP relay that adds 15 ms each way, 40 POSTs with `-H 'Expect: 100-continue'` on one connection, a 3,000-byte response header field and a 10-byte body: 3 to 16 of 40 get their 200 from 1.4.3 (4 runs), and 2 to 12 of 40 from this tree without the patch (4 runs). With the patch 40 of 40 do (4 runs).
-- Over loopback with no delay curl gets all 40 from 1.4.3. The congestion window is never full there.
-- bun's own client over loopback: 15 of 40 responses arrive, and the others never do. One POST beside one 5 MB download gets its 100 and no response (3 of 3).
-- The row for the first flight of a connection is a guard more than a proof. Without the patch it fails on a debug build, and in 2 of 20 runs on a release build.
+- curl 8.14.1 (nghttp3 1.8.0) through a UDP relay that adds 15 ms each way, 40 POSTs with `-H 'Expect: 100-continue'` on one connection, a 3,000-byte response header field and a 10-byte body: 10 to 15 of 40 get their 200 from 1.4.4 (6 runs), and 1 to 15 of 40 from this tree without the patch (6 runs). With the patch 40 of 40 do (4 runs).
+- Over loopback with no delay curl gets all 40 from 1.4.4 (3 runs). The congestion window is never full there.
+- bun's own client over loopback: 15 of 40 responses arrive, and the others never do.
+- The row for the first flight of a connection is a guard more than a proof. Without the patch it fails on a debug build, and in 8 of 99 runs on a release build. The other two rows fail in every run of both builds.
 
 **The callers.** `lsquic_stream_write()` now returns 0 while a header block of the stream waits. `us_quic_stream_write()` (`packages/bun-usockets/src/quic.c`) passes that on, `Http3Response` keeps the bytes in its backpressure buffer, `QuicStream::drain_outbound` (`src/runtime/node/quic/stream.rs`) keeps them in its queue, and the HTTP/3 client (`src/http/h3_client/encode.rs`) waits for the next write event.
 
@@ -63,7 +63,7 @@ notes = f"""<details><summary>Notes</summary>
 
 **Measurements.** On one linux-x64 machine.
 
-- `lsquic_stream.o`, release flags without LTO: `.text` 38,912 to 38,992 bytes.
+- `lsquic_stream.o`, release flags without LTO: `.text` 38,912 to 38,992 bytes. The release binary (`size`): text 144,159,395 to 144,159,475 bytes, data and bss the same.
 - Instructions that `lsquic_stream.o` executes per stream, counted by single-stepping a driver in the scaffolding of lsquic's `tests/test_h3_framing.c`, mean of 10 streams: a header block with a 49,500-byte body 29,430 to 29,446, a header block alone 2,137 to 2,137, a 103 in front 30,754 to 30,770.
 - The patch file reverse-applies to v4.11.1, so upstream has every hunk.
 

@@ -1,14 +1,17 @@
 # a loop of which nothing is known reads `next` once, where it opens the iterator, and the kind of a cell never changes. So which way the iterator is stepped is settled there:
-# a function of the library looks at the iterator and at `next` once and answers with a small number; 0: the loop calls `next` itself.
-# each step compares that number with 0 and hands it to the library's step, which looks at it and at nothing else: no step compares `next` with the five functions that the library steps for.
+# a function of the library looks at the iterator and at `next` once. undefined: the loop calls `next` itself; true: the loop steps the iterator of a set; else a small number.
+# each step looks at that answer and hands a number to the library's step, which looks at it and at nothing else: no step compares `next` with the five functions that the library steps for.
 # function each(things) { for (const thing of things) { if (keep(thing)) break; } }
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: [[next]]: {{*}} = PropGet [[iterator]] key="next"
 # CHECK: = CallDirect [[iterator]], [[next]] function=f6
 # CHECK: isLoopHead=true
+# CHECK: [[element]]: {{*}} = NextSetElement
+# CHECK: Jump -> next [[stepped]]([[element]])
 # CHECK: [[handedOut]]: {{*}} = CallDirect {{*}}function=f7
-# CHECK: = IsCollectionIteratorClosedMark [[handedOut]]
+# CHECK: Jump -> next [[stepped]]([[handedOut]])
+# CHECK: = IsCollectionIteratorClosedMark
 # RUN(WRITTEN): walk f1 mechanisms=all
 # WRITTEN: key="done"
 # WRITTEN: key="value"

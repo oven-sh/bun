@@ -125,7 +125,7 @@ function Duplex(this: $Node.Duplex, options?: $Node.DuplexOptions): void {
       this._writableState.finished = true;
     }
 
-    const { read, write, writev, destroy, final, construct, signal } = options;
+    const { read, write, writev, destroy, final, construct, signal } = options as any;
     if (typeof read === "function") this._read = read;
 
     if (typeof write === "function") this._write = write;

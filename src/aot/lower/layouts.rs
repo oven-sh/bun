@@ -217,7 +217,8 @@ impl FileLowering<'_, '_, '_, '_> {
                 | LayoutKey::UntypedLiteral { .. }
                 | LayoutKey::CreatedObject { .. }
                 | LayoutKey::Container(_)
-                | LayoutKey::Environment { .. } => {}
+                | LayoutKey::Environment { .. }
+                | LayoutKey::ModuleInstance(_) => {}
             }
         }
         self.define_object_types();

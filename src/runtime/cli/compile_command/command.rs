@@ -89,7 +89,7 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
         location.root_dir.fd,
         origin,
     );
-    let result = compile_to_executable(&mut request).and_then(|outcome| {
+    let result = compile_to_executable(&mut request).and_then(move |outcome| {
         write_metafiles(&outcome, &metafile_path, &metafile_markdown_path)?;
         Ok(outcome)
     });

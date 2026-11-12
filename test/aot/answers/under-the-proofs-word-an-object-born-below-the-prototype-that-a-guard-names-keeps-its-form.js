@@ -4,7 +4,7 @@
 // # Under testing=CheckProofsAtRunTime, which --aot-harden=proof-checks stands for, the walk builds the same form, and beside it the conclusion is asked where the allocation stands:
 // # what the function holds under `prototype` now, read off the function itself, is the object that the table names; the allocation lists its two stores, and their guards are asked again right in front of it. The process stops by name where either is false.
 // # It used to build the construction as written there. That read is taken to write the guards, so every turn asked them anew, and a guard that was falsely remembered over a callee was never stale under the word.
-// # f6 = quiet, f8 = entered
+// # f6 = quiet, f8 = entered. The loops of Wide, lay and layAbove are too large to be copied into a loop: their bodies are entered by calls.
 // # In a plain build the guards stand in front of the typed turns, and nothing of the construction is left in them.
 // # RUN(PLAIN): walk f6 mechanisms=all
 // # PLAIN-LABEL: code f6:Body
@@ -55,10 +55,10 @@ function Point(x, y) { this.x = x; this.y = y; }
 Point.prototype.sum = function () { return this.x + this.y; };
 function Pair(x, y) { this.x = x; this.y = y; }
 Pair.prototype.sum = function () { return this.x + this.y; };
-function Wide(x) { this.x = x; for (let k = 0; k < 2; k++) this.x = (this.x + k) | 0; }
+function Wide(x) { this.x = x; for (let k = 0; k < 2; k++) { this.x = (this.x + k) | 0; this.x = (this.x ^ 3) | 0; this.x = (this.x ^ 3) | 0; this.x = (this.x + 5) | 0; this.x = (this.x - 5) | 0; } }
 Wide.prototype.sum = function () { return this.x; };
-function lay(holder, laid) { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; holder[hidden.prototype] = laid; return work; }
-function layAbove(holder) { let work = 0; for (let k = 0; k < 2; k++) work = (work + k) | 0; unseen(Object)[hidden.define](holder[hidden.prototype], hidden.x, { set(value) { seen++; }, get() { return 500; }, configurable: true }); return work; }
+function lay(holder, laid) { let work = 0; for (let k = 0; k < 2; k++) { work = (work + k) | 0; work = (work * 5 + 1) | 0; work = (work ^ 9) | 0; work = (work * 3 + k) | 0; work = (work ^ 5) | 0; work = (work - k) | 0; } holder[hidden.prototype] = laid; return work; }
+function layAbove(holder) { let work = 0; for (let k = 0; k < 2; k++) { work = (work + k) | 0; work = (work * 5 + 1) | 0; work = (work ^ 9) | 0; work = (work * 3 + k) | 0; work = (work ^ 5) | 0; work = (work - k) | 0; } unseen(Object)[hidden.define](holder[hidden.prototype], hidden.x, { set(value) { seen++; }, get() { return 500; }, configurable: true }); return work; }
 function quiet(list) { let total = 0; for (let i = 0; i < list.length; i++) { const p = new Point(list[i] | 0, 1); total = (total + p.sum()) | 0; } return total; }
 function pairs(list, again, above, holder, laid) { let total = 0; for (let i = 0; i < list.length; i++) { const p = new Pair(list[i] | 0, 1); total = (total + p.sum()) | 0; if (i === again) lay(holder, laid); if (i === above) layAbove(holder); } return total; }
 function entered(list) { let total = 0; for (let i = 0; i < list.length; i++) { const w = new Wide(list[i] | 0); total = (total + w.sum()) | 0; } return total; }

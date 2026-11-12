@@ -6,7 +6,7 @@ description: "How to read bun compile --explain, and what to change for each cau
 
 <Warning>Ahead-of-time compilation is experimental.</Warning>
 
-`bun compile --explain` lists the lines that slow your compiled code down, worst first, with a fix for each. Fix the first entry and run it again. Stop when the entries that are left aren't in hot code.
+`bun compile --explain` lists the lines that slow your compiled code down, with a fix for each. The line whose change alone speeds up the most operations in loops comes first. Fix the first entry and run it again. Stop when the entries that are left aren't in hot code.
 
 `bun check --aot --explain` prints the same report without building.
 
@@ -32,32 +32,53 @@ bun compile ./main.ts --explain
 ```
 
 ```txt
-11 | for (const item of items) total += item.price;
-                                        ^
-note: 1. unknown-object: The compiler doesn't know the shape of this object, so the access is a lookup or needs a shape check.
-   at main.ts:11:36
+7 | const saved: any = JSON.parse('{ "sku": "B-2", "price": 10 }');
+                            ^
+note: 1. unknown-object: The compiler doesn't know the shape of what JSON.parse() returns.
+   at main.ts:7:25
 
 note: 1 of 1 untyped access
 note: 1 of these runs in a loop
-note: fix: that depends on where the object comes from. See the table at the link below.
+note: used at main.ts:11:36
+note: fix: check its fields and build a new object from them.
 note: https://bun.com/docs/compiler/explain#unknown-object
 ```
 
-| Line                        | What it tells you                          |
-| --------------------------- | ------------------------------------------ |
-| `1. unknown-object`         | The rank and the [cause](#causes)          |
-| `at`                        | The line that runs slower                  |
-| `1 of 1 untyped access`     | The entry's share of your untyped accesses |
-| `1 untyped operator`        | Operators on a value of unknown type       |
-| `1 indirect call`           | Calls where the callee isn't known         |
-| `1 of these runs in a loop` | How many are in loops                      |
-| `fix:`                      | What to change                             |
+| Line                               | What it tells you                                             |
+| ---------------------------------- | ------------------------------------------------------------- |
+| `1. unknown-object`                | The rank, the [cause](#causes) and why                        |
+| `at`                               | The line to change, where the compiler lost track of the type |
+| `1 of 1 untyped access`            | How many of your untyped accesses this line causes            |
+| `1 untyped operator`               | Operators on a value of unknown type                          |
+| `1 indirect call`                  | Calls where the callee isn't known                            |
+| `1 of these runs in a loop`        | How many are in loops                                         |
+| `1 of these has another cause too` | These get faster when the other cause is fixed as well        |
+| `it comes in at`                   | Where the value gets between objects, if that's another line  |
+| `used at`                          | The lines that run slower                                     |
+| `fix:`                             | What to change                                                |
 
-The location is the line that uses the untyped value, not the line where the value starts. Here that's the read of `item.price`, and the value comes from the `JSON.parse` four lines above it.
+The compiler follows each value back to where its type was lost, through variables, fields, arrays, parameters and results. Here that's the result of `JSON.parse`, and the line that runs slower is the read of `item.price` four lines below it. Where there's no such line, the entry has the location of the operation itself.
 
-Entries in loops come first, then the ones where types would save the most instructions. That's an estimate. Nothing is measured.
+The first entry is the line whose change alone speeds up the most operations in loops, then come the ones with the most operations elsewhere. Entries with nothing to change in your types come last. Nothing is measured.
 
 The report shows the first 20 entries. `--explain=json` prints all of them.
+
+In `--explain=json`, `why` says what happened at the line, and `uses` lists the lines that run slower:
+
+| `why`                                            | At the line                                                                       |
+| ------------------------------------------------ | --------------------------------------------------------------------------------- |
+| `builtin-result`, `call-result`, `property-read` | A value of unknown shape comes from this call or read                             |
+| `outside-caller`                                 | Code that the compiler can't see gets a function that it can call with any values |
+| `exposed-object`, `exposed-variable`             | Code that the compiler can't see gets an object or a variable that it can change  |
+| `caught-exception`                               | A `catch` gets any value                                                          |
+| `other-value`, `other-builtin`, `other-function` | Something else gets to a place that holds objects                                 |
+| `array-argument`                                 | The argument of `new Array()` may not be a number, so it may become an element    |
+| `many-shapes`, `many-functions`                  | Too many shapes or functions come together                                        |
+| `changed-shape`                                  | A property is added, deleted or redefined                                         |
+| `missing-field`, `checked-element`               | The compiler can't prove that the field or the element exists                     |
+| `checked-result`, `checked-keys`                 | A result, or the properties of a copied object, are checked                       |
+| `builtin-property`, `computed-name`              | The property is looked up by name                                                 |
+| `static-field`                                   | A static field is added to its class, once                                        |
 
 ## What is counted
 
@@ -68,15 +89,17 @@ Dependencies: 3.1% of property accesses are one load: 210 free, 1,320 tested, 5,
 92.4% of property accesses are one load: 1,204 free, 61 tested, 38 by name (1,303)
 ```
 
-| Word      | The compiled code                     |
-| --------- | ------------------------------------- |
-| `free`    | One load or store at a fixed offset   |
-| `tested`  | A shape check, then the load or store |
-| `by name` | A lookup at run time                  |
+| Word      | The compiled code                                               |
+| --------- | --------------------------------------------------------------- |
+| `free`    | One load or store at a fixed offset                             |
+| `tested`  | A check each time, such as of the shape, then the load or store |
+| `by name` | A lookup at run time                                            |
+
+Only the code that usually runs counts. When the lookup is the failing side of a check, the access is `tested`. When the check runs once before a loop, the accesses in the loop are `free`.
 
 Only `free` counts as typed. An access is `free` when the compiler knows every shape the object can have at that point, from your types or by tracking the object from where it's created. An `any` or a `.js` file doesn't break that by itself.
 
-A property access is a read, a write, an `in` test or a `delete`. Array elements and `Map` operations aren't counted. Properties of objects that Bun gives you, such as `req.params.id` or `process.env.PORT`, are always lookups. So a small server has a low percentage, which doesn't matter outside of hot code.
+A property access is a read, a write, an `in` test or a `delete`. Reads and writes of array elements count too, `Map` operations don't. Properties of objects that Bun gives you, such as `req.params.id` or `process.env.PORT`, are always lookups. So a small server has a low percentage, which doesn't matter outside of hot code.
 
 Bun counts after optimization, so the total moves when you change code nearby.
 
@@ -98,7 +121,7 @@ The first line of an entry has one of these codes.
 
 ### unknown-object
 
-The compiler doesn't know the shape of the object on this line, so the access is a lookup or needs a shape check.
+The compiler doesn't know the shape of an object, so accesses to it are lookups or need a check. Without a reason of its own, the entry has the location of the access.
 
 | The object                                                                                                   | What to do                                                              |
 | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
@@ -131,4 +154,4 @@ The compiler can't tell which function a call reaches, as in `handlers[name](req
 
 ### lost-track
 
-An operator such as `+`, `<` or `===` runs on a value whose type the compiler doesn't know. The entry usually has the same location as an `unknown-object` or `unknown-callee` entry, and goes away with it.
+An operator such as `+`, `<` or `===` runs on a value whose type the compiler doesn't know. The entry goes away when the type of the value is known, for example with typeof.

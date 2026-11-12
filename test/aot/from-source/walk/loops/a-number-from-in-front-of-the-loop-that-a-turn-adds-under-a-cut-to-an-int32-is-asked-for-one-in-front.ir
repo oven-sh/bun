@@ -16,8 +16,8 @@
 # RUN: walk f1 f2 f3 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: = TypeTest v1 testedType=i32
-# CHECK: : i32 @Int32 = NumberToInteger
-# CHECK-NEXT: : i32 @Double = IntegerToNumber
+# CHECK: @Int64 = Narrowed v1
+# CHECK: @Double = IntegerToNumber
 # CHECK-LABEL: code f2:Body
 # CHECK-NOT: = TypeTest v1 testedType=i32
 # CHECK-LABEL: code f3:Body

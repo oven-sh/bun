@@ -900,6 +900,93 @@ const REPEATED_KEYS: &[(&str, &str)] = &[
     ),
 ];
 
+const TYPES_OF_OWN_OBJECTS: &[FoldedRow] = &[
+    (
+        "a.cjs",
+        "let o = { p: {} }; v(typeof o.p);",
+        Pure(Text("object")),
+    ),
+    ("a.cjs", "let o = { p() {} }; v(typeof o.p);", Unknown),
+    (
+        "a.cjs",
+        "let o = { p: () => 1 }; v(typeof o.p);",
+        Pure(Text("function")),
+    ),
+    (
+        "a.cjs",
+        "let o = { p: {} }; (function () { v(typeof o.p); o.p = 1; })();",
+        Pure(Text("object")),
+    ),
+    (
+        "a.cjs",
+        "let o = { p: {} }; (function () { v(typeof o); })();",
+        Pure(Text("object")),
+    ),
+    (
+        "a.cjs",
+        "let o = { p: {} }; o.p = f(); v(typeof o.p);",
+        Unknown,
+    ),
+    (
+        "a.cjs",
+        "let o = { p: {} }; g(); v(typeof o.p); function g() { o.p = 1; }",
+        Unknown,
+    ),
+    ("a.cjs", "let o = { p: {} }; g(o); v(typeof o.p);", Unknown),
+    (
+        "a.cjs",
+        "let o = { p: {} }; for (;;) { v(typeof o.p); o.p = 1; }",
+        Unknown,
+    ),
+    (
+        "a.cjs",
+        "let o = { p: {} }; (function () { v(typeof o.p); })(o.p = 1);",
+        Unknown,
+    ),
+    (
+        "a.cjs",
+        "let o = { p: {} }; (function g(n) { v(typeof o.p); o.p = 1; n && g(); })(1);",
+        Unknown,
+    ),
+    (
+        "a.cjs",
+        "let o = { get p() { return 1; } }; v(typeof o.p);",
+        Unknown,
+    ),
+    (
+        "a.cjs",
+        "let o = { p: {} }; delete o.p; v(typeof o.p);",
+        Unknown,
+    ),
+    (
+        "a.cjs",
+        "let o = { p: {} }; o.q = 1; v(typeof o.p);",
+        Unknown,
+    ),
+    (
+        "a.cjs",
+        "let o = { p: {} }; eval(s); v(typeof o.p);",
+        Unknown,
+    ),
+    (
+        "a.mjs",
+        "export const o = { p: {} }; v(typeof o.p);",
+        Unknown,
+    ),
+    ("a.cjs", "v(typeof o.p); var o = { p: {} };", Unknown),
+    ("a.cjs", "f(); v(typeof module.exports);", Unknown),
+    (
+        "a.cjs",
+        "(function () { v(typeof module.exports); })(module.exports = 1);",
+        Unknown,
+    ),
+    (
+        "a.cjs",
+        "(function (d = f()) { v(typeof module.exports); })();",
+        Unknown,
+    ),
+];
+
 fn folded(path: &str, text: &str, fold: Fold<'_>, test: impl for<'s> FnOnce(&Analyzed<'s>) + Send) {
     with_workspace(|w| {
         let inputs = w.fold_inputs(&fold);
@@ -1087,6 +1174,13 @@ fn constants_are_published() {
         assert_eq!(tests.len(), 1);
         assert_folded(s, tests[0], Pure(Number(4.0)), "case 1 << 2");
     });
+}
+
+#[test]
+fn own_object_types_are_folded() {
+    for &(path, text, expected) in TYPES_OF_OWN_OBJECTS {
+        analyzed(path, text, |s| assert_folded(s, probe(s), expected, text));
+    }
 }
 
 #[test]

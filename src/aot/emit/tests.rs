@@ -15,9 +15,10 @@ use crate::ir::generated::{
     AmbiguousExport, BuiltinUsedAtStart, Data, DataMember, DataNode, DeclaredRecord, Entry,
     EvalBinding, EvalScope, ExpectedResult, Field, Function, FunctionFlags, FunctionVisibility,
     Header, HostRead, ImportPhase, Layout, LayoutKind, MAGIC, Module, ModuleExport, ModuleFailure,
-    ModuleRequest, ModuleRequestKind, OpenedName, ProgramList, QuotedSource, ReplaceableBuiltin,
-    RequiredName, RuntimeFunctionEntry, SCHEMA_HASH, SourcePositions, SourceStamp, StaticField,
-    SyntheticExport, TypeSite, TypeSiteKind, Variable, WebAssemblyModule,
+    ModuleInstance, ModuleLink, ModuleRequest, ModuleRequestKind, OpenedName, ProgramList,
+    QuotedSource, ReplaceableBuiltin, RequiredName, RuntimeFunctionEntry, SCHEMA_HASH,
+    SourcePositions, SourceStamp, StaticField, SyntheticExport, TypeSite, TypeSiteKind, Variable,
+    WebAssemblyModule,
 };
 use crate::ir::testing::{build_function, function_with_parameters};
 use crate::ir::{
@@ -235,6 +236,20 @@ fn create_full_program() -> Program {
         position: 7,
         parameter: 1,
         names: vec![names.key],
+    });
+    program.module_instances.push(ModuleInstance {
+        module: MODULE,
+        layout: LAYOUT,
+        namespace_field: 1,
+        deferred_namespace_field: 2,
+    });
+    program.module_links.push(ModuleLink {
+        module: MODULE,
+        target: MODULE,
+        link: Some(3),
+        mock: None,
+        path: vec![MODULE],
+        rest: None,
     });
     program.eval_scopes.push(EvalScope {
         bindings: vec![EvalBinding {
@@ -647,6 +662,8 @@ fn counts_match_program() {
         ),
         (ProgramList::SourceStamps, program.source_stamps.len()),
         (ProgramList::DeclaredRecords, program.declared_records.len()),
+        (ProgramList::ModuleInstances, program.module_instances.len()),
+        (ProgramList::ModuleLinks, program.module_links.len()),
         (ProgramList::EvalScopes, program.eval_scopes.len()),
         (ProgramList::Functions, program.functions.len()),
         (ProgramList::Data, program.data.len()),

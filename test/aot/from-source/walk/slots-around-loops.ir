@@ -7,14 +7,14 @@
 # print(seen.join());
 # -- end of source
 # f1 = views, f2 = lists, f3 = Reader, f4 = next
-# A field that every iteration reads and stores is a parameter of the head: no iteration reads it out of the object. Where a list takes it for a position and it only grows, an int32 from zero up is asked for in front and an integer comes round.
+# A field that every iteration reads and stores is a parameter of the head: no iteration reads it out of the object. The field is proven a whole number from zero up, so an integer comes round and nothing is asked for in front.
 # RUN(VIEWS): walk f1 mechanisms=all
 # VIEWS: = GetSlot {{*}}key="at"
-# VIEWS: : number @Double) isInLoop=true isLoopHead=true
+# VIEWS: : int[0, 9007199254740992] @Int64) isInLoop=true isLoopHead=true
 # VIEWS-NOT: = GetSlot
 # VIEWS: = PutSlot {{*}}key="at"
 # RUN(LISTS): walk f2 mechanisms=all
-# LISTS: TypeTest {{*}} testedType=i32
+# LISTS-NOT: testedType=i32
 # LISTS: : int[0, 9007199254740992] @Int64) isInLoop=true isLoopHead=true
 # LISTS-NOT: = GetSlot {{*}}key="at"
 # LISTS: = PutSlot {{*}}key="at"

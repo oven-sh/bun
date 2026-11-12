@@ -26,6 +26,7 @@ fn find_builtin_name(hash: u64, bytes: &[u8]) -> Option<BuiltinName> {
         .copied()
 }
 
+/// The class of a string as a name, and 1 + the number of the built-in name that it is, or 0.
 #[derive(Copy, Clone, Default)]
 struct NameFacts(u32);
 
@@ -221,6 +222,7 @@ impl StringTable {
         &self.bytes[self.start_of(index)..self.ends[index] as usize]
     }
 
+    /// The place in `bytes` of the string with the number `index`, which may be one past the last.
     #[inline]
     fn start_of(&self, index: usize) -> usize {
         let before = index.checked_sub(1);

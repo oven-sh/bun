@@ -10,6 +10,7 @@ use bun_sema::hir::{FnId, TypeNodeId};
 use bun_sema::program::Sym;
 use rustc_hash::{FxHashMap, FxHashSet};
 
+pub(in crate::lower) use self::bindings::comes_from_elsewhere;
 use super::{CheckerTypeId, FileLowering, types};
 use crate::ir::{
     DeclaredType, LayoutKey, Mapped, PositionFlags, Primitives, Type, TypeId, TypeTable,
@@ -30,10 +31,35 @@ struct NamedVariable {
     is_constant_zero: bool,
 }
 
+const SYMBOLS_OF_PAGE: usize = 64;
+
+/// A part of a large file names the variables of its own stretch.
+#[derive(Default)]
+struct NamedVariables {
+    pages: Vec<Option<Box<[Option<NamedVariable>; SYMBOLS_OF_PAGE]>>>,
+}
+
+impl NamedVariables {
+    #[inline]
+    fn get(&self, symbol: SymbolId) -> Option<NamedVariable> {
+        let page = self.pages.get(symbol.idx() / SYMBOLS_OF_PAGE)?.as_ref()?;
+        page[symbol.idx() % SYMBOLS_OF_PAGE]
+    }
+
+    fn insert(&mut self, symbol: SymbolId, named: NamedVariable) {
+        let at = symbol.idx() / SYMBOLS_OF_PAGE;
+        if self.pages.len() <= at {
+            self.pages.resize_with(at + 1, || None);
+        }
+        let page = self.pages[at].get_or_insert_with(|| Box::new([None; SYMBOLS_OF_PAGE]));
+        page[symbol.idx() % SYMBOLS_OF_PAGE] = Some(named);
+    }
+}
+
 #[derive(Default)]
 pub(in crate::lower) struct PositionState {
     annotations: FxHashMap<TypeNodeId, DeclaredType>,
-    named_variables: Vec<Option<NamedVariable>>,
+    named_variables: NamedVariables,
     variables: FxHashMap<Sym, DeclaredType>,
     constant_zeros: FxHashSet<Sym>,
     functions: FxHashMap<FnId, Rc<FunctionPositions>>,
@@ -319,9 +345,9 @@ impl FileLowering<'_, '_, '_, '_> {
 
     #[inline]
     fn named_variable(&mut self, symbol: SymbolId) -> NamedVariable {
-        match self.types.positions.named_variables.get(symbol.idx()) {
-            Some(&Some(named)) => named,
-            _ => self.find_named_variable(symbol),
+        match self.types.positions.named_variables.get(symbol) {
+            Some(named) => named,
+            None => self.find_named_variable(symbol),
         }
     }
 
@@ -337,13 +363,7 @@ impl FileLowering<'_, '_, '_, '_> {
             position,
             is_constant_zero: positions.constant_zeros.contains(&variable) && !is_replaceable,
         };
-        let memo = &mut positions.named_variables;
-        if memo.is_empty() {
-            memo.resize(self.bound.symbols.len(), None);
-        }
-        if let Some(stored) = memo.get_mut(symbol.idx()) {
-            *stored = Some(named);
-        }
+        positions.named_variables.insert(symbol, named);
         named
     }
 

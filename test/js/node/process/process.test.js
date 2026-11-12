@@ -365,11 +365,10 @@ it("process.hrtime()", async () => {
   const end = process.hrtime(start);
   expect(end[0]).toBe(0);
 
-  // Flaky on Ubuntu & Windows.
   await Bun.sleep(16);
   const end2 = process.hrtime();
 
-  // The whole times, not the nanoseconds alone: a second can end between the two reads.
+  // A second may begin in between.
   expect(end2[0] * 1e9 + end2[1]).toBeGreaterThan(start[0] * 1e9 + start[1]);
 });
 

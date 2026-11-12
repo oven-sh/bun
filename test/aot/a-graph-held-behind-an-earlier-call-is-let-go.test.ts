@@ -14,7 +14,7 @@ const note = (name, call) => call.then(() => settled.push(name + "+"), () => set
 note("pages", import("./${first}"));
 await null; await null; await null;
 note("menu", import("./menu.mjs"));
-await new Promise(done => setTimeout(done, 30));
+for (let turn = 0; turn < 20; turn++) await new Promise(done => setImmediate(done));
 console.log(ran.join(" ") + " | " + settled.join(" "));
 `;
 const ring = {

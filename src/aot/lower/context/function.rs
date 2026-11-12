@@ -17,10 +17,13 @@ use crate::lower::convert;
 use crate::lower::generator::CoroutineState;
 use crate::lower::object::ListsInside;
 use crate::lower::scope::ScopeState;
+use crate::lower::self_tail_calls::SelfTailLoop;
 
+/// The `require` of a site that a call of createRequire made. It requires the module, not the module object of the file.
 #[derive(Clone, Copy)]
 pub(in crate::lower) enum CreatedRequire {
     Variable(bun_sema::hir::ExprId),
+    /// The callee makes it. `Value` as soon as the callee is evaluated.
     Callee,
     Value(ValueId),
 }
@@ -48,6 +51,9 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(in crate::lower) does_file_name_library_modules: Option<bool>,
     pub(in crate::lower) created_require_of_site: Option<CreatedRequire>,
     pub(in crate::lower) destructured_position: Option<u32>,
+    pub(in crate::lower) step_before_test: Option<bun_sema::hir::ExprId>,
+    pub(in crate::lower) self_tail_loop: Option<SelfTailLoop>,
+    pub(in crate::lower) suspending_arm: Option<super::super::statement::SuspendingArm>,
     handler: Option<Handler>,
     position: u32,
     nesting_depth: u32,
@@ -85,6 +91,9 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
             does_file_name_library_modules: None,
             created_require_of_site: None,
             destructured_position: None,
+            step_before_test: None,
+            self_tail_loop: None,
+            suspending_arm: None,
             handler: None,
             position,
             nesting_depth: 0,

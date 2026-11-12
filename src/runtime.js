@@ -351,7 +351,7 @@ export var __jsonParse = /* @__PURE__ */ (a, dir) => {
       if (parts[i] === "..") {
         // The root (`/`, `C:\`) keeps its separator.
         var cut = Math.max(dir.lastIndexOf("/"), dir.lastIndexOf("\\"));
-        dir = dir.slice(0, cut > 0 && dir[cut - 1] !== ":" ? cut : cut + 1);
+        dir = dir.slice(0, cut === 0 || (cut === 2 && dir[1] === ":") ? cut + 1 : cut);
       } else if (parts[i]) dir += sep + parts[i];
     }
     delete a.root;

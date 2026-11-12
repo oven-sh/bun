@@ -82,6 +82,64 @@ const create = User.create;
 const log = console.log;
 ```
 
+In a test, `expect()` gets a method only to look at it, so that's fine too, as long as the matcher doesn't call it. With an ESLint or oxlint config file that doesn't apply: the rule reports what typescript-eslint or oxlint reports.
+
+{/* good */}
+```ts
+import { expect, spyOn, test } from "bun:test";
+
+class User {
+  name = "Ada";
+  greet() {
+    return `Hello ${this.name}`;
+  }
+}
+
+test("greets once", () => {
+  const user = new User();
+  spyOn(user, "greet");
+  user.greet();
+  expect(user.greet).toHaveBeenCalledTimes(1);
+  expect(user.greet).not.toHaveBeenCalledWith("Grace");
+});
+```
+
+`toThrow()` calls the value, here `greet` without `user`, so this is reported. So is a method given to `expect.poll()`, or followed by `.resolves`, `.rejects`, `toSatisfy()` or a matcher from `expect.extend()`.
+
+{/* bad */}
+```ts
+import { expect, test } from "bun:test";
+
+class User {
+  name = "Ada";
+  greet() {
+    return `Hello ${this.name}`;
+  }
+}
+
+test("greets without throwing", () => {
+  const user = new User();
+  expect(user.greet).not.toThrow();
+});
+```
+
+{/* good */}
+```ts
+import { expect, test } from "bun:test";
+
+class User {
+  name = "Ada";
+  greet() {
+    return `Hello ${this.name}`;
+  }
+}
+
+test("greets without throwing", () => {
+  const user = new User();
+  expect(() => user.greet()).not.toThrow();
+});
+```
+
 ## Options
 
 | Option | Default | What it does |

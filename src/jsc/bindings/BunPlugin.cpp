@@ -3246,6 +3246,10 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
                 if (isLaid) {
                     owner->putDirectMayBeIndex(globalObject, names[i], jsBoolean(true));
                     RETURN_IF_EXCEPTION(scope, );
+                } else if (!standsAlready) {
+                    // Only a variable of a module takes an owner. The compiled runtime keeps any other export, and what a mock replaces there.
+                    moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
+                    RETURN_IF_EXCEPTION(scope, );
                 }
             } else if (moduleNamespaceObject) {
                 moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));

@@ -456,6 +456,8 @@ public:
     static constexpr unsigned SpyAttributeAccessor = 1 << 29;
     // isOpaqueProperty() was true at install time, so restore the same way.
     static constexpr unsigned SpyAttributeOpaque = 1 << 28;
+    // The spy is the owner of what it laid over a variable of a module: see JSModuleNamespaceObject::layExportOverride().
+    static constexpr unsigned SpyAttributeOwnsExportOverride = 1 << 27;
 
     JSString* jsName()
     {
@@ -1011,14 +1013,6 @@ private:
             ThroughLockOfBuiltins throughLock(globalObject->vm(), isOpaque);
 #if ENABLE(AOT)
             if (JSC::AOT::isModuleNamespace(target)) {
-                JSCell* ownerAbove = nullptr;
-                auto end = JSC::AOT::removeExportOverride(target, identifier.impl(), this, &ownerAbove);
-                RETURN_IF_EXCEPTION(scope, );
-                JSValue found;
-                if (ownerAbove && JSC::AOT::exportFoundByOverride(target, identifier.impl(), ownerAbove, found) && found)
-                    RELEASE_AND_RETURN(scope, didHandExportOverrideTo(globalObject, ownerAbove, found));
-                if (end != JSC::ExportOverrideEnd::NotOverridden)
-                    return;
                 bool isBack = JSC::AOT::tryReplaceExport(target, identifier.impl(), original);
                 RETURN_IF_EXCEPTION(scope, );
                 // The spy was laid there, so the export takes a value. A spy that stays answers undefined to every later test of the process, and nobody hears of it.
@@ -1030,6 +1024,8 @@ private:
             auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target);
             if (!moduleNamespaceObject)
                 return;
+            if (!(attributes & SpyAttributeOwnsExportOverride))
+                RELEASE_AND_RETURN(scope, void(moduleNamespaceObject->overrideExportValue(globalObject, identifier, original)));
             JSCell* ownerAbove = nullptr;
             auto end = moduleNamespaceObject->removeExportOverride(globalObject, identifier, this, &ownerAbove);
             RETURN_IF_EXCEPTION(scope, );
@@ -3176,22 +3172,22 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
 
 #endif
 
+    // Only a variable of a module takes an owner. Any other export is stored bare, and the spy puts back what it replaced.
+    bool ownsExportOverride = false;
     // True if the object is a module namespace object. Its exports are replaced in the module that declares them.
     auto replaceExport = [&](JSMockFunction* spy) {
         JSValue replacement = spy;
         if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
-            moduleNamespaceObject->layExportOverride(globalObject, propertyKey, replacement, spy);
+            ownsExportOverride = moduleNamespaceObject->layExportOverride(globalObject, propertyKey, replacement, spy);
+            RETURN_IF_EXCEPTION(scope, true);
+            if (!ownsExportOverride)
+                moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, replacement);
             return true;
         }
 #if ENABLE(AOT)
         if (JSC::AOT::isModuleNamespace(object)) {
-            // Only a variable of the program takes an owner. Any other export is stored bare, and the spy puts back what it replaced.
-            bool isReplaced = JSC::AOT::layExportOverride(object, propertyKey.impl(), replacement, spy);
+            bool isReplaced = JSC::AOT::tryReplaceExport(object, propertyKey.impl(), replacement);
             RETURN_IF_EXCEPTION(scope, true);
-            if (!isReplaced) {
-                isReplaced = JSC::AOT::tryReplaceExport(object, propertyKey.impl(), replacement);
-                RETURN_IF_EXCEPTION(scope, true);
-            }
             if (!isReplaced)
                 throwTypeError(globalObject, scope, JSC::AOT::spyOnExportErrorMessage(object, propertyKey.impl(), Bun::uncompiledCallerFile(vm, callframe)));
             return true;
@@ -3258,7 +3254,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             RETURN_IF_EXCEPTION(scope, {});
         }
 
-        mock->didInstall(object, propertyKey, isOwn ? value : JSValue(), spyAttributes);
+        mock->didInstall(object, propertyKey, isOwn ? value : JSValue(), spyAttributes | (ownsExportOverride ? JSMockFunction::SpyAttributeOwnsExportOverride : 0));
         return JSValue::encode(mock);
     }
 

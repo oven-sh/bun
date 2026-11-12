@@ -70,6 +70,8 @@ struct us_quic_driver_s {
     int processing;
     /* The owner queued work in an engine since the last pass. */
     int pending;
+    /* An engine called into the owner since us_quic_context_pass cleared this. */
+    int called_owner;
     /* lsquic keeps a socket as the peer_ctx of its paths after the fd closes, so both lists are freed after the engines. */
     us_quic_udp_t *udps;
     us_quic_udp_t *closed_udps;
@@ -745,6 +747,7 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
     us_quic_socket_t *qs = (us_quic_socket_t *) lsquic_conn_get_ctx(conn);
     if (!qs) return;
     us_quic_socket_context_t *ctx = qs->ctx;
+    ctx->driver->called_owner = 1;
     if (ctx->on_close) ctx->on_close(qs);
     lsquic_conn_set_ctx(conn, NULL);
     for (us_quic_socket_t **pp = &ctx->conns; *pp; pp = &(*pp)->next) {
@@ -771,6 +774,7 @@ static void us_quic_on_conn_closed(lsquic_conn_t *conn) {
 static void us_quic_on_hsk_done(lsquic_conn_t *conn, enum lsquic_hsk_status st) {
     us_quic_socket_t *qs = (us_quic_socket_t *) lsquic_conn_get_ctx(conn);
     if (!qs || !qs->ctx->on_hsk_done) return;
+    qs->ctx->driver->called_owner = 1;
     qs->ctx->on_hsk_done(qs, st == LSQ_HSK_OK || st == LSQ_HSK_RESUMED_OK);
 }
 
@@ -778,6 +782,7 @@ static void us_quic_on_goaway_received(lsquic_conn_t *conn) {
     us_quic_socket_t *qs = (us_quic_socket_t *) lsquic_conn_get_ctx(conn);
     if (!qs) return;
     qs->going_away = 1;
+    qs->ctx->driver->called_owner = 1;
     if (qs->ctx->on_goaway) qs->ctx->on_goaway(qs);
 }
 
@@ -789,6 +794,7 @@ static lsquic_stream_ctx_t *us_quic_on_new_stream(void *if_ctx, lsquic_stream_t 
     if (!s) { lsquic_stream_close(stream); return NULL; }
     s->stream = stream;
     s->ctx = ctx;
+    ctx->driver->called_owner = 1;
     if (ctx->on_stream_open) ctx->on_stream_open(s, ctx->is_client);
     lsquic_stream_wantread(stream, 1);
     return (lsquic_stream_ctx_t *) s;
@@ -809,6 +815,7 @@ static int us_quic_deliver_hset(lsquic_stream_t *stream, us_quic_stream_t *s) {
 static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     us_quic_socket_context_t *ctx = s->ctx;
+    ctx->driver->called_owner = 1;
 
     ssize_t r;
     int delivered;
@@ -845,6 +852,7 @@ static void us_quic_on_write(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
      * client's request) is for the next on_write, see the helper. */
     int flush = s->flush_on_write;
     s->flush_on_write = 0;
+    s->ctx->driver->called_owner = 1;
     if (s->ctx->on_stream_writable) s->ctx->on_stream_writable(s);
     /* Last, so that it also covers what on_stream_writable wrote. */
     if (flush) lsquic_stream_flush(stream);
@@ -854,6 +862,7 @@ static void us_quic_on_close(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
     (void) stream;
     us_quic_stream_t *s = (us_quic_stream_t *) h;
     if (!s) return;
+    s->ctx->driver->called_owner = 1;
     if (s->ctx->on_stream_close) s->ctx->on_stream_close(s);
     s->stream = NULL;
     us_quic_hset_free(s->hset);
@@ -977,9 +986,10 @@ lsquic_engine_t *us_quic_driver_add_engine(us_quic_driver_t *d, unsigned flags,
 static void us_quic_after_engine_call(us_quic_driver_t *d);
 
 static int us_quic_context_pass(us_quic_driver_t *d, enum us_quic_pass_point point) {
-    (void) point;
+    if (d->processing) return 0;
+    d->called_owner = 0;
     us_quic_driver_process(d);
-    return us_quic_driver_next_tick_us(d);
+    return point == US_QUIC_BEFORE_POLL && d->called_owner ? 0 : us_quic_driver_next_tick_us(d);
 }
 
 /* Takes `ssl`, also on failure. */

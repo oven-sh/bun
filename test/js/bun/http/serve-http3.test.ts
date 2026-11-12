@@ -1701,6 +1701,30 @@ describe.concurrent("Bun.serve HTTP/3 lifecycle", () => {
     expect(await proc.exited).toBe(0);
   });
 
+  test("server.stop() resolves as soon as the last H3 connection has closed", async () => {
+    const script = `
+      let answered;
+      const server = Bun.serve({
+        port: 0, tls: ${JSON.stringify(tls)}, http3: true, http1: false,
+        async fetch() {
+          // From a timer, so that no packet leads up to the response.
+          await Bun.sleep(1);
+          server.stop().then(() => console.error("STOPPED", performance.now() - answered < 500 ? "promptly" : "late"));
+          await Bun.sleep(50);
+          answered = performance.now();
+          return new Response("ok");
+        },
+      });
+      console.error("PORT=" + server.port);
+      ${STOP_ON_STDIN_END}
+    `;
+    await withCustomServer(script, async (port, _send, waitForStderr) => {
+      expect(await fetchH3(port, "/").then(r => r.text())).toBe("ok");
+      // A loop that overlooks the close sleeps until the next one-second timer.
+      expect((await waitForStderr(/STOPPED (\w+)/))[1]).toBe("promptly");
+    });
+  });
+
   // The HEADERS of the first response on a connection wait for the QPACK encoder
   // stream, and lsquic takes no DATA until they are out. A small streamed body is
   // therefore written, and the response ended, from the stream's writable

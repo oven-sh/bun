@@ -491,6 +491,7 @@ void us_internal_loop_pre(struct us_loop_t *loop) {
     us_internal_handle_dns_results(loop);
     us_internal_handle_low_priority_sockets(loop);
     loop->data.pre_cb(loop);
+    loop->data.quic_next_tick_us = -1;
 #ifdef LIBUS_USE_QUIC
     /* Flush stream writes that JS tasks made before this tick (timers,
      * immediates, promise resolutions outside on_read) so they go out

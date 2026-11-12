@@ -17,6 +17,21 @@ const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
 const cert = readFileSync(join(keysDir, "agent1-cert.pem"));
 
+// The start of a script for a child process.
+const prelude = /* js */ `
+  import { createPrivateKey } from "node:crypto";
+  import { readFileSync } from "node:fs";
+  import { connect, listen, QuicEndpoint } from "node:quic";
+  const key = createPrivateKey(readFileSync(${JSON.stringify(join(keysDir, "agent1-key.pem"))}));
+  const cert = readFileSync(${JSON.stringify(join(keysDir, "agent1-cert.pem"))});
+  const serve = onsession => listen(onsession, { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"] });
+  const dial = async (address, options) => {
+    const session = await connect(address, { alpn: "quic-test", verifyPeer: "manual", ...options });
+    session.closed.catch(() => {});
+    return session;
+  };
+`;
+
 test.each(["connect", "listen"])("%s() reads each transport parameter once, and uses what it read", async side => {
   const reads: Record<string, number> = {};
   const values = { initialMaxData: 70_000, initialMaxStreamsBidi: 7, maxIdleTimeout: 5, disableActiveMigration: true };
@@ -1068,6 +1083,62 @@ describe("maxConnectionsPerHost", () => {
       outcomes: ["opened", "opened", "ERR_QUIC_TRANSPORT_ERROR", "opened"],
       acceptedAtLimit: 2,
     });
+  });
+});
+
+// With nothing else to wake it, a loop that overlooks this work sleeps until the two-second timer.
+describe.concurrent("the event loop", () => {
+  async function run(body: string) {
+    using dir = tempDir("quic-event-loop", {
+      "entry.js": "export default 1;\n",
+      "main.mjs": /* js */ `
+        ${prelude}
+        const silent = await Bun.udpSocket({ hostname: "127.0.0.1" });
+        silent.unref();
+        const nobody = "127.0.0.1:" + silent.port;
+        const fallback = setTimeout(() => {}, 2000);
+        const since = start => (performance.now() - start < 1000 ? "promptly" : "late");
+        ${body}
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-warnings", "main.mjs"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+  const promptly = { stdout: "promptly", stderr: "", exitCode: 0 };
+  // Calls close() from a timer, so the endpoint reports it just before the loop's next poll.
+  const closeAnEndpoint = `
+    const server = await serve(() => {});
+    await new Promise(resolve => setTimeout(resolve, 1));
+    await server.close();
+    const start = performance.now();
+  `;
+
+  test.each(["setTimeout", "setImmediate"])("runs a %s() made when endpoint.close() resolves", async schedule => {
+    const body = `${closeAnEndpoint} ${schedule}(() => { console.log(since(start)); process.exit(0); }, 1);`;
+    expect(await run(body)).toEqual(promptly);
+  });
+
+  test("exits once endpoint.close() resolves and nothing else is left", async () => {
+    const body = `fallback.unref(); ${closeAnEndpoint} process.on("exit", () => console.log(since(start)));`;
+    expect(await run(body)).toEqual(promptly);
+  });
+
+  test("runs a timer made when a handshake times out during another callback", async () => {
+    const body = `
+      const session = await dial(nobody, { handshakeTimeout: 50 });
+      setTimeout(() => Bun.sleepSync(60), 1);
+      await session.opened.catch(() => {});
+      const start = performance.now();
+      setTimeout(() => { console.log(since(start)); process.exit(0); }, 1);
+    `;
+    expect(await run(body)).toEqual(promptly);
   });
 });
 

@@ -508,9 +508,9 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         return;
     }
 
-    /* loop_pre ran the QUIC drivers and stored the soonest tick they want, so their timers fire without other I/O. */
+    /* loop_pre ran the QUIC drivers and stored the soonest tick they want, so their timers fire without other I/O. The pass can have freed the last driver. */
     struct timespec quic_ts;
-    if (loop->data.quic_head && loop->data.quic_next_tick_us >= 0) {
+    if (loop->data.quic_next_tick_us >= 0) {
         long long us = loop->data.quic_next_tick_us;
         if (!timeout ||
             (long long) timeout->tv_sec * 1000000 + timeout->tv_nsec / 1000 > us) {

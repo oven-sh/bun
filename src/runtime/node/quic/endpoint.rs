@@ -321,16 +321,21 @@ impl QuicEndpoint {
             }
             _ => false,
         };
+        let mut ran = false;
         if self.closed.get() {
             if !draining && self.pending_endpoint_close.replace(false) {
                 self.deliver_endpoint_close(global, CLOSECONTEXT_CLOSE, 0);
+                ran = true;
             }
         } else if follow_up_is_due || self.driver().is_pending() || self.next_pass_us() == 0 {
             self.defer_closes.set(draining);
             self.process(global);
             self.defer_closes.set(false);
+            ran = true;
         }
-        if self.follow_up.get() != FollowUp::None && !self.closed.get() {
+        if (ran && point == PassPoint::BeforePoll)
+            || (self.follow_up.get() != FollowUp::None && !self.closed.get())
+        {
             return 0;
         }
         self.next_pass_us()

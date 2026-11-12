@@ -43,7 +43,8 @@ struct lsquic_conn;
 /* Before `loop` polls, after it has dispatched what the poll returned, and after a microtask drain. */
 enum us_quic_pass_point { US_QUIC_BEFORE_POLL, US_QUIC_AFTER_POLL, US_QUIC_AFTER_MICROTASKS };
 
-/* Runs the owner's engines if they have work. Returns the µs until they want the next pass, or -1. It may free the driver. */
+/* Runs the owner's engines if they have work. Returns the µs until they want the next pass, or -1. It may free the driver.
+ * The poll's timeout predates US_QUIC_BEFORE_POLL, so a pass that ran the application's code there returns 0. */
 typedef int (*us_quic_pass_fn)(us_quic_driver_t *d, enum us_quic_pass_point point);
 
 /* `pass` runs at each point, but after a microtask drain only if the driver is pending. */

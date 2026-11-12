@@ -24,6 +24,7 @@ pub enum PassPoint {
 }
 
 /// Runs the owner's engines if they have work. Returns the µs until they want the next pass, or -1. It may free the driver.
+/// The poll's timeout predates `BeforePoll`, so a pass that ran the application's code there returns 0.
 pub type Pass = unsafe extern "C" fn(driver: *mut Driver, point: PassPoint) -> c_int;
 
 unsafe extern "C" {

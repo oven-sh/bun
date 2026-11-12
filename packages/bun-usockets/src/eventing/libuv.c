@@ -147,8 +147,8 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
 static void prepare_cb(uv_prepare_t *p) {
   struct us_loop_t *loop = p->data;
   us_internal_loop_pre(loop);
-  /* Only a loop iteration releases a parked socket (us_internal_handle_low_priority_sockets). */
-  if (loop->data.low_prio_head) {
+  /* Only a loop iteration releases a parked socket (us_internal_handle_low_priority_sockets), or runs what a QUIC pass queued. */
+  if (loop->data.low_prio_head || loop->data.quic_next_tick_us == 0) {
     us_wakeup_loop(loop);
   }
 }

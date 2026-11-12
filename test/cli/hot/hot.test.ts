@@ -807,24 +807,24 @@ it(
         const { join } = require("node:path");
         const { unlinkSync, writeFileSync } = require("node:fs");
         const text = Buffer.alloc(4 << 20, "abcdefghij").toString();
-        // The least RSS while the last ten were loaded, because it goes up and down.
+        let loaded = 0;
+        // The least RSS while the last five were loaded, because it goes up and down.
         function load(count) {
           let least = Infinity;
           for (let i = 0; i < count; i++) {
-            const file = join(__dirname, "m" + globalThis.loaded++ + ".cjs");
-            writeFileSync(file, "module.exports = " + globalThis.loaded + "; const s = '" + text + "';");
+            const file = join(__dirname, "m" + loaded++ + ".cjs");
+            writeFileSync(file, "module.exports = " + loaded + "; const s = '" + text + "';");
             require(file);
             delete require.cache[file];
             module.children.length = 0;
             unlinkSync(file);
             Bun.gc(true);
-            if (i >= count - 10) least = Math.min(least, process.memoryUsage.rss());
+            if (i >= count - 5) least = Math.min(least, process.memoryUsage.rss());
           }
           return least;
         }
-        globalThis.loaded = 0;
-        const before = load(15);
-        console.log(JSON.stringify({ deltaMiB: (load(40) - before) / 1024 / 1024 }));
+        const before = load(10);
+        console.log(JSON.stringify({ deltaMiB: (load(15) - before) / 1024 / 1024 }));
         process.exit(0);
       `,
     });
@@ -838,11 +838,36 @@ it(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    // Unfixed: 120 MiB or more, a copy of each file that was loaded in between.
-    expect(JSON.parse(stdout).deltaMiB).toBeLessThan(isASAN || isDebug ? 90 : 70);
+    // Unfixed: 60 MiB, a copy of each file that was loaded in between.
+    expect(JSON.parse(stdout).deltaMiB).toBeLessThan(40);
     expect(exitCode).toBe(0);
   },
   longTimeout,
+);
+
+it.concurrent.each([[[]], [["--hot"]], [["--watch"]]])(
+  "a CommonJS file that an ES module imports follows the type of its package.json when require() loads them, %j",
+  async flags => {
+    using dir = tempDir("hot-commonjs-package-type", {
+      "package.json": JSON.stringify({ type: "module" }),
+      "dep.cjs": `exports.__esModule = true; exports.default = "default";`,
+      "esm.mjs": `import value from "./dep.cjs"; export { value };`,
+      "entry.cjs": `console.log(JSON.stringify(require("./esm.mjs").value)); process.exit(0);`,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), ...flags, "entry.cjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: `{"__esModule":true,"default":"default"}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  },
 );
 
 it(

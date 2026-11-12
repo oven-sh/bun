@@ -23,15 +23,11 @@ const files = {
   "c.test.ts": testFile("c"),
 };
 
-async function outputOfTests(flags: string[], moreFiles: Record<string, string>) {
+async function runTests(flags: string[], moreFiles: Record<string, string> = {}) {
   using dir = tempDir("bun-test-isolate-compiled", { ...files, ...moreFiles });
   const cmd = [bunExe(), "test", "--aot", "--preload", "./preload.ts", ...flags];
   const { stdout, stderr, exitCode } = await run(cmd, String(dir), { ...bunEnv, BUN_AOT_VERBOSE: "1" });
-  return { output: stdout + stderr, exitCode };
-}
-
-async function runTests(flags: string[], moreFiles: Record<string, string> = {}) {
-  const { output, exitCode } = await outputOfTests(flags, moreFiles);
+  const output = stdout + stderr;
   return {
     compiledPreloads: output
       .split("\n")
@@ -407,7 +403,7 @@ test("nothing", () => { expect(1).toBe(1); });`,
 });
 
 test("a stand-in does not keep the test file that read it", async () => {
-  const { output, exitCode } = await outputOfTests(["--isolate", "./d.test.ts", "./e.test.ts", "./f.test.ts"], {
+  const { summary, exitCode } = await runTests(["--isolate", "./d.test.ts", "./e.test.ts", "./f.test.ts"], {
     "d.test.ts": `
 import { expect, test } from "bun:test";
 import { existsSync } from "node:fs";
@@ -424,10 +420,5 @@ test("reads what no code that the compiler can follow reads", () => {
     "e.test.ts": fileThatDoesNothing,
     "f.test.ts": lastFile(""),
   });
-  // One line each, so that the line says which: the reads, the count of globals, the marked object, the process.
-  expect(output).not.toMatch(/^(\(fail\)|✗) reads what/m);
-  expect(output).not.toContain("toBeLessThanOrEqual");
-  expect(output).not.toMatch(/^(\(fail\)|✗) the global of/m);
-  expect(output).toMatch(/^ 3 pass$/m);
-  expect(exitCode).toBe(0);
+  expect({ summary, exitCode }).toEqual({ summary: [" 3 pass", " 0 fail"], exitCode: 0 });
 });

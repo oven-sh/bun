@@ -21,4 +21,4 @@ test("b", async () => {
   await import("./weft.mjs");
   const later = await import("./warp.mjs");
   console.log("SAID later is " + (later === globalThis.one ? "the first" : later === globalThis.two ? "the second" : "a third") + " | " + keys(later));
-}, 4000);
+});

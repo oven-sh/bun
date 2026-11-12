@@ -375,12 +375,10 @@ test.concurrent.each(isolatedModes)(
   },
 );
 
-// The reruns of a file share the module graph of the file, whose require map holds the CommonJS module.
-// The timeout is for a debug build that was just linked: its first --isolate=modules run reads much of the binary from disk
-// and takes 5.5 s. Every later run takes 1.6 s. Not concurrent, so that this read takes no time from the tests beside it.
+// Not concurrent: --isolate=modules takes 1.6 s to start in a debug build, and beside the other cases this one can time out.
 test("--rerun-each evaluates a CommonJS test file again for every rerun with --isolate=modules", async () => {
   expect(await rerunCommonJSTestFiles(["--isolate=modules"])).toEqual(everyEvaluationCounted);
-}, 30_000);
+});
 
 async function rerunFiles(prefix: string, files: Record<string, string>, ...args: string[]) {
   using dir = tempDir(prefix, files);

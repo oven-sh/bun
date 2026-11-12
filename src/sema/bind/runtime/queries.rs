@@ -34,7 +34,7 @@ fn symbol_at(column: &[SymbolId], index: usize) -> SymbolId {
 
 pub fn is_among_parameters(hir: &File<'_>, function: FnId, from: ScopeKind, pos: u32) -> bool {
     match hir[function].body {
-        FnBody::Expr(body) => pos < hir[body].pos,
+        FnBody::Expr(body) => hir.position_of_evaluation(pos) < hir[body].pos,
         FnBody::Block(_) | FnBody::None => matches!(from, ScopeKind::Param(_)),
     }
 }
@@ -238,9 +238,53 @@ impl<S: Storage> BoundIn<S> {
         self.file_binding_of_exported_value(declared)
     }
 
+    /// Whether the file or the namespace around it exports the declaration.
+    pub fn is_exported_by_container(&self, decl: Decl) -> bool {
+        let own = declaration_symbol(self, decl);
+        own.is_some() && self.symbol(own).parent.is_some()
+    }
+
+    /// Whether the table that lists `local` has refused a later declaration of its name.
+    pub fn has_refused_declarations(&self, local: SymbolId) -> bool {
+        self.redeclarations.iter().any(|it| it.symbol == local)
+    }
+
+    /// The first of the local's declarations in the file that passes, with those that its table has refused.
+    pub fn first_declaration(
+        &self,
+        hir: &File<'_>,
+        local: SymbolId,
+        passes: impl Fn(Decl) -> bool,
+    ) -> Option<Decl> {
+        let listed = self.symbol(local);
+        let first = listed.decls.iter().copied().find(|&decl| passes(decl));
+        let position_of = |decl: &Decl| match *decl {
+            Decl::Enum(it) => hir[it].name_pos,
+            Decl::Module(it) => hir[it].name_pos,
+            Decl::Class(it) => hir[it].name_pos,
+            Decl::Fn(it) => hir[it].name_pos,
+            _ => u32::MAX,
+        };
+        let refused = self.redeclarations.iter();
+        let refused = refused.filter(|it| it.symbol == local && passes(it.decl));
+        let first_refused = refused.map(|it| it.decl).min_by_key(position_of);
+        first
+            .into_iter()
+            .chain(first_refused)
+            .min_by_key(position_of)
+    }
+
+    /// The symbol under which the value of a local is exported. A type of the same name that conflicts with the value may have replaced the local's `export_symbol`.
+    #[inline]
+    pub fn exported_value(&self, local: SymbolId) -> SymbolId {
+        let replaced = &self.runtime.declarations.exported_values;
+        find_symbol(replaced, local)
+            .unwrap_or_else(|| self.export_symbol_of_value_symbol_if_exported(local))
+    }
+
     #[inline(never)]
     fn file_binding_of_exported_value(&self, declared: SymbolId) -> SymbolId {
-        let exported = self.export_symbol_of_value_symbol_if_exported(declared);
+        let exported = self.exported_value(declared);
         match self.symbol(exported).parent == self.file_symbol {
             true => exported,
             false => declared,
@@ -419,6 +463,14 @@ impl Bound<'_> {
         binding.map_or(Binding::Free, |&binding| self.binding_under_goal(binding))
     }
 
+    /// Whether an export specifier or an import-equals declaration names `symbol`.
+    pub fn is_named_by_export(&self, symbol: SymbolId) -> bool {
+        let binding = Binding::Symbol(symbol);
+        let references = &self.runtime.references;
+        (references.exported_bindings.iter()).any(|entry| entry.1 == binding)
+            || (references.entity_root_bindings.iter()).any(|entry| entry.1 == binding)
+    }
+
     pub fn exports_value(&self, statement: StmtId) -> bool {
         let declared = &self.runtime.declarations.declared_symbols;
         find_symbol(declared, Decl::ExportExpr(statement)) != Some(SymbolId::NONE)
@@ -567,6 +619,13 @@ impl Bound<'_> {
             .get_or_init(ask)
     }
 
+    pub fn redeclared_own_require(
+        &self,
+        find: impl FnOnce() -> Option<SymbolId>,
+    ) -> Option<SymbolId> {
+        *self.runtime.redeclared_own_require.get_or_init(find)
+    }
+
     pub fn stores(&self) -> &[SymbolStore] {
         &self.runtime.references.stores[..]
     }
@@ -577,6 +636,12 @@ impl Bound<'_> {
 
     pub fn import_meta_may_be_modified(&self) -> bool {
         self.runtime.import_meta_may_be_modified
+    }
+
+    /// Whether this file itself writes `import.meta.url` or another of its paths. Code that gets
+    /// `import.meta` from this file isn't looked at.
+    pub fn writes_import_meta_path(&self) -> bool {
+        self.runtime.writes_import_meta_path
     }
 
     #[inline]
@@ -723,6 +788,7 @@ impl Bound<'_> {
         has_bit(&self.runtime.references.evaluated_idents, e.idx())
     }
 
+    /// `function` is a function expression that its own code can get hold of.
     pub fn finds_itself(&self, hir: &File, function: FnId) -> bool {
         let ways = FunctionFlags::USES_ARGUMENTS
             | FunctionFlags::HAS_DIRECT_EVAL

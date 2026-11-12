@@ -147,6 +147,24 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         split.not_taken_value
     }
 
+    fn jump_if_taken_narrowing(
+        &mut self,
+        split: Split,
+        local: Option<SymbolId>,
+        value: ValueId,
+        on_taken: BlockId,
+    ) -> ValueId {
+        let Some(local) = local else {
+            return self.jump_if_taken(split, on_taken);
+        };
+        self.builder.switch_to(split.taken);
+        self.narrow_local(local, value, split.taken_value);
+        self.jump(on_taken);
+        self.builder.switch_to(split.not_taken);
+        self.narrow_local(local, value, split.not_taken_value);
+        split.not_taken_value
+    }
+
     fn finish_split(&mut self, split: Split, on_taken: BlockId, on_not_taken: BlockId) {
         self.jump_if_taken(split, on_taken);
         self.jump(on_not_taken);
@@ -341,7 +359,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let (passed, failed) = order_targets(is_negated, if_true, if_false);
                 let value = self.lower_typeof_operand(operand);
                 self.set_position(self.file.hir[expression].pos);
-                self.jump_by_typeof(value, &[(known::object, passed)], failed);
+                self.jump_by_typeof(value, None, &[(known::object, passed)], failed);
             }
             LeafTest::Comparison { op, left, right } => {
                 self.lower_comparison(op, left, right, if_true, if_false);
@@ -360,6 +378,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(in crate::lower) fn jump_by_typeof(
         &mut self,
         value: ValueId,
+        local: Option<SymbolId>,
         cases: &[(Atom, BlockId)],
         otherwise: BlockId,
     ) {
@@ -368,11 +387,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(on_object) = find_target(known::object) {
             let on_function = find_target(known::function).unwrap_or(otherwise);
             let split = self.split_on_type(remaining, TypeTable::FUNCTION);
-            remaining = self.jump_if_taken(split, on_function);
+            remaining = self.jump_if_taken_narrowing(split, local, value, on_function);
             let types = &mut self.file.fragment.types;
             let object_or_null = types.union(TypeTable::OBJECT, TypeTable::NULL);
             let split = self.split_on_type(remaining, object_or_null);
-            remaining = self.jump_if_taken(split, on_object);
+            remaining = self.jump_if_taken_narrowing(split, local, value, on_object);
         }
         let mut seen: SmallVec<[Atom; 8]> = SmallVec::new();
         for &(name, target) in cases {
@@ -385,7 +404,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             seen.push(name);
             let split = self.split_on_type(remaining, tested);
-            remaining = self.jump_if_taken(split, target);
+            remaining = self.jump_if_taken_narrowing(split, local, value, target);
         }
         self.jump(otherwise);
     }
@@ -403,6 +422,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let right_value = self.lower_expression(right);
         let left_field = left_field.filter(|&field| self.is_holder_unchanged(field));
         let right_field = self.find_compared_field(op, right, left);
+        self.set_position(self.file.hir[left].pos);
         let (test, is_negated) = operator::emit_comparison(self, op, left_value, right_value);
         let (on_taken, on_not_taken) = order_targets(is_negated, if_true, if_false);
         let fields = [left_field, right_field];

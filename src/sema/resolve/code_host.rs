@@ -47,6 +47,7 @@ pub trait CodeHost: Host {
         false
     }
 
+    /// True if `entry`, from the "sideEffects" list of the manifest in `directory`, names `path`.
     fn names_file_with_side_effects(&self, directory: &[u8], entry: &[u8], path: &[u8]) -> bool {
         join_spill::<Posix>(&mut Vec::new(), &[directory, entry]) == path
     }
@@ -57,6 +58,7 @@ pub trait CodeHost: Host {
 
     fn note_guesses_left_out(&self, _file_whose_loader_decides_its_kind: Option<&[u8]>) {}
 
+    /// True if the file, which has no known extension, parses as code.
     fn is_code(&self, _path: &[u8]) -> bool {
         true
     }
@@ -86,7 +88,7 @@ pub trait CodeHost: Host {
         None
     }
 
-    fn create_file_from_data_url(&self, _url: &[u8], _type_attribute: &[u8]) -> Option<Vec<u8>> {
+    fn create_module_from_data_url(&self, _url: &[u8]) -> Option<Vec<u8>> {
         None
     }
 
@@ -197,11 +199,25 @@ pub trait CodeHost: Host {
         None
     }
 
+    /// A file that has run may be read from disk and run again. The host knows once every file is finished.
+    fn may_load_files_again(&self) -> bool {
+        false
+    }
+
+    /// The loader under which the file is an ES module beside the CommonJS file at its path.
+    fn loader_of_module_form(&self, _path: &[u8]) -> Option<HostLoader> {
+        None
+    }
+
     fn is_library_file(&self, _path: &[u8]) -> bool {
         false
     }
 
     fn may_any_file_become_main_module(&self) -> bool {
+        false
+    }
+
+    fn may_start_workers(&self) -> bool {
         false
     }
 

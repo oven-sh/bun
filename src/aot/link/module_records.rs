@@ -5,7 +5,9 @@ use super::entries::build_entries;
 use super::merged_keys::MergedKeys;
 use super::module_table::find_unit;
 use super::numbering::Numbering;
-use super::program_keys::{ProgramFunctionKey, ProgramModule, ProgramVariableKey};
+use super::program_keys::{
+    ProgramFunctionKey, ProgramLayoutKey, ProgramModule, ProgramVariableKey,
+};
 use super::state::{Definitions, ExportWriter, ModuleRecords, ModuleTable, VariableDefinition};
 use super::unit::LinkUnit;
 use super::{LinkProject, key_context};
@@ -16,8 +18,8 @@ use crate::ir::generated::{
 };
 use crate::ir::parallel::{extend_from_lists, map_each};
 use crate::ir::{
-    DataId, FunctionId, Id, IdMap, InParallel, ModuleId, StringId, StringTable, VariableId,
-    VariableKey, for_each_mut,
+    DataId, FunctionId, Id, IdMap, InParallel, LayoutId, LayoutKey, ModuleId, StringId,
+    StringTable, VariableId, VariableKey, for_each_mut,
 };
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProgramFile, ProjectId, SourceKind};
@@ -31,7 +33,7 @@ use bun_ast::Loader;
 use bun_resolve_builtins::HardcodedModule::BUN_ALIASES;
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
-use bun_sema::program::FileId;
+use bun_sema::program::{FileId, Sym};
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::SharedSort;
 use core::ops::Range;
@@ -45,6 +47,7 @@ pub(super) struct RecordInput<'a, 's> {
     pub modules: &'a ModuleTable,
     pub functions: &'a MergedKeys<'a, ProgramFunctionKey>,
     pub variables: &'a MergedKeys<'a, ProgramVariableKey>,
+    pub layouts: &'a MergedKeys<'a, ProgramLayoutKey>,
     pub definitions: &'a Definitions,
     pub numbering: &'a Numbering,
     pub in_parallel: InParallel<'a>,
@@ -70,6 +73,16 @@ impl RecordInput<'_, '_> {
         match merged.and_then(|merged| self.numbering.variables[merged as usize]) {
             Some(id) => id,
             None => panic!("the variable of an export that is read has no id: {key:?}"),
+        }
+    }
+
+    fn instance_layout_of(&self, project: ProjectId, file: FileId) -> LayoutId {
+        let key = LayoutKey::ModuleInstance(file);
+        let key = key_context(self.projects, project).layout_key(key);
+        let merged = self.layouts.find(&key);
+        match merged.and_then(|merged| self.numbering.layouts[merged as usize]) {
+            Some(id) => id,
+            None => panic!("the instance layout of an export that is read has no id: {key:?}"),
         }
     }
 
@@ -292,6 +305,7 @@ fn build_records_of_modules(
     let functions: Vec<Option<FunctionId>> = list_ids_as_they_are(counts.functions);
     let variables: Vec<Option<VariableId>> = list_ids_as_they_are(counts.variables);
     let data: Vec<Option<DataId>> = list_ids_as_they_are(counts.data);
+    let layouts: Vec<Option<LayoutId>> = list_ids_as_they_are(counts.layouts);
     let mut tasks: Vec<(&mut BuiltRecords, Vec<Option<StringId>>)> =
         built.iter_mut().zip(program_ids).collect();
     for_each_mut(&mut tasks, input.in_parallel, &|(records, strings)| {
@@ -301,7 +315,7 @@ fn build_records_of_modules(
             types: &[],
             type_sites: &[],
             expected_results: &[],
-            layouts: &[],
+            layouts: &layouts,
             variables: &variables,
             modules: &modules,
             module_failures: &[],
@@ -368,7 +382,7 @@ pub(super) fn build_module_records(
         &writers_of_exports,
         strings,
     );
-    end_loads_at_modules_that_throw(&mut modules);
+    end_loads_at_modules_that_throw(&mut modules, input);
     let mut builder = RecordBuilder {
         input,
         strings: &mut *strings,
@@ -392,8 +406,51 @@ pub(super) fn build_module_records(
     }
 }
 
-fn follow_only(module: &mut generated::Module, way: Option<ModuleId>) {
-    let written = core::mem::take(&mut module.requests);
+fn find_commonjs_records(input: &RecordInput<'_, '_>, count: usize) -> Vec<bool> {
+    let mut is_commonjs = vec![false; count];
+    for (index, module) in input.modules.modules.iter().enumerate() {
+        let Some(id) = input.numbering.modules[index] else {
+            continue;
+        };
+        is_commonjs[id.index()] = match *module {
+            ProgramModule::Facade(_) => true,
+            ProgramModule::File(file) => {
+                let graph = input.projects.get(file.project).graph;
+                graph.interop(ModuleRef::File(file.file)).kind == ModuleKind::CommonJs
+            }
+            _ => false,
+        };
+    }
+    is_commonjs
+}
+
+/// Of the imports in front of the way, only CommonJS files run before the load fails. In a test run it calls the factories of mocks that deferred imports name.
+fn follow_only(
+    module: &mut generated::Module,
+    way: Option<ModuleId>,
+    runs_before: &[bool],
+    runs_tests: bool,
+) {
+    let mut written = core::mem::take(&mut module.requests);
+    let is_way = |request: &generated::ModuleRequest| {
+        request.kind == ModuleRequestKind::Import && Some(request.target) == way
+    };
+    if let Some(place) = written.iter().position(is_way) {
+        let runs = |it: &generated::ModuleRequest| {
+            it.kind == ModuleRequestKind::Import && !it.is_hoisted && runs_before[it.target.index()]
+        };
+        let (first, others): (Vec<_>, Vec<_>) = written.drain(..place).partition(runs);
+        module.requests = first;
+        written.splice(0..0, others);
+    }
+    let is_deferred = |it: &generated::ModuleRequest| {
+        runs_tests
+            && it.kind == ModuleRequestKind::Import
+            && it.phase == ImportPhase::Defer
+            && !is_way(it)
+    };
+    let (deferred, written): (Vec<_>, Vec<_>) = written.into_iter().partition(is_deferred);
+    module.requests.extend(deferred);
     let followed = way.map(|target| generated::ModuleRequest {
         target,
         phase: ImportPhase::Evaluation,
@@ -425,7 +482,7 @@ fn follow_only(module: &mut generated::Module, way: Option<ModuleId>) {
     module.required_names.clear();
 }
 
-fn end_loads_at_modules_that_throw(modules: &mut [generated::Module]) {
+fn end_loads_at_modules_that_throw(modules: &mut [generated::Module], input: &RecordInput<'_, '_>) {
     let throws = |module: &generated::Module| module.flags.contains(ModuleFlags::THROWS_AT_LOAD);
     let mut on_the_way: Vec<usize> = (0..modules.len())
         .filter(|&index| throws(&modules[index]))
@@ -441,10 +498,19 @@ fn end_loads_at_modules_that_throw(modules: &mut [generated::Module]) {
             }
         }
     }
+    let runs_tests = input
+        .projects
+        .get(ProjectId::Application)
+        .graph
+        .runs_tests();
+    let runs_before = match runs_tests {
+        true => vec![false; modules.len()],
+        false => find_commonjs_records(input, modules.len()),
+    };
     let mut is_found = vec![false; modules.len()];
     for &module in &on_the_way {
         is_found[module] = true;
-        follow_only(&mut modules[module], None);
+        follow_only(&mut modules[module], None, &runs_before, runs_tests);
     }
     let mut next = 0;
     while let Some(&target) = on_the_way.get(next) {
@@ -454,7 +520,12 @@ fn end_loads_at_modules_that_throw(modules: &mut [generated::Module]) {
         }
         for &importer in &importers[target] {
             if !core::mem::replace(&mut is_found[importer], true) {
-                follow_only(&mut modules[importer], Some(ModuleId::new(target)));
+                follow_only(
+                    &mut modules[importer],
+                    Some(ModuleId::new(target)),
+                    &runs_before,
+                    runs_tests,
+                );
                 on_the_way.push(importer);
             }
         }
@@ -560,11 +631,13 @@ const MOST_REQUESTS_WALKED_AS_THEY_STAND: usize = 8;
 type NamesLeftToRun = FxHashMap<(ProgramFile, Atom), Option<(ModuleRef, Atom)>>;
 type WritersOfExports = FxHashMap<(ProgramFile, Atom), FileId>;
 
+/// Where the stars of one file lead, by their places among its requests. A file is asked once for each name that it has from a star.
 struct StarsOfFile {
     first_that_leads_to: FxHashMap<FileId, usize>,
     first_that_lists: FxHashMap<Atom, usize>,
     files_that_run_follows: FxHashSet<FileId>,
     names_that_run_follows: FxHashSet<Atom>,
+    /// The stars that the run follows to a module that a mock names, or to a file that follows stars of its own.
     may_answer: Vec<usize>,
 }
 
@@ -717,10 +790,12 @@ fn mock_may_answer_ahead_of_declaration(
         }
     }
     let requests = graph.in_order_of_stars(ModuleRef::File(file.file), graph.requests(file.file));
+    // A chain of small files would make an index for every file below it, each with every name below: a file with few requests is walked as it stands.
     let stars = (requests.len() > MOST_REQUESTS_WALKED_AS_THEY_STAND).then(|| {
         let stars = answers.stars.entry(file);
         Rc::clone(stars.or_insert_with(|| Rc::new(StarsOfFile::of(graph, atoms, file.file))))
     });
+    // Only the file whose table would lose the name must find it again at the run. Below it a mock may add any name, but not ahead of what a file exports itself.
     let is_found_by_run = match &stars {
         _ if is_below_another => !exports_name_itself(graph, atoms, file.file, name),
         Some(stars) => {
@@ -742,6 +817,7 @@ fn mock_may_answer_ahead_of_declaration(
     let places: &mut dyn Iterator<Item = usize> = match &stars {
         None => &mut (0..requests.len()),
         Some(stars) => {
+            // The walk below ends at the star that leads to the declaring file, or at the first whose file lists the name. Only a star that may answer can end it sooner.
             let ends = [
                 stars.first_that_leads_to.get(&declaring_file),
                 stars.first_that_lists.get(&name),
@@ -777,6 +853,7 @@ fn mock_may_answer_ahead_of_declaration(
             {
                 let comes_from =
                     find_file_that_entry_comes_from(graph, atoms, source, name_in_source);
+                // A file that lacks the name and is named by a mock has it from that mock or not at all.
                 let is_settled_by_own_mock =
                     comes_from.is_none() && graph.is_named_by_mock(ModuleRef::File(source));
                 return !is_settled_by_own_mock && comes_from != Some(declaring_file);
@@ -923,6 +1000,7 @@ fn list_writers_of_exports(
     writers
 }
 
+/// The names from stars that a mock may answer ahead of the file that declares them. They are asked once for the whole program: each task that asked for itself walked the rest of a chain of stars anew.
 fn list_names_left_to_run(input: &RecordInput<'_, '_>) -> NamesLeftToRun {
     let mut answers = AnswersOfMocks::default();
     let mut left_to_run = NamesLeftToRun::default();
@@ -1115,9 +1193,10 @@ impl RecordBuilder<'_, '_, '_> {
     ) -> generated::Module {
         let input = self.input;
         let LinkProject { graph, sources, .. } = *input.projects.get(file.project);
-        let paths = sources.module_paths(file.file);
-        let path = self.strings.intern(paths.public_path);
-        let display_path = self.strings.intern(paths.display_path);
+        let path = self.strings.intern(sources.public_path(file.file));
+        let display_path = self
+            .strings
+            .intern(&sources.path_in_stack_traces(file.file));
         let interop = graph.interop(ModuleRef::File(file.file));
         let mut record = create_record(interop, path, display_path);
         assert!(
@@ -1219,7 +1298,7 @@ impl RecordBuilder<'_, '_, '_> {
         let path = self.strings.intern(format!("#{}", id.index()).as_bytes());
         let display_path = self
             .strings
-            .intern(sources.module_paths(file.file).display_path);
+            .intern(&sources.path_in_stack_traces(file.file));
         let interop = graph.interop(own);
         let mut record = create_record(interop, path, display_path);
         record.flags = self.planned_flags(project, own);
@@ -1383,7 +1462,7 @@ impl RecordBuilder<'_, '_, '_> {
             .filter(|export| export.is_read_from_object)
             .filter_map(|export| {
                 let writer = holder.and_then(|holder| self.find_writer(project, holder, export));
-                let record = self.build_export(project, export)?;
+                let record = self.build_export(project, holder, export)?;
                 Some(generated::ModuleExport { writer, ..record })
             })
             .collect()
@@ -1528,6 +1607,7 @@ impl RecordBuilder<'_, '_, '_> {
         for (exporter, export_name) in handed_on.chain(imported) {
             if let ModuleRef::File(exporter) = exporter
                 && (graph.is_importable_during_evaluation(ModuleRef::File(exporter))
+                    || graph.may_fail_in_require(exporter)
                     || graph.may_be_mocked(ModuleRef::File(exporter)))
                 && !asked_for_default.iter().any(|asked| asked.0 == exporter)
             {
@@ -1559,9 +1639,11 @@ impl RecordBuilder<'_, '_, '_> {
     fn build_export(
         &mut self,
         project: ProjectId,
+        holder: Option<FileId>,
         export: &modules::ModuleExport,
     ) -> Option<generated::ModuleExport> {
         let input = self.input;
+        let holder_project = project;
         let is_found_by_run = match export.binding {
             ExportBinding::Indirect {
                 module: ModuleRef::File(file),
@@ -1590,7 +1672,47 @@ impl RecordBuilder<'_, '_, '_> {
             is_from_star_export: export.is_from_star_export,
             ..generated::ModuleExport::default()
         };
+        let graph = input.projects.get(project).graph;
+        let field_of_instance = match binding {
+            ExportBinding::Variable(symbol) => {
+                let fields = graph.instance_layout(symbol.file);
+                let field = fields.and_then(|fields| fields.field_of_export(symbol.id));
+                field.map(|field| (symbol, field))
+            }
+            _ => None,
+        };
         Some(match binding {
+            _ if let Some((symbol, field)) = field_of_instance => {
+                let exporter = holder.filter(|_| holder_project == project);
+                let own = generated::ModuleExport {
+                    kind: ModuleExportKind::Field,
+                    layout: Some(input.instance_layout_of(project, symbol.file)),
+                    field: Some(field),
+                    ..unbound
+                };
+                if exporter == Some(symbol.file) {
+                    return Some(own);
+                }
+                let path =
+                    exporter.and_then(|file| graph.find_reexport_path(file, export.name, binding));
+                match path.and_then(|path| graph.field_of_path(exporter?, path)) {
+                    Some(link) => {
+                        let (next, name) = self.find_first_hop(project, exporter, export, symbol);
+                        generated::ModuleExport {
+                            link: Some(link),
+                            module: Some(next),
+                            import_name: Some(self.intern_atom(name)),
+                            ..own
+                        }
+                    }
+                    // Nobody reads it from an object, so the instance has no link for it.
+                    None if exporter.is_some_and(|file| graph.instance_layout(file).is_some()) => {
+                        return None;
+                    }
+                    // A module without instances passes on what the current instance holds.
+                    None => own,
+                }
+            }
             ExportBinding::Variable(_) | ExportBinding::Synthetic(_) => {
                 let key = exported_variable_key(input.projects.get(project).graph, binding);
                 let key = key.expect("the binding is a variable");
@@ -1599,19 +1721,35 @@ impl RecordBuilder<'_, '_, '_> {
                     ExportBinding::Synthetic(copy) => commonjs.may_stay_empty(copy),
                     _ => false,
                 };
+                let exporter = holder.filter(|_| holder_project == project);
+                let first = self.find_requested_module(project, exporter, export.name, binding);
                 generated::ModuleExport {
                     kind: ModuleExportKind::Variable,
                     variable: Some(input.exported_variable(project, key)),
                     is_hidden_until_initialized,
+                    requested: first.map(|it| it.0),
+                    import_name: first.map(|it| self.intern_atom(it.1)),
                     ..unbound
                 }
             }
-            ExportBinding::Namespace { module, phase } => generated::ModuleExport {
-                kind: ModuleExportKind::Namespace,
-                module: Some(input.id_of(project, module)),
-                phase,
-                ..unbound
-            },
+            ExportBinding::Namespace { module, phase } => {
+                let exporter = holder.filter(|_| holder_project == project);
+                let link = exporter.and_then(|file| {
+                    graph.instance_layout(file)?;
+                    let path = graph.find_reexport_path(file, export.name, binding)?;
+                    graph.field_of_path(file, path)
+                });
+                let first = self.find_requested_module(project, exporter, export.name, binding);
+                generated::ModuleExport {
+                    kind: ModuleExportKind::Namespace,
+                    module: Some(input.id_of(project, module)),
+                    phase,
+                    link: link.filter(|_| first.is_some()),
+                    requested: first.map(|it| it.0),
+                    import_name: first.map(|it| self.intern_atom(it.1)),
+                    ..unbound
+                }
+            }
             ExportBinding::Indirect { module, name } => generated::ModuleExport {
                 kind: ModuleExportKind::Indirect,
                 module: Some(input.id_of(project, module)),
@@ -1619,6 +1757,61 @@ impl RecordBuilder<'_, '_, '_> {
                 ..unbound
             },
         })
+    }
+
+    /// The module that the re-export `name` of `exporter` names, and the name there, if the instance of `exporter` holds
+    /// a link or a mock word for that module.
+    fn find_requested_module(
+        &self,
+        project: ProjectId,
+        exporter: Option<FileId>,
+        name: Atom,
+        binding: ExportBinding,
+    ) -> Option<(ModuleId, Atom)> {
+        let input = self.input;
+        let graph = input.projects.get(project).graph;
+        let exporter = exporter?;
+        let fields = graph.instance_layout(exporter)?;
+        let (next, name) = graph.find_reexport_of_binding(exporter, name, binding, |_| true)?;
+        if next == exporter || (fields.field_of_link(next).is_none() && !fields.holds_mock_of(next))
+        {
+            return None;
+        }
+        let next = key_context(input.projects, project).module(ModuleRef::File(next));
+        Some((input.find_id(next)?, name))
+    }
+
+    /// The first module with a record that the re-export `export` of `exporter` names, and the name there: at the latest
+    /// the module that declares the variable.
+    fn find_first_hop(
+        &self,
+        project: ProjectId,
+        exporter: Option<FileId>,
+        export: &modules::ModuleExport,
+        declared: Sym,
+    ) -> (ModuleId, Atom) {
+        let input = self.input;
+        let graph = input.projects.get(project).graph;
+        let binding = ExportBinding::Variable(declared);
+        let find_module = |file: FileId| {
+            let module = key_context(input.projects, project).module(ModuleRef::File(file));
+            input.find_id(module)
+        };
+        let first = exporter.and_then(|it| {
+            graph.find_reexport_of_binding(it, export.name, binding, |(file, _)| {
+                find_module(file).is_some()
+            })
+        });
+        if let Some((file, name)) = first
+            && let Some(module) = find_module(file)
+        {
+            return (module, name);
+        }
+        let is_declared = |it: &&modules::ModuleExport| it.binding == binding;
+        let listed = graph.exports(declared.file).iter().find(is_declared);
+        let listed = listed.expect("an instance holds only exported variables");
+        let module = input.id_of(project, ModuleRef::File(declared.file));
+        (module, listed.name)
     }
 
     fn build_synthetic_exports(&mut self, index: u32) -> Vec<generated::SyntheticExport> {

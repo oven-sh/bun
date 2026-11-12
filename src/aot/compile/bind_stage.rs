@@ -1,3 +1,6 @@
+use super::guessed_workers::{
+    describe_guessed_files, describe_silent_failure, find_guessed_names, refuse_guessed_file,
+};
 use super::lower_stage::may_fail_where_loaded;
 use super::program_reach::{
     LeftOutCode, ProgramReachInput, ReachedModules, ReplacedLoaderHook,
@@ -5,34 +8,35 @@ use super::program_reach::{
 };
 use super::summary::{collect_names_followed, collect_program_file_paths};
 use super::{BoundBuild, BoundProject, Build, LoadedBuild};
-use crate::builtins::{
-    BuiltinValuePaths, RuntimeModule, builtin_type_paths, is_module_cache, table,
-};
+use crate::builtins::{BuiltinValuePaths, RuntimeModule, builtin_type_paths, table};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{Diagnostic, Diagnostics, ProgramView, Span, range_of_node};
 use crate::ir::generated::ModuleRequestKind;
 use crate::known_helpers::KnownHelpers;
 use crate::link::run_steps_beside;
+use crate::load::contents::ProgramContents;
 use crate::load::contents::worker_entries::source_path_of;
 use crate::load::loaders::{gives_data, loader_by_path};
 use crate::load::module_paths::compute_display_path;
+use crate::load::plugin_modules::{first_error_of, warn_instead_of_errors};
 use crate::load::source_provider::{RefusedText, SourceProvider};
-use crate::load::sources::{JSON_PARSE_ERROR_FOR_BLANK_TEXT, parsed_source};
+use crate::load::sources::{JSON_PARSE_ERROR_FOR_BLANK_TEXT, Sources, parsed_source};
 use crate::load::{PerProject, ProjectId};
 use crate::module_keys::type_attribute_of;
 use crate::modules::{
     self, BindInput, BoundModules, DeferredExports, ImportBinding, LinkedProject, ModuleGraph,
-    ModuleKind, ModuleRef, ModuleRequest, Shape,
+    ModuleKind, ModuleRef, ModuleRequest, Shape, SiteAnswer,
 };
 use crate::statistics::{Stage, StepClock};
-use bun_ast::Loader;
+use bun_ast::{Loader, Log};
 use bun_options_types::aot_options::ExplainSet;
 use bun_paths::is_absolute;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
+use bun_sema::atom::Atom;
 use bun_sema::bind::{
-    Binding, Decl, FnOwner, FunctionFlags, Parent, ReferentCertainty, ResolvedReferent,
-    StaticReferent, static_referent,
+    Binding, BindingInitializer, CommonJsVariable, Decl, FnOwner, FunctionFlags, Parent,
+    ReferentCertainty, ResolvedReferent, StaticReferent, static_referent,
 };
 use bun_sema::check::aot::{BuiltinTypeSymbols, FunctionRef};
 use bun_sema::fold::{Constant, FoldedValue};
@@ -40,7 +44,7 @@ use bun_sema::hir::{ExprId, ExprKind, Flags, MemberKey, NodeData, PatKind, StmtI
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId, Files, Sym};
 use bun_sema::resolve::CodeImportKind;
-use bun_sema::util::{FxHashSet, SharedSort};
+use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::{from_argument, from_native, to_native};
 
 fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules, left_out_files: &[FileId]) {
@@ -71,22 +75,36 @@ fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules, left_out_fi
         true => graph.find_imports_of_lookups(left_out_files, &keeps),
         false => FxHashSet::default(),
     };
-    graph.limit_requests(|referrer, request| {
+    let keeps = |referrer: ModuleRef, request: &ModuleRequest| {
         let is_needed = matches!(
             (referrer, request.target, request.kind),
             (ModuleRef::File(importer), ModuleRef::File(target), ModuleRequestKind::Import)
                 if needed.contains(&(importer, target))
         );
         is_needed || keeps(referrer, request)
-    });
+    };
+    let unreachable_builtins = match reached.drops_imports() {
+        true => graph.find_unreachable_builtins(left_out_files, &keeps),
+        false => Vec::new(),
+    };
+    graph.limit_requests(keeps);
     graph.add_imports(&reached.readers_of_built_in_modules);
+    graph.add_imports(&unreachable_builtins);
 }
 
 fn key_names_no_file_of_program(files: &Files<'_>, file: FileId, entry: ExprId) -> bool {
     let (hir, analysis) = (files.hir(file), files.analysis(file));
-    let path = match hir.member_key(entry) {
-        Some((_, MemberKey::Name(text) | MemberKey::PrivateName(text))) => text,
-        Some((_, MemberKey::Computed(key))) => {
+    let key_of_deletion = match hir[entry].kind {
+        ExprKind::Call(call) => hir.ids(hir[call].args).nth(1),
+        _ => None,
+    };
+    let key = match key_of_deletion {
+        Some(key) => Some(hir.index_member_key(hir.skip_type_assertions(key))),
+        None => hir.member_key(entry).map(|it| it.1),
+    };
+    let path = match key {
+        Some(MemberKey::Name(text) | MemberKey::PrivateName(text)) => text,
+        Some(MemberKey::Computed(key)) => {
             let key = hir.skip_type_assertions(key);
             if let Some(site) = analysis.import_site_of_call(key)
                 && analysis.import_sites[site].kind == ImportSiteKind::RequireResolve(key)
@@ -111,15 +129,18 @@ fn key_names_no_file_of_program(files: &Files<'_>, file: FileId, entry: ExprId) 
     !is_absolute(path) || !files.by_path.contains(&from_native(path))
 }
 
+/// `clear(require.cache)`, `held.table = require.cache`: whoever gets the table may delete from it. `clear(require)`, `new Loader(Module)`: so may a function that gets
+/// what holds the table, unless it is a built-in function, or one that the build finds and that does nothing with its parameter but call it: `factory(require, exports)`.
+/// A `require` that is exported, returned or stored is followed where it is used.
 fn hands_module_cache_to_code_out_of_sight(
     project: &LinkedProject<'_, '_>,
     file: FileId,
     handed: ExprId,
 ) -> bool {
     let (hir, bound) = (project.files.hir(file), project.files.bound(file));
-    let named = parsed_source(project.files, file)
-        .and_then(|source| source.builtins.builtin_of_expression(handed));
-    if named.is_some_and(is_module_cache) {
+    if parsed_source(project.files, file)
+        .is_some_and(|source| source.builtins.passes_module_cache(handed))
+    {
         return true;
     }
     let mut operand = handed;
@@ -298,6 +319,7 @@ fn name_data_files_found_by_patterns(
     has_found_data
 }
 
+/// Returns true if `e` is in a function, declarator or statement that the executable leaves out, or nested in one. A parent that the walk doesn't know ends it with false.
 fn is_in_left_out_code(files: &Files<'_>, left_out: &LeftOutCode, file: FileId, e: ExprId) -> bool {
     let bound = files.bound(file);
     let mut node = bound.parent_of_expr(e);
@@ -335,6 +357,360 @@ fn is_in_left_out_code(files: &Files<'_>, left_out: &LeftOutCode, file: FileId, 
     }
 }
 
+/// `__dirname` and `__filename` are paths of the build machine in an ES module too, and those lead to every embedded file.
+fn names_build_machine_paths(files: &Files<'_>, file: FileId) -> bool {
+    use CommonJsVariable::{Dirname, Filename};
+    let mut names = files.bound(file).ident_bindings().iter();
+    names.any(|it| matches!(it.1, Binding::CommonJs(Filename | Dirname)))
+}
+
+fn is_builtin_function(
+    files: &Files<'_>,
+    graph: &ModuleGraph,
+    file: FileId,
+    callee: ExprId,
+) -> bool {
+    let binding = match files.bound(file).binding(callee) {
+        Binding::Symbol(id) => Some(graph.import_binding(file, id)),
+        _ => graph.member_binding(file, callee),
+    };
+    matches!(
+        binding,
+        Some(
+            ImportBinding::Builtin(_)
+                | ImportBinding::CapturedBuiltin { .. }
+                | ImportBinding::BuiltinMember { .. }
+        )
+    )
+}
+
+/// Where `file` hands its own folder to code that may search from it. Only a built-in function is known not to: a variable may hold any function, and a function of the file may hand on what it is given.
+fn find_forwarded_folder(
+    files: &Files<'_>,
+    graph: &ModuleGraph,
+    left_out: &LeftOutCode,
+    file: FileId,
+) -> Option<ExprId> {
+    let analysis = files.analysis(file);
+    let is_run = |operand: ExprId| !is_in_left_out_code(files, left_out, file, operand);
+    let is_builtin = |callee: ExprId| is_builtin_function(files, graph, file, callee);
+    let mut handed = analysis.own_folder_arguments.iter();
+    let mut urls = analysis.own_url_arguments.iter().map(|it| it.argument);
+    let may_search = |&&(argument, callee): &&(ExprId, Option<ExprId>)| {
+        is_run(argument) && !callee.is_some_and(is_builtin)
+    };
+    let folder = handed.find(may_search).map(|it| it.0);
+    folder.or_else(|| urls.find(|&it| is_run(it)))
+}
+
+/// The folder of the package that `path` lies in.
+fn find_package_folder(path: &[u8]) -> Option<&[u8]> {
+    const FOLDER: &[u8] = b"/node_modules/";
+    let start = bun_core::strings::last_index_of(path, FOLDER)? + FOLDER.len();
+    let slash_after = |from: usize| {
+        let slash = bun_core::strings::index_of_char_usize(&path[from..], b'/');
+        slash.map(|it| from + it)
+    };
+    let first = slash_after(start)?;
+    let end = match path[start] {
+        b'@' => slash_after(first + 1)?,
+        _ => first,
+    };
+    Some(&path[..end])
+}
+
+/// The texts in `file` that can be the name of a file, where `is_meant` by their place.
+fn list_file_names<'f>(
+    files: &'f Files<'_>,
+    file: FileId,
+    is_meant: impl Fn(u32) -> bool + 'f,
+) -> impl Iterator<Item = &'f [u8]> {
+    let hir = files.hir(file);
+    let expressions = (0..hir.exprs.len() as u32).map(ExprId);
+    let texts = expressions.filter_map(move |e| match hir[e].kind {
+        ExprKind::String(text) if is_meant(hir[e].pos) => Some(files.atoms.bytes(text)),
+        _ => None,
+    });
+    let names = texts.map(bun_paths::basename);
+    names.filter(|it| bun_core::strings::contains_char(it, b'.'))
+}
+
+/// A package hands its own folder to code that reads there at paths that aren't known, as in `find(__dirname)` with `for (const name of ["package.json5", "package.json"])`. The files of the folder that this code names come along.
+fn embed_files_asked_by_name(
+    view: ProgramView<'_, '_>,
+    graph: &ModuleGraph,
+    left_out: &LeftOutCode,
+    provider: &dyn SourceProvider,
+    entry: Option<&[u8]>,
+) {
+    let (files, sources) = (view.files(), view.sources);
+    let Some(entry) = entry else {
+        return;
+    };
+    let is_kept = |file: &FileId| left_out.files.binary_search(file).is_err();
+    let kept = files.compiled_files().iter().copied().filter(is_kept);
+    let mut names_by_package: FxHashMap<&[u8], Vec<(FileId, FxHashSet<&[u8]>)>> =
+        FxHashMap::default();
+    let mut files_that_hand_on = Vec::new();
+    for file in kept {
+        let Some(package) = find_package_folder(files.module(file).file_name()) else {
+            continue;
+        };
+        if let Some(argument) = find_forwarded_folder(files, graph, left_out, file) {
+            files_that_hand_on.push((file, package, argument));
+        }
+        let mut unknown = files.analysis(file).unknown_path_reads.iter();
+        if unknown.any(|&it| !is_in_left_out_code(files, left_out, file, it)) {
+            let names = list_file_names(files, file, |_| true).collect();
+            (names_by_package.entry(package).or_default()).push((file, names));
+        }
+    }
+    for (file, package, argument) in files_that_hand_on {
+        let sites = files.analysis(file).import_sites.iter();
+        let loaded = sites.filter_map(|site| match graph.find_site_answer(file, site.kind)? {
+            SiteAnswer::Module(ModuleRef::File(loaded) | ModuleRef::Facade(loaded)) => {
+                find_package_folder(files.module(loaded).file_name())
+            }
+            _ => None,
+        });
+        // What the file itself reads is known of its own text.
+        let mut asked: Vec<&FxHashSet<&[u8]>> = Vec::new();
+        for package in loaded.chain([package]) {
+            let named = names_by_package.get(package).into_iter().flatten();
+            asked.extend(named.filter(|it| it.0 != file).map(|it| &it.1));
+        }
+        // `find(__dirname, "a.json")`, and the names in a variable.
+        let (hir, bound) = (files.hir(file), files.bound(file));
+        let mut beside = Vec::new();
+        if let Parent::Expr(call) = bound.parent_of_expr(argument) {
+            beside.push(hir[call].pos..hir[call].end);
+            for e in (0..hir.exprs.len() as u32).map(ExprId) {
+                if beside[0].contains(&hir[e].pos)
+                    && matches!(hir[e].kind, ExprKind::Ident(_))
+                    && let Binding::Symbol(variable) = bound.binding(e)
+                    && let BindingInitializer::Expression(value) =
+                        bound.binding_initializer(hir, variable)
+                {
+                    beside.push(hir[value].pos..hir[value].end);
+                }
+            }
+        }
+        let is_beside = |place: u32| beside.iter().any(|it| it.contains(&place));
+        let named_beside: FxHashSet<&[u8]> = list_file_names(files, file, is_beside).collect();
+        asked.push(&named_beside);
+        let module = to_native(files.module(file).file_name());
+        let mut folder = dirname::<Posix>(files.module(file).file_name());
+        while folder.len() >= package.len() && asked.iter().any(|it| !it.is_empty()) {
+            for listed in provider.list_files_to_embed(to_native(folder), false) {
+                let name = bun_paths::basename(&listed);
+                if asked.iter().any(|it| it.contains(name)) {
+                    embed_unless_code(files, sources, provider, (entry, module), &listed, false);
+                }
+            }
+            folder = dirname::<Posix>(folder);
+        }
+    }
+}
+
+/// The path operand of a file read, with a path that it can name.
+struct FileRead {
+    operand: ExprId,
+    path: Vec<u8>,
+    /// The call only asks about the file.
+    is_query: bool,
+    is_listing: bool,
+}
+
+/// The folders of their own that the files of the program make the working directory.
+fn find_folders_entered(files: &Files<'_>, left_out: &LeftOutCode) -> Vec<Vec<u8>> {
+    let mut entered = Vec::new();
+    for &file in files.compiled_files() {
+        let folder = dirname::<Posix>(files.module(file).file_name());
+        for &(operand, path) in files.analysis(file).folders_entered {
+            if !is_in_left_out_code(files, left_out, file, operand) {
+                entered.push(from_argument(folder, files.atoms.bytes(path)));
+            }
+        }
+    }
+    entered.sort_unstable();
+    entered.dedup();
+    entered
+}
+
+fn list_file_reads(
+    files: &Files<'_>,
+    graph: &ModuleGraph,
+    folders_entered: &[Vec<u8>],
+    file: FileId,
+) -> Vec<FileRead> {
+    let analysis = files.analysis(file);
+    let folder = dirname::<Posix>(files.module(file).file_name());
+    let is_listing = |operand: ExprId| analysis.path_listings.binary_search(&operand).is_ok();
+    let is_query = |operand: ExprId| analysis.path_queries.binary_search(&operand).is_ok();
+    let read_by_functions_called = analysis.own_url_arguments.iter().flat_map(move |handed| {
+        let function = match graph.import_binding(file, handed.function) {
+            ImportBinding::Variable(function) => function,
+            _ => Sym {
+                file,
+                id: handed.function,
+            },
+        };
+        let read = files.compiled(function.file).into_iter();
+        read.flat_map(|it| it.analysis.caller_relative_reads)
+            .filter(move |it| {
+                (it.function, it.place, it.property) == (function.id, handed.place, handed.property)
+            })
+            .map(|it| (handed.argument, it.path, it.is_query))
+    });
+    let read = analysis.module_relative_reads.iter();
+    let read = read.map(move |&(operand, path)| (operand, path, is_query(operand)));
+    let is_read_by_function_called = move |callee: ExprId| {
+        let function = match files.bound(file).binding(callee) {
+            Binding::Symbol(id) => match graph.import_binding(file, id) {
+                ImportBinding::Variable(function) => function,
+                _ => Sym { file, id },
+            },
+            _ => match graph.member_binding(file, callee) {
+                Some(ImportBinding::Variable(function)) => function,
+                _ => return false,
+            },
+        };
+        let called = files.compiled(function.file);
+        called.is_some_and(|it| {
+            (it.analysis.reading_functions)
+                .binary_search(&function.id)
+                .is_ok()
+        })
+    };
+    let given = analysis.named_paths.iter();
+    let given = given.filter(move |it| it.callee.is_some_and(is_read_by_function_called));
+    let given = given.map(|it| (it.operand, it.path, false));
+    let read = read.chain(given).chain(read_by_functions_called);
+    let create = |folder: &[u8], (operand, path, is_query): (ExprId, Atom, bool)| FileRead {
+        operand,
+        path: from_argument(folder, files.atoms.bytes(path)),
+        is_query,
+        is_listing: is_listing(operand),
+    };
+    let mut reads: Vec<FileRead> = read.map(|it| create(folder, it)).collect();
+    for folder in folders_entered {
+        let below = analysis.reads_below_working_folder.iter();
+        reads.extend(below.map(|it| create(folder, (it.0, it.1, is_query(it.0)))));
+    }
+    reads
+}
+
+/// Returns true if `operand` stands in the operand of another read of the same path, as `p` does in `readFileSync(realpathSync(p))`.
+fn is_within_other_read(
+    files: &Files<'_>,
+    file: FileId,
+    reads: &[FileRead],
+    read: &FileRead,
+) -> bool {
+    let bound = files.bound(file);
+    let mut inner = read.operand;
+    while let Parent::Expr(outer) = bound.parent_of_expr(inner) {
+        if (reads.iter()).any(|it| it.operand == outer && it.path == read.path) {
+            return true;
+        }
+        inner = outer;
+    }
+    false
+}
+
+/// A folder that holds code is listed with its compiled files.
+fn is_excluded_folder(
+    files: &Files<'_>,
+    sources: &Sources,
+    provider: &dyn SourceProvider,
+    folder: &[u8],
+    pattern: Option<&PathPattern<'_>>,
+) -> bool {
+    let is_there = |path: &Vec<u8>| {
+        let is_code = |found: FileId| !sources.is_data(found);
+        files.by_path.get(&from_native(path)).is_some_and(is_code)
+            || provider.is_embedded_implicitly(path, false)
+    };
+    let Some(mut left_out) = provider.list_excluded_folder(to_native(folder)) else {
+        return false;
+    };
+    if let Some(pattern) = pattern {
+        left_out.retain(|path| pattern.matches(path));
+        if left_out.is_empty() {
+            return false;
+        }
+    }
+    !left_out.iter().any(is_there)
+}
+
+/// A path of which only the start and the end are known.
+struct PathPattern<'a> {
+    folder: Vec<u8>,
+    /// It starts with `folder` and a separator.
+    start: Vec<u8>,
+    end: &'a [u8],
+    /// The start names a folder besides the ones that the module lies in.
+    names_folder: bool,
+}
+
+impl<'a> PathPattern<'a> {
+    fn new(module_folder: &[u8], prefix: &[u8], end: &'a [u8]) -> Option<PathPattern<'a>> {
+        let cut = bun_core::strings::last_index_of_char(prefix, b'/')?;
+        let (written, name) = (&prefix[..cut], &prefix[cut + 1..]);
+        let is_name = |it: &[u8]| !matches!(it, b"" | b"." | b"..");
+        let names_folder = bun_core::strings::split(written, b"/").any(is_name);
+        let folder = from_argument(module_folder, written);
+        Some(PathPattern {
+            start: [&folder[..], b"/", name].concat(),
+            folder,
+            end,
+            names_folder,
+        })
+    }
+
+    fn matches_every_file(&self) -> bool {
+        self.end.is_empty() && self.start.len() == self.folder.len() + 1
+    }
+
+    fn matches(&self, path: &[u8]) -> bool {
+        let path = from_native(path);
+        path.len() >= self.start.len() + self.end.len()
+            && path.starts_with(&self.start)
+            && path.ends_with(self.end)
+    }
+}
+
+fn lists_own_folder(files: &Files<'_>, file: FileId, reads: &[FileRead]) -> bool {
+    let folder = dirname::<Posix>(files.module(file).file_name());
+    let entered = files.analysis(file).folders_entered;
+    let is_entered = |operand: ExprId| entered.iter().any(|it| it.0 == operand);
+    (reads.iter()).any(|it| it.is_listing && it.path == folder && !is_entered(it.operand))
+}
+
+/// What the module at `module` finds in its own folder under `pattern` over its sources, and not in the executable. Code is there compiled.
+fn list_excluded_own_files(
+    files: &Files<'_>,
+    sources: &Sources,
+    provider: &dyn SourceProvider,
+    module: &[u8],
+    pattern: &PathPattern<'_>,
+) -> Vec<Vec<u8>> {
+    let is_code = |path: &Vec<u8>| {
+        (files.by_path.get(&from_native(path))).is_some_and(|it| !sources.is_data(it))
+    };
+    let listed = provider.list_excluded_folder(to_native(&pattern.folder));
+    let mut found = listed.unwrap_or_default();
+    found.retain(|path| pattern.matches(path));
+    if !pattern.matches_every_file() && found.iter().any(is_code) {
+        return Vec::new();
+    }
+    found.retain(|path| {
+        let is_hidden = bun_paths::basename(path).starts_with(b".");
+        !is_hidden && !is_code(path) && provider.is_embeddable_only_by_asset(module, path)
+    });
+    found.iter().map(|path| from_native(path)).collect()
+}
+
 fn warn_about_unembedded_reads(
     diagnostics: &mut Diagnostics,
     view: ProgramView<'_, '_>,
@@ -342,57 +718,432 @@ fn warn_about_unembedded_reads(
     left_out: &LeftOutCode,
     project_root: &[u8],
     provider: &dyn SourceProvider,
+    lists_files: bool,
 ) {
     let (files, sources) = (view.files(), view.sources);
     let is_kept = |file: FileId| left_out.files.binary_search(&file).is_err();
+    let path_of = |file: FileId| to_native(files.module(file).file_name());
+    let entry = files.entry_points().first().map(|&file| path_of(file));
+    let mut searched = Vec::new();
+    for &file in files.compiled_files().iter().filter(|&&file| is_kept(file)) {
+        let mut unknown = files.analysis(file).unknown_path_reads.iter().copied();
+        let is_run = |&operand: &ExprId| !is_in_left_out_code(files, left_out, file, operand);
+        let find_handed_on = || find_forwarded_folder(files, graph, left_out, file);
+        let unknown = unknown.find(is_run);
+        if unknown.is_some() {
+            provider.note_reads_of_unknown_paths();
+        }
+        if let Some(operand) = unknown.or_else(find_handed_on) {
+            let added = provider.embed_package_json_files(path_of(file));
+            searched.extend(added.into_iter().map(|path| (file, operand, path)));
+        }
+    }
+    embed_files_asked_by_name(view, graph, left_out, provider, entry);
+    let folders_entered = find_folders_entered(files, left_out);
+    let list_reads = |file: FileId| list_file_reads(files, graph, &folders_entered, file);
+    // By the folder of the module.
+    let mut folders_embedded: FxHashSet<(Vec<u8>, Vec<u8>)> = FxHashSet::default();
+    let mut patterns_embedded: FxHashSet<((Vec<u8>, Vec<u8>), Vec<u8>, bool)> =
+        FxHashSet::default();
+    // A file that is only asked about is embedded without its bytes. One that another call reads has them, wherever that call stands.
     for &file in files.compiled_files().iter().filter(|&&file| is_kept(file)) {
         let folder = dirname::<Posix>(files.module(file).file_name());
-        let analysis = files.analysis(file);
-        let read_by_functions_called = analysis.own_url_arguments.iter().flat_map(|handed| {
-            let function = match graph.import_binding(file, handed.function) {
-                ImportBinding::Variable(function) => function,
-                _ => Sym {
-                    file,
-                    id: handed.function,
-                },
-            };
-            let read = files.compiled(function.file).into_iter();
-            read.flat_map(|it| it.analysis.caller_relative_reads)
-                .filter(move |it| {
-                    (it.function, it.place, it.property)
-                        == (function.id, handed.place, handed.property)
-                })
-                .map(|it| (handed.argument, it.path))
-        });
-        let read = analysis.module_relative_reads.iter().copied();
-        for (operand, path) in read.chain(read_by_functions_called) {
-            let path = from_argument(folder, files.atoms.bytes(path));
+        for read in list_reads(file) {
+            let path = read.path;
+            let is_query = read.is_query && !provider.is_searched_for(to_native(&path));
             let is_code = (files.by_path.get(&path)).is_some_and(|found| !sources.is_data(found));
-            let is_not_embedded =
-                !is_code && provider.is_embeddable_only_by_asset(to_native(&path));
-            let may_not_be_embedded =
-                !is_code && !is_not_embedded && provider.is_embedding_undecided(to_native(&path));
+            if let (false, Some(entry)) = (is_code, entry)
+                && !is_in_left_out_code(files, left_out, file, read.operand)
+            {
+                let module = path_of(file);
+                provider.embed_file_implicitly(entry, module, to_native(&path), is_query);
+                if read.is_listing && folders_embedded.insert((folder.to_vec(), path.clone())) {
+                    for listed in provider.list_files_to_embed(to_native(&path), true) {
+                        embed_unless_code(
+                            files,
+                            sources,
+                            provider,
+                            (entry, module),
+                            &listed,
+                            false,
+                        );
+                    }
+                }
+            }
+        }
+        let analysis = files.analysis(file);
+        for named in analysis.named_paths {
+            let path = from_argument(folder, files.atoms.bytes(named.path));
+            if files.by_path.get(&path).is_none()
+                && !is_in_left_out_code(files, left_out, file, named.operand)
+            {
+                provider.embed_named_file(path_of(file), to_native(&path));
+            }
+        }
+        for &(operand, prefix, suffix) in analysis.module_relative_patterns {
+            let (prefix, suffix) = (files.atoms.bytes(prefix), files.atoms.bytes(suffix));
+            let Some((pattern, entry)) = PathPattern::new(folder, prefix, suffix).zip(entry) else {
+                continue;
+            };
+            let is_any_own_file = !pattern.names_folder && pattern.matches_every_file();
+            if is_any_own_file || is_in_left_out_code(files, left_out, file, operand) {
+                continue;
+            }
+            let is_query = analysis.path_queries.binary_search(&operand).is_ok();
+            let start = (folder.to_vec(), pattern.start.clone());
+            if !patterns_embedded.insert((start, suffix.to_vec(), is_query)) {
+                continue;
+            }
+            let from = (entry, path_of(file));
+            let below = pattern.names_folder;
+            for found in provider.list_files_to_embed(to_native(&pattern.folder), below) {
+                if pattern.matches(&found) {
+                    embed_unless_code(files, sources, provider, from, &found, is_query);
+                }
+            }
+        }
+    }
+    let kept = files.compiled_files().iter().filter(|&&file| is_kept(file));
+    let module_paths: Vec<&[u8]> = kept.map(|&file| path_of(file)).collect();
+    let nearer = provider.fill_package_json_gaps(&module_paths);
+    // What is noted is still embedded: a `package.json` goes out again where a nearer one can't be embedded.
+    let is_noted = |path: &[u8]| lists_files && provider.is_embedded_implicitly(path, false);
+    for (file, operand, path) in searched.iter().filter(|it| is_noted(&it.2)) {
+        let span = Span::of_node(files.hir(*file), *file, NodeData::Expr(*operand));
+        let name = compute_display_path(project_root, path);
+        let code = Code::PackageJsonEmbeddedImplicitly;
+        diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[&name]));
+    }
+    for (path, found) in nearer.iter().filter(|it| is_noted(&it.0)) {
+        let name = compute_display_path(project_root, path);
+        let found = compute_display_path(project_root, found);
+        let code = Code::NearerPackageJsonEmbedded;
+        diagnostics.add(Some(view), Diagnostic::new(code, None, &[&name, &found]));
+    }
+    let (mut created, mut listers) = (None, None);
+    for &file in files.compiled_files().iter().filter(|&&file| is_kept(file)) {
+        let folder = dirname::<Posix>(files.module(file).file_name());
+        let mut names_build_paths = None;
+        let reads = list_reads(file);
+        for read in &reads {
+            let (operand, path) = (read.operand, &read.path);
+            let is_query = read.is_query && !provider.is_searched_for(to_native(path));
+            let is_code = (files.by_path.get(path)).is_some_and(|found| !sources.is_data(found));
+            if !is_code && provider.is_embedded_implicitly(to_native(path), is_query) {
+                if lists_files && !is_query && !is_in_left_out_code(files, left_out, file, operand)
+                {
+                    let span = Span::of_node(files.hir(file), file, NodeData::Expr(operand));
+                    let name = compute_display_path(project_root, to_native(path));
+                    let code = Code::FileEmbeddedImplicitly;
+                    diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[&name]));
+                }
+                continue;
+            }
+            let module = path_of(file);
+            let is_not_embedded = !is_code
+                && (provider.is_embeddable_only_by_asset(module, to_native(path))
+                    || read.is_listing && is_excluded_folder(files, sources, provider, path, None));
+            let may_not_be_embedded = !is_code
+                && !is_not_embedded
+                && provider.is_embedding_undecided(module, to_native(path));
             if !is_not_embedded && !may_not_be_embedded {
+                let module = to_native(files.module(file).file_name());
+                let is_unreachable_asset = !is_code
+                    && graph.kind(file) == ModuleKind::SourceText
+                    && provider.is_asset_unreachable(module, to_native(path))
+                    && !*names_build_paths
+                        .get_or_insert_with(|| names_build_machine_paths(files, file))
+                    && !is_in_left_out_code(files, left_out, file, operand);
+                if is_unreachable_asset {
+                    let span = Span::of_node(files.hir(file), file, NodeData::Expr(operand));
+                    let name = compute_display_path(project_root, to_native(path));
+                    let code = Code::EmbeddedFileUnreachable;
+                    diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[&name]));
+                }
                 continue;
             }
             if is_in_left_out_code(files, left_out, file, operand) {
                 continue;
             }
+            if is_within_other_read(files, file, &reads, read) {
+                continue;
+            }
             let span = Span::of_node(files.hir(file), file, NodeData::Expr(operand));
-            let name = compute_display_path(project_root, to_native(&path));
-            let warning = Diagnostic::new(Code::UnembeddedFileRead, Some(span), &[&name]);
+            let name = compute_display_path(project_root, to_native(path));
+            let link = provider.find_symlink_in_asset(to_native(path));
+            let link = link.map(|link| compute_display_path(project_root, &link));
+            let warning = match &link {
+                Some(link) => {
+                    Diagnostic::new(Code::FileBehindAssetSymlink, Some(span), &[&name, link])
+                }
+                None => Diagnostic::new(Code::UnembeddedFileRead, Some(span), &[&name]),
+            };
             match is_not_embedded {
                 true => diagnostics.add(Some(view), warning),
                 false => {
                     if let Some(warning) = Diagnostics::render(view, warning) {
-                        provider.warn_if_not_embedded(to_native(&path), warning);
+                        provider.warn_if_not_embedded(to_native(path), warning);
                     }
                 }
+            }
+        }
+        let analysis = files.analysis(file);
+        let mut named = find_excluded_named_paths(view, left_out, file, &reads, provider);
+        named.extend(find_searches_missing_manifests(
+            files, graph, left_out, file, provider,
+        ));
+        let listers = listers.get_or_insert_with(|| find_listers(files, left_out, provider));
+        named.extend(find_folders_listed_in_part(
+            view, graph, left_out, file, listers, provider,
+        ));
+        for (operand, path, code) in named {
+            let created = created.get_or_insert_with(|| collect_paths_created(files));
+            let holds_module = is_at_or_below(files.module(file).file_name(), &path);
+            let is_created =
+                (created.iter()).any(|it| is_at_or_below(it, &path) || is_at_or_below(&path, it));
+            if is_created && !holds_module {
+                continue;
+            }
+            let span = Span::of_node(files.hir(file), file, NodeData::Expr(operand));
+            let name = compute_display_path(project_root, to_native(&path));
+            let name = match &name[..] {
+                b"" => b".",
+                name => name,
+            };
+            let warning = Diagnostic::new(code, Some(span), &[name]);
+            diagnostics.add(Some(view), warning);
+        }
+        for &(operand, prefix, suffix) in analysis.module_relative_patterns {
+            let (prefix, suffix) = (files.atoms.bytes(prefix), files.atoms.bytes(suffix));
+            let is_query = || analysis.path_queries.binary_search(&operand).is_ok();
+            let Some(pattern) = PathPattern::new(folder, prefix, suffix) else {
+                continue;
+            };
+            if is_query() || is_in_left_out_code(files, left_out, file, operand) {
+                continue;
+            }
+            let paths = if pattern.names_folder {
+                let is_left_out =
+                    is_excluded_folder(files, sources, provider, &pattern.folder, Some(&pattern));
+                Vec::from_iter(is_left_out.then(|| pattern.folder.clone()))
+            } else if !pattern.matches_every_file() || lists_own_folder(files, file, &reads) {
+                list_excluded_own_files(files, sources, provider, path_of(file), &pattern)
+            } else {
+                Vec::new()
+            };
+            for path in paths {
+                let span = Span::of_node(files.hir(file), file, NodeData::Expr(operand));
+                let name = compute_display_path(project_root, to_native(&path));
+                let warning = Diagnostic::new(Code::UnembeddedFileRead, Some(span), &[&name]);
+                diagnostics.add(Some(view), warning);
             }
         }
     }
 }
 
+fn collect_paths_created(files: &Files<'_>) -> Vec<Vec<u8>> {
+    let mut created = Vec::new();
+    for &file in files.compiled_files() {
+        let folder = dirname::<Posix>(files.module(file).file_name());
+        let paths = files.analysis(file).paths_created.iter();
+        created.extend(paths.map(|&it| from_argument(folder, files.atoms.bytes(it))));
+    }
+    created
+}
+
+fn is_at_or_below(descendant: &[u8], ancestor: &[u8]) -> bool {
+    (descendant.strip_prefix(ancestor))
+        .is_some_and(|below| below.is_empty() || below[0] == b'/' || ancestor.ends_with(b"/"))
+}
+
+/// The folders of the installed packages that list a folder whose path is not known: `fs.readdirSync(folder)`.
+fn find_listers(
+    files: &Files<'_>,
+    left_out: &LeftOutCode,
+    provider: &dyn SourceProvider,
+) -> FxHashSet<Vec<u8>> {
+    let lists = |&&file: &&FileId| {
+        let analysis = files.analysis(file);
+        (analysis.unknown_path_reads.iter()).any(|operand| {
+            analysis.path_listings.binary_search(operand).is_ok()
+                && !is_in_left_out_code(files, left_out, file, *operand)
+        })
+    };
+    let is_kept = |&&file: &&FileId| left_out.files.binary_search(&file).is_err();
+    let lister = files.compiled_files().iter().filter(is_kept).filter(lists);
+    lister
+        .filter_map(|&file| provider.find_package_folder(to_native(files.module(file).file_name())))
+        .collect()
+}
+
+/// Folders of a package that it hands on where it, or a package that it loads, is one of `listers`, and of which the executable holds some files alone.
+fn find_folders_listed_in_part(
+    view: ProgramView<'_, '_>,
+    graph: &ModuleGraph,
+    left_out: &LeftOutCode,
+    file: FileId,
+    listers: &FxHashSet<Vec<u8>>,
+    provider: &dyn SourceProvider,
+) -> Vec<(ExprId, Vec<u8>, Code)> {
+    let (files, sources) = (view.files(), view.sources);
+    let package_of =
+        |file: FileId| provider.find_package_folder(to_native(files.module(file).file_name()));
+    let lists = |file: FileId| package_of(file).is_some_and(|it| listers.contains(&it));
+    let analysis = files.analysis(file);
+    let loads_lister = || {
+        let mut loaded = graph.requests(file).iter();
+        loaded.any(|it| matches!(it.target, ModuleRef::File(target) if lists(target)))
+    };
+    let hands_on = !analysis.own_folder_arguments.is_empty() || !analysis.named_paths.is_empty();
+    if !hands_on || package_of(file).is_none() || !(lists(file) || loads_lister()) {
+        return Vec::new();
+    }
+    let folder = dirname::<Posix>(files.module(file).file_name());
+    // `path.join(__dirname, "lib")` hands on the folder that it names.
+    let is_named = |operand: ExprId| analysis.named_paths.iter().any(|it| it.operand == operand);
+    let own = (analysis.own_folder_arguments.iter()).filter(|it| !is_named(it.0));
+    let own = own.map(|&(operand, callee)| (operand, callee, folder.to_vec()));
+    let named = analysis
+        .named_paths
+        .iter()
+        .filter(|it| !it.is_needed_on_disk);
+    let named = named.map(|it| {
+        let path = from_argument(folder, files.atoms.bytes(it.path));
+        (it.operand, it.callee, path)
+    });
+    let is_there = |path: &Vec<u8>| {
+        let is_code = |found: FileId| !sources.is_data(found);
+        files.by_path.get(&from_native(path)).is_some_and(is_code)
+            || provider.is_embedded_implicitly(path, false)
+    };
+    let is_in_part = |path: &[u8]| {
+        let listed = provider
+            .list_excluded_folder(to_native(path))
+            .unwrap_or_default();
+        listed.iter().any(is_there) && !listed.iter().all(is_there)
+    };
+    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+    let mut found = Vec::new();
+    for (operand, callee, path) in own.chain(named) {
+        let is_builtin = |callee: ExprId| is_builtin_function(files, graph, file, callee);
+        if callee.is_some_and(|it| !is_builtin(it))
+            && !is_in_left_out_code(files, left_out, file, operand)
+            && is_in_part(&path)
+            && seen.insert(path.clone())
+        {
+            found.push((operand, path, Code::FolderListedInPart));
+        }
+    }
+    found
+}
+
+/// `operand` is the value in `name = operand`, as in the next step of a loop that climbs by itself: `folder = path.dirname(folder)`.
+fn is_assigned_to_variable(files: &Files<'_>, file: FileId, operand: ExprId) -> bool {
+    let hir = files.hir(file);
+    let Parent::Expr(above) = files.bound(file).parent_of_expr(operand) else {
+        return false;
+    };
+    matches!(hir[above].kind, ExprKind::Assign { op: None, target, value }
+        if value == operand && matches!(hir[target].kind, ExprKind::Ident(_)))
+}
+
+/// Folders that a file of a package hands to code which may search from them and would find another `package.json` in the executable: `find(path.join(__dirname, ".."))`.
+fn find_searches_missing_manifests(
+    files: &Files<'_>,
+    graph: &ModuleGraph,
+    left_out: &LeftOutCode,
+    file: FileId,
+    provider: &dyn SourceProvider,
+) -> Vec<(ExprId, Vec<u8>, Code)> {
+    let module = files.module(file).file_name();
+    let folder = dirname::<Posix>(module);
+    let mut seen: FxHashSet<Atom> = FxHashSet::default();
+    let mut found = Vec::new();
+    for named in files.analysis(file).named_paths {
+        // A method of some value and a global function are taken for the language's own: `list.push(..)`, `new Error(..)`.
+        let is_name_of_file = |callee: ExprId| {
+            matches!(files.bound(file).binding(callee), Binding::Symbol(_))
+                && !is_builtin_function(files, graph, file, callee)
+        };
+        let may_search = named.is_passed_to_package || named.callee.is_none_or(is_name_of_file);
+        let is_next_step =
+            named.callee.is_none() && is_assigned_to_variable(files, file, named.operand);
+        if named.is_needed_on_disk || !may_search || is_next_step {
+            continue;
+        }
+        let path = from_argument(folder, files.atoms.bytes(named.path));
+        if provider.search_misses_manifest(to_native(module), to_native(&path))
+            && !is_in_left_out_code(files, left_out, file, named.operand)
+            && seen.insert(named.path)
+        {
+            found.push((named.operand, path, Code::SearchMissesPackageJson));
+        }
+    }
+    found
+}
+
+/// Paths that a file of the project passes to code which may read them: `express.static(path.join(import.meta.dirname, "public"))`.
+fn find_excluded_named_paths(
+    view: ProgramView<'_, '_>,
+    left_out: &LeftOutCode,
+    file: FileId,
+    reads: &[FileRead],
+    provider: &dyn SourceProvider,
+) -> Vec<(ExprId, Vec<u8>, Code)> {
+    let (files, sources) = (view.files(), view.sources);
+    let module = files.module(file).file_name();
+    let is_of_project = provider.is_own_module_of_project(to_native(module));
+    let folder = dirname::<Posix>(module);
+    let mut found = Vec::new();
+    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
+    for named in files.analysis(file).named_paths {
+        let code = match (named.is_needed_on_disk, named.is_passed_to_package) {
+            (true, _) => Code::PathNeededOnDisk,
+            (false, true) if is_of_project => Code::NamedPathNotEmbedded,
+            _ => continue,
+        };
+        let path = from_argument(folder, files.atoms.bytes(named.path));
+        let is_code = (files.by_path.get(&path)).is_some_and(|found| !sources.is_data(found));
+        let is_around_module = is_at_or_below(module, &path) && !named.becomes_working_folder;
+        if is_around_module || is_code || !seen.insert(path.clone()) {
+            continue;
+        }
+        let is_left_out = match code {
+            Code::PathNeededOnDisk => provider.is_on_disk(to_native(module), to_native(&path)),
+            _ => {
+                let holds_files = || {
+                    let listed = provider.list_excluded_folder(to_native(&path));
+                    listed.is_some_and(|it| !it.is_empty())
+                        && is_excluded_folder(files, sources, provider, &path, None)
+                };
+                !reads.iter().any(|it| it.path == path)
+                    && (provider.is_embeddable_only_by_asset(to_native(module), to_native(&path))
+                        || holds_files())
+            }
+        };
+        if is_left_out && !is_in_left_out_code(files, left_out, file, named.operand) {
+            found.push((named.operand, path, code));
+        }
+    }
+    found
+}
+
+/// `from` is the entry and the module that reads `path`.
+fn embed_unless_code(
+    files: &Files<'_>,
+    sources: &Sources,
+    provider: &dyn SourceProvider,
+    from: (&[u8], &[u8]),
+    path: &[u8],
+    is_query: bool,
+) {
+    let found = files.by_path.get(&from_native(path));
+    if found.is_none_or(|found| sources.is_data(found)) {
+        provider.embed_file_implicitly(from.0, from.1, path, is_query);
+    }
+}
+
+/// In the executable `node:fs` lists every compiled file.
 fn keep_paths_of_code_that_file_system_sees(
     view: ProgramView<'_, '_>,
     left_out: &LeftOutCode,
@@ -543,6 +1294,56 @@ impl Build<'_> {
         self.diagnostics.add_load_messages(loaded.messages);
     }
 
+    fn describe_guesses(
+        &mut self,
+        view: ProgramView<'_, '_>,
+        graph: &ModuleGraph,
+        left_out: &LeftOutCode,
+        contents: &ProgramContents,
+    ) {
+        let project_root = &self.options.load.project_root;
+        let is_kept = |file: &FileId| left_out.files.binary_search(file).is_err();
+        let mut names = find_guessed_names(
+            view.files(),
+            self.options.entry_points.len(),
+            &contents.found_entry_points,
+            &self.files_of_guesses,
+        );
+        names.retain(|file, _| is_kept(file));
+        let lists_places = self.options.aot.explain.contains(ExplainSet::TEXT);
+        for note in describe_guessed_files(view, project_root, &names, lists_places) {
+            self.diagnostics.add(Some(view), note);
+        }
+        for &file in self.files_of_guesses.iter().filter(|file| is_kept(file)) {
+            let failures = graph.failures().iter().filter(|it| it.importer == file);
+            let mut reasons = failures.filter_map(|it| describe_silent_failure(view, it));
+            if let Some(reason) = reasons.next() {
+                let warning = refuse_guessed_file(view, project_root, file, &reason);
+                self.diagnostics.add(Some(view), warning);
+            }
+        }
+    }
+
+    /// The files of guesses that the program doesn't name in a type either.
+    fn find_files_without_type_references(
+        &self,
+        files: &Files<'_>,
+        contents: &ProgramContents,
+    ) -> Vec<FileId> {
+        if self.files_of_guesses.is_empty() {
+            return Vec::new();
+        }
+        let found = contents.found_entry_points.iter();
+        let is_guess = found.map(|it| it.is_guess);
+        let written = self.options.entry_points.iter().map(|_| false);
+        let entry_points = files.entry_points().iter().zip(written.chain(is_guess));
+        let sure = entry_points.filter(|it| !it.1).map(|it| *it.0).collect();
+        let is_named = files.reached_from(sure);
+        let mut guessed = self.files_of_guesses.clone();
+        guessed.retain(|file| !is_named[file.idx()]);
+        guessed
+    }
+
     fn bundle_pages(
         &mut self,
         loaded: &LoadedBuild<'_, '_>,
@@ -578,11 +1379,31 @@ impl Build<'_> {
                 None => sources.diagnostic_path(page),
             }
         };
-        let paths: Vec<&[u8]> = pages.iter().map(path_of).collect();
         let provider = self.provider;
-        let manifests = loaded
-            .messages
-            .with_log(|log| provider.bundle_pages(&paths, log));
+        let bundle = |pages: &[FileId], log: &mut Log| {
+            let paths: Vec<&[u8]> = pages.iter().map(path_of).collect();
+            provider.bundle_pages(&paths, log)
+        };
+        let mut said = Log::init();
+        let mut manifests = bundle(&pages, &mut said);
+        let is_guessed = |page: &FileId| self.files_of_guesses.binary_search(page).is_ok();
+        if manifests.is_err() && pages.iter().any(is_guessed) {
+            let (guessed, sure) = pages.into_iter().partition(is_guessed);
+            let guessed: Vec<FileId> = guessed;
+            pages = sure;
+            let mut said_of_sure = Log::init();
+            manifests = bundle(&pages, &mut said_of_sure);
+            if manifests.is_ok() {
+                let sentence = first_error_of(&said);
+                warn_instead_of_errors(&mut said);
+                loaded.messages.say(&mut said);
+                let refused = &mut self.refused_guessed_files;
+                refused.extend(guessed.into_iter().map(|page| (page, sentence.clone())));
+                refused.sort_unstable();
+            }
+            said = said_of_sure;
+        }
+        loaded.messages.say(&mut said);
         self.diagnostics.add_load_messages(loaded.messages);
         let Ok(manifests) = manifests else {
             return Vec::new();
@@ -646,7 +1467,8 @@ impl Build<'_> {
             hands_on_any_module: contents.loads_by_unknown_name
                 || contents.loads_by_unknown_path
                 || (project == ProjectId::Application
-                    && contents.run.loader_functions_answer_requires),
+                    && (contents.run.loader_functions_answer_requires
+                        || self.options.aot.admits_inspector)),
             any_module_loads_again: self.options.load.runs_tests && contents.any_module_loads_again,
             runs_tests: self.options.load.runs_tests,
             runner_starts_entry_points: project == ProjectId::Application
@@ -711,6 +1533,18 @@ impl Build<'_> {
                     .filter(|_| self.runner_starts_entry_points())
                     .collect();
                 files_started_by_runner.sort_unstable();
+                let workers = view.files().entry_points().iter().copied();
+                let workers = workers
+                    .skip(written_entry_point_count)
+                    .zip(&contents.found_entry_points)
+                    .filter(|(_, found)| found.because.is_for_worker())
+                    .map(|(file, _)| file);
+                let written = view.files().entry_points().iter().copied();
+                let mut files_with_kept_imports: Vec<FileId> = written
+                    .take(written_entry_point_count)
+                    .chain(workers)
+                    .collect();
+                files_with_kept_imports.sort_unstable();
                 let found = view.files().entry_points().get(written_entry_point_count..);
                 let found = found
                     .unwrap_or_default()
@@ -724,6 +1558,7 @@ impl Build<'_> {
                     .collect();
                 starts_of_workers
                     .sort_unstable_by_key(|&(file, at, entry_point)| (file, at.0, entry_point));
+                // What the build compiles only because a Worker may start it is no root of the program's own.
                 let host = loaded.project(project).host;
                 let found_entry_points = view.files().entry_points().iter().copied();
                 let seeded_last: Vec<FileId> = found_entry_points
@@ -754,6 +1589,7 @@ impl Build<'_> {
                     isolates_code_from_disk: self.options.aot.isolates_code_from_disk,
                     mocks_any_module: contents.mocks_any_module || contents.stores_loader_functions,
                     files_started_by_runner: &files_started_by_runner,
+                    files_with_kept_imports: &files_with_kept_imports,
                     starts_of_workers: &starts_of_workers,
                     beside: &beside,
                 };
@@ -770,7 +1606,8 @@ impl Build<'_> {
                     || find_left_out_code_seeding_last(&input, &seeded_last, &in_parallel),
                 );
                 let alone = &left_out.files_alive_through_last_seeds_alone;
-                loaded.project(project).loaded.hold_as_evaluated_text(alone);
+                let guessed = self.find_files_without_type_references(view.files(), contents);
+                (loaded.project(project).loaded).settle_origins(alone, &guessed);
                 let held = program_files.into_iter();
                 let held = held.filter(|(file, _)| left_out.files.binary_search(file).is_err());
                 self.started_workers.program_files = held.map(|(_, paths)| paths).collect();
@@ -833,6 +1670,7 @@ impl Build<'_> {
                         builtin_names: loaded.builtin_names,
                         platform: self.platform,
                         library: None,
+                        known_helpers: None,
                     };
                     for &(file, place) in &reached.places_that_hand_module_cache_on {
                         if !hands_module_cache_to_code_out_of_sight(&linked, file, place) {
@@ -858,7 +1696,9 @@ impl Build<'_> {
                 }
                 steps.end_with(|| format!("{project_name}: root folders that paths spell"));
                 warn_where_modules_are_reset(&mut self.diagnostics, view, &left_out);
-                for warning in std::mem::take(&mut self.resolves_that_miss) {
+                let without_file = std::mem::take(&mut self.missing_node_workers);
+                let resolves = std::mem::take(&mut self.resolves_that_miss);
+                for warning in without_file.into_iter().chain(resolves) {
                     let is_unreached = |span| lies_in_left_out_code(view.files(), &left_out, span);
                     if !warning.span.is_some_and(is_unreached) {
                         self.diagnostics.add(Some(view), warning);
@@ -883,6 +1723,7 @@ impl Build<'_> {
                     }
                     keep_where_parsers_refused_data(view, &left_out, self.provider);
                     if !self.options.load.runs_tests {
+                        self.describe_guesses(view, &graph, &left_out, contents);
                         warn_about_unembedded_reads(
                             &mut self.diagnostics,
                             view,
@@ -890,6 +1731,7 @@ impl Build<'_> {
                             &left_out,
                             &self.options.load.project_root,
                             self.provider,
+                            self.options.aot.explain.contains(ExplainSet::TEXT),
                         );
                     }
                 }

@@ -1,30 +1,36 @@
 use super::alternatives::{
-    AskedOfDataFiles, AskedOfOwnExports, Folder, WrittenNames, find_alternatives,
-    find_elements_of_list_that_nothing_changes, find_names_as_written, find_path_around_parameter,
-    find_texts_of_key, names_own_url,
+    AskedOfDataFiles, AskedOfOwnExports, FindingsOfFile, Folder, Found, UnknownValues,
+    WrittenNames, find_alternatives, find_elements_of_list_that_nothing_changes,
+    find_names_as_written, find_path_around_parameter, find_texts_of_key, find_worker_names,
+    names_own_url, writes_url_path,
 };
-use super::changed_files::{TextsOfFile, find_file_path_operands};
+use super::changed_files::{TextsOfFile, find_file_path_operands, find_list_iterated_by_read};
 use super::made_requires::{
     OwnRequire, StepsLeft, Text, UrlsHanded, find_imported_export, find_own_require,
     follow_settled_bindings, follow_to_own_require, holds_import_meta_require, is_nothing,
     may_be_modified, may_require_get_members, settled_symbol,
 };
+use super::named_paths::{
+    add_forwarding_functions, collect_candidates, find_database_read, find_named_paths,
+    find_paths_created,
+};
 use super::parameters::{find_names_exported_for, find_parameter_named};
 use super::{
     Alternatives, CallerRelativeRead, ChangedPath, ExportedFileChanger, ImportSite, ImportSiteKind,
-    ImportSpecifier, OwnUrlArgument, ResolvedForm, ResolvedFrom, ScanInputs,
+    ImportSpecifier, NamedPath, OwnUrlArgument, ResolvedForm, ResolvedFrom, ScanInputs, WorkerName,
 };
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{
-    Binding, BindingInitializer, Bound, CommonJsVariable, Decl, FnOwner, Parent, PatParent,
-    ScopeKind, SymbolId,
+    Binding, BindingInitializer, Bound, CommonJsVariable, Decl, FnOwner, MemberOwner, Parent,
+    PatParent, ScopeKind, SymbolId,
 };
 use crate::fold::{
-    Constant, Decisions, FoldedValue, find_export_of_module, find_members_below_module,
+    Constant, Decisions, FoldedValue, Passes, find_export_of_module, find_members_below_module,
 };
 use crate::hir::{
     BinOp, Branches, CallId, ClassId, ExprFlags, ExprId, ExprKind, File, IdList,
-    ImportedFileChanger, MemberKey, NodeData, PropId, PropKey, PropKind, StmtKind, UnOp, VarKind,
+    ImportedFileChanger, MemberKey, MemberKind, NodeData, PropId, PropKey, PropKind, StmtKind,
+    UnOp, VarKind,
 };
 use crate::util::{FxHashSet, SharedSort};
 use bun_core::strings;
@@ -458,7 +464,8 @@ fn is_export_of_test_runner(
         _ => None,
     };
     let find_members = |e: ExprId| {
-        find_members_below_module(hir, bound, e, &find_constant, &is_test_runner, false)
+        let passes = Passes::default();
+        find_members_below_module(hir, bound, e, &find_constant, &is_test_runner, passes)
     };
     let is_holder = |members: &[Atom]| matches!(members, [export] if holders.contains(export));
     if find_members(object).is_some_and(|members| is_holder(&members)) {
@@ -686,20 +693,25 @@ pub fn is_name_read_by_transpiler(
             == Some(OwnRequire::OfFile)
 }
 
-pub fn is_name_written_out(hir: &File<'_>, name: ExprId) -> bool {
-    match hir[hir.skip_type_assertions(name)].kind {
-        ExprKind::String(_) => true,
-        ExprKind::Template { exprs } => hir.ids(exprs).next().is_none(),
-        ExprKind::Binary {
-            op: BinOp::Add,
-            left,
-            right,
-        } => is_name_written_out(hir, left) && is_name_written_out(hir, right),
-        ExprKind::Cond { branches, .. } => {
-            let Branches { yes, no } = hir.branches(branches);
-            is_name_written_out(hir, yes) && is_name_written_out(hir, no)
-        }
-        _ => false,
+pub fn is_name_written_out(hir: &File<'_>, mut name: ExprId) -> bool {
+    loop {
+        name = match hir[hir.skip_type_assertions(name)].kind {
+            ExprKind::String(_) => return true,
+            ExprKind::Template { exprs } => return hir.ids(exprs).next().is_none(),
+            ExprKind::Binary {
+                op: BinOp::Add,
+                left,
+                right,
+            } if is_name_written_out(hir, right) => left,
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
+                if !is_name_written_out(hir, yes) {
+                    return false;
+                }
+                no
+            }
+            _ => return false,
+        };
     }
 }
 
@@ -718,6 +730,7 @@ fn read_path_given_to_create_require(
         &asked,
         given,
         Folder::OfFile,
+        None,
         None,
         None,
     )
@@ -837,7 +850,16 @@ fn find_folders_listed_under(
     let folders = hir.ids(folders).map(|folder| {
         let asked = AskedOfDataFiles::default();
         let from = Folder::OfFile;
-        let found = find_alternatives(inputs, written_names, &asked, folder, from, None, None)?;
+        let found = find_alternatives(
+            inputs,
+            written_names,
+            &asked,
+            folder,
+            from,
+            None,
+            None,
+            None,
+        )?;
         match (
             &found.alternatives[..],
             found.start_at_own_directory,
@@ -854,15 +876,26 @@ pub(super) struct ScannedCalls {
     pub(super) alternatives: Vec<ImportSpecifier>,
     pub(super) paths_from_own_directory: Vec<ExprId>,
     pub(super) answers_of_resolvers: Vec<(ExprId, ResolvedForm)>,
-    pub(super) names_of_workers: Vec<(ExprId, ImportSpecifier)>,
+    pub(super) names_of_workers: Vec<WorkerName>,
     pub(super) paths_of_changed_files: Vec<ChangedPath>,
     pub(super) module_relative_reads: Vec<(ExprId, Atom)>,
+    pub(super) module_relative_patterns: Vec<(ExprId, Atom, Atom)>,
     pub(super) caller_relative_reads: Vec<CallerRelativeRead>,
+    pub(super) unknown_path_reads: Vec<ExprId>,
+    pub(super) path_listings: Vec<ExprId>,
+    pub(super) folders_entered: Vec<(ExprId, Atom)>,
+    pub(super) reads_below_working_folder: Vec<(ExprId, Atom)>,
+    pub(super) named_paths: Vec<NamedPath>,
+    pub(super) paths_created: Vec<Atom>,
+    pub(super) reading_functions: Vec<SymbolId>,
+    pub(super) own_folder_arguments: Vec<(ExprId, Option<ExprId>)>,
+    pub(super) path_queries: Vec<ExprId>,
     pub(super) known_load_names: Vec<(ExprId, Atom)>,
     pub(super) own_url_arguments: Vec<OwnUrlArgument>,
     pub(super) exported_file_changers: Vec<ExportedFileChanger>,
     pub(super) other_file_queries: Vec<(Atom, Atom)>,
     pub(super) data_file_queries: Vec<(Atom, Atom)>,
+    pub(super) own_path_queries: Vec<(Atom, Atom)>,
     pub(super) own_export_queries: Vec<Atom>,
     pub(super) names_from_data_files: Vec<(Atom, ExprId, bool)>,
     pub(super) names_resolved_from_listed_folders: Vec<(Atom, Atom, ExprId)>,
@@ -888,13 +921,28 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut names_of_workers = Vec::new();
     let mut paths_of_changed_files = Vec::new();
     let mut module_relative_reads = Vec::new();
+    let mut module_relative_patterns = Vec::new();
     let mut caller_relative_reads: Vec<CallerRelativeRead> = Vec::new();
+    let mut unknown_path_reads = Vec::new();
+    let mut path_listings = Vec::new();
+    let mut entered_operands: Vec<ExprId> = Vec::new();
+    let mut folders_entered = Vec::new();
+    let mut reads_below_working_folder = Vec::new();
+    let mut path_queries: Vec<ExprId> = Vec::new();
+    let mut reads: Vec<(ExprId, bool)> = Vec::new();
+    let mut file_object_paths = Vec::new();
+    let mut changed_operands = Vec::new();
+    let mut walked_lists = Vec::new();
     let mut known_load_names = Vec::new();
+    let mut followed_loads = Vec::new();
+    let mut has_unknown_load = false;
+    let names_of_file = alternatives.written_names.of_same_file();
     let create_texts = || {
         let &ScanInputs {
             fold, file, atoms, ..
         } = inputs;
-        TextsOfFile::new(hir, bound, decisions, fold, file, atoms)
+        let texts = TextsOfFile::new(hir, bound, decisions, fold, file, atoms);
+        texts.sharing_names(&names_of_file)
     };
     let mut own_url_arguments = Vec::new();
     let mut texts_of_file = None;
@@ -902,13 +950,30 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut keys_stored_in_caches = Vec::new();
     let mut names_resolved_from_listed_folders = Vec::new();
     let mut options_of_resolves_with_unread_folders = Vec::new();
+    let mut candidates = Vec::new();
+    let mut known_operands: FxHashSet<ExprId> = FxHashSet::default();
+    let mut named_paths = Vec::new();
+    let mut created_operands = Vec::new();
+    let mut paths_created = Vec::new();
+    let mut reading_functions = Vec::new();
+    let mut own_folder_arguments = Vec::new();
     for index in 0..hir.exprs.len() {
         let call = ExprId(index as u32);
+        if bound.may_name_own_path()
+            && !decisions.is_dead_expr(call)
+            && bound.parent_of_expr(call) != Parent::None
+        {
+            collect_candidates(inputs, call, &mut candidates, &mut created_operands);
+        }
         let Some(form) = find_call_form(hir, call) else {
             match hir.exprs[index].kind {
                 ExprKind::New(_) => {
                     if let Some(name) = find_name_of_worker(inputs, call, &mut alternatives) {
                         names_of_workers.push(name);
+                    }
+                    if !decisions.is_dead_expr(call) {
+                        let read = find_database_read(inputs, call);
+                        reads.extend(read.map(|path| (path, false)));
                     }
                 }
                 ExprKind::Index { .. } => {
@@ -925,17 +990,36 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         if bound.parent_of_expr(call) == Parent::None || is_dead_in_bun_run {
             continue;
         }
+        if let (false, CallForm::Call { callee, .. }) = (is_dead, form)
+            && matches!(expr_kind(hir, callee), Some(ExprKind::Super))
+        {
+            names_of_workers.extend(find_name_of_worker(inputs, call, &mut alternatives));
+            continue;
+        }
         if let (false, CallForm::Call { callee, args }) = (is_dead, form) {
             let named = find_file_path_operands(inputs, callee, args);
-            if let Some(operand) = named.read {
-                let texts = texts_of_file.get_or_insert_with(create_texts);
-                let (paths, parameter) = texts.find_module_relative_reads(operand);
-                module_relative_reads.extend(paths.into_iter().map(|path| (operand, path)));
-                if let Some(parameter) = parameter {
-                    caller_relative_reads
-                        .extend(texts.find_caller_relative_reads(operand, parameter));
+            reads.extend(named.read.map(|operand| (operand, named.is_query)));
+            if let Some((list, is_query)) = find_list_iterated_by_read(inputs, callee, args) {
+                let names = &alternatives.written_names;
+                let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
+                let written = find_elements_of_list_that_nothing_changes(inputs, names, list);
+                match written.filter(|&paths| !hir.ids(paths).any(is_spread)) {
+                    Some(paths) => reads.extend(hir.ids(paths).map(|path| (path, is_query))),
+                    None => walked_lists.push((list, is_query)),
                 }
             }
+            known_operands.extend(named.made);
+            let is_discarded = matches!(bound.parent_of_expr(call), Parent::Stmt(statement)
+                if matches!(hir[statement].kind, StmtKind::Expr(_)));
+            file_object_paths.extend(named.made.filter(|_| !is_discarded));
+            changed_operands.extend(named.changed.iter().map(|it| it.0.operand));
+            created_operands.extend(named.created);
+            known_operands.extend(named.created);
+            if let Some(operand) = named.listed {
+                reads.push((operand, false));
+                path_listings.push(operand);
+            }
+            entered_operands.extend(named.entered);
             if bound.may_name_own_path() {
                 own_url_arguments.extend(find_own_url_arguments(hir, bound, callee, args));
             }
@@ -1041,19 +1125,94 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
                 ImportSpecifier::Unknown | ImportSpecifier::Pattern { .. }
             );
             if loads && is_partly_unknown && !argument.is_none() {
+                has_unknown_load = true;
                 let texts = texts_of_file.get_or_insert_with(create_texts);
                 let names = texts.find_known_load_names(argument);
                 known_load_names.extend(names.into_iter().map(|name| (argument, name)));
+            } else if loads && alternatives.paths_from_own_directory.last() == Some(&argument) {
+                followed_loads.push(argument);
             }
             sites.push(site);
         }
     }
+    // Another load may be given the same path.
+    for &argument in followed_loads.iter().filter(|_| has_unknown_load) {
+        let texts = texts_of_file.get_or_insert_with(create_texts);
+        let names = texts.find_known_load_names(argument);
+        known_load_names.extend(names.into_iter().map(|name| (argument, name)));
+    }
+    // A file object that nothing writes is read: its size, a slice of it or a `Response` made of it need the file.
+    let is_used = |path: &ExprId| {
+        changed_operands.contains(path) || reads.iter().any(|&(operand, _)| operand == *path)
+    };
+    file_object_paths.retain(|path| !is_used(path));
+    reads.extend(file_object_paths.into_iter().map(|path| (path, false)));
+    for &operand in changed_operands.iter().chain(&created_operands) {
+        let texts = texts_of_file.get_or_insert_with(create_texts);
+        find_paths_created(inputs, texts, operand, &mut paths_created);
+    }
+    known_operands.extend(reads.iter().map(|it| it.0).chain(changed_operands));
+    for (operand, is_query) in reads {
+        let texts = texts_of_file.get_or_insert_with(create_texts);
+        let found = texts.find_module_relative_reads(operand);
+        if !texts.is_path_fully_known(operand) {
+            unknown_path_reads.push(operand);
+        }
+        if entered_operands.contains(&operand) {
+            folders_entered.extend(found.paths.iter().map(|&path| (operand, path)));
+        }
+        module_relative_reads.extend(found.paths.into_iter().map(|path| (operand, path)));
+        let below_working_folder = found.below_working_folder.into_iter();
+        reads_below_working_folder.extend(below_working_folder.map(|path| (operand, path)));
+        let patterns = found.patterns.into_iter();
+        module_relative_patterns.extend(patterns.map(|(prefix, suffix)| (operand, prefix, suffix)));
+        if is_query {
+            path_queries.push(operand);
+        }
+        let open = found.open_parameters.iter();
+        reading_functions.extend(open.filter_map(|&it| texts.find_function_of(it)));
+        if let Some(&parameter) = found.open_parameters.first() {
+            caller_relative_reads
+                .extend(texts.find_caller_relative_reads(operand, parameter, is_query));
+        }
+    }
+    known_operands.extend(sites.iter().map(|it| it.specifier_node));
+    known_operands.extend(names_of_workers.iter().map(|it| it.argument));
+    for candidate in candidates {
+        if !known_operands.contains(&candidate.operand) {
+            // What a read at a known path gives is the text of the file, not a path.
+            let is_text_read = |&(argument, _): &(ExprId, _)| match expr_kind(hir, argument) {
+                Some(ExprKind::Call(call)) => (hir.ids(hir[call].args).next())
+                    .is_some_and(|path| known_operands.contains(&path)),
+                _ => false,
+            };
+            own_folder_arguments.extend(candidate.find_argument().filter(|it| !is_text_read(it)));
+            let texts = texts_of_file.get_or_insert_with(create_texts);
+            find_named_paths(inputs, texts, candidate, &mut named_paths);
+        }
+    }
+    reading_functions.shared_sort_unstable();
+    reading_functions.dedup();
+    if !reading_functions.is_empty() {
+        let texts = texts_of_file.get_or_insert_with(create_texts);
+        add_forwarding_functions(inputs, texts, &mut reading_functions);
+    }
+    for (list, is_query) in walked_lists {
+        let texts = texts_of_file.get_or_insert_with(create_texts);
+        let paths = texts.find_module_relative_elements(list);
+        module_relative_reads.extend(paths.into_iter().map(|path| (list, path)));
+        unknown_path_reads.push(list);
+        if is_query {
+            path_queries.push(list);
+        }
+    }
+    unknown_path_reads.shared_sort_unstable();
     module_require_objects.shared_sort_unstable();
     paths_given_to_create_require.shared_sort_unstable_by_key(|it: &(ExprId, Atom)| it.0);
     paths_given_to_create_require.dedup();
     alternatives.paths_from_own_directory.shared_sort_unstable();
     alternatives.answers_of_resolvers.shared_sort_unstable();
-    names_of_workers.shared_sort_unstable_by_key(|it: &(ExprId, ImportSpecifier)| it.0);
+    names_of_workers.shared_sort_unstable_by_key(|it: &WorkerName| it.argument);
     keys_stored_in_caches.shared_sort_unstable_by_key(|it: &(ExprId, ImportSpecifier)| it.0);
     exported_file_changers
         .shared_sort_unstable_by_key(|it| (it.export.0, it.place, it.reaches_below));
@@ -1064,6 +1223,10 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         (it.function.0, it.place, texts)
     });
     caller_relative_reads.dedup();
+    path_queries.shared_sort_unstable();
+    path_queries.dedup();
+    path_listings.shared_sort_unstable();
+    path_listings.dedup();
     known_load_names.sort_by_key(|it| it.0);
     ScannedCalls {
         alternatives: alternatives.found,
@@ -1072,12 +1235,23 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         names_of_workers,
         paths_of_changed_files,
         module_relative_reads,
+        module_relative_patterns,
         caller_relative_reads,
+        unknown_path_reads,
+        path_queries,
+        path_listings,
+        folders_entered,
+        reads_below_working_folder,
+        named_paths,
+        paths_created,
+        reading_functions,
+        own_folder_arguments,
         known_load_names,
         own_url_arguments,
         exported_file_changers,
         other_file_queries: alternatives.other_file_queries.take(),
         data_file_queries: alternatives.data_file_queries.take(),
+        own_path_queries: texts_of_file.map_or_else(Vec::new, |it| it.take_own_path_queries()),
         own_export_queries: alternatives.own_export_queries.take(),
         names_from_data_files: alternatives.names_from_data_files,
         names_resolved_from_listed_folders,
@@ -1215,9 +1389,15 @@ fn find_whether_constructor_is_worker(
         let global_objects = [known::globalThis, known::global, known::self_];
         return is_free_name(hir, bound, object, &global_objects).then_some(name == known::Worker);
     }
-    let is_own = |class: ClassId| hir[class].extends.is_none().then_some(false);
+    let is_worker = |class: ClassId| {
+        if hir[class].extends.is_none() {
+            return Some(false);
+        }
+        let heritage = find_heritage_constructed(hir, bound, class)?;
+        find_whether_constructor_is_worker(hir, bound, heritage).filter(|&is_worker| is_worker)
+    };
     match expr_kind(hir, constructor)? {
-        ExprKind::Class(class) => is_own(class),
+        ExprKind::Class(class) => is_worker(class),
         ExprKind::Fn(_) => Some(false),
         ExprKind::Ident(_) if is_free_name(hir, bound, constructor, &[known::Worker]) => Some(true),
         ExprKind::Ident(_) if bound.binding(constructor) == Binding::Free => bound
@@ -1227,11 +1407,57 @@ fn find_whether_constructor_is_worker(
         ExprKind::Ident(_) => {
             let symbol = settled_symbol(hir, bound, constructor)?;
             match bound.binding_initializer(hir, symbol) {
-                BindingInitializer::Class(class) => is_own(class),
+                BindingInitializer::Class(class) => is_worker(class),
                 BindingInitializer::Function(_) => Some(false),
                 _ => None,
             }
         }
+        _ => None,
+    }
+}
+
+/// `class A extends Worker {}`: what `new A(..)` hands its arguments to. Only a class declared before `class` counts, so no chain leads back.
+pub fn find_heritage_constructed(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    class: ClassId,
+) -> Option<ExprId> {
+    let heritage = hir[class].extends.some()?;
+    let mut members = hir[class].members.iter();
+    let declares_constructor = members.any(|id| hir[id].kind == MemberKind::Constructor);
+    let named = settled_symbol(hir, bound, hir.skip_type_assertions(heritage));
+    let is_later = named.is_some_and(|symbol| match bound.binding_initializer(hir, symbol) {
+        BindingInitializer::Class(extended) => hir[extended].text_start >= hir[class].text_start,
+        _ => false,
+    });
+    (!declares_constructor && !is_later).then_some(heritage)
+}
+
+/// `super(..)`: the heritage of the class whose constructor holds the call.
+pub fn find_heritage_of_super_call(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    call: ExprId,
+) -> Option<ExprId> {
+    let ExprKind::Call(written) = expr_kind(hir, call)? else {
+        return None;
+    };
+    if !matches!(expr_kind(hir, hir[written].callee), Some(ExprKind::Super)) {
+        return None;
+    }
+    let mut statement = bound.statement_of_expr(call)?;
+    let function = loop {
+        match bound.parent_of_stmt(statement) {
+            Parent::Stmt(above) => statement = above,
+            Parent::FnBody(function) => break function,
+            _ => return None,
+        }
+    };
+    let FnOwner::Member(member) = bound.fns[function.idx()].owner else {
+        return None;
+    };
+    match bound.member_owner[member.idx()] {
+        MemberOwner::Class(class) => hir[class].extends.some(),
         _ => None,
     }
 }
@@ -1249,28 +1475,91 @@ fn find_name_of_worker(
     inputs: &ScanInputs<'_, '_>,
     construction: ExprId,
     alternatives: &mut FoundAlternatives,
-) -> Option<(ExprId, ImportSpecifier)> {
+) -> Option<WorkerName> {
     let &ScanInputs {
         hir,
         bound,
         decisions,
         ..
     } = inputs;
-    let ExprKind::New(call) = expr_kind(hir, construction)? else {
-        return None;
+    let (call, constructor) = match expr_kind(hir, construction)? {
+        ExprKind::New(call) => (call, hir[call].callee),
+        ExprKind::Call(call) => (call, find_heritage_of_super_call(hir, bound, construction)?),
+        _ => return None,
     };
     let is_evaluated =
         bound.parent_of_expr(construction) != Parent::None && !decisions.is_dead_expr(construction);
-    if !is_evaluated || !may_construct_worker(hir, bound, hir[call].callee) {
+    if !is_evaluated || !may_construct_worker(hir, bound, constructor) {
         return None;
     }
     let argument = hir.ids(hir[call].args).next()?;
-    let specifier = call_specifier(inputs, argument, alternatives);
+    let mut specifier = call_specifier(inputs, argument, alternatives);
+    let is_on_trust = specifier == ImportSpecifier::Unknown;
+    if is_on_trust {
+        specifier = find_known_worker_names(inputs, argument, alternatives);
+    }
+    if let ImportSpecifier::OneOf(Alternatives { first, count }) = specifier
+        && find_url_name(hir, argument)
+            .is_some_and(|name| writes_url_path(inputs, &alternatives.written_names, name))
+    {
+        let known = &alternatives.found[first as usize..][..count as usize];
+        let found = [known, &[ImportSpecifier::Unknown]].concat();
+        let first = alternatives.found.len() as u32;
+        let count = found.len() as u32;
+        alternatives.found.extend(found);
+        specifier = ImportSpecifier::OneOf(Alternatives { first, count });
+    }
     let is_known_in_part = matches!(
         specifier,
         ImportSpecifier::Pattern { .. } | ImportSpecifier::OneOf(_)
     );
-    is_known_in_part.then_some((argument, specifier))
+    is_known_in_part.then_some(WorkerName {
+        argument,
+        name: specifier,
+        is_on_trust,
+    })
+}
+
+/// `url`, `url.href`, `fileURLToPath(url)`: the name of the URL.
+fn find_url_name(hir: &File<'_>, argument: ExprId) -> Option<ExprId> {
+    let mut e = argument;
+    loop {
+        e = hir.skip_type_assertions(e);
+        e = match expr_kind(hir, e)? {
+            ExprKind::Ident(_) => return Some(e),
+            ExprKind::Dot { obj, .. } => obj,
+            ExprKind::Call(call) if hir[call].args.len() == 1 => hir.id_at(hir[call].args, 0),
+            _ => return None,
+        };
+    }
+}
+
+fn find_known_worker_names(
+    inputs: &ScanInputs<'_, '_>,
+    argument: ExprId,
+    alternatives: &mut FoundAlternatives,
+) -> ImportSpecifier {
+    let find = |unknown_values| {
+        find_worker_names(
+            inputs,
+            &alternatives.written_names,
+            &alternatives.data_file_queries,
+            argument,
+            unknown_values,
+            &alternatives.findings,
+        )
+    };
+    let unknown = ImportSpecifier::Unknown;
+    let whole = find(UnknownValues::Reject);
+    let is_whole = whole.is_some() && !inputs.bound.writes_import_meta_path();
+    let Some(mut found) = whole.or_else(|| find(UnknownValues::Skip)) else {
+        return unknown;
+    };
+    if !is_whole {
+        found.alternatives.push(unknown);
+    }
+    found.is_from_data_file = false;
+    record_alternatives(inputs, argument, unknown, &found, alternatives)
 }
 
 fn is_ordinary_builtin_call(site: &ImportSite) -> bool {
@@ -1357,6 +1646,7 @@ struct FoundAlternatives {
     paths_from_own_directory: Vec<ExprId>,
     answers_of_resolvers: Vec<(ExprId, ResolvedForm)>,
     written_names: WrittenNames,
+    findings: FindingsOfFile,
     data_file_queries: AskedOfDataFiles,
     other_file_queries: AskedOfDataFiles,
     own_export_queries: AskedOfOwnExports,
@@ -1418,6 +1708,7 @@ fn find_specifier(
         Folder::OfFile,
         reads_other_files.then_some(&alternatives.other_file_queries),
         Some(&alternatives.own_export_queries),
+        Some(&alternatives.findings),
     );
     let is_followed = found.as_ref().is_some_and(|found| {
         let mut names = found.alternatives.iter();
@@ -1431,6 +1722,16 @@ fn find_specifier(
     let Some(found) = found else {
         return folded;
     };
+    record_alternatives(inputs, argument, folded, &found, alternatives)
+}
+
+fn record_alternatives(
+    inputs: &ScanInputs<'_, '_>,
+    argument: ExprId,
+    folded: ImportSpecifier,
+    found: &Found,
+    alternatives: &mut FoundAlternatives,
+) -> ImportSpecifier {
     if found.is_from_data_file {
         let names = found.alternatives.iter().filter_map(|it| match *it {
             ImportSpecifier::Constant(name) => Some((name, argument, false)),
@@ -1470,6 +1771,9 @@ fn find_specifier(
     })
 }
 
+/// Returns true if the declaration of `symbol` always runs before `e` is evaluated.
+/// The declaration must be an earlier statement of a file, function body or block that also contains `e`, with no function boundary between them.
+/// A `switch` and the branches of an `if` don't qualify: control can reach a later statement without running the earlier one.
 fn is_declared_before(hir: &File<'_>, bound: &Bound<'_>, e: ExprId, symbol: SymbolId) -> bool {
     let &[Decl::Var(pattern)] = bound.symbol(symbol).decls else {
         return false;
@@ -1508,7 +1812,9 @@ fn is_declared_before(hir: &File<'_>, bound: &Bound<'_>, e: ExprId, symbol: Symb
     }
 }
 
-fn follow_initialized_bindings(
+/// Follows `e` through variables that are never reassigned and are initialized before their use, and returns the last initializer.
+/// `use_site` is `e`, or the object literal that contains it.
+pub(super) fn follow_initialized_bindings(
     hir: &File<'_>,
     bound: &Bound<'_>,
     e: ExprId,
@@ -1675,6 +1981,7 @@ fn find_path_below_working_directory(
         path,
         folder,
         of_other_files,
+        None,
         None,
     )?;
     if !found.start_at_own_directory || found.is_from_data_file {

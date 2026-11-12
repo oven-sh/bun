@@ -15,7 +15,7 @@ use bun_sema::hir::FnId;
 use bun_sema::import_sites::{ImportSiteKind, is_linked_by_bundler};
 use bun_sema::program::{CodeAnswer, FileId, FileRole};
 use bun_sema::resolve::ExternalKind;
-use bun_sema::util::{FxHashSet, SharedSort};
+use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum ImportTypeKind {
@@ -35,6 +35,7 @@ pub(super) struct ModuleSet {
     pub wrapped: WrappedModules,
     inner_modules: Vec<(FileId, FnId)>,
     may_be_reevaluated: Vec<bool>,
+    pub(super) reloadable_commonjs_files: Vec<FileId>,
     interops: Vec<Option<Interop>>,
     forms: Vec<(FileId, FileId)>,
     pub(super) forms_require_checks_first: Vec<(FileId, FileId)>,
@@ -74,6 +75,7 @@ impl ModuleSet {
             wrapped: WrappedModules::default(),
             inner_modules: Vec::new(),
             may_be_reevaluated: Vec::new(),
+            reloadable_commonjs_files: Vec::new(),
             runs_code_out_of_sight: false,
             texts_listed_ahead: None,
             interops,
@@ -374,6 +376,7 @@ pub(super) fn collect_modules(input: &BindInput<'_, '_>, scans: &Scans) -> Modul
         wrapped: WrappedModules::default(),
         inner_modules: Vec::new(),
         may_be_reevaluated: vec![false; interops.len()],
+        reloadable_commonjs_files: Vec::new(),
         interops,
     }
 }
@@ -547,18 +550,66 @@ fn answer_require_with_what_the_loader_holds(
         compiled_files,
         interops,
     ));
-    for &(_, form) in &checked_first {
+    for &(file, form) in &checked_first {
         if let Some(interop) = &mut interops[form.idx()] {
+            interop.require_result = RequireResult::NamespaceIfImported;
+        }
+        // While a text form is loaded and has not run, require() returns the namespace of the file without a type.
+        if let Some(interop) = interops[file.idx()].as_mut().filter(|it| {
+            stands_for_string(input, form)
+                && !stands_for_string(input, file)
+                && it.kind == ModuleKind::Data
+                && it.require_result == RequireResult::DefaultExport
+        }) {
             interop.require_result = RequireResult::NamespaceIfImported;
         }
     }
     checked_first.extend(code_checked_first);
+    checked_first.extend(find_module_forms(input, compiled_files, interops));
     let is_read_as_json =
         |form: FileId| parsed_source(input.files, form).is_some_and(|it| it.loader == Loader::Json);
     checked_first.shared_sort_unstable_by_key(|&(file, form)| {
         (file, form != file, is_read_as_json(form), form)
     });
     checked_first
+}
+
+/// The CommonJS files that are ES modules too where an import loads them, each with that module.
+fn find_module_forms(
+    input: &BindInput<'_, '_>,
+    compiled_files: &[FileId],
+    interops: &[Option<Interop>],
+) -> Vec<(FileId, FileId)> {
+    let path_of = |file: FileId| input.sources.public_path(file);
+    let is_kind = |file: FileId, kind: ModuleKind| {
+        interops[file.idx()].is_some_and(|interop| interop.kind == kind)
+    };
+    let has_type = |file: FileId| {
+        let loader = input.files.compiled(file).map(|it| it.loader);
+        matches!(
+            loader.and_then(host_loader_kind),
+            Some(HostLoaderKind::Loader(_))
+        )
+    };
+    let forms = compiled_files.iter().copied();
+    let forms = forms.filter(|&form| is_kind(form, ModuleKind::SourceText) && has_type(form));
+    let forms: Vec<(&[u8], FileId)> = forms
+        .filter_map(|form| {
+            let path = path_of(form);
+            let mark = strings::last_index_of_char(path, b'?')?;
+            Some((&path[..mark], form))
+        })
+        .collect();
+    if forms.is_empty() {
+        return Vec::new();
+    }
+    let files = compiled_files.iter().copied();
+    let files = files.filter(|&file| is_kind(file, ModuleKind::CommonJs));
+    let file_by_path: FxHashMap<&[u8], FileId> = files.map(|it| (path_of(it), it)).collect();
+    let forms = forms.into_iter();
+    forms
+        .filter_map(|(path, form)| Some((*file_by_path.get(path)?, form)))
+        .collect()
 }
 
 fn find_paths_that_answer_in_place_of_code(

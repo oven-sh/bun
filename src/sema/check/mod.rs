@@ -73,6 +73,7 @@ mod related;
 mod related_expected;
 pub mod services;
 mod shape;
+pub mod shared_indexes;
 mod shortcuts;
 mod signature_links;
 mod sink;
@@ -295,7 +296,7 @@ pub struct Program<'s> {
     aot_symbols: std::sync::OnceLock<aot::ProgramSymbols>,
     aot_store_indexes: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::StoreIndex<'s>>]>,
     aot_written_stores: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::WrittenStores<'s>>]>,
-    aot_prototype_links: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::PrototypeLinks<'s>>]>,
+    aot_prototype_links: std::sync::OnceLock<&'s [aot::LinksOfFile<'s>]>,
     pub files: &'s Files<'s>,
     pub types: TypeStore<'s>,
 
@@ -1071,6 +1072,12 @@ impl<'s> Program<'s> {
             unrelated_classes: Default::default(),
             grown_unions: Default::default(),
             unions_less_a_member: Default::default(),
+            unions_without_member: Default::default(),
+            subsets_of_unions: Default::default(),
+            unions_with_empty_member: Default::default(),
+            unions_with_global_object: Default::default(),
+            have_same_members: Default::default(),
+            unions_of_large_unions: Default::default(),
             grown_signatures: Default::default(),
             union_members_compared: 0,
             union_calls: Default::default(),
@@ -1088,6 +1095,7 @@ impl<'s> Program<'s> {
             spread_indices_of_many: Default::default(),
             times_cut_short: std::cell::Cell::new(0),
             exprs_by_kind: [None, None],
+            shared_indexes: None,
             provisional_shapes: Default::default(),
             provisional: Default::default(),
             taint_events: Vec::new(),
@@ -1898,6 +1906,18 @@ pub struct Checker<'p, 's> {
     unrelated_classes: unions::UnrelatedClasses,
     grown_unions: FxHashMap<TypeId, unions::Growth>,
     unions_less_a_member: FxHashMap<TypeId, unions::Loss>,
+    /// The rest of a union by the union and the member that was removed.
+    unions_without_member: FxHashMap<(TypeId, TypeId), TypeId>,
+    /// `isTypeSubsetOfUnion` of unions of `unions::MANY_MEMBERS` or more.
+    subsets_of_unions: FxHashMap<(TypeId, TypeId), bool>,
+    /// `isEmptyObjectType` of unions of `unions::MANY_MEMBERS` or more, asked while the members of no type were being resolved.
+    unions_with_empty_member: FxHashMap<TypeId, bool>,
+    /// Whether a union of `unions::MANY_MEMBERS` or more has the global `Object`.
+    unions_with_global_object: FxHashMap<TypeId, bool>,
+    /// Whether two different unions of `unions::MANY_MEMBERS` or more have the same members.
+    have_same_members: FxHashMap<(TypeId, TypeId), bool>,
+    /// `unionOfUnionTypes`, for `UnionReductionLiteral`, where one of the two has `unions::MANY_MEMBERS` or more: the lower id first.
+    unions_of_large_unions: FxHashMap<(TypeId, TypeId), TypeId>,
     /// The same for the signature of a union of function types: the signature that combines one fewer, and the one more.
     grown_signatures: FxHashMap<SigId, (SigId, SigId)>,
     /// `spread_indices` of the array literals and the calls with many elements or arguments.
@@ -1988,7 +2008,9 @@ pub struct Checker<'p, 's> {
     checked_type_references: (Option<FileId>, Vec<u64>),
     /// A file, and which of its expressions `prepare_ancestors` has processed.
     prepared_exprs: (FileId, Vec<bool>),
-    exprs_by_kind: [Option<(FileId, std::rc::Rc<hir::ExprsByKind>)>; 2],
+    exprs_by_kind: [Option<(FileId, std::sync::Arc<hir::ExprsByKind>)>; 2],
+    /// Of the large file whose parts several checkers ask about.
+    shared_indexes: Option<(FileId, std::sync::Arc<shared_indexes::SharedIndexes<'s>>)>,
     /// See `provisional_shape`, which returns a reference to one and pushes the next.
     provisional_shapes: crate::util::memory::LocalVec<shape::Resolved<'s>>,
     /// The innermost resolution that was in progress at the rejection. The frame at `unwind_to`
@@ -4568,15 +4590,15 @@ impl<'p, 's> Checker<'p, 's> {
     /// Returns the expressions of `file` grouped by kind, for callers that need a few kinds and would
     /// otherwise iterate over all expressions. It's built once per file. The handle doesn't borrow
     /// `self`, so this works: `let index = self.exprs_by_kind(file); for &e in index.of(ExprTag::Call)`.
-    pub(crate) fn exprs_by_kind(&mut self, file: FileId) -> std::rc::Rc<hir::ExprsByKind> {
+    pub(crate) fn exprs_by_kind(&mut self, file: FileId) -> std::sync::Arc<hir::ExprsByKind> {
         for (of, index) in self.exprs_by_kind.iter().flatten() {
             if *of == file {
-                return std::rc::Rc::clone(index);
+                return std::sync::Arc::clone(index);
             }
         }
-        let index = std::rc::Rc::new(hir::ExprsByKind::new(self.hir(file)));
+        let index = self.shared_exprs_by_kind(file);
         let is_visited = self.task.file == Some(file);
-        self.exprs_by_kind[usize::from(is_visited)] = Some((file, std::rc::Rc::clone(&index)));
+        self.exprs_by_kind[usize::from(is_visited)] = Some((file, std::sync::Arc::clone(&index)));
         index
     }
 

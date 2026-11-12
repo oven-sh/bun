@@ -13,7 +13,7 @@
 # -- end of source
 # L0 = Box. The store that lays `call` stands in one of the five lost functions, which Link reaches only where the pool is tied: the name is laid on a closure that is tied already.
 # RUN(FIELDS): link fields mechanisms=all
-# FIELDS: "count" proven=i32|string
+# FIELDS: "count" proven=int[0, 2147483647]|string
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: 11,12,13,14,15,10,0,number
 # ANSWERS-NEXT: 21,22,own,text4,text5,text,[object Object],string

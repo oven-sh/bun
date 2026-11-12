@@ -2,6 +2,8 @@
 
 use core::mem::size_of;
 use core::ptr::read_unaligned;
+#[cfg(not(windows))]
+use core::sync::atomic::{AtomicU64, Ordering};
 use std::borrow::Cow;
 
 use bun_collections::StringArrayHashMap;
@@ -15,6 +17,8 @@ use bun_resolver::compiled_program::{
 };
 use bun_resolver::package_names::FurtherPackageName;
 use bun_sys::{Fd, Stat};
+#[cfg(not(windows))]
+use bun_sys::{Maybe, PosixStat};
 
 use crate::Error;
 #[cfg(windows)]
@@ -43,6 +47,9 @@ const HAS_LEVELS_ABOVE_ROOT: u32 = 1024;
 const HAS_REFUSED_DATA: u32 = 2048;
 /// Behind the refused data: the length of `CompiledProgramInput::loaders_given_to_build`, then the bytes.
 const HAS_LOADERS_GIVEN_TO_BUILD: u32 = 4096;
+/// `st_dev` of embedded files and folders. No real device has this number.
+const EMBEDDED_FILES_DEVICE: u32 = 0x6275_6e66;
+
 /// Behind the loaders: the length of `CompiledProgramInput::files_for_file_system_alone`, then the bytes.
 const HAS_FILES_FOR_FILE_SYSTEM_ALONE: u32 = 8192;
 /// The length of the path, what `require` and what `import` find, and what the name hides.
@@ -813,11 +820,190 @@ fn is_normalized_posix_path(name: &[u8]) -> bool {
     name.is_empty() || (!name.ends_with(b"/") && bun_highway::index_of_untidy_slash(name).is_none())
 }
 
-/// `a.json/`, `a.json/.` and `a.json/..`: no file answers to them.
-fn asks_for_folder(name: &[u8]) -> bool {
+/// The keys of what the program has removed from the disk or renamed there.
+static REMOVED_PATHS: bun_threading::Guarded<Vec<Box<[u8]>>> =
+    bun_threading::Guarded::new(Vec::new());
+/// Almost no program removes what its executable holds.
+static HAS_REMOVED_PATHS: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Whether the program has removed `key`, or a folder around it. `key` is a path on the disk or that of a file in the executable. What is not on the disk was never deployed, or was there until a moment ago, and the disk does not say which.
+pub(crate) fn is_removed_by_program(key: &[u8]) -> bool {
+    if !HAS_REMOVED_PATHS.load(core::sync::atomic::Ordering::Acquire) {
+        return false;
+    }
+    let removed = REMOVED_PATHS.lock();
+    removed.iter().any(|it| is_at_or_below(key, it))
+}
+
+fn record_removed_path(key: &[u8]) {
+    let mut removed = REMOVED_PATHS.lock();
+    if removed.iter().any(|it| is_at_or_below(key, it)) {
+        return;
+    }
+    removed.retain(|it| !is_at_or_below(it, key));
+    removed.push(key.into());
+    HAS_REMOVED_PATHS.store(true, core::sync::atomic::Ordering::Release);
+}
+
+fn is_at_or_below(path: &[u8], ancestor: &[u8]) -> bool {
+    let below = path.strip_prefix(ancestor);
+    below.is_some_and(|it| it.is_empty() || it[0] == b'/')
+}
+
+/// A file that nobody asked the build to embed, which the program has written on the disk.
+struct WrittenFile {
+    /// Its path under the root of the executable.
+    path: Box<[u8]>,
+    /// Its key in the graph.
+    key: Box<[u8]>,
+    path_on_disk: Box<[u8]>,
+}
+
+static WRITTEN_FILES: bun_threading::Guarded<Vec<WrittenFile>> =
+    bun_threading::Guarded::new(Vec::new());
+static HAS_WRITTEN_FILES: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// `name` as an absolute path without `.` and `..`.
+pub fn normalize_source_path(name: &[u8]) -> Option<Box<[u8]>> {
+    let mut buffer = path_buffer_pool::get();
+    Some(absolute_key(name, &mut buffer)?.as_bytes().into())
+}
+
+pub fn has_written_files() -> bool {
+    HAS_WRITTEN_FILES.load(core::sync::atomic::Ordering::Acquire)
+}
+
+/// Where the disk has the file that the program has written, if `name` is its path under the root of the executable. What another process has laid there is not trusted.
+pub fn find_written_file(name: &[u8]) -> Option<Box<[u8]>> {
+    if !has_written_files() || !is_bun_standalone_file_path(name) {
+        return None;
+    }
+    let mut buffer = path_buffer_pool::get();
+    let name = absolute_key(name, &mut buffer)?.as_bytes();
+    let graph = StandaloneModuleGraph::get_ref();
+    let key = graph.and_then(|it| Some(it.lookup_file(name)?.name));
+    let path = {
+        let written = WRITTEN_FILES.lock();
+        let is_meant = |it: &&WrittenFile| *it.path == *name || key == Some(&*it.key);
+        written.iter().find(is_meant)?.path_on_disk.clone()
+    };
+    // A write that fails leaves the copy in the executable.
+    bun_sys::exists(&path).then_some(path)
+}
+
+/// Visits the paths under the root of the executable of what the program has written in `folder`, as far as it is on the disk.
+pub(crate) fn for_each_written_file(folder: &[u8], visit: &mut dyn FnMut(&[u8])) {
+    if has_written_files() {
+        let written = WRITTEN_FILES.lock();
+        let below = written.iter().filter(|it| is_at_or_below(&it.path, folder));
+        let on_disk = below.filter(|it| bun_sys::exists(&it.path_on_disk));
+        on_disk.for_each(|it| visit(&it.path));
+    }
+}
+
+fn record_written_file(path: &[u8], key: &[u8], path_on_disk: &[u8]) {
+    let mut written = WRITTEN_FILES.lock();
+    if !written.iter().any(|it| *it.path == *path) {
+        written.push(WrittenFile {
+            path: path.into(),
+            key: key.into(),
+            path_on_disk: path_on_disk.into(),
+        });
+        HAS_WRITTEN_FILES.store(true, core::sync::atomic::Ordering::Release);
+    }
+}
+
+/// What of the program the disk had when the program was about to start its first process, or to remove a folder. What is gone later was removed, by whomever.
+struct FoundOnDisk {
+    /// The files that nobody asked the build to embed, by their keys in the graph.
+    files: StringArrayHashMap<Box<[u8]>>,
+    /// Those files, and the folders with them and with entry points.
+    paths: StringArrayHashMap<()>,
+}
+
+static FOUND_ON_DISK: std::sync::OnceLock<FoundOnDisk> = std::sync::OnceLock::new();
+
+fn found_on_disk() -> Option<&'static FoundOnDisk> {
+    FOUND_ON_DISK.get().filter(|found| found.paths.count() != 0)
+}
+
+impl FoundOnDisk {
+    /// Returns true if the disk has `folder`, a folder of the program. Then it has the folders around it too.
+    fn find_folder(&mut self, folder: &[u8], missing: &mut StringArrayHashMap<()>) -> bool {
+        if self.paths.contains(folder) || missing.contains(folder) {
+            return self.paths.contains(folder);
+        }
+        if !bun_sys::exists(folder) {
+            let _ = missing.put(folder, ());
+            return false;
+        }
+        let mut around = Some(folder);
+        while let Some(folder) = around.filter(|it| !self.paths.contains(it)) {
+            let _ = self.paths.put(folder, ());
+            around = bun_paths::dirname(folder);
+        }
+        true
+    }
+}
+
+/// Whether the disk had `path`, or the nearest folder around it that is known, and has it no longer.
+fn has_vanished(path: &[u8]) -> bool {
+    let Some(found) = found_on_disk() else {
+        return false;
+    };
+    let mut nearest = Some(path);
+    while let Some(path) = nearest {
+        if found.paths.contains(path) {
+            return !bun_sys::exists(path);
+        }
+        nearest = bun_paths::dirname(path);
+    }
+    false
+}
+
+fn is_file_on_disk(path: &[u8]) -> bool {
+    let mut buffer = path_buffer_pool::get();
+    let found = absolute_key(path, &mut buffer).and_then(|it| bun_sys::stat(it).ok());
+    found.is_some_and(|it| {
+        bun_sys::kind_from_mode(it.st_mode as bun_sys::Mode) == bun_sys::FileKind::File
+    })
+}
+
+/// Returns the text in front of each `..` of `name`.
+fn split_at_parent_steps(name: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let mut searched = 0;
+    core::iter::from_fn(move || {
+        loop {
+            let start = searched + strings::index_of(&name[searched..], b"..")?;
+            searched = start + 2;
+            let is_whole_name = start > 0
+                && name[start - 1] == b'/'
+                && name.get(searched).is_none_or(|&byte| byte == b'/');
+            if is_whole_name {
+                return Some(&name[..start]);
+            }
+        }
+    })
+}
+
+/// Whether the disk has a folder where `path` leads once it is normalized. The disk does not know a path as written that runs through a folder of the executable alone. A link in front of a `..` has another parent than the text says, and a file has none, so the text is normalized only past what the disk has as a folder or not at all.
+fn is_folder_once_normalized(path: &[u8]) -> bool {
+    let mut buffer = path_buffer_pool::get();
+    let mut find_kind = |folder: &[u8]| {
+        let found = bun_sys::lstat(absolute_key(folder, &mut buffer)?).ok()?;
+        Some(bun_sys::kind_from_mode(found.st_mode as bun_sys::Mode))
+    };
+    let mut left = split_at_parent_steps(path);
+    left.all(|folder| matches!(find_kind(folder), None | Some(bun_sys::FileKind::Directory)))
+        && find_kind(path) == Some(bun_sys::FileKind::Directory)
+}
+
+/// Whether `name` ends like `a.json/`, `a.json/.` or `a.json/..`, which only a folder can match. Windows strips those endings first.
+fn requests_directory(name: &[u8]) -> bool {
     let without_dots = name.strip_suffix(b"..").or_else(|| name.strip_suffix(b"."));
-    let last = without_dots.unwrap_or(name).last();
-    last.is_some_and(|&byte| byte == b'/' || (cfg!(windows) && byte == b'\\'))
+    !cfg!(windows) && without_dots.unwrap_or(name).last() == Some(&b'/')
 }
 
 /// Writes `path.resolve(base, name)` without a trailing `/` and returns its length. `resolve_path` takes a backslash for a separator on every host; off Windows it is part of a name.
@@ -946,6 +1132,93 @@ fn load_graph_file(descriptor: Fd, size: usize) -> Option<*mut u8> {
 pub enum SourcePathKind {
     File,
     Directory,
+}
+
+#[cfg(not(windows))]
+struct Descriptor {
+    opened: PosixStat,
+    path: &'static [u8],
+}
+
+#[cfg(not(windows))]
+static DESCRIPTORS: bun_threading::Guarded<Vec<Option<Box<Descriptor>>>> =
+    bun_threading::Guarded::new(Vec::new());
+
+/// Has a bit for each index of `DESCRIPTORS`, modulo 64.
+#[cfg(not(windows))]
+static DESCRIPTOR_FILTER: AtomicU64 = AtomicU64::new(0);
+
+/// Whether a descriptor of an embedded path was ever opened.
+#[cfg(not(windows))]
+#[inline(always)]
+pub fn has_descriptors() -> bool {
+    DESCRIPTOR_FILTER.load(Ordering::Relaxed) != 0
+}
+
+#[cfg(not(windows))]
+fn filter_bit(fd: Fd) -> u64 {
+    1 << (fd.native() as u64 % 64)
+}
+
+/// Whether `stat_descriptor` gives the time at which a file was made. Without `statx`, Linux gives the change time in its place, which `fchmod()`, `fchown()` and `futimes()` move.
+#[cfg(not(windows))]
+fn has_birth_time() -> bool {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    return bun_sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed);
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    true
+}
+
+/// Whether a descriptor still names the file that it named when `opened` was taken.
+#[cfg(not(windows))]
+fn is_same_file(now: &PosixStat, opened: &PosixStat, has_birth_time: bool) -> bool {
+    (now.dev, now.ino, now.nlink) == (opened.dev, opened.ino, opened.nlink)
+        && (!has_birth_time || now.birthtim == opened.birthtim)
+}
+
+#[cfg(not(windows))]
+fn stat_descriptor(fd: Fd) -> Maybe<PosixStat> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if bun_sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
+        return bun_sys::fstatx(fd, bun_sys::STATX_MASK_FOR_STATS);
+    }
+    bun_sys::fstat(fd).map(|stat| PosixStat::init(&stat))
+}
+
+/// `fd` reads the file at `path` from here on, from the same offset, if it still is what `is_meant` asks for when that is open.
+#[cfg(not(windows))]
+fn reopen_at(fd: Fd, path: &ZStr, is_meant: impl FnOnce() -> bool) -> Maybe<bool> {
+    use bun_sys::FdExt as _;
+    let opened = bun_sys::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?;
+    let reopened = (|| {
+        let offset = bun_sys::lseek(fd, 0, libc::SEEK_CUR)?;
+        bun_sys::lseek(opened, offset, libc::SEEK_SET)?;
+        if !is_meant() {
+            return Ok(false);
+        }
+        // With FD_CLOEXEC from the start, so that a child of that moment has it no longer than it would have.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            // For Android, libc has the number of the call alone.
+            let (from, to) = (opened.native(), fd.native());
+            // SAFETY: both are descriptors of this process.
+            let moved = unsafe { libc::syscall(libc::SYS_dup3, from, to, libc::O_CLOEXEC) };
+            match moved {
+                -1 => Err(bun_sys::Error::from_code(
+                    bun_sys::E::EIO,
+                    bun_sys::Tag::dup,
+                )),
+                _ => Ok(true),
+            }
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            bun_sys::dup2(opened, fd)?;
+            bun_sys::set_close_on_exec(fd).map(|()| true)
+        }
+    })();
+    opened.close();
+    reopened
 }
 
 impl StandaloneModuleGraph {
@@ -1149,7 +1422,9 @@ impl StandaloneModuleGraph {
             let folder = strings::last_index_of_char(path, b'/').unwrap_or(0);
             let is_held = self.dirs.contains(&path[..folder])
                 && (self.files.contains(path) || self.dirs.contains(path));
-            return is_held || self.key_of_mounted_asset(path).is_some();
+            return is_held
+                || self.key_of_mounted_asset(path).is_some()
+                || self.contains_written_file(path);
         }
         if root.is_some_and(|root| key.starts_with(root)) {
             return true;
@@ -1176,8 +1451,11 @@ impl StandaloneModuleGraph {
             return self.is_near_source_paths(program, path.strip_suffix(b"/").unwrap_or(path));
         }
         let mut buffer = path_buffer_pool::get();
-        absolute_key(path, &mut buffer)
-            .is_some_and(|key| self.is_near_source_paths(program, key.as_bytes()))
+        absolute_key(path, &mut buffer).is_some_and(|key| {
+            // A relative path may lead into the executable.
+            is_bun_standalone_file_path(key.as_bytes())
+                || self.is_near_source_paths(program, key.as_bytes())
+        })
     }
 
     /// For a path the disk does not have.
@@ -1185,6 +1463,9 @@ impl StandaloneModuleGraph {
         let program = self.compiled_program.as_ref()?;
         let mut buffer = path_buffer_pool::get();
         let key = absolute_key(path, &mut buffer)?.as_bytes();
+        if is_removed_by_program(key) || has_vanished(key) {
+            return None;
+        }
         let under_own_root = Self::key_under_own_root(program, key);
         let key = under_own_root.as_deref().unwrap_or(key);
         if program.entry_point_by_source_path(key).is_some() || program.holds_module_at(key) {
@@ -1257,14 +1538,136 @@ impl StandaloneModuleGraph {
 
     /// `Bun.embeddedFiles` passes over it.
     pub fn is_file_for_file_system_alone(&self, file: &File) -> bool {
-        self.find_for_file_system_alone(file.name).is_some()
+        let found = self.find_file_record(file.name);
+        found.is_some_and(|found| !found.is_asset)
     }
 
-    /// What a file on a disk has and a file of the graph has not: a number of its own, a link to it, an owner, blocks, and the times it had when the program was built.
-    pub(crate) fn fill_stat_for_file_system_alone(&self, key: &[u8], stat: &mut Stat) {
-        let Some(found) = self.find_for_file_system_alone(key) else {
+    pub(crate) fn has_no_file_contents(&self, file: &File) -> bool {
+        // Every read of an embedded file asks, and only an empty file needs its record.
+        let is_empty = file.contents.as_bytes().is_empty();
+        let found = is_empty.then(|| self.find_file_record(file.name)).flatten();
+        found.is_some_and(|found| found.size_without_bytes.is_some())
+    }
+
+    fn find_file_record(&self, key: &[u8]) -> Option<FoundForFileSystemAlone> {
+        let found = self.find_for_file_system_alone(key);
+        found.or_else(|| self.find_record_above_root(key))
+    }
+
+    /// The records name a file above the root by its path from the root, `../a.json`.
+    fn find_record_above_root(&self, key: &[u8]) -> Option<FoundForFileSystemAlone> {
+        let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
+        let program = self.compiled_program.as_ref()?;
+        let name = name_in_plain_executable(root, program.levels_above_root(), key)?;
+        let levels = name.as_chunks::<5>().0.iter();
+        let levels = levels.take_while(|&it| it == b"_.._/").count();
+        let path = [&b"../".repeat(levels)[..], &name[5 * levels..]].concat();
+        program.find_for_file_system_alone(&path)
+    }
+
+    /// Records that `fd` was opened for the embedded `path`.
+    #[cfg(not(windows))]
+    pub fn add_descriptor(&self, fd: Fd, path: &'static [u8]) {
+        let Ok(opened) = stat_descriptor(fd) else {
             return;
         };
+        let index = fd.native() as usize;
+        let mut descriptors = DESCRIPTORS.lock();
+        if descriptors.len() <= index {
+            descriptors.resize_with(index + 1, || None);
+        }
+        descriptors[index] = Some(Box::new(Descriptor { opened, path }));
+        DESCRIPTOR_FILTER.fetch_or(filter_bit(fd), Ordering::Relaxed);
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        bun_sys::IS_FSTATX_DIRECT.store(false, Ordering::Relaxed);
+    }
+
+    /// The program has written the file at the source path `name` whole. What has the embedded file open reads there.
+    #[cfg(not(windows))]
+    pub fn move_descriptors_to_disk(&self, name: &[u8]) {
+        let mut buffer = path_buffer_pool::get();
+        let path = absolute_key(name, &mut buffer);
+        let Some((program, path)) = self.compiled_program.as_ref().zip(path) else {
+            return;
+        };
+        let key = Self::key_under_own_root(program, path.as_bytes());
+        let Some(file) = key.and_then(|it| self.lookup_file(&it)) else {
+            return;
+        };
+        let mut descriptors = DESCRIPTORS.lock();
+        for (index, slot) in descriptors.iter_mut().enumerate() {
+            let Some(descriptor) = slot.as_deref().filter(|it| it.path == file.name) else {
+                continue;
+            };
+            let fd = Fd::from_native(index as _);
+            let is_open = || {
+                stat_descriptor(fd)
+                    .is_ok_and(|now| is_same_file(&now, &descriptor.opened, has_birth_time()))
+            };
+            if !is_open() || reopen_at(fd, path, is_open).is_ok() {
+                *slot = None;
+            }
+        }
+    }
+
+    /// For a descriptor of an embedded path, returns the `lstat()` of the path with any changes made through the descriptor.
+    #[cfg(not(windows))]
+    #[cold]
+    pub fn fstat(&self, fd: Fd) -> Maybe<PosixStat> {
+        let now = stat_descriptor(fd)?;
+        if DESCRIPTOR_FILTER.load(Ordering::Relaxed) & filter_bit(fd) == 0 {
+            return Ok(now);
+        }
+        let mut descriptors = DESCRIPTORS.lock();
+        let Some(slot) = descriptors.get_mut(fd.native() as usize) else {
+            return Ok(now);
+        };
+        let Some(Descriptor { opened, path }) = slot.as_deref_mut() else {
+            return Ok(now);
+        };
+        // macOS and FreeBSD move the birth time back to a modification time that is set earlier. A file that reuses the inode is born later.
+        let (born, recorded) = (now.birthtim, opened.birthtim);
+        if born == now.mtim && (born.sec, born.nsec) < (recorded.sec, recorded.nsec) {
+            opened.birthtim = born;
+        }
+        if !is_same_file(&now, opened, has_birth_time()) {
+            *slot = None;
+            return Ok(now);
+        }
+        let mut shown = self
+            .stat(*path)
+            .map_or(now, |named| PosixStat::init(&named));
+        if now.mode != opened.mode {
+            shown.mode = now.mode;
+        }
+        if (now.uid, now.gid) != (opened.uid, opened.gid) {
+            (shown.uid, shown.gid) = (now.uid, now.gid);
+        }
+        if (now.size, now.blocks) != (opened.size, opened.blocks) {
+            (shown.size, shown.blocks) = (now.size, now.blocks);
+        }
+        if now.atim != opened.atim {
+            shown.atim = now.atim;
+        }
+        if now.mtim != opened.mtim {
+            shown.mtim = now.mtim;
+        }
+        if now.ctim != opened.ctim {
+            shown.ctim = now.ctim;
+        }
+        Ok(shown)
+    }
+
+    /// Fills in what only files on disk have: device, inode, link count, owner, blocks, and the times as of the build.
+    pub(crate) fn fill_stat_for_file_system_alone(&self, key: &[u8], stat: &mut Stat) {
+        let without_bytes = self.find_record_above_root(key);
+        let without_bytes = without_bytes.filter(|it| it.size_without_bytes.is_some());
+        let Some(found) = self.find_for_file_system_alone(key).or(without_bytes) else {
+            return;
+        };
+        if let Some(size) = found.size_without_bytes {
+            stat.st_size = size as _;
+        }
         let (seconds, nanoseconds) = (
             found.modified_at.div_euclid(1000),
             found.modified_at.rem_euclid(1000) * 1_000_000,
@@ -1272,6 +1675,7 @@ impl StandaloneModuleGraph {
         if found.is_folder {
             stat.st_size = 4096;
         }
+        stat.st_dev = EMBEDDED_FILES_DEVICE as _;
         stat.st_ino = found.number as _;
         stat.st_nlink = if found.is_folder { 2 } else { 1 };
         stat.st_blksize = 4096;
@@ -1316,14 +1720,11 @@ impl StandaloneModuleGraph {
             .filter(|file| self.is_asset_of_compiled_program(name, file))
     }
 
-    pub(crate) fn key_of_asset_named_at_root(&self, name: &[u8]) -> Option<Vec<u8>> {
-        self.keys_of_assets_named_at_root(name)?.next()
+    pub(crate) fn root_asset_key(&self, name: &[u8]) -> Option<Vec<u8>> {
+        self.root_asset_keys(name)?.next()
     }
 
-    fn keys_of_assets_named_at_root<'a>(
-        &'a self,
-        name: &'a [u8],
-    ) -> Option<impl Iterator<Item = Vec<u8>> + 'a> {
+    fn root_asset_keys<'a>(&'a self, name: &'a [u8]) -> Option<impl Iterator<Item = Vec<u8>> + 'a> {
         let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
         let program = self.compiled_program.as_ref()?;
         let below_root = name.strip_prefix(root)?;
@@ -1331,18 +1732,65 @@ impl StandaloneModuleGraph {
         let (base_name, below_asset) = below_root.split_at(end);
         let mut paths = program.assets_named_at_root(base_name).peekable();
         paths.peek()?;
-        // The graph has no file for a compiled module that is no entry point.
-        let is_taken = program.holds_module_at(name) || program.holds_module_below(name);
-        if is_taken || self.climbs_out_of_what_is_no_folder(name) {
+        if self.traverses_non_directory(name) {
             return None;
         }
-        let may_be_file = !asks_for_folder(name);
-        let keys = paths.filter_map(move |path| match path.starts_with(b"../") {
-            true => program.join_public_asset_path(root, &[path, below_asset].concat()),
-            false => below_asset.is_empty().then(|| [root, path].concat()),
+        let may_be_file = !requests_directory(name);
+        let keys = paths.filter_map(move |path| {
+            if !path.starts_with(b"../") {
+                let at_root = || ([root, path].concat(), 0);
+                return below_asset.is_empty().then(at_root);
+            }
+            let asset = program.join_public_asset_path(root, path)?;
+            let key = program.join_public_asset_path(root, &[path, below_asset].concat())?;
+            key.starts_with(&asset).then_some((key, asset.len()))
         });
-        let is_file = move |key: &Vec<u8>| may_be_file && self.files.contains(key);
-        Some(keys.filter(move |key| is_file(key) || self.dirs.contains(key)))
+        let mut earlier_folders: Vec<Vec<u8>> = Vec::new();
+        Some(keys.filter_map(move |(key, folder_length)| {
+            let (folder, below) = key.split_at(folder_length);
+            let is_file = may_be_file && self.files.contains(&key);
+            let normalized_name = [root, base_name, below].concat();
+            let mut earlier = earlier_folders.iter();
+            let is_found = (is_file || self.dirs.contains(&key))
+                && self.is_unshadowed_by_root(program, &normalized_name, is_file)
+                && earlier.all(|it| self.is_unshadowed_by_folder(it, below, is_file));
+            earlier_folders.push(folder.to_vec());
+            is_found.then_some(key)
+        }))
+    }
+
+    /// Outside folders with the same base name are tried in order, so an earlier one shadows a later one as the root shadows both.
+    fn is_unshadowed_by_folder(&self, earlier_folder: &[u8], below: &[u8], is_file: bool) -> bool {
+        let name_prefix = |end: usize| [earlier_folder, &below[..end]].concat();
+        let ends = (1..below.len()).filter(|&at| below[at] == b'/');
+        let mut ancestor_names = ends.chain([below.len()]).map(name_prefix);
+        !ancestor_names.any(|name| self.files.contains(&name))
+            && !(is_file && self.dirs.contains(&name_prefix(below.len())))
+    }
+
+    /// Entries of the root come first, as in `bun run`: a file shadows its name and everything below it, and a folder shadows a file. Folders merge.
+    fn is_unshadowed_by_root(
+        &self,
+        program: &CompiledProgram,
+        normalized_name: &[u8],
+        is_file: bool,
+    ) -> bool {
+        let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
+        // The graph has no file for a compiled module that is no entry point.
+        let is_own_file = |path: &[u8]| self.files.contains(path) || program.holds_module_at(path);
+        let is_own_folder =
+            || self.dirs.contains(normalized_name) || program.holds_module_below(normalized_name);
+        let ends = (root.len()..normalized_name.len()).filter(|&at| normalized_name[at] == b'/');
+        let mut ancestor_names = ends
+            .chain([normalized_name.len()])
+            .map(|end| &normalized_name[..end]);
+        !ancestor_names.any(is_own_file) && !(is_file && is_own_folder())
+    }
+
+    /// Whether `name`, below the root, resolves to the file or folder at `key`. Listings only show what can be read.
+    pub(crate) fn is_named_at_root(&self, name: &[u8], key: &[u8]) -> bool {
+        self.root_asset_keys(name)
+            .is_some_and(|mut keys| keys.any(|it| it == key))
     }
 
     /// `pub/a.txt` for the key of `../lib/pub/a.txt`, where `--asset ../lib/pub` is also found by its base name and that name leads to this file.
@@ -1356,7 +1804,7 @@ impl StandaloneModuleGraph {
                 return None;
             }
             let name = [bun_paths::basename(path), below].concat();
-            let found = self.key_of_asset_named_at_root(&[root, &name[..]].concat())?;
+            let found = self.root_asset_key(&[root, &name[..]].concat())?;
             (found == key).then_some(name)
         })
     }
@@ -1385,13 +1833,17 @@ impl StandaloneModuleGraph {
                 continue;
             }
             for (below, is_dir) in self.list_folder(&key, true) {
-                listed.push(([base_name, b"/", &below[..]].concat().into(), is_dir));
+                let name = [base_name, b"/", &below[..]].concat();
+                let place = [&key[..], b"/", &below[..]].concat();
+                if self.is_named_at_root(&[root, &name[..]].concat(), &place) {
+                    listed.push((name.into(), is_dir));
+                }
             }
         }
         listed
     }
 
-    /// The key that `name` shares with other folders, and those folders, where `found` is what `directory_key` made of it. A folder that is named by its own place stands for itself alone.
+    /// The key that `name` shares with other folders, and those folders. `found` is its `directory_key`. A folder outside the root that is named by its own path shares no key.
     pub(crate) fn find_folders_named_alike(
         &self,
         name: &[u8],
@@ -1404,9 +1856,9 @@ impl StandaloneModuleGraph {
         };
         let program = self.compiled_program.as_ref().zip(written);
         let as_read = program.and_then(|it| Self::key_under_own_root(it.0, it.1));
-        let as_read = as_read.filter(|it| it != found)?;
+        let as_read = as_read?;
         let is_other_folder = |key: &Vec<u8>| key != found && self.dirs.contains(key);
-        let keys = self.keys_of_assets_named_at_root(&as_read)?;
+        let keys = self.root_asset_keys(&as_read)?;
         let others: Vec<Vec<u8>> = keys.filter(is_other_folder).collect();
         (!others.is_empty()).then_some((as_read, others))
     }
@@ -1414,7 +1866,7 @@ impl StandaloneModuleGraph {
     /// Before it was mounted, the base name of such an asset was its key, so `__dirname` led to it.
     fn key_of_mounted_asset(&self, name: &[u8]) -> Option<Vec<u8>> {
         let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
-        let key = self.key_of_asset_named_at_root(name)?;
+        let key = self.root_asset_key(name)?;
         let is_mounted = key
             .strip_prefix(root)
             .is_none_or(|it| it.starts_with(b"_.._/"));
@@ -1428,11 +1880,11 @@ impl StandaloneModuleGraph {
         if is_below_root && is_normalized_posix_path(name) {
             return None;
         }
-        if asks_for_folder(name) || self.climbs_out_of_what_is_no_folder(name) {
+        if requests_directory(name) || self.traverses_non_directory(name) {
             return None;
         }
         let key = Self::key_under_own_root(program, name)?;
-        let named_at_root = || self.key_of_asset_named_at_root(&key);
+        let named_at_root = || self.root_asset_key(&key);
         let is_file = self.files.contains(&key);
         Some((!is_file).then(named_at_root).flatten().unwrap_or(key))
     }
@@ -1452,40 +1904,310 @@ impl StandaloneModuleGraph {
         name.map_or_else(|| Cow::Borrowed(file.display_name()), Cow::Owned)
     }
 
-    /// `sub/../a.json` is `a.json` only where `sub` is a folder: the key of a path is made of its text alone.
-    fn climbs_out_of_what_is_no_folder(&self, name: &[u8]) -> bool {
-        let is_separator = |byte: u8| byte == b'/' || (cfg!(windows) && byte == b'\\');
+    /// Keys are normalized lexically, but `sub/../a.json` is `a.json` only if `sub` is a folder. Windows normalizes lexically too.
+    fn traverses_non_directory(&self, name: &[u8]) -> bool {
+        if cfg!(windows) {
+            return false;
+        }
         let is_folder = |path: &[u8]| {
             self.find_dir(path)
                 || matches!(
                     bun_sys::directory_exists_at(Fd::cwd(), &bun_core::ZBox::from_bytes(path)),
                     Ok(true)
                 )
+                || is_folder_once_normalized(path)
         };
-        let mut searched = 0;
-        while let Some(found) = strings::index_of(&name[searched..], b"..") {
-            let (start, end) = (searched + found, searched + found + 2);
-            searched = end;
-            let is_whole_name = start > 0
-                && is_separator(name[start - 1])
-                && name.get(end).is_none_or(|&byte| is_separator(byte));
-            if is_whole_name && !is_folder(&name[..start]) {
-                return true;
+        !split_at_parent_steps(name).all(is_folder)
+    }
+
+    /// The program has removed the file or folder `name` from the disk, or renamed it. The executable no longer answers for that source path or below it.
+    pub fn forget_source_path(&self, name: &[u8]) {
+        let mut buffer = path_buffer_pool::get();
+        let Some(key) = absolute_key(name, &mut buffer) else {
+            return;
+        };
+        let program = self.compiled_program.as_ref();
+        if let Some(it) = program.and_then(|it| Self::key_under_own_root(it, key.as_bytes())) {
+            self.forget_implicit_files(&it);
+        }
+        // A program that makes and removes files of its own changes nothing in the executable.
+        if self.holds_at_or_below(key.as_bytes()) {
+            record_removed_path(key.as_bytes());
+        }
+    }
+
+    /// Whether the executable holds something for the path `key` of the disk, or below it.
+    fn holds_at_or_below(&self, key: &[u8]) -> bool {
+        let Some(program) = self.compiled_program.as_ref() else {
+            return false;
+        };
+        let holds = |key: &[u8]| {
+            self.files.contains(key)
+                || self.dirs.contains(key)
+                || program.holds_module_at(key)
+                || program.holds_module_below(key)
+                || program.entry_point_by_source_path(key).is_some()
+                || program.entry_points_in_directory(key).next().is_some()
+                || self.key_of_mounted_asset(key).is_some()
+                || self.contains_written_file(key)
+        };
+        holds(key) || Self::key_under_own_root(program, key).is_some_and(|it| holds(&it))
+    }
+
+    /// The program has written the file at the source path `name` on the disk, or has moved a folder there. The copy in the executable of a file that nobody asked the build to embed is outdated.
+    pub fn note_written_file(&self, name: &[u8]) {
+        let mut buffer = path_buffer_pool::get();
+        let path_on_disk = absolute_key(name, &mut buffer);
+        let Some((program, path_on_disk)) = self.compiled_program.as_ref().zip(path_on_disk) else {
+            return;
+        };
+        let path_on_disk = path_on_disk.as_bytes();
+        let folder = Self::key_under_own_root(program, path_on_disk);
+        let Some(folder) = folder.filter(|it| *it != path_on_disk) else {
+            return;
+        };
+        if let Some(file) = self.lookup_file(&folder) {
+            if self.is_file_for_file_system_alone(file) {
+                record_written_file(&folder, file.name, path_on_disk);
+            }
+            return;
+        }
+        if !self.dirs.contains(&folder) {
+            return;
+        }
+        for (key, file) in self.files.keys().iter().zip(self.files.values()) {
+            if !is_at_or_below(key, &folder) || !self.is_file_for_file_system_alone(file) {
+                continue;
+            }
+            let path_on_disk = [path_on_disk, &key[folder.len()..]].concat();
+            if bun_sys::exists(&path_on_disk) {
+                record_written_file(key, key, &path_on_disk);
             }
         }
-        false
+    }
+
+    /// Where the file or folder `key` of the graph was when the program was built.
+    fn path_on_build_machine(program: &CompiledProgram, key: &[u8]) -> Option<Vec<u8>> {
+        if program.preserves_source_paths {
+            return (!is_bun_standalone_file_path(key)).then(|| key.to_vec());
+        }
+        let root = program.root_on_build_machine()?;
+        let mut root = root.strip_suffix(b"/").unwrap_or(root);
+        let own_root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
+        let below = match key.strip_prefix(own_root) {
+            Some(below) => below,
+            None => {
+                let steps = key.strip_prefix(BASE_PUBLIC_PATH.as_bytes())?;
+                let folders = steps.as_chunks::<5>().0.iter();
+                let folders = folders.take_while(|&it| it == b"_.._/").count();
+                for _ in 0..(program.levels_above_root() + 1).checked_sub(folders)? {
+                    root = bun_paths::dirname(root)?;
+                }
+                &steps[5 * folders..]
+            }
+        };
+        let path = [root.strip_suffix(b"/").unwrap_or(root), b"/", below].concat();
+        // A name that leads elsewhere is none of it.
+        (*Self::key_under_own_root(program, &path)? == *key).then_some(path)
+    }
+
+    /// For what may remove files of the program: `FoundOnDisk`.
+    pub fn note_found_on_disk(&self) {
+        FOUND_ON_DISK.get_or_init(|| self.find_on_disk());
+    }
+
+    fn find_on_disk(&self) -> FoundOnDisk {
+        let mut found = FoundOnDisk {
+            files: StringArrayHashMap::new(),
+            paths: StringArrayHashMap::new(),
+        };
+        let Some(program) = self.compiled_program.as_ref() else {
+            return found;
+        };
+        // An executable that was moved finds nothing.
+        let root = program.root_on_build_machine();
+        if root.is_some_and(|it| !bun_sys::exists(strings::without_trailing_slash(it))) {
+            return found;
+        }
+        let mut missing: StringArrayHashMap<()> = StringArrayHashMap::new();
+        for (key, file) in self.files.keys().iter().zip(self.files.values()) {
+            if !self.is_file_for_file_system_alone(file) {
+                continue;
+            }
+            let Some(path) = Self::path_on_build_machine(program, key) else {
+                continue;
+            };
+            let folder = bun_paths::dirname(&path);
+            if folder.is_some_and(|it| found.find_folder(it, &mut missing))
+                && bun_sys::exists(&path)
+            {
+                let _ = found.files.put(key, path.as_slice().into());
+                let _ = found.paths.put(&path, ());
+            }
+        }
+        for entry_point in &program.entry_points {
+            let path = Self::path_on_build_machine(program, entry_point.source_path);
+            if let Some(folder) = path.as_deref().and_then(bun_paths::dirname) {
+                found.find_folder(folder, &mut missing);
+            }
+        }
+        found
+    }
+
+    /// Whether the disk had the file `key`, which nobody asked the build to embed, and has it no longer.
+    pub(crate) fn has_file_vanished(&self, key: &[u8]) -> bool {
+        let path = found_on_disk().and_then(|found| found.files.get(key));
+        path.is_some_and(|path| !bun_sys::exists(path))
+    }
+
+    /// Whether the disk had the folder `key` and has it no longer. What somebody asked the build to embed keeps its folder.
+    pub(crate) fn has_folder_vanished(&self, key: &[u8]) -> bool {
+        if found_on_disk().is_none() {
+            return false;
+        }
+        let program = self.compiled_program.as_ref();
+        let path = program.and_then(|it| Self::path_on_build_machine(it, key));
+        if !path.is_some_and(|path| has_vanished(&path)) {
+            return false;
+        }
+        let mut files = self.files.keys().iter().zip(self.files.values());
+        !files.any(|(it, file)| {
+            is_at_or_below(it, key)
+                && !self.is_file_for_file_system_alone(file)
+                && !self.is_file_of_compiled_entry_point(file)
+        })
+    }
+
+    /// `import.meta.dirname` leads to `key`, at or below which the program has removed what `__dirname` leads to. Only a file that nobody asked the build to embed is gone.
+    fn forget_implicit_files(&self, key: &[u8]) {
+        if let Some(file) = self.files.get(key) {
+            if self.is_file_for_file_system_alone(file) {
+                record_removed_path(file.name);
+            }
+        } else if self.dirs.contains(key) && !self.forget_folder(key) {
+            let files = self.files.keys().iter().zip(self.files.values());
+            files
+                .filter(|it| is_at_or_below(it.0, key) && !is_removed_by_program(it.0))
+                .filter(|it| self.is_file_for_file_system_alone(it.1))
+                .for_each(|it| record_removed_path(it.0));
+        }
+    }
+
+    /// The disk has the source folder `name`. What the executable still answers for in it, where the sources are not there: that can't be moved or removed with the folder. Where they are, the disk has all the names there are.
+    pub fn list_beside_disk(&self, name: &[u8], recursive: bool) -> Vec<(Box<[u8]>, bool)> {
+        let name = strings::without_trailing_slash(name);
+        let mut buffer = path_buffer_pool::get();
+        let found = absolute_key(name, &mut buffer);
+        let Some((program, found)) = self.compiled_program.as_ref().zip(found) else {
+            return Vec::new();
+        };
+        let found = found.as_bytes();
+        let key = Self::key_under_own_root(program, found);
+        let Some(key) = key.filter(|it| self.dirs.contains(it)) else {
+            return Vec::new();
+        };
+        let in_folder = |folder: &[u8]| [folder, b"/x"].concat();
+        if self.has_source_on_disk(&in_folder(&key), &in_folder(found)) {
+            return Vec::new();
+        }
+        // The build has named what is imported as a file. No folder of the sources holds such a name.
+        let has_name_of_source = |file: &File| self.find_file_record(file.name).is_some();
+        let mut entries = self.list_folder(&key, recursive);
+        entries.retain(|(below, is_folder)| {
+            let path = [name, b"/", below].concat();
+            match is_folder {
+                true => self.find_dir(&path),
+                false => self
+                    .find_at_source_path(&path)
+                    .is_some_and(has_name_of_source),
+            }
+        });
+        entries
+    }
+
+    /// Whether the program finds at `path`, a source path, what the executable holds there.
+    pub(crate) fn holds_at_source_path(&self, path: &[u8], is_folder: bool) -> bool {
+        match is_folder {
+            true => self.find_dir(path),
+            false => self.find_at_source_path(path).is_some() || self.is_source_file(path),
+        }
+    }
+
+    /// The program asks that nothing is at the source path `name`, and the disk had nothing there. That holds for what nobody asked the build to embed.
+    pub fn forget_unasked_files(&self, name: &[u8]) {
+        let mut buffer = path_buffer_pool::get();
+        let key = absolute_key(name, &mut buffer);
+        let program = self.compiled_program.as_ref().zip(key);
+        let Some(key) = program.and_then(|it| Self::key_under_own_root(it.0, it.1.as_bytes()))
+        else {
+            return;
+        };
+        let mut files = self.files.keys().iter().zip(self.files.values());
+        let holds_asset = files.any(|(it, file)| {
+            is_at_or_below(it, &key)
+                && !self.is_file_for_file_system_alone(file)
+                && !self.is_file_of_compiled_entry_point(file)
+        });
+        match holds_asset || self.key_of_mounted_asset(&key).is_some() {
+            true => self.forget_implicit_files(&key),
+            false => self.forget_source_path(name),
+        }
+    }
+
+    fn holds_code_below(&self, folder: &[u8]) -> bool {
+        self.compiled_program.as_ref().is_some_and(|program| {
+            program.holds_module_below(folder)
+                || program.entry_points_in_directory(folder).next().is_some()
+        })
+    }
+
+    /// The folder `key` is gone with what is in it, unless an asset or code is.
+    fn forget_folder(&self, key: &[u8]) -> bool {
+        let is_below = |it: &[u8]| it.len() > key.len() && is_at_or_below(it, key);
+        let mut files = self.files.keys().iter().zip(self.files.values());
+        let is_kept = files.any(|(it, file)| {
+            is_below(it) && !is_removed_by_program(it) && !self.is_file_for_file_system_alone(file)
+        });
+        if is_kept || self.holds_code_below(key) {
+            return false;
+        }
+        record_removed_path(key);
+        true
+    }
+
+    /// The program has removed the source path `key` or renamed it, and has written nothing below it since.
+    fn is_gone(&self, program: &CompiledProgram, key: &[u8]) -> bool {
+        let is_written_to = |it: Vec<u8>| self.contains_written_file(&it);
+        is_removed_by_program(key)
+            && !Self::key_under_own_root(program, key).is_some_and(is_written_to)
+    }
+
+    /// Whether the program has written a file of `folder`.
+    fn contains_written_file(&self, folder: &[u8]) -> bool {
+        let is_below = |path: &[u8]| path.len() > folder.len() && is_at_or_below(path, folder);
+        let is_written = |it: &WrittenFile| is_below(&it.path) && bun_sys::exists(&it.path_on_disk);
+        has_written_files() && WRITTEN_FILES.lock().iter().any(is_written)
     }
 
     pub fn find_at_source_path(&self, name: &[u8]) -> Option<&File> {
         let program = self.compiled_program.as_ref()?;
+        if !bun_paths::is_absolute(name) {
+            let mut buffer = path_buffer_pool::get();
+            // It may lead into the executable.
+            let key = absolute_key(name, &mut buffer)?.as_bytes();
+            if is_bun_standalone_file_path(key) {
+                return self.find_ref(key);
+            }
+        }
         if !program.preserves_source_paths && program.root_on_build_machine().is_none() {
             return None;
         }
-        if asks_for_folder(name) || self.climbs_out_of_what_is_no_folder(name) {
+        if requests_directory(name) || self.traverses_non_directory(name) {
             return None;
         }
         let mut buffer = path_buffer_pool::get();
-        let key = absolute_key(name, &mut buffer)?;
+        let key =
+            absolute_key(name, &mut buffer).filter(|it| !self.is_gone(program, it.as_bytes()))?;
         let under_own_root = Self::key_under_own_root(program, key.as_bytes());
         if !program.preserves_source_paths && under_own_root.is_none() {
             return None;
@@ -1503,8 +2225,45 @@ impl StandaloneModuleGraph {
             return None;
         }
         // As for a directory, the disk wins: the file may have been written since the build, and the program may write it.
-        let is_on_disk = bun_sys::exists(key.as_bytes());
-        (!is_on_disk).then(|| &self.files.values()[file_index])
+        if bun_sys::exists(key.as_bytes()) {
+            return None;
+        }
+        let file = &self.files.values()[file_index];
+        let has_source = |it: &[u8]| self.has_source_on_disk(it, key.as_bytes());
+        let is_gone = self.has_file_vanished(file.name)
+            || self.is_file_for_file_system_alone(file)
+                && under_own_root.as_deref().is_some_and(has_source);
+        (!is_gone && !is_removed_by_program(file.name)).then_some(file)
+    }
+
+    /// Whether the program runs beside its sources, as far as `key` tells: the disk has the source of a compiled file from the nearest folder around `key` that holds one. Then a file that nobody named is gone if the disk says so. `key_in_graph` is `key` in the executable. Neither the folder nor a data file tells: a container often has the folder of the build with only the executable in it, and one file may be laid at its old place to stand for the embedded one.
+    fn has_source_on_disk(&self, key_in_graph: &[u8], key: &[u8]) -> bool {
+        let Some(program) = self.compiled_program.as_ref() else {
+            return false;
+        };
+        let mut cut = bun_paths::basename(key).len() + 1;
+        if cut >= key.len() || !bun_sys::exists(&key[..key.len() - cut]) {
+            return false;
+        }
+        while cut < key.len() && cut < key_in_graph.len() {
+            let folder = &key[..key.len() - cut];
+            let folder_in_graph = &key_in_graph[..key_in_graph.len() - cut];
+            let mut entry_points = program.entry_points_in_directory(folder_in_graph);
+            let mut source = entry_points.next().map(|it| it.source_path.to_vec());
+            program.for_each_module_below(folder_in_graph, &mut |path| {
+                source = Some(path.to_vec());
+                false
+            });
+            if let Some(source) = source {
+                return is_file_on_disk(&[folder, &source[folder_in_graph.len()..]].concat());
+            }
+            let name = bun_paths::basename(folder);
+            if name != bun_paths::basename(folder_in_graph) {
+                return false;
+            }
+            cut += name.len() + 1;
+        }
+        false
     }
 
     pub(crate) fn directory_key<'a>(
@@ -1516,7 +2275,10 @@ impl StandaloneModuleGraph {
             let program = self.compiled_program.as_ref();
             let is_directory = |key: &[u8]| {
                 self.dirs.contains_key(key)
+                    && !is_removed_by_program(key)
+                    && !self.has_folder_vanished(key)
                     || program.is_some_and(|program| program.holds_module_below(key))
+                    || self.contains_written_file(key)
             };
             if is_directory(Self::normalize_dir_path(name, buffer)) {
                 return Some(Self::normalize_dir_path(name, buffer));
@@ -1538,33 +2300,38 @@ impl StandaloneModuleGraph {
             // Every key of such a graph lies under its own root.
             program.root_on_build_machine()?;
             let mut on_build_machine = path_buffer_pool::get();
-            let key = absolute_key(name, &mut on_build_machine)?;
+            // The key of the root is empty. The disk has the root.
+            let key = absolute_key(name, &mut on_build_machine)
+                .filter(|it| !it.as_bytes().is_empty())
+                .filter(|it| !self.is_gone(program, it.as_bytes()))?;
             let under_own_root = Self::key_under_own_root(program, key.as_bytes())?;
-            let is_directory =
-                |key: &[u8]| self.dirs.contains_key(key) || program.holds_module_below(key);
+            let is_directory = |key: &[u8]| {
+                self.dirs.contains_key(key)
+                    || program.holds_module_below(key)
+                    || self.contains_written_file(key)
+            };
             let under_own_root = match is_directory(&under_own_root) {
                 true => under_own_root,
                 false => self.key_of_mounted_asset(&under_own_root)?,
             };
-            let is_directory = is_directory(&under_own_root);
+            let is_directory =
+                is_directory(&under_own_root) && !self.has_folder_vanished(&under_own_root);
             let length = under_own_root.len();
-            if !is_directory
-                || length > buffer.len()
-                || matches!(bun_sys::directory_exists_at(Fd::cwd(), key), Ok(true))
-            {
+            if !is_directory || length > buffer.len() || bun_sys::exists(key.as_bytes()) {
                 return None;
             }
             buffer[..length].copy_from_slice(&under_own_root);
             return Some(&buffer[..length]);
         }
-        let key = absolute_key(name, buffer)?;
+        let key = absolute_key(name, buffer)
+            .filter(|it| !it.as_bytes().is_empty() && !is_removed_by_program(it.as_bytes()))?;
         if !self.is_near_source_paths(program, key.as_bytes())
             || !self.dirs.contains_key(key.as_bytes())
+            || self.has_folder_vanished(key.as_bytes())
         {
             return None;
         }
-        let is_on_disk = matches!(bun_sys::directory_exists_at(Fd::cwd(), key), Ok(true));
-        (!is_on_disk).then_some(key.as_bytes())
+        (!bun_sys::exists(key.as_bytes())).then_some(key.as_bytes())
     }
 
     pub(crate) fn entry_point_by_name(&self, name: &[u8]) -> Option<&CompiledEntryPoint> {
@@ -1600,7 +2367,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::StandaloneModuleGraph::{
         BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, CompileTarget, Flags, GraphRequest, Offsets,
-        RuntimeOptions, to_bytes, to_graph_bytes, with_graph_slices,
+        RuntimeOptions, normalize_windows_key, to_bytes, to_graph_bytes, with_graph_slices,
     };
     use crate::executable_request::graph_bytes;
 
@@ -1959,6 +2726,51 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn removed_paths_are_recorded_once() {
+        let record = |path: &str| record_removed_path(format!("/recorded-once/{path}").as_bytes());
+        ["a/b", "a/b", "a/bc", "d"].into_iter().for_each(record);
+        record("a");
+        record("a/c");
+        let removed = REMOVED_PATHS.lock();
+        let mut of_test: Vec<&[u8]> = (removed.iter())
+            .filter_map(|it| it.strip_prefix(b"/recorded-once/"))
+            .collect();
+        of_test.sort_unstable();
+        assert_eq!(of_test, [&b"a"[..], b"d"]);
+        drop(removed);
+        assert!(is_removed_by_program(b"/recorded-once/a/b/c"));
+        assert!(!is_removed_by_program(b"/recorded-once/ab"));
+    }
+
+    #[test]
+    fn change_time_is_no_birth_time() {
+        let at = |sec: i64| bun_sys::Timespec { sec, nsec: 0 };
+        let opened = PosixStat {
+            ino: 7,
+            nlink: 1,
+            ctim: at(100),
+            birthtim: at(100),
+            ..bun_core::ffi::zeroed()
+        };
+        // As behind `fchmod()` where `fstat()` fills the birth time from the change time.
+        let changed = PosixStat {
+            ctim: at(200),
+            birthtim: at(200),
+            ..opened
+        };
+        assert!(is_same_file(&changed, &opened, false));
+        // With `statx`, a later birth is another file that reuses the inode.
+        assert!(!is_same_file(&changed, &opened, true));
+        let born_as_before = PosixStat {
+            birthtim: at(100),
+            ..changed
+        };
+        assert!(is_same_file(&born_as_before, &opened, true));
+        let other = PosixStat { ino: 8, ..opened };
+        assert!(!is_same_file(&other, &opened, false));
+    }
+
+    #[test]
     fn files_for_file_system_alone_round_trip() {
         use bun_resolver::compiled_program::{
             FoundForFileSystemAlone, PathForFileSystemAlone, encode_files_for_file_system_alone,
@@ -1967,6 +2779,8 @@ pub(crate) mod tests {
             path_below_root: path.to_vec(),
             modified_at,
             is_folder,
+            is_asset: path.ends_with(b".toml"),
+            size_without_bytes: path.ends_with(b".json").then_some(4_020_736),
         };
         let files = encode_files_for_file_system_alone(vec![
             laid(b"data/b.json", 1_700_000_000_123, false),
@@ -1981,17 +2795,22 @@ pub(crate) mod tests {
         let (program, record_end) = read_back(bytes.clone(), record_at).unwrap();
         assert_eq!(record_end, bytes.len());
         assert_eq!(program.loaders_given_to_build(), b".pic\0text\0");
-        let found = |number: u32, modified_at: i64, is_folder: bool| {
+        let found = |number: u32, modified_at: i64, is_folder: bool, is_asset: bool| {
             Some(FoundForFileSystemAlone {
                 number,
                 modified_at,
                 is_folder,
+                is_asset,
+                size_without_bytes: (number == 3).then_some(4_020_736),
             })
         };
         let find = |path: &[u8]| program.find_for_file_system_alone(path);
-        assert_eq!(find(b"data"), found(1, 7, true));
-        assert_eq!(find(b"data/a.toml"), found(2, -5, false));
-        assert_eq!(find(b"data/b.json"), found(3, 1_700_000_000_123, false));
+        assert_eq!(find(b"data"), found(1, 7, true, false));
+        assert_eq!(find(b"data/a.toml"), found(2, -5, false, true));
+        assert_eq!(
+            find(b"data/b.json"),
+            found(3, 1_700_000_000_123, false, false)
+        );
         for path in [&b"data/b.jso"[..], b"data/b.json5", b"data/", b""] {
             assert_eq!(find(path), None);
         }
@@ -2027,6 +2846,21 @@ pub(crate) mod tests {
             read_back(bytes[..bytes.len() - 1].to_vec(), record_at).err(),
             Some(CORRUPTED)
         );
+    }
+
+    #[test]
+    fn normalizes_windows_keys() {
+        for (key, tidy) in [
+            (&b"b:/~BUN/root/a.txt"[..], &b"B:/~BUN/root/a.txt"[..]),
+            (b"B:/~BUN/root/a.txt/", b"B:/~BUN/root/a.txt"),
+            (b"B:/~BUN/root/a.txt//", b"B:/~BUN/root/a.txt"),
+            (b"B:/", b"B:/"),
+            (b"", b""),
+        ] {
+            let mut key = key.to_vec();
+            let length = normalize_windows_key(&mut key);
+            assert_eq!(&key[..length], tidy);
+        }
     }
 
     #[test]
@@ -2503,6 +3337,44 @@ pub(crate) mod tests {
         let answers_in_folder = answers();
         bun_sys::chdir(&previous).unwrap();
         assert_eq!(answers_in_folder, (true, true, Some(SourcePathKind::File)));
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn root_of_the_disk_is_no_folder_of_the_executable() {
+        fn list_modules(start: &[u8], each: &mut dyn FnMut(&[u8]) -> bool) {
+            for path in [
+                &b"/$bunfs/_.._/_.._/no-such-lib/x.js"[..],
+                b"/$bunfs/root/main.js",
+            ] {
+                if path.starts_with(start) && !each(path) {
+                    return;
+                }
+            }
+        }
+        let folder = TemporaryFolder::create("root-of-the-disk");
+        let mut graph = with_request(&folder, false, read_graph);
+        let program = graph.compiled_program.take().unwrap();
+        program.set_module_listing(list_modules);
+        program.set_test_of_path_starts(|start| {
+            let folder = &start[..=strings::last_index_of_char(start, b'/').unwrap()];
+            let mut holds_one = false;
+            list_modules(folder, &mut |_| {
+                holds_one = true;
+                false
+            });
+            holds_one
+        });
+        let program = program.with_root_on_build_machine(Some(b"/no-such-app"));
+        graph.compiled_program = Some(program.with_levels_above_root(2));
+        for name in [&b"/"[..], b"//", b"/tmp/..", b"/."] {
+            let shown = String::from_utf8_lossy(name);
+            assert_eq!(directory_key(&graph, name), None, "{shown}");
+            assert!(!graph.owns_directory(name), "{shown}");
+        }
+        let library = directory_key(&graph, b"/no-such-lib");
+        let key = &b"/$bunfs/_.._/_.._/no-such-lib"[..];
+        assert_eq!(library.as_deref(), Some(key));
     }
 
     #[test]

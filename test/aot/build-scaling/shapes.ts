@@ -766,6 +766,32 @@ export const shapes: Shape[] = [
         `  let said;\n  try { said = (await import("./user.mjs")).look(); } catch (error) { said = error.name; }\n  expect(said).toBe("Error");\n});\n`,
     }),
   },
+  // Diamonds: a barrel stars two files, and each of them exports one name from the next barrel. Nobody declares the name, so each file was followed once per path: 16 diamonds took 14 G instructions,
+  // and 20 took 206 G and 17 GB. The first shape mocks the barrels, the second the files between them.
+  ...[true, false].map(
+    (mocksBarrels): Shape => ({
+      name: `diamonds of barrels whose two files export one name of the next barrel, ${mocksBarrels ? "the barrels" : "the files between"} mocked, in a test run`,
+      counted: "diamonds",
+      size: 10,
+      entry: "a.test.js",
+      isTestRun: true,
+      write: size => ({
+        "package.json": `{ "name": "p", "type": "module" }\n`,
+        "leaf.cjs": `exports[["fou", "nd"].join("")] = 1;\n`,
+        ...Object.fromEntries(
+          upTo(size, level => [
+            [`barrel${level}.mjs`, level + 1 < size ? `export * from "./left${level}.mjs";\nexport * from "./right${level}.mjs";\n` : `export * from "./leaf.cjs";\n`],
+            ...["left", "right"].map(side => [`${side}${level}.mjs`, level + 1 < size ? `export { found } from "./barrel${level + 1}.mjs";\n` : ""]),
+          ]).flat(),
+        ),
+        "user.mjs": size ? `import { found } from "./barrel0.mjs";\nexport const look = () => found;\n` : `export const look = () => 1;\n`,
+        "a.test.js":
+          `import { expect, test, vi } from "bun:test";\ntest("it loads", async () => {\n  if (process.argv.length > 99) {\n` +
+          lines(size, level => (mocksBarrels ? ["barrel"] : ["left", "right"]).map(name => `    vi.doMock("./${name}${level}.mjs", () => ({}));`).join("\n")) +
+          `  }\n  expect((await import("./user.mjs")).look()).toBe(1);\n});\n`,
+      }),
+    }),
+  ),
   // One name that only the run can find, read as many times as the barrel that it is read off has stars, and one file behind the stars mocked. Each read asked every star for the name: reads x stars:
   // 4,000 took 43 G instructions, and take 7. The places of the stars by name were kept where the program is linked, and were not handed to the lowering of a read.
   // At these sizes the build holds too little for its memory to be judged: at 1,000 and 2,000 that read 2.00 to 2.06 times, with and without the mend.
@@ -875,6 +901,38 @@ export const shapes: Shape[] = [
         `  const all = await import("./ring0.js");\n  expect([all.shared, all.leaf]).toEqual([1, -2]);\n});\n`,
     }),
   },
+  // The barrels stay linked to the file that was loaded before the mock. A namespace object listed the names of its stars by reading each value, each read asked of all barrels whether a star leads
+  // to a mock, and then went down barrel by barrel; a ring of 80 took 335 G instructions. The build searched the way of each name from each barrel anew.
+  ...["cjs", "mjs"].flatMap((kind): Shape[] =>
+    ["line", "ring"].map((form): Shape => ({
+      name: `barrels in a ${form} that each export everything of three others and of a file (${kind}) that is mocked once they are loaded, in a test run`,
+      counted: "barrels",
+      // A ring of 200 costs the checker of types more than twice one of 100.
+      size: form === "ring" ? 20 : 200,
+      entry: "a.test.js",
+      isTestRun: true,
+      write: size => ({
+        "package.json": `{ "name": "p", "type": "module" }\n`,
+        [`store.${kind}`]: kind === "cjs" ? `exports.count = 1;\n` : `export const count = 1;\n`,
+        "leaf.js": `export const last = 7;\n`,
+        ...Object.fromEntries(
+          upTo(size, index => [
+            `b${index}.js`,
+            [1, 2, 3]
+              .filter(step => form === "ring" || index + step < size)
+              .map(step => `export * from "./b${(index + step) % size}.js";\n`)
+              .join("") +
+              (form === "ring" ? `export const own${index} = ${index};\n` : "") +
+              `export * from "./${index + 1 < size ? "store." + kind : "leaf.js"}";\n`,
+          ]),
+        ),
+        "a.test.js":
+          `import { expect, test, vi } from "bun:test";\ntest("it loads", async () => {\n  await import("./${size ? "b0" : "leaf"}.js");\n` +
+          `  vi.doMock("./store.${kind}", () => ({ count: 10, more: 5 }));\n  const all = await import("./${size ? "b0" : "leaf"}.js");\n` +
+          `  expect([Object.keys(all).length, all.last, all.count]).toEqual(${size ? `[${form === "ring" ? size + 2 : 2}, 7, 1]` : `[1, 7, undefined]`});\n});\n`,
+      }),
+    })),
+  ),
   // Where files lead back to each other by three ways a level, a walk that keeps no answer goes all the ways: three to the power of the files. Who wrote an entry was sought
   // by such a walk for each entry that is left to the run, and the answer thrown away: 20 files took 164,000 M instructions for 2,000 M.
   {
@@ -969,6 +1027,22 @@ export const shapes: Shape[] = [
         `  let sum = 0; for (let i = 0; i < ${size * 5}; i++) sum += require("./top.mjs").ok; expect(sum).toBe(${size * 5}); });\n`,
     }),
   },
+  // A package without side effects whose files each export everything of the next. All but the last are left out, and each of them walked the rest of the chain for the requests that it passes on.
+  // What is left of the square is the checker's: each file keeps the files that its stars lead to.
+  {
+    name: "files of a package without side effects that each export everything of the next, of which one name of the last is read",
+    counted: "files",
+    size: 1500,
+    entry: "main.mjs",
+    mostGrowthInInstructions: 2.4,
+    write: size => ({
+      "package.json": `{ "name": "p", "type": "module" }\n`,
+      "node_modules/chain/package.json": `{ "name": "chain", "main": "f0.mjs", "sideEffects": false }\n`,
+      ...Object.fromEntries(upTo(size, index => [`node_modules/chain/f${index}.mjs`, `export * from "./f${index + 1}.mjs";\n`])),
+      [`node_modules/chain/f${size}.mjs`]: `export const last = 7;\n`,
+      "main.mjs": `import { last } from "chain";\nconsole.log(last);\n`,
+    }),
+  },
   // A barrel, which is what real suites have. For each name that it has from a star the build walked, and entered, every star in front of the file that declares the name: names x stars.
   {
     name: "a file that exports everything of many files, loaded behind a mock of the last, in a test run",
@@ -976,8 +1050,7 @@ export const shapes: Shape[] = [
     size: 500,
     entry: "a.test.js",
     isTestRun: true,
-    // What is left is the run: the namespace of the barrel resolves each of its names through all of its stars.
-    growsSoFarInInstructions: "3.07 times in instructions",
+    // The run resolved each name of the namespace through all the stars: 2,000 files took 8.7 G instructions, and take 3.3.
     write: size => ({
       "package.json": `{ "name": "p", "type": "module" }\n`,
       ...Object.fromEntries(upTo(size + 1, index => [`m${index}.js`, `export const x${index} = ${index};\n`])),
@@ -1136,6 +1209,19 @@ export const shapes: Shape[] = [
         lines(size, index => `class C${index} extends Base { m${index}() { return ${index}; } }\nall.push(new C${index}());`) +
         lines(size, index => `count += pick(${index}).m${index} ? 1 : 0;`) +
         `console.log(count);\n`,
+    }),
+  },
+  // The new target of a constructor that met other functions was any of them, so each class stored its names on every class below its base: classes x names. 1,450 classes of a bundle of 10 MB took 49 of 89 G instructions and 2.4 GB.
+  {
+    name: "classes that initializers assign, shown beside a function by getters",
+    counted: "classes",
+    size: 500,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `class Base { constructor(id) { this.id = id; } }\nfunction show(target, all) { for (const name in all) Object.defineProperty(target, name, { get: all[name], enumerable: true }); }\nconst once = (make, made) => function init() { return make && (made = make(make = 0)), made; };\nlet sum = 0;\n` +
+        lines(size, index => `const m${index} = {};\nshow(m${index}, { C${index}: () => C${index}, f${index}: () => f${index} });\nfunction f${index}(x) { return x; }\nvar C${index};\nconst init${index} = once(() => {\n  C${index} = class C${index} extends Base {\n    constructor(id, props) { super(id); this.a${index} = props.a; this.b${index} = props.b; }\n    static create(props) { return new C${index}(${index}, props); }\n  };\n});\ninit${index}();\nsum += m${index}.f${index}(${index});`) +
+        `console.log(sum);\n`,
     }),
   },
   // A call by name through a family is tied for every member: a field beside the fields of each is made and watched, and what is found beside each is watched: classes x names in nodes and observers. 4,000 of each: 82 G instructions, 6,454 MB.
@@ -2639,6 +2725,8 @@ export const shapes: Shape[] = [
     counted: "sums",
     size: 1000,
     entry: "main.ts",
+    // Under musl this reads 1.94 to 2.12. The memory is a straight line: 2,000 sums more add 129 MB, 4,000 more 246, 8,000 more 482.
+    mostGrowthInMemory: 2.2,
     write: size => ({
       "main.ts": `function total(held: Uint8Array): number {\n  let sum = 0;\n  for (let i = 0; i < held.length; i++)\n    for (let j = 0; j < 2; j++) {\n${lines(size, () => `      sum += held.length;`)}    }\n  return sum;\n}\nconsole.log(total(new Uint8Array(3)), total(Buffer.from([1, 2, 3])));\n`,
     }),
@@ -3440,6 +3528,19 @@ export const shapes: Shape[] = [
       }),
     }),
   ),
+  // The same patterns, many levels deep. The emitter looked through the blocks of the function for the users of each iterator, and each pattern was printed anew for the message of its failure:
+  // 4,000 levels took 69 G instructions, and take 6.
+  ...["const ", ""].map(
+    (declares): Shape => ({
+      name: `list patterns nested in one another, many levels deep, ${declares ? "that declare" : "that assign"}`,
+      counted: "levels",
+      size: 1000,
+      entry: "main.js",
+      write: size => ({
+        "main.js": `let value = Number("7");\nfor (let i = 0; i < ${size}; i++) value = [value];\n${declares ? "" : "let inmost;\n"}${declares}${"[".repeat(size)}inmost${"]".repeat(size)} = value;\nconsole.log(inmost);\n`,
+      }),
+    }),
+  ),
   // Each pattern takes one element of what the pattern around it has taken, and the iterator of the outer one is open for as long as the inner ones run.
   {
     name: "list patterns nested in one another",
@@ -3649,6 +3750,52 @@ export const shapes: Shape[] = [
       "main.ts":
         `${declaredConsole}type Kind = ${upTo(Math.max(size, 1), index => `"text${index}"`).join(" | ")};\nconst all: Kind[] = [${upTo(size, index => `"text${index}"`).join(", ")}];\n` +
         `function weigh(kind: Kind): number {\n  switch (kind) {\n${lines(size, index => `    case "text${index}":\n      return ${index};`)}  }\n  return -1;\n}\nlet sum = 0;\nfor (const kind of all) sum += weigh(kind);\nconsole.log(sum);\n`,
+    }),
+  },
+  {
+    // For each enum, every block of the namespace was searched for every other: 1,000 took 6 G, and 2,000 took 42 G.
+    name: "blocks of one namespace, each with an enum that is read",
+    counted: "blocks",
+    size: 1000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        `${declaredConsole}namespace Space { export enum First { One } }\n${lines(size, index => `namespace Space { export enum Kind${index} { One = ${index} } }`)}` +
+        `function isOver(value: number): boolean { return value > 0; }\nlet found = 0;\n${lines(size, index => `if (isOver(Space.Kind${index}.One)) found++;`)}console.log(found, Space.First.One);\n`,
+    }),
+  },
+  {
+    // Whether the member is declared in front of the read, and its enum around it, was asked by a walk up every operator above the read: 10,000 reads took 13 G.
+    name: "reads of a member of an enum, operands of one expression",
+    counted: "reads",
+    size: 10000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}enum Kind { One = 1 }\nconst sum = ${upTo(size + 1, () => "Kind.One").join(" + ")};\nconsole.log(sum);\n`,
+    }),
+  },
+  {
+    name: "names of a member of an enum, operands of the initializer of the next member",
+    counted: "names",
+    size: 20000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}enum Kind { One = 1, Sum = ${upTo(size + 1, () => "One").join(" + ")} }\nconsole.log(Kind.Sum);\n`,
+    }),
+  },
+  {
+    name: "reads of a member of an enum, tests of one if with many else ifs",
+    counted: "reads",
+    size: 4000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        `${declaredConsole}enum Kind { None, One }\nfunction isOver(value: number): boolean { return value > 0; }\nlet found = 0;\n` +
+        `if (isOver(Kind.None)) found = 1;\n${lines(size, index => `else if (isOver(Kind.None)) found = ${index};`)}console.log(found);\n`,
     }),
   },
   {
@@ -3972,6 +4119,56 @@ export const shapes: Shape[] = [
             lines(size, index => `} while (++i${size - 1 - index} < 1);`) +
             `  return sum;\n}`,
         ) + `console.log(run0() + run1() + run2() + run3());\n`,
+    }),
+  },
+  // The four forms are bounded and unrolled as loops with a relation are. Whoever asks all loops of the function for each of them, or goes into each inner loop anew from every level, works by the
+  // loop times the function: 200 loops nested in one another added 8,700 M instructions and 400 of them 69,700 M.
+  {
+    name: "loops in a row that each end where their counter equals its bound, upward and downward",
+    counted: "loops",
+    size: 200,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        "function large(a, n) {\n  let s = 0;\n" +
+        lines(size, index => (index % 2 ? `  for (let k = n; k !== 0; k--) s += a[k] + ${index};` : `  for (let k = 0; k !== n; k++) s += a[k] + ${index};`)) +
+        "  return s;\n}\nconsole.log(large([1, 2, 3, 4], 3));\n",
+    }),
+  },
+  {
+    name: "loops in a row that each test at their end, upward and downward",
+    counted: "loops",
+    size: 200,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        "function large(a, n) {\n  let s = 0;\n" +
+        lines(size, index => `  { let k = ${index % 2 ? "n" : "0"}; do { s += a[k] + ${index}; } while (${index % 2 ? "--k > 0" : "++k < n"}); }`) +
+        "  return s;\n}\nconsole.log(large([1, 2, 3, 4], 3));\n",
+    }),
+  },
+  {
+    name: "loops that end where their counter equals its bound, nested in one another",
+    counted: "loops",
+    size: 100,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        "function deep(n) {\n  let sum = 0;\n" +
+        lines(size, index => `for (let i${index} = 0; i${index} !== n; i${index}++) {`) +
+        `sum++;\n${"}\n".repeat(size)}  return sum;\n}\nconsole.log(deep(1));\n`,
+    }),
+  },
+  {
+    name: "nests of two loops in a row whose inner loops step one count",
+    counted: "nests",
+    size: 400,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        "function large(a, n) {\n  let c = 0, d = 0;\n" +
+        lines(size, index => `  for (let i = 0; i < n; i++) { for (let j = a[i]; j; j &= j - 1) c++; d += c + ${index}; }`) +
+        "  return c + d;\n}\nconsole.log(large([3, 1, 4, 1], 4));\n",
     }),
   },
   // A loop is walked under what is assumed of it, held against that at its back edge, and undone and walked again where it does not fit. A nest climbs together: three walks a loop at any
@@ -4733,6 +4930,19 @@ console.log(typeof outmost.inner);
     },
   },
   {
+    // Each read of the list searched the block to its end for what rests on the element.
+    name: "elements of one list that are kept in a field, in a loop",
+    counted: "lines",
+    size: 2000,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        `const numbers = JSON.parse("[" + Array.from({ length: 64 }, (_, k) => (k * 37) % 101).join() + "]");\nconst o: any = { k: 0 };\nfunction run(list: number[], turns: number) {\n  for (let turn = 0; turn < turns; turn++) {\n` +
+        lines(size, index => `    o.k = list[${index % 64}]!;`) +
+        `  }\n  return 1;\n}\nconsole.log(run(numbers, 3), o.k);\n`,
+    }),
+  },
+  {
     name: "lines that each add an element to one sum and truncate it, in a loop that carries the sum as an integer",
     counted: "lines",
     size: 1000,
@@ -4742,6 +4952,19 @@ console.log(typeof outmost.inner);
         `function run(list, turns) {\n  let bits = 0, sum = 0;\n  for (let turn = 0; turn < turns; turn++) {\n` +
         lines(size, index => `    sum += list[${index}]; bits ^= sum & 7;`) +
         `    sum = sum | 0;\n  }\n  return bits + sum;\n}\n${aFloat64Array(size)}console.log(run(list, 3));\n`,
+    }),
+  },
+  {
+    // The allocator searched the uses of a value that rare regions read for each edge into a loop.
+    name: "stores into a field of an object of one class or none",
+    counted: "stores",
+    size: 2000,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        `const hard = JSON.parse('{"n":3}');\nclass P {\n  x = 1;\n}\nconst p: any = hard.n === 4 ? hard : new P();\nfunction run(turn: number) {\n` +
+        lines(size, index => `  p.x = turn;`) +
+        `  return p.x;\n}\nconsole.log(run(3));\n`,
     }),
   },
   {
@@ -5597,7 +5820,8 @@ console.log(typeof outmost.inner);
   {
     name: "keys of one literal that are each stored and read again by name",
     counted: "keys",
-    size: 5000,
+    // An object lists 4,095 names. Past them each name adds 19 to 22 bytes to the code that functions share: a straight line with a bend, which half of this size stands behind.
+    size: 10000,
     entry: "main.ts",
     write: size => ({
       "tsconfig.json": withoutLibraryTypes,
@@ -7752,15 +7976,15 @@ export {};
   // A helper lays getters off a table, as bundlers write it. What is expected at the reads is found from each target's own readers: once a target, however often it is filled.
   ...(
     [
-      ["calls of the helper on one target, a name each", (size: number) => `const ns = {};\n` + lines(size, index => `lay(ns, { a${index}: () => f${index} });`), (index: number) => `ns.a${index}()`],
-      ["targets that the helper fills with a name each", (size: number) => lines(size, index => `const ns${index} = {}; lay(ns${index}, { a${index}: () => f${index} });`), (index: number) => `ns${index}.a${index}()`],
-      ["names of one table that the helper lays on one target", (size: number) => `const ns = {};\nlay(ns, { ${upTo(size, index => `a${index}: () => f${index}`).join(", ")} });\n`, (index: number) => `ns.a${index}()`],
+      ["calls of the helper on one target, a name each", 1000, (size: number) => `const ns = {};\n` + lines(size, index => `lay(ns, { a${index}: () => f${index} });`), (index: number) => `ns.a${index}()`],
+      ["targets that the helper fills with a name each", 4000, (size: number) => lines(size, index => `const ns${index} = {}; lay(ns${index}, { a${index}: () => f${index} });`), (index: number) => `ns${index}.a${index}()`],
+      ["names of one table that the helper lays on one target", 1000, (size: number) => `const ns = {};\nlay(ns, { ${upTo(size, index => `a${index}: () => f${index}`).join(", ")} });\n`, (index: number) => `ns.a${index}()`],
     ] as const
   ).map(
-    ([counted, fill, call]): Shape => ({
+    ([counted, size, fill, call]): Shape => ({
       name: `getters that a helper lays off a table, each called in one loop: ${counted}`,
       counted,
-      size: 1000,
+      size,
       entry: "main.js",
       write: size => ({
         "main.js":
@@ -7874,6 +8098,198 @@ export {};
         `function step(x: number): number { return x + 1; }\nfunction run(x: number): number {\n` +
         lines(size, () => `  x = step(x);`) +
         `  return x;\n}\nconsole.log(run(JSON.parse("7")));\n`,
+    }),
+  },
+  {
+    // The constant of each member used as a key was computed from the first member of the file on: 12,800 members took 14.6 G instructions.
+    name: "enums with tables of labels",
+    counted: "enums",
+    size: 1600,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        lines(size, index => `enum E${index} { A = "a${index}", B = "b${index}", C = "c${index}", D = "d${index}" }\nconst label${index}: Record<E${index}, string> = { [E${index}.A]: "first", [E${index}.B]: "second", [E${index}.C]: "third", [E${index}.D]: "fourth" };`) +
+        `let sum = 0;\n` +
+        lines(size, index => `sum += label${index}[E${index}.D].length;`) +
+        `console.log(sum);\n`,
+    }),
+  },
+  {
+    // Each `import * as` had its own table of the exports of the barrel: 1,600 files took 10.8 G instructions and 339 MB.
+    name: "namespace imports of one barrel",
+    counted: "files",
+    size: 400,
+    entry: "main.ts",
+    write: size => ({
+      ...Object.fromEntries(upTo(size, index => [`m${index}.ts`, `import * as all from "./index.ts";\nexport const a${index} = ${index};\nexport function g${index}(x: number): number { return x < 0 ? all.a${(index + 1) % size} : x + a${index}; }\n`])),
+      "index.ts": lines(size, index => `export * from "./m${index}.ts";`) + `export {};\n`,
+      "main.ts": `import * as all from "./index.ts";\nlet sum = 0;\n` + lines(size, index => `sum += all.g${index}(1);`) + `console.log(sum);\n`,
+    }),
+  },
+  {
+    // Each round of folding resolved every imported name of every reader again, through all stars of the barrel. 1,600 files took 11.5 G instructions.
+    name: "constants chained through a barrel",
+    counted: "files",
+    size: 400,
+    entry: "main.ts",
+    write: size => ({
+      ...Object.fromEntries(
+        upTo(size, index => [
+          `m${index}.ts`,
+          index < 10
+            ? `export const v${index} = ${index};\nexport function f${index}(x: number): number { return x + v${index}; }\n`
+            : `import { v${index - 10} } from "./m${index - 10}.ts";\nexport const v${index} = ${index} + v${index - 10} % 2;\nexport function f${index}(x: number): number { return x + v${index}; }\n`,
+        ]),
+      ),
+      "index.ts": lines(size, index => `export * from "./m${index}.ts";`) + `export {};\n`,
+      "main.ts": `import { ${upTo(size, index => `f${index}`).join(", ")} } from "./index.ts";\nlet sum = 0;\n` + lines(size, index => `sum += f${index}(1);`) + `console.log(sum);\n`,
+    }),
+  },
+  {
+    // Unseen code may construct such a class. The result of super() was then every object below the base, so each class defined its fields on the objects of all classes. 2,400 classes took 57 G instructions and 2.5 GB.
+    name: "classes iterated from a map",
+    counted: "classes",
+    size: 400,
+    entry: "main.ts",
+    counts: ["FactNodes", "FactEdges", "FlowAppendedFields"],
+    write: size => ({
+      "main.ts":
+        `abstract class Base { abstract name: string; protected log: string[] = []; abstract run(args: string[]): string; protected say(text: string) { this.log.push(text); return text; } }\n` +
+        lines(size, index => `class Command${index} extends Base { name = "c${index}"; private option${index} = ${index}; run(args: string[]) { return this.say(this.name + args.length + this.option${index}); } }`) +
+        `const registry = new Map<string, Base>();\n` +
+        lines(size, index => `registry.set("c${index}", new Command${index}());`) +
+        `let length = 0;\nfor (const [name, command] of registry) length += command.run([name]).length;\nconsole.log(length);\n`,
+    }),
+  },
+  {
+    // Each reference passes every earlier test, and each test asked every remaining member: 600 tests took 17.2 G instructions. References x tests are left.
+    name: "union checked by consecutive ifs",
+    counted: "members",
+    size: 150,
+    entry: "main.ts",
+    isCheckedAlone: true,
+    growsSoFarInInstructions: "3.82 times in instructions",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        `type Any = ${upTo(Math.max(size, 1), index => `{ tag: ${index}; v${index}: number }`).join(" | ")};\nexport function read(value: Any): number {\n  let sum = 0;\n` +
+        lines(size, index => `  if (value.tag === ${index}) sum += value.v${index};`) +
+        `  return sum;\n}\n`,
+    }),
+  },
+  {
+    // Each reference of the number walked back through all earlier assignments, and a walk of more than 2,000 steps was made again: 800 of these took 14.6 G instructions.
+    name: "compound assignments after consecutive branches",
+    counted: "assignments, two each",
+    size: 400,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        `function count(from: { [name: string]: string | number | undefined }): number {\n  let found = 0;\n` +
+        lines(size, index => `  const v${index} = from.k${index};\n  if (typeof v${index} === "string") found += v${index}.length;\n  else if (typeof v${index} === "number") found += v${index};`) +
+        `  return found;\n}\nconsole.log(count({ k0: "ab", k1: 3 }));\n`,
+    }),
+  },
+  {
+    // Each member of the variable's union was compared with the members of the assigned union from the first one on: 1,600 took 4.1 G instructions.
+    name: "a union assigned to its nullable variable",
+    counted: "members",
+    size: 2000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        declaredConsole +
+        lines(Math.max(size, 1), index => `interface N${index} { kind: "n${index}"; v${index}: number }`) +
+        `type Token = ${upTo(Math.max(size, 1), index => `N${index}`).join(" | ")};\n` +
+        `function next(at: number): Token { return { kind: "n0", v0: at }; }\n` +
+        `function parse(count: number): number {\n  let current: Token | null = null;\n  let found = 0;\n  for (let at = 0; at < count; at++) {\n    current = next(at);\n    if (current.kind === "n0") found += current.v0;\n  }\n  return found;\n}\n` +
+        `console.log(parse(10));\n`,
+    }),
+  },
+  {
+    // The assigned object was compared with every member of the union, and every member was asked whether it accepts any object: 2,000 took 9.4 G instructions.
+    name: "assignments to a tagged union",
+    counted: "members, and assignments",
+    size: 1000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        declaredConsole +
+        lines(Math.max(size, 1), index => `interface N${index} { kind: "n${index}"; next: Any; v${index}: number }`) +
+        `type Any = ${upTo(Math.max(size, 1), index => `N${index}`).join(" | ")} | null;\nlet list: Any = null;\n` +
+        lines(size, index => `list = { kind: "n${index}", next: list, v${index}: ${index} };`) +
+        `console.log(list === null);\n`,
+    }),
+  },
+  {
+    // Each operation searched the list of rows that the preheader had read.
+    name: "stores into rows of a list, in a loop",
+    counted: "stores",
+    size: 2000,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        `const rows = [[1, 2], [3, 4]];\nfunction run(turns: number) {\n  for (let turn = 0; turn < turns; turn++) {\n` +
+        lines(size, index => `    rows[${index & 1}]![0] = turn;`) +
+        `  }\n  return rows[0]![0];\n}\nconsole.log(run(3));\n`,
+    }),
+  },
+  {
+    // A read through the barrel asked each mocked file for the name: reads x mocks in code. 160 files took 12.8 G instructions.
+    name: "mocked files behind one barrel",
+    counted: "files",
+    size: 40,
+    entry: "a.test.ts",
+    isTestRun: true,
+    write: size => ({
+      ...Object.fromEntries(upTo(size, index => [`m${index}.ts`, `export function f${index}() { return ${index}; }\n`])),
+      "barrel.ts": lines(size, index => `export * from "./m${index}.ts";`) + `export {};\n`,
+      "use.ts": size ? `import { ${upTo(size, index => `f${index}`).join(", ")} } from "./barrel.ts";\nexport function sum() { return ${upTo(size, index => `f${index}()`).join(" + ")}; }\n` : `export function sum() { return 0; }\n`,
+      "a.test.ts":
+        `import { expect, mock, test } from "bun:test";\n` +
+        lines(size, index => `mock.module("./m${index}.ts", () => ({ f${index}: () => 1 }));`) +
+        `const { sum } = await import("./use.ts");\ntest("it sums", () => { expect(sum()).toBe(${size}); });\n`,
+    }),
+  },
+  {
+    // Each access searched the block for later accesses under its key.
+    name: "reads under a key that a variable holds, in a loop",
+    counted: "reads",
+    size: 4000,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        `// @ts-nocheck\nconst hard = JSON.parse('{"k":"k","t":"text"}');\nconst key: string = hard.k;\nconst o: any = { k: 0, a: 1, t: "t", u: hard.t };\nlet kept: any = 0;\nfunction run(turns: number) {\n  for (let turn = 0; turn < turns; turn++) {\n` +
+        lines(size, index => `    kept = o[key];`) +
+        `  }\n  return kept;\n}\nconsole.log(run(3));\n`,
+    }),
+  },
+  {
+    // A remainder that looked at every division of its dividend went n x n steps: 2,000 of each took twice the work.
+    name: "remainders and quotients of one integer by many divisors",
+    counted: "pairs",
+    size: 2000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        "function large(x) {\n  x |= 0;\n  let s = 0;\n" +
+        lines(size, index => `  s = (s + (x % ${index + 3}) + ((x / ${index + 3}) | 0)) | 0;`) +
+        "  return s;\n}\nconsole.log(large(process.argv.length * 1000003));\n",
+    }),
+  },
+  {
+    // Each read of the list searched the loop for another read of the element.
+    name: "branches on elements of one list, in a loop",
+    counted: "branches",
+    size: 2000,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        `const numbers = JSON.parse("[" + Array.from({ length: 64 }, (_, k) => (k * 37) % 101).join() + "]");\nfunction run(list: number[], turns: number) {\n  let sum = 0;\n  for (let turn = 0; turn < turns; turn++) {\n` +
+        lines(size, index => `    if (list[${index % 64}]! > 3) sum++;`) +
+        `  }\n  return sum;\n}\nconsole.log(run(numbers, 3));\n`,
     }),
   },
 ];

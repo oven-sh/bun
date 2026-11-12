@@ -24,6 +24,7 @@ test/cli/test/bun-test.test.ts: --react-compiler > include and exclude, in worke
 test/cli/test/bun-test.test.ts: --react-compiler > the flag
 test/cli/test/bun-test.test.ts: --react-compiler > the flag, in workers
 test/cli/test/bun-test.test.ts: --react-compiler > the flag, with --isolate
+test/cli/test/bun-test.test.ts: --react-compiler > the original of a mocked module is compiled
 test/cli/test/bun-test.test.ts: --react-compiler > true
 test/cli/test/bun-test.test.ts: a test file that can never finish loading > --watch reports it and keeps watching
 test/cli/test/bun-test.test.ts: a test file that can never finish loading > the next file re-evaluates the modules it left unfinished
@@ -95,38 +96,17 @@ test/js/bun/test/mock/mock-hoist.test.ts: imports that stay static > export from
 test/js/bun/test/mock/mock-hoist.test.ts: modes > a file restored from the transpiler cache: ["--isolate"]
 test/js/bun/test/mock/mock-hoist.test.ts: modes > a file restored from the transpiler cache: ["--isolate=modules"]
 test/js/bun/test/mock/mock-hoist.test.ts: modes > a file restored from the transpiler cache: []
-test/js/bun/test/mock/mock-hoist.test.ts: not hoisted > a call into another block of a TypeScript namespace keeps its this: a file that hoists
-test/js/bun/test/mock/mock-hoist.test.ts: not hoisted > a call into another block of a TypeScript namespace keeps its this: a file without any test API
-test/js/bun/test/mock/mock-module.test.ts: a factory doesn't wait for an onLoad() callback in an unrelated load > a module that the factory shares with the importers of the mock stays linked to the mock
 test/js/bun/test/mock/mock-module.test.ts: a factory that require()s a module that is waiting for the mock
-test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > files that mock it between files that don't
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > what vi.importMock() gives inherits from Object.prototype, the exports of a mocked module from nothing
 # The next one's fixture writes and deletes a name of a mocked namespace 30,000 times in one test, which has the 5 s that a test has by default. With a sanitizer, beside the other jobs of a lane, it took 6.6 s.
 ~ASAN test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > writes and deletes aren't cached by the JIT
-test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > gets the original if the factory has no source file either
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > with import() and require()
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > and fails to load
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a Vitest test file with no mock call of its own still runs its imports one at a time > the transpiler cache doesn't mix up a file run as a test with the same file imported
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
-test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > isn't evaluated again when a later file imports it, and keeps its exports
-test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > a preload's mocks are kept
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
-test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > mocks, mocks, plain
-test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > mocks, plain
-test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > mocks, plain, mocks
-test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > only the modules that import a mocked module are evaluated again
-test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > plain, mocks
-test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > plain, mocks, plain
-test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, even with loads in flight > a load that never settles doesn't stop the next file's loads from being evicted
-# The next one: vi.doMock() of a module evicts the CommonJS file that has required it, and the next require() runs the body of that file again. The body of a compiled file runs once.
-test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > the next file gets the originals after a file mocks a loaded module and then one of its imports: vi.doMock
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
-test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate"]
-test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate=modules"]
-test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again []
-test/js/bun/test/mock/mock-module.test.ts: vi.doMock() from bun:test leaves a module that is already loaded as it is
-test/js/bun/test/mock/mock-module.test.ts: vi.doMock() from vitest leaves a module that is already loaded as it is
 test/js/bun/test/vitest-flavor.test.ts: [test] globals = "vitest" > is part of the transpiler cache key
 # A module that is being imported calls import(): a compiled run runs the inner module ahead of the `.then()` of the outer call, as the executable and Node.js do. `bun test` reads the inner file on another thread first.
 test/js/bun/test/vi-utils.test.ts: vi.dynamicImportSettled > waits for the imports in flight and the ones they start

@@ -1,6 +1,6 @@
 use super::mention_use::MentionUse;
 use super::mentions::mentioned_id;
-use super::module_cache::is_module_cache;
+use super::module_cache::{is_module_cache, name_of_module_cache};
 use super::resolver::{ExprState, ResolvedValue, Resolver};
 use super::{
     BuiltinPath, ModuleField, ModuleObjectMention, ModuleObjectOwner, ModuleObjectUse,
@@ -14,7 +14,7 @@ use bun_sema::hir::{
     self, BinOp, ExprId, ExprKind, MemberKey, NodeData, PatId, PatKind, PropKey, PropKind, StmtId,
     StmtKind, UnOp,
 };
-use bun_sema::import_sites::{OwnRequire, find_own_require, is_made_require};
+use bun_sema::import_sites::{OwnRequire, answers_with_require, find_own_require, is_made_require};
 use smallvec::{SmallVec, smallvec};
 
 const HOLDER_ESCAPED: (ModuleObjectOwner, ModuleObjectUse) = (
@@ -75,6 +75,13 @@ fn is_test_or_dropped(hir: &hir::File<'_>, node: ExprId, statement: StmtId) -> b
     }
 }
 
+fn made_require() -> ResolvedValue {
+    ResolvedValue::object(BuiltinPath {
+        id: BuiltinId::ModuleRequire,
+        mutability: Mutability::ChangesOnItsOwn,
+    })
+}
+
 impl Resolver<'_, '_> {
     pub(super) fn find_made_require(&self, object: ExprId) -> Option<ResolvedValue> {
         let input = self.input;
@@ -88,12 +95,17 @@ impl Resolver<'_, '_> {
             && input.dialect == SourceDialect::Program
             && table::exists_on(BuiltinId::ModuleRequire, input.platform)
             && (is_made_require(input.hir, input.bound, object) || is_imported());
-        is_made.then(|| {
-            ResolvedValue::object(BuiltinPath {
-                id: BuiltinId::ModuleRequire,
-                mutability: Mutability::ChangesOnItsOwn,
-            })
-        })
+        is_made.then(made_require)
+    }
+
+    /// The table in `const { cache } = createRequire(import.meta.url)` and in `make().cache`.
+    pub(super) fn find_created_require_cache(&self, require: ExprId) -> Option<ResolvedValue> {
+        let input = self.input;
+        let is_require = input.dialect == SourceDialect::Program
+            && (self.find_made_require(require).is_some()
+                || answers_with_require(input.hir, input.bound, input.decisions, require));
+        let cache = self.find_member(made_require(), name_of_module_cache())?;
+        is_require.then(|| ResolvedValue::object(cache))
     }
 
     fn is_nullish_constant(&self, e: ExprId) -> bool {

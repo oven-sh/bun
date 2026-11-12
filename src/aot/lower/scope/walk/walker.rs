@@ -102,6 +102,7 @@ pub(in crate::lower::scope) fn walk_file(
     }
     walk.created_at_each_read = without_place;
     sort_unique(&mut walk.functions_created_before_loops);
+    sort_unique(&mut walk.functions_calling_themselves);
     let references = &walk.function_references;
     let by_callee = order_by(references, walk.function_of_fn.len(), |it| it.1.idx());
     walk.function_references = order_by(&by_callee, walk.functions.len(), |it| it.0.0 as usize);
@@ -337,11 +338,13 @@ impl<'x, 's> Walker<'x, 's> {
         let (hir, bound) = (input.hir, input.bound);
         let decisions = &input.compiled.analysis.decisions;
         let is_commonjs = input.modules.kind(input.file) == ModuleKind::CommonJs;
-        let keeps_wrapper =
-            is_commonjs && commonjs::keeps_wrapper(hir, bound, decisions, input.builtins);
+        let may_run_as_original = input.modules.may_run_as_original(input.file);
+        let keeps_wrapper = may_run_as_original
+            || is_commonjs && commonjs::keeps_wrapper(hir, bound, decisions, input.builtins);
         let wrapper_slots = match keeps_wrapper {
             true => {
-                let may_be_reevaluated = input.modules.may_be_reevaluated(input.file);
+                let may_be_reevaluated =
+                    may_run_as_original || input.modules.may_be_reevaluated(input.file);
                 commonjs::WrapperSlots::of(bound, decisions, may_be_reevaluated)
             }
             false => commonjs::WrapperSlots::default(),
@@ -369,6 +372,7 @@ impl<'x, 's> Walker<'x, 's> {
             pending_stores: Vec::new(),
             unconditional_calls_of_super: Default::default(),
             fields_evaluated_in_constructors: Default::default(),
+            places_of_this_super_and_return: Default::default(),
             clock: 0,
             number_walked: 0,
             is_only_called_or_tested: vec![false; hir.exprs.len()],
@@ -386,7 +390,7 @@ impl<'x, 's> Walker<'x, 's> {
                 has_wrapper_parameters: keeps_wrapper,
                 wrapper_slots,
                 has_values_of_each_run: is_commonjs
-                    && !keeps_wrapper
+                    && (!keeps_wrapper || may_run_as_original)
                     && input.modules.may_be_reevaluated(input.file),
                 keeps_first_exports: is_commonjs
                     && !keeps_wrapper

@@ -646,12 +646,16 @@ impl FileLowering<'_, '_, '_, '_> {
         fields.finish()
     }
 
-    fn find_base_class(&mut self, derived: ClassRef) -> Option<ClassRef> {
+    pub(in crate::lower) fn find_base_class(&mut self, derived: ClassRef) -> Option<ClassRef> {
         let extends = self.hir[derived.class].extends.some()?;
         let ty = self.queries.expression_type(extends).ok()?;
         match self.queries.type_shape(ty).ok()?.kind {
             ShapeKind::ClassConstructor(base) if base != derived => Some(base),
-            _ => None,
+            ShapeKind::ClassConstructor(_) => None,
+            _ => {
+                let base = self.queries.only_class_stored_in_variable(extends);
+                base.filter(|&base| base != derived)
+            }
         }
     }
 
@@ -662,16 +666,20 @@ impl FileLowering<'_, '_, '_, '_> {
         let Ok(ty) = self.queries.predicted_expression_type(extends) else {
             return Vec::new();
         };
+        let most = MOST_PARENTS_THAT_A_CLASS_HAS_ROOM_FOR;
         let members = match self.queries.type_shape(ty).map(|shape| shape.kind) {
             Ok(ShapeKind::Union(members)) => members,
             Ok(ShapeKind::ClassConstructor(parent)) if parent != derived => return vec![parent],
             Ok(ShapeKind::TypeVariable { .. }) => {
-                let most = MOST_PARENTS_THAT_A_CLASS_HAS_ROOM_FOR;
                 let mut parents = self.queries.classes_handed_to_mixin(extends, most);
                 parents.retain(|&parent| parent != derived);
                 return parents;
             }
-            _ => return Vec::new(),
+            _ => {
+                let mut parents = self.queries.classes_stored_in_variable(extends, most);
+                parents.retain(|&parent| parent != derived);
+                return parents;
+            }
         };
         let parents =
             members
@@ -681,7 +689,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     _ => None,
                 });
         let parents: Vec<ClassRef> = parents.collect();
-        match parents.len() > MOST_PARENTS_THAT_A_CLASS_HAS_ROOM_FOR {
+        match parents.len() > most {
             true => Vec::new(),
             false => parents,
         }
@@ -736,7 +744,10 @@ impl FileLowering<'_, '_, '_, '_> {
         let (hir, bound) = (self.hir, self.bound);
         for class in (0..hir.classes.len() as u32).map(ClassId) {
             let is_ambient = hir[class].flags.contains(Flags::AMBIENT);
-            if is_ambient || bound.class_scope[class.idx()].is_none() {
+            if is_ambient
+                || bound.class_scope[class.idx()].is_none()
+                || self.is_class_of_other_part(class)
+            {
                 continue;
             }
             let reference = ClassRef {
@@ -745,10 +756,14 @@ impl FileLowering<'_, '_, '_, '_> {
             };
             let layout = self.class_layout(reference);
             if !self.fragment.is_layout_defined(layout) {
-                define_class_layout(self, class, None);
+                let constructor = self.constructor_of_class_evaluated_elsewhere(class);
+                define_class_layout(self, class, constructor);
             }
         }
         for function in (0..hir.fns.len() as u32).map(FnId) {
+            if self.is_of_other_part(function) {
+                continue;
+            }
             let reference = FunctionRef {
                 file: self.file,
                 function,

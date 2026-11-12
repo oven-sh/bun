@@ -10,6 +10,7 @@ use super::exports::{ExportTables, Resolution, ResolvedName};
 use super::failures::{ModuleFailureKind, PendingFailure, SitePart, WrittenPart};
 use super::interop::{ImportPhase, ModuleKind, SyntheticExportRule};
 use super::module_set::ModuleSet;
+use super::names_of_mocks::{MockReader, NamesOfMocks};
 use super::namespace_members::StandsFor;
 use super::order::{EvaluationOrder, PlannedSites};
 use super::plan::Member;
@@ -32,7 +33,7 @@ use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::hir::{self, ExprId, ImportId};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, JsxImport};
 use bun_sema::program::{FileId, FileRole, Files, Sym};
-use bun_sema::util::{FxHashSet, SharedSort};
+use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use core::ops::Range;
 use std::sync::OnceLock;
 
@@ -133,6 +134,7 @@ pub(super) fn bind_imports(
         input,
         files_that_sites_name: OnceLock::new(),
         exported_by_mocked_modules: OnceLock::new(),
+        mocked_file_names: OnceLock::new(),
         defaults_spied_on: OnceLock::new(),
         names_spied_on: OnceLock::new(),
     };
@@ -236,6 +238,7 @@ pub(super) struct BindContext<'a, 's> {
     pub(super) input: &'a BindInput<'a, 's>,
     files_that_sites_name: OnceLock<Vec<bool>>,
     exported_by_mocked_modules: OnceLock<ExportedByMockedModules>,
+    mocked_file_names: OnceLock<FxHashSet<Atom>>,
     defaults_spied_on: OnceLock<FxHashSet<ModuleRef>>,
     pub(super) names_spied_on: OnceLock<(bool, FxHashSet<Atom>)>,
 }
@@ -385,6 +388,8 @@ pub(super) struct MockedModules {
     pub(super) names_without_code: Vec<Atom>,
     pub(super) out_of_sight: Vec<ModuleRef>,
     is_every_module: bool,
+    names: FxHashMap<FileId, Vec<Atom>>,
+    spied_names: FxHashSet<Atom>,
 }
 
 impl MockedModules {
@@ -398,6 +403,16 @@ impl MockedModules {
 
     pub(super) fn is_every_module(&self) -> bool {
         self.is_every_module
+    }
+
+    /// The files whose mocks all have known names, with the names.
+    pub(super) fn names(&self) -> &FxHashMap<FileId, Vec<Atom>> {
+        &self.names
+    }
+
+    /// The names that a spy may add to any mock.
+    pub(super) fn spied_names(&self) -> &FxHashSet<Atom> {
+        &self.spied_names
     }
 
     pub(super) fn iter(&self) -> impl Iterator<Item = &ModuleRef> + '_ {
@@ -459,9 +474,22 @@ pub(super) fn find_mocked_modules(
         out_of_sight,
         names_without_code: Vec::new(),
         is_every_module: input.mocks_any_module,
+        names: FxHashMap::default(),
+        spied_names: FxHashSet::default(),
     };
+    let mut names = NamesOfMocks::default();
+    for &file in &modules.reloadable_commonjs_files {
+        mocked.insert_with_forms(modules, ModuleRef::File(file));
+        names.add(input.files, modules, ModuleRef::File(file), None);
+    }
     for &file in &modules.compiled_files {
         let (analysis, scan) = (input.files.analysis(file), scans.of(file));
+        let reader = MockReader {
+            hir: input.files.hir(file),
+            bound: input.files.bound(file),
+            analysis,
+            scan,
+        };
         let sites = analysis.import_sites.iter();
         for (site, answer) in sites.zip(&scan.sites) {
             let ImportSiteKind::MockModule(call) = site.kind else {
@@ -482,12 +510,18 @@ pub(super) fn find_mocked_modules(
                 mocked.names_without_code.push(name);
             }
             match answer {
-                &ScannedSite::Module(module) => mocked.insert_with_forms(modules, module),
+                &ScannedSite::Module(module) => {
+                    mocked.insert_with_forms(modules, module);
+                    let in_mock = reader.find_names(call, Some(module));
+                    names.add(input.files, modules, module, in_mock.as_ref());
+                }
                 ScannedSite::Candidates(spelled) => {
                     match find_modules_of_alternatives(analysis, scan, &site.specifier, spelled) {
                         Some(named) => {
+                            let in_mock = reader.find_names(call, None);
                             for module in named {
                                 mocked.insert_with_forms(modules, module);
+                                names.add(input.files, modules, module, in_mock.as_ref());
                             }
                         }
                         None => mocked.is_every_module = true,
@@ -503,6 +537,7 @@ pub(super) fn find_mocked_modules(
             let named = find_modules_that_program_may_answer_for(input.files, scans, modules, file);
             for module in named {
                 mocked.insert_with_forms(modules, module);
+                names.add(input.files, modules, module, None);
             }
         }
     }
@@ -511,10 +546,41 @@ pub(super) fn find_mocked_modules(
             let path = input.files.module(file).file_name();
             if input.run.is_replaced_in_text(&input.files.atoms, path) {
                 mocked.insert_with_forms(modules, ModuleRef::File(file));
+                names.add(input.files, modules, ModuleRef::File(file), None);
             }
         }
     }
+    if let (false, Some(of_spies)) = (mocked.is_every_module, find_spied_names(input, modules)) {
+        mocked.names = names.finish();
+        mocked.spied_names = of_spies;
+    }
     mocked
+}
+
+/// `None` if a spy may have any name.
+fn find_spied_names(input: &BindInput<'_, '_>, modules: &ModuleSet) -> Option<FxHashSet<Atom>> {
+    let run = &input.run;
+    if run.spies_under_any_name {
+        return None;
+    }
+    let mut names: FxHashSet<Atom> = run.names_spied.iter().copied().collect();
+    names.extend(run.exports_spied_in_text.iter().map(|it| it.1));
+    for &file in &modules.compiled_files {
+        let Some(source) = parsed_source(input.files, file) else {
+            continue;
+        };
+        if source.builtins.hands_spy_on() {
+            return None;
+        }
+        for spy in source.builtins.spy_calls() {
+            match spy.name {
+                Some(name) => _ = names.insert(name),
+                None if source.of_run.spies_read.contains(&spy.call) => {}
+                None => return None,
+            }
+        }
+    }
+    Some(names)
 }
 
 pub(super) fn find_modules_of_alternatives(
@@ -787,6 +853,16 @@ impl<'a, 's> FileBinder<'a, 's> {
         self.bind_resolved_name(exporter, name, resolved)
     }
 
+    /// Whether the name is required only because mocks may bring it, and none of them has it.
+    pub(super) fn is_absent_from_mocks(&self, module: ModuleRef, name: Atom) -> bool {
+        let context = self.context;
+        let find = || find_mocked_file_names(context);
+        let resolved = context.tables.resolve_in(context.modules, module, name);
+        resolved.is_compared_only_with_mocks
+            && !context.mocked.spied_names().contains(&name)
+            && !(context.mocked_file_names.get_or_init(find)).contains(&name)
+    }
+
     pub(super) fn is_hidden_from_namespace(&self, module: ModuleRef, name: Atom) -> bool {
         let context = self.context;
         (context.tables).is_hidden_from_namespace(context.modules, module, name)
@@ -894,7 +970,11 @@ impl<'a, 's> FileBinder<'a, 's> {
         let required_name = match self.find_deferred_export(resolved.resolution) {
             Some(deferred) if is_filled_by_loader(binding) => Some(deferred),
             Some(_) | None => resolved.required_name.map(|resolved_name| match exporter {
-                ModuleRef::File(file) if !is_own_name(file) => RequiredName::new(exporter, name),
+                ModuleRef::File(file)
+                    if !is_own_name(file) || context.mocked.contains(exporter) =>
+                {
+                    RequiredName::new(exporter, name)
+                }
                 _ => resolved_name,
             }),
         };
@@ -986,16 +1066,22 @@ impl<'a, 's> FileBinder<'a, 's> {
         let file = context.modules.table_file(exporter)?;
         let searched = context.tables.files_searched_for(file, name);
         let mut files = searched.iter();
-        if !files.any(|&file| context.mocked.contains(ModuleRef::File(file))) {
-            return None;
+        let is_searched_in_mock = files.any(|&file| context.mocked.contains(ModuleRef::File(file)));
+        let resolved = context.tables.resolve_in(context.modules, exporter, name);
+        let is_compared = resolved.can_be_ambiguous();
+        if (is_compared || is_searched_in_mock)
+            && !self.required_name_set.contains(&(exporter, name))
+        {
+            let names = &mut self.imports.names_searched_behind_stars;
+            match is_compared {
+                true => {
+                    let behind = context.tables.names_behind(context.scans, file, name);
+                    names.extend_from_slice(&behind[1..]);
+                }
+                false => names.extend(searched[1..].iter().map(|&file| (file, name))),
+            }
         }
-        if !self.required_name_set.contains(&(exporter, name)) {
-            let behind_stars = searched[1..].iter().map(|&file| (file, name));
-            self.imports
-                .names_searched_behind_stars
-                .extend(behind_stars);
-        }
-        Some(RequiredName {
+        is_searched_in_mock.then(|| RequiredName {
             is_found_unless_mocked: true,
             ..RequiredName::new(exporter, name)
         })
@@ -1101,7 +1187,10 @@ impl<'a, 's> FileBinder<'a, 's> {
                 self.add_required_name(RequiredName::new(exporter, name));
                 UNBOUND
             }
-            Err(kind @ ModuleFailureKind::ExportAmbiguous { exporter, name }) => {
+            Err(
+                kind @ (ModuleFailureKind::ExportAmbiguous { exporter, name }
+                | ModuleFailureKind::ExportNotFound { exporter, name }),
+            ) => {
                 let (barrel, listed) = (self.context.tables).find_where_names_lead(exporter, name);
                 match self.find_name_that_a_mock_of_an_es_module_may_leave_out(barrel, listed) {
                     Some(_) => {
@@ -1191,19 +1280,7 @@ impl<'a, 's> FileBinder<'a, 's> {
             .context
             .tables
             .find_indirect_site(self.file, position)? as usize;
-        let atoms = &self.context.files.atoms;
-        let module_of_bun = match self.scan.sites[site] {
-            ScannedSite::Module(ModuleRef::Runtime(module)) => Some(module),
-            ScannedSite::Module(ModuleRef::External { specifier, .. }) => {
-                find_module_named(atoms.bytes(specifier))
-            }
-            _ => None,
-        };
-        let specifier = match (module_of_bun, self.analysis.import_sites[site].specifier) {
-            (Some(module), _) => atoms.intern(table::specifier_of(module)),
-            (None, ImportSpecifier::Constant(specifier)) => specifier,
-            _ => return None,
-        };
+        let specifier = find_specifier_of_site(self.context.files, self.file, self.scan, site)?;
         Some(ExportStatement {
             export_name,
             specifier,
@@ -1385,6 +1462,43 @@ fn find_what_mocked_modules_export(context: &BindContext<'_, '_>) -> ExportedByM
         }
     }
     exported
+}
+
+/// The names that the files with known mocks have, and those that their mocks have.
+fn find_mocked_file_names(context: &BindContext<'_, '_>) -> FxHashSet<Atom> {
+    let mut found = FxHashSet::default();
+    for (&file, names) in context.mocked.names() {
+        let symbol = context.files.file_symbol(file);
+        let exports = context.files.exports_of_module(symbol).iter();
+        found.extend(exports.map(|export| export.0));
+        found.extend(names.iter().copied());
+    }
+    found
+}
+
+/// The specifier by which messages name the module of a statement.
+pub(super) fn find_specifier_of_site(
+    files: &Files<'_>,
+    file: FileId,
+    scan: &FileScan,
+    site: usize,
+) -> Option<Atom> {
+    let atoms = &files.atoms;
+    let module_of_bun = match scan.sites[site] {
+        ScannedSite::Module(ModuleRef::Runtime(module)) => Some(module),
+        ScannedSite::Module(ModuleRef::External { specifier, .. }) => {
+            find_module_named(atoms.bytes(specifier))
+        }
+        _ => None,
+    };
+    match (
+        module_of_bun,
+        files.analysis(file).import_sites[site].specifier,
+    ) {
+        (Some(module), _) => Some(atoms.intern(table::specifier_of(module))),
+        (None, ImportSpecifier::Constant(specifier)) => Some(specifier),
+        _ => None,
+    }
 }
 
 fn is_filled_by_loader(binding: PendingBinding) -> bool {

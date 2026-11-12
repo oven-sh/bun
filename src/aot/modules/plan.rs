@@ -7,7 +7,7 @@ use super::bindings::{
 };
 use super::failures::ModuleFailureId;
 use super::graph::{ModuleGraph, find};
-use super::imports::NamedMember;
+use super::imports::{MockedModules, NamedMember};
 use super::interop::ModuleKind;
 use super::order::{OrderParts, SiteKey};
 use super::requests::Spelling;
@@ -41,6 +41,7 @@ pub enum ModuleRef {
         file: FileId,
         callback: FnId,
     },
+    /// The facade of a CommonJS module: the synthetic ES module that wraps it so that `import` can load it.
     Facade(FileId),
     Check(FileId),
     Runtime(RuntimeModule),
@@ -325,15 +326,21 @@ pub(super) struct Plan {
     is_imported_as_namespace: Vec<bool>,
     externals_imported_as_namespace: Vec<ModuleRef>,
     externals_named_by_mocks: Vec<ModuleRef>,
+    absent_modules: Vec<ModuleRef>,
     may_be_mocked: Vec<bool>,
     is_named_by_mock: Vec<bool>,
     is_any_module_named_by_mock: bool,
+    /// The files whose mocks all have known names, with the names.
+    names_of_mocks: FxHashMap<FileId, Vec<Atom>>,
+    spied_names: FxHashSet<Atom>,
     runtime_modules_named_by_mocks: Vec<RuntimeModule>,
     names_without_code_that_mocks_give: Vec<Atom>,
     files_with_late_stars: Vec<FileId>,
     mocked_runtime_modules: Vec<RuntimeModule>,
     may_mock_every_module: bool,
     originals_beside_mocks_may_run: bool,
+    /// The files that a mock names and that lie on no cycle of loads, where originals of mocks may run.
+    runs_as_original: Vec<bool>,
     exposed_runtime_modules: Vec<RuntimeModule>,
     exposes_all_runtime_modules: bool,
     runs_tests: bool,
@@ -380,15 +387,19 @@ impl Plan {
             is_imported_as_namespace: vec![false; order.numbers.len()],
             externals_imported_as_namespace: Vec::new(),
             externals_named_by_mocks: Vec::new(),
+            absent_modules: Vec::new(),
             may_be_mocked: vec![false; order.numbers.len()],
             is_named_by_mock: vec![false; order.numbers.len()],
             is_any_module_named_by_mock: false,
+            names_of_mocks: FxHashMap::default(),
+            spied_names: FxHashSet::default(),
             runtime_modules_named_by_mocks: Vec::new(),
             names_without_code_that_mocks_give: Vec::new(),
             files_with_late_stars: Vec::new(),
             mocked_runtime_modules: Vec::new(),
             may_mock_every_module: false,
             originals_beside_mocks_may_run: false,
+            runs_as_original: Vec::new(),
             exposed_runtime_modules: Vec::new(),
             exposes_all_runtime_modules: false,
             runs_tests: false,
@@ -469,6 +480,15 @@ impl Plan {
         }
     }
 
+    pub(super) fn set_absent_modules(&mut self, modules: Vec<ModuleRef>) {
+        self.absent_modules = modules;
+    }
+
+    pub(super) fn set_names_of_mocks(&mut self, mocked: &MockedModules) {
+        self.names_of_mocks.clone_from(mocked.names());
+        (self.spied_names).clone_from(mocked.spied_names());
+    }
+
     pub(super) fn expose_runtime_module(&mut self, module: RuntimeModule) {
         if !self.exposed_runtime_modules.contains(&module) {
             self.exposed_runtime_modules.push(module);
@@ -519,8 +539,9 @@ impl Plan {
         self.may_mock_every_module = true;
     }
 
-    pub(super) fn set_originals_beside_mocks_may_run(&mut self) {
+    pub(super) fn set_originals_beside_mocks_may_run(&mut self, runs_as_original: Vec<bool>) {
         self.originals_beside_mocks_may_run = true;
+        self.runs_as_original = runs_as_original;
     }
 
     pub(super) fn set_files_with_late_stars(&mut self, files: Vec<FileId>) {
@@ -894,6 +915,11 @@ impl ModuleGraph {
                 .has(&self.plan.order.is_required_during_load, module)
     }
 
+    pub fn may_fail_in_require(&self, file: FileId) -> bool {
+        self.plan
+            .has(&self.plan.order.may_fail_in_require, ModuleRef::File(file))
+    }
+
     pub fn is_importable_during_evaluation(&self, module: ModuleRef) -> bool {
         matches!(module, ModuleRef::File(_))
             && self
@@ -927,7 +953,6 @@ impl ModuleGraph {
                 || is_marked(&self.plan.test_run.may_be_evicted, module))
     }
 
-    #[cfg(test)]
     pub fn is_reloadable(&self, file: FileId) -> bool {
         is_marked(&self.plan.test_run.is_reloadable, ModuleRef::File(file))
     }
@@ -978,6 +1003,10 @@ impl ModuleGraph {
     }
 
     pub fn is_instantiated_ahead(&self, file: FileId) -> bool {
+        self.has_instances(file) || self.is_in_rerun_component(file)
+    }
+
+    pub fn is_in_rerun_component(&self, file: FileId) -> bool {
         let order = &self.plan.order;
         let module = ModuleRef::File(file);
         self.kind(file) == ModuleKind::SourceText
@@ -1011,6 +1040,19 @@ impl ModuleGraph {
         }
     }
 
+    /// The names that the mocks of the file have, if they are known.
+    pub fn names_of_mocks(&self, file: FileId) -> Option<&[Atom]> {
+        match self.plan.may_mock_every_module {
+            true => None,
+            false => self.plan.names_of_mocks.get(&file).map(|names| &names[..]),
+        }
+    }
+
+    /// Whether a spy may add the name to any mock.
+    pub fn is_installed_by_spy(&self, name: Atom) -> bool {
+        self.plan.spied_names.contains(&name)
+    }
+
     pub fn is_any_module_named_by_mock(&self) -> bool {
         self.plan.may_mock_every_module || self.plan.is_any_module_named_by_mock
     }
@@ -1031,6 +1073,11 @@ impl ModuleGraph {
 
     pub fn is_name_without_code_that_mocks_give(&self, name: Atom) -> bool {
         (self.plan.names_without_code_that_mocks_give).contains(&name)
+    }
+
+    /// Whether no file or package provides the requested module, and mocks name it.
+    pub fn is_absent_module(&self, module: ModuleRef) -> bool {
+        self.plan.absent_modules.contains(&module)
     }
 
     pub fn is_made_by_mocks_alone(&self, module: ModuleRef) -> bool {
@@ -1089,6 +1136,15 @@ impl ModuleGraph {
 
     pub fn originals_beside_mocks_may_run(&self) -> bool {
         self.plan.originals_beside_mocks_may_run
+    }
+
+    /// Whether the compiled code of a CommonJS file may run a second time, as the original of its mock.
+    pub fn may_run_as_original(&self, file: FileId) -> bool {
+        let module = ModuleRef::File(file);
+        self.plan.originals_beside_mocks_may_run
+            && self.kind(file) == ModuleKind::CommonJs
+            && self.plan.runs_as_original.get(file.idx()) == Some(&true)
+            && matches!(self.shape(module), Shape::Value | Shape::AsToday)
     }
 
     pub fn is_found_by_name(&self, module: ModuleRef) -> bool {
@@ -1214,6 +1270,7 @@ impl ModuleGraph {
         self.plan.asks_loader_functions = true;
     }
 
+    /// The program loads only compiled code: at run time the loader refuses every file that is not in the image.
     pub fn is_closed_world(&self) -> bool {
         self.plan.is_closed_world
     }

@@ -15,10 +15,13 @@ function project(modules: number) {
   const files: Record<string, string> = {
     "package.json": `{ "type": "module" }`,
     "shared.ts": `export const one = 1;\n`,
+    // The listing of the cache asks once whether this file has run, so there is something to count however little a require asks.
+    "never.ts": `export const v = 0;\n`,
     "requires.test.ts": `import { test } from "bun:test";
 test("requires", () => {
   let sum = 0;
 ${numbers.map(index => `  sum += require("./m${index}").v;\n`).join("")}  console.log("answers", sum);
+  if (Object.keys(require.cache).length === 0) require("./never");
   delete require.cache[require.resolve("./m" + (sum - sum))];
 });
 `,

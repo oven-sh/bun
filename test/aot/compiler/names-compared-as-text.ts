@@ -63,6 +63,12 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
       "the kind of an event is a text that the program hands over, no name: in front of it stands the built-in that adds a listener to the global object",
   },
   {
+    paths: /^src\/aot\/builtins\/resolve\/written_members\.rs$/,
+    lines: /known::(contexts|instances|mock\w*|withImplementation)\b/,
+    reason:
+      "the members through which a spy shows its receiver: asked only in a test file that spies on a built-in object, and all they do is expose that object. A function of the program with such a name changes no answer",
+  },
+  {
     paths: /^src\/aot\/ir\/name_class\.rs$/,
     reason:
       "the class of a name (an index, a number as JavaScript prints it, a word that the schema lists) is read off its text once",
@@ -77,12 +83,28 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     reason: "option words are the build's own, not the program's",
   },
   {
+    paths: /^src\/aot\/load\/import_functions\.rs$/,
+    reason:
+      "the text of a constant string that the program evaluates is code, and is read as code. `Function` and `eval` are asked for only in a file that declares neither",
+  },
+  {
+    paths: /^src\/aot\/load\/known_evaluations(\.rs$|\/)/,
+    reason:
+      "a guess at the string that an eval is handed, made before any name is bound: a wrong guess is a string that never arrives. The program compares the string that arrives with the guess, and the function that it calls with the built-in `eval`",
+  },
+  {
+    paths: /^src\/aot\/lower\/commonjs\/path_comparisons\.rs$/,
+    lines: /^(?:\| )?b"\w+"$/,
+    reason:
+      "asked only of a value made of the file's own `__filename` or `__dirname`, and it only chooses the equalities that also compare the file's other path. A function of the program with such a name changes no answer: whole paths are compared",
+  },
+  {
     paths: /^src\/aot\/load\/test_runner_names\.rs$/,
     reason: "a name that begins with % is the build's own: no program can write one",
   },
   {
-    paths: /^src\/aot\/(load\/react_compiler\/module_items|lower\/quoted_source)\.rs$/,
-    lines: /\.strip_prefix\(NAME_PREFIX\)|\.starts_with\(b"%"\)/,
+    paths: /^src\/aot\/(load\/(hoisted_mocks|react_compiler\/module_items)|lower\/quoted_source)\.rs$/,
+    lines: /\.strip_prefix\(NAME_PREFIX\)|\.starts_with\((?:b"%"|NAMESPACE_PREFIX)/,
     reason: "an identifier that begins with % is the build's own too: what is asked is who made the variable",
   },
   {
@@ -152,23 +174,23 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
       "the specifier in the record of an import, or in a `require` that the binder has answered for: which module it names is a question about a path",
   },
   {
-    paths: /^src\/sema\/import_sites\/(alternatives|call_sites|changed_files)\.rs$/,
+    paths: /^src\/sema\/import_sites\/(alternatives|call_sites|changed_files|named_paths)\.rs$/,
     lines: /b"(?:\.{1,2}\/?|\/)"/,
     reason:
       "the name that a loader, a resolver or the file system is handed is a path, and its steps are bound to nothing",
   },
   {
     paths:
-      /^src\/sema\/(import_sites\/(alternatives|call_sites|made_requires)|fold\/(folder_names|known_to_bun_run|removed_by_bun_run|string_affixes))\.rs$/,
+      /^src\/sema\/(import_sites\/(alternatives|call_sites|made_requires)|fold\/(folder_fields|folder_names|known_to_bun_run|removed_by_bun_run|string_affixes))\.rs$/,
     lines:
-      /known::(?:require|module|exports|arguments|resolve|getBuiltinModule|process|Module|call|apply|url|href|path|main|hot|join|meta_\w+)\b|b"(?:_?cache|sep|cwd|posix|normalize|platform|arch|fileURLToPath|pathToFileURL)"/,
+      /known::(?:require|module|exports|arguments|resolve|getBuiltinModule|process|Module|call|apply|url|href|path|main|hot|join|meta_\w+)\b|b"(?:_?cache|sep|cwd|posix|normalize|dirname|format|parse|dir|base|platform|arch|fileURLToPath|pathToFileURL|realpathSync|native|relative|from)"/,
     reason:
-      "a member behind a thing: of `import.meta`, which is syntax; of `require`, `module` and `process`, where the binder has said that the object is the module's own parameter or the global; of what node:module, node:path, node:url, node:os and node:process export, found by the record of the import",
+      "a member behind a thing: of `import.meta`, which is syntax; of `require`, `module` and `process`, where the binder has said that the object is the module's own parameter or the global; of what node:module, node:path, node:url, node:os, node:process and node:fs export, found by the record of the import",
   },
   {
     paths: /^src\/sema\/(import_sites\/alternatives|fold\/folder_calls)\.rs$/,
     lines:
-      /known::charCodeAt\b|b"(?:forEach|map|filter|find|findLast|findIndex|findLastIndex|some|every|includes|indexOf|lastIndexOf|has|add|size|keys|values|entries|getOwnPropertyNames|ownKeys|defineProperty|mainModule|join|href|pathname|length|default|toString|valueOf|toJSON|trim|trimStart|trimEnd|toLowerCase|toUpperCase|concat|replace|replaceAll|slice|substring)"|known::(?:join|push)\b/,
+      /known::charCodeAt\b|b"(?:forEach|map|filter|find|findLast|findIndex|findLastIndex|some|every|includes|indexOf|lastIndexOf|has|add|size|keys|values|entries|getOwnPropertyNames|ownKeys|defineProperty|defineProperties|assign|seal|preventExtensions|setPrototypeOf|set|deleteProperty|mainModule|join|href|pathname|length|default|toString|valueOf|toJSON|trim|trimStart|trimEnd|toLowerCase|toUpperCase|concat|replace|replaceAll|slice|substring)"|known::(?:join|push|parse|search|hash)\b/,
     reason:
       "a member behind a value: whoever follows a text has the list, the Set that `new Set(..)` of the free name made, the text, the URL, the object literal or the global `Object` or `Reflect` in hand where it reads the name of the member, and built-ins are frozen",
   },
@@ -186,11 +208,11 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
       "tables of what leads to the objects of modules: members behind `module`, `require`, `process` and the global object where the binder has said that the name is free, a few members behind anything, names of built-in modules, and the export that another file's import names. Each makes what a file follows through its own exports unknown: none decides for following",
   },
   {
-    paths: /^src\/sema\/import_sites\/changed_files\.rs$/,
+    paths: /^src\/sema\/import_sites\/(changed_files|named_paths)\.rs$/,
     lines:
-      /b"(?:writeFile|appendFile|truncate|unlink|createWriteStream|rm|copyFile|link|symlink|cp|rename|open|readFile|createReadStream|exists|stat|lstat|access)(?:Sync)?"|b"(?:promises|file|write|writer|delete|recursive|text|json|bytes|arrayBuffer|stream|constants)"|b"O_[A-Z]+"|b"[FR]_OK"/,
+      /b"(?:writeFile|appendFile|truncate|unlink|createWriteStream|rm|copyFile|link|symlink|cp|rename|open|readFile|createReadStream|exists|stat|lstat|access|realpath|readdir|opendir|glob|scan|mkdir|mkdtemp)(?:Sync)?"|b"(?:promises|file|fetch|openAsBlob|loadEnvFile|Glob|cwd|write|writer|delete|recursive|read(?:only|Only)|text|json|bytes|arrayBuffer|stream|constants|bind|call|apply|chdir)"|known::(?:meta_\w+|path|url)\b|b"O_[A-Z]+"|b"[FR]_OK"/,
     reason:
-      "a table of built-ins: which functions of node:fs, node:fs/promises, `Bun` and `Bun.file()` change, read or query a file, which operand names it, and which flags and access modes of `fs.constants` only read. find_function() and find_members_below_holder() find the holder first, by the record of the import or as the free name `Bun`",
+      "a table of built-ins: which functions of node:fs, node:fs/promises, `Bun` and `Bun.file()` change, read or query a file or list a folder, which operand names it, and which flags and access modes of `fs.constants` only read. find_function() and find_members_below_holder() find the holder first, by the record of the import or as the free name `Bun`, and is_process() and is_free_name() the process and the global object",
   },
   {
     paths: /^src\/sema\/import_sites\/call_sites\.rs$/,

@@ -244,6 +244,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.control.entries.push(entry);
     }
 
+    pub(in crate::lower) fn set_continue_target(&mut self, of: StmtId, target: BlockId) {
+        for entry in self.control.entries.iter_mut().rev() {
+            if let ControlEntry::ContinueTarget { statement, block } = entry
+                && *statement == of
+            {
+                *block = target;
+                return;
+            }
+        }
+    }
+
     pub(crate) fn stands_in_loop(&self) -> bool {
         let is_of_loop =
             |entry: &ControlEntry| matches!(entry, ControlEntry::ContinueTarget { .. });

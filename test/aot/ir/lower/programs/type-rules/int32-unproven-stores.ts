@@ -115,27 +115,35 @@ console.log(kept, cursor, point, subtract(1, 2), times(1, 2), half(1), negative(
 // CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=undefined|i32 flags=[IsInt32Promise]}] results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|i32):
 // CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_1]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_1]]}
-// CHECK-NEXT: v5 = CallDirect v4 function=[[f_2]]
-// CHECK-NEXT: v6 = TypeTest v1 testedType=undefined
-// CHECK-NEXT: Branch v6 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v7):
-// CHECK-NEXT: v8 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v9 = CheckInitialized v8 name="given"
-// CHECK-NEXT: v10 = Integer integer=1
-// CHECK-NEXT: v11 = ElemGet v9, v10
-// CHECK-NEXT: v12 = Convert v11 declared={type=i32 flags=[IsInt32Promise]}
-// CHECK-NEXT: Jump -> next b3(v12)
-// CHECK-NEXT: b2(v13):
-// CHECK-NEXT: Jump -> next b3(v13)
-// CHECK-NEXT: b3(v14):
-// CHECK-NEXT: PropSet v4, v14 key="start"
-// CHECK-NEXT: v16 = Undefined
-// CHECK-NEXT: v17 = TypeTest v16 testedType=object
-// CHECK-NEXT: Branch v17 -> taken b4(| 0), notTaken b5(v4)
-// CHECK-NEXT: b4(v18):
-// CHECK-NEXT: Jump -> next b5(v18)
-// CHECK-NEXT: b5(v19):
-// CHECK-NEXT: Return v19
+// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_2]]
+// CHECK-NEXT: v4 = CheckInitialized v3 name="given"
+// CHECK-NEXT: v5 = Integer
+// CHECK-NEXT: v6 = ElemGet v4, v5
+// CHECK-NEXT: v7 = Convert v6 declared={type=i32 flags=[IsInt32Promise]}
+// CHECK-NEXT: v8 = TypeTest v1 testedType=undefined
+// CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2(| 0)
+// CHECK-NEXT: b1(v9):
+// CHECK-NEXT: v10 = GetModuleVariable variable=[[g_2]]
+// CHECK-NEXT: v11 = CheckInitialized v10 name="given"
+// CHECK-NEXT: v12 = Integer integer=1
+// CHECK-NEXT: v13 = ElemGet v11, v12
+// CHECK-NEXT: v14 = Convert v13 declared={type=i32 flags=[IsInt32Promise]}
+// CHECK-NEXT: Jump -> next b3(v14)
+// CHECK-NEXT: b2(v15):
+// CHECK-NEXT: Jump -> next b3(v15)
+// CHECK-NEXT: b3(v16):
+// CHECK-NEXT: v17 = Integer
+// CHECK-NEXT: v18 = Convert v17 declared={type=i32}
+// CHECK-NEXT: v19 = NewObject v2 layout=[[L_1]]
+// CHECK-NEXT: v20 = Convert v19 declared={type=[[L_1]]}
+// CHECK-NEXT: PropDefine v20, v16 key="start"
+// CHECK-NEXT: PropDefine v20, v18 key="line"
+// CHECK-NEXT: PropDefine v20, v7 key="column"
+// CHECK-NEXT: v24 = Undefined
+// CHECK-NEXT: v25 = TypeTest v24 testedType=object
+// CHECK-NEXT: Branch v25 -> taken b4(| 0), notTaken b5(v20)
+// CHECK-NEXT: b4(v26):
+// CHECK-NEXT: Jump -> next b5(v26)
+// CHECK-NEXT: b5(v27):
+// CHECK-NEXT: Return v27
 // CHECK-NEXT: }

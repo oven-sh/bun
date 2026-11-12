@@ -5594,6 +5594,10 @@ impl VirtualMachine {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {
+                    // Not found on disk. Look it up in the executable.
+                    if core::mem::take(&mut self.transpiler.resolver.resolves_for_code_from_disk) {
+                        continue;
+                    }
                     if !retry_on_not_found {
                         if let Some(chai) = self.resolve_chai_next_to_vitest(
                             normalized_specifier,
@@ -5743,6 +5747,18 @@ impl VirtualMachine {
             ResultUnion::Success(chai) => Some(chai),
             _ => None,
         }
+    }
+
+    /// Whether the importing module at `source` is a file that the executable loaded from disk.
+    fn is_code_from_disk(&self, source: &[u8]) -> bool {
+        let graph = self.standalone_module_graph;
+        let program = graph.and_then(|graph| graph.compiled_program());
+        program.is_some_and(|program| {
+            program.allows_code_from_disk
+                && !program.preserves_source_paths
+                && bun_paths::is_absolute(source)
+                && !bun_options_types::standalone_path::is_bun_standalone_file_path(source)
+        })
     }
 
     /// Module-resolution core: resolves `specifier` relative to `source`, with
@@ -5977,6 +5993,10 @@ impl VirtualMachine {
         // SAFETY: per-thread VM is live for this synchronous call.
         let jsc_vm = unsafe { &mut *jsc_vm_ptr };
 
+        if mode == ResolveMode::Esm {
+            jsc_vm.transpiler.resolver.resolves_for_code_from_disk =
+                jsc_vm.is_code_from_disk(source_utf8.slice());
+        }
         let resolve_result = jsc_vm._resolve(
             &mut result,
             specifier_utf8.slice(),
@@ -5985,6 +6005,9 @@ impl VirtualMachine {
             IS_A_FILE_PATH,
             global_cache,
         );
+        if mode == ResolveMode::Esm {
+            jsc_vm.transpiler.resolver.resolves_for_code_from_disk = false;
+        }
         if let Err(err) = resolve_result {
             let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
@@ -7226,6 +7249,9 @@ impl VirtualMachine {
                 }
                 // What lies on the disk under the name of a module that is compiled into an executable is not what runs.
                 let top_path = frames[top].source_url.to_utf8();
+                if crate::compiled_program::is_build_relative_path(top_path.slice()) {
+                    break 'code bun_core::Utf8Bytes::EMPTY;
+                }
                 if crate::compiled_program::is_compiled_module(top_path.slice()) {
                     if !crate::compiled_program::runs_in_place() {
                         break 'code bun_core::Utf8Bytes::EMPTY;
@@ -8337,6 +8363,7 @@ struct OnResolveScope<'a> {
     vm: &'a VirtualMachine,
     was_in_on_resolve: bool,
     custom_dir_paths: Option<&'static [bun_core::String]>,
+    resolves_for_code_from_disk: bool,
 }
 
 impl<'a> OnResolveScope<'a> {
@@ -8345,6 +8372,9 @@ impl<'a> OnResolveScope<'a> {
             vm,
             was_in_on_resolve: vm.is_in_on_resolve.replace(true),
             custom_dir_paths: vm.as_mut().transpiler.resolver.custom_dir_paths.take(),
+            resolves_for_code_from_disk: core::mem::take(
+                &mut vm.as_mut().transpiler.resolver.resolves_for_code_from_disk,
+            ),
         }
     }
 }
@@ -8352,7 +8382,9 @@ impl<'a> OnResolveScope<'a> {
 impl Drop for OnResolveScope<'_> {
     fn drop(&mut self) {
         self.vm.is_in_on_resolve.set(self.was_in_on_resolve);
-        self.vm.as_mut().transpiler.resolver.custom_dir_paths = self.custom_dir_paths;
+        let resolver = &mut self.vm.as_mut().transpiler.resolver;
+        resolver.custom_dir_paths = self.custom_dir_paths;
+        resolver.resolves_for_code_from_disk = self.resolves_for_code_from_disk;
     }
 }
 

@@ -19,7 +19,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let object = self.branch_if_nullish(value, nullish);
         let resume = self.builder.current_block();
         self.continue_in(nullish);
+        let position = self.position();
+        self.set_position(self.destructured_position.unwrap_or(position));
         self.emit_throw_runtime_error(RuntimeErrorKind::NotDestructurable, error_name);
+        self.set_position(position);
         self.builder.switch_to(resume);
         let has_rest = properties.iter().any(|property| property.is_rest);
         let mut read_names: SmallVec<[PropertyName; 8]> = SmallVec::new();
@@ -35,7 +38,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 continue;
             }
             let name = match property.key {
-                PropKey::Computed(key) => self.lower_computed_name_read_by_pattern(key),
+                PropKey::Computed(key) => {
+                    let name = self.lower_computed_name_read_by_pattern(key);
+                    self.report_destructuring_after(key);
+                    name
+                }
                 PropKey::None | PropKey::Name(_) | PropKey::Private(_) => {
                     let Some(name) = self.file.property_name(property) else {
                         continue;

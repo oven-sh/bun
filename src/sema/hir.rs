@@ -8,7 +8,7 @@ use crate::atom::Atom;
 pub use crate::node::{Kind, Node, NodeBases, NodeData, Part, RangeSet, ToNode};
 use crate::session::{Arena, ArenaBox, ArenaHashMap, ArenaVec, Session};
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
-use bun_alloc::ChunkOfBlocks;
+use bun_alloc::BlockChunk;
 use std::borrow::Cow;
 use std::hint::cold_path;
 use std::marker::PhantomData;
@@ -600,8 +600,8 @@ pub struct ListBlock<'s> {
     /// In bytes.
     size: usize,
     used: usize,
-    /// `Arena::lay`. Null: the block lies by itself.
-    chunk: *mut ChunkOfBlocks,
+    /// The chunk of `Arena::alloc_block`. Null: the block has an allocation of its own.
+    chunk: *mut BlockChunk,
     arena: PhantomData<&'s Arena>,
 }
 
@@ -635,7 +635,7 @@ impl<'s> ListBlock<'s> {
         if size == 0 {
             return ListBlock::default();
         }
-        if let Some((first, chunk)) = arena.lay(size) {
+        if let Some((first, chunk)) = arena.alloc_block(size) {
             return ListBlock {
                 first: first.as_ptr().cast(),
                 size,
@@ -730,9 +730,9 @@ impl Drop for ListBlock<'_> {
         if self.first.is_null() {
             return;
         }
-        if let Some(chunk) = NonNull::new(self.chunk) {
+        if let (Some(chunk), Some(first)) = (NonNull::new(self.chunk), NonNull::new(self.first)) {
             // SAFETY: `new_in` has laid the block in it, and the arena outlives `'s`.
-            return unsafe { ChunkOfBlocks::stop_using(chunk) };
+            return unsafe { BlockChunk::free_block(chunk, first.cast(), self.size) };
         }
         let words = self.size / ListBlock::ALIGNMENT;
         // SAFETY: it is the block of `new_in`.
@@ -907,6 +907,8 @@ pub struct Lazy<'s> {
 pub struct LazyCells {
     /// `node.Parent`, by `Node`: `File::parent`.
     pub(crate) parents: LazyCell<crate::node::Parents>,
+    /// `File::nearest_holder`
+    pub(crate) nearest_holders: LazyCell<Box<[crate::node::Node]>>,
     /// `File::kind`
     pub(crate) kinds: LazyCell<Box<[AtomicU16]>>,
     /// `FnId::to_node`, `ClassId::to_node`
@@ -925,6 +927,8 @@ pub struct LazyCells {
     pub(crate) names_used_otherwise_than_called:
         LazyCell<Box<[(crate::bind::SymbolId, crate::import_sites::OtherUse)]>>,
     pub(crate) identifiers_by_name: LazyCell<Box<[(Atom, ExprId)]>>,
+    /// `File::is_valid_evaluation`
+    pub(crate) early_errors_in_evaluations: LazyCell<Box<[u32]>>,
 }
 
 /// A `OnceLock` that can be emptied while nothing reads the file.
@@ -969,6 +973,7 @@ impl<T> LazyCell<T> {
 /// The cells of every file without nodes. What's computed from such a file is the same for all of them.
 static EMPTY_FILE_CELLS: LazyCells = LazyCells {
     parents: LazyCell::new(),
+    nearest_holders: LazyCell::new(),
     kinds: LazyCell::new(),
     owners: LazyCell::new(),
     ambient_or_type_ranges: LazyCell::new(),
@@ -980,6 +985,7 @@ static EMPTY_FILE_CELLS: LazyCells = LazyCells {
     names_that_hold_own_requires: LazyCell::new(),
     names_used_otherwise_than_called: LazyCell::new(),
     identifiers_by_name: LazyCell::new(),
+    early_errors_in_evaluations: LazyCell::new(),
 };
 
 /// Copies `list` to a block of exactly its size in `arena` and clears it. `list` keeps its capacity.
@@ -2925,6 +2931,23 @@ pub struct FunctionWrittenByLoader {
     pub end_in_text: u32,
 }
 
+/// `call` evaluates `arguments`, as far as the build can tell, which gives `function`. The functions of a call follow its
+/// written arguments. Their texts follow the written text of the file. Set by the loader.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct KnownEvaluation {
+    pub call: CallId,
+    pub function: ExprId,
+    /// The expressions from this one to `function` are in the text.
+    pub first_expression: ExprId,
+    /// The text of an eval. The parameters and the body that `Function` takes.
+    pub arguments: IdList<Atom>,
+    /// Where the text of the function is in the text of the file.
+    pub start: u32,
+    pub end: u32,
+    /// `Function` sees the global scope alone.
+    pub is_in_global_scope: bool,
+}
+
 /// The parser's output for one source file.
 #[derive(Default)]
 pub struct FileIn<S: Storage> {
@@ -2963,6 +2986,8 @@ pub struct FileIn<S: Storage> {
     pub exports_that_others_touch: S::Few<Atom>,
     pub texts_written_by_loader: S::Few<TextWrittenByLoader>,
     pub functions_written_by_loader: S::Few<FunctionWrittenByLoader>,
+    /// Sorted by call and by start.
+    pub known_evaluations: S::Few<KnownEvaluation>,
     /// Has a top-level `import` or `export`.
     pub has_module_syntax: bool,
     /// The parser rejected the file, so the HIR is partial or empty. Only parse errors are reported for it.
@@ -3387,6 +3412,43 @@ impl<S: Storage> FileIn<S> {
             .any(|&(start, end)| (start..end).contains(&pos))
     }
 
+    /// Where the text that was read ends. The texts of `known_evaluations` follow it.
+    pub fn written_text_end(&self) -> u32 {
+        match self.known_evaluations.is_empty() {
+            true => self.text.len() as u32,
+            false => self.source_len,
+        }
+    }
+
+    /// The build replaces no names there: the program evaluates the text as it is.
+    #[inline]
+    pub fn is_in_known_evaluation(&self, pos: u32) -> bool {
+        !self.known_evaluations.is_empty() && pos >= self.source_len
+    }
+
+    /// Where the call that evaluates what is at `pos` is. `pos` itself in the text that was read.
+    pub fn position_of_evaluation(&self, pos: u32) -> u32 {
+        let all = &self.known_evaluations[..];
+        match all.partition_point(|it| it.start <= pos) {
+            0 => pos,
+            count => self[self[all[count - 1].call].callee].pos,
+        }
+    }
+
+    pub fn known_evaluations_of(&self, call: CallId) -> &[KnownEvaluation] {
+        let all = &self.known_evaluations[..];
+        let first = all.partition_point(|it| it.call < call);
+        let count = all[first..].partition_point(|it| it.call == call);
+        &all[first..first + count]
+    }
+
+    /// The arguments of `call` that the program writes.
+    pub fn written_args(&self, call: CallId) -> IdList<ExprId> {
+        let args = self[call].args;
+        let known = self.known_evaluations_of(call).len() as u32;
+        IdList::new(args.start, args.len - known)
+    }
+
     /// `NodeFlagsJSDoc`, `NodeFlagsReparsed` for the node at `pos`: true if it's in a JSDoc comment of a JavaScript
     /// file.
     #[inline]
@@ -3691,6 +3753,7 @@ macro_rules! file_in_storage {
             exports_that_others_touch: $few!($this.exports_that_others_touch),
             texts_written_by_loader: $few!($this.texts_written_by_loader),
             functions_written_by_loader: $few!($this.functions_written_by_loader),
+            known_evaluations: $few!($this.known_evaluations),
             has_module_syntax: $this.has_module_syntax,
             has_errors: $this.has_errors,
             ran_out_of_stack: $this.ran_out_of_stack,
@@ -3845,6 +3908,7 @@ impl FileBuilder {
             exports_that_others_touch,
             texts_written_by_loader,
             functions_written_by_loader,
+            known_evaluations,
             has_module_syntax,
             has_errors,
             ran_out_of_stack,
@@ -3955,6 +4019,7 @@ impl FileBuilder {
         exports_that_others_touch.clear();
         texts_written_by_loader.clear();
         functions_written_by_loader.clear();
+        known_evaluations.clear();
         *has_module_syntax = Default::default();
         *has_errors = Default::default();
         *ran_out_of_stack = Default::default();
@@ -4144,6 +4209,22 @@ impl FileBuilder {
 }
 
 impl File<'_> {
+    /// Takes the positions of the early errors in the texts of `known_evaluations`.
+    pub fn set_early_errors_in_evaluations(&self, positions: Box<[u32]>) {
+        let cell = &self.lazy.cells.early_errors_in_evaluations;
+        cell.get_or_init(|| positions);
+    }
+
+    /// The text is JavaScript. False before the early errors of the file are known.
+    pub fn is_valid_evaluation(&self, evaluation: &KnownEvaluation) -> bool {
+        let Some(errors) = self.lazy.cells.early_errors_in_evaluations.get() else {
+            return false;
+        };
+        errors
+            .iter()
+            .all(|at| !(evaluation.start..=evaluation.end).contains(at))
+    }
+
     /// Returns the same file for a program that shares it with others. The lists of nodes stay where they are, and
     /// on-demand data is computed once for all programs. Everything else in the `File` is in `arena`, which belongs to
     /// `session`.
@@ -4217,6 +4298,7 @@ impl<'s> File<'s> {
         // SAFETY: caller contract.
         unsafe {
             cells.parents.clear();
+            cells.nearest_holders.clear();
             cells.kinds.clear();
             cells.owners.clear();
             cells.ambient_or_type_ranges.clear();
@@ -4228,6 +4310,7 @@ impl<'s> File<'s> {
             cells.names_that_hold_own_requires.clear();
             cells.names_used_otherwise_than_called.clear();
             cells.identifiers_by_name.clear();
+            cells.early_errors_in_evaluations.clear();
         }
     }
 }

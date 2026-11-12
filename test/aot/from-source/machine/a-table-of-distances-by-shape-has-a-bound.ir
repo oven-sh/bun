@@ -34,7 +34,7 @@
 #   }
 # }
 # function weigh(thing: HasV, depth: number): number {
-#   if (depth > 0) return weigh(thing, depth - 1);
+#   if (depth > 0) return weigh(thing, -depth);
 #   const before = thing.v;
 #   thing.v = before + 1;
 #   return before;

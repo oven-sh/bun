@@ -7,12 +7,13 @@ mod tests;
 use core::cell::{OnceCell, RefCell};
 use core::mem::take;
 use std::borrow::Cow;
+use std::sync::{Arc, OnceLock};
 
 use bun_core::printer::{FIRST_ASCII, LAST_ASCII, bmp_escape, surrogate_pair_escape};
 use bun_core::strings::{CodepointIterator, Cursor};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Bound, SymbolId};
-use bun_sema::check::aot::{BuiltinTypeSymbols, NamedValues, Queries, QueryInputs};
+use bun_sema::check::aot::{AliasMentions, BuiltinTypeSymbols, NamedValues, Queries, QueryInputs};
 use bun_sema::erasure::{ReplacedText, TypeRanges};
 use bun_sema::fold::{Constant, Decisions};
 use bun_sema::hir::{self, ExprId, ExprKind, MemberId, NodeData};
@@ -30,9 +31,10 @@ use super::function::{ConstsOfPrefixes, StatementsThatNest, ValuesThatConstsWere
 use super::layouts::{LayoutState, NamesCreatedOnExports};
 use super::module::{LibraryFunctions, ModuleState};
 use super::object::EnumsThatStayAsBorn;
+use super::parts::{PartState, SharedOfFile};
 use super::quoted_source::QuotedSources;
 use super::said_types::SaidTypes;
-use super::scope::{RegistryNames, ScopeAnalysis, ScopeInput, analyze_scopes};
+use super::scope::{ResolvedFields, ScopeAnalysis, ScopeInput, analyze_scopes, holds_registry};
 use super::tables::TaskState;
 use super::types::TypeState;
 use super::{KnownHelpersLowered, LoweredFile};
@@ -48,12 +50,14 @@ use crate::ir::generated::FunctionRole;
 use crate::ir::{BuilderScratch, ModuleId, PropertyKey, PropertyKeyId, StringId, WellKnownSymbol};
 use crate::known_helpers::KnownHelpers;
 use crate::load::contents::FixedBuiltins;
+use crate::load::hoisted_mocks::shown_name_of_namespace;
 use crate::load::test_runner_names::written_name_of_local;
 use crate::load::{self, Sources};
 use crate::modules::{CommonJsExports, KnownMemberValues, KnownObjects, ModuleGraph, ModuleRef};
 use crate::options::RemovableOptions;
 use crate::statistics::{LimitId, LimitValues};
 
+pub(in crate::lower) use self::function::CreatedRequire;
 pub(crate) use self::function::FunctionLowering;
 
 pub(super) fn regexp_pattern_as_printed(written: &[u8]) -> Cow<'_, [u8]> {
@@ -124,6 +128,7 @@ pub struct LoweringOptions {
     pub obfuscates: bool,
     pub counts_executions: bool,
     pub runs_tests: bool,
+    pub divides_small_files: bool,
 }
 
 pub struct LoweringInputs<'a> {
@@ -150,6 +155,7 @@ pub struct LoweringInputs<'a> {
     pub limits: &'a LimitValues,
     pub options: LoweringOptions,
     pub said_types: &'a SaidTypes,
+    pub alias_mentions: &'a AliasMentions,
 }
 
 impl<'a> LoweringInputs<'a> {
@@ -170,6 +176,7 @@ impl<'a> LoweringInputs<'a> {
             checked_elsewhere: &[],
             builtin_types: self.builtin_types,
             named_values: self.named_values,
+            alias_mentions: Some(self.alias_mentions),
             max_inference_nodes: self.limits.get(LimitId::MaxInferenceNodes),
             limits: self.limits.for_queries(),
         }
@@ -183,6 +190,14 @@ pub(in crate::lower) struct StoresByNameInList {
     pub(in crate::lower) names_stored_on: FxHashMap<SymbolId, Vec<Atom>>,
 }
 
+/// What is listed of a whole file, once, where something first asks.
+#[derive(Default)]
+pub(in crate::lower) struct ListsOfFile {
+    pub(in crate::lower) literals_named_as_prototype_objects: OnceLock<FxHashSet<ExprId>>,
+    pub(in crate::lower) enums_that_stay_as_born: OnceLock<EnumsThatStayAsBorn>,
+    pub(in crate::lower) places_of_this_super_and_return: OnceLock<Vec<u32>>,
+}
+
 pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(crate) inputs: &'a LoweringInputs<'a>,
     pub(crate) file: FileId,
@@ -194,29 +209,30 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(in crate::lower) values_written_in_place: RefCell<Vec<(ExprId, Constant)>>,
     pub(in crate::lower) enums_written_as_code: Vec<ReplacedText>,
     pub(crate) builtins: &'a ResolvedBuiltins,
-    simplified_expressions: Vec<ExprId>,
-    invalid_regexp_literals_left_out: Vec<ExprId>,
+    pub(in crate::lower) simplified_expressions: Arc<Vec<ExprId>>,
+    pub(in crate::lower) invalid_regexp_literals_left_out: Arc<Vec<ExprId>>,
     pub(crate) queries: &'a mut Queries<'c, 'p, 's>,
     pub(in crate::lower) task: &'a mut TaskState,
     pub(crate) fragment: FragmentBuilder,
     pub(crate) diagnostics: DiagnosticBuffer,
-    pub(crate) scopes: ScopeAnalysis,
+    pub(crate) scopes: Arc<ScopeAnalysis>,
+    pub(in crate::lower) part: Option<Box<PartState>>,
     pub(crate) types: TypeState,
     pub(crate) layouts: LayoutState,
     pub(crate) classes: ClassState,
     pub(crate) modules: ModuleState,
     functions: FunctionTable,
     pub(in crate::lower) levels_of_literals_inside_built_ones: FxHashMap<ExprId, u64>,
-    pub(in crate::lower) literals_named_as_prototype_objects: OnceCell<FxHashSet<ExprId>>,
+    pub(in crate::lower) lists: Arc<ListsOfFile>,
     pub(in crate::lower) stores_by_name_in_lists: RefCell<FxHashMap<u32, StoresByNameInList>>,
     shown_names: ShownNames,
     pub(in crate::lower) enum_member_reads: FxHashMap<ExprId, Constant>,
+    pub(in crate::lower) namespaces_with_two_tables: RefCell<FxHashMap<SymbolId, bool>>,
     pub(in crate::lower) names_word_that_mock_looks_for: Option<bool>,
     pub(in crate::lower) ranges_of_types: OnceCell<TypeRanges>,
     pub(in crate::lower) statements_that_nest: OnceCell<StatementsThatNest>,
     pub(in crate::lower) values_that_consts_were_followed_to: ValuesThatConstsWereFollowedTo,
     pub(in crate::lower) consts_of_prefixes: ConstsOfPrefixes,
-    pub(in crate::lower) enums_that_stay_as_born: Option<EnumsThatStayAsBorn>,
     pub(in crate::lower) counted_places: Option<CountedPlaces>,
     pub(in crate::lower) quoted_sources: QuotedSources,
     pub(in crate::lower) written_path: Vec<u8>,
@@ -224,7 +240,60 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(in crate::lower) function_sources_reparsed: u64,
     pub(in crate::lower) declared_records_without_position:
         Vec<(hir::FnId, crate::ir::generated::DeclaredRecord)>,
+    pub(in crate::lower) resolved_fields: ResolvedFields,
     scratch: BuilderScratch,
+}
+
+#[derive(Clone)]
+pub(super) struct ScopesOfFile {
+    pub(super) analysis: Arc<ScopeAnalysis>,
+    pub(super) fields_under_signed_members: Vec<MemberId>,
+}
+
+type AsksAtOnce<'x, 'c, 'p, 's> = dyn Fn(&mut Queries<'c, 'p, 's>, &[SymbolId]) -> Vec<bool> + 'x;
+
+impl ScopesOfFile {
+    fn find(inputs: &LoweringInputs<'_>, queries: &mut Queries<'_, '_, '_>) -> ScopesOfFile {
+        ScopesOfFile::find_asking(inputs, queries, &|queries, variables| {
+            let holds = variables
+                .iter()
+                .map(|&variable| holds_registry(queries, variable));
+            holds.collect()
+        })
+    }
+
+    /// `find_registries` answers `holds_registry`.
+    pub(super) fn find_asking<'c, 'p, 's>(
+        inputs: &LoweringInputs<'_>,
+        queries: &mut Queries<'c, 'p, 's>,
+        find_registries: &AsksAtOnce<'_, 'c, 'p, 's>,
+    ) -> ScopesOfFile {
+        let file = queries.file();
+        let known_member_values = KnownMemberValues::default();
+        let members = KnownObjects::new(queries.files(), inputs.modules, &known_member_values);
+        let fields_under_signed_members = find_fields_under_signed_members(members, file);
+        let file_inputs = inputs.files[file.idx()].expect("every lowered file has its inputs");
+        let may_hold_registries = inputs.makes_registries || file_inputs.makes_registries();
+        let files = queries.files();
+        let queries = RefCell::new(queries);
+        let find_registries =
+            |variables: &[SymbolId]| find_registries(&mut queries.borrow_mut(), variables);
+        let find_registries: Option<&dyn Fn(&[SymbolId]) -> Vec<bool>> = match may_hold_registries {
+            true => Some(&find_registries),
+            false => None,
+        };
+        let analysis = analyze_scopes_of_file(
+            inputs,
+            files,
+            file,
+            &fields_under_signed_members,
+            find_registries,
+        );
+        ScopesOfFile {
+            analysis: Arc::new(analysis),
+            fields_under_signed_members,
+        }
+    }
 }
 
 fn analyze_scopes_of_file(
@@ -232,7 +301,7 @@ fn analyze_scopes_of_file(
     files: &Files<'_>,
     file: FileId,
     fields_under_signed_members: &[MemberId],
-    holds_registry: &dyn Fn(SymbolId) -> bool,
+    find_registries: Option<&dyn Fn(&[SymbolId]) -> Vec<bool>>,
 ) -> ScopeAnalysis {
     let module = files.module(file);
     let file_inputs = inputs.files[file.idx()].expect("every lowered file has its inputs");
@@ -244,7 +313,7 @@ fn analyze_scopes_of_file(
         modules: inputs.modules,
         builtins: file_inputs.builtins,
         fields_under_signed_members,
-        holds_registry,
+        find_registries,
         max_captures: inputs.limits.get(LimitId::MaxCaptures) as usize,
         names_lie_on_object_prototype: inputs.names_lie_on_object_prototype(),
     })
@@ -257,6 +326,18 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         file: FileId,
         task: &'a mut TaskState,
     ) -> FileLowering<'a, 'c, 'p, 's> {
+        let scopes = ScopesOfFile::find(inputs, queries);
+        FileLowering::new_sharing(inputs, queries, file, task, scopes, None)
+    }
+
+    pub(super) fn new_sharing(
+        inputs: &'a LoweringInputs<'a>,
+        queries: &'a mut Queries<'c, 'p, 's>,
+        file: FileId,
+        task: &'a mut TaskState,
+        scopes: ScopesOfFile,
+        shared: Option<&SharedOfFile>,
+    ) -> FileLowering<'a, 'c, 'p, 's> {
         let hir = queries.hir();
         let bound = queries.bound();
         let compiled = queries.files().compiled(file);
@@ -265,29 +346,29 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         let path = inputs.sources.diagnostic_path(file);
         let is_counted =
             inputs.options.counts_executions && inputs.sources.is_in_coverage_report(file);
-        let known_member_values = KnownMemberValues::default();
-        let members = KnownObjects::new(queries.files(), inputs.modules, &known_member_values);
-        let fields_under_signed_members = find_fields_under_signed_members(members, file);
+        let ScopesOfFile {
+            analysis: scopes,
+            fields_under_signed_members,
+        } = scopes;
         let counted_places = is_counted
             .then(|| CountedPlaces::find(hir, bound, compiled, &fields_under_signed_members, path));
-        let may_hold_registries = inputs.makes_registries || file_inputs.makes_registries();
-        let files = queries.files();
-        let registries = RegistryNames::new(&mut *queries);
-        let holds_registry = |symbol: SymbolId| may_hold_registries && registries.holds(symbol);
-        let scopes = analyze_scopes_of_file(
-            inputs,
-            files,
-            file,
-            &fields_under_signed_members,
-            &holds_registry,
-        );
-        let removable = Removable::of_file(
-            queries.files(),
-            file,
-            &compiled.analysis,
-            file_inputs.builtins,
-            inputs.options.removable,
-        );
+        let simplified_expressions = match shared {
+            Some(shared) => Arc::clone(&shared.simplified_expressions),
+            None if is_counted => Arc::default(),
+            None => {
+                let removable = Removable::of_file(
+                    queries.files(),
+                    file,
+                    &compiled.analysis,
+                    file_inputs.builtins,
+                    inputs.options.removable,
+                );
+                Arc::new(removable.find_simplified_expressions())
+            }
+        };
+        let invalid_regexp_literals_left_out = shared.map_or_else(Arc::default, |shared| {
+            Arc::clone(&shared.invalid_regexp_literals_left_out)
+        });
         task.begin_file_of(file_inputs.source == SourceKind::Program);
         let fragment = FragmentBuilder::new(file, task);
         task.layout_places.begin_file();
@@ -305,38 +386,37 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             values_written_in_place: RefCell::default(),
             enums_written_as_code: Vec::new(),
             builtins: file_inputs.builtins,
-            simplified_expressions: match is_counted {
-                true => Vec::new(),
-                false => removable.find_simplified_expressions(),
-            },
-            invalid_regexp_literals_left_out: Vec::new(),
+            simplified_expressions,
+            invalid_regexp_literals_left_out,
             queries,
             task,
             fragment,
             diagnostics: DiagnosticBuffer::default(),
             scopes,
+            part: None,
             types: TypeState::default(),
             layouts,
             classes: ClassState::new(fields_under_signed_members),
             modules: ModuleState::default(),
             functions,
             levels_of_literals_inside_built_ones: FxHashMap::default(),
-            literals_named_as_prototype_objects: OnceCell::new(),
+            lists: shared.map_or_else(Arc::default, |shared| Arc::clone(&shared.lists)),
             stores_by_name_in_lists: RefCell::default(),
             shown_names: ShownNames::new(inputs.options, file_inputs.source, hir, bound),
             enum_member_reads: FxHashMap::default(),
+            namespaces_with_two_tables: RefCell::default(),
             names_word_that_mock_looks_for: None,
             ranges_of_types: OnceCell::new(),
             statements_that_nest: OnceCell::new(),
             values_that_consts_were_followed_to: ValuesThatConstsWereFollowedTo::default(),
             consts_of_prefixes: ConstsOfPrefixes::default(),
-            enums_that_stay_as_born: None,
             counted_places,
             quoted_sources: QuotedSources::default(),
             written_path: Vec::new(),
             known_helpers_lowered: KnownHelpersLowered::default(),
             function_sources_reparsed: 0,
             declared_records_without_position: Vec::new(),
+            resolved_fields: ResolvedFields::default(),
             scratch: BuilderScratch::default(),
         }
     }
@@ -374,7 +454,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         .find_regexp_literals_left_out();
         for (literal, sentence) in invalid {
             if left_out.binary_search(&literal).is_ok() {
-                self.invalid_regexp_literals_left_out.push(literal);
+                Arc::make_mut(&mut self.invalid_regexp_literals_left_out).push(literal);
             } else {
                 let span = self.span_of(NodeData::Expr(literal));
                 self.diagnostics
@@ -491,7 +571,8 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
 
     pub(crate) fn intern_written_name(&mut self, name: Atom) -> StringId {
         let bytes = self.queries.atom_bytes(name);
-        match written_name_of_local(bytes) {
+        let written = shown_name_of_namespace(bytes);
+        match written.unwrap_or_else(|| written_name_of_local(bytes)) {
             same if same.len() == bytes.len() => self.intern_atom(name),
             written => self.intern_bytes(written),
         }

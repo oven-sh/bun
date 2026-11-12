@@ -4069,7 +4069,7 @@ declare module "bun" {
      *
      * - `"proof-checks"`: check the type that the compiler has proven of a value again at each read,
      *   and check again what the compiler remembers from earlier code. Objects stay on the heap, not
-     *   on the stack.
+     *   on the stack. The build also runs the compiler's own verifier.
      * - `"ignore-told-ranges"`: check every index against the length, where the index is used.
      *
      * A check that fails aborts the process.
@@ -4783,6 +4783,11 @@ declare module "bun" {
         }>;
         /** List of exported names from this output */
         exports: string[];
+        /**
+         * The strings whose characters are only in the machine code of this executable, such as the labels of
+         * a `switch`. A search of the file's bytes doesn't find them. Only for builds with `compile.aot`.
+         */
+        inlinedStrings?: string[];
         /** Entrypoint path, if this output is an entrypoint */
         entryPoint?: string;
         /** Path to the associated CSS bundle (for JS entrypoints with CSS) */

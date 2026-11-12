@@ -8,14 +8,17 @@
 // # RUN(FORM): emit f1 f2 f8 mechanisms=all
 // # REQUIRES(FORM): as-written
 // # FORM-LABEL: unit f1:Body
-// # FORM-COUNT-2: Int64 @{{*}} = Mul({{*}}origin = 281)
-// # FORM-NOT: Int64 @{{*}} = Mul({{*}}origin = 281)
+// # FORM: Int64 @{{*}} = Mul({{*}}origin = [[first]])
+// # FORM: Int64 @{{*}} = Mul({{*}}origin = [[first]])
+// # FORM-NOT: Int64 @{{*}} = Mul({{*}}origin = [[first]])
 // # FORM-LABEL: unit f2:Body
-// # FORM-COUNT-3: Int64 @{{*}} = Mul({{*}}origin = 288)
-// # FORM-NOT: Int64 @{{*}} = Mul({{*}}origin = 288)
+// # FORM: Int64 @{{*}} = Mul({{*}}origin = [[second]])
+// # FORM-COUNT-2: Int64 @{{*}} = Mul({{*}}origin = [[second]])
+// # FORM-NOT: Int64 @{{*}} = Mul({{*}}origin = [[second]])
 // # FORM-LABEL: unit f8:Body
-// # FORM-COUNT-2: Int64 @{{*}} = Mul({{*}}origin = 161)
-// # FORM-NOT: Int64 @{{*}} = Mul({{*}}origin = 161)
+// # FORM: Int64 @{{*}} = Mul({{*}}origin = [[third]])
+// # FORM: Int64 @{{*}} = Mul({{*}}origin = [[third]])
+// # FORM-NOT: Int64 @{{*}} = Mul({{*}}origin = [[third]])
 // # Written sums upward and downward over one counter, another divisor in between, an unsigned reading of a counter that begins below zero, arms and what stands behind them.
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL

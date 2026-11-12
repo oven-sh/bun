@@ -1,4 +1,5 @@
-pub mod answers;
+pub mod alias_mentions;
+mod answers;
 pub mod builtin_types;
 mod call_target;
 mod class_shape;
@@ -33,6 +34,7 @@ mod type_relations;
 pub mod type_shape;
 mod written_type;
 
+pub use alias_mentions::AliasMentions;
 pub use answers::{
     CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassMember, ClassMemberSource,
     ClassParent, ClassRef, ClassShape, EnumConstant, FunctionRef, GaveUp, IndexKey, IndexSignature,
@@ -64,15 +66,16 @@ pub use trust::Trust;
 pub use type_identity::{ObjectOrigin, TypeIdentity};
 pub use type_relations::MemberPresence;
 pub use type_shape::{
-    AnythingReason, BuiltinShape, PrimitiveKinds, ShapeKind, TupleElement, TupleElementKind,
-    TypeShape,
+    AnythingReason, BuiltinShape, FunctionSignatures, PrimitiveKinds, ShapeKind, TupleElement,
+    TupleElementKind, TypeShape,
 };
 pub use written_type::declares_type_alone;
 
 pub(in crate::check) use class_stores::{StoreIndex, WrittenStores};
 pub(in crate::check) use dead_code::DeadCodeRanges;
+pub(in crate::check) use inferred_from_use::Subject;
 pub(in crate::check) use left_out_bodies::LeftOutOfCheck;
 pub(in crate::check) use program_symbols::ProgramSymbols;
-pub(in crate::check) use prototype_links::PrototypeLinks;
+pub(in crate::check) use prototype_links::LinksOfFile;
 
 pub use crate::program::FileRole;

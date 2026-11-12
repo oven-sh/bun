@@ -21,7 +21,10 @@
 # function kept(orders: Order[], rounds: number): number {
 #   let total = 0;
 #   for (let round = 0; round < rounds; round++)
-#     total += orders.filter(order => order.open).length;
+#   {
+#     const open = orders.filter(order => order.open);
+#     total += open.length > 0 ? open.length : 0;
+#   }
 #   return total;
 # }
 # function grown(orders: Order[], rounds: number): number {

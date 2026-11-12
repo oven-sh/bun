@@ -14,14 +14,15 @@ pub use bun_sema::check::explain::MessageChain;
 pub use bun_sema::messages::Category;
 pub use compile::{
     BuildDiagnostic, CheckedProgram, CompileRequest, Demotion, DemotionCause, EntryPointFailure,
-    EntryPoints, FileFinder, FileFinderTables, LoadFailure, LoadedProgram, Locator, PassCount,
-    Passes, RoleDecision, TextLocator, check_and_lower, check_and_lower_noting_commits,
+    EntryPoints, FileFinder, FileFinderTables, LoadFailure, LoadedProgram, Locator, PartsOfVisit,
+    PassCount, Passes, RoleDecision, TextLocator, check_and_lower, check_and_lower_noting_commits,
     check_whole_files, decide_roles, drop_thread_caches, keep_verified_roles, load_program,
     log_message, resolve_names_known_in_part, run_on_one_thread_while, run_on_region_thread,
     run_on_threads_while, says_that_name_is_not_found, wake_idle_region_threads,
 };
 
 use bstr::ByteSlice;
+use bun_core::file_steps::{self, FileStep};
 use bun_core::strings;
 use bun_paths::path_buffer_pool;
 use bun_paths::platform::Posix;
@@ -31,7 +32,7 @@ use bun_sema::check::aot::{DiagnosticClass, DiagnosticSubject};
 use bun_sema::check::commit::RefusedInstantiations;
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
-use bun_sema::check::{Program, Requested, compute_ecma_line_starts};
+use bun_sema::check::{Checker, Program, Requested, compute_ecma_line_starts};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::FileKind;
 use bun_sema::json::Json;
@@ -771,6 +772,7 @@ impl<'a> Region<'a> {
         if from >= self.count {
             return false;
         }
+        bun_core::current_work::ensure_build_signal_stack();
         let has_returned = self.panic.catch(|| {
             for i in from..(from + self.run).min(self.count) {
                 (self.work)(i);
@@ -820,6 +822,18 @@ impl Drop for Raised<'_> {
 /// A checker is replaced after it has checked `1 / MIN_TASKS` of the total cost, because its private tables grow with
 /// every file. A file that costs more than that is heavy and starts before the others.
 const MIN_TASKS: usize = 128;
+
+/// Cost estimate for checking a file: the number of identifiers in its expressions. Each is a symbol to resolve and
+/// a type to compute. The text size is a poor predictor: on storybook, tasks partitioned by it take 1.8 times as
+/// long as tasks partitioned by the measured time, whereas tasks partitioned by this estimate take 1.1 times as
+/// long.
+/// A type node is a type to compute too. A declaration file has no expressions, and next.js checks one of 2.9 MB
+/// that takes 23% of the check's instructions.
+fn cost_of_file(files: &Files<'_>, file: FileId) -> usize {
+    let (identifiers, type_nodes) = files.sizes[file.idx()];
+    identifiers as usize + type_nodes as usize + 1
+}
+
 /// See `TaskSize::ByCostAndThreads`. What lowering has found out about a type goes with the task, and the next task finds it out
 /// again: a program of 30,000 files takes 226 G instructions to lower on 16 threads with 16 tasks for each, 220 G with 8 and
 /// 215 G with 4, and holds 95 MB and 170 MB more.
@@ -4715,6 +4729,13 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
     let checker = boxed_checker(None);
     let (type_checked, only_emitted): (Vec<FileId>, Vec<FileId>) = (to_check.into_iter())
         .partition(|&file| file_work.is_some() || checker.reports_semantic_errors(file));
+    if let Some(work) = file_work {
+        for &file in &type_checked {
+            if (work.requested)(file) == Requested::All && checker.reports_semantic_errors(file) {
+                program.set_check_pending(file);
+            }
+        }
+    }
     drop(checker);
     let is_any_type_checked = !type_checked.is_empty();
     let (to_check, only_emitted) = match is_any_type_checked {
@@ -4943,17 +4964,10 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         });
     };
     let bytes_of = |index: usize| size(to_check[index]) as usize;
-    // Cost estimate for checking a file: the number of identifiers in its expressions. Each is a symbol to resolve and
-    // a type to compute. The text size is a poor predictor: on storybook, tasks partitioned by it take 1.8 times as
-    // long as tasks partitioned by the measured time, whereas tasks partitioned by this estimate take 1.1 times as
-    // long.
-    // A type node is a type to compute too. A declaration file has no expressions, and next.js checks one of 2.9 MB
-    // that takes 23% of the check's instructions.
-    let cost_of = |file: FileId| {
-        let (identifiers, type_nodes) = program.files.sizes[file.idx()];
-        identifiers as usize + type_nodes as usize + 1
-    };
-    let costs: Vec<usize> = to_check.iter().map(|&file| cost_of(file)).collect();
+    let costs: Vec<usize> = to_check
+        .iter()
+        .map(|&file| cost_of_file(program.files, file))
+        .collect();
     let size_of = |index: usize| costs[index];
     let threads = match in_room {
         Some(room_slot) if room_slot.fits_one_thread => 1,
@@ -5011,6 +5025,29 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         };
         let imported = edges.iter().chain(code_edges);
         imported.filter_map(|file| index_of_file.get(file).copied())
+    };
+    // `imports_of` every file, made when the first visit is discarded: where each file's begin, and all of them.
+    let all_imports: OnceLock<(Vec<u32>, Vec<u32>)> = OnceLock::new();
+    let list_all_imports = || {
+        let (mut starts, mut imported) = (vec![0], Vec::new());
+        for importer in 0..to_check.len() {
+            imported.extend(imports_of(importer).map(|it| it as u32));
+            starts.push(imported.len() as u32);
+        }
+        (starts, imported)
+    };
+    // The files that `to_check[index]` leads to, and that file itself.
+    let reached_from = |index: usize| {
+        let (starts, imported) = all_imports.get_or_init(list_all_imports);
+        let mut is_seen = vec![false; to_check.len()];
+        let (mut seen, mut followed) = (vec![index], 0);
+        while let Some(&importer) = seen.get(followed) {
+            followed += 1;
+            let range = starts[importer] as usize..starts[importer + 1] as usize;
+            let imported = imported[range].iter().map(|&it| it as usize);
+            seen.extend(imported.filter(|&it| !std::mem::replace(&mut is_seen[it], true)));
+        }
+        seen
     };
     // Whether the files in the import cycle of `to_check[index]` that come before it are final. `final_files`: what the lock holds.
     let is_first_in_component = |index: usize, final_files: &(Vec<bool>, usize)| {
@@ -5340,10 +5377,58 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 }
                 checker.record_cycles_entered(note_cycles_entered.is_some());
                 let questions = file_work.and_then(|work| Some((work, work.after_file?)));
+                let parts_run = AtomicUsize::new(0);
+                let run_parts = |count: usize,
+                                 ask: &(dyn Fn(&mut Checker<'_, 's>, usize) + Sync),
+                                 meanwhile: &mut dyn FnMut()| {
+                    let Some(work) = file_work else {
+                        return false;
+                    };
+                    let was_discarded = AtomicBool::new(false);
+                    let order = {
+                        let final_files = final_files.lock();
+                        let (is_checked, next) = &*final_files;
+                        (
+                            (*next..index).all(|before| is_checked[before]),
+                            is_first_in_component(index, &final_files),
+                        )
+                    };
+                    let first_part = parts_run.fetch_add(count, Ordering::Relaxed);
+                    let ask_part = |part: usize| {
+                        let mut checker = new_checker(expected, None);
+                        let reading = bun_sema::program::ReadingTask::begin();
+                        // No other task of the round has that number: the index of each is that of a file.
+                        let number = (first_part + part + 1) * to_check.len() + first;
+                        checker.begin_task(first_round + round as u32, number as u32);
+                        checker.see_commits(is_last_round);
+                        checker.set_first_in_order(order.0, order.1);
+                        checker.set_requested(work.requested_while_asked(program.files, file));
+                        checker.begin_questions(file);
+                        ask(&mut checker, part);
+                        if checker.was_discarded() {
+                            was_discarded.store(true, Ordering::Relaxed);
+                        }
+                        deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
+                        queries.fetch_add(checker.work as usize, Ordering::Relaxed);
+                        checker.end_task_after_commits();
+                        drop(checker);
+                        drop(reading);
+                        bun_sema::session::give_back_free_memory();
+                    };
+                    host.parallel_while(count, &ask_part, meanwhile);
+                    !was_discarded.into_inner()
+                };
+                let parts_of_visit = PartsOfVisit {
+                    run: &run_parts,
+                    in_parallel: &|count, work| host.parallel(count, work),
+                };
                 let passes_over_depth_limit = file_work.is_some() && is_last_round;
                 checker.leave_depth_limit_unreported(passes_over_depth_limit);
                 checker.allow_refused_instantiations_of_next_file();
+                let step = file_steps::count(FileStep::Check);
+                let began = step.as_ref().map(|it| it.now());
                 let mut checked = checker.check_file(file);
+                drop(step);
                 if passes_over_depth_limit && questions.is_none() {
                     loop {
                         match checker.compute_refused_instantiations() {
@@ -5380,9 +5465,10 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 if let Some((work, after_file)) = questions
                     && !checker.was_discarded()
                 {
+                    let _step = file_steps::count(FileStep::Lower);
                     loop {
                         checker.set_requested(work.requested_while_asked(program.files, file));
-                        after_file(&mut checker, file);
+                        after_file(&mut checker, file, &parts_of_visit);
                         // No ordinary visit at the end: it would store results cut off at the limit, for the next file to find.
                         if !passes_over_depth_limit
                             || checker.compute_refused_instantiations()
@@ -5406,7 +5492,13 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 // A task caches what it evaluated about other files, and a file's own check must not hit what a later
                 // file's check evaluated. So a task only moves forward in program order.
                 let is_last = upcoming.is_none_or(|it| it < index) || spent >= task_cost;
-                if !checker.commit_after_file(is_last) {
+                let step = file_steps::count(FileStep::Commit);
+                let is_kept = checker.commit_after_file(is_last);
+                if let (Some(step), Some(began), false) = (&step, began, is_kept) {
+                    step.note_discarded_visit(began);
+                }
+                drop(step);
+                if !is_kept {
                     if let Some(progress) = request.progress {
                         progress.checked.fetch_sub(1, Ordering::Relaxed);
                         let bytes = bytes_of(index);
@@ -5416,15 +5508,10 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                         let component_of = |index: usize| {
                             (program.files.components.of_file).get(to_check[index].idx())
                         };
-                        let mut is_seen = vec![false; to_check.len()];
-                        let (mut seen, mut followed) = (vec![index], 0);
-                        while let Some(&importer) = seen.get(followed) {
-                            followed += 1;
-                            let imported = imports_of(importer);
-                            seen.extend(
-                                imported.filter(|&it| !std::mem::replace(&mut is_seen[it], true)),
-                            );
-                        }
+                        let mut seen = match checker.can_recheck_early() {
+                            true => reached_from(index),
+                            false => Vec::new(),
+                        };
                         let final_files = final_files.lock();
                         seen.retain(|&it| {
                             !final_files.0[it] && component_of(it) != component_of(index)
@@ -5761,12 +5848,15 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
     let run_all_rounds = |expected: Requested| {
         enter_cycles_of_earlier_passes();
         let all: Vec<usize> = (0..to_check.len()).collect();
+        let session = program.types.session();
+        session.set_readers_are_tasks(file_work.is_some());
         run_tasks(0, &all, expected, false);
         let mut again = std::mem::take(&mut *lost.lock());
         if !again.is_empty() {
             again.shared_sort_unstable();
             run_tasks(1, &again, expected, true);
         }
+        session.set_readers_are_tasks(false);
     };
     // `NewDiagnosticForNode` without a node: the range is empty, not undefined.
     let global_errors = || -> Vec<Diagnostic> {

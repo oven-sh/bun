@@ -291,20 +291,20 @@ fn find_value_unless_this_of_file_has_one(
     else {
         return None;
     };
-    let ExprKind::Binary {
-        op: BinOp::And,
-        left,
-        right,
-    } = hir[hir.skip_type_assertions(left)].kind
-    else {
-        return None;
-    };
     let is_this = |it: ExprId| matches!(hir[hir.skip_type_assertions(it)].kind, ExprKind::This);
+    let read = match hir[hir.skip_type_assertions(left)].kind {
+        ExprKind::Binary {
+            op: BinOp::And,
+            left,
+            right,
+        } if is_this(left) => right,
+        _ => left,
+    };
     let reads_this = matches!(
-        hir.member_key(hir.skip_type_assertions(right)),
+        hir.member_key(hir.skip_type_assertions(read)),
         Some((object, MemberKey::Name(_))) if is_this(object)
     );
-    (is_this(left) && reads_this && is_evaluated_by_file_body(hir, bound, expr)).then_some(value)
+    (reads_this && is_evaluated_by_file_body(hir, bound, expr)).then_some(value)
 }
 
 fn find_symbol_named_by(hir: &File<'_>, bound: &Bound<'_>, expr: ExprId) -> Option<SymbolId> {
@@ -996,7 +996,10 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         self.certainty = ReferentCertainty::Expected;
         match loaded {
             LoadedValue::Namespace(module) => Step::Linked(LinkedBinding::Namespace(module)),
-            LoadedValue::DefaultExport(file) => self.step_default_export(file),
+            LoadedValue::DefaultExport(file) => {
+                self.follows_stored_members = true;
+                self.step_default_export(file)
+            }
             LoadedValue::ModuleExports(file) => self.step_module_exports(file),
         }
     }
@@ -1146,7 +1149,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                 Step::Found(StaticReferent::Function(FunctionRef { file, function }))
             }
             BindingInitializer::Namespace(_) | BindingInitializer::Enum(_) => {
-                let id = bound.export_symbol_of_value_symbol_if_exported(id);
+                let id = bound.exported_value(id);
                 let container = NamespaceReferent::Declared(Sym { file, id });
                 Step::Found(StaticReferent::Namespace(container))
             }

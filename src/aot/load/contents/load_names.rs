@@ -76,6 +76,7 @@ pub(crate) struct NamedLoads {
     pub unknown_names_at: Vec<u32>,
     pub sought_from_unknown_folders: Vec<(Atom, bool)>,
     pub written_arms_of_unknown_names: Vec<(Atom, bool)>,
+    pub followed_names: Vec<(Atom, bool)>,
     pub guessed_arms: Vec<Atom>,
     pub arms_of_makers_called_first: Vec<Atom>,
     pub files_missing_at_build_at: Vec<u32>,
@@ -1112,10 +1113,13 @@ impl ContentsScan<'_, '_> {
         }
         (names.sought_from_unknown_folders)
             .extend(find_name_sought_from_unknown_folder(request, site));
+        let name = site.specifier_node;
+        let requires = !matches!(site.kind, ImportSiteKind::ImportCall(_));
         if is_known {
+            let known = analysis.known_load_names_at(name);
+            (names.followed_names).extend(known.map(|name| (name, requires)));
             return;
         }
-        let name = site.specifier_node;
         let is_path_alone = find_why_resolver_takes_name_for_path(analysis, atoms, name).is_some();
         names.unknown_names_at.push(index as u32);
         names.loads_by_unknown_name |= may_name_library_module && !is_path_alone;
@@ -1127,11 +1131,11 @@ impl ContentsScan<'_, '_> {
             &self.exported_names,
             &self.written_names,
         ));
-        let requires = !matches!(site.kind, ImportSiteKind::ImportCall(_));
         let arms = find_written_arms(request.hir, request.bound, &analysis.decisions, site);
         let known = analysis.known_load_names_at(name);
         let known = known.filter(|it| !arms.contains(it));
-        let arms = arms.iter().copied().chain(known);
+        (names.followed_names).extend(known.map(|name| (name, requires)));
+        let arms = arms.iter().copied();
         (names.written_arms_of_unknown_names).extend(arms.map(|arm| (arm, requires)));
     }
 

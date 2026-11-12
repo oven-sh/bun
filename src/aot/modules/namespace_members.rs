@@ -411,7 +411,10 @@ impl FileBinder<'_, '_> {
             ),
             _ => (StandsFor::Exports(target), View::Exports(target)),
         };
-        let may_answer_another_object = context.evicted.is_stored_in_cache(target)
+        let has_instances = matches!(target, ModuleRef::File(file) if context.modules.may_be_reevaluated(file))
+            && context.modules.interop(target).kind == ModuleKind::SourceText;
+        let may_answer_another_object = has_instances
+            || context.evicted.is_stored_in_cache(target)
             || (context.order.is_code_of_program(target)
                 && (context.evicted.contains(target)
                     || context.mocked.contains(target)
@@ -457,7 +460,11 @@ impl FileBinder<'_, '_> {
                     return self.imports.unread_sites.push((call, false));
                 }
             }
-            Parent::Stmt(statement) if matches!(hir[statement].kind, StmtKind::Expr(_)) => {
+            // The file may define a getter as `module.exports`, and `require()` runs it.
+            Parent::Stmt(statement)
+                if matches!(hir[statement].kind, StmtKind::Expr(_))
+                    && !self.context.tables.commonjs.is_replaced_late(site.target) =>
+            {
                 return self.imports.unread_sites.push((call, true));
             }
             _ => {}
@@ -777,7 +784,14 @@ impl FileBinder<'_, '_> {
             StandsFor::ImportedNamespace(_) if self.is_hidden_from_namespace(module, name) => {
                 return None;
             }
-            StandsFor::ImportedNamespace(_) => self.resolve_name(module, name),
+            StandsFor::ImportedNamespace(_) => match self.resolve_name(module, name) {
+                Ok((binding @ PendingBinding::Bound(ImportBinding::Variable(_)), Some(_)))
+                    if self.is_absent_from_mocks(module, name) =>
+                {
+                    Ok((binding, None))
+                }
+                resolved => resolved,
+            },
             StandsFor::RequiredNamespace(_) | StandsFor::Exports(_) | StandsFor::Copy { .. } => {
                 self.resolve_required_name(module, name)
             }

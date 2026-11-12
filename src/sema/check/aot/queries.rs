@@ -1,3 +1,4 @@
+use super::alias_mentions::AliasMentions;
 use super::answers::{
     CallTarget, CheckedMember, CheckedType, ClassDeclaration, ClassMember, ClassMemberSource,
     ClassParent, ClassRef, ClassShape, EnumConstant, FunctionRef, GaveUp, IndexSignature,
@@ -23,6 +24,7 @@ use crate::bind::{BindingKind, Bound, Decl, Parent, SymbolId};
 use crate::check::jsx::{JsxName, JsxReferenceKind};
 use crate::check::print::to_valid_utf8;
 use crate::check::relate::{RecursionId, Relation};
+use crate::check::shared_indexes::{ReadsOfFields, SharedIndexes};
 use crate::check::{Checker, ContextFlags, Requested, WORK_TRAP_DISARMED};
 use crate::hir::{self, EnumMemberId, ExprId, ExprKind, FnId, ParamId, PatId, TypeNodeId};
 use crate::program::{FileId, FileRole, Files, Sym};
@@ -33,6 +35,7 @@ use smallvec::{SmallVec, smallvec};
 use std::cell::RefCell;
 use std::hash::Hash;
 use std::rc::Rc;
+use std::sync::Arc;
 
 const MAX_RELATION_ENTRIES: i32 = 20_000;
 
@@ -42,6 +45,7 @@ pub struct QueryInputs<'c> {
     pub checked_elsewhere: &'c [FileId],
     pub builtin_types: &'c BuiltinTypeSymbols,
     pub named_values: &'c dyn NamedValues,
+    pub alias_mentions: Option<&'c AliasMentions>,
     pub max_inference_nodes: u64,
     pub limits: QueryLimits,
 }
@@ -97,8 +101,7 @@ pub(super) struct Memo<'c> {
     classes_with_accessor_at_or_above: FxHashMap<ClassDeclaration, bool>,
     names_of_accessors: FxHashSet<MemberName>,
     pub(super) names_of_fields_asked_about: FxHashMap<u32, (crate::hir::ClassId, Atom)>,
-    pub(super) reads_of_fields_off_this:
-        Option<FxHashMap<(crate::hir::ClassId, Atom), Vec<ExprId>>>,
+    pub(super) reads_of_fields_off_this: Option<Arc<ReadsOfFields>>,
     inherited_accessors: FxHashMap<(ClassDeclaration, MemberName), bool>,
     places_of_classes: FxHashMap<ClassDeclaration, PlaceInRow>,
     highest_places_of_fields: FxHashMap<MemberName, PlaceInRow>,
@@ -122,6 +125,8 @@ pub(super) struct Memo<'c> {
     pub(super) usages: FxHashMap<Subject, UsageState>,
     pub(super) usages_that_lacked_stack: Vec<Subject>,
     pub(super) inferred_types: FxHashMap<Subject, TypeState>,
+    /// The functions about whose results and parameters something has been inferred since `note_functions_inferred`.
+    pub(super) functions_inferred: Option<Vec<FnId>>,
     pub(super) types_of_parts: FxHashMap<*const Usage, (Rc<Usage>, TypeId)>,
     pub(super) parts_remembered: Rc<RefCell<PartsRemembered>>,
     pub(super) members_found: FxHashMap<(TypeId, *const MembersByName), (Rc<MembersByName>, bool)>,
@@ -626,11 +631,59 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             closed_cycles: self
                 .c
                 .closed_cycle_count()
-                .wrapping_sub(self.closed_cycles_before),
+                .wrapping_sub(self.closed_cycles_before)
+                .wrapping_add(self.statistics.closed_cycles),
             union_members_compared: self.c.union_members_compared()
-                - self.union_members_compared_before,
+                - self.union_members_compared_before
+                + self.statistics.union_members_compared,
             ..self.statistics
         }
+    }
+
+    /// Adds what the questions about another part of the file counted.
+    pub fn add_statistics_of_part(&mut self, of_part: &QueryStatistics) {
+        self.statistics.add(of_part);
+    }
+
+    /// The checkers of the other parts of the file share what is found out about all of it.
+    pub fn begin_sharing_indexes(&mut self) -> Arc<SharedIndexes<'s>> {
+        self.c.begin_sharing_indexes(self.file)
+    }
+
+    /// Goes through the file for one of the `SharedIndexes::COUNT` indexes. Several threads make several of them.
+    pub fn make_shared_index(&mut self, number: usize) {
+        let file = self.file;
+        let Some(indexes) = self.c.indexes_of_parts(file) else {
+            return;
+        };
+        match number {
+            0 => {
+                self.c.shared_narrowing_index(file, &indexes.flow);
+            }
+            1 => {
+                self.c.shared_index_of_runs(file, &indexes.flow);
+            }
+            2 => {
+                self.c.shared_index_of_dominators(file, &indexes.flow);
+            }
+            3 => {
+                self.references_to_bindings();
+            }
+            4 => self.find_this_field_reads(),
+            5 => {
+                self.prototype_links(file);
+            }
+            _ => self.share_store_index(&indexes),
+        }
+    }
+
+    pub fn end_sharing_indexes(&mut self) {
+        self.c.end_sharing_indexes();
+    }
+
+    /// Discards the visit, as a part of it was.
+    pub fn discard(&mut self) {
+        self.c.discard_until_recheck();
     }
 
     pub fn canonical_symbol(&self, file: FileId, symbol: SymbolId) -> Sym {
@@ -643,10 +696,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 return self.files().sym(file, own);
             }
         }
-        self.files().sym(
-            file,
-            bound.export_symbol_of_value_symbol_if_exported(symbol),
-        )
+        self.files().sym(file, bound.exported_value(symbol))
     }
 
     #[inline]
@@ -1044,6 +1094,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         })
     }
 
+    /// Whether a variable with a value of unknown type is expected to have the type that its uses suggest.
+    /// The uses are asked first: they stand in the text around the name. What the checker says of a value that is read off
+    /// another may hang on everything in front of it.
     pub fn what_uses_of_field_say(
         &mut self,
         shape: &ClassShape<'_>,
@@ -1101,6 +1154,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if self.c.is_any(said) {
             return false;
         }
+        // `pixels[i] * weight` and `pixels.length` fit an array of numbers and a typed array: a loop guards in its preheader.
         let is_list_of_numbers = |c: &Checker<'_, '_>, part: TypeId| c.is_array(part);
         if self.c.some_type(said, is_list_of_numbers) {
             let mut holds_numbers_alone = true;
@@ -1116,12 +1170,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 return false;
             }
         }
+        // An operator checks an element that it uses as a number itself.
         let is_primitive = self
             .c
             .every_type(said, |c, part| c.flags(part) & tf::PRIMITIVE != 0);
         if is_primitive && is_element {
             return false;
         }
+        // The names that are read off a value make a record that no object of the program may be.
         let names_record = self.c.some_type(said, |c, part| {
             c.flags(part) & tf::OBJECT != 0 && !c.is_array(part)
         });
@@ -1136,6 +1192,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     pub fn uses_say_list_of_lists(&mut self, pattern: PatId) -> bool {
+        let known = self.c.indexes_of_parts(self.file).and_then(|indexes| {
+            let answers = indexes.lists_of_lists.get()?;
+            answers.get(&pattern).copied()
+        });
+        known.unwrap_or_else(|| self.compute_uses_imply_nested_list(pattern))
+    }
+
+    fn compute_uses_imply_nested_list(&mut self, pattern: PatId) -> bool {
         let Ok(said) = self.ask(|queries| Ok(queries.infer_binding_type(pattern, TypeId::ANY)))
         else {
             return false;
@@ -1754,7 +1818,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         types: PositionTypes,
     ) {
         if !self.kept.has_room_for_member_types(row) {
-            let declared = self.declared_type_of_this(object_type);
+            let declared = self.resolve_object_type(object_type);
             let count = self
                 .c
                 .members(declared)

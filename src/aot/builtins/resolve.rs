@@ -17,9 +17,7 @@ mod written_members;
 
 pub use self::imports::find_module_export;
 pub use self::module_cache::{KeyOfModuleCache, is_module_cache, is_table_of_loaders};
-pub use self::module_values::{
-    commonjs_variable_builtin, reads_what_wrapper_hands_in, redeclares_what_wrapper_hands_in,
-};
+pub use self::module_values::commonjs_variable_builtin;
 pub use self::resolver::FileFacts;
 pub use self::runtime_dialect::set_natives;
 pub use self::unnamed_uses::can_lay_key_that_native_code_asks_of_process;
@@ -33,6 +31,7 @@ use bun_sema::bind::{Binding, Bound, CommonJsVariable, SymbolId};
 use bun_sema::fold::{Constant, Decisions};
 use bun_sema::hir::{self, Chain, ExprId, ExprKind, Keyword, MemberKey, NodeData, TypeNodeKind};
 use bun_sema::import_sites::ImportSiteKind;
+pub use bun_sema::import_sites::{reads_what_wrapper_hands_in, redeclares_what_wrapper_hands_in};
 use bun_sema::module_format::ModuleFormat;
 use core::ops::Range;
 use smallvec::SmallVec;
@@ -264,6 +263,13 @@ struct WhereMoreIsHandedOn {
     hands_on_loader_of_paths: bool,
 }
 
+struct ExposedReceivers {
+    held: WhereMoreIsHandedOn,
+    replaced_members: Box<[BuiltinId]>,
+    opened_holders: Box<[BuiltinId]>,
+    stores_loader_functions: bool,
+}
+
 struct WhereTestsLayNamesAbove {
     names_asked_for: Box<[(BuiltinId, Atom)]>,
     held: WhereMoreIsHandedOn,
@@ -283,6 +289,7 @@ pub struct ResolvedBuiltins {
     evaluated_texts: Box<[EvaluatedText]>,
     module_object_mentions: Box<[ModuleObjectMention]>,
     may_store_path_of_main_module: bool,
+    exposes_global_object: bool,
     stores_with_module_exports: Box<[ExprId]>,
     replaced_members: Box<[BuiltinId]>,
     opened_holders: Box<[BuiltinId]>,
@@ -307,11 +314,15 @@ pub struct ResolvedBuiltins {
     hooks_of_instanceof_may_exist: OnceLock<()>,
     where_tests_lay_names_above: Option<Box<WhereTestsLayNamesAbove>>,
     tests_lay_names_above: OnceLock<()>,
+    imported_replacements: Box<[(BuiltinId, ExprId)]>,
+    exposed_receivers: Option<Box<ExposedReceivers>>,
+    are_receivers_exposed: OnceLock<()>,
     can_come_by_hook_of_instanceof: bool,
     keys_taken_out_of_module_cache: Box<[KeyOfModuleCache]>,
     entries_deleted_from_module_cache: Box<[ExprId]>,
     entries_stored_in_module_cache: Box<[ExprId]>,
     places_that_hand_module_cache_on: Box<[ExprId]>,
+    passed_module_caches: Box<[ExprId]>,
     keys_of_entries_handed_on: Box<[KeyOfModuleCache]>,
     loses_sight_of_module_cache: bool,
     hands_module_cache_on: bool,
@@ -529,6 +540,10 @@ impl ResolvedBuiltins {
         &self.mentioned
     }
 
+    pub fn exposes_global_object(&self) -> bool {
+        self.exposes_global_object
+    }
+
     pub fn mentions_evaluator(&self) -> bool {
         let evaluators =
             table::BuiltinFlags::EVALUATES_TEXT | table::BuiltinFlags::RUNS_UNSEEN_CODE;
@@ -551,6 +566,9 @@ impl ResolvedBuiltins {
     }
 
     fn find_what_holds_where_more_is_handed_on(&self) -> Option<&WhereMoreIsHandedOn> {
+        if self.are_receivers_exposed.get().is_some() {
+            return self.exposed_receivers.as_deref().map(|it| &it.held);
+        }
         if self.tests_lay_names_above.get().is_some() {
             return self
                 .where_tests_lay_names_above
@@ -578,6 +596,28 @@ impl ResolvedBuiltins {
             Some(found) => &found.names_asked_for,
             None => &[],
         }
+    }
+
+    /// Values of other files that replace members of built-in objects, each with the object.
+    pub fn imported_replacements(&self) -> &[(BuiltinId, ExprId)] {
+        &self.imported_replacements
+    }
+
+    /// Called where one of `imported_replacements` reads `this`. Returns what is replaced, opened and stored then.
+    pub fn expose_receivers(&self) -> (&[BuiltinId], &[BuiltinId], bool) {
+        self.are_receivers_exposed.get_or_init(|| ());
+        match &self.exposed_receivers {
+            Some(exposed) => (
+                &exposed.replaced_members,
+                &exposed.opened_holders,
+                exposed.stores_loader_functions,
+            ),
+            None => (&[], &[], false),
+        }
+    }
+
+    pub fn are_receivers_exposed(&self) -> bool {
+        self.are_receivers_exposed.get().is_some()
     }
 
     pub fn note_that_tests_lay_names_above(&self) -> (&[BuiltinId], &[BuiltinId], bool) {
@@ -643,6 +683,10 @@ impl ResolvedBuiltins {
 
     pub fn places_that_hand_module_cache_on(&self) -> &[ExprId] {
         &self.places_that_hand_module_cache_on
+    }
+
+    pub fn passes_module_cache(&self, place: ExprId) -> bool {
+        self.passed_module_caches.contains(&place)
     }
 
     pub fn reaches_module_cache(&self) -> bool {

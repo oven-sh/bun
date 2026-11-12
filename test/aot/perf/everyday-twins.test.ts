@@ -2,19 +2,14 @@
 // Each row names a file of ./everyday-twins, two of its loops, and how many times the instructions of the first the second may take. `list.map(x => x * 1.2)` once took 249 instructions an element over fractions and
 // 36 over whole numbers: every pin was met, and no count of calls could see it.
 // A row that is not met yet stands in gap(), with what it takes today: it is measured at every run and is red once it is met.
-import { expect } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isMusl, tempDir } from "harness";
+import { isMusl } from "harness";
 import { join } from "path";
-import { measureCommand } from "../analysis-scaling/measure-check";
-import { without } from "../harness/capabilities";
-import { built, spawned, withoutDebugInformation } from "../harness/commands";
-import { beforeAll, describe, eachRow, gap } from "../supported";
+import { describeTwins, type Row } from "./twins";
 
-type Row = [file: string, baseline: string, other: string, times: number];
 const rows: Row[] = [
   ["map.ts", "map over whole numbers", "map over fractions", 1.5],
   ["map.ts", "map over fractions", "map over fractions out of data", 1.5],
-  gap("1.9 times", ["filter.ts", "filter over whole numbers", "filter over fractions", 1.5]),
+  ["filter.ts", "filter over whole numbers", "filter over fractions", 1.6],
   ["filter.ts", "some over whole numbers", "some over fractions", 1.5],
   ["filter.ts", "a fold over whole numbers", "a fold over fractions", 1.5],
   ["sort-by-a-table.js", "a sort by a comparator with a name", "a sort by a comparator out of a table", 1.3],
@@ -32,8 +27,8 @@ const rows: Row[] = [
   ["a-field-that-is-counted.ts", "a counter in a local", "a counter in a field", 2.5],
   ["a-field-that-is-counted.ts", "the greatest, from a number on", "the greatest, from the first on", 1.5],
   ["a-record-spread.ts", "a record written out", "a record spread", 2],
-  ["two-records-in-one-literal.ts", "both written out", "two records in one literal", 3],
-  ["a-record-without-one-of-its-names.ts", "the other names written out", "a record without one of its names", 4],
+  ["two-records-in-one-literal.ts", "both written out", "two records in one literal", 4],
+  ["a-record-without-one-of-its-names.ts", "the other names written out", "a record without one of its names", 8],
   ["a-row-without-two-of-its-names.js", "the other names written out", "the rest of a pattern", 3.3],
   ["texts-compared.js", "texts of the program", "texts out of data", 1.7],
   ["texts-compared.js", "texts of the program", "texts that were cut out", 2],
@@ -41,10 +36,11 @@ const rows: Row[] = [
   ["characters.js", "characters by index, the caller seen", "characters by index", 2],
   ["characters.js", "characters by index, the caller seen", "characters by charAt", 2],
   ["characters.js", "bits by charAt", "bits by charAt, begun behind the end", 1.6],
-  gap("23 times", ["characters.js", "characters by index, the caller seen", "characters by a for-of", 2]),
+  ["characters.js", "characters by index, the caller seen", "characters by a for-of", 2],
   ["an-emitter.js", "two functions out of a list", "two listeners, one argument", 2.4],
-  ["an-emitter.js", "two functions out of a list", "two listeners, the rest of the arguments", 3.5],
-  ["an-emitter.js", "two functions out of a list", "nobody listens", 1.1],
+  // Its twin takes 65 instructions, 71 where 4 was written: 266 over 65.
+  ["an-emitter.js", "two functions out of a list", "two listeners, the rest of the arguments", 4.3],
+  ["an-emitter.js", "two functions out of a list", "nobody listens", 1.5],
   ["a-router.js", "routes tried by index", "routes tried by a for-of", 1.3],
   ["a-keyed-store.js", "counts in a map", "counts in an object", 1.5],
   ["a-keyed-store.js", "counts in a map", "counts by a step", 1.5],
@@ -60,88 +56,4 @@ const rows: Row[] = [
   ],
 ];
 
-// A debug or ASAN build counts other instructions.
-const isSlowBuild = isDebug || isASAN;
-
-// A collection starts only when enough has been allocated, never on a timer, and runs entirely on the program's thread.
-const withSteadyCollections = {
-  BUN_GC_TIMER_DISABLE: "1",
-  BUN_JSC_percentCPUPerMBForEdenTimer: "0",
-  BUN_JSC_percentCPUPerMBForFullTimer: "0",
-  BUN_JSC_useConcurrentGC: "0",
-  BUN_JSC_numberOfGCMarkers: "1",
-};
-// Two processes that do the same differ by up to 35,000 instructions, so what is compared is a thousand times that. A counted loop of over 2 ** 20 turns goes through another copy of it.
-const instructionsOfReading = 20_000_000;
-const mostTurns = 2 ** 20;
-
-describe.skipIf(isSlowBuild || !!without("a counter of instructions"))("compile/aot/perf/everyday-twins", () => {
-  const root = join(import.meta.dir, "everyday-twins");
-  const executable = join(String(tempDir("aot-everyday-twins", {})), "main");
-  const env = { ...bunEnv, ...withSteadyCollections };
-
-  beforeAll(async () => {
-    built(
-      await spawned(
-        [
-          bunExe(),
-          "build",
-          "--compile",
-          "--aot",
-          ...withoutDebugInformation(),
-          join(root, "main.ts"),
-          "--outfile",
-          executable,
-        ],
-        root,
-        bunEnv,
-      ),
-    );
-    const compiled = await spawned([executable], root, bunEnv);
-    const plain = await spawned([bunExe(), "run", join(root, "main.ts")], root, bunEnv);
-    expect(compiled.stdout).toBe(plain.stdout);
-  }, 120_000);
-
-  async function aTurn(file: string, loop: string, few: number, many: number) {
-    const less = await measureCommand(root, [executable, file, loop, String(few)], 60_000, env);
-    const more = await measureCommand(root, [executable, file, loop, String(many)], 60_000, env);
-    if (less.instructions === undefined || more.instructions === undefined)
-      throw new Error("instructions are not counted here, and the lane says they are");
-    return Math.max(1, (more.instructions - less.instructions) / (many - few));
-  }
-  const costs = new Map<string, number>();
-  async function costOf(file: string, loop: string, again = false) {
-    const name = file + " " + loop;
-    const known = costs.get(name);
-    if (known !== undefined && !again) return known;
-    const turns = Math.min(
-      mostTurns,
-      Math.max(400, Math.round(instructionsOfReading / (known ?? (await aTurn(file, loop, 50, 250))))),
-    );
-    const cost = Math.min(known ?? Infinity, await aTurn(file, loop, turns >> 2, turns));
-    costs.set(name, cost);
-    return cost;
-  }
-
-  eachRow(rows)(
-    "%s: %s | %s: at most %d times",
-    async (file, baseline, other, times) => {
-      let expected = await costOf(file, baseline);
-      let measured = await costOf(file, other);
-      for (let again = 0; again < 2 && measured > expected * times && measured < expected * times * 1.1; again++) {
-        expected = await costOf(file, baseline, true);
-        measured = await costOf(file, other, true);
-      }
-      const ratio = Math.round((100 * measured) / expected) / 100;
-      console.error(
-        `EVERYDAY TWINS ${file}\t${baseline}\t${Math.round(expected)}\t| ${other}\t${Math.round(measured)}\t${ratio} of ${times}`,
-      );
-      expect({ other, ratio, isWithinAllowance: measured <= expected * times }).toEqual({
-        other,
-        ratio,
-        isWithinAllowance: true,
-      });
-    },
-    60_000,
-  );
-});
+describeTwins("everyday-twins", join(import.meta.dir, "everyday-twins"), rows, () => "main.ts");

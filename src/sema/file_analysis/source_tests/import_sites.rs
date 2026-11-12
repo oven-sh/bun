@@ -2238,9 +2238,55 @@ const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
         "for (const [...[name]] of [['./a'], ['./b']]) require(name);",
         &["./a", "./b"],
     ),
+    (
+        "const fs = require('node:fs'); const names = ['./a', './b']; names.filter(fs.existsSync); require(names[1]);",
+        &["./b"],
+    ),
+    (
+        "const fs = require('node:fs'); const names = ['./a', './b']; const { statSync } = fs; hand(fs); exports.fs = fs; Object.assign({}, fs); if (typeof fs === 'object' && 'cpSync' in fs) Object.keys(fs); names.filter(fs.existsSync); require(names[1]);",
+        &["./b"],
+    ),
+    (
+        "const fs = require('node:fs'); require(['./a', './b'].find(fs.existsSync));",
+        &["./a", "./b"],
+    ),
+    (
+        "const fs = require('node:fs'); for (const name of ['./a', './b'].filter(fs.existsSync)) require(name);",
+        &["./a", "./b"],
+    ),
+    (
+        "const path = require('path'); const o = { dir: path.join(__dirname, 'a') }; if (x) o.dir = path.join(o.dir, 'b'); require(path.join(o.dir, 'c.cjs'));",
+        &["./a/b/c.cjs", "./a/c.cjs"],
+    ),
+    (
+        "const path = require('path'); const o = { dir: path.join(__dirname, 'a') }; o.dir = path.join(o.dir, 'b'); require(path.join(o.dir, 'c.cjs'));",
+        &["./a/b/c.cjs"],
+    ),
+    (
+        "const path = require('path'); const o = { dir: path.join(__dirname, 'a'), other: 1 }; o.other = 2; console.log(o.other); o.dir = path.join(o.dir, 'b'); require(path.join(o.dir, 'c.cjs'));",
+        &["./a/b/c.cjs"],
+    ),
+    (
+        "const path = require('path'); const o = { dir: path.join(__dirname, 'a') }; load(); o.dir = path.join(o.dir, 'b'); function load() { require(path.join(o.dir, 'c.cjs')); }",
+        &["./a/b/c.cjs", "./a/c.cjs"],
+    ),
+    (
+        "const path = require('path'); const make = dir => ({ dir }); const o = make(path.join(__dirname, 'a')); if (x) o.dir = path.join(o.dir, 'b'); if (y) o.dir = path.join(__dirname, '..'); require(path.join(o.dir, 'c.cjs'));",
+        &["./../c.cjs", "./a/b/c.cjs", "./a/c.cjs"],
+    ),
+    (
+        "const path = require('path'); const o = { dir: path.join(__dirname, 'a') }; o.dir = x ? path.join(o.dir, 'b') : o.dir; require(path.join(o.dir, 'c.cjs'));",
+        &["./a/b/c.cjs", "./a/c.cjs"],
+    ),
 ];
 
 const NAMES_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
+    "const fs = require('node:fs'); const names = ['./a', './b']; fs.existsSync = (name, place, list) => { list[1] = x; }; names.filter(fs.existsSync); require(names[1]);",
+    "const fs = require('node:fs'); const names = ['./a', './b']; Object.defineProperty(fs, 'existsSync', { value: change }); names.filter(fs.existsSync); require(names[1]);",
+    "const fs = require('node:fs'); const names = ['./a', './b']; Object.assign(fs, { existsSync: change }); names.filter(fs.existsSync); require(names[1]);",
+    "const fs = require('node:fs'); const names = ['./a', './b']; delete fs.existsSync; names.filter(fs.existsSync); require(names[1]);",
+    "const fs = require('node:fs'); const names = ['./a', './b']; fs[key] = change; names.filter(fs.existsSync); require(names[1]);",
+    "const fs = require('node:fs'); const names = ['./a', './b']; Reflect.set(fs, 'existsSync', change); names.filter(fs.existsSync); require(names[1]);",
     "let table = { a: './a' }; function get() { return (table ??= null); } get().a = './c'; require(table.a);",
     "let table = { x: { a: './a' } }; hand((table ||= {}).x); require(table.x.a);",
     "const uses = { quiet() {} }; for (const name in uses) require(uses[name]);",
@@ -2837,8 +2883,8 @@ fn describe_name_of_worker(text: &str) -> Option<Vec<String>> {
                 return None;
             };
             let argument = s.hir.ids(s.hir[call].args).next()?;
-            let specifier = s.analysis.find_name_of_worker(argument)?;
-            Some(describe_specifier(s, specifier))
+            let found = s.analysis.find_name_of_worker(argument)?;
+            Some(describe_specifier(s, &found.name))
         });
     });
     described
@@ -3076,6 +3122,26 @@ fn paths_that_a_file_spells_to_calls_which_change_what_is_there() {
 
 const MODULE_RELATIVE_READS: &[(&str, &str, &[&str])] = &[
     (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const read = fs.readFileSync.bind(fs); read(path.join(__dirname, 'a.txt')); fs.readFileSync.call(fs, path.join(__dirname, 'b.txt')); fs.readFileSync.apply(fs, [path.join(__dirname, 'c.txt'), 'utf8']); fs.readFileSync.apply(fs, process.argv);",
+        &["./a.txt", "./b.txt", "./c.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); require('util').promisify(fs.readFile)(path.join(__dirname, 'a.txt')); ((...p) => fs.readFileSync(path.join(__dirname, ...p)))('b', 'c.txt');",
+        &["./a.txt", "./b/c.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const cwd = process.cwd(); fs.readFileSync(path.relative(cwd, path.join(__dirname, 'a.txt'))); fs.readFileSync(path.relative(process.cwd(), __filename + '.b')); fs.readFileSync(path.relative('/', __dirname)); fs.readFileSync(Buffer.from(path.join(__dirname, 'c.txt')));",
+        &["./a.txt", "./a.cjs.b", "./c.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'); fs.readFileSync(Bun.resolveSync('./a.txt', __dirname)); const p = Bun.resolveSync('./b.txt', __dirname); fs.readFileSync(p); Bun.resolveSync('./d.txt', __dirname); Bun.resolveSync('package', __dirname); Bun.resolveSync('./c.txt', process.cwd());",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
         "a.mjs",
         "import { readFileSync } from 'node:fs'; readFileSync(new URL('./a.txt', import.meta.url));",
         &["./a.txt"],
@@ -3242,6 +3308,236 @@ const MODULE_RELATIVE_READS: &[(&str, &str, &[&str])] = &[
     ),
     (
         "a.mjs",
+        "import { join } from 'node:path'; export const size = Bun.file(join(import.meta.dir, 'a.txt')).size; export const part = Bun.file(join(import.meta.dir, 'b.txt')).slice(0, 4); export const page = () => new Response(Bun.file(join(import.meta.dir, 'c.txt'))); export const routes = { '/d': Bun.file(join(import.meta.dir, 'd.txt')) };",
+        &["./a.txt", "./b.txt", "./c.txt", "./d.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { join } from 'node:path'; const log = Bun.file(join(import.meta.dir, 'a.log')); const writer = log.writer(); export const size = () => log.size; await Bun.file(join(import.meta.dir, 'b.log')).write(text);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; fs.realpathSync(join(import.meta.dirname, 'a.txt')); fs.realpath(join(import.meta.dirname, 'b.txt'), done); await fs.promises.realpath(join(import.meta.dirname, 'c.txt'));",
+        &["./a.txt", "./b.txt", "./c.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs, { statSync } from 'node:fs'; import { join } from 'node:path'; export const first = [join(import.meta.dirname, 'a.txt'), join(import.meta.dirname, 'b.txt')].find(fs.existsSync); const candidates = [join(import.meta.dirname, 'c.txt')]; export const sizes = candidates.map(statSync);",
+        &["./a.txt", "./b.txt", "./c.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { join } from 'node:path'; export const first = [join(import.meta.dirname, 'a.txt')].find(other.existsSync); export const kept = [join(import.meta.dirname, 'b.txt')].filter(Boolean);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; fs.readFileSync(fs.realpathSync(join(import.meta.dirname, 'a.txt')));",
+        &["./a.txt", "./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; fs.readFileSync(fs.realpathSync(join(import.meta.dirname, 'a.txt'), 'utf8')); fs.readFileSync(fs.realpathSync(join(import.meta.dirname, 'b.txt'), { encoding: 'utf8' }));",
+        &["./a.txt", "./a.txt", "./b.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; fs.readFileSync(fs.realpathSync.native(join(import.meta.dirname, 'a.txt')));",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; fs.readFileSync(fs.realpathSync(new URL('./a.txt', import.meta.url)));",
+        &["./a.txt", "./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; const here = import.meta.dirname; const list = [join(here, 'a.txt')]; list.push(join(here, 'b.txt')); list.find(it => fs.existsSync(it));",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; const here = import.meta.dirname; const list = [join(here, 'a.txt')]; list.push(join(here, 'b.txt')); list.find(fs.existsSync);",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; const here = import.meta.dirname; let list = [join(here, 'a.txt')]; list = [join(here, 'b.txt')]; list.find(it => fs.existsSync(it));",
+        &["./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; const here = import.meta.dirname; let list = [join(here, 'a.txt')]; list = [join(here, 'b.txt')]; list.find(fs.existsSync);",
+        &["./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; const here = import.meta.dirname; const first = [join(here, 'a.txt')]; [...first, join(here, 'b.txt')].find(it => fs.existsSync(it));",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; const here = import.meta.dirname; const first = [join(here, 'a.txt')]; [...first, join(here, 'b.txt')].find(fs.existsSync);",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; const here = import.meta.dirname; ['a.txt', 'b.txt'].map(name => join(here, name)).find(it => fs.existsSync(it));",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; const here = import.meta.dirname; ['a.txt', 'b.txt'].map(name => join(here, name)).find(fs.existsSync);",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; const here = import.meta.dirname; Object.values({ a: join(here, 'a.txt'), b: join(here, 'b.txt') }).find(it => fs.existsSync(it));",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; const here = import.meta.dirname; Object.values({ a: join(here, 'a.txt'), b: join(here, 'b.txt') }).find(fs.existsSync);",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; const here = import.meta.dirname; const make = () => [join(here, 'a.txt'), join(here, 'b.txt')]; make().find(it => fs.existsSync(it));",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; const here = import.meta.dirname; const make = () => [join(here, 'a.txt'), join(here, 'b.txt')]; make().find(fs.existsSync);",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; const here = import.meta.dirname; [...new Set([join(here, 'a.txt'), join(here, 'b.txt')])].find(it => fs.existsSync(it));",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; const here = import.meta.dirname; [...new Set([join(here, 'a.txt'), join(here, 'b.txt')])].find(fs.existsSync);",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; const here = import.meta.dirname; const names = [join(here, 'a.txt'), join(here, 'b.txt')]; hand(fs); names.filter(fs.existsSync); fs.readFileSync(names[1]);",
+        &["./a.txt", "./b.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; const here = import.meta.dirname; fs.existsSync = change; fs.readFileSync([join(here, 'a.txt'), join(here, 'b.txt')].find(fs.existsSync));",
+        &["./a.txt", "./b.txt", "./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; class Config { file = join(import.meta.dirname, 'a.txt'); has() { return fs.existsSync(this.file); } load() { return fs.readFileSync(this.file, 'utf8'); } } export const config = new Config();",
+        &["./a.txt", "./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; class Config { #file = join(import.meta.dirname, 'a.txt'); load() { return fs.readFileSync(this.#file); } } export const config = new Config();",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; class Store { constructor(file) { this.file = file; } load() { return fs.readFileSync(this.file); } } export const store = new Store(join(import.meta.dirname, 'a.txt'));",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; function Store() { this.file = join(import.meta.dirname, 'a.txt'); } Store.prototype.load = function () { return fs.readFileSync(this.file); };",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; export const store = { file: join(import.meta.dirname, 'a.txt'), load() { return fs.readFileSync(this.file); } };",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; export const other = { file: join(import.meta.dirname, 'a.txt') }; export const store = { load() { return fs.readFileSync(this.file); } };",
+        &[],
+    ),
+    (
+        "a.cjs",
+        "const fs_1 = require('fs'); const path_1 = require('path'); (0, fs_1.readFileSync)((0, path_1.join)(__dirname, 'a.txt'));",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "var __importDefault = (this && this.__importDefault) || function (mod) { return (mod && mod.__esModule) ? mod : { \"default\": mod }; }; const fs_1 = __importDefault(require('fs')); const path_1 = __importDefault(require('path')); fs_1.default.readFileSync(path_1.default.join(__dirname, 'a.txt'));",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const tslib_1 = require('tslib'); const fs = tslib_1.__importStar(require('fs')); const path = tslib_1.__importStar(require('path')); fs.readFileSync(path.join(__dirname, 'a.txt'));",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs_default = n(require('fs')); const path = require('path'); fs_default().readFileSync(path.join(__dirname, 'a.txt'));",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const { promisify } = require('util'); const read = promisify(require('fs').readFile); const path = require('path'); read(path.join(__dirname, 'a.txt'));",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); exports.load = (options = {}) => { const { file = path.join(__dirname, 'a.txt') } = options; return fs.readFileSync(file); };",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const defaults = { file: path.join(__dirname, 'a.txt') }; exports.load = options => fs.readFileSync({ ...defaults, ...options }.file);",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const defaults = { file: path.join(__dirname, 'a.txt') }; exports.load = options => fs.readFileSync(Object.assign({}, defaults, options).file);",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const defaults = { file: path.join(__dirname, 'a.txt') }; exports.load = options => { const all = { ...defaults, ...options }; return fs.readFileSync(all.file); };",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); class Store { constructor(options) { this.options = { file: path.join(__dirname, 'a.txt'), ...options }; } load() { return fs.readFileSync(this.options.file); } } exports.Store = Store;",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); fs.readFileSync(path.join(path.dirname(module.filename), 'a.txt')); fs.readFileSync(path.join(module.path, 'a.txt'));",
+        &["./a.txt", "./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); let options = { file: path.join(__dirname, 'a.txt') }; exports.set = more => { options = { ...options, ...more }; }; exports.load = () => fs.readFileSync(options.file);",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); let first = { file: path.join(__dirname, 'a.txt') }, second = { ...first }; exports.set = () => { first = { ...second }; second = { ...first }; }; exports.load = () => fs.readFileSync(second.file);",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); fs.copyFileSync(path.join(__dirname, 'a.txt'), process.argv[2]);",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; class Base { constructor(file) { this.file = file; } load() { return fs.readFileSync(this.file); } } export class Store extends Base { constructor() { super(join(import.meta.dirname, 'a.txt')); } }",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
         "import { join } from 'node:path'; await other.file(join(import.meta.dir, 'a.txt')).text();",
         &[],
     ),
@@ -3343,9 +3639,259 @@ const MODULE_RELATIVE_READS: &[(&str, &str, &[&str])] = &[
     (
         "a.mjs",
         "import fs from 'node:fs'; fs.readdirSync(new URL('./a', import.meta.url)); fs.mkdirSync(new URL('./b', import.meta.url));",
+        &["./a"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); fs.readFileSync(path.join(path.parse(__filename).dir, 'a.txt'));",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); fs.readFileSync(path.format({ dir: path.join(__dirname, 'b'), base: 'a.txt' }));",
+        &["./b/a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const root = path.dirname(require.resolve('./package.json')); fs.readFileSync(path.join(root, 'a.txt'));",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const file = path.join(__dirname, 'b', 'c.txt'); fs.readFileSync(path.join(path.dirname(file), 'a.txt'));",
+        &["./b/a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); fs.readFileSync(path.join(path.dirname(path.dirname(__dirname)), 'a.txt'));",
+        &["./../../a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const file = [__dirname, 'a.txt'].join(path.sep); const load = it => fs.readFileSync(it); load(file); fs.readFileSync([__dirname, 'b.txt'].join(path.posix.sep));",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); for (const name of new Bun.Glob('*.txt').scanSync(path.join(__dirname, 'b'))) load(name);",
+        &["./b"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const { Glob } = require('bun'); const glob = new Glob('**/*.txt'); (async () => { for await (const name of glob.scan({ cwd: path.join(__dirname, 'b') })) load(name); })();",
+        &["./b"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); fs.globSync('*.txt', { cwd: path.join(__dirname, 'b') }); fs.promises.glob('*.txt', { cwd: path.join(__dirname, 'c') });",
+        &["./b", "./c"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); fs.globSync('*.txt', options); queue.scan(path.join(__dirname, 'b')); new Bun.Glob('*').scanSync();",
         &[],
     ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const { Database } = require('bun:sqlite'); new Database(path.join(__dirname, 'a.sqlite'), { readonly: true }); new Database(path.join(__dirname, 'b.sqlite'));",
+        &["./a.sqlite"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); class K { dir = path.join(__dirname, 'conf'); down(s) { this.dir = path.join(this.dir, s); } } const k = new K(), o = { dir: path.join(__dirname, 'data'), other: path.join(__dirname, 'other') }; const put = (t, s) => { t.dir = s; }; put(o, path.join(o.other, 'x')); put(k, path.join(k.dir, 'y')); fs.readFileSync(path.join(o.dir, 'a.txt'));",
+        &["./conf/y/a.txt", "./data/a.txt", "./other/x/a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); let file = 'a.txt'; file = path.join(__dirname, file); exports.read = () => fs.readFileSync(file);",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); function load(name) { name = path.join(__dirname, name); return fs.readFileSync(name); } load('a.txt'); load('b.txt');",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); function load(name) { if (!path.isAbsolute(name)) name = path.join(__dirname, name); return fs.readFileSync(name); } exports.load = load; load('a.txt');",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); let file = process.argv[2]; if (!file) file = 'a.txt'; if (!path.isAbsolute(file)) file = path.join(__dirname, file); fs.readFileSync(file);",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); let folder = __dirname; folder = path.join(folder, 'b'); fs.readFileSync(path.join(folder, 'a.txt'));",
+        &["./b/a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); function load(options) { options = { name: 'a.txt', ...options }; return fs.readFileSync(path.join(__dirname, options.name)); } load();",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); function load(options) { options = Object.assign({ name: 'a.txt' }, options); return fs.readFileSync(path.join(__dirname, options.name)); } load({});",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); module.exports = { folder: __dirname, load(name) { return fs.readFileSync(path.join(this.folder, name)); } }; module.exports.load('a.txt');",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); class Store { constructor(folder) { this.folder = folder; } at(name) { return path.join(this.folder, name); } load(name) { return fs.readFileSync(this.at(name)); } } new Store(__dirname).load('a.txt');",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); class Store { from(file) { this.file = file; return this; } load() { return fs.readFileSync(this.file); } } new Store().from(path.join(__dirname, 'a.txt')).load();",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); class Store { set file(file) { this.kept = file; } load() { return fs.readFileSync(this.kept); } } const store = new Store(); store.file = path.join(__dirname, 'a.txt');",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); function Store(folder) { this.folder = folder; } Store.prototype.load = function (name) { return fs.readFileSync(path.join(this.folder, name)); }; new Store(__dirname).load('a.txt');",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); class Paths { static root = __dirname; static at(name) { return path.join(Paths.root, name); } } fs.readFileSync(Paths.at('a.txt'));",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const paths = { root: __dirname, get file() { return path.join(this.root, 'a.txt'); } }; fs.readFileSync(paths.file);",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const load = name => fs.readFileSync(path.join(__dirname, name)); module.exports = { load }; load('a.txt');",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const at = (...names) => path.join(__dirname, ...names); fs.readFileSync(at('b', 'a.txt'));",
+        &["./b/a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const load = (...names) => fs.readFileSync(path.join(__dirname, ...names)); load('b', 'a.txt'); load('c.txt');",
+        &["./b/a.txt", "./c.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const names = ['b', 'a.txt']; fs.readFileSync(path.join(__dirname, ...names));",
+        &["./b/a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const files = new Map([['a', path.join(__dirname, 'a.txt')]]); files.set('b', path.join(__dirname, 'b.txt')); fs.readFileSync(files.get('b'));",
+        &["./b.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const files = new Map([['a', path.join(__dirname, 'a.txt')]]); for (const [name, file] of files) fs.readFileSync(file); files.forEach(file => fs.statSync(file)); for (const file of files.values()) fs.readFileSync(file);",
+        &["./a.txt", "./a.txt", "./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const options = Object.freeze({ folder: __dirname, name: 'a.txt' }); fs.readFileSync(path.join(options.folder, options.name));",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const o = { p: path.join(__dirname, 'a') }; if (process.env.X) o.p = path.join(o.p, 'b'); else o.p = path.join(o.p, 'c'); fs.readFileSync(path.join(o.p, 't.txt'));",
+        &["./a/b/t.txt", "./a/c/t.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const o = { p: path.join(__dirname, 'a') }; if (process.env.X) o.p = path.join(o.p, 'b'); if (!process.env.X) o.p = path.join(o.p, 'c'); fs.readFileSync(path.join(o.p, 't.txt'));",
+        &["./a/b/t.txt", "./a/c/t.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const o = { p: path.join(__dirname, 'a') }; if (process.env.X) o.p = path.join(o.p, 'b'); change(); if (!process.env.X) o.p = path.join(o.p, 'c'); fs.readFileSync(path.join(o.p, 't.txt')); function change() { process.env.X = ''; }",
+        &["./a/b/c/t.txt", "./a/b/t.txt", "./a/c/t.txt", "./a/t.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const o = { p: path.join(__dirname, 'a') }; if (f()) o.p = path.join(o.p, 'b'); if (!f()) o.p = path.join(o.p, 'c'); fs.readFileSync(path.join(o.p, 't.txt'));",
+        &["./a/b/c/t.txt", "./a/b/t.txt", "./a/c/t.txt", "./a/t.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); class K1 { dir = path.join(__dirname, 'conf'); } class K2 { dir = path.join(__dirname, 'data'); } const o1 = new K1(), o2 = new K2(); fs.readFileSync(path.join(o2.dir, 'a.txt'));",
+        &["./data/a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); class K1 { dir = path.join(__dirname, 'conf'); } class K2 { dir = path.join(__dirname, 'data'); } const o1 = new K1(), o2 = new K2(); o1.dir = path.join(__dirname, 'z'); fs.readFileSync(path.join(o2.dir, 'a.txt'));",
+        &["./data/a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); class K1 { dir = path.join(__dirname, 'conf'); } class K2 { dir = path.join(__dirname, 'data'); } const o1 = new K1(), o2 = new K2(); o2.dir = path.join(__dirname, 'z'); fs.readFileSync(path.join(o2.dir, 'a.txt'));",
+        &["./data/a.txt", "./z/a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); class K2 { constructor() { this.dir = path.join(__dirname, 'data'); return shared; } } class K1 { dir = path.join(__dirname, 'conf'); } const shared = new K1(), o2 = new K2(); fs.readFileSync(path.join(o2.dir, 'a.txt'));",
+        &["./conf/a.txt", "./data/a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const o2 = { dir: path.join(__dirname, 'data') }; o2.dir = path.join(__dirname, 'z'); fs.readFileSync(path.join(o2.dir, 'a.txt'));",
+        &["./z/a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const o2 = { dir: path.join(__dirname, 'data') }; f(o2); o2.dir = path.join(__dirname, 'z'); fs.readFileSync(path.join(o2.dir, 'a.txt'));",
+        &["./data/a.txt", "./z/a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); const o2 = { dir: path.join(__dirname, 'data'), other: 1 }; Object.assign(o2, { dir: path.join(__dirname, 'z') }); fs.readFileSync(path.join(o2.dir, 'a.txt'));",
+        &["./data/a.txt", "./z/a.txt"],
+    ),
 ];
+
+#[test]
+fn object_spread_into_itself_is_visited_once() {
+    let start = "const fs = require('fs'), path = require('path'); let options = { file: path.join(__dirname, 'a.txt') }; exports.set = more => { options = { ...options, ...more }; }; exports.load = () => fs.readFileSync(options.file);";
+    let text = [
+        start,
+        &"exports.f = (a, b) => [a + 1, b * 2, { a, b: [a, b] }].length;\n".repeat(20_000),
+    ]
+    .concat();
+    with_workspace(|w| {
+        let s = &w.analyze(&Source::new("a.cjs", &text), &w.fold_inputs(&TARGET));
+        let [(_, path)] = s.analysis.module_relative_reads else {
+            panic!("one read");
+        };
+        assert_eq!(s.workspace.text(*path), "./a.txt");
+    });
+}
+
+#[test]
+fn property_values_are_known_on_endless_parent_paths() {
+    let text = "const fs = require('fs'), path = require('path'); const say = f => { try { console.log(f()); } catch (e) { console.log(e.code ?? e.name); } }; const o = { dir: path.join(__dirname, 'b'), other: path.join(__dirname, 'a') }; const up = () => { o.dir = path.join(o.dir, '..'); }; up(); if (process.argv.length > 9) o.other = path.join(o.dir, 'y'); if (process.argv.length > 1) o.dir = o.dir; if (process.argv.length > 9) o.dir = (process.argv.length > 1 ? path.join(o.other, '../a') : o.dir); say(() => fs.readFileSync(path.join(o.other, 'a.txt'), 'utf8')); say(() => fs.readFileSync(path.join(o.other, 'a.txt'), 'utf8'));";
+    with_workspace(|w| {
+        let s = &w.analyze(&Source::new("a.cjs", text), &w.fold_inputs(&TARGET));
+        let read = s.analysis.module_relative_reads;
+        assert!(
+            read.iter()
+                .any(|&(_, path)| s.workspace.text(path) == "./a/a.txt")
+        );
+    });
+}
 
 #[test]
 fn finds_module_relative_reads() {
@@ -3413,6 +3959,177 @@ const KNOWN_LOAD_NAMES: &[(&str, &str, &[&str])] = &[
         &[],
     ),
 ];
+
+const PATHS_CREATED: &[(&str, &[&str])] = &[
+    (
+        "const fs = require('fs'), path = require('path'); fs.mkdirSync(path.join(__dirname, 'a'), { recursive: true });",
+        &["./a"],
+    ),
+    (
+        "const fs = require('fs'), path = require('path'); exports.write = (name, text) => fs.writeFileSync(path.join(__dirname, 'a', 'b', name), text);",
+        &["./a/b"],
+    ),
+    (
+        "const { Database } = require('bun:sqlite'), path = require('path'); new Database(path.join(__dirname, 'a.sqlite')); new Database(path.join(__dirname, 'b.sqlite'), { readonly: true }); new Database(path.join(__dirname, 'c.sqlite'), { create: true });",
+        &["./a.sqlite", "./c.sqlite"],
+    ),
+    (
+        "const fs = require('fs'), path = require('path'); fs.readFileSync(path.join(__dirname, 'a')); fs.mkdirSync('b'); fs.writeFileSync('/c', '');",
+        &[],
+    ),
+];
+
+const PATHS_PASSED_TO_PACKAGES: &[(&str, &[&str])] = &[
+    (
+        "const express = require('express'), path = require('path'); const app = express(); app.use(express.static(path.join(__dirname, 'a'))); app.set('views', path.join(__dirname, 'b'));",
+        &["./a", "./b"],
+    ),
+    (
+        "const open = require('open'), path = require('path'); open({ files: [path.join(__dirname, 'a')], other: x ? path.join(__dirname, 'b') : '' });",
+        &["./a", "./b"],
+    ),
+    (
+        "const { Database } = require('bun:sqlite'), path = require('path'); new Database(path.join(__dirname, 'a'), { readonly: true });",
+        &[],
+    ),
+    (
+        "const own = require('./own'), path = require('path'); own(path.join(__dirname, 'a')); this.set(path.join(__dirname, 'b')); exports.c = path.join(__dirname, 'c'); require('http').get(path.join(__dirname, 'd')); function f(app) { app.set(path.join(__dirname, 'e')); }",
+        &[],
+    ),
+];
+
+const PATHS_NEEDED_ON_DISK: &[(&str, &[&str])] = &[
+    (
+        "const { spawn, execFileSync } = require('child_process'), path = require('path'); spawn('python3', [path.join(__dirname, 'a.py')], { cwd: path.join(__dirname, 'b') }); execFileSync(path.join(__dirname, 'c'), []);",
+        &["./a.py", "./b", "./c"],
+    ),
+    (
+        "const cp = require('node:child_process'), path = require('path'), util = require('util'); const tool = path.join(__dirname, 'a'); const run = util.promisify(cp.execFile); run(tool, ['--in']); Bun.spawn([path.join(__dirname, 'b'), 'x']); Bun.spawnSync({ cmd: ['sh', path.join(__dirname, 'c')] });",
+        &["./a", "./b", "./c"],
+    ),
+    (
+        "const fs = require('fs'), path = require('path'); fs.readFileSync(path.join(__dirname, 'a')); spawn(path.join(__dirname, 'b')); require('./own').spawn(path.join(__dirname, 'c'));",
+        &[],
+    ),
+    (
+        "const fs = require('fs'), path = require('path'), { $ } = require('bun'); fs.watch(path.join(__dirname, 'a'), () => {}); Bun.build({ entrypoints: [path.join(__dirname, 'b')] }); $`cat ${path.join(__dirname, 'c')}`; Bun.$`ls`.cwd(path.join(__dirname, 'd')); fs.watchFile(path.join(__dirname, 'e'), () => {});",
+        &["./a", "./b", "./c", "./d"],
+    ),
+    (
+        "const cp = require('child_process'), path = require('path'); cp.spawn('ls', [__dirname]); cp.spawn('ls', [], { cwd: __dirname }); cp.spawn('ls', [], { cwd: process.env.X || path.join(__dirname, 'a'), env: { HERE: __dirname } });",
+        &[".", "./a"],
+    ),
+];
+
+const FOLDERS_ENTERED: &[(&str, &[&str], &[&str])] = &[
+    (
+        "const fs = require('fs'), path = require('path'); process.chdir(__dirname); fs.readFileSync('a.txt'); fs.readdirSync(`data`); fs.readFileSync('/b.txt'); fs.readFileSync(process.argv[2]);",
+        &["."],
+        &["a.txt", "data"],
+    ),
+    (
+        "const { chdir } = require('node:process'), path = require('path'); chdir(path.join(__dirname, 'a')); process.chdir('b'); process.chdir(process.argv[2]);",
+        &["./a"],
+        &["b"],
+    ),
+];
+
+#[test]
+fn finds_folders_entered() {
+    for &(text, entered, below) in FOLDERS_ENTERED {
+        with_workspace(|w| {
+            let s = &w.analyze(&Source::new("a.cjs", text), &w.fold_inputs(&TARGET));
+            let describe = |found: &[(ExprId, Atom)]| -> Vec<String> {
+                (found.iter())
+                    .map(|it| s.workspace.text(it.1).to_string())
+                    .collect()
+            };
+            assert_eq!(describe(s.analysis.folders_entered), entered, "{text}");
+            let read = s.analysis.reads_below_working_folder;
+            assert_eq!(describe(read), below, "{text}");
+        });
+    }
+}
+
+const OWN_PATH_QUERIES: &[(&str, &str, &[&str])] = &[
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'), paths = require('./paths'); fs.readFileSync(paths.file); fs.readFileSync(path.join(paths.inner.root, 'data', 'a.txt')); fs.existsSync(`${paths.root}/b.txt`);",
+        &[
+            "./paths file",
+            "./paths inner",
+            "./paths inner.root",
+            "./paths root",
+        ],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import path from 'node:path'; import { views, file } from '@/paths.mjs'; import all from './all.mjs'; import pkg from './package.json'; export const render = name => fs.readFileSync(path.join(views, name + '.html')); class C { constructor() { this.file = file; } read() { return fs.readFileSync(this.file); } } fs.readdirSync(all.data); console.log(pkg.version);",
+        &["./all.mjs data", "@/paths.mjs file", "@/paths.mjs views"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'), other = require('./other'); other.run(other.file); fs.readFileSync(process.argv[2]); fs.readFileSync(path.join(__dirname, 'a.txt')); exports.read = file => fs.readFileSync(file);",
+        &[],
+    ),
+];
+
+#[test]
+fn finds_exports_needed_by_reads() {
+    for &(name, text, queries) in OWN_PATH_QUERIES {
+        with_workspace(|w| {
+            let s = &w.analyze(&Source::new(name, text), &w.fold_inputs(&TARGET));
+            let text_of = |atom| s.workspace.text(atom).replace('\0', ".");
+            let asked = s.analysis.own_path_queries.iter();
+            let mut described: Vec<String> = asked
+                .map(|it| format!("{} {}", text_of(it.0), text_of(it.1)))
+                .collect();
+            described.sort();
+            assert_eq!(described, queries, "{text}");
+        });
+    }
+}
+
+fn check_named_paths(cases: &[(&str, &[&str])], is_asked_for: fn(&NamedPath) -> bool) {
+    for &(text, paths) in cases {
+        with_workspace(|w| {
+            let s = &w.analyze(&Source::new("a.cjs", text), &w.fold_inputs(&TARGET));
+            let passed = s.analysis.named_paths.iter();
+            let passed = passed.filter(|it| is_asked_for(it));
+            let mut described: Vec<String> = passed
+                .map(|it| s.workspace.text(it.path).to_string())
+                .collect();
+            described.sort();
+            described.dedup();
+            assert_eq!(described, paths, "{text}");
+        });
+    }
+}
+
+#[test]
+fn finds_paths_passed_to_packages() {
+    check_named_paths(PATHS_PASSED_TO_PACKAGES, |it| it.is_passed_to_package);
+}
+
+#[test]
+fn finds_paths_needed_on_disk() {
+    check_named_paths(PATHS_NEEDED_ON_DISK, |it| it.is_needed_on_disk);
+}
+
+#[test]
+fn finds_paths_created() {
+    for &(text, paths) in PATHS_CREATED {
+        with_workspace(|w| {
+            let s = &w.analyze(&Source::new("a.cjs", text), &w.fold_inputs(&TARGET));
+            let created = s.analysis.paths_created.iter();
+            let mut described: Vec<String> = created
+                .map(|&path| s.workspace.text(path).to_string())
+                .collect();
+            described.sort();
+            assert_eq!(described, paths, "{text}");
+        });
+    }
+}
 
 #[test]
 fn finds_known_load_names() {
@@ -3931,6 +4648,59 @@ const CALLER_RELATIVE_READS: &[(&str, &[&str], &[&str])] = &[
     ),
 ];
 
+const UNKNOWN_PATH_READS: &[(&str, usize)] = &[
+    (
+        "import fs from 'node:fs'; export const has = folder => fs.existsSync(folder + '/package.json');",
+        1,
+    ),
+    (
+        "import { readdirSync, statSync } from 'node:fs'; export const list = folder => readdirSync(folder).map(name => statSync(folder + '/' + name));",
+        2,
+    ),
+    (
+        "import { readFile } from 'node:fs/promises'; export const read = name => readFile(name, 'utf8');",
+        1,
+    ),
+    (
+        "import fs from 'node:fs'; import path from 'node:path'; fs.readFileSync(path.join(import.meta.dirname, 'a.txt')); fs.readdirSync(import.meta.dirname);",
+        0,
+    ),
+    (
+        "import fs from 'node:fs'; import path from 'node:path'; export function find() { let folder = import.meta.dirname; for (let steps = 0; steps < 8 && !fs.existsSync(path.join(folder, 'package.json')); steps++) folder = path.dirname(folder); return folder; }",
+        1,
+    ),
+    (
+        "import fs from 'node:fs'; import path from 'node:path'; export const read = name => fs.readFileSync(path.join(import.meta.dirname, '..', name)); export const has = name => fs.existsSync(`${import.meta.dirname}/../${name}`);",
+        2,
+    ),
+    (
+        "import fs from 'node:fs'; export const find = names => names.find(fs.existsSync);",
+        1,
+    ),
+    (
+        "import fs from 'node:fs'; fs.statSync('/.dockerenv'); fs.readFileSync('/proc/version', 'utf8'); fs.readdirSync('/proc'); fs.existsSync('notes.txt');",
+        0,
+    ),
+    (
+        "import fs from 'node:fs'; export const put = (name, text) => fs.writeFileSync(name, text);",
+        0,
+    ),
+    (
+        "export const read = (fs, name) => fs.readFileSync(name);",
+        0,
+    ),
+];
+
+#[test]
+fn finds_unknown_path_reads() {
+    for &(text, count) in UNKNOWN_PATH_READS {
+        with_workspace(|w| {
+            let s = &w.analyze(&Source::new("a.mjs", text), &w.fold_inputs(&TARGET));
+            assert_eq!(s.analysis.unknown_path_reads.len(), count, "{text}");
+        });
+    }
+}
+
 #[test]
 fn finds_caller_relative_reads() {
     for &(text, read, handed) in CALLER_RELATIVE_READS {
@@ -3960,6 +4730,87 @@ fn finds_caller_relative_reads() {
                 && s.analysis.data_file_queries.is_empty()
                 && s.analysis.own_export_queries.is_empty();
             assert!(lays_nothing_else, "{text}");
+        });
+    }
+}
+
+const NAMED_PATHS: &[(&str, &str, &[&str])] = &[
+    (
+        "a.cjs",
+        "const path = require('path'); load(path.join(__dirname, 'a.txt'));",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const { join } = require('path'); const file = join(__dirname, '../b', 'a.txt'); exports.load = () => reader.load(file);",
+        &["./../b/a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { load } from './load.mjs'; load('./a.txt', import.meta.url); load(import.meta.dirname, 'b', 'c.txt');",
+        &["././a.txt", "./b/c.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { Reader } from 'reader'; new Reader(new URL('./a.txt', import.meta.url)); reader.read(`${import.meta.dirname}/b.txt`); reader.read(import.meta.dirname + '/c.txt');",
+        &["./a.txt", "./b.txt", "./c.txt"],
+    ),
+    (
+        "a.cjs",
+        "const path = require('path'); require(path.join(__dirname, 'a.cjs')); child.spawn(path.join(folder, 'b'), [__dirname]);",
+        &[],
+    ),
+    (
+        "a.cjs",
+        "load('/etc/a.txt', __dirname); load('https://a.b/c.txt', __dirname); load(__dirname); load(folder, 'a.txt');",
+        &[],
+    ),
+];
+
+#[test]
+fn paths_named_for_other_readers() {
+    for &(name, text, paths) in NAMED_PATHS {
+        with_workspace(|w| {
+            let s = &w.analyze(&Source::new(name, text), &w.fold_inputs(&TARGET));
+            let mut described: Vec<&str> = (s.analysis.named_paths.iter())
+                .map(|it| s.workspace.text(it.path))
+                .collect();
+            described.sort();
+            described.dedup();
+            assert_eq!(described, paths, "{text}");
+        });
+    }
+}
+
+const READING_FUNCTIONS: &[(&str, &[&str])] = &[
+    (
+        "import fs from 'node:fs'; export const load = file => fs.readFileSync(file);",
+        &["load"],
+    ),
+    (
+        "import fs from 'node:fs'; const load = file => fs.existsSync(file) && fs.readFileSync(file); export const loadBeside = (name, base) => load(new URL(name, base));",
+        &["loadBeside"],
+    ),
+    (
+        "import fs from 'node:fs'; export const load = file => fs.readFileSync(file); export function loadBeside(name, base) { return load(new URL(name, base)); }",
+        &["load", "loadBeside"],
+    ),
+    (
+        "import fs from 'node:fs'; export const load = file => fs.readFileSync('a.txt') + file; export const put = (file, text) => fs.writeFileSync(file, text);",
+        &[],
+    ),
+];
+
+#[test]
+fn functions_that_read_given_file() {
+    for &(text, functions) in READING_FUNCTIONS {
+        with_workspace(|w| {
+            let s = &w.analyze(&Source::new("a.mjs", text), &w.fold_inputs(&TARGET));
+            let mut described: Vec<&str> = (s.analysis.reading_functions.iter())
+                .map(|&it| s.workspace.text(s.bound.symbol(it).name))
+                .collect();
+            described.sort();
+            assert_eq!(described, functions, "{text}");
         });
     }
 }

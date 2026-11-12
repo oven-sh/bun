@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod barrel_tests;
 mod bind_stage;
+mod guessed_workers;
 #[cfg(test)]
 mod imported_constant_tests;
 #[cfg(test)]
@@ -118,9 +119,12 @@ pub(crate) struct StartedWorkers {
     pub program_files: Vec<EntryPointPaths>,
     pub code: CodeOfWorkers,
     pub names: Vec<EntryPointPaths>,
+    pub followed_at: Vec<(Vec<u8>, u32)>,
     pub named_at: Vec<(Vec<u8>, u32)>,
     pub names_followed: Vec<FollowedName>,
     pub names_plugin: bool,
+    /// What a warning says of names that lead out of the root directory.
+    pub names_left_out: Vec<u8>,
 }
 
 pub struct BuildFailed {
@@ -158,7 +162,13 @@ pub(crate) struct Build<'a> {
     unreached_runtime_files: Vec<FileId>,
     circular_runtime_files: Vec<(FileId, u32)>,
     written_function_names: Vec<u8>,
+    /// Found while the host of the load is there. Said once it is known which code is left out.
     resolves_that_miss: Vec<Diagnostic>,
+    missing_node_workers: Vec<Diagnostic>,
+    /// The files that are compiled only because a Worker may start from one of them. Sorted.
+    files_of_guesses: Vec<FileId>,
+    /// Those of them that failed to load, and what failed. Sorted.
+    refused_guessed_files: Vec<(FileId, Vec<u8>)>,
     pub(crate) started_workers: StartedWorkers,
     pub(crate) stays_in_compiled_files: bool,
     keeps_library_code_without_names: bool,
@@ -241,13 +251,12 @@ impl FrontEndOutput {
         statistics: Statistics,
         engine: Option<&EngineResult>,
     ) -> (Program, ProgramSummary) {
-        let bytes_by_module = engine.map_or(&[][..], EngineResult::bytes_by_module);
         let summary = ProgramSummary {
             entry_points: self.entry_points,
             folders: self.folders,
             texts: self.texts,
             statistics,
-            modules: self.modules.map(|modules| modules.finish(bytes_by_module)),
+            modules: self.modules.map(|modules| modules.finish(engine)),
         };
         (self.program, summary)
     }
@@ -283,6 +292,14 @@ pub fn link_program(
     let (output, statistics) = build.finish(result, log)?;
     let (program, summary) = output.into_parts(statistics, None);
     Ok(LinkedProgram { program, summary })
+}
+
+fn is_witness_among(witness: &Witness, places: &[(Vec<u8>, u32)], texts: &SourceTexts) -> bool {
+    position_of(witness.location).is_some_and(|position| {
+        let path = texts.path(position.module);
+        let mut places = places.iter();
+        places.any(|place| place.0 == path && place.1 == position.offset)
+    })
 }
 
 fn starts_workers_out_of_sight(engine: &EngineResult) -> bool {
@@ -368,6 +385,7 @@ pub fn compile(
         identity: options.executable_identity,
         image_form: options.image_form,
         thread_count: options.thread_count(),
+        lists_inlined_strings: options.lists_modules,
     };
     let mut engine_options = match EngineOptions::new(&request) {
         Ok(engine_options) => engine_options,
@@ -484,6 +502,9 @@ impl<'a> Build<'a> {
             circular_runtime_files: Vec::new(),
             written_function_names: Vec::new(),
             resolves_that_miss: Vec::new(),
+            missing_node_workers: Vec::new(),
+            files_of_guesses: Vec::new(),
+            refused_guessed_files: Vec::new(),
             started_workers: StartedWorkers::default(),
             stays_in_compiled_files: false,
             keeps_library_code_without_names: false,
@@ -576,6 +597,7 @@ impl<'a> Build<'a> {
         }
     }
 
+    /// The program, and behind it the options that the engine is about to get with it.
     fn write_program_file(
         &mut self,
         bytes: &ProgramBytes,
@@ -721,15 +743,16 @@ impl<'a> Build<'a> {
     }
 
     fn is_start_followed_by_load(&self, witness: &Witness, texts: &SourceTexts) -> bool {
-        let Some(position) = position_of(witness.location) else {
-            return false;
-        };
-        if texts.origin(position.module) == ModuleOrigin::Runtime {
-            return true;
-        }
-        let path = texts.path(position.module);
-        let mut named_at = self.started_workers.named_at.iter();
-        named_at.any(|place| place.0 == path && place.1 == position.offset)
+        position_of(witness.location).is_some_and(|position| {
+            texts.origin(position.module) == ModuleOrigin::Runtime
+                || is_witness_among(witness, &self.started_workers.followed_at, texts)
+        })
+    }
+
+    /// A URL that the build doesn't know may name a file on disk.
+    fn may_start_from_disk(&self, witness: &Witness, texts: &SourceTexts) -> bool {
+        self.options.aot.loads_code_from_disk
+            && !is_witness_among(witness, &self.started_workers.named_at, texts)
     }
 
     fn finish_started_workers(&mut self, engine: &EngineResult, output: &FrontEndOutput) {
@@ -745,11 +768,25 @@ impl<'a> Build<'a> {
                 continue;
             }
             self.started_workers.code = CodeOfWorkers::Unseen;
-            self.diagnostics
-                .add_worker_start_without_name(&record.witness, &output.texts);
+            self.diagnostics.add_worker_start_without_name(
+                &record.witness,
+                &self.started_workers.names_left_out,
+                &output.texts,
+            );
         }
         if options.aot.checks_only {
             return;
+        }
+        for record in engine.worker_starts_from_urls() {
+            let is_followed = self.is_start_followed_by_load(&record.witness, &output.texts);
+            if !is_followed && !self.may_start_from_disk(&record.witness, &output.texts) {
+                self.started_workers.code = CodeOfWorkers::Unseen;
+                self.diagnostics.add_worker_start_without_name(
+                    &record.witness,
+                    &self.started_workers.names_left_out,
+                    &output.texts,
+                );
+            }
         }
         for record in engine.worker_entries() {
             let name = engine.text(record.path);

@@ -5,11 +5,11 @@
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { slot, spawned, unsupported } from "./harness/commands";
+import { slot, spawned, unsupported, withoutCrashReport } from "./harness/commands";
 import { test } from "./harness/default-timeout";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
-const env = { ...bunEnv, NO_COLOR: "1" };
+const env = { ...bunEnv, NO_COLOR: "1", ...withoutCrashReport };
 const check = "CheckResultFreshnessAtRunTime";
 const readPrototype = `const kept = { held: 7 };
 const holder = Object.create(kept);
@@ -96,6 +96,8 @@ describe.skipIf(!!unsupported)("the result freshness check", () => {
   const words = "a,b,c".split(",");
   const copy = Array.from(new Set(base));
   const bytes = new Uint8Array(4).slice(1);
+  Array.prototype.reverse.call(round);
+  Array.prototype.fill.call(round, 1);
   return base.concat(copy).length + keys.length + entries.length + words.length + bytes.length;
 }
 let total = 0;

@@ -193,6 +193,8 @@ impl Resolver<'_, '_> {
         self.output.mentioned.push(id);
     }
 
+    /// Nothing of the program stands above the object until node:events is loaded. Its text is told
+    /// what the files of the program do, and exposes the object there.
     fn hand_to_code_laid_above(&mut self, id: BuiltinId, is_handed: bool) {
         match self.input.dialect {
             SourceDialect::Program => {
@@ -343,6 +345,35 @@ impl Resolver<'_, '_> {
             }
             _ => !self.folds_to_primitive(operand),
         }
+    }
+
+    /// Unlike may_read_this(), false for a value whose function is not written in this file.
+    pub(super) fn is_function_reading_this(&self, value: ExprId) -> bool {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let mut value = hir.skip_type_assertions(value);
+        for _ in 0..=MOST_VARIABLES_FOLLOWED {
+            match hir[value].kind {
+                ExprKind::Fn(function) => {
+                    return hir[function].kind != FnKind::Arrow && self.reads_this(function);
+                }
+                ExprKind::Ident(_) => {}
+                _ => return false,
+            }
+            let Binding::Symbol(name) = bound.binding(value) else {
+                return false;
+            };
+            match *bound.symbol(name).decls {
+                [Decl::Fn(function)] => return self.reads_this(function),
+                [Decl::Var(pattern)] => match bound.pat_parent[pattern.idx()] {
+                    PatParent::Var(declaration) if hir[declaration].init.is_some() => {
+                        value = hir.skip_type_assertions(hir[declaration].init);
+                    }
+                    _ => return false,
+                },
+                _ => return false,
+            }
+        }
+        false
     }
 
     fn is_stored_over_by_what_may_read_this(&self, member: ExprId, id: BuiltinId) -> bool {
@@ -634,6 +665,7 @@ impl Resolver<'_, '_> {
             }
             MentionUse::Holder => self.note_names_that_tests_may_lay_above(id, &[expr]),
             MentionUse::Inspected => {
+                self.note_imported_replacements(expr, id);
                 let holders = self.find_where_variable_holds_what_is_stored(expr);
                 self.note_names_that_tests_may_lay_above(id, &holders);
             }
@@ -659,6 +691,9 @@ impl Resolver<'_, '_> {
         }
     }
 
+    /// `Reflect.get(Bun, "ModuleGraph")`, `Object.getOwnPropertyDescriptor(Bun, "ModuleGraph")` and `Bun["Module" + "Graph"]` read
+    /// the member that the key spells, as `Bun.ModuleGraph` does. A test run asks what its files mention to tell whether it stays
+    /// in its compiled files, and what only goes out of sight there opens nothing.
     fn mention_members_read_under_written_keys(&mut self, holder: ExprId) {
         let hir = self.input.hir;
         let written = self.outermost_assertion_of(holder);

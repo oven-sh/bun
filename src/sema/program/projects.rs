@@ -395,6 +395,7 @@ impl<'s> Files<'s> {
         }
     }
 
+    /// Whether the type errors that this program finds in the file are the ones that the file's own project finds.
     pub fn matches_own_project_checks(&self, file: FileId) -> bool {
         let (program, project) = (self.options, self.module_options(file));
         !self.needs_another_program(file)

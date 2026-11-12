@@ -84,11 +84,17 @@ const countMappedBytes = (file: Buffer) => getMappedSegments(file).reduce((sum, 
 // does not list, and measures 67,894,605 and 25,427,277.
 // Restated once with oven-sh/bun#48120: the second measured 25,880,776.
 // And once with oven-sh/bun#48436: it measured 25,966,728. A trimmed executable still keeps 307 KB for mocks, to be removed next.
-const mostMappedBytes: Record<string, number> = { "": 68_440_000, "--trim": 25_990_000 };
+// Both restated with oven-sh/bun#48478: they measured 68,536,578 and 26,028,290.
+// A second exception: the engine of WebKit 8156ba68efab has 417,496 bytes more that an executable keeps, 376,536 of them in a trimmed one, and both bounds
+// went up by that. Before oven-sh/bun#48478 they measured 68,847,648 and 26,351,648 with it, against 68,430,152 and 25,975,112 with the engine before it.
+// Both restated with oven-sh/WebKit#1036: they measured 69,803,456 and 27,164,096.
+const mostMappedBytes: Record<string, number> = { "": 70_150_000, "--trim": 27_340_000 };
 // The bytes of the feature ImageCompiler in the trim table: about 22.50 MB when this was set, with about the 250 KB of room it had before.
 // Restated once, where the compiler was merged: it measured 23,647,988.
 // And once with oven-sh/bun#47605, from what CI measured there and 1%: 23,755,040.
-const mostBytesOfCompiler = 23_990_000;
+// And with oven-sh/bun#48478, from 24,324,717 and 1%.
+// And with oven-sh/WebKit#1036, from 26,919,547 and 1%.
+const mostBytesOfCompiler = 27_190_000;
 
 const importsItsArguments = `
   import { join } from "node:path";

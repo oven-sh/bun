@@ -259,11 +259,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         expression: ExprId,
         evaluation: Evaluation<'_>,
     ) -> ValueId {
-        let position = self.file.hir[expression].pos;
+        let position = self.file.reported_position(expression);
         debug_assert!(
             !self.file.hir.is_in_jsdoc(position),
             "an expression synthesized from a JSDoc tag is never lowered"
         );
+        if self.step_before_test == Some(expression)
+            && let ExprKind::Unary { operand, .. } = self.file.hir[expression].kind
+        {
+            return self.lower_identifier(operand);
+        }
         if !self.enter_nesting(position) {
             return self.builder.undefined();
         }
@@ -505,8 +510,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if self.file.counts_executions() {
             return None;
         }
+        let hir = self.file.hir;
         let decisions = self.file.decisions();
-        decisions.find_operand_alone_in_bun_run(self.file.hir, operator)
+        let mut operand = decisions.find_operand_alone_in_bun_run(hir, operator)?;
+        // A chain of operators nests on the left, as deep as it is long.
+        while matches!(
+            hir[operand].kind,
+            ExprKind::Binary {
+                op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                ..
+            }
+        ) && !self.file.is_statically_resolved(operand)
+            && self.file.builtins.module_object_mentions().is_empty()
+            && let Some(inner) = decisions.find_operand_alone_in_bun_run(hir, operand)
+        {
+            operand = inner;
+        }
+        Some(operand)
     }
 
     fn lower_unless_constant(
@@ -515,10 +535,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         lower: fn(&mut FunctionLowering<'_, '_, '_, '_, '_>, ExprId) -> ValueId,
     ) -> ValueId {
         let inner = self.file.skip_type_syntax(expression);
-        let (constant, has_dead_zone) = match self.file.decisions().constant(self.file.hir, inner) {
-            FoldedValue::Constant(constant) => (constant, false),
-            FoldedValue::ConstantOutsideDeadZone(constant) => (constant, true),
-            FoldedValue::Unknown => return lower(self, expression),
+        let decisions = self.file.decisions();
+        let read = match self.file.hir[inner].kind {
+            ExprKind::Ident(_) => decisions.constant_read(inner),
+            _ => None,
+        };
+        let (constant, has_dead_zone) = match (decisions.constant(self.file.hir, inner), read) {
+            (FoldedValue::Constant(constant), _) => (constant, false),
+            (FoldedValue::ConstantOutsideDeadZone(constant), _) => (constant, read.is_none()),
+            (FoldedValue::Unknown, Some(constant)) => (constant, false),
+            (FoldedValue::Unknown, None) => return lower(self, expression),
         };
         if !self.file.passes_every_assertion(expression, constant) {
             return lower(self, expression);
@@ -722,7 +748,7 @@ impl FileLowering<'_, '_, '_, '_> {
         names_below_top_level: bool,
         is_below_void: bool,
     ) -> bool {
-        if self.counts_executions() {
+        if self.counts_executions() || self.is_in_known_evaluation(expression) {
             return false;
         }
         let hir = self.hir;
@@ -895,7 +921,17 @@ pub(in crate::lower) fn find_constant_outside_dead_zone(
         FoldedValue::ConstantOutsideDeadZone(constant) => file
             .passes_every_assertion(expression, constant)
             .then_some(constant),
-        FoldedValue::Constant(_) | FoldedValue::Unknown => None,
+        FoldedValue::Unknown => {
+            let ExprKind::Ident(_) = file.hir[inner].kind else {
+                return None;
+            };
+            let decisions = file.decisions();
+            let constant = decisions.constant_read(inner);
+            let constant = constant.or_else(|| decisions.constant_of_let(inner))?;
+            file.passes_every_assertion(expression, constant)
+                .then_some(constant)
+        }
+        FoldedValue::Constant(_) => None,
     }
 }
 
@@ -929,17 +965,20 @@ pub(in crate::lower) fn is_printed_as_number_or_text(
         }
 }
 
-fn holds_written_numbers_alone(file: &FileLowering<'_, '_, '_, '_>, expression: ExprId) -> bool {
-    match file.hir[file.skip_type_syntax(expression)].kind {
-        ExprKind::Number(_) => true,
-        ExprKind::Unary {
-            op: UnOp::Plus | UnOp::Minus | UnOp::BitNot,
-            operand,
-        } => holds_written_numbers_alone(file, operand),
-        ExprKind::Binary { op, left, right } => {
-            let is_arithmetic = matches!(
-                op,
-                BinOp::Add
+fn holds_written_numbers_alone(
+    file: &FileLowering<'_, '_, '_, '_>,
+    mut expression: ExprId,
+) -> bool {
+    loop {
+        expression = match file.hir[file.skip_type_syntax(expression)].kind {
+            ExprKind::Number(_) => return true,
+            ExprKind::Unary {
+                op: UnOp::Plus | UnOp::Minus | UnOp::BitNot,
+                operand,
+            } => operand,
+            ExprKind::Binary {
+                op:
+                    BinOp::Add
                     | BinOp::Sub
                     | BinOp::Mul
                     | BinOp::Div
@@ -950,12 +989,11 @@ fn holds_written_numbers_alone(file: &FileLowering<'_, '_, '_, '_>, expression: 
                     | BinOp::UShr
                     | BinOp::BitAnd
                     | BinOp::BitOr
-                    | BinOp::BitXor
-            );
-            is_arithmetic
-                && holds_written_numbers_alone(file, left)
-                && holds_written_numbers_alone(file, right)
-        }
-        _ => false,
+                    | BinOp::BitXor,
+                left,
+                right,
+            } if holds_written_numbers_alone(file, right) => left,
+            _ => return false,
+        };
     }
 }

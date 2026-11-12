@@ -1,4 +1,5 @@
 use super::finish_body;
+use super::imports::RequestedImport;
 use super::test_run_ways::{BoundBy, emit_behind_stations};
 use crate::ir::generated::{FunctionFlags, FunctionKind};
 use crate::ir::{BlockId, Edge, FunctionId, FunctionKey, TypeTable, VariableId, VariableKey};
@@ -69,8 +70,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         emit_behind_stations(
             self,
             ImportBinding::Synthetic(export),
-            asked,
-            Some(written.importer),
+            RequestedImport {
+                request: asked,
+                passed_by: Some(written.importer),
+                holders: &[],
+            },
             BoundBy::Statement,
             &mut |lowering, _, _| lowering.builder.undefined(),
             &mut |lowering| {

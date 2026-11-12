@@ -630,6 +630,8 @@ impl FileReader {
         let sink = *self.sink.get();
         if sink.is_some() {
             self.write_chunk_to_sink(sink, &chunk, has_more)
+        } else if self.read_callback.get() {
+            self.read_chunk_into_callback(chunk)
         } else if self.pending.get().state == streams::PendingState::Pending {
             // Pipes may return 0-byte reads short of EOF; keep reading.
             if chunk.is_empty() && state == ReadState::Drained {
@@ -749,6 +751,79 @@ impl FileReader {
         self.pending.with_mut(|p| p.run());
         // Re-entrant cancel or a nested pull that read to EOF closed the reader; tell the io caller to stop so it does not re-read the captured fd.
         ret && !self.done.get() && !self.reader().is_done()
+    }
+
+    /// `on_read_chunk` in handle mode. `false` ends this read loop: the callback stopped the reader or cancelled the source, or this was the last chunk.
+    fn read_chunk_into_callback(&self, chunk: Chunk<'_>) -> bool {
+        // Pipes may return 0-byte reads short of EOF.
+        if chunk.is_empty() {
+            return self.flowing.get();
+        }
+        // A `destroy()` inside the callback cancels the source and reaches on_reader_done, which drops the across-read ref: this one keeps the box for the checks after the call.
+        // SAFETY: see `parent()`.
+        let _pin = unsafe { RefPtr::init_ref(self.parent()) };
+        // Wait for more before the call, not after the read loop: what the child writes while the listeners run, and its exit after that, then reach the event loop in that order.
+        #[cfg(unix)]
+        if !self.reader().has_pending_read() {
+            self.arming.set(true);
+            self.reader().watch();
+            self.arming.set(false);
+        }
+        let parent = self.parent_const();
+        let registered =
+            parent.this_jsvalue.get().try_get().and_then(|this_value| {
+                Some((this_value, js::read_callback_get_cached(this_value)?))
+            });
+        let Some((this_value, callback)) = registered else {
+            parent.cancel();
+            return false;
+        };
+        let buffer = match chunk_into_buffer(parent.global_this(), chunk) {
+            Ok(buffer) => buffer,
+            // Out of memory, or the VM is stopping. The source stops: a stream that went on without these bytes would be wrong.
+            Err(err) => {
+                crate::dispatch::fold(Err(err));
+                parent.cancel();
+                return false;
+            }
+        };
+        self.call_read_callback(this_value, callback, &[buffer]);
+        if let Some(err) = self.read_error.replace(None) {
+            self.end_read_callback(Some(err));
+        }
+        // `false` from the callback stopped the reader. A `destroy()` in it, or a throw that ends the run, cancelled the source and closed the fd the io caller captured.
+        self.flowing.get()
+            && self.read_callback.get()
+            && !self.done.get()
+            && !self.reader().is_done()
+    }
+
+    /// Calls the read callback from the event loop: the ticks and promise jobs it queued run before the next call, as after a libuv read callback in Node. What the call asked for takes effect before that checkpoint, where a `_read()` starts the reader again.
+    fn call_read_callback(&self, this_value: JSValue, callback: JSValue, args: &[JSValue]) {
+        use jsc::event_loop::CallbackOutcome;
+        let parent = self.parent_const();
+        let global = parent.global_this();
+        let vm = global.bun_vm();
+        // The callback carries the context it was registered in (`with_async_context_if_needed`).
+        vm.event_loop_mut().run_callback_then(
+            jsc::ContextId::NONE,
+            callback,
+            global,
+            this_value,
+            args,
+            |outcome| match outcome {
+                // `push()` returned false: the reader stops until the next `set_flowing(true)`. The `false` that `on_read_chunk` then returns is not enough: Windows' reader ignores it, and so does a POSIX read loop on a pipe that hung up, which only the pause ends (`PAUSE_ENDS_READ_LOOP`).
+                CallbackOutcome::Returned(more) if more == JSValue::FALSE => {
+                    self.flowing.set(false);
+                    self.reader().pause();
+                }
+                CallbackOutcome::Returned(_) => {}
+                // A listener threw, and the run goes on (a handler took it, or `--hot`, `--watch` or the REPL stays after an unhandled error): the stream reads on, as in Node.
+                CallbackOutcome::Threw { handled } if !vm.uncaught_exception_ends_run(handled) => {}
+                // The report ends the run, or the VM is stopping: nothing more comes out of this source.
+                CallbackOutcome::Threw { .. } | CallbackOutcome::Stopped => parent.cancel(),
+            },
+        );
     }
 
     pub(crate) fn drain(&self) -> Vec<u8> {

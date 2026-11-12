@@ -1588,9 +1588,6 @@ pub(crate) mod environment_variables {
         let vm = global_object.bun_vm().as_mut();
         let name_slice = name.to_utf8();
 
-        // Synchronize the slot swap against a concurrently spawning worker's
-        // cloneFrom. Without this, the worker could clone the slot `Arc` between
-        // our drop (refcount → 0 → free) and the `None` write below.
         let mut slots = vm.proxy_env_storage.lock();
 
         let Some(slot) = slots.slot(name_slice.slice()) else {

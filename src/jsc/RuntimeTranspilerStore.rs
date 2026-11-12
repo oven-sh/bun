@@ -746,6 +746,8 @@ impl TranspilerJob {
         }
         // Borrows the `paths` of a `require.resolve()` that runs on the JS thread.
         transpiler.resolver.custom_dir_paths = None;
+        // Set during a resolve on the JS thread. Such a resolve writes a list that the copy shares.
+        transpiler.resolver.resolves_for_code_from_disk = false;
         transpiler.set_arena(&arena);
         transpiler.set_log(&raw mut *log_clone_guard.1);
         // Note: the resolver already shares opts with the parent

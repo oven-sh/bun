@@ -138,9 +138,9 @@ pub struct S3Credentials {
 }
 
 pub struct Loader {
-    /// Once a pool thread can hold a pointer to this loader, written only through [`Loader::update_map`].
+    /// The variables that `process.env` writes go through [`Loader::update_map`]: pool threads read them.
     pub map: Map,
-    /// Held while the map is copied (a macro VM's pool thread does) and by `update_map`.
+    /// Held by `update_map`, and while a pool thread copies the map or a value of it.
     map_lock: bun_core::Mutex<()>,
     // allocator dropped — global mimalloc (see PORTING.md §Allocators)
     pub(crate) default_files_loaded: EnumSet<DefaultEnvFile>,
@@ -572,15 +572,22 @@ impl Loader {
         }
     }
 
-    fn clone_map(&self) -> Result<Map, AllocError> {
-        let _guard = self.map_lock.lock();
-        self.map.clone_with_allocator()
+    /// A copy of a value of a loader that another thread may be writing.
+    ///
+    /// # Safety
+    /// `this` is live, and its owner writes its map only through [`Self::update_map`].
+    pub unsafe fn get_copy(this: *const Loader, key: &[u8]) -> Option<Box<[u8]>> {
+        // SAFETY: fn contract. Only fields are borrowed, and the map only under the lock.
+        unsafe {
+            let _guard = (*this).map_lock.lock();
+            (*this).map.get(key).map(Box::from)
+        }
     }
 
     /// A `Worker`'s loader: the map, with the explicit entries marked loaded so a pipe is not read twice.
     pub fn clone_for_worker(&self) -> Result<Loader, AllocError> {
         Ok(Loader {
-            map: self.clone_map()?,
+            map: self.map.clone_with_allocator()?,
             map_lock: bun_core::Mutex::new(()),
             default_files_loaded: EnumSet::empty(),
             custom_files_loaded: self.custom_files_loaded.clone()?,

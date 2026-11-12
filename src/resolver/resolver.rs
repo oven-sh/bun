@@ -610,8 +610,7 @@ impl<'a> Resolver<'a> {
     /// fresh `BundleOptions` subset and arena-allocates its own `Log`).
     ///
     /// # Safety
-    /// `env_loader()` returns `&'a Loader` and the caller picks `'a`: the
-    /// loader that `from.env_loader` points to must outlive `'a`.
+    /// The caller picks `'a`: the loader that `from.env_loader` points to must outlive it.
     pub unsafe fn for_worker(
         from: &Resolver<'_>,
         log: NonNull<bun_ast::Log>,
@@ -925,24 +924,6 @@ impl<'a> Resolver<'a> {
                 log,
             ),
         }
-    }
-
-    /// Safe read-only accessor for the optional `DotEnv::Loader` back-reference.
-    ///
-    /// Single `unsafe` deref site for the `env_loader: Option<NonNull<_>>`
-    /// field. The pointee is the Transpiler-owned loader (set from
-    /// `transpiler.env`) and strictly outlives the resolver. Only called once
-    /// resolution has begun (after `run_env_loader()`), so no `&mut Loader` is
-    /// live concurrently — see the field comment for why this is *not* stored
-    /// as `Option<&'a Loader>`.
-    #[inline]
-    pub(crate) fn env_loader(&self) -> Option<&'a DotEnv::Loader> {
-        // SAFETY: BACKREF — `env_loader` names the Transpiler-owned
-        // `DotEnv::Loader`, live for the resolver's lifetime `'a`; resolution
-        // never mutates the env, so no `&mut Loader` overlaps this shared
-        // borrow. Returned as `&'a` (not tied to `&self`) so callers may keep
-        // the env borrow across `&mut self` resolver calls.
-        self.env_loader.map(|p| unsafe { p.as_ref() })
     }
 
     #[inline]
@@ -3265,10 +3246,12 @@ impl<'a> Resolver<'a> {
 
         // try resolve from `NODE_PATH`
         // https://nodejs.org/api/modules.html#loading-from-the-global-folders
-        let node_path: &[u8] = self
-            .env_loader()
-            .and_then(|env| env.get(b"NODE_PATH"))
-            .unwrap_or(b"");
+        // SAFETY: BACKREF, live for the resolver's lifetime. On a pool thread it is the JS thread's, which
+        // writes the map through `update_map`.
+        let node_path = self
+            .env_loader
+            .and_then(|env| unsafe { DotEnv::Loader::get_copy(env.as_ptr(), b"NODE_PATH") })
+            .unwrap_or_default();
         if !node_path.is_empty() {
             let delim = if cfg!(windows) { b';' } else { b':' };
             for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {

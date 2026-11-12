@@ -239,9 +239,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             .entry(id.ref_)
                                             .or_default()
                                     } else {
-                                        p.import_items_for_namespace
-                                            .get_mut(&id.ref_)
-                                            .unwrap()
+                                        p.import_items_for_namespace.get_mut(&id.ref_).unwrap()
                                     }
                                     .put(name, new_item)
                                     .expect("unreachable");

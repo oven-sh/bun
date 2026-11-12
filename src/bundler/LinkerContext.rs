@@ -4280,11 +4280,15 @@ impl<'a> LinkerContext<'a> {
                 .get(&base)
                 .is_some_and(|import| {
                     !import.alias_is_star
-                        && import.alias.is_some_and(|alias| alias.slice() == b"default")
+                        && import
+                            .alias
+                            .is_some_and(|alias| alias.slice() == b"default")
                         && self.graph.ast.items_import_records()[source_index as usize]
                             .as_slice()
                             .get(import.import_record_index as usize)
-                            .is_some_and(|record| record.source_index.get() == resolved.source_index)
+                            .is_some_and(|record| {
+                                record.source_index.get() == resolved.source_index
+                            })
                 })
     }
 
@@ -4600,12 +4604,16 @@ impl<'a> LinkerContext<'a> {
             let mut namespace_uses: Vec<(Ref, u32)> = Vec::new();
             for part in self.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice() {
                 // Every use of such an item is a callee, so `symbol_uses` counts each of them.
-                debug_assert!(part.import_symbol_property_uses.as_ref().is_none_or(|uses| {
-                    !uses
-                        .keys()
-                        .iter()
-                        .any(|base| method_call_items.contains_key(base))
-                }));
+                debug_assert!(
+                    part.import_symbol_property_uses
+                        .as_ref()
+                        .is_none_or(|uses| {
+                            !uses
+                                .keys()
+                                .iter()
+                                .any(|base| method_call_items.contains_key(base))
+                        })
+                );
                 namespace_uses.clear();
                 for (item, item_use) in part
                     .symbol_uses

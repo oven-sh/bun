@@ -121,22 +121,30 @@ fn build_checks_callback_by_name<'a>(func: Func<'a>) -> bool {
 }
 
 /// The function whose body the build finds `e` in. Its search goes through statements, expressions, the initializer
-/// of a variable and the value of a property: not through a parameter, a binding pattern, a class, a type, a computed
-/// key or an `import()`.
+/// of a variable and the value of a property: not through a parameter, a binding pattern, the default of a property
+/// in a destructuring assignment, a class, a type, a computed key or an `import()`.
 fn body_function<'a>(e: Expr<'a>) -> Option<Func<'a>> {
     let mut child = Node::Expr(e);
+    let mut grandchild = None;
     for node in Node::Expr(e).ancestors() {
         let searched = match node {
             Node::Func(func) => return Some(func),
             Node::Expr(parent) => !matches!(parent.kind(), ExprKind::ImportCall { .. }),
             Node::Stmt(_) | Node::Case(_) => true,
             Node::VarDecl(declaration) => matches!(child, Node::Expr(it) if declaration.init() == Some(it)),
-            Node::Prop(prop) => matches!(child, Node::Expr(it) if prop.value() == Some(it)),
+            Node::Prop(prop) => match child {
+                Node::Expr(it) if prop.value() == Some(it) => match it.kind() {
+                    ExprKind::Assign { op: None, value, .. } => grandchild != Some(Node::Expr(value)),
+                    _ => true,
+                },
+                _ => false,
+            },
             _ => false,
         };
         if !searched {
             return None;
         }
+        grandchild = Some(child);
         child = node;
     }
     None

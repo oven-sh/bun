@@ -1236,6 +1236,7 @@ const rules: Record<string, Case[]> = {
     `${memo}function List({ empty = <Empty /> }) {\n  return render(empty);\n}\nexport default memo(List);`,
     `${useMemo}function useIcon(props) {\n  const { icon = <Default /> } = props;\n  return «useMemo»(() => wrap(icon), [icon]);\n}`,
     `${useMemo}function useIcon(props) {\n  const icons = { [<Default />]: 1 };\n  return «useMemo»(() => wrap(icons), [icons]);\n}`,
+    `${useMemo}function useIcon(props) {\n  let icon;\n  ({ icon = <Default /> } = props);\n  return «useMemo»(() => wrap(icon), [icon]);\n}`,
     `${memo}function Toolbar({ onSave }) {\n  const actions = {\n    save() {\n      return <Button onClick={onSave} />;\n    },\n  };\n  return render(actions);\n}\nexport default memo(Toolbar);`,
     // The build's lexer is a token ahead of its parser, so a comment right after a function marks that function.
     `${useMemo}function Total({ a, b }) {\n  return <b>{useMemo(() => a + b, [a, b])}</b>;\n}\n// was eslint-disable-next-line react-hooks/rules-of-hooks\nfunction Other() {\n  return <b />;\n}`,

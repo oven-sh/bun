@@ -709,6 +709,13 @@ impl Execution {
                 Execution::reset_sequence(sequence);
                 return;
             }
+            // Bun <= 1.4.4 repeated a skipped test too, and began its snapshot counts again with that.
+            if sequence.result == Result::Skip
+                && sequence.remaining_repeat_count > 0
+                && let Some(runner) = super::jest::Jest::runner()
+            {
+                runner.snapshots.reset_counts_of_older_bun();
+            }
 
             // Only report the final result after all retries/repeats are done
             Execution::on_sequence_completed(buntest, sequence);
@@ -904,7 +911,7 @@ impl Execution {
         // increment the counter to N on attempt N and look for a key that does
         // not exist (https://github.com/oven-sh/bun/issues/23705).
         if let Some(runner) = super::jest::Jest::runner() {
-            runner.snapshots.undo_counts(&sequence.counted_snapshots);
+            runner.snapshots.on_retry_or_repeat(&sequence.counted_snapshots);
         }
 
         // Preserve retry/repeat counts across reset

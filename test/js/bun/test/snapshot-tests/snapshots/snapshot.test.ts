@@ -1783,6 +1783,369 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         expect([updating.exitCode, all.exitCode]).toEqual([0, 0]);
       });
 
+      // Bun 1.2.23 to 1.4.4 named the snapshot of a hook after the hook, joined names with a space, and counted the snapshots
+      // of each such name. From 1.3.13 on, every count began again when a test was retried or repeated. Bun 1.4.4 wrote these.
+      const zOld = `test("z old", () => { expect({ a: 1 }).toMatchSnapshot(); });\n`;
+      const entry = (key: string, value: string) => "\nexports[`" + key + "`] = `" + value + "`;\n";
+      const hookAndBody = `
+        describe("h", () => {
+          beforeEach(() => { expect("s").toMatchSnapshot(); });
+          test("t", () => { expect("b").toMatchSnapshot(); });
+        });
+      `;
+      const ofHookAndBody = entry("h (unnamed) 1", '"s"') + entry("h t 1", '"b"');
+      const threeTestsUnderAHook = (second: string) => `
+        let attempts = 0;
+        describe("outer", () => {
+          beforeEach(() => { expect("state").toMatchSnapshot(); });
+          test("first", () => {});
+          ${second}
+          test("third", () => {});
+        });
+      `;
+      const ofTwoHookCalls = entry("outer (unnamed) 1", '"state"') + entry("outer (unnamed) 2", '"state"');
+
+      type Older = [name: string, tests: string, appended: string, pass: number, ...args: string[]];
+      const older: Older[] = [
+        [
+          "inline snapshots of beforeEach in front of the snapshot of the test body",
+          `
+            describe("d", () => {
+              beforeEach(() => {
+                expect("s").toMatchInlineSnapshot(\`"s"\`);
+                expect(() => { throw new Error("e"); }).toThrowErrorMatchingInlineSnapshot(\`"e"\`);
+              });
+              test("t", () => { expect("b").toMatchSnapshot(); });
+            });
+          `,
+          entry("d t 1", '"b"'),
+          2,
+        ],
+        [
+          "two tests that have one name in Bun's spelling",
+          `
+            describe("p", () => {
+              test("x y", () => { expect("flat").toMatchSnapshot(); });
+              describe("x", () => { test("y", () => { expect("nested").toMatchSnapshot(); }); });
+            });
+          `,
+          entry("p x y 1", '"flat"') + entry("p x y 2", '"nested"'),
+          3,
+        ],
+        [
+          "a hook of three tests, the second of which is repeated",
+          threeTestsUnderAHook(`test("repeated", () => {}, { repeats: 1 });`),
+          ofTwoHookCalls,
+          4,
+        ],
+        [
+          "a hook of three tests, the second of which is retried",
+          threeTestsUnderAHook(
+            `test("retried", () => { if (attempts++ === 0) throw new Error("once"); }, { retry: 1 });`,
+          ),
+          ofTwoHookCalls,
+          4,
+        ],
+        [
+          "a hook of three tests, the second of which is skipped and has repeats",
+          threeTestsUnderAHook(`test.skip("repeated", () => {}, { repeats: 1 });`),
+          entry("outer (unnamed) 1", '"state"'),
+          3,
+        ],
+      ];
+      // In Jest's spelling the key of a hook's snapshot is `h t 1`, which is the key that an older Bun gave the first snapshot
+      // of the test body. The file's own key is asked first, so under Jest's first line these compare the hook with that entry.
+      const olderBesideABodySnapshot: Older[] = [
+        ["a snapshot of beforeEach and one of the test body", hookAndBody, ofHookAndBody, 2],
+        ["the same, with --rerun-each", hookAndBody, ofHookAndBody, 4, "--rerun-each", "2"],
+        [
+          "every kind of hook in one describe, with and without a hint",
+          `
+            describe("d", () => {
+              beforeAll(() => { expect("before all").toMatchSnapshot(); });
+              beforeEach(() => { expect("before each").toMatchSnapshot(); expect("hinted").toMatchSnapshot("hint"); });
+              afterEach(() => { expect("after each").toMatchSnapshot(); });
+              afterAll(() => { expect("after all").toMatchSnapshot(); });
+              test("t", () => { expect("body of t").toMatchSnapshot(); expect("hint of t").toMatchSnapshot("hint"); });
+              test("u", () => { expect("body of u").toMatchSnapshot(); });
+            });
+          `,
+          entry("d (unnamed) 1", '"before all"') +
+            entry("d (unnamed) 2", '"before each"') +
+            entry("d (unnamed): hint 1", '"hinted"') +
+            entry("d t 1", '"body of t"') +
+            entry("d t: hint 1", '"hint of t"') +
+            entry("d (unnamed) 3", '"after each"') +
+            entry("d (unnamed) 4", '"before each"') +
+            entry("d (unnamed): hint 2", '"hinted"') +
+            entry("d u 1", '"body of u"') +
+            entry("d (unnamed) 5", '"after each"') +
+            entry("d (unnamed) 6", '"after all"'),
+          3,
+        ],
+        [
+          "a hook of an outer describe",
+          `
+            describe("outer", () => {
+              beforeEach(() => { expect("s").toMatchSnapshot(); });
+              describe("inner", () => { test("t", () => { expect("b").toMatchSnapshot(); }); });
+            });
+          `,
+          entry("outer (unnamed) 1", '"s"') + entry("outer inner t 1", '"b"'),
+          2,
+        ],
+        [
+          "toThrowErrorMatchingSnapshot() in a hook",
+          `
+            describe("d", () => {
+              beforeEach(() => { expect(() => { throw new Error("in hook"); }).toThrowErrorMatchingSnapshot(); });
+              test("t", () => { expect(() => { throw new Error("in body"); }).toThrowErrorMatchingSnapshot(); });
+            });
+          `,
+          entry("d (unnamed) 1", '"in hook"') + entry("d t 1", '"in body"'),
+          2,
+        ],
+      ];
+
+      test.each(format === "vitest" ? [...olderBesideABodySnapshot, ...older] : older)(
+        "is found under the count that an older Bun gave it: %s",
+        async (_, tests, appended, pass, ...args) => {
+          const saved = headers[format] + old + appended;
+          using dir = tempDir("snapshot-appended-to", {
+            "a.test.js": tests + zOld,
+            "__snapshots__/a.test.js.snap": saved,
+          });
+          const run = await runTests(String(dir), { CI: "true" }, ...args);
+          expect({ pass: run.pass, stderr: run.pass === pass ? "" : run.stderr }).toEqual({ pass, stderr: "" });
+          expect(snap(dir)).toBe(saved);
+          expect(run.exitCode).toBe(0);
+        },
+      );
+
+      // An older Bun had no file snapshots, so they are not in its counts.
+      test("of a hook is found under the count that an older Bun gave it when the hook takes a file snapshot too", async () => {
+        const saved = headers[format] + old + entry("h (unnamed) 1", '"s"') + entry("h (unnamed) 2", '"s"');
+        using dir = tempDir("snapshot-appended-to", {
+          "a.test.js":
+            `
+              describe("h", () => {
+                beforeEach(async () => { await expect("f").toMatchFileSnapshot("./f.txt"); expect("s").toMatchSnapshot(); });
+                test("t", () => {});
+                test("u", () => {});
+              });
+            ` + zOld,
+          "f.txt": "f",
+          "__snapshots__/a.test.js.snap": saved,
+        });
+        const { pass, stderr, exitCode } = await runTests(String(dir), { CI: "true" });
+        expect({ pass, stderr: pass === 3 ? "" : stderr }).toEqual({ pass: 3, stderr: "" });
+        expect(snap(dir)).toBe(saved);
+        expect(exitCode).toBe(0);
+      });
+
+      // An older Bun took no snapshot in a concurrent test. Such a test counts as the file does, whatever the tests beside it do.
+      test.skipIf(format === "jest")(
+        "of a test that now runs beside others is found under the count of the file while another test is retried",
+        async () => {
+          const saved = headers.vitest + old + entry("p w 1", '"w1"') + entry("p x 1", '"x1"') + entry("p x 2", '"x2"');
+          using dir = tempDir("snapshot-appended-to", {
+            "a.test.js": `
+              import { describe, test } from "vitest";
+              let attempts = 0;
+              const started = Promise.withResolvers();
+              const retried = Promise.withResolvers();
+              describe("p", () => {
+                test.concurrent("w", { retry: 1 }, async ({ expect }) => {
+                  expect("w1").toMatchSnapshot();
+                  await started.promise;
+                  if (attempts++ === 0) throw new Error("once");
+                  retried.resolve();
+                });
+                test.concurrent("x", async ({ expect }) => {
+                  expect("x1").toMatchSnapshot();
+                  started.resolve();
+                  await retried.promise;
+                  expect("x2").toMatchSnapshot();
+                });
+              });
+              test("z old", ({ expect }) => { expect({ a: 1 }).toMatchSnapshot(); });
+            `,
+            "__snapshots__/a.test.js.snap": saved,
+          });
+          const { pass, stderr, exitCode } = await runTests(String(dir), { CI: "true" });
+          expect({ pass, stderr: pass === 3 ? "" : stderr }).toEqual({ pass: 3, stderr: "" });
+          expect(snap(dir)).toBe(saved);
+          expect(exitCode).toBe(0);
+        },
+      );
+
+      test.skipIf(format === "jest").each(["true", "false"])(
+        "of a hook or of the test beside it still fails when the value is another (CI: %s)",
+        async CI => {
+          const saved = headers[format] + old + ofHookAndBody;
+          const files = (tests: string) => ({ "a.test.js": tests + zOld, "__snapshots__/a.test.js.snap": saved });
+          using hook = tempDir("snapshot-appended-to", files(hookAndBody.replace('expect("s")', 'expect("S")')));
+          using body = tempDir("snapshot-appended-to", files(hookAndBody.replace('expect("b")', 'expect("B")')));
+          const [ofHook, ofBody] = await Promise.all([hook, body].map(dir => runTests(String(dir), { CI })));
+          expect(ofHook.stderr).toContain('Expected: "s"\nReceived: "S"');
+          expect(ofBody.stderr).toContain('Expected: "b"\nReceived: "B"');
+          expect([ofHook, ofBody].map(({ pass, fail, exitCode }) => ({ pass, fail, exitCode }))).toEqual([
+            { pass: 1, fail: 1, exitCode: 1 },
+            { pass: 1, fail: 1, exitCode: 1 },
+          ]);
+          expect([snap(hook), snap(body)]).toEqual([saved, saved]);
+        },
+      );
+
+      // "p" > "x y" and "p" > "x" > "y" are both `p x y` in an older Bun's keys. The second test has no entry yet.
+      test("of a test is not taken for a new test that has the same name in an older Bun's spelling", async () => {
+        using dir = tempDir("snapshot-appended-to", {
+          "a.test.js":
+            `
+              describe("p", () => {
+                test("x y", () => { expect("first").toMatchSnapshot(); });
+                describe("x", () => { test("y", () => { expect("second").toMatchSnapshot(); }); });
+              });
+            ` + zOld,
+          "__snapshots__/a.test.js.snap": headers[format] + old + entry("p x y 1", '"first"'),
+        });
+        const adding = await runTests(String(dir), { CI: "false" });
+        expect(adding.stderr).toContain("2 passed, 1 added");
+        const all = await runTests(String(dir), { CI: "true" });
+        expect({ pass: all.pass, stderr: all.pass === 3 ? "" : all.stderr }).toEqual({ pass: 3, stderr: "" });
+        expect([adding.exitCode, all.exitCode]).toEqual([0, 0]);
+      });
+
+      test.skipIf(format === "jest")(
+        "is found for a second snapshot of a test whose first is the runner's",
+        async () => {
+          // Vitest wrote the first entry. An older Bun looked for its own key, and added the other two.
+          const saved =
+            headers.vitest +
+            entry("outer > inner 1", "1") +
+            old +
+            entry("outer inner 1", "1") +
+            entry("outer inner 2", "2");
+          using dir = tempDir("snapshot-appended-to", {
+            "a.test.js":
+              `describe("outer", () => { test("inner", () => { expect(1).toMatchSnapshot(); expect(2).toMatchSnapshot(); }); });\n` +
+              zOld,
+            "__snapshots__/a.test.js.snap": saved,
+          });
+          const { pass, stderr, exitCode } = await runTests(String(dir), { CI: "true" });
+          expect({ pass, stderr: pass === 2 ? "" : stderr }).toEqual({ pass: 2, stderr: "" });
+          expect(snap(dir)).toBe(saved);
+          expect(exitCode).toBe(0);
+        },
+      );
+
+      // In Vitest's format `x > y z 1` is the key of "x" > "y z" too, which asks for it first.
+      test("is found under a key that another test has in the file's own spelling", async () => {
+        const saved = headers[format] + old + entry("x y z 1", "1") + entry("x > y z 1", "1");
+        using dir = tempDir("snapshot-appended-to", {
+          "a.test.js":
+            `
+              describe("x", () => { test("y z", () => { expect(1).toMatchSnapshot(); }); });
+              describe("x > y", () => { test("z", () => { expect(1).toMatchSnapshot(); }); });
+            ` + zOld,
+          "__snapshots__/a.test.js.snap": saved,
+        });
+        const { pass, stderr, exitCode } = await runTests(String(dir), { CI: "true" });
+        expect({ pass, stderr: pass === 3 ? "" : stderr }).toEqual({ pass: 3, stderr: "" });
+        expect(snap(dir)).toBe(saved);
+        expect(exitCode).toBe(0);
+      });
+
+      describe("in a file that holds none of it, a snapshot gets what it gets in a file whose keys are in order", () => {
+        const noTest = entry("z gone 1", "0") + entry("a gone 1", "0");
+
+        // The snapshot of beforeEach is the first of the test in the keys of Jest and Vitest. An older Bun counted the body alone.
+        test("one more snapshot in a test body is a new entry, not the one before it", async () => {
+          const testsOf = (body: string) => `
+            beforeEach(() => { expect("s").toMatchSnapshot(); });
+            test("c new", () => { ${body} });
+          `;
+          const added = headers[format] + noTest + entry("c new 1", '"s"') + entry("c new 2", "5");
+          using dir = tempDir("snapshot-out-of-order", {
+            "a.test.js": testsOf("expect(5).toMatchSnapshot();"),
+            "__snapshots__/a.test.js.snap": headers[format] + noTest,
+          });
+          const first = await runTests(String(dir), { CI: "false" });
+          expect(first.stderr).toContain("+2 added");
+          expect(snap(dir)).toBe(added);
+          writeFileSync(
+            join(String(dir), "a.test.js"),
+            testsOf("expect(5).toMatchSnapshot(); expect(6).toMatchSnapshot();"),
+          );
+          const second = await runTests(String(dir), { CI: "false" });
+          expect(second.stderr).toContain("2 passed, 1 added");
+          expect(snap(dir)).toBe(added + entry("c new 3", "6"));
+          expect([first.exitCode, second.exitCode]).toEqual([0, 0]);
+        });
+
+        // A retry begins the counts of an older Bun again. The entry that the first test found is still not the second test's.
+        test("a second test of one name behind a retried test does not get the entry of the first", async () => {
+          const testsOf = (second: string) => `
+            let attempts = 0;
+            test("same", () => { expect("v").toMatchSnapshot(); });
+            test("retried", () => { expect("r").toMatchSnapshot(); if (attempts++ === 0) throw new Error("once"); }, { retry: 1 });
+            ${second}
+          `;
+          using added = tempDir("snapshot-out-of-order", {
+            "a.test.js": testsOf(""),
+            "__snapshots__/a.test.js.snap": headers[format] + noTest,
+          });
+          using changed = tempDir("snapshot-out-of-order", {
+            "a.test.js": testsOf(`test("same", () => { expect("q").toMatchSnapshot(); });`),
+            "__snapshots__/a.test.js.snap": headers[format] + noTest,
+          });
+          const writing = await Promise.all([added, changed].map(dir => runTests(String(dir), { CI: "false" })));
+          expect(writing.map(run => run.exitCode)).toEqual([0, 0]);
+          for (const dir of [added, changed]) {
+            writeFileSync(
+              join(String(dir), "a.test.js"),
+              testsOf(`test("same", () => { expect("v").toMatchSnapshot(); });`),
+            );
+          }
+          const [ofAdded, ofChanged] = await Promise.all(
+            [added, changed].map(dir => runTests(String(dir), { CI: "true" })),
+          );
+          expect(ofAdded.stderr).toContain('Snapshot name: "same 2"');
+          expect(ofChanged.stderr).toContain('Expected: "q"\nReceived: "v"');
+          expect([ofAdded.exitCode, ofChanged.exitCode]).toEqual([1, 1]);
+        });
+
+        // `(unnamed) 1` is the key of the afterAll snapshot, and the key that an older Bun had for the snapshot of beforeEach.
+        // `x y 1` is the key of the test "x y" in Vitest's spelling, and the key that an older Bun had for "x" > "y".
+        test("a changed value fails though the entry under the key that an older Bun had for it holds that value", async () => {
+          const hooks = (each: string) => `
+            beforeEach(() => { expect("${each}").toMatchSnapshot(); });
+            afterAll(() => { expect("after").toMatchSnapshot(); });
+            test("t", () => {});
+          `;
+          const names = (nested: string) => `
+            describe("x", () => { test("y", () => { expect("${nested}").toMatchSnapshot(); }); });
+            test("x y", () => { expect("top").toMatchSnapshot(); });
+          `;
+          using ofHooks = tempDir("snapshot-out-of-order", {
+            "a.test.js": hooks("each"),
+            "__snapshots__/a.test.js.snap": headers[format] + noTest,
+          });
+          using ofNames = tempDir("snapshot-out-of-order", {
+            "a.test.js": names("nested"),
+            "__snapshots__/a.test.js.snap": headers[format] + noTest,
+          });
+          const writing = await Promise.all([ofHooks, ofNames].map(dir => runTests(String(dir), { CI: "false" })));
+          expect(writing.map(run => run.exitCode)).toEqual([0, 0]);
+          writeFileSync(join(String(ofHooks), "a.test.js"), hooks("after"));
+          writeFileSync(join(String(ofNames), "a.test.js"), names("top"));
+          const [hook, name] = await Promise.all([ofHooks, ofNames].map(dir => runTests(String(dir), { CI: "true" })));
+          expect(hook.stderr).toContain('Expected: "each"\nReceived: "after"');
+          expect(name.stderr).toContain('Expected: "nested"\nReceived: "top"');
+          expect([hook.exitCode, name.exitCode]).toEqual([1, 1]);
+        });
+      });
+
       test("a file that holds none of it gets the runner's order in a run that adds entries and sees the others", async () => {
         using dir = tempDir("snapshot-out-of-order", {
           "a.test.js": tests + newTests,

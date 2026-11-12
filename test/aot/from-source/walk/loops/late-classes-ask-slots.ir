@@ -1,0 +1,15 @@
+# f1 = Machine
+# f2 = begin
+# f3 = run
+# -- source: main.mjs
+# function Machine() { this.at = 0; }
+# Machine.prototype.begin = function (n) { if (n > 2) this.table = new Uint8Array(n); };
+# Machine.prototype.run = function (turns) { let sum = 0; for (let turn = 0; turn < turns; turn++) { unseen(this); sum = sum + this.table[turn & 3] | 0; } return sum; };
+# const unseen = (0, eval)("(function (x) { return x; })");
+# const machine = new Machine(); globalThis.unseen = [Machine, machine]; unseen(machine).begin(4); machine.begin(5); unseen(machine).extra = 1;
+# print(machine.run((0, eval)("3")));
+# -- end of source
+# A name laid late that holds one built-in class is looked at as filled where a loop reads it.
+# RUN: walk f3 mechanisms=all
+# CHECK-NOT: GetSlotOrUndefined {{*}}key="table"
+# CHECK: IsSlotFilled {{*}}key="table"

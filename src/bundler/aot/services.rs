@@ -27,7 +27,7 @@ use bun_sema::fold::FoldOptions;
 use bun_sema::hir_from_data::DataModule;
 use bun_sema::resolve::{AOT_CONDITION, CodeFailure, CodeImportKind, FileSearch, FoundCode, Host};
 use bun_sema::util::FxHashSet;
-use bun_sema_driver::host::{from_native, to_native};
+use bun_sema_driver::host::{from_native, is_regular_file, to_native};
 use bun_threading::Guarded;
 use core::ptr::NonNull;
 use std::borrow::Cow;
@@ -360,6 +360,9 @@ fn is_native_program(path: &[u8]) -> bool {
         b"\xcf\xfa\xed\xfe",
         b"\xca\xfe\xba\xbe",
     ];
+    if !is_regular_file(path) {
+        return false;
+    }
     let Ok(file) = bun_sys::File::openat(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0) else {
         return false;
     };
@@ -525,9 +528,8 @@ impl BundlerServices {
         // The levels above the root are already settled. They reach as far up as code does, and one level always exists.
         let root = without_trailing_slash_windows_path(&self.names_wanted.root_directory);
         let highest = count_lexical_levels_above(root, module_path).max(1);
-        let kind = bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(source_path));
         let is_embedded = count_lexical_levels_above(root, source_path) <= highest
-            && matches!(kind, Ok(bun_sys::ExistsAtType::File))
+            && is_regular_file(source_path)
             && match is_query {
                 // What finds it there may read it. A program of machine code is started, which needs the disk.
                 true if reads_unknown_paths => {
@@ -957,6 +959,12 @@ impl SourceProvider for BundlerServices {
             && self.is_embeddable_as_asset(module_path, source_path)
     }
 
+    fn is_in_asset(&self, source_path: &[u8]) -> bool {
+        let source_path = &*with_platform_separators(source_path);
+        let mut assets = self.assets.iter();
+        assets.any(|asset| is_at_or_below(source_path, asset))
+    }
+
     fn find_package_folder(&self, module_path: &[u8]) -> Option<Vec<u8>> {
         find_package_root(&with_platform_separators(module_path)).map(<[u8]>::to_vec)
     }
@@ -1086,6 +1094,15 @@ impl SourceProvider for BundlerServices {
         let source = &*with_platform_separators(source_path);
         (is_installed_package_file(source) || is_nearest_package_json(entry, source))
             && self.embed_eligible_file(module_path, source_path, is_query)
+    }
+
+    fn read_web_assembly(&self, source_path: &[u8]) -> Option<Vec<u8>> {
+        let source = &*with_platform_separators(source_path);
+        if !is_regular_file(source) {
+            return None;
+        }
+        let bytes = bun_sys::File::read_from(bun_sys::Fd::cwd(), source).ok()?;
+        bytes.starts_with(b"\0asm\x01\0\0\0").then_some(bytes)
     }
 
     fn embed_named_file(&self, module_path: &[u8], source_path: &[u8]) -> bool {

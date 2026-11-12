@@ -114,8 +114,11 @@ CompilerHelpersPlainQueryEntries/0: it is not called: the compiler hands it what
 CompilerHelpersPlainQueryKeys/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersPlainQueryValues/0: it is not called: the compiler hands it what another helper answered for the same operands, and takes that on trust
 CompilerHelpersSortByDifference/0: it is not called: this realm does not have it
+CompilerHelpersSortByKeys/0: it is not called: this realm does not have it
 CompilerHelpersSortByReversedDifference/0: it is not called: this realm does not have it
 CompilerHelpersTakeFromIterable/0: it is not called: it is written with the intrinsics that read @@iterator and step generators, and only compiled code has those
+CompilerHelpersToSortedByDifference/0: it is not called: this realm does not have it
+CompilerHelpersToSortedByReversedDifference/0: it is not called: this realm does not have it
 CrashHandlerJscCrashHandlerAbort/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerFastfail/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerOperatorNew/0: the process ended or did not come back

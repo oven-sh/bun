@@ -493,10 +493,7 @@ impl AnyRoute {
         if let Some(file_route) = FileRoute::from_js(global, argument)? {
             return Ok(Some(AnyRoute::File(file_route)));
         }
-        match StaticRoute::from_js(global, argument)? {
-            Some(s) => Ok(Some(AnyRoute::Static(s))),
-            None => Ok(None),
-        }
+        Ok(StaticRoute::from_js(global, argument)?.map(AnyRoute::Static))
     }
 }
 

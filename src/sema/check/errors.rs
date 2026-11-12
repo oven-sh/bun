@@ -489,7 +489,7 @@ impl Checker<'_, '_> {
         }
         let hir = self.hir(d.file);
         // What a string holds is the run's. The tree may be gone before the build sorts what it reports.
-        if hir.is_in_known_evaluation(d.start) {
+        if hir.is_in_known_evaluation(d.start) || hir.is_in_copied_factory(d.start) {
             return None;
         }
         let is_unconditional = self.is_unconditional_error(&d);

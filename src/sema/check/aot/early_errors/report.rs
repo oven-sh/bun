@@ -42,6 +42,9 @@ impl Checker<'_, '_> {
             };
             d.file == file && is_kept && !hir.is_in_jsdoc(d.start)
         });
+        if !hir.copied_factories.is_empty() {
+            found.retain(|d| !hir.is_in_copied_factory(d.start));
+        }
         if !hir.known_evaluations.is_empty() {
             let end = hir.written_text_end();
             let (written, evaluated): (Vec<_>, Vec<_>) =

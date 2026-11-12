@@ -1,6 +1,7 @@
 mod array_makers;
 mod assignment_to_new_object;
 mod callee;
+mod copied_factory;
 mod evaluated_text;
 mod intrinsic;
 mod intrinsic_call;
@@ -9,7 +10,7 @@ mod written_operands;
 
 use bun_sema::atom::known;
 use bun_sema::fold::Constant;
-use bun_sema::hir::{Call, Chain, ExprId, ExprKind, FnId, IdList};
+use bun_sema::hir::{Call, Chain, ExprId, ExprKind, FnId, IdList, MemberKey};
 use smallvec::SmallVec;
 
 use super::expression::{self, Evaluation, Tail, TailCast};
@@ -116,17 +117,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if bound.eval_scope(call).is_some() {
             return scope::lower_direct_eval(self, call);
         }
-        if let ExprKind::Call(id) = hir[call].kind
-            && !hir.known_evaluations_of(id).is_empty()
-        {
-            return self.lower_known_function_call(call, id, evaluation.tail);
+        if let ExprKind::Call(id) = hir[call].kind {
+            if hir.is_settled_eval(id) {
+                return scope::lower_direct_eval(self, call);
+            }
+            if !hir.known_evaluations_of(id).is_empty() {
+                return self.lower_known_function_call(call, id, evaluation.tail);
+            }
         }
         if matches!(hir[site.callee].kind, ExprKind::Super) {
             return self.lower_super_call(call);
         }
         if matches!(evaluation.tail, Tail::Yes { casts: None })
             && matches!(hir[call].kind, ExprKind::Call(_))
-            && let Some(value) = self.try_lower_self_tail_call(site)
+            && let Some(value) = self.try_lower_self_tail_call(call, site)
         {
             return value;
         }
@@ -141,6 +145,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return self.lower_call_of_declaration(call, site, function, evaluation.tail);
         }
         if let Some(value) = self.try_lower_export_definition(call) {
+            return value;
+        }
+        if let Some(value) = self.try_lower_definition_of_getters(call) {
             return value;
         }
         if let Some(value) = self.try_lower_known_call(call) {
@@ -496,6 +503,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             arguments = self.hand_global_object_to_stub(arguments);
         }
         self.file.intern_key_written_at_definition(site, named);
+        self.file.intern_keys_passed_to_callback(site);
         let options = CallOptions {
             tail: Tail::No,
             is_never_inlined: false,
@@ -646,6 +654,50 @@ impl FileLowering<'_, '_, '_, '_> {
             && let Some(key) = self.find_constant_key(written)
         {
             self.fragment.note_key_laid_by_descriptor(key);
+        }
+    }
+
+    /// `["x", "y"].forEach(function (key) { C.prototype[key] = .. })`: the link resolves the stores to the names.
+    fn intern_keys_passed_to_callback(&mut self, site: Call) {
+        let hir = self.hir;
+        let Some((list, MemberKey::Name(_))) = hir.member_key(self.skip_type_syntax(site.callee))
+        else {
+            return;
+        };
+        let callback = hir.ids(site.args).next();
+        let passes_function = callback.is_some_and(|callback| {
+            matches!(hir[self.skip_type_syntax(callback)].kind, ExprKind::Fn(_))
+        });
+        if passes_function {
+            self.intern_keys_of_written_list(list);
+        }
+    }
+
+    /// `for (const key of ["x", "y"]) C.prototype[key] = ..`
+    pub(in crate::lower) fn intern_keys_of_written_list(&mut self, list: ExprId) {
+        let hir = self.hir;
+        let ExprKind::Array(elements) = hir[self.skip_type_syntax(list)].kind else {
+            return;
+        };
+        for element in hir.ids(elements) {
+            let element = self.skip_type_syntax(element);
+            match hir[element].kind {
+                ExprKind::Array(row) => {
+                    for part in hir.ids(row) {
+                        self.intern_key_of_constant_string(part);
+                    }
+                }
+                _ => self.intern_key_of_constant_string(element),
+            }
+        }
+    }
+
+    fn intern_key_of_constant_string(&mut self, value: ExprId) {
+        let constant = expression::find_constant(self, value);
+        let constant =
+            constant.or_else(|| expression::find_constant_outside_dead_zone(self, value));
+        if let Some(Constant::String(text)) = constant {
+            self.atom_key(text);
         }
     }
 

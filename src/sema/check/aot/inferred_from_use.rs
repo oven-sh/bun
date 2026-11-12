@@ -1,5 +1,8 @@
-use super::answers::{CheckedType, ClassRef, GaveUp, MemberLookup, QueryLimit};
+use super::answers::{
+    CheckedType, ClassDeclaration, ClassRef, FunctionRef, GaveUp, MemberLookup, QueryLimit,
+};
 use super::builtin_types::BuiltinClassIndex;
+use super::class_stores::{BindingStoreKind, StoreForm, ThisOwner, find_stored_function};
 use super::prototype_links::{NamedValue, PrototypeOperation};
 use super::queries::{GivenProduct, Queries};
 use super::type_identity::ObjectOrigin;
@@ -1964,6 +1967,29 @@ fn find_name_of_function(
     }
 }
 
+/// `key` of `object.key = expression`.
+fn find_name_stored_under(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    expression: ExprId,
+) -> Option<Atom> {
+    let Parent::Expr(store) = bound.parent_of_expr(expression) else {
+        return None;
+    };
+    let ExprKind::Assign {
+        op: None,
+        target,
+        value,
+    } = hir[store.some()?].kind
+    else {
+        return None;
+    };
+    match hir.member_key(target) {
+        Some((_, MemberKey::Name(name))) if value == expression => Some(name),
+        Some(_) | None => None,
+    }
+}
+
 fn find_argument_of_call(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -1975,6 +2001,11 @@ fn find_argument_of_call(
         return None;
     };
     let call = call.some()?;
+    if let Some((object, MemberKey::Name(known::call))) = hir.member_key(call)
+        && object == callee
+    {
+        return find_argument_of_call(hir, bound, first_spread_arguments, call, index + 1);
+    }
     let ExprKind::Call(site) = hir[call].kind else {
         return None;
     };
@@ -2011,11 +2042,21 @@ struct CallWithReceiver {
 
 type TypeParts = SmallVec<[TypeId; 4]>;
 
+/// The functions that a file lays under names, and its calls by name.
+#[derive(Default)]
+pub(super) struct MethodsByName {
+    /// None: several functions bear the name.
+    functions: FxHashMap<Atom, Option<FnId>>,
+    names: FxHashMap<FnId, Atom>,
+    callees: FxHashMap<Atom, Vec<ExprId>>,
+}
+
 /// What the calls in the file of a function pass to one of its parameters.
 pub(super) struct ArgumentsGiven {
     pub(super) written: SmallVec<[ExprId; 4]>,
     /// The function is exported, or mentioned where it is not called.
     others_may_call: bool,
+    are_calls_by_name: bool,
 }
 type ContentsOfLiteral = (FileId, SmallVec<[(Atom, PropFlags, TypeId); 4]>);
 type ReturnedExpressions = SmallVec<[(ExprId, TypeId); 4]>;
@@ -2352,6 +2393,104 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.inferred_type(Subject::Field(position))
     }
 
+    pub(super) fn find_type_stored_later(
+        &mut self,
+        class: ClassDeclaration,
+        field: Atom,
+    ) -> CheckedType {
+        let file = self.file;
+        if !self.are_positions_only_expected(file) {
+            return Ok(TypeId::ANY);
+        }
+        let (hir, bound) = (self.hir(), self.bound());
+        let index = self.store_index(file);
+        let mut owners: SmallVec<[ThisOwner; 8]> = SmallVec::new();
+        match class {
+            ClassDeclaration::Class(class) => owners.push(ThisOwner::Instance(class.class)),
+            ClassDeclaration::Function(FunctionRef { function, .. }) => {
+                owners.push(ThisOwner::Function(function));
+                let constructor = bound.declared_symbol(Decl::Fn(function)).some();
+                let stores = constructor.map_or(&[][..], |symbol| index.binding_stores_of(symbol));
+                let methods = stores
+                    .iter()
+                    .filter(|store| matches!(store.kind, BindingStoreKind::Prototype(_)))
+                    .filter_map(|store| find_stored_function(hir, bound, store.value));
+                owners.extend(methods.map(ThisOwner::Function));
+            }
+        }
+        let mut found: SmallVec<[TypeId; 4]> = SmallVec::new();
+        for owner in owners {
+            for store in index.this_stores_of(owner) {
+                if store.name != field || store.form != StoreForm::Plain {
+                    continue;
+                }
+                let Some(value) = store.value.some() else {
+                    continue;
+                };
+                let Ok(ty) = self.expression_type(value) else {
+                    continue;
+                };
+                if !self.c.is_any(ty)
+                    && !self.is_null_or_undefined_alone(ty)
+                    && !found.contains(&ty)
+                {
+                    found.push(ty);
+                }
+            }
+        }
+        match found.is_empty() {
+            true => Ok(TypeId::ANY),
+            false => self.union_of(&found),
+        }
+    }
+
+    /// Whether the elements of an object of the type are numbers or bigints, as those of typed arrays are.
+    fn holds_numeric_elements(&mut self, ty: TypeId) -> bool {
+        let Some(members) = self.c.members_for_index_infos(ty) else {
+            return false;
+        };
+        let element = self.c.applicable_index_info(&members, TypeId::NUMBER);
+        element.is_some_and(|element| {
+            element.value == TypeId::NUMBER || element.value == TypeId::BIGINT
+        })
+    }
+
+    /// By the name of a field: the one typed array that is stored into it, none if they differ.
+    pub(super) fn typed_arrays_in_fields(&mut self) -> Rc<FxHashMap<Atom, Option<TypeId>>> {
+        if let Some(found) = &self.memo.typed_arrays_in_fields {
+            return Rc::clone(found);
+        }
+        let mut found: FxHashMap<Atom, Option<TypeId>> = FxHashMap::default();
+        if self.are_positions_only_expected(self.file) {
+            let hir = self.hir();
+            for store in self.store_index(self.file).all_this_stores() {
+                let Some(value) = store
+                    .value
+                    .some()
+                    .filter(|_| store.form == StoreForm::Plain)
+                else {
+                    continue;
+                };
+                if !matches!(hir[value].kind, ExprKind::New(_)) {
+                    continue;
+                }
+                let Ok(ty) = self.expression_type(value) else {
+                    continue;
+                };
+                if !self.holds_numeric_elements(ty) {
+                    continue;
+                }
+                let held = found.entry(store.name).or_insert(Some(ty));
+                if *held != Some(ty) {
+                    *held = None;
+                }
+            }
+        }
+        let found = Rc::new(found);
+        self.memo.typed_arrays_in_fields = Some(Rc::clone(&found));
+        found
+    }
+
     pub(super) fn infer_this_type(&mut self, of: FileId, function: FnId) -> TypeId {
         match self.find_this_subject(of, function) {
             Some(subject) => self.inferred_type(subject),
@@ -2489,6 +2628,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         let declaration = self.resolved_call(call).ok()??.declaration?;
         self.find_result_subject(declaration.file, declaration.function)
+    }
+
+    fn find_named_call_result_subject(&mut self, call: ExprId) -> Option<Subject> {
+        let ExprKind::Call(site) = self.hir()[call].kind else {
+            return None;
+        };
+        let method = self.find_method_by_name(self.hir()[site].callee)?;
+        self.find_result_subject(self.file, method)
     }
 
     fn find_referenced_subject(&self, expression: ExprId) -> Option<Subject> {
@@ -2902,6 +3049,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 let receiver = self.find_untyped_receiver_of_method_call(expression);
                 asked_for.extend(receiver.map(Subject::Expression));
                 asked_for.extend(self.find_result_subject_of_call(expression));
+                asked_for.extend(self.find_named_call_result_subject(expression));
             }
             Subject::Result(function) => {
                 for (returned, checked) in self.find_returned_expressions(function) {
@@ -2924,6 +3072,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             if let Some(initializer) = self.find_initializer_of_constant(symbol) {
                 let receiver = self.find_untyped_receiver_of_method_call(initializer);
                 asked_for.extend(receiver.map(Subject::Expression));
+                asked_for.extend(self.find_named_call_result_subject(initializer));
             }
             return;
         };
@@ -2982,6 +3131,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             };
         }
         let (given, others_may_call) = self.compute_type_from_arguments(name);
+        if !self.c.is_any(given) && self.is_passed_only_by_name(name) {
+            return given;
+        }
         // A record is one layout by its names. Where others may call and the uses name every member of what is given, the
         // record of the uses is that layout, and says what the members are used as.
         let is_named_whole = others_may_call
@@ -2996,6 +3148,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             true => given,
             false => used_as,
         }
+    }
+
+    fn is_passed_only_by_name(&mut self, name: PatId) -> bool {
+        self.find_arguments_given(name)
+            .is_some_and(|given| given.are_calls_by_name)
     }
 
     fn find_type_a_constant_is_made_with(&mut self, symbol: SymbolId) -> Option<TypeId> {
@@ -3031,7 +3188,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return None;
         }
         let index = hir[function].params.position_of(parameter.idx())?;
-        let callee = find_name_of_function(hir, bound, function)?;
+        let Some(callee) = find_name_of_function(hir, bound, function) else {
+            return self.find_arguments_given_by_name(function, index);
+        };
         let references = references_to(self.references_to_bindings(), callee);
         let is_exported = self.is_exported(callee);
         let first_spreads = &mut self.memo.first_spread_arguments;
@@ -3043,7 +3202,133 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         (!written.is_empty()).then_some(ArgumentsGiven {
             written,
             others_may_call,
+            are_calls_by_name: false,
         })
+    }
+
+    fn find_arguments_given_by_name(
+        &mut self,
+        function: FnId,
+        index: usize,
+    ) -> Option<ArgumentsGiven> {
+        if !self.are_positions_only_expected(self.file) {
+            return None;
+        }
+        let methods = self.methods_by_name();
+        let name = methods.names.get(&function)?;
+        if methods.functions.get(name) != Some(&Some(function)) {
+            return None;
+        }
+        let (hir, bound) = (self.hir(), self.bound());
+        let first_spreads = &mut self.memo.first_spread_arguments;
+        let arguments =
+            methods.callees.get(name)?.iter().filter_map(|&callee| {
+                find_argument_of_call(hir, bound, first_spreads, callee, index)
+            });
+        let written: SmallVec<[ExprId; 4]> = arguments.collect();
+        (!written.is_empty()).then_some(ArgumentsGiven {
+            written,
+            others_may_call: true,
+            are_calls_by_name: true,
+        })
+    }
+
+    fn methods_by_name(&mut self) -> Rc<MethodsByName> {
+        if let Some(found) = &self.memo.methods_by_name {
+            return Rc::clone(found);
+        }
+        let (file, hir, bound) = (self.file, self.hir(), self.bound());
+        let mut methods = MethodsByName::default();
+        for number in 0..bound.fns.len() {
+            let function = FnId(number as u32);
+            let name = match bound.fns[number].owner {
+                FnOwner::Member(member) if hir[function].kind == FnKind::Method => {
+                    match hir[member].key {
+                        PropKey::Name(name) => Some(name),
+                        PropKey::None | PropKey::Private(_) | PropKey::Computed(_) => None,
+                    }
+                }
+                FnOwner::Expr(expression) => find_name_stored_under(hir, bound, expression),
+                FnOwner::None | FnOwner::Stmt(_) | FnOwner::Member(_) | FnOwner::Type(_) => None,
+            };
+            if let Some(name) = name {
+                methods.names.insert(function, name);
+                let bearer = methods.functions.entry(name).or_insert(Some(function));
+                if *bearer != Some(function) {
+                    *bearer = None;
+                }
+            }
+        }
+        let expressions = self.c.exprs_by_kind(file);
+        for &call in expressions.of(ExprTag::Call) {
+            let ExprKind::Call(site) = hir[call].kind else {
+                continue;
+            };
+            let callee = hir[site].callee;
+            if let Some((_, MemberKey::Name(name))) = hir.member_key(callee)
+                && methods
+                    .functions
+                    .get(&name)
+                    .is_some_and(|bearer| bearer.is_some())
+            {
+                methods.callees.entry(name).or_default().push(callee);
+            }
+        }
+        let methods = Rc::new(methods);
+        self.memo.methods_by_name = Some(Rc::clone(&methods));
+        methods
+    }
+
+    /// What the one method that bears the name returns, where nothing is known of the receiver.
+    fn find_named_method_result(&mut self, callee: ExprId) -> Option<TypeId> {
+        let method = self.find_method_by_name(callee)?;
+        let subject = self.find_result_subject(self.file, method)?;
+        let result = self.inferred_type(subject);
+        self.is_instance_of_class(result).then_some(result)
+    }
+
+    fn find_method_by_name(&mut self, callee: ExprId) -> Option<FnId> {
+        if !self.are_positions_only_expected(self.file) {
+            return None;
+        }
+        let Some((_, MemberKey::Name(name))) = self.hir().member_key(callee) else {
+            return None;
+        };
+        self.find_untyped_receiver(callee)?;
+        self.methods_by_name()
+            .functions
+            .get(&name)
+            .copied()
+            .flatten()
+    }
+
+    /// The class of which those calls whose operand is known hand an instance.
+    fn find_class_passed_by_name(&mut self, arguments: &[ExprId]) -> TypeId {
+        let mut only = TypeId::ANY;
+        for argument in arguments.iter().filter_map(|argument| argument.some()) {
+            let Ok(given) = self.predicted_expression_type(argument) else {
+                continue;
+            };
+            if self.c.is_any(given) || self.is_null_or_undefined_alone(given) {
+                continue;
+            }
+            if self.is_instance_of_class(given) {
+                if only != TypeId::ANY && only != given {
+                    return TypeId::ANY;
+                }
+                only = given;
+            } else if self.c.flags(given) & crate::types::tf::OBJECT == 0 {
+                return TypeId::ANY;
+            }
+        }
+        only
+    }
+
+    fn is_instance_of_class(&mut self, ty: TypeId) -> bool {
+        matches!(
+            self.type_shape(ty).map(|shape| shape.kind),
+            Ok(ShapeKind::Class(_))
+        )
     }
 
     pub fn is_given_by_written_calls_alone(&mut self, name: PatId) -> bool {
@@ -3056,6 +3341,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return (TypeId::ANY, true);
         };
         let others_may_call = given.others_may_call;
+        if given.are_calls_by_name {
+            return (self.find_class_passed_by_name(&given.written), true);
+        }
         let handed = self.compute_type_of_arguments(given.written);
         match others_may_call && self.c.is_union(handed) {
             true => (TypeId::ANY, true),
@@ -3427,6 +3715,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         };
         let callee = hir[site].callee;
         hir.member_key(callee)?;
+        let found = self.find_inferred_receiver_method_result(callee);
+        found.or_else(|| self.find_named_method_result(callee))
+    }
+
+    fn find_inferred_receiver_method_result(&mut self, callee: ExprId) -> Option<TypeId> {
         let method = self.find_type_in_inferred_receiver(callee)?;
         let mut result = None;
         for &signature in self.c.signatures(method, false).iter() {

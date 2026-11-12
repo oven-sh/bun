@@ -21,5 +21,5 @@
 # CHECK-NEXT: slot 66 "kind" {{*}}Inline offset=24
 # CHECK-NEXT: slot 67 "x" JSValue OutOfLine offset=8
 # CHECK-NEXT: slot 68 "y" {{*}}Inline
-# CHECK: layout L1 CompiledObject size=48
+# CHECK: layout L1 CompiledObject size=32
 # CHECK: slot 1 "x" JSValue OutOfLine offset=8

@@ -1,0 +1,14 @@
+# f2 = repeat
+# -- source: main.ts
+# function memo(f: (x: number) => number): (x: number) => number { const m = new Map<number, number>(); return x => { if (m.has(x)) return m.get(x)!; const v = f(x); m.set(x, v); return v; }; } const f = memo(x => x * x);
+# function repeat(turns: number): number { let n = 0; for (let k = 0; k < turns; k++) n += f(k & 31); return n; }
+# print(repeat(1000), repeat(0), repeat(40));
+# -- end of source
+# The answer of the test was a value in which the sides met, and four tests of the place stood between the search and the read. The search is asked whether it has found the key, and each answer goes on to its side.
+# RUN: walk f2:Body mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = FindKeyInMap
+# CHECK-NEXT: = Greater
+# CHECK-NEXT: Branch
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 323036 0 10556

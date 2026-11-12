@@ -18,6 +18,7 @@ use crate::lower::generator::CoroutineState;
 use crate::lower::object::ListsInside;
 use crate::lower::scope::ScopeState;
 use crate::lower::self_tail_calls::SelfTailLoop;
+use crate::lower::super_calls::CheckOfClass;
 
 /// The `require` of a site that a call of createRequire made. It requires the module, not the module object of the file.
 #[derive(Clone, Copy)]
@@ -54,6 +55,9 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     pub(in crate::lower) step_before_test: Option<bun_sema::hir::ExprId>,
     pub(in crate::lower) self_tail_loop: Option<SelfTailLoop>,
     pub(in crate::lower) suspending_arm: Option<super::super::statement::SuspendingArm>,
+    pub(in crate::lower) check_of_class: Option<CheckOfClass>,
+    /// Variables declared by `var type = typeof value` in the statement lists around the current statement, and before it.
+    pub(in crate::lower) typeof_variables: smallvec::SmallVec<[bun_sema::bind::SymbolId; 4]>,
     handler: Option<Handler>,
     position: u32,
     nesting_depth: u32,
@@ -94,6 +98,8 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
             step_before_test: None,
             self_tail_loop: None,
             suspending_arm: None,
+            check_of_class: None,
+            typeof_variables: smallvec::SmallVec::new(),
             handler: None,
             position,
             nesting_depth: 0,
@@ -120,6 +126,7 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
 
     #[inline]
     pub(crate) fn set_position(&mut self, position: u32) {
+        let position = self.file.hir.written_position(position);
         self.position = position;
         self.builder.set_position(Some(position));
     }

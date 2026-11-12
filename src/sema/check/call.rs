@@ -743,13 +743,32 @@ impl<'p, 's> Checker<'p, 's> {
         let Parent::Expr(parent) = bound.parent_of_expr(e) else {
             return None;
         };
-        let ExprKind::Call(c) = hir[parent].kind else {
-            return None;
+        let (call, c) = match hir[parent].kind {
+            ExprKind::Call(c) if hir[c].callee == e => (parent, c),
+            ExprKind::Binary { left, right, .. } if left == e => {
+                (right, hir.copied_factory_of(parent)?.call)
+            }
+            _ => return None,
         };
-        if hir[c].callee != e {
+        Some(self.iife_param_type_from_args(file, func, index, call, hir[c].args))
+    }
+
+    /// What the call behind `copy` returns, if it enters the copy.
+    pub(super) fn type_created_by_copied_factory(
+        &mut self,
+        file: FileId,
+        sequence: ExprId,
+        copy: TypeId,
+    ) -> Option<TypeId> {
+        let hir = self.hir(file);
+        // A type that the file declares goes before what a copy without types returns.
+        if !hir.is_js || hir.copied_factory_of(sequence).is_none() {
             return None;
         }
-        Some(self.iife_param_type_from_args(file, func, index, parent, hir[c].args))
+        let &[signature] = &self.signatures(copy, false)[..] else {
+            return None;
+        };
+        Some(self.sig_return(signature))
     }
 
     fn iife_param_type_from_args(

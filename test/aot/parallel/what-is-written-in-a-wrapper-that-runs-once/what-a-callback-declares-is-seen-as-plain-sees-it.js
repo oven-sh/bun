@@ -1,8 +1,8 @@
 // What a callback declares lives as long as the closures that it made: variables stored later, a dead zone met through a cycle of two wrappers, a callback that throws half way,
 // a function that is called while its callback still runs, private names, accessors, static blocks.
-// The scope of a callback that runs at most once is never made: its variables lie in words of the instance. Two callbacks lean on "once" and stop at a second entry.
+// The names of a bundle's module bodies are variables of modules. The scope of another callback that runs at most once is never made: its variables lie in words of the instance. Three callbacks lean on "once" and stop at a second entry.
 // STATISTIC: EnvironmentsPromotedToVariables >= 1
-// COUNT: operation:operationAOTEnterBodyThatRunsOnce = 2
+// COUNT: operation:operationAOTEnterBodyThatRunsOnce = 3
 "use strict";
 var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
@@ -49,3 +49,5 @@ initShape(); initShape();
 const square = new Shape(4);
 square.sides = 3;
 console.log(square.sides, Shape.made, shapes, Shape.is(square), Shape.is({}), square instanceof Shape, Object.getOwnPropertyNames(Shape.prototype).join());
+const counter = (() => { let counted = 0; return { next: () => ++counted, word: () => "counted " + counted }; })();
+console.log(counter.next(), counter.next(), counter.word());

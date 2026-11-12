@@ -80,13 +80,7 @@ describe.concurrent("one reason to keep more", () => {
 describe.concurrent("a key that is proven to be one symbol keeps what a name of the program's own keeps", () => {
   const key = `Symbol.for("made.up")`;
   eachRow([
-    [
-      "a name of the program's own is read off the global object",
-      "main.mjs",
-      `console.log(globalThis.madeUp);`,
-      10,
-      "",
-    ],
+    ["a name of the program's own is read off the global object", "main.mjs", `console.log(globalThis.madeUp);`, 6, ""],
     ["a registered symbol is read", "main.mjs", `console.log(globalThis[${key}]);`, 10, ""],
     ["a registered symbol is stored under", "main.mjs", `globalThis[${key}] = 1;`, 5, ""],
     ["a registered symbol is defined", "main.mjs", `Object.defineProperty(globalThis, ${key}, { value: 1 });`, 10, ""],
@@ -116,7 +110,7 @@ describe.concurrent("an alias of the global object that a closure captures", () 
       "is read under a name of the program's own",
       "main.mjs",
       outer("() => g.madeUp") + `console.log(outer()());`,
-      10,
+      6,
       "",
     ],
     [

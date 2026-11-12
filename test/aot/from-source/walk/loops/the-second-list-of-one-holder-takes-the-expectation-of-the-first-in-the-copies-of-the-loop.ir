@@ -6,6 +6,7 @@
 # print(sum([].length + 1));
 # -- end of source
 # RUN(COUNT): compile UnrolledLoopsForIndexingType mechanisms=all
-# COUNT: statistic UnrolledLoopsForIndexingType 2
+# The two lists are asked together: one copy for the kind of both.
+# COUNT: statistic UnrolledLoopsForIndexingType 1
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 43.5

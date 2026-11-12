@@ -1,0 +1,13 @@
+# -- source: main.js
+# function power(b, e, acc) { if (e === 0) return acc; if (e % 2 === 1) return power(b * b % 1009, (e - 1) / 2, acc * b % 1009); return power(b * b % 1009, e / 2, acc); }
+# print(power(3, 1000, 1), power(5, 77, 1), power(7, 2, 1));
+# -- end of source
+# LIBRARY: own
+# The remainder of a product of counts is proven to be a count, but the walk cannot show it. The function calls itself directly and proves the number at the call.
+# RUN: walk f1 mechanisms=all
+# CHECK: code f1:Body
+# CHECK: CallDirect {{*}} function=f1
+# CHECK: CallDirect {{*}} function=f1
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 404 200 49
+# ANSWERS-NEXT: exited with 0

@@ -424,6 +424,14 @@ declare global {
       $resumeUnlessFlowing?(asksWhetherReadable: boolean): void;
     }
 
+    /** A stream that a program passes to a response in place of a connection. It may not be a `Duplex`. */
+    interface SubstituteSocket extends Writable, Omit<HttpSocket, keyof Writable> {
+      _readableState: ReadableState;
+      allowHalfOpen: boolean;
+      get readable(): boolean;
+      set readable(value: boolean);
+    }
+
     /** The server of a connection, as `node:http` reads it: an `http.Server`, or a `net.Server` (an `Http2SecureServer` that allows HTTP/1, a server whose sockets are handed on) that has some of an `http.Server`'s options or none. */
     interface HttpSocketServer extends EventEmitter {
       timeout?: number;
@@ -456,7 +464,7 @@ declare global {
       [kNeedDrain]: boolean;
       [kErrored]: Error | null | undefined;
       [kHighWaterMark]: number;
-      [kSocket]: HttpSocket | null;
+      [kSocket]: HttpSocket | SubstituteSocket | null;
       [kRejectNonStandardBodyWrites]: boolean | undefined;
       [kUniqueHeaders]?: Set<string> | null;
       /** Of a `ServerResponse`. */
@@ -472,7 +480,7 @@ declare global {
       [kHandle]: NodeHTTPResponse | null | undefined;
       [kPendingCallbacks]: HttpWriteCallback[];
       /** `null` while the response waits for its turn on the connection. */
-      [fakeSocketSymbol]: HttpSocket | null | undefined;
+      [fakeSocketSymbol]: HttpSocket | SubstituteSocket | null | undefined;
       [kCloseCallback]: (() => void) | undefined;
     }
 

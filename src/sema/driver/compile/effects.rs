@@ -270,7 +270,9 @@ impl ProgramOrigins<'_, '_> {
             return false;
         };
         let hir = files.hir(file);
-        !diagnostic.has_undefined_range && hir.is_in_known_evaluation(diagnostic.start)
+        !diagnostic.has_undefined_range
+            && (hir.is_in_known_evaluation(diagnostic.start)
+                || hir.is_in_copied_factory(diagnostic.start))
     }
 
     fn is_in_jsdoc_comment(&self, diagnostic: &Diagnostic) -> bool {

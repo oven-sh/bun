@@ -1,0 +1,13 @@
+# -- source: main.mjs
+# class Client { constructor(base) { this.base = base; } request(method, data) { return this.base + method.length + data; } }
+# ["get", "delete"].forEach(function (method) { Client.prototype[method] = function (data) { return this.request(method, data); }; });
+# function run(turns) { const client = new Client(1); let sum = 0; for (let i = 0; i < turns; i++) sum += client.get(i) + client.delete(1); return sum; }
+# print(run(4), run(0));
+# -- end of source
+# Nobody else has the list or the callback: the methods lie under its texts, and the class stays in sight.
+# RUN: link mechanisms=all
+# CHECK: on-prototype L0 "{{*}}" function=f
+# CHECK: on-prototype L0 "{{*}}" function=f
+# CHECK: layout L0 changes=[]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 54 0

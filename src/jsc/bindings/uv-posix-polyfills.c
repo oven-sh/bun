@@ -7,6 +7,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+#include <time.h>
+
+#if defined(__APPLE__) && defined(__MACH__)
+#include <mach/mach.h>
+#else
+#include <semaphore.h>
+#endif
 
 // libuv does the annoying thing of #undef'ing these
 #include <errno.h>
@@ -15,6 +22,8 @@
 #else
 #define UV__ERR(x) (x)
 #endif
+
+#define UV__NANOSEC ((uint64_t)1e9)
 
 #if defined(PATH_MAX)
 #define UV__PATH_MAX PATH_MAX
@@ -175,6 +184,461 @@ UV_EXTERN int uv_mutex_trylock(uv_mutex_t* mutex)
 UV_EXTERN void uv_mutex_unlock(uv_mutex_t* mutex)
 {
     if (pthread_mutex_unlock(mutex))
+        abort();
+}
+
+// Copy-pasted from libuv
+UV_EXTERN int uv_rwlock_init(uv_rwlock_t* rwlock)
+{
+    return UV__ERR(pthread_rwlock_init(rwlock, NULL));
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void uv_rwlock_destroy(uv_rwlock_t* rwlock)
+{
+    if (pthread_rwlock_destroy(rwlock))
+        abort();
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void uv_rwlock_rdlock(uv_rwlock_t* rwlock)
+{
+    if (pthread_rwlock_rdlock(rwlock))
+        abort();
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void uv_rwlock_rdunlock(uv_rwlock_t* rwlock)
+{
+    if (pthread_rwlock_unlock(rwlock))
+        abort();
+}
+
+// Copy-pasted from libuv
+UV_EXTERN int uv_rwlock_tryrdlock(uv_rwlock_t* rwlock)
+{
+    int err;
+
+    err = pthread_rwlock_tryrdlock(rwlock);
+    if (err) {
+        if (err != EBUSY && err != EAGAIN)
+            abort();
+        return UV_EBUSY;
+    }
+
+    return 0;
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void uv_rwlock_wrlock(uv_rwlock_t* rwlock)
+{
+    if (pthread_rwlock_wrlock(rwlock))
+        abort();
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void uv_rwlock_wrunlock(uv_rwlock_t* rwlock)
+{
+    if (pthread_rwlock_unlock(rwlock))
+        abort();
+}
+
+// Copy-pasted from libuv
+UV_EXTERN int uv_rwlock_trywrlock(uv_rwlock_t* rwlock)
+{
+    int err;
+
+    err = pthread_rwlock_trywrlock(rwlock);
+    if (err) {
+        if (err != EBUSY && err != EAGAIN)
+            abort();
+        return UV_EBUSY;
+    }
+
+    return 0;
+}
+
+#if defined(__APPLE__) && defined(__MACH__)
+
+// Copy-pasted from libuv
+UV_EXTERN int uv_sem_init(uv_sem_t* sem, unsigned int value)
+{
+    kern_return_t err;
+
+    err = semaphore_create(mach_task_self(), sem, SYNC_POLICY_FIFO, value);
+    if (err == KERN_SUCCESS)
+        return 0;
+    if (err == KERN_INVALID_ARGUMENT)
+        return UV_EINVAL;
+    if (err == KERN_RESOURCE_SHORTAGE)
+        return UV_ENOMEM;
+
+    abort();
+    return UV_EINVAL; /* Satisfy the compiler. */
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void uv_sem_destroy(uv_sem_t* sem)
+{
+    if (semaphore_destroy(mach_task_self(), *sem))
+        abort();
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void uv_sem_post(uv_sem_t* sem)
+{
+    if (semaphore_signal(*sem))
+        abort();
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void uv_sem_wait(uv_sem_t* sem)
+{
+    int r;
+
+    do
+        r = semaphore_wait(*sem);
+    while (r == KERN_ABORTED);
+
+    if (r != KERN_SUCCESS)
+        abort();
+}
+
+// Copy-pasted from libuv
+UV_EXTERN int uv_sem_trywait(uv_sem_t* sem)
+{
+    mach_timespec_t interval;
+    kern_return_t err;
+
+    interval.tv_sec = 0;
+    interval.tv_nsec = 0;
+
+    err = semaphore_timedwait(*sem, interval);
+    if (err == KERN_SUCCESS)
+        return 0;
+    if (err == KERN_OPERATION_TIMED_OUT)
+        return UV_EAGAIN;
+
+    abort();
+    return UV_EINVAL; /* Satisfy the compiler. */
+}
+
+#else /* !(defined(__APPLE__) && defined(__MACH__)) */
+
+// Copy-pasted from libuv (the sem_t path; the custom semaphore for glibc
+// older than 2.21 is not needed, bun requires a newer glibc)
+UV_EXTERN int uv_sem_init(uv_sem_t* sem, unsigned int value)
+{
+    if (sem_init(sem, 0, value))
+        return UV__ERR(errno);
+    return 0;
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void uv_sem_destroy(uv_sem_t* sem)
+{
+    if (sem_destroy(sem))
+        abort();
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void uv_sem_post(uv_sem_t* sem)
+{
+    if (sem_post(sem))
+        abort();
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void uv_sem_wait(uv_sem_t* sem)
+{
+    int r;
+
+    do
+        r = sem_wait(sem);
+    while (r == -1 && errno == EINTR);
+
+    if (r)
+        abort();
+}
+
+// Copy-pasted from libuv
+UV_EXTERN int uv_sem_trywait(uv_sem_t* sem)
+{
+    int r;
+
+    do
+        r = sem_trywait(sem);
+    while (r == -1 && errno == EINTR);
+
+    if (r) {
+        if (errno == EAGAIN)
+            return UV_EAGAIN;
+        abort();
+    }
+
+    return 0;
+}
+
+#endif /* defined(__APPLE__) && defined(__MACH__) */
+
+// Copy-pasted from libuv
+UV_EXTERN int uv_cond_init(uv_cond_t* cond)
+{
+#if defined(__APPLE__) && defined(__MACH__)
+    return UV__ERR(pthread_cond_init(cond, NULL));
+#else
+    pthread_condattr_t attr;
+    int err;
+
+    err = pthread_condattr_init(&attr);
+    if (err)
+        return UV__ERR(err);
+
+    err = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+    if (err)
+        goto error2;
+
+    err = pthread_cond_init(cond, &attr);
+    if (err)
+        goto error2;
+
+    err = pthread_condattr_destroy(&attr);
+    if (err)
+        goto error;
+
+    return 0;
+
+error:
+    pthread_cond_destroy(cond);
+error2:
+    pthread_condattr_destroy(&attr);
+    return UV__ERR(err);
+#endif
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void uv_cond_destroy(uv_cond_t* cond)
+{
+#if defined(__APPLE__) && defined(__MACH__)
+    /* It has been reported that destroying condition variables that have been
+     * signalled but not waited on can sometimes result in application crashes.
+     * See https://codereview.chromium.org/1323293005.
+     */
+    pthread_mutex_t mutex;
+    struct timespec ts;
+    int err;
+
+    if (pthread_mutex_init(&mutex, NULL))
+        abort();
+
+    if (pthread_mutex_lock(&mutex))
+        abort();
+
+    ts.tv_sec = 0;
+    ts.tv_nsec = 1;
+
+    err = pthread_cond_timedwait_relative_np(cond, &mutex, &ts);
+    if (err != 0 && err != ETIMEDOUT)
+        abort();
+
+    if (pthread_mutex_unlock(&mutex))
+        abort();
+
+    if (pthread_mutex_destroy(&mutex))
+        abort();
+#endif /* defined(__APPLE__) && defined(__MACH__) */
+
+    if (pthread_cond_destroy(cond))
+        abort();
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void uv_cond_signal(uv_cond_t* cond)
+{
+    if (pthread_cond_signal(cond))
+        abort();
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void uv_cond_broadcast(uv_cond_t* cond)
+{
+    if (pthread_cond_broadcast(cond))
+        abort();
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void uv_cond_wait(uv_cond_t* cond, uv_mutex_t* mutex)
+{
+    if (pthread_cond_wait(cond, mutex))
+        abort();
+}
+
+// Copy-pasted from libuv. `timeout` is relative, in nanoseconds.
+UV_EXTERN int uv_cond_timedwait(uv_cond_t* cond, uv_mutex_t* mutex, uint64_t timeout)
+{
+    int r;
+    struct timespec ts;
+
+#if defined(__APPLE__) && defined(__MACH__)
+    ts.tv_sec = timeout / UV__NANOSEC;
+    ts.tv_nsec = timeout % UV__NANOSEC;
+    r = pthread_cond_timedwait_relative_np(cond, mutex, &ts);
+#else
+    timeout += uv__hrtime(UV_CLOCK_PRECISE);
+    ts.tv_sec = timeout / UV__NANOSEC;
+    ts.tv_nsec = timeout % UV__NANOSEC;
+    r = pthread_cond_timedwait(cond, mutex, &ts);
+#endif
+
+    if (r == 0)
+        return 0;
+
+    if (r == ETIMEDOUT)
+        return UV_ETIMEDOUT;
+
+    abort();
+    return UV_EINVAL; /* Satisfy the compiler. */
+}
+
+#if defined(__APPLE__) || !defined(PTHREAD_BARRIER_SERIAL_THREAD)
+
+// Copy-pasted from libuv. The guard matches uv_barrier_t's in uv/unix.h.
+UV_EXTERN int uv_barrier_init(uv_barrier_t* barrier, unsigned int count)
+{
+    struct _uv_barrier* b;
+    int rc;
+
+    if (barrier == NULL || count == 0)
+        return UV_EINVAL;
+
+    b = malloc(sizeof(*b));
+    if (b == NULL)
+        return UV_ENOMEM;
+
+    b->in = 0;
+    b->out = 0;
+    b->threshold = count;
+
+    rc = uv_mutex_init(&b->mutex);
+    if (rc != 0)
+        goto error2;
+
+    rc = uv_cond_init(&b->cond);
+    if (rc != 0)
+        goto error;
+
+    barrier->b = b;
+    return 0;
+
+error:
+    uv_mutex_destroy(&b->mutex);
+error2:
+    free(b);
+    return rc;
+}
+
+// Copy-pasted from libuv
+UV_EXTERN int uv_barrier_wait(uv_barrier_t* barrier)
+{
+    struct _uv_barrier* b;
+    int last;
+
+    if (barrier == NULL || barrier->b == NULL)
+        return UV_EINVAL;
+
+    b = barrier->b;
+    uv_mutex_lock(&b->mutex);
+
+    if (++b->in == b->threshold) {
+        b->in = 0;
+        b->out = b->threshold;
+        uv_cond_signal(&b->cond);
+    } else {
+        do
+            uv_cond_wait(&b->cond, &b->mutex);
+        while (b->in != 0);
+    }
+
+    last = (--b->out == 0);
+    if (!last)
+        uv_cond_signal(&b->cond); /* Not needed for last thread. */
+
+    uv_mutex_unlock(&b->mutex);
+    return last;
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void uv_barrier_destroy(uv_barrier_t* barrier)
+{
+    struct _uv_barrier* b;
+
+    b = barrier->b;
+    uv_mutex_lock(&b->mutex);
+
+    if (b->in != 0 || b->out != 0)
+        abort();
+
+    uv_mutex_unlock(&b->mutex);
+    uv_mutex_destroy(&b->mutex);
+    uv_cond_destroy(&b->cond);
+
+    free(b);
+    barrier->b = NULL;
+}
+
+#else
+
+// Copy-pasted from libuv
+UV_EXTERN int uv_barrier_init(uv_barrier_t* barrier, unsigned int count)
+{
+    return UV__ERR(pthread_barrier_init(barrier, NULL, count));
+}
+
+// Copy-pasted from libuv
+UV_EXTERN int uv_barrier_wait(uv_barrier_t* barrier)
+{
+    int rc;
+
+    rc = pthread_barrier_wait(barrier);
+    if (rc != 0)
+        if (rc != PTHREAD_BARRIER_SERIAL_THREAD)
+            abort();
+
+    return rc == PTHREAD_BARRIER_SERIAL_THREAD;
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void uv_barrier_destroy(uv_barrier_t* barrier)
+{
+    if (pthread_barrier_destroy(barrier))
+        abort();
+}
+
+#endif
+
+// Copy-pasted from libuv
+UV_EXTERN int uv_key_create(uv_key_t* key)
+{
+    return UV__ERR(pthread_key_create(key, NULL));
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void uv_key_delete(uv_key_t* key)
+{
+    if (pthread_key_delete(*key))
+        abort();
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void* uv_key_get(uv_key_t* key)
+{
+    return pthread_getspecific(*key);
+}
+
+// Copy-pasted from libuv
+UV_EXTERN void uv_key_set(uv_key_t* key, void* value)
+{
+    if (pthread_setspecific(*key, value))
         abort();
 }
 

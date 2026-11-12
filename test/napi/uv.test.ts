@@ -80,6 +80,60 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(() => nativeModule.testMutexTrylock()).not.toThrow();
   });
 
+  test("uv_cond: wait, timedwait, signal and broadcast", () => {
+    const result = nativeModule.testCond();
+    expect(result).toEqual({
+      initRc: 0,
+      timedOutRc: result.UV_ETIMEDOUT,
+      signaledRc: 0,
+      broadcastWoken: 2,
+      UV_ETIMEDOUT: -constants.errno.ETIMEDOUT,
+    });
+  });
+
+  test("uv_rwlock: readers share, a writer excludes", () => {
+    const result = nativeModule.testRwlock();
+    expect(result).toEqual({
+      initRc: 0,
+      tryrdWhileRead: 0,
+      trywrWhileRead: result.UV_EBUSY,
+      tryrdWhileWrite: result.UV_EBUSY,
+      trywrAfterUnlock: 0,
+      UV_EBUSY: -constants.errno.EBUSY,
+    });
+  });
+
+  test("uv_sem: trywait, post and wait", () => {
+    const result = nativeModule.testSem();
+    expect(result).toEqual({
+      initRc: 0,
+      trywaitEmpty: result.UV_EAGAIN,
+      trywaitAfterPost: 0,
+      waited: 1,
+      UV_EAGAIN: -constants.errno.EAGAIN,
+    });
+  });
+
+  test("uv_barrier: one thread is serial, every thread passes", () => {
+    const result = nativeModule.testBarrier();
+    expect(result).toEqual({
+      initRc: 0,
+      zeroCountRc: result.UV_EINVAL,
+      serial: 1,
+      passed: 3,
+      UV_EINVAL: -constants.errno.EINVAL,
+    });
+  });
+
+  test("uv_key: a value is per thread", () => {
+    expect(nativeModule.testKey()).toEqual({
+      createRc: 0,
+      beforeSetIsNull: 1,
+      afterSet: 42,
+      otherThreadIsNull: 1,
+    });
+  });
+
   test("process IDs", () => {
     const result = nativeModule.testProcessIds();
     expect(result).toHaveProperty("pid");

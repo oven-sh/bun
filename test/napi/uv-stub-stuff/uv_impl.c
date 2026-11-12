@@ -200,7 +200,8 @@ static int tty_reset_unexpected;
 static void *tty_reset_hammer(void *arg) {
   for (int i = 0; i < TTY_RESET_ITERATIONS; i++) {
     int result = uv_tty_reset_mode();
-    if (result == 0) continue;
+    if (result == 0)
+      continue;
     pthread_mutex_lock(&tty_reset_counts);
     if (result == UV_EBUSY)
       tty_reset_busy++;
@@ -1175,6 +1176,223 @@ static napi_value test_now(napi_env env, napi_callback_info info) {
   return result;
 }
 
+// uv_cond_*: a helper thread signals a condition the main thread waits on.
+struct cond_state {
+  uv_mutex_t mutex;
+  uv_cond_t cond;
+  int ready;
+  int woken;
+};
+
+static void *cond_signal_after(void *arg) {
+  struct cond_state *st = arg;
+  usleep(2000);
+  uv_mutex_lock(&st->mutex);
+  st->ready = 1;
+  uv_cond_signal(&st->cond);
+  uv_mutex_unlock(&st->mutex);
+  return NULL;
+}
+
+static void *cond_wait_for_broadcast(void *arg) {
+  struct cond_state *st = arg;
+  uv_mutex_lock(&st->mutex);
+  while (!st->ready)
+    uv_cond_wait(&st->cond, &st->mutex);
+  st->woken++;
+  uv_mutex_unlock(&st->mutex);
+  return NULL;
+}
+
+// testCond() returns { initRc, waited, timedOutRc, signaledRc, broadcastWoken,
+// UV_ETIMEDOUT }.
+static napi_value test_cond(napi_env env, napi_callback_info info) {
+  struct cond_state st;
+  pthread_t thread, waiters[2];
+  int init_rc, timed_out_rc, signaled_rc;
+
+  uv_mutex_init(&st.mutex);
+  init_rc = uv_cond_init(&st.cond);
+  st.ready = 0;
+  st.woken = 0;
+
+  // wait: blocks until the helper thread signals.
+  pthread_create(&thread, NULL, cond_signal_after, &st);
+  uv_mutex_lock(&st.mutex);
+  while (!st.ready)
+    uv_cond_wait(&st.cond, &st.mutex);
+  uv_mutex_unlock(&st.mutex);
+  pthread_join(thread, NULL);
+
+  // timedwait with nobody signaling: times out (1ms, relative nanoseconds).
+  uv_mutex_lock(&st.mutex);
+  timed_out_rc = uv_cond_timedwait(&st.cond, &st.mutex, 1000000);
+  uv_mutex_unlock(&st.mutex);
+
+  // timedwait that is signaled before the (long) timeout: returns 0.
+  st.ready = 0;
+  pthread_create(&thread, NULL, cond_signal_after, &st);
+  uv_mutex_lock(&st.mutex);
+  signaled_rc = 0;
+  while (!st.ready && signaled_rc == 0)
+    signaled_rc = uv_cond_timedwait(&st.cond, &st.mutex, 30ull * 1000000000ull);
+  uv_mutex_unlock(&st.mutex);
+  pthread_join(thread, NULL);
+
+  // broadcast wakes every waiter.
+  st.ready = 0;
+  for (int i = 0; i < 2; i++)
+    pthread_create(&waiters[i], NULL, cond_wait_for_broadcast, &st);
+  usleep(2000);
+  uv_mutex_lock(&st.mutex);
+  st.ready = 1;
+  uv_cond_broadcast(&st.cond);
+  uv_mutex_unlock(&st.mutex);
+  for (int i = 0; i < 2; i++)
+    pthread_join(waiters[i], NULL);
+
+  uv_cond_destroy(&st.cond);
+  uv_mutex_destroy(&st.mutex);
+
+  napi_value result;
+  napi_create_object(env, &result);
+  set_int32(env, result, "initRc", init_rc);
+  set_int32(env, result, "timedOutRc", timed_out_rc);
+  set_int32(env, result, "signaledRc", signaled_rc);
+  set_int32(env, result, "broadcastWoken", st.woken);
+  set_int32(env, result, "UV_ETIMEDOUT", UV_ETIMEDOUT);
+  return result;
+}
+
+// testRwlock() returns { initRc, tryrdWhileRead, trywrWhileRead,
+// tryrdWhileWrite, trywrAfterUnlock, UV_EBUSY }.
+static napi_value test_rwlock(napi_env env, napi_callback_info info) {
+  uv_rwlock_t lock;
+  int init_rc = uv_rwlock_init(&lock);
+
+  uv_rwlock_rdlock(&lock);
+  int tryrd_while_read = uv_rwlock_tryrdlock(&lock);
+  int trywr_while_read = uv_rwlock_trywrlock(&lock);
+  uv_rwlock_rdunlock(&lock);
+  uv_rwlock_rdunlock(&lock);
+
+  uv_rwlock_wrlock(&lock);
+  int tryrd_while_write = uv_rwlock_tryrdlock(&lock);
+  uv_rwlock_wrunlock(&lock);
+
+  int trywr_after_unlock = uv_rwlock_trywrlock(&lock);
+  uv_rwlock_wrunlock(&lock);
+  uv_rwlock_destroy(&lock);
+
+  napi_value result;
+  napi_create_object(env, &result);
+  set_int32(env, result, "initRc", init_rc);
+  set_int32(env, result, "tryrdWhileRead", tryrd_while_read);
+  set_int32(env, result, "trywrWhileRead", trywr_while_read);
+  set_int32(env, result, "tryrdWhileWrite", tryrd_while_write);
+  set_int32(env, result, "trywrAfterUnlock", trywr_after_unlock);
+  set_int32(env, result, "UV_EBUSY", UV_EBUSY);
+  return result;
+}
+
+static void *sem_post_after(void *arg) {
+  usleep(2000);
+  uv_sem_post(arg);
+  return NULL;
+}
+
+// testSem() returns { initRc, trywaitEmpty, trywaitAfterPost, waited,
+// UV_EAGAIN }.
+static napi_value test_sem(napi_env env, napi_callback_info info) {
+  uv_sem_t sem;
+  pthread_t thread;
+  int init_rc = uv_sem_init(&sem, 0);
+  int trywait_empty = uv_sem_trywait(&sem);
+  uv_sem_post(&sem);
+  int trywait_after_post = uv_sem_trywait(&sem);
+
+  // wait: blocks until the helper thread posts.
+  pthread_create(&thread, NULL, sem_post_after, &sem);
+  uv_sem_wait(&sem);
+  pthread_join(thread, NULL);
+  uv_sem_destroy(&sem);
+
+  napi_value result;
+  napi_create_object(env, &result);
+  set_int32(env, result, "initRc", init_rc);
+  set_int32(env, result, "trywaitEmpty", trywait_empty);
+  set_int32(env, result, "trywaitAfterPost", trywait_after_post);
+  set_int32(env, result, "waited", 1);
+  set_int32(env, result, "UV_EAGAIN", UV_EAGAIN);
+  return result;
+}
+
+struct barrier_state {
+  uv_barrier_t barrier;
+  _Atomic int serial;
+  _Atomic int passed;
+};
+
+static void *barrier_wait_thread(void *arg) {
+  struct barrier_state *st = arg;
+  if (uv_barrier_wait(&st->barrier))
+    st->serial++;
+  st->passed++;
+  return NULL;
+}
+
+// testBarrier() returns { initRc, zeroCountRc, serial, passed, UV_EINVAL }.
+static napi_value test_barrier(napi_env env, napi_callback_info info) {
+  struct barrier_state st;
+  uv_barrier_t unused;
+  pthread_t threads[2];
+  int zero_count_rc = uv_barrier_init(&unused, 0);
+  int init_rc = uv_barrier_init(&st.barrier, 3);
+  st.serial = 0;
+  st.passed = 0;
+
+  for (int i = 0; i < 2; i++)
+    pthread_create(&threads[i], NULL, barrier_wait_thread, &st);
+  barrier_wait_thread(&st);
+  for (int i = 0; i < 2; i++)
+    pthread_join(threads[i], NULL);
+  uv_barrier_destroy(&st.barrier);
+
+  napi_value result;
+  napi_create_object(env, &result);
+  set_int32(env, result, "initRc", init_rc);
+  set_int32(env, result, "zeroCountRc", zero_count_rc);
+  set_int32(env, result, "serial", st.serial);
+  set_int32(env, result, "passed", st.passed);
+  set_int32(env, result, "UV_EINVAL", UV_EINVAL);
+  return result;
+}
+
+static void *key_get_in_thread(void *arg) { return uv_key_get(arg); }
+
+// testKey() returns { createRc, beforeSetIsNull, afterSet, otherThreadIsNull }.
+static napi_value test_key(napi_env env, napi_callback_info info) {
+  uv_key_t key;
+  pthread_t thread;
+  void *other = (void *)1;
+  int value = 42;
+  int create_rc = uv_key_create(&key);
+  int before_set_is_null = uv_key_get(&key) == NULL;
+  uv_key_set(&key, &value);
+  int *after = uv_key_get(&key);
+  pthread_create(&thread, NULL, key_get_in_thread, &key);
+  pthread_join(thread, &other);
+  uv_key_delete(&key);
+
+  napi_value result;
+  napi_create_object(env, &result);
+  set_int32(env, result, "createRc", create_rc);
+  set_int32(env, result, "beforeSetIsNull", before_set_is_null);
+  set_int32(env, result, "afterSet", after ? *after : -1);
+  set_int32(env, result, "otherThreadIsNull", other == NULL);
+  return result;
+}
+
 napi_value Init(napi_env env, napi_value exports) {
   // Register all test functions
   napi_value fn;
@@ -1278,9 +1496,23 @@ napi_value Init(napi_env env, napi_value exports) {
   napi_create_function(env, NULL, 0, test_tty_reset_mode, NULL, &fn);
   napi_set_named_property(env, exports, "testTtyResetMode", fn);
 
-  napi_create_function(env, NULL, 0, test_tty_reset_mode_concurrent, NULL,
-                       &fn);
+  napi_create_function(env, NULL, 0, test_tty_reset_mode_concurrent, NULL, &fn);
   napi_set_named_property(env, exports, "testTtyResetModeConcurrent", fn);
+
+  napi_create_function(env, NULL, 0, test_cond, NULL, &fn);
+  napi_set_named_property(env, exports, "testCond", fn);
+
+  napi_create_function(env, NULL, 0, test_rwlock, NULL, &fn);
+  napi_set_named_property(env, exports, "testRwlock", fn);
+
+  napi_create_function(env, NULL, 0, test_sem, NULL, &fn);
+  napi_set_named_property(env, exports, "testSem", fn);
+
+  napi_create_function(env, NULL, 0, test_barrier, NULL, &fn);
+  napi_set_named_property(env, exports, "testBarrier", fn);
+
+  napi_create_function(env, NULL, 0, test_key, NULL, &fn);
+  napi_set_named_property(env, exports, "testKey", fn);
 
   return exports;
 }

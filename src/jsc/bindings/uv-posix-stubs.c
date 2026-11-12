@@ -26,24 +26,6 @@ UV_EXTERN int uv_backend_timeout(const uv_loop_t*)
     __builtin_unreachable();
 }
 
-UV_EXTERN void uv_barrier_destroy(uv_barrier_t* barrier)
-{
-    __bun_throw_not_implemented("uv_barrier_destroy");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_barrier_init(uv_barrier_t* barrier, unsigned int count)
-{
-    __bun_throw_not_implemented("uv_barrier_init");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_barrier_wait(uv_barrier_t* barrier)
-{
-    __bun_throw_not_implemented("uv_barrier_wait");
-    __builtin_unreachable();
-}
-
 UV_EXTERN uv_buf_t uv_buf_init(char* base, unsigned int len)
 {
     __bun_throw_not_implemented("uv_buf_init");
@@ -59,44 +41,6 @@ UV_EXTERN int uv_chdir(const char* dir)
 UV_EXTERN int uv_clock_gettime(uv_clock_id clock_id, uv_timespec64_t* ts)
 {
     __bun_throw_not_implemented("uv_clock_gettime");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_cond_broadcast(uv_cond_t* cond)
-{
-    __bun_throw_not_implemented("uv_cond_broadcast");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_cond_destroy(uv_cond_t* cond)
-{
-    __bun_throw_not_implemented("uv_cond_destroy");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_cond_init(uv_cond_t* cond)
-{
-    __bun_throw_not_implemented("uv_cond_init");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_cond_signal(uv_cond_t* cond)
-{
-    __bun_throw_not_implemented("uv_cond_signal");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_cond_timedwait(uv_cond_t* cond,
-    uv_mutex_t* mutex,
-    uint64_t timeout)
-{
-    __bun_throw_not_implemented("uv_cond_timedwait");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_cond_wait(uv_cond_t* cond, uv_mutex_t* mutex)
-{
-    __bun_throw_not_implemented("uv_cond_wait");
     __builtin_unreachable();
 }
 
@@ -803,30 +747,6 @@ UV_EXTERN int uv_is_writable(const uv_stream_t* handle)
     __builtin_unreachable();
 }
 
-UV_EXTERN int uv_key_create(uv_key_t* key)
-{
-    __bun_throw_not_implemented("uv_key_create");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_key_delete(uv_key_t* key)
-{
-    __bun_throw_not_implemented("uv_key_delete");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void* uv_key_get(uv_key_t* key)
-{
-    __bun_throw_not_implemented("uv_key_get");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_key_set(uv_key_t* key, void* value)
-{
-    __bun_throw_not_implemented("uv_key_set");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_kill(int pid, int signum)
 {
     __bun_throw_not_implemented("uv_kill");
@@ -1199,84 +1119,6 @@ UV_EXTERN int uv_resident_set_memory(size_t* rss)
 UV_EXTERN int uv_run(uv_loop_t*, uv_run_mode mode)
 {
     __bun_throw_not_implemented("uv_run");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_rwlock_destroy(uv_rwlock_t* rwlock)
-{
-    __bun_throw_not_implemented("uv_rwlock_destroy");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_rwlock_init(uv_rwlock_t* rwlock)
-{
-    __bun_throw_not_implemented("uv_rwlock_init");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_rwlock_rdlock(uv_rwlock_t* rwlock)
-{
-    __bun_throw_not_implemented("uv_rwlock_rdlock");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_rwlock_rdunlock(uv_rwlock_t* rwlock)
-{
-    __bun_throw_not_implemented("uv_rwlock_rdunlock");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_rwlock_tryrdlock(uv_rwlock_t* rwlock)
-{
-    __bun_throw_not_implemented("uv_rwlock_tryrdlock");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_rwlock_trywrlock(uv_rwlock_t* rwlock)
-{
-    __bun_throw_not_implemented("uv_rwlock_trywrlock");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_rwlock_wrlock(uv_rwlock_t* rwlock)
-{
-    __bun_throw_not_implemented("uv_rwlock_wrlock");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_rwlock_wrunlock(uv_rwlock_t* rwlock)
-{
-    __bun_throw_not_implemented("uv_rwlock_wrunlock");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_sem_destroy(uv_sem_t* sem)
-{
-    __bun_throw_not_implemented("uv_sem_destroy");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_sem_init(uv_sem_t* sem, unsigned int value)
-{
-    __bun_throw_not_implemented("uv_sem_init");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_sem_post(uv_sem_t* sem)
-{
-    __bun_throw_not_implemented("uv_sem_post");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_sem_trywait(uv_sem_t* sem)
-{
-    __bun_throw_not_implemented("uv_sem_trywait");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_sem_wait(uv_sem_t* sem)
-{
-    __bun_throw_not_implemented("uv_sem_wait");
     __builtin_unreachable();
 }
 

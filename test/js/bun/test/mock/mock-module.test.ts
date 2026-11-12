@@ -7931,6 +7931,33 @@ describe.concurrent("a module whose top-level code mocks through a function of a
       viaPreload,
     );
   });
+
+  // The function of register.cjs gets the module object of helper.cjs and the filename behind it, as the body of helper.cjs does. It is of another file.
+  test("leaves a CommonJS module loaded where a function of another file is handed its module object and filename for a hook of the test file", async () => {
+    await expectFixturesToPass(
+      {
+        ...dep,
+        ...preloaded(),
+        "helper.cjs": `
+          ${count("helper")}
+          exports.self = module;
+        `,
+        "register.cjs": `
+          const { join } = require("node:path");
+          ${count("register")}
+          module.exports = (exports, require, module, __filename, __dirname) => {
+            globalThis.mockModule(join(__dirname, "dep.ts"), ${factory});
+          };
+        `,
+        ...testFiles(
+          `import { beforeAll } from "bun:test"; import helper from "./helper.cjs"; import register from "./register.cjs"; beforeAll(() => { register(null, null, helper.self, helper.self.filename, import.meta.dir); });`,
+          { wrapper: 1, helper: 1, register: 1 },
+        ),
+      },
+      3,
+      viaPreload,
+    );
+  });
 });
 
 // The loader has such a module under a key that ends in the query, which the path of its file leaves out.

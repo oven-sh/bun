@@ -11,6 +11,14 @@ const lastingCopyOfThisModule: () => typeof setup = $newCppFunction(
   "jsFunctionTestEnvironmentModuleOfLastingRealm",
   0,
 );
+// See src/js/internal/test/globals.ts.
+const customValueOf: (object: object, key: PropertyKey) => unknown = $newCppFunction(
+  "TestEnvironment.cpp",
+  "jsFunctionCustomValueOf",
+  2,
+);
+const restoreCustomValue: (object: object, key: PropertyKey, customValue: unknown, value: unknown) => void =
+  $newCppFunction("TestEnvironment.cpp", "jsFunctionRestoreCustomValue", 4);
 
 const { captureStackTrace } = Error;
 const { isExtensible } = Object;
@@ -455,14 +463,19 @@ function open(
   return environment;
 }
 
-function ownProperty(key: string): PropertyDescriptor | undefined {
+// Bun's `onerror` and `onmessage` are native getters and setters that a descriptor shows as a value. Defining that value
+// would leave a plain property, which no later `onerror = fn` registers a handler through.
+type OwnProperty = PropertyDescriptor & { customValue?: unknown };
+
+function ownProperty(key: string): OwnProperty | undefined {
   const descriptor = $Object.$getOwnPropertyDescriptor(globalThis, key);
-  return descriptor && ({ __proto__: null, ...descriptor } as PropertyDescriptor);
+  return descriptor && ({ __proto__: null, ...descriptor, customValue: customValueOf(globalThis, key) } as OwnProperty);
 }
 
-function putBack(key: string, original: PropertyDescriptor | undefined) {
+function putBack(key: string, original: OwnProperty | undefined) {
   try {
-    if (original) $Object.$defineProperty(globalThis, key, original);
+    if (original?.customValue) restoreCustomValue(globalThis, key, original.customValue, original.value);
+    else if (original) $Object.$defineProperty(globalThis, key, original);
     else delete (globalThis as any)[key];
     return true;
   } catch {

@@ -1,5 +1,6 @@
 // Called by VirtualMachine.rs. With `bun test --isolate=modules`, all test files share one global object,
 // so after each file we restore what it changed: globals, builtins, `process.env` and `process` listeners.
+// Bun__TestGlobals__resetNativeState() in TestEnvironment.cpp runs first, for what no property shows.
 
 const isEnvironmentGlobal: (key: PropertyKey) => boolean = require("internal/test/environment").isEnvironmentGlobal;
 const shapesOf: (objects: object[]) => unknown[] = $newCppFunction(
@@ -18,6 +19,15 @@ const deleteOwnProperty: (object: object, key: PropertyKey) => boolean = $newCpp
   "jsFunctionDeleteOwnProperty",
   2,
 );
+// A custom value is a native getter and setter that script sees as a data property, like `globalThis.onerror` and
+// `Error.prepareStackTrace`. defineProperty() would replace the pair with the value.
+const customValueOf: (object: object, key: PropertyKey) => unknown = $newCppFunction(
+  "TestEnvironment.cpp",
+  "jsFunctionCustomValueOf",
+  2,
+);
+const restoreCustomValue: (object: object, key: PropertyKey, customValue: unknown, value: unknown) => void =
+  $newCppFunction("TestEnvironment.cpp", "jsFunctionRestoreCustomValue", 4);
 
 // Builtin modules are loaded once and shared by all files. These two patch `Performance.prototype` and
 // `MessagePort.prototype` on load, so load them before the snapshot. Otherwise the restore would remove their patches.
@@ -53,6 +63,8 @@ const seen = new Map<object, true>();
 // Nearly all of the objects are untouched by a test file. Native code tells which ones may not be.
 let shapes: unknown[];
 let alwaysComparedCount: number;
+// For each custom value: its object, its key, what customValueOf() returned and its value.
+const customValues: unknown[] = [];
 let env: Map<string, string | undefined>;
 let listeners: Map<string | symbol, Function[]>;
 
@@ -163,14 +175,41 @@ function restoreListeners() {
 
 function saveShapes() {
   shapes = shapesOf(objects);
-  alwaysComparedCount = indexesOfChanged(objects, shapes).length;
+  const alwaysCompared = indexesOfChanged(objects, shapes);
+  alwaysComparedCount = alwaysCompared.length;
+  return alwaysCompared;
+}
+
+// An object that has a custom value is always compared.
+function saveCustomValues(alwaysCompared: number[]) {
+  for (let i = 0; i < alwaysCompared.length; i++) {
+    const object = objects[alwaysCompared[i]];
+    savedProperties[alwaysCompared[i]].$forEach((saved, key) => {
+      const customValue = saved.get || saved.set ? undefined : customValueOf(object, key);
+      if (!customValue) return;
+      $arrayPush(customValues, object);
+      $arrayPush(customValues, key);
+      $arrayPush(customValues, customValue);
+      $arrayPush(customValues, saved.value);
+    });
+  }
+}
+
+function restoreCustomValues() {
+  for (let i = 0; i < customValues.length; i += 4) {
+    const object = customValues[i] as object;
+    const key = customValues[i + 1] as PropertyKey;
+    // The next file's window replaces these.
+    if (object === globalThis && isEnvironmentGlobal(key)) continue;
+    restoreCustomValue(object, key, customValues[i + 2], customValues[i + 3]);
+  }
 }
 
 // The first call takes the snapshot. Later calls restore it.
 export default function restoreGlobals() {
   if (!env) {
     saveProperties(globalThis, true);
-    saveShapes();
+    saveCustomValues(saveShapes());
     env = new Map();
     const keys = getOwnPropertyNames(process.env);
     for (let i = 0; i < keys.length; i++) env.$set(keys[i], process.env[keys[i]]);
@@ -179,6 +218,7 @@ export default function restoreGlobals() {
     for (let i = 0; i < names.length; i++) listeners.$set(names[i], rawListeners.$call(process, names[i]));
     return;
   }
+  restoreCustomValues();
   const changed = indexesOfChanged(objects, shapes);
   for (let i = 0; i < changed.length; i++) {
     const index = changed[i];

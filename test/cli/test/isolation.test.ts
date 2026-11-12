@@ -75,6 +75,20 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.each(isolateFlags)(
+    "with %s, a file that never finishes loading is reported when it holds a stream that nothing reads",
+    async isolate => {
+      using dir = tempDir("isolate-stuck-stream", {
+        "a.test.js": `void process.stdin; await new Promise(() => {}); test("unreachable", () => {});`,
+        "b.test.js": `test("b", () => {});`,
+      });
+      const { stderr, exitCode } = await runTests(String(dir), [isolate], ["./a.test.js", "./b.test.js"]);
+      expect(stderr).toMatch(/error: ".*a\.test\.js" never finished loading/);
+      expect(stderr).toContain(" 1 pass\n 1 fail\n");
+      expect(exitCode).toBe(1);
+    },
+  );
+
   test.each(isolateFlags)("with %s, a file's process.chdir() is undone before the next file", async isolate => {
     const cwdFixtures = {
       "a-chdir.test.ts": `
@@ -1428,6 +1442,16 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect(exitCode).toBe(0);
     return stdout;
   };
+  // Without the "bun test v1.2.3" line.
+  const printed = (stdout: string) => stdout.slice(stdout.indexOf("\n") + 1);
+  // What the same files print when each of them has a global object of its own.
+  const printsWithNewGlobals = async (files: Record<string, string>) => {
+    using dir = tempDir("isolate-global", files);
+    const names = Object.keys(files)
+      .filter(name => name.includes(".test."))
+      .map(name => "./" + name);
+    return printed((await runTests(String(dir), ["--isolate"], names)).stdout);
+  };
 
   test("what a file leaves open is closed, and what it put on globalThis is gone", async () => {
     await passes(fixtures, 2);
@@ -1581,6 +1605,293 @@ describe.concurrent("bun test --isolate=modules", () => {
     };
     const lines = (await passes(files, 2)).split("\n").filter(line => line.startsWith("["));
     expect(lines).toEqual(Array(2).fill(JSON.stringify(["fetch", true, false])));
+  });
+
+  test("what a file registered on globalThis, performance and the standard streams is gone, and so is its capture callback", async () => {
+    const files = {
+      "a.test.js": `test("a", () => {
+        globalThis.addEventListener("leftover", () => console.log("globalThis listener of a"));
+        globalThis.onerror = () => console.log("onerror of a");
+        globalThis.onmessage = () => console.log("onmessage of a");
+        performance.addEventListener("leftover", () => console.log("performance listener of a"));
+        performance.onresourcetimingbufferfull = () => console.log("performance handler of a");
+        for (const stream of [process.stdin, process.stdout, process.stderr]) {
+          stream.on("leftover", () => {});
+          stream.setMaxListeners(99);
+          stream.leftover = true;
+        }
+        process.stdout.write = function leftover() { return true; };
+        process.setUncaughtExceptionCaptureCallback(() => {});
+      });`,
+      "b.test.js": `test("b", () => {
+        globalThis.onerror = () => console.log("onerror of b");
+        for (const type of ["leftover", "error", "message"]) globalThis.dispatchEvent(new Event(type));
+        for (const type of ["leftover", "resourcetimingbufferfull"]) performance.dispatchEvent(new Event(type));
+        const streams = [process.stdin, process.stdout, process.stderr];
+        console.log(JSON.stringify({
+          listeners: streams.map(stream => stream.listenerCount("leftover")),
+          limits: streams.map(stream => stream.getMaxListeners()),
+          properties: streams.map(stream => "leftover" in stream),
+          write: process.stdout.write.name === "leftover",
+          capture: process.hasUncaughtExceptionCaptureCallback(),
+        }));
+        // Throws while a callback is set.
+        process.setUncaughtExceptionCaptureCallback(() => {});
+      });`,
+    };
+    const expected = `onerror of b\n{"listeners":[0,0,0],"limits":[10,10,10],"properties":[false,false,false],"write":false,"capture":false}\n`;
+    expect(printed(await passes(files, 2))).toBe(expected);
+    expect(await printsWithNewGlobals(files)).toBe(expected);
+    // One worker of --parallel runs both files. What they print comes with the results.
+    using dir = tempDir("isolate-modules-worker", files);
+    const env = { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" };
+    const worker = await runTests(
+      String(dir),
+      ["--isolate=modules", "--parallel=2"],
+      ["./a.test.js", "./b.test.js"],
+      env,
+    );
+    expect(worker.stderr).toContain(expected);
+    expect(worker.exitCode).toBe(0);
+  });
+
+  test("what a preload registers is there once for each file, and its capture callback is set for each", async () => {
+    const files: Record<string, string> = {
+      "preload.js": `
+        globalThis.addEventListener("fromPreload", () => console.log("globalThis listener"));
+        performance.addEventListener("fromPreload", () => console.log("performance listener"));
+        process.stdout.on("resize", () => {});
+        process.stderr.on("resize", () => {});
+        process.setUncaughtExceptionCaptureCallback(() => {});
+      `,
+    };
+    // An emitter warns about its eleventh listener.
+    const names = Array.from({ length: 12 }, (_, i) => `./${i}.test.js`);
+    for (const name of names) {
+      files[name] = `test("dispatches", () => {
+        globalThis.dispatchEvent(new Event("fromPreload"));
+        performance.dispatchEvent(new Event("fromPreload"));
+        console.log(process.stdout.listenerCount("resize"), process.stderr.listenerCount("resize"));
+      });`;
+    }
+    using dir = tempDir("isolate-modules-preload", files);
+    const { stdout, stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate=modules", "--preload", "./preload.js"],
+      names,
+    );
+    expect(stderr).not.toContain("MaxListenersExceededWarning");
+    expect(printed(stdout)).toBe(Array(names.length).fill("globalThis listener\nperformance listener\n1 1\n").join(""));
+    expect(stderr).toContain(` ${names.length} pass\n 0 fail\n`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("onerror, onmessage and Error.prepareStackTrace are Bun's again, however a file left them", async () => {
+    const file = (name: string, leave: string) => `test("${name}", () => {
+      const seen = [new Error("unformatted").stack.split("\\n")[0]];
+      Error.prepareStackTrace = () => "stack of ${name}";
+      seen.push(new Error("formatted").stack);
+      globalThis.onerror = () => seen.push("onerror of ${name}");
+      globalThis.onmessage = () => seen.push("onmessage of ${name}");
+      globalThis.dispatchEvent(new Event("error"));
+      globalThis.dispatchEvent(new Event("message"));
+      console.log(seen.join(", "));
+      const native = [[Error, "prepareStackTrace"], [globalThis, "onerror"], [globalThis, "onmessage"]];
+      ${leave}
+    });`;
+    const files = {
+      "assigned.test.js": file("assigned", ""),
+      "deleted.test.js": file("deleted", `for (const [object, key] of native) delete object[key];`),
+      "defined.test.js": file(
+        "defined",
+        `for (const [object, key] of native) Object.defineProperty(object, key, { get() {}, set() {}, configurable: false });`,
+      ),
+      "last.test.js": file("last", ""),
+    };
+    const expected = ["assigned", "deleted", "defined", "last"]
+      .map(name => `Error: unformatted, stack of ${name}, onerror of ${name}, onmessage of ${name}\n`)
+      .join("");
+    expect(printed(await passes(files, 4))).toBe(expected);
+    expect(await printsWithNewGlobals(files)).toBe(expected);
+  });
+
+  test("every file reads its own part of stdin", async () => {
+    const reads = (name: string) => `test("${name}", async () => {
+      const { promise, resolve } = Promise.withResolvers();
+      process.stdin.once("data", chunk => resolve(String(chunk)));
+      console.log("ready ${name}");
+      console.log("${name} read", JSON.stringify(await promise));
+    });`;
+    using dir = tempDir("isolate-modules-stdin", {
+      "a.test.js": reads("a"),
+      "b.test.js": reads("b"),
+      "c.test.js": `test("c", async () => {
+        const reader = Bun.stdin.stream().getReader();
+        console.log("ready c");
+        console.log("c read", JSON.stringify(new TextDecoder().decode((await reader.read()).value)));
+        reader.releaseLock();
+      });`,
+      "d.test.js": reads("d"),
+      "e.test.js": `test("e", async () => {
+        const { promise, resolve } = Promise.withResolvers();
+        process.stdin.once("end", resolve).resume();
+        console.log("ready e");
+        await promise;
+        console.log("e saw the end");
+      });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "test",
+        "--isolate=modules",
+        "./a.test.js",
+        "./b.test.js",
+        "./c.test.js",
+        "./d.test.js",
+        "./e.test.js",
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // A file gets its line once it has said that it listens.
+    const feed = async () => {
+      let stdout = "";
+      const decoder = new TextDecoder();
+      for await (const chunk of proc.stdout) {
+        const text = decoder.decode(chunk, { stream: true });
+        stdout += text;
+        for (const [, name] of text.matchAll(/^ready (\w)$/gm)) {
+          if (name === "e") proc.stdin.end();
+          else {
+            proc.stdin.write(`line for ${name}\n`);
+            proc.stdin.flush();
+          }
+        }
+      }
+      return stdout;
+    };
+    const [stdout, stderr, exitCode] = await Promise.all([feed(), proc.stderr.text(), proc.exited]);
+    expect(
+      printed(stdout)
+        .split("\n")
+        .filter(line => !line.startsWith("ready ")),
+    ).toEqual([
+      `a read "line for a\\n"`,
+      `b read "line for b\\n"`,
+      `c read "line for c\\n"`,
+      `d read "line for d\\n"`,
+      "e saw the end",
+      "",
+    ]);
+    expect(stderr).toContain(" 5 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a file writes to process.stdout and process.stderr, whatever the files before it did with them", async () => {
+    using dir = tempDir("isolate-modules-stdio", {
+      // node:assert reads process.stderr when it makes its first AssertionError, and it is no module of a test file.
+      "a.test.js": `
+        import assert from "node:assert";
+        test("a", () => {
+          try { assert.strictEqual(1, 2); } catch {}
+          console._stdout.write("a, console._stdout\\n");
+        });
+      `,
+      "b.test.js": `test("b", () => {
+        process.stderr.write("b, process.stderr\\n");
+        console._stderr.write("b, console._stderr\\n");
+        process.stdout.write("b, process.stdout\\n");
+        console._stdout.write("b, console._stdout\\n");
+        process.stdout.end();
+        process.stderr.end();
+      });`,
+      "c.test.js": `test("c", async () => {
+        console.log(console._stdout === process.stdout, console._stderr === process.stderr);
+        for (const stream of [process.stdout, process.stderr]) {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          stream.write("c, written\\n", error => (error ? reject(error) : resolve()));
+          await promise;
+        }
+      });`,
+    });
+    const { stdout, stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate=modules"],
+      ["./a.test.js", "./b.test.js", "./c.test.js"],
+    );
+    expect(printed(stdout)).toBe("a, console._stdout\nb, process.stdout\nb, console._stdout\ntrue true\nc, written\n");
+    expect(stderr.split("\n").filter(line => /^[bc], /.test(line))).toEqual([
+      "b, process.stderr",
+      "b, console._stderr",
+      "c, written",
+    ]);
+    expect(stderr).toContain(" 3 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // A stream opens a copy of its file descriptor.
+  test.skipIf(isWindows)("pipe() does not make process.stdout or process.stderr", async () => {
+    const files = {
+      "pipe.test.js": `
+        import { readdirSync } from "node:fs";
+        import { PassThrough } from "node:stream";
+        test("pipe", () => {
+          const open = () => readdirSync("/dev/fd").length;
+          const before = open();
+          new PassThrough().pipe(new PassThrough());
+          const afterPipe = open();
+          void process.stdout;
+          console.log(afterPipe - before, open() > afterPipe);
+        });
+      `,
+    };
+    expect(printed(await passes(files, 1))).toBe("0 true\n");
+  });
+
+  test("a REPL in a later file handles the errors of what it runs", async () => {
+    // Under the globals of vitest, an error that nothing catches goes to the capture callback of process, which a REPL sets.
+    const file = (name: string) => `
+      import { test } from "vitest";
+      import repl from "node:repl";
+      import { PassThrough } from "node:stream";
+      test("${name}", async () => {
+        const input = new PassThrough();
+        const output = new PassThrough();
+        let printed = "";
+        const { promise, resolve } = Promise.withResolvers();
+        output.on("data", chunk => {
+          printed += chunk;
+          if (printed.includes("Uncaught")) resolve();
+        });
+        const server = repl.start({ input, output, terminal: false, prompt: "" });
+        input.write('setTimeout(() => { throw new Error("thrown in ${name}"); })\\n');
+        await promise;
+        console.log(printed.includes("thrown in ${name}"));
+        server.close();
+      });
+    `;
+    expect(printed(await passes({ "a.test.js": file("a"), "b.test.js": file("b") }, 2))).toBe("true\ntrue\n");
+  });
+
+  test("a file that never finishes loading is reported after a file that left a message listener", async () => {
+    using dir = tempDir("isolate-modules-message", {
+      // The listener holds the event loop until it is removed.
+      "a.test.js": `test("a", () => { globalThis.addEventListener("message", () => {}); });`,
+      "b.test.js": `await new Promise(() => {}); test("unreachable", () => {});`,
+      "c.test.js": `test("c", () => {});`,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate=modules"],
+      ["./a.test.js", "./b.test.js", "./c.test.js"],
+    );
+    expect(stderr).toMatch(/error: ".*b\.test\.js" never finished loading/);
+    expect(stderr).toContain(" 2 pass\n 1 fail\n");
+    expect(exitCode).toBe(1);
   });
 
   test("keeps what node:perf_hooks and node:worker_threads add to the builtins when they load", async () => {

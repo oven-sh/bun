@@ -53,6 +53,8 @@
 #include <sys/stat.h>
 #include "ConsoleObject.h"
 #include <JavaScriptCore/GetterSetter.h>
+#include <JavaScriptCore/JSCustomGetterFunction.h>
+#include <JavaScriptCore/JSCustomSetterFunction.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -4111,6 +4113,9 @@ static JSValue constructStderr(VM& vm, JSObject* processObject)
     return constructStdioWriteStream(processObject->globalObject(), processObject, 2);
 }
 
+// `bun test --isolate=modules`: whether `property` of `process` is the accessor that reads the running test file's stream.
+static bool isStandardStreamAccessorOfTestFile(JSValue property, unsigned fd);
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsStandardOutputStream, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -4170,6 +4175,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsStandardOutputStream, (JSGlobalObject * lex
             // The stream that a read has made lies on the object as a plain property.
             if (isPlainValue(own))
                 held = own;
+            else if (isStandardStreamAccessorOfTestFile(own, index)) {
+                held = Bun::testFileStandardStream(defaultGlobalObject(process->globalObject()), index).get();
+                if (!held) {
+                    isStreamLeftUnmade = true;
+                    continue;
+                }
+            }
         }
         if (!held) {
             held = holder.get(lexicalGlobalObject, name);
@@ -4223,6 +4235,110 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
         return jsUndefined();
     }
     return result;
+}
+
+// ─── bun test --isolate=modules ──────────────────────────────────────────────────────────
+// One `process` serves every test file, and a standard stream is of no use to the file after the one that made it: its
+// listeners and patches are that file's, its sink is closed with that file, and what stdin was reading is cancelled. So
+// process.stdin, process.stdout and process.stderr are accessors here, each over a stream that the running file makes on
+// its first read, the way every file does under `--isolate`.
+
+static constexpr ASCIILiteral standardStreamNames[] = { "stdin"_s, "stdout"_s, "stderr"_s };
+
+static JSValue standardStreamOfTestFile(JSGlobalObject* lexicalGlobalObject, unsigned fd)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& made = Bun::testFileStandardStream(globalObject, fd);
+    if (JSValue stream = made.get())
+        return stream;
+    auto* process = globalObject->processObject();
+    JSValue stream = fd ? constructStdioWriteStream(globalObject, process, fd) : constructStdin(vm, process);
+    RETURN_IF_EXCEPTION(scope, {});
+    made.set(vm, stream);
+    return stream;
+}
+
+JSC_DEFINE_CUSTOM_GETTER(processStdinOfTestFile, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
+{
+    return JSValue::encode(standardStreamOfTestFile(globalObject, 0));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(processStdoutOfTestFile, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
+{
+    return JSValue::encode(standardStreamOfTestFile(globalObject, 1));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(processStderrOfTestFile, (JSGlobalObject * globalObject, EncodedJSValue, PropertyName))
+{
+    return JSValue::encode(standardStreamOfTestFile(globalObject, 2));
+}
+
+static GetValueFunc standardStreamGetterOfTestFile(unsigned fd)
+{
+    switch (fd) {
+    case 0:
+        return processStdinOfTestFile;
+    case 1:
+        return processStdoutOfTestFile;
+    default:
+        return processStderrOfTestFile;
+    }
+}
+
+// What a test file assigns is the stream until that file ends.
+JSC_DEFINE_CUSTOM_SETTER(setProcessStandardStreamOfTestFile, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName name))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // An object that inherits from `process` gets a property of its own, as it does where the stream is a data property.
+    if (JSValue::decode(thisValue) != globalObject->processObject()) {
+        auto* receiver = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
+        if (!receiver)
+            return false;
+        RELEASE_AND_RETURN(scope, Bun::defineOwnDataProperty(globalObject, receiver, name, JSValue::decode(value), 0));
+    }
+    for (unsigned fd = 0; fd < std::size(standardStreamNames); ++fd) {
+        if (name == Identifier::fromString(vm, standardStreamNames[fd]))
+            Bun::testFileStandardStream(globalObject, fd).set(vm, JSValue::decode(value));
+    }
+    return true;
+}
+
+static bool isStandardStreamAccessorOfTestFile(JSValue property, unsigned fd)
+{
+    auto* accessor = property ? dynamicDowncast<GetterSetter>(property) : nullptr;
+    auto* getter = accessor ? dynamicDowncast<JSCustomGetterFunction>(accessor->getter()) : nullptr;
+    return getter && getter->getter() == standardStreamGetterOfTestFile(fd);
+}
+
+void Process::resetForTestFile(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    m_uncaughtExceptionCaptureCallback.clear();
+    m_reportOnUncaughtException = false;
+
+    for (unsigned fd = 0; fd < std::size(standardStreamNames); ++fd) {
+        Bun::testFileStandardStream(globalObject, fd).clear();
+        auto name = Identifier::fromString(vm, standardStreamNames[fd]);
+        if (isStandardStreamAccessorOfTestFile(getDirect(vm, name), fd))
+            continue;
+        // The first file, or the last one defined or deleted the property. Written over what is there: deleting a name
+        // of the static table would make every lazy property of `process`, the streams among them.
+        auto* getter = JSCustomGetterFunction::create(vm, globalObject, name, standardStreamGetterOfTestFile(fd));
+        auto* setter = JSCustomSetterFunction::create(vm, globalObject, name, setProcessStandardStreamOfTestFile);
+        AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+        putDirectAccessor(globalObject, name, GetterSetter::create(vm, globalObject, getter, setter), PropertyAttribute::Accessor | 0);
+    }
+
+    // process.stdin reads Bun.stdin.stream(), which is one stream for as long as that Blob lives. The last file's reader
+    // holds its lock, and what it was reading from is cancelled.
+    if (JSValue bunStdin = globalObject->bunObject()->getDirect(vm, Identifier::fromString(vm, standardStreamNames[0]))) {
+        if (auto* blob = dynamicDowncast<Bun::Bindgen::Generated::JSBlob>(bunStdin))
+            blob->m_stream.clear();
+    }
 }
 
 static JSValue constructProcessSend(VM& vm, JSObject* processObject)

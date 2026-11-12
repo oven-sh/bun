@@ -525,7 +525,8 @@ impl FileSink {
         let Some(vm) = self.js_vm() else {
             return;
         };
-        if vm.as_graph_context(context).is_some() {
+        // A `Bun.ModuleGraph` of the program's own does not end with a test file.
+        if vm.as_graph_context(context).is_some() && !vm.is_test_file_context(context) {
             return;
         }
         if let Some(context) = vm.as_context_that_stops_early(context) {

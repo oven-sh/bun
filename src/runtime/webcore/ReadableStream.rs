@@ -1199,6 +1199,9 @@ impl<C: SourceContext> NewSource<C> {
         if self.this_jsvalue.get().is_empty() {
             self.this_jsvalue.set(jsc::JsRef::init_weak(out_value));
             if let Some(context) = cx.vm().as_context_that_stops_early(cx.context()) {
+                // The handle is only how the stream ends with its context. A read that is on its
+                // way holds the event loop itself, so a stream nobody reads is not work left.
+                self.abort_handle.set_only_waits_to_be_closed();
                 // SAFETY: the wrapper just made owns this heap allocation; the handle leaves its
                 // context when this is dropped.
                 unsafe { jsc::AbortHandle::arm_owner(core::ptr::from_mut(self), context) };

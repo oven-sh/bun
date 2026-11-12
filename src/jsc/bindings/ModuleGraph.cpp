@@ -758,6 +758,11 @@ JSMap* testFileRequireMap(Zig::GlobalObject* globalObject)
     return requireMapOf(globalObject, testFileModuleGraph(globalObject));
 }
 
+Strong<Unknown>& testFileStandardStream(Zig::GlobalObject* globalObject, unsigned fd)
+{
+    return moduleGraphState(globalObject).standardStreams[fd];
+}
+
 // Returns the ID of the context to run the file's callbacks in.
 extern "C" uint32_t Bun__TestFile__enterModuleGraph(Zig::GlobalObject* globalObject)
 {

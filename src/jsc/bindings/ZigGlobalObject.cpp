@@ -3343,6 +3343,9 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStdout, (JSGlobalObject * globalObject, Encod
     // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
     auto stdoutValue = global->processObject()->get(globalObject, Identifier::fromString(vm, "stdout"_s));
     RETURN_IF_EXCEPTION(scope, {});
+    // `bun test --isolate=modules`: the next test file has another process.stdout.
+    if (Bun::testFileModuleGraph(global))
+        return JSValue::encode(stdoutValue);
 
     AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
     console->putDirect(vm, property, stdoutValue, PropertyAttribute::DontEnum | 0);
@@ -3360,6 +3363,8 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, Encod
     // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
     auto stderrValue = global->processObject()->get(globalObject, Identifier::fromString(vm, "stderr"_s));
     RETURN_IF_EXCEPTION(scope, {});
+    if (Bun::testFileModuleGraph(global))
+        return JSValue::encode(stderrValue);
 
     AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
     console->putDirect(vm, property, stderrValue, PropertyAttribute::DontEnum | 0);

@@ -130,6 +130,10 @@ public:
         return m_uncaughtExceptionCaptureCallback.get();
     }
 
+    // `bun test --isolate=modules`: one `process` serves every test file. Before each file, the capture callback of
+    // the last one goes, and process.stdin, process.stdout and process.stderr are the new file's to make. Runs no script.
+    void resetForTestFile(Zig::GlobalObject*);
+
     inline void setRunsWhenProcessExits(JSC::JSObject* function)
     {
         m_runsWhenProcessExits.setMayBeNull(vm(), this, function);

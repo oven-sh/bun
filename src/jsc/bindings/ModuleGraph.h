@@ -121,6 +121,8 @@ public:
     // Disposed graphs of the most recent files, kept only for their compiled code, which would otherwise be collected
     // with the last graph that ran it. Code that files keep loading stays alive. Code only one file used ages out.
     WTF::Deque<JSC::Strong<JSModuleGraph>, 8> finishedTestFiles;
+    // process.stdin, process.stdout and process.stderr of the running test file. Empty until the file reads one.
+    JSC::Strong<JSC::Unknown> standardStreams[3];
 };
 
 void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);
@@ -156,6 +158,8 @@ void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext&);
 JSModuleGraph* testFileModuleGraph(Zig::GlobalObject*);
 JSC::JSModuleLoader* testFileModuleLoader(Zig::GlobalObject*);
 JSC::JSMap* testFileRequireMap(Zig::GlobalObject*);
+// ModuleGraphState::standardStreams, by file descriptor.
+JSC::Strong<JSC::Unknown>& testFileStandardStream(Zig::GlobalObject*, unsigned fd);
 
 // ── The graph's context ──────────────────────────────────────────────────────────────
 // What runs while this is alive runs inside a graph's context: an async context frame naming

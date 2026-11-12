@@ -527,6 +527,7 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__retireForTestIsolation(global: &JSGlobalObject);
     safe fn Bun__TestFile__enterModuleGraph(global: &JSGlobalObject) -> u32;
+    safe fn Bun__TestGlobals__resetNativeState(global: &JSGlobalObject);
     safe fn Bun__Process__resetArgv(global: &JSGlobalObject);
     safe fn Bun__TestFile__leaveModuleGraph(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__retireDerivedRealmsForTestIsolation(global: &JSGlobalObject);
@@ -1174,6 +1175,14 @@ impl VirtualMachine {
             return Some(context);
         }
         self.as_graph_context(context)
+    }
+
+    /// `bun test --isolate=modules`: whether `context` is the running test file's, which stops
+    /// with that file.
+    #[inline]
+    pub fn is_test_file_context(&self, context: &crate::ScriptExecutionContext) -> bool {
+        self.test_isolation_state.shares_global
+            && context.id() == self.test_isolation_state.file_context
     }
 
     /// The context of the realm's own script: what belongs to the realm rather
@@ -6591,8 +6600,10 @@ impl VirtualMachine {
     pub fn enter_module_graph_for_test_isolation(&mut self) -> JsResult<()> {
         let state = &self.test_isolation_state;
         if state.shares_global && state.file_context == crate::ContextId::NONE {
-            // The first call snapshots the globals. Later calls restore them.
             let global = self.global();
+            // Listeners on the global object, the standard streams: what the snapshot below cannot see.
+            Bun__TestGlobals__resetNativeState(global);
+            // The first call snapshots the globals. Later calls restore them.
             let restore_globals = crate::cpp::Bun__TestGlobals__getRestoreFunction(global)?;
             restore_globals.call(global, JSValue::UNDEFINED, &[])?;
             self.test_isolation_state.file_context =

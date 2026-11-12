@@ -3236,6 +3236,10 @@ impl<'a> HTTPClient<'a> {
             // on_writable, and a fatal SSL error already ran on_close (and
             // may have freed *self), so bail via Ok(true) without touching
             // self — same as the other ProxyTunnel::write callers.
+            if proxy.holds_refused_ciphertext() {
+                let _ = buffer.write(data);
+                return Ok(true);
+            }
             let pending = buffer.slice().len();
             if pending > 0 {
                 let Ok(n) = ProxyTunnel::write(proxy, buffer.slice()) else {
@@ -3590,12 +3594,7 @@ impl<'a> HTTPClient<'a> {
                         HTTPRequestBody::Sendfile(sendfile) => {
                             let mut tunnel_write_failed = false;
                             let status = sendfile.write_copy(|chunk| {
-                                // The tunnel buffers the ciphertext the socket didn't take. Wait for that to drain.
-                                if proxy
-                                    .wrapper
-                                    .as_ref()
-                                    .is_some_and(|w| w.refused_ciphertext() > 0)
-                                {
+                                if proxy.holds_refused_ciphertext() {
                                     return Ok(0);
                                 }
                                 ProxyTunnel::write(proxy, chunk)

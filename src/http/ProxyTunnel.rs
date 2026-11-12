@@ -574,6 +574,13 @@ impl ProxyTunnel {
         // _guard derefs here.
     }
 
+    /// `write` takes every byte and keeps what the socket refuses, so a body without a bound waits while this is true.
+    pub(crate) fn holds_refused_ciphertext(&self) -> bool {
+        self.wrapper
+            .as_ref()
+            .is_some_and(|wrapper| wrapper.refused_ciphertext() > 0)
+    }
+
     pub(crate) fn write(&mut self, buf: &[u8]) -> Result<usize, Error> {
         if let Some(wrapper) = &self.wrapper {
             return wrapper.write_data(buf).map_err(|e| match e {

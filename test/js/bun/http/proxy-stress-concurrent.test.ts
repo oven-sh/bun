@@ -467,6 +467,62 @@ describe("large bidirectional", () => {
   }
 });
 
+describe("a stream body waits while the proxy doesn't read", () => {
+  test.concurrent.each(["http", "https"])("%s-proxy → https-origin", async scheme => {
+    const chunk = Buffer.alloc(64 * 1024);
+    const total = 1024 * chunk.length;
+    const bodyStarted = Promise.withResolvers<void>();
+    await using origin = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: tlsCert,
+      async fetch(req) {
+        let received = 0;
+        for await (const part of req.body!) (bodyStarted.resolve(), (received += part.length));
+        return new Response(String(received));
+      },
+    });
+    const accepted = Promise.withResolvers<net.Socket>();
+    const relay = (client: net.Socket) =>
+      client.once("data", () => {
+        const upstream = net.connect(origin.port!, "127.0.0.1", () => {
+          client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          // Not pipe(): it resumes the client at the next 'drain'.
+          client.on("data", data => upstream.write(data));
+          upstream.pipe(client);
+          accepted.resolve(client);
+        });
+        client.on("error", () => {}).on("close", () => upstream.destroy());
+        upstream.on("error", () => {});
+      });
+    await using proxy = scheme === "https" ? tls.createServer(tlsCert, relay) : net.createServer(relay);
+    await once(proxy.listen(0, "127.0.0.1"), "listening");
+
+    let pulled = 0;
+    const response = fetch(origin.url, {
+      method: "POST",
+      body: new ReadableStream({
+        pull: controller =>
+          pulled < total ? ((pulled += chunk.length), controller.enqueue(chunk)) : controller.close(),
+      }),
+      proxy: `${scheme}://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`,
+      keepalive: false,
+      tls: laxTls,
+    });
+    const [client] = await Promise.all([accepted.promise, bodyStarted.promise]);
+    client.pause();
+    // No event says that the pulls have stopped.
+    for (let last = -1, unchanged = 0; unchanged < 5; last = pulled) {
+      await Bun.sleep(20);
+      unchanged = pulled === last ? unchanged + 1 : 0;
+    }
+    const pulledWhilePaused = pulled;
+    client.resume();
+    expect(await (await response).text()).toBe(String(total));
+    expect(pulledWhilePaused).toBeLessThan(total / 2);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Pooled tunnel receives unsolicited data while idle: the proxy pushes a
 // byte into the client after the first request fully completes and the

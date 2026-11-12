@@ -1,0 +1,1 @@
+A call of import() races the four calls of import() that wait for it to arrive.

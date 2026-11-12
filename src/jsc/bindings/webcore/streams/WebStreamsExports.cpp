@@ -204,7 +204,7 @@ extern "C" uint8_t ReadableStream__bodyFacts(JSC::EncodedJSValue possibleReadabl
 extern "C" void ReadableStream__setBodyFacts(JSC::EncodedJSValue possibleReadableStream, uint8_t facts)
 {
     if (auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream)))
-        stream->m_bodyFacts = facts & 0x7;
+        stream->m_bodyFacts = facts;
 }
 
 // Closed with nothing ever read or attached: the queue was empty at close, so no byte can come out.

@@ -3112,6 +3112,16 @@ void WebCore__FetchHeaders__fastRemove_(WebCore::FetchHeaders* headers, unsigned
     headers->fastRemove(static_cast<WebCore::HTTPHeaderName>(headerName));
 }
 
+uint8_t WebCore__FetchHeaders__bodyFacts(WebCore::FetchHeaders* headers)
+{
+    return headers->bodyFacts();
+}
+
+void WebCore__FetchHeaders__setBodyFacts(WebCore::FetchHeaders* headers, uint8_t facts)
+{
+    headers->setBodyFacts(facts);
+}
+
 void WebCore__FetchHeaders__fastGet_(WebCore::FetchHeaders* headers, unsigned char headerName, EncodedSlice* arg2)
 {
     auto str = headers->fastGet(static_cast<WebCore::HTTPHeaderName>(headerName));

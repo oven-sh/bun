@@ -74,6 +74,8 @@ CPP_DECL void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0);
 CPP_DECL void WebCore__FetchHeaders__fastGet_(WebCore::FetchHeaders* arg0, unsigned char arg1, EncodedSlice* arg2);
 CPP_DECL bool WebCore__FetchHeaders__fastHas_(WebCore::FetchHeaders* arg0, unsigned char arg1);
 CPP_DECL void WebCore__FetchHeaders__fastRemove_(WebCore::FetchHeaders* arg0, unsigned char arg1);
+CPP_DECL uint8_t WebCore__FetchHeaders__bodyFacts(WebCore::FetchHeaders* arg0);
+CPP_DECL void WebCore__FetchHeaders__setBodyFacts(WebCore::FetchHeaders* arg0, uint8_t arg1);
 CPP_DECL void WebCore__FetchHeaders__get_(WebCore::FetchHeaders* arg0, const EncodedSlice* arg1, EncodedSlice* arg2, JSC::JSGlobalObject* arg3);
 CPP_DECL bool WebCore__FetchHeaders__isEmpty(WebCore::FetchHeaders* arg0);
 CPP_DECL JSC::EncodedJSValue WebCore__FetchHeaders__toJS(WebCore::FetchHeaders* arg0, JSC::JSGlobalObject* arg1);

@@ -1888,11 +1888,7 @@ impl FetchTasklet {
             // the body so this matches the split-read `on_body_received` path.
             return BodyValue::Error(self.on_reject());
         }
-        let facts = if self.result.did_decompress {
-            BodyFacts::DECODED
-        } else {
-            BodyFacts::empty()
-        };
+        let facts = BodyFacts::decoded_from(self.result.decoded_from);
         if self.is_waiting_body {
             let mut pending = body::PendingValue::new(&self.global_this);
             pending.facts = facts;
@@ -1944,7 +1940,15 @@ impl FetchTasklet {
         let metadata = self.metadata.as_ref().unwrap();
         let http_response = &metadata.response;
         // reshaped for borrowck — capture metadata fields before to_body_value() takes &mut self
-        let headers = FetchHeaders::create_from_pico_headers(http_response.headers.list);
+        // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
+        let mut headers = unsafe {
+            HeadersRef::adopt(FetchHeaders::create_from_pico_headers(
+                http_response.headers.list,
+            ))
+        };
+        if self.result.decoded_from.is_compressed() {
+            headers.set_body_facts(BodyFacts::decoded_from(self.result.decoded_from));
+        }
         let status_code = http_response.status_code as u16;
         // Fast path: when the wire reason phrase matches the canonical text for
         // this status code, store a StaticEncodedSlice and skip the WTF allocation.
@@ -1965,8 +1969,7 @@ impl FetchTasklet {
         };
         Response::init(
             crate::webcore::response::Init {
-                // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
-                headers: Some(unsafe { HeadersRef::adopt(headers) }),
+                headers: Some(headers),
                 status_code,
                 status_text,
                 ..Default::default()

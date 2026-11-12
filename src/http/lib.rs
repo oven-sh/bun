@@ -503,8 +503,8 @@ pub struct HTTPClientResult<'a> {
     /// Set once ALPN selected h2 so the JS side writes raw bytes into the
     /// streaming-body buffer instead of chunked-encoding them.
     pub is_http2: bool,
-    /// The client decodes the body, so `Content-Encoding` no longer describes it.
-    pub did_decompress: bool,
+    /// The `Content-Encoding` that the client takes off the body.
+    pub decoded_from: Encoding,
 
     pub fail: Option<crate::Error>,
     /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
@@ -4564,7 +4564,7 @@ impl<'a> HTTPClient<'a> {
                         || self.state.request_stage == RequestStage::ProxyBody)
                         && self.flags.is_streaming_request_body,
                     is_http2: self.flags.protocol != Protocol::Http1_1,
-                    did_decompress: self.state.encoding.is_compressed(),
+                    decoded_from: self.state.encoding,
                 };
             }
         }
@@ -4589,7 +4589,7 @@ impl<'a> HTTPClient<'a> {
                 || self.state.request_stage == RequestStage::ProxyBody)
                 && self.flags.is_streaming_request_body,
             is_http2: self.flags.protocol != Protocol::Http1_1,
-            did_decompress: self.state.encoding.is_compressed(),
+            decoded_from: self.state.encoding,
         }
     }
 

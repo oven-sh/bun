@@ -205,6 +205,7 @@ ExceptionOr<void> FetchHeaders::fill(const FetchHeaders& otherHeaders)
         headers.uncommonHeaders().appendVector(otherHeaders.internalHeaders().uncommonHeaders());
         headers.getSetCookieHeaders().appendVector(otherHeaders.internalHeaders().getSetCookieHeaders());
         setInternalHeaders(WTF::move(headers));
+        m_bodyFacts = otherHeaders.m_bodyFacts;
         return {};
     }
 

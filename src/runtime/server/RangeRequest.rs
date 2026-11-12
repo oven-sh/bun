@@ -216,3 +216,13 @@ pub(crate) fn format_content_range(buf: &mut [u8], range: Result, total: Option<
         },
     }
 }
+
+/// Returns true for `bytes 0-{n - 1}/{n}`.
+pub(crate) fn is_whole_content_range(value: &[u8]) -> bool {
+    let parse = bun_http_types::parse_content_length_strict;
+    value
+        .strip_prefix(b"bytes 0-")
+        .and_then(|rest| strings::split_once_char(rest, b'/'))
+        .and_then(|(end, total)| Some(parse(end)? == parse(total)?.checked_sub(1)?))
+        .unwrap_or(false)
+}

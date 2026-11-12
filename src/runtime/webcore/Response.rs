@@ -6,6 +6,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{AbortSignal, GlobalRef};
 use bun_ptr::RefPtr;
 
+use crate::server::RangeRequest;
 use crate::webcore::jsc::{
     BuiltinName, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult, StringJsc as _,
 };
@@ -404,13 +405,49 @@ impl Response {
         self.init.with_mut(|init| init.headers.take())
     }
 
+    /// Removes what describes the bytes as they were before `fetch()` decoded them.
+    fn drop_headers_of_encoded_body(&self) {
+        let init = self.init_mut();
+        let Some(headers) = init.headers.as_deref_mut() else {
+            return;
+        };
+        let decoded = BodyFacts::DECODED
+            & match self.get_body_value() {
+                BodyValue::Null | BodyValue::Empty | BodyValue::Used => headers.body_facts(),
+                body => body.facts(),
+            };
+        if decoded.is_empty() {
+            return;
+        }
+        let names_decoded_coding = headers
+            .fast_get(HTTPHeaderName::ContentEncoding)
+            .is_some_and(|value| {
+                let value = value.to_utf8();
+                let mut codings = bun_http::HeaderValueIterator::init(value.slice())
+                    .map(bun_http::Encoding::from_token)
+                    .filter(|coding| *coding != Some(bun_http::Encoding::Identity));
+                let first = codings.next().flatten();
+                first.map(BodyFacts::decoded_from) == Some(decoded) && codings.next().is_none()
+            });
+        if !names_decoded_coding {
+            return;
+        }
+        headers.fast_remove(HTTPHeaderName::ContentEncoding);
+        headers.fast_remove(HTTPHeaderName::ContentLength);
+        if init.status_code == 206
+            && headers
+                .fast_get(HTTPHeaderName::ContentRange)
+                .is_some_and(|value| RangeRequest::is_whole_content_range(value.to_utf8().slice()))
+        {
+            headers.fast_remove(HTTPHeaderName::ContentRange);
+            init.status_code = 200;
+            init.status_text = BunString::EMPTY;
+        }
+    }
+
     /// Settles what the body says about the headers. Call it before the body is taken to be sent.
     pub(crate) fn prepare_headers_for_send(&self, global_this: &JSGlobalObject) -> JsResult<()> {
-        if self.get_body_value().facts().contains(BodyFacts::DECODED) {
-            if let Some(headers) = self.get_init_headers_mut() {
-                headers.fast_remove(HTTPHeaderName::ContentEncoding);
-            }
-        }
+        self.drop_headers_of_encoded_body();
         let body = self.get_body_value();
         body.to_blob_if_possible();
         // Bytes are sent with their own type. A stream's type can only be sent as a header.

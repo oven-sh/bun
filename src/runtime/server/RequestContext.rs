@@ -262,6 +262,7 @@ mod NativePromiseContext {
 }
 use crate::node::types::PathLikeExt as _;
 use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText, file_response_stream};
+use crate::webcore::blob::BodyFacts;
 use crate::webcore::sink::ReadableSinkController;
 use crate::webcore::{Blob, ReadableStream, body as Body};
 use bun_jsc::SysErrorJsc as _;
@@ -2644,6 +2645,13 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                     // SAFETY: FFI handle
                     resp.write_header_int(b"content-length", len as u64);
                     this.end_without_body(this.should_close_connection());
+                    return;
+                }
+                // Only a GET finds out how long the decoded body is.
+                if headers.body_facts().intersects(BodyFacts::DECODED) {
+                    this.render_metadata();
+                    let close_connection = this.should_close_connection();
+                    this.end_head(|resp| resp.end_head_of_stream(close_connection));
                     return;
                 }
             }

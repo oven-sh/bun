@@ -1602,6 +1602,119 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect(lines).toEqual(Array(2).fill(JSON.stringify([false, false, "function", true, false])));
   });
 
+  test("an index key that a file defines without \`configurable\` is undone too", async () => {
+    const state = `JSON.stringify([String([][7]), [1, 2].at(1), "zz" in Array.prototype, Array.prototype.length, String(globalThis[7]),
+      String(Math[7]), String(new Map()[7]), String(Date[7]), String(""[7]), "0" in {}])`;
+    // Read-only, writable and accessor keys. The key on Array.prototype also moves its length.
+    const define = (value: string) => `
+      Object.defineProperty(Array.prototype, "7", { value: "${value}" });
+      Array.prototype.at = function () { return "${value}"; };
+      Array.prototype.zz = 1;
+      Object.defineProperty(globalThis, "7", { value: "${value}" });
+      Object.defineProperty(Math, "7", { value: "${value}", writable: true });
+      Object.defineProperty(Map.prototype, "7", { value: "${value}" });
+      Object.defineProperty(Date, "7", { get: () => "${value}" });
+      Object.defineProperty(String.prototype, "7", { value: "${value}" });
+      Object.defineProperty(Object.prototype, "0", { get: () => "${value}" });
+    `;
+    const files = {
+      "a.test.js": `test("a", () => { console.log(${state}); ${define("fake")} });`,
+      // To define a key again throws while the key of the file before is there.
+      "b.test.js": `test("b", () => { console.log(${state}); ${define("again")} });`,
+      "c.test.js": `test("c", () => { console.log(${state}); });`,
+    };
+    const lines = (await passes(files, 3)).split("\n").filter(line => line.startsWith("["));
+    const clean = ["undefined", 2, false, 0, "undefined", "undefined", "undefined", "undefined", "undefined", false];
+    expect(lines).toEqual(Array(3).fill(JSON.stringify(clean)));
+  });
+
+  test("a preload defines an index key without \`configurable\` for every file", async () => {
+    const file = `test("reads", () => { console.log("read", Math[7]); });`;
+    const files = {
+      // Each run makes a new getter, and a key that is not configurable doesn't take another one.
+      "preload.js": `Object.defineProperty(Math, "7", { get: () => "preload" });`,
+      "a.test.js": file,
+      "b.test.js": file,
+    };
+    expect(await passes(files, 2, ["--preload", "./preload.js"])).toContain("read preload\nread preload\n");
+  });
+
+  test("compiled code doesn't keep an index key that a file defined without \`configurable\`", async () => {
+    const files = {
+      "shared.js": `export function read() { return Math[7]; }`,
+      // Code that is compiled while a function has one copy is dropped when the next file makes its copy. So the second file compiles read().
+      "a.test.js": `import { read } from "./shared.js"; test("a", () => { console.log("read", String(read())); });`,
+      "b.test.js": `
+        import { noInline, numberOfDFGCompiles } from "bun:jsc";
+        import { read } from "./shared.js";
+        test("b", () => {
+          Object.defineProperty(Math, "7", { value: "b" });
+          noInline(read);
+          for (let i = 0; i < 1000 && !numberOfDFGCompiles(read); i++) for (let j = 0; j < 500; j++) read();
+          console.log("read", read());
+        });
+      `,
+      "c.test.js": `
+        import { read } from "./shared.js";
+        test("c", () => {
+          const before = String(read());
+          Object.defineProperty(Math, "7", { value: "c" });
+          console.log("read", before, read());
+        });
+      `,
+      "d.test.js": `import { read } from "./shared.js"; test("d", () => { console.log("read", String(read())); });`,
+    };
+    // JavaScriptCore folds an element that is read-only and not configurable into the code on x64 alone: only there can c and d read "b".
+    expect(await passes(files, 4)).toContain("read undefined\nread b\nread undefined c\nread undefined\n");
+  });
+
+  test("compiled code doesn't keep an index key of a built-in that has its shape in common with another", async () => {
+    const files = {
+      // read() comes to `name` behind a branch, so its compiled code checks for every shape that nameOf() has seen. Math.cos and
+      // Math.sin have one shape. If the key of Math.sin is deleted first, the code must not take Math.cos for it once its key goes too.
+      "shared.js": `
+        let sink = 0;
+        export function nameOf(fn) { return fn.name; }
+        export function read(flag) {
+          const holder = Math.cos;
+          if (flag) sink = 1; else sink = 2;
+          nameOf(holder);
+          return holder[9];
+        }
+      `,
+      "a.test.js": `
+        import { read } from "./shared.js";
+        test("a", () => {
+          Object.defineProperty(Math.cos, "9", { value: "a", configurable: true });
+          Object.defineProperty(Math.sin, "9", { value: "other" });
+          for (let i = 0; i < 10; i++) read(i & 1);
+          console.log("read", read(0));
+        });
+      `,
+      "b.test.js": `
+        import { noInline, numberOfDFGCompiles } from "bun:jsc";
+        import { nameOf, read } from "./shared.js";
+        test("b", () => {
+          Object.defineProperty(Math.cos, "9", { value: "b" });
+          for (let i = 0; i < 300; i++) { nameOf(Math.cos); nameOf(Math.sin); }
+          noInline(read);
+          for (let i = 0; i < 1000 && !numberOfDFGCompiles(read); i++) for (let j = 0; j < 500; j++) read(j & 1);
+          console.log("read", read(0));
+        });
+      `,
+      "c.test.js": `
+        import { read } from "./shared.js";
+        test("c", () => {
+          const before = String(read(0));
+          Object.defineProperty(Math.cos, "9", { value: "c" });
+          console.log("read", before, read(0));
+        });
+      `,
+      "d.test.js": `import { read } from "./shared.js"; test("d", () => { console.log("read", String(read(0))); });`,
+    };
+    expect(await passes(files, 4)).toContain("read a\nread b\nread undefined c\nread undefined\n");
+  });
+
   test("restores a global that a file redefined as writable but not configurable, and the properties after it", async () => {
     const state = `JSON.stringify([fetch.name, Object.getOwnPropertyDescriptor(globalThis, "fetch").configurable, "addedLater" in globalThis])`;
     const files = {

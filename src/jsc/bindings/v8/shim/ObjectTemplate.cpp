@@ -39,9 +39,11 @@ void ObjectTemplate::finishCreation(JSC::VM& vm, FunctionTemplate* constructor)
     m_objectStructure.initLater([](const LazyProperty<ObjectTemplate, Structure>::Initializer& init) {
         auto* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(init.owner->globalObject());
         // As in V8, instances of a template with a constructor get the constructor's prototype.
+        // newInstance() made the function first, so no template is materialized in here.
         JSC::JSValue prototype = zigGlobal->objectPrototype();
         if (auto* constructor = init.owner->m_constructor.get()) {
-            auto* function = constructor->makeFunction(init.vm, zigGlobal, zigGlobal->V8GlobalInternals());
+            auto* function = constructor->cachedFunction();
+            RELEASE_ASSERT(function);
             JSC::JSValue functionPrototype = function->getDirect(init.vm, init.vm.propertyNames->prototype);
             if (functionPrototype.isObject())
                 prototype = functionPrototype;
@@ -86,8 +88,13 @@ Structure* ObjectTemplate::createStructure(JSC::VM& vm, JSC::JSGlobalObject* glo
 
 InternalFieldObject* ObjectTemplate::newInstance()
 {
-    auto& vm = globalObject()->vm();
+    auto* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject());
+    auto& vm = JSC::getVM(zigGlobal);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto* constructor = m_constructor.get()) {
+        constructor->makeFunction(vm, zigGlobal, zigGlobal->V8GlobalInternals());
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
     auto* structure = m_objectStructure.get(this);
     auto* newInstance = InternalFieldObject::create(vm, structure, this, m_internalFieldCount);
     applyTemplateProperties(globalObject(), newInstance, m_properties, m_accessors);

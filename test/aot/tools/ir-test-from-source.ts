@@ -16,13 +16,27 @@ import { basename, dirname, join, resolve } from "node:path";
 // Nothing here asks, and ../engine/answers.ts loads this file.
 import { testaot, toolEnv } from "../engine/testaot";
 
-/** `written`: a file that counts as success where it is there, whatever the exit code. What a signal has ended has not succeeded. */
-function run(cmd: string[], cwd: string, env: typeof bunEnv, written?: string) {
-  const { exitCode, signalCode, stdout, stderr } = Bun.spawnSync({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
-  const hasDied = signalCode !== undefined || exitCode > 128;
+/**
+ * What a command printed, where it has succeeded. `written`: a file that counts as success where it is there, whatever the exit code.
+ * What a signal has ended has not succeeded. Where there was none, Bun.spawnSync leaves `signalCode` out and Bun.spawn says null.
+ */
+function printed(
+  cmd: string[],
+  written: string | undefined,
+  exitCode: number | null,
+  signalCode: NodeJS.Signals | number | null | undefined,
+  stdout: string,
+  stderr: string | Buffer,
+) {
+  const hasDied = signalCode != null || (exitCode ?? 0) > 128;
   if (hasDied || (exitCode !== 0 && !(written && existsSync(written))))
     throw new Error(`${cmd.join(" ")} ended with ${signalCode ?? exitCode}:\n${stderr}`);
-  return stdout.toString().replaceAll("\r\n", "\n");
+  return stdout.replaceAll("\r\n", "\n");
+}
+
+function run(cmd: string[], cwd: string, env: typeof bunEnv, written?: string) {
+  const { exitCode, signalCode, stdout, stderr } = Bun.spawnSync({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
+  return printed(cmd, written, exitCode, signalCode, stdout.toString(), stderr);
 }
 
 type Command = Parameters<typeof run>;
@@ -31,10 +45,7 @@ type Command = Parameters<typeof run>;
 async function runBesideOthers(...[cmd, cwd, env, written]: Command) {
   await using child = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  const hasDied = child.signalCode !== null || exitCode > 128;
-  if (hasDied || (exitCode !== 0 && !(written && existsSync(written))))
-    throw new Error(`${cmd.join(" ")} ended with ${child.signalCode ?? exitCode}:\n${stderr}`);
-  return stdout.replaceAll("\r\n", "\n");
+  return printed(cmd, written, exitCode, child.signalCode, stdout, stderr);
 }
 
 type IRRecord = { kind: string; id?: string; lines: string[] };

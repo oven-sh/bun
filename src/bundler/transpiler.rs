@@ -1316,13 +1316,24 @@ impl<'a> Transpiler<'a> {
             // `RuntimeTranspilerStore`) so the source bytes land in the
             // job-scoped heap that `TranspilerJob::run` `mi_heap_destroy`s on
             // return — not the worker thread's default mimalloc heap.
-            let mut entry = match self.resolver.caches.fs.read_file_with_allocator(
-                path.text,
-                dirname_fd,
-                USE_SHARED_BUFFER,
-                file_descriptor,
-                if USE_SHARED_BUFFER { None } else { Some(arena) },
-            ) {
+            // The XML parser reads the byte order mark and the encoding declaration itself.
+            let read = if loader == options::Loader::Xml {
+                self.resolver.caches.fs.read_bytes_into_arena(
+                    path.text,
+                    dirname_fd,
+                    file_descriptor,
+                    arena,
+                )
+            } else {
+                self.resolver.caches.fs.read_file_with_allocator(
+                    path.text,
+                    dirname_fd,
+                    USE_SHARED_BUFFER,
+                    file_descriptor,
+                    if USE_SHARED_BUFFER { None } else { Some(arena) },
+                )
+            };
+            let mut entry = match read {
                 Ok(e) => e,
                 Err(err) => {
                     let _ = log.add_error_fmt(
@@ -1790,7 +1801,7 @@ fn parse_data_loader<'a>(
         options::Loader::Xml => {
             let options = bun_parsers::xml::Options {
                 compact: true,
-                encoding: bun_parsers::xml::InputEncoding::File,
+                encoding: bun_parsers::xml::InputEncoding::Bytes,
             };
             bun_core::analytics::Features::xml_parse_inc();
             match bun_parsers::xml::XML::parse(source, log, arena, options) {

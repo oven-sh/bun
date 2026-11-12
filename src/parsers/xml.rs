@@ -56,13 +56,14 @@ pub struct Options {
 /// §4.3.3 (BOM / UTF-16 detection, the `encoding` declaration) applies.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum InputEncoding {
-    /// Raw bytes (`XML.parse` of a Buffer/Blob): full detection, and a
+    /// Raw bytes (`XML.parse` of a Buffer/Blob, and `.xml` files that
+    /// `import`, `require` and `bun build` read): full detection, and a
     /// declaration that contradicts the bytes is an error.
     Bytes,
-    /// A file read by the module loader: detection applies, but the file
-    /// reader has already converted UTF-16LE-with-BOM to UTF-8 and stripped
-    /// UTF-8 byte-order marks, so a UTF-16 declaration on UTF-8 input is
-    /// taken as already satisfied rather than as a contradiction.
+    /// A file read for `bundler/aot/data_loaders.rs`: detection applies, but
+    /// the file reader has already converted UTF-16LE-with-BOM to UTF-8 and
+    /// stripped UTF-8 byte-order marks, so a UTF-16 declaration on UTF-8
+    /// input is taken as already satisfied rather than as a contradiction.
     File,
     /// Already-decoded text (a JS string, re-encoded as UTF-8): nothing to
     /// detect; the declaration is checked for syntax but not acted upon.

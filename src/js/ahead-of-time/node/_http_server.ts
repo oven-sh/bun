@@ -513,14 +513,7 @@ function normalizeServerTls(tls: $Node.HttpServerTLSOptions) {
 // uWS parses the connections it accepts. Every other Duplex gets Node's connection listener.
 function connectionListener(this: $Node.HttpServer, socket: $Node.HttpServerSocket) {
   // A socket that 'connect' or 'upgrade' got is a connection like any other when it's emitted again.
-  if (!socket[kHandedOff]) {
-    if (socket[kHandle] !== undefined) return;
-    const http = httpConnectionOf(socket._handle);
-    if (http !== undefined) {
-      attachConnection(this, socket, http);
-      return;
-    }
-  }
+  if (socket[kHandle] !== undefined && !socket[kHandedOff]) return;
   const tlsServer = this[tlsSymbol];
   // Its 'connection' listener wraps the socket in a TLSSocket, which comes back as 'secureConnection'.
   if (tlsServer) tlsServer.emit("connection", socket);
@@ -528,8 +521,7 @@ function connectionListener(this: $Node.HttpServer, socket: $Node.HttpServerSock
 }
 
 function secureConnectionListener(this: $Node.HttpServer, socket: $Node.HttpServerSocket) {
-  if (socket[kHandle] !== undefined && !socket[kHandedOff]) nativeConnectionListener(this, socket);
-  else connectionListenerInternal(this, socket);
+  if (socket[kHandle] === undefined || socket[kHandedOff]) connectionListenerInternal(this, socket);
 }
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L103-L106
@@ -1986,7 +1978,12 @@ function applyServerCustomOptions(server: $Node.HttpServer) {
   );
   setServerMaxHeadersCount(handle, nativeMaxHeadersCount(server.maxHeadersCount));
   const SocketClass = server[kListenerGeneration]!.tls ? TLSSocket : NetSocket;
-  const { 0: handlers, 1: data } = require("node:net").Server.prototype[kForeignListener].$call(server, SocketClass);
+  const { 0: handlers, 1: data } = require("node:net").Server.prototype[kForeignListener].$call(
+    server,
+    SocketClass,
+    attachConnection,
+    attachSecureConnection,
+  );
   // The native side keeps the async context it's called in for every handler. What a socket emits runs in nobody's AsyncLocalStorage store, as in Node.
   const frame = AsyncContextFrame.current();
   const socketFrame = AsyncContextFrame.currentGraphFrame();
@@ -3039,7 +3036,9 @@ function loadNet(tls: $Node.HttpServerTLSOptions | null) {
   if (tls) TLSSocket ??= require("node:tls").TLSSocket;
 }
 
-function attachConnection(server: $Node.HttpServer, socket: $Node.HttpServerSocket, http: $Node.NodeHTTPServerSocket) {
+// uWS parses the connection whatever a program did to the server's listeners, so this is none of them.
+function attachConnection(server: $Node.HttpServer, socket: $Node.HttpServerSocket) {
+  const http = httpConnectionOf(socket._handle)!;
   socket[kHandle] = http;
   http.duplex = socket;
   http.onclose = onConnectionClosed.bind(http, server[kTrackedConnections]);
@@ -3051,6 +3050,11 @@ function attachConnection(server: $Node.HttpServer, socket: $Node.HttpServerSock
     if (server[kListenerGeneration]?.isUnix) socket.resetAndDestroy = resetAndDestroyNotTCP;
     nativeConnectionListener(server, socket);
   }
+}
+
+// A TLSSocket of the program's that was emitted as 'connection' finishes its handshake with this server as socket.server too.
+function attachSecureConnection(server: $Node.HttpServer, socket: $Node.HttpServerSocket) {
+  if (socket[kHandle] !== undefined) nativeConnectionListener(server, socket);
 }
 
 // https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L826-L829

@@ -364,6 +364,8 @@ const kWriteReq = Symbol("kWriteReq");
 // How many bytes the kernel had taken when the timer last found a write queue that moved.
 const kLastBytesSent = Symbol("kLastBytesSent");
 const kSocketClass = Symbol("kSocketClass");
+const kOnAccepted = Symbol("kOnAccepted");
+const kOnSecure = Symbol("kOnSecure");
 const kServerSocket = Symbol("kServerSocket");
 
 // https://github.com/nodejs/node/blob/v26.5.0/lib/internal/stream_base_commons.js#L81-L107
@@ -1204,6 +1206,7 @@ const SocketHandlers = {
       if (server) {
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1214-L1232
         if (!self.destroyed && self._releaseControl()) {
+          server[bunSocketServerOptions]?.[kOnSecure]?.(server, self);
           server.emit("secureConnection", self);
         }
       }
@@ -1403,6 +1406,7 @@ function onconnection(err, clientHandle) {
 
   // Node reports a throwing 'connection' listener as uncaughtException and keeps the socket.
   try {
+    options[kOnAccepted]?.(self, _socket);
     self.emit("connection", _socket);
   } catch (e) {
     reportError(e);
@@ -3275,8 +3279,9 @@ Object.defineProperty(Server.prototype, "listening", {
 });
 
 // node:http's listener is uWS's. Returns the handler table for the handles it accepts and their first `data`, where open() looks for the listener.
-Server.prototype[kForeignListener] = function (SocketClass) {
-  this[bunSocketServerOptions] = { [kSocketClass]: SocketClass };
+// The two functions get (server, socket) ahead of 'connection' and of 'secureConnection'.
+Server.prototype[kForeignListener] = function (SocketClass, onAccepted, onSecure) {
+  this[bunSocketServerOptions] = { [kSocketClass]: SocketClass, [kOnAccepted]: onAccepted, [kOnSecure]: onSecure };
   return [serverHandlersFor(this), { _handle: { [owner_symbol]: this, onconnection } }];
 };
 

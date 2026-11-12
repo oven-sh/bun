@@ -1973,7 +1973,7 @@ net[Server][prototype][getsockname]: function function name="getsockname" length
 net[Server][prototype][getsockname][length] c-- number
 net[Server][prototype][getsockname][name] c-- string
 net[Server][prototype][Symbol(kForeignListener)] cew function
-net[Server][prototype][Symbol(kForeignListener)]: function function name="" length=1 above=Function extensible=true
+net[Server][prototype][Symbol(kForeignListener)]: function function name="" length=3 above=Function extensible=true
 net[Server][prototype][Symbol(kForeignListener)][length] c-- number
 net[Server][prototype][Symbol(kForeignListener)][name] c-- string
 net[Server][prototype][Symbol(Symbol.asyncDispose)] cew function

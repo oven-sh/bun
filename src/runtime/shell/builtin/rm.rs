@@ -4,6 +4,9 @@ use bun_core::{ZBox, ZStr, strings};
 use bun_paths::resolve_path::{self, Platform, platform};
 use bun_sys::{E, FdExt, dir_iterator};
 
+use crate::node::fs::{
+    find_embedded_shell_folder, forget_shell_operand, is_on_disk_at, note_found_on_disk,
+};
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, IoKind, Kind};
 use crate::shell::interpreter::{
@@ -98,6 +101,7 @@ enum RmParseFlag {
 
 impl Rm {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+        note_found_on_disk();
         Self::next(interp, cmd)
     }
 
@@ -393,6 +397,20 @@ impl Rm {
 
         // SAFETY: `task` is live; exclusive on main thread until decr above runs.
         let task_err = unsafe { (*task).err.get_mut().take() };
+        // SAFETY: the root task is freed with `task`, behind this function.
+        let (operand, is_recursive, was_on_disk) = unsafe {
+            (
+                (*(*task).root_task).path.as_bytes(),
+                (*task).opts.recursive,
+                (*task).was_on_disk,
+            )
+        };
+        let cwd = Builtin::shell(interp, cmd).cwd();
+        let find_folder = || find_embedded_shell_folder(cwd, operand).filter(|_| !is_recursive);
+        let task_err = task_err.or_else(find_folder);
+        if task_err.is_none() {
+            forget_shell_operand(cwd, operand, was_on_disk);
+        }
         // Format the error string before
         // stashing the error on `exec` (formatting needs &mut interp).
         let errstr: Option<Vec<u8>> = task_err
@@ -626,6 +644,7 @@ pub(crate) struct ShellRmTask {
     /// can take `&self` without an interior `&mut` cast.
     pub(crate) err: bun_threading::Guarded<Option<bun_sys::Error>>,
     pub(crate) join_style: JoinStyle,
+    was_on_disk: bool,
     pub(crate) event_loop: EventLoopHandle,
     pub task: ShellTask,
 }
@@ -700,6 +719,7 @@ impl ShellRmTask {
             pending_main_callbacks: AtomicU32::new(1),
             err: bun_threading::Guarded::new(None),
             join_style,
+            was_on_disk: is_on_disk_at(cwd, root_path),
             event_loop: evtloop,
             task: ShellTask::new(evtloop),
         });

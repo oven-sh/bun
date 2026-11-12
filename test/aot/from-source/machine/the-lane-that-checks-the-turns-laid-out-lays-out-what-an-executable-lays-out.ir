@@ -13,14 +13,14 @@
 # CHECK: statistic UnrolledLoopsEmitted 65
 # CHECK: statistic UnrolledLoopsForMaskedIndexes 5
 # CHECK: statistic UnrolledLoopsForTypedArrays 5
-# CHECK: statistic UnrolledLoopStorageChecksHoisted 21
+# CHECK: statistic UnrolledLoopStorageChecksHoisted 4
 # CHECK: statistic UnrolledLoopTypeProofsChecked 0
 # RUN(LANE): compile UnrolledLoopsEmitted UnrolledLoopsForMaskedIndexes UnrolledLoopsForTypedArrays UnrolledLoopStorageChecksHoisted UnrolledLoopTypeProofsChecked mechanisms=all testing=CheckBoundsInEmittersOnly
 # LANE: statistic UnrolledLoopsEmitted 65
 # LANE: statistic UnrolledLoopsForMaskedIndexes 5
 # LANE: statistic UnrolledLoopsForTypedArrays 5
-# LANE: statistic UnrolledLoopStorageChecksHoisted 21
-# LANE: statistic UnrolledLoopTypeProofsChecked 344
+# LANE: statistic UnrolledLoopStorageChecksHoisted 4
+# LANE: statistic UnrolledLoopTypeProofsChecked 430
 # RUN(PROOFS): compile UnrolledLoopsEmitted mechanisms=all testing=CheckProofsAtRunTime
 # PROOFS: statistic UnrolledLoopsEmitted 0
 # RUN(ANSWERS): run-in-shell mechanisms=all testing=CheckBoundsInEmittersOnly

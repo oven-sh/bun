@@ -126,6 +126,8 @@ pub(super) fn scan_statements(
     result
 }
 
+/// The import sites of the statements at the top level, each with its specifier, as `collect_import_sites` finds them
+/// where no such statement is dead and the file has no `import x = require()`.
 pub fn find_statement_sites(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -139,16 +141,22 @@ pub fn find_statement_sites(
         .collect()
 }
 
+/// What the names in a file tell without binding it.
 pub struct SitesByName {
+    /// As `find_statement_sites` finds them.
     pub sites: Vec<(ImportSiteKind, Atom)>,
+    /// One of the given names is evaluated where nothing in the file declares it.
     pub has_free_name: bool,
 }
 
+/// `None` where only binding the file tells: something else declares a name that decides, or the file has code that is not
+/// evaluated and that the names alone do not tell from code that is.
 pub fn find_sites_by_name(
     hir: &File<'_>,
     inputs: &FoldInputs<'_>,
     names: &[Atom],
 ) -> Option<SitesByName> {
+    // The binder may have no stack for what is nested deeper than this.
     const MOST_EXPRS: usize = 20_000;
     let is_ambient = |flags: Flags| flags.contains(Flags::AMBIENT);
     let may_have_default = |func: &Func| {

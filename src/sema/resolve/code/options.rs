@@ -29,6 +29,7 @@ pub struct CodeOptions {
     pub entry_points_that_run_first: Vec<Vec<u8>>,
     pub ignores_declared_side_effects: bool,
     pub looks_for_type_errors: bool,
+    /// `bun check --aot`: also reports type errors in the TypeScript sources of dependencies.
     pub checks_dependency_sources: bool,
 }
 

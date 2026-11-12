@@ -1,0 +1,3 @@
+// method assign getter, nothing
+const show = (label, f) => { let r; try { r = f(); } catch (e) { r = `${e?.name}: ${e?.message}`.slice(0, 90); } console.log(label, typeof r === "object" ? Object.prototype.toString.call(r) : String(r).slice(0, 60)); };
+class A { k = 0; m(n) { return n * 1000 + this.k; } } let a = new A(); function r() { let s = 0; for (let j = 0; j < 150; j++) { s += a.m(j & 3); } return s; } show("before", r); Object.assign(A.prototype, { get m() { return function (n) { return n * 8 + this.k; }; } }); show("after", r); const c = a; a = new A(); show("new", r); try {  } catch (e) { console.log("threw", e.name); } show("then", r); a = c; show("first object", r);

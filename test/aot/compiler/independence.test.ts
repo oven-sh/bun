@@ -13,7 +13,7 @@
 //   a reader | beside names   a file that it never names mentions more names than the table of lookups has columns: the reader's names keep theirs
 //   alone | another limit     the control: one constant of the feature is changed, and the comparison must report it
 //   alone | another type      the control: somebody hands a shared helper what the features never do, and the comparison must report it
-//   alone | another helper    the control: a shared helper is no longer copied in line, and the comparison must report the call
+//   alone | another helper    the control: a shared helper is no longer copied in line, and the comparison must report what its copy calls
 //
 // A build writes its program with --aot-out, and `testaot bytes` prints what each unit of it compiles to: a hash of the code with the fields of its
 // relocations cleared, and each relocation by the name of its symbol. The numbers behind the names are the image's, and differ by right.
@@ -443,7 +443,8 @@ for (const dress of Object.keys(extensions) as Dress[]) {
       "the comparison reports a helper that is no longer copied in line",
       async () =>
         expect((await compare(await both(dress, "alone", "another helper"), features)).differences.join("\n")).toMatch(
-          /calls, another helper, \w+: Call Function Body .* "isInteger" /,
+          // The copy of isInteger() makes a number of its text. x64 calls for the characters of a rope first, ARM64 for the number.
+          /calls, alone, \w+: Call Stub (?:RopeCharacters|TailCallOperation\.None operationAOTStringToNumber8)/,
         ),
       timeLimit,
     );

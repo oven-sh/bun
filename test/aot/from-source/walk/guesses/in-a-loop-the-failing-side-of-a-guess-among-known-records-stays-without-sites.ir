@@ -11,4 +11,4 @@
 # ASKED: frequency=Rare isInLoop=true
 # RUN(UNMARKED): walk f1 mechanisms=all
 # UNMARKED: code f1:Body
-# UNMARKED-NOT: keepsSitesThoughRare
+# UNMARKED-NOT: = PropGet

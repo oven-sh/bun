@@ -515,7 +515,8 @@ pub fn encode_refused_data(path: &[u8], refused: &RefusedData<'_>) -> Vec<u8> {
     record
 }
 
-const FILE_FOR_FILE_SYSTEM_RECORD: usize = 4 * size_of::<u32>() + size_of::<i64>();
+const FILE_FOR_FILE_SYSTEM_RECORD: usize =
+    4 * size_of::<u32>() + size_of::<i64>() + size_of::<u64>();
 
 /// A file that the build laid into the executable for `node:fs` to find, or a folder that only such files bring into sight.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -526,6 +527,8 @@ pub struct PathForFileSystemAlone {
     pub is_folder: bool,
     /// Passed as `--asset`, so `Bun.embeddedFiles` lists it.
     pub is_asset: bool,
+    /// Its size on the disk of the build, if the executable has none of its bytes because the program only asks about it.
+    pub size_without_bytes: Option<u64>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -535,6 +538,7 @@ pub struct FoundForFileSystemAlone {
     pub modified_at: i64,
     pub is_folder: bool,
     pub is_asset: bool,
+    pub size_without_bytes: Option<u64>,
 }
 
 /// The folders that hold `path`, from its own upward, as long as their paths have `least_length` bytes.
@@ -561,6 +565,8 @@ pub fn encode_files_for_file_system_alone(mut paths: Vec<PathForFileSystemAlone>
         records.extend_from_slice(&u32::from(path.is_folder).to_le_bytes());
         records.extend_from_slice(&u32::from(path.is_asset).to_le_bytes());
         records.extend_from_slice(&path.modified_at.to_le_bytes());
+        let size = path.size_without_bytes.unwrap_or(u64::MAX);
+        records.extend_from_slice(&size.to_le_bytes());
         start += path.path_below_root.len() as u32;
     }
     records.extend(paths.iter().flat_map(|path| &path.path_below_root));
@@ -578,7 +584,9 @@ fn find_for_file_system_alone(records: &[u8], path: &[u8]) -> Option<FoundForFil
         let (length, record) = record.split_first_chunk::<4>()?;
         let (is_folder, record) = record.split_first_chunk::<4>()?;
         let (is_asset, record) = record.split_first_chunk::<4>()?;
-        let (modified_at, _) = record.split_first_chunk::<8>()?;
+        let (modified_at, record) = record.split_first_chunk::<8>()?;
+        let (size, _) = record.split_first_chunk::<8>()?;
+        let size = u64::from_le_bytes(*size);
         let start = u32::from_le_bytes(*start) as usize;
         let listed = paths.get(start..start.checked_add(u32::from_le_bytes(*length) as usize)?)?;
         let found = FoundForFileSystemAlone {
@@ -586,6 +594,7 @@ fn find_for_file_system_alone(records: &[u8], path: &[u8]) -> Option<FoundForFil
             modified_at: i64::from_le_bytes(*modified_at),
             is_folder: u32::from_le_bytes(*is_folder) != 0,
             is_asset: u32::from_le_bytes(*is_asset) != 0,
+            size_without_bytes: (size != u64::MAX).then_some(size),
         };
         Some((listed, found))
     };

@@ -260,6 +260,7 @@ fn is_condition_or_unused(hir: &File<'_>, node: ExprId, statement: StmtId) -> bo
     }
 }
 
+/// Returns true if the code around `value` tests it and passes it nowhere.
 fn is_only_tested(hir: &File<'_>, bound: &BoundBuilder, value: ExprId) -> bool {
     let mut node = value;
     loop {
@@ -283,6 +284,7 @@ fn is_only_tested(hir: &File<'_>, bound: &BoundBuilder, value: ExprId) -> bool {
                 left,
                 right,
             } => {
+                // Beside a string or a number, `==` converts the object.
                 let other = if node == left { right } else { left };
                 return matches!(
                     hir[hir.skip_type_assertions(other)].kind,
@@ -310,6 +312,7 @@ fn is_only_tested(hir: &File<'_>, bound: &BoundBuilder, value: ExprId) -> bool {
     }
 }
 
+/// Returns true if the code around `import.meta` writes a member that holds the path of the file.
 fn writes_import_meta_path(hir: &File<'_>, bound: &BoundBuilder, import_meta: ExprId) -> bool {
     let object = find_outermost_cast(hir, bound, import_meta);
     let user = match bound.parent_of_expr(object) {
@@ -346,12 +349,14 @@ fn holds_path(name: Atom) -> bool {
 
 fn stores_path(hir: &File<'_>, bound: &BoundBuilder, member: ExprId) -> bool {
     match bound.get_assignment_target(hir, member) {
+        // Bun fills in every path, so `??=` and `||=` store nothing.
         Some(AssignmentTarget::Assign(Some(BinOp::Nullish | BinOp::Or))) | None => false,
         Some(AssignmentTarget::Assign(None)) => !stores_own_value(hir, bound, member),
         Some(_) => true,
     }
 }
 
+/// `import.meta.url = import.meta.url`
 fn stores_own_value(hir: &File<'_>, bound: &BoundBuilder, member: ExprId) -> bool {
     let Parent::Expr(assignment) = bound.parent_of_expr(member) else {
         return false;
@@ -368,11 +373,20 @@ fn stores_own_value(hir: &File<'_>, bound: &BoundBuilder, member: ExprId) -> boo
         && matches!((key(target), key(value)), (Some(MemberKey::Name(it)), Some(MemberKey::Name(other))) if it == other)
 }
 
+/// Returns true if the file stores to or defines a member that is named as a path of `import.meta`.
 fn may_write_path_under_alias(hir: &File<'_>, bound: &BoundBuilder) -> bool {
     (0..hir.exprs.len() as u32).map(ExprId).any(|member| {
         let Some((object, MemberKey::Name(name))) = hir.member_key(member) else {
             return false;
         };
+        if (name == known::defineProperty || name == known::set)
+            && let Parent::Expr(call) = bound.parent_of_expr(member)
+            && let ExprKind::Call(call) = hir[call].kind
+        {
+            let mut arguments = hir.ids(hir[call].args);
+            return hir[call].callee == member
+                && matches!(arguments.nth(1).map(|name| hir[name].kind), Some(ExprKind::String(name)) if holds_path(name));
+        }
         let object = hir[hir.skip_type_assertions(object)].kind;
         holds_path(name)
             && !matches!(object, ExprKind::This | ExprKind::ImportMeta)

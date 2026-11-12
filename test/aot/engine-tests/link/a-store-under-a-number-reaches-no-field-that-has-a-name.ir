@@ -5,8 +5,8 @@
 # export function read() { return [table.first, table.second]; }
 # console.log(read().join());
 # RUN: link fields mechanisms=all
-# CHECK: field L0.0 "first" proven=i32 writers-known
-# CHECK: field L0.1 "second" proven=i32 writers-known
+# CHECK: field L0.0 "first" proven=int[0, 2147483647] writers-known
+# CHECK: field L0.1 "second" proven=int[0, 2147483647] writers-known
 
 layout L0 module=m0 position=14 fields=[{key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
 # layout L132 kind=Closure

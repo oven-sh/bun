@@ -43,4 +43,4 @@
 # CHECK-NEXT: exited with 0
 # REQUIRES(HANDED): x86_64 as-written
 # RUN(HANDED): compile NullChecksFoldedIntoAccesses mechanisms=all
-# HANDED: statistic NullChecksFoldedIntoAccesses 3
+# HANDED: statistic NullChecksFoldedIntoAccesses 8

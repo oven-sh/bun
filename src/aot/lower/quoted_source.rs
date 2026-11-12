@@ -28,7 +28,13 @@ pub(in crate::lower) struct QuotedSources {
     places_of_patterns: PlacesOfPatterns,
     is_printed: Vec<u64>,
     quoted: Vec<QuotedSource>,
+    quoted_in_parts: Vec<QuotedSource>,
     line: Cell<Option<(usize, usize)>>,
+}
+
+pub(in crate::lower) struct QuotedInPart {
+    text: Vec<u8>,
+    quoted: Vec<QuotedSource>,
 }
 
 impl QuotedSources {
@@ -46,6 +52,22 @@ impl QuotedSources {
         self.places_of_patterns = places_of_patterns;
         (gaps == 0).then_some((start as u32, end as u32))
     }
+}
+
+fn merge_by_position(own: Vec<QuotedSource>, mut of_parts: Vec<QuotedSource>) -> Vec<QuotedSource> {
+    if !of_parts.is_sorted_by_key(|quoted| quoted.position) {
+        of_parts.sort_by_u32(|quoted| quoted.position);
+    }
+    let mut merged = Vec::with_capacity(own.len() + of_parts.len());
+    let mut own = own.into_iter().peekable();
+    for quoted in of_parts {
+        while let Some(before) = own.next_if(|it| it.position <= quoted.position) {
+            merged.push(before);
+        }
+        merged.push(quoted);
+    }
+    merged.extend(own);
+    merged
 }
 
 #[derive(Default)]
@@ -1329,7 +1351,22 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         !self.inputs.options.obfuscates && self.inputs.options.embeds_function_source
     }
 
+    fn quote_known_evaluation_at(&mut self, position: u32, expression: ExprId) {
+        let (written, own) = (self.hir[expression], &mut self.quoted_sources);
+        let text = &self.hir.text[written.pos as usize..written.end as usize];
+        let start = own.text.len() as u32;
+        own.text.extend_from_slice(text);
+        own.quoted.push(QuotedSource {
+            position,
+            start,
+            end: own.text.len() as u32,
+        });
+    }
+
     fn quote_at(&mut self, position: u32, expression: ExprId) {
+        if self.is_in_known_evaluation(expression) {
+            return self.quote_known_evaluation_at(position, expression);
+        }
         let expression = self.skip_to_written_expression(expression);
         let mut place = self.quoted_sources.places.get(&expression).copied();
         if place.is_none() {
@@ -1417,7 +1454,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         let StmtKind::Var(declarations) = hir[statement].kind else {
             return None;
         };
-        let stands_in_list = match bound.parent_of_stmt(statement) {
+        let is_list_element = match bound.parent_of_stmt(statement) {
             Parent::Stmt(parent) => matches!(hir[parent].kind, StmtKind::Block(_)),
             Parent::FnBody(_) | Parent::File => true,
             _ => false,
@@ -1434,16 +1471,42 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
                     matches!(written.next(), None | Some(b'/'))
                 })
         });
-        (stands_in_list && !may_be_joined && declarations.iter().next() == Some(declaration))
+        (is_list_element && !may_be_joined && declarations.iter().next() == Some(declaration))
             .then_some(start)
+    }
+
+    pub(in crate::lower) fn take_quoted_in_part(&mut self) -> QuotedInPart {
+        let QuotedSources {
+            text, mut quoted, ..
+        } = core::mem::take(&mut self.quoted_sources);
+        quoted.sort_by_u32(|quoted| quoted.position);
+        QuotedInPart { text, quoted }
+    }
+
+    pub(in crate::lower) fn add_quoted_in_part(&mut self, part: QuotedInPart) {
+        let own = &mut self.quoted_sources;
+        let start = own.text.len() as u32;
+        own.text.extend_from_slice(&part.text);
+        own.quoted_in_parts
+            .extend(part.quoted.into_iter().map(|quoted| QuotedSource {
+                start: quoted.start + start,
+                end: quoted.end + start,
+                ..quoted
+            }));
     }
 
     pub(in crate::lower) fn take_quoted_sources(&mut self) -> (Vec<QuotedSource>, Vec<u8>) {
         let QuotedSources {
-            text, mut quoted, ..
+            text,
+            mut quoted,
+            quoted_in_parts,
+            ..
         } = core::mem::take(&mut self.quoted_sources);
         let text_of = |quoted: &QuotedSource| &text[quoted.start as usize..quoted.end as usize];
         quoted.sort_by_u32(|quoted| quoted.position);
+        if !quoted_in_parts.is_empty() {
+            quoted = merge_by_position(quoted, quoted_in_parts);
+        }
         let mut kept: Vec<QuotedSource> = Vec::with_capacity(quoted.len());
         let mut index = 0;
         while let Some(first) = quoted.get(index) {

@@ -1,12 +1,44 @@
 use bun_sema::bind::Parent;
-use bun_sema::hir::{BinOp, Call, CallId, ExprId, ExprKind, PatId, PatKind, StmtId, StmtKind};
+use bun_sema::hir::{
+    BinOp, Call, CallId, ExprId, ExprKind, PatId, PatKind, StmtId, StmtKind, end_of_expr,
+};
 
 use crate::builtins::BuiltinId;
 use crate::lower::FileLowering;
 
 impl FileLowering<'_, '_, '_, '_> {
+    /// The engine reads a string that the program evaluates as it is. `bun run` prints the rest of the file anew.
+    #[inline]
+    pub(in crate::lower) fn is_in_known_evaluation(&self, expression: ExprId) -> bool {
+        self.hir.is_in_known_evaluation(self.hir[expression].pos)
+    }
+
+    /// The end of the head of a loop in front of `in` or `of`.
+    fn end_in_known_evaluation(&self, left: StmtId) -> Option<u32> {
+        let hir = self.hir;
+        let end = match hir[left].kind {
+            StmtKind::Var(declarations) => hir[hir[declarations.iter().next()?].pat].end,
+            StmtKind::Expr(target) => end_of_expr(hir, target),
+            _ => return None,
+        };
+        hir.is_in_known_evaluation(end).then_some(end)
+    }
+
+    /// Where a read of a variable that fails is reported, and whatever else has no place of its own.
+    #[inline]
+    pub(in crate::lower) fn reported_position(&self, expression: ExprId) -> u32 {
+        let written = self.hir[expression];
+        match written.kind {
+            ExprKind::Ident(_) if self.is_in_known_evaluation(expression) => written.end,
+            _ => written.pos,
+        }
+    }
+
     pub(in crate::lower) fn last_token_position_of(&self, expression: ExprId) -> u32 {
         let hir = self.hir;
+        if self.is_in_known_evaluation(expression) {
+            return end_of_expr(hir, expression);
+        }
         let mut last = self.skip_type_syntax(expression);
         loop {
             let next = match hir[last].kind {
@@ -41,6 +73,12 @@ impl FileLowering<'_, '_, '_, '_> {
         let ExprKind::New(site) = hir[expression].kind else {
             return hir[expression].pos;
         };
+        if self.is_in_known_evaluation(expression) {
+            return match hir[site].close_pos {
+                u32::MAX => hir[expression].pos,
+                _ => self.call_position(hir[site]),
+            };
+        }
         let reports_as_call = self.is_printed_as_call(hir[site])
             || (hir[site].close_pos != u32::MAX
                 && !self.is_printed_without_parentheses(expression, site));
@@ -50,6 +88,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    /// Where an error that is printed places the construction: `bun run` moves it back to `new`, where its printed source has a `new`.
     pub(in crate::lower) fn construction_start(&self, expression: ExprId) -> Option<u32> {
         let hir = self.hir;
         match hir[expression].kind {
@@ -58,9 +97,11 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    /// `bun run` prints `new Error(x)` as `Error(x)`.
     fn is_printed_as_call(&self, site: Call) -> bool {
         let callee = self.skip_type_syntax(site.callee);
         matches!(self.hir[callee].kind, ExprKind::Ident(_))
+            && !self.is_in_known_evaluation(callee)
             && self
                 .builtins
                 .global_path(self.hir, self.bound, callee)
@@ -82,9 +123,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 })
     }
 
+    /// `bun run` prints `new A()` as `new A` where nothing reads or calls the result in place.
     fn is_printed_without_parentheses(&self, expression: ExprId, site: CallId) -> bool {
         let hir = self.hir;
-        if hir.ids(hir[site].args).next().is_some() {
+        if hir.ids(hir[site].args).next().is_some() || self.is_in_known_evaluation(expression) {
             return false;
         }
         let mut operand = expression;
@@ -101,6 +143,7 @@ impl FileLowering<'_, '_, '_, '_> {
         true
     }
 
+    /// Where a pattern reports that the value of `expression` is null or undefined: `bun run` reports at the last place that the expression can fail at.
     pub(in crate::lower) fn destructured_position(&self, expression: ExprId) -> Option<u32> {
         let hir = self.hir;
         let mut last = self.skip_type_syntax(expression);
@@ -126,6 +169,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    /// The position of the async frame that awaits `operand`: `bun run` reports the last place that the operand can fail at.
     pub(in crate::lower) fn awaited_position(&self, operand: ExprId) -> Option<u32> {
         let hir = self.hir;
         let mut last = self.skip_type_syntax(operand);
@@ -148,6 +192,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    /// Whether the member or the call around `expression` reports at its last token too. One position quotes one expression.
     pub(in crate::lower) fn shares_last_token(&self, expression: ExprId) -> bool {
         let hir = self.hir;
         let mut last = expression;
@@ -170,6 +215,7 @@ impl FileLowering<'_, '_, '_, '_> {
         false
     }
 
+    /// The last name that a pattern binds, where nothing stands behind it.
     fn last_name_of_pattern(&self, pattern: PatId) -> Option<PatId> {
         let hir = self.hir;
         let mut last = pattern;
@@ -193,8 +239,14 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    /// Where a `for`-`of` loop reports what its subject refuses: at the last name in what the head declares or assigns to.
     pub(in crate::lower) fn loop_head_position(&self, statement: StmtId, left: StmtId) -> u32 {
         let hir = self.hir;
+        if let Some(end) = self.end_in_known_evaluation(left) {
+            let rest = &hir.text[end as usize..];
+            let blanks = rest.iter().take_while(|byte| byte.is_ascii_whitespace());
+            return end + blanks.count() as u32;
+        }
         match hir[left].kind {
             StmtKind::Var(declarations) => match declarations.iter().next() {
                 Some(declaration) => match self.last_name_of_pattern(hir[declaration].pat) {
@@ -241,6 +293,7 @@ mod tests {
             obfuscates: false,
             counts_executions: false,
             runs_tests: false,
+            divides_small_files: false,
         };
         let lowered = lower_program(&[("main.ts", source)], options);
         let fragments = lowered.iter().map(|(_, lowered)| &lowered.fragment);
@@ -318,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn construction_without_arguments_reports_as_it_is_printed() {
+    fn bare_construction_reports_printed_form() {
         let source = "export function probe(a: any) {
   new a.First();
   new a.Second().run;
@@ -344,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn object_pattern_reports_where_its_initializer_does() {
+    fn object_pattern_reports_initializer_position() {
         let source = "export function probe(a: any, x: any) {
   const { first } = a.call(x);
   const { second } = a.member.last;

@@ -23,6 +23,6 @@
 # -- end of source
 # L0 = Box. Two families of lost functions, each with a pool. The name is called on the first; the second, tied by direct calls, comes to the same parameter only through one of the first five: the families are united behind the call, and nothing tells the call again: the pools are tied, and what is laid on the closures of the one is found through the other.
 # RUN(FIELDS): link fields mechanisms=all
-# FIELDS: "count" proven=i32|string
+# FIELDS: "count" proven=int[0, 2147483647]|string
 # RUN(ANSWERS): run-in-shell globalThis.hidden = () => 2;
 # ANSWERS: 10;20;30;40;50;11,12,13,14,own,text,string

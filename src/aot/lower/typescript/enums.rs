@@ -117,7 +117,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(in crate::lower) fn lower_enum(&mut self, declaration: EnumId) {
         let (hir, bound) = (self.file.hir, self.file.bound);
         let data = hir[declaration];
-        if data.flags.contains(Flags::AMBIENT) {
+        if data.flags.contains(Flags::AMBIENT)
+            || self.file.is_const_enum_without_object(declaration)
+        {
             return;
         }
         let container = self.find_container(Decl::Enum(declaration), data.name);

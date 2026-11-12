@@ -396,7 +396,7 @@ pub(super) fn unit_in(
     project: ProjectId,
     fragment: Fragment,
 ) -> LinkUnit {
-    LinkUnit::new(&key_context(projects, project), fragment)
+    LinkUnit::new(&key_context(projects, project), fragment, &forward)
 }
 
 pub(super) fn finish_unit(projects: &Projects<'_, '_>, fragment: FragmentBuilder) -> LinkUnit {

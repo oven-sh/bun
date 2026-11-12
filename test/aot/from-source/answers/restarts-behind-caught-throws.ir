@@ -1,0 +1,37 @@
+# -- source: main.ts
+# declare function print(...values: any[]): void;
+# const unseen = (x: any): any => (globalThis as any).nothingOfThisName ?? x;
+# class Point { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } sum(): number { return this.x + this.y; } }
+# const holder = unseen(Point);
+# function change(): void { holder.prototype.sum = function () { return 1000; }; }
+# class Picky { v: number; constructor(v: number) { this.v = v; if (v & 1) throw 7; } }
+# function straight(list: number[]): number {
+#   let total = 0;
+#   for (let i = 0; i < list.length; i++) { const got = new Picky(list[i] & ~1).v; const p = new Point(list[i], got); total = (total + p.sum()) | 0; }
+#   return total;
+# }
+# function caught(list: number[], at: number): number {
+#   let total = 0;
+#   for (let i = 0; i < list.length; i++) { let got = 0; try { got = new Picky(list[i]).v; } catch { got = -1; } const p = new Point(list[i], got); if (i === at) change(); total = (total + p.sum()) | 0; }
+#   return total;
+# }
+# const numbers: number[] = [];
+# for (let k = 0; k < 24; k++) numbers.push(k * 3);
+# print(straight(numbers), caught(numbers, -1));
+# print(caught(numbers, 5));
+# -- end of source
+# The state at a handler is the meet of the states at its throws, so an iteration restarts behind a catch only where nothing that the iteration did before any of those throws can be seen. Three restarts: one of `straight`,
+# one in the try of `caught` in front of its throw, and one behind the join with its catch. f2 = straight, f3 = caught
+# The net of effects holds each of them to that: the handler puts back the counts of a quiet call that threw, as the code behind the call does where it returns. no-restart-behind-caught-effects.ir holds what may not restart.
+# RUN(COUNT): compile IterationRestartsEmitted testing=FailSpeculations:2 mechanisms=all
+# COUNT: statistic IterationRestartsEmitted 3
+# RUN(NET): run-in-shell testing=CheckEffectsAtRunTime,FailSpeculations:2 mechanisms=all
+# NET: 1644 1212
+# NET-NEXT: 19046
+# NET-NEXT: exited with 0
+# RUN(THIRD): run-in-shell testing=CheckEffectsAtRunTime,FailSpeculations:3 mechanisms=all
+# THIRD: 1644 1212
+# THIRD-NEXT: 19046
+# RUN(CALLED): run-in-shell testing=CheckEffectsAtRunTime,FailSpeculations:2 mechanisms=all-Inlining
+# CALLED: 1644 1212
+# CALLED-NEXT: 19046

@@ -2451,6 +2451,9 @@ declare namespace $Node {
     pause(): boolean;
     resume(): boolean;
     notifyWhenReadParsed(): boolean;
+    setTrailers(trailers: string): void;
+    /** The turn of a pipelined response: it takes the connection and sends what it held. False if it can't be sent. */
+    start(): boolean;
     takeRequestTrailers(lenient: boolean): string[] | undefined;
     takeRawHeaders(headers: IncomingHttpHeaders | null): string[] | undefined;
     headersObject(): IncomingHttpHeaders | undefined;
@@ -2473,9 +2476,7 @@ declare namespace $Node {
     leaveHttp(resumes: boolean): boolean;
     leaveHttpAfterBody(): void;
     setRawReads(enabled: boolean): void;
-    setResponseTrailers(trailers: string): void;
     isRequestTimedOut(headersTimeout: number, requestTimeout: number): boolean;
-    startRawResponse(response: NodeHTTPResponse, connectionClose: boolean): boolean;
     stopParsing(): void;
     detachParser(): void;
     /** Whether the connection ended in the middle of a message. */

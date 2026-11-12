@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 3e8cde01fb99e12e9b6cd1e8cc4f7cdc3618972cc0cd407bab8f1a61e096be99.
+// Written against that file with the SHA-256 c4083d43f85bd29bfa0fd2db94c008af12b5af4d50d94fb4a291986bcc971226.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -618,6 +618,7 @@ const upgradeDuplexToTLS: (
   "socket_body.bind.ts",
   "upgradeDuplexToTLS",
 );
+const httpConnectionOf = $bindgen("node_http_binding.bind.ts", "httpConnectionOf") as (socket: unknown) => unknown;
 // tls.connect({ socket }) upgrade: hostname policy stays with this JS layer.
 const upgradeTLSDeferred = $bindgen("socket_body.bind.ts", "upgradeTLSDeferred") as unknown as (
   socket: SocketHandle,
@@ -2574,8 +2575,13 @@ Object.defineProperty(Socket.prototype, "pending", {
 // Queued/in-flight plain writes would be stranded on the retired TCP wrapper
 // if the fd were adopted; such sockets use the stream-level TLS engine, whose
 // ciphertext queues behind the pending writes (order + callbacks preserved).
+// So does a connection on which node:http still has responses to send.
 function hasUnflushedWrites(connection: $Node.Socket) {
-  return connection.writableLength > 0 || connection[kWriteReq] !== undefined;
+  return (
+    connection.writableLength > 0 ||
+    connection[kWriteReq] !== undefined ||
+    httpConnectionOf(connection._handle) !== undefined
+  );
 }
 
 function drainOnreadTail(self: $Node.Socket, fromRead?: boolean) {

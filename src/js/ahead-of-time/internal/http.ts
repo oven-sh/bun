@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 b303ec0a03f9807d44a295ae0168bafbf6ca315553e457928a4d1ba26cceac81.
+// Written against that file with the SHA-256 73e5cc3ea232248741e2291db44571b6ee06f3e832537cf6e570db9f0725970d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { isIPv4 } = require("internal/net/isIP");
@@ -110,6 +110,8 @@ export const enum NodeHTTPResponseFlags {
   socket_closed = 1 << 0,
   request_has_completed = 1 << 1,
   ended = 1 << 2,
+  /** The response waits behind an earlier one on its connection, and the handle holds what it's given. */
+  holds = 1 << 6,
 
   closed_or_completed = socket_closed | request_has_completed,
 }

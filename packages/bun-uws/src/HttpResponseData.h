@@ -151,13 +151,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * NodeHttpResponseData) because they are read on shared code paths:
          * request reset, response end, shouldCloseConnection(). */
 
-        /* The request currently being routed arrived while an earlier response on
-         * this connection is still in flight (HTTP/1.1 pipelining). NodeHTTP.cpp
-         * queues it on the server socket instead of making it the connection's
-         * current response; the per-response state reset is applied later by
-         * JSNodeHTTPServerSocket::startRawResponse(). Only meaningful while
-         * the request handler dispatch is on the stack. */
-        HTTP_NODE_PIPELINED_DISPATCH = 1 << 11,
         /* The JS layer stopped HTTP processing on this connection (Node frees the
          * parser when 'close' is emitted on the socket); any further request data
          * in the buffer is not parsed. */
@@ -212,7 +205,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
          * keep-alive connection, so starting a new response clears the rest of the
-         * word (resetResponseState) - these have to survive that. */
+         * word (beginResponse) - these have to survive that. */
         /* node:http: call NodeHttpSocketHooks::onReadParsed once the read being parsed is consumed. */
         HTTP_NODE_NOTIFY_READ_PARSED = 1 << 19,
 
@@ -234,14 +227,21 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         READ_PAUSE_SOCKET = 8,
     };
 
+    /* What the head that was just parsed says about its response: HTTP/1.0 gets no keep-alive and no chunked framing, `Connection: close` no keep-alive. */
+    uint32_t stateForRequest(bool isAncient) const {
+        if (isAncient) {
+            return HTTP_ANCIENT_REQUEST | HTTP_CONNECTION_CLOSE;
+        }
+        return this->sawConnectionClose ? HTTP_CONNECTION_CLOSE : 0;
+    }
+
     /* Begin a new response on this connection. Clearing the word in one go is
      * what keeps a previous response's framing or
      * trailers from leaking into the next request on a
      * keep-alive socket; only the connection-scoped bits are carried over. */
-    void resetResponseState() {
-        state = (state & HTTP_CONNECTION_SCOPED) | HTTP_RESPONSE_PENDING;
-        /* A response is in flight again (a new request dispatched, or a queued
-         * pipelined response activated), so the connection is not idle. */
+    void beginResponse(uint32_t requestState) {
+        offset = 0;
+        state = (state & HTTP_CONNECTION_SCOPED) | HTTP_RESPONSE_PENDING | requestState;
         this->isIdle = false;
     }
 
@@ -294,10 +294,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * both Bun.serve and node:http servers. */
     uint64_t chunkedExtensionsByteCount = 0;
 
-    /* node:http server compat: number of pipelined responses dispatched to JS
-     * that have not yet become this connection's current response. While
-     * non-zero, newly parsed requests keep being queued (preserving response
-     * order). */
+    /* node:http: requests that were dispatched and whose responses wait for the connection (JSNodeHTTPServerSocket::startResponse). */
     uint32_t nodeHttpQueuedPipelinedCount = 0;
 
     /* Returns true if the response in flight is the last one on this connection. A graceful stop still answers a parked request. */

@@ -5,9 +5,9 @@
 #include <JavaScriptCore/JSObject.h>
 #include "BunClientData.h"
 #include "GeneratedNodeHTTPResponse.h"
+#include <wtf/Deque.h>
 #include <wtf/Lock.h>
 #include <wtf/Vector.h>
-#include <wtf/text/StringView.h>
 
 extern "C" {
 struct us_socket_t;
@@ -61,14 +61,10 @@ public:
      * (ms; 0 disables a check). Reports a given message at most once. */
     bool isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs);
 
-    /* node:http server compat - HTTP/1.1 pipelining. Responses for requests
-     * that were parsed while an earlier response on this connection was still
-     * in flight are queued here (in arrival order) and become the connection's
-     * current response one at a time via startRawResponse(). On socket
-     * close every queued response is notified just like the current one. */
-    void appendPipelinedResponse(JSC::VM& vm, JSNodeHTTPResponse* response);
-    /* Makes a queued response the connection's current one, and resets the per-response state of uWS. JavaScript renders it and writes it with socket.write(), so its end() writes nothing: it only completes the response. Returns false if the connection is gone or didn't queue it. */
-    bool startRawResponse(JSC::VM& vm, JSNodeHTTPResponse* response, bool connectionClose);
+    /* HTTP/1.1 pipelining: the response of a request that was parsed while an earlier response was owed waits here, in arrival order. `requestState` is for HttpResponseData::beginResponse(). */
+    void appendPipelinedResponse(JSC::VM& vm, JSNodeHTTPResponse* response, uint32_t requestState);
+    /* Makes the response that has waited longest the current one. Returns false if that isn't `response`. */
+    bool startResponse(JSC::VM& vm, JSNodeHTTPResponse* response);
     /* The response that answers on this connection now. A close reaches it and the queued ones. */
     JSNodeHTTPResponse* currentResponse() const { return m_currentResponse.get(); }
     /* A close does not reach the response that leaves the slot, so the connection is taken back from it first. */
@@ -119,10 +115,6 @@ public:
     void updateParked();
     /* Sends the response bytes that are not in the uWS buffer (the zero-copy tail of a res.write(), the cork buffer) to the kernel or into it. A raw write or a FIN then goes out behind them. */
     void flushResponseBytesAhead();
-    /* Set the trailer fields (pre-rendered "name: value\r\n" lines) to write
-     * between the terminating 0 chunk and the final CRLF of the current
-     * response's chunked body. */
-    void setResponseTrailers(WTF::StringView trailers);
 
     ~JSNodeHTTPServerSocket();
 
@@ -131,11 +123,13 @@ public:
     mutable JSC::WriteBarrier<JSC::JSObject> functionToCallOnClose;
     mutable JSC::WriteBarrier<JSC::JSObject> m_duplex;
 
-    /* Queued pipelined responses (see appendPipelinedResponse). The lock keeps
-     * mutation on the JS thread coherent with the concurrent GC marker walking
-     * the vector in visitChildren. */
+    struct PipelinedResponse {
+        JSC::WriteBarrier<JSNodeHTTPResponse> response;
+        uint32_t requestState;
+    };
+    /* The lock is for the concurrent marker, which walks the queue in visitChildren. */
     mutable WTF::Lock m_pipelinedResponsesLock;
-    mutable WTF::Vector<JSC::WriteBarrier<JSNodeHTTPResponse>, 2> m_pipelinedResponses;
+    WTF::Deque<PipelinedResponse> m_pipelinedResponses;
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

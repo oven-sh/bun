@@ -509,23 +509,16 @@ private:
                 nodeHttpResponseData->headersCompleted = true;
             }
 
-            /* Is the previous response on this connection still in flight? */
-            bool queueBehindEarlierResponse = false;
+            bool isResponseOwed = httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
             if constexpr (IsNodeHttp) {
-                /* node:http also queues behind responses that were dispatched but
-                 * are not the connection's current response yet, and behind a
-                 * response that has ended but not finished: its bytes are still
-                 * in the outgoing buffer (or the TLS spill), and it owns the
-                 * connection (Node's socket._httpMessage) until they have been
-                 * written out, with later responses queued behind it (Node's
-                 * state.outgoing). A write or uncork can empty the buffer before
-                 * the writable event tells that response so (kqueue reports read
-                 * and write readiness separately); onWritable stays armed until then. */
-                queueBehindEarlierResponse = httpResponseData->nodeHttpQueuedPipelinedCount > 0
-                    || !((AsyncSocket<SSL> *) s)->hasFullyDrained()
-                    || httpResponseData->onWritable != nullptr;
+                /* A response that has ended keeps the connection until onWritable has told it that its bytes are out. */
+                isResponseOwed = isResponseOwed || httpResponseData->nodeHttpQueuedPipelinedCount > 0 || httpResponseData->onWritable != nullptr;
+                /* Node's flood prevention. The rest of this read is still parsed: the pause holds from the next read until onWritable has sent these bytes. */
+                if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0) [[unlikely]] {
+                    ((HttpResponse<SSL> *) s)->pauseReads(HttpResponseData<SSL>::READ_PAUSE_FLOOD);
+                }
             }
-            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || queueBehindEarlierResponse) {
+            if (isResponseOwed) [[unlikely]] {
                 if constexpr (!IsNodeHttp) {
                     /* The parser parks a request that arrives while a response is pending, so this
                      * only guards against interleaved responses. Responses that completed earlier in
@@ -534,48 +527,12 @@ private:
                     ((AsyncSocket<SSL> *) s)->close();
                     return nullptr;
                 } else {
-
-                /* node:http supports async pipelining: the request is dispatched
-                 * while the previous response is still in flight and the JS layer
-                 * queues its response (res.socket === null until it becomes the
-                 * connection's current response). The per-response state reset is
-                 * skipped here - it still belongs to the in-flight response - and
-                 * is applied by JSNodeHTTPServerSocket::startRawResponse()
-                 * when the queued response is activated. Node keeps reading and
-                 * dispatching pipelined requests while responses are queued (its
-                 * parserOnIncoming only pauses the socket once the outgoing data
-                 * backs up), so reads are paused only when this connection already
-                 * has unsent outgoing backpressure; they resume once the
-                 * backpressure flushes (onWritable). That pause is also Node's flood prevention for sync
-                 * write()+end() handlers that back up the socket: the request
-                 * behind the backed-up response lands here. */
-                httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PIPELINED_DISPATCH;
-                httpResponseData->nodeHttpQueuedPipelinedCount++;
-                /* A connection that owes a queued response is not idle (see markDone). */
-                httpResponseData->isIdle = false;
-                if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0) {
-                    /* Like Node, the rest of this read is still parsed: the pause holds from the next read. */
-                    ((HttpResponse<SSL> *) s)->pauseReads(HttpResponseData<SSL>::READ_PAUSE_FLOOD);
-                }
+                    /* Like Node, the request is dispatched now. The state stays with the response in flight, and this one holds what it writes until its turn. */
+                    httpResponseData->nodeHttpQueuedPipelinedCount++;
+                    httpResponseData->isIdle = false;
                 }
             } else {
-                /* Reset httpResponse */
-                httpResponseData->offset = 0;
-
-                /* Mark pending request and emit it. This also clears the previous
-                 * response's per-request framing bits (204/304, close-delimited,
-                 * trailers), which writeHead only ever sets: a stale one would
-                 * strip the next response's body framing. */
-                httpResponseData->resetResponseState();
-
-                /* An ancient (HTTP/1.0) request gets no keep-alive and no chunked
-                 * framing; so does an explicit `Connection: close`. */
-                const bool isAncient = httpRequest->isAncient();
-                if (isAncient) {
-                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
-                } else if (httpResponseData->sawConnectionClose) {
-                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
-                }
+                httpResponseData->beginResponse(httpResponseData->stateForRequest(httpRequest->isAncient()));
 
                 httpResponseData->requestBodyBudget = UINT64_MAX;
                 if (declaresBodyOverLimit(httpRequest->getContentLength(), httpContextData->maxRequestBodySize)) [[unlikely]] {
@@ -631,12 +588,6 @@ private:
             /* We absolutely have to terminate parsing if shutdown */
             if (isShutDownByOwner<IsNodeHttp>((us_socket_t *) s) && !readsBodyBehindOwnFin(httpResponseData)) {
                 return nullptr;
-            }
-
-            /* node:http compat: the pipelined-dispatch marker is only meaningful
-             * while this dispatch is on the stack. */
-            if constexpr (IsNodeHttp) {
-                httpResponseData->state &= ~HttpResponseData<SSL>::HTTP_NODE_PIPELINED_DISPATCH;
             }
 
             /* Returning from a request handler without responding or attaching an onAborted handler is ill-use */

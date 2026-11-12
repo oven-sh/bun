@@ -288,6 +288,7 @@ const checkServerIdentityInHandshake = $bindgen("socket_body.bind.ts", "checkSer
 // destroy() in the handshake callback: drops the handshake flight that the native layer holds.
 const releaseHeldFlight = $bindgen("socket_body.bind.ts", "releaseHeldFlight");
 const isNamedPipeSocket = $bindgen("socket_body.bind.ts", "isNamedPipeSocket");
+const httpConnectionOf = $bindgen("node_http_binding.bind.ts", "httpConnectionOf");
 const getBytesRead = $bindgen("socket_body.bind.ts", "getBytesRead");
 
 const bunTlsSymbol = Symbol.for("::buntls::");
@@ -2182,8 +2183,13 @@ Object.defineProperty(Socket.prototype, "pending", {
 // Queued/in-flight plain writes would be stranded on the retired TCP wrapper
 // if the fd were adopted; such sockets use the stream-level TLS engine, whose
 // ciphertext queues behind the pending writes (order + callbacks preserved).
+// So does a connection on which node:http still has responses to send.
 function hasUnflushedWrites(connection) {
-  return connection.writableLength > 0 || connection[kWriteReq] !== undefined;
+  return (
+    connection.writableLength > 0 ||
+    connection[kWriteReq] !== undefined ||
+    httpConnectionOf(connection._handle) !== undefined
+  );
 }
 
 function drainOnreadTail(self, fromRead?) {

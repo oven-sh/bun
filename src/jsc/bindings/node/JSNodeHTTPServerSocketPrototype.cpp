@@ -29,9 +29,7 @@ JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnClose);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketClose);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketLeaveHttpAfterBody);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetRawReads);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetResponseTrailers);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketIsRequestTimedOut);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStartRawResponse);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStopParsing);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketFinishParsing);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketDetachParser);
@@ -60,9 +58,7 @@ static const JSC::HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = 
     { "close"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketClose, 0 } },
     { "leaveHttpAfterBody"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketLeaveHttpAfterBody, 0 } },
     { "setRawReads"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketSetRawReads, 1 } },
-    { "setResponseTrailers"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketSetResponseTrailers, 1 } },
     { "isRequestTimedOut"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketIsRequestTimedOut, 2 } },
-    { "startRawResponse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketStartRawResponse, 2 } },
     { "stopParsing"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketStopParsing, 0 } },
     { "detachParser"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketDetachParser, 0 } },
     { "finishParsing"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketFinishParsing, 0 } },
@@ -118,26 +114,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetRawReads, (JSC::JSGlob
     return JSValue::encode(JSC::jsUndefined());
 }
 
-// node:http: set the trailer fields (pre-rendered "name: value\r\n" lines) to send
-// at the end of the current response's chunked body (response.addTrailers()).
-JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetResponseTrailers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
-    if (!thisObject) [[unlikely]] {
-        return JSValue::encode(JSC::jsUndefined());
-    }
-    JSValue trailersValue = callFrame->argument(0);
-    if (!trailersValue.isString()) {
-        return JSValue::encode(JSC::jsUndefined());
-    }
-    WTF::String trailers = trailersValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    thisObject->setResponseTrailers(trailers);
-    return JSValue::encode(JSC::jsUndefined());
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketIsRequestTimedOut, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
@@ -164,17 +140,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketIsRequestTimedOut, (JSC::
     uint64_t requestTimeoutMs = std::isfinite(requestTimeout) && requestTimeout > 0 ? static_cast<uint64_t>(std::min(requestTimeout, kMaxDoubleBelowU64)) : 0;
 
     return JSValue::encode(JSC::jsBoolean(thisObject->isRequestTimedOut(headersTimeoutMs, requestTimeoutMs)));
-}
-
-// (responseHandle, connectionClose). Returns false if the connection is gone or didn't queue that response.
-JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStartRawResponse, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
-    auto* response = dynamicDowncast<JSNodeHTTPResponse>(callFrame->argument(0));
-    if (!thisObject || !response) [[unlikely]] {
-        return JSValue::encode(JSC::jsBoolean(false));
-    }
-    return JSValue::encode(JSC::jsBoolean(thisObject->startRawResponse(globalObject->vm(), response, callFrame->argument(1).toBoolean(globalObject))));
 }
 
 // node:http: stop parsing further HTTP requests on this connection (the user

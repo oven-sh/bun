@@ -923,36 +923,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     )
                 };
 
-                // A pipelined response stays queued: the connection's state describes the one ahead of it.
-                if nhr.flags.get().contains(NhrFlags::CURRENT) {
-                    let nhr_flags = nhr.flags.get();
-                    if !nhr.is_socket_closed_or_closing() {
-                        if let Some(raw) = nhr.writer() {
-                            if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
-                                && raw.state().is_response_pending()
-                            {
-                                if raw.state().is_http_status_called() {
-                                    raw.write_status(b"500 Internal Server Error");
-                                    raw.end_without_body(true);
-                                } else {
-                                    raw.end_stream(true);
-                                }
-                            }
-                        }
-                    }
-                    // The handler threw before `res.end()`; we just ended (or
-                    // will never end) the raw response above. Mark ENDED so
-                    // `on_request_complete()` → `mark_request_as_done()` runs
-                    // and releases the `IS_REQUEST_PENDING` ref (one of the
-                    // initial 3). Without this the box leaks: the later
-                    // `on_abort` socket-close path early-returns once
-                    // `REQUEST_HAS_COMPLETED` is set and never balances it.
-                    // An ended response still draining completes from on_drain/on_abort.
-                    if !nhr_flags.contains(NhrFlags::ENDED) {
-                        nhr.flags.set(nhr.flags.get() | NhrFlags::ENDED);
-                        nhr.on_request_complete();
-                    }
-                }
+                nhr.on_dispatch_threw();
             }
             HttpResult::Success | HttpResult::Pending => {}
         }

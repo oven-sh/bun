@@ -114,7 +114,7 @@ public:
         return (getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_BODY_MASK) == HttpResponseData<SSL>::HTTP_BODY_CHUNKED;
     }
 
-    /* Ends the header section of every HTTP/1 response but one that node:http writes whole (tryWriteHeadAtOnce() in NodeHTTP.cpp). Decides the framing once, and writes the headers uWS owns unless the caller wrote them. */
+    /* Ends the header section of every HTTP/1 response but one that node:http writes whole (tryWriteWholeResponse() in NodeHTTP.cpp). Decides the framing once, and writes the headers uWS owns unless the caller wrote them. */
     void terminateHeaders(uint64_t bodyLength) {
         using Data = HttpResponseData<SSL>;
         writeStatus(HTTP_200_OK);
@@ -739,9 +739,7 @@ public:
         return this;
     }
 
-    /* Write a caller-built 1xx informational response line + headers. Shares
-     * the AsyncSocket write path (and buffer) writeStatus/end use, so a
-     * pipelined replay stays ordered ahead of the final response bytes. */
+    /* Write a caller-built 1xx informational response line + headers. */
     HttpResponse *writeRawInformational(std::string_view data) {
         Super::write(data.data(), data.length());
         return this;

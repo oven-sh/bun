@@ -50,6 +50,8 @@ export const enum NodeHTTPResponseFlags {
   socket_closed = 1 << 0,
   request_has_completed = 1 << 1,
   ended = 1 << 2,
+  /** The response waits behind an earlier one on its connection, and the handle holds what it's given. */
+  holds = 1 << 6,
 
   closed_or_completed = socket_closed | request_has_completed,
 }

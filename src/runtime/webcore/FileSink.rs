@@ -1945,8 +1945,8 @@ impl CloseTask {
 /// `_final` of a node stream over `sink`, a `FileSink`: flushes as `flush()` does. `true`: `callback` is called
 /// from the event loop once everything is written, with the error of the write if it failed, and never before
 /// this returns. That is where libuv completes the shutdown request of Node's `net.Socket`. `false`: the sink
-/// writes in its caller's turn, as the `SyncWriteStream` that Node has over a regular file does. It is flushed,
-/// and the caller calls back.
+/// writes in its caller's turn, as the `SyncWriteStream` that Node has over a regular file does, and no write
+/// is parked. It is flushed, and the caller calls back.
 pub(crate) fn shutdown(
     cx: &mut JsScope<'_>,
     sink: JsLocal<'_>,
@@ -1962,9 +1962,11 @@ pub(crate) fn shutdown(
     unsafe {
         let _guard = RefPtr::init_ref(this);
         let completes_from_loop = (*this).completes_from_loop();
+        // A write that is parked flushes everything, and reports through the slot: also the error of a
+        // writer that has closed since, which waits there for its task.
+        let parked = (*this).pending.get().state == streams::PendingState::Pending;
         let mut errno = 0;
-        // A write that is parked flushes everything.
-        if (*this).pending.get().state != streams::PendingState::Pending && !(*this).done.get() {
+        if !parked && !(*this).done.get() {
             match (*this).flush_buffered(drop) {
                 sys::Result::Ok(()) => {}
                 sys::Result::Err(err) if completes_from_loop => errno = err.errno,
@@ -1974,12 +1976,12 @@ pub(crate) fn shutdown(
                 }
             }
         }
-        if !completes_from_loop {
+        if !completes_from_loop && !parked {
             return Ok(false);
         }
         (*this).set_request(StreamRequest::Shutdown, &cx.js_thread(), callback.to_js());
         // Behind a write that is parked, `run_pending` completes the request.
-        if (*this).pending.get().state != streams::PendingState::Pending {
+        if !parked {
             (*this).complete_shutdown_once_written(errno);
         }
     }
@@ -2131,8 +2133,9 @@ impl FileSink {
             && !self.writer.get().has_pending_data()
             && self.writer.get().get_poll().is_some()
         {
-            // SAFETY: the writer has not closed, so `fd` is still this sink's descriptor.
-            let _ = unsafe { libc::shutdown(self.fd.get().native(), libc::SHUT_WR) };
+            // The writer has not closed, so `fd` is still this sink's descriptor. A descriptor that is not a
+            // socket refuses: its reader gets end-of-file at the close.
+            let _ = sys::shutdown_write(self.fd.get());
         }
     }
 }

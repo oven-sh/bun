@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExeAtLeast } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExeAtLeast, tempDir } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
@@ -243,7 +243,7 @@ describe("stdin 'finish' and 'close' come from the event loop", () => {
     "a tick, then a promise job",
     "a promise job, then a tick",
   ];
-  // What a listener hears that is added that much later than the call, by node v26.3.0.
+  // What a listener hears that is added that much later than the call, by node v26.3.0 on POSIX.
   const expected = Object.fromEntries(
     calls.map(call => {
       const ends = !call.includes("destroy()");
@@ -263,20 +263,36 @@ describe("stdin 'finish' and 'close' come from the event loop", () => {
     }),
   );
 
+  // On Windows a write to a pipe completes from the event loop. So end("abc") finishes one turn of the loop later
+  // than end(): behind the immediates of its turn, or ahead of the next ones when an immediate called it. A
+  // destroy() behind that write closes one turn later too.
+  if (isWindows) {
+    for (const origin of origins) {
+      if (origin !== "a setImmediate callback") expected['end("abc")'][origin]["one setImmediate"] = "finish, close";
+    }
+    expected['end("abc"); destroy()']["a setImmediate callback"]["one setImmediate"] = "close";
+  }
+
   const order = join(import.meta.dir, "fixtures", "stdin-end-order-fixture.js");
   const expectedOrder = {
-    'end("abc", cb)': { log: ["prefinish", "end callback null", "finish", "immediate", "close"], read: "abc" },
+    'end("abc", cb)': {
+      log: isWindows
+        ? ["immediate", "prefinish", "end callback null", "finish", "close"]
+        : ["prefinish", "end callback null", "finish", "immediate", "close"],
+      read: "abc",
+    },
     'end("abc", cb); destroy()': ["end callback ERR_STREAM_DESTROYED", "immediate", "close"],
     "destroy(err)": ["error BOOM", "immediate", "close"],
     "destroy() of two children in one turn": ["immediate", "stdin 1", "stdin 0"],
-    "an ended stdin as the stdout of another child": { second: 0, first: 0 },
     ...(!isWindows && {
+      "an ended stdin as the stdout of another child": { second: 0, first: 0 },
       "a 'finish' listener that throws": { read: "abc", code: 0, uncaught: ["from 'finish'"] },
       "a large chunk behind a small one, to a reader that starts late": {
         before: [],
         log: ["prefinish", "finish", "close"],
         bytes: 1024 * 1024 + 5,
       },
+      "end() behind a chunk whose flush failed while the script was busy": ["error EPIPE", "close"],
       "a chunk that the pipe did not take, when the child exits and a grandchild keeps the pipe": ["close"],
     }),
     ...(isLinux && {
@@ -291,8 +307,10 @@ describe("stdin 'finish' and 'close' come from the event loop", () => {
     }),
   };
 
+  // The second fixture keeps its signal files in a directory of its own.
   async function report(exe, file) {
-    await using proc = Bun.spawn({ cmd: [exe, file], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    using dir = tempDir("stdin-end-order", {});
+    await using proc = Bun.spawn({ cmd: [exe, file, String(dir)], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stderr, report: stdout && JSON.parse(stdout), exitCode };
   }
@@ -305,9 +323,10 @@ describe("stdin 'finish' and 'close' come from the event loop", () => {
     expect(await report(bunExe(), order)).toEqual({ stderr: "", report: expectedOrder, exitCode: 0 });
   });
 
-  // The reports above are those of node v26.3.0.
+  // The reports above are those of node v26.3.0. On Windows node's own report changes with the machine: where
+  // 'finish' comes after end("abc") follows a write that a thread completes.
   const node = nodeExeAtLeast("22.0.0");
-  it.skipIf(!node)("node prints the same reports", async () => {
+  it.skipIf(!node || isWindows)("node prints the same reports", async () => {
     expect(await Promise.all([report(node, fixture), report(node, order)])).toEqual([
       { stderr: "", report: expected, exitCode: 0 },
       { stderr: "", report: expectedOrder, exitCode: 0 },

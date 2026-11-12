@@ -1395,6 +1395,7 @@ impl Tag {
     pub const epoll_create1: Tag = Tag(112);
     pub const pthread_create: Tag = Tag(113);
     pub const _open_osfhandle: Tag = Tag(114);
+    pub const shutdown: Tag = Tag(115);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1402,7 +1403,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 115] = [
+        const NAMES: [&str; 116] = [
             "TODO",
             "dup",
             "access",
@@ -1519,6 +1520,7 @@ impl Tag {
             "epoll_create1",
             "pthread_create",
             "_open_osfhandle",
+            "shutdown",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -1600,6 +1602,7 @@ mod safe_libc {
             proto: c_int,
             fds: &mut [c_int; 2],
         ) -> c_int;
+        pub(crate) safe fn shutdown(fd: c_int, how: c_int) -> c_int;
         // `&`/`&mut` to POD `termios`/`rlimit` — non-null, valid for read/write;
         // bad fd/resource → errno (`ENOTTY`/`EINVAL`/…), never UB. `resource`
         // is ABI-`int` on every Unix (glibc's `__rlimit_resource_t` is a
@@ -3237,6 +3240,14 @@ mod posix_impl {
     /// returns EPIPE instead of raising SIGPIPE.
     pub fn send_non_block(fd: Fd, buf: &[u8]) -> Maybe<usize> {
         send(fd, buf, SEND_FLAGS_NONBLOCK)
+    }
+    /// `shutdown(fd, SHUT_WR)`: the peer reads end-of-file, and `fd` stays open. `ENOTSOCK` for a pipe.
+    pub fn shutdown_write(fd: Fd) -> Maybe<()> {
+        check!(
+            safe_libc::shutdown(fd.native(), libc::SHUT_WR),
+            Tag::shutdown
+        );
+        Ok(())
     }
     pub(crate) const MSG_DONTWAIT: i32 = libc::MSG_DONTWAIT;
     /// XNU's `sosend` only honours `MSG_NBIO` (private, 0x20000) for "don't wait for buffer space"; `MSG_DONTWAIT` alone still blocks there.

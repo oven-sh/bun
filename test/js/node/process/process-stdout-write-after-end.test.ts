@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import path from "path";
 
@@ -92,7 +92,8 @@ test.concurrent.each(["stdout", "stderr"] as const)(
 );
 
 // Over a pipe node's process.stdout is a net.Socket: 'finish' comes from the event loop, after the promise jobs of the
-// turn that called end(). Over a file it is a SyncWriteStream, which finishes on the next tick, ahead of them.
+// turn that called end(). Over a file it is a SyncWriteStream, which finishes on the next tick, ahead of them. On
+// Windows the sink of process.stdout writes inside the call over a pipe too, and finishes as over a file.
 test.each(["stdout", "stderr"] as const)(
   "process.%s - a 'finish' listener added one promise job after end() (piped, file)",
   async which => {
@@ -120,7 +121,7 @@ test.each(["stdout", "stderr"] as const)(
     }
     const [piped, file] = await Promise.all([run("pipe"), run(Bun.file(path.join(String(dir), "out.txt")))]);
     expect({ piped, file }).toEqual({
-      piped: { heard: "heard", exitCode: 0 },
+      piped: { heard: isWindows ? "not heard" : "heard", exitCode: 0 },
       file: { heard: "not heard", exitCode: 0 },
     });
   },

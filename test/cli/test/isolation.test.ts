@@ -1623,19 +1623,24 @@ describe.concurrent("bun test --isolate=modules", () => {
       import "node:worker_threads";
       test("reads the additions", () => {
         const { timerify, eventLoopUtilization, nodeTiming } = performance;
+        // The three exports of the package are members of the global AbortController, which is what require() answers with.
+        const { AbortController: Controller, AbortSignal: Signal, default: byDefault } = require("abort-controller");
         // The native close() has no parameters.
-        console.log(JSON.stringify([typeof timerify, typeof eventLoopUtilization, typeof nodeTiming, MessagePort.prototype.close.length]));
+        console.log(JSON.stringify([typeof timerify, typeof eventLoopUtilization, typeof nodeTiming, MessagePort.prototype.close.length,
+          Controller === AbortController, Signal === AbortSignal, byDefault === AbortController]));
       });
     `;
     const lines = (await passes({ "a.test.js": file, "b.test.js": file }, 2))
       .split("\n")
       .filter(line => line.startsWith("["));
-    expect(lines).toEqual(Array(2).fill(JSON.stringify(["function", "function", "object", 1])));
+    expect(lines).toEqual(Array(2).fill(JSON.stringify(["function", "function", "object", 1, true, true, true])));
   });
 
   // If this fails, load the module before the snapshot in src/js/internal/test/globals.ts.
   test("no other builtin module patches a global class when it loads", async () => {
-    const ids = builtinModules.filter(id => !/^bun|^_|^(wasi|repl|inspector|trace_events)/.test(id));
+    // `builtinModules` leaves out these packages, in whose place Bun loads a builtin too.
+    const packages = ["abort-controller", "isomorphic-fetch", "node-fetch", "@vercel/fetch", "utf-8-validate"];
+    const ids = builtinModules.filter(id => !/^bun|^_|^(wasi|repl|inspector|trace_events)/.test(id)).concat(packages);
     const files = {
       // A test for each module: a debug build needs more than the 5 seconds of one test to load them all.
       "a.test.js": `

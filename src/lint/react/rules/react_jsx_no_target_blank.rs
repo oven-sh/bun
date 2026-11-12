@@ -291,6 +291,7 @@ impl JsxNoTargetBlank {
                 | ExprTag::Null
                 | ExprTag::Number
                 | ExprTag::BigInt
+                | ExprTag::Decimal
                 | ExprTag::Regex => Some(fixer.replace(e.jsx_container_span()?, "\"noreferrer\"")),
                 _ => None,
             },

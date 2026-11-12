@@ -118,7 +118,7 @@ fn is_not_array(expr: Expr) -> bool {
             }
             _ if at.is_chain_root() => return false,
             // oxlint doesn't recognize these here when they're parenthesized.
-            ExprKind::True | ExprKind::False | ExprKind::Null | ExprKind::Number(_) | ExprKind::BigInt(_) | ExprKind::Regex(_) | ExprKind::String(_) => {
+            ExprKind::True | ExprKind::False | ExprKind::Null | ExprKind::Number(_) | ExprKind::BigInt(_) | ExprKind::Decimal(_) | ExprKind::Regex(_) | ExprKind::String(_) => {
                 return !is_parenthesized;
             }
             ExprKind::Call(call_expr) => {

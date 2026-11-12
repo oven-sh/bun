@@ -715,6 +715,7 @@ impl<'a, 's> Removable<'a, 's> {
                     None => self.expression(operand),
                 }
             }
+            UnOp::Minus if self.hir.is_decimal_token(operand) => true,
             UnOp::Plus | UnOp::Minus => self.has_folded_sign(operand),
             _ => false,
         }

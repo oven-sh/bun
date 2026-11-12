@@ -261,6 +261,7 @@ fn may_need_parentheses<'a>(e: Expr<'a>) -> bool {
         | T::True
         | T::False
         | T::BigInt
+        | T::Decimal
         | T::Regex
         | T::Template
         | T::ImportMeta
@@ -333,6 +334,7 @@ fn needs_parentheses_in_position<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         | ExprKind::True
         | ExprKind::False
         | ExprKind::BigInt(_)
+        | ExprKind::Decimal(_)
         | ExprKind::Regex(_)
         | ExprKind::Template(_)
         | ExprKind::ImportMeta

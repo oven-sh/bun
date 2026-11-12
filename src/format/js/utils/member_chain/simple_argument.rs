@@ -48,6 +48,7 @@ fn is_simple(e: Expr<'_>, depth: u8, flavor: Flavor) -> bool {
                 | ExprKind::String(_)
                 | ExprKind::Number(_)
                 | ExprKind::BigInt(_)
+                | ExprKind::Decimal(_)
                 | ExprKind::This
                 | ExprKind::Ident(_)
                 | ExprKind::PrivateIdentifier(_)

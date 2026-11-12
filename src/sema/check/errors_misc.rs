@@ -240,7 +240,8 @@ impl Checker<'_, '_> {
             | ExprKind::BigInt(_)
             | ExprKind::Class(_)
             | ExprKind::Object(_)
-            | ExprKind::Regex { .. } => ALWAYS,
+            | ExprKind::Regex { .. }
+            | ExprKind::Decimal(_) => ALWAYS,
             // Not a fragment.
             ExprKind::Jsx(j) if hir[j].tag.is_some() => ALWAYS,
             ExprKind::Unary { op: UnOp::Void, .. } | ExprKind::Null => NEVER,

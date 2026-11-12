@@ -161,7 +161,10 @@ impl Folder<'_, '_> {
             .find(|&it| matches!(hir.runtime_property_key(it), PropKey::Name(key) if key == name))
             .map(|it| hir.skip_type_assertions(hir[it].value))?;
         let type_name = match hir[value].kind {
-            ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Regex { .. } => known::object,
+            ExprKind::Object(_)
+            | ExprKind::Array(_)
+            | ExprKind::Regex { .. }
+            | ExprKind::Decimal(_) => known::object,
             ExprKind::Fn(_) => known::function,
             _ => return None,
         };
@@ -447,6 +450,7 @@ impl Folder<'_, '_> {
             | ExprKind::Number(_)
             | ExprKind::String(_)
             | ExprKind::Regex { .. }
+            | ExprKind::Decimal(_)
             | ExprKind::This
             | ExprKind::Fn(_) => true,
             ExprKind::Ident(_) => matches!(
@@ -480,6 +484,7 @@ impl Folder<'_, '_> {
                     | ExprKind::This
                     | ExprKind::Fn(_)
                     | ExprKind::Regex { .. }
+                    | ExprKind::Decimal(_)
                     | ExprKind::Object(_)
                     | ExprKind::Array(_)
             )

@@ -19,6 +19,7 @@ fn is_single_token(e: Expr) -> bool {
             | ExprTag::Number
             | ExprTag::String
             | ExprTag::BigInt
+            | ExprTag::Decimal
             | ExprTag::Regex
     )
 }

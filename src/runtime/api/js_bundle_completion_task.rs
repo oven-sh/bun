@@ -607,6 +607,7 @@ impl JSBundleCompletionTask {
             flags,
             RuntimeOptions {
                 jit_policy: compile_options.jit_policy,
+                uses_decimal: bun_ast::E::Decimal::is_enabled(),
             },
             &mut additions,
         ) {

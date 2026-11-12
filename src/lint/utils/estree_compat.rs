@@ -394,6 +394,7 @@ fn type_name_of_expr(e: Expr<'_>) -> &'static str {
         | ExprKind::Number(_)
         | ExprKind::String(_)
         | ExprKind::BigInt(_)
+        | ExprKind::Decimal(_)
         | ExprKind::Regex(_) => "Literal",
         ExprKind::Template(_) => "TemplateLiteral",
         ExprKind::TaggedTemplate(_) => "TaggedTemplateExpression",

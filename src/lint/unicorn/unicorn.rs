@@ -387,6 +387,7 @@ pub(crate) fn may_have_side_effects(e: Expr) -> bool {
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
             | ExprKind::Null
+            | ExprKind::Decimal(_)
             | ExprKind::Regex(_)
             | ExprKind::ImportMeta
             | ExprKind::NewTarget

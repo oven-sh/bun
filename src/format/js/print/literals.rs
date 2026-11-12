@@ -32,6 +32,12 @@ pub(crate) fn write_big_int_literal<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     }
 }
 
+pub(crate) fn write_decimal_literal<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
+    let source = f.source_text().text_for(&e);
+    let number = source.strip_suffix(b"m").unwrap_or(source);
+    write!(f, [format_number_token(number), "m"]);
+}
+
 /// Invalid flags, as in `/a/é`. They're sorted the way JavaScript sorts strings, by UTF-16 code units.
 #[cold]
 fn write_reg_exp_literal_with_unknown_flags<'a>(

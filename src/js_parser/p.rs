@@ -6166,6 +6166,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             | js_ast::ExprData::EString(_)
             | js_ast::ExprData::EThis(_)
             | js_ast::ExprData::ERegExp(_)
+            | js_ast::ExprData::EDecimal(_)
             | js_ast::ExprData::EFunction(_)
             | js_ast::ExprData::EArrow(_)
             | js_ast::ExprData::EImportMeta(_) => return true,
@@ -6305,6 +6306,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // such as "toString" or "valueOf". They must also never throw any exceptions.
                 js_ast::op::Code::UnVoid | js_ast::op::Code::UnNot => {
                     return self.expr_can_be_removed_if_unused_without_dce_check(&ex.value);
+                }
+
+                js_ast::op::Code::UnNeg => {
+                    return matches!(ex.value.data, js_ast::ExprData::EDecimal(_));
                 }
 
                 // The "typeof" operator doesn't do any type conversions so it can be removed

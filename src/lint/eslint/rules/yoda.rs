@@ -48,6 +48,7 @@ fn is_literal_like(e: Expr) -> bool {
         | ExprTag::Number
         | ExprTag::String
         | ExprTag::BigInt
+        | ExprTag::Decimal
         | ExprTag::Regex => true,
         ExprTag::Unary => as_negative_numeric_literal(e).is_some(),
         ExprTag::Template => ast_utils::is_static_template_literal(e),
@@ -179,6 +180,7 @@ fn oxlint_needs_spaces(source: &[u8], whole: Span, left: Expr, right: Expr) -> (
                     | ExprTag::Null
                     | ExprTag::Number
                     | ExprTag::BigInt
+                    | ExprTag::Decimal
                     | ExprTag::Regex
                     | ExprTag::String
                     | ExprTag::Ident

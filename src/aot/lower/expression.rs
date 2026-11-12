@@ -398,6 +398,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.emit_constant(Constant::String(text))
             }
             ExprKind::BigInt(digits) => self.emit_constant(Constant::BigInt(digits)),
+            ExprKind::Decimal(text) => array::lower_decimal_literal(self, expression, text, false),
             ExprKind::Regex { .. } => array::lower_regexp_literal(self, expression),
             ExprKind::Template { .. } => {
                 self.lower_unless_constant(expression, template::lower_template_literal)
@@ -463,6 +464,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 Chain::Start | Chain::Continue => self.lower_call(expression, evaluation),
             },
             ExprKind::New(_) => self.lower_new(expression, evaluation.tail),
+            ExprKind::Unary { .. }
+                if let Some((text, is_negative)) = hir.decimal_literal(expression) =>
+            {
+                array::lower_decimal_literal(self, expression, text, is_negative)
+            }
             ExprKind::Unary { op, .. } => match op {
                 UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => {
                     assignment::lower_update(self, expression, ResultUsage::Value)

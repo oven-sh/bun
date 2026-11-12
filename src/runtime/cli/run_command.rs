@@ -1245,6 +1245,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
         bun_jsc::initialize(bun_jsc::InitializeOptions {
             runs_compiled_code,
+            uses_decimal: graph.runtime_options.uses_decimal,
             ..Default::default()
         });
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);

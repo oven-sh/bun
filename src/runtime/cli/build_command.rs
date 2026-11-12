@@ -1053,6 +1053,7 @@ impl BuildCommand {
                     flags,
                     bun_standalone_module_graph::StandaloneModuleGraph::RuntimeOptions {
                         jit_policy: ctx.bundler_options.compile_jit_policy,
+                        uses_decimal: bun_ast::E::Decimal::is_enabled(),
                     },
                     &mut additions,
                 ) {

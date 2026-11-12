@@ -137,6 +137,7 @@ impl<'p, 's> Checker<'p, 's> {
             | ExprKind::String(_)
             | ExprKind::JsxText(_)
             | ExprKind::Regex { .. }
+            | ExprKind::Decimal(_)
             | ExprKind::True
             | ExprKind::False
                 if !is_parenthesized(hir, e) =>
@@ -2086,6 +2087,8 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::String(s) | ExprKind::JsxText(s) => self.string_literal(s, true),
             ExprKind::BigInt(text) => self.fresh_bigint_literal(text, false),
             ExprKind::Regex { .. } => self.global_ref(known::RegExp, &[]),
+            // No library declares it, and a global type of that name is another class.
+            ExprKind::Decimal(_) => TypeId::ANY,
             // `checkTemplateExpression`
             ExprKind::Template { exprs } => {
                 // The comparison runs for every span, whether or not the types are used. Comparing
@@ -5831,6 +5834,7 @@ impl<'p, 's> Checker<'p, 's> {
                         let negative = !digits.iter().all(|&c| c == b'0' || c == b'n');
                         self.fresh_bigint_literal(text, negative)
                     }
+                    _ if hir.decimal_literal(e).is_some() => TypeId::ANY,
                     _ => {
                         self.check_non_null_type(file, operand, ty);
                         let (is_symbol, is_bigint) = (tf::ES_SYMBOL_LIKE, tf::BIGINT_LIKE);
@@ -5954,10 +5958,12 @@ impl<'p, 's> Checker<'p, 's> {
                 } else if !(is_type_only && self.is_rechecking()) {
                     let hir = self.hir(file);
                     let is_equality = matches!(op, BinOp::EqEq | BinOp::EqEqEq);
-                    // A JavaScript file reports only `===` and `!==`.
+                    // A JavaScript file reports only `===` and `!==`. `==` can compare the values of Decimals.
+                    let is_strict_only =
+                        hir.is_js || hir.is_decimal_token(left) || hir.is_decimal_token(right);
                     if (is_literal_expression_of_object(hir, left)
                         || is_literal_expression_of_object(hir, right))
-                        && (!hir.is_js || matches!(op, BinOp::EqEqEq | BinOp::NotEqEq))
+                        && (!is_strict_only || matches!(op, BinOp::EqEqEq | BinOp::NotEqEq))
                     {
                         let always = if is_equality { "false" } else { "true" };
                         self.error_at(self.span_of_expr(file, e), 2839, &[Arg::Text(always)]);

@@ -239,6 +239,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 | T::TTrue
                                 | T::TNumericLiteral
                                 | T::TBigIntegerLiteral
+                                | T::TDecimalLiteral
                                 | T::TStringLiteral => {
                                     p.log().add_range_error(
                                         Some(p.source),
@@ -319,6 +320,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // markSyntaxFeature bigInt
         p.lexer.next()?;
         Ok(p.new_expr(E::BigInt { value }, loc))
+    }
+
+    #[cold]
+    fn pfx_t_decimal_literal(p: &mut Self) -> PResult<Expr> {
+        let loc = p.lexer.loc();
+        let value = E::Str::new(p.lexer.identifier);
+        p.lexer.next()?;
+        Ok(p.new_expr(E::Decimal { value }, loc))
     }
 
     fn pfx_t_slash(p: &mut Self) -> PResult<Expr> {
@@ -1019,6 +1028,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TTemplateHead => Self::pfx_t_template_head(p),
             T::TNumericLiteral => Self::pfx_t_numeric_literal(p),
             T::TBigIntegerLiteral => Self::pfx_t_big_integer_literal(p),
+            T::TDecimalLiteral => Self::pfx_t_decimal_literal(p),
             T::TStringLiteral | T::TNoSubstitutionTemplateLiteral => p.parse_string_literal(),
             T::TSlashEquals | T::TSlash => Self::pfx_t_slash(p),
             T::TVoid => Self::pfx_t_void(p),

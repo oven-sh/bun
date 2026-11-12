@@ -258,6 +258,7 @@ impl JSBundleCompletionTask {
                 flags: destination.flags,
                 runtime_options: RuntimeOptions {
                     jit_policy: compile.jit_policy,
+                    uses_decimal: bun_ast::E::Decimal::is_enabled(),
                 },
                 assets: &compile.assets,
                 metafiles: [&metafiles[0], &metafiles[1]],

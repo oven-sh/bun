@@ -1134,6 +1134,8 @@ pub enum ExprKind {
     Number(u32),
     String(Atom),
     BigInt(Atom),
+    /// `1.5m`, without separators and without the `m`. A new object each time.
+    Decimal(Atom),
     /// `/pattern/flags`, both as written.
     Regex {
         pattern: Atom,
@@ -1277,6 +1279,7 @@ pub enum ExprTag {
     Number,
     String,
     BigInt,
+    Decimal,
     Regex,
     Template,
     TaggedTemplate,
@@ -1307,7 +1310,7 @@ pub enum ExprTag {
 }
 
 impl ExprTag {
-    pub const COUNT: usize = 38;
+    pub const COUNT: usize = 39;
 }
 
 impl ExprKind {
@@ -1325,6 +1328,7 @@ impl ExprKind {
             ExprKind::Number(..) => ExprTag::Number,
             ExprKind::String(..) => ExprTag::String,
             ExprKind::BigInt(..) => ExprTag::BigInt,
+            ExprKind::Decimal(..) => ExprTag::Decimal,
             ExprKind::Regex { .. } => ExprTag::Regex,
             ExprKind::Template { .. } => ExprTag::Template,
             ExprKind::TaggedTemplate(..) => ExprTag::TaggedTemplate,

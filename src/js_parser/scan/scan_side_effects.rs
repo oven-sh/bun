@@ -145,6 +145,7 @@ impl SideEffects {
             | ExprData::EString(_)
             | ExprData::EThis(_)
             | ExprData::ERegExp(_)
+            | ExprData::EDecimal(_)
             | ExprData::EFunction(_)
             | ExprData::EArrow(_)
             | ExprData::EImportMeta(_)
@@ -793,6 +794,7 @@ impl SideEffects {
             | ExprData::ENumber(_)
             | ExprData::EString(_)
             | ExprData::ERegExp(_)
+            | ExprData::EDecimal(_)
             | ExprData::EFunction(_)
             | ExprData::EArrow(_)
             | ExprData::EBigInt(_) => Some(Known {
@@ -890,7 +892,10 @@ impl SideEffects {
                 value: e.rope_len > 0 || !e.data.is_empty(),
                 side_effects: SideEffects::NoSideEffects,
             }),
-            ExprData::EFunction(_) | ExprData::EArrow(_) | ExprData::ERegExp(_) => Some(Known {
+            ExprData::EFunction(_)
+            | ExprData::EArrow(_)
+            | ExprData::ERegExp(_)
+            | ExprData::EDecimal(_) => Some(Known {
                 value: true,
                 side_effects: SideEffects::NoSideEffects,
             }),

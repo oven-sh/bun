@@ -73,6 +73,7 @@ fn is_function(node: Expr, is_oxlint: bool) -> bool {
         | ExprKind::True
         | ExprKind::False
         | ExprKind::Null
+        | ExprKind::Decimal(_)
         | ExprKind::Regex(_)
         | ExprKind::Template(_) => false,
         ExprKind::Call(call) if is_oxlint || !node.is_chain_root() => {

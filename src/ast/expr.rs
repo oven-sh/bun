@@ -807,6 +807,7 @@ impl_into_expr_data_boxed! {
     Spread => ESpread,
     Template => ETemplate,
     RegExp => ERegExp,
+    Decimal => EDecimal,
     Await => EAwait,
     Yield => EYield,
     If => EIf,
@@ -1013,6 +1014,7 @@ pub enum Tag {
     ESpecial,
     EInlinedEnum,
     ENameOfSymbol,
+    EDecimal,
 }
 
 impl Tag {
@@ -1035,7 +1037,9 @@ impl Tag {
         // no side effects. Array/object/class literals are omitted because
         // their elements, properties, and static initializers can run code.
         Some(match tag {
-            Tag::EArrayJSON | Tag::EObjectJSON | Tag::ENull | Tag::ERegExp => b"object",
+            Tag::EArrayJSON | Tag::EObjectJSON | Tag::ENull | Tag::ERegExp | Tag::EDecimal => {
+                b"object"
+            }
             Tag::EUndefined => b"undefined",
             Tag::EBoolean | Tag::EBranchBoolean => b"boolean",
             Tag::ENumber => b"number",
@@ -1078,6 +1082,7 @@ impl Tag {
             Tag::ESpread => "...",
             Tag::ETemplate => "template",
             Tag::ERegExp => "regexp",
+            Tag::EDecimal => "Decimal",
             Tag::EAwait => "await",
             Tag::EYield => "yield",
             Tag::EIf => "if",
@@ -1155,7 +1160,7 @@ impl Expr {
                     return Some(expr.at(E::Boolean { value: equal }));
                 }
             }
-            Data::EFunction(_) | Data::EArrow(_) | Data::ERegExp(_) => {
+            Data::EFunction(_) | Data::EArrow(_) | Data::ERegExp(_) | Data::EDecimal(_) => {
                 return Some(expr.at(E::Boolean { value: false }));
             }
             // "!!!a" => "!a"
@@ -1361,6 +1366,8 @@ pub enum Data {
     EInlinedEnum(StoreRef<E::InlinedEnum>),
 
     ENameOfSymbol(StoreRef<E::NameOfSymbol>),
+
+    EDecimal(StoreRef<E::Decimal>),
 }
 
 // ── Layout guards ─────────────────────────────────────────────────────────
@@ -1368,7 +1375,7 @@ pub enum Data {
 // structs — is ≤ 8 bytes at align 4, so `Data` = 1-byte discriminant + 8-byte
 // payload → 12 at align 4. `Expr` = `Data` (12, align 4) + `Loc` (i32) → 16.
 // `Option<Data>`/`Option<Expr>` niche-pack via spare discriminant values
-// (47 variants < 256); a `#[repr(C)]`/`#[repr(u32)]` on `Data` would break it.
+// (48 variants < 256); a `#[repr(C)]`/`#[repr(u32)]` on `Data` would break it.
 const _: () = assert!(core::mem::size_of::<Data>() == 12); // Do not increase the size of Expr
 const _: () = assert!(core::mem::align_of::<Data>() == 4);
 const _: () = assert!(core::mem::size_of::<Expr>() == 16);
@@ -2000,6 +2007,10 @@ impl Data {
                 });
                 Ok(Data::EImport(StoreRef::from_bump(item)))
             }
+            Data::EDecimal(el) => {
+                let item = bump.alloc(E::Decimal { value: el.value });
+                Ok(Data::EDecimal(StoreRef::from_bump(item)))
+            }
             Data::EBigInt(el) => {
                 let item = bump.alloc(E::BigInt { value: el.value });
                 Ok(Data::EBigInt(StoreRef::from_bump(item)))
@@ -2205,6 +2216,9 @@ impl Data {
                 hasher.update(&e.value);
             }
             Data::ERegExp(e) => {
+                hasher.update(&e.value);
+            }
+            Data::EDecimal(e) => {
                 hasher.update(&e.value);
             }
             Data::EString(e) => {
@@ -2794,6 +2808,7 @@ crate::new_store!(
         E::TemplatePart,
         E::Template,
         E::RegExp,
+        E::Decimal,
         E::Await,
         E::Yield,
         E::If,

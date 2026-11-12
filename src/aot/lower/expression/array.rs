@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 
+use bun_sema::atom::Atom;
 use bun_sema::hir::{Branches, ExprId, ExprKind, NodeData};
 use smallvec::{SmallVec, smallvec};
 
@@ -96,6 +97,26 @@ pub(super) fn lower_array_literal(
     let contents = lowering.file.array_literal_contents(literal);
     let elements: SmallVec<[ExprId; 8]> = hir.ids(elements).collect();
     lowering.lower_elements(contents, &[], &elements, hir[literal].pos)
+}
+
+pub(super) fn lower_decimal_literal(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    literal: ExprId,
+    text: Atom,
+    is_negative: bool,
+) -> ValueId {
+    let function = BuiltinId::from_name("LinkTimeConstantDecimalLiteral")
+        .expect("an engine without Decimal does not start with useDecimal");
+    let text = match is_negative {
+        true => {
+            let signed = [b"-", lowering.file.queries.atom_bytes(text)].concat();
+            lowering.file.intern_bytes(&signed)
+        }
+        false => lowering.file.intern_atom(text),
+    };
+    let text = lowering.builder.string(text);
+    lowering.set_position(lowering.file.hir[literal].pos);
+    lowering.emit_builtin_call(function, &[text])
 }
 
 pub(super) fn lower_regexp_literal(

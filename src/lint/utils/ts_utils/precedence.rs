@@ -88,6 +88,7 @@ pub fn get_operator_precedence_for_node(e: Expr<'_>) -> OperatorPrecedence {
         | ExprKind::Number(_)
         | ExprKind::String(_)
         | ExprKind::BigInt(_)
+        | ExprKind::Decimal(_)
         | ExprKind::Regex(_)
         | ExprKind::Array(_)
         | ExprKind::Object(_)
@@ -121,7 +122,7 @@ pub fn ts_syntax_kind(e: Expr<'_>) -> SyntaxKind {
         ExprKind::String(_) if e.is_jsx_text() => K::JsxText,
         ExprKind::String(_) => K::StringLiteral,
         ExprKind::BigInt(_) => K::BigIntLiteral,
-        ExprKind::Regex(_) => K::RegularExpressionLiteral,
+        ExprKind::Regex(_) | ExprKind::Decimal(_) => K::RegularExpressionLiteral,
         ExprKind::Template(template) => match template.exprs().is_empty() {
             true => K::NoSubstitutionTemplateLiteral,
             false => K::TemplateExpression,

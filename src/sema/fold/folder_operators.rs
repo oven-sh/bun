@@ -96,7 +96,10 @@ impl<'s> Folder<'_, 's> {
                 self.conditions.insert(e, true);
                 Folded::UNKNOWN
             }
-            ExprKind::Regex { .. } | ExprKind::Fn(_) | ExprKind::Class(_) => {
+            ExprKind::Regex { .. }
+            | ExprKind::Decimal(_)
+            | ExprKind::Fn(_)
+            | ExprKind::Class(_) => {
                 self.conditions.insert(e, true);
                 Folded::UNKNOWN
             }
@@ -149,7 +152,7 @@ impl<'s> Folder<'_, 's> {
         }
         let type_of_literal = match self.hir[operand].kind {
             ExprKind::Fn(_) => Some(known::function),
-            ExprKind::Regex { .. } => Some(known::object),
+            ExprKind::Regex { .. } | ExprKind::Decimal(_) => Some(known::object),
             _ => None,
         };
         if op == UnOp::Typeof

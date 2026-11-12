@@ -559,6 +559,7 @@ impl<'a, 's> Text<'a, 's> {
             | ExprKind::Object(_)
             | ExprKind::Array(_)
             | ExprKind::Regex { .. }
+            | ExprKind::Decimal(_)
             | ExprKind::Template { .. } => StoredValue::IgnoresThis,
             _ => StoredValue::Unknown,
         }

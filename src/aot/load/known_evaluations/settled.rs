@@ -1339,6 +1339,7 @@ impl Settler<'_, '_> {
             | ExprKind::Number(_)
             | ExprKind::String(_)
             | ExprKind::Regex { .. }
+            | ExprKind::Decimal(_)
             | ExprKind::Fn(_) => true,
             ExprKind::Template { exprs } => hir.ids(exprs).all(|it| self.has_no_effects(it)),
             ExprKind::Dot { obj, .. } => self.has_no_effects(obj),

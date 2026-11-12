@@ -109,7 +109,7 @@ fn get_member_type(member: EnumMember) -> AllowedType {
     match initializer.kind() {
         ExprKind::Number(_) => AllowedType::Number,
         ExprKind::String(_) | ExprKind::Template(_) => AllowedType::String,
-        ExprKind::True | ExprKind::False | ExprKind::Null | ExprKind::BigInt(_) | ExprKind::Regex(_) => {
+        ExprKind::True | ExprKind::False | ExprKind::Null | ExprKind::BigInt(_) | ExprKind::Decimal(_) | ExprKind::Regex(_) => {
             AllowedType::Unknown
         }
         _ => get_allowed_type(initializer.ty()),

@@ -899,6 +899,7 @@ fn returns_created_object(hir: &hir::File<'_>, statement: StmtId) -> bool {
     matches!(
         hir[hir.skip_type_assertions(value)].kind,
         ExprKind::Regex { .. }
+            | ExprKind::Decimal(_)
             | ExprKind::Array(_)
             | ExprKind::Object(_)
             | ExprKind::Fn(_)

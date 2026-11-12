@@ -1557,7 +1557,7 @@ impl JSValue {
         }
         let mut out = bun_core::String::EMPTY;
         // SAFETY: `out` is a valid place for the one string that it writes.
-        let is_decimal = unsafe { crate::cpp::Bun__JSValue__textOfDecimal(self, &mut out) };
+        let is_decimal = unsafe { crate::cpp::Bun__JSValue__textOfDecimal(self, &raw mut out) };
         is_decimal.then_some(out)
     }
 

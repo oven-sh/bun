@@ -89,6 +89,7 @@ impl Rule for ValidTypeof {
             | ExprKind::True
             | ExprKind::False
             | ExprKind::Null
+            | ExprKind::Decimal(_)
             | ExprKind::Regex(_)
                 // oxlint treats them like any other expression.
                 if !cx.language().is_oxlint =>

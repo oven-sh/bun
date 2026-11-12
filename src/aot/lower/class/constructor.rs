@@ -647,7 +647,8 @@ fn names_nothing(hir: &hir::File<'_>, expression: ExprId) -> bool {
             | ExprKind::Number(_)
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
-            | ExprKind::Regex { .. } => {}
+            | ExprKind::Regex { .. }
+            | ExprKind::Decimal(_) => {}
             ExprKind::Unary {
                 op: UnOp::Minus,
                 operand,
@@ -787,7 +788,10 @@ fn is_parameter_or_literal(
             Binding::Symbol(symbol) => parameters.contains(&symbol),
             _ => false,
         },
-        ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Regex { .. } => false,
+        ExprKind::Array(_)
+        | ExprKind::Object(_)
+        | ExprKind::Regex { .. }
+        | ExprKind::Decimal(_) => false,
         _ => names_nothing(hir, value),
     }
 }

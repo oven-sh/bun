@@ -2,6 +2,7 @@
 
 use core::cmp::Ordering;
 use core::fmt;
+use core::sync::atomic::{self, AtomicBool};
 
 use bun_alloc::Arena as Bump;
 
@@ -831,6 +832,24 @@ impl BigInt {
             return Some(false);
         }
         None
+    }
+}
+
+/// `1.5m`. Like a `RegExp` literal, it is a new object each time.
+pub struct Decimal {
+    /// The source text without separators and without the `m`.
+    pub value: Str,
+}
+static EXECUTABLE_USES_DECIMAL: AtomicBool = AtomicBool::new(false);
+impl Decimal {
+    pub fn is_enabled() -> bool {
+        EXECUTABLE_USES_DECIMAL.load(atomic::Ordering::Relaxed)
+            || bun_core::env_var::BUN_JSC_useDecimal.get() == Some(true)
+    }
+
+    /// For an executable that was built with it.
+    pub fn enable() {
+        EXECUTABLE_USES_DECIMAL.store(true, atomic::Ordering::Relaxed);
     }
 }
 

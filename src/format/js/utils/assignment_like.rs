@@ -121,6 +121,7 @@ fn plain_expression_width<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<usize> {
             | ExprKind::Number(_)
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
+            | ExprKind::Decimal(_)
             | ExprKind::Regex(_) => {
                 return Some(width + f.source_text().span_width(current.span()));
             }
@@ -1161,6 +1162,7 @@ pub(crate) fn is_short_argument<'a>(
         AstNodes::ThisExpression(_)
         | AstNodes::NullLiteral(_)
         | AstNodes::BigIntLiteral(_)
+        | AstNodes::DecimalLiteral(_)
         | AstNodes::BooleanLiteral(_)
         | AstNodes::NumericLiteral(_) => true,
         _ => false,

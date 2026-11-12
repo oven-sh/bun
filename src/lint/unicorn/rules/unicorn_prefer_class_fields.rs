@@ -60,6 +60,7 @@ impl Rule for PreferClassFields {
                     | ExprTag::False
                     | ExprTag::Null
                     | ExprTag::BigInt
+                    | ExprTag::Decimal
                     | ExprTag::Regex
             )
         {

@@ -4241,6 +4241,12 @@ pub(crate) mod __gated_printer {
                     self.print(&e.value[..]);
                     self.print(b'n');
                 }
+                ExprData::EDecimal(e) => {
+                    self.print_space_before_identifier();
+                    self.add_source_mapping(expr.loc);
+                    self.print(&e.value[..]);
+                    self.print(b'm');
+                }
                 ExprData::ENumber(e) => {
                     self.add_source_mapping(expr.loc);
                     self.print_number(e.value(), level);

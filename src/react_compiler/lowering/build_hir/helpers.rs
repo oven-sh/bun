@@ -51,6 +51,7 @@ pub(super) fn expression_type_name(expr: &Expr) -> &'static str {
         Data::EString(_) => "StringLiteral",
         Data::EBigInt(_) => "BigIntLiteral",
         Data::ERegExp(_) => "RegExpLiteral",
+        Data::EDecimal(_) => "DecimalLiteral",
         Data::ENull(_) => "NullLiteral",
         Data::EUndefined(_) => "Identifier",
         Data::EThis(_) => "ThisExpression",

@@ -121,6 +121,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             | T::TFalse
             | T::TNumericLiteral
             | T::TBigIntegerLiteral
+            | T::TDecimalLiteral
             | T::TStringLiteral
             | T::TNoSubstitutionTemplateLiteral
             | T::TTemplateHead

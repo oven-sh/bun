@@ -701,6 +701,7 @@ impl PreferStringStartsEndsWith {
                 ExprKind::String(_)
                 | ExprKind::Number(_)
                 | ExprKind::BigInt(_)
+                | ExprKind::Decimal(_)
                 | ExprKind::Regex(_)
                 | ExprKind::Template(_)
                 | ExprKind::Ident(_) => false,

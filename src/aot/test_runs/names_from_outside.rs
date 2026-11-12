@@ -262,6 +262,7 @@ impl<'a, 's> NamesFromOutside<'a, 's> {
                     | ExprKind::Fn(_)
                     | ExprKind::Class(_)
                     | ExprKind::Regex { .. }
+                    | ExprKind::Decimal(_)
             );
             property.kind == PropKind::Init
                 && property.key == PropKey::Name(known::__proto__)

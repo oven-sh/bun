@@ -405,6 +405,10 @@ pub mod Runtime {
             hasher.update(bun_core::slice_as_bytes(&bools));
             hasher.update(&[self.react_compiler as u8]);
 
+            if bun_ast::E::Decimal::is_enabled() {
+                hasher.update(b"decimal");
+            }
+
             // `P::runs_imports_in_turn` depends on both, even when `P::uses_test_api` is false. Other files hash nothing extra.
             if self.is_test_entry_point {
                 hasher.update(&[b'e', u8::from(self.vitest_globals)]);

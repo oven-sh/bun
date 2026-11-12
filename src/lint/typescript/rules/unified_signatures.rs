@@ -123,6 +123,7 @@ fn get_overload_info<'a>(key: Key<'a>, file: &File<'a>) -> OverloadInfo<'a> {
             | ExprKind::True
             | ExprKind::False
             | ExprKind::Null
+            | ExprKind::Decimal(_)
             | ExprKind::Regex(_) => OverloadInfo::Raw(e.text()),
             _ => OverloadInfo::Expression,
         },

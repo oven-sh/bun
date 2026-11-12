@@ -1445,6 +1445,7 @@ fn is_function(argument: Expr) -> Option<bool> {
         | ExprTag::True
         | ExprTag::False
         | ExprTag::Null
+        | ExprTag::Decimal
         | ExprTag::Regex
         | ExprTag::Object
         | ExprTag::Array => Some(false),

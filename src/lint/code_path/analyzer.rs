@@ -108,7 +108,7 @@ fn is_forking_by_true_or_false<'a>(e: Expr<'a>, parent: Option<Node<'a>>) -> boo
 /// `getBooleanValueIfSimpleConstant`
 pub(super) fn boolean_value_if_simple_constant(e: Expr) -> Option<bool> {
     match e.kind() {
-        ExprKind::True | ExprKind::Regex(_) => Some(true),
+        ExprKind::True | ExprKind::Regex(_) | ExprKind::Decimal(_) => Some(true),
         ExprKind::False | ExprKind::Null => Some(false),
         ExprKind::Number(value) => Some(value != 0.0 && !value.is_nan()),
         ExprKind::String(value) => Some(!value.bytes().is_empty()),

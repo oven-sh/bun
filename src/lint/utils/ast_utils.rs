@@ -683,6 +683,7 @@ pub fn is_literal(e: Expr<'_>) -> bool {
             | ExprTag::Number
             | ExprTag::String
             | ExprTag::BigInt
+            | ExprTag::Decimal
             | ExprTag::Regex
     )
 }
@@ -1064,7 +1065,7 @@ pub fn is_same_reference<'a>(a: Expr<'a>, b: Expr<'a>, disable_static_computed_k
 pub fn get_boolean_value(e: Expr<'_>) -> Option<bool> {
     Some(match e.kind() {
         ExprKind::Null | ExprKind::False => false,
-        ExprKind::True | ExprKind::Regex(_) => true,
+        ExprKind::True | ExprKind::Regex(_) | ExprKind::Decimal(_) => true,
         ExprKind::String(value) => !value.bytes().is_empty(),
         ExprKind::Number(value) => value != 0.0 && !value.is_nan(),
         ExprKind::BigInt(_) => {

@@ -497,6 +497,8 @@ pub struct InitializeOptions {
     pub locks_builtins: bool,
     /// This process is `bun compile`: a release build of Bun takes no B3, Air or macro assembler option from `BUN_JSC_*`.
     pub is_compiler: bool,
+    /// This executable was built with `BUN_JSC_useDecimal=1`.
+    pub uses_decimal: bool,
 }
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
@@ -506,6 +508,9 @@ pub fn initialize(options: InitializeOptions) {
     bun_core::analytics::Features::jsc_inc();
     if options.runs_compiled_code {
         bindgen::hold_results_to_declared_types();
+    }
+    if options.uses_decimal {
+        bun_ast::E::Decimal::enable();
     }
     let env = bun_sys::environ();
     // SAFETY: `env` borrows the libc `environ` global for the duration of the
@@ -522,6 +527,7 @@ pub fn initialize(options: InitializeOptions) {
             options.runs_compiled_code,
             options.locks_builtins,
             options.is_compiler,
+            options.uses_decimal,
         )
     };
 }
@@ -1455,6 +1461,7 @@ unsafe extern "C" {
         runs_compiled_code: bool,
         locks_builtins: bool,
         is_compiler: bool,
+        uses_decimal: bool,
     );
     fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
 }

@@ -334,6 +334,7 @@ impl Resolver<'_, '_> {
             | ExprKind::Array(_)
             | ExprKind::Class(_)
             | ExprKind::Regex { .. }
+            | ExprKind::Decimal(_)
             | ExprKind::Template { .. } => false,
             ExprKind::New(made) => {
                 match mentioned_id(self.state(hir.skip_type_assertions(hir[made].callee))) {

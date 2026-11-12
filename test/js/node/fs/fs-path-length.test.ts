@@ -348,7 +348,9 @@ describe("callback APIs report a path longer than MAX_PATH_BYTES through the cal
 // MAX_PATH_BYTES - 7 bytes. Node gives mkdtemp(3) the whole template, and the system answers ENAMETOOLONG for a
 // longer one. A prefix of MAX_PATH_BYTES bytes or more is the parser's case above.
 describe("mkdtemp makes its directory from the whole prefix, or fails", () => {
-  const longestPrefix = MAX_PATH_BYTES - "XXXXXX".length - 1;
+  // The six X at the end of a template, which mkdtemp(3) writes its own characters over.
+  const suffix = Buffer.alloc(6, "X").toString();
+  const longestPrefix = MAX_PATH_BYTES - suffix.length - 1;
 
   /**
    * A prefix of `bytes` UTF-8 bytes that ends in `name`, in a directory under `root`. The directory is names of
@@ -371,7 +373,7 @@ describe("mkdtemp makes its directory from the whole prefix, or fails", () => {
 
   // The callback and promise forms of node report libuv's copy of the template as `path`, into which glibc has
   // written its six characters. Bun stops before mkdtemp(3), so every form reports the template as it was given.
-  const tooLong = (prefix: string) => ({ code: "ENAMETOOLONG", syscall: "mkdtemp", path: prefix + "XXXXXX" });
+  const tooLong = (prefix: string) => ({ code: "ENAMETOOLONG", syscall: "mkdtemp", path: prefix + suffix });
 
   const forms: [string, (prefix: string) => Promise<string>][] = [
     ["mkdtempSync", async prefix => fs.mkdtempSync(prefix)],

@@ -6736,11 +6736,11 @@ impl NodeFS {
         }
         let len = prefix_slice.len();
         // Node appends the suffix to the whole prefix: https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc#L3360-L3364
-        if len > prefix_buf.len() - b"XXXXXX\0".len() {
+        if len > prefix_buf.len() - 7 {
             return Err(sys::Error {
                 errno: SystemErrno::ENAMETOOLONG as _,
                 syscall: sys::Tag::mkdtemp,
-                path: [prefix_slice, b"XXXXXX"].concat().into(),
+                path: [prefix_slice, &[b'X'; 6]].concat().into(),
                 ..Default::default()
             });
         }

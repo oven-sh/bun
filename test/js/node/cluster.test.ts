@@ -760,6 +760,30 @@ test.concurrent("a worker whose primary closed the channel exits when it loads n
   });
 });
 
+test.concurrent.each([
+  ["before", `require("node:cluster");`],
+  ["by listen()", ``],
+])("http.Server.listen() binds nothing in a disconnected worker, node:cluster loaded %s", async (_, load) => {
+  const job = {
+    "job.js": `${load}
+    process.once("disconnect", () => {
+      const { createServer } = require("node:http");
+      const exclusive = createServer().listen({ port: 0, host: "127.0.0.1", exclusive: true });
+      const shared = createServer().listen(0, "127.0.0.1");
+      console.log("exclusive: " + exclusive.listening + ", shared: " + shared.listening);
+      exclusive.close();
+      if (shared.listening) shared.close();
+    });
+    process.send("ready");`,
+  };
+  const { stdout, stderr, exitCode } = await runWorker(`worker.once("message", () => worker.disconnect());`, job);
+  expect({ first: stdout[0], stderr, exitCode }).toEqual({
+    first: "exclusive: true, shared: false",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
   // `kHandle` is a private symbol that only `cluster.fork()` sets, so a
   // `cluster.Worker({ process })` built around a plain object (how Node's own

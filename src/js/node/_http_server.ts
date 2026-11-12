@@ -849,6 +849,9 @@ Server.prototype.listen = function () {
 
     if (cluster === undefined) cluster = require("node:cluster");
 
+    // Node asks the primary for the handle, which a worker that has left doesn't get.
+    if (!exclusive && cluster.worker?.exitedAfterDisconnect) return this;
+
     // SO_REUSEPORT can't share a unix socket or port 0, and a worker's `fd` names a descriptor of the primary.
     if (
       process.connected &&

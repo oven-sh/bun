@@ -1809,3 +1809,40 @@ describe.concurrent("disabling cc()", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// TinyCC's setjmp/longjmp error handling conflicts with ASan.
+it.skipIf(isWindows || isASAN)(
+  "the process exits after the realm of a cc() with a napi_env was collected",
+  async () => {
+    using dir = tempDir("cc-napi-env-realm", {
+      "id.c": `typedef struct v *napi_value; typedef struct e *napi_env; napi_value id(napi_env env, napi_value v) { return v; }`,
+      "main.mjs": `
+      import { heapStats } from "bun:jsc";
+      globalThis.source = import.meta.dir + "/id.c";
+      for (let i = 0; i < 5; i++) {
+        new ShadowRealm().evaluate(\`import("bun:ffi").then(({ cc }) => {
+          cc({
+            source: \${JSON.stringify(source)},
+            flags: ["-nostdlib"],
+            symbols: { id: { args: ["napi_env", "napi_value"], returns: "napi_value" } },
+          }).close();
+        }); 1\`);
+      }
+      for (let i = 0; i < 5 || (i < 200 && heapStats().objectTypeCounts.GlobalObject > 1); i++) {
+        await new Promise(resolve => setImmediate(resolve));
+        Bun.gc(true);
+      }
+      console.log(heapStats().objectTypeCounts.GlobalObject);
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1\n", stderr: "", exitCode: 0 });
+  },
+);

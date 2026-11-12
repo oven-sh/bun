@@ -283,7 +283,8 @@ public:
         }
         m_isFinishingFinalizers = false;
 
-        {
+        // An env without one can outlive its realm (makeNapiEnvForFFI() of a ShadowRealm).
+        if (instanceDataFinalizer.callback()) {
             Bun::NapiHandleScope handle_scope(m_globalObject);
             instanceDataFinalizer.call(this, instanceData, true);
         }

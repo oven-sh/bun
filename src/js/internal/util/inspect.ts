@@ -1082,12 +1082,14 @@ function isInstanceof(object: unknown, proto) {
 let wellKnownPrototypes:
   Map<unknown, { name: string; constructor: (new (...args: never[]) => unknown) | undefined }> | undefined;
 let wellKnownFunction: FunctionConstructor;
+const ObjectPrototypeIsPrototypeOf = IS_COMPILED_AHEAD_OF_TIME ? Object.prototype.isPrototypeOf : undefined;
 function initializeWellKnownPrototypes() {
   wellKnownPrototypes = new SafeMap();
   wellKnownPrototypes.set(Array.prototype, { name: "Array", constructor: Array });
   wellKnownPrototypes.set(ArrayBuffer.prototype, { name: "ArrayBuffer", constructor: ArrayBuffer });
   wellKnownPrototypes.set(Function.prototype, { name: "Function", constructor: undefined });
-  wellKnownFunction = Function;
+  // Compiled, Function itself is kept nowhere: whoever prints an object would hold an evaluator. `obj` is Function.prototype where its record is found.
+  if (!IS_COMPILED_AHEAD_OF_TIME) wellKnownFunction = Function;
   wellKnownPrototypes.set(Map.prototype, { name: "Map", constructor: Map });
   wellKnownPrototypes.set(Object.prototype, { name: "Object", constructor: Object });
   wellKnownPrototypes.set(Set.prototype, { name: "Set", constructor: Set });
@@ -1102,7 +1104,13 @@ function getConstructorName(obj, ctx: Context, recurseTimes: number, protoProps?
     const wellKnownPrototypeNameAndConstructor = wellKnownPrototypes!.get(obj);
     if (wellKnownPrototypeNameAndConstructor != null) {
       const { name, constructor } = wellKnownPrototypeNameAndConstructor;
-      if (constructor === undefined ? tmp instanceof wellKnownFunction : tmp instanceof constructor) {
+      if (
+        constructor === undefined
+          ? IS_COMPILED_AHEAD_OF_TIME
+            ? ObjectPrototypeIsPrototypeOf!.$call(obj, tmp)
+            : tmp instanceof wellKnownFunction
+          : tmp instanceof constructor
+      ) {
         if (protoProps !== undefined && firstProto !== obj) {
           addPrototypeProperties(ctx, tmp, firstProto || tmp, recurseTimes, protoProps);
         }
@@ -1790,8 +1798,7 @@ function getFunctionBase(ctx: Context, value, constructor: string | null, tag: s
 function identicalSequenceRange(a: string[], b: string[]) {
   for (let i = 0; i < a.length - 3; i++) {
     // Find the first entry of b that matches the current entry of a.
-    // TODO: this looks for `undefined` in a[i] and never finds it. Node looks for a[i] in b.
-    const pos = ArrayPrototypeIndexOf.$call(a[i]);
+    const pos = ArrayPrototypeIndexOf.$call(b, a[i]);
     if (pos !== -1) {
       const rest = b.length - pos;
       if (rest > 3) {

@@ -37,25 +37,32 @@ pub struct Define<'s> {
     pub value: DefineValue<'s>,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct PathInPlace<'s> {
+    pub path: DefinePath<'s>,
+    pub first_name: Atom,
+    pub is_one_name: bool,
+    pub is_in_bundle: bool,
+}
+
 #[derive(Copy, Clone, Default, Debug)]
 pub struct FoldOptions<'s> {
     pub defines: &'s [Define<'s>],
-    /// Those of `defines` that `--define` or bunfig.toml names. `bun run` replaces them too.
     pub user_defined: &'s [DefinePath<'s>],
     pub dropped_calls: &'s [DefinePath<'s>],
     pub features: &'s [Atom],
+    pub features_are_unknown: bool,
     pub preserves_unused_imports: bool,
     pub minifies_syntax: bool,
+    pub is_read_left_out_where_unused: Option<fn(&[&[u8]]) -> bool>,
     pub max_string_bytes: usize,
+    pub max_pattern_bytes: usize,
 }
 
-/// The variables of a file that a test stores into from outside. `mock.module(path, factory)` lays what the factory returns over the exports of a module
-/// that has run, and `spyOn(namespace, name)` a function over one of them. The code of the file reads what they stored, out of a `const` too.
 #[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
 pub enum StoredByMocks<'s> {
     #[default]
     Nothing,
-    /// Ascending.
     Variables(&'s [SymbolId]),
     EveryExport,
 }
@@ -68,16 +75,22 @@ pub(super) struct TrieNode<'s> {
     pub(super) ends_dropped_path: bool,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Default, Debug)]
 pub struct FoldInputs<'s> {
     pub(super) nodes: &'s [TrieNode<'s>],
     pub(super) roots: &'s [(DefineRoot, u32)],
     pub(super) root_filter: u64,
+    pub(super) names_in_place: &'s [PathInPlace<'s>],
+    pub(super) names_in_place_for_bun_run: &'s [PathInPlace<'s>],
     pub(super) features: &'s [Atom],
+    pub(super) features_are_unknown: bool,
     pub(super) preserves_unused_imports: bool,
     pub(super) minifies_syntax: bool,
+    pub(super) runs_in_place: bool,
+    pub(super) is_read_left_out_where_unused: Option<fn(&[&[u8]]) -> bool>,
+    pub(super) has_names_for_brackets: bool,
     pub(super) max_string_bytes: usize,
-    pub(super) is_called_before_it_runs: bool,
+    pub(super) max_pattern_bytes: usize,
     pub(super) stored_by_mocks: StoredByMocks<'s>,
 }
 

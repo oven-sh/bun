@@ -280,6 +280,57 @@ fn classes() {
 }
 
 #[test]
+fn body_of_class_with_class_decorators_reads_and_stores_two_bindings() {
+    let text = "@d class C { static a = C; static b() { C = 1; C ||= 2; C++; [C] = [3]; } } \
+                (@d class E { static a = E; static b() { E = 1; } }); class P { static a() { P = 1; } }";
+    analyzed("a.mjs", text, |s| {
+        let bound = &s.bound;
+        for (name, stores) in [("C", 4), ("E", 1)] {
+            let inner = bound.inner_class_symbol(s.class(name));
+            let own = bound.own_binding_of_decorated_class(inner);
+            let own = own.expect("the class has class decorators");
+            assert_eq!(bound.initial_state(inner), InitialState::Undefined);
+            assert_eq!(bound.initial_state(own), InitialState::Uninitialized);
+            assert_eq!(bound.symbol_scope(own), bound.symbol_scope(inner));
+            for symbol in [inner, own] {
+                assert_eq!(bound.binding_kind(symbol), BindingKind::ClassInnerName);
+            }
+            assert_eq!(s.binding(name, 0), Binding::Symbol(inner));
+            for nth in 1..=stores {
+                assert_eq!(s.binding(name, nth), Binding::Symbol(own), "{name} {nth}");
+            }
+            assert!(bound.stores_to(inner).is_empty());
+            assert_eq!(bound.stores_to(own).len(), stores);
+        }
+        let plain = bound.inner_class_symbol(s.class("P"));
+        assert_eq!(bound.own_binding_of_decorated_class(plain), None);
+        assert_eq!(bound.initial_state(plain), InitialState::Uninitialized);
+        assert_eq!(s.binding("P", 0), Binding::Symbol(plain));
+    });
+    let legacy = Source {
+        experimental_decorators: true,
+        ..Source::new("a.ts", "declare const d: any; @d class C { static a = C; }")
+    };
+    analyzed_source(&legacy, |s| {
+        let inner = s.bound.inner_class_symbol(s.class("C"));
+        assert_eq!(s.bound.own_binding_of_decorated_class(inner), None);
+        assert_eq!(s.bound.initial_state(inner), InitialState::Uninitialized);
+    });
+}
+
+#[test]
+fn evaluated_text_finds_own_binding_of_class_with_class_decorators() {
+    let text = r#"@d class C { static a() { return eval("C"); } }"#;
+    analyzed("a.mjs", text, |s| {
+        let inner = s.bound.inner_class_symbol(s.class("C"));
+        let own = s.bound.own_binding_of_decorated_class(inner);
+        let own = own.expect("the class has class decorators");
+        assert!(s.bound.is_visible_to_eval(own));
+        assert!(!s.bound.is_visible_to_eval(inner));
+    });
+}
+
+#[test]
 fn enums_and_namespaces() {
     analyzed("a.ts", "enum E { A }", |s| {
         assert_eq!(
@@ -312,6 +363,35 @@ fn enums_and_namespaces() {
             declared_kind(s, Decl::Module(ModuleId(0))),
             BindingKind::NoBinding
         );
+    });
+}
+
+#[test]
+fn only_name_of_enum_finds_parameter_of_block_of_container() {
+    let text = "namespace N { export const a = 1; N; } namespace N { N; } enum E { A = 1, B = E.A } \
+                declare enum D { A } namespace T { export type T = 1; }";
+    analyzed("a.ts", text, |s| {
+        let bound = &s.bound;
+        let scopes = [
+            bound.module_scope[0],
+            bound.module_scope[1],
+            bound.enum_scope[0],
+        ];
+        let parameters = scopes.map(|scope| bound.container_parameter(scope));
+        for (scope, parameter) in scopes.into_iter().zip(parameters) {
+            assert!(bound.is_appended_symbol(parameter));
+            assert_eq!(bound.symbol_scope(parameter), scope);
+            assert_eq!(bound.binding_kind(parameter), BindingKind::Parameter);
+            assert_eq!(bound.initial_state(parameter), InitialState::Initialized);
+            assert!(bound.is_stable_binding(parameter));
+        }
+        assert_ne!(parameters[0], parameters[1]);
+        let variable = Binding::Symbol(bound.declared_symbol(Decl::Module(ModuleId(0))));
+        assert_eq!([s.binding("N", 0), s.binding("N", 1)], [variable, variable]);
+        assert_eq!(s.binding("E", 0), Binding::Symbol(parameters[2]));
+        for erased in [bound.enum_scope[1], bound.module_scope[2]] {
+            assert_eq!(bound.container_parameter(erased), SymbolId::NONE);
+        }
     });
 }
 

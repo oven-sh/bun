@@ -9,6 +9,12 @@ const js = { capability: "js", throws: true } as const;
 
 /** `Bun.jest(path)` is what `import "bun:test"` gives the file at `path`. Outside of `bun test`, and in a preload, it takes anything. */
 export const jest = b.fn({ args: { path: b.string.utf8.otherAsNull }, returns: b.any, ...js });
+/**
+ * What a file that `bun test --aot` compiled asks of the run while it loads. No object holds it: src/aot/prelude/test-files.ts names it. It answers with a number and hands out nothing.
+ * `ownGlobals`: `RuntimeFeatures::own_test_globals` as `bun test` would transpile the file with now.
+ * Otherwise 1 where `bun test` would take the file's globals from the module of Vitest if it transpiled the file now, else 0.
+ */
+export const askedByCompiledTestFile = b.fn({ args: { ownGlobals: b.bool }, returns: b.u32 });
 /** Also `jest.setTimeout`. */
 export const setDefaultTimeout = b.fn({
   export: "Bun__Jest__setDefaultTimeout",
@@ -22,6 +28,8 @@ export const returnUndefined = b.fn({ export: "Bun__Jest__returnUndefined" });
 export const DoneCallback = b.class({ rustPath: "crate::test_runner::DoneCallback" });
 
 const modifier = { getter: b.any.returning("object"), cache: true, ...js } as const;
+/** `undefined` on `describe`. `shuffle`: on `test`. */
+const modifierOfOneMode = { ...modifier, getter: b.any.returning("object", "undefined") } as const;
 const conditionalModifier = { args: { condition: b.bool.loose }, returns: b.any.returning("object"), ...js } as const;
 /** A tagged template call passes its substitutions as `values`. */
 const rows = {
@@ -46,15 +54,15 @@ export const ScopeFunctions = b.class({
   /** `bound` is the function JavaScript sees. */
   internalFields: ["each", "fixtures", "bound"],
   proto: {
-    afterAll: modifier,
-    afterEach: modifier,
-    aroundAll: modifier,
-    aroundEach: modifier,
-    beforeAll: modifier,
-    beforeEach: modifier,
+    afterAll: modifierOfOneMode,
+    afterEach: modifierOfOneMode,
+    aroundAll: modifierOfOneMode,
+    aroundEach: modifierOfOneMode,
+    beforeAll: modifierOfOneMode,
+    beforeEach: modifierOfOneMode,
     concurrent: modifier,
     concurrentIf: conditionalModifier,
-    describe: modifier,
+    describe: modifierOfOneMode,
     each: rows,
     extend: fixtures,
     failing: modifier,
@@ -69,10 +77,10 @@ export const ScopeFunctions = b.class({
     sequential: modifier,
     serial: modifier,
     serialIf: conditionalModifier,
-    shuffle: modifier,
+    shuffle: modifierOfOneMode,
     skip: modifier,
     skipIf: conditionalModifier,
-    suite: { ...modifier, cache: "describe", rustName: "describe" },
+    suite: { ...modifierOfOneMode, cache: "describe", rustName: "describe" },
     todo: modifier,
     todoIf: conditionalModifier,
   },

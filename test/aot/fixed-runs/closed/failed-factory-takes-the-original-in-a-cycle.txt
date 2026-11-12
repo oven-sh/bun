@@ -1,0 +1,22 @@
+A factory of vi.doMock() throws at its first call. One that takes importOriginal is asked again by the next import; the error of one that takes nothing stays with the loader: it takes importOriginal, the module stands in a cycle.
+#### a.ts
+import "./b";
+export const a = "real-a";
+#### b.ts
+import { a } from "./a";
+export const seen = () => a;
+#### fails.test.ts
+
+import { test, vi } from "bun:test";
+let calls = 0;
+vi.doMock("./a", importOriginal => {
+  if (++calls === 1) throw new Error("the factory failed");
+  return { a: "mocked-a" };
+});
+const said = value => (value instanceof Error ? value.message : value);
+test("fails once", async () => {
+  console.log("| CASE first:", said(await import("./b").then(it => it.seen(), error => error)));
+  console.log("| CASE the module:", said(await import("./a").then(it => it.a, error => error)));
+  console.log("| CASE its importer:", said(await import("./b").then(it => it.seen(), error => error)));
+  console.log("| CASE calls:", calls);
+});

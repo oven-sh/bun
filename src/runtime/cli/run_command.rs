@@ -1039,6 +1039,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             entry_points.extend(ctx.preloads.iter().cloned());
             crate::cli::run_compiled::start(ctx, entry_points, 0);
         }
+        crate::cli::run_compiled::read_no_environment_file_again(ctx);
 
         // `bun_jsc::initialize`
         // is real (calls `JSCInitialize` over `bun_sys::environ()`); the
@@ -1238,8 +1239,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
         crate::cli::startup_options::refuse_code_the_compiler_did_not_see();
-        let runs_compiled_code =
-            bun_resolver::StandaloneModuleGraph::compiled_program(graph).is_some();
+        let program = bun_resolver::StandaloneModuleGraph::compiled_program(graph);
+        let runs_compiled_code = program.is_some();
         // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
         bun_jsc::initialize(bun_jsc::InitializeOptions {
             runs_compiled_code,
@@ -1260,7 +1261,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 bun_core::zstr!("bunfig.toml"),
                 ctx,
             )?;
-            crate::cli::startup_options::reject_unusable_bunfig_settings(ctx);
+            crate::cli::startup_options::reject_unusable_bunfig_settings(ctx, None);
         }
 
         let vm_ptr = VirtualMachine::init_with_module_graph(bun_jsc::virtual_machine::Options {
@@ -1498,6 +1499,12 @@ impl Run<'_> {
         'do_postgres_preconnect: {
             if !ctx.runtime_options.sql_preconnect {
                 break 'do_postgres_preconnect;
+            }
+            unsafe extern "C" {
+                safe fn Bun__canReadSqlAtStart(global: &JSGlobalObject) -> bool;
+            }
+            if !Bun__canReadSqlAtStart(global) {
+                crate::cli::startup_options::exit_for_sql_preconnect_without_sql();
             }
             let preconnect = || -> bun_jsc::JsResult<()> {
                 let Some(bun_object) = global.to_js_value().get(global, "Bun")? else {
@@ -2199,6 +2206,21 @@ impl RunCommand {
     ) -> crate::Result<::core::convert::Infallible> {
         use crate::api::bun_process::{Status as SpawnStatus, sync};
 
+        if cfg!(windows)
+            && bun_which::is_batch_file(executable)
+            && let Some(arg) =
+                (passthrough.iter()).find(|arg| bun_which::batch_arg_has_cmd_metachars(arg))
+        {
+            if !ctx.debug.silent {
+                pretty_errorln!(
+                    "<r><red>error<r>: Failed to run \"<b>{}<r>\": argument {} contains a cmd.exe special character and cannot be passed to a .bat/.cmd file",
+                    bstr::BStr::new(Self::basename_or_bun(executable)),
+                    bun_core::fmt::quote(&arg[..]),
+                );
+            }
+            Global::exit(1);
+        }
+
         let mut argv: Vec<Box<[u8]>> = Vec::with_capacity(1 + passthrough.len());
         argv.push(executable.to_vec().into_boxed_slice());
         for p in passthrough {
@@ -2405,6 +2427,7 @@ impl RunCommand {
 
     /// Dispatch `bun run <target>`: classify as file path vs. package.json
     pub(crate) fn exec_with_cfg(ctx: &mut ContextData, cfg: ExecCfg) -> crate::Result<bool> {
+        crate::cli::run_compiled::read_no_environment_file_again(ctx);
         let bin_dirs_only = cfg.bin_dirs_only;
         let log_errors = cfg.log_errors;
 

@@ -1,0 +1,38 @@
+# JSON.parse(text).prototype; Uint8Array.from(<a list that the program has just made>)
+# The one row of %TypedArray%.from says all that it does with its receiver: it constructs it once, with a length, and answers what that made. So the class is constructed: objects of it exist, and what
+# is asked of them by name is found. It is not let go. Let go, it would take along what it inherits from, %TypedArray%, on which the name `prototype`, which some code reads off a value that nobody
+# knows, finds %TypedArray%.prototype: let go in turn with all that lies below it, and the function behind %TypedArray%.prototype.every would be in the program.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/TypedArrayConstructor.ts" displayPath="/$bun/js/engine/TypedArrayConstructor.ts" flags=[IsLibrary]
+module m2 path="/$bun/js/engine/TypedArrayPrototype.ts" displayPath="/$bun/js/engine/TypedArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=TypedArrayConstructorFrom function=f1
+runtimefunction id=TypedArrayPrototypeEvery function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=JSON
+    v1 = PropGet v0 key="parse"
+    v2 = Convert v1 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v3 = String string="{}"
+    v4 = Call v2, v0, v3 calleeKey="parse" calleeName="JSON.parse"
+    v5 = PropGet v4 key="prototype"
+    v6 = NewArray contents=anything
+    v7 = Builtin builtin=Uint8Array
+    v8 = PropGet v7 key="from"
+    v9 = Convert v8 declared={type=builtin(TypedArrayFrom) flags=[IsExpected]}
+    v10 = Call v9, v7, v6 calleeKey="from"
+    Return v10
+}
+function f1 name="from" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=TypedArrayConstructorFrom thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="every" module=m2 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=TypedArrayPrototypeEvery thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

@@ -42,3 +42,7 @@ bun_trim.workspace = true
 bun_url.workspace = true
 bun_zlib.workspace = true
 bun_zstd.workspace = true
+
+[dev-dependencies]
+# The native symbols that Bun's C and C++ side provides to `bun_core`.
+bun_sema_standalone = { path = "../sema/standalone", features = ["test_support"] }

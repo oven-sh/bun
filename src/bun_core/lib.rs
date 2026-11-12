@@ -42,6 +42,7 @@ pub mod heap;
 pub mod current_work;
 pub mod debug;
 pub mod env;
+pub mod file_steps;
 #[cfg(windows)]
 pub mod windows_sys;
 pub mod wtf;
@@ -372,8 +373,6 @@ pub mod vec {
 
     /// Reserve `additional`, advance `len` by `additional`, and return the
     /// newly-exposed (uninitialized) tail.
-    /// Generic free-fn form of `bun_collections::VecExt::writable_slice` so
-    /// `bun_core::string` can call it without a `bun_collections` edge.
     ///
     /// # Safety
     /// Caller must fully write the returned slice before any read of
@@ -633,7 +632,7 @@ pub use bun_alloc::{
 // "FFI shape invariant" tooling lives in one file. Re-exported here so callers
 // can write `bun_core::assert_ffi_layout!(...)` without naming `bun_opaque`.
 pub use Global::*;
-pub use bun_opaque::{FfiLayout, assert_ffi_discr, assert_ffi_layout};
+pub use bun_opaque::{assert_ffi_discr, assert_ffi_layout};
 pub use error::{Error, Error as CrateError, Result as CrateResult};
 pub use ffi::{Zeroable, boxed_zeroed};
 pub use result::coreutils_error_map;

@@ -760,6 +760,24 @@ _ZN3bun9N_AVX3_DL11BSwap64ImplEPhm                                             [
 
 
 # ----------------------------------------------------------------------------
+# Bun's packing of words (src/jsc/bindings/highway_strings.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (12 symbols)
+# ----------------------------------------------------------------------------
+_ZN3bun6N_AVX213PackWordsImplEPKjmPhS3_                                        [AVX, AVX2]
+_ZN3bun6N_AVX215UnpackWordsImplEPKhmS2_mPjPm                                   [AVX, AVX2]
+_ZN3bun6N_AVX313PackWordsImplEPKjmPhS3_                                        [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun6N_AVX315UnpackWordsImplEPKhmS2_mPjPm                                   [AVX, AVX2]
+_ZN3bun9N_AVX3_DL13PackWordsImplEPKjmPhS3_                                     [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun9N_AVX3_DL15UnpackWordsImplEPKhmS2_mPjPm                                [AVX, AVX2]
+_ZN3bun10N_AVX3_SPR13PackWordsImplEPKjmPhS3_                                   [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun10N_AVX3_SPR15UnpackWordsImplEPKhmS2_mPjPm                              [AVX, AVX2]
+_ZN3bun11N_AVX3_ZEN413PackWordsImplEPKjmPhS3_                                  [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun11N_AVX3_ZEN415UnpackWordsImplEPKhmS2_mPjPm                             [AVX, AVX2]
+_ZN3bun9N_AVX10_213PackWordsImplEPKjmPhS3_                                     [AVX, AVX2, AVX512DQ, AVX512F, AVX512VL]
+_ZN3bun9N_AVX10_215UnpackWordsImplEPKhmS2_mPjPm                                [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
 # Bun source-map VLQ decoder (src/jsc/bindings/highway_sourcemap.cpp).
 # Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (12 symbols)
 # ----------------------------------------------------------------------------
@@ -1418,6 +1436,25 @@ _ZN3bun10N_AVX3_SPR13OddBlocksImplEPKhmPm          [AVX, AVX2, AVX512BW, AVX512D
 _ZN3bun11N_AVX3_ZEN419ScannerRunStopsImplEPKhmPhm  [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun11N_AVX3_ZEN414LineStartsImplEPKhmPj        [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
 _ZN3bun11N_AVX3_ZEN413OddBlocksImplEPKhmPm         [AVX, AVX2, AVX512BW, AVX512DQ, AVX512F, AVX512VL, AVX512_VBMI, BMI1, BMI2, GFNI]
+
+
+# ----------------------------------------------------------------------------
+# The ahead-of-time compiler's search of an array for a value. Gate: findBox() asks
+# CPUFeatureSet::host() for AVX2 (CPUID and XGETBV).
+# (1 symbols)
+# ----------------------------------------------------------------------------
+_ZN3JSC3AOTL12findWithAVX2EPKmmm  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# The ahead-of-time compiler's products of BigInts. Gate: BigIntArithmetic::hasMULX()
+# (CPUID).
+# (4 symbols)
+# ----------------------------------------------------------------------------
+_ZN3JSC3AOTL24tryMulUsualBigIntsByMULXEllPv                  [BMI2]
+_ZN3JSC3AOTL31tryMulUsualBigIntsInFrameByMULXEllPv           [BMI2]
+_ZN3JSC3AOTL32tryRemainderOfUsualFactorsByMULXElllPv         [BMI2]
+_ZN3JSC3AOTL39tryRemainderOfUsualFactorsInFrameByMULXElllPv  [BMI2]
 
 
 # ----------------------------------------------------------------------------

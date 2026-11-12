@@ -1,0 +1,25 @@
+# `wrapped` captures `f` in an arrow that `each` only calls, and the arrow only calls `f`. So the arrow of `maker` lies in the frame of `maker`, and the arrow of `wrapped`, which holds its address, in the frame of `wrapped`, which is gone first. Neither is made in the heap, and nothing is asked of `f`: the closure that holds it is entered by `each` alone.
+# f1 = each, f2 = wrapped, f3 = maker
+# -- source: closure-lent-to-a-wrapper-that-captures-it-lies-in-the-frame.ts
+# declare function print(...values: unknown[]): void;
+# function each(list: number[], f: (x: number) => number): number { let t = 0; for (let i = 0; i < list.length; i++) t += f(list[i]); return t; }
+# function wrapped(list: number[], f: (x: number) => number): number { const t = each(list, x => f(x) + 1); return t + f(0); }
+# function maker(list: number[], k: number): number { const t = wrapped(list, x => x * k); return t + 1; }
+# print(maker([1, 2], 3), maker([4], 5), maker([], 7));
+# -- end of source
+# RUN: bytes f3 mechanisms=all-Inlining
+# CHECK: NewSlimClosureInFrame.Plain
+# RUN(MAKER): bytes f3 mechanisms=all-Inlining
+# MAKER-NOT: NewSlimClosure.
+# RUN(WRAPPER): bytes f2 mechanisms=all-Inlining
+# WRAPPER: NewSlimClosureInFrame.Plain
+# RUN(HEAP): bytes f2 mechanisms=all-Inlining
+# HEAP-NOT: NewSlimClosure.
+# RUN(ASKED): bytes f2 mechanisms=all-Inlining
+# ASKED-NOT: operationAOTMoveClosureToHeap
+# RUN(WITHHELD): bytes f3 mechanisms=all-Inlining-CellsInFrames
+# WITHHELD: NewSlimClosure.Plain
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 12 22 1
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: 12 22 1

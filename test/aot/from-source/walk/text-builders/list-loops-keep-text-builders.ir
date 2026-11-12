@@ -1,0 +1,21 @@
+# `for (const row of rows) { if (row.skip) continue; line += tell(row); }`: every turn that appends runs other code. A step through a list is cheap with a builder, so the text stays in one.
+# The same over a Map: its turns without other code are quicker without a builder.
+# f1 = told, f2 = toldOfTable
+# -- source: list-loops-keep-text-builders.ts
+# declare function print(text: unknown): void;
+# declare function id<T>(value: T): T;
+# type Row = { skip: boolean; text: string };
+# function told(rows: Row[], tell: any): string { let line = ""; for (const row of rows) { if (row.skip) continue; line += tell(row); } return line; }
+# function toldOfTable(rows: Map<string, Row>, tell: any): string { let line = ""; for (const [, row] of rows) { if (row.skip) continue; line += tell(row); } return line; }
+# const tellers: any = { whole(row: Row) { return row.text; } };
+# const rows: Row[] = [{ skip: false, text: "a" }, { skip: true, text: "b" }, { skip: false, text: "c" }];
+# print(told(rows, tellers[id("whole")]) + toldOfTable(new Map(rows.map(row => [row.text, row])), tellers[id("whole")]));
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: acac
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: StringBuilderBegin
+# RUN(TABLE): walk f2 mechanisms=all
+# TABLE-LABEL: code f2:Body
+# TABLE-NOT: StringBuilderBegin

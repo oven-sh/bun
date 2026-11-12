@@ -2,8 +2,9 @@ use bun_core::fmt::{ItoaBuf, itoa};
 use bun_react_compiler::{JsxImportKind, ObservedSymbol, SymbolOrigin};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::hir::{
-    Call, Chain, ExprId, ExprKind, File, FileBuilder, Flags, Import, ImportId, ImportSpec, ListAt,
-    PatId, PatKind, ResolutionMode, StmtId, StmtKind, TextRange, TypeNodeId, VarDecl, VarKind,
+    Call, Chain, ExprId, ExprKind, File, FileBuilder, Flags, Import, ImportId, ImportSpec, Keyword,
+    ListAt, PatId, PatKind, ResolutionMode, StmtId, StmtKind, TextRange, TypeNodeId, TypeNodeKind,
+    VarDecl, VarKind,
 };
 use bun_sema::import_sites::JsxImport;
 use bun_sema::module_format::ModuleFormat;
@@ -11,9 +12,9 @@ use bun_sema::resolve::JsxSettings;
 use bun_sema::session::Arena;
 use std::borrow::Cow;
 
-// What is added has no text of its own: it stands at the start of the file, where `TextRange::default()` is.
 pub(crate) const POSITION: u32 = 0;
 const NAME_PREFIX: &[u8] = b"%react:";
+const OUTLINED: &[u8] = b"outlined:";
 const SYMBOL_KEY_PREFIX: &[u8] = b"react.";
 const MEMO_CACHE_SENTINEL: &[u8] = b"memo_cache_sentinel";
 const EARLY_RETURN_SENTINEL: &[u8] = b"early_return_sentinel";
@@ -69,10 +70,19 @@ impl ModuleItems {
                 let mut digits = ItoaBuf::new();
                 let number = itoa(&mut digits, self.outlined_count);
                 self.outlined_count += 1;
-                intern_item_name(atoms, b"outlined:", number)
+                intern_item_name(atoms, OUTLINED, &[number, b":", symbol.name].concat())
             }
             SymbolOrigin::ImportNamespace => intern_item_name(atoms, b"namespace:", symbol.name),
         }
+    }
+
+    pub(super) fn key_of_sentinel(atoms: &Interner<'_>, origin: SymbolOrigin) -> Option<Atom> {
+        let sentinel = match origin {
+            SymbolOrigin::MemoCacheSentinel => MEMO_CACHE_SENTINEL,
+            SymbolOrigin::EarlyReturnSentinel => EARLY_RETURN_SENTINEL,
+            _ => return None,
+        };
+        Some(atoms.intern(&[SYMBOL_KEY_PREFIX, sentinel].concat()))
     }
 
     pub(super) fn name_shadowing_local(atoms: &Interner<'_>, name: &[u8]) -> Atom {
@@ -97,7 +107,6 @@ impl ModuleItems {
         atoms: &Interner<'_>,
         format: ModuleFormat,
     ) {
-        // Every function names the `Fragment` import, also one without a fragment.
         self.imports
             .retain(|import| is_referenced(file, import.local));
         let mut before = Vec::new();
@@ -116,10 +125,10 @@ impl ModuleItems {
             }
         }
         if self.needs_memo_cache_sentinel {
-            before.push(write_sentinel(file, atoms, MEMO_CACHE_SENTINEL));
+            before.push(declare_sentinel(file, atoms, MEMO_CACHE_SENTINEL));
         }
         if self.needs_early_return_sentinel {
-            before.push(write_sentinel(file, atoms, EARLY_RETURN_SENTINEL));
+            before.push(declare_sentinel(file, atoms, EARLY_RETURN_SENTINEL));
         }
         put_around_body(file, &before, &self.outlined);
     }
@@ -133,6 +142,12 @@ fn jsx_import_of(kind: JsxImportKind) -> JsxImport {
         JsxImportKind::Fragment => JsxImport::Fragment,
         JsxImportKind::CreateElement => JsxImport::CreateElement,
     }
+}
+
+pub(crate) fn name_of_outlined_function(name: &[u8]) -> Option<&[u8]> {
+    let numbered = name.strip_prefix(NAME_PREFIX)?.strip_prefix(OUTLINED)?;
+    let colon = bun_core::strings::index_of_char_usize(numbered, b':')?;
+    Some(&numbered[colon + 1..])
 }
 
 fn intern_item_name(atoms: &Interner<'_>, item: &[u8], detail: &[u8]) -> Atom {
@@ -185,6 +200,7 @@ pub(crate) fn write_import(
         mode: ResolutionMode::None,
         stmt: StmtId::NONE,
         attributes: ExprId::NONE,
+        loaded_as: Atom::NONE,
     });
     debug_assert_eq!(added, import);
     file.has_module_syntax = true;
@@ -192,8 +208,6 @@ pub(crate) fn write_import(
     file.stmt(StmtKind::Import(import), POSITION)
 }
 
-/// `const module = require(path)`, then `const local = module.imported` for each name: a CommonJS file cannot hold an
-/// import statement. A bundle loads the module at the same place, the head of the file's body.
 fn write_require(
     file: &mut FileBuilder,
     atoms: &Interner<'_>,
@@ -233,7 +247,7 @@ pub(crate) fn write_constant(
     write_declaration(file, pat, init)
 }
 
-pub(crate) fn write_declaration(file: &mut FileBuilder, pat: PatId, init: ExprId) -> StmtId {
+fn write_declaration(file: &mut FileBuilder, pat: PatId, init: ExprId) -> StmtId {
     let declarations = file.add_var_decls(&[VarDecl {
         pat,
         ty: TypeNodeId::NONE,
@@ -245,14 +259,22 @@ pub(crate) fn write_declaration(file: &mut FileBuilder, pat: PatId, init: ExprId
     file.stmt(StmtKind::Var(declarations), POSITION)
 }
 
-fn write_sentinel(file: &mut FileBuilder, atoms: &Interner<'_>, sentinel: &[u8]) -> StmtId {
-    let global = file.expr(ExprKind::Ident(known::globalThis), POSITION, POSITION);
-    let constructor = add_member(file, global, known::Symbol);
-    let callee = add_member(file, constructor, atoms.intern(b"for"));
-    let key = atoms.intern(&[SYMBOL_KEY_PREFIX, sentinel].concat());
+fn declare_sentinel(file: &mut FileBuilder, atoms: &Interner<'_>, sentinel: &[u8]) -> StmtId {
     let name = intern_item_name(atoms, sentinel, b"");
     let pat = file.pat(PatKind::Ident(name), POSITION, POSITION);
-    write_constant(file, pat, callee, key)
+    let ty = match file.is_js {
+        true => TypeNodeId::NONE,
+        false => file.ty(TypeNodeKind::Keyword(Keyword::Any), POSITION, POSITION),
+    };
+    let declarations = file.add_var_decls(&[VarDecl {
+        pat,
+        ty,
+        init: ExprId::NONE,
+        kind: VarKind::Var,
+        flags: Flags::empty(),
+        loc: TextRange::default(),
+    }]);
+    file.stmt(StmtKind::Var(declarations), POSITION)
 }
 
 pub(crate) fn put_around_body(file: &mut FileBuilder, before: &[StmtId], after: &[StmtId]) {
@@ -273,9 +295,7 @@ pub(crate) fn finish_file<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
 ) -> File<'s> {
-    // The parser's filter covers the source text only. An empty filter answers "may mention" for every name.
     file.mentioned.clear();
-    // What stands in a JSDoc comment is no code, and a comment at the head of a file begins where the added statements stand. Nothing that the parser reads out of a comment begins at its first byte.
     if let Some(first) = file.jsdoc_comments.first_mut()
         && first.0 == POSITION
     {

@@ -1,0 +1,14 @@
+# -- source: main.cjs
+# function whole(x) { return (x | 0) == x ? x : x * 0.5; }
+# let sum = 0;
+# for (let i = 0; i < 4; i++) sum += whole(i & 255);
+# print(sum);
+# -- end of source
+# The integer that is compared is the one it is compared with. f1 = whole
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = Eq
+# CHECK-NOT: Mul
+# CHECK: Return
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 6

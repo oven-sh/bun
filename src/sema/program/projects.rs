@@ -11,6 +11,7 @@ pub(super) struct Projects<'s> {
     lenient_template: OnceLock<Options>,
     aot_sources_by_directory: ShardedMap<Vec<u8>, Option<ConfigAnswer<'s>>>,
     naming_types: Guarded<Vec<&'s Options>>,
+    listing_files: Guarded<Vec<&'s Options>>,
 }
 
 #[derive(Copy, Clone)]
@@ -57,14 +58,20 @@ impl<'s> Projects<'s> {
             lenient_template: OnceLock::new(),
             aot_sources_by_directory: ShardedMap::default(),
             naming_types: Guarded::new(Vec::new()),
+            listing_files: Guarded::new(Vec::new()),
         }
     }
 
     pub(super) fn naming_types(&self) -> Vec<&'s Options> {
-        let mut projects = self.naming_types.lock().clone();
-        projects.shared_sort_unstable_by(|a, b| a.config_path.cmp(&b.config_path));
-        projects.dedup_by(|a, b| a.config_path == b.config_path);
-        projects
+        in_order_of_paths(&self.naming_types)
+    }
+
+    pub(super) fn list_files(&self, host: &dyn Host) -> Vec<Vec<u8>> {
+        let projects = in_order_of_paths(&self.listing_files).into_iter();
+        let listed = projects.filter_map(|project| {
+            config::load_for_build(host, &Session::new(), &project.config_path).ok()
+        });
+        listed.flat_map(|project| project.files).collect()
     }
 
     pub(super) fn governing_code(
@@ -75,13 +82,25 @@ impl<'s> Projects<'s> {
         Some(self.note_types(self.governing(context, path)?))
     }
 
+    pub(super) fn governing_checked_code(
+        &self,
+        context: &CodeLoadContext<'_, 's, '_>,
+        path: &[u8],
+    ) -> Option<&'s Options> {
+        let project = self.governing_code(context, path)?;
+        if !project.config_path.is_empty()
+            && installed_package_directory(dirname::<Posix>(path)).is_none()
+            && make_the_same_program(context.options, project)
+        {
+            note(&self.listing_files, project);
+        }
+        Some(project)
+    }
+
     fn note_types(&self, project: &'s Options) -> &'s Options {
         let lists_types = project.types.as_ref().is_some_and(|it| !it.is_empty());
         if lists_types && !project.config_path.is_empty() {
-            let mut naming_types = self.naming_types.lock();
-            if !naming_types.iter().any(|&it| std::ptr::eq(it, project)) {
-                naming_types.push(project);
-            }
+            note(&self.naming_types, project);
         }
         project
     }
@@ -124,7 +143,11 @@ impl<'s> Projects<'s> {
             false => {
                 let scratch = Session::new();
                 let project = config::load_for_aot_package(context.host, &scratch, &manifest_path);
-                let options = governing_options(context, project.options);
+                let mut options = governing_options(context, project.options);
+                if !options.specifies_lib && !options.no_lib {
+                    options.libs.clone_from(&context.options.libs);
+                    options.no_lib = context.options.no_lib;
+                }
                 ConfigAnswer::Project(self.session.keep(options))
             }
         };
@@ -220,6 +243,20 @@ impl<'s> Projects<'s> {
             .lenient_by_package
             .insert_ref(package_directory.to_vec(), options)
     }
+}
+
+fn note<'s>(noted: &Guarded<Vec<&'s Options>>, project: &'s Options) {
+    let mut noted = noted.lock();
+    if !noted.iter().any(|&it| std::ptr::eq(it, project)) {
+        noted.push(project);
+    }
+}
+
+fn in_order_of_paths<'s>(noted: &Guarded<Vec<&'s Options>>) -> Vec<&'s Options> {
+    let mut projects = noted.lock().clone();
+    projects.shared_sort_unstable_by(|a, b| a.config_path.cmp(&b.config_path));
+    projects.dedup_by(|a, b| a.config_path == b.config_path);
+    projects
 }
 
 fn governing_options(context: &CodeLoadContext<'_, '_, '_>, project: Options) -> Options {
@@ -333,6 +370,22 @@ pub(super) fn lenient_options(program: &Options, package_directory: &[u8]) -> Op
     }
 }
 
+fn make_the_same_program(a: &Options, b: &Options) -> bool {
+    let names_libraries_of =
+        |a: &Options, b: &Options| b.libs.iter().all(|library| a.libs.contains(library));
+    a.strict_null_checks == b.strict_null_checks
+        && a.strict_function_types == b.strict_function_types
+        && a.strict_bind_call_apply == b.strict_bind_call_apply
+        && a.strict_builtin_iterator_return == b.strict_builtin_iterator_return
+        && a.exact_optional_property_types == b.exact_optional_property_types
+        && a.allow_js == b.allow_js
+        && a.max_node_module_js_depth == b.max_node_module_js_depth
+        && a.resolve_json_module == b.resolve_json_module
+        && a.allow_arbitrary_extensions == b.allow_arbitrary_extensions
+        && names_libraries_of(a, b)
+        && names_libraries_of(b, a)
+}
+
 impl<'s> Files<'s> {
     #[inline]
     pub fn module_options(&self, file: FileId) -> &'s Options {
@@ -340,6 +393,25 @@ impl<'s> Files<'s> {
             true => self.compiler_options_for_file(file),
             false => self.options,
         }
+    }
+
+    /// Whether the type errors that this program finds in the file are the ones that the file's own project finds.
+    pub fn matches_own_project_checks(&self, file: FileId) -> bool {
+        let (program, project) = (self.options, self.module_options(file));
+        !self.needs_another_program(file)
+            || (program.strict_null_checks == project.strict_null_checks
+                && program.strict_function_types == project.strict_function_types
+                && program.strict_bind_call_apply == project.strict_bind_call_apply
+                && program.strict_builtin_iterator_return == project.strict_builtin_iterator_return
+                && program.exact_optional_property_types == project.exact_optional_property_types
+                && (project.libs.iter()).all(|library| program.libs.contains(library)))
+    }
+
+    pub fn needs_another_program(&self, file: FileId) -> bool {
+        let (program, project) = (self.options, self.module_options(file));
+        !std::ptr::eq(program, project)
+            && project.has_config_file
+            && !make_the_same_program(program, project)
     }
 
     #[inline]

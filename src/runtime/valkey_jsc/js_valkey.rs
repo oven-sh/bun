@@ -11,7 +11,7 @@ use bun_jsc::{
     self as jsc, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsCell, JsRef,
     JsResult,
 };
-use bun_ptr::{AsCtxPtr, BackRef, RefPtr};
+use bun_ptr::{AsCtxPtr, RefPtr};
 use bun_uws as uws;
 
 use super::protocol_jsc;
@@ -181,10 +181,7 @@ impl JSValkeyClient {
         channel_name: JSValue,
         callback: JSValue,
     ) -> JsResult<()> {
-        // `BackRef` (Copy + Deref) detaches the borrow so the guard closure is
-        // safe even though intervening JS may re-enter `&self`.
-        let parent_br = BackRef::new(self);
-        let _guard = scopeguard::guard(parent_br, |p| {
+        let _guard = scopeguard::guard(self, |p| {
             p.on_new_subscription_callback_insert();
         });
         let map = self.subscription_callback_map();
@@ -259,10 +256,7 @@ impl JSValkeyClient {
 
         // After we go through every single callback, we will have to update the poll ref.
         // The user may, for example, unsubscribe in the callbacks, or even stop the client.
-        // `BackRef` (Copy + Deref) detaches the borrow so the guard closure is
-        // safe even though intervening JS may re-enter `&self`.
-        let parent_br = BackRef::new(self);
-        let _update = scopeguard::guard(parent_br, |p| p.update_poll_ref());
+        let _update = scopeguard::guard(self, |p| p.update_poll_ref());
 
         // If callbacks is an array, iterate and call each one
         let mut iter = callbacks.array_iterator(global_object)?;
@@ -931,8 +925,7 @@ impl JSValkeyClient {
         // Without this, every subsequent command rejects with "Connection has
         // failed" forever — see https://github.com/oven-sh/bun/issues/29925.
         self.client_mut().flags.failed = false;
-        let self_br = BackRef::new(self);
-        let _update = scopeguard::guard(self_br, |p| p.update_poll_ref());
+        let _update = scopeguard::guard(self, |p| p.update_poll_ref());
 
         if self.client.get().status == valkey::Status::NeverConnected {
             self.poll_ref.with_mut(|r| r.ref_(vm_event_loop_ctx()));
@@ -1191,14 +1184,9 @@ impl JSValkeyClient {
         // Now counting idle time, not connect time.
         self.reset_connection_timeout();
 
-        let self_ptr = self.as_ctx_ptr();
-        let _defer = scopeguard::guard(self_ptr, |p| {
-            // SAFETY: `p` was `self.as_ctx_ptr()` at guard creation; the caller
-            // holds an intrusive ref across this scope so `*p` is live here.
-            unsafe {
-                (*p).client_mut().on_writable();
-                (*p).update_poll_ref();
-            }
+        let _defer = scopeguard::guard(self, |this| {
+            this.client_mut().on_writable();
+            this.update_poll_ref();
         });
         let global_object = self.global_object;
         let _exit = self.vm().enter_event_loop_scope();
@@ -1353,7 +1341,7 @@ impl JSValkeyClient {
     // Callback for when Valkey client closes
     pub(crate) fn on_valkey_close(&self) -> JsResult<()> {
         let global_object = self.global_object;
-        let _defer = scopeguard::guard(BackRef::new(self), |p| p.update_poll_ref());
+        let _defer = scopeguard::guard(self, |p| p.update_poll_ref());
 
         // Bounded the attempt that just ended; a dial that fails outright
         // arms no timer of its own, so left armed this one would fire into it.
@@ -1498,7 +1486,7 @@ impl JSValkeyClient {
 
         self.client_mut().status = valkey::Status::Connecting;
         self.update_poll_ref();
-        let errdefer_status = scopeguard::guard(BackRef::new(self), |p| {
+        let errdefer_status = scopeguard::guard(self, |p| {
             p.client_mut().status = valkey::Status::Disconnected;
             p.update_poll_ref();
         });
@@ -1544,8 +1532,7 @@ impl JSValkeyClient {
 
         self.ensure_dialing();
 
-        let self_br = BackRef::new(self);
-        let _update = scopeguard::guard(self_br, |p| p.update_poll_ref());
+        let _update = scopeguard::guard(self, |p| p.update_poll_ref());
         self.client_mut().send(global_this, command)
     }
 
@@ -1867,7 +1854,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // Before `on_close()`: it runs `onclose` and settles the connect()
         // promise, and a connect() called from either must see Disconnected.
         this.client_mut().status = valkey::Status::Disconnected;
-        let _defer = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
+        let _defer = scopeguard::guard(this, |p| p.update_poll_ref());
 
         this.client_mut().on_close()
     }
@@ -1892,7 +1879,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // SAFETY: as in `on_close`; a dial that fails gets this event instead.
         let _socket_ref = unsafe { RefPtr::from_raw(this.as_ctx_ptr()) };
         this.client_mut().status = valkey::Status::Disconnected;
-        let _defer = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
+        let _defer = scopeguard::guard(this, |p| p.update_poll_ref());
 
         this.client_mut().on_close()
     }

@@ -1,0 +1,30 @@
+A test file writes state.js anew and takes it out of require.cache; the next test file, in a realm of its own, imports the new text: by statements, and through a module that has not run yet.
+#### a.test.js
+import { test } from "bun:test";
+import { writeFileSync } from "node:fs";
+test("a", () => {
+  const path = require.resolve("./state.js");
+  console.log("| CASE a", require(path).bump());
+  writeFileSync(path, 'export let count = 100;\nexport function bump() { return count += 10; }\nexport const extra = "new";\n');
+  delete require.cache[path];
+});
+#### b.test.js
+import { test } from "bun:test";
+import { bump, count } from "./state.js";
+import * as all from "./state.js";
+test("b", () => { console.log("| CASE b", count, bump(), count, Object.keys(all).join()); });
+#### c.test.js
+import { test } from "bun:test";
+import { seen } from "./helper.js";
+test("c", () => { console.log("| CASE c", seen()); });
+#### d.test.js
+import { test } from "bun:test";
+import { writeFileSync } from "node:fs";
+test("d puts the first text back", () => {
+  writeFileSync(require.resolve("./state.js"), "export let count = 0;\nexport function bump() { return ++count; }\n");
+});
+#### helper.js
+import { bump, count } from "./state.js"; export const seen = () => [count, bump(), count].join();
+#### state.js
+export let count = 0;
+export function bump() { return ++count; }

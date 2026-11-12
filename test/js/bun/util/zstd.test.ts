@@ -381,6 +381,7 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
       ],
       env: {
         ...bunEnv,
+        WebKitMallocForceEnabled: "1",
         // detect_leaks=0: LeakSanitizer cannot see through JSC cells to the natives they own.
         ASAN_OPTIONS: [
           bunEnv.ASAN_OPTIONS,

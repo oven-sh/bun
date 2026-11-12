@@ -1,15 +1,13 @@
 // RUN: link
-// `value as Flow` with `value: S` says that this one value is a Flow. It does not say that whatever is passed for S is one. Every layout that is passed for S lies below
-// the record of S, so an edge from that record up to Flow would put them all into the set of Flow: Point, which has none of its names.
-// The record of S is the one that Point lies below. It has no `supertypes=` of its own: its flags follow its number.
-// CHECK: layout {{*}}name="Point" {{*}}supertypes=[
-// CHECK-NOT: ,
-// CHECK: [[parameter]]]
-// CHECK: layout [[parameter]] flags=[IsTypeParameter
+// `value as Flow` with `value: S` says that this one value is a Flow. It does not say that whatever is passed for S is one: Point, which has none of its names, stays out of the set of Flow.
+// CHECK-NOT: layout {{*}}fields=[{key="x"{{*}}{key="y"{{*}}supertypes=
 
 // RUN(INTO): link
-// The other way round stands: `made as T` says that this object passes for T, so its layout goes below the record of T.
-// INTO: layout {{*}}name="Made" {{*}}supertypes=[
+// `made as T` enters a position that takes every value, so Made goes below nothing. `make` is in the program, so what `make<Made>()` answers is claimed to be nothing: Made goes along as a guess, because the answer is read like an object.
+// INTO-NOT: layout {{*}}fields=[{key="made"{{*}}supertypes=
+// INTO: [[answer]] = Call {{*}}calleeName="make"
+// INTO-NEXT: [[expected]] = Convert [[answer]] declared={type=undefined|null|L{{*}} flags=[IsExpected]}
+// INTO-NEXT: = PropGet [[expected]] key="made"
 interface Flow {
   state: string;
   tries: number;

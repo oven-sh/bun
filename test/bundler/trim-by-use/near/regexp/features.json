@@ -1,1 +1,1 @@
-{ "features": ["RegExp"], "keptToday": true }
+{ "features": ["RegExp"], "keptToday": ["RegExp"] }

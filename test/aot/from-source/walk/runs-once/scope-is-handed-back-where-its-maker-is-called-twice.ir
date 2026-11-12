@@ -1,0 +1,11 @@
+# -- source: scopes.ts
+# function plain(start: number, label: string): number { let n = start; let seen = label; const step = () => { seen += "."; return ++n; }; const t = step() + step(); return t + n + seen.length; }
+# { console.log(plain(1, "a")); }
+# { console.log(plain(1, "a")); }
+# export {};
+# -- end of source
+# The program of ..-is-called-once.ir and one call more. The check lines on `plain` are the same. f1 = plain
+# RUN: walk f1 mechanisms=all
+# CHECK: ReleaseEnvironment
+# RUN(PROMOTED): compile EnvironmentsPromotedToVariables mechanisms=all
+# PROMOTED: statistic EnvironmentsPromotedToVariables 0

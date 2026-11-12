@@ -27,6 +27,7 @@ import {
   normalizeBunSnapshot,
   pack,
   runBunInstall,
+  runCommandMaxRSS,
   substDrive,
   tempDir,
   unprivilegedSpawnOptions,
@@ -1400,25 +1401,21 @@ test.concurrent("peak memory does not grow with the size of the tarball", async 
 
   async function peakMemory(size: number) {
     await truncate(join(dir, "zeroes.bin"), size);
-    await using proc = spawn({
+    const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
       cmd: [bunExe(), "pm", "pack", "--quiet", "--gzip-level=0"],
       cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
-      env: bunEnv,
     });
-    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(err).toBe("");
-    expect(out).toBe("pack-memory-1.0.0.tgz\n");
+    expect(stderr).toBe("");
+    expect(stdout).toBe("pack-memory-1.0.0.tgz\n");
     expect(exitCode).toBe(0);
     expect(file(join(dir, "pack-memory-1.0.0.tgz")).size).toBeGreaterThan(size);
-    return proc.resourceUsage()!.maxRSS;
+    return maxRSS;
   }
 
   const MiB = 1024 * 1024;
   const small = await peakMemory(1 * MiB);
-  const large = await peakMemory(32 * MiB);
+  // Under ASAN the process that runCommandMaxRSS spawns from peaks some 50 MiB above `bun pm pack`, and hides that much.
+  const large = await peakMemory((isASAN || isDebug ? 128 : 32) * MiB);
   // A release build grows by under 1 MiB. One that holds the tarball in memory grew by 36 to 54 MiB, never under 31.
   expect(large - small).toBeLessThan((isASAN || isDebug ? 16 : 8) * MiB);
   expect(await sortedNames(dir)).toEqual(["pack-memory-1.0.0.tgz", "package.json", "zeroes.bin"]);
@@ -5188,6 +5185,37 @@ describe.concurrent("bins", () => {
     expect(tarballEntries(join(dir, "pack-bins-never-packed-1.0.0.tgz"))).toEqual([
       "package/package.json",
       "package/index.js",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // A NUL ends the path that the OS gets. `files` leaves everything but index.js out.
+  test.each([
+    { bin: "cli.js\u0000" },
+    { bin: { a: "cli.js\u0000.js", b: "bins/a.js\u0000" } },
+    { bin: "package.json\u0000" },
+    { bin: ".npmrc\u0000" },
+    { directories: { bin: "bins\u0000" } },
+    { directories: { bin: "..\u0000" } },
+  ])("%j is ignored", async fields => {
+    using dir = tempDir("pack-bins-nul", {
+      "above.js": indexJs,
+      "pkg/package.json": JSON.stringify({ name: "pack-bins-nul", version: "1.0.0", files: ["index.js"], ...fields }),
+      "pkg/index.js": indexJs,
+      "pkg/cli.js": indexJs,
+      "pkg/bins/a.js": indexJs,
+      "pkg/.npmrc": "registry=https://registry.example/",
+    });
+    const pkg = join(dir, "pkg");
+
+    const { err, exitCode } = await runPack(pkg);
+    expect(err).toBe("");
+    const tarball = readTarball(join(pkg, "pack-bins-nul-1.0.0.tgz"));
+    expect(
+      tarball.entries.map(entry => ({ pathname: entry.pathname, executable: (entry.perm & 0o111) !== 0 })),
+    ).toEqual([
+      { pathname: "package/package.json", executable: false },
+      { pathname: "package/index.js", executable: false },
     ]);
     expect(exitCode).toBe(0);
   });

@@ -2723,7 +2723,10 @@ impl VirtualMachine {
         }
         match kind {
             Teardown::Worker => WebWorker__teardownJSCVM(vm.global()),
-            Teardown::MainThreadExit => Zig__GlobalObject__destructOnExit(vm.global()),
+            Teardown::MainThreadExit => {
+                Zig__GlobalObject__destructOnExit(vm.global());
+                VMHolder::set_cached_global_object(Some(core::ptr::null_mut()));
+            }
         }
         // Finalizers just closed the sockets only they owned; `us_socket_close`
         // queues onto `loop->data.closed_head`, normally freed on the next tick.
@@ -4266,20 +4269,37 @@ pub enum ResolveMode {
     Require,
     /// `require.resolve()`: returns the bare specifier for Node builtins.
     RequireResolve,
+    /// `import.meta.resolve()`, `Bun.resolveSync()`: ESM resolution that loads nothing.
+    EsmResolve,
 }
 
 impl ResolveMode {
     #[inline]
     pub fn is_esm(self) -> bool {
-        matches!(self, Self::Esm)
+        matches!(self, Self::Esm | Self::EsmResolve)
     }
 
     #[inline]
     pub fn import_kind(self) -> bun_ast::ImportKind {
         match self {
-            Self::Esm => bun_ast::ImportKind::Stmt,
+            Self::Esm | Self::EsmResolve => bun_ast::ImportKind::Stmt,
             Self::Require => bun_ast::ImportKind::Require,
             Self::RequireResolve => bun_ast::ImportKind::RequireResolve,
+        }
+    }
+
+    /// The caller only wants the path; nothing is loaded.
+    #[inline]
+    pub fn only_resolves(self) -> bool {
+        matches!(self, Self::RequireResolve | Self::EsmResolve)
+    }
+
+    /// For functions that load nothing when they resolve as ESM (`import.meta.resolveSync()`).
+    #[inline]
+    pub fn loading_nothing_if_esm(self) -> Self {
+        match self {
+            Self::Esm => Self::EsmResolve,
+            mode => mode,
         }
     }
 
@@ -5538,7 +5558,7 @@ impl VirtualMachine {
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
         let top_level_dir = self.top_level_dir();
-        let mut source_to_use: &[u8] = if !is_special_source {
+        let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
                 bun_resolver::fs::PathName::init(source).dir_with_trailing_slash()
             } else {
@@ -5552,9 +5572,6 @@ impl VirtualMachine {
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
         let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
-        let mut may_retry_from_root = self.finds_entry_points_by_path && !is_special_source;
-        let mut source_before_root: Option<&[u8]> = None;
-        let mut has_read_folders_again = false;
         let result: bun_resolver::Result = loop {
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt
@@ -5570,15 +5587,8 @@ impl VirtualMachine {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {
-                    if core::mem::take(&mut may_retry_from_root)
-                        && let Some(root) = self
-                            .standalone_module_graph
-                            .map(|graph| graph.base_public_path_with_default_suffix())
-                            .filter(|root| !source_to_use.starts_with(root))
-                    {
-                        source_before_root = Some(source_to_use);
-                        source_to_use = root;
-                        retry_on_not_found = !has_read_folders_again;
+                    // Not found on disk. Look it up in the executable.
+                    if core::mem::take(&mut self.transpiler.resolver.resolves_for_code_from_disk) {
                         continue;
                     }
                     if !retry_on_not_found {
@@ -5592,20 +5602,12 @@ impl VirtualMachine {
                         return Err(crate::CrateError::ModuleNotFound);
                     }
                     retry_on_not_found = false;
-                    has_read_folders_again = true;
-                    // A file that was written since the folder of the importer was read is looked for from there again, and then from the root.
-                    if let Some(asked) = source_before_root
-                        .take()
-                        .filter(|asked| bun_paths::is_absolute(asked))
-                    {
-                        source_to_use = asked;
-                        may_retry_from_root = true;
-                    }
 
                     // SAFETY: thread-local heap allocation; sole `&mut` on the JS
                     // thread for the duration of the bust below.
                     let buf = unsafe { &mut *specifier_cache_resolver_buf() }.as_mut_slice();
                     let mut busted_as_spelled = false;
+                    let mut busted_working_directory = false;
                     let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
                         if let Some(dir) = bun_paths::dirname(normalized_specifier) {
                             if dir.len() > buf.len() {
@@ -5651,6 +5653,21 @@ impl VirtualMachine {
                                 let resolver = &mut self.transpiler.resolver;
                                 let found = folders
                                     .find(|it| resolver.read_dir_info_ignore_error(it).is_some());
+                                // From there the resolver has gone on to the working directory.
+                                if found.is_some() {
+                                    use bun_paths::resolve_path::{
+                                        join_abs_string_buf_checked, platform,
+                                    };
+                                    let mut buffer = bun_paths::path_buffer_pool::get();
+                                    let parts = [normalized_specifier, &b".."[..]];
+                                    let folder = join_abs_string_buf_checked::<platform::Auto>(
+                                        top_level_dir,
+                                        &mut buffer[..],
+                                        &parts,
+                                    );
+                                    busted_working_directory =
+                                        folder.is_some_and(|it| resolver.bust_dir_cache(it));
+                                }
                                 Some(found.unwrap_or_else(|| top_level_dir.to_vec()))
                             }
                             _ => None,
@@ -5670,6 +5687,7 @@ impl VirtualMachine {
                     if self.transpiler.resolver.bust_dir_cache(
                         bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
                     ) || busted_as_spelled
+                        || busted_working_directory
                     {
                         continue;
                     }
@@ -5724,6 +5742,18 @@ impl VirtualMachine {
         }
     }
 
+    /// Whether the importing module at `source` is a file that the executable loaded from disk.
+    fn is_code_from_disk(&self, source: &[u8]) -> bool {
+        let graph = self.standalone_module_graph;
+        let program = graph.and_then(|graph| graph.compiled_program());
+        program.is_some_and(|program| {
+            program.allows_code_from_disk
+                && !program.preserves_source_paths
+                && bun_paths::is_absolute(source)
+                && !bun_options_types::standalone_path::is_bun_standalone_file_path(source)
+        })
+    }
+
     /// Module-resolution core: resolves `specifier` relative to `source`, with
     /// path-length checks when `IS_A_FILE_PATH`. `Ok(Err(value))` is a
     /// resolution failure to be thrown/rejected with `value`.
@@ -5763,7 +5793,7 @@ impl VirtualMachine {
         mode: ResolveMode,
         same_is_no_answer: bool,
     ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
-        let answer = match run_on_resolve(global, specifier, source)? {
+        let answer = match run_on_resolve(global, specifier, source, IS_A_FILE_PATH, mode)? {
             None => return Ok(None),
             Some(Err(error)) => return Ok(Some(Err(error))),
             Some(Ok(answer)) => answer,
@@ -5783,7 +5813,7 @@ impl VirtualMachine {
         drop(answer_utf8);
         let is_own = is_bare
             && (answer.eql(specifier)
-                || match run_on_resolve(global, &answer, source)? {
+                || match run_on_resolve(global, &answer, source, IS_A_FILE_PATH, mode)? {
                     None => false,
                     Some(Ok(_)) => true,
                     Some(Err(error)) => return Ok(Some(Err(error))),
@@ -5801,9 +5831,12 @@ impl VirtualMachine {
             mode,
             global_cache,
         )?;
-        // Not on disk, for an `onLoad` to serve.
-        if resolved.is_err() && global.has_on_load(&answer.to_utf8())? {
-            return Ok(Some(Ok(answer)));
+        // Not on disk: either an `onLoad` serves it, or nothing is loaded and the callback's absolute path stands, like the answer of a resolve hook in Node.js.
+        if resolved.is_err() {
+            let stands = mode.only_resolves() && bun_paths::is_absolute(&answer.to_utf8());
+            if stands || global.has_on_load(&answer.to_utf8())? {
+                return Ok(Some(Ok(answer)));
+            }
         }
         Ok(Some(resolved))
     }
@@ -5953,6 +5986,10 @@ impl VirtualMachine {
         // SAFETY: per-thread VM is live for this synchronous call.
         let jsc_vm = unsafe { &mut *jsc_vm_ptr };
 
+        if mode == ResolveMode::Esm {
+            jsc_vm.transpiler.resolver.resolves_for_code_from_disk =
+                jsc_vm.is_code_from_disk(source_utf8.slice());
+        }
         let resolve_result = jsc_vm._resolve(
             &mut result,
             specifier_utf8.slice(),
@@ -5961,6 +5998,9 @@ impl VirtualMachine {
             IS_A_FILE_PATH,
             global_cache,
         );
+        if mode == ResolveMode::Esm {
+            jsc_vm.transpiler.resolver.resolves_for_code_from_disk = false;
+        }
         if let Err(err) = resolve_result {
             let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
@@ -5998,6 +6038,21 @@ impl VirtualMachine {
                     continue;
                 }
                 notes.push(logged.data.clone());
+            }
+            // The message is that of `bun run`, which finds the file beside the importer. What helps here is another thing.
+            let importer = normalize_source(source_utf8.slice());
+            let folder = match IS_A_FILE_PATH {
+                true => bun_resolver::fs::PathName::init(importer).dir_with_trailing_slash(),
+                false => importer,
+            };
+            let resolver = &jsc_vm.transpiler.resolver;
+            if resolver.looks_in_executable_alone(folder, specifier_utf8.slice()) {
+                notes.push(bun_ast::Data {
+                    text: std::borrow::Cow::Borrowed(
+                        b"it isn't in this executable, and a relative path is only looked up there. To embed a file, import it by a constant path or pass it to bun compile as another entry point. For a data file you can also write its folder or its extension in the path, as in \"./data/\" + name or name + \".json\". An absolute path loads a data file from disk.",
+                    ),
+                    location: None,
+                });
             }
             msg.notes = notes.into_boxed_slice();
             return Ok(Err(crate::ResolveMessage::create(
@@ -6182,6 +6237,9 @@ impl VirtualMachine {
                 }
             }
         }
+
+        // After the preloads, so the modules they loaded still count as loaded by a preload.
+        crate::cpp::JSMock__didBeginTestFile(self.global());
 
         // Note: reshaped for borrowck.
         let global = self.global;
@@ -7184,6 +7242,9 @@ impl VirtualMachine {
                 }
                 // What lies on the disk under the name of a module that is compiled into an executable is not what runs.
                 let top_path = frames[top].source_url.to_utf8();
+                if crate::compiled_program::is_build_relative_path(top_path.slice()) {
+                    break 'code bun_core::Utf8Bytes::EMPTY;
+                }
                 if crate::compiled_program::is_compiled_module(top_path.slice()) {
                     if !crate::compiled_program::runs_in_place() {
                         break 'code bun_core::Utf8Bytes::EMPTY;
@@ -8295,6 +8356,7 @@ struct OnResolveScope<'a> {
     vm: &'a VirtualMachine,
     was_in_on_resolve: bool,
     custom_dir_paths: Option<&'static [bun_core::String]>,
+    resolves_for_code_from_disk: bool,
 }
 
 impl<'a> OnResolveScope<'a> {
@@ -8303,6 +8365,9 @@ impl<'a> OnResolveScope<'a> {
             vm,
             was_in_on_resolve: vm.is_in_on_resolve.replace(true),
             custom_dir_paths: vm.as_mut().transpiler.resolver.custom_dir_paths.take(),
+            resolves_for_code_from_disk: core::mem::take(
+                &mut vm.as_mut().transpiler.resolver.resolves_for_code_from_disk,
+            ),
         }
     }
 }
@@ -8310,7 +8375,9 @@ impl<'a> OnResolveScope<'a> {
 impl Drop for OnResolveScope<'_> {
     fn drop(&mut self) {
         self.vm.is_in_on_resolve.set(self.was_in_on_resolve);
-        self.vm.as_mut().transpiler.resolver.custom_dir_paths = self.custom_dir_paths;
+        let resolver = &mut self.vm.as_mut().transpiler.resolver;
+        resolver.custom_dir_paths = self.custom_dir_paths;
+        resolver.resolves_for_code_from_disk = self.resolves_for_code_from_disk;
     }
 }
 
@@ -8319,6 +8386,8 @@ fn run_on_resolve(
     global: &JSGlobalObject,
     specifier: &bun_core::String,
     importer: &bun_core::String,
+    importer_is_a_file: bool,
+    mode: ResolveMode,
 ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
     let (in_file_namespace, in_another_namespace) = global.has_on_resolve();
     if !in_file_namespace && !in_another_namespace {
@@ -8341,11 +8410,38 @@ fn run_on_resolve(
         return Ok(None);
     }
     // The importer's key ends in the query it was imported with.
-    let importer = importer.to_utf8();
-    let importer = match bun_core::strings::index_of_char_usize(&importer, b'?') {
-        Some(query) => &importer[..query],
-        None => &importer[..],
+    let importer_with_query = importer.to_utf8();
+    let importer = match bun_core::strings::index_of_char_usize(&importer_with_query, b'?') {
+        Some(query) => &importer_with_query[..query],
+        None => &importer_with_query[..],
     };
+    // import(), require() and import.meta name a module whose key isn't a path (`namespace:path`) as `/namespace:path`. An importer is a loaded module, so the loader knows whether that key or a file is meant; a file is never split at a colon.
+    let is_loaded =
+        |key: &[u8]| global.is_key_of_loaded_module(&bun_core::StringView::borrow_utf8(key));
+    let importer_key = match (
+        importer.strip_prefix(b"/"),
+        importer_with_query.strip_prefix(b"/"),
+    ) {
+        (Some(key), Some(key_with_query))
+            if !ModuleLoader::namespace_and_path(key).0.is_empty()
+                && (is_loaded(key_with_query)? || is_loaded(key)?) =>
+        {
+            key
+        }
+        _ => importer,
+    };
+    let importer_namespace = match ModuleLoader::namespace_and_path(importer_key).0 {
+        _ if bun_paths::is_absolute(importer_key) => &b"file"[..],
+        b"" => &b"file"[..],
+        namespace => namespace,
+    };
+    let resolve_dir = match importer_namespace {
+        b"file" if importer_is_a_file => bun_paths::dirname(importer).unwrap_or(importer),
+        b"file" => importer,
+        _ => b"",
+    };
+    let importer_namespace = bun_core::StringView::borrow_utf8(importer_namespace);
+    let resolve_dir = bun_core::StringView::borrow_utf8(resolve_dir);
     let importer = bun_core::StringView::borrow_utf8(importer);
     let _scope = OnResolveScope::enter(vm);
     let mut answer = None;
@@ -8354,6 +8450,9 @@ fn run_on_resolve(
             &bun_core::StringView::from_bytes(namespace),
             &bun_core::StringView::borrow_utf8(path),
             &importer,
+            &importer_namespace,
+            &resolve_dir,
+            mode,
         )?;
     }
     if answer.is_none() && asks_file_namespace {
@@ -8365,6 +8464,9 @@ fn run_on_resolve(
                 &specifier
             }),
             &importer,
+            &importer_namespace,
+            &resolve_dir,
+            mode,
         )?;
     }
     let Some(on_resolve_plugin) = answer else {

@@ -30,6 +30,7 @@ fn import_pattern<'a>(prefix: &'a str, directory: &'a str) -> ComputedCodeReques
         directory: directory.as_bytes(),
         kind: Import,
         form: CodeImportForm::Static,
+        site: Default::default(),
     }
 }
 

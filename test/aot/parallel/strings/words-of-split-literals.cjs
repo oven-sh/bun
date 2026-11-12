@@ -1,0 +1,31 @@
+// Literals that are split into words, searched for atoms, parts of other texts, joined texts and what is no text, before and behind changes of the list.
+"use strict";
+const out = [];
+const show = (name, f) => { let r; try { r = f(); } catch (e) { r = e.constructor.name + ": " + e.message.slice(0, 40); } out.push(name + " " + String(r)); };
+const words = "break case catch continue debugger default do else finally for function if return".split(" ");
+const few = "one two three".split(" "), twice = "a b c a b c a b c a".split(" "), odd = "1a b2 _c d e f g h i j".split(" "), commas = "alpha, beta, gamma, delta, epsilon, zeta, eta, theta".split(", ");
+const limited = "break case catch continue debugger default do else finally for function if return".split(" ", 9);
+const many = Array.from({ length: 120 }, (_, i) => "w" + i).join(" "), lots = many.split(" ");
+const empty = "a  b c d e f g h i".split(" "), wide = "alpha béta gamma delta epsilon zeta eta theta ж".split(" "), latin = "alpha béta gamma delta epsilon zeta eta theta".split(" ");
+const text = "x break y function z returns finally; casecatch béta";
+const parts = [text.slice(2, 7), text.slice(10, 18), text.slice(21, 28), text.slice(29, 36), text.slice(38, 42), text.slice(38, 47), text.slice(0, 1), text.slice(4, 4), text.slice(48)];
+const joined = ["br" + "eak".slice(0), "func" + (out.length ? "x" : "tion"), "wo" + out.length, ["re", "turn"].join(""), String(0), "do".repeat(1), "e" + "lse" + parts[7]];
+const others = [undefined, null, 1, true, {}, [], Symbol.iterator, "", NaN, "break ", " break", "Break", "a", "c", "j", "_c", "ж", "béta", "w119", "w12"];
+const lists = { words, few, twice, odd, commas, limited, lots, empty, wide, latin };
+for (const name of Object.keys(lists)) for (const key of [...parts, ...joined, ...others]) show(name + " " + (typeof key === "symbol" ? "symbol" : JSON.stringify(key)), () => [lists[name].indexOf(key), lists[name].includes(key), lists[name].lastIndexOf(key), lists[name].indexOf(key, 2), lists[name].indexOf(key, -3), lists[name].includes(key, 5)]);
+const isWord = (text) => words.indexOf(text) >= 0;
+let found = 0; for (let i = 0; i < 400; i++) { const from = (i * 7) % 40; if (isWord(text.slice(from, from + i % 9))) found++; if (isWord("f" + "or".slice(0, i % 3))) found += 1000; }
+show("found", () => found);
+words.push("wi" + "th"); show("pushed", () => [isWord("with"), isWord("wi" + "th".slice(0, 2)), words.length, isWord("break")]);
+words[1] = { toString() { return "case"; } }; show("other value", () => [isWord("case"), words.indexOf(words[1]), isWord("catch")]);
+words.length = 5; show("shorter", () => [isWord("default"), isWord("catch"), words.join()]);
+delete words[0]; show("hole", () => [isWord("break"), words.indexOf(undefined), words.includes(undefined)]);
+const again = () => "var let const class extends super import export static yield".split(" ");
+const first = again(), second = again(), third = again(); second.reverse(); third.sort();
+show("again", () => [first === second, first.join(), second.indexOf("var"), third.indexOf("var"), first.indexOf(second[0]), again().indexOf(["im", "port"].join(""))]);
+first.prototype = 1; Object.freeze(second); show("frozen", () => { try { second.push("x"); } catch (e) { return e.constructor.name + second.indexOf("super"); } });
+class Words extends Array { indexOf(word) { return "own " + super.indexOf(word); } } const own = Words.from(first); show("heir", () => [own.indexOf("cla" + "ss".slice(0)), own.includes("let")]);
+show("map", () => first.map((word) => word.length).join()); show("concat", () => first.concat(twice).lastIndexOf("a")); show("keys", () => { const o = {}; for (const word of first) o[word] = word.length; return Object.keys(o).join() + o["im" + "port"]; });
+show("same", () => first[3] === "class" && first.includes(String.fromCharCode(108, 101, 116)));
+if (typeof Bun === "object") Bun.gc(true); show("collected", () => [first.indexOf("st" + "atic".slice(0)), commas.indexOf(["gam", "ma"].join("")), limited.length, limited.indexOf(text.slice(38, 42))]);
+for (const line of out) console.log(line);

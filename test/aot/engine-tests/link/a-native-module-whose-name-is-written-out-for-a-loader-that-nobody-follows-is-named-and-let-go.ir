@@ -1,0 +1,22 @@
+# const load = [require][index]; load("bun:jsc");
+# No site binds the module, so the front end lists it with a record of its own. The text is its name, and a require that nobody follows may be handed the text: the object that it answers with is named by the program, and it is let go with its members.
+# Names from run time are held back here, as under --trim. Without the mark the module was never heard of, and a trimmed executable said MODULE_NOT_FOUND.
+# OPTIONS: exclude=CodeOutsideImage,FeaturesNamedAtRunTime
+# RUN: features
+# CHECK: by BunJsc named
+# CHECK: by BunJscHeapSize named
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs body=f0
+module m1 path="bun:jsc" displayPath="bun:jsc" kind=Runtime exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=BunJsc
+entry module=m0
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleBuiltin builtin=ModuleRequire module=m0
+    v1 = NewArray v0 contents=anything
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="index" [isFreeName]
+    v4 = ElemGet v1, v3
+    v5 = String string="bun:jsc"
+    v6 = Call v4, -, v5 calleeName="load"
+    Return v6
+}

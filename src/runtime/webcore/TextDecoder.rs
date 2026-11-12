@@ -4,6 +4,7 @@ use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSString, JSValue};
 use bun_core::strings;
 use bun_jsc::HostReturn as _;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
+use core::mem::MaybeUninit;
 use std::collections::TryReserveError;
 
 use jsc::StringJsc as _;
@@ -482,6 +483,19 @@ impl TextDecoder {
 // `TextDecoder` wrapper cell, no `decode` prototype lookup, no per-chunk
 // `{stream: true}` options object) and drives it through these.
 
+/// Whether the next `decode()` without `{stream: true}` decodes its bytes as UTF-8 from the start of a new
+/// stream, so that it keeps no state for later calls.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn TextDecoder__startsUTF8(
+    decoder: &TextDecoder,
+    removes_byte_order_mark: &mut MaybeUninit<bool>,
+    replaces_invalid_bytes: &mut MaybeUninit<bool>,
+) -> bool {
+    removes_byte_order_mark.write(!decoder.ignore_bom);
+    replaces_invalid_bytes.write(!decoder.fatal);
+    matches!(decoder.encoding, EncodingLabel::Utf8) && !decoder.do_not_flush
+}
+
 /// Validates `label` (WebIDL DOMString coercion — may run user JS) and
 /// returns a fresh decoder configured for the matching encoding. Returns null
 /// with an exception pending on `global` on a bad label.
@@ -496,10 +510,10 @@ pub(crate) extern "C" fn TextDecoder__createForStream(
     label: JSValue,
     fatal: bool,
     ignore_bom: bool,
-    out_utf8_fast_path: &mut bool,
-    out_encoding: &mut EncodingLabel,
+    out_utf8_fast_path: &mut MaybeUninit<bool>,
+    out_encoding: &mut MaybeUninit<EncodingLabel>,
 ) -> *mut TextDecoder {
-    *out_utf8_fast_path = false;
+    out_utf8_fast_path.write(false);
     let encoding = if label.is_undefined() {
         EncodingLabel::Utf8
     } else {
@@ -524,9 +538,9 @@ pub(crate) extern "C" fn TextDecoder__createForStream(
             }
         }
     };
-    *out_encoding = encoding;
+    out_encoding.write(encoding);
     if matches!(encoding, EncodingLabel::Utf8) && !fatal {
-        *out_utf8_fast_path = true;
+        out_utf8_fast_path.write(true);
         return core::ptr::null_mut();
     }
     bun_core::heap::into_raw(Box::new(TextDecoder {

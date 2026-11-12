@@ -1,12 +1,10 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="arrayOrder"
 // CHECK-NOT: = Call
-// CHECK: [[calledIterable]] = Call {{*}}calleeName="v"
-// CHECK-NEXT: [[iterable]] = Convert [[calledIterable]] declared={type=undefined|null|string|Array flags=[IsExpected]}
+// CHECK: [[iterable]] = Call {{*}}calleeName="v"
 // CHECK-NEXT: [[iterator]] = IteratorOpen [[iterable]]
 // CHECK-NOT: IteratorResume
-// CHECK: [[called]] = Call {{*}}calleeName="o"
-// CHECK-NEXT: [[element]] = Convert [[called]] declared={type={{*}}flags=[IsExpected]}
+// CHECK: [[element]] = Call {{*}}calleeName="o"
 // CHECK-NOT: = Call
 // CHECK: = IteratorResume [[iterator]]
 // CHECK-NOT: PropSet
@@ -21,8 +19,7 @@
 // CHECK-NOT: = Call
 // CHECK: [[key]] = ToPropertyKey [[calledKey]]
 // CHECK-NOT: ElemGet
-// CHECK: [[calledHolder]] = Call {{*}}calleeName="o"
-// CHECK-NEXT: [[holder]] = Convert [[calledHolder]] declared={type={{*}}flags=[IsExpected]}
+// CHECK: [[holder]] = Call {{*}}calleeName="o"
 // CHECK-NOT: = Call
 // CHECK: = ElemGet [[object]], [[key]]
 // CHECK-NOT: PropSet

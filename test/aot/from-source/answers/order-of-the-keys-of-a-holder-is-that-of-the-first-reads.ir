@@ -1,0 +1,33 @@
+# A holder adds some members when the program first reads them, and a copy of the holder fixes the order of its keys: the members that were read first stand in front, in the order of the reads.
+# The front end writes such a read as the object that it finds. The run time still has to see it where it stands: read and called, read and not taken, kept in a constant, in a loop that runs no turn and then two,
+# in the arm that is taken first, twice in one body, in a function that nobody calls.
+# -- source: main.js
+# function names(holder) { Object.assign({}, holder); return Reflect.ownKeys(holder).map(String).join(); }
+# function size(object) { return Object.entries(object).length; }
+# function never(object) { return Object.values(object).length; }
+# const point = { x: 1 };
+# function inLoop(turns) { let total = 0; for (let i = 0; i < turns; i = i + 1) if (Object.isFrozen(point)) total = total + 1; return total; }
+# function inArm(flag) { if (flag) return Object.isExtensible(point); return Object.getOwnPropertyNames(point).length; }
+# function twice() { return Object.keys(point).length + Object.keys(point).length; }
+# print(size({ a: 1 }));
+# if (Object.isSealed) print("read and not taken");
+# const kept = Object.is;
+# print(typeof kept);
+# print(inLoop(0));
+# print(typeof Object.create(null));
+# print(inLoop(2));
+# print(inArm(false));
+# print(inArm(true));
+# print(twice());
+# if (Symbol.keyFor) Object.entries(Symbol);
+# print(Reflect.has({}, "a"));
+# print(names(Object));
+# print(names(Reflect));
+# print(Reflect.ownKeys(Symbol).slice(-2).join());
+# print(typeof never);
+# -- end of source
+# LIBRARY: own
+# RUN: run-in-shell
+# CHECK: groupBy,entries,isSealed,is,create,isFrozen,getOwnPropertyNames,isExtensible,keys,assign,getPrototypeOf
+# CHECK: exited with 0
+# CHECK-NEXT: the source prints the same

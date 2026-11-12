@@ -647,6 +647,7 @@ impl CompileC {
         &mut self,
         global_this: &JSGlobalObject,
     ) -> crate::Result<NonNull<TCC::State>> {
+        let ctx = std::ptr::from_mut::<CompileC>(self);
         let tcc_options_owned: ZBox;
         let compile_options: &ZStr = if !self.flags.is_empty() {
             &self.flags
@@ -661,10 +662,10 @@ impl CompileC {
 
         // TODO: correctly handle invalid user-provided options
         let state_ptr = match TCC::State::init::<CompileC, true>(&TCC::Config {
-            options: Some(NonNull::from(compile_options)),
+            options: Some(compile_options),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
-                ctx: Some(std::ptr::from_mut::<CompileC>(self)),
+                ctx: Some(ctx),
                 handler: Self::handle_compilation_error,
             },
         }) {
@@ -1361,10 +1362,12 @@ impl FFI {
     pub(crate) fn close<'a>(&self, this_value: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) {
         unsafe extern "C" {
             /// Type-checks `library` (`dynamicDowncast`) before use.
-            safe fn Bun__FFI__closeFunctions(global: &JSGlobalObject, library: JSValue) -> bool;
+            fn Bun__FFI__closeFunctions(global: &JSGlobalObject, library: JSValue) -> bool;
         }
         jsc::mark_binding();
-        let is_running = Bun__FFI__closeFunctions(cx.global(), this_value.to_js());
+        // SAFETY: C++ indexes `functionsValue` unchecked up to its length. It is empty or the array
+        // that `cc` filled from 0 to its length, which JS never sees.
+        let is_running = unsafe { Bun__FFI__closeFunctions(cx.global(), this_value.to_js()) };
         if is_running {
             // The running call returns into the compiled code, so leak it instead of letting `do_close` free it.
             self.shared_state.set(None);
@@ -2093,7 +2096,7 @@ impl Function {
         }
     }
 
-    pub(crate) fn compile(&mut self, napi_env: Option<&napi::NapiEnv>) -> crate::Result<()> {
+    pub(crate) fn compile(&mut self, napi_env: Option<NonNull<c_void>>) -> crate::Result<()> {
         let mut source_code: Vec<u8> = Vec::new();
         self.print_source_code(&mut source_code)?;
 
@@ -2104,7 +2107,7 @@ impl Function {
             zstr!("-std=c11 -nostdlib -Wl,--export-all-symbols")
         };
         let state = match TCC::State::init::<Function, false>(&TCC::Config {
-            options: Some(NonNull::from(tcc_options)),
+            options: Some(tcc_options),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
                 ctx: Some(std::ptr::from_mut::<Function>(self)),
@@ -2130,12 +2133,9 @@ impl Function {
         let state = unsafe { self.state.unwrap().as_mut() };
 
         if let Some(env) = napi_env {
-            // `env` is the live VM-owned napi env; process-lifetime.
+            // `makeNapiEnvForFFI` leaks a ref on `env`: the address stays valid for JIT'd code.
             if state
-                .add_symbol(
-                    zstr!("Bun__thisFFIModuleNapiEnv"),
-                    std::ptr::from_ref(env).cast::<c_void>(),
-                )
+                .add_symbol(zstr!("Bun__thisFFIModuleNapiEnv"), env.as_ptr())
                 .is_err()
             {
                 self.fail(b"Failed to add NAPI env symbol");
@@ -2748,17 +2748,10 @@ static WORKAROUND: MyFunctionSStructWorkAround = MyFunctionSStructWorkAround {
 fn make_napi_env_if_needed<'a>(
     functions: impl IntoIterator<Item = &'a Function>,
     global_this: &JSGlobalObject,
-) -> Option<&'static napi::NapiEnv> {
-    // Return is `'static`, not `'a` — the env is heap-allocated by C++
-    // (`makeNapiEnvForFFI`) and owned by the VM for process lifetime; tying it
-    // to `'a` (the iterator borrow) is over-restrictive and blocks the
-    // immediate-after `values_mut()` loop at every call site.
+) -> Option<NonNull<c_void>> {
     for function in functions {
         if function.needs_napi_env() {
-            // SAFETY: C++ returns a non-null fresh NapiEnv; we hand back a shared `&` only.
-            // `bun_jsc` exposes `*mut c_void` to avoid an upward dep on
-            // `bun_runtime::napi`; the concrete type lives here, so cast at the boundary.
-            return Some(unsafe { &*global_this.make_napi_env_for_ffi().cast::<napi::NapiEnv>() });
+            return NonNull::new(global_this.make_napi_env_for_ffi());
         }
     }
     None

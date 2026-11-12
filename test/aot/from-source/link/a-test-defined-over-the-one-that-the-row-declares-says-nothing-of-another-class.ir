@@ -1,0 +1,17 @@
+# Base declares a test of its own, and Tagged below it gets another by a descriptor. What is defined goes where the lookup from Tagged ends: to Base's member. Nothing is said of other classes: what is tested against Other stays in sight.
+# -- source: main.js
+# class Other { constructor() { this.x = 1; } }
+# class Base { static [Symbol.hasInstance](v) { return false; } }
+# class Tagged extends Base {}
+# Object.defineProperty(Tagged, Symbol.hasInstance, { value: (v) => v === 1 });
+# const o = new Other();
+# print(o instanceof Other, 1 instanceof Tagged, 1 instanceof Base, o.x);
+# -- end of source
+# RUN: link fields mechanisms=all
+# CHECK: field {{*}} "x" proven=int[0, 2147483647]
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: true true false 1
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: true true false 1
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: true true false 1

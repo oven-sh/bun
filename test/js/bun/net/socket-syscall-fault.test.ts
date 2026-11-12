@@ -354,6 +354,38 @@ describe.skipIf(!fault.available())("poll_start failure is reported, not a crash
     `),
   );
 
+  test.concurrent.skipIf(isWindows).each(['"ignore"', '"pipe"', 'new Blob(["a"])', "new ReadableStream()"])(
+    "Bun.spawn with ipc and stdin %s",
+    stdin =>
+      run(`
+      const { fstatSync, readdirSync } = require("fs");
+      const isSocket = fd => { try { return fstatSync(+fd).isSocket(); } catch { return false; } };
+      const sockets = () => readdirSync("/dev/fd").filter(isSocket).length;
+      const before = sockets();
+      const exited = Promise.withResolvers();
+      ${arm};
+      let err;
+      try {
+        Bun.spawn({ cmd: ["sleep", "100"], stdin: ${stdin}, stdout: "ignore", ipc() {}, onExit: exited.resolve }).kill();
+      } catch (e) { err = e; }
+      if (err?.code !== "ENOMEM") throw new Error("expected Bun.spawn to throw ENOMEM, got: " + err);
+      const { signalCode } = await exited.promise;
+      if (signalCode !== "SIGKILL") throw new Error("expected the child to be killed, got: " + signalCode);
+      while (sockets() > before) await new Promise(setImmediate);
+      console.log("OK");
+    `),
+  );
+
+  test.concurrent.skipIf(isWindows)("child_process.fork", () =>
+    run(`
+      ${arm};
+      let err;
+      try { require("child_process").fork("-e", ["setInterval(() => {}, 1000)"]).kill(); } catch (e) { err = e; }
+      if (err?.code !== "ENOMEM" || err.syscall !== "spawn") throw new Error("expected fork to throw ENOMEM, got: " + err);
+      console.log("OK");
+    `),
+  );
+
   test.concurrent("Bun.udpSocket", () =>
     run(`
       ${arm};

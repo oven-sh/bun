@@ -2882,6 +2882,7 @@ pub(crate) mod tests {
         assert!(!is_removed_by_program(b"/recorded-once/ab"));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn change_time_is_no_birth_time() {
         let at = |sec: i64| bun_sys::Timespec { sec, nsec: 0 };

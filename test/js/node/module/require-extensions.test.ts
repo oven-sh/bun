@@ -354,7 +354,7 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
 // A default handler stores what require() returns for an ES module on the
 // module object that it is handed. ".js" and ".mjs" are one native loader,
 // and ".ts", ".cts" and ".mts" are the other.
-describe.concurrent('default handler: `__esModule` in TDZ beside an initialized "module.exports"', () => {
+describe.concurrent("default handler, for an ES module that is still evaluating", () => {
   const tag = `v => (v?.custom === true ? "custom" : Object.prototype.toString.call(v))`;
   // The file calls the default handler of its own extension on itself while it evaluates.
   const callsOwnHandler = (ext: string) => `
@@ -366,9 +366,24 @@ describe.concurrent('default handler: `__esModule` in TDZ beside an initialized 
     console.log(JSON.stringify({ handler: (${tag})(m.exports) }));
     export let __esModule = true;
   `;
+  // The same, before either export is initialized. The file first shows that a read of "module.exports" throws.
+  const callsOwnHandlerEarly = (ext: string) => `
+    import Module from "node:module";
+    import * as self from ${JSON.stringify("./early" + ext)};
+    let read;
+    try { read = typeof self["module.exports"]; } catch (e) { read = e.constructor.name; }
+    const m = new Module(import.meta.path);
+    Module._extensions[${JSON.stringify(ext)}](m, import.meta.path);
+    console.log(JSON.stringify({ read, storesNamespace: m.exports === self }));
+    const custom = { custom: true };
+    export { custom as "module.exports" };
+    export let __esModule = true;
+  `;
   const extensions = [".mjs", ".js", ".ts", ".cts", ".mts"];
+  const oneOfEachLoader = [".mjs", ".ts"];
   const files = {
     ...Object.fromEntries(extensions.map(ext => ["direct" + ext, callsOwnHandler(ext)])),
+    ...Object.fromEntries(oneOfEachLoader.map(ext => ["early" + ext, callsOwnHandlerEarly(ext)])),
     // a.mjs has finished when require() returns. Its `__esModule` is the binding of late.mjs, which is still running.
     "a.mjs": `
       const custom = { custom: true };
@@ -400,11 +415,20 @@ describe.concurrent('default handler: `__esModule` in TDZ beside an initialized 
   }
   const printed = (value: object) => ({ stdout: JSON.stringify(value), stderr: "", exitCode: 0, signalCode: null });
 
-  test.each(extensions)("called by a %s file on itself", async ext => {
-    expect(await run("direct" + ext)).toEqual(printed({ handler: "custom" }));
+  describe('`__esModule` in TDZ does not hide an initialized "module.exports"', () => {
+    test.each(extensions)("called by a %s file on itself", async ext => {
+      expect(await run("direct" + ext)).toEqual(printed({ handler: "custom" }));
+    });
+
+    test("called by a handler that replaced it", async () => {
+      expect(await run("delegate-fixture.cjs")).toEqual(printed({ calls: 2, inner: "custom", later: "custom" }));
+    });
   });
 
-  test("called by a handler that replaced it", async () => {
-    expect(await run("delegate-fixture.cjs")).toEqual(printed({ calls: 2, inner: "custom", later: "custom" }));
-  });
+  test.each(oneOfEachLoader)(
+    "both exports in TDZ: called by a %s file on itself, it stores the namespace",
+    async ext => {
+      expect(await run("early" + ext)).toEqual(printed({ read: "ReferenceError", storesNamespace: true }));
+    },
+  );
 });

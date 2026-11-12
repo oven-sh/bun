@@ -123,9 +123,6 @@ fn parts_outside(range: (u32, u32), mut holes: Vec<(u32, u32)>) -> Vec<(u32, u32
     parts
 }
 
-/// The diagnostics of binder.go. The binder visits every node, whether or not the checker does. 1184 isn't included:
-/// the binder only reports it for `export as namespace`, and wherever it's reported here it comes from the checker
-/// (`reportObviousModifierErrors`).
 pub(super) fn is_binder_diagnostic(code: u32) -> bool {
     matches!(
         code,
@@ -212,6 +209,12 @@ impl Checker<'_, '_> {
     /// removed.
     pub(super) fn never_check(&self, start: u32, end: u32) {
         self.never_checked.borrow_mut().push((start, end));
+    }
+
+    /// The ranges of `never_check` in the file that was checked last, where `Files::brings_declarations`. In a build they hold
+    /// the code that it leaves out.
+    pub fn never_checked_ranges(&self) -> &[(u32, u32)] {
+        &self.never_checked_in_last_file
     }
 
     /// `checkStrictModeWithStatement`, `checkStrictModeLabeledStatement`: 1101 1344. The binder visits every node,

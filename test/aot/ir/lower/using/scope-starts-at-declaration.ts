@@ -1,4 +1,5 @@
 // RUN: lower
+// OPTIONS: builtin-modules
 // CHECK-LABEL: function {{*}}name="starts"
 // CHECK-NOT: handler=
 // CHECK: integer=1

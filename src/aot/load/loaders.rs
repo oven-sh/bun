@@ -80,6 +80,10 @@ pub(crate) fn to_host_loader(loader: Loader, path: &[u8]) -> HostLoader {
     }
 }
 
+pub(crate) fn to_host_loader_of_attribute(loader: Loader) -> HostLoader {
+    HostLoader(host_number(loader))
+}
+
 pub(crate) fn host_loader_kind(loader: HostLoader) -> Option<HostLoaderKind> {
     match loader {
         BY_NAME => Some(HostLoaderKind::ByName),
@@ -94,6 +98,38 @@ pub(crate) fn script_kind_of(loader: Loader) -> Option<ScriptKind> {
         Loader::Ts => Some(ScriptKind::Ts),
         Loader::Tsx => Some(ScriptKind::Tsx),
         _ => None,
+    }
+}
+
+pub(crate) fn gives_data(loader: Loader) -> bool {
+    match loader {
+        Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx | Loader::Wasm | Loader::Napi => false,
+        Loader::Bunsh
+        | Loader::Md
+        | Loader::Html
+        | Loader::Css
+        | Loader::File
+        | Loader::Json
+        | Loader::Jsonc
+        | Loader::Toml
+        | Loader::Base64
+        | Loader::Dataurl
+        | Loader::Text
+        | Loader::Sqlite
+        | Loader::SqliteEmbedded
+        | Loader::Yaml
+        | Loader::Json5
+        | Loader::Xml => true,
+    }
+}
+
+pub(crate) fn is_taken_by_written_type(own: Loader, written: Loader) -> bool {
+    match written {
+        Loader::Json | Loader::Jsonc | Loader::Json5 => {
+            matches!(own, Loader::Json | Loader::Jsonc | Loader::Json5)
+        }
+        Loader::Text => matches!(own, Loader::Text | Loader::File),
+        _ => own == written,
     }
 }
 
@@ -118,12 +154,25 @@ mod tests {
     const JS_AS_TS: [(&[u8], Loader); 1] = [(b".js", Loader::Ts)];
 
     #[test]
-    fn host_numbers_invert_and_avoid_reserved_numbers() {
+    fn host_numbers_invert_and_avoid_the_reserved_number() {
         for &loader in ALL_LOADERS {
             let number = host_number(loader);
             assert_eq!(loader_from_host_number(number), Some(loader));
             assert_ne!(HostLoader(number), BY_NAME);
         }
+    }
+
+    #[test]
+    fn what_an_attribute_asks_for_is_apart_from_what_the_name_of_the_file_asks_for() {
+        for &loader in ALL_LOADERS {
+            let by_attribute = to_host_loader_of_attribute(loader);
+            assert_ne!(by_attribute, BY_NAME);
+            assert_eq!(
+                host_loader_kind(by_attribute),
+                Some(HostLoaderKind::Loader(loader))
+            );
+        }
+        assert_eq!(to_host_loader(Loader::Ts, b"/project/a.ts"), BY_NAME);
     }
 
     #[test]
@@ -173,9 +222,9 @@ mod tests {
         let xml = HostLoaderKind::Loader(Loader::Xml);
         assert_eq!(host_loader_kind(BY_NAME), Some(HostLoaderKind::ByName));
         assert_eq!(host_loader_kind(HostLoader(22)), Some(xml));
-        assert_eq!(host_loader_kind(HostLoader(23)), None);
-        assert_eq!(host_loader_kind(HostLoader(200)), None);
-        assert_eq!(host_loader_kind(HostLoader(255)), None);
+        for number in 23..=u8::MAX {
+            assert_eq!(host_loader_kind(HostLoader(number)), None);
+        }
     }
 
     #[test]

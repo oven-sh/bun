@@ -1,19 +1,20 @@
 use bun_core::fmt::{ItoaBuf, itoa};
-use bun_lint_react_compiler::code_generation::{GeneratedSymbol, SymbolOrigin};
-use bun_react_compiler::JsxImportKind;
+use bun_react_compiler::{JsxImportKind, ObservedSymbol, SymbolOrigin};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::hir::{
-    Call, Chain, ExprId, ExprKind, File, FileBuilder, Flags, Import, ImportId, ImportSpec, ListAt,
-    PatId, PatKind, ResolutionMode, StmtId, StmtKind, TextRange, TypeNodeId, VarDecl, VarKind,
+    Call, Chain, ExprId, ExprKind, File, FileBuilder, Flags, Import, ImportId, ImportSpec, Keyword,
+    ListAt, PatId, PatKind, ResolutionMode, StmtId, StmtKind, TextRange, TypeNodeId, TypeNodeKind,
+    VarDecl, VarKind,
 };
 use bun_sema::import_sites::JsxImport;
+use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::JsxSettings;
 use bun_sema::session::Arena;
 use std::borrow::Cow;
 
-// What is added has no text of its own: it stands at the start of the file, where `TextRange::default()` is.
 pub(crate) const POSITION: u32 = 0;
 const NAME_PREFIX: &[u8] = b"%react:";
+const OUTLINED: &[u8] = b"outlined:";
 const SYMBOL_KEY_PREFIX: &[u8] = b"react.";
 const MEMO_CACHE_SENTINEL: &[u8] = b"memo_cache_sentinel";
 const EARLY_RETURN_SENTINEL: &[u8] = b"early_return_sentinel";
@@ -38,11 +39,13 @@ impl ModuleItems {
         &mut self,
         atoms: &Interner<'_>,
         jsx: &JsxSettings,
-        symbol: &GeneratedSymbol,
+        symbol: &ObservedSymbol<'_>,
     ) -> Atom {
         match symbol.origin {
-            SymbolOrigin::Source | SymbolOrigin::Local => atoms.intern(&symbol.name),
-            SymbolOrigin::ImportItem => intern_item_name(atoms, b"import:", &symbol.name),
+            SymbolOrigin::Source | SymbolOrigin::Local | SymbolOrigin::NamespaceMember(_) => {
+                atoms.intern(symbol.name)
+            }
+            SymbolOrigin::ImportItem => intern_item_name(atoms, b"import:", symbol.name),
             SymbolOrigin::JsxImport(kind) => {
                 let import = jsx_import_of(kind);
                 let local = intern_item_name(atoms, import.export_name(), b"");
@@ -67,17 +70,23 @@ impl ModuleItems {
                 let mut digits = ItoaBuf::new();
                 let number = itoa(&mut digits, self.outlined_count);
                 self.outlined_count += 1;
-                intern_item_name(atoms, b"outlined:", number)
+                intern_item_name(atoms, OUTLINED, &[number, b":", symbol.name].concat())
             }
-            SymbolOrigin::ImportNamespace => intern_item_name(atoms, b"namespace:", &symbol.name),
-            SymbolOrigin::ClassicFactory | SymbolOrigin::ClassicFragment => {
-                intern_item_name(atoms, b"classic:", &symbol.name)
-            }
+            SymbolOrigin::ImportNamespace => intern_item_name(atoms, b"namespace:", symbol.name),
         }
     }
 
-    pub(super) fn name_shadowing_local(atoms: &Interner<'_>, symbol: &GeneratedSymbol) -> Atom {
-        intern_item_name(atoms, b"local:", &symbol.name)
+    pub(super) fn key_of_sentinel(atoms: &Interner<'_>, origin: SymbolOrigin) -> Option<Atom> {
+        let sentinel = match origin {
+            SymbolOrigin::MemoCacheSentinel => MEMO_CACHE_SENTINEL,
+            SymbolOrigin::EarlyReturnSentinel => EARLY_RETURN_SENTINEL,
+            _ => return None,
+        };
+        Some(atoms.intern(&[SYMBOL_KEY_PREFIX, sentinel].concat()))
+    }
+
+    pub(super) fn name_shadowing_local(atoms: &Interner<'_>, name: &[u8]) -> Atom {
+        intern_item_name(atoms, b"local:", name)
     }
 
     pub(super) fn add_import(&mut self, path: &[u8], imported: &[u8], local: Atom) {
@@ -92,8 +101,12 @@ impl ModuleItems {
         });
     }
 
-    pub(super) fn write(&mut self, file: &mut FileBuilder, atoms: &Interner<'_>) {
-        // Every function names the `Fragment` import, also one without a fragment.
+    pub(super) fn write(
+        &mut self,
+        file: &mut FileBuilder,
+        atoms: &Interner<'_>,
+        format: ModuleFormat,
+    ) {
         self.imports
             .retain(|import| is_referenced(file, import.local));
         let mut before = Vec::new();
@@ -104,13 +117,18 @@ impl ModuleItems {
             }
             let from_path = rest.iter().filter(|import| import.path == first.path);
             let names = from_path.map(|import| (atoms.intern(&import.imported), import.local));
-            before.push(write_import(file, atoms, &first.path, names));
+            match format {
+                ModuleFormat::Esm => before.push(write_import(file, atoms, &first.path, names)),
+                ModuleFormat::CommonJs => {
+                    write_require(file, atoms, &first.path, names, &mut before)
+                }
+            }
         }
         if self.needs_memo_cache_sentinel {
-            before.push(write_sentinel(file, atoms, MEMO_CACHE_SENTINEL));
+            before.push(declare_sentinel(file, atoms, MEMO_CACHE_SENTINEL));
         }
         if self.needs_early_return_sentinel {
-            before.push(write_sentinel(file, atoms, EARLY_RETURN_SENTINEL));
+            before.push(declare_sentinel(file, atoms, EARLY_RETURN_SENTINEL));
         }
         put_around_body(file, &before, &self.outlined);
     }
@@ -124,6 +142,12 @@ fn jsx_import_of(kind: JsxImportKind) -> JsxImport {
         JsxImportKind::Fragment => JsxImport::Fragment,
         JsxImportKind::CreateElement => JsxImport::CreateElement,
     }
+}
+
+pub(crate) fn name_of_outlined_function(name: &[u8]) -> Option<&[u8]> {
+    let numbered = name.strip_prefix(NAME_PREFIX)?.strip_prefix(OUTLINED)?;
+    let colon = bun_core::strings::index_of_char_usize(numbered, b':')?;
+    Some(&numbered[colon + 1..])
 }
 
 fn intern_item_name(atoms: &Interner<'_>, item: &[u8], detail: &[u8]) -> Atom {
@@ -176,11 +200,31 @@ pub(crate) fn write_import(
         mode: ResolutionMode::None,
         stmt: StmtId::NONE,
         attributes: ExprId::NONE,
+        loaded_as: Atom::NONE,
     });
     debug_assert_eq!(added, import);
     file.has_module_syntax = true;
     file.is_forced_module = false;
     file.stmt(StmtKind::Import(import), POSITION)
+}
+
+fn write_require(
+    file: &mut FileBuilder,
+    atoms: &Interner<'_>,
+    path: &[u8],
+    names: impl Iterator<Item = (Atom, Atom)>,
+    statements: &mut Vec<StmtId>,
+) {
+    let module = intern_item_name(atoms, b"required:", path);
+    let pat = file.pat(PatKind::Ident(module), POSITION, POSITION);
+    let require = file.expr(ExprKind::Ident(known::require), POSITION, POSITION);
+    statements.push(write_constant(file, pat, require, atoms.intern(path)));
+    for (imported, local) in names {
+        let object = file.expr(ExprKind::Ident(module), POSITION, POSITION);
+        let init = add_member(file, object, imported);
+        let pat = file.pat(PatKind::Ident(local), POSITION, POSITION);
+        statements.push(write_declaration(file, pat, init));
+    }
 }
 
 pub(crate) fn write_constant(
@@ -200,6 +244,10 @@ pub(crate) fn write_constant(
         is_pure: false,
     });
     let init = file.expr(ExprKind::Call(call), POSITION, POSITION);
+    write_declaration(file, pat, init)
+}
+
+fn write_declaration(file: &mut FileBuilder, pat: PatId, init: ExprId) -> StmtId {
     let declarations = file.add_var_decls(&[VarDecl {
         pat,
         ty: TypeNodeId::NONE,
@@ -211,14 +259,22 @@ pub(crate) fn write_constant(
     file.stmt(StmtKind::Var(declarations), POSITION)
 }
 
-fn write_sentinel(file: &mut FileBuilder, atoms: &Interner<'_>, sentinel: &[u8]) -> StmtId {
-    let global = file.expr(ExprKind::Ident(known::globalThis), POSITION, POSITION);
-    let constructor = add_member(file, global, known::Symbol);
-    let callee = add_member(file, constructor, atoms.intern(b"for"));
-    let key = atoms.intern(&[SYMBOL_KEY_PREFIX, sentinel].concat());
+fn declare_sentinel(file: &mut FileBuilder, atoms: &Interner<'_>, sentinel: &[u8]) -> StmtId {
     let name = intern_item_name(atoms, sentinel, b"");
     let pat = file.pat(PatKind::Ident(name), POSITION, POSITION);
-    write_constant(file, pat, callee, key)
+    let ty = match file.is_js {
+        true => TypeNodeId::NONE,
+        false => file.ty(TypeNodeKind::Keyword(Keyword::Any), POSITION, POSITION),
+    };
+    let declarations = file.add_var_decls(&[VarDecl {
+        pat,
+        ty,
+        init: ExprId::NONE,
+        kind: VarKind::Var,
+        flags: Flags::empty(),
+        loc: TextRange::default(),
+    }]);
+    file.stmt(StmtKind::Var(declarations), POSITION)
 }
 
 pub(crate) fn put_around_body(file: &mut FileBuilder, before: &[StmtId], after: &[StmtId]) {
@@ -239,8 +295,12 @@ pub(crate) fn finish_file<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
 ) -> File<'s> {
-    // The parser's filter covers the source text only. An empty filter answers "may mention" for every name.
     file.mentioned.clear();
+    if let Some(first) = file.jsdoc_comments.first_mut()
+        && first.0 == POSITION
+    {
+        first.0 = POSITION + 1;
+    }
     let (mut file, _) = file.into_arena(arena, atoms.session());
     file.finish_nodes();
     file

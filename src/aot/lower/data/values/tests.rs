@@ -1,5 +1,5 @@
 use bstr::BStr;
-use bun_ast::Log;
+use bun_ast::{Loader, Log};
 use bun_sema::atom::Interner;
 use bun_sema::fold::{Define, DefinePath, DefineRoot, DefineValue, FoldOptions};
 use bun_sema::hir_from_data::{DataModule, DataValue};
@@ -12,10 +12,10 @@ use crate::diagnostic_codes::Code;
 use crate::ir::generated::{Data, DataMember, DataNode};
 use crate::ir::{Id, LayoutId, LayoutKey, StringId, TypeTable};
 use crate::load::source_provider::{
-    DeferredLoad, Failed, LoadRequest, Loaded, MacroCall, ModuleName, Resolution, ResolveRequest,
+    DataFailure, DeferredLoad, Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest,
     SourceFile, SourceProvider, WithoutServices,
 };
-use crate::lower::Fragment;
+use crate::lower::{Fragment, UnitTables};
 use crate::modules::ModuleRef;
 use crate::statistics::{LimitId, LimitValues};
 
@@ -72,28 +72,63 @@ impl SourceProvider for DefinedData {
         arena: &'s Arena,
         atoms: &Interner<'s>,
         log: &mut Log,
-    ) -> Result<DataModule<'s>, Failed> {
+    ) -> Result<DataModule<'s>, DataFailure> {
         WithoutServices.parse_data(file, arena, atoms, log)
     }
 
-    fn run_macro<'s>(
+    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+        WithoutServices.check_embedded_files(log)
+    }
+}
+
+struct BundledPages;
+
+impl SourceProvider for BundledPages {
+    fn fold_options<'s>(
         &self,
-        call: &MacroCall<'_, 's>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
         log: &mut Log,
-    ) -> Result<&'s DataValue<'s>, Failed> {
-        WithoutServices.run_macro(call, arena, atoms, log)
+    ) -> FoldOptions<'s> {
+        WithoutServices.fold_options(arena, atoms, log)
     }
 
-    fn bundle_pages<'s>(
+    fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
+        WithoutServices.resolve(request, log)
+    }
+
+    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+        WithoutServices.load(request, log)
+    }
+
+    fn has_load_plugin(&self, module: ModuleName<'_>) -> bool {
+        WithoutServices.has_load_plugin(module)
+    }
+
+    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+        WithoutServices.finish_deferred_loads(log)
+    }
+
+    fn parse_data<'s>(
         &self,
-        pages: &[&[u8]],
+        file: &SourceFile<'_>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
         log: &mut Log,
-    ) -> Result<Vec<&'s DataValue<'s>>, Failed> {
-        WithoutServices.bundle_pages(pages, arena, atoms, log)
+    ) -> Result<DataModule<'s>, DataFailure> {
+        match file.loader {
+            Loader::Html => Ok(DataModule::Page),
+            _ => WithoutServices.parse_data(file, arena, atoms, log),
+        }
+    }
+
+    fn bundle_pages(&self, pages: &[&[u8]], _log: &mut Log) -> Result<Vec<Vec<u8>>, Failed> {
+        let write_manifest = |page: &&[u8]| {
+            let name = BStr::new(bun_paths::basename(page));
+            let files = r#"[{"loader":"js","isEntry":true}]"#;
+            format!(r#"{{"index":"./{name}","files":{files}}}"#).into_bytes()
+        };
+        Ok(pages.iter().map(write_manifest).collect())
     }
 
     fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
@@ -123,8 +158,11 @@ fn lower_data_module(json: &str) -> Vec<Fragment> {
         .collect()
 }
 
-fn data_of(json: &str) -> (Fragment, Data) {
-    let mut fragments = lower_data_module(json);
+fn data_of(json: &str) -> (Fragment, Box<UnitTables>, Data) {
+    data_among(lower_data_module(json))
+}
+
+fn data_among(mut fragments: Vec<Fragment>) -> (Fragment, Box<UnitTables>, Data) {
     fragments.retain(|fragment| fragment.module.data.is_some());
     assert_eq!(fragments.len(), 1, "one module of the program is data");
     let mut fragment = fragments.remove(0);
@@ -132,19 +170,22 @@ fn data_of(json: &str) -> (Fragment, Data) {
         .module
         .data
         .expect("the other fragments were removed");
-    let data = core::mem::take(&mut fragment.data[id.index()]);
-    (fragment, data)
+    let index = fragment.data.iter().position(|&(data, _)| data == id);
+    let index = index.expect("a fragment holds the record of its module");
+    let (_, data) = fragment.data.remove(index);
+    let tables = fragment.tables.take();
+    (fragment, tables, data)
 }
 
-fn defined_data_of(create_value: CreateValue) -> (Fragment, Data) {
+fn defined_data_of(create_value: CreateValue) -> (Box<UnitTables>, Data) {
     let files = [("main.js", "export const probe = PROBE_DATA;\n")];
     let provider = DefinedData(create_value);
     let mut lowered = lower_program_with_provider(&files, &default_settings(), &provider);
     assert_eq!(lowered.len(), 1);
     let mut fragment = lowered.remove(0).1.fragment;
     assert_eq!(fragment.data.len(), 1, "the program reads the define once");
-    let data = fragment.data.remove(0);
-    (fragment, data)
+    let (_, data) = fragment.data.remove(0);
+    (fragment.tables.take(), data)
 }
 
 fn elements_of(node: &DataNode) -> &[DataNode] {
@@ -168,15 +209,15 @@ fn layout_of(node: &DataNode) -> LayoutId {
     *layout
 }
 
-fn text_of(fragment: &Fragment, id: StringId) -> &BStr {
-    BStr::new(fragment.strings.get(id))
+fn text_of(tables: &UnitTables, id: StringId) -> &BStr {
+    BStr::new(tables.strings.get(id))
 }
 
-fn key_texts<'a>(fragment: &'a Fragment, node: &DataNode) -> Vec<&'a BStr> {
+fn key_texts<'a>(tables: &'a UnitTables, node: &DataNode) -> Vec<&'a BStr> {
     let keys = members_of(node).iter().map(|member| member.key);
     keys.map(|key| {
-        let text = fragment.property_keys.get(key).text;
-        text_of(fragment, text.expect("the key of a data member is a text"))
+        let text = tables.property_keys.get(key).text;
+        text_of(tables, text.expect("the key of a data member is a text"))
     })
     .collect()
 }
@@ -195,7 +236,7 @@ fn count_nested_arrays(mut node: DataNode) -> usize {
 
 #[test]
 fn primitives_become_leaves() {
-    let (fragment, data) = data_of(r#"[null, true, 1.5, -0, "a"]"#);
+    let (_, tables, data) = data_of(r#"[null, true, 1.5, -0, "a"]"#);
     let [
         DataNode::Null,
         DataNode::Boolean { value: true },
@@ -208,21 +249,47 @@ fn primitives_become_leaves() {
     };
     assert_eq!(*fraction, 1.5);
     assert!(*zero == 0.0 && zero.is_sign_negative());
-    assert_eq!(text_of(&fragment, *text), "a");
+    assert_eq!(text_of(&tables, *text), "a");
+}
+
+#[test]
+fn page_is_its_manifest() {
+    let files = [
+        (
+            "main.js",
+            "import page from \"./index.html\";\nexport default page;\n",
+        ),
+        ("index.html", "<!doctype html>"),
+    ];
+    let lowered = lower_program_with_provider(&files, &default_settings(), &BundledPages);
+    let fragments = lowered.into_iter().map(|(_, lowered)| lowered.fragment);
+    let (_, tables, data) = data_among(fragments.collect());
+    assert_eq!(key_texts(&tables, &data.root), ["index", "files"]);
+    let [index, listed] = members_of(&data.root) else {
+        panic!("{:?}", data.root);
+    };
+    let DataNode::String { value: index } = &index.value else {
+        panic!("{:?}", index.value);
+    };
+    assert_eq!(text_of(&tables, *index), "./index.html");
+    let [file] = elements_of(&listed.value) else {
+        panic!("{:?}", listed.value);
+    };
+    assert_eq!(key_texts(&tables, file), ["loader", "isEntry"]);
 }
 
 #[test]
 fn undefined_and_bigint_become_leaves() {
-    let (fragment, data) = defined_data_of(create_undefined_and_bigint);
+    let (tables, data) = defined_data_of(create_undefined_and_bigint);
     let [DataNode::Undefined, DataNode::BigInt { digits }] = elements_of(&data.root) else {
         panic!("{:?}", data.root);
     };
-    assert_eq!(text_of(&fragment, *digits), "12");
+    assert_eq!(text_of(&tables, *digits), "12");
 }
 
 #[test]
 fn array_contents_are_untyped() {
-    let (_, data) = data_of("[1, 2]");
+    let (_, _, data) = data_of("[1, 2]");
     let DataNode::Array { contents, .. } = data.root else {
         panic!("{:?}", data.root);
     };
@@ -231,8 +298,8 @@ fn array_contents_are_untyped() {
 
 #[test]
 fn members_stay_in_insertion_order() {
-    let (fragment, data) = data_of(r#"{"b": 1, "a": 2}"#);
-    assert_eq!(key_texts(&fragment, &data.root), ["b", "a"]);
+    let (_, tables, data) = data_of(r#"{"b": 1, "a": 2}"#);
+    assert_eq!(key_texts(&tables, &data.root), ["b", "a"]);
     let values: Vec<&DataNode> = members_of(&data.root)
         .iter()
         .map(|member| &member.value)
@@ -248,8 +315,8 @@ fn members_stay_in_insertion_order() {
 
 #[test]
 fn nested_values_stay_under_parents() {
-    let (fragment, data) = data_of(r#"{"list": [1, {"deep": true}, []], "last": {}}"#);
-    assert_eq!(key_texts(&fragment, &data.root), ["list", "last"]);
+    let (_, tables, data) = data_of(r#"{"list": [1, {"deep": true}, []], "last": {}}"#);
+    assert_eq!(key_texts(&tables, &data.root), ["list", "last"]);
     let [list, last] = members_of(&data.root) else {
         panic!("{:?}", data.root);
     };
@@ -257,7 +324,7 @@ fn nested_values_stay_under_parents() {
         panic!("{:?}", list.value);
     };
     assert_eq!(*first, DataNode::Number { value: 1.0 });
-    assert_eq!(key_texts(&fragment, second), ["deep"]);
+    assert_eq!(key_texts(&tables, second), ["deep"]);
     assert_eq!(
         members_of(second)[0].value,
         DataNode::Boolean { value: true }
@@ -269,20 +336,20 @@ fn nested_values_stay_under_parents() {
 #[test]
 fn equal_key_sets_share_layout() {
     let json = r#"[{"a": 1, "b": 2}, {"a": 3, "b": 4}, {"b": 5, "a": 6}, {"a": 7}]"#;
-    let (fragment, data) = data_of(json);
+    let (_, tables, data) = data_of(json);
     let rows = elements_of(&data.root);
     let layouts: Vec<LayoutId> = rows.iter().map(layout_of).collect();
     assert_eq!(layouts.len(), 4);
     assert_eq!(layouts[0], layouts[1]);
     assert_eq!(layouts[0], layouts[2]);
     assert_ne!(layouts[0], layouts[3]);
-    assert_eq!(key_texts(&fragment, &rows[2]), ["b", "a"]);
+    assert_eq!(key_texts(&tables, &rows[2]), ["b", "a"]);
 }
 
 #[test]
 fn object_layout_belongs_to_data_file() {
-    let (fragment, data) = data_of(r#"{"name": "x"}"#);
-    let key = fragment.layout_keys[layout_of(&data.root).index()];
+    let (fragment, tables, data) = data_of(r#"{"name": "x"}"#);
+    let key = tables.layout_keys[layout_of(&data.root).index()];
     let LayoutKey::UntypedLiteral { file, .. } = key else {
         panic!("{key:?}");
     };
@@ -291,8 +358,8 @@ fn object_layout_belongs_to_data_file() {
 
 #[test]
 fn proto_key_is_member() {
-    let (fragment, data) = data_of(r#"{"__proto__": 1}"#);
-    assert_eq!(key_texts(&fragment, &data.root), ["__proto__"]);
+    let (_, tables, data) = data_of(r#"{"__proto__": 1}"#);
+    assert_eq!(key_texts(&tables, &data.root), ["__proto__"]);
     assert_eq!(
         members_of(&data.root)[0].value,
         DataNode::Number { value: 1.0 }
@@ -301,8 +368,8 @@ fn proto_key_is_member() {
 
 #[test]
 fn index_like_key_is_member() {
-    let (fragment, data) = data_of(r#"{"404": 1, "a": 2}"#);
-    assert_eq!(key_texts(&fragment, &data.root), ["404", "a"]);
+    let (_, tables, data) = data_of(r#"{"404": 1, "a": 2}"#);
+    assert_eq!(key_texts(&tables, &data.root), ["404", "a"]);
 }
 
 #[test]
@@ -323,7 +390,7 @@ fn count_nesting_errors(depth: usize) -> usize {
 
 #[test]
 fn data_past_nesting_limit_is_an_error() {
-    let limit = LimitValues::for_host().get(LimitId::MaxNestingDepth) as usize;
+    let limit = LimitValues::for_host().get(LimitId::MaxDataNestingDepth) as usize;
     assert_eq!(count_nesting_errors(limit), 0);
     assert_eq!(count_nesting_errors(limit + 1), 1);
 }
@@ -340,12 +407,12 @@ fn primitive_module_has_no_record() {
 
 #[test]
 fn record_names_module() {
-    let (fragment, data) = data_of("[1]");
+    let (fragment, tables, data) = data_of("[1]");
     let module = data
         .module
         .expect("a record names the module that creates it");
     assert_eq!(
-        fragment.module_keys[module.index()],
+        tables.module_keys[module.index()],
         ModuleRef::File(fragment.file)
     );
 }

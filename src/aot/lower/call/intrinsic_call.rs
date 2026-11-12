@@ -5,7 +5,7 @@ use smallvec::{SmallVec, smallvec};
 use super::intrinsic::{
     IntrinsicCall, Lowered, Misuse, get_named_arguments, has_spread, lower_named_arguments,
 };
-use super::{Arguments, Callee, emit_call};
+use super::{Arguments, CallOptions, Callee, emit_call};
 use crate::builtins::PromiseStatus;
 use crate::builtins::id::{BuiltinId, BuiltinName, RuntimeFunction};
 use crate::builtins::table::{self, Conversion, ErrorKind};
@@ -19,10 +19,7 @@ use crate::lower::member::PropertyName;
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn position_of_call(&self, site: &IntrinsicCall<'_>) -> u32 {
-        match self.file.is_shown_without_source_map() {
-            true => self.file.last_mapped_position(site.callee),
-            false => self.file.hir[site.call].pos,
-        }
+        self.file.hir[site.call].pos
     }
 
     pub(super) fn lower_call_with_rest(
@@ -69,6 +66,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let function = self.lower_member_base(site.callee, function, site.exit);
         let apply = self.emit_builtin_itself(BuiltinId::FunctionPrototypeApply);
         let callee = Callee::without_key(apply, Some(function), None);
+        let options = CallOptions {
+            is_done_in_place: true,
+            ..site.options
+        };
+        let site = IntrinsicCall { options, ..site };
         Ok(self.lower_call_with_rest(site, callee, site.arguments))
     }
 
@@ -273,7 +275,6 @@ pub(super) fn lower_if_abrupt_close_iterator(
 
     lowering.begin_cleanup(BlockRole::CleanupHandler, None);
     lowering.lower_expression_for_effect(expression);
-    // A normal completion closes nothing, so it leaves without an exit of the cleanup.
     lowering.jump(after);
 
     lowering.set_position(position);
@@ -283,4 +284,23 @@ pub(super) fn lower_if_abrupt_close_iterator(
     });
     lowering.continue_in(after);
     Ok(lowering.builder.undefined())
+}
+
+pub(super) fn lower_iterator_generic_close(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    site: IntrinsicCall<'_>,
+) -> Lowered<ValueId> {
+    let [iterator] = lower_named_arguments(lowering, site)?;
+    lowering.emit_iterator_object_close(iterator, CleanupPath::Normal);
+    Ok(lowering.builder.undefined())
+}
+
+pub(super) fn lower_iterator_generic_next(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    site: IntrinsicCall<'_>,
+) -> Lowered<ValueId> {
+    let [next_method, iterator] = lower_named_arguments(lowering, site)?;
+    let result = emit_call(lowering, next_method, Some(iterator), &[]);
+    let error = RuntimeErrorKind::IteratorResultNotObject;
+    Ok(lowering.builder.require_object(result, error))
 }

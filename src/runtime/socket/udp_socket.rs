@@ -2074,19 +2074,11 @@ pub(crate) fn dgram_get_sock_name_fd<'a>(
         {
             // SAFETY: the family says this is a sockaddr_in.
             let addr4 = unsafe { &*std::ptr::from_ref(&storage).cast::<sockaddr_in>() };
-            (
-                // SAFETY: in_addr is 4 bytes.
-                unsafe { core::slice::from_raw_parts((&raw const addr4.addr).cast::<u8>(), 4) },
-                u16::from_be(addr4.port),
-            )
+            (bun_core::bytes_of(&addr4.addr), u16::from_be(addr4.port))
         } else if storage.ss_family == inet::AF_INET6 as libc::sa_family_t {
             // SAFETY: the family says this is a sockaddr_in6.
             let addr6 = unsafe { &*std::ptr::from_ref(&storage).cast::<sockaddr_in6>() };
-            (
-                // SAFETY: in6_addr is 16 bytes.
-                unsafe { core::slice::from_raw_parts((&raw const addr6.addr).cast::<u8>(), 16) },
-                u16::from_be(addr6.port),
-            )
+            (&addr6.addr, u16::from_be(addr6.port))
         } else {
             return Err(bun_sys::Error::from_code_int(
                 SystemErrno::EINVAL as c_int,

@@ -1,7 +1,7 @@
 // --compile --aot --trim: what an executable that only runs code that was compiled into it keeps, removes and says.
 // What it says without --trim: ../aot/cli/admitted-code.test.ts.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, isArm64, isWindows } from "harness";
+import { bunEnv, isWindows } from "harness";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/compiler";
 import { run } from "../aot/harness/run";
@@ -223,7 +223,10 @@ function removedFeaturesOf(executable: Build) {
         stderr: `error: BUN_INSPECT_PRELOAD ${runsOnlyCompiledCode}\n`,
         exitCode: 1,
       });
-      expect(await startedWith({ BUN_OPTIONS: "--config=own.toml" })).toEqual(saysHello);
+      expect(await startedWith({ BUN_OPTIONS: "--config=own.toml" })).toEqual({
+        ...saysHello,
+        stderr: `warn: "preload" in own.toml is ignored by this executable because it only runs code that was compiled into it. Rebuild it with --compile-inspector to load other code\n`,
+      });
       expect(await startedWith({ BUN_INSPECT_PRELOAD: "./preloaded.js" })).toEqual(saysHello);
     });
 
@@ -243,9 +246,6 @@ function removedFeaturesOf(executable: Build) {
           exitCode: 1,
         });
     });
-
-    const savesLittleToday = isWindows && isArm64;
-    if (savesLittleToday) test.todo("removing HTMLRewriter makes the executable at least 64 KB smaller");
 
     test("a feature is kept when the program uses it and removed when it doesn't", async () => {
       const trimmed = await build("names-html-rewriter.ts", "--trim");
@@ -267,7 +267,7 @@ function removedFeaturesOf(executable: Build) {
         const removed = readRemovedFeatures(takenAway.file) ?? [];
         console.error(`${saved} bytes saved\n${describeBytesRemovedWith(featureOf("HTMLRewriter"), removed)}`);
       }
-      if (!savesLittleToday) expect(saved).toBeGreaterThanOrEqual(65536);
+      expect(saved).toBeGreaterThanOrEqual(65536);
       const asked = await run([takenAway.executable], folder);
       expect({
         stderr: asked.stderr,

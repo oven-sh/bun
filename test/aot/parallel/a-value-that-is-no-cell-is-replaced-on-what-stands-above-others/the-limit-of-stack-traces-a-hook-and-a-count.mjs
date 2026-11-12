@@ -1,0 +1,33 @@
+// What is stored again and again under one name on an object that stands above others is read back by the program, through what stands below, and by the engine.
+const said = [];
+const say = (label, answer) => { let word; try { word = JSON.stringify(answer()); } catch (error) { word = "throws " + error.constructor.name; } said.push(label + ": " + word); };
+const turns = 40;
+const linesOfStack = () => { try { (function deep(n) { if (n) deep(n - 1); else throw new Error("x"); })(6); } catch (error) { return String(error.stack).split("\n").length; } };
+class Mine extends Error {}
+say("the limit is heard by the engine", () => { const seen = []; for (let turn = 0; turn < turns; turn++) { Error.stackTraceLimit = turn % 3; seen.push(linesOfStack()); } return seen.join(""); });
+say("and is read through what stands below", () => { const seen = []; for (let turn = 0; turn < turns; turn++) { Error.stackTraceLimit = turn; seen.push(Mine.stackTraceLimit === turn && TypeError.stackTraceLimit === turn && Error.stackTraceLimit === turn); } return seen.every(Boolean); });
+say("round a parse", () => { let sum = 0; for (let turn = 0; turn < turns; turn++) { const { stackTraceLimit } = Error; Error.stackTraceLimit = 0; try { sum += JSON.parse("[1]")[0] + linesOfStack(); } finally { Error.stackTraceLimit = stackTraceLimit; } } return [sum, Error.stackTraceLimit]; });
+say("undefined, null, true and a fraction are no cells", () => { const seen = []; for (let turn = 0; turn < turns; turn++) { const value = [undefined, null, true, 1.5, -0, NaN][turn % 6]; Error.stackTraceLimit = value; seen.push(Object.is(Mine.stackTraceLimit, value) ? linesOfStack() : "other"); } return seen.join(""); });
+say("a text, an object and a function between the numbers", () => { const seen = []; const values = [1, "2", 3, { valueOf() { return 4; } }, 5, () => 6, 7, 8n, 9, Symbol.iterator, 10]; for (let turn = 0; turn < turns; turn++) { const value = values[turn % values.length]; Error.stackTraceLimit = value; seen.push(Mine.stackTraceLimit === value && TypeError.stackTraceLimit === value ? linesOfStack() : "other"); } return seen.join(""); });
+Error.stackTraceLimit = 10;
+say("a function under a name is called through what stands below, and replaced", () => { const seen = []; for (let turn = 0; turn < turns; turn++) { Error.hook = turn % 4 === 3 ? turn : turn % 2 ? () => "odd" : () => "even"; seen.push(typeof Mine.hook === "function" ? Mine.hook() + TypeError.hook() : Mine.hook); } return seen.join(" "); });
+say("a number, then a function, then called", () => { const seen = []; for (let turn = 0; turn < turns; turn++) { Error.hook = turn; const before = Mine.hook; Error.hook = () => turn; seen.push(before === turn && Mine.hook() === turn); } return seen.every(Boolean); });
+say("what stands below takes the name for itself", () => { const seen = []; for (let turn = 0; turn < turns; turn++) { Error.mark = turn; if (turn === 20) Mine.mark = "mine"; seen.push(Mine.mark); } return seen.join(" "); });
+say("deleted and stored anew", () => { const seen = []; for (let turn = 0; turn < turns; turn++) { if (turn % 10 === 9) delete Error.mark; seen.push(TypeError.mark); Error.mark = turn; } return seen.join(" "); });
+const above = JSON.parse('{"count":0,"other":1}');
+const below = Object.create(above), lowest = Object.create(below);
+say("an object that the host made stands above two", () => { const seen = []; for (let turn = 0; turn < turns; turn++) { above.count = turn; seen.push(below.count === turn && lowest.count === turn); } return seen.every(Boolean); });
+say("counted up through itself", () => { for (let turn = 0; turn < turns; turn++) above.count++; return [above.count, lowest.count, Object.keys(lowest).length]; });
+say("stored through what stands below lays an own one", () => { for (let turn = 0; turn < turns; turn++) lowest.count = turn; return [above.count, below.count, lowest.count, Object.keys(lowest)]; });
+say("no longer writable, strict", () => { "use strict"; Object.defineProperty(above, "count", { writable: false }); const seen = []; for (let turn = 0; turn < turns; turn++) { try { above.count = turn; seen.push("stored"); } catch (error) { seen.push(error.constructor.name); } } return [[...new Set(seen)], above.count]; });
+say("no longer writable, sloppy", () => Function("above", "turns", "for (let turn = 0; turn < turns; turn++) above.count = turn; return above.count;")(above, turns));
+say("an accessor takes its place", () => { let heard = 0; const seen = []; for (let turn = 0; turn < turns; turn++) { if (turn === 20) Object.defineProperty(above, "other", { get() { return "got"; }, set(value) { heard += value; }, configurable: true }); above.other = turn; seen.push(below.other); } return [seen.join(" "), heard]; });
+say("the setter is replaced later", () => { let heard = ""; for (let turn = 0; turn < turns; turn++) { if (turn === 20) Object.defineProperty(above, "other", { set(value) { heard += "B"; }, configurable: true }); else if (!turn) Object.defineProperty(above, "other", { set(value) { heard += "A"; }, configurable: true }); above.other = turn; } return heard; });
+const frozen = JSON.parse('{"n":1}'); const underFrozen = Object.create(frozen);
+say("frozen in the middle", () => { const seen = []; for (let turn = 0; turn < turns; turn++) { if (turn === 20) Object.freeze(frozen); try { frozen.n = turn; } catch (error) { seen.push(error.constructor.name); } seen.push(underFrozen.n); } return seen.join(" "); });
+const underProxy = JSON.parse('{"n":1}'); const lowestOfAll = Object.create(underProxy); let traps = 0;
+Object.setPrototypeOf(underProxy, new Proxy({}, { set() { traps++; return true; }, get() { traps++; return "trap"; } }));
+say("a proxy stands above", () => { const seen = []; for (let turn = 0; turn < turns; turn++) { underProxy.n = turn; seen.push(lowestOfAll.n === turn); } underProxy.unknown = 1; return [seen.every(Boolean), traps, lowestOfAll.missing]; });
+say("the limit as an accessor on Error", () => { let heard = []; Object.defineProperty(Error, "stackTraceLimit", { get() { return 2; }, set(value) { heard.push(value); }, configurable: true }); for (let turn = 0; turn < 12; turn++) Error.stackTraceLimit = turn; return [heard.length, Mine.stackTraceLimit, linesOfStack()]; });
+say("and a value again", () => { Object.defineProperty(Error, "stackTraceLimit", { value: 3, writable: true, configurable: true }); const seen = []; for (let turn = 0; turn < turns; turn++) { Error.stackTraceLimit = turn % 4; seen.push(linesOfStack()); } return seen.join(""); });
+console.log(said.join("\n"));

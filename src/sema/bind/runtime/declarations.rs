@@ -12,18 +12,31 @@ use super::{
 use crate::atom::{Atom, known};
 use crate::bind::{
     BoundBuilder, Decl, GrowingDecls, GrowingSymbol, ScopeId, ScopeKind, SymFlags, SymbolId,
-    TableId,
+    TableId, bit_of_nested_name,
 };
 use crate::hir::*;
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
 
 impl RuntimeScopes {
+    #[inline]
     pub(super) fn is_scope_binding(&self, bound: &BoundBuilder, symbol: SymbolId) -> bool {
         let flags = bound.symbols[symbol.idx()].flags;
         !has_bit(&bound.runtime.declarations.valueless_symbols, symbol.idx())
             && !has_bit(&self.hidden_symbols, symbol.idx())
             && !flags.contains(SymFlags::MODULE_EXPORTS)
             && flags.intersects(SymFlags::VALUE | SymFlags::EXPORT_VALUE | SymFlags::ALIAS)
+    }
+
+    fn list_appended_names(&mut self) {
+        if self.appended_bindings.is_empty() {
+            return;
+        }
+        let words = (self.appended_bindings.len() / 8 + 1).next_power_of_two();
+        self.appended_names.resize(words, 0);
+        for &(_, name) in self.appended_bindings.keys() {
+            let (word, bit) = bit_of_nested_name(words, name);
+            self.appended_names[word] |= bit;
+        }
     }
 }
 
@@ -54,6 +67,7 @@ pub(super) fn compute_declarations(input: &mut RuntimeInput<'_, '_>) -> RuntimeS
     declarations.create_body_variables();
     declarations.hoist_block_functions();
     declarations.create_class_bindings();
+    declarations.create_container_parameters();
     declarations.check_duplicate_names();
     declarations.finish()
 }
@@ -85,7 +99,7 @@ pub(super) fn append_symbol(
 pub(super) fn is_var_scope(kind: ScopeKind) -> bool {
     matches!(
         kind,
-        ScopeKind::File | ScopeKind::Fn(_) | ScopeKind::Module(_)
+        ScopeKind::File | ScopeKind::Fn(_) | ScopeKind::Module(_) | ScopeKind::Enum(_)
     )
 }
 
@@ -142,10 +156,13 @@ impl Declarations<'_, '_> {
             if let Some(CodeUnit::FieldInitializer(member)) = unit {
                 field_initializer_scopes.push((member, ScopeId(index as u32)));
             }
-            let parent = self
-                .bound
-                .runtime_parent_scope(hir, ScopeId(index as u32))
-                .some();
+            let parent = match scope.kind {
+                ScopeKind::ClassDecorators(_) => {
+                    self.bound.runtime_parent_scope(hir, ScopeId(index as u32))
+                }
+                _ => scope.parent,
+            };
+            let parent = parent.some();
             let inherited = parent.map_or(CodeUnit::File, |parent| units[parent.idx()]);
             units.push(unit.unwrap_or(inherited));
             let is_strict = is_strict.unwrap_or_else(|| {
@@ -171,10 +188,38 @@ impl Declarations<'_, '_> {
         let import_equals = find_import_equals_symbols(hir, self.bound);
         self.bound.runtime.declarations.import_equals_symbols = import_equals;
         let bound = &*self.bound;
+        let declaration_creates_binding = creates_binding;
+        let creates_binding = |symbol: &GrowingSymbol| {
+            let mut decls = symbol.decls.iter();
+            decls.any(|&d| declaration_creates_binding(hir, bound, d))
+        };
+        let mut bound_without_export = Vec::new();
+        for (index, symbol) in bound.symbols.iter().enumerate() {
+            if !symbol.flags.contains(SymFlags::EXPORT_VALUE) {
+                continue;
+            }
+            let binding = bound.file_binding(SymbolId(index as u32));
+            let is_bound_without_export = || {
+                symbol.decls.iter().any(|&d| {
+                    declaration_creates_binding(hir, bound, d)
+                        && !bound.modifier_flags(hir, d).contains(Flags::EXPORT)
+                })
+            };
+            let exported = &bound.symbols[binding.idx()];
+            if binding.idx() != index
+                && exported.flags.intersects(SymFlags::VALUE)
+                && !creates_binding(exported)
+                && is_bound_without_export()
+            {
+                insert_bit(&mut bound_without_export, binding.idx());
+            }
+        }
         let mut valueless_symbols = Vec::new();
         for (index, symbol) in bound.symbols.iter().enumerate() {
-            let decls = &symbol.decls[..];
-            if !decls.is_empty() && !decls.iter().any(|&d| creates_binding(hir, bound, d)) {
+            if !symbol.decls.is_empty()
+                && !creates_binding(symbol)
+                && !has_bit(&bound_without_export, index)
+            {
                 insert_bit(&mut valueless_symbols, index);
             }
         }
@@ -204,6 +249,7 @@ impl Declarations<'_, '_> {
         let binding_kinds = vec![BindingKind::NoBinding; bound.symbols.len()];
         let declarations = &mut self.bound.runtime.declarations;
         declarations.valueless_symbols = valueless_symbols;
+        declarations.bound_without_export = bound_without_export;
         declarations.symbol_scopes = symbol_scopes;
         declarations.binding_kinds = binding_kinds;
     }
@@ -294,20 +340,26 @@ impl Declarations<'_, '_> {
             if scope.is_none() {
                 continue;
             }
-            let import = &hir[ImportId(index as u32)];
+            let id = ImportId(index as u32);
+            let import = &hir[id];
             let locals = bound.scopes[bound.container_scope(scope).idx()].locals;
-            let find = |name: Atom| {
+            let find = |name: Atom, decl: Decl| {
                 let symbol = name
                     .is_some()
                     .then(|| bound.find_in_table(locals, name))
                     .flatten();
-                let symbol = symbol.filter(|&it| hir.is_js || !has_local_value(hir, bound, it));
+                let symbol = symbol.filter(|&it| {
+                    hir.is_js
+                        || bound.symbols[it.idx()].decls.contains(&decl)
+                            && !has_local_value(hir, bound, it)
+                });
                 symbol.unwrap_or(SymbolId::NONE)
             };
-            defaults[index] = find(import.default);
-            namespaces[index] = find(import.namespace);
+            defaults[index] = find(import.default, Decl::ImportDefault(id));
+            namespaces[index] = find(import.namespace, Decl::ImportNamespace(id));
             for specifier in import.named.iter() {
-                specifiers[specifier.idx()] = find(hir[specifier].local);
+                specifiers[specifier.idx()] =
+                    find(hir[specifier].local, Decl::ImportSpec(specifier));
             }
         }
         let declarations = &mut self.bound.runtime.declarations;
@@ -321,7 +373,7 @@ impl Declarations<'_, '_> {
         let mut pending = Vec::new();
         let mut flags = vec![FunctionFlags::empty(); hir.fns.len()];
         for (index, func) in hir.fns.iter().enumerate() {
-            if matches!(func.body, FnBody::None) {
+            if matches!(func.body, FnBody::None) || func.params.is_empty() {
                 continue;
             }
             if has_parameter_expressions(hir, func, &mut pending) {
@@ -393,6 +445,7 @@ impl Declarations<'_, '_> {
         declarations.early_redeclarations = self.redeclarations;
         self.bound.runtime.sort();
         record_declared_binding_kinds(self.hir, self.bound);
+        self.scopes.list_appended_names();
         self.scopes
     }
 }

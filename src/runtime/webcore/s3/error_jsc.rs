@@ -8,59 +8,42 @@ use bun_s3_signing::error::{self as s3_error, get_sign_error_message};
 
 pub(crate) use s3_error::S3Error;
 
-// `get_sign_error_message` returns `&'static [u8]` of ASCII literals; reinterpret as
-// `&str` for the `format_args!`-taking `JSGlobalObject::err()` builder.
-#[inline]
-fn msg(bytes: &'static [u8]) -> &'static str {
-    // SAFETY: every value returned by `get_sign_error_message` is an ASCII string literal.
-    unsafe { core::str::from_utf8_unchecked(bytes) }
-}
-
 pub(crate) fn get_js_sign_error(err: SignError, global_this: &JSGlobalObject) -> JSValue {
     match err {
         SignError::MissingCredentials => global_this
             .err(
                 ErrorCode::S3_MISSING_CREDENTIALS,
-                format_args!(
-                    "{}",
-                    msg(get_sign_error_message(SignError::MissingCredentials))
-                ),
+                format_args!("{}", get_sign_error_message(SignError::MissingCredentials)),
             )
             .to_js(),
         SignError::InvalidMethod => global_this
             .err(
                 ErrorCode::S3_INVALID_METHOD,
-                format_args!("{}", msg(get_sign_error_message(SignError::InvalidMethod))),
+                format_args!("{}", get_sign_error_message(SignError::InvalidMethod)),
             )
             .to_js(),
         SignError::InvalidPath => global_this
             .err(
                 ErrorCode::S3_INVALID_PATH,
-                format_args!("{}", msg(get_sign_error_message(SignError::InvalidPath))),
+                format_args!("{}", get_sign_error_message(SignError::InvalidPath)),
             )
             .to_js(),
         SignError::InvalidEndpoint => global_this
             .err(
                 ErrorCode::S3_INVALID_ENDPOINT,
-                format_args!(
-                    "{}",
-                    msg(get_sign_error_message(SignError::InvalidEndpoint))
-                ),
+                format_args!("{}", get_sign_error_message(SignError::InvalidEndpoint)),
             )
             .to_js(),
         SignError::InvalidSessionToken => global_this
             .err(
                 ErrorCode::S3_INVALID_SESSION_TOKEN,
-                format_args!(
-                    "{}",
-                    msg(get_sign_error_message(SignError::InvalidSessionToken))
-                ),
+                format_args!("{}", get_sign_error_message(SignError::InvalidSessionToken)),
             )
             .to_js(),
         _ => global_this
             .err(
                 ErrorCode::S3_INVALID_SIGNATURE,
-                format_args!("{}", msg(get_sign_error_message(SignError::SignError))),
+                format_args!("{}", get_sign_error_message(SignError::SignError)),
             )
             .to_js(),
     }
@@ -71,46 +54,37 @@ pub(crate) fn throw_sign_error(err: SignError, global_this: &JSGlobalObject) -> 
         SignError::MissingCredentials => global_this
             .err(
                 ErrorCode::S3_MISSING_CREDENTIALS,
-                format_args!(
-                    "{}",
-                    msg(get_sign_error_message(SignError::MissingCredentials))
-                ),
+                format_args!("{}", get_sign_error_message(SignError::MissingCredentials)),
             )
             .throw(),
         SignError::InvalidMethod => global_this
             .err(
                 ErrorCode::S3_INVALID_METHOD,
-                format_args!("{}", msg(get_sign_error_message(SignError::InvalidMethod))),
+                format_args!("{}", get_sign_error_message(SignError::InvalidMethod)),
             )
             .throw(),
         SignError::InvalidPath => global_this
             .err(
                 ErrorCode::S3_INVALID_PATH,
-                format_args!("{}", msg(get_sign_error_message(SignError::InvalidPath))),
+                format_args!("{}", get_sign_error_message(SignError::InvalidPath)),
             )
             .throw(),
         SignError::InvalidEndpoint => global_this
             .err(
                 ErrorCode::S3_INVALID_ENDPOINT,
-                format_args!(
-                    "{}",
-                    msg(get_sign_error_message(SignError::InvalidEndpoint))
-                ),
+                format_args!("{}", get_sign_error_message(SignError::InvalidEndpoint)),
             )
             .throw(),
         SignError::InvalidSessionToken => global_this
             .err(
                 ErrorCode::S3_INVALID_SESSION_TOKEN,
-                format_args!(
-                    "{}",
-                    msg(get_sign_error_message(SignError::InvalidSessionToken))
-                ),
+                format_args!("{}", get_sign_error_message(SignError::InvalidSessionToken)),
             )
             .throw(),
         _ => global_this
             .err(
                 ErrorCode::S3_INVALID_SIGNATURE,
-                format_args!("{}", msg(get_sign_error_message(SignError::SignError))),
+                format_args!("{}", get_sign_error_message(SignError::SignError)),
             )
             .throw(),
     }

@@ -1,16 +1,30 @@
 import { bunEnv } from "harness";
-import { endAtMemoryLimitTogether, memoryLimitOfCommandsAtOnce } from "./memory-limit";
+import { describeKill } from "./killed-for-memory";
+import { endAtMemoryLimitTogether } from "./memory-limit";
+import { hasSmallHeap, saysWhereItIs } from "./where-a-child-is";
+import { reportsToTheRunnerAlone, throughAtOnce } from "./without-core-dump";
 
 const { watch } = endAtMemoryLimitTogether();
 
-/** Runs a command to its end. */
-export async function run(cmd: string[], cwd?: string, env: Record<string, string | undefined> = bunEnv) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
+/** Runs a command to completion. With `limit`, kills it after that many milliseconds and returns what it printed so far. */
+export async function run(
+  cmd: string[],
+  cwd?: string,
+  env: Record<string, string | undefined> = bunEnv,
+  limit?: number,
+) {
+  await using proc = Bun.spawn({
+    cmd: throughAtOnce(cmd),
+    cwd,
+    env: reportsToTheRunnerAlone(env),
+    stdout: "pipe",
+    stderr: "pipe",
+    ...(limit && { timeout: limit, killSignal: "SIGKILL" as const }),
+  });
   using held = watch(proc);
+  // A program with a small heap fills it in a second or two. One that goes on for much longer says where its threads are.
+  using _where = hasSmallHeap(env) ? saysWhereItIs(proc.pid, cmd) : undefined;
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  if (held.exceeded)
-    throw new Error(
-      `KILLED: the commands that ran at once held more than ${(memoryLimitOfCommandsAtOnce / 2 ** 30).toFixed(1)} GB together. Run fewer of them at once: ${cmd.join(" ")}`,
-    );
+  if (held.exceeded) throw new Error(describeKill(held.held, cmd));
   return { stdout, stderr, exitCode };
 }

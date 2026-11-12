@@ -1,8 +1,10 @@
 use bun_sema::bind::{CodeUnit, CommonJsVariable, ScopeId};
 use bun_sema::hir::{FnBody, FnId};
+use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
 use super::variables::{BodyForm, WRAPPER_PARAMETERS, emit_entry_value};
+use crate::builtins::resolve::reads_what_wrapper_hands_in;
 use crate::ir::generated::{Function, FunctionFlags, FunctionKind};
 use crate::ir::{DeclaredType, FunctionId, FunctionKey, ValueId};
 use crate::lower::function::{self, EntryArguments};
@@ -17,7 +19,7 @@ impl FileLowering<'_, '_, '_, '_> {
         match self.body_form() {
             BodyForm::Plain => self.lower_plain_body(function),
             BodyForm::Wrapped => self.lower_calling_body(function),
-            BodyForm::NotCommonJs => unreachable!("the self is a CommonJS module"),
+            BodyForm::NotCommonJs => unreachable!("the file is a CommonJS module"),
         }
     }
 
@@ -25,25 +27,30 @@ impl FileLowering<'_, '_, '_, '_> {
         let scope = module::file_scope(self);
         let own_module = ModuleRef::File(self.file);
         let mut lowering = FunctionLowering::begin(self, function);
+        lowering.note_first_load();
         let first_exports = lowering.emit_first_exports(own_module);
         lowering.enter_plain_file_scope(scope, first_exports);
+        lowering.emit_loads_of_jsx_modules();
         lowering.lower_file_statements();
         module::finish_body(lowering, Some(scope));
     }
 
-    // A file that stores to one of the five names, or shows them to code that finds names at run time, has them as the parameters they are to `bun run`.
     fn lower_calling_body(&mut self, function: FunctionId) {
         let key = FunctionKey::WrappedModuleBody(self.file);
         let wrapped = self.declare_function(key, create_wrapped_header);
         let own_module = ModuleRef::File(self.file);
         let mut lowering = FunctionLowering::begin(self, function);
+        lowering.note_first_load();
         let first_exports = lowering.emit_first_exports(own_module);
         let first_exports = first_exports.unwrap_or_else(|| lowering.builder.undefined());
         let mut values: SmallVec<[ValueId; 5]> = SmallVec::new();
         for variable in WRAPPER_PARAMETERS {
             values.push(match variable {
                 CommonJsVariable::Exports => first_exports,
-                _ => lowering.emit_passed_value(variable),
+                _ if lowering.file.is_passed_by_wrapper(variable) => {
+                    lowering.emit_passed_value(variable)
+                }
+                _ => lowering.builder.undefined(),
             });
         }
         let arguments = EntryArguments {
@@ -59,11 +66,11 @@ impl FileLowering<'_, '_, '_, '_> {
         let scope = module::file_scope(self);
         let mut lowering = FunctionLowering::begin(self, function);
         lowering.enter_wrapped_file_scope(scope);
+        lowering.emit_loads_of_jsx_modules();
         lowering.lower_file_statements();
         module::finish_body(lowering, Some(scope));
     }
 
-    // The callback of `__commonJS(cb)` or `__esm(fn)` is the body of a module: nobody passes it anything, and nobody gets what it returns.
     pub(in crate::lower) fn declare_inner_module_body(&mut self, callback: FnId) -> FunctionId {
         function::declare_source_function_with(self, callback, &mut |_, header| {
             header.kind = FunctionKind::CommonJsModule;
@@ -96,19 +103,18 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             let value = match (is_exports, first_exports) {
                 (true, Some(first_exports)) => first_exports,
-                // Only whether it is an object can be asked of it.
                 (true, None) => lowering.builder.boolean(true),
                 (false, _) => lowering.builder.undefined(),
             };
             entry_values.push((BindingRef::Symbol(symbol), value));
         }
-        entry_values.sort_by_key(|entry| entry.0);
+        entry_values.shared_sort_by_key(|entry| entry.0);
         entry_values.dedup_by_key(|entry| entry.0);
         lowering.allocate_scope(scope, &entry_values);
         lowering.instantiate_functions(scope);
         match lowering.file.hir[callback].body {
             FnBody::Block(statements) => lowering.lower_statements(statements),
-            FnBody::Expr(value) => lowering.lower_expression_for_effect(value),
+            FnBody::Expr(value) => lowering.lower_taken_value_for_effect(value),
             FnBody::None => {}
         }
         module::finish_body(lowering, Some(scope));
@@ -116,13 +122,12 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // The body begins as if it were written `exports = module.exports = {}`, with the layout of the names it stores.
     fn emit_first_exports(&mut self, module: ModuleRef) -> Option<ValueId> {
         let variable = self.file.ensure_whole_exports_variable(module)?;
         let layout = match module {
             ModuleRef::File(file) => {
                 let is_seen = self.file.body_form() == BodyForm::Wrapped
-                    || self.file.begins_with_exports_object(file);
+                    || self.file.begins_with_exports_object();
                 if !is_seen {
                     return None;
                 }
@@ -144,7 +149,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // `this` at the top is the object that the body begins with. None of the five names is read from the scope.
     fn enter_plain_file_scope(&mut self, scope: ScopeId, first_exports: Option<ValueId>) {
         let mut entry_values = EntryValues::new();
         let slots = WRAPPER_PARAMETERS.into_iter().map(ScopeSlot::CommonJs);
@@ -154,13 +158,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 continue;
             }
             let value = match (slot, first_exports) {
-                (ScopeSlot::This, Some(first_exports)) => first_exports,
+                (
+                    ScopeSlot::This | ScopeSlot::CommonJs(CommonJsVariable::Exports),
+                    Some(first_exports),
+                ) => first_exports,
+                (
+                    ScopeSlot::CommonJs(
+                        variable @ (CommonJsVariable::Module | CommonJsVariable::Require),
+                    ),
+                    _,
+                ) => self.emit_passed_value(variable),
                 _ => self.builder.undefined(),
             };
             entry_values.push((binding, value));
-        }
-        if let Some(first_exports) = first_exports {
-            self.store_first_exports(first_exports);
         }
         self.allocate_scope(scope, &entry_values);
         self.instantiate_functions(scope);
@@ -186,7 +196,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let bound = self.file.bound;
         for &(symbol, variable) in bound.runtime.redeclared_commonjs_variables() {
             let binding = BindingRef::Symbol(symbol);
-            if self.file.scopes.placement(binding).is_none() {
+            if self.file.scopes.placement(binding).is_none()
+                || !reads_what_wrapper_hands_in(self.file.hir, bound, symbol)
+            {
                 continue;
             }
             let value = emit_entry_value(self, variable);

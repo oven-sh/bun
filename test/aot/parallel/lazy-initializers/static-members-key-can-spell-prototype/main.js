@@ -1,5 +1,4 @@
 // Each module makes a class that nobody reads. A static member under a computed key that can only spell "prototype" stops the module with a TypeError; on the prototype object of the class that name is free.
-// STATISTIC: InitializersDeferred >= 1
 const modules = {
   "method": () => import("./method.js"),
   "getter": () => import("./getter.js"),

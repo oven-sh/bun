@@ -1,13 +1,16 @@
 // `bun build --compile --aot --aot-symbols` puts the functions of the program into the symbol table of a Linux executable, beside the symbols
 // that Bun has there itself, so that gdb and perf show them by name. The file is read here, with no tool.
-import { expect, setDefaultTimeout } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
+import "./harness/real-executables";
 import { run } from "./harness/run";
-import { describe, test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { describe, testOneByOne as test } from "./supported";
 
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 const SYMBOL_TABLE = 2;
 const FUNCTION = 2;
@@ -93,7 +96,7 @@ describe.skipIf(!isLinux)("--aot-symbols", () => {
     expect(without.symbols.filter(isOfTheTest)).toEqual([]);
 
     const own = withThem.symbols.filter(isOfTheTest);
-    expect(own.map(symbol => symbol.name)).toContain("fibonacciOfTheTest");
+    expect(own.map(symbol => symbol.name)).toContain("fibonacciOfTheTest main.ts:1");
     const { address, size } = withThem.payload;
     for (const symbol of own) {
       expect(symbol).toMatchObject({ isLocal: true, isFunction: true, section: ".bun" });

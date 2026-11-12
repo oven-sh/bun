@@ -19,6 +19,9 @@ function loadChild(): $BunModules["internal/cluster/child"] {
 }
 
 export default {
-  isPrimary: !Object.prototype.hasOwnProperty.$call(process.env, "NODE_UNIQUE_ID"),
+  // Such an executable can only say that it is no worker. Without a channel nobody is there to be a worker of.
+  isPrimary: CAN_BE_CLUSTER_WORKER
+    ? !Object.prototype.hasOwnProperty.$call(process.env, "NODE_UNIQUE_ID")
+    : !Object.prototype.hasOwnProperty.$call(process.env, "NODE_UNIQUE_ID") || !process.connected,
   loadChild,
 };

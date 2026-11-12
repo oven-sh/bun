@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Disallow the use of the `__proto__` property.
 pub struct NoProto;
 
-const UNEXPECTED_PROTO: Message =
-    Message::new("unexpectedProto", "The '__proto__' property is deprecated.");
+const UNEXPECTED_PROTO: &Message =
+    &Message::new("unexpectedProto", "The '__proto__' property is deprecated.");
 
 impl Rule for NoProto {
     const META: Meta = Meta::eslint("no-proto", Kind::Suggestion);

@@ -28,6 +28,7 @@ pub use self::storage::RuntimeTablesIn;
 use super::decorator_metadata::MetadataReference;
 use super::{BoundBuilder, Decl, ScopeId, SymbolId};
 use crate::atom::{Atom, Intern, known};
+use crate::fold::PathInPlace;
 use crate::hir::*;
 use crate::util::FxHashMap;
 use smallvec::SmallVec;
@@ -38,8 +39,10 @@ define_id!(PrivateNameId);
 pub struct RuntimeBindOptions {
     pub jsx_factory_root: Option<Atom>,
     pub jsx_fragment_root: Option<Atom>,
+    pub jsx_paths: [Option<Atom>; 2],
     pub emits_decorator_metadata: bool,
     pub hoists_top_level_variables: bool,
+    pub object_prototype_takes_names: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -52,6 +55,7 @@ pub enum CommonJsVariable {
 }
 
 impl CommonJsVariable {
+    #[inline]
     pub fn name(self) -> Atom {
         match self {
             CommonJsVariable::Module => known::module,
@@ -103,6 +107,7 @@ pub enum BindingKind {
 }
 
 impl BindingKind {
+    #[inline]
     pub fn is_immutable(self) -> bool {
         matches!(
             self,
@@ -152,12 +157,16 @@ pub enum BindingInitializer {
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
-    pub struct FunctionFlags: u8 {
+    pub struct FunctionFlags: u16 {
         const HAS_PARAMETER_EXPRESSIONS = 1 << 0;
         const USES_ARGUMENTS = 1 << 1;
         const HAS_DIRECT_EVAL = 1 << 2;
         const HAS_ARGUMENTS_VARIABLE = 1 << 3;
         const HAS_REST_PATTERN_OR_DEFAULT = 1 << 4;
+        const HANDS_ARGUMENTS_ON = 1 << 5;
+        const READS_ELEMENTS_OF_ARGUMENTS = 1 << 6;
+        const MAY_READ_ABOVE_ARGUMENTS = 1 << 7;
+        const MENTIONS_OWN_NAME = 1 << 8;
     }
 }
 
@@ -165,6 +174,7 @@ bitflags::bitflags! {
 pub enum ImplicitReferenceKind {
     JsxFactory,
     JsxFragment,
+    DefinedPath,
     DecoratorMetadata(MetadataReference),
 }
 
@@ -195,6 +205,8 @@ pub struct EarlyRedeclaration {
 pub struct EvalScope {
     pub scope: ScopeId,
     pub symbols: IdList<SymbolId>,
+    pub file_symbols: IdList<SymbolId>,
+    pub constructor_symbols: IdList<SymbolId>,
     pub is_sloppy: bool,
 }
 
@@ -218,6 +230,7 @@ pub struct ImplicitReference {
     pub kind: ImplicitReferenceKind,
     pub name: Atom,
     pub binding: Binding,
+    pub member: Atom,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -288,11 +301,13 @@ pub(in crate::bind) struct RuntimeInput<'a, 's> {
     pub idents: &'a [(ExprId, ScopeId)],
     pub options: RuntimeBindOptions,
     pub atoms: &'a dyn Intern,
+    pub names_in_place: &'a [PathInPlace<'a>],
 }
 
 #[derive(Default)]
 struct RuntimeScopes {
     appended_bindings: FxHashMap<(ScopeId, Atom), (SymbolId, Declaration)>,
+    appended_names: Vec<u64>,
     hoisted_requires: Vec<(PatId, ScopeId)>,
     hidden_symbols: Vec<u64>,
     body_variables: Vec<(SymbolId, SymbolId)>,
@@ -305,6 +320,7 @@ pub(in crate::bind) fn compute(
 ) {
     input.bound.runtime.tables = Some(Box::default());
     input.bound.runtime.hoists_top_level_variables = input.options.hoists_top_level_variables;
+    input.bound.runtime.jsx_paths = input.options.jsx_paths;
     input.bound.runtime.first_appended_symbol = input.bound.symbols.len() as u32;
     let scopes = declarations::compute_declarations(&mut input);
     references::compute_references(&mut input, &scopes);
@@ -330,8 +346,8 @@ pub(in crate::bind) fn has_implicit_block(
 }
 
 pub fn has_simple_parameter_list(hir: &File<'_>, function: FnId) -> bool {
-    hir[function].params.iter().all(|parameter| {
-        let node = hir[parameter];
+    let parameters = &hir.params[hir[function].params.range()];
+    parameters.iter().all(|node| {
         matches!(hir[node.pat].kind, PatKind::Ident(_))
             && node.default.is_none()
             && !node.flags.contains(Flags::REST)

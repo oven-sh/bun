@@ -1,8 +1,9 @@
 use super::*;
-use crate::ir::parallel::run_serially;
 use crate::modules::order::OrderParts;
 use crate::modules::testing::{file_named, member_named, symbol_named, with_graph};
-use crate::modules::{ExportBinding, ImportPhase, ModuleFailureKind};
+use crate::modules::{
+    BindInput, ExportBinding, ImportPhase, ModuleFailureKind, RequireResult, View, bind_modules,
+};
 use bun_sema::hir::{ExprKind, ImportId};
 use bun_sema::program::Sym;
 use bun_sema::resolve::CodeFailure;
@@ -66,16 +67,39 @@ fn source_text_file(file: FileId) -> FileRow {
         evaluating_sites: Vec::new(),
         unread_sites: Vec::new(),
         holders: Vec::new(),
+        holders_by_call: OnceLock::new(),
+        answer_members: Vec::new(),
+        names_read_on_answers: Vec::new(),
         exports: Vec::new(),
+        ambiguous_names: Vec::new(),
         unread_exports: Vec::new(),
-        is_data_linked_by_names_alone: false,
+        names_left_out: Vec::new(),
+        is_left_to_loader: false,
         required_names: Vec::new(),
+        names_searched_behind_stars: Vec::new(),
+        handed_on: Vec::new(),
+        named_by_stars: Vec::new(),
+        names_from_stars: Vec::new(),
+        names_of_unlisted_stars: Vec::new(),
+        reaches_mock: false,
     }
 }
 
 fn file_with_sites(file: u32, sites: Vec<(ImportSiteKind, StoredSiteAnswer)>) -> FileRow {
     FileRow {
         sites,
+        ..source_text_file(FileId(file))
+    }
+}
+
+fn data_file(file: u32, exports: Vec<ModuleExport>) -> FileRow {
+    FileRow {
+        interop: Interop {
+            kind: ModuleKind::Data,
+            require_result: RequireResult::DefaultExport,
+            ..Interop::ES_MODULE
+        },
+        exports,
         ..source_text_file(FileId(file))
     }
 }
@@ -90,18 +114,27 @@ fn unfinished_graph(file_count: usize, rows: Vec<FileRow>) -> ModuleGraph {
         left_out_inner_modules: Vec::new(),
         other_modules: Vec::new(),
         external_kinds: Vec::new(),
+        runs_code_out_of_sight: false,
         synthetic_exports: Vec::new(),
         errors: Vec::new(),
         failures: Vec::new(),
         load_failures: Vec::new(),
+        files_that_sites_name: vec![false; file_count],
+        mocked_library_modules: Vec::new(),
         wrapped: WrappedModules::default(),
         commonjs_exports: CommonJsExports::default(),
         plan: Plan::new(OrderParts::without_sites(file_count), Vec::new()),
+        member_stores: (0..file_count).map(|_| OnceLock::new()).collect(),
+        data_linked_by_names_alone: Box::default(),
+        forms_require_checks_first: Vec::new(),
+        folders_of_databases: Vec::new(),
+        star_names_left_out: StarNamesLeftOut::default(),
+        names_laid_on_object_prototype: Vec::new(),
     }
 }
 
 fn graph_of(file_count: usize, rows: Vec<FileRow>) -> ModuleGraph {
-    unfinished_graph(file_count, rows).finish(&run_serially)
+    unfinished_graph(file_count, rows).finish()
 }
 
 fn unresolved_at(importer: u32, site: ImportSiteKind) -> ModuleFailure {
@@ -247,13 +280,14 @@ fn modules_without_files_have_no_export_table() {
     let external = ModuleRef::External {
         importer: FileId(0),
         specifier,
+        type_attribute: None,
     };
     let graph = ModuleGraph {
         other_modules: vec![runtime, external],
         external_kinds: vec![((FileId(0), specifier), ExternalKind::HostValue)],
         ..unfinished_graph(0, Vec::new())
     }
-    .finish(&run_serially);
+    .finish();
     assert_eq!(graph.interop(runtime), Interop::RUNTIME);
     for module in [runtime, external] {
         let export = graph.find_export(module, name, &atoms);
@@ -270,6 +304,7 @@ fn external_kind_is_found_by_importer_and_specifier() {
     let external = |importer, specifier| ModuleRef::External {
         importer: FileId(importer),
         specifier,
+        type_attribute: None,
     };
     let graph = ModuleGraph {
         external_kinds: vec![
@@ -279,7 +314,7 @@ fn external_kind_is_found_by_importer_and_specifier() {
         ],
         ..unfinished_graph(2, Vec::new())
     }
-    .finish(&run_serially);
+    .finish();
     let host_value = Some(ExternalKind::HostValue);
     let uncompiled_code = Some(ExternalKind::UncompiledCode);
     assert_eq!(graph.external_kind(external(0, first)), host_value);
@@ -294,6 +329,7 @@ fn external_kind_is_found_by_importer_and_specifier() {
     assert_eq!(graph.interop(external(0, first)), of_host_value);
     let of_uncompiled_code = Interop::of_external(ExternalKind::UncompiledCode);
     assert_eq!(graph.interop(external(1, first)), of_uncompiled_code);
+    assert_eq!(graph.importer_of_external(FileId(1), first), FileId(1));
 }
 
 #[test]
@@ -325,6 +361,7 @@ fn candidates_are_rebased_per_file() {
     let spelled = |spelling, module| SpelledModule {
         spelling: Atom(spelling),
         module,
+        is_left_to_loader: false,
     };
     let runtime = ModuleRef::Runtime(RuntimeModule::NodeFs);
     let import_call = ImportSiteKind::ImportCall(ExprId(1));
@@ -400,6 +437,31 @@ fn member_binding_is_found_by_expression() {
 }
 
 #[test]
+fn required_member_of_commonjs_file_has_no_member_binding() {
+    let accessed = |is_imported| AccessedModule {
+        module: file_module(1),
+        is_imported,
+    };
+    let binding = ImportBinding::Synthetic(SyntheticExportId(0));
+    let importer = FileRow {
+        members: vec![(ExprId(3), binding), (ExprId(7), binding)],
+        accessed: vec![(ExprId(3), accessed(true)), (ExprId(7), accessed(false))],
+        ..source_text_file(FileId(0))
+    };
+    let exporter = FileRow {
+        interop: Interop {
+            kind: ModuleKind::CommonJs,
+            ..Interop::ES_MODULE
+        },
+        ..source_text_file(FileId(1))
+    };
+    let graph = graph_of(2, vec![importer, exporter]);
+    let binding_at = |member| graph.member_binding(FileId(0), ExprId(member));
+    assert_eq!(binding_at(3), Some(binding));
+    assert_eq!(binding_at(7), None);
+}
+
+#[test]
 fn namespace_member_has_member_binding() {
     let files = [
         (
@@ -447,9 +509,17 @@ fn jsx_binding_panics_for_unused_import() {
 fn lists_are_read_per_file() {
     let name = known::default;
     let required_name = RequiredName::new(file_module(1), name);
+    let holder = Holder {
+        symbol: SymbolId(5),
+        call: ExprId(2),
+        view: View::Namespace(file_module(1)),
+        is_needed_as_value: true,
+        copy: None,
+    };
     let importer = FileRow {
         requests: vec![request(file_module(1)), request(file_module(3))],
         imports: vec![(SymbolId(4), ImportBinding::Unused)],
+        holders: vec![holder],
         required_names: vec![required_name],
         ..source_text_file(FileId(0))
     };
@@ -470,6 +540,8 @@ fn lists_are_read_per_file() {
     assert_eq!(binding_in(0), ImportBinding::Unused);
     assert_eq!(binding_in(1), ImportBinding::Unbound);
     assert_eq!(binding_in(3), ImportBinding::Local);
+    assert_eq!(graph.holders(FileId(0)), [holder]);
+    assert!(graph.holders(FileId(1)).is_empty());
     assert_eq!(graph.required_names(FileId(0)), [required_name]);
     assert!(graph.required_names(FileId(1)).is_empty());
     assert!(graph.exports(FileId(0)).is_empty());
@@ -491,7 +563,7 @@ fn file_flags_are_read_per_file() {
         runtime_module: Some(RuntimeModule::NodePath),
         ..source_text_file(FileId(2))
     };
-    let graph = unfinished_graph(3, vec![plain, flagged, runtime_source]).finish(&run_serially);
+    let graph = unfinished_graph(3, vec![plain, flagged, runtime_source]).finish();
     for (file, expected) in [(FileId(0), false), (FileId(1), true)] {
         assert_eq!(graph.is_library(file), expected);
         assert_eq!(graph.has_dynamic_names(file), expected);
@@ -507,6 +579,155 @@ fn file_flags_are_read_per_file() {
 }
 
 #[test]
+fn file_imported_in_front_of_a_ring_back_to_its_importer_is_read_as_an_es_module() {
+    let quiet = ("quiet.cjs", "console.log(1);");
+    let in_front = "import './quiet.cjs'; import './asker.cjs'; import './pages.mjs';";
+    let behind = "import './asker.cjs'; import './quiet.cjs'; import './pages.mjs';";
+    let asks_for_pages = ("asker.cjs", "require('./pages.mjs');");
+    let back_to_main = ("pages.mjs", "import './main.mjs';");
+    let rows: [(&[(&str, &str)], ModuleKind); 6] = [
+        (
+            &[("main.mjs", in_front), quiet, asks_for_pages, back_to_main],
+            ModuleKind::SourceText,
+        ),
+        (
+            &[
+                ("main.mjs", in_front),
+                quiet,
+                asks_for_pages,
+                ("pages.mjs", "import './between.mjs';"),
+                ("between.mjs", "import './main.mjs';"),
+            ],
+            ModuleKind::SourceText,
+        ),
+        (
+            &[
+                ("main.mjs", "import './quiet.cjs'; import './asker.cjs';"),
+                quiet,
+                ("asker.cjs", "require('./main.mjs');"),
+            ],
+            ModuleKind::SourceText,
+        ),
+        (
+            &[
+                ("main.mjs", in_front),
+                quiet,
+                asks_for_pages,
+                ("pages.mjs", ""),
+            ],
+            ModuleKind::SourceText,
+        ),
+        (
+            &[("main.mjs", behind), quiet, asks_for_pages, back_to_main],
+            ModuleKind::CommonJs,
+        ),
+        (
+            &[
+                ("main.mjs", "import './asker.cjs'; import './pages.mjs';"),
+                quiet,
+                asks_for_pages,
+                ("pages.mjs", "import './quiet.cjs'; import './main.mjs';"),
+            ],
+            ModuleKind::CommonJs,
+        ),
+    ];
+    for (files, expected) in rows {
+        with_graph(files, |graph, input| {
+            assert_eq!(
+                graph.kind(file_named(input, "quiet.cjs")),
+                expected,
+                "{files:?}"
+            );
+        });
+    }
+}
+
+#[test]
+fn mocked_library_modules_are_listed_once_in_order() {
+    let (fs, path) = (RuntimeModule::NodeFs, RuntimeModule::NodePath);
+    let (first, second) = (fs.min(path), fs.max(path));
+    let graph = ModuleGraph {
+        mocked_library_modules: vec![second, first, second],
+        ..unfinished_graph(0, Vec::new())
+    }
+    .finish();
+    assert_eq!(graph.mocked_library_modules(), [first, second]);
+    let without_mocks = graph_of(0, Vec::new());
+    assert!(without_mocks.mocked_library_modules().is_empty());
+}
+
+#[test]
+fn file_that_no_site_names_is_found_by_computed_names_alone() {
+    let [named, unnamed, data, not_of_program, without_record] = [0, 1, 2, 3, 4].map(FileId);
+    let data_file = FileRow {
+        interop: Interop {
+            kind: ModuleKind::Data,
+            ..Interop::ES_MODULE
+        },
+        ..source_text_file(data)
+    };
+    let rows = vec![
+        source_text_file(named),
+        source_text_file(unnamed),
+        data_file,
+        source_text_file(not_of_program),
+    ];
+    let order = OrderParts {
+        is_code_of_program: vec![true, true, false, false, true],
+        ..OrderParts::without_sites(5)
+    };
+    let graph = ModuleGraph {
+        files_that_sites_name: vec![true, false, false, false, false],
+        plan: Plan::new(order, Vec::new()),
+        ..unfinished_graph(5, rows)
+    }
+    .finish();
+    assert!(!graph.is_found_by_computed_names_alone(named));
+    assert!(graph.is_found_by_computed_names_alone(unnamed));
+    assert!(graph.is_found_by_computed_names_alone(data));
+    assert!(!graph.is_found_by_computed_names_alone(not_of_program));
+    assert!(!graph.is_found_by_computed_names_alone(without_record));
+}
+
+#[test]
+fn external_module_keeps_no_name_of_a_data_file_that_the_build_links() {
+    let external = ModuleRef::External {
+        importer: FileId(0),
+        specifier: known::default,
+        type_attribute: None,
+    };
+    let rows = |is_left_to_loader: bool| {
+        let exports = vec![
+            export(known::default, variable(1, 0)),
+            export(known::__esModule, variable(1, 1)),
+            export(known::r#type, variable(1, 2)),
+        ];
+        vec![
+            FileRow {
+                imports: vec![(SymbolId(0), ImportBinding::Variable(symbol(1, 1)))],
+                namespace_values: vec![external],
+                required_names: vec![RequiredName::new(external, known::r#type)],
+                ..source_text_file(FileId(0))
+            },
+            FileRow {
+                is_left_to_loader,
+                ..data_file(1, exports)
+            },
+        ]
+    };
+    let mut linked_by_build = rows(false);
+    remove_unread_data_exports(&mut linked_by_build);
+    assert_eq!(linked_by_build[1].exports.len(), 2);
+    assert_eq!(linked_by_build[1].unread_exports, [SymbolId(2)]);
+    assert_eq!(linked_by_build[1].names_left_out, [known::r#type]);
+    let mut left_to_loader = rows(true);
+    remove_unread_data_exports(&mut left_to_loader);
+    assert_eq!(left_to_loader[1].exports.len(), 3);
+    assert!(left_to_loader[1].unread_exports.is_empty());
+    assert!(left_to_loader[1].names_left_out.is_empty());
+}
+
+#[test]
 fn errors_and_failures_are_separate_lists() {
     let statement = ImportSiteKind::Import(ImportId(0));
     let calls = [1, 2].map(|call| ImportSiteKind::Require(ExprId(call)));
@@ -514,6 +735,7 @@ fn errors_and_failures_are_separate_lists() {
         module: file_module(0),
         name: known::default,
         is_known_member: false,
+        is_replaceable: false,
     };
     let graph = ModuleGraph {
         synthetic_exports: vec![synthetic_export],
@@ -521,7 +743,7 @@ fn errors_and_failures_are_separate_lists() {
         failures: calls.map(|call| unresolved_at(0, call)).to_vec(),
         ..unfinished_graph(1, vec![source_text_file(FileId(0))])
     }
-    .finish(&run_serially);
+    .finish();
     let error_sites: Vec<ImportSiteKind> = graph.errors().iter().map(|error| error.site).collect();
     assert_eq!(error_sites, [statement]);
     assert_eq!(graph.failures().len(), 2);
@@ -591,6 +813,25 @@ fn absent_export_follows_module_kind() {
         assert_eq!(find("es.js", b"absent"), ExportLookup::Absent);
         assert_eq!(find("legacy.cjs", b"present"), ExportLookup::Unknown);
         assert_eq!(find("legacy.cjs", b"absent"), ExportLookup::Unknown);
+    });
+}
+
+#[test]
+fn every_export_is_asked_for_where_modules_load_again() {
+    let files = [
+        ("main.js", "import './a.js';\n"),
+        ("a.js", "export const a = 1;\n"),
+    ];
+    with_graph(&files, |graph, input| {
+        let exporter = ModuleRef::File(file_named(input, "a.js"));
+        assert!(!graph.is_every_export_asked_for(exporter));
+        let loading_again = BindInput {
+            any_module_loads_again: true,
+            runs_tests: true,
+            ..*input
+        };
+        let graph = bind_modules(&loading_again).graph;
+        assert!(graph.is_every_export_asked_for(exporter));
     });
 }
 

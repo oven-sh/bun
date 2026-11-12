@@ -1,0 +1,18 @@
+# -- source: a-list-with-an-iterator-of-its-own-is-taken-apart-by-that-iterator.cjs
+# "use strict";
+# const own = Object.assign([1.5, 2.5, 3.5], { *[Symbol.iterator]() { yield 4; yield 5; } });
+# function run(list, t) { let last = ""; for (let i = 0; i < 10; i++) { const [x, y] = list; last = x + "|" + y; } return last + "|" + (t & 1); }
+# print(run(own, 3));
+# -- end of source
+# A pattern destructures by index, without the iterator protocol, only if its operand is certainly a pristine array.
+# This array has an iterator method of its own assigned to it, so Link does not claim that it stays pristine, and the pattern takes what that iterator yields.
+# Fault injection, testing=AssumePermanentlyPristineIterables: the operand of a pattern is assumed to be an array that Link claims stays pristine.
+# Link's claim is checked against the object where the iteration opens, in every build. The check tests one bit of the object's cell and crashes with a named error if it fails.
+# So the injected fault is caught loudly, and no element is read in place of what the iterator yields.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 4|5|1
+# CHECK-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=AssumePermanentlyPristineIterables
+# LIE: bun: internal AOT error: type check failed at {{*}} (run)
+# LIE-NEXT: in the result of an operation
+# LIE: crashed with

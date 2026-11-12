@@ -1,0 +1,25 @@
+# f1 = warm
+# -- source: store-through-a-setter-of-a-class.ts
+# function warm(room: Room, celsius: number): void {
+#   room.celsius = celsius;
+# }
+# class Room {
+#   kelvin: number;
+#   constructor(kelvin: number) {
+#     this.kelvin = kelvin;
+#   }
+#   set celsius(value: number) {
+#     this.kelvin = value + 273.15;
+#   }
+# }
+# declare const input: any;
+# const room = new Room(+input);
+# warm(room, +input);
+# (globalThis as any).answer = room.kelvin;
+# -- end of source
+# The compiler before this one: 3 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 4, patches 1, moves 1, unlikely or rare 0.
+# RUN(X64): steps most:5 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 5

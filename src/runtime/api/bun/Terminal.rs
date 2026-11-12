@@ -322,7 +322,7 @@ impl Terminal {
     fn from_parent_ptr<'a>(this: *mut Self) -> &'a Self {
         // SAFETY: `this` is the BACKREF set via `reader.set_parent` /
         // `writer.parent = …` in `open`. The Terminal is heap-stable
-        // (`heap::into_raw`) and outlives every reader/writer callback (the
+        // (`RefPtr::new`) and outlives every reader/writer callback (the
         // intrusive +1 ref held by the I/O machinery is dropped only after the
         // last callback fires). R-2: shared borrow only — bodies take `&self`;
         // field writes go through `Cell`/`JsCell`, so re-entrant JS forming a
@@ -364,7 +364,7 @@ impl Terminal {
         let pty_result = create_pty(options.cols, options.rows)?;
 
         // The intrusive ref_count starts at 1: the JS wrapper's ref.
-        let terminal: *mut Terminal = bun_core::heap::into_raw(Box::new(Terminal {
+        let terminal = bun_ptr::RefPtr::new(Terminal {
             ref_count: bun_ptr::RefCount::init(),
             master_fd: Cell::new(pty_result.master),
             read_fd: Cell::new(pty_result.read_fd),
@@ -394,12 +394,8 @@ impl Terminal {
             #[cfg(unix)]
             tty_state: Cell::new(bun_core::tty::State::new()),
             abort_handle: jsc::AbortHandle::for_owner::<Terminal>(),
-        }));
-        let parent_ptr = terminal;
-        // SAFETY: just allocated, non-null, exclusively owned here. R-2: `&`
-        // (not `&mut`) — every method below takes `&self`; field writes go
-        // through `Cell`/`JsCell`.
-        let terminal = unsafe { &*terminal };
+        });
+        let parent_ptr = terminal.as_ptr();
 
         // Set reader parent
         terminal
@@ -423,7 +419,6 @@ impl Terminal {
                 terminal.write_fd.get().close();
                 terminal.write_fd.set(Fd::INVALID);
                 terminal.close_internal();
-                terminal.deref_();
                 return Err(InitError::WriterStartFailed);
             }
         }
@@ -471,8 +466,7 @@ impl Terminal {
             return Err(terminal.fail_reader_start());
         }
 
-        // SAFETY: the ref taken by `RefCount::init()` above.
-        Ok(unsafe { bun_ptr::RefPtr::from_raw(parent_ptr) })
+        Ok(terminal)
     }
 
     /// `this_value` is the JS wrapper, which owns the ref [`open`](Self::open) returned.
@@ -509,11 +503,10 @@ impl Terminal {
     /// `open` error path for a reader that finished before the
     /// terminal reached JS, with the reader's ref already released.
     /// `close_internal` closes what is still open (a writer that is still
-    /// open releases its ref through `on_writer_close`), then the initial ref
-    /// is dropped, which may free `self`.
+    /// open releases its ref through `on_writer_close`); `open` then drops
+    /// the initial ref.
     fn fail_reader_start(&self) -> InitError {
         self.close_internal();
-        self.deref_();
         InitError::ReaderStartFailed
     }
 
@@ -1728,7 +1721,7 @@ impl Terminal {
         bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
         match status {
             WriteStatus::Pending => {}
-            // `PosixStreamingWriter` never dispatches `on_ready`, so POSIX
+            // `PosixStreamingWriter` has no `on_writable`, so POSIX
             // fires `drain` off this transition. Windows fires it from
             // `on_writable` and only records the state here.
             WriteStatus::Drained => {
@@ -1882,9 +1875,7 @@ impl Terminal {
             return true;
         }
         v.extend_from_slice(chunk);
-        // MarkedArrayBuffer::from_bytes takes a `&mut [u8]` it will own (freed
-        // via mimalloc on the C++ side) — leak the Box and hand over the slice.
-        let bytes: &'static mut [u8] = Box::leak(v.into_boxed_slice());
+        let bytes = v.into_boxed_slice();
         // This is the pipe reader's landing frame: a buffer that cannot be
         // built (allocation failure, a terminating VM) is folded here and
         // reading goes on.
@@ -1994,9 +1985,6 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     }
     unsafe fn on_error(this: *mut Self, err: sys::Error) {
         Self::from_parent_ptr(this).on_writer_error(&err);
-    }
-    unsafe fn on_ready(this: *mut Self) {
-        Self::from_parent_ptr(this).on_writer_ready();
     }
     unsafe fn on_close(this: *mut Self) {
         Self::from_parent_ptr(this).on_writer_close();

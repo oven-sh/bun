@@ -5,12 +5,12 @@ mod tests;
 use bun_sema::atom::Atom;
 use bun_sema::bind::SymbolId;
 use bun_sema::fold::{Constant, FoldedValue};
-use bun_sema::hir::{CaseId, ExprId, Span, StmtId};
+use bun_sema::hir::{CaseId, ExprId, ExprKind, Span, StmtId};
 
 use super::condition::TestedField;
 use super::control::BreakTargetKind;
 use super::{FileLowering, FunctionLowering, scope};
-use crate::ir::{BlockId, ValueId};
+use crate::ir::{BlockId, TypeTable, ValueId};
 
 struct ClauseGroup {
     first: u32,
@@ -22,6 +22,7 @@ struct ClauseGroup {
 struct CaseTest {
     expression: ExprId,
     constant: FoldedValue,
+    read_off: Option<SymbolId>,
     target: BlockId,
 }
 
@@ -69,28 +70,41 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         for group in &groups {
             for index in group.first..group.end {
                 match hir[cases.at(index as usize)].test.some() {
-                    Some(expression) => tests.push(CaseTest {
-                        expression,
-                        constant: find_constant(self.file, expression),
-                        target: group.body,
-                    }),
+                    Some(expression) => {
+                        let mut constant = find_constant(self.file, expression);
+                        let mut read_off = None;
+                        if matches!(constant, FoldedValue::Unknown)
+                            && let Some((variable, value)) =
+                                self.file.find_member_of_enum_that_stays_as_born(expression)
+                        {
+                            constant = FoldedValue::Constant(value);
+                            read_off = Some(variable);
+                        }
+                        tests.push(CaseTest {
+                            expression,
+                            constant,
+                            read_off,
+                            target: group.body,
+                        });
+                    }
                     None => default_target = group.body,
                 }
             }
         }
         match switched_by_kind {
-            Some(operand) => {
+            Some(_) => {
                 let names = tests.iter().filter_map(|test| match test.constant {
                     FoldedValue::Constant(Constant::String(name)) => Some((name, test.target)),
                     _ => None,
                 });
                 let names: Vec<(Atom, BlockId)> = names.collect();
-                self.jump_by_typeof(operand, subject.value, &names, default_target);
+                self.jump_by_typeof(subject.value, &names, default_target);
             }
             None => self.emit_dispatch(subject, &tests, default_target),
         }
         for (index, group) in groups.iter().enumerate() {
             self.continue_in(group.body);
+            self.count_case(cases.at(group.end as usize - 1));
             self.lower_statements(hir[cases.at(group.end as usize - 1)].body);
             let next = groups.get(index + 1).map_or(after, |next| next.body);
             self.jump(next);
@@ -101,7 +115,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.leave_own_scope(scope);
     }
 
-    /// `switch (typeof operand)` where every case is a written text: the operand.
     fn find_operand_switched_by_kind(
         &mut self,
         subject: ExprId,
@@ -125,7 +138,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let mut first = 0;
         while first < cases.len {
             let mut end = first + 1;
-            while end < cases.len && hir[cases.at(end as usize - 1)].body.is_empty() {
+            while end < cases.len
+                && hir[cases.at(end as usize - 1)].body.is_empty()
+                && !self.file.counts_executions()
+            {
                 end += 1;
             }
             let body = self.create_block();
@@ -136,10 +152,38 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
+fn fits_every_asserted_type(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    expression: ExprId,
+    constant: Constant,
+) -> bool {
+    let mut current = expression;
+    while let Some(operand) = file.hir.type_assertion_operand(current) {
+        if let ExprKind::As { ty, .. } = file.hir[current].kind {
+            let asserted = file.assertion_position(ty).ty;
+            let fits = match constant {
+                Constant::Number(number) => {
+                    asserted == TypeTable::NUMBER
+                        || (asserted == TypeTable::INT32
+                            && f64::from(number as i32).to_bits() == number.to_bits())
+                }
+                Constant::String(_) => asserted == TypeTable::STRING,
+                _ => false,
+            };
+            if !fits {
+                return false;
+            }
+        }
+        current = operand;
+    }
+    true
+}
+
 fn find_constant(file: &mut FileLowering<'_, '_, '_, '_>, expression: ExprId) -> FoldedValue {
     let inner = file.skip_type_syntax(expression);
     let folded = match file.decisions().constant(file.hir, inner) {
         FoldedValue::Unknown => match file.find_enum_member_read(inner) {
+            Some(_) if file.find_member_of_loaded_module(inner).is_some() => FoldedValue::Unknown,
             Some(value) => FoldedValue::Constant(value),
             None => FoldedValue::Unknown,
         },
@@ -147,7 +191,8 @@ fn find_constant(file: &mut FileLowering<'_, '_, '_, '_>, expression: ExprId) ->
     };
     match folded {
         FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant)
-            if !file.passes_every_assertion(expression, constant) =>
+            if !file.passes_every_assertion(expression, constant)
+                && !fits_every_asserted_type(file, expression, constant) =>
         {
             FoldedValue::Unknown
         }

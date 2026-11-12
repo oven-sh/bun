@@ -109,13 +109,23 @@ describe("which builds compile WebKit", () => {
     expect(prebuiltHasProgramObjects(cfg)).toBe(false);
     writeFileSync(join(source.destDir!, objects("testaot")), "");
     expect(prebuiltHasProgramObjects(cfg)).toBe(true);
+    // The ICU of the tarball keeps its data compressed. The objects of jsc hold what reads it; testaot gets it here, with
+    // zstd's decoder compiled for it alone: the objects of zstd that bun links want bun's run time in a hardened build.
     expect(
-      jscPrograms(cfg).map(({ name, sources, libs }) => [name, sources.map(s => relative(buildDir, s)), libs]),
+      jscPrograms(cfg).map(({ name, sources, cSources, libs, sourcesFrom }) => [
+        name,
+        [...sources, ...(cSources ?? [])].map(s => relative(buildDir, s)),
+        libs,
+        sourcesFrom,
+      ]),
     ).toEqual(
       ["jsc", "testaot"].map(name => [
         name,
-        [join("deps", "WebKit", "programs", name, "OutOfMemory.cpp")],
+        ["OutOfMemory.cpp", ...(name === "testaot" ? ["ICUData.cpp", "ZstdDecoder.c"] : [])].map(file =>
+          join("deps", "WebKit", "programs", name, file),
+        ),
         [join(source.destDir!, objects(name))],
+        name === "testaot" ? ["zstd"] : undefined,
       ]),
     );
     expect(webkit.provides(cfg).files).toEqual(expect.arrayContaining([objects("jsc"), objects("testaot")]));
@@ -307,6 +317,7 @@ const checkout = {
     set(JavaScriptCore_AOT_TEST_SOURCES aot/tests/testaot.cpp)
     set(JavaScriptCore_AOT_PROGRAM_SOURCES aot/runtime/AOTNoFeatureRemoved.cpp)
     set(JavaScriptCore_AOT_SHELL_SOURCES aot/tests/AOTShell.cpp)
+    set(JavaScriptCore_AOT_STAND_IN_HOST_TEST_SOURCES aot/tests/host/AOTNativeTestsOfStandInHost.cpp)
     function(AOT_CHECK_SOURCE_LISTS)
         if (NO SUCH OPERATOR)
         endif ()
@@ -323,7 +334,9 @@ const checkout = {
   "Source/JavaScriptCore/aot/ir/generator/package.json": "",
   "Source/JavaScriptCore/aot/ir/AOTValue.cpp": "",
   "Source/JavaScriptCore/aot/runtime/AOTNoFeatureRemoved.cpp": "",
+  "Source/JavaScriptCore/aot/runtime/generator/forced-jumps-fixtures/leaves-by-no-forced-jump.txt": "",
   "Source/JavaScriptCore/aot/tests/AOTShell.cpp": "",
+  "Source/JavaScriptCore/aot/tests/host/AOTNativeTestsOfStandInHost.cpp": "",
   "Source/JavaScriptCore/aot/tests/testaot.cpp": "",
   "Source/JavaScriptCore/b3/testb3_1.cpp": "",
   "Source/JavaScriptCore/b3/testb3_bun_loops.cpp": "",
@@ -485,6 +498,21 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
     expect(attributesIn("Debug")).toEqual([]);
   });
 
+  test("a release build does not unroll loops of unknown trip count in the sources of aot/ compiled for speed", () => {
+    const sourcesWithFlagIn = (buildType: "Debug" | "Release") => {
+      const { spec, short } = describeBuild({ asan: false, buildType });
+      const sources = spec.groups!.find(g => g.name === "JavaScriptCore")!.sources;
+      return sources.flatMap(s =>
+        typeof s !== "string" && (s.cflags ?? []).includes("-mllvm=-unroll-runtime=false") ? [short(s.path)] : [],
+      );
+    };
+    expect(sourcesWithFlagIn("Release")).toEqual([
+      "B/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-of-8-1.cpp",
+      "B/JavaScriptCore/DerivedSources/aot/AOTBuiltinTableEngineBindings.cpp",
+    ]);
+    expect(sourcesWithFlagIn("Debug")).toEqual([]);
+  });
+
   test("--unified-sources=off compiles each source of aot/ by itself", () => {
     const { sources } = describeBuild({ asan: false, unifiedSources: false }).group("JavaScriptCore");
     expect(sources).toContain("JSC/aot/ir/AOTValue.cpp");
@@ -623,6 +651,11 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
         "a listed file that does not exist",
         { "aot/tests/AOTShell.cpp": undefined },
         "aot/tests/AOTShell.cpp: listed, and there is no such file",
+      ],
+      [
+        "a listed file of the stand-in host that does not exist",
+        { "aot/tests/host/AOTNativeTestsOfStandInHost.cpp": undefined },
+        "aot/tests/host/AOTNativeTestsOfStandInHost.cpp: listed, and there is no such file",
       ],
       [
         "a path in a list where it does not belong",

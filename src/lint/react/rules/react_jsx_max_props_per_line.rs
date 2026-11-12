@@ -10,7 +10,7 @@ pub struct JsxMaxPropsPerLine {
     multi: Option<usize>,
 }
 
-const NEW_LINE: Message = Message::new("newLine", "Prop `{{prop}}` must be placed on a new line");
+const NEW_LINE: &Message = &Message::new("newLine", "Prop `{{prop}}` must be placed on a new line");
 
 impl Rule for JsxMaxPropsPerLine {
     const META: Meta = Meta::plugin(Plugin::React, "jsx-max-props-per-line", Kind::None).fixable(Fixable::Code);

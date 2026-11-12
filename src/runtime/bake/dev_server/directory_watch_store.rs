@@ -297,19 +297,18 @@ impl DirectoryWatchStore {
         });
 
         // Try to use an existing open directory handle
-        // SAFETY: server_transpiler is initialized by Framework::init_transpiler
-        // before DevServer accepts requests; `dev` is a valid *mut DevServer.
-        let cache_fd: Option<bun_sys::Fd> =
-            match unsafe { (*dev).server_transpiler.assume_init_mut() }
-                .resolver
-                .read_dir_info(dir_name_to_watch)
-            {
-                Ok(Some(cache)) => {
-                    let fd = cache.get_file_descriptor();
-                    if fd.is_valid() { Some(fd) } else { None }
-                }
-                Ok(None) | Err(_) => None,
-            };
+        // SAFETY: `dev` is the live DevServer that owns this store;
+        // `server_transpiler` is disjoint from `directory_watchers`.
+        let cache_fd: Option<bun_sys::Fd> = match unsafe { &mut (*dev).server_transpiler }
+            .resolver
+            .read_dir_info(dir_name_to_watch)
+        {
+            Ok(Some(cache)) => {
+                let fd = cache.get_file_descriptor();
+                if fd.is_valid() { Some(fd) } else { None }
+            }
+            Ok(None) | Err(_) => None,
+        };
 
         let (fd, owned_fd): (bun_sys::Fd, bool) = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
             if let Some(fd) = cache_fd {

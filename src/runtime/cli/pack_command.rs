@@ -1239,8 +1239,14 @@ pub(crate) fn bin_subpath<'a>(
     (!is_package_root_or_outside(subpath) && !never_packed()).then_some(subpath)
 }
 
+/// A NUL ends the path that the OS gets, so a path that has one counts as outside.
 pub(crate) fn is_package_root_or_outside(p: &[u8]) -> bool {
-    p.is_empty() || p == b"." || path::is_absolute_loose(p) || p == b".." || p.starts_with(b"../")
+    p.is_empty()
+        || p == b"."
+        || path::is_absolute_loose(p)
+        || p == b".."
+        || p.starts_with(b"../")
+        || strings::contains_char(p, 0)
 }
 
 /// `Unknown` if `bin_path` is missing or a parent component is not a real directory.
@@ -1664,7 +1670,7 @@ pub(crate) fn pack(
     let mut this_transpiler: core::mem::MaybeUninit<bun_bundler::Transpiler<'static>> =
         core::mem::MaybeUninit::uninit();
 
-    if let Err(err) = RunCommand::configure_env_for_run(
+    let (this_transpiler, _) = match RunCommand::configure_env_for_run(
         &mut *ctx.command_ctx,
         &mut this_transpiler,
         Some(std::ptr::from_mut(ctx.manager.env_mut())),
@@ -1673,21 +1679,22 @@ pub(crate) fn pack(
             store_root_fd: false,
         },
     ) {
-        if matches!(err, crate::Error::Alloc(_)) {
-            return Err(PackError::OutOfMemory);
+        Ok(configured) => configured,
+        Err(err) => {
+            if matches!(err, crate::Error::Alloc(_)) {
+                return Err(PackError::OutOfMemory);
+            }
+            Output::err_generic(
+                "failed to run pack scripts due to error: {}\n",
+                format_args!("{}", err.name()),
+            );
+            Global::crash();
         }
-        Output::err_generic(
-            "failed to run pack scripts due to error: {}\n",
-            format_args!("{}", err.name()),
-        );
-        Global::crash();
-    }
+    };
 
     let abs_workspace_path: &[u8] = path::string_paths::without_trailing_slash_windows_path(
         strings::without_suffix_comptime(abs_package_json_path.as_bytes(), b"package.json"),
     );
-    // SAFETY: `configure_env_for_run` fully initialized `this_transpiler`.
-    let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
     /// `MaybeUninit` does not drop its contents.
     struct DeinitTranspiler(*mut bun_bundler::Transpiler<'static>);
     impl Drop for DeinitTranspiler {

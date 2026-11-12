@@ -6,8 +6,8 @@
 
 use bun_ast::e::{JsonValue, ObjectJSON};
 use bun_core::strings::{
-    BOM, contains, contains_char, is_valid_utf8, rsplit_once_char, split_once_char,
-    without_trailing_slash,
+    BOM, contains, contains_char, is_valid_utf8, last_index_of_char, rsplit_once_char,
+    split_once_char, without_trailing_slash,
 };
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, windows_volume_name_len, z};
@@ -39,8 +39,9 @@ pub struct BundledLibs {
 pub const BUNDLED_LIBS: &[u8] = b"/bundled:///libs";
 
 /// `bundled.IsBundled`
+#[inline]
 pub fn is_bundled(path: &[u8]) -> bool {
-    path.starts_with(b"/bundled:")
+    path.first_chunk() == Some(b"/bundled:")
 }
 
 /// `/C:/a` becomes `C:/a`, and `/\\server/share/a` becomes `\\server/share/a`, which Windows accepts.
@@ -254,6 +255,7 @@ pub struct Disk {
     io_pool: Option<bun_threading::io_thread_pool::Ref>,
     /// Readers that aren't in use, least recently used first.
     idle_readers: bun_threading::Guarded<Vec<Reader>>,
+    idle_buffers: bun_threading::Guarded<Vec<Vec<u8>>>,
     /// See `Host::take_unreadable`.
     unreadable: bun_threading::Guarded<Vec<Vec<u8>>>,
     /// See `AlreadyRead`. Keyed by `tspath.Path`, so such a file is found however its name is spelled, like a file on
@@ -354,7 +356,6 @@ struct Reader {
     directory: Vec<u8>,
     /// Opened when a second file is read from `directory`.
     handle: Option<bun_sys::Dir>,
-    buffer: Vec<u8>,
 }
 
 /// The maximum number of idle readers, and so of open directories, that are retained.
@@ -457,6 +458,16 @@ struct Split<'a> {
 
 /// `GetDirectoryPath`, `GetBaseFileName`. A root is its own directory and has no name.
 fn split(path: &[u8]) -> Split<'_> {
+    if let Some(separator) = last_index_of_char(path, b'/')
+        && separator > 0
+        && separator + 1 < path.len()
+        && path[separator - 1] != b'/'
+    {
+        return Split {
+            parent: &path[..separator],
+            name: &path[separator + 1..],
+        };
+    }
     let parent = dirname::<Posix>(path);
     // `parent` only ends with a separator when it was cut out of a root.
     if parent.ends_with(b"/") && path.len() <= root_length(path) {
@@ -534,6 +545,7 @@ impl Disk {
             io_pool: (threads > 3 && bun_threading::io_thread_pool::uses_io_pool())
                 .then(|| bun_threading::io_thread_pool::acquire().into()),
             idle_readers: bun_threading::Guarded::new(Vec::new()),
+            idle_buffers: bun_threading::Guarded::new(Vec::new()),
             unreadable: bun_threading::Guarded::new(Vec::new()),
             bundled_libs: None,
             script_kinds: Vec::new(),
@@ -579,6 +591,13 @@ impl Disk {
         idle.push(reader);
     }
 
+    fn return_buffer(&self, buffer: Vec<u8>) {
+        let mut idle = self.idle_buffers.lock();
+        if idle.len() < MAX_IDLE_READERS {
+            idle.push(buffer);
+        }
+    }
+
     /// True if the entries of `path` are queried from the system every time. That's the case for the roots, which
     /// aren't directories on Windows. Neither is a server, and `C:` means the working directory on that drive.
     fn is_never_listed(path: &[u8]) -> bool {
@@ -592,7 +611,7 @@ impl Disk {
 
     fn directory(&self, path: &[u8]) -> &Directory {
         // `SplitPath` drops a trailing separator after the root.
-        let path = match path.ends_with(b"/") {
+        let path = match path.last() == Some(&b'/') {
             true => &path[..without_trailing_slash(path).len().max(root_length(path))],
             false => path,
         };
@@ -1368,6 +1387,7 @@ impl Host for UncachedDisk<'_> {
             atoms,
             options.experimental_decorators,
             options.module_detection == ModuleDetection::Force,
+            options.reads_as_bun_run,
         )
     }
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
@@ -1422,6 +1442,7 @@ impl Host for Disk {
         }
         let _turn = self.reader_limit.as_ref().map(ReadSlot::wait_for);
         let mut reader = self.take_reader(parent);
+        let mut buffer = self.idle_buffers.lock().pop().unwrap_or_default();
         // The second and later files read from a directory are opened relative to the directory. An absolute path makes
         // the kernel look up every directory on the way again, and all threads contend on the ones near the root. For a
         // single file, opening the directory costs that walk and more. On macOS it always does: opens wait for one lock.
@@ -1436,16 +1457,15 @@ impl Host for Disk {
                     .ok()
                     .map(bun_sys::Dir::from_fd);
             }
-            let Reader { handle, buffer, .. } = &mut reader;
-            handle
-                .as_ref()
-                .map(|directory| read_file(directory.fd(), name, buffer))
+            let handle = reader.handle.as_ref();
+            handle.map(|directory| read_file(directory.fd(), name, &mut buffer))
         };
         let read = read.unwrap_or_else(|| {
             let path = to_native(without_trailing_slash(path));
-            read_file(Fd::cwd(), path, &mut reader.buffer)
+            read_file(Fd::cwd(), path, &mut buffer)
         });
         self.return_reader(reader);
+        self.return_buffer(buffer);
         read.map(|bytes| {
             crate::did_read_source(bytes.len());
             decoded(bytes, keeps_mark)
@@ -1549,6 +1569,7 @@ impl Host for Disk {
             atoms,
             options.experimental_decorators,
             options.module_detection == ModuleDetection::Force,
+            options.reads_as_bun_run,
         )
     }
     fn parse_top_level<'s>(
@@ -1567,6 +1588,7 @@ impl Host for Disk {
             atoms,
             options.experimental_decorators,
             options.module_detection == ModuleDetection::Force,
+            options.reads_as_bun_run,
         )
     }
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {

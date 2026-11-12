@@ -4,7 +4,7 @@ use crate::hir::{BinOp, UnOp};
 use crate::util::LocalVec;
 use bun_core::fmt::js_string_to_number;
 use bun_core::strings;
-use std::cell::Cell;
+use std::cell::{Cell, OnceCell};
 use std::cmp::Ordering;
 
 const MAX_EXACT_INTEGER: u64 = 1 << f64::MANTISSA_DIGITS;
@@ -26,6 +26,7 @@ pub(super) enum Value {
 }
 
 impl From<Constant> for Value {
+    #[inline]
     fn from(constant: Constant) -> Value {
         Value::Known(Primitive::Constant(constant))
     }
@@ -44,10 +45,25 @@ impl Value {
         Value::from(Constant::String(text))
     }
 
+    #[inline]
     pub(super) fn is_number(self) -> bool {
         matches!(self, Value::Known(Primitive::Constant(Constant::Number(_))))
     }
 
+    pub(super) fn is_boolean_or_finite_number(self) -> bool {
+        match self {
+            Value::Known(Primitive::Constant(Constant::Number(number))) => number.is_finite(),
+            Value::Known(Primitive::Constant(Constant::Boolean(_))) => true,
+            _ => false,
+        }
+    }
+
+    #[inline]
+    pub(super) fn is_finite_number(self) -> bool {
+        matches!(self, Value::Known(Primitive::Constant(Constant::Number(number))) if number.is_finite())
+    }
+
+    #[inline]
     pub(super) fn is_nan(self) -> bool {
         matches!(self, Value::Known(Primitive::Constant(Constant::Number(number))) if number.is_nan())
     }
@@ -66,8 +82,9 @@ enum Operand<'a> {
 pub(super) struct Evaluator<'a, 's> {
     atoms: &'a Interner<'s>,
     max_string_bytes: usize,
+    max_pattern_bytes: usize,
     over_limit_count: &'a Cell<u32>,
-    scratch_strings: LocalVec<Box<[u8]>>,
+    scratch_strings: OnceCell<LocalVec<Box<[u8]>>>,
 }
 
 impl<'a, 's> Evaluator<'a, 's> {
@@ -79,8 +96,20 @@ impl<'a, 's> Evaluator<'a, 's> {
         Evaluator {
             atoms,
             max_string_bytes,
+            max_pattern_bytes: max_string_bytes,
             over_limit_count,
-            scratch_strings: LocalVec::new(),
+            scratch_strings: OnceCell::new(),
+        }
+    }
+
+    fn scratch_strings(&self) -> &LocalVec<Box<[u8]>> {
+        self.scratch_strings.get_or_init(LocalVec::new)
+    }
+
+    pub(super) fn with_max_pattern_bytes(self, max_pattern_bytes: usize) -> Self {
+        Evaluator {
+            max_pattern_bytes: max_pattern_bytes.max(self.max_string_bytes),
+            ..self
         }
     }
 
@@ -88,6 +117,11 @@ impl<'a, 's> Evaluator<'a, 's> {
         self.max_string_bytes
     }
 
+    pub(super) fn max_pattern_bytes(&self) -> usize {
+        self.max_pattern_bytes
+    }
+
+    #[inline]
     pub(super) fn over_limit_count(&self) -> u32 {
         self.over_limit_count.get()
     }
@@ -101,7 +135,7 @@ impl<'a, 's> Evaluator<'a, 's> {
         match primitive {
             Primitive::Constant(constant) => constant,
             Primitive::ScratchString(ScratchString(index)) => {
-                Constant::String(self.atoms.intern(self.scratch_strings.get(index)))
+                Constant::String(self.atoms.intern(self.scratch_strings().get(index)))
             }
         }
     }
@@ -161,6 +195,23 @@ impl<'a, 's> Evaluator<'a, 's> {
         }
     }
 
+    pub(super) fn is_power_truthy(&self, base: Value, exponent: Value) -> Option<bool> {
+        let (Value::Known(base), Value::Known(exponent)) = (base, exponent) else {
+            return None;
+        };
+        match (self.operand(base), self.operand(exponent)) {
+            (Operand::Number(base), Operand::Number(_)) if base.is_nan() => Some(false),
+            (Operand::Number(base), Operand::Number(exponent)) => {
+                match exponent * base.abs().log2() {
+                    power_of_two if power_of_two > -1000.0 => Some(true),
+                    power_of_two if power_of_two < -1100.0 => Some(false),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn is_nullish(&self, primitive: Primitive) -> bool {
         match self.operand(primitive) {
             Operand::Undefined | Operand::Null => true,
@@ -174,11 +225,27 @@ impl<'a, 's> Evaluator<'a, 's> {
         is_string(self.operand(primitive))
     }
 
+    pub(super) fn is_ascii(&self, primitive: Primitive) -> bool {
+        match self.operand(primitive) {
+            Operand::String(text) => text.is_ascii(),
+            _ => true,
+        }
+    }
+
     pub(super) fn push_text(&self, text: &mut Vec<u8>, primitive: Primitive) {
         push_string(text, self.operand(primitive));
     }
 
     pub(super) fn concatenate(&self, texts: &[Atom], values: &[Value]) -> Value {
+        self.concatenate_within(self.max_string_bytes, texts, values)
+    }
+
+    pub(super) fn concatenate_within(
+        &self,
+        max_bytes: usize,
+        texts: &[Atom],
+        values: &[Value],
+    ) -> Value {
         let Some((&first, rest)) = texts.split_first() else {
             return Value::Unknown;
         };
@@ -192,10 +259,19 @@ impl<'a, 's> Evaluator<'a, 's> {
             .iter()
             .zip(rest)
             .flat_map(|(&value, &text)| [value, Value::string(text)]);
-        self.join(std::iter::once(Value::string(first)).chain(substitutions))
+        let parts = std::iter::once(Value::string(first)).chain(substitutions);
+        self.join(max_bytes, parts)
     }
 
     pub(super) fn add_all(&self, addends: impl IntoIterator<Item = Value>) -> Value {
+        self.add_all_within(self.max_string_bytes, addends)
+    }
+
+    pub(super) fn add_all_within(
+        &self,
+        max_bytes: usize,
+        addends: impl IntoIterator<Item = Value>,
+    ) -> Value {
         let mut addends = addends.into_iter();
         let Some(mut sum) = addends.next() else {
             return Value::Unknown;
@@ -206,27 +282,86 @@ impl<'a, 's> Evaluator<'a, 's> {
             };
             let (left, right) = (self.operand(left), self.operand(right));
             if is_string(left) || is_string(right) {
-                return self.join([sum, addend].into_iter().chain(addends));
+                return self.join(max_bytes, [sum, addend].into_iter().chain(addends));
             }
             sum = evaluate_numeric_operands(BinOp::Add, left, right);
         }
         sum
     }
 
-    fn join(&self, parts: impl IntoIterator<Item = Value>) -> Value {
+    fn join(&self, max_bytes: usize, parts: impl IntoIterator<Item = Value>) -> Value {
         let mut text = Vec::new();
         for part in parts {
             let Value::Known(part) = part else {
                 return Value::Unknown;
             };
             push_string(&mut text, self.operand(part));
-            if text.len() > self.max_string_bytes {
+            if text.len() > max_bytes {
                 self.note_over_limit();
                 return Value::Unknown;
             }
         }
-        let index = self.scratch_strings.push(text.into_boxed_slice());
+        let index = self.scratch_strings().push(text.into_boxed_slice());
         Value::Known(Primitive::ScratchString(ScratchString(index)))
+    }
+
+    pub(super) fn is_computed_by_bun_run(
+        &self,
+        op: BinOp,
+        left: Primitive,
+        right: Primitive,
+    ) -> bool {
+        use Operand::{BigInt, Boolean, Null, Number, String, Undefined};
+        let operands = (self.operand(left), self.operand(right));
+        match op {
+            BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => match operands {
+                (Undefined | Null, _) | (_, Undefined | Null) => true,
+                (Boolean(_) | Number(_), Boolean(_) | Number(_))
+                | (String(_), String(_))
+                | (BigInt(_), BigInt(_)) => true,
+                (String(text), Number(number)) => {
+                    matches!(op, BinOp::EqEqEq | BinOp::NotEqEq)
+                        || (number == 0.0 && matches!(text, b"" | b"0"))
+                        || (number == 1.0 && text == b"1")
+                }
+                _ => false,
+            },
+            BinOp::Add => match operands {
+                (Number(_), Number(_)) => true,
+                (String([]), String(_)) => true,
+                (String(_), _) | (_, String(_)) => self.is_ascii(left) && self.is_ascii(right),
+                _ => false,
+            },
+            BinOp::Sub
+            | BinOp::Mul
+            | BinOp::Div
+            | BinOp::Rem
+            | BinOp::Pow
+            | BinOp::Shl
+            | BinOp::Shr
+            | BinOp::UShr
+            | BinOp::BitAnd
+            | BinOp::BitOr
+            | BinOp::BitXor => matches!(operands, (Number(_), Number(_))),
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => match operands {
+                (Number(left), Number(right)) => {
+                    let is_exact = |number: f64| number.abs() < MAX_EXACT_INTEGER as f64;
+                    !left.is_nan()
+                        && !right.is_nan()
+                        && (left.is_infinite()
+                            || right.is_infinite()
+                            || (is_exact(left) && is_exact(right)))
+                }
+                (String(_), String(_)) => true,
+                _ => false,
+            },
+            BinOp::In
+            | BinOp::Instanceof
+            | BinOp::And
+            | BinOp::Or
+            | BinOp::Nullish
+            | BinOp::Comma => true,
+        }
     }
 
     fn operand(&self, primitive: Primitive) -> Operand<'_> {
@@ -240,7 +375,7 @@ impl<'a, 's> Evaluator<'a, 's> {
                 Operand::BigInt(self.atoms.bytes(digits))
             }
             Primitive::ScratchString(ScratchString(index)) => {
-                Operand::String(self.scratch_strings.get(index))
+                Operand::String(self.scratch_strings().get(index))
             }
         }
     }

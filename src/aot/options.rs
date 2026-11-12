@@ -12,34 +12,36 @@ pub struct Options<'a> {
     pub executable_identity: ExecutableIdentity,
     pub image_form: Option<TargetImageForm>,
     pub entry_points: Vec<Vec<u8>>,
-    // Its paths are in the checker's format. Every other path in these options is native.
     pub code: CodeOptions,
     pub typescript_libs: Libs<'a>,
     pub load: LoadOptions,
     pub paths: PathOptions,
     pub removable: RemovableOptions,
-    // --metafile
     pub lists_modules: bool,
-    // --minify-identifiers without --keep-names
     pub minifies_identifiers: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub struct RemovableOptions {
-    // --ignore-dce-annotations
     pub ignores_pure_annotations: bool,
-    // --jsx-side-effects
     pub jsx_has_side_effects: bool,
+    pub has_no_bundle: bool,
+    pub is_told_to_minify_syntax: bool,
 }
 
-/// Modules and functions of Bun's own code, by their numbers.
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
-pub struct LibraryCode {
-    pub modules: Vec<u32>,
-    /// Those of `modules` off which any export may be read.
-    pub modules_read_whole: Vec<u32>,
-    pub exports_read: Vec<(u32, &'static str)>,
-    pub functions: Vec<u32>,
+impl RemovableOptions {
+    pub fn minifies_syntax(self) -> bool {
+        self.has_no_bundle || self.is_told_to_minify_syntax
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct PathFilter(pub &'static (dyn Fn(&[u8]) -> bool + Sync));
+
+impl core::fmt::Debug for PathFilter {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("PathFilter")
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -48,50 +50,21 @@ pub struct LoadOptions {
     pub loaders: Vec<(Vec<u8>, Loader)>,
     pub externals: Externals,
     pub react_compiler: ReactCompilerMode,
-    pub runs_macros: bool,
+    pub react_compiler_filter: Option<PathFilter>,
     pub in_memory_files: Vec<(Vec<u8>, Vec<u8>)>,
-    /// Sorted. The key of each of `in_memory_files` as the build's options write it, and its path. An import that spells the key means the file, wherever the import stands.
     pub in_memory_file_keys: Vec<(Vec<u8>, Vec<u8>)>,
-    /// The entry points that are no files.
     pub entry_texts: Vec<EntryText>,
     pub omits_builtin_modules: bool,
     pub runs_tests: bool,
-    /// What the run time provides is of type `any` where `@types/bun` is not installed.
-    pub takes_runtime_as_any: bool,
-    /// What of Bun's own code an earlier compile of the same program lacked, by the word of the engine.
-    pub library_code_lacked: LibraryCode,
-    /// The program holds all of Bun's own code that can be got at without a name that the build sees.
-    pub keeps_library_code_without_names: bool,
-    /// An earlier compile of the same program read `process.mainModule` where no file names a way to a module object, by the word of the engine.
-    pub reads_main_module_without_its_name: bool,
-    /// An earlier compile of the same program read them, by the word of the engine, where a module object goes where the front end does not follow it.
-    pub ways_read_out_of_sight: WaysBetweenModuleObjects,
-    /// An earlier compile of the same program followed them because a file names them, and nobody reads them of a module object, by the word of the engine.
-    pub ways_named_that_nobody_reads: WaysBetweenModuleObjects,
+    pub has_globals_of_vitest: bool,
+    pub entry_point_imports_vitest: bool,
+    pub replaced_builtins: Vec<u32>,
+    pub test_files: Vec<Vec<u8>>,
+    pub paths_of_preloads: Vec<Vec<u8>>,
 }
 
-/// The members of a module object that lead to other module objects.
-#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
-pub struct WaysBetweenModuleObjects {
-    pub children: bool,
-    pub parent: bool,
-}
-
-impl WaysBetweenModuleObjects {
-    pub fn is_empty(self) -> bool {
-        !self.children && !self.parent
-    }
-
-    pub fn add(&mut self, more: WaysBetweenModuleObjects) {
-        self.children |= more.children;
-        self.parent |= more.parent;
-    }
-}
-
-/// Code that the program holds as a text and starts a Worker with.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct EntryText {
-    /// How `Options::entry_points` writes it, and what the run time knows the module by.
     pub name: Vec<u8>,
     pub contents: Vec<u8>,
     pub loader: Loader,
@@ -122,6 +95,7 @@ pub struct PathOptions {
     pub module_prefix: Vec<u8>,
     pub root_directory: Vec<u8>,
     pub entry_point_names: Vec<Vec<u8>>,
+    pub entry_point_file_names: Vec<Vec<u8>>,
 }
 
 pub use crate::module_keys::DEFAULT_LOADERS;
@@ -142,33 +116,49 @@ impl LoadOptions {
             loaders: default_loaders(),
             externals: Externals::default(),
             react_compiler: ReactCompilerMode::Disabled,
-            runs_macros: true,
+            react_compiler_filter: None,
             in_memory_files: Vec::new(),
             in_memory_file_keys: Vec::new(),
             entry_texts: Vec::new(),
             omits_builtin_modules: false,
             runs_tests: false,
-            takes_runtime_as_any: false,
-            library_code_lacked: LibraryCode::default(),
-            keeps_library_code_without_names: false,
-            reads_main_module_without_its_name: false,
-            ways_read_out_of_sight: WaysBetweenModuleObjects::default(),
-            ways_named_that_nobody_reads: WaysBetweenModuleObjects::default(),
+            has_globals_of_vitest: false,
+            entry_point_imports_vitest: false,
+            replaced_builtins: Vec::new(),
+            test_files: Vec::new(),
+            paths_of_preloads: Vec::new(),
         }
     }
 }
 
+fn default_thread_count(processors: usize, memory: usize) -> usize {
+    const THREADS_WHATEVER_THE_MEMORY: usize = 16;
+    const MEMORY_PER_THREAD: usize = 256 << 20;
+    let fit_into_memory = (memory / MEMORY_PER_THREAD).max(THREADS_WHATEVER_THE_MEMORY);
+    processors.min(fit_into_memory)
+}
+
 impl Options<'_> {
-    // The inspector evaluates text, and an external package is read from the disk: code that the build does not see.
     pub fn can_load_code_at_run_time(&self) -> bool {
         self.aot.admits_inspector || !self.load.externals.is_empty()
     }
 
+    pub fn reads_back_what_it_writes(&self) -> bool {
+        let mut words = self.aot.option_words.iter();
+        cfg!(test) || words.any(|word| &**word == b"check=Validate")
+    }
+
+    pub fn code_from_disk_names_files(&self) -> bool {
+        self.aot.loads_code_from_disk && !self.aot.isolates_code_from_disk
+    }
+
     pub fn thread_count(&self) -> NonZeroUsize {
-        const MOST_USEFUL_THREADS: usize = 16;
         let count = match self.aot.thread_count {
             Some(count) => count.get() as usize,
-            None => usize::from(bun_core::get_thread_count()).min(MOST_USEFUL_THREADS),
+            None => default_thread_count(
+                usize::from(bun_core::get_thread_count()),
+                bun_core::get_total_memory_size(),
+            ),
         };
         NonZeroUsize::new(count).unwrap_or(NonZeroUsize::MIN)
     }
@@ -178,10 +168,17 @@ impl Options<'_> {
             loaders,
             externals,
             in_memory_files,
+            replaced_builtins,
             ..
         } = &self.load;
         debug_assert!(!self.entry_points.is_empty());
         debug_assert_eq!(self.paths.entry_point_names.len(), self.entry_points.len());
+        debug_assert!(
+            !self.aot.isolates_code_from_disk
+                || (self.aot.loads_code_from_disk
+                    && !self.aot.runs_in_place
+                    && !self.load.runs_tests)
+        );
         debug_assert!(is_strictly_ascending(
             loaders.iter().map(|(extension, _)| extension)
         ));
@@ -196,6 +193,7 @@ impl Options<'_> {
         debug_assert!(is_strictly_ascending(externals.packages.iter()));
         debug_assert!(is_strictly_ascending(externals.paths.iter()));
         debug_assert!(is_strictly_ascending(externals.patterns.iter()));
+        debug_assert!(is_strictly_ascending(replaced_builtins.iter()));
     }
 }
 
@@ -227,6 +225,7 @@ mod tests {
                 module_prefix: b"/$bunfs/root/".to_vec(),
                 root_directory: b"/project".to_vec(),
                 entry_point_names: vec![b"main".to_vec()],
+                entry_point_file_names: Vec::new(),
             },
             removable: RemovableOptions::default(),
             lists_modules: false,
@@ -260,10 +259,63 @@ mod tests {
     }
 
     #[test]
-    fn default_thread_count_is_between_one_and_sixteen() {
+    fn only_code_from_disk_that_is_not_isolated_names_files() {
+        for (loads, isolates, names_files) in [
+            (false, false, false),
+            (true, false, true),
+            (true, true, false),
+        ] {
+            let aot = AotOptions {
+                loads_code_from_disk: loads,
+                isolates_code_from_disk: isolates,
+                ..Default::default()
+            };
+            let options = options_with(&aot);
+            options.debug_assert_valid();
+            assert_eq!(options.code_from_disk_names_files(), names_files);
+        }
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic]
+    fn isolation_without_code_from_disk_is_invalid() {
+        let aot = AotOptions {
+            isolates_code_from_disk: true,
+            ..Default::default()
+        };
+        options_with(&aot).debug_assert_valid();
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic]
+    fn isolation_of_a_program_that_runs_in_place_is_invalid() {
+        let aot = AotOptions {
+            loads_code_from_disk: true,
+            isolates_code_from_disk: true,
+            runs_in_place: true,
+            ..Default::default()
+        };
+        options_with(&aot).debug_assert_valid();
+    }
+
+    #[test]
+    fn default_thread_count_is_between_one_and_the_processors() {
         let aot = AotOptions::default();
         let count = options_with(&aot).thread_count().get();
-        assert!((1..=16).contains(&count));
+        assert!((1..=usize::from(bun_core::get_thread_count())).contains(&count));
+    }
+
+    #[test]
+    fn default_thread_count_follows_processors_and_memory() {
+        const GB: usize = 1 << 30;
+        assert_eq!(default_thread_count(4, 64 * GB), 4);
+        assert_eq!(default_thread_count(16, GB), 16);
+        assert_eq!(default_thread_count(64, 2 * GB), 16);
+        assert_eq!(default_thread_count(64, 8 * GB), 32);
+        assert_eq!(default_thread_count(64, 16 * GB), 64);
+        assert_eq!(default_thread_count(32, 64 * GB), 32);
     }
 
     #[test]
@@ -309,6 +361,7 @@ mod tests {
                 (b"a".to_vec(), b"x".to_vec()),
                 (b"a".to_vec(), b"y".to_vec()),
             ];
+            options.load.replaced_builtins = vec![1, 2];
         });
     }
 
@@ -381,5 +434,12 @@ mod tests {
             options.load.externals.patterns =
                 vec![(b"b".to_vec(), Vec::new()), (b"a".to_vec(), Vec::new())];
         });
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic]
+    fn duplicate_replaced_builtin_is_invalid() {
+        assert_valid_after(|options| options.load.replaced_builtins = vec![1, 1]);
     }
 }

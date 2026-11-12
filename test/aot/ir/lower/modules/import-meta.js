@@ -1,8 +1,7 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="meta"
 // CHECK: [[meta]] = ModuleBuiltin builtin=ImportMeta module=m
-// CHECK-NEXT: [[result]] = Convert [[meta]] declared={type=undefined|null|L{{*}} flags=[IsExpected]}
-// CHECK-NEXT: Return [[result]]
+// CHECK-NEXT: Return [[meta]]
 
 // RUN(STORE): lower
 // STORE-LABEL: function {{*}}name="store"

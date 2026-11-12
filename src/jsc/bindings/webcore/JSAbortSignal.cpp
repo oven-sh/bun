@@ -381,11 +381,12 @@ void JSAbortSignal::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-void JSAbortSignalOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSAbortSignalOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsAbortSignal = static_cast<JSAbortSignal*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, jsAbortSignal->protectedWrapped().ptr(), jsAbortSignal);
+    return FinalizeResult::KeepImpl;
 }
 
 #if ENABLE(BINDING_INTEGRITY)

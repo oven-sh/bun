@@ -86,7 +86,6 @@ mod tests {
         split(text, b"\n").map(<[u8]>::trim_ascii)
     }
 
-    /// The declarations that begin with `type`, each on one line, however many the formatter gave it.
     fn type_aliases(text: &[u8]) -> Vec<Vec<u8>> {
         let mut aliases: Vec<Vec<u8>> = Vec::new();
         let mut is_open = false;

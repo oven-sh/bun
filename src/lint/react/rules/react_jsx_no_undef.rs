@@ -9,8 +9,8 @@ pub struct JsxNoUndef {
     allow_globals: bool,
 }
 
-const UNDEFINED: Message = Message::new("undefined", "'{{identifier}}' is not defined.");
-const JSX_NO_UNDEF: Message = Message::new("", "'{{ident_name}}' is not defined.");
+const UNDEFINED: &Message = &Message::new("undefined", "'{{identifier}}' is not defined.");
+const JSX_NO_UNDEF: &Message = &Message::new("", "'{{ident_name}}' is not defined.");
 
 impl Rule for JsxNoUndef {
     const META: Meta = Meta::plugin(Plugin::React, "jsx-no-undef", Kind::None).recommended();

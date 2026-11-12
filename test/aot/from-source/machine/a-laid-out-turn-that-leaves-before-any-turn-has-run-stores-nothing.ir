@@ -1,0 +1,56 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function unseen<T>(value: T): T;
+# let last = 5.5;
+# function addUntilNine(view: Int32Array, n: number): number {
+#   let t = 0.25;
+#   for (let i = 0; i < n; i++) {
+#     if (view[i] === 9) break;
+#     t = t + view[i] * 0.5;
+#     last = t;
+#   }
+#   return t;
+# }
+# function addInRows(view: Int32Array, n: number): number {
+#   let sum = 0;
+#   for (let row = 0; row < 2; row++) {
+#     const wanted = row === 1 ? 3 : 9;
+#     let t = 0.25;
+#     for (let i = 0; i < n; i++) {
+#       if (view[i] === wanted) break;
+#       t = t + view[i] * 0.5;
+#       last = t;
+#     }
+#     sum = sum + t;
+#   }
+#   return sum;
+# }
+# function look(): number {
+#   return last;
+# }
+# const view = new Int32Array(64);
+# for (const stop of [0, 1, 7, 8, 9, 63]) {
+#   view.fill(3);
+#   view[stop] = 9;
+#   last = 5.5;
+#   print(stop, addUntilNine(view, 64), unseen(look)());
+# }
+# view.fill(3);
+# last = 5.5;
+# print(addInRows(view, 16), unseen(look)());
+# -- end of source
+# What comes round here is the LOCAL t; the variable only gets it, turn by turn. The laid-out turns leave that store out and make it where they hand over to the loop as written, with what stood ahead
+# of the turn that leaves. Ahead of the very first turn that is t's start, which the program never stored: where the counter that is handed over is the counter that entered, no turn has run and memory
+# is not touched. A text that stored there always was in the tree for thirteen minutes: the first line said `0 0.25 0.25`, the last `24.5 0.25` (the inner loop leaves in its first turn the second time
+# it is entered, and the wrong store overwrites a number that the program did store). No hardening word sees it: under them the turn is not laid out.
+# RUN(EVENT): compile UnrolledLoopStoresSunk mechanisms=all
+# EVENT: statistic UnrolledLoopStoresSunk 2
+# RUN(RIGHT): run-in-shell globalThis.unseen = (value) => value;
+# RIGHT: 0 0.25 5.5
+# RIGHT-NEXT: 1 1.75 1.75
+# RIGHT-NEXT: 7 10.75 10.75
+# RIGHT-NEXT: 8 12.25 12.25
+# RIGHT-NEXT: 9 13.75 13.75
+# RIGHT-NEXT: 63 94.75 94.75
+# RIGHT-NEXT: 24.5 24.25
+# RIGHT-NEXT: exited with 0

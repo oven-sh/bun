@@ -1,5 +1,6 @@
 use super::answers::{CheckedType, ClassRef, FunctionRef, GaveUp, MemberName};
 use super::queries::Queries;
+use super::type_shape::{FunctionSignatures, ShapeKind};
 use crate::bind::{Decl, SymbolId};
 use crate::hir::{self, FnId, has_body};
 use crate::program::Sym;
@@ -41,6 +42,31 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             other.and_then(|other| self.symbol_of_function(other)) == Some(symbol)
         });
         has_one_symbol.then_some(first)
+    }
+
+    pub fn declaration_of_signatures(&self, signatures: &[SigId]) -> Option<FunctionRef> {
+        match signatures {
+            &[signature] => self.signature_declaration(signature),
+            overloads => self.first_overload(overloads),
+        }
+    }
+
+    pub fn only_signature(&mut self, signatures: FunctionSignatures<'_>) -> Option<SigId> {
+        match signatures.declared {
+            &[signature] => Some(self.c.instantiate_sig(signature, signatures.mapper)),
+            _ => None,
+        }
+    }
+
+    pub(super) fn are_functions_of_one_declaration(&mut self, one: TypeId, other: TypeId) -> bool {
+        let (Ok(one), Ok(other)) = (self.type_shape(one), self.type_shape(other)) else {
+            return false;
+        };
+        let (ShapeKind::Function(one), ShapeKind::Function(other)) = (one.kind, other.kind) else {
+            return false;
+        };
+        let declaration = self.declaration_of_signatures(one.declared);
+        declaration.is_some() && declaration == self.declaration_of_signatures(other.declared)
     }
 
     pub fn overload_implementation(&self, overload: FunctionRef) -> Option<FunctionRef> {

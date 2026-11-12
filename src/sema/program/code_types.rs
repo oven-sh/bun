@@ -38,7 +38,6 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         (Box::new(loaded), code, payload)
     }
 
-    // Other files take their types from a file of the types program, so it imports what the type checker finds.
     pub(super) fn answer_types_question_in_types_program(
         &self,
         arena: &'s Arena,
@@ -98,11 +97,15 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
 
     pub(super) fn types_file_parse_options(&self, path: &[u8]) -> ParseOptions {
         if is_declaration_file_name(path) {
-            return self.options.for_parsing();
+            return ParseOptions {
+                reads_as_bun_run: true,
+                ..self.options.for_parsing()
+            };
         }
         let project = self.projects.governing(self, path);
         ParseOptions {
             module_detection: ModuleDetection::Force,
+            reads_as_bun_run: true,
             ..project.unwrap_or(self.options).for_parsing()
         }
     }
@@ -120,6 +123,9 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         let governing = match code {
             Some(code) if code.analyzed.is_aot_source => {
                 self.projects.governing_aot_source(self, path)
+            }
+            Some(_) if role == FileRole::Checked => {
+                self.projects.governing_checked_code(self, path)
             }
             Some(_) => self.projects.governing_code(self, path),
             None => self.projects.governing(self, path),

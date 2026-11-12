@@ -68,7 +68,7 @@ pub(crate) struct Listener {
     pub(crate) listener: Cell<ListenerType>,
 
     pub poll_ref: JsCell<KeepAlive>,
-    pub(crate) connection: UnixOrHost,
+    pub(crate) connection: JsCell<UnixOrHost>,
     /// Embedded sweep/iteration list-head for every accepted socket on this
     /// listener. `group.ext` = `*Listener`, so the dispatch handler recovers us
     /// from the socket without a context-ext lookup.
@@ -275,7 +275,7 @@ impl Listener {
 
                 let this_value = Listener {
                     handlers,
-                    connection,
+                    connection: JsCell::new(connection),
                     ssl: ssl_enabled,
                     listener: Cell::new(ListenerType::None),
                     protos: protos_taken,
@@ -400,9 +400,9 @@ impl Listener {
 
         let this_value = Listener {
             handlers,
-            // Placeholder until `this_ref.connection = connection` below.
+            // Placeholder until `this_ref.connection` is written below.
             // Cannot `mem::zeroed()` a Rust enum (UB).
-            connection: UnixOrHost::Fd(Fd::invalid()),
+            connection: JsCell::new(UnixOrHost::Fd(Fd::invalid())),
             ssl: ssl_enabled,
             protos: protos_taken,
             reject_unauthorized: crate::socket::resolve_reject_unauthorized(
@@ -424,8 +424,7 @@ impl Listener {
         let js_value = this_value.to_js();
         let this: *mut Listener = this_value.payload_ptr().as_ptr();
         // SAFETY: the payload of `this_value`; every field touched through this
-        // borrow is `Cell`/`JsCell` or `&self`. The one plain-field write
-        // (`connection`, below) goes through the root pointer instead.
+        // borrow is `Cell`/`JsCell` or `&self`.
         let this_ref = unsafe { &*this };
         this_ref
             .group
@@ -579,10 +578,7 @@ impl Listener {
             return Err(cx.global().throw_value(err));
         }
 
-        // SAFETY: nothing else has the wrapper yet; scoped write through the
-        // root pointer so no `&mut Listener` is materialized (`this_ref` never
-        // reads `connection`).
-        unsafe { (*this).connection = connection };
+        this_ref.connection.with_mut(|c| *c = connection);
         this_ref.listener.set(ListenerType::Uws(listen_socket));
         if !default_data.is_empty() {
             this_ref
@@ -869,7 +865,7 @@ impl Listener {
     /// Match Node.js/libuv: unlink the unix socket file before closing the listening fd.
     /// Unlinking after close would race with another process creating a socket at the same path.
     fn unlink_unix_socket_path(&self) {
-        let UnixOrHost::Unix(path) = &self.connection else {
+        let UnixOrHost::Unix(path) = self.connection.get() else {
             return;
         };
         // Abstract sockets (Linux) start with a NUL byte and have no filesystem entry.
@@ -881,21 +877,21 @@ impl Listener {
     }
 
     pub(crate) fn get_unix(&self) -> Option<&[u8]> {
-        match &self.connection {
+        match self.connection.get() {
             UnixOrHost::Unix(unix) => Some(unix),
             _ => None,
         }
     }
 
     pub(crate) fn get_hostname(&self) -> Option<&[u8]> {
-        match &self.connection {
+        match self.connection.get() {
             UnixOrHost::Host { host, .. } => Some(host),
             _ => None,
         }
     }
 
     pub(crate) fn get_port(&self) -> Option<u16> {
-        match &self.connection {
+        match self.connection.get() {
             UnixOrHost::Host { port, .. } => Some(*port),
             _ => None,
         }
@@ -1881,25 +1877,26 @@ impl WindowsNamedPipeListeningContext {
 pub(crate) extern "C" fn us_dispatch_socket_server_name(
     socket: *mut uws_sys::us_socket_t,
     hostname: *const core::ffi::c_char,
-    abort_handshake: *mut core::ffi::c_int,
+    abort_handshake: Option<&mut core::ffi::c_int>,
 ) -> *mut uws_sys::SslCtx {
     dispatch_server_name(socket, hostname, abort_handshake).cast()
 }
 
 /// Shared decoding of what the JS SNI handler returned. See
 /// `us_dispatch_server_name` for the contract.
-fn decode_sni_result(result: JSValue, abort_handshake: *mut core::ffi::c_int) -> *mut c_void {
+fn decode_sni_result(
+    result: JSValue,
+    abort_handshake: Option<&mut core::ffi::c_int>,
+) -> *mut c_void {
     if result.is_boolean() && result.to_boolean() {
-        if !abort_handshake.is_null() {
-            // SAFETY: live out-parameter for the duration of this dispatch.
-            unsafe { *abort_handshake = 2 };
+        if let Some(abort_handshake) = abort_handshake {
+            *abort_handshake = 2;
         }
         return core::ptr::null_mut();
     }
     if result.to_error().is_some() {
-        if !abort_handshake.is_null() {
-            // SAFETY: live out-parameter for the duration of this dispatch.
-            unsafe { *abort_handshake = 1 };
+        if let Some(abort_handshake) = abort_handshake {
+            *abort_handshake = 1;
         }
         return core::ptr::null_mut();
     }
@@ -1914,9 +1911,8 @@ fn decode_sni_result(result: JSValue, abort_handshake: *mut core::ffi::c_int) ->
     }
     // Anything else is not a SecureContext: Node treats this as an invalid SNI
     // context and drops the connection.
-    if !abort_handshake.is_null() {
-        // SAFETY: live out-parameter for the duration of this dispatch.
-        unsafe { *abort_handshake = 1 };
+    if let Some(abort_handshake) = abort_handshake {
+        *abort_handshake = 1;
     }
     core::ptr::null_mut()
 }
@@ -1940,7 +1936,7 @@ fn decode_sni_result(result: JSValue, abort_handshake: *mut core::ffi::c_int) ->
 extern "C" fn us_dispatch_server_name(
     _ls: *mut uws_sys::ListenSocket,
     hostname: *const core::ffi::c_char,
-    abort_handshake: *mut core::ffi::c_int,
+    abort_handshake: Option<&mut core::ffi::c_int>,
     socket: *mut c_void,
 ) -> *mut c_void {
     dispatch_server_name(socket.cast(), hostname, abort_handshake)
@@ -1949,7 +1945,7 @@ extern "C" fn us_dispatch_server_name(
 fn dispatch_server_name(
     socket: *mut uws_sys::us_socket_t,
     hostname: *const core::ffi::c_char,
-    abort_handshake: *mut core::ffi::c_int,
+    abort_handshake: Option<&mut core::ffi::c_int>,
 ) -> *mut c_void {
     jsc::mark_binding!();
     if socket.is_null() || hostname.is_null() {

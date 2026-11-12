@@ -3,8 +3,6 @@
     clippy::disallowed_types,
     clippy::disallowed_macros
 )]
-//! Export `BUN_CODEGEN_DIR` for the tables of built-ins that `src/codegen/builtins/index.ts` writes, and for what
-//! JavaScriptCore's `aot/ir/generator/index.ts` writes from the schema.
 
 use std::env;
 use std::path::{Path, PathBuf};

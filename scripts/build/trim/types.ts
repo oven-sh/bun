@@ -1,11 +1,16 @@
 export type FeatureName = string;
 export type ObjectFormat = "elf" | "macho" | "coff";
 export type StubKind = "Abort" | "Throw" | "ReturnUndefined" | "ReturnDefault";
-export type EnteredFrom = "program" | "startup" | "command-line";
+export type EnteredFrom = "program" | "startup" | "command-line" | "compiled-code";
 
 export const objectFormats = ["elf", "macho", "coff"] as const satisfies readonly ObjectFormat[];
 export const stubKinds = ["Abort", "Throw", "ReturnUndefined", "ReturnDefault"] as const satisfies readonly StubKind[];
-export const enteredFromValues = ["program", "startup", "command-line"] as const satisfies readonly EnteredFrom[];
+export const enteredFromValues = [
+  "program",
+  "startup",
+  "command-line",
+  "compiled-code",
+] as const satisfies readonly EnteredFrom[];
 
 export const firstEmbedderFeatureIndex = 128;
 export const featureIndexLimit = 512;
@@ -162,9 +167,13 @@ export interface Partition {
   edges: FeatureEdge[];
   layoutRank: Uint16Array;
   groups: Group[];
+  /** The first this many of `groups` have only features that no compiled program has, so they are removed together. */
+  groupsOutsidePrograms: number;
   groupOfSet: Map<number, number>;
   removableBytes: Map<number, number>;
   featuresNearMinimum: number[];
+  /** The sections that are in the image without a known reference. */
+  unexplained: number[];
   unexplainedBytes: number;
   failures: PartitionFailure[];
 }

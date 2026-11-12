@@ -1,0 +1,27 @@
+# const get = fetch.bind(globalThis); hold(get)
+# No row of fetch speaks of its receiver, and nobody takes what is bound out of a bound function: the global object goes nowhere, so nothing that hangs on it is kept.
+# `bind` is found on a function of the host though the function itself is handed on: the run time refuses an own `bind` and a new prototype on every native function.
+# RUN: features
+# CHECK: by Fetch
+# CHECK-NOT: by BunFileSystemRouter
+# CHECK-NOT: by Eval
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="fetch" [isFreeName]
+    v2 = PropGet v1 key="bind"
+    v3 = Builtin builtin=GlobalThis
+    v4 = Call v2, v1, v3 calleeKey="bind"
+    v5 = NewClosure function=f1
+    v6 = Call v5, -, v4
+    Return v6
+}
+function f1 name="hold" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="http://localhost:1"
+    v2 = Call v0, -, v1
+    Return v2
+}

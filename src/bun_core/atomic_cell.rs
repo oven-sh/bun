@@ -34,7 +34,7 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU16, AtomicU32, AtomicU64, O
 /// handles, and `Option<NonNull<_>>` that more than one thread touches.
 ///
 /// `T` must implement [`Atom`] (no padding, `size_of::<T>() ∈ {1,2,4,8}`).
-/// Larger or padded `T` is a compile error — use `bun_threading::RwLock<T>` or
+/// Larger or padded `T` is a compile error — use `bun_threading::Guarded<T>` or
 /// restructure. There is **no** seqlock fallback (unlike crossbeam's
 /// `AtomicCell`): if it doesn't fit in a native atomic word, it doesn't
 /// compile.
@@ -293,9 +293,8 @@ macro_rules! size_dispatch {
                 let $a = unsafe { &*($p as *const $A) };
                 $body
             }
-            // SAFETY: `unsafe_impl_atom!`'s `const _` assert rejected every
-            // other width at compile time.
-            _ => unsafe { ::core::hint::unreachable_unchecked() },
+            // `unsafe_impl_atom!`'s `const _` assert rejects every other width.
+            _ => unreachable!(),
         }
     };
 }
@@ -461,9 +460,6 @@ pub struct ThreadCell<T: ?Sized> {
 // SAFETY: same lie as `RacyCell` (caller promises thread-affinity), now
 // *checked* in debug via `owner`.
 unsafe impl<T: ?Sized> Sync for ThreadCell<T> {}
-// SAFETY: `UnsafeCell<T>: Send` when `T: Send`, and `owner: AtomicU64` is
-// `Send`; sending the cell just moves the (still thread-affine) `T`.
-unsafe impl<T: ?Sized + Send> Send for ThreadCell<T> {}
 
 #[cfg(debug_assertions)]
 const UNCLAIMED: u64 = 0;

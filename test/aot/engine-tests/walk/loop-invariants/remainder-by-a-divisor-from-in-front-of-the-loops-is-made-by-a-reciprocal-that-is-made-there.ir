@@ -1,0 +1,82 @@
+# `j % u` in the inner of two loops; u is shown in front of them to be an int32 of at least one, j lies in [0, 999]. A division holds every turn at six cycles. For a dividend of at most 32 bits that is not negative and such a
+# divisor the remainder is exact by two multiplications (Lemire, Kaser, Kurz 2019): c = floor((2^64 - 1) / u) + 1 . j % u = the high half of ((c * j mod 2^64) * u). c hangs on u alone: it is made once, in front of BOTH loops.
+# function run(u: number) { const a = new Int32Array(100); for (let i = 0; i < 100; i++) for (let j = 0; j < 1000; j++) a[i] = a[i] + j % u; return a[7]; }
+# console.log(run(Number(process.argv[2] ?? "40")));
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[reciprocal]]: opaque(Reciprocal) @RawWord = ReciprocalOfDivisor [[divisor]]
+# CHECK-COUNT-2: isInLoop=true isLoopHead=true:
+# CHECK: int[0, 999] @Int32 = RemainderByReciprocal {{*}}, [[divisor]], [[reciprocal]]
+
+module m0 path="remainder-by-a-divisor-from-in-front-of-the-loops-is-made-by-a-reciprocal-that-is-made-there.ts" displayPath="remainder-by-a-divisor-from-in-front-of-the-loops-is-made-by-a-reciprocal-that-is-made-there.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @154
+    v3 = PropGet v2 key="console" [isFreeName] @154
+    v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]} @154
+    v5 = PropGet v4 key="log" @154
+    v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @154
+    v7 = Builtin builtin=Number @170
+    v8 = Builtin builtin=Process @177
+    v9 = PropGet v8 key="argv" @177
+    v10 = Convert v9 declared={type=builtin(ProcessArgv) flags=[IsExpected]} @177
+    v11 = Integer integer=2 @177
+    v12 = ElemGet v10, v11 @185
+    v13 = TypeTest v12 testedType=undefined|null @177
+    Branch v13 -> taken b1(| 0), notTaken b2(| 0) @177
+  b1(v14):
+    v15 = String string="40" @196
+    Jump -> next b3(v15) @196
+  b2(v16):
+    Jump -> next b3(v16) @177
+  b3(v17):
+    v18 = Call v7, -, v17 calleeName="Number" @170
+    v19 = Convert v18 declared={type=number} illTypedCause=DeclarationWithoutBody @170
+    v20 = Call v1, -, v19 calleeName="run" @166
+    v21 = Call v6, v4, v20 calleeKey="log" calleeName="console.log" @162
+    v22 = Undefined @154
+    Return v22 @154
+}
+function f1 name="run" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Builtin builtin=Int32Array @40
+    v2 = Integer integer=100 @51
+    v3 = Construct v1, -, v2 calleeName="Int32Array" @40
+    v4 = Convert v3 declared={type=undefined|null|Int32Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @36
+    v5 = Integer @70
+    v6 = Convert v5 declared={type=number} @70
+    Jump -> next b1(v6) @66
+  b1(v7: number):
+    LoopHint @66
+    v9 = Integer integer=100 @77
+    v10 = Less v7, v9 @77
+    Branch v10 -> taken b2(), notTaken b6() @77
+  b2():
+    v11 = Integer @100
+    v12 = Convert v11 declared={type=number} @100
+    Jump -> next b3(v12) @96
+  b3(v13: number):
+    LoopHint @96
+    v15 = Integer integer=1000 @107
+    v16 = Less v13, v15 @107
+    Branch v16 -> taken b4(), notTaken b5() @107
+  b4():
+    v17 = ElemGet v4, v7 @125
+    v18 = Mod v13, v0 @136
+    v19 = Add v17, v18 @136
+    ElemSet v4, v7, v19 @118
+    v21 = Increment v13 @113
+    v22 = Convert v21 declared={type=number} @113
+    Jump -> next b3(v22) @113
+  b5():
+    v23 = Increment v7 @82
+    v24 = Convert v23 declared={type=number} @82
+    Jump -> next b1(v24) @82
+  b6():
+    v25 = Integer integer=7 @146
+    v26 = ElemGet v4, v25 @146
+    Return v26 @146
+}

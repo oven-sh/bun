@@ -1,0 +1,14 @@
+# Plain reads no `this`, so it has no parameter that holds what it makes. The objects are held at a node of their own: the layout stays in sight, and so does what stands above it. L0 = Base, L1 = Plain.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 family=F0 changes=[] stays-with-compiled-code
+# CHECK: layout L1 family=F0 changes=[] stays-with-compiled-code
+# -- source: what-a-constructor-function-that-reads-no-this-makes-stays-in-sight-with-what-stands-above.js
+# function Base() { this.a = 1; }
+# Base.prototype.read = function () { return this.a; };
+# function Plain() {}
+# Object.setPrototypeOf(Plain.prototype, Base.prototype);
+# Object.setPrototypeOf(Plain, Base);
+# const plain = new Plain();
+# const made = new Base();
+# console.log(made.read(), plain.read(), plain instanceof Base);
+# -- end of source

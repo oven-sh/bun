@@ -25,16 +25,16 @@ struct ZoneOptions {
     message: Box<str>,
 }
 
-const RESTRICTED: Message =
-    Message::new("", "Unexpected path \"{{importPath}}\" imported in restricted zone.{{message}}");
-const EXCEPTION_IS_NO_DESCENDANT: Message = Message::new(
+const RESTRICTED: &Message =
+    &Message::new("", "Unexpected path \"{{importPath}}\" imported in restricted zone.{{message}}");
+const EXCEPTION_IS_NO_DESCENDANT: &Message = &Message::new(
     "",
     "Restricted path exceptions must be descendants of the configured `from` path for that zone.",
 );
-const FROM_IS_MIXED: Message =
-    Message::new("", "Restricted path `from` must contain either only glob patterns or none");
-const EXCEPTION_IS_NO_GLOB: Message =
-    Message::new("", "Restricted path exceptions must be glob patterns when `from` contains glob patterns");
+const FROM_IS_MIXED: &Message =
+    &Message::new("", "Restricted path `from` must contain either only glob patterns or none");
+const EXCEPTION_IS_NO_GLOB: &Message =
+    &Message::new("", "Restricted path exceptions must be glob patterns when `from` contains glob patterns");
 
 enum Target {
     Glob(Glob),
@@ -113,7 +113,7 @@ impl Zone {
 
     /// Reports what `checkForRestrictedImportPath` reports for the zone. `found`: the file that `import_path` resolves
     /// to.
-    fn check<'a>(&self, (import_path, found, cwd): (&[u8], &[u8], &[u8]), report: &dyn Fn(Message) -> Report<'a>) {
+    fn check<'a>(&self, (import_path, found, cwd): (&[u8], &[u8], &[u8]), report: &dyn Fn(&'static Message) -> Report<'a>) {
         let restricted = || {
             let message = interpolate_text(&self.message, |name| (name == "importPath").then_some(import_path));
             report(RESTRICTED).data("message", message);
@@ -204,7 +204,7 @@ impl Rule for NoRestrictedPaths {
             let Resolved::File(found) = resolvers.resolve(file, visited.specifier, visited.is_require) else {
                 continue;
             };
-            let report = |message: Message| cx.report(visited.source, message).data("importPath", visited.specifier);
+            let report = |message: &'static Message| cx.report(visited.source, message).data("importPath", visited.specifier);
             for zone in cx.state.iter().filter_map(|it| zones.get(*it as usize)) {
                 zone.check((visited.specifier, &found, cwd), &report);
             }

@@ -4,12 +4,13 @@ use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_core::EncodedSlice;
+use bun_core::Environment;
 
 use crate::{
-    ArrayBuffer, CommonString, EncodedSliceJsc as _, ErrorCode, JSArray, JSGlobalObject, JSObject,
-    JSString, JSValue, JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
+    ArrayBuffer, CommonString, ErrorCode, JSArray, JSGlobalObject, JSObject, JSString, JSValue,
+    JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -66,13 +67,10 @@ impl<'a> JsHeap<'a> {
 
     /// Debug check: an empty result means an exception is pending. Any other means none is, except a termination.
     fn exception_presence_matches(&self, should_have_exception: bool) -> bool {
-        // SAFETY: the global object is live.
-        unsafe {
-            extern_types::Bun__Bindgen__exceptionPresenceMatches(
-                self.global_ptr(),
-                should_have_exception,
-            )
-        }
+        extern_types::Bun__Bindgen__exceptionPresenceMatches(
+            self.global_object(),
+            should_have_exception,
+        )
     }
 
     /// `owner` has come to own `size` more bytes since it was created. From `estimated_size` alone the GC learns that
@@ -124,18 +122,40 @@ impl<'a> JsHeap<'a> {
         ))
     }
 
-    /// A string with a copy of `latin1`, or the empty string when that is longer than a string can be.
+    /// A string with a copy of `latin1`, or the empty string when that is longer than a string can be. Out of memory ends the process.
     #[inline]
     pub fn create_latin1_string(&self, latin1: &[u8]) -> JsLocal<'a, JSString> {
-        if (2..=JSString::MAX_LENGTH).contains(&latin1.len()) {
-            // SAFETY: all of the characters are written.
-            return unsafe {
-                self.create_latin1_string_with(latin1.len(), |to| {
+        if latin1.len() > JSString::MAX_LENGTH {
+            return JsLocal::from_raw(JSValue::js_empty_string(self.global_object()));
+        }
+        self.try_copy_latin1(latin1)
+            .unwrap_or_else(|| bun_core::out_of_memory())
+    }
+
+    /// As [`create_latin1_string`](Self::create_latin1_string) for as many characters as JavaScript likes. Its error is not thrown: a `&mut self` method can call it.
+    #[inline]
+    pub fn try_create_latin1_string(&self, latin1: &[u8]) -> Result<'a, JsLocal<'a, JSString>> {
+        if latin1.len() > bun_core::String::max_length() {
+            return Err(self.string_too_long());
+        }
+        self.try_copy_latin1(latin1)
+            .ok_or_else(|| self.memory_allocation_failed())
+    }
+
+    /// At most [`JSString::MAX_LENGTH`] characters. `None` when they cannot be allocated.
+    #[inline]
+    fn try_copy_latin1(&self, latin1: &[u8]) -> Option<JsLocal<'a, JSString>> {
+        let global = self.global_object();
+        Some(JsLocal::from_raw(match *latin1 {
+            [] => JSValue::js_empty_string(global),
+            [character] => JSString::single_latin1_character(global, character),
+            // SAFETY: all of the characters are written, and to copy them allocates nothing.
+            _ => unsafe {
+                JSString::try_create_latin1_with(global, latin1.len(), |to| {
                     to.copy_from_nonoverlapping(latin1.as_ptr(), latin1.len());
                 })
-            };
-        }
-        JsLocal::from_raw(EncodedSlice::latin1(latin1).to_js(self.global_object()))
+            }?,
+        }))
     }
 
     /// A string of `length` 8-bit characters, 2 to [`JSString::MAX_LENGTH`]. SAFETY: `fill` writes all of them.
@@ -1126,15 +1146,14 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
 
     #[inline(always)]
     fn payload(self) -> *mut T {
-        // SAFETY: generated offset inside the cell.
-        unsafe { self.0.as_ptr().byte_add(T::PAYLOAD_OFFSET).cast() }
+        self.payload_ptr().as_ptr()
     }
 
     /// The payload's address, which does not change. It is valid while the wrapper is alive.
     #[inline(always)]
     pub fn payload_ptr(self) -> NonNull<T> {
-        // SAFETY: inside the cell, which is not null.
-        unsafe { NonNull::new_unchecked(self.payload()) }
+        // SAFETY: generated offset inside the cell.
+        unsafe { self.0.byte_add(T::PAYLOAD_OFFSET).cast() }
     }
 }
 
@@ -1350,6 +1369,74 @@ pub fn host_fn_return<'a, T, E: IntoError<'a>>(
         "a body fails exactly when an exception is pending",
     );
     value
+}
+
+/// Whether this process holds native code to the types that `.bind.ts` files declare for its results.
+///
+/// An executable compiled ahead of time does: its code takes those types for proven. A build of Bun that asserts does, so that Bun's own tests find
+/// the native code that answers outside its type. Release `bun run` does not, and answers as it always has.
+///
+/// To hold every build of Bun to them, start this as `true`. Nothing else decides it.
+static HOLDS_RESULTS_TO_DECLARED_TYPES: AtomicBool = AtomicBool::new(Environment::CI_ASSERT);
+
+/// For [`crate::initialize`], which comes before any JavaScript.
+pub(crate) fn hold_results_to_declared_types() {
+    HOLDS_RESULTS_TO_DECLARED_TYPES.store(true, Ordering::Relaxed);
+}
+
+#[inline(always)]
+pub fn holds_results_to_declared_types() -> bool {
+    HOLDS_RESULTS_TO_DECLARED_TYPES.load(Ordering::Relaxed)
+}
+
+/// Holds what a thunk ends with to the type that its `.bind.ts` file declares. The empty value stands for a pending exception.
+#[doc(hidden)]
+#[inline(always)]
+pub fn hold_to_declared_type<'a>(
+    cx: &mut JsScope<'a>,
+    returned: JSValue,
+    is_declared: impl FnOnce(JSValue) -> bool,
+    member: &'static str,
+    declared: &'static str,
+) -> JSValue {
+    if !holds_results_to_declared_types() || returned.is_empty() || is_declared(returned) {
+        return returned;
+    }
+    throw_outside_declared_type(cx, member, declared)
+}
+
+#[cold]
+#[inline(never)]
+fn throw_outside_declared_type<'a>(
+    cx: &mut JsScope<'a>,
+    member: &'static str,
+    declared: &'static str,
+) -> JSValue {
+    cx.heap
+        .type_error(format_args!(
+            "internal AOT error: type check failed: expected {declared} in the result of {member}. This is a bug in Bun, not in your code."
+        ))
+        .into_host_fn_return(cx)
+}
+
+/// As [`hold_to_declared_type`], for a value that Rust lays in the field a getter answers from. Compiled code reads that field itself, so a value
+/// outside the type must never lie there: the field is left empty, the next read asks the getter, and its thunk stops the program if the getter answers
+/// outside the type too. A build of Bun that asserts stops here, where the value comes from.
+#[doc(hidden)]
+#[inline(always)]
+pub fn hold_cached_to_declared_type(
+    value: JSValue,
+    is_declared: impl FnOnce(JSValue) -> bool,
+    member: &'static str,
+    declared: &'static str,
+) -> JSValue {
+    if !holds_results_to_declared_types() || value.is_empty() || is_declared(value) {
+        return value;
+    }
+    if Environment::CI_ASSERT {
+        panic!("{member} is declared as {declared}, and native code cached something else");
+    }
+    JSValue::ZERO
 }
 
 /// As [`host_fn_return`], for the constructor of a `refCounted` class: null if it failed.

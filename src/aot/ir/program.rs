@@ -1,6 +1,7 @@
 use super::generated::{
-    Data, Entry, EvalScope, ExpectedResult, Function, Layout, Module, ModuleFailure,
-    RuntimeFunctionEntry, TypeSite, Variable, WebAssemblyModule,
+    AmbiguousExport, BuiltinUsedAtStart, Data, DeclaredRecord, Entry, EvalScope, ExpectedResult,
+    Function, Layout, Module, ModuleFailure, OpenedName, ReplaceableBuiltin, RuntimeFunctionEntry,
+    SourceStamp, TypeSite, Variable, WebAssemblyModule,
 };
 use super::property_keys::PropertyKeyTable;
 use super::strings::StringTable;
@@ -17,12 +18,18 @@ pub struct Program {
     pub variables: Vec<Variable>,
     pub modules: Vec<Module>,
     pub module_failures: Vec<ModuleFailure>,
+    pub ambiguous_exports: Vec<AmbiguousExport>,
+    pub source_stamps: Vec<SourceStamp>,
+    pub declared_records: Vec<DeclaredRecord>,
     pub eval_scopes: Vec<EvalScope>,
     pub functions: Vec<Function>,
     pub data: Vec<Data>,
     pub entries: Vec<Entry>,
     pub runtime_functions: Vec<RuntimeFunctionEntry>,
     pub web_assembly_modules: Vec<WebAssemblyModule>,
+    pub replaceable_builtins: Vec<ReplaceableBuiltin>,
+    pub opened_names: Vec<OpenedName>,
+    pub builtins_used_at_start: Vec<BuiltinUsedAtStart>,
 }
 
 #[cfg(any(test, feature = "ir_text"))]

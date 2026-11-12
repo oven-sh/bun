@@ -219,18 +219,11 @@ impl MacroContext {
         }
         let _flush_guard = Output::flush_guard();
 
-        // Borrowck: snapshot the small POD fields we need (`disabled`,
-        // `vm`) so the macro_entry borrow can be released.
-        let macro_disabled = macro_entry.value_ptr.disabled;
-        let macro_vm = macro_entry.value_ptr.vm;
-        let macro_: *const Macro = macro_entry.value_ptr;
-        if macro_disabled {
+        let macro_: &Macro = macro_entry.value_ptr;
+        if macro_.disabled {
             return Ok(caller);
         }
-        // SAFETY: `Some` for every non-disabled Macro; see `Macro` struct comment.
-        let vm = macro_vm
-            .expect("Macro.vm accessed on disabled sentinel")
-            .as_ptr();
+        let vm = macro_.vm();
         // `vm` is the per-thread VM (BackRef invariant: outlives this guard).
         // Enables macro mode now; disables on scope exit.
         let _mode_guard = MacroModeGuard::new(vm);
@@ -238,21 +231,14 @@ impl MacroContext {
         unsafe { (*(*vm).event_loop()).ensure_waker() };
 
         let javascript_object = self.javascript_object;
-        // reshaped for borrowck — `self.bump` is shared-borrowed for
-        // the closure while `self.macros` was already released above; capture
-        // as a raw pointer so the closure does not extend `&mut self`.
         // Lazy-init the backing arena now that a macro is actually being
         // invoked (see field doc — avoids per-`import()` `mi_heap_new`).
-        let bump: *const bun_alloc::Arena =
-            &raw const *self.bump.get_or_insert_with(bun_alloc::Arena::new);
+        let bump: &bun_alloc::Arena = self.bump.get_or_insert_with(bun_alloc::Arena::new);
         let ret = VirtualMachine::get().run_with_api_lock(|| {
-            // SAFETY: `macro_` points into `self.macros` which is not mutated
-            // for the duration of this closure; `bump` points into `*self`,
-            // which outlives the closure and is not otherwise borrowed.
             Runner::run(
-                unsafe { &*macro_ },
+                macro_,
                 log,
-                unsafe { &*bump },
+                bump,
                 function_name,
                 caller,
                 source,
@@ -292,6 +278,7 @@ fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> js_parser::Ma
     js_parser::Macro::MacroContext {
         javascript_object: js_parser::Macro::MacroJSCtx::ZERO,
         data: data.cast::<core::ffi::c_void>(),
+        known_answers: None,
     }
 }
 
@@ -376,12 +363,7 @@ fn __bun_macro_context_get_remap(
     // the `'static` borrow is sound for callers that drop it before the
     // `Transpiler` does.
     let inner = unsafe { &*data.cast::<MacroContext>() };
-    inner.get_remap(path).map(|e| {
-        // SAFETY: `e` borrows an entry in the remap table owned by
-        // `Transpiler.options`, which outlives every parse that calls this fn,
-        // so extending the borrow to `'static` upholds the function-level contract.
-        unsafe { &*std::ptr::from_ref::<js_parser::Macro::MacroRemapEntry>(e) }
-    })
+    inner.get_remap(path)
 }
 
 // ══════════════════════════════════════════════════════════════════════════

@@ -199,7 +199,7 @@ impl BasePalette {
         }
 
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         crate::match_ignore_ascii_case! { ident, {
             b"light" => Ok(BasePalette::Light),
             b"dark" => Ok(BasePalette::Dark),
@@ -240,7 +240,7 @@ const _: () = {
 
         fn parse_value(
             _this: &mut Self,
-            name: &[u8],
+            name: &'static [u8],
             input: &mut Parser,
         ) -> Result<Self::Declaration> {
             let state = input.state();

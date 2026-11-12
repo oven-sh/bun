@@ -1,1 +1,0 @@
-var shared = "a"; function helper() { return "helper a"; } exports.a = [eval("shared"), eval("helper()"), eval("typeof require"), eval("var made = 1; made"), typeof made, new Function("return typeof shared")()];

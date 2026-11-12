@@ -2,30 +2,30 @@ use crate::builtins::id::BuiltinId;
 use crate::builtins::{ResolvedBuiltins, RuntimeModule};
 use crate::load::Sources;
 use crate::load::sources::parsed_source;
-use bun_sema::atom::{Atom, Interner};
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingInitializer, Bound, SymbolId};
 use bun_sema::hir::{self, ExprId, ExprKind, PropId, PropKey, PropKind, Span, StmtKind};
 use bun_sema::program::Files;
 use bun_sema::util::SharedSort;
 
-/// A getter of the object that one of Bun's own modules exports: `get WriteStream() { .. }` in the literal, or `Object.defineProperty(assert, "AssertionError", { get() { .. } })`.
 #[derive(Default)]
 pub struct DeferredExports {
-    /// In the order of the registry, and of the bytes.
     names: Vec<(u32, Box<[u8]>)>,
 }
 
-/// The native modules that mirror an object of the host, which makes most of its members at their first read: `process.stdout` loads `node:stream`.
 const MODULES_THAT_MIRROR_AN_OBJECT: [RuntimeModule; 3] = [
     RuntimeModule::NodeModule,
     RuntimeModule::NodeProcess,
     RuntimeModule::Bun,
 ];
 
+pub(super) fn mirrors_an_object(module: RuntimeModule) -> bool {
+    MODULES_THAT_MIRROR_AN_OBJECT.contains(&module)
+}
+
 struct LibraryModule<'a, 's> {
     hir: &'a hir::File<'s>,
     bound: &'a Bound<'s>,
-    atoms: &'a Interner<'s>,
     builtins: Option<&'a ResolvedBuiltins>,
 }
 
@@ -36,7 +36,6 @@ impl DeferredExports {
             let library_module = LibraryModule {
                 hir: runtime_files.hir(file),
                 bound: runtime_files.bound(file),
-                atoms: &runtime_files.atoms,
                 builtins: parsed_source(runtime_files, file).map(|source| &source.builtins),
             };
             for name in library_module.find_getters() {
@@ -49,7 +48,7 @@ impl DeferredExports {
     }
 
     pub fn contains(&self, module: RuntimeModule, name: &[u8]) -> bool {
-        if MODULES_THAT_MIRROR_AN_OBJECT.contains(&module) {
+        if mirrors_an_object(module) {
             return true;
         }
         let key = (module.registry_id(), name);
@@ -70,11 +69,9 @@ impl LibraryModule<'_, '_> {
         let Some(exported) = exported else {
             return Vec::new();
         };
-        // `export default { .. }`
         let ExprKind::Ident(_) = hir[exported].kind else {
             return self.find_getters_of_literal(self.as_literal(exported));
         };
-        // `export default a`
         let Binding::Symbol(symbol) = self.bound.binding(exported) else {
             return Vec::new();
         };
@@ -113,7 +110,6 @@ impl LibraryModule<'_, '_> {
             .collect()
     }
 
-    // `Object.defineProperty(a, "name", { get() { .. }, .. })` as a statement of the module.
     fn find_defined_getter(&self, exported: SymbolId, statement: ExprId) -> Option<Atom> {
         let hir = self.hir;
         let ExprKind::Call(call) = hir[hir.skip_type_assertions(statement)].kind else {
@@ -136,7 +132,7 @@ impl LibraryModule<'_, '_> {
         let has_getter = self.as_literal(argument(2))?.iter().any(|id| {
             let property = hir[id];
             matches!(property.kind, PropKind::Init | PropKind::Method)
-                && matches!(property.key, PropKey::Name(key) if self.atoms.bytes(key) == b"get")
+                && property.key == PropKey::Name(known::get)
         });
         (is_exported && has_getter).then_some(name)
     }

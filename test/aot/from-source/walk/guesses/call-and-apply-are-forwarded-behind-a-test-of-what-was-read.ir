@@ -1,0 +1,40 @@
+# -- source: call-and-apply-are-forwarded-behind-a-test-of-what-was-read.js
+# function byCall(f, t, x) { return f.call(t, x, 1) + 1; }
+# function inTailPosition(f, t, x) { return f.call(t, x); }
+# function byApply(f, t, list) { return f.apply(t, list) + 1; }
+# function ofOtherReceiver(f, g, x) { return f.call.call(g, x) + 1; }
+# sink(byCall, inTailPosition, byApply, ofOtherReceiver);
+# -- end of source
+# Nothing says what the read of `call` finds. Above every function lies one member under the name, whose row does nothing but forward the call to its receiver. So that member is expected:
+# one test of what was read, the call of the receiver itself, and the call as written in a rare block. In tail position each of the two leaves by itself.
+# RUN: walk f1 f2 f3 f4 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: b0([[f]]: anything{{*}}, [[t]]: anything{{*}}, [[x]]: anything
+# CHECK: [[read]]: {{*}} = PropGet [[f]] key="call"
+# CHECK: [[test]]: boolean {{*}} = TypeTest [[read]] testedType=builtin(FunctionPrototypeCall)
+# CHECK: Branch [[test]]
+# CHECK: = Call [[f]], [[t]], [[x]], {{*}}
+# CHECK: frequency=Rare
+# CHECK: = Call [[read]], [[f]], [[t]], [[x]], {{*}}
+# CHECK-LABEL: code f2:Body
+# CHECK: b0([[f]]: anything{{*}}, [[t]]: anything{{*}}, [[x]]: anything
+# CHECK: [[forwarded]]: {{*}} = Call [[f]], [[t]], [[x]] {{*}}tail
+# CHECK-NEXT: ReturnCall [[forwarded]]
+# CHECK: [[written]]: {{*}} = Call {{*}}, [[f]], [[t]], [[x]] {{*}}tail
+# CHECK-NEXT: ReturnCall [[written]]
+# CHECK-LABEL: code f3:Body
+# CHECK: b0([[f]]: anything{{*}}, [[t]]: anything{{*}}, [[given]]: anything
+# CHECK: = TypeTest {{*}} testedType=builtin(FunctionPrototypeApply)
+# CHECK: = TypeTest [[given]] testedType=Array
+# CHECK: = NewArgumentList [[given]]
+# CHECK: ([[list]]: Array{{*}} @Cell
+# CHECK-NEXT: = CallList [[f]], [[t]], [[list]]
+# CHECK-LABEL: code f4:Body
+# CHECK: b0([[f]]: anything{{*}}, [[g]]: anything{{*}}, [[x]]: anything
+# CHECK: [[first]]: {{*}} = PropGet [[f]] key="call"
+# CHECK: [[second]]: {{*}} = PropGet [[first]] key="call"
+# CHECK: = TypeTest [[second]] testedType=builtin(FunctionPrototypeCall)
+# CHECK: = Call [[first]], [[g]], [[x]]
+# RUN(WITHHELD): walk f1 f2 f3 f4 mechanisms=all-Guesses
+# WITHHELD-NOT: TypeTest
+# WITHHELD-NOT: CallList

@@ -13,11 +13,11 @@ pub struct NoUnsafe {
     check_aliases: bool,
 }
 
-const UNSAFE_METHOD: Message = Message::new(
+const UNSAFE_METHOD: &Message = &Message::new(
     "unsafeMethod",
     "{{method}} is unsafe for use in async rendering. Update the component to use {{newMethod}} instead. {{details}}",
 );
-const NO_UNSAFE: Message = Message::new("", "Unsafe lifecycle method `{{method_name}}` is not allowed");
+const NO_UNSAFE: &Message = &Message::new("", "Unsafe lifecycle method `{{method_name}}` is not allowed");
 
 const DETAILS: &str = "See https://reactjs.org/blog/2018/03/27/update-on-async-rendering.html.";
 

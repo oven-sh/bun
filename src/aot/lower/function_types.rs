@@ -2,6 +2,7 @@ use bun_sema::check::aot::{ClassRef, FunctionRef};
 use bun_sema::hir::MemberKind;
 use bun_sema::types::SigId as SignatureId;
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 use std::sync::Arc;
 
 use super::{FileLowering, class};
@@ -10,25 +11,59 @@ use crate::ir::generated::{
 };
 use crate::ir::{Body, DeclaredType, FunctionId, FunctionKey};
 
+pub(in crate::lower) type FunctionTypes = SmallVec<[FunctionId; 2]>;
+
 #[derive(Default)]
 pub(in crate::lower) struct FunctionTypeState {
     declared: Vec<FunctionId>,
     classes: FxHashMap<ClassRef, FunctionId>,
+    asked_for: Option<FunctionTypes>,
 }
 
 impl FileLowering<'_, '_, '_, '_> {
+    pub(in crate::lower) fn begin_list_of_function_types(&mut self) {
+        self.types.function_types.asked_for = Some(FunctionTypes::new());
+    }
+
+    pub(in crate::lower) fn take_list_of_function_types(&mut self) -> Option<FunctionTypes> {
+        self.types.function_types.asked_for.take()
+    }
+
+    fn list_function_type(&mut self, function_type: FunctionId) -> FunctionId {
+        if let Some(asked_for) = &mut self.types.function_types.asked_for {
+            asked_for.push(function_type);
+        }
+        function_type
+    }
+
     pub(in crate::lower) fn find_function_type(
         &mut self,
         signatures: &[SignatureId],
     ) -> Option<FunctionId> {
-        let declaration = match signatures {
-            &[signature] => self.queries.signature_declaration(signature)?,
-            overloads => self.queries.first_overload(overloads)?,
-        };
-        Some(self.declare_signature(declaration))
+        let declaration = self.queries.declaration_of_signatures(signatures)?;
+        let function_type = self.declare_signature(declaration);
+        Some(self.list_function_type(function_type))
     }
 
     pub(in crate::lower) fn find_class_function_type(&mut self, class: ClassRef) -> FunctionId {
+        let function_type = self.declare_class_function_type(class);
+        self.list_function_type(function_type)
+    }
+
+    pub(in crate::lower) fn declare_function_type_again(&mut self, function_type: FunctionId) {
+        match self.function_key(function_type) {
+            FunctionKey::Signature(declaration) => {
+                self.declare_signature(declaration);
+            }
+            key => {
+                debug_assert!(matches!(key, FunctionKey::ClassSignature(_)));
+                self.reference_function(key);
+                self.add_declared(function_type);
+            }
+        }
+    }
+
+    fn declare_class_function_type(&mut self, class: ClassRef) -> FunctionId {
         if let Some(&function_type) = self.types.function_types.classes.get(&class) {
             return function_type;
         }
@@ -56,7 +91,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The link step puts a function with a body below its own signature. What runs behind an overload is declared elsewhere.
     fn declare_signature(&mut self, declaration: FunctionRef) -> FunctionId {
         let function_type = self.reference_function(FunctionKey::Signature(declaration));
         if self.add_declared(function_type)
@@ -76,7 +110,7 @@ impl FileLowering<'_, '_, '_, '_> {
             name: None,
             module: self.module_id(),
             position: 0,
-            text: SourceRange::default(),
+            source_range: SourceRange::default(),
             kind: FunctionKind::Plain,
             role: FunctionRole::Signature,
             flags: FunctionFlags::default(),
@@ -90,6 +124,7 @@ impl FileLowering<'_, '_, '_, '_> {
             body: Body::default(),
             function_types: Vec::new(),
             builtin_members: Vec::new(),
+            requested_originals: Vec::new(),
         });
         for function_type in declared {
             self.fragment

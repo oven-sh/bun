@@ -1,0 +1,17 @@
+# The definition goes through a value that may be One or Two. Both leave with it, and whoever looks at one of them finds that it has left. Nothing is said of a class: what is tested against Other stays in sight.
+# -- source: main.js
+# class Other { constructor() { this.x = 1; } m() { return this.x; } }
+# function One() {}
+# function Two() {}
+# for (const each of [One, Two]) Object.defineProperty(each, Symbol.hasInstance, { value: (v) => v === 1 });
+# const o = new Other();
+# print(o instanceof Other, 1 instanceof One, 1 instanceof Two, o.m());
+# -- end of source
+# RUN: link fields mechanisms=all
+# CHECK: field {{*}} "x" proven=i32
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: true true true 1
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: true true true 1
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: true true true 1

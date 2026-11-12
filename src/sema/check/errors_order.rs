@@ -213,7 +213,7 @@ impl Checker<'_, '_> {
         usage: Node,
     ) -> bool {
         let hir = self.hir(file);
-        let emits_standard_class_fields = self.module_options(file).emit_standard_class_fields;
+        let emits_standard_class_fields = self.module_options(file).reports_standard_class_fields;
         let has_legacy_decorators = self.module_options(file).experimental_decorators;
         let container = hir.get_enclosing_block_scope_container(declaration);
         if hir.is_in_jsdoc(hir.start(usage))
@@ -527,7 +527,7 @@ impl Checker<'_, '_> {
         let code = if is_in_initializer
             && !is_optional
             && !(kind == Kind::MethodDeclaration && flags.contains(Flags::STATIC))
-            && (self.module_options(file).use_define_for_class_fields
+            && (self.module_options(file).reports_define_for_class_fields
                 || !self.is_property_declared_in_ancestor_class(file, declaration, name))
         {
             2729
@@ -595,6 +595,15 @@ fn is_immediately_used_in_initializer_of_block_scoped_variable(
 /// `isSameScopeDescendentOf`
 fn is_same_scope_descendent_of(hir: &File, initial: Node, parent: Node, stop_at: Node) -> bool {
     if parent.is_none() {
+        return false;
+    }
+    // FOR SPEED: a descendant starts before its ancestor ends. The uses in the body of `for (let i = 0; ..)` don't.
+    let end = match hir.data(parent) {
+        NodeData::VarDecl(d) => hir[d].loc.end,
+        NodeData::Expr(e) => crate::hir::end_of_expr(hir, e),
+        _ => u32::MAX,
+    };
+    if hir.start(initial) >= end {
         return false;
     }
     let found = hir.find_ancestor_or_quit(initial, |n| {

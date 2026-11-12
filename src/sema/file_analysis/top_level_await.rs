@@ -7,10 +7,26 @@ pub(crate) fn has_live_top_level_await(hir: &File<'_>, decisions: &Decisions<'_>
     hir.has_top_level_await() && has_await_below(hir, decisions, roots, Sought::Live)
 }
 
-/// Whether a run can reach it or not. `bun run` goes by this for what kind of module a file is.
 pub(crate) fn has_written_top_level_await(hir: &File<'_>) -> bool {
     let roots = hir.ids(hir.body).map(TreeNode::Stmt).collect();
     hir.has_top_level_await() && has_await_below(hir, &Decisions::default(), roots, Sought::Written)
+}
+
+/// Returns the position of the first statement of the file that holds a top-level `await`.
+pub(crate) fn find_first_top_level_await(hir: &File<'_>, decisions: &Decisions<'_>) -> Option<u32> {
+    if !hir.has_top_level_await() {
+        return None;
+    }
+    let mut statements = hir.ids(hir.body);
+    let first = statements.find(|&statement: &StmtId| {
+        has_await_below(
+            hir,
+            decisions,
+            vec![TreeNode::Stmt(statement)],
+            Sought::Live,
+        )
+    });
+    first.map(|statement| hir[statement].start)
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -19,7 +35,6 @@ enum Sought {
     Written,
 }
 
-/// An `await` of a function that is written inside `function` is not one of `function`.
 pub fn has_live_await(hir: &File<'_>, decisions: &Decisions<'_>, function: FnId) -> bool {
     let mut roots = Vec::new();
     match hir[function].body {
@@ -30,7 +45,6 @@ pub fn has_live_await(hir: &File<'_>, decisions: &Decisions<'_>, function: FnId)
     has_await_below(hir, decisions, roots, Sought::Live)
 }
 
-// Nobody keeps what stands behind such a statement in its list.
 fn push_statements_until_exit(hir: &File<'_>, list: IdList<StmtId>, stack: &mut Vec<TreeNode>) {
     for statement in hir.ids(list) {
         stack.push(TreeNode::Stmt(statement));

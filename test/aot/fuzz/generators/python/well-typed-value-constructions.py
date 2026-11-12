@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""ways-to-make-a-value-that-fits-its-type.py <n>: a value that satisfies its type is never refused for how it is made.
-The n-th of 1,640 programs: (kind of type) x (how the value is made) x (door and container). Untyped code of the same file makes something that has `id: number` and `name: string` in one of forty ways: own, inherited, by accessors,
-frozen, without a prototype, a function, an array, a Map, an Error with the two names, in dictionary mode .. `names` lists the programs; a name does in place of the number.
-As plain Bun, line by line."""
+"""well-typed-value-constructions.py <n>: The n-th of 1,640 programs: (kind of type) x (how the value is created) x
+(entry path and container). A value that satisfies its type must be accepted however it was created.
+"""
 import sys, json
 TYPES = {
  'interface': ('interface T { id: number; name: string }', '{ id: 0, name: "made" }'),

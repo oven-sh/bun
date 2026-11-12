@@ -5,11 +5,11 @@ mod main_module;
 mod tests;
 mod this_of_file;
 
-pub(crate) use decide::{decide_module_format, find_marked_format};
+pub(crate) use decide::{decide_module_format, find_format_by_syntax, find_marked_format};
 pub(crate) use esm_syntax::{file_esm_syntax, statement_esm_syntax};
-pub use main_module::main_module_operand;
+pub use main_module::{main_module_operand, settled_main_module_operand};
 pub(crate) use this_of_file::collect_this_of_file;
-pub use this_of_file::{ThisPositions, evaluates_own_this};
+pub use this_of_file::{ThisPositions, evaluates_own_this, list_this_of_file};
 
 use crate::fold::FoldError;
 
@@ -43,7 +43,6 @@ pub(crate) enum EsmSyntax {
     ExportOrTopLevelAwait,
 }
 
-/// The format of a text for each type that may be declared for it.
 #[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
 pub struct FormatByDeclaredType {
     unknown: ModuleFormat,

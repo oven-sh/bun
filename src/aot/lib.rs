@@ -1,3 +1,4 @@
+#![feature(optimize_attribute)]
 #![cfg_attr(test, feature(linkage))]
 
 #[cfg(test)]
@@ -22,16 +23,18 @@ pub mod module_list;
 pub mod modules;
 #[cfg(test)]
 pub mod options;
-mod package_diagnostics;
 pub mod prelude;
 pub mod report;
 pub mod statistics;
+mod test_run_loads;
+mod test_run_report;
+mod test_runs;
 
 #[cfg(not(test))]
 pub use bun_aot_builtins::builtins;
 #[cfg(not(test))]
 pub use bun_aot_interface::{diagnostic_codes, module_keys, module_list, options};
 
-pub use compile::{BuildFailed, Compilation, compile, emit_program, link_program};
+pub use compile::{BuildFailed, Compilation, compile, link_program};
 pub use load::source_provider::{SourceProvider, WithoutServices};
 pub use options::Options;

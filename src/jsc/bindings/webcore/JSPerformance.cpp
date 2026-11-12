@@ -122,6 +122,11 @@ JSC_DEFINE_HOST_FUNCTION(functionPerformanceNow, (JSGlobalObject * globalObject,
     return functionPerformanceNowBody(globalObject->vm());
 }
 
+extern "C" SYSV_ABI double AOT__performanceNow(JSC::JSGlobalObject* globalObject)
+{
+    return static_cast<double>(Bun__readOriginTimer(bunVM(globalObject->vm()))) / 1000000.0;
+}
+
 JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSPerformance* castedThis))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -576,11 +581,12 @@ bool JSPerformanceOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> ha
     return visitor.containsOpaqueRoot(&jsPerformance->wrapped());
 }
 
-void JSPerformanceOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSPerformanceOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsPerformance = static_cast<JSPerformance*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, &jsPerformance->wrapped(), jsPerformance);
+    return FinalizeResult::KeepImpl;
 }
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Performance>&& impl)

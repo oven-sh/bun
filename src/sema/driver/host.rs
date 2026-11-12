@@ -1268,6 +1268,13 @@ fn unmarshal_fields(object: &ObjectJSON, has_duplicates: bool) -> Option<Json> {
     Some(Json::Object(fields))
 }
 
+/// The JSON parser reports a duplicate key as a warning, and the callers read it. So this log keeps warnings at every `logLevel`.
+fn log_for_duplicate_keys() -> bun_ast::Log {
+    let mut log = bun_ast::Log::init();
+    log.level = bun_ast::Level::Warn;
+    log
+}
+
 /// `packagejson.Parse`. Bun's JSON parser, which builds the values, also accepts input that isn't JSON, so the text is
 /// validated first.
 fn parse_package_json(arena: &Arena, text: &[u8]) -> Option<Json> {
@@ -1278,7 +1285,7 @@ fn parse_package_json(arena: &Arena, text: &[u8]) -> Option<Json> {
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
     let _ast_scope = ast_memory_allocator.enter();
     let source = bun_ast::Source::init_path_string(b"package.json".as_slice(), text);
-    let mut log = bun_ast::Log::init();
+    let mut log = log_for_duplicate_keys();
     let parsed = ParsedJson::parse_json(&source, &mut log).ok()?;
     let bun_ast::expr::Data::EObjectJSON(root) = parsed.root.data else {
         return None;
@@ -1296,7 +1303,7 @@ pub(crate) fn parse_json_object(arena: &Arena, text: &[u8]) -> Option<Json> {
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
     let _ast_scope = ast_memory_allocator.enter();
     let source = bun_ast::Source::init_path_string(b"object.json".as_slice(), text);
-    let mut log = bun_ast::Log::init();
+    let mut log = log_for_duplicate_keys();
     let parsed = ParsedJson::parse_json(&source, &mut log).ok()?;
     let bun_ast::expr::Data::EObjectJSON(root) = parsed.root.data else {
         return None;

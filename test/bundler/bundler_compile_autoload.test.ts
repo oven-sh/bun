@@ -152,6 +152,48 @@ console.log("PRELOAD");
     },
   });
 
+  // Test that logLevel in bunfig.toml applies: at "debug" bun prints how long it took to read .env
+  itBundled("compile/AutoloadBunfigLogLevel", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(process.env.TEST_VAR || "not found");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `logLevel = "debug"`,
+      "/.env": `TEST_VAR=from_dotenv`,
+    },
+    run: {
+      stdout: "from_dotenv",
+      setCwd: true,
+      validate({ stderr }) {
+        expect(stderr).toContain(`] ".env"\n`);
+      },
+    },
+  });
+
+  // Test that logLevel in bunfig.toml does not apply with autoloadBunfig: false
+  itBundled("compile/AutoloadBunfigDisabledLogLevel", {
+    compile: {
+      autoloadBunfig: false,
+    },
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(process.env.TEST_VAR || "not found");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `logLevel = "debug"`,
+      "/.env": `TEST_VAR=from_dotenv`,
+    },
+    run: {
+      stdout: "from_dotenv",
+      stderr: "",
+      setCwd: true,
+    },
+  });
+
   // Test CLI backend with autoloadDotenv: false
   itBundled("compile/AutoloadDotenvDisabledCLI", {
     compile: {
@@ -566,6 +608,30 @@ console.log("PRELOAD");
     run: {
       stdout: "PRELOAD\nENTRY",
       setCwd: true,
+    },
+  });
+
+  // Test that logLevel in bunfig.toml applies with execArgv: that executable reads bunfig.toml while it reads its
+  // arguments, and not after that as one without execArgv does
+  itBundled("compile/AutoloadBunfigLogLevelWithExecArgv", {
+    compile: {
+      execArgv: ["--smol"],
+    },
+    files: {
+      "/entry.ts": /* js */ `
+        console.log(process.env.TEST_VAR || "not found");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `logLevel = "debug"`,
+      "/.env": `TEST_VAR=from_dotenv`,
+    },
+    run: {
+      stdout: "from_dotenv",
+      setCwd: true,
+      validate({ stderr }) {
+        expect(stderr).toContain(`] ".env"\n`);
+      },
     },
   });
 

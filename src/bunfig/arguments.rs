@@ -97,6 +97,14 @@ impl Drop for RestoreLogLevel {
     }
 }
 
+/// `logLevel` of a bunfig.toml: the level of the CLI log and of each log that `Log::init()` makes from here on.
+#[cold]
+fn apply_log_level(log: *mut bun_ast::Log, level: bun_ast::Level) {
+    bun_ast::DEFAULT_LOG_LEVEL.store(level);
+    // SAFETY: see `load_bunfig`; runs on the same thread.
+    unsafe { (*log).level = level };
+}
+
 fn load_bunfig(
     cmd: CommandTag,
     file: ConfigFile,
@@ -132,11 +140,17 @@ fn load_bunfig(
     let original_level = unsafe { (*log_ptr).level };
     // SAFETY: see above.
     unsafe { (*log_ptr).level = bun_ast::Level::Warn };
-    let _restore = RestoreLogLevel {
-        log: log_ptr,
-        level: original_level,
+    let level = {
+        let _restore = RestoreLogLevel {
+            log: log_ptr,
+            level: original_level,
+        };
+        Bunfig::parse(cmd, &source, file == ConfigFile::Project, ctx, tool, counts)?
     };
-    Bunfig::parse(cmd, &source, file == ConfigFile::Project, ctx, tool, counts)
+    if let Some(level) = level {
+        apply_log_level(log_ptr, level);
+    }
+    Ok(())
 }
 
 /// The user's own file, once.

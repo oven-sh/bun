@@ -159,6 +159,8 @@ struct Parser<'a, 'tool> {
     /// Reads `[lint]` and `[fmt]`.
     tool: Option<&'a mut crate::ToolReader<'tool>>,
     counts: Counts,
+    /// `logLevel` of the file, for a command that takes its level from it.
+    log_level: Option<bun_ast::Level>,
 }
 
 /// What of a bunfig.toml counts.
@@ -266,13 +268,13 @@ impl<'a> Parser<'a, '_> {
         Ok(())
     }
 
-    fn load_log_level(&mut self, expr: &Expr) -> crate::Result<()> {
+    fn load_log_level(&mut self, cmd: CommandTag, expr: &Expr) -> crate::Result<()> {
         self.expect_string(expr)?;
         let level = match expr.as_string(self.bump).unwrap_or(b"") {
-            b"debug" => api::MessageLevel::Debug,
-            b"error" => api::MessageLevel::Err,
-            b"warn" => api::MessageLevel::Warn,
-            b"info" => api::MessageLevel::Info,
+            b"debug" => bun_ast::Level::Debug,
+            b"warn" => bun_ast::Level::Warn,
+            // "info" acts as "error": that is what the key did before, kept as it was.
+            b"error" | b"info" => bun_ast::Level::Err,
             _ => {
                 return self.add_error(
                     expr.loc,
@@ -280,7 +282,9 @@ impl<'a> Parser<'a, '_> {
                 );
             }
         };
-        self.ctx.args.log_level = Some(level);
+        if !cmd.has_own_log_level() {
+            self.log_level = Some(level);
+        }
         Ok(())
     }
 
@@ -418,7 +422,7 @@ impl<'a> Parser<'a, '_> {
         }
 
         if let Some(expr) = json.get(b"logLevel") {
-            self.load_log_level(&expr)?;
+            self.load_log_level(cmd, &expr)?;
         }
 
         if let Some(expr) = json.get(b"define") {
@@ -928,7 +932,7 @@ impl<'a> Parser<'a, '_> {
                 }
 
                 if let Some(expr) = install_obj.get(b"logLevel") {
-                    self.load_log_level(&expr)?;
+                    self.load_log_level(cmd, &expr)?;
                 }
 
                 // Only the package manager reads these two.
@@ -1049,7 +1053,7 @@ impl<'a> Parser<'a, '_> {
 
             if matches!(cmd, CommandTag::BuildCommand | CommandTag::CompileCommand) {
                 if let Some(expr2) = _bun.get(b"logLevel") {
-                    self.load_log_level(&expr2)?;
+                    self.load_log_level(cmd, &expr2)?;
                 }
 
                 if let Some(entry_points) = _bun.get(b"entryPoints") {
@@ -1276,6 +1280,7 @@ impl<'a> Parser<'a, '_> {
 }
 
 impl Bunfig {
+    /// Returns the `logLevel` of the file if `cmd` takes its level from it. The caller applies it.
     pub(crate) fn parse(
         cmd: CommandTag,
         source: &bun_ast::Source,
@@ -1283,7 +1288,7 @@ impl Bunfig {
         ctx: &mut ContextData,
         tool: Option<&mut crate::ToolReader<'_>>,
         counts: Counts,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<Option<bun_ast::Level>> {
         // SAFETY: ctx.log is populated by `create_context_data()` before any
         // bunfig load; single-threaded CLI startup invariant. The raw pointer
         // is copied out so the resulting `&mut Log` does not borrow `ctx`
@@ -1357,8 +1362,10 @@ impl Bunfig {
             is_project_file,
             tool,
             counts,
+            log_level: None,
         };
-        parser.parse(cmd)
+        parser.parse(cmd)?;
+        Ok(parser.log_level)
     }
 
     /// Checks whether the file sets `[install.security] scanner` without applying any settings.

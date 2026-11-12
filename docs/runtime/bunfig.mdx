@@ -68,8 +68,14 @@ smol = true
 Set the log level: `"debug"`, `"warn"`, or `"error"`.
 
 ```toml title="bunfig.toml" icon="settings"
-logLevel = "debug" # "debug" | "warn" | "error"
+logLevel = "warn" # "debug" | "warn" | "error"
 ```
+
+The package manager, `bun lint` and `bun fmt` do not follow the top-level `logLevel`:
+
+- `bun fmt`: set `logLevel` in `[fmt]` (see [Every other flag](#every-other-flag)), or pass `--log-level`.
+- `bun lint`: set `quiet` or `silent` in `[lint]` (see [All keys](#all-keys)), or pass `--quiet` or `--silent`.
+- The package manager (`bun install`, `bun add` and so on): pass `--silent` or `--verbose`. It has no key for this.
 
 ### `define`
 
@@ -1216,12 +1222,7 @@ hoist = false
 
 ### `install.logLevel`
 
-Set the log level for `bun install`. This can be one of `"debug"`, `"warn"`, or `"error"`.
-
-```toml title="bunfig.toml" icon="settings"
-[install]
-logLevel = "warn"
-```
+`bun install` does not read this key, so remove it from `[install]`. Pass `--silent` to print nothing on an install that succeeds, or `--verbose` to print more. There is no setting that prints only errors. To set the level of the runtime, use the top-level [`logLevel`](#loglevel).
 
 ### `install.security.scanner`
 

@@ -2061,20 +2061,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         }
     }
 
-    if let Some(log_level) = opts.log_level {
-        bun_ast::DEFAULT_LOG_LEVEL.store(match log_level {
-            api::MessageLevel::Debug => bun_ast::Level::Debug,
-            api::MessageLevel::Err => bun_ast::Level::Err,
-            api::MessageLevel::Warn => bun_ast::Level::Warn,
-            _ => bun_ast::Level::Err,
-        });
-        // SAFETY: `ctx.log` is the CLI log, owned by the caller and not yet
-        // shared with another thread.
-        unsafe {
-            (*ctx.log).level = bun_ast::DEFAULT_LOG_LEVEL.load();
-        }
-    }
-
     if args.flag(b"--no-macros") {
         ctx.debug.macros = MacroOptions::Disable;
     }

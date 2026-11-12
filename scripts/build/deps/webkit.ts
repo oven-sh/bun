@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "bb2e5abe7fdb63b371009d373f4f5f78c07afa3f";
+export const WEBKIT_VERSION = "fd9c7641afcd1297157c34fcc9ef430897bfec6e";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -1921,6 +1921,9 @@ function jscGroup(
           // Unrolling loops whose trip count is not known adds 2% to this code and no speed. Under ThinLTO loops are
           // unrolled in the link, so this counts where the objects are machine code.
           if (cfg.release && attribute === undefined) extra.push("-mllvm=-unroll-runtime=false");
+          // CMake builds what ships, and does not define it: `--aot-testing=MisstateFact` is known to local builds alone.
+          if ((bundled ?? [path]).some(source => basename(source) === "AOTFactFaults.cpp"))
+            extra.push("-DENABLE_AOT_FAULT_INJECTION=1");
           // A switch of aot/ that has no default names every enumerator, and nothing points into a temporary beyond its statement
           // (aot/AOT.cmake has the same flags).
           return {

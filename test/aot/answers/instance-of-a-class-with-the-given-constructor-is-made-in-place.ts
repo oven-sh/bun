@@ -1,9 +1,8 @@
 // answers: without-library
-// # `class Given extends Plain { stamp = 7 }` has `constructor(...args) { super(...args); }`: copied, its list is known, `super(...args)` is `super()`, and the constructor above is copied in its place: one allocation of the class that is constructed, and two stores.
+// # `class Given extends Plain { stamp = 7 }` has `constructor(...args) { super(...args); }`: copied, its list is known, `super(...args)` is `super()`, and the constructor above is copied in its place: one allocation of the class that is constructed, with both fields.
 // # RUN(FORM): walk f1 mechanisms=all
-// # FORM: NewObject layout=L1
-// # FORM: PutSlotOrAdd {{*}}key="id" receivers=[L1]
-// # FORM: PutSlotOrAdd {{*}}key="stamp" receivers=[L1]
+// # FORM: NewObject {{*}}layout=L1 fields=[
+// # FORM-NOT: PutSlotOrAdd
 // # RUN(NEVER): walk f1 mechanisms=all
 // # NEVER: isInLoop=true isLoopHead=true
 // # NEVER-NOT: SuperConstruct

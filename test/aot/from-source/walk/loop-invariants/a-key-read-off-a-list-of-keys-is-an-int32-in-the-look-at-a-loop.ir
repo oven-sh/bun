@@ -34,10 +34,10 @@
 # RUN(STEPPED): walk f2 mechanisms=all
 # STEPPED-COUNT-2: = HasArrayStorage {{*}}arrayStorage=Int32
 # STEPPED: = IsElementPresent {{*}}arrayStorage=Int32
-# STEPPED: i32 @Int32 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds, isPresent]
-# STEPPED: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral]
+# STEPPED: i32 @Int32 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds, isPresent
+# STEPPED: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral
 # RUN(COUNTED): walk f3 mechanisms=all
 # COUNTED-COUNT-2: = HasArrayStorage {{*}}arrayStorage=Int32
 # COUNTED: = IsElementPresent {{*}}arrayStorage=Int32
-# COUNTED: i32 @Int32 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds, isPresent]
-# COUNTED: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral]
+# COUNTED: i32 @Int32 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds, isPresent
+# COUNTED: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral

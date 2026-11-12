@@ -4285,7 +4285,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         RETURN_IF_EXCEPTION(scope, {});
 #if ENABLE(AOT)
         if (JSC::AOT::isResolvingImportCallWithoutAttributes(vm)) {
-            Bun::throwIfHeldUnderTypesAlone(globalObject, resolved, keyString, referrerString, false);
+            Bun::throwIfOnlyTyped(globalObject, resolved, keyString, referrerString, false);
             RETURN_IF_EXCEPTION(scope, {});
         }
 #endif

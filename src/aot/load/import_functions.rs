@@ -87,7 +87,7 @@ fn read_function_body(
         .bytes(body)
         .trim_ascii_start()
         .strip_prefix(b"return")?;
-    if !rest.first()?.is_ascii_whitespace() || rest.trim_ascii_start().len() + 1 != rest.len() {
+    if !matches!(rest.first()?, b' ' | b'\t') || rest.trim_ascii_start().len() + 1 != rest.len() {
         return None;
     }
     let argument = read_import(rest)?;
@@ -152,7 +152,7 @@ fn find_evaluated_import(
     }
 }
 
-fn declares(hir: &File<'_>, name: Atom) -> bool {
+pub(super) fn declares(hir: &File<'_>, name: Atom) -> bool {
     hir.pats
         .iter()
         .any(|pat| matches!(pat.kind, PatKind::Ident(it) if it == name))

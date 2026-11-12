@@ -9,8 +9,8 @@
 # RUN: walk f1 mechanisms=all
 # REQUIRES: as-written
 # CHECK-LABEL: code f1:Body
-# CHECK-COUNT-2: GetArrayElement {{*}}level=Proven
-# CHECK-NOT: GetArrayElement {{*}}level=Proven
+# CHECK-COUNT-2: GetArrayElement {{*}}arrayStorage=Double level=Proven
+# CHECK-NOT: GetArrayElement {{*}}arrayStorage=Double level=Proven
 # RUN(SHELL): run-in-shell globalThis.sink = weigh => { const halves = Array.from({ length: 40 }, (_, i) => i + 0.5), wholes = Array.from({ length: 40 }, (_, i) => i), holed = halves.slice(), holedWholes = wholes.slice(); delete holed[21]; delete holed[22]; delete holedWholes[3]; for (const [x, y] of [[halves, halves], [wholes, halves], [holed, halves], [halves, holed], [holedWholes, wholes], [wholes, holedWholes], [[1.5, NaN], [2, 3]], [[, 1], [1, 1]], [[], halves]]) print(weigh(x, y)); };
 # SHELL: 21330
 # SHELL: 20930

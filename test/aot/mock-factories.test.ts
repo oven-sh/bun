@@ -11,7 +11,7 @@ import { test } from "./supported";
 // first.mjs itself is asked for or a file that imports it by a statement, which may wait at an await . how the first factory ends, or that the second factory
 // opens the gate itself behind its call, so that the first has settled when a call that is held comes to its turn.
 // A case prints what the two imports give. A package gets the original with or without a wait: there the case also says whether the second import had settled before the gate was opened.
-// Nothing hangs on a clock but the bound on a wait that never ends: gates are opened behind fresh files that a file of nobody's has loaded, one behind the other.
+// Nothing hangs on a clock: gates are opened behind fresh files that a file of nobody's has loaded, one behind the other, and so is a wait given up that may never end.
 // All cases are laid as one project: one plain run and one compiled run. What `bun test` prints is the specification.
 const product = <Row extends readonly (readonly string[])[]>(...rows: Row): string[][] =>
   rows.reduce<string[][]>((found, row) => found.flatMap(head => row.map(next => [...head, next])), [[]]);
@@ -42,7 +42,7 @@ for (const [mocked, order, first, second, asks, turn, begunBy, before, via, end]
   // Under `bun test` an import() written in a package, of a mocked module whose factory nobody has called yet, gets the module itself at once. Compiled code calls the factory and waits for it.
   if (asks === "package" && order !== "first-ahead" && (order === "second-alone" || turn === "later")) continue;
   if (end === "fails" && before === "imports-over") continue;
-  // A load that waits for the mock below a statement is known by nothing but the time it takes: fewer of those.
+  // A load that waits for the mock below a statement is known by nothing but what others load meanwhile: fewer of those.
   if (
     via !== "itself" &&
     (end === "fails" || turn === "one-turn" || begunBy === "begins" || /imports-(asks|dep)/.test(before))
@@ -76,7 +76,7 @@ for (const [mocked, order, first, second, asks, turn, begunBy, before, via, end]
   files[`${at}/asks.cjs`] = `exports.ask = () => import("./${target}");\n`;
   files[`${at}/dep.mjs`] = `${state}.ask = () => import("./${target}");\nexport const here = 1;\n`;
   files[`${at}/begins.mjs`] = `export const begin = () => import("./second.mjs");\n`;
-  for (let fresh = 0; fresh < 8; fresh++) files[`${at}/fresh${fresh}.mjs`] = `export const fresh = ${fresh};\n`;
+  for (let fresh = 0; fresh < 12; fresh++) files[`${at}/fresh${fresh}.mjs`] = `export const fresh = ${fresh};\n`;
   files[`${at}/settles.mjs`] =
     `let next = 0;\nexport const settle = async () => { for (let count = 0; count < 4; count++) await import(\`./fresh\${next++}.mjs\`); };\n`;
   const firstFactory = (dir: string) => {
@@ -110,8 +110,7 @@ ${mocked === "file_that_had_run" ? `import "${dir}/first.mjs";\nimport "${dir}/s
 import { begin } from "${dir}/begins.mjs";
 import { settle } from "${dir}/settles.mjs";
 const turns = async () => { for (let turn = 0; turn < 6; turn++) await new Promise(done => setImmediate(done)); };
-const bound = (ms, value) => new Promise(done => setTimeout(done, ms, value));
-const within = promise => Promise.race([promise.then(it => it.name, error => "threw " + error.message), bound(1500, "never settles")]);
+const told = promise => promise.then(it => it.name, error => "threw " + error.message);
 test("${name}", async () => {
   const state = (${state} = {});
   state.gate = new Promise(open => (state.open = open));
@@ -123,15 +122,15 @@ test("${name}", async () => {
   const importFirst = () => import("${nameOfFirst(dir)}");
   const importSecond = () => ${{ test: `import("${dir}/second.mjs")`, begins: `begin()`, root: `import("${dir}/root.mjs")` }[begunBy]};
   const ahead = ${order === "first-ahead" ? "importFirst" : "importSecond"}();
-${turn === "later" ? `  await settle();\n  await turns();\n` : ""}${asks === "dep" ? `  while (!state.ask) await turns();\n` : ""}${before === "imports-over" ? `  await Promise.race([overRuns, bound(1500)]);\n` : ""}  const behind = ${{ "first-ahead": "importSecond()", "second-ahead": "importFirst()", "second-alone": "undefined" }[order]};
+${turn === "later" ? `  await settle();\n  await turns();\n` : ""}${asks === "dep" ? `  while (!state.ask) await turns();\n` : ""}${before === "imports-over" ? `  await overRuns;\n` : ""}  const behind = ${{ "first-ahead": "importSecond()", "second-ahead": "importFirst()", "second-alone": "undefined" }[order]};
   const [first, second] = ${order === "first-ahead" ? "[ahead, behind]" : "[behind, ahead]"};
-  await Promise.race([asked, bound(1500)]);
+  await asked;
   await settle();
-${via === "itself" ? "" : `  await Promise.race([overRuns, bound(300)]);\n`}  await turns();
+${via === "itself" ? "" : `  await Promise.race([overRuns, settle().then(turns)]);\n`}  await turns();
   state.passTick();
   await turns();
-${asks === "package" ? `  const settled = await Promise.race([second.then(() => "ahead of the gate", () => "ahead of the gate"), bound(300, "behind the gate")]);\n` : ""}  state.open();
-  console.log("| ${name}:", await within(first ?? importFirst()), "|", await within(second)${asks === "package" ? ", settled" : ""});
+${asks === "package" ? `  const settled = await Promise.race([second.then(() => "ahead of the gate", () => "ahead of the gate"), settle().then(turns).then(() => "behind the gate")]);\n` : ""}  state.open();
+  console.log("| ${name}:", await told(first ?? importFirst()), "|", await told(second)${asks === "package" ? ", settled" : ""});
 });
 `;
 }
@@ -151,18 +150,8 @@ afterAll(() => dir[Symbol.dispose]());
 test("what each case prints", async () => {
   const [plain, compiled] = [await said(String(dir), "./t"), await said(String(dir), "--aot", "./t")];
   expect(plain.size).toBe(numberOfCases);
-  const mismatches = () => [...plain].filter(([name, expected]) => compiled.get(name) !== expected);
-  // Cases that differ are run again under plain `bun test`, on their own, as harness/test-runs-in-folders.ts does.
-  for (let attempt = 0; attempt < 2 && mismatches().length > 0; attempt++) {
-    const rerun = await said(String(dir), ...mismatches().map(([name]) => `./t/${name}.test.js`));
-    for (const [name, first] of mismatches()) {
-      if (!compiled.has(name) || rerun.get(name) !== compiled.get(name)) continue;
-      console.error(
-        `THE REFERENCE WAVERED: ${name}: plain Bun said ${first} at first, and asked again what the compiled run said`,
-      );
-      plain.set(name, compiled.get(name)!);
-    }
-  }
-  const report = mismatches().map(([name, expected]) => `${name}: ${expected} > ${compiled.get(name) ?? "nothing"}`);
+  const report = [...plain]
+    .filter(([name, expected]) => compiled.get(name) !== expected)
+    .map(([name, expected]) => `${name}: ${expected} > ${compiled.get(name) ?? "nothing"}`);
   expect(report).toEqual([]);
 }, 600_000);

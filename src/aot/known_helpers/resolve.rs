@@ -250,6 +250,40 @@ pub fn resolve_reference(
     })
 }
 
+pub struct PublicFieldCallee {
+    pub file: FileId,
+    pub shape: Shape,
+    pub defines: HeldFunction,
+}
+
+/// `__publicField` where nothing else can be called, neither by the call nor by the helper.
+pub fn resolve_public_field(
+    input: &ResolveInput<'_, '_>,
+    file: FileId,
+    callee: ExprId,
+) -> Option<PublicFieldCallee> {
+    let callee = resolve_callee(input, file, callee)?;
+    let &[held] = &callee.functions[..] else {
+        return None;
+    };
+    let known = input.helpers.function(callee.file, held.definition)?;
+    let is_certain = !callee.needs_guard() && callee.holds_from_the_start;
+    if known.shape.helper() != Helper::PublicField || !is_certain || !known.relies_on_facts {
+        return None;
+    }
+    let [reference] = known.references[..] else {
+        return None;
+    };
+    let defines = resolve_reference(input, callee.file, reference, &|shape| {
+        shape == Shape::DefineNormalPropertyDefinesWhatIsThereAndStoresWhatIsNot
+    })?;
+    (!defines.needs_guard).then_some(PublicFieldCallee {
+        file: callee.file,
+        shape: known.shape,
+        defines: defines.function,
+    })
+}
+
 pub fn resolve_loaded_reference(
     input: &ResolveInput<'_, '_>,
     file: FileId,

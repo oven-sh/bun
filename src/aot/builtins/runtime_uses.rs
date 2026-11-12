@@ -157,6 +157,7 @@ const DECORATOR_HELPERS: &[BuiltinId] = &[
     BuiltinId::CompilerHelpersDecorateParameter,
     BuiltinId::CompilerHelpersDecorateProperty,
     BuiltinId::CompilerHelpersDefineMetadata,
+    BuiltinId::CompilerHelpersKeepInitializerLists,
     BuiltinId::CompilerHelpersRunInitializers,
     BuiltinId::CompilerHelpersRunValueInitializers,
     BuiltinId::CompilerHelpersSetDecoratorMetadata,

@@ -49,7 +49,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.destructured_position = outer;
     }
 
-    fn report_destructuring_behind(&mut self, expression: ExprId) {
+    fn report_destructuring_after(&mut self, expression: ExprId) {
         let position = self.file.destructured_position(expression);
         self.destructured_position = position.or(self.destructured_position);
     }
@@ -182,7 +182,7 @@ pub(super) fn apply_default_with(
         }
         None => lowering.lower_expression(default),
     };
-    lowering.report_destructuring_behind(default);
+    lowering.report_destructuring_after(default);
     let default_value = convert(lowering, default_value);
     lowering.builder.write_variable(result, default_value);
     lowering.jump(join);
@@ -210,6 +210,7 @@ mod tests {
             obfuscates: false,
             counts_executions: false,
             runs_tests: false,
+            divides_small_files: false,
         };
         let mut lowered = lower_program(&[("main.ts", source)], options);
         assert_eq!(lowered.len(), 1);

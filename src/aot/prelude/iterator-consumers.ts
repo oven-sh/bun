@@ -71,6 +71,7 @@ declare function $arrayFromFastWithoutMapFn(constructor: unknown, items: unknown
 // `Array.from(map)`, `Array.from(map.entries())`: what native code does not copy at once is walked by a loop, which asks no `next` for an object a step.
 $visibility = "Public";
 export function fromIterable(this: unknown, items: Iterable<unknown>): unknown[] {
+  if ($isArrayIterator(items)) return [...items];
   if (typeof items !== "string") {
     const copied = $arrayFromFastWithoutMapFn(this, items);
     if (copied) return copied;
@@ -167,6 +168,9 @@ export function appendGenerator(target: unknown[], items: Generator<unknown>): v
 declare function $isArrayIterator(value: unknown): boolean;
 declare function $isMapIterator(value: unknown): boolean;
 declare function $isSetIterator(value: unknown): boolean;
+declare function $isSet(value: unknown): boolean;
+declare function $isMap(value: unknown): boolean;
+declare function $getSetIteratorInternalField(iterator: unknown, field: number): unknown;
 declare function $stepArrayIterator(iterator: unknown): unknown;
 declare function $stepMapIterator(iterator: unknown): unknown;
 declare function $stepSetIterator(iterator: unknown): unknown;
@@ -196,6 +200,10 @@ declare const $resumeModeNext: number;
 // And no program ever holds that function: so whatever has it under `next` is what openIterator() has made, and stepIterator() steps it without a call and without an object.
 declare const $stringProtoSymbolIterator: unknown;
 declare const $iteratorProtoSymbolIterator: unknown;
+declare const $setProtoValues: unknown;
+declare const $mapProtoEntries: unknown;
+declare const $setIteratorFieldKind: number;
+declare const $iterationKindEntries: number;
 declare const $nextOfStepsOverText: unknown;
 // The text and the place in it lie under private names of this file's own (collect-syntax-uses.ts): a read of them off a value that nobody knows finds nothing else.
 interface StepsOverText {
@@ -240,6 +248,8 @@ export function openIterator(iterable: unknown): unknown {
   if (typeof iterable === "string" && method === $stringProtoSymbolIterator)
     return { $steppedText: iterable, $nextPosition: 0, next: $nextOfStepsOverText };
   // What is opened is an iterator already: a generator, the values of a table. The method that it inherits answers `this` and does nothing else: no call of the host is made for that.
+  if (method === $setProtoValues && $isSet(iterable)) return $call($setProtoValues, iterable);
+  if (method === $mapProtoEntries && $isMap(iterable)) return $call($mapProtoEntries, iterable);
   const iterator: unknown = method === $iteratorProtoSymbolIterator ? iterable : $call(method, iterable);
   if (!$isObject(iterator)) $throwTypeError("Iterator result interface is not an object.");
   return iterator;
@@ -294,17 +304,20 @@ export function stepIterator(iterator: unknown, next: unknown): unknown {
 }
 
 // WHICH WAY AN ITERATOR IS STEPPED IS SETTLED WHERE THE LOOP OPENS IT: `next` is read once, there, and the kind of a cell never changes. So a loop asks once and hands the answer to each step.
-// 0: the loop calls `next` itself. Else `next` is the own method of an iterator of the engine, of a generator, or of what openIterator() has made of a text, as in stepIterator().
+// Undefined: the loop calls `next` itself. True: the loop steps the iterator of a set, which hands out its elements. False: `next` is that of generators. Else `next` is the own method of an iterator of the engine, or of what openIterator() has made of a text, as in stepIterator().
 $visibility = "Private";
-export function wayToStepIterator(iterator: unknown, next: unknown): number {
-  if ($isArrayIterator(iterator)) return next === $arrayIteratorProtoNext ? 1 : 0;
-  if ($isMapIterator(iterator)) return next === $mapIteratorProtoNext ? 2 : 0;
-  if ($isSetIterator(iterator)) return next === $setIteratorProtoNext ? 3 : 0;
-  if (next === $generatorProtoNext) return 4;
-  return next === $nextOfStepsOverText ? 5 : 0;
+export function wayToStepIterator(iterator: unknown, next: unknown): number | boolean | undefined {
+  if ($isArrayIterator(iterator)) return next === $arrayIteratorProtoNext ? 1 : undefined;
+  if ($isMapIterator(iterator)) return next === $mapIteratorProtoNext ? 2 : undefined;
+  if ($isSetIterator(iterator)) {
+    if (next !== $setIteratorProtoNext) return undefined;
+    return $getSetIteratorInternalField(iterator, $setIteratorFieldKind) === $iterationKindEntries ? 3 : true;
+  }
+  if (next === $generatorProtoNext) return false;
+  return next === $nextOfStepsOverText ? 5 : undefined;
 }
 
-// What the iterator hands out, or the mark of a closed iterator. `way` is what wayToStepIterator() has said of this iterator, and not 0.
+// What the iterator hands out, or the mark of a closed iterator. `way` is the number that wayToStepIterator() has said of this iterator.
 // The kind of the cell holds by that. It is asked so that what follows is compiled for that kind: what is written of a type proves nothing.
 $visibility = "Private";
 export function stepIteratorInWay(iterator: unknown, way: unknown): unknown {
@@ -327,7 +340,7 @@ export function stepIteratorInWay(iterator: unknown, way: unknown): unknown {
       const value = $resultAt(step, $stepArrayIteratorResultValue);
       return $resultAt(step, $stepArrayIteratorResultDone) ? $collectionIteratorClosedMark() : value;
     }
-  } else if (way === 4) {
+  } else if (way === false) {
     const step = $stepGenerator(iterator, $resumeModeNext, undefined, $generatorStepCheckIsGenerator);
     const value = $resultAt(step, $stepGeneratorResultValue);
     const status = $resultAt(step, $stepGeneratorResultStatus);

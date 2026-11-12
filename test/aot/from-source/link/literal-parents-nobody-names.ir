@@ -1,0 +1,18 @@
+# -- source: main.cjs
+# function Base(v) { this.v = v; }
+# Base.prototype = { ask() { return this.v * 4; } };
+# function Child(v) { this.v = v; }
+# Child.prototype = { __proto__: Base.prototype, constructor: Child };
+# var one = new Child(1);
+# function call(list) { var out = []; for (var i = 0; i < list.length; i++) out.push(list[i].ask()); return out.join(); }
+# print(call([one, new Child(2)]));
+# Child.prototype = { ask: function () { return 77; } };
+# print(call([one, new Child(2)]));
+# -- end of source
+# The parent that a literal names is told of the prototype object, and is no read off it.
+# RUN(SUMMARY): summary f0
+# SUMMARY: access a0 {{*}}Read Closure {{*}} "prototype"
+# SUMMARY-NOT: ChangesPrototype Constant
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 4,8
+# ANSWERS: 4,77

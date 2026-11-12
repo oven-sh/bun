@@ -111,7 +111,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return None;
         }
         let index = self.store_index(file);
-        let candidates = store_candidates(
+        let mut candidates = store_candidates(
             hir,
             bound,
             &index,
@@ -119,6 +119,23 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             bound.declared_symbol(Decl::Fn(function)).some(),
             None,
         );
+        for initializer in self.initializers_at_path(FunctionRef { file, function }) {
+            let stores = index
+                .this_stores_of(ThisOwner::Function(initializer))
+                .iter();
+            candidates.stores.extend(stores.map(|store| StoreCandidate {
+                name: store.name,
+                kind: ObjectMemberKind::Field,
+                place: StorePlace::Instance,
+                store: store.assign,
+                value: store.value,
+                form: store.form,
+                is_in_every_construction: false,
+                defined: store.defined,
+                is_stored_by_callee: true,
+                birth: u32::MAX,
+            }));
+        }
         let stores_like_constructor = candidates
             .stores
             .iter()

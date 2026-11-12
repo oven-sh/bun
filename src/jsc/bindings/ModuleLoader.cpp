@@ -56,6 +56,10 @@ extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunSt
 
 JSC::JSObject* createAsyncModuleRequiredError(JSC::JSGlobalObject* globalObject, const WTF::String& specifier)
 {
+#if ENABLE(AOT)
+    if (globalObject->vm().hasCompiledCode()) [[unlikely]]
+        JSC::AOT::didRejectRequire(globalObject, specifier);
+#endif
     return JSC::createTypeError(globalObject, makeString("require() async module \""_s, specifier, "\" is unsupported. use \"await import()\" instead."_s));
 }
 

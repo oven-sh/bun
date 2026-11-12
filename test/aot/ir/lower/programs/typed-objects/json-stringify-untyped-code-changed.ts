@@ -125,16 +125,16 @@ export const deeds = {
 // CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything, v1: number):
 // CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_2]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_2]]}
-// CHECK-NEXT: v5 = String string="p"
-// CHECK-NEXT: v6 = Add v5, v1
-// CHECK-NEXT: PropDefine v4, v1 key="x"
-// CHECK-NEXT: PropDefine v4, v6 key="text"
-// CHECK-NEXT: PropDefine v4, v1 key="id"
+// CHECK-NEXT: v3 = String string="p"
+// CHECK-NEXT: v4 = Add v3, v1
+// CHECK-NEXT: v5 = NewObject v2 layout=[[L_2]]
+// CHECK-NEXT: v6 = Convert v5 declared={type=[[L_2]]}
+// CHECK-NEXT: PropDefine v6, v1 key="x"
+// CHECK-NEXT: PropDefine v6, v4 key="text"
+// CHECK-NEXT: PropDefine v6, v1 key="id"
 // CHECK-NEXT: v10 = Undefined
 // CHECK-NEXT: v11 = TypeTest v10 testedType=object
-// CHECK-NEXT: Branch v11 -> taken b1(| 0), notTaken b2(v4)
+// CHECK-NEXT: Branch v11 -> taken b1(| 0), notTaken b2(v6)
 // CHECK-NEXT: b1(v12):
 // CHECK-NEXT: Jump -> next b2(v12)
 // CHECK-NEXT: b2(v13):

@@ -2,7 +2,8 @@ use super::answers::{FunctionRef, MemberForm, ObjectMemberKind};
 use super::prototype_links::{NamedValue, PrototypeOperation, list_in};
 use super::queries::Queries;
 use crate::atom::{Atom, known};
-use crate::bind::{Binding, BindingInitializer, Bound, FnOwner, Parent, SymbolId};
+use crate::bind::{Binding, BindingInitializer, Bound, Decl, FnOwner, Parent, PatParent, SymbolId};
+use crate::check::shared_indexes::SharedIndexes;
 use crate::check::{Checker, Program};
 use crate::hir::{
     self, BinOp, CallId, ClassId, ExprId, ExprKind, ExprTag, Flags, FnId, FnKind, MemberKey,
@@ -17,6 +18,20 @@ use std::sync::OnceLock;
 pub(in crate::check) struct StoreIndex<'s> {
     this_stores: &'s [ThisStore],
     binding_stores: &'s [BindingStore],
+}
+
+struct FirstExits {
+    mentions_of_super: Vec<u32>,
+    of_functions: FxHashMap<FnId, u32>,
+}
+
+impl FirstExits {
+    fn find_super_behind(&self, start: u32) -> u32 {
+        let behind = self
+            .mentions_of_super
+            .partition_point(|&place| place <= start);
+        self.mentions_of_super.get(behind).copied().unwrap_or(0)
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -255,14 +270,36 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if let Some(&index) = self.kept.store_indexes.get(&file) {
             return index;
         }
+        if let Some(indexes) = self.c.indexes_of_parts(file)
+            && let Some(&index) = indexes.store_index.get()
+        {
+            self.kept.store_indexes.insert(file, index);
+            return index;
+        }
         self.compute_store_index(file)
+    }
+
+    /// The checkers of the other parts of the file find it there.
+    pub(super) fn share_store_index(&mut self, indexes: &SharedIndexes<'s>) {
+        let index = self.store_index(self.file);
+        let binding_stores = self.c.written_stores(self.file).binding_stores;
+        let _ = indexes.store_index.set(StoreIndex {
+            this_stores: list_in(self.c.arena, index.this_stores),
+            binding_stores,
+        });
     }
 
     fn compute_store_index(&mut self, file: FileId) -> StoreIndex<'c> {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let assigns = self.c.exprs_by_kind(file);
         let mut this_stores = Vec::new();
-        let mut first_exits = FxHashMap::default();
+        let mentions_of_super = assigns.of(ExprTag::Super).iter();
+        let mut mentions_of_super: Vec<u32> = mentions_of_super.map(|&it| hir[it].pos).collect();
+        mentions_of_super.sort_unstable();
+        let mut first_exits = FirstExits {
+            mentions_of_super,
+            of_functions: FxHashMap::default(),
+        };
         let mut first_returns = FxHashMap::default();
         let mut has_asked_checker = false;
         let handed_this = self.find_parameters_handed_this(file, &mut first_exits);
@@ -380,6 +417,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         (name != known::__proto__ && !may_be_index).then_some(name)
     }
 
+    /// The names of a list that `object[names[i]] = v` goes over in a loop of a function's body.
     fn find_listed_names(
         &self,
         file: FileId,
@@ -426,7 +464,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     fn find_parameters_handed_this(
         &mut self,
         file: FileId,
-        first_exits: &mut FxHashMap<FnId, u32>,
+        first_exits: &mut FirstExits,
     ) -> Vec<(SymbolId, ThisOwner, u32, FnId)> {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let expressions = self.c.exprs_by_kind(file);
@@ -496,7 +534,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         &mut self,
         file: FileId,
         handed_this: &[(SymbolId, ThisOwner, u32, FnId)],
-        first_exits: &mut FxHashMap<FnId, u32>,
+        first_exits: &mut FirstExits,
         first_returns: &mut FxHashMap<FnId, u32>,
         this_stores: &mut Vec<ThisStore>,
     ) {
@@ -520,6 +558,16 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 .inputs
                 .named_values
                 .find_named_value(file, hir[call].callee);
+            if let Some(NamedValue::PrototypeOperation(PrototypeOperation::DefineField {
+                object,
+                key,
+                value,
+            })) = callee
+            {
+                let operands = [object, key, value].map(|at| find_operand_at(hir, call, at));
+                this_stores.extend(self.find_field_defined_by(file, site, operands, first_exits));
+                continue;
+            }
             let Some(NamedValue::PrototypeOperation(PrototypeOperation::DefineProperty {
                 object,
                 key,
@@ -577,6 +625,52 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
+    /// The statement of a constructor's body that defines a field of `this`: the only place where the lowering leaves the helper out.
+    fn find_field_defined_by(
+        &self,
+        file: FileId,
+        site: ExprId,
+        operands: [Option<ExprId>; 3],
+        first_exits: &mut FirstExits,
+    ) -> Option<ThisStore> {
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let [Some(object), Some(key), value] = operands else {
+            return None;
+        };
+        let ExprKind::String(name) = hir[key].kind else {
+            return None;
+        };
+        let is_this = matches!(hir[object].kind, ExprKind::This);
+        if !is_this || name == known::__proto__ || self.is_never_evaluated(file, site) {
+            return None;
+        }
+        let statement = find_statement_always_evaluating(hir, bound, site)?;
+        let Parent::FnBody(constructor) = bound.parent_of_stmt(statement) else {
+            return None;
+        };
+        let owner = self.this_owner(file, object)?;
+        let is_of_instance = matches!(owner, ThisOwner::Instance(_));
+        if hir[constructor].kind != FnKind::Constructor || !is_of_instance {
+            return None;
+        }
+        let is_in_every_construction =
+            self.is_in_every_construction(file, owner, site, first_exits);
+        Some(ThisStore {
+            owner,
+            name,
+            assign: site,
+            value: value.unwrap_or(ExprId::NONE),
+            form: StoreForm::Plain,
+            is_in_every_construction,
+            defined: MemberForm::default(),
+            is_stored_by_callee: false,
+            birth: match is_in_every_construction {
+                true => hir[site].pos,
+                false => u32::MAX,
+            },
+        })
+    }
+
     fn this_owner(&self, file: FileId, this: ExprId) -> Option<ThisOwner> {
         let function = match self.c.this_container(file, this)? {
             Err((class, false)) => return Some(ThisOwner::Instance(class)),
@@ -605,7 +699,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         file: FileId,
         owner: ThisOwner,
         assign: ExprId,
-        first_exits: &mut FxHashMap<FnId, u32>,
+        first_exits: &mut FirstExits,
     ) -> bool {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let Some(statement) = find_statement_always_evaluating(hir, bound, assign) else {
@@ -622,10 +716,17 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if !is_constructor {
             return false;
         }
+        let first_super = match owner {
+            ThisOwner::Instance(class) if hir[class].extends.is_some() => {
+                first_exits.find_super_behind(hir[function].start)
+            }
+            _ => 0,
+        };
         let first_exit = *first_exits
+            .of_functions
             .entry(function)
-            .or_insert_with(|| self.find_first_exit_with_this(file, function));
-        hir[statement].start < first_exit
+            .or_insert_with(|| self.find_first_exit_with_this(file, function, first_super));
+        hir[statement].start <= first_exit
     }
 
     fn is_always_evaluated_in(
@@ -655,18 +756,51 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 .min()
                 .unwrap_or(u32::MAX)
         });
-        hir[statement].start < first_return
+        hir[statement].start <= first_return
     }
 
-    fn find_first_exit_with_this(&self, file: FileId, function: FnId) -> u32 {
+    fn find_first_exit_with_this(&self, file: FileId, function: FnId, first_super: u32) -> u32 {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let returns = bound.ids(bound.fns[function.idx()].returns);
         let exits = returns.filter(|&statement| {
-            !self.c.is_dead_statement(file, statement) && !returns_created_object(hir, statement)
+            !self.c.is_dead_statement(file, statement)
+                && !returns_created_object(hir, statement)
+                && !exits_before(hir, bound, statement, first_super)
         });
         let first = exits.map(|statement| hir[statement].start).min();
         first.unwrap_or(u32::MAX)
     }
+}
+
+/// `if (isMatrix(rows)) return rows.clone(); super(rows);`: what leaves a derived constructor in front of `super` leaves no instance behind.
+fn exits_before(hir: &hir::File<'_>, bound: &Bound<'_>, statement: StmtId, place: u32) -> bool {
+    let end = match hir[statement].kind {
+        StmtKind::Return(value) if value.is_some() => hir[value].end,
+        _ => hir[statement].start,
+    };
+    if end >= place {
+        return false;
+    }
+    let mut around = bound.parent_of_stmt(statement);
+    while let Parent::Stmt(outer) = around {
+        if outer.is_none() {
+            return false;
+        }
+        let comes_round = matches!(
+            hir[outer].kind,
+            StmtKind::For { .. }
+                | StmtKind::ForIn { .. }
+                | StmtKind::ForOf { .. }
+                | StmtKind::While { .. }
+                | StmtKind::DoWhile { .. }
+                | StmtKind::Try { .. }
+        );
+        if comes_round {
+            return false;
+        }
+        around = bound.parent_of_stmt(outer);
+    }
+    matches!(around, Parent::FnBody(_))
 }
 
 fn classify_store_form(op: Option<BinOp>) -> StoreForm {
@@ -711,7 +845,9 @@ fn find_statement_always_evaluating(
             Parent::Expr(parent) => parent.some()?,
             Parent::Stmt(statement) => {
                 let statement = statement.some()?;
-                return matches!(hir[statement].kind, StmtKind::Expr(_)).then_some(statement);
+                let is_evaluated =
+                    matches!(hir[statement].kind, StmtKind::Expr(_) | StmtKind::Return(_));
+                return is_evaluated.then_some(statement);
             }
             _ => return None,
         };
@@ -751,7 +887,11 @@ fn returns_created_object(hir: &hir::File<'_>, statement: StmtId) -> bool {
     )
 }
 
-fn find_stored_function(hir: &hir::File<'_>, bound: &Bound<'_>, value: ExprId) -> Option<FnId> {
+pub(super) fn find_stored_function(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    value: ExprId,
+) -> Option<FnId> {
     let value = hir.skip_type_assertions(value);
     let function = match hir[value].kind {
         ExprKind::Fn(function) => function,
@@ -780,6 +920,9 @@ fn is_in_loop_of_function_body(hir: &hir::File<'_>, bound: &Bound<'_>, expressio
     let Some(mut body) = find_statement_always_evaluating(hir, bound, expression) else {
         return false;
     };
+    if !matches!(hir[body].kind, StmtKind::Expr(_)) {
+        return false;
+    }
     if let Parent::Stmt(block) = bound.parent_of_stmt(body)
         && block.is_some()
         && matches!(hir[block].kind, StmtKind::Block(_))
@@ -998,13 +1141,50 @@ fn find_written_data_descriptor(
 }
 
 fn find_this_held_by(hir: &hir::File<'_>, bound: &Bound<'_>, object: ExprId) -> Option<ExprId> {
-    if matches!(hir[object].kind, ExprKind::This) {
-        return Some(object);
-    }
-    find_this_in_initializer(hir, find_stable_initializer(hir, bound, object)?)
+    let held = match hir[object].kind {
+        ExprKind::This => return Some(object),
+        ExprKind::Assign {
+            op: None, value, ..
+        } => value,
+        _ => find_stable_initializer(hir, bound, object)
+            .or_else(|| find_only_stored_value(hir, bound, object))?,
+    };
+    find_this_in_initializer(hir, held)
 }
 
-fn find_stable_initializer(
+/// `var t; t = value;` without another store into `t`.
+fn find_only_stored_value(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    object: ExprId,
+) -> Option<ExprId> {
+    let variable = bound_symbol(hir, bound, object)?;
+    let &[Decl::Var(pattern)] = bound.symbol(variable).decls else {
+        return None;
+    };
+    let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
+        return None;
+    };
+    let [store] = bound.stores_to(variable) else {
+        return None;
+    };
+    if hir[declaration].init.is_some() || bound.is_visible_to_eval(variable) {
+        return None;
+    }
+    let Parent::Expr(around) = bound.parent_of_expr(store.target) else {
+        return None;
+    };
+    match hir[around.some()?].kind {
+        ExprKind::Assign {
+            op: None,
+            target,
+            value,
+        } if target == store.target => Some(value),
+        _ => None,
+    }
+}
+
+pub(super) fn find_stable_initializer(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
     object: ExprId,
@@ -1052,7 +1232,7 @@ pub(super) fn is_prototype_property(hir: &hir::File<'_>, e: ExprId) -> bool {
     matches!(hir.member_key(e), Some((_, MemberKey::Name(name))) if name == known::prototype)
 }
 
-fn bound_symbol(hir: &hir::File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<SymbolId> {
+pub(super) fn bound_symbol(hir: &hir::File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<SymbolId> {
     if !matches!(hir[e].kind, ExprKind::Ident(_)) {
         return None;
     }

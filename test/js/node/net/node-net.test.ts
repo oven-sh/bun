@@ -3676,7 +3676,9 @@ it("write after peer FIN emits 'error' and closes with hadError true", async () 
     });
 
     const errorPromise = once(socket, "error");
-    const closePromise = once(socket, "close");
+    const closePromise = new Promise<boolean>(resolve => {
+      socket.once("close", hadError => resolve(hadError));
+    });
     const drainPromise = once(socket, "drain");
 
     await peerReady;
@@ -3697,13 +3699,64 @@ it("write after peer FIN emits 'error' and closes with hadError true", async () 
 
     await expect(drainPromise).rejects.toThrow();
     await errorPromise;
-    await closePromise;
+    const closedHadError = await closePromise;
 
     expect(errorEvent).not.toBeNull();
     expect(errorEvent.code).toBe("EPIPE");
-    expect(closeHadError).toBe(true);
+    expect(closedHadError).toBe(true);
 
     socket.destroy();
+  } finally {
+    server.close();
+  }
+});
+
+it("Socket._write on closed handle emits 'error' and resets _hadError on reuse", async () => {
+  const server = createServer(peer => {
+    peer.on("error", () => {});
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
+
+  try {
+    const port = (server.address() as AddressInfo).port;
+    const socket = connect(port, "127.0.0.1");
+    await once(socket, "connect");
+
+    // Force closed handle (readyState < 0) to exercise the native write failure path in _write directly
+    (socket as any)._handle.close();
+
+    let errorEvent: any = null;
+    socket.on("error", err => {
+      errorEvent = err;
+    });
+
+    const errorPromise = once(socket, "error");
+    const closePromise = new Promise<boolean>(resolve => {
+      socket.once("close", hadError => resolve(hadError));
+    });
+
+    let callbackError: any = null;
+    const callbackPromise = new Promise<void>(resolve => {
+      const wrote = socket.write(new Uint8Array(64), err => {
+        callbackError = err;
+        resolve();
+      });
+      expect(wrote).toBe(false);
+    });
+
+    await callbackPromise;
+    expect(callbackError).not.toBeNull();
+
+    await errorPromise;
+    const closedHadError = await closePromise;
+
+    expect(errorEvent).not.toBeNull();
+    expect(closedHadError).toBe(true);
+    expect((socket as any)._hadError).toBe(true);
+
+    // Verify _hadError is reset when reusing or undestroying the socket
+    socket._undestroy();
+    expect((socket as any)._hadError).toBe(false);
   } finally {
     server.close();
   }

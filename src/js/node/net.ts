@@ -2479,6 +2479,11 @@ Socket.prototype.end = function end(data, encoding, callback) {
   return Duplex.prototype.end.$call(this, data, encoding, callback);
 };
 
+Socket.prototype._undestroy = function _undestroy() {
+  Duplex.prototype._undestroy.$call(this);
+  this._hadError = false;
+};
+
 Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
@@ -4518,6 +4523,7 @@ function initSocketHandle(self) {
   self._sockname = null;
   self[kclosed] = false;
   self[kended] = false;
+  self._hadError = false;
 
   // Handle creation may be deferred to bind() or connect() time.
   const handle = self._handle;

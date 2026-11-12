@@ -4,7 +4,7 @@ use bun_core::{ZBox, ZStr, strings};
 use bun_paths::{PathBuffer, resolve_path};
 use bun_ptr::BackRef;
 
-use crate::node::fs::{forget_shell_operand, holds_more_than_disk_at, note_moved_shell_operand};
+use crate::node::fs::{forget_shell_operand, note_moved_shell_operand, refuse_move};
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
@@ -534,11 +534,8 @@ impl ShellMvBatchedTask {
     ) -> Result<(), bun_sys::Error> {
         use bun_sys::E;
 
-        if holds_more_than_disk_at(src_dir, src.as_bytes())
-            || holds_more_than_disk_at(dst_dir, dst.as_bytes())
-        {
-            let error = bun_sys::Error::from_code(E::EROFS, bun_sys::Tag::rename);
-            return Err(error.with_path(src.as_bytes()));
+        if let Some(error) = refuse_move((src_dir, src.as_bytes()), (dst_dir, dst.as_bytes())) {
+            return Err(error);
         }
         if no_clobber {
             if shell_lstatat(dst_dir, dst).is_ok() {

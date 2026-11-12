@@ -16,6 +16,18 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/commonjs-originals-stay-under-their-key.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/spies-of-files-loaded-after-a-reset.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/spies-of-files-with-top-level-await.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/originals-ask-load-plugins.test.ts": {
     "default": 60000,
     "asan": 240000

@@ -1861,6 +1861,9 @@
     "aot/a-data-file-under-a-mock-at-a-reset-is-named-where-its-next-load-shows-another-object.test.ts",
     "aot/leaf-constants-in-test-runs.test.ts",
     "aot/originals-come-from-disk.test.ts",
-    "aot/originals-ask-load-plugins.test.ts"
+    "aot/originals-ask-load-plugins.test.ts",
+    "aot/commonjs-originals-stay-under-their-key.test.ts",
+    "aot/spies-of-files-loaded-after-a-reset.test.ts",
+    "aot/spies-of-files-with-top-level-await.test.ts"
   ]
 }

@@ -2,7 +2,7 @@ use std::iter::successors;
 use std::mem::take;
 
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, Bound, ScopeId, ScopeKind, SymbolId};
+use bun_sema::bind::{Binding, Bound, Decl, ScopeId, ScopeKind, SymbolId};
 use bun_sema::hir::File;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -79,6 +79,23 @@ impl FileLowering<'_, '_, '_, '_> {
         !self.inputs.options.obfuscates
     }
 
+    /// The program evaluates a text as it is.
+    fn is_declared_in_known_evaluation(&self, symbol: SymbolId) -> bool {
+        let hir = self.hir;
+        if hir.known_evaluations.is_empty() {
+            return false;
+        }
+        let mut declarations = self.bound.symbol(symbol).decls.iter();
+        declarations.any(|&it| match it {
+            Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat) => {
+                hir.is_in_known_evaluation(hir[pat].pos)
+            }
+            Decl::Fn(function) => hir.is_in_known_evaluation(hir[function].start),
+            Decl::Class(class) => hir.is_in_known_evaluation(hir[class].start),
+            _ => false,
+        })
+    }
+
     #[inline]
     fn find_shortened_symbol(&self, binding: Binding) -> Option<SymbolId> {
         let Binding::Symbol(symbol) = binding else {
@@ -91,7 +108,8 @@ impl FileLowering<'_, '_, '_, '_> {
             && (names.scopes_around_evals.is_empty() || {
                 let scope = self.bound.symbol_scope(symbol);
                 scope.is_some() && names.scopes_around_evals.binary_search(&scope).is_err()
-            });
+            })
+            && !self.is_declared_in_known_evaluation(symbol);
         is_shortened.then_some(symbol)
     }
 

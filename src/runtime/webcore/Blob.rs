@@ -1518,11 +1518,11 @@ impl BlobExt for Blob {
                 PathOrFileDescriptor::Fd(fd) => *fd,
                 PathOrFileDescriptor::Path(p) => {
                     let mut file_path = bun_paths::path_buffer_pool::get();
-                    match bun_sys::open(
-                        p.slice_z(&mut file_path),
-                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
-                        WRITE_PERMISSIONS,
-                    ) {
+                    let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK;
+                    if let Some(err) = node::fs::refuse_open_for_write(p.slice(), flags) {
+                        return Err(global_this.throw_value(err.to_js(global_this)));
+                    }
+                    match bun_sys::open(p.slice_z(&mut file_path), flags, WRITE_PERMISSIONS) {
                         bun_sys::Result::Ok(result) => {
                             node::fs::note_opened_for_write(p.slice(), false);
                             result
@@ -4388,13 +4388,7 @@ pub(crate) fn write_file_internal(
         },
     };
     if let Some(PathOrFileDescriptor::Path(path)) = destination
-        && let Some(err) =
-            node::fs::creation_in_executable(path.slice(), bun_sys::Tag::open, bun_sys::E::EROFS)
-    {
-        return Ok(JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js());
-    }
-    if let Some(PathOrFileDescriptor::Path(path)) = destination
-        && let Err(err) = node::fs::refuse_embedded_write(path.slice())
+        && let Some(err) = node::fs::refuse_embedded_write(path.slice())
     {
         return Ok(JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js());
     }

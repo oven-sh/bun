@@ -776,6 +776,10 @@ const start = async () => {
   said.push((await handle.stat()).size, fs.existsSync(below("a.txt")));
   await handle.close();
   fs.closeSync(begun);
+  const streamed = fs.openSync(path.join(${own}, "d.txt"));
+  await Bun.write(below("d.txt"), new Response(new ReadableStream({ start(it) { it.enqueue("streamed"); it.close(); } })));
+  said.push(fs.readFileSync(streamed, "utf8"));
+  fs.closeSync(streamed);
   const later = fs.openSync(path.join(${own}, "c.txt"));
   fs.closeSync(later);
   const other = fs.openSync(process.execPath);
@@ -788,11 +792,12 @@ ${isModule ? "export { start };" : "exports.start = start;"}
         "app/node_modules/store/a.txt": "first",
         "app/node_modules/store/b.txt": "first",
         "app/node_modules/store/c.txt": "first",
+        "app/node_modules/store/d.txt": "first",
         "app/main.mjs": `import { start } from "store"; console.log(await start());`,
       });
       const { plain, compiled } = await plainAfterBuild(String(dir), "node_modules/store");
       expect(plain).toEqual({
-        stdout: "fi,2,written,7,rst and more,14,5,again,5,false,true\n",
+        stdout: "fi,2,written,7,rst and more,14,5,again,5,false,streamed,true\n",
         stderr: "",
         exitCode: 0,
       });
@@ -2070,7 +2075,7 @@ const own = name => path.join(import.meta.dirname, "data", name);
 const read = name => fs.readFileSync(own(name), "utf8") + " " + fs.readFileSync(below(name), "utf8");
 const say = async (label, change, name) => {
   let said = "done";
-  try { const done = await change(); if (done?.exitCode) said = "exit " + done.exitCode; } catch (error) { said = error.code; }
+  try { const done = await change(); if (done?.exitCode) said = "fails"; } catch (error) { said = error.code; }
   console.log(label, said, name ? read(name) : "");
 };
 export const start = async () => {
@@ -2090,7 +2095,15 @@ export const start = async () => {
   await say("mkdir", () => fs.mkdirSync(below("b.txt")), "b.txt");
   await say("mkdir below it", () => fs.mkdirSync(below("b.txt") + "/x", { recursive: true }), "b.txt");
   await say("symlink", () => fs.symlinkSync("c.txt", below("b.txt")), "b.txt");
+  await say("an append that must make it", () => fs.appendFileSync(below("b.txt"), "x", { flag: "ax" }), "b.txt");
   await say("a write onto a folder", () => fs.writeFileSync(below("deep"), "x"), "deep/f.txt");
+  await say("an append onto a folder", () => fs.appendFileSync(below("deep"), "x"), "deep/f.txt");
+  await say("Bun.write() onto a folder", () => Bun.write(below("deep"), "x"), "deep/f.txt");
+  await say("a writer onto a folder", () => Bun.file(path.join(below("deep"))).writer().end(), "deep/f.txt");
+  await say("> onto a folder", () => $\`echo x > \${below("deep")}\`.nothrow().quiet(), "deep/f.txt");
+  fs.mkdirSync(below("made"));
+  await say("a rename over a folder", () => fs.renameSync(below("made"), below("deep")), "deep/f.txt");
+  await say("mv over a folder", () => $\`mv \${below("made")} \${below("deep")}\`.nothrow().quiet(), "deep/f.txt");
   await say("rm -f of a folder", () => $\`rm -f \${below("deep")}\`.nothrow().quiet(), "deep/f.txt");
   await say("touch", () => $\`touch \${below("d.txt")}\`.nothrow().quiet(), "d.txt");
   await say("a write", () => fs.writeFileSync(below("e.txt"), "new"), "e.txt");
@@ -2121,8 +2134,15 @@ a copy that must make it EEXIST first first
 mkdir EEXIST first first
 mkdir below it ENOTDIR first first
 symlink EEXIST first first
+an append that must make it EEXIST first first
 a write onto a folder EISDIR first first
-rm -f of a folder exit 1 first first
+an append onto a folder EISDIR first first
+Bun.write() onto a folder EISDIR first first
+a writer onto a folder EISDIR first first
+> onto a folder fails first first
+a rename over a folder ENOTEMPTY first first
+mv over a folder fails first first
+rm -f of a folder fails first first
 touch done first first
 a write done new new
 `,

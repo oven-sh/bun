@@ -2317,10 +2317,7 @@ impl StandaloneModuleGraph {
             let is_directory =
                 is_directory(&under_own_root) && !self.has_folder_vanished(&under_own_root);
             let length = under_own_root.len();
-            if !is_directory
-                || length > buffer.len()
-                || matches!(bun_sys::directory_exists_at(Fd::cwd(), key), Ok(true))
-            {
+            if !is_directory || length > buffer.len() || bun_sys::exists(key.as_bytes()) {
                 return None;
             }
             buffer[..length].copy_from_slice(&under_own_root);
@@ -2334,8 +2331,7 @@ impl StandaloneModuleGraph {
         {
             return None;
         }
-        let is_on_disk = matches!(bun_sys::directory_exists_at(Fd::cwd(), key), Ok(true));
-        (!is_on_disk).then_some(key.as_bytes())
+        (!bun_sys::exists(key.as_bytes())).then_some(key.as_bytes())
     }
 
     pub(crate) fn entry_point_by_name(&self, name: &[u8]) -> Option<&CompiledEntryPoint> {

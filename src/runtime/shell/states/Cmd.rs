@@ -3,7 +3,7 @@
 //! Execution proceeds: expand assigns → expand redirect → expand argv atoms
 //! → resolve to builtin or spawn subprocess → await exit.
 
-use crate::node::fs::{note_shell_redirect, open_embedded_shell_operand};
+use crate::node::fs::{note_shell_redirect, open_embedded_shell_operand, refuse_shell_redirect};
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
@@ -812,8 +812,10 @@ impl Cmd {
                 log!("Expanded Redirect: {}\n", bstr::BStr::new(path.as_bytes()));
                 let shell = interp.as_cmd(this).base.shell();
                 let cwd_fd = shell.cwd_fd;
-                let opened =
-                    crate::shell::interpreter::shell_openat(cwd_fd, path, flags.to_flags(), 0o666);
+                let refused = refuse_shell_redirect(shell.cwd(), path.as_bytes(), flags.to_flags());
+                let opened = refused.and_then(|()| {
+                    crate::shell::interpreter::shell_openat(cwd_fd, path, flags.to_flags(), 0o666)
+                });
                 let opened = opened.inspect(|_| {
                     note_shell_redirect(shell.cwd(), path.as_bytes(), flags.to_flags());
                 });

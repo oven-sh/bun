@@ -5,7 +5,6 @@
 #include "BunGlobalScope.h"
 
 #include <JavaScriptCore/JSFunction.h>
-#include <JavaScriptCore/JSGlobalProxy.h>
 #include <JavaScriptCore/VM.h>
 
 #include "headers-handwritten.h"
@@ -98,23 +97,6 @@ public:
     bool ownMicrotaskQueue = false;
 };
 
-class NodeVMGlobalProxy final : public JSC::JSGlobalProxy {
-public:
-    using Base = JSC::JSGlobalProxy;
-
-    static NodeVMGlobalProxy* create(JSC::VM&);
-
-    DECLARE_INFO;
-
-    static bool deleteProperty(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::DeletePropertySlot&);
-
-private:
-    NodeVMGlobalProxy(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, nullptr)
-    {
-    }
-};
-
 // This class represents a sandboxed global object for vm contexts
 class NodeVMGlobalObject final : public Bun::GlobalScope {
 public:
@@ -135,7 +117,7 @@ public:
 
     ~NodeVMGlobalObject();
 
-    void finishCreation(JSC::VM&, NodeVMGlobalProxy*);
+    void finishCreation(JSC::VM&);
     static void destroy(JSCell* cell);
     JSObject* contextifiedObject() const { return m_sandbox.get(); }
     // The object vm.createContext() returns for this context.
@@ -153,21 +135,14 @@ public:
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
     static bool defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow);
     static bool deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot);
-    static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned index);
-    bool deletePropertyOfGlobalThis(JSGlobalObject*, PropertyName, JSC::DeletePropertySlot&);
     static bool setPrototype(JSObject*, JSGlobalObject*, JSValue prototype, bool shouldThrowIfCantSet);
     static JSC::JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin&, bool deferred);
 
 private:
-    bool defineOnContextifiedObject(JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
-    bool hasOwnRealProperty(JSGlobalObject*, PropertyName);
-    bool resolvesForDelete(JSGlobalObject*, PropertyName);
-
     // The contextified object that acts as the global proxy
     WriteBarrier<JSObject> m_sandbox;
     WriteBarrier<Unknown> m_dynamicImportCallback;
     NodeVMContextOptions m_contextOptions {};
-    JSC::IdentifierSet m_namesDefinedThroughProxy;
 
     NodeVMGlobalObject(VM& vm, Structure* structure, NodeVMContextOptions contextOptions, JSValue importer);
 };

@@ -459,14 +459,33 @@ fn holds_more_than_disk(path: &[u8]) -> bool {
     })
 }
 
-/// The same for what the shell moves, which is relative to its working directory.
-pub(crate) fn holds_more_than_disk_at(cwd: FD, name: &[u8]) -> bool {
-    if compiled_program_graph().is_none() || bun_paths::is_absolute(name) {
-        return holds_more_than_disk(name);
+/// What is at `path` can't be renamed over: a folder that the executable holds, or holds more of than the disk.
+fn refuses_rename_over(path: &[u8]) -> bool {
+    holds_more_than_disk(path) || is_embedded_folder(path)
+}
+
+/// Whether the executable holds a folder at `path` that the disk does not have.
+fn is_embedded_folder(path: &[u8]) -> bool {
+    graph_after_disk(path).is_some_and(|graph| graph.may_answer_for(path) && graph.find_dir(path))
+}
+
+/// As `rename()` refuses, for what the shell moves, which is relative to its folders.
+pub(crate) fn refuse_move(from: (FD, &[u8]), to: (FD, &[u8])) -> Option<sys::Error> {
+    compiled_program_graph()?;
+    let resolve = |(folder, name): (FD, &[u8])| {
+        if bun_paths::is_absolute(name) {
+            return Some(name.to_vec());
+        }
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        let folder = sys::get_fd_path(folder, &mut buffer).ok()?;
+        Some([&*folder, b"/", name].concat())
+    };
+    let (old, new) = (resolve(from)?, resolve(to)?);
+    let error = |errno: E| sys::Error::from_code(errno, sys::Tag::rename).with_path(from.1);
+    if holds_more_than_disk(&old) {
+        return Some(error(E::EROFS));
     }
-    let mut buffer = bun_paths::path_buffer_pool::get();
-    sys::get_fd_path(cwd, &mut buffer)
-        .is_ok_and(|cwd| holds_more_than_disk(&[&*cwd, b"/", name].concat()))
+    (sys::exists(&old) && refuses_rename_over(&new)).then(|| error(E::ENOTEMPTY))
 }
 
 /// Whether the disk has `name`, for a program that may find in the executable what it does not have.
@@ -476,11 +495,13 @@ pub(crate) fn is_on_disk_at(cwd: FD, name: &[u8]) -> bool {
 }
 
 /// `Bun.write()` would make the folder of an embedded file that the disk does not have. The program is refused instead.
-pub(crate) fn refuse_embedded_write(path: &[u8]) -> Maybe<()> {
-    match !has_folder_on_disk(path) && is_embedded_source_file(path) {
-        true => Err(sys::Error::from_code(E::EROFS, sys::Tag::open).with_path(path)),
-        false => Ok(()),
-    }
+pub(crate) fn refuse_embedded_write(path: &[u8]) -> Option<sys::Error> {
+    let truncates = sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC;
+    refuse_open_for_write(path, truncates).or_else(|| {
+        let is_refused = !has_folder_on_disk(path)
+            && (is_embedded_source_file(path) || is_embedded_folder(path));
+        is_refused.then(|| sys::Error::from_code(E::EROFS, sys::Tag::open).with_path(path))
+    })
 }
 
 /// The program writes `path`, which the disk has now. What it has open of an embedded file reads there if that is written whole.
@@ -524,8 +545,14 @@ fn has_folder_on_disk(path: &[u8]) -> bool {
     bun_paths::dirname(strings::without_trailing_slash(path)).is_none_or(sys::exists)
 }
 
-/// EEXIST for an open that must make the file, and EISDIR for one that writes where the executable holds a folder.
-fn refuse_open_for_write(path: &[u8], flags: i32) -> Option<sys::Error> {
+/// For every open that writes: the executable is read-only, EEXIST for one that must make a file that it holds, and EISDIR where it holds a folder.
+pub(crate) fn refuse_open_for_write(path: &[u8], flags: i32) -> Option<sys::Error> {
+    if flags & FLAGS_OF_WRITES == 0 {
+        return None;
+    }
+    if let Some(error) = creation_in_executable(path, sys::Tag::open, E::EROFS) {
+        return Some(error);
+    }
     let graph = graph_after_disk(path).filter(|graph| graph.may_answer_for(path))?;
     let exclusive = sys::O::CREAT | sys::O::EXCL;
     if flags & exclusive == exclusive {
@@ -541,7 +568,15 @@ pub(crate) fn is_embedded_source_file(path: &[u8]) -> bool {
         .is_some_and(|graph| graph.may_answer_for(path) && graph.contains_file(path))
 }
 
-/// As `note_opened_for_write`, for the file of a redirect of the shell, which is relative to the shell's working directory.
+/// As `refuse_open_for_write`, for the file of a redirect of the shell, which is relative to the shell's working directory.
+pub(crate) fn refuse_shell_redirect(cwd: &[u8], file: &[u8], flags: i32) -> Maybe<()> {
+    match refuse_open_for_write(&resolve_shell_operand(cwd, file), flags) {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+/// As `note_opened_for_write`, for the same.
 pub(crate) fn note_shell_redirect(cwd: &[u8], file: &[u8], flags: i32) {
     if flags & FLAGS_OF_WRITES != 0 {
         let path = resolve_shell_operand(cwd, file);
@@ -1376,14 +1411,8 @@ mod _async_tasks {
             match F {
                 NodeFSFunctionEnum::Open => {
                     let args: &args::Open = args_as!(args::Open);
-                    let writes = args.flags.as_int() & FLAGS_OF_WRITES != 0;
                     let named = &args.path;
-                    let refusal = if writes {
-                        creation_in_executable(named.slice(), sys::Tag::open, E::EROFS)
-                            .or_else(|| refuse_open_for_write(named.slice(), args.flags.as_int()))
-                    } else {
-                        None
-                    };
+                    let refusal = refuse_open_for_write(named.slice(), args.flags.as_int());
                     let answer: Option<Maybe<ret::Open>> = refusal.map(Err);
                     let path = if strings::eql_comptime(named.slice(), b"/dev/null") {
                         ZStr::from_static(b"\\\\.\\NUL\0")
@@ -5436,8 +5465,7 @@ impl NodeFS {
                 Ok(())
             }
             PathOrFileDescriptor::Path(path) => {
-                if let Some(error) = creation_in_executable(path.slice(), sys::Tag::open, E::EROFS)
-                {
+                if let Some(error) = refuse_open_for_write(path.slice(), args.flag.as_int()) {
                     return Err(error);
                 }
                 let opened = path.slice_z(&mut self.sync_error_buf);
@@ -6759,12 +6787,7 @@ impl NodeFS {
     pub(crate) fn open(&mut self, args: &args::Open, _: Flavor) -> Maybe<ret::Open> {
         let is_write = args.flags.as_int() & FLAGS_OF_WRITES != 0;
         let named = &args.path;
-        if is_write
-            && let Some(error) = creation_in_executable(named.slice(), sys::Tag::open, E::EROFS)
-        {
-            return Err(error);
-        }
-        if is_write && let Some(error) = refuse_open_for_write(named.slice(), args.flags.as_int()) {
+        if let Some(error) = refuse_open_for_write(named.slice(), args.flags.as_int()) {
             return Err(error);
         }
         let path = if cfg!(windows) && named.slice() == b"/dev/null" {
@@ -8163,9 +8186,6 @@ impl NodeFS {
     ) -> Maybe<ret::WriteFile> {
         let fd = match &args.file {
             PathOrFileDescriptor::Path(p) => {
-                if let Some(error) = creation_in_executable(p.slice(), sys::Tag::open, E::EROFS) {
-                    return Err(error);
-                }
                 if let Some(error) = refuse_open_for_write(p.slice(), args.flag.as_int()) {
                     return Err(error);
                 }
@@ -8523,11 +8543,7 @@ impl NodeFS {
         if holds_more_than_disk(old) {
             return refused(E::EROFS);
         }
-        let is_embedded_folder = || {
-            graph_after_disk(new)
-                .is_some_and(|graph| graph.may_answer_for(new) && graph.find_dir(new))
-        };
-        if sys::exists(old) && (holds_more_than_disk(new) || is_embedded_folder()) {
+        if sys::exists(old) && refuses_rename_over(new) {
             return refused(E::ENOTEMPTY);
         }
         let from = args.old_path.slice_z(&mut self.sync_error_buf);

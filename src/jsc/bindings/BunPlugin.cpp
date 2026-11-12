@@ -966,13 +966,13 @@ static JSValue importModuleKeySync(Zig::GlobalObject* globalObject, const String
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::VM::SynchronousModuleQueue queue;
-    queue.prev = vm.m_synchronousModuleQueue;
-    vm.m_synchronousModuleQueue = &queue;
-    JSC::JSPromise* promise = importModuleKey(globalObject, key);
-    if (!scope.exception())
-        JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
-    vm.m_synchronousModuleQueue = queue.prev;
+    JSC::JSPromise* promise = nullptr;
+    {
+        JSC::VM::SynchronousModuleQueueScope queue(vm);
+        promise = importModuleKey(globalObject, key);
+        if (!scope.exception())
+            JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+    }
     RETURN_IF_EXCEPTION(scope, {});
     Bun::evictModulesThatHaveLoaded(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -2078,8 +2078,10 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
         RETURN_IF_EXCEPTION(scope, {});
         auto compiled = isBuiltinModuleKey(path) ? std::nullopt : JSC::AOT::findVariantToMock(globalObject, path, Bun::findMockedModule(path));
         bool isCommonJS = compiled && !JSC::AOT::isESModule(*compiled) && !JSC::AOT::isDataFile(*compiled);
-        bool hasOwnOriginal = spy && compiled && (isCommonJS || JSC::AOT::isSynchronousESModule(globalObject, *compiled)) && JSC::AOT::hasIntactOriginal(globalObject, *compiled);
-        if (compiled && !hasOwnOriginal && JSC::AOT::hasStartedLoading(globalObject, *compiled) && !JSC::AOT::hasOnlyBeenLinked(globalObject, *compiled) && !JSC::AOT::hasActiveMock(globalObject, *compiled)) {
+        bool hasOwnOriginal = spy && compiled && (isCommonJS || JSC::AOT::isESModule(*compiled)) && JSC::AOT::hasIntactOriginal(globalObject, *compiled);
+        // The loader holds a later run of the file, which is what this mock patches.
+        bool isOverLaterRun = compiled && (originalExports || originalCommonJSExports) && JSC::AOT::isEvicted(globalObject, *compiled);
+        if (compiled && !hasOwnOriginal && !isOverLaterRun && JSC::AOT::hasStartedLoading(globalObject, *compiled) && !JSC::AOT::hasOnlyBeenLinked(globalObject, *compiled) && !JSC::AOT::hasActiveMock(globalObject, *compiled)) {
             // Under an earlier mock those would be the mock's functions, which an automock would keep.
             JSValue before = JSC::AOT::isPatchedByMock(globalObject, *compiled) ? JSC::AOT::exportsBeforeMock(globalObject, *compiled, false) : JSValue();
             RETURN_IF_EXCEPTION(scope, {});
@@ -6333,7 +6335,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         evictModulesAndTheirImporters(globalObject, Vector<String> { originalModuleKey(specifier) });
         RETURN_IF_EXCEPTION(scope, {});
     }
-    if (mock->coversImportedActual && JSC::AOT::hasInstances(globalObject, *loaded.compiledModule))
+    if (mock->coversImportedActual && (JSC::AOT::hasInstances(globalObject, *loaded.compiledModule) || JSC::AOT::isReloadableImport(globalObject, *loaded.compiledModule)))
         JSC::AOT::setIsUnderActualKey(globalObject, *loaded.compiledModule, true);
     if (keepsCompiledModule && wasLoadedByImportActual && Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, originalModuleKey(specifier)))) {
         evictModulesAndTheirImporters(globalObject, Vector<String> { originalModuleKey(specifier) });

@@ -99,6 +99,17 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
       "asked only of a value made of the file's own `__filename` or `__dirname`, and it only chooses the equalities that also compare the file's other path. A function of the program with such a name changes no answer: whole paths are compared",
   },
   {
+    paths: /^src\/aot\/lower\/call\/assignment_to_new_object\.rs$/,
+    lines: /b"__assign"/,
+    reason:
+      "a guess at what a call calls: the call compares its callee with the built-in `Object.assign`. A function of the program with such a name changes no answer",
+  },
+  {
+    paths: /^src\/(?:aot\/compile\/bind_stage|sema\/import_sites\/call_sites)\.rs$/,
+    lines: /\.ends_with\(b"\.wasm"\)/,
+    reason: "whether a string ends as the name of a WebAssembly file does is a question about a path",
+  },
+  {
     paths: /^src\/aot\/load\/test_runner_names\.rs$/,
     reason: "a name that begins with % is the build's own: no program can write one",
   },
@@ -183,7 +194,7 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     paths:
       /^src\/sema\/(import_sites\/(alternatives|call_sites|made_requires)|fold\/(folder_fields|folder_names|known_to_bun_run|removed_by_bun_run|string_affixes))\.rs$/,
     lines:
-      /known::(?:require|module|exports|arguments|resolve|getBuiltinModule|process|Module|call|apply|url|href|path|main|hot|join|meta_\w+)\b|b"(?:_?cache|sep|cwd|posix|normalize|dirname|format|parse|dir|base|platform|arch|fileURLToPath|pathToFileURL|realpathSync|native|relative|from)"/,
+      /known::(?:require|module|exports|arguments|resolve|getBuiltinModule|process|Module|call|apply|url|href|path|main|hot|join|meta_\w+)\b|b"(?:_?cache|sep|cwd|posix|normalize|dirname|format|parse|dir|base|platform|arch|fileURLToPath|pathToFileURL|realpathSync|native|relative|from|raw|bind|split|slice|push)"/,
     reason:
       "a member behind a thing: of `import.meta`, which is syntax; of `require`, `module` and `process`, where the binder has said that the object is the module's own parameter or the global; of what node:module, node:path, node:url, node:os, node:process and node:fs export, found by the record of the import",
   },
@@ -193,6 +204,12 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
       /known::charCodeAt\b|b"(?:forEach|map|filter|find|findLast|findIndex|findLastIndex|some|every|includes|indexOf|lastIndexOf|has|add|size|keys|values|entries|getOwnPropertyNames|ownKeys|defineProperty|defineProperties|assign|seal|preventExtensions|setPrototypeOf|set|deleteProperty|mainModule|join|href|pathname|length|default|toString|valueOf|toJSON|trim|trimStart|trimEnd|toLowerCase|toUpperCase|concat|replace|replaceAll|slice|substring)"|known::(?:join|push|parse|search|hash)\b/,
     reason:
       "a member behind a value: whoever follows a text has the list, the Set that `new Set(..)` of the free name made, the text, the URL, the object literal or the global `Object` or `Reflect` in hand where it reads the name of the member, and built-ins are frozen",
+  },
+  {
+    paths: /^src\/sema\/import_sites\/alternatives\/execution\.rs$/,
+    lines: /known::env\b|b"(?:dirname|assign)"/,
+    reason:
+      "a member behind a thing: of `process`, of what node:path exports, found by the record of the import, and of the free name `Object`",
   },
   {
     paths: /^src\/sema\/import_sites\/alternatives\.rs$/,
@@ -292,6 +309,18 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     lines: /known::(?:require|exports)\b/,
     reason:
       "`import.meta.require` and `module.exports`: `import.meta` is syntax, and the binder has said that the object is the parameter of the module",
+  },
+  {
+    paths: /^src\/aot\/modules\/wrapped\/bootstrap\.rs$/,
+    lines: /known::exports\b|== b"(?:call|bind|then|o)"/,
+    reason:
+      "members of what webpack's runtime has made itself: in front of each name stands the binder's symbol of its cache, of the record that it makes of a module, of its object of function literals or of its require function",
+  },
+  {
+    paths: /^src\/aot\/modules\/wrapped\/browserify\.rs$/,
+    lines: /known::exports\b|== b"call"/,
+    reason:
+      "members of what browserify's runtime has made itself: in front of each name stands the binder's symbol of its object of bodies or of its cache",
   },
   {
     paths: /^src\/aot\/load\/made_own_require\.rs$/,

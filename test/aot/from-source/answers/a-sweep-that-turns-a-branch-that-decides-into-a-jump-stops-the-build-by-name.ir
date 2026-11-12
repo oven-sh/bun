@@ -3,7 +3,7 @@
 # The Narrowed after the branch stays.
 # The verifier's run before the sweep sees none of this: the build used to succeed under check=Validate, and the program crashed when it ran.
 # -- source: main.js
-# function fill(to, x) { for (let i = 0; i < to.length; i++) to[i] = x | 0; return to; }
+# function fill(to, x) { for (let i = 0; i < to.length; i++) to[i] = (x ^ i) | 0; return to; }
 # print(fill([1.5, 2.5, 3.5].slice(), 7).join() + " " + fill([1, 2, 3].slice(), 7).join());
 # -- end of source
 # OPTIONS: check=Validate testing=MisfoldBranchInSweep

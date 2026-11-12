@@ -2194,6 +2194,93 @@ c.txt,e.txt,f.txt
     expect(compiled).toEqual(plain);
   }, 120_000);
 
+  test.each(["beside its sources", "where its files are gone"])(
+    "a package reads what other threads have copied and written, %s",
+    async place => {
+      const rows = ["copied", "called back", "cp", "written", "opened", "shell", "folder/shell", "folder/deep/shell"];
+      const some = ["a", "b", "c", "d", "e", "f", "g", "h"].map(name => `some/${name}`);
+      using dir = tempDir("aot-writes-of-other-threads", {
+        "app/main.mjs": `import { start } from "store"; console.log(await start());`,
+        "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.mjs" }`,
+        "app/node_modules/store/below.cjs": `exports.below = name => require("node:path").join(__dirname, "data", name);`,
+        "app/node_modules/store/index.mjs": `import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { $ } from "bun";
+import { below } from "./below.cjs";
+const own = name => path.join(import.meta.dirname, "data", name);
+const from = fs.mkdtempSync(path.join(os.tmpdir(), "copied-from-"));
+const said = [];
+const say = async (write, ...names) => {
+  const opened = names.map(name => fs.openSync(own(name)));
+  for (const name of names) {
+    fs.mkdirSync(path.dirname(path.join(from, name)), { recursive: true });
+    fs.writeFileSync(path.join(from, name), "new");
+  }
+  await write(path.join(from, names[0]), below(names[0]));
+  for (const [index, name] of names.entries()) {
+    // On Windows a file that was opened keeps its bytes.
+    const kept = process.platform === "win32" ? "new" : fs.readFileSync(opened[index], "utf8");
+    said.push([name, fs.readFileSync(own(name), "utf8"), kept].join(" "));
+    fs.closeSync(opened[index]);
+  }
+};
+export const start = async () => {
+  try {
+    await say((source, target) => fs.promises.copyFile(source, target), "copied");
+    await say((source, target) => new Promise(done => fs.copyFile(source, target, done)), "called back");
+    await say((source, target) => fs.promises.cp(source, target), "cp");
+    await say((source, target) => fs.promises.writeFile(target, "new"), "written");
+    await say(async (source, target) => {
+      const handle = await fs.promises.open(target, "w");
+      await handle.writeFile("new");
+      await handle.close();
+    }, "opened");
+    await say((source, target) => $\`cp \${source} \${target}\`, "shell");
+    await say(() => $\`cp -R \${path.join(from, "folder")} \${below("")}\`, "folder/shell", "folder/deep/shell");
+    const some = ["a", "b", "c", "d", "e", "f", "g", "h"].map(name => "some/" + name);
+    fs.mkdirSync(path.join(from, "some"));
+    for (const name of [...some, "some/folder"]) fs.writeFileSync(path.join(from, name), "new");
+    fs.mkdirSync(below("some/folder"));
+    const { exitCode } = await $\`cp -R \${path.join(from, "some")} \${below("")}\`.nothrow().quiet();
+    said.push("laid " + fs.readFileSync(own("folder/laid"), "utf8"));
+    const isSame = name => fs.readFileSync(own(name), "utf8") === fs.readFileSync(below(name), "utf8");
+    said.push("some " + (exitCode !== 0) + " " + some.every(isSame));
+  } finally {
+    fs.rmSync(from, { recursive: true });
+  }
+  return said.join("\\n");
+};
+`,
+        ...Object.fromEntries(
+          [...rows, ...some, "folder/laid"].map(name => [`app/node_modules/store/data/${name}`, "first"]),
+        ),
+      });
+      const [app, copy, outfile] = ["app", "copy", "built.exe"].map(it => join(String(dir), it));
+      cpSync(app, copy, { recursive: true });
+      const built = await run(app, [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", outfile]);
+      expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+        stderr: "",
+        exitCode: 0,
+      });
+      if (place !== "beside its sources") {
+        renameSync(app, join(String(dir), "moved-away"));
+        for (const folder of ["folder/deep", "some"]) {
+          mkdirSync(join(app, "node_modules/store/data", folder), { recursive: true });
+        }
+      }
+      // The program has not written this one, so it is not trusted.
+      writeFileSync(join(app, "node_modules/store/data/folder/laid"), "laid");
+      const env = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
+      const plain = await run(copy, [bunExe(), "run", "./main.mjs"], env);
+      const compiled = await run(String(dir), [outfile], { ...env, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+      const stdout = [...rows.map(name => `${name} new new`), "laid first", "some true true", ""].join("\n");
+      expect(plain).toEqual({ stdout, stderr: "", exitCode: 0 });
+      expect(compiled).toEqual(plain);
+    },
+    120_000,
+  );
+
   test("a failed mv leaves what the disk does not have", async () => {
     using dir = tempDir("aot-mv-of-embedded-file", {
       "app/main.mjs": `import { start } from "store"; console.log(await start());`,
@@ -2692,6 +2779,47 @@ a blob third
     },
     120_000,
   );
+
+  test("a route of Bun.serve() may be a file that --asset embeds", async () => {
+    using dir = tempDir("aot-route-of-embedded-file", {
+      "app/package.json": `{ "name": "server" }`,
+      "app/favicon.ico": "an icon",
+      "app/page.html": "a page",
+      "app/main.mjs": `import path from "node:path";
+const at = name => Bun.file(path.join(import.meta.dir, name));
+using server = Bun.serve({
+  port: 0,
+  routes: { "/favicon.ico": at("favicon.ico"), "/page": at("page.html"), "/response": new Response(at("page.html")) },
+  fetch: () => new Response("no route"),
+});
+for (const route of ["/favicon.ico", "/page", "/response", "/other"]) {
+  const answer = await fetch(new URL(route, server.url));
+  console.log(route, answer.status, answer.headers.get("content-type"), await answer.text());
+}
+const head = await fetch(new URL("/favicon.ico", server.url), { method: "HEAD" });
+console.log("HEAD", head.status, head.headers.get("content-length"));
+`,
+    });
+    const { plain, compiled } = await bothWays(
+      String(dir),
+      "./main.mjs",
+      "--asset",
+      "./favicon.ico",
+      "--asset",
+      "./page.html",
+    );
+    expect(plain).toEqual({
+      stdout: `/favicon.ico 200 image/x-icon an icon
+/page 200 text/html;charset=utf-8 a page
+/response 200 text/html;charset=utf-8 a page
+/other 200 text/plain;charset=utf-8 no route
+HEAD 200 7
+`,
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(compiled).toEqual(plain);
+  }, 120_000);
 
   test.skipIf(!isLinux)(
     "an embedded folder is opened where no temporary folder can be made",

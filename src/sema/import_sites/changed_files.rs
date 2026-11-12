@@ -6,21 +6,25 @@ use super::alternatives::{
 use super::call_sites::{is_free_name, is_process};
 use super::made_requires::{follow_settled_bindings, is_only_read_by_member};
 use super::named_paths::{is_relative_path, may_lead_to_own_folder};
-use super::parameters::{find_only_name_of, find_parameter_key_path};
+use super::parameters::{
+    find_arguments_where_written, find_only_name_of, find_parameter_key_path, is_exported,
+};
 use super::{
     CallerRelativeRead, ChangedPath, ExportedText, ImportSpecifier, ResolvedForm, ScanInputs,
 };
 use crate::atom::{Atom, Interner, known};
-use crate::bind::{Binding, Bound, Decl, Parent, PatParent, SymbolId};
+use crate::bind::{
+    Binding, BindingInitializer, BindingStability, Bound, Decl, Parent, PatParent, SymbolId,
+};
 use crate::file_analysis::FileInputs;
 use crate::fold::{
     Constant, Decisions, FoldInputs, FoldedValue, Passes, find_members_below_module,
 };
 use crate::hir::{
-    BinOp, ExprId, ExprKind, File, IdList, ImportedFileChanger, MemberKey, PatId, PatKind, PropKey,
-    PropKind, StmtKind,
+    BinOp, ExprId, ExprKind, File, Flags, FnId, IdList, ImportedFileChanger, MemberKey, PatId,
+    PatKind, PropId, PropKey, PropKind, StmtKind,
 };
-use crate::util::SharedSort;
+use crate::util::{FxHashMap, SharedSort};
 use smallvec::SmallVec;
 use std::cell::Cell;
 
@@ -174,10 +178,27 @@ pub(super) fn find_constant(inputs: &ScanInputs<'_, '_>, e: ExprId) -> Option<Co
 }
 
 fn find_function(inputs: &ScanInputs<'_, '_>, callee: ExprId) -> Option<(Holder, Atom)> {
-    find_function_named(inputs, callee).or_else(|| {
-        let bound_function = find_function_bound(inputs, callee)?;
-        find_function_named(inputs, bound_function)
-    })
+    find_function_named(inputs, callee)
+        .or_else(|| find_function_named(inputs, find_function_bound(inputs, callee)?))
+        .or_else(|| find_function_passed(inputs, callee))
+}
+
+/// `read` in `(read => read(path))(fs.readFileSync)` and `(read = fs.readFileSync) => read(path)`.
+fn find_function_passed(inputs: &ScanInputs<'_, '_>, callee: ExprId) -> Option<(Holder, Atom)> {
+    let &ScanInputs { hir, bound, .. } = inputs;
+    if !matches!(hir[callee].kind, ExprKind::Ident(_)) {
+        return None;
+    }
+    let (function, place, path) = find_parameter_key_path(hir, bound, callee)?;
+    let parameter = hir[function].params.iter().nth(place)?;
+    if !path.is_empty() {
+        return None;
+    }
+    let no_names = |_: Atom| Vec::new();
+    let passed = find_arguments_where_written(hir, bound, function, &no_names);
+    let passed = passed.and_then(|it| hir.ids(it).nth(place));
+    let mut functions = hir[parameter].default.some().into_iter().chain(passed);
+    functions.find_map(|it| find_function_named(inputs, hir.skip_type_assertions(it)))
 }
 
 /// `fs.readFileSync` in `const read = fs.readFileSync.bind(fs)`.
@@ -688,6 +709,27 @@ impl<'a, 's> TextsOfFile<'a, 's> {
         reads
     }
 
+    /// What the reads at `operands` read, for those of which the statements of the file tell.
+    pub(super) fn find_executed_reads(
+        &self,
+        operands: FxHashMap<ExprId, bool>,
+    ) -> FxHashMap<ExprId, SmallVec<[Atom; 2]>> {
+        let (names, asked) = (&self.written_names, &self.asked);
+        let find = super::alternatives::find_executed_alternatives;
+        let executed = find(&self.inputs, names, asked, operands);
+        let text = |atom: Atom| self.inputs.atoms.bytes(atom);
+        let reads = executed.into_iter().map(|(operand, found)| {
+            let mut paths: SmallVec<[Atom; 2]> = SmallVec::new();
+            for found in &found {
+                paths.extend(self.to_module_relative_paths(found));
+            }
+            paths.shared_sort_unstable_by_key(|it| text(*it));
+            paths.dedup();
+            (operand, paths)
+        });
+        reads.collect()
+    }
+
     /// The paths that `value` can be, without the module's own folder.
     pub(super) fn find_files_named(&self, value: ExprId) -> SmallVec<[Atom; 2]> {
         let mut paths = self.find_module_relative_reads(value).paths;
@@ -700,6 +742,227 @@ impl<'a, 's> TextsOfFile<'a, 's> {
         let others = &self.own_path_queries;
         let found = find_known_elements(&self.inputs, names, asked, others, list, &self.findings);
         found.map_or_else(SmallVec::new, |found| self.to_module_relative_paths(&found))
+    }
+
+    /// Whether all that the program can do with the file object `made` is to write the whole file.
+    pub(super) fn is_written_alone(&self, made: ExprId) -> bool {
+        self.are_all_uses_writes(made, &mut SmallVec::new())
+    }
+
+    /// `seen`: the names whose mentions are looked at already.
+    fn are_all_uses_writes(&self, value: ExprId, seen: &mut SmallVec<[SymbolId; 4]>) -> bool {
+        let ScanInputs {
+            hir, bound, atoms, ..
+        } = self.inputs;
+        let parent = bound.parent_of_expr(value);
+        match parent {
+            Parent::Expr(above) if hir.type_assertion_operand(above).is_some() => {
+                self.are_all_uses_writes(above, seen)
+            }
+            Parent::Expr(above) => {
+                if let Some((object, MemberKey::Name(method))) = hir.member_key(above) {
+                    let writes = matches!(atoms.bytes(method), b"write" | b"delete" | b"unlink");
+                    return object == value && writes && self.is_callee(above);
+                }
+                let ExprKind::Call(call) = hir[above].kind else {
+                    return false;
+                };
+                let (callee, args) = (hir[call].callee, hir[call].args);
+                let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
+                let Some(place) = hir.ids(args).position(|it| it == value) else {
+                    return false;
+                };
+                if hir.ids(args).take(place).any(is_spread) {
+                    return false;
+                }
+                match find_function(&self.inputs, callee) {
+                    Some((Holder::Bun, name)) if atoms.bytes(name) == b"write" => place == 0,
+                    Some(_) => false,
+                    None => self.find_parameter(callee, place).is_some_and(|parameter| {
+                        self.is_every_mention(parameter, seen, &|texts, mention, seen| {
+                            texts.are_all_uses_writes(mention, seen)
+                        })
+                    }),
+                }
+            }
+            Parent::VarInit(declaration) => {
+                let pattern = hir[declaration].pat;
+                let Binding::Symbol(name) = bound.initialized_binding(pattern) else {
+                    return false;
+                };
+                matches!(hir[pattern].kind, PatKind::Ident(_))
+                    && self.is_every_mention(name, seen, &|texts, mention, seen| {
+                        texts.are_all_uses_writes(mention, seen)
+                    })
+            }
+            Parent::FnBody(_) | Parent::Stmt(_) => self
+                .find_returning_function(parent)
+                .and_then(|function| self.find_only_name(function))
+                .is_some_and(|name| {
+                    self.is_every_mention(name, seen, &|texts, mention, seen| {
+                        texts
+                            .find_call_of(mention)
+                            .is_some_and(|call| texts.are_all_uses_writes(call, seen))
+                    })
+                }),
+            Parent::Prop(property) => self.is_property_written_alone(property, seen),
+            Parent::MemberInit(member) => {
+                let PropKey::Private(name) = hir[member].key else {
+                    return false;
+                };
+                // Another class may have a field of the same name, and `eval()` reaches each of them.
+                let mut all = (0..hir.exprs.len() as u32).map(ExprId);
+                all.all(|it| match hir[it].kind {
+                    ExprKind::Ident(name) => name != known::eval,
+                    _ => {
+                        let key = hir.member_key(it).map(|it| it.1);
+                        key != Some(MemberKey::PrivateName(name))
+                            || self.are_all_uses_writes(it, seen)
+                    }
+                })
+            }
+            _ => false,
+        }
+    }
+
+    /// `{ log: Bun.file(path) }`, held by a name that is only asked for its properties.
+    fn is_property_written_alone(
+        &self,
+        property: PropId,
+        seen: &mut SmallVec<[SymbolId; 4]>,
+    ) -> bool {
+        let ScanInputs { hir, bound, .. } = self.inputs;
+        let literal = bound.prop_owner[property.idx()];
+        let (PropKey::Name(key), ExprKind::Object(properties)) =
+            (hir[property].key, hir[literal].kind)
+        else {
+            return false;
+        };
+        // A method or a getter has the object as `this`.
+        let is_plain = |it: PropId| {
+            matches!(hir[it].kind, PropKind::Init | PropKind::Shorthand)
+                && matches!(hir[it].key, PropKey::Name(key) if key != known::__proto__)
+        };
+        let Parent::VarInit(declaration) = bound.parent_of_expr(literal) else {
+            return false;
+        };
+        let pattern = hir[declaration].pat;
+        let Binding::Symbol(name) = bound.initialized_binding(pattern) else {
+            return false;
+        };
+        properties.iter().all(is_plain)
+            && matches!(hir[pattern].kind, PatKind::Ident(_))
+            && self.is_every_mention(name, seen, &|texts, mention, seen| {
+                let Parent::Expr(member) = bound.parent_of_expr(mention) else {
+                    return false;
+                };
+                match hir.member_key(member) {
+                    Some((object, MemberKey::Name(asked))) if object == mention => {
+                        match asked == key {
+                            true => texts.are_all_uses_writes(member, seen),
+                            false => !texts.is_callee(member),
+                        }
+                    }
+                    _ => false,
+                }
+            })
+    }
+
+    /// Whether all that mentions `name` is known, and `is_write` for each of them.
+    fn is_every_mention(
+        &self,
+        name: SymbolId,
+        seen: &mut SmallVec<[SymbolId; 4]>,
+        is_write: &dyn Fn(&Self, ExprId, &mut SmallVec<[SymbolId; 4]>) -> bool,
+    ) -> bool {
+        let ScanInputs { hir, bound, .. } = self.inputs;
+        if seen.contains(&name) {
+            return true;
+        }
+        seen.push(name);
+        let is_settled = matches!(
+            bound.binding_stability(name),
+            BindingStability::Stable | BindingStability::NotInitializedOnce
+        ) && bound.stores_to(name).is_empty();
+        if !is_settled || bound.is_visible_to_eval(name) || is_exported(hir, bound, name) {
+            return false;
+        }
+        let written = bound.symbol(name).name;
+        let mentions = self.written_names.find_expressions(hir, written);
+        let mut mentions = mentions.into_iter().filter(|&it| {
+            bound.binding(it) == Binding::Symbol(name) && bound.is_evaluated_ident(it)
+        });
+        mentions.all(|it| is_write(self, it, seen))
+    }
+
+    fn is_callee(&self, value: ExprId) -> bool {
+        self.find_call_of(value).is_some()
+    }
+
+    fn find_call_of(&self, callee: ExprId) -> Option<ExprId> {
+        let ScanInputs { hir, bound, .. } = self.inputs;
+        let Parent::Expr(above) = bound.parent_of_expr(callee) else {
+            return None;
+        };
+        let is_call = matches!(hir[above].kind, ExprKind::Call(call) if hir[call].callee == callee);
+        is_call.then_some(above)
+    }
+
+    fn find_only_name(&self, function: FnId) -> Option<SymbolId> {
+        let ScanInputs { hir, bound, .. } = self.inputs;
+        let find_written = |name: Atom| self.written_names.find_expressions(hir, name);
+        find_only_name_of(hir, bound, function, &find_written, false)
+    }
+
+    /// The parameter at `place` of the function of the file that `callee` names.
+    fn find_parameter(&self, callee: ExprId, place: usize) -> Option<SymbolId> {
+        let ScanInputs { hir, bound, .. } = self.inputs;
+        let callee = hir.skip_type_assertions(callee);
+        let (ExprKind::Ident(_), Binding::Symbol(name)) = (hir[callee].kind, bound.binding(callee))
+        else {
+            return None;
+        };
+        let function = match bound.binding_initializer(hir, name) {
+            BindingInitializer::Function(function) => function,
+            BindingInitializer::Expression(value) => {
+                match hir[hir.skip_type_assertions(value)].kind {
+                    ExprKind::Fn(function) => function,
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        let find_written = |name: Atom| self.written_names.find_expressions(hir, name);
+        if find_only_name_of(hir, bound, function, &find_written, true) != Some(name) {
+            return None;
+        }
+        let parameter = hir[function].params.iter().nth(place)?;
+        let pattern = hir[parameter].pat;
+        let is_plain = matches!(hir[pattern].kind, PatKind::Ident(_))
+            && !hir[parameter].flags.contains(Flags::REST);
+        is_plain.then(|| bound.declared_symbol(Decl::Param(pattern)))
+    }
+
+    /// The function whose answer is the value below `parent`.
+    fn find_returning_function(&self, parent: Parent) -> Option<FnId> {
+        let ScanInputs { hir, bound, .. } = self.inputs;
+        let function = match parent {
+            Parent::FnBody(function) => function,
+            Parent::Stmt(mut statement) if matches!(hir[statement].kind, StmtKind::Return(_)) => {
+                while let Parent::Stmt(above) = bound.parent_of_stmt(statement) {
+                    statement = above;
+                }
+                match bound.parent_of_stmt(statement) {
+                    Parent::FnBody(function) => function,
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        let is_plain = !hir[function]
+            .flags
+            .intersects(Flags::ASYNC | Flags::GENERATOR);
+        is_plain.then_some(function)
     }
 
     /// Returns false if `find_module_relative_reads()` skips a value of `value`.

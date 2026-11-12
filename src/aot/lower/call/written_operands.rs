@@ -1,10 +1,10 @@
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Parent, SymbolId};
 use bun_sema::check::aot::ObjectMemberKind;
 use bun_sema::fold::{TreeNode, push_children};
 use bun_sema::hir::{
-    Call, CallId, Chain, ExprId, ExprKind, IdList, NameKind, PatId, PatKind, PropKind, StmtId,
-    is_private_name_at, is_proto_setter,
+    Call, CallId, Chain, ExprId, ExprKind, FnKind, IdList, NameKind, PatId, PatKind, PropKey,
+    PropKind, StmtId, is_private_name_at, is_proto_setter,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -13,10 +13,11 @@ use super::{Arguments, Callee, emit_call, emit_call_of};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{Mutability, Resolved, table};
 use crate::ir::generated::{Layout, LayoutFlags, LayoutKind};
-use crate::ir::{LayoutId, LayoutKey, PropertyKeyId, ValueId};
+use crate::ir::{FunctionKey, LayoutId, LayoutKey, PropertyKeyId, ValueId};
 use crate::lower::context::StoresByNameInList;
 use crate::lower::expression::Tail;
 use crate::lower::member::PropertyName;
+use crate::lower::object::ObjectBuilder;
 use crate::lower::{FileLowering, FunctionLowering, object};
 use crate::modules::{DescribedPart, WrittenDescriptor};
 
@@ -191,6 +192,60 @@ impl FileLowering<'_, '_, '_, '_> {
                     && !is_proto_setter(&entry)
                     && self.lays_value_or_getter(entry.value)
             })
+    }
+
+    /// The names and the descriptors of a map whose reading runs no code and refuses nothing.
+    fn find_entries_of_written_map(&self, map: ExprId) -> Option<SmallVec<[(Atom, ExprId); 8]>> {
+        let hir = self.hir;
+        let ExprKind::Object(properties) = hir[self.skip_type_syntax(map)].kind else {
+            return None;
+        };
+        let members = [
+            known::value,
+            known::get,
+            known::set,
+            known::enumerable,
+            known::configurable,
+            known::writable,
+        ];
+        if members
+            .iter()
+            .any(|&member| self.is_name_on_object_prototype(member))
+        {
+            return None;
+        }
+        let is_function = |part: Option<ExprId>| {
+            part.is_none_or(|part| matches!(hir[self.skip_type_syntax(part)].kind, ExprKind::Fn(_)))
+        };
+        let mut names = FxHashSet::default();
+        let mut entries = SmallVec::new();
+        for entry in properties.iter().map(|entry| hir[entry]) {
+            let PropKey::Name(name) = entry.key else {
+                return None;
+            };
+            let is_plain = entry.kind == PropKind::Init
+                && entry.name_kind == NameKind::Identifier
+                && !is_proto_setter(&entry);
+            if !is_plain || !names.insert(name) {
+                return None;
+            }
+            let written = WrittenDescriptor::read(hir, self.decisions(), entry.value)?;
+            let ExprKind::Object(members) = hir[self.skip_type_syntax(entry.value)].kind else {
+                return None;
+            };
+            let is_written = match written.part {
+                DescribedPart::Data { .. } => true,
+                DescribedPart::Accessor { getter, setter } => {
+                    is_function(getter) && is_function(setter)
+                }
+            };
+            let mut named = FxHashSet::default();
+            if !is_written || !members.iter().all(|member| named.insert(hir[member].key)) {
+                return None;
+            }
+            entries.push((name, entry.value));
+        }
+        (!entries.is_empty()).then_some(entries)
     }
 
     fn find_parent_and_written_map(&self, site: Call) -> Option<(ExprId, Option<ExprId>)> {
@@ -464,12 +519,87 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.convert_arguments(call, &mut written);
         let [target, described] = written;
         self.set_position(self.file.call_position(site));
-        let define = self.emit_locked_builtin(BuiltinId::CompilerHelpersDefinePropertiesFrom);
+        let define = self.emit_builtin_itself(BuiltinId::CompilerHelpersDefinePropertiesFrom);
         let define = Callee::without_key(define, None, self.file.find_callee_name(site.callee));
         let arguments = Arguments::Values(SmallVec::from_slice(&[target, described, source]));
         let defined = emit_call_of(self, define, arguments);
         self.set_position(hir[call].pos);
         Some(self.claim_call_result(call, defined))
+    }
+
+    /// `Object.defineProperties(object, { a: { value: 1 }, b: { get() { .. } } })`: the map is not made, and each property is defined by itself once every descriptor is evaluated.
+    fn lower_definitions_of_written_map(&mut self, call: ExprId, site: Call) -> Option<ValueId> {
+        let hir = self.file.hir;
+        let arguments: SmallVec<[ExprId; 4]> = hir.ids(site.args).collect();
+        let &[target, map] = arguments.as_slice() else {
+            return None;
+        };
+        if !self.is_object_made_here(target) {
+            return None;
+        }
+        let entries = self.file.find_entries_of_written_map(map)?;
+
+        // The receiver of each definition is the built-in that an error names.
+        let map = self.emit_locked_builtin(BuiltinId::ObjectDefineProperties);
+        let target = self.lower_expression(target);
+        let mut definitions: SmallVec<[(Atom, ObjectBuilder); 8]> = SmallVec::new();
+        for (name, descriptor) in entries {
+            definitions.push((name, self.lower_members_of_descriptor(descriptor)));
+        }
+        self.set_position(self.file.call_position(site));
+        let define = self.emit_builtin_itself(BuiltinId::ObjectDefineProperty);
+        for (name, descriptor) in definitions {
+            let descriptor = object::finish_object(self, descriptor);
+            let name = self.file.intern_atom(name);
+            let key = self.builder.string(name);
+            emit_call(self, define, Some(map), &[target, key, descriptor]);
+        }
+        self.set_position(hir[call].pos);
+        Some(self.claim_call_result(call, target))
+    }
+
+    /// A definition on any other holder, `C.prototype` or what is handed in, opens the classes that may be behind it. The call does not.
+    fn is_object_made_here(&mut self, holder: ExprId) -> bool {
+        let hir = self.file.hir;
+        match hir[self.file.skip_type_syntax(holder)].kind {
+            ExprKind::Object(_) => true,
+            ExprKind::This => {
+                let FunctionKey::Source(source) = self.key else {
+                    return false;
+                };
+                match hir[source.function].kind {
+                    FnKind::Constructor => true,
+                    FnKind::Decl | FnKind::Expr => self
+                        .file
+                        .queries
+                        .constructor_function_shape(source)
+                        .is_some(),
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// The values are evaluated here. The object is made where it is finished.
+    fn lower_members_of_descriptor(&mut self, descriptor: ExprId) -> ObjectBuilder {
+        let hir = self.file.hir;
+        let ExprKind::Object(properties) = hir[self.file.skip_type_syntax(descriptor)].kind else {
+            unreachable!("a written descriptor is a literal");
+        };
+        let mut members: SmallVec<[(PropertyKeyId, ObjectMemberKind); 6]> = SmallVec::new();
+        for property in properties.iter() {
+            let PropKey::Name(name) = hir[property].key else {
+                unreachable!("a written descriptor has no computed key");
+            };
+            members.push((self.file.name_key(name), ObjectMemberKind::Field));
+        }
+        let layout = self.file.untyped_layout(&members);
+        let mut literal = self.begin_object(layout);
+        for property in properties.iter() {
+            self.lower_property_of_written_literal(&mut literal, property);
+        }
+        literal
     }
 
     pub(super) fn try_lower_builtin_call_in_place(
@@ -483,15 +613,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         match find_locked_builtin(self.file, site.callee) {
             Some(BuiltinId::ObjectFromEntries) => self.lower_object_from_entries(call, site, tail),
-            Some(BuiltinId::ObjectDefineProperties) => {
-                self.lower_definition_by_descriptors(call, site)
-            }
+            Some(BuiltinId::ObjectDefineProperties) => self
+                .lower_definition_by_descriptors(call, site)
+                .or_else(|| self.lower_definitions_of_written_map(call, site)),
             Some(BuiltinId::ArrayFrom) => self.lower_array_from(call, site, tail),
             Some(BuiltinId::Object) => self.lower_empty_object(call, site),
             Some(BuiltinId::ObjectCreate) => self.lower_object_created_below(call, site, tail),
-            Some(BuiltinId::ObjectAssign) => self.lower_assignment_to_new_object(call, site, tail),
+            Some(BuiltinId::ObjectAssign) => self
+                .lower_assignment_to_new_object(call, site, tail)
+                .or_else(|| self.lower_assignment_of_literals(call, site)),
             Some(_) => None,
-            None => self.try_lower_method_call(call, site, tail),
+            None => match self.lower_call_of_assign_helper(call, site) {
+                Some(made) => Some(made),
+                None => self.try_lower_method_call(call, site, tail),
+            },
         }
     }
 

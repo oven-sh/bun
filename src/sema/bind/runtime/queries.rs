@@ -34,7 +34,16 @@ fn symbol_at(column: &[SymbolId], index: usize) -> SymbolId {
 
 pub fn is_among_parameters(hir: &File<'_>, function: FnId, from: ScopeKind, pos: u32) -> bool {
     match hir[function].body {
-        FnBody::Expr(body) => hir.position_of_evaluation(pos) < hir[body].pos,
+        FnBody::Expr(body) => {
+            let body = hir[body].pos;
+            let is_evaluated = hir.position_of_evaluation(body) != body;
+            let pos = if is_evaluated {
+                pos
+            } else {
+                hir.position_of_evaluation(pos)
+            };
+            pos < body
+        }
         FnBody::Block(_) | FnBody::None => matches!(from, ScopeKind::Param(_)),
     }
 }

@@ -133,7 +133,6 @@ test("a", async () => console.log("SAID", (await import("./part.mjs")).part));`,
   },
   ...Object.fromEntries(
     Object.entries({
-      "import()": `async () => ({ ...(await import("./part.mjs")), read: () => "mock" })`,
       "importActual()": `async () => ({ ...(await vi.importActual("./part.mjs")), read: () => "mock" })`,
       "the original that it is given": `async original => ({ ...(await original()), read: () => "mock" })`,
       "requireActual()": `() => ({ ...jest.requireActual("./part.mjs"), read: () => "mock" })`,

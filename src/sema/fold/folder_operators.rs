@@ -210,6 +210,8 @@ impl<'s> Folder<'_, 's> {
                 };
                 self.fold_logical(e, operator, left, right)
             }
+            // A copy of a factory is called.
+            BinOp::Comma if self.hir.copied_factory_of(e).is_some() => self.folded(right),
             BinOp::Comma => {
                 self.copy_condition(e, right);
                 let right = self.folded(right);

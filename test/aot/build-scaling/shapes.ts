@@ -5924,6 +5924,26 @@ console.log(typeof outmost.inner);
       "main.js": `class Wide {\n  constructor(v) {\n${lines(size, index => `    this.f${index} += v;`)}  }\n}\nconsole.log(String(new Wide(1).f0));\n`,
     }),
   },
+  // What is filled is not sorted again at each call.
+  {
+    name: "methods that a constructor calls, each storing a field of its own",
+    counted: "methods",
+    size: 2000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `class Wide {\n  constructor(v) {\n${lines(size, index => `    this.m${index}(v);`)}  }\n${lines(size, index => `  m${index}(v) { this.f${index} = v; }`)}}\nconsole.log(String(new Wide(1).f0));\n`,
+    }),
+  },
+  // The keys of the methods below are not listed again for each method.
+  {
+    name: "methods that a constructor calls, each storing a field and calling the next",
+    counted: "methods",
+    size: 3000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `class Wide {\n  constructor(v) {\n    this.m0(v);\n  }\n${lines(size, index => `  m${index}(v) {\n    this.f${index} = v;\n${index + 1 < size ? `    this.m${index + 1}(v);\n` : ""}  }`)}}\nconsole.log(String(new Wide(1).f0));\n`,
+    }),
+  },
   // The same of static fields: the static blocks were sought among all members anew for each. 32,000 took 29 G instructions, and take 5.8.
   // At these sizes the build holds too little for its memory to be judged. At 8,000 and 16,000 that was judged, and one compiler read 1.96 to 2.10 times in eight runs: the instructions were the same in all.
   {

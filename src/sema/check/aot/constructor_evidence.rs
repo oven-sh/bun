@@ -1,7 +1,9 @@
 use super::answers::FunctionRef;
 use super::class_shape::is_prototype_object;
 use super::class_stores::find_prototype_object_held_by;
-use super::class_stores::{ThisOwner, bound_symbol, find_stable_initializer, find_stored_function};
+use super::class_stores::{
+    ThisOwner, WrittenStores, bound_symbol, find_stable_initializer, find_stored_function,
+};
 use super::prototype_links::{LinkEnd, NamedValue, PrototypeOperation, list_in};
 use super::queries::Queries;
 use crate::atom::{Atom, known};
@@ -9,8 +11,8 @@ use crate::bind::{
     Binding, BindingInitializer, BindingKind, Bound, Decl, FnOwner, Parent, PatParent, SymbolId,
 };
 use crate::hir::{
-    self, BinOp, ExportSpecId, ExprId, ExprKind, ExprTag, Flags, FnId, FnKind, MemberKey, PatKind,
-    PropKey, PropKind, TypeNodeKind, VarKind,
+    self, BinOp, CallId, ExportSpecId, ExprId, ExprKind, ExprTag, Flags, FnId, FnKind, MemberKey,
+    PatKind, PropKey, PropKind, TypeNodeKind, VarKind,
 };
 use crate::program::FileId;
 use crate::util::{FxHashMap, FxHashSet};
@@ -44,7 +46,15 @@ impl From<bool> for Standing {
     }
 }
 
-fn is_laid_as_prototype_object(hir: &hir::File<'_>, bound: &Bound<'_>, literal: ExprId) -> bool {
+fn is_laid_as_prototype_object(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    written: WrittenStores<'_>,
+    literal: ExprId,
+) -> bool {
+    if written.is_named_prototype_literal(literal) {
+        return true;
+    }
     let Parent::Expr(parent) = bound.parent_of_expr(literal) else {
         return false;
     };
@@ -60,6 +70,7 @@ fn is_laid_as_prototype_object(hir: &hir::File<'_>, bound: &Bound<'_>, literal: 
 fn find_standing(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
+    written: WrittenStores<'_>,
     mut value: ExprId,
     declares_this: bool,
 ) -> Standing {
@@ -77,6 +88,7 @@ fn find_standing(
                         && !is_laid_as_prototype_object(
                             hir,
                             bound,
+                            written,
                             bound.prop_owner[property.idx()],
                         ),
                 );
@@ -292,8 +304,57 @@ fn find_property_path(
     }
 }
 
-/// What a parameter of a function that is called where it is written holds.
+/// What a parameter of a function that is called where it is written holds, if that is a name.
 fn find_argument_in_place(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    root: SymbolId,
+) -> Option<ExprId> {
+    let argument = find_argument_of_only_call(hir, bound, root)?;
+    matches!(hir[argument].kind, ExprKind::Ident(_))
+        .then_some(argument)
+        .or_else(|| hir.member_key(argument).map(|_| argument))
+}
+
+/// The object literal that a name holds.
+pub(super) fn find_named_literal(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    name: ExprId,
+) -> Option<ExprId> {
+    let mut value = hir.skip_type_assertions(name);
+    let mut followed: SmallVec<[SymbolId; 4]> = SmallVec::new();
+    while matches!(hir[value].kind, ExprKind::Ident(_)) {
+        let symbol = bound_symbol(hir, bound, value)?;
+        if followed.contains(&symbol) {
+            return None;
+        }
+        followed.push(symbol);
+        let held = find_stable_initializer(hir, bound, value)
+            .or_else(|| find_argument_of_only_call(hir, bound, symbol))?;
+        value = hir.skip_type_assertions(held);
+    }
+    let is_literal = matches!(hir[value].kind, ExprKind::Object(_));
+    (is_literal && !followed.is_empty()).then_some(value)
+}
+
+/// The one call of a function that is called where it is written, or of the copy of a factory.
+fn find_only_call(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId) -> Option<CallId> {
+    if let FnOwner::Expr(copy) = bound.fns[function.idx()].owner
+        && let Parent::Expr(sequence) = bound.parent_of_expr(copy)
+        && let Some(sequence) = sequence.some()
+        && let Some(copied) = hir.copied_factory_of(sequence)
+        && copied.function == copy
+    {
+        return Some(copied.call);
+    }
+    if !bound.is_called_only_where_written(hir, function) {
+        return None;
+    }
+    bound.get_immediately_invoked_function_expression(hir, function)
+}
+
+fn find_argument_of_only_call(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
     root: SymbolId,
@@ -312,21 +373,17 @@ fn find_argument_in_place(
         || !matches!(hir[pattern].kind, PatKind::Ident(_))
         || hir[parameter].default.is_some()
         || hir[parameter].flags.contains(Flags::REST)
-        || !bound.is_called_only_where_written(hir, function)
     {
         return None;
     }
-    let call = bound.get_immediately_invoked_function_expression(hir, function)?;
+    let call = find_only_call(hir, bound, function)?;
     let index = hir[function].params.position_of(parameter.idx())?;
     let mut arguments = hir.ids(hir[call].args);
     let is_spread = |argument: ExprId| matches!(hir[argument].kind, ExprKind::Spread(_));
     if arguments.clone().take(index + 1).any(is_spread) {
         return None;
     }
-    let argument = hir.skip_type_assertions(arguments.nth(index)?);
-    matches!(hir[argument].kind, ExprKind::Ident(_))
-        .then_some(argument)
-        .or_else(|| hir.member_key(argument).map(|_| argument))
+    Some(hir.skip_type_assertions(arguments.nth(index)?))
 }
 
 /// A function that a file stores under a path of names.
@@ -428,9 +485,45 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         *of_file.get_or_init(|| self.compute_functions_at_paths(file))
     }
 
+    /// The paths that `new ns.math.Vector(..)` names.
+    fn find_paths_named_by_new(&self, file: FileId) -> FxHashSet<PropertyPath> {
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let expressions = self.c.shared_exprs_by_kind(file);
+        let mut paths = FxHashSet::default();
+        for &construction in expressions.of(ExprTag::New) {
+            if let ExprKind::New(site) = hir[construction].kind
+                && let callee = hir.skip_type_assertions(hir[site].callee)
+                && hir.member_key(callee).is_some()
+            {
+                paths.extend(find_property_path(hir, bound, callee));
+            }
+        }
+        paths
+    }
+
     fn compute_functions_at_paths(&self, file: FileId) -> &'s [FunctionAtPath<'s>] {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let arena = self.c.arena;
+        let named_values = self.inputs.named_values;
+        let mut paths_named_by_new: Option<FxHashSet<PropertyPath>> = None;
+        // `ns.math.Vector = (function () { return function Vector() { .. }; })()`
+        let mut find_returned_function = |target: ExprId, value: ExprId| {
+            let value = hir.skip_type_assertions(value);
+            if !matches!(hir[value].kind, ExprKind::Call(_)) {
+                return None;
+            }
+            let named =
+                paths_named_by_new.get_or_insert_with(|| self.find_paths_named_by_new(file));
+            if named.is_empty() || !named.contains(&find_property_path(hir, bound, target)?) {
+                return None;
+            }
+            match named_values.find_named_value(file, value) {
+                Some(NamedValue::Function(function)) if function.file == file => {
+                    Some(function.function)
+                }
+                _ => None,
+            }
+        };
         let mut functions: Vec<FunctionAtPath<'s>> = Vec::new();
         for &assign in self.c.shared_exprs_by_kind(file).of(ExprTag::Assign) {
             if let ExprKind::Assign {
@@ -440,6 +533,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             } = hir[assign].kind
                 && hir.member_key(target).is_some()
                 && let Some(function) = find_assigned_function(hir, bound, value)
+                    .or_else(|| find_returned_function(target, value))
                 && !self.c.is_dead_expression(file, assign)
                 && let Some(path) = find_property_path(hir, bound, target)
             {
@@ -534,7 +628,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         declares_this: bool,
     ) -> bool {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
-        match find_standing(hir, bound, value, declares_this) {
+        let written = self.c.written_stores(file);
+        match find_standing(hir, bound, written, value, declares_this) {
             Standing::AsConstructor => true,
             Standing::AsSomethingElse => false,
             Standing::AsArgument { call, argument } => {
@@ -677,6 +772,42 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         list_in(self.c.arena, &named)
     }
 
+    /// Functions that `new Vector(..)` names through variables and through calls that create them.
+    fn compute_functions_named_through_variables(&mut self, file: FileId) -> &'s [FnId] {
+        let hir = self.c.hir(file);
+        let expressions = self.c.exprs_by_kind(file);
+        let named_values = self.inputs.named_values;
+        let mut named = Vec::new();
+        for &construction in expressions.of(ExprTag::New) {
+            let ExprKind::New(site) = hir[construction].kind else {
+                continue;
+            };
+            let callee = hir.skip_type_assertions(hir[site].callee);
+            if matches!(hir[callee].kind, ExprKind::Ident(_))
+                && let Some(NamedValue::Function(function)) =
+                    named_values.find_named_value(file, callee)
+                && function.file == file
+            {
+                named.push(function.function);
+            }
+        }
+        named.sort_unstable();
+        named.dedup();
+        list_in(self.c.arena, &named)
+    }
+
+    fn functions_named_through_variables(&mut self, file: FileId) -> &'s [FnId] {
+        let of_file = self.prototype_links(file);
+        *of_file
+            .functions_named_through_variables
+            .get_or_init(|| self.compute_functions_named_through_variables(file))
+    }
+
+    fn is_named_through_variables(&mut self, function: FunctionRef) -> bool {
+        let named = self.functions_named_through_variables(function.file);
+        named.binary_search(&function.function).is_ok()
+    }
+
     /// Functions that `new ns.math.Vector(..)` names: one function of the file is stored under that path, by a literal or an assignment.
     fn compute_constructed_at_paths(&mut self, file: FileId) -> &'s [FnId] {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
@@ -748,13 +879,47 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         constructed.binary_search(&function.function).is_ok()
     }
 
-    /// Functions of the file that fill the object of a constructor at a path: `this.init(..)`, `this.init.apply(this, ..)`, `Constructor.init.apply(this, ..)`,
+    /// Functions of the file that `new V(..)` names by a binding of their own.
+    fn functions_named_by_new(&mut self, file: FileId) -> Vec<FnId> {
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        if !bound.runtime.is_computed() {
+            return Vec::new();
+        }
+        let of_file = self.prototype_links(file);
+        let named = *of_file
+            .declarations_named_by_new
+            .get_or_init(|| self.compute_declarations_named_by_new(file));
+        let find_function = |&symbol: &SymbolId| {
+            if !bound.is_stable_binding(symbol) {
+                return None;
+            }
+            let function = match bound.binding_initializer(hir, symbol) {
+                BindingInitializer::Function(function) => function,
+                BindingInitializer::Expression(initializer) => {
+                    match hir[hir.skip_type_assertions(initializer)].kind {
+                        ExprKind::Fn(function) => function,
+                        _ => return None,
+                    }
+                }
+                _ => return None,
+            };
+            (hir[function].kind != FnKind::Arrow).then_some(function)
+        };
+        named.iter().filter_map(find_function).collect()
+    }
+
+    /// Functions of the file that fill the object of a constructor that `new` names: `this.init(..)`, `this.init.apply(this, ..)`, `Constructor.init.apply(this, ..)`,
     /// `this.above.init.call(this)`, and what those call in the same ways.
     fn compute_initializers_at_paths(&mut self, file: FileId) -> &'s [(FnId, FnId)] {
         let of_file = self.prototype_links(file);
-        let constructed = *of_file
+        let at_paths = *of_file
             .functions_constructed_at_paths
             .get_or_init(|| self.compute_constructed_at_paths(file));
+        let mut constructed = self.functions_named_by_new(file);
+        constructed.extend_from_slice(at_paths);
+        constructed.extend_from_slice(self.functions_named_through_variables(file));
+        constructed.sort_unstable();
+        constructed.dedup();
         if constructed.is_empty() {
             return &[];
         }
@@ -852,7 +1017,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 continue;
             }
             // `ns.V.prototype = { init: function () { .. } }`
-            let literal = hir.skip_type_assertions(value);
+            let literal = match name == known::prototype {
+                true => find_named_literal(hir, bound, value),
+                false => None,
+            };
+            let literal = literal.unwrap_or_else(|| hir.skip_type_assertions(value));
             if on_prototype.is_none()
                 && name == known::prototype
                 && let ExprKind::Object(properties) = hir[literal].kind
@@ -877,7 +1046,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }
         }
         let mut initializers = Vec::new();
-        for &constructor in constructed {
+        for constructor in constructed {
             let mut found: SmallVec<[FnId; 4]> = SmallVec::new();
             let mut next = 0;
             let mut container = constructor;
@@ -947,14 +1116,16 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             FnOwner::Stmt(_) => Some(bound.declared_symbol(Decl::Fn(function))),
             FnOwner::None | FnOwner::Member(_) | FnOwner::Type(_) => None,
         };
-        let Some(symbol) = symbol else {
-            return false;
-        };
-        let of_file = self.prototype_links(file);
-        let named = *of_file
-            .declarations_named_by_new
-            .get_or_init(|| self.compute_declarations_named_by_new(file));
-        named.binary_search(&symbol).is_ok()
+        if let Some(symbol) = symbol {
+            let of_file = self.prototype_links(file);
+            let named = *of_file
+                .declarations_named_by_new
+                .get_or_init(|| self.compute_declarations_named_by_new(file));
+            if named.binary_search(&symbol).is_ok() {
+                return true;
+            }
+        }
+        self.is_named_through_variables(FunctionRef { file, function })
     }
 
     pub(super) fn is_held_by_name_or_returned(&mut self, function: FunctionRef) -> bool {
@@ -971,6 +1142,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                         bound.parent_of_expr(expression),
                         Parent::Stmt(_) | Parent::FnBody(_)
                     )
+                    || self.is_named_through_variables(FunctionRef { file, function })
             }
             FnOwner::None | FnOwner::Member(_) | FnOwner::Type(_) => false,
         }

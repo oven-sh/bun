@@ -5,9 +5,10 @@ use bun_sema::check::spans::skip_trivia_back;
 use bun_sema::erasure::{
     PackedTypeRanges, ReplacedText, TypeRanges, find_type_ranges_beside_what_is_laid,
 };
-use bun_sema::fold::Constant;
+use bun_sema::fold::{Constant, Decision};
 use bun_sema::hir::{
-    ExprId, ExprKind, FnId, PropKind, StmtId, StmtKind, end_of_expr, find_transpiled_mark, start_of,
+    BinOp, ExprId, ExprKind, FnId, PropKind, StmtId, StmtKind, end_of_expr, find_transpiled_mark,
+    start_of,
 };
 use bun_sema::module_format::list_this_of_file;
 use rustc_hash::FxHashMap;
@@ -24,6 +25,40 @@ use crate::load::SourceKind;
 use crate::lower::FileLowering;
 
 impl FileLowering<'_, '_, '_, '_> {
+    fn is_left_out_of_text(&self, expression: ExprId) -> bool {
+        let may_be_left_out = !matches!(
+            self.hir[expression].kind,
+            ExprKind::Call(_) | ExprKind::Assign { .. } | ExprKind::Await(_) | ExprKind::New(_)
+        );
+        may_be_left_out && self.reads_only_what_bun_run_leaves_out(expression, true)
+    }
+
+    fn find_operands_left_out(&self, list: ExprId) -> Vec<(u32, u32)> {
+        let hir = self.hir;
+        let decisions = self.decisions();
+        let mut found = Vec::new();
+        let mut waiting = vec![list];
+        while let Some(operand) = waiting.pop() {
+            if let ExprKind::Binary {
+                op: BinOp::Comma,
+                left,
+                right,
+            } = hir[operand].kind
+            {
+                waiting.extend([left, right]);
+                continue;
+            }
+            let is_written_in_place = matches!(
+                decisions.decision(operand),
+                Decision::Constant(_) | Decision::Data(_)
+            );
+            if !is_written_in_place && self.is_left_out_of_text(operand) {
+                found.push((hir[operand].pos, hir[operand].end));
+            }
+        }
+        found
+    }
+
     pub(in crate::lower) fn finish_function_sources(&mut self) -> PackedTypeRanges {
         let hir = self.hir;
         let atoms = &self.queries.files().atoms;
@@ -87,11 +122,15 @@ impl FileLowering<'_, '_, '_, '_> {
             let StmtKind::Expr(expression) = statement.kind else {
                 continue;
             };
-            let may_be_left_out = !matches!(
+            let is_left_out = self.is_left_out_of_text(expression);
+            let is_list = matches!(
                 hir[expression].kind,
-                ExprKind::Call(_) | ExprKind::Assign { .. } | ExprKind::Await(_) | ExprKind::New(_)
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    ..
+                }
             );
-            if !may_be_left_out || !self.reads_only_what_bun_run_leaves_out(expression, true) {
+            if !is_left_out && !is_list {
                 continue;
             }
             let id = StmtId(index as u32);
@@ -106,6 +145,16 @@ impl FileLowering<'_, '_, '_, '_> {
                 _ => false,
             };
             if is_head_of_loop {
+                continue;
+            }
+            if !is_left_out {
+                let operands = self.find_operands_left_out(expression);
+                replaced.extend(operands.iter().map(|&(start, end)| ReplacedText {
+                    start,
+                    end,
+                    text: Box::new(*b"0"),
+                }));
+                not_evaluated.extend(operands);
                 continue;
             }
             not_evaluated.push((statement.start, statement.loc.end));

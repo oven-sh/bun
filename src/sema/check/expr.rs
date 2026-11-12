@@ -5975,8 +5975,9 @@ impl<'p, 's> Checker<'p, 's> {
                 TypeId::BOOLEAN
             }
             BinOp::Comma => {
-                self.type_of_expr(file, left);
-                self.type_of_expr(file, right)
+                let l = self.type_of_expr(file, left);
+                let r = self.type_of_expr(file, right);
+                self.type_created_by_copied_factory(file, e, l).unwrap_or(r)
             }
             BinOp::And => {
                 let l = self.type_of_expr(file, left);

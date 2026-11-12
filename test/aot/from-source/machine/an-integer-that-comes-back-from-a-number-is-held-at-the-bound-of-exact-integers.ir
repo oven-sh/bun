@@ -10,11 +10,11 @@
 # RUN: emit f1:Body f2:Body mechanisms=all
 # CHECK-LABEL: unit f1:Body
 # CHECK: Int64 {{*}} = Add(
-# CHECK: = GreaterThan(
+# CHECK: Int32 {{*}}Than(@
 # CHECK-NEXT: Int64 {{*}} = Select(
 # CHECK-LABEL: unit f2:Body
 # CHECK: Int64 {{*}} = Add(
-# CHECK: = LessThan(
+# CHECK: Int32 {{*}}Than(@
 # CHECK-NEXT: Int64 {{*}} = Select(
 # RUN(SHELL): run-in-shell const turns = [2, 2, 9, 9]; globalThis.hidden = () => turns.shift(); globalThis.say = (x) => print(String(x));
 # SHELL: 0

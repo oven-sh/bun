@@ -10,6 +10,7 @@ mod convert;
 mod counted_places;
 mod data;
 mod decorators;
+mod definitions_of_getters;
 mod dispose;
 mod exception;
 mod expected_result;
@@ -37,6 +38,7 @@ mod said_types;
 mod scope;
 mod self_tail_calls;
 mod statement;
+mod super_calls;
 mod switch;
 mod tables;
 mod template;
@@ -233,6 +235,7 @@ impl FileLowering<'_, '_, '_, '_> {
             FunctionKey::PrivateNameTest { member, .. } => {
                 self.lower_private_name_test(function, member);
             }
+            FunctionKey::ModuleRequest { call, .. } => self.lower_module_request(function, call),
         }
     }
 }

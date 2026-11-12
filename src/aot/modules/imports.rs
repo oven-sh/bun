@@ -81,6 +81,7 @@ pub(super) struct FileImports {
     pub names_read_on_answers: Vec<(SymbolId, Atom)>,
     pub copies_called_through: Vec<SymbolId>,
     pub unread_sites: Vec<(ExprId, bool)>,
+    pub destructured_holders: Vec<(ExprId, (SymbolId, ModuleRef))>,
     pub required_names: Vec<RequiredName>,
     pub names_searched_behind_stars: Vec<(FileId, Atom)>,
     pub replaced_variables: Vec<Sym>,

@@ -12,8 +12,8 @@ use bun_core::{StringBuilder, StringPointer, ZStr, bytes_of, slice_as_bytes};
 use bun_paths::{PathBuffer, path_buffer_pool, platform, resolve_path, strings};
 use bun_resolver::compiled_program::{
     CompiledEntryPoint, CompiledFurtherPackageName, CompiledPackageName, CompiledPathAlias,
-    CompiledProgram, FoundForFileSystemAlone, ImageFile, RefusedData, compare_source_paths,
-    name_in_plain_executable,
+    CompiledProgram, FoundForFileSystemAlone, ImageFile, NamesReadLater, RefusedData,
+    compare_source_paths, name_in_plain_executable,
 };
 use bun_resolver::package_names::FurtherPackageName;
 use bun_sys::{Fd, Stat};
@@ -54,6 +54,8 @@ const EMBEDDED_FILES_DEVICE: u32 = 0x6275_6e66;
 const HAS_FILES_FOR_FILE_SYSTEM_ALONE: u32 = 8192;
 /// The length of the path, what `require` and what `import` find, and what the name hides.
 const PACKAGE_NAME_SIZE: usize = 4 * size_of::<u32>();
+/// The number of names and the size of their records and strings.
+const NAMES_HEADER_SIZE: usize = 2 * size_of::<u32>();
 const HIDES_OTHER_PATHS: u32 = 1;
 const IS_HIDDEN_FROM_REQUIRE: u32 = 2;
 const IS_HIDDEN_FROM_IMPORT: u32 = 4;
@@ -180,7 +182,7 @@ pub(crate) fn capacity(input: &CompiledProgramInput<'_>) -> usize {
         + input.image_alignment
         + RECORD_SIZE
         + entry_points
-        + size_of::<u32>()
+        + NAMES_HEADER_SIZE
         + package_names
         + size_of::<u32>()
         + path_aliases
@@ -419,7 +421,7 @@ pub(crate) fn append_record(
     Ok(())
 }
 
-/// The number of names, a record a name, then the paths one after the other.
+/// A header of `NAMES_HEADER_SIZE` bytes, one record per name, then the paths.
 fn encode_package_names(names: &[CompiledPackageNameInput<'_>], places: &[u32]) -> Option<Vec<u8>> {
     let mut names: Vec<&CompiledPackageNameInput<'_>> = names.iter().collect();
     index_sort::sort_slice_unstable_by_key(&mut names, |name| name.path);
@@ -430,7 +432,7 @@ fn encode_package_names(names: &[CompiledPackageNameInput<'_>], places: &[u32]) 
         Some(index) => places.get(index as usize).copied(),
         None => Some(NO_ENTRY_POINT),
     };
-    let mut bytes = u32::try_from(names.len()).ok()?.to_le_bytes().to_vec();
+    let mut bytes = Vec::new();
     for name in &names {
         let length = u32::try_from(name.path.len()).ok()?;
         let words = [
@@ -446,15 +448,35 @@ fn encode_package_names(names: &[CompiledPackageNameInput<'_>], places: &[u32]) 
     for name in &names {
         bytes.extend_from_slice(name.path);
     }
+    add_names_header(names.len(), bytes)
+}
+
+fn add_names_header(count: usize, names: Vec<u8>) -> Option<Vec<u8>> {
+    let words = [u32::try_from(count).ok()?, u32::try_from(names.len()).ok()?];
+    let mut bytes: Vec<u8> = words.into_iter().flat_map(u32::to_le_bytes).collect();
+    bytes.extend(names);
     Some(bytes)
 }
 
-// The number of names, then of each: its three strings, each behind its length, a length of u32::MAX for none, and a word for `hides_other_paths`.
+/// The bytes with their header. Empty if there are no names.
+fn skip_names(payload: &Payload, at: &mut usize) -> Option<&'static [u8]> {
+    let head = payload.bytes(*at, NAMES_HEADER_SIZE)?;
+    let (count, size) = head.split_at(size_of::<u32>());
+    let size = u32::from_le_bytes(size.try_into().ok()?) as usize;
+    let encoded = payload.bytes(*at, NAMES_HEADER_SIZE.checked_add(size)?)?;
+    *at += encoded.len();
+    Some(match u32::from_le_bytes(count.try_into().ok()?) {
+        0 => b"",
+        _ => encoded,
+    })
+}
+
+// A header of `NAMES_HEADER_SIZE` bytes, then for each name its three strings, each preceded by its length (u32::MAX if absent), and a word for `hides_other_paths`.
 fn encode_further_package_names(names: &[FurtherPackageName]) -> Vec<u8> {
     if names.is_empty() {
         return Vec::new();
     }
-    let mut bytes = (names.len() as u32).to_le_bytes().to_vec();
+    let mut bytes = Vec::new();
     let add = |bytes: &mut Vec<u8>, text: Option<&[u8]>| match text {
         Some(text) => {
             bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
@@ -468,34 +490,36 @@ fn encode_further_package_names(names: &[FurtherPackageName]) -> Vec<u8> {
         add(&mut bytes, name.imported.as_deref());
         bytes.extend_from_slice(&u32::from(name.hides_other_paths).to_le_bytes());
     }
-    bytes
+    add_names_header(names.len(), bytes).expect("the names of packages fit 32 bits")
 }
 
 fn read_further_package_names(
-    payload: &Payload,
-    at: &mut usize,
-) -> Option<Vec<CompiledFurtherPackageName>> {
-    let word = |at: &mut usize| {
-        let bytes = payload.bytes(*at, size_of::<u32>())?;
-        *at += size_of::<u32>();
+    encoded: &'static [u8],
+    _entry_point_count: usize,
+) -> Option<Box<[CompiledFurtherPackageName]>> {
+    let word = |rest: &mut &'static [u8]| {
+        let (bytes, after) = rest.split_at_checked(size_of::<u32>())?;
+        *rest = after;
         Some(u32::from_le_bytes(bytes.try_into().ok()?))
     };
-    let text = |at: &mut usize| -> Option<Option<&'static [u8]>> {
-        let length = word(at)?;
+    let text = |rest: &mut &'static [u8]| -> Option<Option<&'static [u8]>> {
+        let length = word(rest)?;
         if length == u32::MAX {
             return Some(None);
         }
-        let bytes = payload.bytes(*at, length as usize)?;
-        *at += bytes.len();
+        let (bytes, after) = rest.split_at_checked(length as usize)?;
+        *rest = after;
         Some(Some(bytes))
     };
-    let count = word(at)? as usize;
+    let mut rest = encoded;
+    let count = word(&mut rest)? as usize;
+    word(&mut rest)?;
     let mut names = Vec::new();
     for _ in 0..count {
-        let path = text(at)??;
-        let required = text(at)?;
-        let imported = text(at)?;
-        let hides_other_paths = word(at)? != 0;
+        let path = text(&mut rest)??;
+        let required = text(&mut rest)?;
+        let imported = text(&mut rest)?;
+        let hides_other_paths = word(&mut rest)? != 0;
         names.push(CompiledFurtherPackageName {
             path,
             required,
@@ -503,27 +527,26 @@ fn read_further_package_names(
             hides_other_paths,
         });
     }
-    names.is_sorted_by(|a, b| a.path < b.path).then_some(names)
+    let is_whole = rest.is_empty() && names.is_sorted_by(|a, b| a.path < b.path);
+    is_whole.then(|| names.into_boxed_slice())
 }
 
 fn read_package_names(
-    payload: &Payload,
-    at: &mut usize,
+    encoded: &'static [u8],
     entry_point_count: usize,
 ) -> Option<Box<[CompiledPackageName]>> {
-    let count = payload.bytes(*at, size_of::<u32>())?;
+    let (head, rest) = encoded.split_at_checked(NAMES_HEADER_SIZE)?;
+    let (count, _) = head.split_at(size_of::<u32>());
     let count = u32::from_le_bytes(count.try_into().ok()?) as usize;
-    let records_at = at.checked_add(size_of::<u32>())?;
-    let records = payload.bytes(records_at, count.checked_mul(PACKAGE_NAME_SIZE)?)?;
-    let mut path_at = records_at.checked_add(records.len())?;
+    let (records, mut paths) = rest.split_at_checked(count.checked_mul(PACKAGE_NAME_SIZE)?)?;
     let entry_point = |index: u32| match index {
         NO_ENTRY_POINT => Some(None),
         index => ((index as usize) < entry_point_count).then_some(Some(index)),
     };
     let mut names = Vec::with_capacity(count);
     for [length, required, imported, hidden] in records.as_chunks::<4>().0.as_chunks::<4>().0 {
-        let path = payload.bytes(path_at, u32::from_le_bytes(*length) as usize)?;
-        path_at += path.len();
+        let (path, after) = paths.split_at_checked(u32::from_le_bytes(*length) as usize)?;
+        paths = after;
         let hidden = u32::from_le_bytes(*hidden);
         names.push(CompiledPackageName {
             path,
@@ -534,11 +557,8 @@ fn read_package_names(
             is_hidden_from_import: hidden & IS_HIDDEN_FROM_IMPORT != 0,
         });
     }
-    if !names.is_sorted_by(|a, b| a.path < b.path) {
-        return None;
-    }
-    *at = path_at;
-    Some(names.into_boxed_slice())
+    let is_whole = paths.is_empty() && names.is_sorted_by(|a, b| a.path < b.path);
+    is_whole.then(|| names.into_boxed_slice())
 }
 
 /// The number of aliases, a record an alias, then the three strings of each one after the other.
@@ -674,7 +694,7 @@ fn try_read(
     }
 
     let mut end = module_paths_at + module_paths_size;
-    let package_names = read_package_names(payload, &mut end, entry_point_count)?;
+    let package_names = skip_names(payload, &mut end)?;
     let path_aliases = read_path_aliases(payload, &mut end)?;
     let mut root_below_working_directory = None;
     if header.flags & HAS_ROOT_BELOW_WORKING_DIRECTORY != 0 {
@@ -722,9 +742,9 @@ fn try_read(
         levels_above_root = u32::from_le_bytes(levels.try_into().ok()?) as usize;
         end += size_of::<u32>();
     }
-    let mut further_package_names = Vec::new();
+    let mut further_package_names: &'static [u8] = b"";
     if header.flags & HAS_FURTHER_PACKAGE_NAMES != 0 {
-        further_package_names = read_further_package_names(payload, &mut end)?;
+        further_package_names = skip_names(payload, &mut end)?;
     }
     let mut refused_data: &'static [u8] = b"";
     if header.flags & HAS_REFUSED_DATA != 0 {
@@ -762,7 +782,11 @@ fn try_read(
         source_path_order,
         header.flags & PRESERVES_SOURCE_PATHS != 0,
     );
-    let program = program.with_package_names(package_names);
+    let program = program.with_package_names_read_later(NamesReadLater::new(
+        package_names,
+        entry_point_count,
+        read_package_names,
+    ));
     let program = program.with_root_below_working_directory(root_below_working_directory);
     let program = program.with_code_from_disk(header.flags & ALLOWS_CODE_FROM_DISK != 0);
     let program = program.with_plugin_named(header.flags & NAMES_PLUGIN != 0);
@@ -774,7 +798,11 @@ fn try_read(
     let program = program.with_loaders_given_to_build(loaders_given_to_build);
     let program = program.with_files_for_file_system_alone(files_for_file_system_alone);
     let program = program.with_levels_above_root(levels_above_root);
-    let program = program.with_further_package_names(further_package_names.into_boxed_slice());
+    let program = program.with_further_package_names(NamesReadLater::new(
+        further_package_names,
+        entry_point_count,
+        read_further_package_names,
+    ));
     Some(program.with_path_aliases(path_aliases))
 }
 
@@ -1147,6 +1175,22 @@ static DESCRIPTORS: bun_threading::Guarded<Vec<Option<Box<Descriptor>>>> =
 /// Has a bit for each index of `DESCRIPTORS`, modulo 64.
 #[cfg(not(windows))]
 static DESCRIPTOR_FILTER: AtomicU64 = AtomicU64::new(0);
+
+/// Paths of the disk that threads which run no script have written whole.
+#[cfg(not(windows))]
+static WRITTEN_BY_POOL: bun_threading::Guarded<Vec<Box<[u8]>>> =
+    bun_threading::Guarded::new(Vec::new());
+
+/// `fd` is about to be closed. From then on, any file may have its number.
+#[cfg(not(windows))]
+pub fn forget_descriptor(fd: Fd) {
+    if DESCRIPTOR_FILTER.load(Ordering::Relaxed) & filter_bit(fd) == 0 {
+        return;
+    }
+    if let Some(slot) = DESCRIPTORS.lock().get_mut(fd.native() as usize) {
+        *slot = None;
+    }
+}
 
 /// Whether a descriptor of an embedded path was ever opened.
 #[cfg(not(windows))]
@@ -1582,18 +1626,38 @@ impl StandaloneModuleGraph {
         bun_sys::IS_FSTATX_DIRECT.store(false, Ordering::Relaxed);
     }
 
-    /// The program has written the file at the source path `name` whole. What has the embedded file open reads there.
+    /// The program has written the file at the source path `name` whole. What has the embedded file open reads there: at once if this thread runs scripts, and otherwise, as a script may be reading, from `move_waiting_descriptors` on.
     #[cfg(not(windows))]
-    pub fn move_descriptors_to_disk(&self, name: &[u8]) {
+    pub fn move_descriptors_to_disk(&self, name: &[u8], runs_scripts: bool) {
         let mut buffer = path_buffer_pool::get();
-        let path = absolute_key(name, &mut buffer);
-        let Some((program, path)) = self.compiled_program.as_ref().zip(path) else {
+        let Some(path) = absolute_key(name, &mut buffer).map(ZStr::as_bytes) else {
             return;
         };
-        let key = Self::key_under_own_root(program, path.as_bytes());
+        match runs_scripts {
+            true => self.move_descriptors_to(path),
+            false => WRITTEN_BY_POOL.lock().push(path.into()),
+        }
+    }
+
+    /// For the completion of what a thread of the pool has written, on a thread that runs scripts.
+    #[cfg(not(windows))]
+    pub fn move_waiting_descriptors(&self) {
+        let written = core::mem::take(&mut *WRITTEN_BY_POOL.lock());
+        for path in &written {
+            self.move_descriptors_to(path);
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn move_descriptors_to(&self, path: &[u8]) {
+        let Some(program) = self.compiled_program.as_ref() else {
+            return;
+        };
+        let key = Self::key_under_own_root(program, path);
         let Some(file) = key.and_then(|it| self.lookup_file(&it)) else {
             return;
         };
+        let path = bun_core::ZBox::from_bytes(path);
         let mut descriptors = DESCRIPTORS.lock();
         for (index, slot) in descriptors.iter_mut().enumerate() {
             let Some(descriptor) = slot.as_deref().filter(|it| it.path == file.name) else {
@@ -1604,7 +1668,7 @@ impl StandaloneModuleGraph {
                 stat_descriptor(fd)
                     .is_ok_and(|now| is_same_file(&now, &descriptor.opened, has_birth_time()))
             };
-            if !is_open() || reopen_at(fd, path, is_open).is_ok() {
+            if !is_open() || reopen_at(fd, &path, is_open).is_ok() {
                 *slot = None;
             }
         }
@@ -2592,12 +2656,25 @@ pub(crate) mod tests {
                 .iter()
                 .map(|name| PACKAGE_NAME_SIZE + name.path.len())
                 .sum::<usize>();
+        let names_end = bytes.len() - size_of::<u32>();
+        let read_names = |bytes: Vec<u8>| {
+            let bytes: &'static [u8] = Box::leak(bytes.into_boxed_slice());
+            read_package_names(&bytes[names_at - NAMES_HEADER_SIZE..names_end], 3)
+        };
+        assert_eq!(read_names(bytes.clone()).map(|names| names.len()), Some(4));
         let mut out_of_range = bytes.clone();
         patch(&mut out_of_range, names_at + 4, 3);
-        assert_eq!(read_back(out_of_range, record_at).err(), Some(CORRUPTED));
+        assert_eq!(read_names(out_of_range), None);
         let mut too_many = bytes.clone();
-        patch(&mut too_many, names_at - 4, names.len() as u32 + 1);
-        assert_eq!(read_back(too_many, record_at).err(), Some(CORRUPTED));
+        patch(
+            &mut too_many,
+            names_at - NAMES_HEADER_SIZE,
+            names.len() as u32 + 1,
+        );
+        assert_eq!(read_names(too_many), None);
+        let mut too_long = bytes.clone();
+        patch(&mut too_long, names_at - 4, bytes.len() as u32);
+        assert_eq!(read_back(too_long, record_at).err(), Some(CORRUPTED));
         assert_eq!(
             read_back(bytes[..bytes.len() - 1].to_vec(), record_at).err(),
             Some(CORRUPTED)

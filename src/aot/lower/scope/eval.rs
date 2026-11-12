@@ -1,6 +1,6 @@
 mod bindings;
 
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{self, Binding, CodeUnit, ScopeId, ScopeKind, SymbolId};
 use bun_sema::fold::Constant;
 use bun_sema::hir::{CallId, ClassId, ExprId, ExprKind, FnKind, IdList};
@@ -8,7 +8,7 @@ use bun_sema::hir::{CallId, ClassId, ExprId, ExprKind, FnKind, IdList};
 use super::BindingForm;
 use super::identifiers::BindingRead;
 use crate::builtins::id::BuiltinId;
-use crate::ir::generated::{ECMAMode, EvalScope, EvalScopeFlags};
+use crate::ir::generated::{ECMAMode, EvalScope, EvalScopeFlags, FunctionKind, RuntimeErrorKind};
 use crate::ir::{BlockId, Edge, EvalScopeId, StringId, ValueId, VariableKey};
 use crate::lower::call::{self, Arguments, Callee};
 use crate::lower::{FileLowering, FunctionLowering, commonjs, expression};
@@ -62,7 +62,10 @@ pub(crate) fn lower_direct_eval(
         Some((binding, name)) => lowering.read_binding(binding, name, BindingRead::Value),
         None => {
             lowering.lower_known_evaluations(call_id, &arguments, join);
-            lowering.emit_direct_eval(call, &arguments)
+            match hir.is_settled_eval(call_id) {
+                true => lowering.emit_settled_eval_end(call_id, &arguments),
+                false => lowering.emit_direct_eval(call, &arguments),
+            }
         }
     };
     lowering.jump_with(join, &[evaluated]);
@@ -212,6 +215,31 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.continue_in(other);
     }
 
+    /// No string arrives here but one that isn't JavaScript. What strict code refuses may be JavaScript in sloppy code.
+    fn emit_settled_eval_end(&mut self, call: CallId, arguments: &Arguments) -> ValueId {
+        let hir = self.file.hir;
+        let mut known = hir.known_evaluations_of(call).iter();
+        let name = self.file.intern_atom(known::eval);
+        if known.any(|it| !hir.is_valid_evaluation(it)) {
+            let Some(text) = self.emit_evaluated_string(arguments) else {
+                return self.builder.undefined();
+            };
+            let flags = match self.builder.function().kind {
+                FunctionKind::Arrow => EvalScopeFlags::IS_IN_ARROW_FUNCTION,
+                _ => EvalScopeFlags::default(),
+            };
+            let scope = self.file.fragment.add_eval_scope(EvalScope {
+                mode: self.mode(),
+                flags,
+                ..EvalScope::default()
+            });
+            let this_value = self.builder.undefined();
+            return (self.builder).direct_eval(scope, text, this_value, None, &[]);
+        }
+        self.emit_throw_runtime_error(RuntimeErrorKind::OmittedFromExecutable, Some(name));
+        self.builder.undefined()
+    }
+
     fn list_names_of_file(&mut self, eval_scope: bind::EvalScope) -> NamesOfFileForEvals {
         if let Some(names) = &self.file.modules.names_of_file_for_evals {
             return names.clone();
@@ -231,16 +259,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         names
     }
 
-    fn emit_direct_eval(&mut self, call: ExprId, arguments: &Arguments) -> ValueId {
-        let text = match arguments {
-            Arguments::Values(values) => match values.first() {
-                Some(&text) => text,
-                None => return self.builder.undefined(),
-            },
+    fn emit_evaluated_string(&mut self, arguments: &Arguments) -> Option<ValueId> {
+        match arguments {
+            Arguments::Values(values) => values.first().copied(),
             Arguments::List(list) => {
                 let index = self.builder.integer(0);
-                self.builder.elem_get(*list, index)
+                Some(self.builder.elem_get(*list, index))
             }
+        }
+    }
+
+    fn emit_direct_eval(&mut self, call: ExprId, arguments: &Arguments) -> ValueId {
+        let Some(text) = self.emit_evaluated_string(arguments) else {
+            return self.builder.undefined();
         };
         let eval_scope = self.file.bound.eval_scope(call);
         let eval_scope = *eval_scope.expect("lower_direct_eval takes a call with an eval scope");

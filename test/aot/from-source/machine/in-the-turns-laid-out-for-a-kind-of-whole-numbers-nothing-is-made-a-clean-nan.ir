@@ -10,12 +10,12 @@
 # f1 = go
 # REQUIRES(TURNS): x86_64
 # RUN(TURNS): loops f1:Body mechanisms=all
-# TURNS: loop: operations 8, patches 0
-# arm64 has no operation that loads and adds or stores what it reckons: the same four turns are sixteen operations there, as those of three more kinds are on both machines: five loops of sixteen.
+# TURNS: loop: operations 9, patches 0
+# arm64 has no operation that loads and adds or stores what it reckons: the same four turns and the jump are seventeen operations there, as those of three more kinds are on both machines: five loops of seventeen.
 # REQUIRES(ARM): arm64
 # RUN(ARM): loops f1:Body mechanisms=all
-# ARM-COUNT-5: loop: operations 16, patches 0
-# ARM-NOT: loop: operations 16, patches 0
+# ARM-COUNT-5: loop: operations 17, patches 0
+# ARM-NOT: loop: operations 17, patches 0
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: -2147483648 0 -32768 -128 255 1.5 NaN 1
 # ANSWERS-NEXT: exited with 0

@@ -3,6 +3,7 @@ pub(crate) mod builtin_uses;
 pub(crate) mod bundled_commonjs;
 pub(crate) mod compiler_declarations;
 pub(crate) mod contents;
+mod copied_factories;
 pub(crate) mod data_modules;
 pub(crate) mod disk_delegation;
 pub(crate) mod externals;
@@ -22,6 +23,7 @@ mod made_own_require;
 pub(crate) mod manual_mocks;
 pub(crate) mod module_paths;
 pub(crate) mod modules_with_queries;
+pub(crate) mod objects_created_below;
 pub(crate) mod plugin_modules;
 pub mod project;
 pub(crate) mod react_compiler;
@@ -84,6 +86,13 @@ pub(crate) fn file_size(path: &[u8]) -> Option<u64> {
     }
     let stat = bun_sys::stat(&ZBox::from_bytes(native_path)).ok()?;
     u64::try_from(stat.st_size).ok()
+}
+
+pub(crate) fn is_regular_file(path: &[u8]) -> bool {
+    let native_path = to_native(path);
+    !contains_char(native_path, 0)
+        && bun_sys::stat(&ZBox::from_bytes(native_path))
+            .is_ok_and(|it| bun_sys::is_regular_file(it.st_mode as bun_sys::Mode))
 }
 
 #[cfg(test)]

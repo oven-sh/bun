@@ -12,7 +12,7 @@ use super::made_requires::{
 };
 use super::named_paths::{
     add_forwarding_functions, collect_candidates, find_database_read, find_named_paths,
-    find_paths_created,
+    find_paths_created, is_relative_path,
 };
 use super::parameters::{find_names_exported_for, find_parameter_named};
 use super::{
@@ -32,7 +32,7 @@ use crate::hir::{
     ImportedFileChanger, MemberKey, MemberKind, NodeData, PropId, PropKey, PropKind, StmtKind,
     UnOp, VarKind,
 };
-use crate::util::{FxHashSet, SharedSort};
+use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_core::strings;
 
 pub const WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY: [&[u8]; 3] =
@@ -887,6 +887,7 @@ pub(super) struct ScannedCalls {
     pub(super) reads_below_working_folder: Vec<(ExprId, Atom)>,
     pub(super) named_paths: Vec<NamedPath>,
     pub(super) paths_created: Vec<Atom>,
+    pub(super) web_assembly_names: Vec<(ExprId, Atom)>,
     pub(super) reading_functions: Vec<SymbolId>,
     pub(super) own_folder_arguments: Vec<(ExprId, Option<ExprId>)>,
     pub(super) path_queries: Vec<ExprId>,
@@ -955,6 +956,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut named_paths = Vec::new();
     let mut created_operands = Vec::new();
     let mut paths_created = Vec::new();
+    let mut web_assembly_names = Vec::new();
     let mut reading_functions = Vec::new();
     let mut own_folder_arguments = Vec::new();
     for index in 0..hir.exprs.len() {
@@ -980,6 +982,13 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
                     if let Some(key) = find_key_stored_in_cache(inputs, call, &mut alternatives) {
                         keys_stored_in_caches.push(key);
                     }
+                }
+                ExprKind::String(name)
+                    if inputs.atoms.bytes(name).ends_with(b".wasm")
+                        && is_relative_path(inputs.atoms.bytes(name))
+                        && !decisions.is_dead_expr(call) =>
+                {
+                    web_assembly_names.push((call, name));
                 }
                 _ => {}
             }
@@ -1011,7 +1020,8 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
             known_operands.extend(named.made);
             let is_discarded = matches!(bound.parent_of_expr(call), Parent::Stmt(statement)
                 if matches!(hir[statement].kind, StmtKind::Expr(_)));
-            file_object_paths.extend(named.made.filter(|_| !is_discarded));
+            let made = named.made.filter(|_| !is_discarded);
+            file_object_paths.extend(made.map(|path| (path, call)));
             changed_operands.extend(named.changed.iter().map(|it| it.0.operand));
             created_operands.extend(named.created);
             known_operands.extend(named.created);
@@ -1145,18 +1155,44 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let is_used = |path: &ExprId| {
         changed_operands.contains(path) || reads.iter().any(|&(operand, _)| operand == *path)
     };
-    file_object_paths.retain(|path| !is_used(path));
-    reads.extend(file_object_paths.into_iter().map(|path| (path, false)));
+    let mut is_written_alone = |made: ExprId| {
+        let texts = texts_of_file.get_or_insert_with(create_texts);
+        texts.is_written_alone(made)
+    };
+    file_object_paths.retain(|it| !is_used(&it.0) && !is_written_alone(it.1));
+    reads.extend(file_object_paths.into_iter().map(|it| (it.0, false)));
     for &operand in changed_operands.iter().chain(&created_operands) {
         let texts = texts_of_file.get_or_insert_with(create_texts);
         find_paths_created(inputs, texts, operand, &mut paths_created);
     }
     known_operands.extend(reads.iter().map(|it| it.0).chain(changed_operands));
+    let mut found_reads = Vec::with_capacity(reads.len());
+    let mut unsure: FxHashMap<ExprId, bool> = FxHashMap::default();
     for (operand, is_query) in reads {
         let texts = texts_of_file.get_or_insert_with(create_texts);
         let found = texts.find_module_relative_reads(operand);
-        if !texts.is_path_fully_known(operand) {
+        let found_count = found.paths.len() + found.patterns.len();
+        let is_known = texts.is_path_fully_known(operand);
+        if !is_known {
             unknown_path_reads.push(operand);
+        }
+        if found_count > 0 || !is_known {
+            *unsure.entry(operand).or_default() |= found_count > 0;
+        }
+        found_reads.push((operand, is_query, found));
+    }
+    let executed = match unsure.is_empty() {
+        true => FxHashMap::default(),
+        false => {
+            let texts = texts_of_file.get_or_insert_with(create_texts);
+            texts.find_executed_reads(unsure)
+        }
+    };
+    for (operand, is_query, mut found) in found_reads {
+        let texts = texts_of_file.get_or_insert_with(create_texts);
+        if let Some(paths) = executed.get(&operand) {
+            found.paths.clone_from(paths);
+            found.patterns.clear();
         }
         if entered_operands.contains(&operand) {
             folders_entered.extend(found.paths.iter().map(|&path| (operand, path)));
@@ -1244,6 +1280,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         reads_below_working_folder,
         named_paths,
         paths_created,
+        web_assembly_names,
         reading_functions,
         own_folder_arguments,
         known_load_names,

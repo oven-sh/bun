@@ -1,5 +1,6 @@
 // Loops that move elements: copies, swaps, reversals, shifts, shuffles, fills, between lists of every kind, also one list for both.
-// STATISTIC: BoxedStoresByStorage >= 10
+// STATISTIC: ElementCopyLoopsHoisted >= 7
+// STATISTIC: ValuesStoredByAnyKind >= 7
 function copy(a, b, c) {
   for (let i = 0; i < a.length; i++) c[i] = a[i];
   return 0;

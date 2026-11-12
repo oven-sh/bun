@@ -15,6 +15,7 @@
 # of the guard, as where the body does not tell the parameter apart.
 # f1 = add
 # RUN: plan units mechanisms=all
-# CHECK-NOT: unit f1:ParameterGuard
+# The body leans on the whole word behind its own tests for objects: the guard lets all of it pass, and not the list alone.
+# CHECK: unit f1:ParameterGuard {{*}} tests (undefined|null|i32|string|Array, undefined|null|i32|string|Array)
 # RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
 # ANSWERS: 6,7,8,9 4,6 3 a1

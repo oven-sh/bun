@@ -896,7 +896,7 @@ impl FileReader {
         self.call_read_callback(this_value, callback, &[JSValue::UNDEFINED, err]);
     }
 
-    /// Leaves handle mode. The wrapper and the callback, if there is still one to call.
+    /// Leaves handle mode. The wrapper and the callback, if there is still one to call. The callback lives only in the wrapper's slot: it closes over the stream, which holds the wrapper, and a `Strong` to it would root that cycle.
     fn take_read_callback(&self) -> Option<(JSValue, JSValue)> {
         if !self.read_callback.replace(false) {
             return None;

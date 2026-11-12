@@ -316,12 +316,11 @@ public:
         while (s) {
             /* The HTTP group only holds HTTP sockets (an upgraded WebSocket is
              * adopted into its own group), so the ext block is an HttpResponseData. */
-            auto *data = (HttpResponseData<SSL> *) ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
             struct us_socket_t *next = s->next;
             if (((HttpResponse<SSL> *) s)->closeIfIdle()) {
                 closed++;
             } else if (closeWhenIdle) {
-                data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
+                ((HttpResponse<SSL> *) s)->closeWhenIdle();
             }
             s = next;
         }
@@ -329,8 +328,7 @@ public:
         if (closeWhenIdle && group->low_prio_count) {
             for (s = group->loop->data.low_prio_head; s; s = s->next) {
                 if (s->group == group) {
-                    auto *data = (HttpResponseData<SSL> *) ((AsyncSocket<SSL> *) s)->getAsyncSocketData();
-                    data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
+                    ((HttpResponse<SSL> *) s)->closeWhenIdle();
                 }
             }
         }

@@ -33,6 +33,11 @@ struct HttpContext;
 /* Minimum allowed throughput, either way: a client that uploads, or takes a blocked response, at less than 16 kB per second gets dropped. */
 static constexpr uint64_t HTTP_MIN_THROUGHPUT_BYTES_PER_SECOND = 16 * 1024;
 
+/* How long a graceful stop waits for the request of a connection that has none in flight. */
+static constexpr uint8_t timeoutAfterStop(unsigned int idleTimeout) {
+    return idleTimeout && idleTimeout < 10 ? (uint8_t) idleTimeout : 10;
+}
+
 /* The idle timeout of an HTTP/1 or HTTP/2 connection. It tells a peer that reads a blocked response slowly from one that stopped reading. */
 struct IdleTimeout {
     /* The kernel drains a blocked write at the peer's pace, and a writable event only comes once a good part of the send buffer is free. */

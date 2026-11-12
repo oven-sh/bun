@@ -701,7 +701,8 @@ struct Http2Context {
         *(Http2Connection **) us_socket_ext(s) = conn;
         s->flags.allow_half_open = 0;
         conn->idleTimeoutS = idleTimeoutS;
-        conn->touch();
+        /* The first stream arms the connection's own timeout. */
+        conn->idleTimer.arm(s, stopping ? timeoutAfterStop(idleTimeoutS) : idleTimeoutS);
         conn->writeSettings();
         if (initialLength > 0) {
             conn->onData(initialData, (size_t) initialLength);

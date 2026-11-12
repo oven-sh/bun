@@ -4065,6 +4065,74 @@ describe("idle timeout with a forced sweep", () => {
     });
   });
 
+  describe.each([0, 255])("a graceful stop() with idleTimeout: %d", idleTimeout => {
+    const head = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+    const preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n\0\0\0\x04\0\0\0\0\0";
+    type Step = (client: net.Socket) => unknown;
+    const write = (data: string) => (client: net.Socket) => void client.write(data, "latin1");
+    const exchange = (data: string) => (client: net.Socket) => (client.write(data, "latin1"), once(client, "data"));
+
+    const nothing = () => {};
+
+    async function stopBetween(secure: boolean, before: Step, after: Step) {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        tls: secure ? tls : undefined,
+        http2: true,
+        idleTimeout,
+        fetch: () => new Response(),
+      });
+      const client = rawClient(server.port!, secure, "TLSv1.2");
+      try {
+        let reply = "";
+        client.on("data", data => (reply += data.toString("latin1")));
+        await once(client, secure ? "secureConnect" : "connect");
+        await before(client);
+        // A round trip on another connection. The server has read what the client wrote before it.
+        await (await fetch(server.url, { tls: { ca: tls.cert } })).text();
+        let stopped = false;
+        server.stop().then(() => (stopped = true));
+        await after(client);
+        // 10 seconds end at the fourth sweep at the latest, and stop() settles before the fifth.
+        for (let i = 0; i < 5 && !stopped; i++) await sweep();
+        return { stopped, reply };
+      } finally {
+        client.destroy();
+      }
+    }
+
+    it.each<[string, boolean, Step, Step]>([
+      ["sent nothing after the TLS handshake", true, nothing, nothing],
+      ["sent a part of its first head", false, write(head.slice(0, 10)), nothing],
+      [
+        "sent a part of its second head",
+        false,
+        async client => (await exchange(head)(client), client.write(head.slice(0, 10))),
+        nothing,
+      ],
+      [
+        "sent a part of a body that was answered",
+        false,
+        async client => (await exchange(head.slice(0, -2) + "Content-Length: 9\r\n\r\n")(client), client.write("x")),
+        nothing,
+      ],
+      ["becomes HTTP/2 and opens no stream", false, write(preface.slice(0, 3)), exchange(preface.slice(3))],
+    ])("ends for a client that %s", async (_name, secure, before, after) => {
+      expect((await stopBetween(secure, before, after)).stopped).toBe(true);
+    });
+
+    it("answers a head that the client completes in time", async () => {
+      const { stopped, reply } = await stopBetween(false, write(head.slice(0, 10)), async client => {
+        await sweep();
+        await sweep();
+        await exchange(head.slice(10))(client);
+      });
+      expect(stopped).toBe(true);
+      expect(reply).toMatch(/^HTTP\/1\.1 200 OK\r\n.*^Connection: close\r\n/ms);
+    });
+  });
+
   it.each([
     ["http", false],
     ["https", true],

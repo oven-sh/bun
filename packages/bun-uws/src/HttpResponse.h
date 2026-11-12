@@ -347,6 +347,21 @@ public:
         return true;
     }
 
+    /* Bun.serve's graceful stop, for a connection that closeIfIdle() left open. */
+    void closeWhenIdle() {
+        HttpResponseData<SSL> *data = getHttpResponseData();
+        data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
+        /* Idle and left open: the response is complete and still drains. */
+        if ((data->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || data->isIdle) {
+            return;
+        }
+        data->idleTimeout = timeoutAfterStop(data->idleTimeout);
+        /* A TLS handshake keeps its own deadline, and onHandshake arms this one. */
+        if (data->filteredOpen) {
+            resetTimeout();
+        }
+    }
+
     /* node:http: the connection of a parked request (NodeHTTPResponse::update_parked) doesn't read and has nothing left to send. Like a libuv handle in that state, it doesn't hold the event loop. The filter hears -3, and +3 when that ends. */
     void setParked(bool parked) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();

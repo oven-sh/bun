@@ -378,7 +378,7 @@ await server.stop();
 await server.stop(true);
 ```
 
-By default, `stop()` allows in-flight requests and WebSocket connections to complete. The server closes idle keep-alive connections immediately. Connections with a request in flight close once the server has sent their response. Pass `true` to immediately terminate all connections instead. Open WebSockets close with code `1001`. The returned promise resolves once every connection has closed.
+By default, `stop()` allows in-flight requests and WebSocket connections to complete. The server closes idle keep-alive connections immediately. Connections with a request in flight close once the server has sent their response. A connection that has not sent a complete request head gets 10 seconds to do so, or `idleTimeout` if that is shorter. Pass `true` to immediately terminate all connections instead. Open WebSockets close with code `1001`. The returned promise resolves once every connection has closed.
 
 The last HTTP/1.1 response on a connection carries `Connection: close`. An HTTP/2 connection gets a `GOAWAY` frame, and once its streams are done the server ends its side of the connection. The connection closes when the client ends its side too, or after 10 seconds.
 

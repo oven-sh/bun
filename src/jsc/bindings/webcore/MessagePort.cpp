@@ -143,28 +143,10 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
     return {};
 }
 
-void MessagePort::entrySettled()
-{
-    if (!std::exchange(m_startDeferredUntilEntrySettled, false))
-        return;
-    start();
-}
-
 void MessagePort::start()
 {
     if (m_started || !isEntangled())
         return;
-    // A node worker's parentPort delivers nothing until the entry module has evaluated; keep the
-    // request and let entrySettled() perform it. Messages stay buffered in the pipe meanwhile.
-    if (auto* context = scriptExecutionContext()) {
-        if (auto* jsGlobal = context->globalObject()) {
-            auto* globalObject = defaultGlobalObject(jsGlobal);
-            if (globalObject->nodeParentPort() == this && !globalObject->nodeWorkerEntrySettled()) {
-                m_startDeferredUntilEntrySettled = true;
-                return;
-            }
-        }
-    }
     m_started = true;
 
     auto* context = scriptExecutionContext();

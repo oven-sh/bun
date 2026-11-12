@@ -75,17 +75,15 @@ const {
   6: _markAsUntransferable,
   7: _isMarkedAsUntransferable,
   8: _markAsUncloneable,
-  9: _setEntryEvaluatedHook,
-  10: _isNodeWorker,
-  11: _setParentPort,
-  12: _setStdioPorts,
+  9: _isNodeWorker,
+  10: _setStdioPorts,
   // The intrinsic web constructors, captured natively so user code replacing the
   // globals (e.g. happy-dom's registrator) before this module loads cannot break
   // worker_threads (#40268).
-  13: _MessagePort,
-  14: MessageChannel,
-  15: BroadcastChannel,
-  16: WebWorker,
+  11: _MessagePort,
+  12: MessageChannel,
+  13: BroadcastChannel,
+  14: WebWorker,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -96,9 +94,7 @@ const {
   (value: unknown) => void,
   (value: unknown) => boolean,
   (value: unknown) => void,
-  (hook: () => void) => void,
   boolean,
-  (port: MessagePort) => void,
   (ports: object) => void,
   typeof globalThis.MessagePort,
   typeof globalThis.MessageChannel,
@@ -623,19 +619,17 @@ if (
   const transferredParentPort: MessagePort | undefined = workerData[BUN_WORKER_PARENT_PORT_KEY];
   workerData = workerData.data;
   if (stdioPorts) setupWorkerStdio(stdioPorts);
-  if (controlPort) messaging.setupMainThreadPort(controlPort, _setEntryEvaluatedHook);
+  if (controlPort) messaging.setupMainThreadPort(controlPort);
   // A real MessagePort entangled with the parent Worker's public port: adding a
   // 'message' listener starts it and keeps this thread alive; close()/unref()/
   // removing the listeners let the thread exit — node's parentPort lifecycle.
   if (transferredParentPort) {
     parentPort = transferredParentPort;
-    // node auto-starts parentPort, but delivery waits until the entry module has
-    // evaluated (registering it natively is how start() knows to defer). Only
-    // parentPort receives what the parent posts: `self.onmessage` on the global
+    // Only parentPort receives what the parent posts: `self.onmessage` on the global
     // scope is not a channel in a node worker, as in node. The port arrives
     // without a loop ref, so an unlistened parentPort does not by itself keep
-    // the thread alive (a 'message' listener refs it, as in node).
-    _setParentPort(parentPort);
+    // the thread alive (a 'message' listener refs it, as in node). While it has
+    // no 'message' listener, what the parent posts stays queued.
     parentPort.start();
   }
 }

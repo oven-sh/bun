@@ -5731,6 +5731,11 @@ void JSC__VM__drainMicrotasks(JSC::VM* arg0)
     arg0->drainMicrotasks();
 }
 
+bool JSC__VM__hasQueuedMicrotasks(JSC::VM* arg0)
+{
+    return !arg0->defaultMicrotaskQueue().isEmpty();
+}
+
 bool JSC__VM__executionForbidden(JSC::VM* arg0)
 {
     return (*arg0).executionForbidden();

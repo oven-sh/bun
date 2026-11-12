@@ -51,6 +51,15 @@ use bun_ast::RuntimeTranspilerCache;
 
 bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 
+unsafe extern "C" {
+    /// Queues `callback(context)` as a microtask of `global`.
+    fn JSC__JSGlobalObject__queueMicrotaskCallback(
+        global: &JSGlobalObject,
+        context: *mut c_void,
+        callback: extern "C" fn(*mut c_void),
+    );
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Debug source dumping (debug-only helpers; no-ops in release)
 // ──────────────────────────────────────────────────────────────────────────
@@ -201,12 +210,47 @@ pub struct RuntimeTranspilerStore {
     pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
     pub(crate) queue: Queue,
+    park: JobPark,
     /// JS thread only.
     pub jobs_scheduled: u64,
     pub jobs_completed: u64,
+    /// JS thread only. While set, this thread waits for a job in the microtask checkpoint that
+    /// sent it out (`wait_microtask`), and not in a turn of its event loop.
+    waits_in_microtasks: bool,
+    /// JS thread only. `wait_microtask` is in the microtask queue.
+    wait_microtask_queued: bool,
 }
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
+
+/// Where the JS thread waits for a job with no turn of its event loop (`wait_microtask`). Bit 0
+/// is set while it waits. Every wake adds to the other bits, so a wake that comes between the JS
+/// thread's look at the queue and its wait changes the word that the wait compares.
+struct JobPark(AtomicU32);
+
+impl JobPark {
+    const WAITING: u32 = 1;
+    const WAKE: u32 = 2;
+
+    /// JS thread. Returns once `has_job()` is true or a [`wake`](Self::wake) has come. Can return
+    /// early.
+    fn wait(&self, has_job: impl FnOnce() -> bool) {
+        let word = self.0.fetch_or(Self::WAITING, Ordering::SeqCst) | Self::WAITING;
+        if !has_job() {
+            bun_threading::Futex::wait_forever(&self.0, word);
+        }
+        self.0.fetch_and(!Self::WAITING, Ordering::SeqCst);
+    }
+
+    /// A pool thread. Whether the JS thread was in [`wait`](Self::wait), which returns now.
+    fn wake(&self) -> bool {
+        if self.0.fetch_add(Self::WAKE, Ordering::SeqCst) & Self::WAITING == 0 {
+            return false;
+        }
+        bun_threading::Futex::wake(&self.0, 1);
+        true
+    }
+}
 
 impl Default for RuntimeTranspilerStore {
     fn default() -> Self {
@@ -215,8 +259,11 @@ impl Default for RuntimeTranspilerStore {
             store: TranspilerJobStore::init(),
             enabled: true,
             queue: Queue::new(),
+            park: JobPark(AtomicU32::new(0)),
             jobs_scheduled: 0,
             jobs_completed: 0,
+            waits_in_microtasks: false,
+            wait_microtask_queued: false,
         }
     }
 }
@@ -237,6 +284,57 @@ impl RuntimeTranspilerStore {
         // The HiveArrayFallback uses the global mimalloc
         // (PORTING.md §Allocators).
         Self::default()
+    }
+
+    /// A Worker's start sequence sets this (`WebWorker::spin`). The completion of a job is a task
+    /// of the event loop, and the turn that runs a task also delivers what the parent posted. While
+    /// `wait` is set, a module that `transpile` sends to the thread pool is back before the
+    /// microtask checkpoint that asked for it ends, so no turn of the loop comes between.
+    pub fn set_waits_in_microtasks(&mut self, wait: bool) {
+        self.waits_in_microtasks = wait;
+    }
+
+    fn queue_wait_microtask(&mut self, vm: *mut VirtualMachine, global: &JSGlobalObject) {
+        if self.wait_microtask_queued {
+            return;
+        }
+        self.wait_microtask_queued = true;
+        // SAFETY: the VM outlives its microtasks.
+        unsafe {
+            JSC__JSGlobalObject__queueMicrotaskCallback(global, vm.cast(), Self::wait_microtask);
+        }
+    }
+
+    /// The microtask of `waits_in_microtasks`. It fulfils the jobs that are back, and blocks this
+    /// thread until a pool thread hands one back when none is. It blocks only as the last
+    /// microtask in the queue: a microtask behind it may be about to import another module, and
+    /// the thread pool transpiles the two side by side. While a job is out it queues itself again.
+    extern "C" fn wait_microtask(vm: *mut c_void) {
+        let vm = vm.cast::<VirtualMachine>();
+        // SAFETY: the JS thread of a live VM. Field-level derefs only: a job's completion reaches
+        // `vm.transpiler_store.store` through `vm`.
+        unsafe {
+            let this = ptr::addr_of_mut!((*vm).transpiler_store);
+            // A VM that was asked to stop waits for nothing more: its teardown releases the jobs,
+            // once each is back.
+            let waits = |this: *mut Self| {
+                (*this).waits_in_microtasks
+                    && (*this).jobs_scheduled != (*this).jobs_completed
+                    && (*vm).script_allowed()
+            };
+            if waits(this) && (!(*this).queue.is_empty() || !(*vm).jsc_vm().has_queued_microtasks())
+            {
+                (*this).park.wait(|| !(*this).queue.is_empty());
+                if (*vm).script_allowed() {
+                    (*this).run_jobs(&*(*vm).global, || Ok(()));
+                }
+            }
+            // Only now: a `transpile` from inside `run_jobs` queues no second one.
+            (*this).wait_microtask_queued = false;
+            if waits(this) {
+                (*this).queue_wait_microtask(vm, &*(*vm).global);
+            }
+        }
     }
 
     /// VM teardown (JS thread, heap alive, script forbidden; called on every
@@ -276,22 +374,31 @@ impl RuntimeTranspilerStore {
         global: &JSGlobalObject,
         vm: NonNull<VirtualMachine>,
     ) {
-        let batch = self.queue.pop_batch();
         // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
         let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
+        // if there are more, we need to drain the microtasks from the previous run
+        // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
+        self.run_jobs(global, || unsafe {
+            (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm)
+        });
+        // immediately after this is called, the microtasks will be drained again.
+    }
+
+    /// `between_jobs` runs ahead of every job but the first.
+    #[inline(always)]
+    fn run_jobs(
+        &mut self,
+        global: &JSGlobalObject,
+        mut between_jobs: impl FnMut() -> Result<(), crate::event_loop::Stopped>,
+    ) {
+        let batch = self.queue.pop_batch();
         let mut iter = batch.iterator();
         let mut job = iter.next();
         let mut first = true;
         while !job.is_null() {
-            if !first {
-                // if there are more, we need to drain the microtasks from the previous run
-                // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
-                let drained =
-                    unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) };
-                if drained.is_err() {
-                    self.requeue(job, &mut iter);
-                    return;
-                }
+            if !first && between_jobs().is_err() {
+                self.requeue(job, &mut iter);
+                return;
             }
             first = false;
             // SAFETY: `job` is a live job popped from the intrusive queue.
@@ -305,7 +412,6 @@ impl RuntimeTranspilerStore {
                 }
             }
         }
-        // immediately after this is called, the microtasks will be drained again.
     }
 
     /// Put `job` and the rest of a popped batch back: each still has its posted
@@ -398,6 +504,9 @@ impl RuntimeTranspilerStore {
         self.jobs_scheduled += 1;
         // SAFETY: job fully initialized above
         unsafe { (*job).schedule() };
+        if self.waits_in_microtasks {
+            self.queue_wait_microtask(vm, global_object);
+        }
         promise.cast::<c_void>()
     }
 }
@@ -520,6 +629,11 @@ impl TranspilerJob {
         let job = NonNull::from(&mut *self);
         // SAFETY: queue is concurrent-safe (UnboundedQueue uses atomics).
         unsafe { (*transpiler_store).queue.push(job) };
+        // SAFETY: `park` is atomic.
+        if unsafe { (*transpiler_store).park.wake() } {
+            // The JS thread was in `wait_microtask`, and takes the job from the queue itself.
+            return;
+        }
         ticket.post(ConcurrentTask::create_from(transpiler_store));
     }
 

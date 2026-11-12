@@ -70,8 +70,6 @@ public:
 
     void start();
     bool hasMessageEventListener() const { return m_hasMessageEventListener; }
-    // The worker's entry module finished evaluating: a start() requested before that takes effect now.
-    void entrySettled();
     void close();
     // Called on the entangled peer when this side closes: dispatches a
     // 'close' event and releases the event-loop ref so the loop can idle.
@@ -149,7 +147,6 @@ private:
     bool m_isDispatching { false };
     bool m_closeEventDispatched { false };
     bool m_hasMessageEventListener { false };
-    bool m_startDeferredUntilEntrySettled { false };
     // Read from the GC thread: a port whose only listener is 'close' must survive
     // until that event is delivered, or the peer's close is lost to a collection.
     std::atomic<bool> m_hasCloseEventListener { false };

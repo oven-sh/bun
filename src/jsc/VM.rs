@@ -40,6 +40,7 @@ unsafe extern "C" {
     safe fn JSC__VM__throwError(vm: &VM, global_object: &JSGlobalObject, value: JSValue);
     safe fn JSC__VM__releaseWeakRefs(vm: &VM);
     safe fn JSC__VM__drainMicrotasks(vm: &VM);
+    safe fn JSC__VM__hasQueuedMicrotasks(vm: &VM) -> bool;
     safe fn JSC__VM__blockBytesAllocated(vm: &VM) -> usize;
 }
 
@@ -165,6 +166,11 @@ impl VM {
 
     pub fn drain_microtasks(&self) {
         JSC__VM__drainMicrotasks(self)
+    }
+
+    /// Whether a microtask is queued. Inside a microtask: behind the one that runs.
+    pub fn has_queued_microtasks(&self) -> bool {
+        JSC__VM__hasQueuedMicrotasks(self)
     }
 
     /// `RESOURCE_USAGE` build option in JavaScriptCore is required for this function

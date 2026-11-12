@@ -284,6 +284,9 @@ pub struct VirtualMachine {
     /// does not count). What is still pending on the entry promise after that
     /// is a top-level await.
     pub entry_evaluation_started: bool,
+    /// A step of a Worker's start sequence (`start_entry_point_for_web_worker`) failed from the
+    /// reaction that began it, with no promise to reject. The Worker's thread ends the Worker.
+    pub worker_start_failed: bool,
 
     pub(crate) had_errors: bool,
 
@@ -801,9 +804,12 @@ impl ExitHandler {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__noteEntryEvaluationStarted(vm: &mut VirtualMachine) {
         vm.entry_evaluation_started = true;
+        // Every module of the start sequence is loaded: what the entry point imports from here on
+        // waits for the event loop.
+        vm.transpiler_store.set_waits_in_microtasks(false);
     }
 
-    /// Only a worker's start waits on this (`wait_for_worker_entry_evaluation`);
+    /// Only a worker's start waits on this (`WebWorker::spin`);
     /// any other VM answers `true` so the hook's registry probe never runs there.
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__entryEvaluationStarted(vm: &VirtualMachine) -> bool {
@@ -3004,6 +3010,10 @@ pub struct RuntimeHooks {
     /// (resolver failures / `ModuleNotFound`).
     pub load_preloads:
         unsafe fn(vm: *mut VirtualMachine) -> crate::CrateResult<*mut JSInternalPromise>,
+    /// The preloads of a Worker, for [`VirtualMachine::start_entry_point_for_web_worker`]: imports
+    /// the first, and the reaction to each imports the next. The reaction to the last calls
+    /// [`VirtualMachine::load_main_after_preloads`].
+    pub start_worker_preloads: unsafe fn(vm: *mut VirtualMachine) -> crate::CrateResult<()>,
     /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
     pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),
     /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
@@ -3705,6 +3715,46 @@ impl VirtualMachine {
         &mut self,
         entry_path: Option<&[u8]>,
     ) -> crate::CrateResult<*mut JSInternalPromise> {
+        self.prepare_entry_point(entry_path)?;
+
+        if !self.transpiler.options.disable_transpilation && !self.preload.is_empty() {
+            if let Some(hooks) = runtime_hooks() {
+                // SAFETY: hook contract.
+                let p = unsafe { (hooks.load_preloads)(self) }?;
+                if !p.is_null() {
+                    self.set_pending_internal_promise(Some(p));
+                    return Ok(p);
+                }
+            }
+            return self.load_main_after_preloads();
+        }
+        self.load_main()
+    }
+
+    /// Begins a Worker's start sequence: each preload in turn, then the entry point. A step begins
+    /// in the reaction to the promise of the step before it, so no task of the event loop runs
+    /// between two steps, and `pending_internal_promise` is the promise of the step that the
+    /// sequence is at. `Err`: the sequence failed before it had a promise to reject.
+    pub(crate) fn start_entry_point_for_web_worker(
+        &mut self,
+        entry_path: &[u8],
+    ) -> crate::CrateResult<()> {
+        self.prepare_entry_point(Some(entry_path))?;
+
+        if !self.transpiler.options.disable_transpilation && !self.preload.is_empty() {
+            if let Some(hooks) = runtime_hooks() {
+                // SAFETY: hook contract.
+                return unsafe { (hooks.start_worker_preloads)(self) };
+            }
+            self.load_main_after_preloads()?;
+            return Ok(());
+        }
+        self.load_main()?;
+        Ok(())
+    }
+
+    /// What `reload_entry_point` does ahead of the preloads.
+    fn prepare_entry_point(&mut self, entry_path: Option<&[u8]>) -> crate::CrateResult<()> {
         let entry_path = entry_path.map(crate::compiled_program::entry_module_key);
         self.has_loaded = false;
         self.set_main(entry_path);
@@ -3792,72 +3842,64 @@ impl VirtualMachine {
             }
         }
 
-        if !self.transpiler.options.disable_transpilation {
-            if !self.preload.is_empty() {
-                if let Some(hooks) = hooks {
-                    // SAFETY: hook contract.
-                    let p = unsafe { (hooks.load_preloads)(self) }?;
-                    if !p.is_null() {
-                        self.set_pending_internal_promise(Some(p));
-                        return Ok(p);
+        Ok(())
+    }
+
+    /// Loads the main module once the preloads have run: one of them may have replaced `Module.runMain`.
+    pub fn load_main_after_preloads(&mut self) -> crate::CrateResult<*mut JSInternalPromise> {
+        // Check if Module.runMain was patched.
+        if self.has_patched_run_main
+            && matches!(
+                self.main_entry_point,
+                MainEntryPoint::File | MainEntryPoint::Compiled | MainEntryPoint::OutsideExecutable
+            )
+        {
+            bun_core::hint::cold();
+            self.set_pending_internal_promise(None);
+            let global_ref = self.global();
+            let run_main_path = match (self.main_entry_point, self.main()) {
+                (MainEntryPoint::File, _) | (_, None) => MAIN_FILE_NAME,
+                (_, Some(main)) => main,
+            };
+            let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, run_main_path)?;
+            let promise: *mut JSInternalPromise =
+                match jsc::from_js_host_call_generic(global_ref, || {
+                    NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
+                }) {
+                    Ok(ret) => {
+                        // If the override stored a promise itself, use that; otherwise
+                        // wrap its return value.
+                        if let Some(stored) = self.pending_internal_promise() {
+                            return Ok(stored);
+                        }
+                        // `Promise.resolve(ret)` reads `ret.constructor` / `ret.then`,
+                        // which may throw.
+                        jsc::call_check_slow(global_ref, || {
+                            JSC__JSInternalPromise__resolvedPromise(global_ref, ret)
+                        })?
                     }
-                }
-
-                // Check if Module.runMain was patched.
-                if self.has_patched_run_main
-                    && matches!(
-                        self.main_entry_point,
-                        MainEntryPoint::File
-                            | MainEntryPoint::Compiled
-                            | MainEntryPoint::OutsideExecutable
-                    )
-                {
-                    bun_core::hint::cold();
-                    self.set_pending_internal_promise(None);
-                    let global_ref = self.global();
-                    let run_main_path = match (self.main_entry_point, self.main()) {
-                        (MainEntryPoint::File, _) | (_, None) => MAIN_FILE_NAME,
-                        (_, Some(main)) => main,
-                    };
-                    let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, run_main_path)?;
-                    let promise: *mut JSInternalPromise =
-                        match jsc::from_js_host_call_generic(global_ref, || {
-                            NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
-                        }) {
-                            Ok(ret) => {
-                                // If the override stored a promise itself, use that; otherwise
-                                // wrap its return value.
-                                if let Some(stored) = self.pending_internal_promise() {
-                                    return Ok(stored);
-                                }
-                                // `Promise.resolve(ret)` reads `ret.constructor` / `ret.then`,
-                                // which may throw.
-                                jsc::call_check_slow(global_ref, || {
-                                    JSC__JSInternalPromise__resolvedPromise(global_ref, ret)
-                                })?
-                            }
-                            Err(err) => {
-                                let rejected =
-                                    crate::JSPromise::rejected_promise_with_caught_exception(
-                                        global_ref, err,
-                                    )?;
-                                // Nobody else looks at a promise the override stored, so that stays
-                                // the entry point's, and this one is left to the rejection tracker.
-                                if let Some(stored) = self.pending_internal_promise() {
-                                    return Ok(stored);
-                                }
-                                // Whoever loads the entry point reports its promise, so, like the
-                                // loader's, it is not for the rejection tracker as well.
-                                rejected.set_handled();
-                                core::ptr::from_mut(rejected).cast()
-                            }
-                        };
-                    self.set_pending_internal_promise(Some(promise));
-                    return Ok(promise);
-                }
-            }
+                    Err(err) => {
+                        let rejected = crate::JSPromise::rejected_promise_with_caught_exception(
+                            global_ref, err,
+                        )?;
+                        // Nobody else looks at a promise the override stored, so that stays
+                        // the entry point's, and this one is left to the rejection tracker.
+                        if let Some(stored) = self.pending_internal_promise() {
+                            return Ok(stored);
+                        }
+                        // Whoever loads the entry point reports its promise, so, like the
+                        // loader's, it is not for the rejection tracker as well.
+                        rejected.set_handled();
+                        core::ptr::from_mut(rejected).cast()
+                    }
+                };
+            self.set_pending_internal_promise(Some(promise));
+            return Ok(promise);
         }
+        self.load_main()
+    }
 
+    fn load_main(&mut self) -> crate::CrateResult<*mut JSInternalPromise> {
         // Preloads (evaluated above, synchronously) are not the entry: only
         // module evaluations from here on mark the entry graph as executing.
         self.entry_evaluation_started = false;
@@ -6261,25 +6303,6 @@ impl VirtualMachine {
             }
         };
         self.set_pending_internal_promise(Some(promise));
-        Ok(promise)
-    }
-
-    /// Load a worker's entry: fetch and link its module graph and begin
-    /// evaluating it. Returns once evaluation has begun (or the load failed) —
-    /// the promise may still be pending on a top-level await, which then
-    /// continues in the worker's normal event loop, as in Node.
-    pub(crate) fn load_entry_point_for_web_worker(
-        &mut self,
-        entry_path: &[u8],
-    ) -> crate::CrateResult<*mut JSInternalPromise> {
-        let promise = self.reload_entry_point(Some(entry_path))?;
-        self.event_loop_mut()
-            .wait_for_worker_entry_evaluation(jsc::AnyPromise::Internal(promise));
-        if let Some(worker) = self.worker_ref() {
-            if worker.has_requested_terminate() {
-                return Err(crate::CrateError::WorkerTerminated);
-            }
-        }
         Ok(promise)
     }
 

@@ -231,35 +231,9 @@ function destroyMainThreadPort(threadId: number) {
   }
 }
 
-// Deliveries from the main-thread hub are deferred until the entry module has
-// finished evaluating (the native side invokes the entryEvaluated hook right
-// before dispatching 'online'), matching node's bootstrap -> synchronous CJS
-// main ordering: a routed message must not observe "no listeners" while the
-// entry that registers them is still loading.
-let entryEvaluated = false;
-let pendingMainPortMessages: ReceiveMessageFromWorkerMessage[] | null = null;
-
-function handleMessageFromMainThreadGated(message: ReceiveMessageFromWorkerMessage) {
-  if (!entryEvaluated) {
-    (pendingMainPortMessages ??= []).push(message);
-    return;
-  }
-  handleMessageFromMainThread(message);
-}
-
-function setupMainThreadPort(port: MessagePort, setEntryEvaluatedHook: (hook: () => void) => void) {
+function setupMainThreadPort(port: MessagePort) {
   mainThreadPort = port;
-  mainThreadPort.on("message", handleMessageFromMainThreadGated);
-
-  // Stored on ZigGlobalObject (WriteBarrier), not on globalThis, so user code
-  // can't observe or clobber it. WebWorker__entrySettled calls it once.
-  setEntryEvaluatedHook(() => {
-    entryEvaluated = true;
-    const pending = pendingMainPortMessages;
-    pendingMainPortMessages = null;
-    // Indexed, not for-of: Array.prototype[Symbol.iterator] is user-overridable.
-    if (pending) for (let i = 0; i < pending.length; i++) handleMessageFromMainThread(pending[i]);
-  });
+  mainThreadPort.on("message", handleMessageFromMainThread);
 
   // Never block the process on this port.
   mainThreadPort.unref();

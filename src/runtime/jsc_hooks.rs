@@ -782,144 +782,26 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
 
     // ── is_in_preload guard ─────────────────────────────────────────────
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
-    unsafe { (*vm).is_in_preload = true };
-    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
-    bun_jsc::compiled_program::will_run_preloads(unsafe { &*(*vm).global });
+    unsafe { begin_preloads(vm) };
     // Note: copy the raw ptr into a guard-owned local so the defer body
     // doesn't borrow the fn param — later `(*vm).pending_internal_promise = …`
     // would otherwise alias the guard's capture.
     let vm_for_guard = vm;
     scopeguard::defer! {
         // SAFETY: per fn contract.
-        unsafe { (*vm_for_guard).is_in_preload = false };
-        // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
-        bun_jsc::compiled_program::did_run_preloads(unsafe { &*(*vm_for_guard).global });
+        unsafe { end_preloads(vm_for_guard) };
     }
     // SAFETY: per fn contract.
     let kept_for_this_run = core::mem::take(unsafe { &mut (*vm).preloads_kept_for_reload });
-
-    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
-    let global: *mut JSGlobalObject = unsafe { &*vm }.global;
-    // SAFETY: per fn contract; `global` is the live global of `vm`.
-    unsafe {
-        if (*vm).transpiler.options.rewrite_jest_for_tests
-            && (*vm).transpiler.options.vitest_globals
-        {
-            bun_removable_features::call_removable!(
-                Test,
-                Abort,
-                crate::test_runner::jest::Jest::define_vitest_globals,
-                &*global
-            )
-            .map_err(|_| bun_jsc::CrateError::JSError)?;
-        }
-    }
-    // `vm.transpiler` (hence the `FileSystem` singleton) is always initialized here:
-    // `init_runtime_state` returns `Err` on `Transpiler::init`
-    // failure and `VirtualMachine::init` propagates it via `?`, so a VM that
-    // failed to build its transpiler never reaches `load_preloads` (this hook
-    // only runs via `reload_entry_point*`, which operate on an already-`Ok` VM).
-    let top_level_dir: *const [u8] = Fs::FileSystem::get().top_level_dir();
     // SAFETY: per fn contract.
-    let global_cache = if unsafe { &*vm }.standalone_module_graph.is_none() {
-        GlobalCache::read_only
-    } else {
-        GlobalCache::disable
-    };
+    unsafe { define_vitest_globals_for_preloads(vm) }?;
 
     // SAFETY: per fn contract.
     let n = unsafe { &*vm }.preload.len();
     for i in 0..n {
-        // SAFETY: `i < n`; nothing touches `vm.preload` until the `clear()` after
-        // this loop: the resolver does not, and `reload()` defers while `is_in_preload`.
-        let preload_slice: &[u8] = unsafe { &(&(*vm).preload)[i] };
-        // Strip "file://".
-        let normalized: &[u8] = preload_slice
-            .strip_prefix(b"file://".as_slice())
-            .unwrap_or(preload_slice);
-
-        // node: builtin specifiers bypass the file resolver — JSModuleLoader
-        // resolves them internally, so `bun --import node:*` works like Node's.
-        let module_name = if normalized.starts_with(b"node:") {
-            bun_core::StringView::from_bytes(normalized)
-        } else {
-            // ── resolve ─────────────────────────────────────────────────────
-            // SAFETY: per fn contract; `top_level_dir` is the `'static` fs
-            // singleton field.
-            let mut result = match unsafe {
-                (*vm).transpiler.resolver.resolve_and_auto_install(
-                    &*top_level_dir,
-                    normalized,
-                    ImportKind::Stmt,
-                    global_cache,
-                )
-            } {
-                ResolveResultUnion::Success(r) => r,
-                ResolveResultUnion::Failure(e) => {
-                    // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
-                    // `VirtualMachine::init`.
-                    if let Some(log) = unsafe { &*vm }.log {
-                        // SAFETY: `log` is the unique per-VM `Box<Log>`.
-                        let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "{} resolving preload {}",
-                                e.name(),
-                                bun_core::fmt::format_json_string_latin1(preload_slice),
-                            ),
-                        );
-                    }
-                    return Err(e.into());
-                }
-                ResolveResultUnion::Pending(_) | ResolveResultUnion::NotFound => {
-                    // SAFETY: see above.
-                    if let Some(log) = unsafe { &*vm }.log {
-                        // SAFETY: `log` is the unique per-VM `Box<Log>`.
-                        let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "preload not found {}",
-                                bun_core::fmt::format_json_string_latin1(preload_slice),
-                            ),
-                        );
-                    }
-                    return Err(bun_jsc::CrateError::ModuleNotFound);
-                }
-            };
-
-            // ── import ──────────────────────────────────────────────────────
-            let path_text = result
-                .path()
-                .expect("resolver Success result has a primary path")
-                .text;
-            // SAFETY: per fn contract.
-            unsafe {
-                (*vm).preload_hash = bun_watcher::Watcher::get_hash(path_text);
-                (*vm).transpiler.options.test_file_imports_vitest =
-                    crate::test_runner::jest::compiled_entry_point_imports_vitest(path_text);
-            }
-            bun_core::StringView::from_bytes(path_text)
-        };
-        // Note: use `import_ptr` (not `import`) so the `*mut` we store in
-        // `pending_internal_promise` keeps the FFI's mutable provenance instead
-        // of being laundered through `&JSInternalPromise -> *const -> *mut`
-        // (UB to write through under Stacked Borrows).
-        let promise: *mut JSInternalPromise = match JSModuleLoader::import_ptr(global, &module_name)
-        {
-            Ok(p) => p.as_ptr(),
-            // Report a preload that fails to resolve the same way as one that fails to load.
-            Err(err) => {
-                let rejected = JSInternalPromise::rejected_promise_with_caught_exception(
-                    JSGlobalObject::opaque_ref(global),
-                    err,
-                )?;
-                // The caller reports the error, so don't also report it as an unhandled rejection.
-                rejected.set_handled();
-                return Ok(ptr::from_mut(rejected));
-            }
-        };
+        // SAFETY: per fn contract; `i < n`, and nothing touches `vm.preload` until
+        // `finish_preloads` after this loop.
+        let promise = unsafe { import_preload(vm, i) }?;
 
         // SAFETY: per fn contract.
         unsafe { (*vm).set_pending_internal_promise(Some(promise)) };
@@ -929,6 +811,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // SAFETY: per fn contract.
         if unsafe { &*vm }.is_main_thread && crate::test_runner::jest::Jest::runner_ptr().is_some()
         {
+            // SAFETY: `i < n`; see above.
+            let preload_slice: &[u8] = unsafe { &(&(*vm).preload)[i] };
             // SAFETY: per fn contract — short-lived `&mut *vm`.
             let never_loads = unsafe {
                 (*vm).wait_for_test_runner_load(format_args!(
@@ -958,6 +842,181 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // `_protected` drops here → unprotect.
     }
 
+    // SAFETY: per fn contract.
+    unsafe { finish_preloads(vm, kept_for_this_run) }?;
+    Ok(ptr::null_mut())
+}
+
+/// Before the first preload of a run. [`end_preloads`] is its pair: bun:test's global hooks, a
+/// compiled program and a hot reload that arrives meanwhile ask `is_in_preload`.
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
+unsafe fn begin_preloads(vm: *mut VirtualMachine) {
+    // SAFETY: per fn contract.
+    unsafe { (*vm).is_in_preload = true };
+    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+    bun_jsc::compiled_program::will_run_preloads(unsafe { &*(*vm).global });
+}
+
+/// # Safety
+/// `vm` is the live per-thread VM.
+unsafe fn end_preloads(vm: *mut VirtualMachine) {
+    // SAFETY: per fn contract.
+    unsafe { (*vm).is_in_preload = false };
+    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+    bun_jsc::compiled_program::did_run_preloads(unsafe { &*(*vm).global });
+}
+
+/// # Safety
+/// `vm` is the live per-thread VM.
+unsafe fn define_vitest_globals_for_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<()> {
+    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+    let global: *mut JSGlobalObject = unsafe { &*vm }.global;
+    // SAFETY: per fn contract; `global` is the live global of `vm`.
+    unsafe {
+        if (*vm).transpiler.options.rewrite_jest_for_tests
+            && (*vm).transpiler.options.vitest_globals
+        {
+            bun_removable_features::call_removable!(
+                Test,
+                Abort,
+                crate::test_runner::jest::Jest::define_vitest_globals,
+                &*global
+            )
+            .map_err(|_| bun_jsc::CrateError::JSError)?;
+        }
+    }
+    Ok(())
+}
+
+/// Resolves preload `index` of `vm.preload` and imports it. The promise is the import's. If the
+/// import threw, the promise is rejected with what it threw and marked handled: the caller reports it.
+///
+/// # Safety
+/// `vm` is the live per-thread VM, between `begin_preloads` and `end_preloads`, and
+/// `index < vm.preload.len()`.
+unsafe fn import_preload(
+    vm: *mut VirtualMachine,
+    index: usize,
+) -> bun_jsc::CrateResult<*mut JSInternalPromise> {
+    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+    let global: *mut JSGlobalObject = unsafe { &*vm }.global;
+    // `vm.transpiler` (hence the `FileSystem` singleton) is always initialized here:
+    // `init_runtime_state` returns `Err` on `Transpiler::init`
+    // failure and `VirtualMachine::init` propagates it via `?`, so a VM that
+    // failed to build its transpiler never reaches `load_preloads` (this hook
+    // only runs via `reload_entry_point*`, which operate on an already-`Ok` VM).
+    let top_level_dir: *const [u8] = Fs::FileSystem::get().top_level_dir();
+    // SAFETY: per fn contract.
+    let global_cache = if unsafe { &*vm }.standalone_module_graph.is_none() {
+        GlobalCache::read_only
+    } else {
+        GlobalCache::disable
+    };
+
+    // SAFETY: per fn contract; nothing touches `vm.preload` while its preloads
+    // run: the resolver does not, and `reload()` defers while `is_in_preload`.
+    let preload_slice: &[u8] = unsafe { &(&(*vm).preload)[index] };
+    // Strip "file://".
+    let normalized: &[u8] = preload_slice
+        .strip_prefix(b"file://".as_slice())
+        .unwrap_or(preload_slice);
+
+    // node: builtin specifiers bypass the file resolver — JSModuleLoader
+    // resolves them internally, so `bun --import node:*` works like Node's.
+    let module_name = if normalized.starts_with(b"node:") {
+        bun_core::StringView::from_bytes(normalized)
+    } else {
+        // ── resolve ─────────────────────────────────────────────────────
+        // SAFETY: per fn contract; `top_level_dir` is the `'static` fs
+        // singleton field.
+        let mut result = match unsafe {
+            (*vm).transpiler.resolver.resolve_and_auto_install(
+                &*top_level_dir,
+                normalized,
+                ImportKind::Stmt,
+                global_cache,
+            )
+        } {
+            ResolveResultUnion::Success(r) => r,
+            ResolveResultUnion::Failure(e) => {
+                // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
+                // `VirtualMachine::init`.
+                if let Some(log) = unsafe { &*vm }.log {
+                    // SAFETY: `log` is the unique per-VM `Box<Log>`.
+                    let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "{} resolving preload {}",
+                            e.name(),
+                            bun_core::fmt::format_json_string_latin1(preload_slice),
+                        ),
+                    );
+                }
+                return Err(e.into());
+            }
+            ResolveResultUnion::Pending(_) | ResolveResultUnion::NotFound => {
+                // SAFETY: see above.
+                if let Some(log) = unsafe { &*vm }.log {
+                    // SAFETY: `log` is the unique per-VM `Box<Log>`.
+                    let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "preload not found {}",
+                            bun_core::fmt::format_json_string_latin1(preload_slice),
+                        ),
+                    );
+                }
+                return Err(bun_jsc::CrateError::ModuleNotFound);
+            }
+        };
+
+        // ── import ──────────────────────────────────────────────────────
+        let path_text = result
+            .path()
+            .expect("resolver Success result has a primary path")
+            .text;
+        // SAFETY: per fn contract.
+        unsafe {
+            (*vm).preload_hash = bun_watcher::Watcher::get_hash(path_text);
+            (*vm).transpiler.options.test_file_imports_vitest =
+                crate::test_runner::jest::compiled_entry_point_imports_vitest(path_text);
+        }
+        bun_core::StringView::from_bytes(path_text)
+    };
+    // Note: use `import_ptr` (not `import`) so the `*mut` we store in
+    // `pending_internal_promise` keeps the FFI's mutable provenance instead
+    // of being laundered through `&JSInternalPromise -> *const -> *mut`
+    // (UB to write through under Stacked Borrows).
+    match JSModuleLoader::import_ptr(global, &module_name) {
+        Ok(p) => Ok(p.as_ptr()),
+        // Report a preload that fails to resolve the same way as one that fails to load.
+        Err(err) => {
+            let rejected = JSInternalPromise::rejected_promise_with_caught_exception(
+                JSGlobalObject::opaque_ref(global),
+                err,
+            )?;
+            // The caller reports the error, so don't also report it as an unhandled rejection.
+            rejected.set_handled();
+            Ok(ptr::from_mut(rejected))
+        }
+    }
+}
+
+/// Every preload of the run has been imported and none rejected. `kept_for_this_run`: what
+/// `vm.preloads_kept_for_reload` was when the run began.
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
+unsafe fn finish_preloads(
+    vm: *mut VirtualMachine,
+    kept_for_this_run: bool,
+) -> bun_jsc::CrateResult<()> {
+    // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
+    let global: *mut JSGlobalObject = unsafe { &*vm }.global;
     // Under --isolate each test file gets
     // a fresh global, so preloads must re-execute for every file. Otherwise,
     // only load preloads once.
@@ -982,7 +1041,92 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         }
     }
 
-    Ok(ptr::null_mut())
+    Ok(())
+}
+
+/// `start_worker_preloads` hook: the preloads of a Worker, as a chain of promise reactions in
+/// place of `load_preloads`' loop that waits for each. What follows a preload (the next one, or
+/// the main module) begins in the reaction to it, ahead of every other task of the event loop:
+/// in node the whole sequence is one `async` function.
+///
+/// # Safety
+/// `vm` is the live per-thread VM of a Worker that has not run its preloads.
+unsafe fn start_worker_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<()> {
+    // SAFETY: per fn contract.
+    unsafe {
+        begin_preloads(vm);
+        if let Err(err) = define_vitest_globals_for_preloads(vm) {
+            end_preloads(vm);
+            return Err(err);
+        }
+        import_worker_preload(vm, 0)
+    }
+}
+
+/// Imports preload `index` of a Worker and leaves the rest to the reactions to its promise. Past
+/// the last preload, loads the main module. Ends the preloads (`end_preloads`) when it imports no other.
+///
+/// # Safety
+/// `vm` is the live per-thread VM of a Worker, between `begin_preloads` and `end_preloads`.
+unsafe fn import_worker_preload(vm: *mut VirtualMachine, index: usize) -> bun_jsc::CrateResult<()> {
+    // SAFETY: per fn contract.
+    unsafe {
+        if index < (*vm).preload.len() {
+            let promise = match import_preload(vm, index) {
+                Ok(promise) => promise,
+                Err(err) => {
+                    end_preloads(vm);
+                    return Err(err);
+                }
+            };
+            (*vm).set_pending_internal_promise(Some(promise));
+            JSValue::from_cell(promise).then2(
+                &*(*vm).global,
+                JSValue::js_number(index as f64),
+                crate::generated_bindgen::jsc_hooks::Bun__Worker__onPreloadFulfilled,
+                crate::generated_bindgen::jsc_hooks::Bun__Worker__onPreloadRejected,
+            );
+            return Ok(());
+        }
+        // The first run of this VM's preloads: no run before it kept the list.
+        let finished = finish_preloads(vm, false);
+        end_preloads(vm);
+        finished?;
+        (*vm).load_main_after_preloads()?;
+        Ok(())
+    }
+}
+
+/// The reaction to a Worker's preload that fulfilled: the start sequence goes on.
+pub(crate) fn on_worker_preload_fulfilled(
+    cx: &mut bun_jsc::bindgen::JsScope<'_>,
+    _: bun_jsc::bindgen::JsLocal<'_>,
+    index: u32,
+) {
+    let vm = VirtualMachine::get_mut_ptr();
+    // SAFETY: the reaction runs on the thread of its VM.
+    unsafe {
+        // Asked to stop while the preload ran: the Worker's thread sees that next, and loads nothing more.
+        if !(*vm).script_allowed() {
+            return;
+        }
+        if import_worker_preload(vm, index as usize + 1).is_err() {
+            // The Worker's thread reports what the step logged. A reaction has nobody to throw to.
+            (*vm).worker_start_failed = true;
+            let _ = cx.global().clear_exception_except_termination();
+        }
+    }
+}
+
+/// The reaction to a Worker's preload that rejected: the start sequence ends there, and the
+/// Worker's thread reports the promise, which `pending_internal_promise` still is.
+pub(crate) fn on_worker_preload_rejected(
+    _: &mut bun_jsc::bindgen::JsScope<'_>,
+    _: bun_jsc::bindgen::JsLocal<'_>,
+    _: u32,
+) {
+    // SAFETY: the reaction runs on the thread of its VM, between `begin_preloads` and `end_preloads`.
+    unsafe { end_preloads(VirtualMachine::get_mut_ptr()) };
 }
 
 /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
@@ -1591,6 +1735,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     deinit_runtime_state,
     generate_entry_point,
     load_preloads,
+    start_worker_preloads,
     ensure_debugger,
     auto_tick,
     auto_tick_active,

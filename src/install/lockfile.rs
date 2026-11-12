@@ -1966,20 +1966,34 @@ pub mod printer {
 impl<'a> Printer<'a> {
     #[cold]
     pub fn print(log: &mut bun_ast::Log, input_lockfile_path: &[u8]) -> Result<(), BunError> {
-        // We truncate longer than allowed paths. We should probably throw an error instead.
-        let path = &input_lockfile_path[..input_lockfile_path.len().min(MAX_PATH_BYTES)];
+        /// `path` and its NUL do not fit a path buffer.
+        fn too_long(path: &[u8]) -> ! {
+            Output::err(
+                sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open),
+                "failed to open lockfile {}",
+                (bun_core::fmt::quote(path),),
+            );
+            Global::crash();
+        }
 
         let mut cwd_buf = bun_paths::path_buffer_pool::get();
         let mut joined_buf = bun_paths::path_buffer_pool::get();
-        let lockfile_path: &[u8] = if bun_paths::is_absolute(path) {
-            path
+        let lockfile_path: &[u8] = if bun_paths::is_absolute(input_lockfile_path) {
+            if input_lockfile_path.len() >= MAX_PATH_BYTES {
+                too_long(input_lockfile_path);
+            }
+            input_lockfile_path
         } else {
             let cwd_len = bun_sys::getcwd(&mut cwd_buf[..])?;
-            resolve_path::join_abs_string_buf::<platform::Auto>(
-                &cwd_buf[..cwd_len],
+            let cwd = &cwd_buf[..cwd_len];
+            match resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
+                cwd,
                 &mut joined_buf.0,
-                &[path],
-            )
+                &[input_lockfile_path],
+            ) {
+                Some(joined) => joined.as_bytes(),
+                None => too_long(&[cwd, SEP_STR.as_bytes(), input_lockfile_path].concat()),
+            }
         };
 
         if lockfile_path.first() == Some(&SEP) {

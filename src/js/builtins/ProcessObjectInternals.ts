@@ -128,9 +128,7 @@ export function getStdinStream(
   var reader: import("node:stream/web").ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | undefined;
 
   let needsInternalReadRefresh = false;
-  // A read() on the current `reader` has not settled. One read at a time: _read() is
-  // re-entered from the rejected read of a released reader and from Readable paths that
-  // reset its own `reading` flag.
+  // A read() on the current `reader` has not settled, so _read() is a no-op until it does.
   let readInFlight = false;
   // if true, while the stream is own()ed it will not
   let forceUnref = false;
@@ -227,9 +225,8 @@ export function getStdinStream(
   const originalRead = stream.read;
   stream.read = function (size) {
     const ret = originalRead.$call(this, size);
-    // An explicit read() is a consumer that _read() cannot see when no listener is
-    // attached, so it acquires the native reader itself. Owning afterwards so a
-    // throwing size never refs stdin; read(0) kicks never own here (pause() relies on it).
+    // With no listener, _read() sees no consumer, so an explicit read() owns here, after a
+    // throwing size cannot ref stdin. read(0) kicks never own (pause() relies on it).
     if (size !== 0 && reader === undefined && !stream_destroyed) {
       own();
     }

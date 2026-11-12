@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 48c7100ddcd6034a7089c3ea733ce583b2af428062e79dbe0b793ab60a8b4d74.
+// Written against that file with the SHA-256 65f58a16d801ca564c0ae38d199f8681e8204980e55af57df2bbc7a6d601abfa.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -147,9 +147,7 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
   let needsInternalReadRefresh = false;
-  // A read() on the current `reader` has not settled. One read at a time: _read() is
-  // re-entered from the rejected read of a released reader and from Readable paths that
-  // reset its own `reading` flag.
+  // A read() on the current `reader` has not settled, so _read() is a no-op until it does.
   let readInFlight = false;
   // if true, while the stream is own()ed it will not
   let forceUnref = false;
@@ -246,9 +244,8 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   const originalRead = stream.read;
   stream.read = function (this: StdinStream, size?: number) {
     const ret = originalRead.$call(this, size);
-    // An explicit read() is a consumer that _read() cannot see when no listener is
-    // attached, so it acquires the native reader itself. Owning afterwards so a
-    // throwing size never refs stdin; read(0) kicks never own here (pause() relies on it).
+    // With no listener, _read() sees no consumer, so an explicit read() owns here, after a
+    // throwing size cannot ref stdin. read(0) kicks never own (pause() relies on it).
     if (size !== 0 && reader === undefined && !stream_destroyed) {
       own();
     }

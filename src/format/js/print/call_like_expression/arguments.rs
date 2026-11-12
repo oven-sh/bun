@@ -346,7 +346,9 @@ fn has_embed_label_with_hug<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
 }
 
 /// Prettier's `shouldGroupFirst` and `shouldGroupLast`.
-fn arguments_grouped_layout<'a>(
+/// Prettier's `shouldGroupLast` and `shouldGroupFirst`: the argument that's printed expanded while the others stay on
+/// the line of the call, if there is one.
+pub(crate) fn arguments_grouped_layout<'a>(
     args: List<'a, Expr<'a>>,
     f: &Formatter<'a>,
 ) -> Option<GroupedCallArgumentLayout> {

@@ -54,7 +54,8 @@ impl<'d> Measure<'d> {
             is_space_element_pending: printer.pending_space,
             has_line_suffix: !printer.buffers.line_suffixes.is_empty(),
             must_be_flat: false,
-            uses_flat,
+            // The measurements don't know that a group is forced to break.
+            uses_flat: uses_flat && !printer.has_expanded_group(),
             has_skipped_group_ids: false,
             elements: printer.elements.clone(),
             queue_len: printer.buffers.queue.len(),
@@ -121,7 +122,10 @@ impl<'d> Printer<'d> {
     /// it up to the next possible line break.
     pub(super) fn group_fits(&mut self, group: &Group) -> PrintResult<bool> {
         let flat = group.flat();
-        if flat.flags.has(FlatFlags::MEASURED) && group.end() < self.elements.end {
+        if flat.flags.has(FlatFlags::MEASURED)
+            && group.end() < self.elements.end
+            && !self.has_expanded_group()
+        {
             let mut measure = Measure::new(self, true);
             if self.flat_fits(&mut measure, flat) == Fits::No {
                 return Ok(false);
@@ -161,7 +165,7 @@ impl<'d> Printer<'d> {
     /// True if `variant` of a [`FormatElement::BestFitting`] fits in its place.
     pub(super) fn variant_fits(&mut self, variant: Interned) -> PrintResult<bool> {
         let flat = self.flat_of(variant);
-        if flat.flags.has(FlatFlags::MEASURED) {
+        if flat.flags.has(FlatFlags::MEASURED) && !self.has_expanded_group() {
             let mut measure = Measure::new(self, true);
             if self.flat_fits(&mut measure, flat) == Fits::No {
                 return Ok(false);
@@ -387,10 +391,12 @@ impl<'d> Printer<'d> {
             FormatElement::Interned(content) => self.measure_content(measure, *content),
             FormatElement::Tag(tag) => match tag {
                 Tag::StartGroup(group) => {
-                    if measure.must_be_flat && !group.mode().is_flat() {
+                    let is_flat = group.mode().is_flat()
+                        && !self.is_forced(measure.elements.at().saturating_sub(1), group);
+                    if measure.must_be_flat && !is_flat {
                         return Ok(Fits::No);
                     }
-                    let group_mode = match group.mode().is_flat() {
+                    let group_mode = match is_flat {
                         true => mode,
                         false => PrintMode::Expanded,
                     };

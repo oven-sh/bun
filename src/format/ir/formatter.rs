@@ -206,16 +206,43 @@ impl Storage {
         }
     }
 
+    /// Returns what was recorded about `interned` when it was written, and whether it has a
+    /// [`GroupMode::StaysExpanded`] group, so that [`Storage::will_break`] may be true for it when the output is
+    /// formatted again.
+    #[inline]
+    pub(crate) fn summary_and_stays_expanded(&self, interned: Interned) -> (Flat, bool, bool) {
+        match self.skip_of(interned) {
+            Some(skip) => (skip.flat, skip.will_break, skip.stays_expanded),
+            None => {
+                let (flat, will_break) = self.summary_of_part(interned);
+                (flat, will_break, self.part_stays_expanded(interned))
+            }
+        }
+    }
+
+    /// True if `interned` has a [`GroupMode::StaysExpanded`] group. See [`Storage::summary_and_stays_expanded`].
+    pub(crate) fn stays_expanded(&self, interned: Interned) -> bool {
+        match self.skip_of(interned) {
+            Some(skip) => skip.stays_expanded,
+            None => self.part_stays_expanded(interned),
+        }
+    }
+
     /// Returns `None` if `interned` is only part of a capture.
     #[inline]
     fn summary_of_whole(&self, interned: Interned) -> Option<(Flat, bool)> {
+        self.skip_of(interned)
+            .map(|skip| (skip.flat, skip.will_break))
+    }
+
+    /// The [`FormatElement::Skip`] before `interned`, if `interned` is all of what it skips.
+    #[inline]
+    fn skip_of(&self, interned: Interned) -> Option<&Skip> {
         match (interned.start as usize)
             .checked_sub(1)
             .and_then(|before| self.pool.get(before))
         {
-            Some(FormatElement::Skip(skip)) if skip.len == interned.len => {
-                Some((skip.flat, skip.will_break))
-            }
+            Some(FormatElement::Skip(skip)) if skip.len == interned.len => Some(skip),
             _ => None,
         }
     }
@@ -227,6 +254,42 @@ impl Storage {
             flags: FlatFlags::default().with(FlatFlags::EXPANDS, self.part_expands(part)),
         };
         (flat, self.will_break(self.interned(part)))
+    }
+
+    #[cold]
+    fn part_stays_expanded(&self, part: Interned) -> bool {
+        // Nested parts still to visit.
+        let mut parts = SmallVec::<[Interned; 4]>::new();
+        parts.push(part);
+        while let Some(part) = parts.pop() {
+            let mut elements = self.interned(part).iter();
+            while let Some(element) = elements.next() {
+                let stays_expanded = match element {
+                    FormatElement::Skip(it) => {
+                        skip(&mut elements, it.len);
+                        false
+                    }
+                    FormatElement::Tag(Tag::StartGroup(group)) => {
+                        group.mode() == GroupMode::StaysExpanded
+                    }
+                    FormatElement::Interned(interned) => match self.skip_of(*interned) {
+                        Some(skip) => skip.stays_expanded,
+                        None => {
+                            parts.push(*interned);
+                            false
+                        }
+                    },
+                    FormatElement::BestFitting(it) => {
+                        self.variants(*it).first().is_some_and(|&first| self.stays_expanded(first))
+                    }
+                    _ => false,
+                };
+                if stays_expanded {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// True if something in `part` forces the enclosing groups to break.
@@ -416,6 +479,15 @@ impl FormatElement {
     /// See [`Storage::will_break`].
     pub(crate) fn will_break(&self, f: &Formatter<'_>) -> bool {
         f.storage.will_break(std::slice::from_ref(self))
+    }
+
+    /// True if this is interned content with a [`GroupMode::StaysExpanded`] group in it. See
+    /// [`Storage::stays_expanded`].
+    pub(crate) fn stays_expanded(&self, f: &Formatter<'_>) -> bool {
+        match self {
+            FormatElement::Interned(interned) => f.storage.stays_expanded(*interned),
+            _ => false,
+        }
     }
 }
 
@@ -804,13 +876,14 @@ impl<'a> Formatter<'a> {
     /// Ends the capture that returned `slot`.
     pub(crate) fn end_capture(&mut self, slot: usize) -> Interned {
         let len = self.storage.pool.len().saturating_sub(slot + 1) as u32;
-        let (_, flat, will_break) = self.tracker.end_skipped().unwrap_or_default();
+        let (_, flat, will_break, stays_expanded) = self.tracker.end_skipped().unwrap_or_default();
         match self.storage.pool.get_mut(slot) {
             Some(element) if len > 0 => {
                 *element = FormatElement::Skip(Skip {
                     len,
                     flat,
                     will_break,
+                    stays_expanded,
                 });
             }
             _ => self.storage.pool.truncate(slot),
@@ -989,6 +1062,12 @@ impl<'a> Formatter<'a> {
                         self.remove_soft_lines(flattest, conditions, variants);
                     }
                     continue;
+                }
+                // Without its line breaks, the group is written the same way whether or not it breaks.
+                FormatElement::Tag(Tag::StartGroup(group))
+                    if group.mode() == GroupMode::StaysExpanded =>
+                {
+                    FormatElement::Tag(Tag::StartGroup(group.with_mode(GroupMode::Flat)))
                 }
                 element => element,
             };

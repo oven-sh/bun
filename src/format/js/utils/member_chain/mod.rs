@@ -14,11 +14,23 @@ use super::call_expression::{is_call_expression, is_member_expression};
 use super::is_long_curried_call;
 use super::typecast::is_cast_target;
 use crate::js::parentheses::expression::expression_needs_parentheses;
+use crate::js::print::call_like_expression::arguments::arguments_grouped_layout;
 use crate::prelude::*;
 use crate::{best_fitting, write};
+use bun_core::strings;
 use smallvec::SmallVec;
 
 type Members<'a> = SmallVec<[ChainMember<'a>; 8]>;
+
+/// What the calls of a chain say about its layout. See `MemberChain::calls`.
+#[derive(Copy, Clone)]
+struct Calls {
+    /// More than two calls, and an argument that isn't simple: the groups break.
+    are_complex: bool,
+    /// A function is an argument of a call before the last, and the chain ends with a call: the groups break if the
+    /// last one does.
+    function_breaks_last: bool,
+}
 
 struct MemberChain<'a, 'b> {
     root: Expr<'a>,
@@ -213,10 +225,8 @@ impl<'a, 'b> MemberChain<'a, 'b> {
         (needs_empty_line, has_empty_line_after_call)
     }
 
-    /// Prettier's `shouldMerge`'s counterpart `shouldNotWrap`, and the complexity checks.
-    ///
-    /// `formatted` is each group's output.
-    fn groups_should_break(&self, formatted: &[Option<FormatElement>], f: &Formatter<'a>) -> bool {
+    /// The complexity checks of Prettier's `printMemberChain`, which don't depend on how the groups print.
+    fn calls(&self, f: &Formatter<'a>) -> Calls {
         let mut call_expressions = self
             .members
             .iter()
@@ -229,6 +239,10 @@ impl<'a, 'b> MemberChain<'a, 'b> {
             })
             .peekable();
 
+        let mut calls = Calls {
+            are_complex: false,
+            function_breaks_last: false,
+        };
         let mut calls_count = 0;
         let mut has_function_like_argument = false;
         let mut has_complex_args = false;
@@ -247,22 +261,84 @@ impl<'a, 'b> MemberChain<'a, 'b> {
                     .iter()
                     .all(|argument| SimpleArgument::new(argument, f).is_simple());
             if calls_count > 2 && has_complex_args {
-                return true;
+                calls.are_complex = true;
+                return calls;
             }
         }
+        let ends_with_call = matches!(
+            self.members.last(),
+            Some(ChainMember::CallExpression { .. })
+        );
+        calls.function_breaks_last = has_function_like_argument && ends_with_call;
+        calls
+    }
 
+    /// Prettier's `shouldMerge`'s counterpart `shouldNotWrap`, and the complexity checks.
+    ///
+    /// `formatted` is each group's output.
+    fn groups_should_break(
+        &self,
+        calls: Calls,
+        formatted: &[Option<FormatElement>],
+        f: &Formatter<'a>,
+    ) -> bool {
+        if calls.are_complex {
+            return true;
+        }
         let will_break =
             |group: &Option<FormatElement>| group.is_some_and(|formatted| formatted.will_break(f));
         let ([head, tail @ ..], Some(last)) = (formatted, formatted.last()) else {
             return false;
         };
-        let ends_with_call = matches!(
-            self.members.last(),
-            Some(ChainMember::CallExpression { .. })
-        );
         (!tail.is_empty() && will_break(head))
-            || (has_function_like_argument && ends_with_call && will_break(last))
+            || (calls.function_breaks_last && will_break(last))
             || tail.iter().rev().skip(1).any(will_break)
+    }
+
+    /// True if the last group is printed the same way the next time, once a group in it breaks because it doesn't fit.
+    /// The arguments of a call aren't, at any depth: if one that isn't the grouped one breaks, every argument goes on
+    /// its own line the next time (`write_grouped_arguments`), so a `{` in such an argument is a reason to say no.
+    fn last_group_prints_the_same_once_broken(&self, f: &Formatter<'a>) -> bool {
+        let Some(last) = self.groups().last() else {
+            return false;
+        };
+        let prints_the_same = |call: Call<'a>| {
+            let args = call.args();
+            let Some(layout) = arguments_grouped_layout(args, f) else {
+                return true;
+            };
+            let grouped = match layout.is_grouped_first() {
+                true => 0,
+                false => args.len().saturating_sub(1),
+            };
+            let can_stay_expanded = |argument: Expr<'a>| {
+                strings::contains_char(f.source_text().text_for(&argument.span()), b'{')
+            };
+            !(args.iter().enumerate())
+                .any(|(index, argument)| index != grouped && can_stay_expanded(argument))
+        };
+        // The arguments of the calls of the last group, and everything in them.
+        let mut rest = SmallVec::<[Node<'a>; 8]>::new();
+        for member in last {
+            if let ChainMember::CallExpression { expression, .. } = member
+                && let Some(call) = expression.as_call_like()
+            {
+                if !prints_the_same(call) {
+                    return false;
+                }
+                rest.extend(call.args().iter().map(Node::from));
+            }
+        }
+        while let Some(node) = rest.pop() {
+            if let Node::Expr(e) = node
+                && let Some(call) = e.as_call_like()
+                && !prints_the_same(call)
+            {
+                return false;
+            }
+            node.for_each_child(|child| rest.push(child));
+        }
+        true
     }
 
     /// Prettier's `nodeHasComment`.
@@ -332,17 +408,32 @@ impl<'a> Format<'a> for MemberChain<'a, '_> {
         });
 
         let format_content = format_with(|f| {
-            if has_comment || has_empty_line_after_call || self.groups_should_break(&formatted, f) {
-                write!(f, group(&format_expanded));
-            } else {
-                let has_empty_line_before_tail = needs_empty_line.first() == Some(&true);
-                let last_group_breaks = formatted
-                    .last()
-                    .is_some_and(|last| last.is_some_and(|it| it.will_break(f)));
-                if has_empty_line_before_tail || last_group_breaks {
-                    write!(f, expand_parent());
-                }
-                write!(f, best_fitting!(format_one_line, format_expanded));
+            let calls = self.calls(f);
+            if has_comment
+                || has_empty_line_after_call
+                || self.groups_should_break(calls, &formatted, f)
+            {
+                return write!(f, group(&format_expanded));
+            }
+            let has_empty_line_before_tail = needs_empty_line.first() == Some(&true);
+            let last = formatted.last().copied().flatten();
+            let last_group_breaks = last.is_some_and(|it| it.will_break(f));
+            if has_empty_line_before_tail || last_group_breaks {
+                write!(f, expand_parent());
+                return write!(f, best_fitting!(format_one_line, format_expanded));
+            }
+            // If the last group breaks because it doesn't fit, and an object in it stays broken, the next run prints
+            // the chain on one line before it, as just above. That's printed right away.
+            let last_group_decides = !calls.function_breaks_last
+                && last.is_some_and(|it| it.stays_expanded(f))
+                && self.last_group_prints_the_same_once_broken(f);
+            match last_group_decides {
+                true => write!(
+                    f,
+                    best_fitting!(format_one_line, format_expanded)
+                        .with_fallback(Fallback::MostExpandedIfStable)
+                ),
+                false => write!(f, best_fitting!(format_one_line, format_expanded)),
             }
         });
 

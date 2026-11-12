@@ -2032,8 +2032,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     /// No entry is named `.` or `..`: that member of a multi-index set gets a work item of its own.
     #[cold]
     fn requeue_dot_component(&mut self, item: &mut WorkItem<A>) {
-        // Behind a followed link, `..` is one directory for the kernel and can be another in a
-        // joined path. The set stays as it is there.
+        // Behind a followed link the kernel and a joined path can disagree on `..`: the set stays.
         if !self.followed_links.is_empty() {
             return;
         }

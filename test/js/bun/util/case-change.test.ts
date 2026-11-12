@@ -437,7 +437,7 @@ describe("case-change", () => {
       for (const ch of ["a", "A", "z", "Z", "0", "9"]) {
         for (const caseName of CASE_NAMES) {
           const row = EXPECTED.find(([input]) => input === ch)!;
-          expect(bunFns[caseName](ch)).toBe(row[CASE_NAMES.indexOf(caseName) + 1]);
+          expect(bunFns[caseName](ch)).toBe(row[1][CASE_NAMES.indexOf(caseName)]);
         }
       }
     });
@@ -454,9 +454,19 @@ describe("case-change", () => {
       for (const input of ["café latte", "naïve résumé", "hello 世界"]) {
         for (const caseName of CASE_NAMES) {
           const row = EXPECTED.find(([i]) => i === input)!;
-          expect(bunFns[caseName](input)).toBe(row[CASE_NAMES.indexOf(caseName) + 1]);
+          expect(bunFns[caseName](input)).toBe(row[1][CASE_NAMES.indexOf(caseName)]);
         }
       }
+    });
+
+    test("greek final sigma", () => {
+      // JavaScript's toLowerCase maps a word-final Σ to ς; lowercasing
+      // character by character would always produce σ.
+      expect(Bun.snakeCase("ΟΔΥΣΣΕΥΣ")).toBe("οδυσσευς");
+      expect(Bun.camelCase("ΟΔΥΣΣΕΥΣ")).toBe("οδυσσευς");
+      expect(Bun.pascalCase("ΟΔΥΣΣΕΥΣ")).toBe("Οδυσσευς");
+      expect(Bun.capitalCase("ΟΔΥΣΣΕΥΣ")).toBe("Οδυσσευς");
+      expect(Bun.constantCase("ΟΔΥΣΣΕΥΣ")).toBe("ΟΔΥΣΣΕΥΣ");
     });
 
     test("acronym splitting", () => {
@@ -480,7 +490,7 @@ describe("case-change", () => {
       ]) {
         for (const caseName of CASE_NAMES) {
           const row = EXPECTED.find(([i]) => i === input)!;
-          expect(bunFns[caseName](input)).toBe(row[CASE_NAMES.indexOf(caseName) + 1]);
+          expect(bunFns[caseName](input)).toBe(row[1][CASE_NAMES.indexOf(caseName)]);
         }
       }
     });
@@ -501,7 +511,7 @@ describe("case-change", () => {
       for (const input of [long, camelLong]) {
         const row = EXPECTED.find(([i]) => i === input)!;
         for (const caseName of CASE_NAMES) {
-          expect(bunFns[caseName](input)).toBe(row[CASE_NAMES.indexOf(caseName) + 1]);
+          expect(bunFns[caseName](input)).toBe(row[1][CASE_NAMES.indexOf(caseName)]);
         }
       }
     });
@@ -591,7 +601,7 @@ describe("case-change", () => {
       test(`words joined by ${JSON.stringify(sep)}: ${JSON.stringify(input)}`, () => {
         const row = EXPECTED.find(([i]) => i === input)!;
         for (const caseName of CASE_NAMES) {
-          expect(bunFns[caseName](input)).toBe(row[CASE_NAMES.indexOf(caseName) + 1]);
+          expect(bunFns[caseName](input)).toBe(row[1][CASE_NAMES.indexOf(caseName)]);
         }
       });
     }
@@ -612,7 +622,7 @@ describe("case-change", () => {
       test(`camelCase-style: ${JSON.stringify(input)}`, () => {
         for (const caseName of CASE_NAMES) {
           const row = EXPECTED.find(([i]) => i === input)!;
-          expect(bunFns[caseName](input)).toBe(row[CASE_NAMES.indexOf(caseName) + 1]);
+          expect(bunFns[caseName](input)).toBe(row[1][CASE_NAMES.indexOf(caseName)]);
         }
       });
     }

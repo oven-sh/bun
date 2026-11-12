@@ -13,10 +13,13 @@
 //! the word and resets the boundary state, exactly as the regexes do, since
 //! neither pattern can match across it.
 //!
-//! Case mapping uses Rust's `char::to_uppercase`/`to_lowercase`, which do
-//! full Unicode mappings (e.g. `ß` -> `SS`), matching JavaScript's
-//! `String.prototype.toUpperCase`/`toLowerCase` — and therefore `change-case` —
-//! rather than the single-codepoint mapping ICU does.
+//! Case mapping uses Rust's full Unicode mappings (e.g. `ß` -> `SS`),
+//! matching JavaScript's `String.prototype.toUpperCase`/`toLowerCase` —
+//! and therefore `change-case` — rather than the single-codepoint mapping
+//! ICU does. Lowercasing is applied to the whole word
+//! (`str::to_lowercase`), not per character, so context-sensitive mappings
+//! match JavaScript too: a word-final `Σ` becomes `ς`, where
+//! `char::to_lowercase` would always produce `σ`.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Case {
@@ -245,25 +248,23 @@ pub(crate) fn convert(case: Case, input: &str) -> String {
             out.push('_');
         }
 
-        let mut chars = word.chars();
         match case.transform(word_index) {
             Transform::Lower => {
-                for c in chars {
-                    out.extend(c.to_lowercase());
-                }
+                out.push_str(&word.to_lowercase());
             }
             Transform::Upper => {
-                for c in chars {
+                for c in word.chars() {
                     out.extend(c.to_uppercase());
                 }
             }
             Transform::Capitalize => {
+                let mut chars = word.chars();
                 if let Some(first) = chars.next() {
                     out.extend(first.to_uppercase());
                 }
-                for c in chars {
-                    out.extend(c.to_lowercase());
-                }
+                // Lowercase the rest as one string, not per character, so a
+                // word-final `Σ` in the rest still becomes `ς`.
+                out.push_str(&chars.as_str().to_lowercase());
             }
         }
 

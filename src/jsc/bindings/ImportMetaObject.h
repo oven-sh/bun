@@ -61,9 +61,8 @@ public:
     /// stated in https://github.com/oven-sh/bun/pull/9399
     static ImportMetaObject* createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier);
 
-    /// The `url` that createFromSpecifier() gives the object made for `specifier`. A module key compares
-    /// against `url` through this function and not against `import.meta.path`: the key of an embedded file
-    /// is `B:/~BUN/root/x` on Windows and its path is `B:\~BUN\root\x`.
+    /// The `url` that createFromSpecifier() gives the object made for `specifier`. Compare a module key
+    /// against `url` through this, not against `import.meta.path`: the path loses the key's separators.
     static WTF::String urlForSpecifier(const String& specifier);
 
     DECLARE_INFO;

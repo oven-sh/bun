@@ -683,8 +683,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
     JSValue path = thisObject->pathProperty.getInitializedOnMainThread(thisObject);
     bool isMain = JSValue::strictEqual(globalObject, path, bunMain);
     RETURN_IF_EXCEPTION(scope, {});
-    // `Bun.main` is the main module's key, and this object was made from its own key (see urlForSpecifier).
-    // The name of a text that a Worker starts from is no path at all.
+    // `Bun.main` is a module key. This object's url came from its own key, so compare in that form.
     if (!isMain && bunMain.isString()) {
         auto name = asString(bunMain)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});

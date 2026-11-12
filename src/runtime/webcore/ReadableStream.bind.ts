@@ -57,8 +57,11 @@ export const BlobInternalReadableStreamSource = b.class({
 export const FileInternalReadableStreamSource = b.class({
   ...source,
   rustPath: "crate::webcore::file_reader::Source",
-  /** `lockedStream` is the stream `ReadableStream__lockNative` locked, which `NewSource::end_locked_stream` closes or errors. */
-  internalFields: [...internalFields, "lockedStream"],
+  /**
+   * `lockedStream` is the stream `ReadableStream__lockNative` locked, which `NewSource::end_locked_stream` closes or errors.
+   * `readCallback` is the function `setReadCallback` was given.
+   */
+  internalFields: [...internalFields, "lockedStream", "readCallback"],
   proto: {
     cancel: members.cancel,
     drain: members.drain,
@@ -66,6 +69,13 @@ export const FileInternalReadableStreamSource = b.class({
     pull: members.pull,
     setFlowing: { args: { flag: b.any }, capability: "js" },
     setRawMode: { args: { flag: b.any }, returns: b.any.returning("object", "undefined"), capability: "js" },
+    /**
+     * Handle mode, for the stdio of `node:child_process`. The source is not pulled from then on: each read completion
+     * calls `callback(chunk)` from the event loop, and `false` from it stops the reader until `setFlowing(true)`, which
+     * also starts it. The end is `callback(null)`, a read error `callback(undefined, error)`.
+     * `false`: nothing changed, and the source keeps being pulled.
+     */
+    setReadCallback: { args: { callback: b.callable }, returns: b.bool, capability: "js", passThis: true },
     start: members.start,
     updateRef: members.updateRef,
   },

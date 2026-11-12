@@ -1068,6 +1068,12 @@ declare namespace $Bindgen {
   interface FileInternalReadableStreamSource {
     updateRef(ref: boolean): void;
     setFlowing(flowing: boolean): void;
+    /**
+     * `callback(chunk)` for each read, where `false` stops the reader until `setFlowing(true)`, which also starts it;
+     * `callback(null)` at the end; `callback(undefined, error)` for a read error. The source is not pulled from then
+     * on. `false`: nothing changed, and the source keeps being pulled.
+     */
+    setReadCallback(callback: (chunk: Buffer | null | undefined, error?: Error) => unknown): boolean;
     /** `undefined`, or the system error. */
     setRawMode(enabled: boolean): Error | undefined;
   }

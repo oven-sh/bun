@@ -74,13 +74,29 @@ fn compiler_name(func: Func<'_>) -> Option<Name<'_>> {
     }
 }
 
-/// True if the compiler would compile `func` on its own: named like a component or a hook, passed to `memo()` or
-/// `forwardRef()`, or opted in.
-fn is_compile_candidate(func: Func<'_>) -> bool {
-    if compiler_name(func).is_some_and(|it| is_component_or_hook_name(it.bytes())) {
-        return true;
+/// `useState`, `React.useState`
+fn is_hook_callee(callee: Expr<'_>) -> bool {
+    match callee.kind() {
+        ExprKind::Ident(name) => is_hook_name(name.bytes()),
+        ExprKind::Dot { name, .. } => is_hook_name(name.name().bytes()),
+        _ => false,
     }
-    let is_react_api_callback = match func.owner() {
+}
+
+/// The compiler's `calls_hooks_or_creates_jsx`: in `func` itself, not in a function inside it.
+fn calls_hooks_or_creates_jsx<'a>(func: Func<'a>) -> bool {
+    let file = func.file();
+    let is_own = |e: Expr<'a>| Node::Expr(e).enclosing_function() == Some(func);
+    file.exprs_of_kind(ExprTag::Jsx).any(is_own)
+        || file
+            .exprs_of_kind(ExprTag::Call)
+            .any(|e| e.as_call().is_some_and(|call| is_hook_callee(call.callee())) && is_own(e))
+}
+
+/// True if the compiler would compile `func` on its own: named like a component or a hook, or passed to `memo()` or
+/// `forwardRef()`, and calling a hook or creating JSX itself, or opted in.
+fn is_compile_candidate(func: Func<'_>) -> bool {
+    let is_react_api_callback = || match func.owner() {
         Node::Expr(e) => match e.parent() {
             Node::Expr(parent) => parent.as_call().is_some_and(|call| {
                 call.args().first() == Some(e) && is_react_api(call.callee(), &["memo", "forwardRef"])
@@ -89,7 +105,9 @@ fn is_compile_candidate(func: Func<'_>) -> bool {
         },
         _ => false,
     };
-    is_react_api_callback || has_body_directive(func, &OPT_IN_DIRECTIVES)
+    let looks_like_one = compiler_name(func).is_some_and(|it| is_component_or_hook_name(it.bytes()))
+        || is_react_api_callback();
+    (looks_like_one && calls_hooks_or_creates_jsx(func)) || has_body_directive(func, &OPT_IN_DIRECTIVES)
 }
 
 /// The function the compiler would compile `e` as part of: the outermost candidate, as it doesn't look inside one.
@@ -111,9 +129,12 @@ fn is_in_undiscovered_function(e: Expr<'_>) -> bool {
 enum Component<'a> {
     Class,
     Func(Func<'a>),
+    /// Something else this file makes, like `observer(..)`.
+    Other,
 }
 
-/// Returns the component that `e` is, or that `e` names in this file: `C` in `memo(C)`, through `forwardRef()`.
+/// Returns the component that `e` is, or that `e` names in this file: `C` in `memo(C)`, through `forwardRef()`. `None`
+/// for what comes from another file.
 fn component_of(e: Expr<'_>, depth: u8) -> Option<Component<'_>> {
     if depth == 0 {
         return None;
@@ -129,11 +150,20 @@ fn component_of(e: Expr<'_>, depth: u8) -> Option<Component<'_>> {
     {
         return component_of(call.args().first()?, depth - 1);
     }
-    match e.symbol()?.declarations().next()?.node()? {
-        Node::Class(_) => Some(Component::Class),
-        Node::Func(func) => Some(Component::Func(func)),
-        Node::VarDecl(declaration) => component_of(declaration.init()?, depth - 1),
-        _ => None,
+    if e.as_ident().is_none() {
+        return Some(Component::Other);
+    }
+    match e.symbol()?.declarations().next()? {
+        Declaration::ImportSpec(_) | Declaration::ImportDefault(_) | Declaration::ImportNamespace(_) => None,
+        Declaration::Class(_) => Some(Component::Class),
+        Declaration::Fn(func) => Some(Component::Func(func)),
+        declaration => match declaration.node() {
+            Some(Node::VarDecl(declaration)) => match declaration.init() {
+                Some(init) => component_of(init, depth - 1),
+                None => Some(Component::Other),
+            },
+            _ => Some(Component::Other),
+        },
     }
 }
 
@@ -142,7 +172,7 @@ fn compiler_skips(e: Expr<'_>) -> bool {
     match component_of(e, 4) {
         Some(Component::Class) => true,
         Some(Component::Func(func)) => opts_out(func),
-        None => false,
+        Some(Component::Other) | None => false,
     }
 }
 
@@ -163,21 +193,22 @@ fn first_argument(call: Call<'_>, count: usize) -> Option<Expr<'_>> {
     (fits && is_plain).then(|| args.first()).flatten()
 }
 
-/// True if the function `kept` has a name the compiler looks at once `memo()` is gone: the variable's, or its own as a
-/// declaration. A function this file declares keeps the name it has.
-fn keeps_name<'a>(e: Expr<'a>, kept: Expr<'a>) -> bool {
-    let name = match kept.as_fn() {
+/// True if the compiler would still find the component `kept` once `memo()` is gone: by the variable's name, or by its
+/// own as a declaration, and by a hook call or JSX in it. A component from another file is taken to be found.
+fn stays_compiled<'a>(e: Expr<'a>, kept: Expr<'a>) -> bool {
+    let (func, name) = match kept.as_fn() {
         Some(func) => match e.parent() {
-            Node::VarDecl(declaration) if declaration.init() == Some(e) => declaration.pat().as_ident(),
-            _ if becomes_declaration(e, kept) => func.name().map(Ident::name),
-            _ => None,
+            Node::VarDecl(declaration) if declaration.init() == Some(e) => (func, declaration.pat().as_ident()),
+            _ if becomes_declaration(e, kept) => (func, func.name().map(Ident::name)),
+            _ => return false,
         },
         None => match component_of(kept, 4) {
-            Some(Component::Func(func)) => compiler_name(func),
-            _ => return true,
+            Some(Component::Func(func)) => (func, compiler_name(func)),
+            Some(Component::Class | Component::Other) => return false,
+            None => return true,
         },
     };
-    name.is_some_and(|it| is_component_or_hook_name(it.bytes()))
+    name.is_some_and(|it| is_component_or_hook_name(it.bytes())) && calls_hooks_or_creates_jsx(func)
 }
 
 /// What the call leaves behind: `expr` of `useMemo(() => expr, deps)`, `fn` of `useCallback(fn, deps)`, `C` of `memo(C)`.
@@ -198,7 +229,7 @@ fn replacement<'a>(name: Name<'a>, e: Expr<'a>, call: Call<'a>) -> Option<(Expr<
         b"useCallback" => Some((first_argument(call, 2)?, KEEP_FUNCTION)),
         b"memo" => {
             let component = first_argument(call, 1)?;
-            keeps_name(e, component).then_some((component, KEEP_COMPONENT))
+            stays_compiled(e, component).then_some((component, KEEP_COMPONENT))
         }
         _ => None,
     }
@@ -226,14 +257,15 @@ fn needs_parentheses(e: Expr<'_>, kept: Expr<'_>) -> bool {
         let Some(first) = e.file().tokens_in(kept).next() else {
             return false;
         };
+        let starts_declaration = matches!(first.text(), b"function" | b"class" | b"async")
+            && (ast_utils::is_start_of_expression_statement(e) || is_export_default(e))
+            && !becomes_declaration(e, kept);
         is_start_of_expression_statement_needing_parentheses(e, &first)
             || is_start_of_arrow_function_body_needing_parentheses(e, &first)
-            || (is_export_default(e)
-                && !becomes_declaration(e, kept)
-                && matches!(first.text(), b"function" | b"class" | b"async"))
+            || starts_declaration
     };
     // `new Date` is strong, but `new Date.getTime()` is not `(new Date).getTime()`.
-    let is_bare_new = matches!(kept.kind(), ExprKind::New(_)) && !kept.text().ends_with(b")");
+    let is_bare_new = matches!(kept.kind(), ExprKind::New(call) if call.close_paren().is_none());
     ((!is_strong_precedence_node(kept) || is_bare_new) && (is_weak_precedence_parent(e) || has_postfix_parent))
         || matches!(kept.kind(), ExprKind::Binary { op: BinOp::Comma, .. })
         || starts_block_or_declaration()
@@ -241,7 +273,7 @@ fn needs_parentheses(e: Expr<'_>, kept: Expr<'_>) -> bool {
 
 /// True if the function `kept` becomes a declaration in the place of `e`: `export default memo(function C ..)`.
 fn becomes_declaration(e: Expr<'_>, kept: Expr<'_>) -> bool {
-    matches!(kept.kind(), ExprKind::Fn(func) if !func.is_arrow()) && is_export_default(e)
+    matches!(kept.kind(), ExprKind::Fn(func) if !func.is_arrow()) && is_export_default(e) && !e.is_parenthesized()
 }
 
 /// The span to replace: the call, and the `;` right after it when a function expression becomes a declaration.

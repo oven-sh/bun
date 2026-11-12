@@ -977,6 +977,11 @@ const rules: Record<string, Case[]> = {
       ],
       [`${useCallback}«useCallback»(() => 1, [])();`, `(() => 1)();`],
       [`${useCallback}«useCallback»(function () {}, []);`, `(function () {});`],
+      [`${useCallback}«useCallback»(async function () {}, []);`, `(async function () {});`],
+      [
+        `${useMemo}const gain = «useMemo»(() => new (A || B), []).createGain();`,
+        `const gain = (new (A || B)).createGain();`,
+      ],
       [`${useCallback}const k = «useCallback»(() => a, [a]) as Fn;`, `const k = (() => a) as Fn;`],
       [`${memo}const Row = «memo»(({ label }) => <li>{label}</li>);`, `const Row = ({ label }) => <li>{label}</li>;`],
       [
@@ -1050,6 +1055,10 @@ const rules: Record<string, Case[]> = {
         `function withTotal(Wrapped) {\n  "use no memo";\n  const Total = ({ a, b }) => <Wrapped total={a + b} />;\n  return Total;\n}`,
       ],
       [
+        `${useMemo}function App({ a, b }) {\n  "use no memo";\n  const Row = () => «useMemo»(() => a + b, [a, b]);\n}`,
+        `function App({ a, b }) {\n  "use no memo";\n  const Row = () => a + b;\n}`,
+      ],
+      [
         `${useMemo}const Total = function inner({ a, b }) {\n  return «useMemo»(() => a + b, [a, b]);\n};`,
         `const Total = function inner({ a, b }) {\n  return a + b;\n};`,
       ],
@@ -1057,17 +1066,9 @@ const rules: Record<string, Case[]> = {
         `${memo}export default «memo»(function Row({ label }) {\n  return <li>{label}</li>;\n}) /* note */;`,
         `export default function Row({ label }) {\n  return <li>{label}</li>;\n} /* note */;`,
       ],
-      [
-        `${memo}export default «memo»(function Row() {\n  return null;\n} as FC);`,
-        `export default (function Row() {\n  return null;\n} as FC);`,
-      ],
       [`${useCallback}go();\n«useCallback»(() => 1, [])();`, `go();\n(() => 1)();`],
       [`${useCallback}go()\n«useCallback»(() => 1, [])()`, `go()\n;(() => 1)()`],
       [`${useMemo}const list = []\n«useMemo»(() => [a], [a]).forEach(run)`, `const list = []\n;[a].forEach(run)`],
-      [
-        `${useMemo}function App({ a, b }) {\n  const total = () => {\n    "use no memo";\n    return «useMemo»(() => a + b, [a, b]);\n  };\n}`,
-        `function App({ a, b }) {\n  const total = () => {\n    "use no memo";\n    return a + b;\n  };\n}`,
-      ],
     ].map(([code, suggestion]) => ({ code, suggestions: [suggestion] })),
     // The rewrite keeps both uses. The import is removed once nothing refers to it.
     {
@@ -1106,12 +1107,19 @@ const rules: Record<string, Case[]> = {
     `${memo}export const M = «memo»(() => null) as any;`,
     `${memo}const row = «memo»(() => <li />);`,
     `${memo}const row = () => <li />;\nexport default «memo»(row);`,
+    `${memo}function List({ items }) {\n  return items.map(item => <li>{item}</li>);\n}\nexport default «memo»(List);`,
+    `${memo}const Row = observer(() => <li />);\nexport default «memo»(Row);`,
+    `${memo}export default «memo»(function Row() {\n  return null;\n} as FC);`,
+    `${memo}export default («memo»(function Row() {\n  return <li />;\n}));`,
     `${memo}function row() {\n  return <li />;\n}\nexport default «memo»(row);`,
     // The compiler never finds these functions, so the rewrite would leave nothing memoized.
     `${useMemo}function withTotal(Wrapped) {\n  "use no memo";\n  return function Total({ a, b }) {\n    return <Wrapped total={«useMemo»(() => a + b, [a, b])} />;\n  };\n}`,
     `${useMemo}export default ({ a, b }) => «useMemo»(() => a + b, [a, b]);`,
     `${useMemo}const Row = observer(({ a, b }) => «useMemo»(() => a + b, [a, b]));`,
     `${useMemo}const get = () => «useMemo»(() => ({ a }), [a]);`,
+    // Neither function calls a hook or creates JSX itself, so the compiler finds neither, and the directive is inert.
+    `${useMemo}function Total({ a, b }) {\n  "use no memo";\n  const f = () => «useMemo»(() => a + b, [a, b]);\n}`,
+    `${useMemo}function App({ a, b }) {\n  const total = () => {\n    "use no memo";\n    return «useMemo»(() => a + b, [a, b]);\n  };\n}`,
     // The name of the function is already taken in the module, or is a global the module uses.
     `${memo}import { Row } from "./Row";\nexport default «memo»(function Row() {\n  return <li />;\n});`,
     `${memo}const img = new Image();\nexport default «memo»(function Image() {\n  return <img />;\n});`,
@@ -1133,8 +1141,6 @@ const rules: Record<string, Case[]> = {
     `${useMemo}function useTotal(a, b) {\n  "use no memo";\n  return useMemo(() => a + b, [a, b]);\n}`,
     `${useMemo}const Total = ({ a, b }) => {\n  "use no memo";\n  return useMemo(() => a + b, [a, b]);\n};`,
     `${useMemo}const Total = function ({ a, b }) {\n  "use no memo";\n  return useMemo(() => a + b, [a, b]);\n};`,
-    `${useMemo}function Total({ a, b }) {\n  "use no memo";\n  const f = () => useMemo(() => a + b, [a, b]);\n}`,
-    `${useMemo}function App({ a, b }) {\n  "use no memo";\n  const Row = () => useMemo(() => a + b, [a, b]);\n}`,
     `${useMemo}const Total = function inner({ a, b }) {\n  "use no memo";\n  return useMemo(() => a + b, [a, b]);\n};`,
     `${useMemo}function total(a, b) {\n  "use memo";\n  "use no memo";\n  return useMemo(() => a + b, [a, b]);\n}`,
     `${useMemo}const Total = memo(({ a, b }) => {\n  "use no memo";\n  return useMemo(() => a + b, [a, b]);\n});`,

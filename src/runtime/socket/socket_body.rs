@@ -801,6 +801,16 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
+    /// `send(message, socket)` without `keepOpen`: another process reads and writes the connection now, and
+    /// this handle waits to be closed. Its owner hears how a write it still waits for ends, and nothing else.
+    pub(crate) fn detach_for_send(&self, global: &JSGlobalObject, this_value: JSValue) {
+        self.update_flags(|f| f.insert(Flags::SENT));
+        self.pause_reads();
+        if self.buffered_data_for_node_net.get().completion() == Completion::None {
+            Self::data_set_cached(this_value, global, JSValue::UNDEFINED);
+        }
+    }
+
     /// Consumes `PAUSE_ON_CONNECT`: a TLS client dispatches another handshake after a renegotiation.
     fn pause_on_connect_once(&self) {
         if self.flags.get().contains(Flags::PAUSE_ON_CONNECT) {
@@ -1032,7 +1042,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         );
         let callback = handlers.on_timeout();
-        if this.flags.get().contains(Flags::FINALIZING) {
+        if this.flags.get().intersects(Flags::FINALIZING_OR_SENT) {
             return Ok(());
         }
         let _guard = RefPtr::from_this(this);
@@ -1712,6 +1722,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         let Some(handlers) = this.dispatch_handlers() else {
             return Ok(());
         };
+        // That read of an error event reaches the peer's FIN too.
+        if this.flags.get().contains(Flags::SENT) {
+            return Ok(());
+        }
         log!(
             "onEnd {}",
             if handlers.mode == super::SocketMode::Server {
@@ -2193,6 +2207,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             0
         };
+        // A sent socket reports no read, so the error that closed it ends its write.
+        if err > 2 && this.flags.get().contains(Flags::SENT) {
+            this.buffered_data_for_node_net.with_mut(|b| {
+                if b.is_pending() {
+                    b.fail(send_errno(err));
+                }
+            });
+        }
         let failed_write = this.take_failed_write(send_error);
         let reset = this.buffered_data_for_node_net.get().completion() == Completion::Reset;
         // node:net hears of it through the write's own callback.
@@ -2223,8 +2245,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             scope
         });
 
-        if this.flags.get().contains(Flags::FINALIZING) {
-            return Ok(());
+        if this.flags.get().intersects(Flags::FINALIZING_OR_SENT) {
+            return Self::on_unheard_close(this, &handlers, failed_write);
         }
 
         this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
@@ -2289,6 +2311,27 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(())
     }
 
+    /// The closes that `close` never hears of: one under the finalizer, and one of a sent socket,
+    /// whose owner only hears how its write ended.
+    #[cold]
+    #[inline(never)]
+    fn on_unheard_close(
+        this: bun_ptr::ThisPtr<Self>,
+        handlers: &Rc<Handlers>,
+        failed_write: Option<sys::SystemErrno>,
+    ) -> JsResult<()> {
+        // Only a plain socket is ever sent (`do_send`).
+        if SSL || this.flags.get().contains(Flags::FINALIZING) {
+            return Ok(());
+        }
+        this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        if let Some(errno) = failed_write {
+            let this_value = this.get_this_value(&handlers.global_object);
+            handlers.call_write_complete(this_value, uv_status(errno));
+        }
+        Ok(())
+    }
+
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as `on_writable`.
     pub(crate) fn on_data(
         this: bun_ptr::ThisPtr<Self>,
@@ -2316,7 +2359,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
 
         let callback = handlers.on_data();
-        if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
+        // A sent socket reads nothing, but an error event reads what is left ahead of it (loop.c).
+        if callback.is_empty() || this.flags.get().intersects(Flags::FINALIZING_OR_SENT) {
             return Ok(());
         }
 
@@ -3492,10 +3536,14 @@ bitflags::bitflags! {
         const SENDING_QUEUE        = 1 << 17;
         /// node:net's `fdIsWriteOnly`: `do_connect` gives the descriptor to an `FdPipe`, not to uSockets.
         const WRITE_ONLY_FD        = 1 << 18;
+        /// `send(message, socket)` gave the connection to another process (`detach_for_send`).
+        const SENT                 = 1 << 19;
     }
 }
 
 impl Flags {
+    const FINALIZING_OR_SENT: Flags = Flags::FINALIZING.union(Flags::SENT);
+
     fn initial(reject_unauthorized: bool) -> Flags {
         let mut flags = Flags::empty();
         flags.set(Flags::REJECT_UNAUTHORIZED, reject_unauthorized);

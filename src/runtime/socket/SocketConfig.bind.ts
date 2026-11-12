@@ -54,8 +54,6 @@ export const SocketOptions = b.dictionary(
     fd: b.i32.allowBigInt.optional,
     /** Windows, `Bun.connect` only: `fd` is a SOCKET and not a libuv descriptor. */
     fdIsRawSocket: b.bool.loose.default(false),
-    /** node:net only: `fd` is a pipe, a terminal or a socket that is only written to, in its own blocking mode. */
-    fdIsWriteOnly: b.bool.default(false),
     /** node:net only: the literal IP and the port to bind before connecting. */
     localAddress: b.string.falsyAsNull,
     localPort: b.f64.falsyAsNull,

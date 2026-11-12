@@ -491,6 +491,7 @@ pub(crate) struct SocketConfig {
     pub(crate) hostname_or_unix: Utf8Bytes<'static>,
     pub(crate) port: Option<u16>,
     pub(crate) fd: Option<Fd>,
+    /// node:net sets the private `$fdIsWriteOnly`: `fd` is a pipe, a terminal or a socket that is only written to, in its own blocking mode.
     pub(crate) fd_is_write_only: bool,
     pub(crate) local_binding: Option<(Box<[u8]>, u16)>,
     pub(crate) ssl: Option<SSLConfig>,
@@ -562,7 +563,7 @@ impl SocketConfig {
                     }
                     Fd::from_uv(v)
                 }),
-                fd_is_write_only: generated.fd_is_write_only,
+                fd_is_write_only: false,
                 local_binding: generated.local_address.map(|address| {
                     let port = generated.local_port.unwrap_or(0.0).clamp(0.0, 65535.0) as u16;
                     (address.into_utf8().into_vec().into_boxed_slice(), port)
@@ -640,6 +641,9 @@ impl SocketConfig {
         config.default_timeout = opts
             .fast_get(global_object, bun_jsc::BuiltinName::defaultTimeout)?
             .is_none_or(|value| value.to_boolean());
+        config.fd_is_write_only = opts
+            .fast_get(global_object, bun_jsc::BuiltinName::fdIsWriteOnly)?
+            .is_some_and(|value| value.to_boolean());
         Ok(config)
     }
 }

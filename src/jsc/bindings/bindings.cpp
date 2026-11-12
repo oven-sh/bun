@@ -5660,6 +5660,7 @@ enum class BuiltinNamesMap : uint8_t {
     internal,
     sharedFd,
     defaultTimeout,
+    fdIsWriteOnly,
 };
 
 static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char name)
@@ -5741,6 +5742,9 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     }
     case BuiltinNamesMap::defaultTimeout: {
         return clientData->builtinNames().defaultTimeoutPrivateName();
+    }
+    case BuiltinNamesMap::fdIsWriteOnly: {
+        return clientData->builtinNames().fdIsWriteOnlyPrivateName();
     }
     default: {
         ASSERT_NOT_REACHED();

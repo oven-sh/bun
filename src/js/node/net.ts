@@ -329,6 +329,7 @@ const kSessionAccepted = Symbol("kSessionAccepted");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
 const kConnectReq = Symbol("kConnectReq");
+const kFdIsWriteOnly = Symbol("kFdIsWriteOnly");
 const kclosed = Symbol("closed");
 const kended = Symbol("ended");
 // The handle closed behind the peer's EOF: the peer hung up, and the loop closed the descriptor.
@@ -1817,7 +1818,7 @@ function Socket(options?): void {
 
   // usockets can't read a FIFO (recv() fails with ENOTSOCK), and it would close fds 0-2 on destroy, which Node never does.
   if (fdIsWriteOnly) {
-    Socket.prototype.connect.$call(this, { fd, fdIsWriteOnly });
+    Socket.prototype.connect.$call(this, { fd, [kFdIsWriteOnly]: true });
     // Nothing is read from this handle. Like a socket whose peer sent FIN, it holds the loop only while a write is pending.
     this[kended] = true;
     this._handle.unref();
@@ -1955,18 +1956,15 @@ Socket.prototype.connect = function connect(...args) {
       // createConnection({ fd }) gets here after the constructor already adopted the fd.
       if (this._handle?.fd !== fd) {
         this._handle ??= newDetachedSocket(false);
-        const errno = kConnectDispatch(
-          this,
-          { oncomplete: afterOpenFd },
-          {
-            fd,
-            fdIsRawSocket: options.fdIsRawSocket === true,
-            fdIsWriteOnly: options.fdIsWriteOnly === true,
-            // Always half-open natively; see kConnect.
-            allowHalfOpen: true,
-            pauseOnConnect,
-          },
-        );
+        const fdOptions: any = {
+          fd,
+          fdIsRawSocket: options.fdIsRawSocket === true,
+          // Always half-open natively; see kConnect.
+          allowHalfOpen: true,
+          pauseOnConnect,
+        };
+        if (options[kFdIsWriteOnly]) $putByIdDirectPrivate(fdOptions, "fdIsWriteOnly", true);
+        const errno = kConnectDispatch(this, { oncomplete: afterOpenFd }, fdOptions);
         // https://github.com/nodejs/node/blob/v26.5.0/lib/net.js#L568-L569
         if (errno !== 0) throw new ErrnoException(errno, "open");
       }

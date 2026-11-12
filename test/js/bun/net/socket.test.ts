@@ -582,6 +582,34 @@ describe.concurrent("socket", () => {
     expect(exitCode).toBe(0);
   });
 
+  it.skipIf(isWindows).each([
+    [
+      "Bun.connect()",
+      (fd: number, onData: (chunk: Buffer) => void) =>
+        Bun.connect({ fd, fdIsWriteOnly: true, socket: { data: (_, chunk) => onData(chunk) } } as any).then(
+          socket => () => socket.end(),
+        ),
+    ],
+    [
+      "net.Socket#connect()",
+      (fd: number, onData: (chunk: Buffer) => void) => {
+        const socket = new net.Socket().on("data", onData).connect({ fd, fdIsWriteOnly: true } as any);
+        return () => socket.destroy();
+      },
+    ],
+  ] as const)("%s ignores node:net's own fdIsWriteOnly", async (_, adopt) => {
+    const [fd, peer] = createSocketPair();
+    const read = Promise.withResolvers<string>();
+    const close = await adopt(fd, chunk => read.resolve(String(chunk)));
+    try {
+      writeSync(peer, "read");
+      expect(await read.promise).toBe("read");
+    } finally {
+      close();
+      closeSync(peer);
+    }
+  });
+
   it("should allow large amounts of data to be sent and received", async () => {
     // Hashing and copying 1 GiB takes several seconds on debug and ASAN builds.
     const size = isDebug || isASAN ? 256 * 1024 * 1024 : 1024 * 1024 * 1024;

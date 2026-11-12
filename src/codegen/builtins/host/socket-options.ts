@@ -67,7 +67,6 @@ const socketOptionNames = [
   "unix",
   "fd",
   "fdIsRawSocket",
-  "fdIsWriteOnly",
   "localAddress",
   "localPort",
   "exclusive",

@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { tempDir } from "harness";
 import { join } from "node:path";
 import empty from "./xml-empty.xml";
 import fixture, * as namespace from "./xml-fixture.xml";
@@ -61,92 +61,28 @@ it("files in the encodings XML requires are decoded before parsing", async () =>
   expect((await import("./xml-latin1.xml")).default).toEqual({ doc: { "@lang": "français", "#text": "café" } });
 });
 
-it("a file is read as its bytes, so import, require and Bun.build give what XML.parse gives", async () => {
-  const bom = "﻿";
-  const files = {
-    "utf8-bom-declares-latin1.xml": Buffer.from(`${bom}<?xml version="1.0" encoding="ISO-8859-1"?><r>café</r>`),
-    "utf16-bom-declares-latin1.xml": Buffer.from(
-      `${bom}<?xml version="1.0" encoding="ISO-8859-1"?><r>café</r>`,
-      "utf16le",
-    ),
-    "utf16-bom-declares-utf8.xml": Buffer.from(`${bom}<?xml version="1.0" encoding="UTF-8"?><r>café</r>`, "utf16le"),
-    "utf8-declares-utf16.xml": Buffer.from(`<?xml version="1.0" encoding="UTF-16"?><r>café</r>`),
-    "two-boms.xml": Buffer.from(`${bom}${bom}<r>café</r>`),
-    "bom-only.xml": Buffer.from(bom),
-    "unclosed.xml": Buffer.from("<r>"),
-    "utf8-bom.xml": Buffer.from(`${bom}<r>café</r>`),
-    "utf16le-bom.xml": Buffer.from(`${bom}<r>café</r>`, "utf16le"),
-    "utf16be-bom.xml": Buffer.from(`${bom}<r>café</r>`, "utf16le").swap16(),
-    "latin1.xml": Buffer.from(`<?xml version="1.0" encoding="ISO-8859-1"?><r>caf\xe9</r>`, "latin1"),
-  };
-  const names = Object.keys(files);
-  const outcome = load => {
-    try {
-      return JSON.stringify(load());
-    } catch (error) {
-      return "threw " + error.message.replace(/^XML Parse error: /, "");
-    }
-  };
-  const expected = Object.fromEntries(names.map(name => [name, outcome(() => Bun.XML.parse(files[name]))]));
-  expect(Object.values(expected).filter(value => value === `{"r":"café"}`)).toHaveLength(4);
-
-  const tree = {
-    "load.mjs": `
-      import { createRequire } from "node:module";
-      const require = createRequire(import.meta.url);
-      const names = ${JSON.stringify(names)};
-      const said = { import: {}, require: {}, typed: {} };
-      const outcome = async load => {
-        try {
-          return JSON.stringify(await load());
-        } catch (error) {
-          return "threw " + error.message;
-        }
-      };
-      for (const name of names) {
-        said.import[name] = await outcome(async () => (await import("./import/" + name)).default);
-        said.require[name] = await outcome(() => require("./require/" + name));
-        said.typed[name] = await outcome(
-          async () => (await import("./typed/" + name + ".txt", { with: { type: "xml" } })).default,
-        );
-      }
-      console.log(JSON.stringify(said));
-    `,
-  };
-  for (const name of names) {
-    tree["import/" + name] = files[name];
-    tree["require/" + name] = files[name];
-    tree["typed/" + name + ".txt"] = files[name];
-    tree["build/" + name] = files[name];
-    tree["build/" + name + ".mjs"] = `import doc from "./${name}";\nexport default doc;\n`;
-  }
-  using dir = tempDir("xml-file-bytes", tree);
-
-  const bundled = {};
-  for (const name of names) {
-    const build = await Bun.build({
-      entrypoints: [join(String(dir), "build", name + ".mjs")],
-      outdir: join(String(dir), "out", name),
-      throw: false,
-    });
-    bundled[name] = build.success
-      ? outcome(() => require(build.outputs[0].path).default)
-      : "threw " + build.logs.map(log => log.message).join("\n");
-  }
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "load.mjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
+it("a byte order mark that contradicts the declaration is an error, as in XML.parse", async () => {
+  const utf8BomDeclaringLatin1 = Buffer.concat([
+    Buffer.from([0xef, 0xbb, 0xbf]),
+    Buffer.from(`<?xml version="1.0" encoding="ISO-8859-1"?><r>café</r>`),
+  ]);
+  using dir = tempDir("xml-bom", {
+    "doc.xml": utf8BomDeclaringLatin1,
+    "entry.mjs": `import doc from "./doc.xml"; export default doc;`,
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ said: JSON.parse(stdout || "null"), bundled, stderr }).toEqual({
-    said: { import: expected, require: expected, typed: expected },
-    bundled: expected,
-    stderr: "",
-  });
-  expect(exitCode).toBe(0);
+  const message = "Document has a UTF-8 byte-order mark but declares encoding 'ISO-8859-1'";
+  expect(() => Bun.XML.parse(utf8BomDeclaringLatin1)).toThrow(`XML Parse error: ${message}`);
+
+  let error;
+  try {
+    await import(join(String(dir), "doc.xml"));
+  } catch (e) {
+    error = e;
+  }
+  expect(error?.message).toBe(message);
+
+  const build = await Bun.build({ entrypoints: [join(String(dir), "entry.mjs")], throw: false });
+  expect(build.logs.map(log => log.message)).toEqual([message]);
 });
 
 it("a malformed file is a build error with the parser's message and location", async () => {

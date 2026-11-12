@@ -147,7 +147,7 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
          * TLS close (never observed for parked mid-handshake sockets; the
          * assert below encodes that) from turning the re-scan into a spin. */
         struct us_internal_loop_data_t *ld = &group->loop->data;
-        for (uint16_t budget = group->low_prio_count; budget && group->low_prio_count; budget--) {
+        for (uint32_t budget = group->low_prio_count; budget && group->low_prio_count; budget--) {
             struct us_socket_t *q = ld->low_prio_head;
             while (q && q->group != group) {
                 q = q->next;

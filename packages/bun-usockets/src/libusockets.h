@@ -314,7 +314,7 @@ struct us_socket_group_t {
     /* Sockets currently parked in loop->data.low_prio_head with s->group == this.
      * They are NOT in head_sockets while queued, so close_all/deinit must
      * account for them separately. */
-    uint16_t low_prio_count;
+    uint32_t low_prio_count;
     unsigned char linked;
 };
 

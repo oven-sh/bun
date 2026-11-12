@@ -32,7 +32,7 @@ pub struct SocketGroup {
     /// Sockets currently parked in `loop.data.low_prio_head` with
     /// `s->group == this`. They are NOT in `head_sockets` while queued, so
     /// `close_all`/`destroy` must account for them separately.
-    pub low_prio_count: u16,
+    pub low_prio_count: u32,
     pub linked: u8,
 }
 
@@ -55,7 +55,7 @@ pub struct VTable {
 }
 
 // Must match `struct us_socket_group_t` in libusockets.h.
-// 9 ptrs + u16 + u8, padded to 8-byte alignment.
+// 9 ptrs + u32 + u8, padded to 8-byte alignment.
 const _: () = assert!(
     core::mem::size_of::<SocketGroup>() == 9 * core::mem::size_of::<*mut c_void>() + 8,
     "SocketGroup layout drifted from us_socket_group_t"

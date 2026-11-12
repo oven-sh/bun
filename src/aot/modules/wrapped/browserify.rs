@@ -1,7 +1,7 @@
 use super::bootstrap::Bootstrap;
 use super::{Candidate, Finder, InnerModuleKind, SiteTime};
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Decl, Parent, SymbolId};
+use bun_sema::bind::{Binding, Decl, Parent, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
     self, BinOp, Chain, ExprId, ExprKind, FnBody, FnId, FnKind, IdList, MemberKey, PatKind, PropId,

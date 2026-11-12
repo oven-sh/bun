@@ -124,7 +124,6 @@ impl Finder<'_, '_> {
         Some((symbol, record.init.some()?))
     }
 
-    /// No read of the variable throws.
     pub(super) fn has_no_dead_zone(&self, symbol: SymbolId) -> bool {
         matches!(
             self.bound.binding_kind(symbol),

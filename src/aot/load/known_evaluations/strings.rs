@@ -183,11 +183,11 @@ pub(super) fn call_method(text: &Rc<[u8]>, name: &[u8], args: &[Value]) -> Optio
             is_count.then(|| text.repeat(count as usize))?.into()
         }
         b"indexOf" if is_ascii && args.len() == 1 => {
-            let at = index_of(text, text_of_first()?);
+            let at = find(text, text_of_first()?);
             return Some(Value::Number(at.map_or(-1.0, |at| at as f64)));
         }
         b"includes" if is_ascii && args.len() == 1 => {
-            return Some(Value::Boolean(index_of(text, text_of_first()?).is_some()));
+            return Some(Value::Boolean(find(text, text_of_first()?).is_some()));
         }
         b"startsWith" if is_ascii && args.len() == 1 => {
             return Some(Value::Boolean(text.starts_with(text_of_first()?)));
@@ -198,6 +198,13 @@ pub(super) fn call_method(text: &Rc<[u8]>, name: &[u8], args: &[Value]) -> Optio
         _ => return None,
     };
     Some(Value::String(given))
+}
+
+fn find(text: &[u8], searched: &[u8]) -> Option<usize> {
+    match searched.is_empty() {
+        true => Some(0),
+        false => index_of(text, searched),
+    }
 }
 
 fn is_blank(byte: u8) -> bool {

@@ -89,6 +89,9 @@ impl Checker<'_, '_> {
             let ExprKind::Ident(name) = hir[store.target].kind else {
                 continue;
             };
+            if hir.is_in_known_evaluation(hir[store.target].pos) {
+                continue;
+            }
             let code = match bound.binding_kind(store.symbol) {
                 BindingKind::Const if !bound.symbol(store.symbol).decls.iter().any(is_in_text) => {
                     continue;
@@ -151,6 +154,9 @@ impl Checker<'_, '_> {
             let Some((star, star_name)) = star_of(e) else {
                 continue;
             };
+            if hir.is_in_known_evaluation(hir[e].pos) {
+                continue;
+            }
             let (at, name) = match hir[e].kind {
                 ExprKind::Dot { name, .. } => (hir.name_pos(e), Some(name)),
                 ExprKind::Index { index, .. } => match hir[index].kind {

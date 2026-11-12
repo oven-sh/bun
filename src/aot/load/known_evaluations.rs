@@ -25,6 +25,10 @@ use crate::load::react_compiler::module_items::finish_file;
 
 const MAX_NESTED_TEXTS: u32 = 8;
 
+pub(crate) fn may_need_scope_around(code: &[u8]) -> bool {
+    contains(code, b"#") || contains(code, b"eval")
+}
+
 pub(crate) struct CodeBeside<'a> {
     pub path: &'a [u8],
     pub read_file: &'a dyn Fn(&[u8]) -> Option<Vec<u8>>,

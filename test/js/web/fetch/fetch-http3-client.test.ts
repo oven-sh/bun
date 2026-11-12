@@ -2007,7 +2007,7 @@ describe("per-request tls options over http3", () => {
     expect(await attempt(`${base}/hello`, { ca: tls.cert, maxVersion: 0x0303 })).toBe("HTTP3Unsupported");
   });
 
-  test("verifies against tls.ca after an Alt-Svc upgrade", async () => {
+  test("keep a request on TCP when Alt-Svc offers HTTP/3", async () => {
     const fixture = `
       import { fetchH3Internals } from "bun:internal-for-testing";
       const tls = ${JSON.stringify(tls)};
@@ -2025,7 +2025,7 @@ describe("per-request tls options over http3", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr }).toEqual({ stdout: "0,1\n", stderr: "" });
+    expect({ stdout, stderr }).toEqual({ stdout: "0,0\n", stderr: "" });
     expect(exitCode).toBe(0);
   });
 });

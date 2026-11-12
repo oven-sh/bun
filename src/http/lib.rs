@@ -2163,7 +2163,12 @@ impl<'a> HTTPClient<'a> {
         ) {
             return false;
         }
-        if self.has_tls_options_unsupported_by_h3() {
+        // An unreachable alternative costs a whole QUIC handshake timeout before the fallback to TCP.
+        if self
+            .tls_props
+            .as_ref()
+            .is_some_and(|tls| tls.get().requires_custom_request_ctx)
+        {
             return false;
         }
         h3_alt_svc_enabled() && !self.flags.h3_alt_svc_failed

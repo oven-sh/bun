@@ -931,6 +931,10 @@ pub(crate) struct SendQueue {
     pub(crate) mode: Mode,
     pub internal_msg_queue: JsCell<InternalMsgHolder>,
     incoming: JsCell<IncomingBuffer>,
+    /// What a read that is being delivered from the event loop's buffer still holds. A nested read of
+    /// this channel moves it to `incoming` first. A nested tick has receive buffers of its own, so it
+    /// stays readable until `on_data` returns.
+    undelivered: Cell<Option<core::ptr::NonNull<[u8]>>>,
     pub(crate) incoming_fd: Cell<Option<Fd>>,
 
     pub socket: JsCell<SocketUnion>,
@@ -1055,6 +1059,7 @@ impl SendQueue {
             mode,
             internal_msg_queue: JsCell::new(InternalMsgHolder::default()),
             incoming: JsCell::new(IncomingBuffer::init(mode)),
+            undelivered: Cell::new(None),
             incoming_fd: Cell::new(None),
             socket: JsCell::new(socket),
             owner: Cell::new(owner),
@@ -2304,7 +2309,7 @@ fn deliver(
 fn deliver_buffered(
     send_queue: &SendQueue,
     global_this: &JSGlobalObject,
-    decode_next: fn(&JsCell<IncomingBuffer>, &JSGlobalObject) -> DecodeStep,
+    decode_next: impl Fn(&JsCell<IncomingBuffer>, &JSGlobalObject) -> DecodeStep,
 ) {
     loop {
         match decode_next(&send_queue.incoming, global_this) {
@@ -2386,7 +2391,12 @@ fn decode_next_advanced(incoming: &JsCell<IncomingBuffer>, global: &JSGlobalObje
                 adv_buf.start = 0;
                 DecodeStep::Wait
             }
-            Err(e) => DecodeStep::Fail(e),
+            Err(e) => {
+                // A read that is delivered below this one goes on here: it must not report them again.
+                adv_buf.data.clear();
+                adv_buf.start = 0;
+                DecodeStep::Fail(e)
+            }
         }
     })
 }
@@ -2411,8 +2421,7 @@ fn on_data2(send_queue: &SendQueue, data: &[u8]) {
         }
         Mode::Advanced => {
             // Advanced mode: uses length-prefix, no newline scanning needed.
-            // Decode the first message directly from the incoming chunk. What follows it is buffered
-            // before it is delivered: a handler that ticks the event loop can read more of this channel.
+            // Try to decode directly from the incoming chunk first, only buffer if needed.
             let buffer = |data: &[u8]| {
                 send_queue.incoming.with_mut(|inc| {
                     let IncomingBuffer::Advanced(adv_buf) = inc else {
@@ -2421,6 +2430,10 @@ fn on_data2(send_queue: &SendQueue, data: &[u8]) {
                     handle_oom(adv_buf.data.write(data));
                 });
             };
+            if let Some(undelivered) = send_queue.undelivered.take() {
+                // SAFETY: the `on_data2` that set it is on the stack, and its bytes outlive it.
+                buffer(unsafe { undelivered.as_ref() });
+            }
             let has_buffered = send_queue.incoming.with_mut(|inc| {
                 let IncomingBuffer::Advanced(adv_buf) = inc else {
                     unreachable!()
@@ -2430,22 +2443,34 @@ fn on_data2(send_queue: &SendQueue, data: &[u8]) {
             if has_buffered {
                 buffer(data);
             } else {
-                match decode_ipc_message(Mode::Advanced, data, &global_this, None) {
-                    Ok(result) => {
-                        let rest = &data[result.bytes_consumed as usize..];
-                        if !rest.is_empty() {
-                            buffer(rest);
+                let mut data = data;
+                loop {
+                    match decode_ipc_message(Mode::Advanced, data, &global_this, None) {
+                        Ok(result) => {
+                            data = &data[result.bytes_consumed as usize..];
+                            if data.is_empty() {
+                                deliver(send_queue, result.message, &global_this);
+                                return;
+                            }
+                            send_queue
+                                .undelivered
+                                .set(Some(core::ptr::NonNull::from(data)));
+                            let delivered = deliver(send_queue, result.message, &global_this);
+                            let is_in_place = send_queue.undelivered.take().is_some();
+                            if !delivered {
+                                return;
+                            }
+                            if !is_in_place {
+                                break;
+                            }
                         }
-                        if !deliver(send_queue, result.message, &global_this) || rest.is_empty() {
+                        Err(IPCDecodeError::NotEnoughBytes) => {
+                            buffer(data);
+                            log!("hit NotEnoughBytes");
                             return;
                         }
+                        Err(e) => return finish_decode(send_queue, &DecodeStep::Fail(e)),
                     }
-                    Err(IPCDecodeError::NotEnoughBytes) => {
-                        buffer(data);
-                        log!("hit NotEnoughBytes");
-                        return;
-                    }
-                    Err(e) => return finish_decode(send_queue, &DecodeStep::Fail(e)),
                 }
             }
 

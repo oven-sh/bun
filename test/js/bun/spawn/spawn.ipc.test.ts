@@ -427,7 +427,8 @@ describe("ipc mode advanced", () => {
 });
 
 // Writes the messages with one write(), then makes the file "written". They fit the socket's buffer on Linux.
-function senderOfOneRead(serialization: string, messages: unknown[]) {
+// `later` is JavaScript: the messages for one more write(), once there is a file "more". A Buffer is written as it is.
+function senderOfOneRead(serialization: string, messages: unknown[], later = "[]") {
   return `
     const fs = require("node:fs");
     const encode = {
@@ -441,6 +442,11 @@ function senderOfOneRead(serialization: string, messages: unknown[]) {
     }["${serialization}"];
     fs.writeSync(3, Buffer.concat(${JSON.stringify(messages)}.map(encode)));
     fs.writeFileSync("written", "");
+    const later = ${later};
+    if (later.length) {
+      while (!fs.existsSync("more")) Bun.sleepSync(1);
+      fs.writeSync(3, Buffer.concat(later.map(message => (Buffer.isBuffer(message) ? message : encode(message)))));
+    }
   `;
 }
 
@@ -514,7 +520,75 @@ it.skipIf(!isLinux).concurrent.each(["json", "advanced"])(
   },
 );
 
-// The handler of the first message waits for the response to a fetch(), which is read on the same event loop.
+// The handler of the first message of a read waits in a nested event loop for a later read of the same channel. Linux
+// only, as the others: the messages have to be in one read.
+it.skipIf(!isLinux).concurrent.each([
+  ["json", "in order", `["m3", "m4"]`, ["m1", "m2", "m3", "m4"]],
+  ["advanced", "in order", `["m3", "m4"]`, ["m1", "m2", "m3", "m4"]],
+  [
+    "advanced",
+    "an undecodable one once",
+    `[Buffer.from([2, 4, 0, 0, 0, 255, 255, 255, 255]), "m4"]`,
+    ["m1", "m2", "Unable to deserialize data."],
+  ],
+])("a nested read of the same channel: %s, %s", async (serialization, _name, later, expected) => {
+  using dir = tempDir("ipc-nested-read-of-the-channel", {
+    "entry.js": "",
+    "receiver.js": `
+      import { existsSync, writeFileSync } from "node:fs";
+      const received = [];
+      process.on("uncaughtException", error => received.push(error.message));
+      let handled = false;
+      const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+      const { promise: fourth, resolve: onFourth } = Promise.withResolvers();
+      Bun.spawn({
+        cmd: [process.execPath, "sender.js"],
+        serialization: process.argv[2],
+        stdio: ["ignore", "inherit", "inherit"],
+        onDisconnect,
+        ipc(message) {
+          received.push(message);
+          if (message === "m4") onFourth();
+          if (received.length !== 1) return;
+          writeFileSync("more", "");
+          Bun.build({
+            entrypoints: ["./entry.js"],
+            plugins: [
+              {
+                name: "ticks the event loop",
+                async setup() {
+                  await Promise.race([fourth, disconnected]);
+                },
+              },
+            ],
+          });
+          handled = true;
+        },
+      });
+      const cell = new Int32Array(new SharedArrayBuffer(4));
+      for (let i = 0; !existsSync("written"); i++) {
+        if (i === 20_000) throw new Error("the sender did not write");
+        Atomics.wait(cell, 0, 0, 1);
+      }
+      await disconnected;
+      while (!handled) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify(received));
+      process.exit();
+    `,
+    "sender.js": senderOfOneRead(serialization, ["m1", "m2"], later),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "receiver.js", serialization],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(expected) + "\n", stderr: "", exitCode: 0 });
+});
+
+// The handler of the first message waits for the response to a fetch(), whose request the server reads on this event loop.
 it.skipIf(!isLinux).concurrent.each(["json", "advanced"])(
   "the handler of the first of three messages of one read ticks the event loop: %s",
   async serialization => {

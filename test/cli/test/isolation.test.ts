@@ -1623,24 +1623,43 @@ describe.concurrent("bun test --isolate=modules", () => {
       import "node:worker_threads";
       test("reads the additions", () => {
         const { timerify, eventLoopUtilization, nodeTiming } = performance;
-        // The three exports of the package are members of the global AbortController, which is what require() answers with.
-        const { AbortController: Controller, AbortSignal: Signal, default: byDefault } = require("abort-controller");
         // The native close() has no parameters.
-        console.log(JSON.stringify([typeof timerify, typeof eventLoopUtilization, typeof nodeTiming, MessagePort.prototype.close.length,
-          Controller === AbortController, Signal === AbortSignal, byDefault === AbortController]));
+        console.log(JSON.stringify([typeof timerify, typeof eventLoopUtilization, typeof nodeTiming, MessagePort.prototype.close.length]));
       });
     `;
     const lines = (await passes({ "a.test.js": file, "b.test.js": file }, 2))
       .split("\n")
       .filter(line => line.startsWith("["));
-    expect(lines).toEqual(Array(2).fill(JSON.stringify(["function", "function", "object", 1, true, true, true])));
+    expect(lines).toEqual(Array(2).fill(JSON.stringify(["function", "function", "object", 1])));
+  });
+
+  test("keeps what abort-controller adds to AbortController when it loads", async () => {
+    const file = `
+      test("reads the exports", () => {
+        // For require() the module is the global AbortController itself, and its three exports are members of that class.
+        const { AbortController: Controller, AbortSignal: Signal, default: byDefault } = require("abort-controller");
+        console.log(JSON.stringify([Controller === AbortController, Signal === AbortSignal, byDefault === AbortController]));
+      });
+    `;
+    const lines = (await passes({ "a.test.js": file, "b.test.js": file }, 2))
+      .split("\n")
+      .filter(line => line.startsWith("["));
+    expect(lines).toEqual(Array(2).fill(JSON.stringify([true, true, true])));
   });
 
   // If this fails, load the module before the snapshot in src/js/internal/test/globals.ts.
   test("no other builtin module patches a global class when it loads", async () => {
-    // `builtinModules` leaves out these packages, in whose place Bun loads a builtin too.
-    const packages = ["abort-controller", "isomorphic-fetch", "node-fetch", "@vercel/fetch", "utf-8-validate"];
-    const ids = builtinModules.filter(id => !/^bun|^_|^(wasi|repl|inspector|trace_events)/.test(id)).concat(packages);
+    // `builtinModules` leaves out two modules that need the "node:" prefix, and the packages in whose place Bun loads a builtin.
+    const unlisted = [
+      "node:test",
+      "node:quic",
+      "abort-controller",
+      "isomorphic-fetch",
+      "node-fetch",
+      "@vercel/fetch",
+      "utf-8-validate",
+    ];
+    const ids = builtinModules.filter(id => !/^bun|^_|^(wasi|repl|inspector|trace_events)/.test(id)).concat(unlisted);
     const files = {
       // A test for each module: a debug build needs more than the 5 seconds of one test to load them all.
       "a.test.js": `

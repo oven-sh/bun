@@ -470,9 +470,22 @@ describe("findSourceMap", () => {
     },
   );
 
-  test.concurrent(
-    "bun test --enable-source-maps reaches each file, and a file's setter stays with the file under --isolate",
-    async () => {
+  // Without isolation the files share one VM, so the setter of the first reaches the second. Each
+  // worker process of --parallel gets the flag, and the setter of one does not reach another.
+  test.concurrent.each([
+    [["--enable-source-maps"], [true, false]],
+    [
+      ["--enable-source-maps", "--isolate"],
+      [true, true],
+    ],
+    [["--isolate"], [false, false]],
+    [
+      ["--enable-source-maps", "--parallel", "--max-concurrency=2"],
+      [true, true],
+    ],
+  ])(
+    "bun test %s: the flag reaches each file, and a file's setter stays with the file under --isolate",
+    async (args, expected) => {
       using dir = tempDir("find-source-map-test", {
         "src.ts": srcTs,
         "a.test.ts": `
@@ -492,45 +505,29 @@ describe("findSourceMap", () => {
         });
       `,
       });
-      for (const [args, expected] of [
-        // Without isolation the files share one VM, so the setter of the first reaches the second.
-        [["--enable-source-maps"], [true, false]],
-        [
-          ["--enable-source-maps", "--isolate"],
-          [true, true],
-        ],
-        [["--isolate"], [false, false]],
-        // Each worker process of --parallel gets the flag, and the setter of one does not reach another.
-        [
-          ["--enable-source-maps", "--parallel", "--max-concurrency=2"],
-          [true, true],
-        ],
-      ]) {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "test", ...args, "a.test.ts", "b.test.ts"],
-          env: bunEnv,
-          cwd: String(dir),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ args, stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
-          args,
-          stdout: expect.any(String),
-          stderr: "",
-          exitCode: 0,
-        });
-        expect(stderr).toContain(" 2 pass");
-        // A worker of --parallel prints through the stream of its results.
-        const seen = Object.assign(
-          {},
-          ...(stdout + stderr)
-            .split("\n")
-            .filter(line => line.startsWith("{"))
-            .map(line => JSON.parse(line)),
-        );
-        expect({ args, ...seen }).toEqual({ args, aHasMap: expected[0], bEnabled: expected[1] });
-      }
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args, "a.test.ts", "b.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+        stdout: expect.any(String),
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(stderr).toContain(" 2 pass");
+      // A worker of --parallel prints through the stream of its results.
+      const seen = Object.assign(
+        {},
+        ...(stdout + stderr)
+          .split("\n")
+          .filter(line => line.startsWith("{"))
+          .map(line => JSON.parse(line)),
+      );
+      expect(seen).toEqual({ aHasMap: expected[0], bEnabled: expected[1] });
     },
   );
 

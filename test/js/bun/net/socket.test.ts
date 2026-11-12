@@ -8293,6 +8293,8 @@ describe.concurrent("end(data) larger than the send buffer", () => {
 
   // In its own process: the sweeps also advance every other socket's timeout on the thread.
   it.skipIf(isWindows)("close() gets an error when that wait ends over unread input", async () => {
+    // macOS delivers a TCP segment from another thread, so it can arrive after the sweep. What a unix socket sends is there when write() returns.
+    using dir = tempDir("linger-unread-input", {});
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -8301,8 +8303,7 @@ describe.concurrent("end(data) larger than the send buffer", () => {
         import { sweepSocketTimers } from "bun:internal-for-testing";
         const peerEnded = Promise.withResolvers();
         using server = Bun.listen({
-          hostname: "127.0.0.1",
-          port: 0,
+          unix: "s.sock",
           socket: {
             open: socket => void socket.end(Buffer.alloc(16 << 20)),
             data() {},
@@ -8310,8 +8311,7 @@ describe.concurrent("end(data) larger than the send buffer", () => {
           },
         });
         using peer = await Bun.connect({
-          hostname: "127.0.0.1",
-          port: server.port,
+          unix: "s.sock",
           allowHalfOpen: true,
           socket: { data() {}, end: () => peerEnded.resolve() },
         });
@@ -8320,6 +8320,7 @@ describe.concurrent("end(data) larger than the send buffer", () => {
         sweepSocketTimers(4);
         `,
       ],
+      cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",

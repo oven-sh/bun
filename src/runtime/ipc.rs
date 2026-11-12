@@ -845,7 +845,9 @@ impl SendHandle {
             }
         }
         if answer {
-            if let Err(err) = self.callbacks.call_next_tick(global, false) {
+            // Node writes a message with a handle asynchronously, and doesn't look at how such a write ended.
+            let reports_success = self.handle.is_some();
+            if let Err(err) = self.callbacks.call_next_tick(global, reports_success) {
                 let _ = bun_jsc::task::report_error_or_terminate(global, err);
             }
         }

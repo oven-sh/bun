@@ -412,7 +412,7 @@ describe("fork() IPC", () => {
     });
 
     it.concurrent.each(["net.Server", "net.Socket", "dgram.Socket"])(
-      "calls the callback of a message that carries a %s, and leaks no descriptor",
+      "calls the callback of a message that carries a %s without an error, like Node, and leaks no descriptor",
       async kind => {
         const files = {
           "parent.js": `
@@ -448,7 +448,7 @@ describe("fork() IPC", () => {
         expect(await run(files)).toEqual({
           stdout: [
             "sent",
-            `with a handle: ${EPIPE}`,
+            "with a handle: null",
             "disconnect",
             "exit 0",
             { "net.Server": "listening: true", "net.Socket": "handle: null", "dgram.Socket": "port: number" }[kind],
@@ -473,7 +473,7 @@ describe("fork() IPC", () => {
         "child.js": closes,
       };
       expect(await run(files)).toEqual({
-        stdout: ["sent", `first: ${EPIPE}`, `second: ${EPIPE}`, "disconnect", "exit 0"],
+        stdout: ["sent", `first: ${EPIPE}`, "second: null", "disconnect", "exit 0"],
         stderr: "",
         exitCode: 0,
       });

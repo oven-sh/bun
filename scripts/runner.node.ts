@@ -68,6 +68,8 @@ import {
   getFileUrl,
   getPullRequestFiles,
   getSecret,
+  getTestUrl,
+  getVendorSource,
   isBuildkite,
   isCI,
   isGithubAction,
@@ -80,6 +82,7 @@ import {
   unescapeGitHubAction,
   uploadArtifact,
   type JunitFileSuite,
+  type VendorSource,
 } from "./buildkite.ts";
 import { costOfNewTests } from "./ci-cost-of-new-tests.ts";
 import { checkoutVendor } from "./vendor-checkout.ts";
@@ -1297,6 +1300,12 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
       return result;
     }
 
+    // A vendored test ran in the checkout of its suite, so its path does not say which suite it is of. Its title does.
+    const source = getVendorSource(title, vendorTests ?? []);
+    if (source) {
+      failure.source = source;
+    }
+
     if (isBuildkite) {
       // Group flaky tests together, regardless of the title; unlisted flakes get their own group above the known ones.
       const newFlaky = flaky && !title.endsWith("package.json") && !isKnownFlakyTest(title);
@@ -1305,8 +1314,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
       const priority = newFlaky ? 4 : 3;
       if (!flaky) attempt = 1; // no need to show the retries count on failures, we know it maxed out
 
-      const result = title.startsWith("vendor") ? { ...failure, testPath: title } : failure;
-      const content = formatTestToMarkdown(result, false, attempt - 1, newFlaky);
+      const content = formatTestToMarkdown(failure, false, attempt - 1, newFlaky);
       if (content) {
         reportAnnotationToBuildkite({ context, label: title, content, style, priority });
       }
@@ -1678,12 +1686,13 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
               ? `\n\n\`\`\`terminal\n${cases.map(({ name, message }) => `✗ ${name}\n${message}`).join("\n\n")}\n\`\`\`\n\n`
               : "";
             const unlisted = !isKnownFlakyTest(title);
+            const url = getFileUrl(title);
             reportAnnotationToBuildkite({
               context: unlisted ? "flaky-new" : "flaky",
               label: title,
               style: "warning",
               priority: unlisted ? 4 : 3,
-              content: `<details><summary><a href="${getFileUrl(title)}"><code>${title}</code></a> - ${reason} <i>(in the parallel batch on ${getBuildLabel()}; passed alone)</i>${unlisted ? " <b>(not in test/flaky-tests.txt)</b>" : ""}</summary>${detail}</details>`,
+              content: `<details><summary><a${url === undefined ? "" : ` href="${url}"`}><code>${title}</code></a> - ${reason} <i>(in the parallel batch on ${getBuildLabel()}; passed alone)</i>${unlisted ? " <b>(not in test/flaky-tests.txt)</b>" : ""}</summary>${detail}</details>`,
             });
           }
         }
@@ -2617,10 +2626,11 @@ interface TestResult {
   exitCode?: SpawnResult["exitCode"];
   signalCode?: SpawnResult["signalCode"];
   duration?: number;
+  /** Of a vendored test that has failed: what its report names and links. */
+  source?: VendorSource;
 }
 
 interface TestEntry {
-  url?: string | undefined;
   file: string | undefined;
   test: string;
   status: string;
@@ -2630,7 +2640,6 @@ interface TestEntry {
 
 /** A `::error` workflow command printed by `bun test`; its properties are strings as printed. */
 interface TestError {
-  url?: string | undefined;
   file: string | undefined;
   line: string | undefined;
   col: string | undefined;
@@ -2834,7 +2843,6 @@ function parseTestStdout(stdout: string, testPath?: string): TestOutput {
 
       const errorPath = file || testPath;
       const error: TestError = {
-        url: errorPath === undefined ? undefined : getFileUrl(errorPath, line),
         file: errorPath,
         line,
         col,
@@ -2862,7 +2870,6 @@ function parseTestStdout(stdout: string, testPath?: string): TestOutput {
       const duration = eol ? string.substring(eol + 2, string.lastIndexOf("]")) : undefined;
 
       tests.push({
-        url: testPath === undefined ? undefined : getFileUrl(testPath),
         file: testPath,
         test,
         status: text,
@@ -3144,6 +3151,10 @@ interface Vendor {
 
 interface VendorTest {
   cwd: string;
+  /** `cwd` from the root of this repository. The titles of the suite's tests start with it. */
+  directory: string;
+  repository: string;
+  commit: string;
   packageManager: string;
   testRunner: string;
   testPaths: string[];
@@ -3237,6 +3248,9 @@ async function getVendorTests(cwd: string): Promise<VendorTest[]> {
 
         return {
           cwd: vendorPath,
+          directory: relative(cwd, vendorPath),
+          repository,
+          commit,
           packageManager: packageManager || "bun",
           testRunner: testRunner || "bun",
           testPaths,
@@ -3740,7 +3754,7 @@ function formatTestToMarkdown(
   const platform = buildUrl ? `<a href="${buildUrl}">${buildLabel}</a>` : buildLabel;
 
   let markdown = "";
-  for (const { testPath, ok, tests, error, stdoutPreview: stdout } of results) {
+  for (const { testPath, ok, tests, error, stdoutPreview: stdout, source } of results) {
     if (ok || error === "SIGTERM") {
       continue;
     }
@@ -3756,8 +3770,8 @@ function formatTestToMarkdown(
         return line && errorFile && (testFile.endsWith(errorFile) || errorFile.endsWith(testFile));
       })?.line;
 
-    const testTitle = testPath.replace(/\\/g, "/");
-    const testUrl = getFileUrl(testPath, errorLine);
+    const testTitle = source?.title ?? testPath.replace(/\\/g, "/");
+    const testUrl = getTestUrl(testPath, source, errorLine);
 
     if (concise) {
       markdown += "<li>";

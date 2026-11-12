@@ -5,7 +5,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { userInfo } from "node:os";
-import { basename, dirname, relative, resolve } from "node:path";
+import { basename, dirname } from "node:path";
 import {
   getAbi,
   getAbiVersion,
@@ -90,25 +90,23 @@ export function parseGitUrl(url: string | URL): URL | undefined {
   return undefined;
 }
 
-export function getRepositoryUrl(cwd?: string): URL | undefined {
-  if (!cwd) {
-    if (isBuildkite) {
-      const repository = process.env.BUILDKITE_REPO;
-      if (repository) {
-        return parseGitUrl(repository);
-      }
-    }
-
-    if (isGithubAction) {
-      const serverUrl = process.env.GITHUB_SERVER_URL || "https://github.com";
-      const repository = process.env.GITHUB_REPOSITORY;
-      if (serverUrl && repository) {
-        return parseGitUrl(new URL(repository, serverUrl));
-      }
+export function getRepositoryUrl(): URL | undefined {
+  if (isBuildkite) {
+    const repository = process.env.BUILDKITE_REPO;
+    if (repository) {
+      return parseGitUrl(repository);
     }
   }
 
-  const stdout = output(["git", "remote", "get-url", "origin"], { cwd });
+  if (isGithubAction) {
+    const serverUrl = process.env.GITHUB_SERVER_URL || "https://github.com";
+    const repository = process.env.GITHUB_REPOSITORY;
+    if (serverUrl && repository) {
+      return parseGitUrl(new URL(repository, serverUrl));
+    }
+  }
+
+  const stdout = output(["git", "remote", "get-url", "origin"]);
   if (stdout !== undefined) {
     return parseGitUrl(stdout.trim());
   }
@@ -116,24 +114,22 @@ export function getRepositoryUrl(cwd?: string): URL | undefined {
   return undefined;
 }
 
-export function getCommit(cwd?: string): string | undefined {
-  if (!cwd) {
-    if (isBuildkite) {
-      const commit = process.env.BUILDKITE_COMMIT;
-      if (commit) {
-        return commit;
-      }
-    }
-
-    if (isGithubAction) {
-      const commit = process.env.GITHUB_SHA;
-      if (commit) {
-        return commit;
-      }
+export function getCommit(): string | undefined {
+  if (isBuildkite) {
+    const commit = process.env.BUILDKITE_COMMIT;
+    if (commit) {
+      return commit;
     }
   }
 
-  const stdout = output(["git", "rev-parse", "HEAD"], { cwd });
+  if (isGithubAction) {
+    const commit = process.env.GITHUB_SHA;
+    if (commit) {
+      return commit;
+    }
+  }
+
+  const stdout = output(["git", "rev-parse", "HEAD"]);
   if (stdout !== undefined) {
     return stdout.trim();
   }
@@ -358,21 +354,62 @@ export function getBuildLabel(): string | undefined {
   return undefined;
 }
 
+/** The page of `path` at `commit` of a repository on GitHub, unless `repository` cannot be the base of a URL. */
+function getBlobUrl(repository: URL, commit: string, path: string, line?: number | string): string | undefined {
+  const url = URL.parse(`blob/${commit}/${path.replace(/\\/g, "/")}`, `${repository}/`)?.toString();
+  return url === undefined || line === undefined ? url : `${url}#L${line}`;
+}
+
+/** The page of a file of this repository, unless the repository or the commit is not known. */
 export function getFileUrl(filename: string, line?: number | string): string | undefined {
-  let cwd: string | undefined;
-  if (filename.startsWith("vendor")) {
-    const parentPath = resolve(dirname(filename));
-    cwd = output(["git", "rev-parse", "--show-toplevel"], { cwd: parentPath })?.trim();
-    if (cwd === undefined) {
-      return;
+  const repository = getRepositoryUrl();
+  const commit = getCommit();
+  if (repository === undefined || commit === undefined) {
+    return undefined;
+  }
+  return getBlobUrl(repository, commit, filename, line);
+}
+
+/**
+ * A file of a test suite that test/vendor.json names: `path` in `repository` at `commit`.
+ * The test runner calls it `title`.
+ */
+export interface VendorSource {
+  title: string;
+  repository: string;
+  commit: string;
+  path: string;
+}
+
+/**
+ * The file that `title` names in one of `suites`. The test runner titles a test of a vendored suite
+ * `<directory>/<path in the suite>`: `directory` is where the suite is checked out, from the root of this repository.
+ */
+export function getVendorSource(
+  title: string,
+  suites: readonly { directory: string; repository: string; commit: string }[],
+): VendorSource | undefined {
+  const file = title.replaceAll("\\", "/");
+  for (const { directory, repository, commit } of suites) {
+    const prefix = `${directory.replaceAll("\\", "/")}/`;
+    if (file.startsWith(prefix)) {
+      return { title: file, repository, commit, path: file.slice(prefix.length) };
     }
   }
+  return undefined;
+}
 
-  const baseUrl = getRepositoryUrl(cwd);
-  const filePath = (cwd ? relative(cwd, filename) : filename).replace(/\\/g, "/");
-  const commit = getCommit(cwd);
-  const url = new URL(`blob/${commit}/${filePath}`, `${baseUrl}/`).toString();
-  return line === undefined ? url : `${url}#L${line}`;
+/** The page of the file of a test: in the repository of its suite for a vendored test, in this repository for any other. */
+export function getTestUrl(
+  testPath: string,
+  source: VendorSource | undefined,
+  line?: number | string,
+): string | undefined {
+  if (source === undefined) {
+    return getFileUrl(testPath, line);
+  }
+  const repository = parseGitUrl(source.repository);
+  return repository && getBlobUrl(repository, source.commit, source.path, line);
 }
 
 /** The fields of Buildkite's build JSON (`<build url>.json`) that are read here and in .buildkite/ci.ts. */

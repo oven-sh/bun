@@ -7,7 +7,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { parseJunitFileSuites } from "../../scripts/buildkite.ts";
+import { pathToFileURL } from "node:url";
+import { getTestUrl, getVendorSource, parseGitUrl, parseJunitFileSuites } from "../../scripts/buildkite.ts";
+import vendors from "../vendor.json";
 
 const parse = (xml: string) => Object.fromEntries(parseJunitFileSuites(xml));
 
@@ -155,4 +157,175 @@ test("parseJunitFileSuites reads the report bun test --parallel --reporter=junit
     },
   });
   expect(exitCode).toBe(1);
+});
+
+/**
+ * The annotation of a failed test links to the file of the test. A test of a vendored suite runs in the
+ * checkout of the suite, and scripts/runner.node.ts titles it by the path of its file from the root of
+ * this repository. From that title, getVendorSource() finds the file in the suite's entry of
+ * test/vendor.json, and getTestUrl() links it in the repository that the entry names.
+ */
+describe("getVendorSource", () => {
+  const elysia = {
+    directory: "vendor/elysia",
+    repository: "https://github.com/elysiajs/elysia",
+    commit: "56310be9617b826f862c985eae95ae823d95f097",
+  };
+  const plugin = {
+    directory: "vendor/elysia-plugin",
+    repository: "https://github.com/elysiajs/plugin",
+    commit: "1111111111111111111111111111111111111111",
+  };
+  const hono = {
+    // As path.relative() gives it on Windows.
+    directory: "vendor\\hono",
+    repository: "https://github.com/honojs/hono",
+    commit: "2222222222222222222222222222222222222222",
+  };
+  const file = ({ repository, commit }: typeof elysia, title: string, path: string) => ({
+    title,
+    repository,
+    commit,
+    path,
+  });
+
+  test.each([
+    [
+      "vendor/elysia/test/response/stream.test.ts",
+      file(elysia, "vendor/elysia/test/response/stream.test.ts", "test/response/stream.test.ts"),
+    ],
+    // The install of a suite is titled by its package.json.
+    ["vendor/elysia/package.json", file(elysia, "vendor/elysia/package.json", "package.json")],
+    ["vendor\\elysia\\test\\a.test.ts", file(elysia, "vendor/elysia/test/a.test.ts", "test/a.test.ts")],
+    ["vendor/hono/test/a.test.ts", file(hono, "vendor/hono/test/a.test.ts", "test/a.test.ts")],
+    // The name of one suite begins with the name of another.
+    ["vendor/elysia-plugin/test/a.test.ts", file(plugin, "vendor/elysia-plugin/test/a.test.ts", "test/a.test.ts")],
+    // Not a file of a suite: tests of this repository, a suite that is not in the list, the directory of a suite.
+    ["test/js/bun/http/serve.test.ts", undefined],
+    ["test/vendor/elysia/a.test.ts", undefined],
+    ["vendor.test.ts", undefined],
+    ["vendor/zod/test/a.test.ts", undefined],
+    ["vendor/elysia", undefined],
+  ])("%s", (title, source) => {
+    expect(getVendorSource(title, [elysia, plugin, hono])).toEqual(source);
+  });
+});
+
+describe("getTestUrl", () => {
+  const commit = "56310be9617b826f862c985eae95ae823d95f097";
+  const elysia = { directory: "vendor/elysia", repository: "https://github.com/elysiajs/elysia", commit };
+  // The path of the result of a vendored test is from the checkout of its suite. The title is what says which suite.
+  const url = (title: string, testPath: string, line?: number | string) =>
+    getTestUrl(testPath, getVendorSource(title, [elysia]), line);
+
+  test("links a test of a vendored suite in the repository of the suite, at the commit of its entry", () => {
+    expect([
+      url("vendor/elysia/test/response/stream.test.ts", "test/response/stream.test.ts", "95"),
+      url("vendor/elysia/test/response/stream.test.ts", "test/response/stream.test.ts"),
+      url("vendor\\elysia\\test\\response\\stream.test.ts", "test\\response\\stream.test.ts", 95),
+      url("vendor/elysia/package.json", "vendor/elysia/package.json"),
+    ]).toEqual([
+      `https://github.com/elysiajs/elysia/blob/${commit}/test/response/stream.test.ts#L95`,
+      `https://github.com/elysiajs/elysia/blob/${commit}/test/response/stream.test.ts`,
+      `https://github.com/elysiajs/elysia/blob/${commit}/test/response/stream.test.ts#L95`,
+      `https://github.com/elysiajs/elysia/blob/${commit}/package.json`,
+    ]);
+  });
+
+  test("links a test of each suite in test/vendor.json", () => {
+    // scripts/runner.node.ts checks a suite out at vendor/<package>.
+    const suites = vendors.map(({ package: name, repository, commit }) => ({
+      directory: `vendor/${name}`,
+      repository,
+      commit,
+    }));
+    expect(suites.length).toBeGreaterThan(0);
+    for (const { directory, repository, commit } of suites) {
+      // An entry can name its repository by a clone URL. The link is on the page of the repository.
+      const page = parseGitUrl(repository);
+      expect(page).toBeDefined();
+      const source = getVendorSource(`${directory}/test/a.test.ts`, suites);
+      expect(getTestUrl("test/a.test.ts", source, 12)).toBe(`${page}/blob/${commit}/test/a.test.ts#L12`);
+    }
+  });
+
+  test("links a suite whose entry names its repository by a clone URL", () => {
+    const source = getVendorSource("vendor/elysia/test/a.test.ts", [elysia])!;
+    expect([
+      getTestUrl("test/a.test.ts", { ...source, repository: "https://github.com/elysiajs/elysia.git" }, 12),
+      getTestUrl("test/a.test.ts", { ...source, repository: "git@github.com:elysiajs/elysia.git" }, 12),
+    ]).toEqual([
+      `https://github.com/elysiajs/elysia/blob/${commit}/test/a.test.ts#L12`,
+      `https://github.com/elysiajs/elysia/blob/${commit}/test/a.test.ts#L12`,
+    ]);
+  });
+
+  test("gives no link for a suite whose repository is not one of GitHub", () => {
+    const source = getVendorSource("vendor/elysia/test/a.test.ts", [elysia])!;
+    expect([
+      getTestUrl("test/a.test.ts", { ...source, repository: "https://gitlab.com/elysiajs/elysia" }, 12),
+      // parseGitUrl() resolves what follows the host, and "a:b/c" is a URL of its own, which cannot be a base.
+      getTestUrl("test/a.test.ts", { ...source, repository: "https://github.com/a:b/c" }, 12),
+      getTestUrl("test/a.test.ts", { ...source, repository: "https://github.com/a:b/c" }),
+    ]).toEqual([undefined, undefined, undefined]);
+  });
+});
+
+test("getFileUrl links a file of the repository of the build at its commit, and gives no link without either", async () => {
+  // The directory and vendor/pkg in it are repositories with no commit and no remote.
+  // scripts/vendor-checkout.ts leaves a vendored suite in a repository with no remote.
+  using dir = tempDir("runner-file-url", { "vendor/pkg/test/a.test.ts": "" });
+  for (const repository of [String(dir), join(String(dir), "vendor", "pkg")]) {
+    await using git = Bun.spawn({
+      cmd: ["git", "init", "--quiet", repository],
+      env: bunEnv,
+      stdio: ["ignore", "ignore", "inherit"],
+    });
+    expect(await git.exited).toBe(0);
+  }
+
+  const commit = "98cda0d8b1243fc3dbf6963f0a12e708efb20d80";
+  const build = { BUILDKITE_REPO: "https://github.com/oven-sh/bun.git", BUILDKITE_COMMIT: commit };
+  const blob = `https://github.com/oven-sh/bun/blob/${commit}`;
+  // What the build says, the call, and what the call gives.
+  const cases: [Record<string, string>, [filename: string, line?: number], string | null][] = [
+    [build, ["test/js/bun/a.test.ts"], `${blob}/test/js/bun/a.test.ts`],
+    [build, ["test\\js\\bun\\a.test.ts", 7], `${blob}/test/js/bun/a.test.ts#L7`],
+    // The repository under vendor/ is not asked where its files are from.
+    [build, ["vendor/pkg/test/a.test.ts", 12], `${blob}/vendor/pkg/test/a.test.ts#L12`],
+    // Not a repository on GitHub.
+    [{ ...build, BUILDKITE_REPO: "https://gitlab.com/oven-sh/bun.git" }, ["test/js/bun/a.test.ts", 7], null],
+    // What the build does not say is asked of git, which has no origin remote and no commit to name.
+    [{ BUILDKITE_COMMIT: commit }, ["test/js/bun/a.test.ts", 7], null],
+    [{ BUILDKITE_REPO: build.BUILDKITE_REPO }, ["test/js/bun/a.test.ts", 7], null],
+  ];
+
+  const buildkite = pathToFileURL(join(import.meta.dir, "..", "..", "scripts", "buildkite.ts")).href;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `import * as buildkite from ${JSON.stringify(buildkite)};
+      for (const [build, call] of ${JSON.stringify(cases.map(([build, call]) => [build, call]))}) {
+        delete process.env.BUILDKITE_REPO;
+        delete process.env.BUILDKITE_COMMIT;
+        Object.assign(process.env, build);
+        console.log(buildkite.getFileUrl(...call) ?? null);
+      }
+      // A test that is of no vendored suite is a file of this repository.
+      Object.assign(process.env, ${JSON.stringify(build)});
+      console.log(buildkite.getTestUrl("test/js/bun/a.test.ts", undefined, 7) ?? null);`,
+    ],
+    cwd: String(dir),
+    // Of what scripts/buildkite.ts reads, a CI agent sets more than the cases do.
+    env: { ...bunEnv, BUILDKITE: "true", GITHUB_ACTIONS: undefined, GITHUB_SERVER_URL: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: [...cases.map(([, , url]) => url), `${blob}/test/js/bun/a.test.ts#L7`].map(url => `${url}\n`).join(""),
+    stderr: "",
+    exitCode: 0,
+  });
 });

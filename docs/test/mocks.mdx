@@ -509,6 +509,8 @@ As in Vitest, `vi.resetModules()` leaves packages in `node_modules` loaded, so a
 
 Module mocks are removed when the test file ends. The next file gets the real module, and modules that imported the mock are re-evaluated. So is a module that made a mock, so a helper that calls `vi.mock()` mocks for every test file that imports it. Other modules stay cached between files.
 
+Await an `import()` before the test ends. An `import()` that is still loading when the test file ends keeps the mocks that it has already imported. A factory that nothing has called by then is not called for it. When another test file follows, the load goes on with the real module in its place, and the `import()` is rejected if there is no real module.
+
 Mocks made in a `--preload` script apply to every test file.
 
 A test file can mock a module that the preload script already mocked. With `vi.mock()` and `vi.doMock()`, only the modules the test file imports get the file's mock. Modules the preload script imported keep what they imported, as in Vitest. With `mock.module()` and `jest.mock()`, the modules the preload script imported get the file's mock too.

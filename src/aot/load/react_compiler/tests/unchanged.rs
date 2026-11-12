@@ -236,7 +236,7 @@ fn node_modules_file_is_not_compiled() {
 }
 
 #[test]
-fn ts_loader_without_jsx_is_not_compiled() {
+fn ts_loader_without_jsx_is_compiled() {
     let text = "export function useDouble(value: number) {\n\
                 useState(value);\n\
                 return [value * 2];\n\
@@ -245,7 +245,7 @@ fn ts_loader_without_jsx_is_not_compiled() {
         let mode = ReactCompilerMode::Client;
         with_tree(name, text, mode, |tree| tree.has_compiled_components())
     };
-    assert!(!is_compiled("main.ts"));
+    assert!(is_compiled("main.ts"));
     assert!(is_compiled("main.tsx"));
 }
 

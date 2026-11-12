@@ -106,11 +106,12 @@ impl ReactCompilerMode {
         matches!(self, Self::Ssr)
     }
 
-    /// The mode the React Compiler runs one module in. This is the one rule
-    /// for which modules the compiler considers: every JavaScript-like loader
-    /// outside `node_modules`, narrowed by the caller's own filter (`bun test`
-    /// excludes test files and preloads). The bundler, the AOT loader and the
-    /// runtime transpiler all decide through here so they cannot disagree.
+    /// The mode the React Compiler runs one module in: every JavaScript-like
+    /// loader outside `node_modules`, narrowed by the caller's path filter
+    /// (`bun test` passes its test-file suffixes and its include and exclude
+    /// globs). The bundler, the AOT loader and the runtime transpiler all
+    /// decide the loader and path rule through here. A test run excludes the
+    /// running test file and its preloads before it asks.
     ///
     /// `is_node_module` and `is_compiled` scan the path, so they are closures:
     /// with the compiler off, neither runs.

@@ -5292,6 +5292,52 @@ describe("react-compiler compiles every JavaScript-like loader", () => {
     expect(code).not.toContain("react/compiler-runtime");
   });
 
+  // A `.ts` or `.mjs` module with no component or hook in it prints the same
+  // with the compiler on and off, on both output modes.
+  const notReact = {
+    "store.ts": /* ts */ `
+      export enum Kind { A, B }
+      export namespace Config { export const useDefaults = (input: Kind) => ({ input }); }
+      export abstract class Base { abstract run(): void; }
+      export const settings = { useCache: true, useEntry() { return this.useCache; } } satisfies Record<string, unknown>;
+      // eslint-disable-next-line react-hooks/rules-of-hooks
+      export function helper(items: number[]) { return items.map(item => <number>item * 2); }
+      export const total = settings.useEntry() ? 1 : 0;
+    `,
+    "store.mjs": /* js */ `
+      export const settings = { useCache: true, useEntry() { return this.useCache; } };
+      export function helper(items) { return items.map(item => item * 2); }
+      export const total = settings.useEntry() ? 1 : 0;
+    `,
+  };
+  for (const file of Object.keys(notReact)) {
+    for (const target of ["browser", "bun"] as const) {
+      test.concurrent(
+        `${file} without React prints the same with the compiler on and off (target ${target})`,
+        async () => {
+          using dir = tempDir("react-compiler-not-react", notReact);
+          const build = (reactCompiler: boolean) =>
+            Bun.build({ entrypoints: [join(String(dir), file)], reactCompiler, target }).then(r => r.outputs[0].text());
+          const [off, on] = await Promise.all([build(false), build(true)]);
+          expect(on).toBe(off);
+          expect(on).not.toContain("react/compiler-runtime");
+        },
+      );
+    }
+  }
+
+  test("'use no memo' at the top of a .ts file still opts out", async () => {
+    using dir = tempDir("react-compiler-ts-opt-out", { "useTotal.ts": `"use no memo";\n${hook}` });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "useTotal.ts")],
+      reactCompiler: true,
+      external: ["react", "react/compiler-runtime"],
+    });
+    const code = await result.outputs[0].text();
+    expect(code).not.toContain("react/compiler-runtime");
+    expect(code).toContain("useState(0)");
+  });
+
   test("bun build --no-bundle --react-compiler compiles a .ts hook", async () => {
     using dir = tempDir("react-compiler-no-bundle", { "useTotal.ts": hook });
     await using proc = Bun.spawn({

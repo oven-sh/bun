@@ -2323,6 +2323,8 @@ impl<'a> Repl<'a> {
         self.vm = vm;
         if let Some(v) = vm {
             self.global = Some(v.global());
+            // The loop below reads the next line after an unhandled error.
+            v.as_mut().keeps_running_after_unhandled_error = true;
         }
 
         self.setup_terminal();

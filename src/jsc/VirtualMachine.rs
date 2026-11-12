@@ -366,6 +366,9 @@ pub struct VirtualMachine {
     hot_run_failed: bool,
     /// The watcher's loop turned after an unhandled error, so that error did not stop the timers.
     pub timers_ran_after_error: bool,
+    /// The loop driving this VM does not stop at an unhandled error: the interactive REPL reads its next line.
+    /// Read by [`Self::uncaught_exception_ends_run`].
+    pub keeps_running_after_unhandled_error: bool,
 
     pub modules: crate::async_module::Queue,
     pub aggressive_garbage_collection: GCLevel,
@@ -2319,6 +2322,24 @@ impl VirtualMachine {
         // `panic!`, which never returns), so a linear reset here suffices.
         self.is_handling_uncaught_exception = false;
         handled
+    }
+
+    /// Whether the report that [`Self::uncaught_exception`] answered with `handled` ends this VM's run. What
+    /// delivered that exception then delivers nothing more, as nothing runs in Node after a fatal exception.
+    ///
+    /// Unhandled alone does not say so. It depends on the loop that drives this VM:
+    /// - `bun run`, `bun -e`, `bun repl -e`: it stops ticking once the error is counted. Ends.
+    /// - a worker: its `on_unhandled_rejection` requests the worker's termination, `--hot` or not. Ends.
+    /// - `--hot`, `--watch`: it waits for the next save. Stays.
+    /// - the interactive REPL: it reads the next line. Stays.
+    ///
+    /// `bun test` answers `handled` to every report: the runner records the error and goes on.
+    pub fn uncaught_exception_ends_run(&self, handled: bool) -> bool {
+        if handled {
+            return false;
+        }
+        !self.is_main_thread()
+            || !(self.is_watcher_enabled() || self.keeps_running_after_unhandled_error)
     }
 
     pub fn hot_map(&mut self) -> Option<&mut crate::rare_data::HotMap> {

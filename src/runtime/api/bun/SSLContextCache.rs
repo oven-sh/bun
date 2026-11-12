@@ -1,4 +1,4 @@
-//! Per-VM cache of `SSL_CTX*` keyed by config digest: weak, except for the `KEPT` contexts asked for last that read no file.
+//! Per-VM cache of `SSL_CTX*` keyed by config digest: weak, except for the `KEPT` contexts that clients asked for last and that read no file.
 //!
 //! The map holds **zero** refs on the cached `SSL_CTX*`. An `SSL_CTX` ex_data
 //! slot stores a back-pointer to the heap `Entry`; BoringSSL's `CRYPTO_EX_free`
@@ -29,16 +29,13 @@ use bun_threading::Mutex;
 use bun_uws as uws;
 use bun_uws::create_bun_socket_error_t;
 
-// `jsc.API.ServerConfig.SSLConfig` — re-exported from src/runtime/socket/SSLConfig.rs
-use crate::api::server::server_config::SSLConfig;
-
 /// 16 contexts that each parsed all bundled roots take 2.8 MB.
 const KEPT: usize = 16;
 
 #[derive(Default)]
 pub(crate) struct SSLContextCache {
     map: ArrayHashMap<Digest, *mut Entry, DigestContext>,
-    /// The contexts asked for last, newest first, so that a program that opens one connection at a time doesn't build its context each time.
+    /// The contexts that clients asked for last, newest first, so that a program that opens one connection at a time doesn't build its context each time.
     kept: [Option<OwnedSslCtx>; KEPT],
     mutex: Mutex,
     ops_since_compact: u32,
@@ -66,7 +63,7 @@ impl ArrayHashContext<Digest> for DigestContext {
 
 pub(crate) struct Entry {
     /// Nulled by `bun_ssl_ctx_cache_on_free` when BoringSSL drops the last
-    /// ref. Tombstoned entries are reclaimed on the next `get_or_create` for
+    /// ref, or a listen socket that used it closes. Tombstoned entries are reclaimed on the next `get_or_create` for
     /// the same digest, or by the periodic compact.
     pub ctx: *mut boringssl::SSL_CTX,
     /// BACKREF: the cache outlives every `Entry` it allocates (Drop clears
@@ -76,21 +73,20 @@ pub(crate) struct Entry {
 }
 
 impl SSLContextCache {
-    /// This thread's context for `config`.
-    pub(crate) fn get_or_create(
-        config: &SSLConfig,
-        err: &mut create_bun_socket_error_t,
-    ) -> Option<OwnedSslCtx> {
-        Self::get_or_create_opts(&config.as_usockets(), err)
-    }
-
-    /// Variant for callers that already projected to `BunSocketContextOptions`
-    /// (e.g. via `as_usockets_for_client_verification()`).
-    pub(crate) fn get_or_create_opts(
+    /// For a client, whose context can go with its connection.
+    pub(crate) fn get_or_create_for_client(
         opts: &uws::SocketContext::BunSocketContextOptions,
         err: &mut create_bun_socket_error_t,
     ) -> Option<OwnedSslCtx> {
-        Self::get_or_create_digest(opts, opts.digest(), err)
+        let ctx = Self::get_or_create_digest(opts, opts.digest(), err)?;
+        // A file can get new content under the same digest, so its context goes with its last user and the next one reads the file again.
+        if opts.reads_files() {
+            return Some(ctx);
+        }
+        let evicted = Self::of_this_thread().keep(&ctx);
+        // Freeing it can run `bun_ssl_ctx_cache_on_free`, which reaches the cache through the entry, so the borrow has to be over.
+        drop(evicted);
+        Some(ctx)
     }
 
     /// For a server. One whose options name files reads them again, whoever else holds a context with the same digest.
@@ -98,36 +94,35 @@ impl SSLContextCache {
         opts: &uws::SocketContext::BunSocketContextOptions,
         err: &mut create_bun_socket_error_t,
     ) -> Option<OwnedSslCtx> {
+        let mut d = opts.digest();
         if opts.reads_files() {
-            return opts.create_ssl_context_with_digest(&opts.digest(), err);
+            return opts.create_ssl_context_with_digest(&d, err);
         }
-        Self::get_or_create_opts(opts, err)
+        // Not the context of a client with the same options: `kept` would hold the session ticket keys past the server's end.
+        let mut hasher = bun_sha_hmac::SHA256::init();
+        hasher.update(b"server");
+        hasher.update(&d);
+        hasher.r#final(&mut d);
+        Self::get_or_create_digest(opts, d, err)
     }
 
-    /// Core entry — `d` already computed by caller. `SecureContext.intern()`
-    /// threads its WeakGCMap key through here so the SHA-256 runs once total
-    /// instead of three times on a miss.
+    /// For an owner that holds the context across connections. `d` is `opts.digest()`.
     pub(crate) fn get_or_create_digest(
         opts: &uws::SocketContext::BunSocketContextOptions,
         d: Digest,
         err: &mut create_bun_socket_error_t,
     ) -> Option<OwnedSslCtx> {
+        Self::of_this_thread().find_or_build(opts, d, err)
+    }
+
+    fn of_this_thread<'a>() -> &'a mut Self {
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(
             !state.is_null(),
             "runtime_state() before init_runtime_state"
         );
-        // SAFETY: the per-thread `RuntimeState` boxed in `init_runtime_state` is address-stable until VM teardown, and only the JS thread gets here, so this `&mut` is unique until its last use below.
-        let cache = unsafe { &mut (*state).ssl_ctx_cache };
-        let ctx = cache.find_or_build(opts, d, err)?;
-        // A file can get new content under the same digest, so its context goes with its last user and the next one reads the file again.
-        if opts.reads_files() {
-            return Some(ctx);
-        }
-        let evicted = cache.keep(&ctx);
-        // Freeing it can run `bun_ssl_ctx_cache_on_free`, which reaches the cache through the entry, so the borrow has to be over.
-        drop(evicted);
-        Some(ctx)
+        // SAFETY: the per-thread `RuntimeState` boxed in `init_runtime_state` is address-stable until VM teardown, only the JS thread gets here, and each caller's borrow ends with its one call.
+        unsafe { &mut (*state).ssl_ctx_cache }
     }
 
     /// Moves `ctx` to the front of `kept`. Returns the context that fell off the end.

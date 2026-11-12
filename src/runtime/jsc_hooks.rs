@@ -270,7 +270,8 @@ pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCt
         // to the same CTX rather than building a second one with the same
         // digest. The +1 ref returned here is held, so the entry never tombstones.
         let config = vm.tls_config(Default::default(), false);
-        match SSLContextCache::get_or_create(&config, &mut err) {
+        let opts = config.as_usockets();
+        match SSLContextCache::get_or_create_digest(&opts, opts.digest(), &mut err) {
             Some(ctx) => vm.as_mut().rare_data().default_client_ssl_ctx = Some(ctx),
             None => bun_core::Output::panic(format_args!(
                 "default client SSL_CTX init failed: {}",
@@ -307,7 +308,7 @@ fn ssl_ctx_cache_get_or_create(
     // The WebSocket client and the SQL clients call it.
     bun_removable_features::removable_definition!(WebSocket, ssl_ctx_cache_get_or_create);
     bun_removable_features::removable_definition!(Sql, ssl_ctx_cache_get_or_create);
-    SSLContextCache::get_or_create_opts(opts, err)
+    SSLContextCache::get_or_create_for_client(opts, err)
 }
 
 // ════════════════════════════════════════════════════════════════════════════

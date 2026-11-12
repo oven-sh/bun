@@ -3625,7 +3625,7 @@ impl UpgradeOptions {
             };
             (ctx, config)
         } else if let Some(tls_js) = tls_js {
-            let mut config = if tls_js.is_boolean() {
+            let config = if tls_js.is_boolean() {
                 vm.tls_config(Default::default(), is_server)
             } else {
                 let parsed = ParsedTls::from_js(vm, global, tls_js, is_server)?;
@@ -3638,7 +3638,7 @@ impl UpgradeOptions {
                     parsed.or_defaults(vm, false)
                 }
             };
-            (Self::cached_ctx(global, &mut config)?, Some(config))
+            (Self::cached_ctx(global, &config, is_server)?, Some(config))
         } else {
             return Err(global.throw(format_args!("Expected \"tls\" option")));
         };
@@ -3660,10 +3660,16 @@ impl UpgradeOptions {
     /// The per-VM cache: `tls: true` and `{ servername }` share the context of `Bun.connect`, and upgrades that name one CA share theirs.
     fn cached_ctx(
         global: &JSGlobalObject,
-        config: &mut SSLConfig,
+        config: &SSLConfig,
+        is_server: bool,
     ) -> JsResult<boringssl_sys::OwnedSslCtx> {
         let mut create_err = uws::create_bun_socket_error_t::none;
-        if let Some(ctx) = SSLContextCache::get_or_create(config, &mut create_err) {
+        let get_or_create = if is_server {
+            SSLContextCache::get_or_create_for_server
+        } else {
+            SSLContextCache::get_or_create_for_client
+        };
+        if let Some(ctx) = get_or_create(&config.as_usockets(), &mut create_err) {
             return Ok(ctx);
         }
         // Only the CA and cipher cases set the error. A bad cert, key or DH leaves the detail on BoringSSL's error queue.

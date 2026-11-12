@@ -871,7 +871,8 @@ impl Listener {
         {
             // Identical configs share one `SSL_CTX*`. servername and ALPNProtocols are applied per SSL, so they aren't compared.
             let mut create_err = uws::create_bun_socket_error_t::none;
-            owned_ssl_ctx = SSLContextCache::get_or_create(ssl_cfg, &mut create_err);
+            owned_ssl_ctx =
+                SSLContextCache::get_or_create_for_client(&ssl_cfg.as_usockets(), &mut create_err);
             if owned_ssl_ctx.is_none() {
                 return Err(cx.global().throw_value(
                     crate::socket::uws_jsc::create_bun_socket_error_to_js(create_err, cx.global()),

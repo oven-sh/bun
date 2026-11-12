@@ -1459,8 +1459,10 @@ impl JSValkeyClient {
                 // Per-VM weak cache: a `duplicate()`'d client (or any
                 // other client with the same config) hits the same
                 // `SSL_CTX*` instead of rebuilding.
-                self._secure
-                    .set(SSLContextCache::get_or_create(custom, &mut err));
+                self._secure.set(SSLContextCache::get_or_create_for_client(
+                    &custom.as_usockets(),
+                    &mut err,
+                ));
             }
             self._secure.get().is_none()
         } else {

@@ -3616,6 +3616,10 @@ int us_ssl_set_key_cert(SSL *ssl, SSL_CTX *ctx, const unsigned char *sid_ctx, si
 
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls) {
   if (ls->ssl_ctx) {
+    /* Out of the cache, whoever still holds it: the next server with these options gets new session ticket keys. */
+    int idx = us_ssl_ctx_cache_ex_idx();
+    bun_ssl_ctx_cache_on_free(ls->ssl_ctx, SSL_CTX_get_ex_data(ls->ssl_ctx, idx), NULL, idx, 0, NULL);
+    SSL_CTX_set_ex_data(ls->ssl_ctx, idx, NULL);
     us_internal_ssl_ctx_unref(ls->ssl_ctx);
     ls->ssl_ctx = NULL;
   }

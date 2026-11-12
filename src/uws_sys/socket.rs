@@ -435,6 +435,14 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
+    /// `CloseCode::Normal` that waits for the peer's FIN over plain TCP too: see `us_socket_close_lingering`.
+    pub fn close_lingering(&self) {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).close_lingering(),
+            _ => self.close(CloseCode::Normal),
+        }
+    }
+
     /// The JS wrapper that owns this socket is being finalized: whatever the
     /// close below unwinds must not reach back into JS objects.
     pub fn prepare_for_finalize(&self) {

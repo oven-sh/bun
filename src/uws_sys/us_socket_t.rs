@@ -102,6 +102,11 @@ impl us_socket_t {
         let _ = c::us_socket_close_now(self);
     }
 
+    pub(crate) fn close_lingering(&mut self) {
+        bun_core::scoped_log!(uws, "us_socket_close_lingering({:p})", self);
+        let _ = c::us_socket_close_lingering(self);
+    }
+
     pub fn shutdown(&mut self) {
         bun_core::scoped_log!(uws, "us_socket_shutdown({:p})", self);
         c::us_socket_shutdown(self);
@@ -535,6 +540,7 @@ mod c {
             reason: *mut c_void,
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_close_now(s: &mut us_socket_t) -> *mut us_socket_t;
+        pub(super) safe fn us_socket_close_lingering(s: &mut us_socket_t) -> *mut us_socket_t;
         pub(super) safe fn us_socket_shutdown(s: &mut us_socket_t);
         pub(super) safe fn us_socket_is_closed(s: &us_socket_t) -> i32;
         pub(super) fn us_socket_write_check_error(

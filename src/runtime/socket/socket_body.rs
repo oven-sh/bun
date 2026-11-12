@@ -335,7 +335,7 @@ pub(crate) extern "C" fn us_dispatch_alpn_select(
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct NewSocket<const SSL: bool> {
     pub(crate) socket: Cell<uws::NewSocketHandler<SSL>>,
-    /// A TLS socket whose close still waits for the peer. `socket` is detached by then, so `terminate()` closes this one.
+    /// A socket whose close still waits for the peer. `socket` is detached by then, so `terminate()` closes this one.
     pub(crate) closing: Cell<uws::NewSocketHandler<SSL>>,
 
     pub(crate) flags: Cell<Flags>,
@@ -1421,14 +1421,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.socket.set(SocketHandler::<SSL>::DETACHED);
         self.detach_native_callback();
 
-        socket.close(code);
+        // The kernel is still full of the tail, which a reset for unread input would drop.
+        if code == uws::CloseCode::Normal && self.flags.get().contains(Flags::QUEUED_TAIL) {
+            socket.close_lingering();
+        } else {
+            socket.close(code);
+        }
         self.keep_if_still_closing(socket);
     }
 
-    /// A TLS close can wait for the peer to read or to answer. Keeps that socket for `terminate()`.
+    /// A close can wait for the peer to read or to answer. Keeps that socket for `terminate()`.
     fn keep_if_still_closing(&self, socket: SocketHandler<SSL>) {
-        if SSL && matches!(socket.socket, uws::InternalSocket::Connected(_)) && !socket.is_closed()
-        {
+        if matches!(socket.socket, uws::InternalSocket::Connected(_)) && !socket.is_closed() {
             self.closing.set(socket);
         }
     }
@@ -3048,9 +3052,15 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     pub(crate) fn terminate(&self, _: &mut JsScope<'_>) {
         self.close_and_detach(uws::CloseCode::Failure);
+        // Over TCP only the wait ends: the kernel has the whole tail and goes on delivering it.
+        let code = if SSL {
+            uws::CloseCode::Failure
+        } else {
+            uws::CloseCode::Normal
+        };
         self.closing
             .replace(SocketHandler::<SSL>::DETACHED)
-            .close(uws::CloseCode::Failure);
+            .close(code);
     }
 
     pub(crate) fn shutdown(&self, _: &mut JsScope<'_>, half_close: bool) {
@@ -3066,6 +3076,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     pub(crate) fn close(&self, _: &mut JsScope<'_>) {
+        // It lingers behind a tail, and holds the loop for the `close` to come.
+        if !SSL && !self.closing.get().is_detached() {
+            return;
+        }
         let socket = self.socket.get();
         // `_handle.close()` is the net.Socket `_destroy()` path. Node closes the fd
         // with no close_notify (crypto_tls.cc sends the alert only from DoShutdown,
@@ -3120,7 +3134,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             WriteResult::Success { wrote, total } => {
                 if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
                     let _ = self.internal_flush();
-                } else {
+                } else if self.waits_to_send_tail() {
+                    self.update_flags(|f| f.insert(Flags::QUEUED_TAIL));
                     self.arm_tail_timeout();
                 }
                 if queues_tail && wrote >= 0 {
@@ -3552,6 +3567,8 @@ bitflags::bitflags! {
         const HANDSHAKE_COMPLETE   = 1 << 3;
         const EMPTY_PACKET_PENDING = 1 << 4;
         const END_AFTER_FLUSH      = 1 << 5;
+        /// `end(data)` queued what the socket didn't take at once.
+        const QUEUED_TAIL          = 1 << 6;
         const IS_PAUSED            = 1 << 7;
         /// Set for `allowHalfOpen: false` on `Bun.listen` / `Bun.connect`. `on_end` closes the socket.
         const ENDS_ON_PEER_FIN     = 1 << 8;

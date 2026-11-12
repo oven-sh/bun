@@ -8127,6 +8127,97 @@ describe.concurrent("end(data) larger than the send buffer", () => {
     );
   });
 
+  // Closing over unread input is a reset, which drops what the kernel hasn't sent. Windows queues no tail.
+  describe.skipIf(isWindows).each(["tcp", "unix"] as const)("%s", transport => {
+    it.each(["is paused over unread input", "has a peer that writes until the FIN"] as const)(
+      "delivers the tail and the FIN of a socket that %s",
+      async state => {
+        using dir = tempDir("end-unread", {});
+        const unix = join(String(dir), "socket");
+        const closed = Promise.withResolvers<Error | undefined>();
+        let readAfterPause = 0;
+        let paused = false;
+        using listener = Bun.listen({
+          ...(transport === "unix" ? { unix } : { hostname: "127.0.0.1", port: 0 }),
+          socket: {
+            data(socket) {
+              if (paused) readAfterPause++;
+              paused = state === "is paused over unread input";
+              if (paused) socket.pause();
+              socket.end(payload);
+            },
+            close: (_socket, error) => closed.resolve(error),
+          },
+        } as Bun.TCPSocketListenOptions);
+        const peer = net.connect(transport === "unix" ? { path: unix } : { host: "127.0.0.1", port: listener.port });
+        const received: Buffer[] = [];
+        const events: string[] = [];
+        peer.on("data", chunk => (received.push(chunk), peer.write("more")));
+        peer.on("end", () => events.push("end"));
+        peer.on("error", (error: NodeJS.ErrnoException) => events.push(`error ${error.code}`));
+        peer.write("request");
+        const [closeError] = await Promise.all([closed.promise, new Promise(resolve => peer.on("close", resolve))]);
+        expect({ closeError, events, readAfterPause, received: Buffer.concat(received).length }).toEqual({
+          closeError: undefined,
+          events: ["end"],
+          readAfterPause: 0,
+          received: payload.length,
+        });
+        expect(Buffer.concat(received).equals(payload)).toBe(true);
+      },
+    );
+  });
+
+  // In its own process: the sweeps also advance every other socket's timeout on the thread.
+  it.skipIf(isWindows).each([
+    ["nothing", ["waits", "close undefined", "swept"]],
+    ["close", ["waits", "close undefined", "swept"]],
+    ["terminate", ["close undefined", "waits", "swept"]],
+  ] as const)(
+    "the wait for the peer's FIN behind a tail that was sent ends when %s follows",
+    async (then, expected) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+        import { sweepSocketTimers } from "bun:internal-for-testing";
+        const accepted = Promise.withResolvers();
+        const peerEnded = Promise.withResolvers();
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            open: socket => (socket.end(Buffer.alloc(16 << 20)), accepted.resolve(socket)),
+            data: () => console.log("data"),
+            timeout: () => console.log("timeout"),
+            close: (socket, error) => console.log("close", error?.code),
+          },
+        });
+        using peer = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          allowHalfOpen: true,
+          socket: { data() {}, end: () => peerEnded.resolve() },
+        });
+        const [socket] = await Promise.all([accepted.promise, peerEnded.promise]);
+        socket.${then}?.();
+        console.log("waits");
+        // 10 seconds. One sweep is 4, and a timeout is due at the first sweep that isn't early.
+        sweepSocketTimers(4);
+        console.log("swept");
+        `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim().split("\n"), stderr }).toEqual({ stdout: [...expected], stderr: "" });
+      expect(exitCode).toBe(0);
+    },
+  );
+
   // An ended socket takes no more writes. Windows queues no tail.
   describe.skipIf(isWindows).each(["tcp", "unix", "tls"] as const)("%s", transport => {
     it.each(["nothing", "flush", "shutdown", "close"] as const)(

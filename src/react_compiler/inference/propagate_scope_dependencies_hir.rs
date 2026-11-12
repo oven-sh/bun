@@ -1190,6 +1190,10 @@ fn get_assumed_invoked_functions_impl(
                     // Recursively traverse into other function expressions
                     // TS passes the shared temporaries map to the recursive call
                     let inner_func = &env.functions[lowered_func.func.0 as usize];
+                    // Not in upstream: see `collect_non_nulls_in_blocks`.
+                    if inner_func.keeps_unread_reads {
+                        continue;
+                    }
                     let lambdas_called =
                         get_assumed_invoked_functions_impl(inner_func, env, temporaries);
                     if let Some(entry) = temporaries.get_mut(instr.lvalue.identifier) {
@@ -1311,8 +1315,13 @@ fn collect_non_nulls_in_blocks(
 
             // Handle assumed-invoked inner functions
             if let InstructionValue::FunctionExpression { lowered_func, .. } = &instr.value {
-                if ctx.assumed_invoked_fns.contains(&lowered_func.func) {
-                    let inner_func = &env.functions[lowered_func.func.0 as usize];
+                let inner_func = &env.functions[lowered_func.func.0 as usize];
+                // Not in upstream, where DeadCodeElimination takes the read away: a function that
+                // keeps a read of a property that nothing uses is taken as a whole, and what it
+                // reads does not tell the code around it that a value is not null.
+                if ctx.assumed_invoked_fns.contains(&lowered_func.func)
+                    && !inner_func.keeps_unread_reads
+                {
                     // Build nested fn immutable context
                     let nested_fn_immutable_context: HashSet<IdentifierId> =
                         if ctx.nested_fn_immutable_context.is_some() {
@@ -2138,6 +2147,21 @@ fn visit_inner_function_blocks(
     env: &mut Environment,
 ) {
     if !env.has_stack() {
+        return;
+    }
+
+    // Not in upstream, where DeadCodeElimination takes the read away: a function that keeps a read
+    // of a property that nothing uses is taken as a whole. What makes it depends on each variable
+    // that it captures, and not on a path into one, which a guard would read at render.
+    if env.functions[func_id.0 as usize].keeps_unread_reads {
+        let func = std::mem::replace(
+            &mut env.functions[func_id.0 as usize],
+            crate::ssa::enter_ssa::placeholder_function(),
+        );
+        for place in &func.context {
+            ctx.visit_operand_root(place, env);
+        }
+        env.functions[func_id.0 as usize] = func;
         return;
     }
 

@@ -30,8 +30,35 @@ use crate::optimization::prune_maybe_throws::value_may_throw;
 ///
 /// Corresponds to TS `deadCodeElimination(fn: HIRFunction): void`.
 pub(crate) fn dead_code_elimination(func: &mut HirFunction, env: &Environment) {
+    // OutlineJSX runs the pass again on a nested function: what that kept stays.
+    let may_keep_unread_reads = func.keeps_unread_reads;
+    eliminate(func, env, may_keep_unread_reads);
+}
+
+/// For a nested function: an effect, a handler, any callback. Not in upstream, which prunes a read
+/// of a property that nothing uses as "read-only", and so takes the `el.offsetHeight;` that flushes
+/// the layout out of an effect. Here the read stays. The body of a component or hook is render
+/// code, which has to be pure: there it goes as in upstream. So it does in SSR output, which
+/// renders once and has no effects, and for the linter.
+///
+/// `HirFunction::keeps_unread_reads` is then set on the function, and on each nested function
+/// around it. PropagateScopeDependenciesHIR takes such a function as a whole.
+pub(crate) fn dead_code_elimination_in_nested_function(func: &mut HirFunction, env: &Environment) {
+    eliminate(func, env, env.output_mode == OutputMode::Client);
+}
+
+fn eliminate(func: &mut HirFunction, env: &Environment, may_keep_unread_reads: bool) {
     // Phase 1: Find/mark all referenced identifiers
-    let state = find_referenced_identifiers(func, env, true);
+    let mut state = find_referenced_identifiers(func, env, true, false);
+    let mut keeps_a_read = false;
+    // The walk of upstream comes first: where it leaves no read of a property, it is the answer.
+    if may_keep_unread_reads
+        && state.has_unmarked_instruction
+        && has_unread_member_read(func, &state, env)
+    {
+        state = find_referenced_identifiers(func, env, true, true);
+        keeps_a_read = true;
+    }
 
     // Phase 2: Prune / sweep unreferenced identifiers and instructions
     let instructions = &mut func.instructions;
@@ -58,6 +85,11 @@ pub(crate) fn dead_code_elimination(func: &mut HirFunction, env: &Environment) {
             let is_destructure = match &instr.value {
                 InstructionValue::Destructure { .. } => true,
                 InstructionValue::StoreLocal { .. } => false,
+                InstructionValue::FunctionExpression { lowered_func, .. }
+                | InstructionValue::ObjectMethod { lowered_func, .. } => {
+                    keeps_a_read |= env.functions[lowered_func.func.0 as usize].keeps_unread_reads;
+                    continue;
+                }
                 // Nothing else is rewritten.
                 _ => continue,
             };
@@ -73,6 +105,8 @@ pub(crate) fn dead_code_elimination(func: &mut HirFunction, env: &Environment) {
     // Remove unused context variables
     func.context
         .retain(|ctx_var| is_id_or_name_used(&state, &env.identifiers, ctx_var.identifier));
+
+    func.keeps_unread_reads |= may_keep_unread_reads && keeps_a_read;
 }
 
 /// State for tracking referenced identifiers during mark phase.
@@ -188,12 +222,34 @@ fn is_caught(terminal: &Terminal) -> bool {
     )
 }
 
+/// A read of a property runs a getter or a proxy trap. A pattern, a coercion and a spread can run
+/// the user's code too: they go as in upstream.
+fn is_member_read(value: &InstructionValue) -> bool {
+    matches!(
+        value,
+        InstructionValue::PropertyLoad { .. } | InstructionValue::ComputedLoad { .. }
+    )
+}
+
+/// Whether the walk of upstream left a read of a property for the sweep.
+fn has_unread_member_read(func: &HirFunction, state: &State, env: &Environment) -> bool {
+    func.body.blocks.values().any(|block| {
+        block.instructions.iter().any(|instr_id| {
+            let instr = &func.instructions[instr_id.0 as usize];
+            is_member_read(&instr.value)
+                && !is_id_or_name_used(state, &env.identifiers, instr.lvalue.identifier)
+        })
+    })
+}
+
 /// Phase 1: Find all referenced identifiers via fixed-point iteration.
 /// `preserve_caught_throws`: upstream takes `try { props.a.b; } catch { return null; }` for nothing.
+/// `keeps_unread_reads`: see `dead_code_elimination_in_nested_function`.
 fn find_referenced_identifiers(
     func: &HirFunction,
     env: &Environment,
     preserve_caught_throws: bool,
+    keeps_unread_reads: bool,
 ) -> State {
     let has_loop = has_back_edge(func);
     let mut state = State::new(env);
@@ -255,6 +311,9 @@ fn find_referenced_identifiers(
                             );
                         }
                     }
+                } else if keeps_unread_reads && is_member_read(&instr.value) {
+                    reference(&mut state, &env.identifiers, instr.lvalue.identifier);
+                    reference_operands(&mut state, env, &instr.value);
                 } else {
                     state.has_unmarked_instruction = true;
                 }
@@ -297,7 +356,7 @@ pub(crate) fn find_semantic_only_caught_instructions(
         return None;
     }
 
-    let state = find_referenced_identifiers(func, env, false);
+    let state = find_referenced_identifiers(func, env, false, false);
     let mut semantic_only = vec![false; func.instructions.len()];
     for instr_id in candidates {
         let lvalue = func.instructions[instr_id.0 as usize].lvalue.identifier;

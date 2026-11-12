@@ -486,6 +486,7 @@ fn emit_outlined_fn(
         directives: AstAlloc::vec(),
         aliasing_effects: Some(AstAlloc::vec()),
         loc: None,
+        keeps_unread_reads: false,
     };
 
     Some(outlined_fn)

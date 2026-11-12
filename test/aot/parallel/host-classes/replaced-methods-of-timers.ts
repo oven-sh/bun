@@ -20,6 +20,8 @@ const loose = (value: unknown): any => value;
 // A method that answers its receiver is told from a stand-in that answers a text.
 const same = (answer: unknown, holder: unknown): unknown => (answer === holder ? "its receiver" : answer);
 
+// The declarations have no close(): its second call is under a key that only the caller knows.
+const callOf = (holder: any, key: string): unknown => holder[key]();
 const hasRefOf = (holder: Timeout): unknown => holder.hasRef();
 const unrefOf = (holder: Timeout): unknown => same(holder.unref(), holder);
 const immediateHasRefOf = (holder: Immediate): unknown => holder.hasRef();
@@ -40,6 +42,9 @@ function all(label: string, holder: object, name: string, typed: () => unknown, 
   say(label + " replaced by a getter", () => (Object.defineProperty(holder, name, { get: () => () => "from a getter", configurable: true }), both()));
   say(label + " put back", () => (Object.defineProperty(holder, name, original), both()));
   say(label + " deleted", () => [delete (holder as Record<string, unknown>)[name], name in holder]);
+  // A line for each: the call of a deleted method throws.
+  say(label + " called while deleted, with its type", typed);
+  say(label + " called while deleted, without a type", untyped);
   say(label + " put back again", () => (Object.defineProperty(holder, name, original), many()));
 }
 
@@ -47,6 +52,6 @@ const timeoutPrototype = Object.getPrototypeOf(timer) as object;
 const immediatePrototype = Object.getPrototypeOf(immediate) as object;
 all("Timeout.prototype.hasRef", timeoutPrototype, "hasRef", () => hasRefOf(timer), () => loose(timer).hasRef());
 all("Timeout.prototype.unref", timeoutPrototype, "unref", () => unrefOf(timer), () => same(loose(timer).unref(), timer));
-all("Timeout.prototype.close", timeoutPrototype, "close", () => same(loose(timer).close(), timer), () => same(loose(timer)["close"](), timer));
+all("Timeout.prototype.close", timeoutPrototype, "close", () => same(loose(timer).close(), timer), () => same(callOf(timer, "close"), timer));
 all("Immediate.prototype.hasRef", immediatePrototype, "hasRef", () => immediateHasRefOf(immediate), () => loose(immediate).hasRef());
 console.log(lines.join("\n"));

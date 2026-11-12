@@ -2118,12 +2118,12 @@ describe.concurrent("test environment with the real", () => {
       expect(exitCode).toBe(0);
     });
 
-    // happy-dom finishes a close on a timer. Until happy-dom 18, closing the window again after that throws.
-    test.each(["window.close();", "await window.happyDOM.close();"])(
+    // Until happy-dom 18, closing the window again once its close has finished throws.
+    test.each(["window.close(); await window.happyDOM.waitUntilComplete();", "await window.happyDOM.close();"])(
       "--isolate: closing it again after `%s` is not an error",
       async close => {
         using dir = project({
-          "1.test.js": file("happy-dom", `${close} await new Promise(resolve => setTimeout(resolve, 20));`),
+          "1.test.js": file("happy-dom", close),
           "2.test.js": file("happy-dom", ""),
         });
         const { stderr, exitCode } = await bunTest(String(dir), "--isolate");

@@ -1077,8 +1077,8 @@ impl Source {
     /// The Node stream that passed `deliver` to `pull()` lets go of the source, and the next reader can be another
     /// one (`process.stdin` when it stops reading): the read that still waits in the source is dropped, with
     /// nothing read into it. `false`: none waits, and a result that is queued still comes.
-    pub fn cancel_pull(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> bool {
-        if !self.context.pending.with_mut(|pending| pending.release_handler()) {
+    pub fn cancel_pull(&self, this_value: JsWrapper<'_, Self>) -> bool {
+        if !self.context.pending.with_mut(|p| p.release_handler()) {
             return false;
         }
         self.context
@@ -1086,8 +1086,8 @@ impl Source {
             .with_mut(|view| view.clear_without_deallocation());
         <FileReader as readable_stream::SourceContext>::js_deliver_set_cached(
             this_value.to_js(),
-            cx.global(),
-            JSValue::UNDEFINED,
+            self.global_this(),
+            JSValue::ZERO,
         );
         true
     }

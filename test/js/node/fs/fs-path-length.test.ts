@@ -380,6 +380,10 @@ describe.if(isPosix)("recursive readdir at the path length limit", () => {
     return { listing: JSON.parse(stdout), stderr };
   }
 
+  // The forms of `readdir`, without the two of `fs.Dir`.
+  const readdirForms = (listing: Record<string, string[]>) =>
+    Object.fromEntries(Object.entries(listing).filter(([form]) => !form.includes("opendir")));
+
   // Makes a chain of directories with a file in the deepest one, and returns what
   // is below `root`. The deepest directory has a 255-byte name and an absolute
   // path 64 bytes short of the limit, so the OS accepts every path in the tree.
@@ -462,15 +466,8 @@ describe.if(isPosix)("recursive readdir at the path length limit", () => {
   // enter a directory. Bun lists the directory and goes on.
   it("lists a directory at MAX_PATH_BYTES from the root and does not enter it", async () => {
     using dir = tempDir("readdir-at-limit", {});
-    const root = String(dir);
-    const expected = makeTreeAcrossTheLimit(root, { atTheLimit: true })
-      .map(([path]) => shorten(path))
-      .sort();
-    const list = (names: string[]) => names.map(shorten).sort();
-    expect({
-      readdirSync: list(fs.readdirSync(root, { recursive: true })),
-      "promises.readdir": list(await fs.promises.readdir(root, { recursive: true })),
-    }).toEqual({ readdirSync: expected, "promises.readdir": expected });
+    const entries = makeTreeAcrossTheLimit(String(dir), { atTheLimit: true });
+    expect(readdirForms(await listInEveryForm(String(dir)))).toEqual(readdirForms(inEveryForm(entries)));
   });
 
   it("lists a symlink that the OS does not follow because of its length", async () => {
@@ -522,6 +519,17 @@ describe.if(isPosix)("recursive readdir at the path length limit", () => {
       expect(stderr).toContain(dtUnknownReaddir.marker);
       expect(listing).toEqual(inEveryForm(entries));
     });
+
+    it.skipIf(!dtUnknownReaddir.available)(
+      "lists the directory at MAX_PATH_BYTES with its type when readdir reports no entry types",
+      async () => {
+        using dir = tempDir("readdir-at-limit-unknown", {});
+        const entries = makeTreeAcrossTheLimit(String(dir), { atTheLimit: true });
+        const { listing, stderr } = await listInChild(bunExe(), String(dir), { env: shimEnv });
+        expect(stderr).toContain(dtUnknownReaddir.marker);
+        expect(readdirForms(listing)).toEqual(readdirForms(inEveryForm(entries)));
+      },
+    );
 
     it.skipIf(!node)("Node.js lists the same close to the limit", async () => {
       using dir = tempDir("readdir-near-limit-node", {});

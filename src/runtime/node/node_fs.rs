@@ -7344,8 +7344,10 @@ impl NodeFS {
     }
 
     /// An open that the OS refuses for length ends like `readdir_rel_too_long`: listed, not entered.
+    /// Not on Windows: there the open measures the absolute path, and that failure stays an error.
     fn readdir_skips_subdir_open(errno: E) -> bool {
-        matches!(errno, E::ENAMETOOLONG) || Self::readdir_skips_subdir(errno)
+        (cfg!(not(windows)) && matches!(errno, E::ENAMETOOLONG))
+            || Self::readdir_skips_subdir(errno)
     }
 
     /// `openat(root_fd, rel)` can only answer ENAMETOOLONG. The entry is listed and not entered.

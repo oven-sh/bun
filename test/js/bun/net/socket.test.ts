@@ -8713,6 +8713,66 @@ describe.concurrent("end(data) larger than the send buffer", () => {
     expect(taken).toBe(size);
   });
 
+  // In its own process: the rule that refuses the sends and the sweeps are process-wide.
+  it.skipIf(isWindows || !socketFaultInjection.available()).each([
+    ["the kernel takes them", "socketFaultInjection.clear()", "close undefined peer undefined hello"],
+    [
+      "the peer sends its FIN",
+      "peer.shutdown(); await ended; socketFaultInjection.clear()",
+      "close undefined peer undefined hello",
+    ],
+    ["the timeout passes", "sweepSocketTimers(31)", "close ETIMEDOUT peer ECONNRESET "],
+    ["close() is called", "socket.close()", "close ECANCELED peer ECONNRESET "],
+    ["terminate() is called", "socket.terminate()", "close ECANCELED peer ECONNRESET "],
+    ["stop(true) is called", "server.stop(true)", "close ECANCELED peer ECONNRESET "],
+  ])("the TLS layer holds the records of end(data) until %s", async (_, then, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        import { socketFaultInjection, sweepSocketTimers } from "bun:internal-for-testing";
+        const { key, cert } = JSON.parse(process.env.TEST_TLS);
+        const [opened, peerOpened, closed, peerClosed] = [0, 1, 2, 3].map(() => Promise.withResolvers());
+        const { promise: ended, resolve: end } = Promise.withResolvers();
+        let received = "";
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          tls: { key, cert },
+          socket: {
+            handshake: socket => opened.resolve(socket),
+            data() {},
+            end,
+            close: (socket, error) => closed.resolve(error?.code),
+          },
+        });
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          tls: { ca: cert },
+          socket: {
+            handshake: socket => peerOpened.resolve(socket),
+            data: (socket, chunk) => void (received += chunk),
+            close: (socket, error) => peerClosed.resolve(error?.code),
+          },
+        });
+        const [socket, peer] = await Promise.all([opened.promise, peerOpened.promise]);
+        socketFaultInjection.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1, fd: socket.fd });
+        console.log(socket.end("hello"), socket.write("late"), socket.end("late"));
+        ${then};
+        console.log("close", await closed.promise, "peer", await peerClosed.promise, received);
+        `,
+      ],
+      env: { ...bunEnv, TEST_TLS: JSON.stringify({ key: tls.key, cert: tls.cert }) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: `5 -1 -1\n${expected}\n`, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   it.skipIf(isWindows)("close() on the raw half of an upgradeTLS() pair resets the TLS half's tail", async () => {
     const closed = Promise.withResolvers<Error | undefined>();
     const peerOpened = Promise.withResolvers<Socket<unknown>>();

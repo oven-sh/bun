@@ -975,7 +975,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // The TLS layer couldn't send records it still held.
         let send_error = this.socket.get().rejected_send_error();
         if send_error != 0 {
-            if this.buffered_data_for_node_net.get().is_pending() {
+            if this.has_pending_write() {
                 this.fail_queued_writes(send_error, PendingWrites::fail_held_records);
             }
             return Ok(());
@@ -997,12 +997,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !this.internal_flush() || this.socket.get().is_detached() {
             return Ok(());
         }
-        let queue = this.buffered_data_for_node_net.get();
-        if queue.len() > 0 {
+        if this.has_unsent_bytes() {
             return Ok(());
         }
         let global = handlers.global_object;
-        if queue.completion() == Completion::Owed {
+        if this.buffered_data_for_node_net.get().completion() == Completion::Owed {
             if !this.holds_unsent_tls_records() {
                 this.buffered_data_for_node_net.with_mut(|b| b.take());
                 handlers.call_write_complete(this.get_this_value(&global), 0);
@@ -1075,9 +1074,20 @@ impl<const SSL: bool> NewSocket<SSL> {
         handled
     }
 
+    /// Bytes are queued, or the TLS layer holds the last records of `end(data)`.
+    fn has_unsent_bytes(&self) -> bool {
+        let queue = self.buffered_data_for_node_net.get();
+        queue.len() > 0
+            || (SSL && self.flags.get().contains(Flags::QUEUED_TAIL) && !queue.is_lost())
+    }
+
+    fn has_pending_write(&self) -> bool {
+        self.buffered_data_for_node_net.get().is_pending() || self.has_unsent_bytes()
+    }
+
     fn waits_to_send_tail(&self) -> bool {
         self.flags.get().contains(Flags::END_AFTER_FLUSH)
-            && self.buffered_data_for_node_net.get().len() > 0
+            && self.has_unsent_bytes()
             && !self.socket.get().is_detached()
     }
 
@@ -1095,6 +1105,13 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// Closes an ended socket once its tail is sent. Until then the socket's own timeout runs, from each send that moved bytes.
     fn close_if_flushed(&self) {
+        if SSL
+            && self.waits_to_send_tail()
+            && self.buffered_data_for_node_net.get().len() == 0
+            && !self.holds_unsent_tls_records()
+        {
+            self.update_flags(|f| f.remove(Flags::QUEUED_TAIL));
+        }
         if self.can_end_after_flush() {
             self.mark_inactive();
         } else {
@@ -1379,7 +1396,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if self.flags.get().contains(Flags::SENDING_QUEUE) {
             return None;
         }
-        if send_error != 0 && self.buffered_data_for_node_net.get().is_pending() {
+        if send_error != 0 && self.has_pending_write() {
             self.buffered_data_for_node_net
                 .with_mut(|b| b.fail_held_records(send_errno(send_error)));
         }
@@ -1396,8 +1413,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return uws::CloseCode::Failure;
         }
         let flags = self.flags.get();
-        let queue = self.buffered_data_for_node_net.get();
-        if queue.len() == 0 && !queue.is_lost() {
+        if !self.has_unsent_bytes() && !self.buffered_data_for_node_net.get().is_lost() {
             self.discard_queued_writes();
             return code;
         }
@@ -1777,7 +1793,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let callback = handlers.on_end();
         if callback.is_empty() {
             // `on_writable` sends the queued bytes, then closes.
-            if this.buffered_data_for_node_net.get().len() > 0 {
+            if this.has_unsent_bytes() {
                 this.update_flags(|f| f.insert(Flags::END_AFTER_FLUSH));
                 this.close_if_flushed();
                 return Ok(());
@@ -2249,7 +2265,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let reset = this.buffered_data_for_node_net.get().completion() == Completion::Reset;
         // node:net hears of it through the write's own callback.
         let lost_tail = this.flags.get().contains(Flags::END_AFTER_FLUSH)
-            && this.buffered_data_for_node_net.get().len() > 0
+            && this.has_unsent_bytes()
             && handlers.on_write_complete().is_empty();
         this.discard_queued_writes();
         // Declared first so it drops last: ticks drain ahead of the teardown.
@@ -2802,8 +2818,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             return WriteResult::Success { wrote: 0, total: 0 };
         }
 
-        // `end(data)` left a tail queued, and a send now would jump ahead of it.
-        if self.buffered_data_for_node_net.get().len() > 0 {
+        // `end(data)` left a tail, which is the last thing the peer gets.
+        if self.has_unsent_bytes() {
             return WriteResult::Success {
                 wrote: -1,
                 total: 0,
@@ -3013,7 +3029,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         flags.contains(Flags::IS_ACTIVE)
             && flags.contains(Flags::END_AFTER_FLUSH)
             && !flags.contains(Flags::EMPTY_PACKET_PENDING)
-            && self.buffered_data_for_node_net.get().len() == 0
+            && !self.has_unsent_bytes()
             && !self.tls_half_waits_to_send_tail()
     }
 
@@ -3133,6 +3149,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
             WriteResult::Success { wrote, total } => {
                 if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
+                    if total > 0 && self.holds_unsent_tls_records() {
+                        self.update_flags(|f| f.insert(Flags::QUEUED_TAIL));
+                    }
                     let _ = self.internal_flush();
                 } else if self.waits_to_send_tail() {
                     self.update_flags(|f| f.insert(Flags::QUEUED_TAIL));
@@ -3567,7 +3586,7 @@ bitflags::bitflags! {
         const HANDSHAKE_COMPLETE   = 1 << 3;
         const EMPTY_PACKET_PENDING = 1 << 4;
         const END_AFTER_FLUSH      = 1 << 5;
-        /// `end(data)` queued what the socket didn't take at once.
+        /// The kernel didn't take `end(data)` at once. Over TLS this is cleared when it has the last record.
         const QUEUED_TAIL          = 1 << 6;
         const IS_PAUSED            = 1 << 7;
         /// Set for `allowHalfOpen: false` on `Bun.listen` / `Bun.connect`. `on_end` closes the socket.

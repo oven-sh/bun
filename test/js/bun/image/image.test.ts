@@ -2,6 +2,8 @@ import { S3Client } from "bun";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
 import { isMacOS, isWindows, tempDir } from "harness";
+import { closeSync, openSync, readdirSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import zlib from "node:zlib";
 import { join } from "path";
 
@@ -1236,6 +1238,225 @@ describe("Bun.Image", () => {
           expect(errorShape(actual)).toEqual(errorShape(expected));
         }
       }
+    });
+
+    test(".write(dest) accepts a file descriptor", async () => {
+      using dir = tempDir("image-write-fd", {});
+      const out = join(String(dir), "out.png");
+      const encoded = await new Bun.Image(cornersPng).png().bytes();
+      const fd = openSync(out, "w");
+      try {
+        expect(await new Bun.Image(cornersPng).png().write(fd)).toBe(encoded.length);
+      } finally {
+        closeSync(fd);
+      }
+      expect(await Bun.file(out).bytes()).toEqual(encoded);
+    });
+
+    test(".write(dest) writes to the path that dest named when write() was called", async () => {
+      using dir = tempDir("image-write-dest-at-call", { "src.png": Buffer.from(cornersPng) });
+      const at = (name: string) => join(String(dir), name);
+      const encode = (path: string) => new TextEncoder().encode(path);
+      class PathString extends String {
+        path = this.valueOf();
+        toString() {
+          return this.path;
+        }
+      }
+      // Each kind of destination that a program can change while the write is
+      // pending: the destination for `first`, and the change that makes it
+      // name `later` (same length) or no path at all.
+      const kinds: Record<string, (first: string, later: string) => [dest: any, change: () => unknown]> = {
+        buffer: (first, later) => {
+          const dest = Buffer.from(first);
+          return [dest, () => dest.write(later)];
+        },
+        uint8array: (first, later) => {
+          const dest = encode(first);
+          return [dest, () => dest.set(encode(later))];
+        },
+        arraybuffer: (first, later) => {
+          const bytes = encode(first);
+          return [bytes.buffer, () => bytes.set(encode(later))];
+        },
+        dataview: (first, later) => {
+          const bytes = encode(first);
+          return [new DataView(bytes.buffer), () => bytes.set(encode(later))];
+        },
+        url: (first, later) => {
+          const dest = pathToFileURL(first);
+          return [dest, () => (dest.href = pathToFileURL(later).href)];
+        },
+        string: (first, later) => {
+          const dest = new PathString(first);
+          return [dest, () => (dest.path = later)];
+        },
+        zeroed: first => {
+          const dest = Buffer.from(first);
+          return [dest, () => dest.fill(0)];
+        },
+        transferred: first => {
+          const dest = encode(first);
+          return [dest, () => dest.buffer.transfer()];
+        },
+      };
+      // An in-memory source and a Bun.file() source enter the pipeline
+      // through different schedulers.
+      const sources = { bytes: () => cornersPng, file: () => Bun.file(at("src.png")) };
+      const size = (await new Bun.Image(cornersPng).png().bytes()).length;
+
+      const pending: Promise<number>[] = [];
+      const expected: string[] = [];
+      for (const [source, open] of Object.entries(sources)) {
+        for (const [kind, make] of Object.entries(kinds)) {
+          const first = `${source}-${kind}-first.png`;
+          const [dest, change] = make(at(first), at(`${source}-${kind}-later.png`));
+          pending.push(new Bun.Image(open()).png().write(dest));
+          change();
+          expected.push(first);
+        }
+      }
+      await Promise.allSettled(pending);
+      expect(
+        readdirSync(String(dir))
+          .filter(name => name !== "src.png")
+          .sort(),
+      ).toEqual(expected.sort());
+      expect(await Promise.all(pending)).toEqual(pending.map(() => size));
+    });
+
+    test("a Buffer reused for three pending .write(dest) calls names three files", async () => {
+      using dir = tempDir("image-write-scratch-buffer", {});
+      const names = ["thumb-1.png", "thumb-2.png", "thumb-3.png"];
+      const size = (await new Bun.Image(cornersPng).png().bytes()).length;
+      const scratch = Buffer.alloc(Buffer.byteLength(join(String(dir), names[0])));
+      const pending = names.map(name => {
+        scratch.write(join(String(dir), name));
+        return new Bun.Image(cornersPng).png().write(scratch);
+      });
+      expect(await Promise.all(pending)).toEqual([size, size, size]);
+      expect(readdirSync(String(dir)).sort()).toEqual(names);
+    });
+
+    test(".write(dest) calls toString() of a String object once, inside the call", async () => {
+      using dir = tempDir("image-write-string-object", {});
+      const out = join(String(dir), "out.webp");
+      let calls = 0;
+      class Counted extends String {
+        toString() {
+          calls++;
+          return super.toString();
+        }
+      }
+      // No format is chained, so the one result names the file and the format.
+      const pending = new Bun.Image(cornersPng).write(new Counted(out) as any);
+      expect(calls).toBe(1);
+      await pending;
+      expect(calls).toBe(1);
+      const bytes = await Bun.file(out).bytes();
+      expect(String.fromCharCode(...bytes.subarray(8, 12))).toBe("WEBP");
+    });
+
+    // Neither source can be decoded. A write() that read its source before it
+    // looked at the destination would reject with the error of the source.
+    describe.each([
+      ["bytes that are not an image", (_dir: string) => Buffer.from("not an image")],
+      ["a Bun.file() that does not exist", (dir: string) => Bun.file(join(dir, "missing.png"))],
+    ])(".write(dest) rejects for an invalid destination before it reads %s", (_, source) => {
+      const errorShape = (e: any) => ({ name: e.name, code: e.code, message: e.message });
+
+      test.each([
+        ["a plain object", () => ({})],
+        ["a boolean", () => true],
+        ["a symbol", () => Symbol("dest")],
+        ["a Uint16Array", () => new Uint16Array(4)],
+        ["a Blob backed by bytes", () => new Blob(["not a file"])],
+        ["a Blob with no store", () => new Blob([])],
+        ["an empty Buffer", () => Buffer.alloc(0)],
+        ["a path with a NUL byte", () => "a\0b"],
+        ["a Buffer path with a NUL byte", () => Buffer.from("a\0b")],
+        ["a negative fd", () => -1],
+        ["a fractional fd", () => 1.5],
+        ["a URL that is not file:", () => new URL("http://example.com/a.png")],
+      ])("%s, with the error that Bun.write throws", async (_, dest) => {
+        using dir = tempDir("image-write-invalid-dest", {});
+        let thrownByBunWrite: unknown;
+        try {
+          Bun.write(dest() as any, "x");
+        } catch (e) {
+          thrownByBunWrite = e;
+        }
+        expect(thrownByBunWrite).toBeInstanceOf(Error);
+
+        const returned = new Bun.Image(source(String(dir))).png().write(dest() as any);
+        expect(returned).toBeInstanceOf(Promise);
+        expect(await returned.then(() => "resolved", errorShape)).toEqual(errorShape(thrownByBunWrite));
+      });
+
+      test("a path longer than every platform allows", async () => {
+        using dir = tempDir("image-write-long-dest", {});
+        const returned = new Bun.Image(source(String(dir))).png().write(Buffer.alloc(100_000, "x").toString());
+        expect(returned).toBeInstanceOf(Promise);
+        await expect(returned).rejects.toMatchObject({ code: "ENAMETOOLONG" });
+      });
+    });
+
+    test(".write(dest) to an S3 file sends the key and the type that the file had at the call", async () => {
+      const puts: { key: string; type: string | null; body: Uint8Array }[] = [];
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          if (req.method !== "PUT") return new Response("", { status: 404 });
+          puts.push({ key: new URL(req.url).pathname, type: req.headers.get("content-type"), body: await req.bytes() });
+          return new Response("", { headers: { ETag: '"etag"' } });
+        },
+      });
+      const client = new S3Client({
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "us-east-1",
+        bucket: "images",
+        endpoint: server.url.href,
+      });
+      const encoded = await new Bun.Image(cornersPng).png().bytes();
+      const imagePuts = () =>
+        puts
+          .filter(put => Buffer.from(put.body).equals(encoded))
+          .map(put => `${put.key} ${put.type}`)
+          .sort();
+
+      // No ambient proxy for the loopback endpoint, as in the S3 source test above (#32045).
+      const proxyKeys = ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"] as const;
+      const savedProxyEnv = Object.fromEntries(proxyKeys.map(k => [k, process.env[k]]));
+      for (const k of proxyKeys) process.env[k] = "";
+      try {
+        // Another write gives the same S3 file a type while the image is pending.
+        const typed = client.file("typed.png");
+        const pending = new Bun.Image(cornersPng).png().write(typed);
+        await Promise.all([pending, typed.write("unrelated", { type: "text/plain" })]);
+        expect(imagePuts()).toEqual(["/images/typed.png image/png"]);
+
+        // Nothing else holds these S3 files: they are collected while their writes are pending.
+        puts.length = 0;
+        const keys = Array.from({ length: 16 }, (_, i) => `collected-${i}.png`);
+        const writes = keys.map(key =>
+          new Bun.Image(cornersPng).png().write(client.file(key, { type: `image/x-${key}` })),
+        );
+        Bun.gc(true);
+        expect(await Promise.all(writes)).toEqual(keys.map(() => encoded.length));
+        expect(imagePuts()).toEqual(keys.map(key => `/images/${key} image/x-${key}`).sort());
+      } finally {
+        for (const k of proxyKeys) process.env[k] = savedProxyEnv[k] ?? "";
+      }
+    });
+
+    test(".write(dest) does not create the file when the encode fails", async () => {
+      using dir = tempDir("image-write-encode-fails", {});
+      const out = join(String(dir), "out.png");
+      await expect(new Bun.Image(Buffer.from("not an image")).png().write(out)).rejects.toThrow(
+        expect.objectContaining({ code: "ERR_IMAGE_UNKNOWN_FORMAT" }),
+      );
+      expect(readdirSync(String(dir))).toEqual([]);
     });
 
     test(".toBase64() produces valid base64", async () => {

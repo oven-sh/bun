@@ -1087,12 +1087,13 @@ impl<'a> Context<'_, 'a> {
             }
         };
         let is_open = last_value.is_none();
-        let value_takes_indented = last_value
-            .is_some_and(|it| !matches!(it.kind, Kind::BlockFolded | Kind::BlockLiteral));
+        let value_takes_indented =
+            last_value.is_some_and(|it| !matches!(it.kind, Kind::BlockFolded | Kind::BlockLiteral));
         // oxfmt has no such stack. Each collection, the innermost first, takes the comments that are indented more
         // than its items, but for a mapping whose last value is a block scalar. A comment that none takes ends the
         // document, and so does everything after it.
-        let root_takes_indented = is_nested || content.kind == Kind::Sequence || value_takes_indented;
+        let root_takes_indented =
+            is_nested || content.kind == Kind::Sequence || value_takes_indented;
         let is_oxfmt = self.is_oxfmt;
         let mut leave_root = true;
         while let Some(token) = self.peek().filter(|it| it.kind == TokenKind::Comment) {

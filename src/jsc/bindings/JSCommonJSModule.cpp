@@ -1104,6 +1104,7 @@ JSC::Structure* JSCommonJSModule::createStructure(
 void JSCommonJSModule::setParent(JSC::VM& vm, JSCommonJSModule* parent)
 {
     m_parent = JSC::Weak<JSCommonJSModule>(parent);
+    isUnusedByParent = false;
     JSValue filename = parent->filename();
     m_parentFilename.setMayBeNull(vm, this, filename && filename.isString() ? asString(filename) : nullptr);
 }
@@ -1111,6 +1112,7 @@ void JSCommonJSModule::setParent(JSC::VM& vm, JSCommonJSModule* parent)
 void JSCommonJSModule::clearParent()
 {
     m_parent = {};
+    isUnusedByParent = false;
     m_parentFilename.clear();
 }
 

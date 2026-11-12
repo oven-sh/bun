@@ -531,6 +531,7 @@ static JSValue handleVirtualModuleResult(
             if (exports) {
                 commonJSModule->setExportsObject(exports);
                 commonJSModule->hasEvaluated = true;
+                commonJSModule->hasExportsOfModuleMock = wasModuleMock;
                 return commonJSModule;
             }
         }

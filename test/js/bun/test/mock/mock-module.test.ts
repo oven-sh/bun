@@ -6210,6 +6210,702 @@ test.concurrent(
   },
 );
 
+describe.concurrent("a module that left require.cache still counts when a mock ends", () => {
+  const drop = (...files: string[]) => files.map(file => `delete require.cache[require.resolve("${file}")];`).join(" ");
+  // app.js -> mid.js -> svc.js -> dep.js
+  const chain = {
+    "dep.js": `export const name = "real";`,
+    "svc.js": `import { name } from "./dep.js"; export const describe = () => name;`,
+    "mid.js": `export { describe } from "./svc.js";`,
+    "app.js": `
+      import { describe } from "./mid.js";
+      globalThis.appLoads = (globalThis.appLoads ?? 0) + 1;
+      export const run = () => "app(" + describe() + ")";
+    `,
+  };
+  // app.cjs -> svc.cjs -> dep.cjs, and late.cjs -> dep.cjs. Each keeps what it required when it ran.
+  const commonJSChain = {
+    "dep.cjs": `exports.name = "real";`,
+    "svc.cjs": `const { name } = require("./dep.cjs"); exports.describe = () => "svc(" + name + ")";`,
+    "app.cjs": `const { describe } = require("./svc.cjs"); exports.run = () => "app(" + describe() + ")";`,
+    "late.cjs": `const { name } = require("./dep.cjs"); exports.captured = "late(" + name + ")";`,
+    "twice.cjs": `require("./svc.cjs"); const { describe } = require("./svc.cjs"); exports.run = () => "twice(" + describe() + ")";`,
+    // root.cjs -> over.cjs -> late.cjs -> dep.cjs
+    "over.cjs": `const { captured } = require("./late.cjs"); exports.over = () => "over(" + captured + ")";`,
+    "root.cjs": `const { over } = require("./over.cjs"); exports.run = () => "root(" + over() + ")";`,
+  };
+
+  test.each([
+    ["vi.mock(), the module between them deleted", "vi.mock", drop("./svc.js")],
+    ["jest.mock(), the module between them deleted", "jest.mock", drop("./svc.js")],
+    ["two modules between them deleted", "vi.mock", drop("./mid.js", "./svc.js")],
+    ["the module between them and the mock deleted", "vi.mock", drop("./svc.js", "./dep.js")],
+    ["the module between them deleted and imported again", "vi.mock", drop("./svc.js") + ` await import("./svc.js");`],
+  ])("the next file evaluates the importer of a mock again: %s", async (_, mockFunction, deletes) => {
+    await expectFixturesToPass(
+      {
+        ...chain,
+        "a.test.js": `
+          import { expect, jest, test, vi } from "bun:test";
+          import { run } from "./app.js";
+          ${mockFunction}("./dep.js", () => ({ name: "mock-a" }));
+          test("reads the mock", async () => {
+            expect(run()).toBe("app(mock-a)");
+            ${deletes}
+          });
+        `,
+        "b.test.js": `
+          import { expect, mock, test } from "bun:test";
+          import { run } from "./app.js";
+          mock.module("./dep.js", () => ({ name: "mock-b" }));
+          test("reads its own mock", () => {
+            expect([run(), globalThis.appLoads]).toEqual(["app(mock-b)", 2]);
+          });
+        `,
+        "c.test.js": `
+          import { expect, test } from "bun:test";
+          import { run } from "./app.js";
+          test("reads the module itself", () => {
+            expect([run(), globalThis.appLoads]).toEqual(["app(real)", 3]);
+          });
+        `,
+      },
+      3,
+      ["./a.test.js", "./b.test.js", "./c.test.js"],
+    );
+  });
+
+  test.each([
+    ["in the next file", ["./a.test.js", "./b.test.js", "./c.test.js"], 3],
+    ["in the next run of --rerun-each", ["--rerun-each=2", "./a.test.js"], 2],
+  ])("a module that mock.module() patched and that was deleted itself: %s", async (_, args, pass) => {
+    await expectFixturesToPass(
+      {
+        "dep.js": `export const name = "real";`,
+        "svc.js": `import { name } from "./dep.js"; export const describe = () => "svc(" + name + ")";`,
+        "late.js": `import { name } from "./dep.js"; export const captured = "late(" + name + ")";`,
+        "a.test.js": `
+          import { afterAll, expect, mock, test } from "bun:test";
+          import { describe } from "./svc.js";
+          mock.module("./dep.js", () => ({ name: "mock-a" }));
+          afterAll(() => { ${drop("./dep.js")} });
+          test("reads the mock", async () => {
+            expect([describe(), (await import("./late.js")).captured]).toEqual(["svc(mock-a)", "late(mock-a)"]);
+          });
+        `,
+        "b.test.js": `
+          import { expect, mock, test } from "bun:test";
+          import { describe } from "./svc.js";
+          mock.module("./dep.js", () => ({ name: "mock-b" }));
+          test("reads its own mock", async () => {
+            expect([describe(), (await import("./late.js")).captured]).toEqual(["svc(mock-b)", "late(mock-b)"]);
+          });
+        `,
+        "c.test.js": `
+          import { expect, test } from "bun:test";
+          import { describe } from "./svc.js";
+          test("reads the module itself", async () => {
+            expect([describe(), (await import("./late.js")).captured]).toEqual(["svc(real)", "late(real)"]);
+          });
+        `,
+      },
+      pass,
+      args,
+    );
+  });
+
+  test("a CommonJS file that deletes the module before each mock and puts a copy back after each test", async () => {
+    await expectFixturesToPass(
+      {
+        "mailer.js": `module.exports = { send: to => "sent:" + to };`,
+        "signup.js": `const mailer = require("./mailer.js"); module.exports = { signup: user => "signup(" + mailer.send(user) + ")" };`,
+        "a.test.js": `
+          const { afterEach, beforeEach, expect, mock, test } = require("bun:test");
+          const realMailer = { ...require("./mailer.js") };
+          beforeEach(() => {
+            ${drop("./mailer.js")}
+            mock.module("./mailer.js", () => ({ send: to => "queued:" + to }));
+          });
+          afterEach(() => {
+            mock.module("./mailer.js", () => realMailer);
+            mock.restore();
+          });
+          test("a signup queues a mail", () => {
+            expect(require("./signup.js").signup("ann")).toBe("signup(queued:ann)");
+          });
+          test("the fake mailer queues", () => {
+            expect(require("./mailer.js").send("bob")).toBe("queued:bob");
+          });
+        `,
+        "b.test.js": `
+          const { expect, test } = require("bun:test");
+          test("a signup sends a mail", () => {
+            expect(require("./signup.js").signup("cy")).toBe("signup(sent:cy)");
+          });
+        `,
+      },
+      3,
+      ["./a.test.js", "./b.test.js"],
+    );
+  });
+
+  test.each([
+    [
+      "the module between them deleted",
+      `jest.mock("./dep.cjs", () => ({ name: "mock-a" }));
+       const { run } = require("./app.cjs");
+       test("reads the mock", () => {
+         expect(run()).toBe("app(svc(mock-a))");
+         ${drop("./svc.cjs")}
+       });`,
+      `expect(require("./app.cjs").run()).toBe("app(svc(real))");`,
+    ],
+    [
+      "the module between them replaced by undefined in require.cache",
+      `jest.mock("./dep.cjs", () => ({ name: "mock-a" }));
+       const { run } = require("./app.cjs");
+       test("reads the mock", () => {
+         expect(run()).toBe("app(svc(mock-a))");
+         require.cache[require.resolve("./svc.cjs")] = undefined;
+       });`,
+      `expect(require("./app.cjs").run()).toBe("app(svc(real))");`,
+    ],
+    [
+      "the module between them deleted, which was not the first to require the mock",
+      `jest.mock("./dep.cjs", () => ({ name: "mock-a" }));
+       require("./late.cjs");
+       const { run } = require("./app.cjs");
+       test("reads the mock", () => {
+         expect(run()).toBe("app(svc(mock-a))");
+         ${drop("./svc.cjs")}
+       });`,
+      `expect(require("./app.cjs").run()).toBe("app(svc(real))");`,
+    ],
+    [
+      "a module deleted that required a module that requires the mock",
+      `jest.mock("./dep.cjs", () => ({ name: "mock-a" }));
+       require("./late.cjs");
+       const { run } = require("./root.cjs");
+       test("reads the mock", () => {
+         expect(run()).toBe("root(over(late(mock-a)))");
+         ${drop("./over.cjs")}
+       });`,
+      `expect(require("./root.cjs").run()).toBe("root(over(late(real)))");`,
+    ],
+    [
+      "two modules between them deleted",
+      `jest.mock("./dep.cjs", () => ({ name: "mock-a" }));
+       require("./late.cjs");
+       const { run } = require("./root.cjs");
+       test("reads the mock", () => {
+         expect(run()).toBe("root(over(late(mock-a)))");
+         ${drop("./over.cjs", "./late.cjs")}
+       });`,
+      `expect(require("./root.cjs").run()).toBe("root(over(late(real)))");`,
+    ],
+    [
+      "the module between them deleted, which its requirer required twice, after another mock came and went",
+      `jest.mock("./dep.cjs", () => ({ name: "mock-a" }));
+       const { run } = require("./twice.cjs");
+       test("reads the mock", () => {
+         expect(run()).toBe("twice(svc(mock-a))");
+         ${drop("./svc.cjs")}
+         jest.doMock("./late.cjs", () => ({ captured: "mock-late" }));
+         expect(require("./late.cjs").captured).toBe("mock-late");
+         jest.dontMock("./late.cjs");
+       });`,
+      `expect(require("./twice.cjs").run()).toBe("twice(svc(real))");`,
+    ],
+    [
+      "the module between them deleted, which was not the first, after a read of its children",
+      `jest.mock("./dep.cjs", () => ({ name: "mock-a" }));
+       require("./late.cjs");
+       const { run } = require("./app.cjs");
+       test("reads the mock", () => {
+         expect(run()).toBe("app(svc(mock-a))");
+         expect(require.cache[require.resolve("./svc.cjs")].children.length).toBe(1);
+         ${drop("./svc.cjs")}
+       });`,
+      `expect(require("./app.cjs").run()).toBe("app(svc(real))");`,
+    ],
+    [
+      "the mock deleted",
+      `jest.mock("./dep.cjs", () => ({ name: "mock-a" }));
+       const { describe } = require("./svc.cjs");
+       afterAll(() => { ${drop("./dep.cjs")} });
+       test("reads the mock", () => {
+         expect(describe()).toBe("svc(mock-a)");
+       });`,
+      `expect(require("./svc.cjs").describe()).toBe("svc(real)");`,
+    ],
+    [
+      "a module that mock.module() patched deleted",
+      `require("./svc.cjs");
+       mock.module("./dep.cjs", () => ({ name: "mock-a" }));
+       afterAll(() => { ${drop("./dep.cjs")} });
+       test("reads the mock", () => {
+         expect(require("./late.cjs").captured).toBe("late(mock-a)");
+       });`,
+      `expect(require("./late.cjs").captured).toBe("late(real)");`,
+    ],
+    [
+      "the mock deleted, and then ended by jest.dontMock()",
+      `test("reads the mock", () => {
+         jest.doMock("./dep.cjs", () => ({ name: "mock-a" }));
+         expect(require("./svc.cjs").describe()).toBe("svc(mock-a)");
+         ${drop("./dep.cjs")}
+         jest.dontMock("./dep.cjs");
+       });`,
+      `expect(require("./svc.cjs").describe()).toBe("svc(real)");`,
+    ],
+    [
+      "the mock deleted, and then ended by vi.doUnmock()",
+      `test("reads the mock", () => {
+         vi.doMock("./dep.cjs", () => ({ name: "mock-a" }));
+         expect(require("./svc.cjs").describe()).toBe("svc(mock-a)");
+         ${drop("./dep.cjs")}
+         vi.doUnmock("./dep.cjs");
+       });`,
+      `expect(require("./svc.cjs").describe()).toBe("svc(real)");`,
+    ],
+    [
+      "the mock deleted, and then replaced by a second jest.doMock()",
+      `test("reads the mock", () => {
+         jest.doMock("./dep.cjs", () => ({ name: "mock-a" }));
+         expect(require("./svc.cjs").describe()).toBe("svc(mock-a)");
+         ${drop("./dep.cjs")}
+         jest.doMock("./dep.cjs", () => ({ name: "mock-b" }));
+       });`,
+      `expect(require("./svc.cjs").describe()).toBe("svc(real)");`,
+    ],
+  ])("the next file runs the CommonJS requirer of a mock again: %s", async (_, first, second) => {
+    await expectFixturesToPass(
+      {
+        ...commonJSChain,
+        "a.test.cjs": `
+          const { afterAll, expect, jest, mock, test, vi } = require("bun:test");
+          ${first}
+        `,
+        "b.test.cjs": `
+          const { expect, test } = require("bun:test");
+          test("reads the module itself", () => {
+            ${second}
+          });
+        `,
+      },
+      2,
+      ["./a.test.cjs", "./b.test.cjs"],
+    );
+  });
+
+  test("the next file runs the CommonJS requirer of a module that deletes itself and required the mock", async () => {
+    await expectFixturesToPass(
+      {
+        ...commonJSChain,
+        "svc.cjs": `
+          delete require.cache[__filename];
+          const { name } = require("./dep.cjs");
+          exports.describe = () => "svc(" + name + ")";
+        `,
+        "a.test.cjs": `
+          const { expect, jest, test } = require("bun:test");
+          jest.mock("./dep.cjs", () => ({ name: "mock-a" }));
+          test("reads the mock", () => {
+            expect(require("./app.cjs").run()).toBe("app(svc(mock-a))");
+          });
+        `,
+        "b.test.cjs": `
+          const { expect, test } = require("bun:test");
+          test("reads the module itself", () => {
+            expect(require("./app.cjs").run()).toBe("app(svc(real))");
+          });
+        `,
+      },
+      2,
+      ["./a.test.cjs", "./b.test.cjs"],
+    );
+  });
+
+  test("the next file runs a CommonJS module again that keeps a deleted mock and has required the module again since", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.cjs": `exports.name = "real";`,
+        "keep.cjs": `
+          const first = require("./dep.cjs");
+          exports.read = () => first.name;
+          exports.again = () => require("./dep.cjs").name;
+        `,
+        "a.test.cjs": `
+          const { expect, jest, test } = require("bun:test");
+          jest.mock("./dep.cjs", () => ({ name: "mock-a" }));
+          const keep = require("./keep.cjs");
+          test("reads the mock, and the module itself where it requires the module again", () => {
+            ${drop("./dep.cjs")}
+            jest.dontMock("./dep.cjs");
+            expect([keep.read(), keep.again()]).toEqual(["mock-a", "real"]);
+          });
+        `,
+        "b.test.cjs": `
+          const { expect, test } = require("bun:test");
+          test("reads the module itself", () => {
+            expect(require("./keep.cjs").read()).toBe("real");
+          });
+        `,
+      },
+      2,
+      ["./a.test.cjs", "./b.test.cjs"],
+    );
+  });
+
+  test("an ES module that imports a deleted ES module that imports a mocked CommonJS module", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.cjs": `exports.name = "real";`,
+        "svc.js": `import { name } from "./dep.cjs"; export const describe = () => name;`,
+        "app.js": `import { describe } from "./svc.js"; export const run = () => "app(" + describe() + ")";`,
+        "a.test.js": `
+          import { expect, test, vi } from "bun:test";
+          import { run } from "./app.js";
+          vi.mock("./dep.cjs", () => ({ name: "mock-a" }));
+          test("reads the mock", () => {
+            expect(run()).toBe("app(mock-a)");
+            ${drop("./svc.js")}
+          });
+        `,
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          import { run } from "./app.js";
+          test("reads the module itself", () => {
+            expect(run()).toBe("app(real)");
+          });
+        `,
+      },
+      2,
+      ["./a.test.js", "./b.test.js"],
+    );
+  });
+
+  test.each([
+    ["", ""],
+    [", after a collection", "Bun.gc(true);"],
+  ])("an ES module that imports a deleted CommonJS module that required the mock%s", async (_, collects) => {
+    await expectFixturesToPass(
+      {
+        "dep.cjs": `exports.name = "real";`,
+        "svc.cjs": `const dep = require("./dep.cjs"); exports.describe = () => dep.name;`,
+        "app.mjs": `import { describe } from "./svc.cjs"; export const run = () => "app(" + describe() + ")";`,
+        "a.test.mjs": `
+          import { expect, mock, test } from "bun:test";
+          mock.module("./dep.cjs", () => ({ name: "mock-a" }));
+          const { run } = await import("./app.mjs");
+          test("reads the mock", () => {
+            expect(run()).toBe("app(mock-a)");
+            ${drop("./svc.cjs")}
+            ${collects}
+          });
+        `,
+        "b.test.mjs": `
+          import { expect, mock, test } from "bun:test";
+          mock.module("./dep.cjs", () => ({ name: "mock-b" }));
+          test("reads its own mock", async () => {
+            expect((await import("./app.mjs")).run()).toBe("app(mock-b)");
+          });
+        `,
+      },
+      2,
+      ["./a.test.mjs", "./b.test.mjs"],
+    );
+  });
+
+  test.each([
+    ["", drop("./svc.js")],
+    [", the first of them deleted too", drop("./svc.js", "./first.cjs")],
+  ])("two CommonJS modules that required a deleted ES module that imports the mock%s", async (_, deletes) => {
+    await expectFixturesToPass(
+      {
+        "dep.js": `export const name = "real";`,
+        "svc.js": `import { name } from "./dep.js"; export const describe = () => name;`,
+        "first.cjs": `const { describe } = require("./svc.js"); exports.first = () => "first(" + describe() + ")";`,
+        "second.cjs": `const { describe } = require("./svc.js"); exports.second = () => "second(" + describe() + ")";`,
+        "top.cjs": `const { first } = require("./first.cjs"); exports.top = () => "top(" + first() + ")";`,
+        "a.test.cjs": `
+          const { expect, jest, test } = require("bun:test");
+          jest.mock("./dep.js", () => ({ name: "mock-a" }));
+          const { top } = require("./top.cjs");
+          const { second } = require("./second.cjs");
+          test("reads the mock", () => {
+            expect([top(), second()]).toEqual(["top(first(mock-a))", "second(mock-a)"]);
+            ${deletes}
+          });
+        `,
+        "b.test.cjs": `
+          const { expect, test } = require("bun:test");
+          test("reads the module itself", () => {
+            expect([require("./top.cjs").top(), require("./second.cjs").second()]).toEqual(["top(first(real))", "second(real)"]);
+          });
+        `,
+      },
+      2,
+      ["./a.test.cjs", "./b.test.cjs"],
+    );
+  });
+
+  test("a CommonJS module that requires a deleted CommonJS module that required an ES module that imports the mock", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.mjs": `export const name = "real";`,
+        "mid.mjs": `import { name } from "./dep.mjs"; export const describe = () => name;`,
+        "svc.cjs": `const { describe } = require("./mid.mjs"); exports.describe = () => "svc(" + describe() + ")";`,
+        "app.cjs": `const { describe } = require("./svc.cjs"); exports.run = () => "app(" + describe() + ")";`,
+        "a.test.cjs": `
+          const { expect, jest, test } = require("bun:test");
+          jest.mock("./dep.mjs", () => ({ name: "mock-a" }));
+          const { run } = require("./app.cjs");
+          test("reads the mock", () => {
+            expect(run()).toBe("app(svc(mock-a))");
+            ${drop("./svc.cjs")}
+          });
+        `,
+        "b.test.cjs": `
+          const { expect, test } = require("bun:test");
+          test("reads the module itself", () => {
+            expect(require("./app.cjs").run()).toBe("app(svc(real))");
+          });
+        `,
+      },
+      2,
+      ["./a.test.cjs", "./b.test.cjs"],
+    );
+  });
+
+  test("vi.doUnmock() in the same file reaches the importer of a deleted module that imported the mock", async () => {
+    await expectFixturesToPass(
+      {
+        ...chain,
+        "a.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("reads the mock, and then the module itself", async () => {
+            vi.doMock("./dep.js", () => ({ name: "mock-a" }));
+            expect((await import("./app.js")).run()).toBe("app(mock-a)");
+            ${drop("./svc.js")}
+            vi.doUnmock("./dep.js");
+            expect([(await import("./app.js")).run(), globalThis.appLoads]).toEqual(["app(real)", 2]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("jest.dontMock() in the same file reaches the requirer of a deleted module that required a requirer of the mock", async () => {
+    await expectFixturesToPass(
+      {
+        ...commonJSChain,
+        "a.test.cjs": `
+          const { expect, jest, test } = require("bun:test");
+          test("reads the mock, and then the module itself", () => {
+            jest.doMock("./dep.cjs", () => ({ name: "mock-a" }));
+            require("./late.cjs");
+            expect(require("./root.cjs").run()).toBe("root(over(late(mock-a)))");
+            ${drop("./over.cjs")}
+            jest.dontMock("./dep.cjs");
+            expect(require("./root.cjs").run()).toBe("root(over(late(real)))");
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test.each([
+    [
+      "vi.doMock()",
+      `expect([run(), globalThis.appLoads]).toEqual(["app(real)", 1]);
+       vi.doMock("./dep.js", () => ({ name: "mock-b" }));`,
+    ],
+    [
+      "mock.module(), after the file loaded the deleted module again",
+      `expect([run(), globalThis.appLoads]).toEqual(["app(real)", 1]);
+       await import("./svc.js");
+       mock.module("./dep.js", () => ({ name: "mock-b" }));`,
+    ],
+  ])("a later file's mock reaches the importer of a module that an earlier file deleted: %s", async (_, mocks) => {
+    await expectFixturesToPass(
+      {
+        ...chain,
+        "a.test.js": `
+          import { expect, test } from "bun:test";
+          import { run } from "./app.js";
+          test("deletes the module between them", () => {
+            expect(run()).toBe("app(real)");
+            ${drop("./svc.js")}
+          });
+        `,
+        "b.test.js": `
+          import { expect, mock, test, vi } from "bun:test";
+          import { run } from "./app.js";
+          test("gets the app.js that the first file left, and then one that imports the mock", async () => {
+            ${mocks}
+            expect([(await import("./app.js")).run(), globalThis.appLoads]).toEqual(["app(mock-b)", 2]);
+          });
+        `,
+      },
+      2,
+      ["./a.test.js", "./b.test.js"],
+    );
+  });
+
+  test("mock.module() over a module of an earlier file keeps this file's importer of a deleted module", async () => {
+    await expectFixturesToPass(
+      {
+        ...chain,
+        "first.test.js": `
+          import { expect, test } from "bun:test";
+          import { name } from "./dep.js";
+          test("loads dep.js", () => {
+            expect(name).toBe("real");
+          });
+        `,
+        "second.test.js": `
+          import { expect, mock, test } from "bun:test";
+          import { run } from "./app.js";
+          test("keeps its app.js, which reads the patched dep.js through the deleted module", async () => {
+            ${drop("./svc.js")}
+            mock.module("./dep.js", () => ({ name: "mock-b" }));
+            expect([(await import("./app.js")).run(), run(), globalThis.appLoads]).toEqual(["app(mock-b)", "app(mock-b)", 1]);
+          });
+        `,
+      },
+      2,
+      ["./first.test.js", "./second.test.js"],
+    );
+  });
+
+  test("a CommonJS module that required the module itself, before the file deleted and mocked it, is not run again", async () => {
+    await expectFixturesToPass(
+      {
+        "config.cjs": `exports.name = "real";`,
+        "pool.cjs": `
+          const config = require("./config.cjs");
+          globalThis.poolLoads = (globalThis.poolLoads ?? 0) + 1;
+          exports.name = () => "pool(" + config.name + ")";
+        `,
+        "a.test.cjs": `
+          const { beforeEach, expect, mock, test } = require("bun:test");
+          const pool = require("./pool.cjs");
+          beforeEach(() => {
+            ${drop("./config.cjs")}
+            mock.module("./config.cjs", () => ({ name: "mock-a" }));
+          });
+          test("reads the mock, and pool.cjs reads the module itself", () => {
+            expect([require("./config.cjs").name, pool.name(), globalThis.poolLoads]).toEqual(["mock-a", "pool(real)", 1]);
+          });
+        `,
+        "b.test.cjs": `
+          const { expect, test } = require("bun:test");
+          test("gets the pool.cjs of the first file", () => {
+            expect([require("./pool.cjs").name(), globalThis.poolLoads]).toEqual(["pool(real)", 1]);
+          });
+        `,
+      },
+      2,
+      ["./a.test.cjs", "./b.test.cjs"],
+    );
+  });
+
+  test("a CommonJS module that required a module after its mock ended is not run again when the module is deleted", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.cjs": `exports.name = "real";`,
+        "keeper.cjs": `
+          const { name } = require("./dep.cjs");
+          globalThis.keeperLoads = (globalThis.keeperLoads ?? 0) + 1;
+          exports.captured = "keeper(" + name + ")";
+        `,
+        "a.test.cjs": `
+          const { expect, jest, mock, test } = require("bun:test");
+          require("./dep.cjs");
+          test("a mock of dep.cjs comes and goes, and then dep.cjs is deleted", () => {
+            mock.module("./dep.cjs", () => ({ name: "mock-a" }));
+            expect(require("./dep.cjs").name).toBe("mock-a");
+            jest.dontMock("./dep.cjs");
+            expect(require("./keeper.cjs").captured).toBe("keeper(real)");
+            ${drop("./dep.cjs")}
+          });
+        `,
+        "b.test.cjs": `
+          const { expect, test } = require("bun:test");
+          test("gets the keeper.cjs of the first file", () => {
+            expect([require("./keeper.cjs").captured, globalThis.keeperLoads]).toEqual(["keeper(real)", 1]);
+          });
+        `,
+      },
+      2,
+      ["./a.test.cjs", "./b.test.cjs"],
+    );
+  });
+
+  test("a preload module that vi.resetModules() set aside is not an importer of what it imports", async () => {
+    await expectFixturesToPass(
+      {
+        // As in Vitest, the reset loads inl again, which has ES syntax in a package without "type": "module". It leaves ext and kept loaded.
+        "node_modules/inl/package.json": `{ "name": "inl", "main": "./index.js" }`,
+        "node_modules/inl/index.js": `import { k } from "kept"; export const inl = () => "inl(" + k + ")";`,
+        "node_modules/kept/package.json": `{ "name": "kept", "type": "module", "main": "./index.js" }`,
+        "node_modules/kept/index.js": `export const k = "real";`,
+        "node_modules/ext/package.json": `{ "name": "ext", "type": "module", "main": "./index.js" }`,
+        "node_modules/ext/index.js": `
+          import { inl } from "inl";
+          globalThis.extLoads = (globalThis.extLoads ?? 0) + 1;
+          export const ext = () => "ext(" + inl() + ")";
+        `,
+        "preload.js": `import "inl";`,
+        "a.test.js": `
+          import { expect, jest, test, vi } from "bun:test";
+          test("a mock of kept comes and goes, and ext, which imports the preload's inl, stays", async () => {
+            expect([(await import("ext")).ext(), globalThis.extLoads]).toEqual(["ext(inl(real))", 1]);
+            vi.resetModules();
+            jest.doMock("kept", () => ({ k: "mock" }));
+            expect((await import("kept")).k).toBe("mock");
+            jest.dontMock("kept");
+            expect([(await import("ext")).ext(), globalThis.extLoads]).toEqual(["ext(inl(real))", 1]);
+          });
+        `,
+      },
+      1,
+      ["--preload", "./preload.js"],
+    );
+  });
+
+  test.each([
+    ["", ""],
+    [", also after the mock left require.cache", drop("./x.js")],
+  ])("a preload module that the file has mocked is not an importer of what it imports%s", async (_, deletes) => {
+    await expectFixturesToPass(
+      {
+        "preload.js": `import "./x.js";`,
+        "x.js": `import { y } from "./y.js"; export const x = "real-x, " + y;`,
+        "y.js": `export const y = "real-y";`,
+        "user.js": `import { x } from "./x.js"; globalThis.userLoads = (globalThis.userLoads ?? 0) + 1; export const seen = x;`,
+        "a.test.js": `
+          import { expect, test, vi } from "bun:test";
+          vi.mock("./x.js", () => ({ x: "mock-x" }));
+          test("a mock of y.js comes and goes, and user.js, which imports the mock of x.js, stays", async () => {
+            expect([(await import("./user.js")).seen, globalThis.userLoads]).toEqual(["mock-x", 1]);
+            ${deletes}
+            vi.doMock("./y.js", () => ({ y: "mock-y" }));
+            expect((await import("./y.js")).y).toBe("mock-y");
+            vi.doUnmock("./y.js");
+            expect([(await import("./user.js")).seen, globalThis.userLoads]).toEqual(["mock-x", 1]);
+          });
+        `,
+      },
+      1,
+      ["--preload", "./preload.js"],
+    );
+  });
+});
+
 describe.concurrent("a factory doesn't wait for an onLoad() callback in an unrelated load", () => {
   const files = {
     "k.js": `export const x = "real";`,

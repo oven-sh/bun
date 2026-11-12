@@ -96,6 +96,10 @@ public:
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
     bool ignoreESModuleAnnotation { false };
+    // A module mock gave the object its exports: the loader made it for the mock, or the mock replaced the exports of a module that had run.
+    bool hasExportsOfModuleMock { false };
+    // `m_parent` uses it no more: it has required the file again since, or is a test file that has ended. Saves the end of a mock a look at it once it has left the require cache.
+    bool isUnusedByParent { false };
     // Of the module object of a file of an ahead-of-time executable: the number of the file in the executable. Its `exports`, `parent` and `children` are the engine's to answer.
     static constexpr uint32_t noCompiledModule = UINT32_MAX;
     uint32_t compiledModule { noCompiledModule };

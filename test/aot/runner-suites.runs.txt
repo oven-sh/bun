@@ -7,6 +7,37 @@
 # `const dep = require("dep")`), two instances are wanted at one time, or the test counts the runs. What an importer reads late follows the mock.
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > a CommonJS file that deletes the module before each mock and puts a copy back after each test
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > a CommonJS module that requires a deleted CommonJS module that required an ES module that imports the mock
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > a later file's mock reaches the importer of a module that an earlier file deleted: mock.module(), after the file loaded the deleted module again
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > a later file's mock reaches the importer of a module that an earlier file deleted: vi.doMock()
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > a module that mock.module() patched and that was deleted itself: in the next file
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > a module that mock.module() patched and that was deleted itself: in the next run of --rerun-each
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > an ES module that imports a deleted CommonJS module that required the mock
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > an ES module that imports a deleted CommonJS module that required the mock, after a collection
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > an ES module that imports a deleted ES module that imports a mocked CommonJS module
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > jest.dontMock() in the same file reaches the requirer of a deleted module that required a requirer of the mock
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > the next file evaluates the importer of a mock again: jest.mock(), the module between them deleted
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > the next file evaluates the importer of a mock again: the module between them and the mock deleted
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > the next file evaluates the importer of a mock again: the module between them deleted and imported again
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > the next file evaluates the importer of a mock again: two modules between them deleted
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > the next file evaluates the importer of a mock again: vi.mock(), the module between them deleted
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > the next file runs a CommonJS module again that keeps a deleted mock and has required the module again since
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > the next file runs the CommonJS requirer of a mock again: a module deleted that required a module that requires the mock
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > the next file runs the CommonJS requirer of a mock again: a module that mock.module() patched deleted
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > the next file runs the CommonJS requirer of a mock again: the mock deleted
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > the next file runs the CommonJS requirer of a mock again: the mock deleted, and then ended by jest.dontMock()
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > the next file runs the CommonJS requirer of a mock again: the mock deleted, and then ended by vi.doUnmock()
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > the next file runs the CommonJS requirer of a mock again: the mock deleted, and then replaced by a second jest.doMock()
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > the next file runs the CommonJS requirer of a mock again: the module between them deleted
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > the next file runs the CommonJS requirer of a mock again: the module between them deleted, which its requirer required twice, after another mock came and went
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > the next file runs the CommonJS requirer of a mock again: the module between them deleted, which was not the first to require the mock
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > the next file runs the CommonJS requirer of a mock again: the module between them deleted, which was not the first, after a read of its children
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > the next file runs the CommonJS requirer of a mock again: the module between them replaced by undefined in require.cache
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > the next file runs the CommonJS requirer of a mock again: two modules between them deleted
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > the next file runs the CommonJS requirer of a module that deletes itself and required the mock
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > two CommonJS modules that required a deleted ES module that imports the mock
+test/js/bun/test/mock/mock-module.test.ts: a module that left require.cache still counts when a mock ends > two CommonJS modules that required a deleted ES module that imports the mock, the first of them deleted too
 # In these the one instance is all that differs: every test of the fixture passes, every file runs, and some files run fewer times.
 test/js/bun/test/mock/mock-module.test.ts: a factory that loads a module which imports another mock > a mock that waits for the factory is a mock for what the factory loads too
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > a factory that fails

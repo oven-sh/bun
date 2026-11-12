@@ -1272,12 +1272,14 @@ test.concurrent("a worker exiting right after closing ref'd ports shuts down cle
 // port. Linux is where that combination is verified clean (CI's ASAN lane); keep the
 // fixture on the main thread, since every exited worker thread leaves its thread_local
 // eventNames() table behind under Malloc=1, which LSan would report here.
-test.concurrent.skipIf(!isASAN || !isLinux)("ports closed right before exit are released by the VM teardown", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const { MessageChannel } = require("worker_threads");
+test.concurrent.skipIf(!isASAN || !isLinux)(
+  "ports closed right before exit are released by the VM teardown",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { MessageChannel } = require("worker_threads");
        for (let i = 0; i < 50; i++) {
          const { port1, port2 } = new MessageChannel();
          port1.onmessage = () => {};
@@ -1286,20 +1288,21 @@ test.concurrent.skipIf(!isASAN || !isLinux)("ports closed right before exit are 
          port2.close();
        }
        process.exit(0);`,
-    ],
-    env: {
-      ...bunEnv,
-      BUN_DESTRUCT_VM_ON_EXIT: "1",
-      Malloc: "1",
-      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-      LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
-});
+      ],
+      env: {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        Malloc: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  },
+);
 
 // In a node worker only parentPort receives what the parent posts; the global
 // scope's `self.onmessage` is not a channel there (as in node). Libraries that

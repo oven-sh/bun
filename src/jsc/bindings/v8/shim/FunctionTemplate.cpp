@@ -129,8 +129,7 @@ Function* FunctionTemplate::makeFunction(JSC::VM& vm, Zig::GlobalObject* globalO
     f->putDirect(vm, vm.propertyNames->prototype, protoObj,
         JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
     protoObj->putDirect(vm, vm.propertyNames->constructor, f, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
-    // Cached before the properties are applied, as V8 does: a property can be a template
-    // whose instances take this function's prototype.
+    // Cached first: a property can be a template whose instances take this prototype.
     m_cachedFunction.set(vm, this, f);
 
     // Properties recorded directly on the FunctionTemplate become own properties

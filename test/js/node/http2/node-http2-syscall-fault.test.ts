@@ -3,7 +3,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isASAN, isWindows } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
+import net from "node:net";
 import path from "node:path";
+import http2utils from "./helpers";
 
 const skip = !fault.available() || isWindows;
 
@@ -234,6 +236,136 @@ describe.skipIf(skip)("node:http2 under injected syscall faults", () => {
       expect(exitCode).toBe(0);
     },
   );
+});
+
+// The session gives such a transport up, and the socket layer closes it. Before that close the session
+// has to get what the peer sent, and the close has to reach it as the close of any socket does.
+describe.skipIf(skip)("node:http2 after a send() that the kernel rejects", () => {
+  // :method GET, :scheme http and :path / from the static table, then a literal :authority.
+  const requestBlock = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+  const requestFrame = (id: number) => new http2utils.HeadersFrame(id, requestBlock, 0, true, true).data;
+  const requests = Buffer.concat([
+    http2utils.kClientMagic,
+    new http2utils.SettingsFrame().data,
+    requestFrame(1),
+    requestFrame(3),
+  ]);
+
+  // A server whose every send fails from the moment `peer` runs, and a raw peer that stays connected.
+  async function serve(
+    connect: net.NetConnectOpts,
+    peer: (socket: net.Socket, session: http2.ServerHttp2Session) => void,
+  ) {
+    const events: string[] = [];
+    const server = http2.createServer();
+    server.on("sessionError", err => events.push(`sessionError:${(err as NodeJS.ErrnoException).code}`));
+    const accepted = Promise.withResolvers<number>();
+    server.on("connection", socket => accepted.resolve((socket as any)._handle.fd));
+    const sessionOpened = Promise.withResolvers<http2.ServerHttp2Session>();
+    const sessionClosed = Promise.withResolvers<void>();
+    server.on("session", session => {
+      session.on("goaway", code => events.push(`goaway:${code}`));
+      session.on("close", () => {
+        events.push("session-close");
+        sessionClosed.resolve();
+      });
+      sessionOpened.resolve(session);
+    });
+    server.on("stream", stream => {
+      events.push(`stream:${stream.id}`);
+      stream.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const socket = net.connect({ ...connect, port: (server.address() as net.AddressInfo).port, host: "127.0.0.1" });
+    socket.on("error", () => {});
+    try {
+      const [fd, session] = await Promise.all([accepted.promise, sessionOpened.promise]);
+      // The server's SETTINGS have left, so the rule fails what the server sends from here on.
+      await once(socket, "data");
+      fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: -1, fd });
+      peer(socket, session);
+      await sessionClosed.promise;
+    } finally {
+      fault.clear();
+      socket.destroy();
+      await new Promise(resolve => server.close(resolve));
+    }
+    return events;
+  }
+
+  test("reads what a peer that stays connected sent before", async () => {
+    const events = await serve({}, (socket, session) => {
+      // The server writes in the turn in which the peer writes, so its send fails before the loop reads.
+      socket.write(Buffer.concat([requests, new http2utils.GoAwayFrame(0, 0).data]));
+      session.ping(() => {});
+    });
+    expect(events).toEqual(["stream:1", "stream:3", "goaway:0", "session-close"]);
+  });
+
+  test("closes without the FIN of a peer that stays connected, once it has read what was queued", async () => {
+    // This peer does not answer the server's FIN with its own, and it sends no GOAWAY.
+    const events = await serve({ allowHalfOpen: true }, (socket, session) => {
+      socket.write(requests);
+      session.ping(() => {});
+    });
+    expect(events).toEqual(["stream:1", "stream:3", "session-close"]);
+  });
+
+  // A frame that the program submits in the turn of the rejected send corks and flushes again. That flush must
+  // not release the deferred tick with the cork: the peer sends nothing, so no read ends this session either.
+  test.each([
+    ["session.close()", (client: http2.ClientHttp2Session) => client.close()],
+    ["session.settings()", (client: http2.ClientHttp2Session) => client.settings({ enablePush: false })],
+    [
+      "a second session.request()",
+      (client: http2.ClientHttp2Session) => {
+        const second = client.request({ ":path": "/second" });
+        second.on("error", () => {});
+        second.end();
+      },
+    ],
+  ])("ends the writes when %s flushes before the deferred tick", async (_name, flushAgain) => {
+    const settingsAcked = Promise.withResolvers<void>();
+    const peer = net.createServer(socket => {
+      socket.on("error", () => {});
+      let received = Buffer.alloc(0);
+      socket.on("data", chunk => {
+        received = Buffer.concat([received, chunk]);
+        // After the preface: a SETTINGS frame with the ACK flag means that the client's write path is idle.
+        for (let at = 24; at + 9 <= received.length; at += 9 + received.readUIntBE(at, 3)) {
+          if (received[at + 3] === 4 && received[at + 4] & 1) settingsAcked.resolve();
+        }
+      });
+      socket.write(new http2utils.SettingsFrame().data);
+    });
+    peer.listen(0, "127.0.0.1");
+    await once(peer, "listening");
+    const events: string[] = [];
+    const client = http2.connect(`http://127.0.0.1:${(peer.address() as net.AddressInfo).port}`);
+    client.on("error", err => events.push(`session-error:${(err as NodeJS.ErrnoException).code}`));
+    const sessionClosed = Promise.withResolvers<void>();
+    client.on("close", () => {
+      events.push("session-close");
+      sessionClosed.resolve();
+    });
+    try {
+      await settingsAcked.promise;
+      const fd = (client.socket as any)._handle.fd;
+      fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: -1, fd });
+      const req = client.request({ ":path": "/" });
+      req.on("error", err => events.push(`stream-error:${(err as NodeJS.ErrnoException).code}`));
+      req.on("close", () => events.push(`stream-close:${req.rstCode}`));
+      req.end();
+      flushAgain(client);
+      await sessionClosed.promise;
+    } finally {
+      fault.clear();
+      client.destroy();
+      await new Promise(resolve => peer.close(resolve));
+    }
+    expect(events).toEqual(["stream-close:8", "session-close"]);
+  });
 });
 
 describe.skipIf(skip)("node:http2 seeded short-I/O fuzz", () => {

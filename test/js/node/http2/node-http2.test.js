@@ -13,7 +13,7 @@ import path from "node:path";
 import { PerformanceObserver } from "node:perf_hooks";
 import tls from "node:tls";
 import util from "node:util";
-import { Duplex, duplexPair, finished, Writable } from "stream";
+import { Duplex, duplexPair, finished, Readable, Writable } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 const { describe, expect, it, beforeAll, afterAll, beforeEach, createCallCheckCtx, mock } = createTest(
@@ -9381,6 +9381,484 @@ it.skipIf(!isLinux)("a stream closes without an error when its write finds the c
   await streamClosed.promise;
   await new Promise(resolve => server.close(resolve));
   expect(events).toEqual(["aborted", "close:8"]);
+});
+
+describe("a session reads what the peer sent before the close that follows a rejected send", () => {
+  // :method GET, :scheme http and :path / from the static table, then a literal :authority.
+  const requestBlock = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+  const requestFrame = id => new http2utils.HeadersFrame(id, requestBlock, 0, true, true).data;
+  const head = Buffer.concat([http2utils.kClientMagic, new http2utils.SettingsFrame().data, requestFrame(1)]);
+  const goaway = new http2utils.GoAwayFrame(0, 0).data;
+  // One segment: the server reads two complete requests and the GOAWAY in one chunk.
+  const burst = Buffer.concat([head, requestFrame(3), goaway]);
+  // Above one DATA frame, below the window of a stream.
+  const large = Buffer.alloc(40000, "x");
+
+  // Returns what the server saw: the requests and the GOAWAY in the order of the wire, then how each stream ended.
+  async function serve(peer, onStream, { unixPath, allowHalfOpen = false } = {}) {
+    const events = [];
+    const streams = [];
+    const server = http2.createServer({ allowHalfOpen });
+    server.on("sessionError", err => events.push(`sessionError:${err.code}`));
+    const sessionOpened = Promise.withResolvers();
+    const sessionClosed = Promise.withResolvers();
+    server.on("session", session => {
+      session.on("goaway", code => events.push(`goaway:${code}`));
+      session.on("close", sessionClosed.resolve);
+      sessionOpened.resolve(session);
+    });
+    let socket;
+    server.on("stream", stream => {
+      events.push(`stream:${stream.id}`);
+      const closed = Promise.withResolvers();
+      const ended = [];
+      stream.on("error", err => events.push(`error:${err.code}`));
+      stream.on("aborted", () => ended.push("aborted"));
+      // A stream with no answer has nothing to finish.
+      if (onStream) stream.on("finish", () => ended.push("finish"));
+      stream.on("close", () => closed.resolve(`${stream.id}:${[...ended, `close:${stream.rstCode}`].join(",")}`));
+      streams.push(closed.promise);
+      onStream?.(stream, socket);
+    });
+    await new Promise(resolve =>
+      unixPath ? server.listen(unixPath, resolve) : server.listen(0, "127.0.0.1", resolve),
+    );
+    socket = unixPath ? net.connect(unixPath) : net.connect(server.address().port, "127.0.0.1");
+    socket.on("error", () => {});
+    try {
+      await once(socket, "connect");
+      await peer(socket, sessionOpened.promise);
+      // The session closes in every case. The requests and the GOAWAY have to come first.
+      await sessionClosed.promise;
+      events.push(...(await Promise.all(streams)));
+    } finally {
+      socket.destroy();
+      await new Promise(resolve => server.close(resolve));
+    }
+    return events;
+  }
+
+  const answer = stream => {
+    stream.respond({ ":status": 200 });
+    stream.end("hello");
+  };
+
+  // The server's SETTINGS ACK is the write that finds the reset, between the frames of the chunk.
+  const resetAfter = chunk => async socket => {
+    socket.write(chunk);
+    socket.resetAndDestroy();
+  };
+
+  // The server writes in the turn in which the peer leaves, so its send fails before the loop reads the chunk.
+  const leaveUnread =
+    (leave, chunk = burst) =>
+    async (socket, sessionOpened) => {
+      const session = await sessionOpened;
+      // The server's SETTINGS have left, so the PING below is its first write after the peer left.
+      await once(socket, "data");
+      socket.write(chunk);
+      leave(socket);
+      session.ping(() => {});
+    };
+
+  const delivered = ["stream:1", "stream:3", "goaway:0", "1:aborted,close:8", "3:aborted,close:8"];
+
+  // A unix socket keeps what its peer wrote before it closed. Not tried on Windows, where the tests of a reset above are not run either.
+  it.skipIf(isWindows)("a server, when the frames are still unread in the kernel of a unix socket", async () => {
+    using dir = tempDir("h2-rejected-send", {});
+    const leave = leaveUnread(socket => socket.destroy());
+    expect(await serve(leave, undefined, { unixPath: path.join(String(dir), "h2.sock") })).toEqual(delivered);
+  });
+
+  // Linux only. The kernel has to deliver the bytes queued ahead of the reset before it reports the close.
+  describe.skipIf(!isLinux)("after a reset", () => {
+    it("a server, when the frames are in the chunk that it reads", async () => {
+      expect(await serve(resetAfter(burst))).toEqual(delivered);
+    });
+
+    it("a server, when the frames are still unread in the kernel", async () => {
+      expect(await serve(leaveUnread(socket => socket.resetAndDestroy()))).toEqual(delivered);
+    });
+
+    it("a server that answers the requests of that chunk", async () => {
+      // An answer that is written after the send that failed completes, like node's ClearOutgoing. The answer
+      // above one DATA frame takes the batch path of the parser, and no answer waits behind another.
+      const events = await serve(
+        resetAfter(Buffer.concat([head, requestFrame(3), requestFrame(5), requestFrame(7), goaway])),
+        stream => {
+          stream.respond({ ":status": 200 });
+          stream.end(stream.id === 5 ? large : "hello");
+        },
+      );
+      expect(events).toEqual([
+        "stream:1",
+        "stream:3",
+        "stream:5",
+        "stream:7",
+        "goaway:0",
+        "1:finish,close:0",
+        "3:finish,close:0",
+        "5:finish,close:0",
+        "7:finish,close:0",
+      ]);
+    });
+
+    it.each([
+      ["one DATA frame", "hello"],
+      ["several DATA frames in one writev", large],
+    ])("a server, when the frames arrive while its answer of %s is the send that finds the reset", async (_, body) => {
+      const events = await serve(
+        async socket => {
+          await once(socket, "data");
+          socket.write(head);
+        },
+        (stream, socket) => {
+          if (stream.id === 1) {
+            // The rest and the reset reach the kernel inside the dispatch of the first request.
+            socket.write(Buffer.concat([requestFrame(3), goaway]));
+            socket.resetAndDestroy();
+            stream.respond({ ":status": 200 });
+            stream.end(body);
+          } else {
+            answer(stream);
+          }
+        },
+      );
+      expect(events).toEqual(["stream:1", "stream:3", "goaway:0", "1:finish,close:0", "3:finish,close:0"]);
+    });
+
+    it("a server whose answer has no end reads the next request of the chunk", async () => {
+      const chunk = Buffer.alloc(16384, "x");
+      let pulled = 0;
+      let pulledBeforeTheNextRequest;
+      const events = await serve(resetAfter(burst), stream => {
+        if (stream.id !== 1) {
+          pulledBeforeTheNextRequest = pulled;
+          return;
+        }
+        stream.respond({ ":status": 200 });
+        Readable.from(
+          (function* () {
+            // The next request ends the source. So does a count that no window allows: the test then fails with it.
+            while (pulledBeforeTheNextRequest === undefined && pulled < 4096) {
+              pulled++;
+              yield chunk;
+            }
+          })(),
+          { objectMode: false },
+        )
+          .on("error", () => {})
+          .pipe(stream);
+      });
+      expect(events.slice(0, 3)).toEqual(["stream:1", "stream:3", "goaway:0"]);
+      // The window of the peer is 65535 bytes: four chunks leave, and the streams buffer a few more.
+      expect(pulledBeforeTheNextRequest).toBeLessThan(16);
+    });
+
+    it.each([false, true])(
+      "a server with allowHalfOpen %p closes the session when the peer has left",
+      async allowHalfOpen => {
+        const requests = Buffer.concat([head, requestFrame(3)]);
+        // No GOAWAY and no close() of the program: only the close of the socket ends these sessions.
+        expect(await serve(resetAfter(requests), answer, { allowHalfOpen })).toEqual([
+          "stream:1",
+          "stream:3",
+          "1:finish,close:0",
+          "3:finish,close:0",
+        ]);
+        const unread = leaveUnread(socket => socket.resetAndDestroy(), requests);
+        expect(await serve(unread, answer, { allowHalfOpen })).toEqual([
+          "stream:1",
+          "stream:3",
+          "1:finish,close:0",
+          "3:finish,close:0",
+        ]);
+      },
+    );
+
+    it("the hand-over of one session takes the cork from another session of the server", async () => {
+      // Parses what a raw peer receives. Resolves `seen(id, what)` when stream `id` got its HEADERS or its END_STREAM.
+      function tape(socket) {
+        let buffered = Buffer.alloc(0);
+        const streams = new Map();
+        const waiters = [];
+        const settingsAcked = Promise.withResolvers();
+        socket.on("data", chunk => {
+          buffered = Buffer.concat([buffered, chunk]);
+          while (buffered.length >= 9 && buffered.length >= 9 + buffered.readUIntBE(0, 3)) {
+            const length = buffered.readUIntBE(0, 3);
+            const type = buffered[3];
+            const id = buffered.readUInt32BE(5) & 0x7fffffff;
+            if (type === 4 && buffered[4] & 1) settingsAcked.resolve();
+            if (id && type <= 1) {
+              const stream = streams.get(id) ?? { headers: false, data: 0, end: false };
+              if (type === 1) stream.headers = true;
+              if (type === 0) stream.data += length;
+              if (buffered[4] & 1) stream.end = true;
+              streams.set(id, stream);
+            }
+            buffered = buffered.subarray(9 + length);
+          }
+          for (let i = waiters.length - 1; i >= 0; i--) {
+            if (streams.get(waiters[i].id)?.[waiters[i].what]) waiters.splice(i, 1)[0].resolve();
+          }
+        });
+        const seen = (id, what) =>
+          new Promise(resolve => (streams.get(id)?.[what] ? resolve() : waiters.push({ id, what, resolve }))).then(() =>
+            streams.get(id),
+          );
+        return { seen, settingsAcked: settingsAcked.promise };
+      }
+      const server = http2.createServer();
+      const eventsOfA = [];
+      const sessions = [];
+      const closedA = Promise.withResolvers();
+      const firstOfB = Promise.withResolvers();
+      server.on("session", session => {
+        sessions.push(session);
+        if (sessions.length > 1) return;
+        session.on("goaway", code => eventsOfA.push(`goaway:${code}`));
+        session.on("close", closedA.resolve);
+      });
+      server.on("stream", stream => {
+        stream.on("error", () => {});
+        if (stream.session === sessions[0]) return void eventsOfA.push(`stream:${stream.id}`);
+        if (stream.id === 1) return firstOfB.resolve(stream);
+        stream.respond({ ":status": 200 });
+        stream.end("second");
+      });
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const { port } = server.address();
+      const a = net.connect(port, "127.0.0.1");
+      a.on("error", () => {});
+      const b = net.connect(port, "127.0.0.1");
+      b.on("error", () => {});
+      try {
+        // The server's SETTINGS have left on A.
+        await once(a, "data");
+        const { seen, settingsAcked } = tape(b);
+        b.write(head);
+        const streamOfB = await firstOfB.promise;
+        // B's peer has the SETTINGS ACK, so the turn below starts with nothing corked.
+        await settingsAcked;
+        // One turn. A corks a PING. B's HEADERS take the cork, which sends A's PING: that send finds the reset.
+        // B still holds the cork when the deferred tick ends the writes of A.
+        a.write(burst);
+        a.resetAndDestroy();
+        sessions[0].ping(() => {});
+        streamOfB.respond({ ":status": 200 });
+        expect(await seen(1, "headers")).toEqual({ headers: true, data: 0, end: false });
+        await closedA.promise;
+        expect(eventsOfA).toEqual(["stream:1", "stream:3", "goaway:0"]);
+        // B still answers.
+        streamOfB.end("hello");
+        expect(await seen(1, "end")).toEqual({ headers: true, data: 5, end: true });
+        b.write(requestFrame(3));
+        expect(await seen(3, "end")).toEqual({ headers: true, data: 6, end: true });
+      } finally {
+        a.destroy();
+        b.destroy();
+        await new Promise(resolve => server.close(resolve));
+      }
+    });
+
+    // The exit flushes the cork, that send finds the reset, and the deferred tick that it asks for never runs.
+    it.skipIf(!isASAN)("a process that exits in the turn of the rejected send leaks no session", async () => {
+      const fixture = `
+        const http2 = require("node:http2");
+        const net = require("node:net");
+        const block = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+        const request = Buffer.concat([Buffer.from([0, 0, block.length, 1, 5, 0, 0, 0, 1]), block]);
+        const server = http2.createServer();
+        server.on("sessionError", () => {});
+        let client;
+        server.on("stream", stream => {
+          stream.on("error", () => {});
+          client.resetAndDestroy();
+          stream.respond({ ":status": 200 });
+          stream.end("bye");
+          process.exit(0);
+        });
+        server.listen(0, "127.0.0.1", () => {
+          client = net.connect(server.address().port, "127.0.0.1");
+          client.on("error", () => {});
+          const preface = Buffer.from("PRI * HTTP/2.0\\r\\n\\r\\nSM\\r\\n\\r\\n");
+          client.on("connect", () => client.write(Buffer.concat([preface, Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0]), request])));
+        });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: {
+          ...bunEnv,
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+          LSAN_OPTIONS: `suppressions=${path.join(import.meta.dir, "..", "..", "..", "leaksan.supp")}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, leaks: stderr.includes("LeakSanitizer"), exitCode }, stderr).toEqual({
+        stdout: "",
+        leaks: false,
+        exitCode: 0,
+      });
+    });
+
+    // What a client's request saw of a response that is complete in the kernel when `write` finds the reset.
+    async function exchange(write, options) {
+      const events = [];
+      let client, req;
+      const peer = net.createServer(socket => {
+        socket.on("error", () => {});
+        socket.write(new http2utils.SettingsFrame().data);
+        const received = [];
+        socket.on("data", chunk => {
+          received.push(chunk);
+          // The request's first DATA frame has arrived, so stream 1 is open on both ends.
+          if (!Buffer.concat(received).includes("first")) return;
+          socket.removeAllListeners("data");
+          // :status 200 from the static table, then the whole body: one segment, and the reset.
+          socket.write(
+            Buffer.concat([
+              new http2utils.HeadersFrame(1, Buffer.from([0x88]), 0, true, false).data,
+              new http2utils.DataFrame(1, Buffer.from("early"), 0, true).data,
+            ]),
+          );
+          socket.resetAndDestroy();
+          // The client writes in the turn of the reset, so its send fails before the loop reads the response.
+          write(client, req, events);
+        });
+      });
+      await new Promise(resolve => peer.listen(0, "127.0.0.1", resolve));
+      try {
+        client = http2.connect(`http://127.0.0.1:${peer.address().port}`, options);
+        client.on("error", err => events.push(`sessionError:${err.code}`));
+        req = client.request({ ":method": "POST", ":path": "/" });
+        const closed = Promise.withResolvers();
+        let body = "";
+        req.setEncoding("utf8");
+        req.on("error", err => events.push(`error:${err.code}`));
+        req.on("response", headers => events.push(`response:${headers[":status"]}`));
+        req.on("data", chunk => (body += chunk));
+        req.on("end", () => events.push(`end:${body}`));
+        req.on("close", () => closed.resolve());
+        req.write("first");
+        await closed.promise;
+        events.push(`close:${req.rstCode}`);
+      } finally {
+        client?.destroy();
+        await new Promise(resolve => peer.close(resolve));
+      }
+      return events;
+    }
+
+    it.each([
+      ["writes more", (client, req) => void req.write("more"), 8],
+      ["ends", (client, req) => void req.end(), 0],
+      ["writes several DATA frames", (client, req) => void req.write(large), 8],
+      ["writes several DATA frames and ends", (client, req) => void (req.write(large), req.end()), 0],
+    ])("a client's request that %s, when its response is still unread in the kernel", async (_, write, code) => {
+      expect(await exchange(write)).toEqual(["response:200", "end:early", `close:${code}`]);
+    });
+
+    it("a client that cannot encode the header block of a request, after the send that failed", async () => {
+      const events = await exchange(
+        (client, req, events) => {
+          req.write("more");
+          req.once("response", () => {
+            const large = client.request({ ":path": "/", "x-large": Buffer.alloc(90000, "a").toString() });
+            large.on("error", err => events.push(`large:error:${err.code}`));
+            large.on("close", () => events.push(`large:close:${large.rstCode}`));
+            large.end();
+          });
+        },
+        // The block is within this limit, so it reaches the encoder, which has a smaller one.
+        { maxSendHeaderBlockLength: 100000 },
+      );
+      // Only the read ends the session: no COMPRESSION_ERROR cuts the response off.
+      expect(events).toEqual(["response:200", "end:early", "large:close:8", "close:8"]);
+    });
+
+    it("a TLS server that cannot encode the header block of an answer, after the send that failed", async () => {
+      // :method GET, :scheme https and :path / from the static table, then a literal :authority.
+      const block = Buffer.concat([Buffer.from([0x82, 0x87, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
+      const request = id => new http2utils.HeadersFrame(id, block, 0, true, true).data;
+      const events = [];
+      // The block is within this limit, so it reaches the encoder, which has a smaller one.
+      const server = http2.createSecureServer({ ...TLS_CERT, maxSendHeaderBlockLength: 100000 });
+      server.on("sessionError", err => events.push(`sessionError:${err.code}`));
+      const sessionClosed = Promise.withResolvers();
+      server.on("session", session => {
+        session.on("goaway", code => events.push(`goaway:${code}`));
+        session.on("close", sessionClosed.resolve);
+      });
+      let socket;
+      server.on("stream", stream => {
+        events.push(`stream:${stream.id}`);
+        stream.on("error", () => {});
+        // The answer of the first request is the send that finds the reset.
+        if (stream.id === 1) socket.resetAndDestroy();
+        stream.respond(stream.id === 3 ? { ":status": 200, "x-large": Buffer.alloc(90000, "a").toString() } : {});
+        stream.end("hello");
+      });
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      socket = net.connect(server.address().port, "127.0.0.1");
+      socket.on("error", () => {});
+      const peer = tls.connect({ socket, ALPNProtocols: ["h2"], ...TLS_OPTIONS, servername: "localhost" }, () => {
+        // One record: three requests and a GOAWAY.
+        peer.write(
+          Buffer.concat([
+            http2utils.kClientMagic,
+            new http2utils.SettingsFrame().data,
+            request(1),
+            request(3),
+            request(5),
+            goaway,
+          ]),
+        );
+      });
+      peer.on("error", () => {});
+      try {
+        await sessionClosed.promise;
+      } finally {
+        socket.destroy();
+        await new Promise(resolve => server.close(resolve));
+      }
+      // The third request and the GOAWAY follow in the record: a COMPRESSION_ERROR would cut them off.
+      expect(events).toEqual(["stream:1", "stream:3", "stream:5", "goaway:0"]);
+    });
+
+    it("a client, when the frames are still unread in the kernel", async () => {
+      const events = [];
+      let client;
+      // The peer answers the preface with SETTINGS, a PING and a GOAWAY in one segment, and resets.
+      const peer = net.createServer(socket => {
+        socket.on("error", () => {});
+        socket.once("data", () => {
+          socket.write(Buffer.concat([new http2utils.SettingsFrame().data, new http2utils.PingFrame().data, goaway]));
+          socket.resetAndDestroy();
+          // The client writes in the turn of the reset, so its send fails before the loop reads the segment.
+          client.ping(() => {});
+        });
+      });
+      await new Promise(resolve => peer.listen(0, "127.0.0.1", resolve));
+      try {
+        client = http2.connect(`http://127.0.0.1:${peer.address().port}`);
+        const closed = Promise.withResolvers();
+        client.on("error", err => events.push(`error:${err.code}`));
+        client.on("remoteSettings", () => events.push("remoteSettings"));
+        client.on("ping", () => events.push("ping"));
+        client.on("goaway", code => events.push(`goaway:${code}`));
+        client.on("close", closed.resolve);
+        await closed.promise;
+      } finally {
+        client?.destroy();
+        await new Promise(resolve => peer.close(resolve));
+      }
+      expect(events).toEqual(["remoteSettings", "ping", "goaway:0"]);
+    });
+  });
 });
 
 it.skipIf(!isLinux)("a TLS session closes without an error when its write finds the connection reset", async () => {

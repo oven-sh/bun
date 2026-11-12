@@ -258,6 +258,8 @@ static JSPromise* takeCodecPromise(JSTransformStream* stream)
 {
     auto* promise = stream->m_codecPromise.get();
     stream->m_codecPromise.clear();
+    // A parked chunk that was abandoned never runs.
+    stream->m_pendingWriteChunk.clear();
     stream->m_codecChunkOffThread = false;
     nativeTransformReleaseStateIfIdle(stream);
     return promise;
@@ -302,12 +304,14 @@ static JSPromise* transformChunk(JSGlobalObject* globalObject, JSTransformStream
     ASSERT(coder);
 
     // A sink that detached abandoned the previous chunk, whose step still owns the coder on its pool thread.
+    // This one is parked, which m_codecPromise and m_pendingWriteChunk together mean: deliverAsync starts it.
     if (stream->m_asyncCodecInFlight) [[unlikely]] {
-        RELEASE_AND_RETURN(scope, promiseFromSteps(globalObject, [&] -> JSPromise* {
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            throwTypeError(globalObject, scope, "Cannot enqueue a chunk into a TransformStream whose readable side is closed or has already requested close"_s);
-            return nullptr;
-        }));
+        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+        stream->m_codecPromise.set(vm, stream, promise);
+        stream->m_pendingWriteChunk.set(vm, stream, chunk);
+        stream->m_codecChunkOffThread = true;
+        scope.assertNoException();
+        return promise;
     }
 
     if (inputLen > kAsyncCodecThreshold) {
@@ -383,8 +387,7 @@ void nativeCodecAbandon(JSGlobalObject* globalObject, JSTransformStream* stream)
     settleCodecChunk(globalObject, stream, JSValue());
 }
 
-template<typename JSStream>
-static JSPromise* compressionStreamTransformImpl(JSGlobalObject* globalObject, JSStream* stream, JSValue chunk)
+static JSPromise* compressionStreamTransformImpl(JSGlobalObject* globalObject, JSTransformStream* stream, void* coder, JSValue chunk)
 {
     return promiseFromSteps(globalObject, [&] -> JSPromise* {
         auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
@@ -393,14 +396,14 @@ static JSPromise* compressionStreamTransformImpl(JSGlobalObject* globalObject, J
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (!bytes) [[unlikely]]
             return nullptr;
-        RELEASE_AND_RETURN(scope, transformChunk(globalObject, stream, stream->m_coder, chunk, bytes->data(), bytes->size(), false));
+        RELEASE_AND_RETURN(scope, transformChunk(globalObject, stream, coder, chunk, bytes->data(), bytes->size(), false));
     });
 }
 
 NEVER_INLINE JSPromise* compressionStreamTransform(JSGlobalObject* globalObject, JSCompressionStream* stream, JSTransformStreamDefaultController*, JSValue chunk)
 {
     BUN_REMOVABLE_DEFINITION(CompressionStreams, compressionStreamTransform);
-    return compressionStreamTransformImpl(globalObject, stream, chunk);
+    return compressionStreamTransformImpl(globalObject, stream, stream->m_coder, chunk);
 }
 
 NEVER_INLINE JSPromise* compressionStreamFlush(JSGlobalObject* globalObject, JSCompressionStream* stream, JSTransformStreamDefaultController*)
@@ -412,7 +415,7 @@ NEVER_INLINE JSPromise* compressionStreamFlush(JSGlobalObject* globalObject, JSC
 NEVER_INLINE JSPromise* decompressionStreamTransform(JSGlobalObject* globalObject, JSDecompressionStream* stream, JSTransformStreamDefaultController*, JSValue chunk)
 {
     BUN_REMOVABLE_DEFINITION(CompressionStreams, decompressionStreamTransform);
-    return compressionStreamTransformImpl(globalObject, stream, chunk);
+    return compressionStreamTransformImpl(globalObject, stream, stream->m_coder, chunk);
 }
 
 NEVER_INLINE JSPromise* decompressionStreamFlush(JSGlobalObject* globalObject, JSDecompressionStream* stream, JSTransformStreamDefaultController*)
@@ -447,6 +450,30 @@ static CodecStepResult deliverAsyncOutput(JSGlobalObject* globalObject, JSTransf
     return step;
 }
 
+// Runs the chunk, or the flush, that transformChunk parked behind a step whose chunk was abandoned.
+static void startParkedChunk(JSGlobalObject* globalObject, JSTransformStream* stream)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* promise = stream->m_codecPromise.get();
+    JSValue chunk = stream->m_pendingWriteChunk.get();
+    void* coder = coderOf(stream);
+    // Before the clears, which would let a pending release go ahead.
+    stream->m_nativeStateInUse = true;
+    stream->m_codecPromise.clear();
+    stream->m_pendingWriteChunk.clear();
+    stream->m_codecChunkOffThread = false;
+    JSPromise* result = chunk.isUndefined()
+        ? transformChunk(globalObject, stream, coder, chunk, nullptr, 0, true)
+        : compressionStreamTransformImpl(globalObject, stream, coder, chunk);
+    stream->m_nativeStateInUse = false;
+    // Only a termination: the write stays pending, and the stream's finalizer releases the coder.
+    RETURN_IF_EXCEPTION(scope, );
+    nativeTransformReleaseStateIfIdle(stream);
+    // Not resolvePromise(promise, result), which looks up `then`.
+    result->performPromiseThenWithContext(vm, globalObject, jsUndefined(), jsUndefined(), promise, jsUndefined());
+}
+
 // JS-thread completion of an off-thread step. `out` borrows the coder's buffer, so it is
 // consumed BEFORE m_asyncCodecInFlight is cleared and the coder may be released or
 // re-dispatched. Entered from the event loop with no JS above it (a TopExceptionScope, and
@@ -460,6 +487,15 @@ extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* global
     if (!stream) [[unlikely]]
         return;
     ASSERT(stream->m_asyncCodecInFlight);
+
+    // The chunk of this step was abandoned, and its output with it. Another one waits for the coder.
+    if (stream->m_codecPromise && stream->m_pendingWriteChunk) [[unlikely]] {
+        stream->m_asyncCodecInFlight = false;
+        startParkedChunk(globalObject, stream);
+        if (scope.exception()) [[unlikely]]
+            Bun__VM__takeTerminationOutsideScript(globalObject);
+        return;
+    }
 
     CodecStepResult step;
     step.more = more;

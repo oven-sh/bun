@@ -998,13 +998,14 @@ describe("bounded output per input chunk", () => {
             // Output from before the sink is attached goes to the readable's queue, whose backpressure keeps a later chunk from the codec.
             await served.promise;
             await new Promise(resolve => setImmediate(resolve));
-            await writer.write(large.subarray(0, 512 * 1024));
+            await writer.write(large.subarray(0, 192 * 1024));
             const reader = (await response).body.getReader();
             await reader.read();
             const writes = [writer.write(large), writer.write(large.subarray(0, 64 * 1024))];
             controller.abort();
             results.add((await Promise.allSettled(writes)).map(result => result.status).join());
-            await reader.cancel();
+            // Rejects if the response has failed by now.
+            await reader.cancel().catch(() => {});
           }
           console.log(...results);
           process.exit(0);
@@ -1020,6 +1021,60 @@ describe("bounded output per input chunk", () => {
       expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
     },
   );
+
+  // Nothing of these reaches the readable, so they do not fail with it, whether the step before them is still running or not.
+  test.each([
+    ["the end of the data", "writer.write(rest.subarray(cut))", "fulfilled,fulfilled"],
+    ["an empty chunk", "writer.write(new Uint8Array(0))", "fulfilled,fulfilled"],
+    ["a close()", "writer.close()", "fulfilled,AbortError"],
+  ])("%s behind a chunk that addAbortSignal() abandoned off-thread", async (what, last, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { addAbortSignal } = require("node:stream");
+        const { randomBytes } = require("node:crypto");
+        let onServe;
+        using server = Bun.serve({
+          port: 0,
+          error: () => new Response(),
+          fetch: () => onServe(),
+        });
+        const compressed = Bun.gzipSync(randomBytes(1024 * 1024));
+        const rest = compressed.subarray(100 * 1024);
+        const cut = ${what === "the end of the data"} ? rest.length - 5 : rest.length;
+        const results = new Set();
+        for (let i = 0; i < 3; i++) {
+          const controller = new AbortController();
+          const ds = new DecompressionStream("gzip");
+          addAbortSignal(controller.signal, ds.readable);
+          const writer = ds.writable.getWriter();
+          writer.closed.catch(() => {});
+          const served = Promise.withResolvers();
+          onServe = () => (served.resolve(), new Response(ds.readable));
+          const response = fetch(server.url);
+          await served.promise;
+          await new Promise(resolve => setImmediate(resolve));
+          await writer.write(compressed.subarray(0, 100 * 1024));
+          const reader = (await response).body.getReader();
+          await reader.read();
+          const writes = [writer.write(rest.subarray(0, cut)), ${last}];
+          controller.abort();
+          results.add((await Promise.allSettled(writes)).map(result => result.reason?.name ?? result.status).join());
+          await reader.cancel().catch(() => {});
+        }
+        console.log(...results);
+        process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: expected + "\n", exitCode: 0 });
+  });
 
   // An abort during close() is different: the close in progress wins, so a flush
   // being drained keeps going and the reader still gets all of it.

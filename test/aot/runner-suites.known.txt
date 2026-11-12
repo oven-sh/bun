@@ -107,8 +107,6 @@ test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not eval
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
-# The next one arms a getter on the module object of "vitest" for the file after it. --isolate=modules runs like --isolate in a compiled run: each test file gets a module object of its own.
-test/js/bun/test/vitest-flavor.test.ts: [test] globals = "vitest" > an export that throws while the globals are defined fails that file, and the next file runs > --isolate=modules, which loads no preload for the file that fails
 test/js/bun/test/vitest-flavor.test.ts: [test] globals = "vitest" > is part of the transpiler cache key
 # A module that is being imported calls import(): a compiled run runs the inner module ahead of the `.then()` of the outer call, as the executable and Node.js do. `bun test` reads the inner file on another thread first.
 test/js/bun/test/vi-utils.test.ts: vi.dynamicImportSettled > waits for the imports in flight and the ones they start

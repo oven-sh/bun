@@ -10,6 +10,7 @@
 #include "ZigGlobalObject.h"
 #include "NodeAsyncHooks.h"
 
+#include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
@@ -3348,6 +3349,8 @@ struct ModulesToEvict {
     // Packages that vi.mock() is about to mock.
     Vector<String> packagesToStash;
     bool onlyImportersFromEarlierTestFiles { false };
+    // An importer that an earlier test file fetched stays too if the running test file holds it: see ModulesOfTestFile.
+    bool keepsWhatTestFileHolds { false };
     // Forces a pass even with nothing listed, to sweep the modules that failed to load or threw.
     bool isEndOfTestFile { false };
     bool hasLoadSettled { false };
@@ -3479,6 +3482,104 @@ static void stashLoadedModule(Zig::GlobalObject* globalObject, const String& spe
     RELEASE_AND_RETURN(scope, moveLoadedModule(globalObject, specifier, original));
 }
 
+// The object behind `require` in an ES module, if the module has used it. What require() got for the module is listed there, and nowhere in the registry.
+static Bun::JSCommonJSModule* requirerOfESModule(JSC::VM& vm, JSC::AbstractModuleRecord* record)
+{
+    auto* environment = record->moduleEnvironmentMayBeNull();
+    if (!environment)
+        return nullptr;
+    JSC::SymbolTableEntry::Fast importMeta = environment->symbolTable()->get(vm.propertyNames->builtinNames().metaPrivateName().impl());
+    if (importMeta.isNull())
+        return nullptr;
+    JSValue value = environment->readVariable(vm, importMeta.scopeOffset());
+    auto* meta = value ? dynamicDowncast<Zig::ImportMetaObject>(value) : nullptr;
+    // Null until the module first reads `require`.
+    JSC::JSCell* require = meta ? meta->requireProperty.getConcurrently() : nullptr;
+    auto* bound = require ? dynamicDowncast<JSC::JSBoundFunction>(require) : nullptr;
+    return bound ? dynamicDowncast<Bun::JSCommonJSModule>(bound->boundThis()) : nullptr;
+}
+
+using RegisteredKeys = UncheckedKeyHashMap<JSC::AbstractModuleRecord*, String>;
+
+// The modules that the running test file holds, by key: the ones that it fetched or that have mocked, and everything that those are linked to in the registry and in require.cache.
+// An earlier test file may have fetched them. A pass puts the set together once, when an importer first asks.
+// Not minsize, as the rest of the pass is: this walks every module that the file holds, once for each mock call that asks.
+static UncheckedKeyHashSet<String> modulesOfTestFile(Zig::GlobalObject* globalObject, JSC::JSModuleLoader* loader, const RegisteredKeys& registeredKeys, const RequireKeys& requireKeys)
+{
+    using Type = JSC::ScriptFetchParameters::Type;
+    auto& vm = JSC::getVM(globalObject);
+    auto& plugins = globalObject->onLoadPlugins;
+    UncheckedKeyHashSet<String> held;
+    Vector<String> work;
+    auto hold = [&](const String& key) {
+        if (!key.isNull() && held.add(key).isNewEntry)
+            work.append(key);
+    };
+    for (auto& [key, testFile] : plugins.testFileOfModule) {
+        if (testFile == plugins.testFile)
+            hold(key);
+    }
+    for (auto& key : plugins.mockingModules)
+        hold(key);
+
+    UncheckedKeyHashMap<String, Bun::JSCommonJSModule*> requiredUnder;
+    // The wrapper of a require()d ES module isn't among the children of the module that required it first: only m_parent links the two.
+    UncheckedKeyHashMap<Bun::JSCommonJSModule*, Vector<String, 1>> requiredFirstBy;
+    for (auto& [commonJSModule, key] : requireKeys) {
+        requiredUnder.add(key, commonJSModule);
+        if (auto* parent = commonJSModule->m_parent.get())
+            requiredFirstBy.ensure(parent, [] { return Vector<String, 1>(); }).iterator->value.append(key);
+    }
+    auto holdRequired = [&](Bun::JSCommonJSModule* requirer) {
+        // Every require() call appends its module to the list, so a call in a loop appends the same one again and again.
+        JSValue previous;
+        for (auto& child : requirer->m_children) {
+            if (child.get() == previous)
+                continue;
+            previous = child.get();
+            if (auto* required = dynamicDowncast<Bun::JSCommonJSModule>(previous))
+                hold(requireKeys.get(required));
+        }
+        if (auto* children = requirer->m_childrenValue ? dynamicDowncast<JSC::JSArray>(requirer->m_childrenValue.get()) : nullptr) {
+            for (unsigned i = 0; i < children->length(); ++i) {
+                // canGetIndexQuickly() skips accessors, so no script runs here.
+                JSValue child = children->canGetIndexQuickly(i) ? children->getIndexQuickly(i) : JSValue();
+                if (auto* required = child ? dynamicDowncast<Bun::JSCommonJSModule>(child) : nullptr)
+                    hold(requireKeys.get(required));
+            }
+        }
+        if (auto first = requiredFirstBy.find(requirer); first != requiredFirstBy.end()) {
+            for (auto& required : first->value)
+                hold(required);
+        }
+    };
+
+    while (!work.isEmpty()) {
+        String key = work.takeLast();
+        // A key may also name what `with { type: "text" }` and the like imported. The file holds the module, not those.
+        auto* entry = loader->getRegisteredMayBeNull(JSC::Identifier::fromString(vm, key), Type::JavaScript);
+        if (auto* record = entry ? entry->record() : nullptr) {
+            hold(specifierOfUnwaitedModuleMockKey(key));
+            for (auto& [request, resolved] : record->resolvedRequests()) {
+                if (request.second == Type::JavaScript)
+                    hold(String { resolved.get() });
+            }
+            for (auto& [request, loaded] : record->loadedModules()) {
+                if (request.second != Type::JavaScript)
+                    continue;
+                if (auto registered = registeredKeys.find(loaded.m_module.get()); registered != registeredKeys.end())
+                    hold(registered->value);
+            }
+            // No module of the require cache: then no `require` has got anything that a pass could keep.
+            if (auto* requirer = requireKeys.isEmpty() ? nullptr : requirerOfESModule(vm, record))
+                holdRequired(requirer);
+        }
+        if (auto* commonJSModule = requiredUnder.get(key))
+            holdRequired(commonJSModule);
+    }
+    return held;
+}
+
 // Importers stay linked to the record they imported, so they're evicted too, except preload modules, which nothing would load again.
 // The loader looks up the entries of a loading module's imports more than once and expects the same ones, so an entry that is
 // loading, or that a loading module has requested, stays until that load settles (modulesToEvictOnceLoaded).
@@ -3592,7 +3693,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     Vector<std::pair<JSC::AbstractModuleRecord*, JSC::JSPromise*>> asking;
     UncheckedKeyHashSet<JSC::AbstractModuleRecord*> asks;
     // After moveLoadedModule() a record's own key is not the one it is registered under.
-    UncheckedKeyHashMap<JSC::AbstractModuleRecord*, String> registeredKeys;
+    RegisteredKeys registeredKeys;
     for (auto& [mapKey, entry] : loader->moduleMap()) {
         if (auto* record = entry->record())
             registeredKeys.add(record, String(mapKey.first));
@@ -3709,8 +3810,19 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         }
     }
 
+    // The running test file is linked to the modules that it holds, whoever fetched them. A compiled program has its own record of that.
+    std::optional<UncheckedKeyHashSet<String>> heldByTestFile;
+    auto isHeld = [&](const String& module) {
+        if (vm.hasCompiledCode())
+            return false;
+        if (!heldByTestFile)
+            heldByTestFile = modulesOfTestFile(globalObject, loader, registeredKeys, requireKeys);
+        return heldByTestFile->contains(module);
+    };
+
     // A patched-in-place module that imports an evicted one goes after all, and is walked again for the rest of its importers.
-    UncheckedKeyHashSet<String> evicted;
+    // So does a module that stays because the running test file holds it.
+    UncheckedKeyHashSet<String> evicted, keptForTestFile;
     keys.removeAllMatching([&](const String& key) { return !evicted.add(key).isNewEntry; });
     for (size_t i = 0; i < keys.size(); ++i) {
         String key = keys[i];
@@ -3735,8 +3847,19 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
                 continue;
             if (!testFile || importer == key || (stays && evict.onlyImportersFromEarlierTestFiles && testFile == plugins.testFile))
                 continue;
+            if (stays && evict.keepsWhatTestFileHolds && isHeld(importer)) {
+                // The file stays linked to `key` through it. It is walked all the same: an importer of it that the file doesn't hold goes.
+                if (evicted.add(importer).isNewEntry) {
+                    staysInRegistry.add(importer);
+                    staysInRequireCache.add(importer);
+                    keptForTestFile.add(importer);
+                    keys.append(importer);
+                }
+                continue;
+            }
             bool stayed = staysInRegistry.remove(importer);
             stayed |= staysInRequireCache.remove(importer);
+            keptForTestFile.remove(importer);
             if (evicted.add(importer).isNewEntry || stayed)
                 keys.append(importer);
         }
@@ -3795,6 +3918,9 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     UncheckedKeyHashSet<JSC::JSPromise*> awaited;
     WTF::ListHashSet<String> stay;
     for (auto& key : keys) {
+        // Not waited for either: the pass that a settled load starts would not know that the file holds it.
+        if (keptForTestFile.contains(key))
+            continue;
         if (JSC::JSPromise* pendingLoad = loading.get(key)) {
             stay.add(key);
             awaited.add(pendingLoad);
@@ -6614,6 +6740,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         if (wasLoadedByEarlierTestFile || loaded.staleESMEntry || loaded.staleCommonJSEntry) {
             ModulesToEvict evict;
             evict.onlyImportersFromEarlierTestFiles = true;
+            evict.keepsWhatTestFileHolds = true;
             if (loaded.esmNamespace)
                 evict.patchedESModules.append(specifier);
             if (loaded.commonJSModule)

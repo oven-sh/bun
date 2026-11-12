@@ -925,8 +925,7 @@ pub(crate) fn tick_queue_with_count(
         match run_task(task, el, vm, global) {
             Ok(RunTaskResult::Continue) => {}
             Ok(RunTaskResult::EarlyReturn) => {
-                // The caller keeps draining while a drain ran tasks, and must after a
-                // hot-reload task. Do NOT return `Nothing` here.
+                // Not `Nothing`: the caller must keep draining after a hot-reload task.
                 return Ok(Drained::Tasks);
             }
             // The one fold for every queued task: report what it left as

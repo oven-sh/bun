@@ -1104,8 +1104,7 @@ impl<'a> Repl<'a> {
         // On Windows, ENABLE_PROCESSED_INPUT is already set so Ctrl+C works
     }
 
-    /// The `tick()` at the end of a line. Nothing runs the loop again until the next line, so the tasks that it
-    /// leaves queued run here (`EventLoop::run_tasks_left`).
+    /// The `tick()` at the end of a line: nothing runs the loop again until the next line.
     fn tick_at_line_end(vm: &VirtualMachine) {
         vm.as_mut().tick();
         vm.event_loop_mut().run_tasks_left();

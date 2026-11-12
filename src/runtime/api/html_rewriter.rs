@@ -598,9 +598,8 @@ impl bun_event_loop::Taskable for RewriterPipeBackgroundPull {
 /// that reader falls a high-water mark behind, and its drain signal resumes
 /// it. While nothing is, the rewrite still runs to completion — its handlers
 /// are side effects callers rely on — but one upstream chunk per event-loop
-/// task ([`Self::schedule_background_pull`]), so a synchronous source such as
-/// a regular file is never read through inside a single call. One drain of the
-/// task queue runs at most 9 such tasks in a row.
+/// turn ([`Self::schedule_background_pull`]), so a synchronous source such as
+/// a regular file is never read through inside a single call.
 /// `align(16)`: `NativePromiseContext`'s deferred-deref task packs a 4-bit
 /// type tag into the low bits of a pointer to this.
 #[derive(bun_ptr::CellRefCounted)]
@@ -1225,10 +1224,9 @@ impl RewriterPipe {
 
     /// Nothing is draining the output, so nothing will signal `resume()`:
     /// continue the rewrite from the event loop instead, one upstream chunk
-    /// per task, at most 9 in a row per drain of the task queue. The queued
-    /// task holds a pipe ref and protects the cell, which roots the Response,
-    /// both streams and the handlers until it runs — an unobserved rewrite is
-    /// otherwise reachable from nothing.
+    /// per turn. The queued task holds a pipe ref and protects the cell, which
+    /// roots the Response, both streams and the handlers until it runs — an
+    /// unobserved rewrite is otherwise reachable from nothing.
     fn schedule_background_pull(&self) {
         self.background_pull_armed.set(true);
         if self.background_pull_queued.replace(true) {

@@ -354,11 +354,10 @@ public:
     }
 
     // Node's pending_finalizers: refs whose value was swept during GC and whose finalizer runs on a later event-loop turn; ~NapiRef removes itself.
-    // One task per pending ref, queued here. A task that queued the next one would be a chain of tasks, and one drain of
-    // the task queue runs 9 links of a chain (`EventLoop::next_task_within`).
     void enqueueRefFinalizer(Zig::NapiRef* ref)
     {
         m_pendingRefFinalizers.add(ref);
+        // One task per ref: a task that queued the next one would be a chain (`EventLoop::next_task_within`).
         Bun__napi_enqueue_finalizer(this, drainOneRefFinalizer, this, nullptr);
     }
 

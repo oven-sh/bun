@@ -3667,9 +3667,7 @@ impl VirtualMachine {
         self.event_loop_mut().wait_for_promise(promise)
     }
 
-    /// [`Self::wait_for_promise`] for a macro. Nothing runs the loop of a macro once its promise
-    /// has settled, so the tasks that the last `tick()` of the wait left queued run here
-    /// ([`crate::event_loop::EventLoop::run_tasks_left`]).
+    /// [`Self::wait_for_promise`] for a macro: nothing runs a macro's loop once its promise has settled.
     pub fn wait_for_macro_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
         if promise.status() != crate::js_promise::Status::Pending {
             return Ok(());

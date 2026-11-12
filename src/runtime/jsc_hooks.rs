@@ -1114,9 +1114,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             || uv_idle_started
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
-        // `get_timeout` ignores `has_pending_immediate` on Windows, so work
-        // that is queued for the next `tick()` (an immediate, a yielded task, a
-        // task that the last `tick()` left queued) wakes the poll here.
+        // `get_timeout` ignores `has_pending_immediate` on Windows, so queued work wakes the poll here.
         #[cfg(windows)]
         if has_pending_immediate {
             // SAFETY: `el` is the live per-thread event loop.

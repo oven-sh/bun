@@ -72,11 +72,7 @@ pub struct EventLoop {
     /// (link-time `__bun_run_immediate_task`) casts it back.
     pub immediate_tasks: Vec<*mut ()>,
     pub next_immediate_tasks: Vec<*mut ()>,
-    /// Tasks that asked to run on the *next* loop iteration — after I/O and
-    /// timers have had a turn — rather than in the current drain, which
-    /// runs a task that is queued on this thread in one of its next
-    /// generations (`next_task_within`). Promoted into `tasks` by `auto_tick`,
-    /// like immediates.
+    /// Tasks that asked to run after I/O and timers have had a turn: `auto_tick` promotes them into `tasks`.
     pub yield_tasks: Vec<Task>,
 
     pub concurrent_tasks: ConcurrentQueue,
@@ -274,13 +270,11 @@ pub enum Drained {
     Nothing,
     /// Tasks ran.
     Tasks,
-    /// Tasks ran, and the drain ended with the generation after its last still queued
-    /// (`EventLoop::next_task_within`).
+    /// Tasks ran, and the next generation is still queued (`EventLoop::next_task_within`).
     TasksLeft,
 }
 
-/// How far one drain of the task queue by `tick()` has come: see
-/// [`EventLoop::next_task_within`].
+/// One drain of the task queue by `tick()`: see [`EventLoop::next_task_within`].
 pub struct TaskDrain {
     /// How many tasks of the generation that is running have not run yet.
     left: usize,
@@ -858,14 +852,7 @@ impl EventLoop {
     /// next `tick()`, after a non-blocking poll (`has_pending_tasks`).
     const CONCURRENT_REFILLS_PER_TICK: u32 = 8;
 
-    /// How many generations of tasks one drain of the queue runs
-    /// (`next_task_within`). A task can queue its successor each time it runs
-    /// (a client that dials again when its dial fails); without a bound that
-    /// chain keeps `tick()` from ever returning and timers / I/O never run. A
-    /// drain that ends with tasks queued ends its `tick()`, and the next one
-    /// picks them up: in the run loop after a non-blocking poll
-    /// (`has_pending_tasks`). 9 is libuv's count: `uv_run` runs its pending
-    /// queue once before the poll and at most 8 times after it.
+    /// Generations of tasks per drain (`next_task_within`). libuv runs its pending queue 1 + 8 times a turn.
     const GENERATIONS_PER_DRAIN: u32 = 9;
 
     /// Work is queued that the next `tick()` will run: the poll before it must
@@ -885,10 +872,7 @@ impl EventLoop {
         }
     }
 
-    /// The plugin request that the drain of the queue runs next: they go before every other task.
-    /// Like every other task that another thread posts, they cannot keep `tick()` from returning:
-    /// it takes new ones `CONCURRENT_REFILLS_PER_TICK` times in a row, and again after each other
-    /// task.
+    /// The plugin request to run next. New ones are taken `CONCURRENT_REFILLS_PER_TICK` times in a row.
     fn next_plugin_request(&mut self) -> Option<Task> {
         if self.plugin_requests.readable_length() == 0
             && self.plugin_request_refills_left > 0
@@ -918,8 +902,7 @@ impl EventLoop {
         Some(task)
     }
 
-    /// The task that a release of the whole queue takes next. `tick()` takes its tasks with
-    /// [`Self::next_task_within`].
+    /// The next task for a release of the whole queue. `tick()` reads with [`Self::next_task_within`].
     pub fn next_task(&mut self) -> Option<Task> {
         self.next_plugin_request()
             .or_else(|| self.next_queued_task())
@@ -936,14 +919,7 @@ impl EventLoop {
         }
     }
 
-    /// The task that `drain` runs next. A drain runs the queue one generation at a time: a
-    /// generation is the tasks that were queued when it began, and what they queue on this thread
-    /// is the next one. After `GENERATIONS_PER_DRAIN` of them the drain ends with the next one
-    /// still queued (`Drained::TasksLeft`). So a task that queues its successor each time it runs
-    /// cannot keep `tick()` from returning.
-    ///
-    /// Not inlined into the drain loop: that loop holds `&mut EventLoop` while the tasks it runs
-    /// and releases reach this queue through the VM, so it must read the queue again each time.
+    /// The next task of `drain`. A generation is what was queued when it began: a drain runs 9, then leaves the rest.
     #[inline(never)]
     pub fn next_task_within(&mut self, drain: &mut TaskDrain) -> Option<Task> {
         if self.plugin_request_waits() {
@@ -996,10 +972,7 @@ impl EventLoop {
     /// How many more times [`Self::run_tasks_left`] calls `tick()`.
     const TICKS_FOR_TASKS_LEFT: u32 = 1024;
 
-    /// For a driver that stops running this loop here: a macro that has settled, a test file
-    /// that is over, a line of the REPL. When the last `tick()` ended with tasks queued, `tick()`
-    /// runs again until one ends with none, so a chain of tasks that ends is over here. A chain
-    /// that does not end stays queued after `TICKS_FOR_TASKS_LEFT` more ticks.
+    /// For a driver that stops running this loop: `tick()` again while the last one left tasks queued.
     pub fn run_tasks_left(&mut self) {
         let mut ticks = 0;
         while self.last_tick_left_tasks
@@ -1102,9 +1075,6 @@ impl EventLoop {
         self.closed_for_tasks
     }
 
-    /// Queues `task` from this thread. A task that is queued while the queue drains runs in a
-    /// later generation (`next_task_within`): in the same drain while it has generations left,
-    /// else in the next `tick()`.
     pub fn enqueue_task(&mut self, task: Task) {
         if self.closed_for_tasks {
             // Teardown already released the queue and this loop never ticks
@@ -1639,14 +1609,13 @@ impl EventLoop {
         self.process_gc_timer();
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
-        // timerfd used to. Tasks that the last `tick()` left queued do not
-        // wait for it. libuv's `tick_with_timeout` ignores the argument, so
-        // there a wakeup ends the park.
+        // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
         let has_pending_tasks = self.has_pending_tasks();
         #[cfg(windows)]
         if has_pending_tasks {
             self.wakeup();
         }
+        // Queued tasks do not wait for the park.
         let park = bun_core::Timespec {
             sec: if has_pending_tasks { 0 } else { 1 },
             nsec: 0,

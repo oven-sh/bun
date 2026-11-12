@@ -941,11 +941,13 @@ function numbered(row: string, at: number): { name: string; file: ProgramFile } 
   return { name, file: { name: `${name}.${isTypeScript ? "ts" : "mjs"}`, text } };
 }
 
-/** The programs number `from` .. `from + count - 1` of a row, each made when it is asked for. */
-export function* stretch(row: string, from: number, count: number, stride = 1): Generator<ProgramFile> {
+/** The programs number `from` .. `from + count - 1` of a row, each made when it is asked for. A row that does not exist throws at the call, before any is asked for. */
+export function stretch(row: string, from: number, count: number, stride = 1): Generator<ProgramFile> {
   const length = rows[row][0];
-  for (let step = from; step < Math.min(length, from + count); step++)
-    yield numbered(row, (step * stride) % length).file;
+  return (function* () {
+    for (let step = from; step < Math.min(length, from + count); step++)
+      yield numbered(row, (step * stride) % length).file;
+  })();
 }
 
 /**
@@ -994,8 +996,8 @@ if (import.meta.main) {
       process.argv[2],
       ...[process.argv[3] ?? 0, process.argv[4] ?? 3000, process.argv[5] ?? 1].map(Number),
     ] as [string, number, number, number];
+    const programs = stretch(process.argv[6] ?? "lists", from, count, stride);
     mkdirSync(folder, { recursive: true });
-    for (const { name, text } of stretch(process.argv[6] ?? "lists", from, count, stride))
-      writeFileSync(`${folder}/${name}`, text);
+    for (const { name, text } of programs) writeFileSync(`${folder}/${name}`, text);
   }
 }

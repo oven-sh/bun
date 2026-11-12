@@ -285,15 +285,10 @@ export function getStdinStream(
       return;
     }
 
-    // The stream has not been ref()ed yet. If it is ever ref()ed,
-    // run internalRead()
+    // No reader: own() replays this read. A live consumer (flowing, or a 'readable'
+    // listener) takes the reader back here, as net.Socket._read restarts its handle in
+    // Node. The 'pause' tick may have released it after the consumer attached.
     needsInternalReadRefresh = true;
-
-    // The Readable asks for data on behalf of a consumer (a 'readable' listener or
-    // flowing mode), so take the reader back, as net.Socket._read restarts its handle
-    // in Node. The 'pause' tick may have released it after the consumer attached:
-    // pause() then on('readable') in one 'data' handler leaves readableFlowing false
-    // at that tick. A destroyed stream stays released, or the process never exits.
     if (!stream.destroyed && (stream.readableFlowing || stream._readableState.readableListening)) {
       own();
     }

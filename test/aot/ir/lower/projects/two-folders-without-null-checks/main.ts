@@ -1,6 +1,6 @@
-// a build reports what `bun check` reports in the project of each file: two folders without the option
+// a file whose project needs another program than the entry point's is held to nothing that it declares: two folders without the option
 // RUN: link
-// STATISTIC: SourceFilesDemoted = 0
+// STATISTIC: SourceFilesDemoted = 2
 // CHECK: entry
 
 import { first } from "./imports/one/lib.ts";

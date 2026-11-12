@@ -1,0 +1,17 @@
+# f1 = fill, f2 = elsewhere
+# -- source: the-room-of-a-cell-is-the-same-where-thong-is-read-off-another-object.ts
+# declare function sink(...values: unknown[]): void;
+# const enum Tint { None = 0, Red = 1, Blue = 2 }
+# class Stamp { ink: string; constructor(ink: string) { this.ink = ink; } }
+# interface Ledger { tint: Tint; shade: Tint; gloss: Tint; quill?: Stamp; vellum?: Stamp; wax?: Stamp; twine?: Stamp; }
+# const LedgerMaker = function (this: Ledger) { this.tint = Tint.None; this.shade = Tint.Red; this.gloss = Tint.Blue; } as unknown as new () => Ledger;
+# function fill(book: Ledger, n: number) { book.quill = new Stamp("q" + n); if (n & 1) book.vellum = new Stamp("v" + n); if (n & 2) book.wax = new Stamp("w" + n); if (n & 4) book.twine = new Stamp("t" + n); }
+# function elsewhere(bag: any) { return "" + bag.thong + bag.thong + bag.thong + bag.thong + bag.thong + bag.thong + bag.thong + bag.thong + bag.thong + bag.thong + bag.thong + bag.thong; }
+# sink(fill, elsewhere, new LedgerMaker());
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: size=48
+# CHECK: "quill" appended OptionalCell32 Inline
+# CHECK: "vellum" appended OptionalCell32 Inline
+# CHECK: "wax" appended OptionalCell32 Inline
+# CHECK: "twine" appended JSValue OutOfLine

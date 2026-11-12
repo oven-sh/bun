@@ -1,0 +1,19 @@
+# -- source: a-read-that-asks-its-site-on-the-left-of-a-constant-is-asked-for-a-number.ts
+# declare function print(value: unknown): void;
+# declare function id(value: any): any;
+# const rows = id([{ name: "a", price: 0.5 }, { name: "b", price: 1.5 }, { name: "c", price: 2.5 }]);
+# function total(): number { let sum = 0; for (const row of rows) sum += row.price + 1; return sum; }
+# print(id(total)());
+# print(id(total)());
+# -- end of source
+# LIBRARY: own
+# f1 = total. The constant stands behind the read and is not built yet when the read is. It was tested for absent alone, the sum took any value, ran other code, and the copy left at its first turn.
+# RUN(TWICE): walk f1 mechanisms=all
+# TWICE-LABEL: code f1:Body
+# TWICE: [[found]]: absent|anything @JSValue = GetValueAtSiteOrAbsent {{*}}key="price"
+# TWICE-NEXT: = TypeTest [[found]] testedType=number
+# TWICE: = Add {{*}}form=Numbers
+# RUN: run-in-shell mechanisms=all
+# CHECK: 7.5
+# CHECK-NEXT: 7.5
+# CHECK-NEXT: exited with 0

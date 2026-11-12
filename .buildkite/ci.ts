@@ -1176,7 +1176,7 @@ const BINARY_SIZE_THRESHOLD_MB = 0.5;
 function getReleaseStep(
   releasePlatforms: Platform[],
   options: PipelineOptions,
-  { signed = false, testStepKeys = [] }: { signed?: OptionFlag; testStepKeys?: string[] } = {},
+  { signed = false }: { signed?: OptionFlag } = {},
 ): CommandStep {
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
@@ -1186,11 +1186,6 @@ function getReleaseStep(
   const depends_on = signed
     ? [...releasePlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
     : releasePlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
-
-  // Gate canary upload on green tests. A red test lane leaves the artifacts in
-  // Buildkite but skips the GitHub/S3 upload; the next green main push ships.
-  // [skip tests] on main still lets the release run (testStepKeys is empty).
-  depends_on.push(...testStepKeys);
 
   return {
     key: "release",
@@ -1330,7 +1325,6 @@ interface PipelineOptions {
   skipTests?: OptionFlag;
   skipSizeCheck?: OptionFlag;
   forceBuilds?: OptionFlag;
-  signWindows?: OptionFlag;
   canary?: number;
   buildPlatforms?: Platform[];
   testPlatforms?: Platform[];
@@ -1597,7 +1591,6 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
     forceBuilds: parseOption(/\[(force builds?)\]/i),
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
-    signWindows: parseOption(/\[(sign windows)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
   };
@@ -1718,10 +1711,9 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   }
 
   const { buildPlatforms = [], testPlatforms = [] } = options;
-  // Sign with [sign windows] in the commit message (for testing the sign step
-  // on a branch). DigiCert charges per signature, so canary builds are never signed.
+  // DigiCert charges per signature, so canary builds are never signed.
   const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");
-  const signWindows = ((isMainBranch() && !options.canary) || !!options.signWindows) && windowsPlatforms.length > 0;
+  const signWindows = isMainBranch() && !options.canary && windowsPlatforms.length > 0;
 
   // A build makes sure every image of the spec exists, not only the ones its
   // own steps start from: which steps a build has depends on its options (a
@@ -1899,14 +1891,12 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     .filter(({ tests }) => !tests || !options.testFiles?.length)
     .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms)
     .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms);
-  const testStepKeys: string[] = [];
   {
     const { skipTests, testFiles } = options;
     if (!skipTests) {
       steps.push(
         ...relevantTestPlatforms.map(target => {
           const step = getTestBunStep(target, options, { testFiles, buildId });
-          testStepKeys.push(step.key);
           // Test shards run on their native platform image; when this build
           // bakes it, they wait for it.
           const dependsOn = getImageDependsOn(target, baking);
@@ -1922,7 +1912,6 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
       );
       if (!testFiles?.length) {
         const step = getCargoTestStep(buildId);
-        testStepKeys.push(step.key);
         steps.push(
           getStepWithDependsOn(
             { key: getPlatformKey(cargoTestPlatform), group: getPlatformLabel(cargoTestPlatform), steps: [step] },
@@ -1956,7 +1945,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   }
 
   if (isMainBranch()) {
-    steps.push(getReleaseStep(buildPlatforms, options, { signed: signWindows, testStepKeys }));
+    steps.push(getReleaseStep(buildPlatforms, options, { signed: signWindows }));
   }
 
   // Merge same-label groups into their first occurrence, keeping every

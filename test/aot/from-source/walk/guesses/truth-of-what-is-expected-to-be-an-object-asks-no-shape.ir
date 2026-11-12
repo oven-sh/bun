@@ -1,0 +1,23 @@
+# `parent ? 1 : 2`, of what is written `Node | undefined`: nobody reads what a test of the shape would prove: the question itself says that an object or nothing is expected, and the code asks for undefined and for an object in front of the closed operation
+# `if (parent) return parent.kind`: the truth narrows the parameter, and the read tests the shape itself
+# f1 = truth, f2 = kindOf
+# -- source: truth-of-what-is-expected-to-be-an-object-asks-no-shape.ts
+# declare function sink(...values: unknown[]): void;
+# class Node { kind = 0; }
+# function truth(parent: Node | undefined): number { return parent ? 1 : 2; }
+# function kindOf(parent: Node | undefined): number { if (parent) return parent.kind; return -1; }
+# sink(truth, kindOf, new Node());
+# -- end of source
+# RUN(OBJECT): walk f1 mechanisms=all-ParameterGuards
+# OBJECT-LABEL: code f1:Body
+# OBJECT: [[truth]]: boolean @Boolean = ToBoolean v0 form=Generic [expectsObjectOrNothing]
+# OBJECT-NEXT: Branch [[truth]]
+# OBJECT-NOT: = TypeTest
+# RUN(NOSHAPE): walk f1 mechanisms=all-ParameterGuards
+# NOSHAPE-NOT: = ShapeTest
+# RUN(PROOF): walk f2 mechanisms=all-ParameterGuards
+# PROOF-LABEL: code f2:Body
+# PROOF: = Narrowed v0
+# PROOF: = GetSlot {{*}}key="kind" receivers=[L0] level=Expected
+# RUN(WITHHELD): walk f1 f2 mechanisms=all-ParameterGuards-Guesses
+# WITHHELD-NOT: testedType=undefined|null

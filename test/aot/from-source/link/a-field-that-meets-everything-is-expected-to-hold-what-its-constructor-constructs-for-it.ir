@@ -1,0 +1,25 @@
+# -- source: main.js
+# function Odd() { this.a = 1; }
+# const soup = [new Odd(), { b: 1 }, () => 1, new Map(), new Set(), "text", 1];
+# function State(n) { this.count = n; this.step = 1; }
+# function Other(n) { this.count = n; }
+# function Holder(n) { this.state = new State(n); this.seen = new Map(); }
+# function spoil(holder, i) { if (i > 100) { holder.state = soup[i]; holder.seen = soup[i + 1]; } return holder; }
+# function read(holder) { return holder.state.count + holder.state.step + holder.seen.size; }
+# var total = 0;
+# for (var i = 0; i < 10; i++) total += read(spoil(new Holder(i), i + shift())) + new Other(i).count;
+# print(total);
+# -- end of source
+# The constructor lays `new State(n)` and `new Map()`; one store each brings whatever a list of strangers holds, so the flow says nothing of either field. Each is expected to hold what the constructor makes for it.
+# Two layouts have the name `count`, so the name alone says nothing. f6 = read
+# RUN: link fields mechanisms=all
+# CHECK-NOT: "state" proven
+# RUN(HELD): link held fields mechanisms=all
+# HELD: "state" proven=undefined|null|L
+# HELD: "seen" proven=undefined|null|Map
+# RUN(WALK): walk f6 mechanisms=all
+# WALK-LABEL: code f6:Body
+# WALK: GetSlot {{*}}key="count"
+# RUN(ANSWERS): run-in-shell globalThis.shift = () => 0;
+# ANSWERS: 100
+# ANSWERS-NEXT: exited with 0

@@ -1,0 +1,9 @@
+# the red control: the function is printed and nobody calls it: no record has a place in the program
+# -- source: a-method-that-a-read-under-a-key-of-the-run-only-hands-out-has-no-place.ts
+# const cookies = JSON.parse(process.argv[2]!);
+# console.log(cookies[process.argv[3]!], new URLPattern("/a").test("/a"));
+# -- end of source
+# RUN: features
+# CHECK: by URLPattern named
+# RUN(NEVER): features
+# NEVER-NOT: unnamed at f0

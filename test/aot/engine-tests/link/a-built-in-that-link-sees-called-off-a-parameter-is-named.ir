@@ -1,0 +1,19 @@
+# function hand(all) { return all.build(); } hand(Bun);
+# The control: Link follows Bun into the parameter and sees Bun.build called.
+# RUN: features
+# CHECK: feature Interpreter by BunBuild named at f
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=Bun
+    v2 = Call v0, -, v1 calleeName="hand"
+    Return v2
+}
+function f1 name="hand" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="build"
+    v2 = Call v1, v0 calleeKey="build"
+    Return v2
+}

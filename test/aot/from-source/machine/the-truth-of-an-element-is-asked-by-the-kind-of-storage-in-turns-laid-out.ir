@@ -1,0 +1,17 @@
+# -- source: main.cjs
+# "use strict";
+# function count(list) { let c = 0; for (let i = 0; i < list.length; i++) { if (list[i]) c = (c + 1) | 0; } return c; }
+# const entry = [count];
+# console.log(entry[0](JSON.parse("[1,0,2,0,3,0,4,0,5,0,6]")), entry[0](JSON.parse("[1.5,0,2.5,0,3.5,0,4.5,0,5.5]")), entry[0](JSON.parse('["a","",null,{},0,1,0.5,true,false]')));
+# -- end of source
+# Nothing is known of what the list holds, and nothing but its truth is asked of an element. The typed copy's read names no storage. The turns are laid out once for whole numbers, once for doubles, and once without
+# the question. Behind the question the read is left to the branch on its truth: the word of a whole number is held against zero as it lies, a double against zero and NaN; the hole of either is as false as undefined.
+# RUN: compile UnrolledLoopsForInt32Truthiness UnrolledLoopsForIndexingType mechanisms=all
+# CHECK: statistic UnrolledLoopsForInt32Truthiness 1
+# CHECK: statistic UnrolledLoopsForIndexingType 2
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 6 5 5
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 6 5 5
+# HELD-NEXT: exited with 0

@@ -1,0 +1,17 @@
+# `super.__proto__` looks the name up from the prototype object above the home object and comes to the engine's accessor, which answers for `this`: the link of the receiver, not that of the class above. Nobody follows it: nothing is proven of the answer, and what hangs on the class of the receiver is reached.
+# f4 = own, f5 = probe
+# -- source: super-proto-in-a-method-is-the-link-of-the-receiver.js
+# class Low {}
+# class Mid extends Low {}
+# class Top extends Mid {
+#   own() { return 1; }
+#   probe() { return super.__proto__.own; }
+# }
+# new Top().probe()();
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f4
+# LINK-NOT: unreached
+# LINK: function f5
+# LINK-NOT: result=
+# LINK: function f6

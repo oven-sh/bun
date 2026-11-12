@@ -1,0 +1,2 @@
+function at4(view) { return view[4]; } function tell(view) { try { return String(at4(view)) + " " + view.length; } catch (error) { return error.constructor.name; } }
+const view = new Uint8Array(8); view[4] = 7; console.log(tell(view)); const stream = new ReadableStream({ type: 'bytes', pull(controller) { controller.byobRequest.view[0] = 1; controller.byobRequest.respond(1); } }); const reader = stream.getReader({ mode: 'byob' }); const got = await reader.read(view); console.log(tell(view), got.value.length); reader.releaseLock();

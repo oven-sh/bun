@@ -17,7 +17,9 @@ use bun_core::{self, FeatureFlags, Global, Output, env_var};
 use bun_jsc::RegularExpression;
 use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
-use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
+use bun_options_types::context::{
+    Debugger, DebuggerEnable, HotReload, MacroOptions, Shard, TestEnvironment, TestGlobals,
+};
 use bun_options_types::schema::api;
 use bun_paths::platform;
 use bun_paths::resolve_path;
@@ -229,9 +231,6 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--aot                             Check the program like bun compile does, then run it with built-in objects read-only. <b>bun test<r> compiles it and runs the compiled code"
     ),
     parse_param!(
-        "--aot-log-type-mismatches         Compile the program like bun compile, run it, and log every value that doesn't match its declared type"
-    ),
-    parse_param!(
         "--aot-allow-code-from-disk        With --aot: let import() and require() load code from disk that wasn't compiled. The build takes longer"
     ),
     parse_param!(
@@ -390,7 +389,6 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--aot-huge-heap"),
     parse_param!("--aot-graph-fd <STR>"),
     parse_param!("--aot-checked <STR>"),
-    parse_param!("--aot-build-test-part <STR>"),
     parse_param!("--aot-decode-crash-report <STR>"),
     parse_param!("--aot-build-id"),
 ];
@@ -443,6 +441,8 @@ pub(crate) const AUTO_PARAMS: &[ParamType] = concat_params!(
 
 pub(crate) const AUTO_REQUIREMENTS: [RuntimeRequirement; AUTO_PARAMS.len()] =
     startup_options::requirements_of(AUTO_PARAMS, AUTO_REQUIREMENT_ROWS);
+pub(crate) const UNHANDLED_REJECTIONS_PARAM: usize =
+    startup_options::index_of_long(AUTO_PARAMS, b"unhandled-rejections");
 pub(crate) const CODE_GENERATION_PARAM: usize =
     startup_options::index_of_long(AUTO_PARAMS, b"disallow-code-generation-from-strings");
 /// These need `Feature::HotReload` besides what their rows say.
@@ -474,10 +474,6 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"check"), RuntimeRequirement::Feature(Feature::Check)),
         (
             Long(b"aot"),
-            RuntimeRequirement::Feature(Feature::AotCompiler),
-        ),
-        (
-            Long(b"aot-log-type-mismatches"),
             RuntimeRequirement::Feature(Feature::AotCompiler),
         ),
         (
@@ -602,7 +598,6 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"aot-huge-heap"), Nothing),
         (Long(b"aot-graph-fd"), Nothing),
         (Long(b"aot-checked"), Nothing),
-        (Long(b"aot-build-test-part"), Nothing),
         (Long(b"aot-decode-crash-report"), Nothing),
         (Long(b"aot-build-id"), Nothing),
         (Long(b"main-fields"), Nothing),
@@ -717,16 +712,13 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--aot                            Compile JavaScript and TypeScript to machine code at build time. Requires --compile"
         ),
         parse_param!(
-            "--aot-log-type-mismatches        With --aot: the executable logs every value that doesn't match its declared type"
-        ),
-        parse_param!(
-            "--explain <STR>?...              With --aot: list the code that compiled to a slow path and how to fix it, worst first. Other reports: json, guards, guards-json, trim, missed-optimizations, allocations"
+            "--explain <STR>?...              With --aot: list the code that compiled to a slow path and how to fix it, worst first. Other reports: json, guards, guards-json, trim, allocations"
         ),
         parse_param!(
             "--aot-huge-heap                  With --aot: remove the 32 GB heap limit per thread. Uses more memory and runs slower"
         ),
         parse_param!(
-            "--no-compile-function-source     With --aot: don't embed function source code. fn.toString() returns [native code], and an eval() or new Function() call the compiler didn't find at build time throws"
+            "--no-compile-function-source     With --aot: don't embed function source code. fn.toString() returns [native code]"
         ),
         parse_param!(
             "--compile-in-place               With --aot: keep modules at their paths on disk and load anything that wasn't compiled from there. The executable only runs on the machine that built it"
@@ -738,7 +730,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--trim-locales <STR>...          Keep only these locales, such as en,de-AT. Implies --trim"
         ),
         parse_param!(
-            "--obfuscate                      With --aot: strip function names and source locations from the executable and write them to \\<outfile\\>.map. Same as --sourcemap=external"
+            "--obfuscate                      With --aot: strip function names and source locations from the executable and write them to \\<outfile\\>.map. The name of every function and class is empty"
         ),
         parse_param!(
             "--compile-inspector              With --aot: let a debugger attach to the executable (BUN_INSPECT, --inspect). Makes it larger and slower"
@@ -747,32 +739,21 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--aot-allow-code-from-disk       With --aot: let import(), require() and new Worker() load code that isn't in the executable from disk at run time. Makes it larger and slower"
         ),
         parse_param!(
+            "--aot-harden <STR>...            With --aot: make a bug in the compiler harder to turn into a memory bug. Takes proof-checks, ignore-told-ranges. Runs slower"
+        ),
+        parse_param!(
             "--disallow-code-generation-from-strings <STR>?  In the executable, eval() and new Function() throw an EvalError. \"strict\" also blocks every other way to run code from a string. Requires --compile"
         ),
-        parse_param!("--aot-validate"),
         parse_param!("--aot-check <STR>..."),
-        parse_param!("--aot-disable <STR>..."),
-        parse_param!("--aot-only-passes <STR>"),
-        parse_param!("--aot-disable-in <STR>"),
-        parse_param!("--aot-limit <STR>"),
-        parse_param!("--aot-heat <STR>"),
-        parse_param!("--aot-flow <STR>"),
         parse_param!("--aot-testing <STR>..."),
-        parse_param!("--aot-sabotage <STR>"),
-        parse_param!("--aot-count-branches"),
-        parse_param!("--aot-count-arrivals"),
-        parse_param!("--aot-drop-guard <STR>"),
-        parse_param!("--aot-layout-seed <STR>"),
-        parse_param!("--aot-report <STR>"),
-        parse_param!("--aot-report-detail <STR>"),
-        parse_param!("--aot-list <STR>"),
-        parse_param!("--aot-verify-each-pass"),
         parse_param!("--aot-references <STR>"),
+        parse_param!("--aot-cpu <STR>"),
         parse_param!("--aot-threads <STR>"),
         parse_param!("--aot-erase-types"),
         parse_param!("--aot-refuse-code-from-disk"),
-        parse_param!("--aot-separate-programs"),
         parse_param!("--aot-out <STR>"),
+        parse_param!("--aot-stored-strings <STR>"),
+        parse_param!("--aot-stored-strings-json <STR>"),
         parse_param!("--aot-symbols"),
         parse_param!("--no-builtin-modules"),
         parse_param!("--trim-without <STR>..."),
@@ -973,6 +954,9 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter)."
     ),
     parse_param!(
+        "--reporter-junit-suites <STR>    How --reporter=junit writes describe blocks: 'nested' (default) gives each block its own \\<testsuite\\>, 'flat' prefixes test names with the block names."
+    ),
+    parse_param!(
         "--dots                           Enable dots reporter. Shorthand for --reporter=dots."
     ),
     parse_param!(
@@ -986,7 +970,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--changed <STR>?                 Only run test files affected by changed files according to git. Optionally pass a commit or branch to compare against."
     ),
     parse_param!(
-        "--isolate                        Run each test file in a fresh global object. Leaked handles from one file cannot affect another."
+        "--isolate <STR>?                 Run each test file in a fresh global object. Leaked handles from one file cannot affect another. \"modules\": keep the global object and load each file's modules afresh (faster; files can see each other's changes to globals)."
     ),
     parse_param!(
         "--no-isolate                     With --parallel: let each worker keep one global and module registry across the files it runs (faster; files can see each other's leftovers)."
@@ -1013,7 +997,13 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--update-timings                 After the run, write measured per-file durations to the first --timings file (only this shard's files under --shard; merged with what was read otherwise)."
     ),
     parse_param!(
-        "--aot-memory-limit <STR>         With --aot --parallel: the memory that the run may take, e.g. 5GB. What doesn't fit as one program is compiled as several. Defaults to the container's limit, or the memory that is free. When given, a test file starts only where there is room for what --timings says it took."
+        "--environment <STR>              DOM for test files: 'node' (default, no DOM), 'jsdom' or 'happy-dom'. A '@vitest-environment' or '@jest-environment' comment in a file overrides it."
+    ),
+    parse_param!(
+        "--globals <STR>?                 Module that 'test', 'expect' and the other globals come from: 'bun' (default) uses \"vitest\" in files that import from it and \"bun:test\" elsewhere, 'vitest' uses it everywhere."
+    ),
+    parse_param!(
+        "--react-compiler                 Compile components and hooks with the React Compiler. Test files, preloads and node_modules are left alone"
     ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(
@@ -1361,7 +1351,8 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     if command::LOADS_CONFIG[cmd] {
         load_config_with_cmd_args(cmd, &args, ctx)?;
         if may_refuse_options {
-            startup_options::reject_unusable_bunfig_settings(ctx);
+            let named_file = args.option(b"--config").filter(|file| !file.is_empty());
+            startup_options::reject_unusable_bunfig_settings(ctx, named_file);
         }
     }
 
@@ -2188,6 +2179,17 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         ctx.test_options.reporter_outfile = Some(reporter_outfile.into());
     }
 
+    if let Some(name) = args.option(b"--reporter-junit-suites") {
+        let Some(suites) = bun_options_types::context::JunitSuites::from_name(name) else {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --reporter-junit-suites expects 'nested' or 'flat', received \"{}\"",
+                BStr::new(name)
+            );
+            Global::exit(1);
+        };
+        ctx.test_options.reporters.junit_suites = Some(suites);
+    }
+
     if let Some(reporter) = args.option(b"--reporter") {
         if reporter == b"junit" {
             // A `--parallel` worker only collects for the coordinator's file.
@@ -2361,21 +2363,36 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         }
     }
     ctx.test_options.update_timings = args.flag(b"--update-timings");
-    if let Some(text) = args.option(b"--aot-memory-limit") {
-        let Some(limit) = crate::cli::test::memory_of_job::parse(text) else {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: --aot-memory-limit expects a size like 5GB or 4096MB, received \"{}\"",
-                BStr::new(text)
-            );
-            Global::exit(1);
-        };
-        ctx.test_options.aot_memory_limit = Some(limit);
-    }
     if ctx.test_options.update_timings && ctx.test_options.timings_files.is_empty() {
         bun_core::pretty_errorln!(
             "<r><red>error<r>: --update-timings requires --timings, e.g. --timings=.bun-test-timings.json --update-timings"
         );
         Global::exit(1);
+    }
+    if let Some(name) = args.option(b"--environment") {
+        let Some(environment) = TestEnvironment::from_name(name) else {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --environment expects 'node', 'jsdom' or 'happy-dom', received \"{}\"",
+                BStr::new(name)
+            );
+            Global::exit(1);
+        };
+        ctx.test_options.environment = Some(environment);
+    }
+    // Vitest's --globals is a boolean, and Bun always defines the globals.
+    let globals = args.option(b"--globals");
+    if let Some(name) = globals.filter(|name| !matches!(*name, b"" | b"true" | b"false")) {
+        let Some(globals) = TestGlobals::from_name(name) else {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --globals expects 'bun' or 'vitest', received \"{}\"",
+                BStr::new(name)
+            );
+            Global::exit(1);
+        };
+        ctx.test_options.globals = Some(globals);
+    }
+    if args.flag(b"--react-compiler") {
+        ctx.test_options.react_compiler = Some(Default::default());
     }
     ctx.test_options.update_snapshots = args.flag(b"--update-snapshots");
     ctx.test_options.run_todo = args.flag(b"--todo");
@@ -2384,7 +2401,19 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     ctx.test_options.concurrent = args.flag(b"--concurrent");
     ctx.test_options.randomize = args.flag(b"--randomize");
     let no_isolate = args.flag(b"--no-isolate");
-    ctx.test_options.isolate = args.flag(b"--isolate") && !no_isolate;
+    let isolate = args.option(b"--isolate");
+    ctx.test_options.isolate = isolate.is_some() && !no_isolate;
+    ctx.test_options.isolate_modules = match isolate {
+        None | Some(b"" | b"global") => false,
+        Some(b"modules") => !no_isolate,
+        Some(other) => {
+            bun_core::pretty_errorln!(
+                "<red>error<r>: --isolate expects \"global\" or \"modules\", received \"{}\"",
+                BStr::new(other)
+            );
+            Global::exit(1);
+        }
+    };
     ctx.test_options.test_worker = args.flag(b"--test-worker");
 
     if let Some(parallel_str) = args.option(b"--parallel") {
@@ -2426,7 +2455,8 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
 
     if let Some(seed_str) = args.option(b"--seed") {
-        ctx.test_options.randomize = true;
+        // A --parallel worker always gets --seed, so for a worker it doesn't imply --randomize.
+        ctx.test_options.randomize |= !ctx.test_options.test_worker;
         ctx.test_options.seed = match strings::parse_int::<u32>(seed_str, 10) {
             Ok(v) => Some(v),
             Err(_) => {
@@ -2480,6 +2510,16 @@ fn parse_build_command_options(
             .is_some_and(|format| format != b"esm" && format != b"cjs")
         {
             Output::err_generic("--library only supports --format=esm and --format=cjs", ());
+            Global::exit(1);
+        }
+        if args
+            .option(b"--target")
+            .is_some_and(|target| !matches!(target, b"bun" | b"node" | b"browser"))
+        {
+            Output::err_generic(
+                "--library only supports --target=bun, --target=node and --target=browser",
+                (),
+            );
             Global::exit(1);
         }
         ctx.bundler_options.outdir = cli::compile_command::DEFAULT_LIBRARY_OUTDIR.into();

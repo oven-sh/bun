@@ -30,6 +30,11 @@ extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
 
 #[unsafe(export_name = "Bun__Process__getExecPath")]
 extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
+    if let Some(file) = bun_resolver::compiled_program::FILE_IN_PLACE_OF_EXECUTABLE.get()
+        && file.can_be_started
+    {
+        return EncodedSlice::from_bytes(&file.path).to_js(global_object);
+    }
     let Ok(out) = bun_core::self_exe_path() else {
         // if for any reason we are unable to get the executable path, we just return argv[0]
         return create_argv0(global_object);
@@ -53,6 +58,14 @@ pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::St
 }
 
 // ───────────────────────────── argv (C++ accessor wrappers) ─────────────────
+
+/// `process.stdout._handle.setBlocking(blocking)`. Like libuv's `uv_stream_set_blocking`, returns 0 or a negative errno.
+pub(crate) fn set_stdio_blocking(fd: i32, blocking: bool) -> i32 {
+    match bun_sys::update_nonblocking(bun_sys::Fd::from_uv(fd), !blocking) {
+        Ok(()) => 0,
+        Err(err) => -i32::from(err.errno),
+    }
+}
 
 pub(crate) fn get_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
     bun_jsc::call_zero_is_throw(global, || Bun__Process__getArgv(global))

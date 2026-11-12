@@ -1,0 +1,30 @@
+# -- source: main.js
+# function make(id, note) { return id % 2 ? new Noted(id, note) : new Plain(id); }
+# function run(count) { var text = ""; for (var i = 0; i < count; i++) { var made = make(i, notes[i % 3]); text += made.id + (made.note ? made.note.name : "-") + (made.mark ?? "") + Object.keys(made).length + " "; } return text; }
+# class Plain { id; note; next; constructor(id) { this.id = id; this.note = undefined; this.next = null; } }
+# class Noted extends Plain { mark; constructor(id, note) { super(id); this.note = note; this.mark = id + 1; } }
+# const notes = [{ name: "x" }, { name: "y" }, { name: "z" }];
+# print(run(10));
+# -- end of source
+# f3 = the constructor of Plain, f4 = the constructor of Noted
+# A class has one `super(..)`, so the constructor that it names is copied into the constructor of the class below, once a class, as the body of a constructor function is copied where it is constructed.
+# In the copy new.target is the class below: the object is made as a Noted, below the prototype of Noted, and nobody has to ask what the call has given.
+# RUN(COPY): walk f4 mechanisms=all
+# COPY-NOT: function=f3
+# COPY: = NewObject {{*}}layout=
+# COPY-NOT: function=f3
+# COPY: Return
+# RUN(TYPED): walk f4 mechanisms=all
+# TYPED: = NewObject {{*}}layout=
+# TYPED-NOT: ShapeTest
+# TYPED: Return
+# RUN(STORES): walk f4 mechanisms=all
+# STORES: = NewObject {{*}}layout=
+# STORES-NOT: PropSet
+# STORES: Return
+# RUN: run-in-shell void 0;
+# CHECK: 0-3 1y24 2-3 3x44 4-3 5z64 6-3 7y84 8-3 9x104
+# CHECK-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime void 0;
+# CHECKED: 0-3 1y24 2-3 3x44 4-3 5z64 6-3 7y84 8-3 9x104
+# CHECKED-NEXT: exited with 0

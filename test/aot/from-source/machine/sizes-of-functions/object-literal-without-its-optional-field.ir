@@ -1,0 +1,19 @@
+# f1 = mark
+# -- source: object-literal-without-its-optional-field.ts
+# type Mark = { at: number; label?: string };
+# function mark(at: number): Mark {
+#   return { at };
+# }
+# declare const input: any;
+# for (let turn = 0; turn < 2; turn++) {
+#   const plain = mark(+input);
+#   const named: Mark = { at: +input, label: String(input) };
+#   (globalThis as any).answer = [plain, named, plain.at + named.at, plain.label, named.label];
+# }
+# -- end of source
+# The compiler before this one: 7 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 16, patches 2, moves 3, unlikely or rare 0.
+# RUN(X64): steps most:19 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 19

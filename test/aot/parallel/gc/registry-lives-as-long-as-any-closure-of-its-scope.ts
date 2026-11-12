@@ -5,13 +5,24 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const make = () => new FinalizationRegistry<string>(note);
 const makeBoth = (form: string) => ({ registry: make(), form });
 const target = () => ({ payload: new Array(50).fill(0) });
+const registerWith = (registry: any, form: string) => registry.register(target(), form);
 type Kept = () => unknown;
 type Registers = { register(target: object, held: string): void };
 class Named extends FinalizationRegistry<string> {
   label = "named";
 }
+function handsOn(registry: any, form: string) {
+  const watch = () => registerWith(registry, form);
+  watch();
+  return () => form;
+}
+function handsOnWhatever<T>(registry: T, form: string) {
+  const watch = () => registerWith(registry, form);
+  watch();
+  return () => form;
+}
 
-// Each form registers an object that nothing holds, through a closure that nothing holds afterwards, and returns a closure of the same scope.
+// Each form registers an object that nothing holds, through a closure that nothing holds afterwards, and returns a closure of the same scope, or what holds a suspended call of one.
 const forms: Record<string, (form: string) => Kept> = {
   "made in place"(form) {
     const registry = new FinalizationRegistry<string>(note);
@@ -74,6 +85,43 @@ const forms: Record<string, (form: string) => Kept> = {
   "a name of unknown type"(form) {
     const registry: unknown = make();
     const watch = () => (registry as Registers).register(target(), form);
+    watch();
+    return () => form;
+  },
+  "a parameter that may be anything and is only handed on"(form) {
+    return ((registry: any) => {
+      const watch = () => registerWith(registry, form);
+      watch();
+      return () => form;
+    })(make());
+  },
+  "a parameter that may be anything, of a function with a name"(form) {
+    return handsOn(make(), form);
+  },
+  "a parameter of a type variable"(form) {
+    return handsOnWhatever(make(), form);
+  },
+  "a name of type object"(form) {
+    const registry: object = make();
+    const watch = () => (registry as Registers).register(target(), form);
+    watch();
+    return () => form;
+  },
+  "a name of type object that is only handed on"(form) {
+    const registry: object = make();
+    const watch = () => registerWith(registry, form);
+    watch();
+    return () => form;
+  },
+  "a name of the empty object type"(form) {
+    const registry: {} = make();
+    const watch = () => registerWith(registry, form);
+    watch();
+    return () => form;
+  },
+  "a name of type Object"(form) {
+    const registry: Object = make();
+    const watch = () => registerWith(registry, form);
     watch();
     return () => form;
   },
@@ -162,6 +210,40 @@ const forms: Record<string, (form: string) => Kept> = {
     return function* () {
       yield form;
     };
+  },
+  "what stays is a generator that has not begun"(form) {
+    const registry = make();
+    const watch = () => registry.register(target(), form);
+    watch();
+    function* stays() {
+      yield form;
+      yield form;
+    }
+    return stays() as unknown as Kept;
+  },
+  "what stays is a generator that has begun"(form) {
+    const registry = make();
+    const watch = () => registry.register(target(), form);
+    watch();
+    function* stays() {
+      yield form;
+      yield form;
+    }
+    const generator = stays();
+    generator.next();
+    return generator as unknown as Kept;
+  },
+  "what stays is an async function that waits"(form) {
+    const registry = make();
+    const watch = () => registry.register(target(), form);
+    watch();
+    let settle: Kept = () => form;
+    const waited = new Promise(resolve => (settle = resolve as Kept));
+    (async () => {
+      await waited;
+      return form;
+    })();
+    return settle;
   },
 };
 

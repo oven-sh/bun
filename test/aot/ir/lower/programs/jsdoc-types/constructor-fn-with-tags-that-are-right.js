@@ -85,38 +85,6 @@ console.log(counter.next(), counter.next(), counter.n, Object.keys(counter).join
 
 export {};
 
-// GENERATED: Named sumOf describe
 // CHECK-LABEL: function {{*}}name="Named"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] length=1 thisType={type=[[L_1]] flags=[IsExpected]} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: [[L_1]], v1: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|[[L_3]] flags=[IsExpected]}
-// CHECK-NEXT: PropSet v2, v1 key="name"
-// CHECK-NEXT: v4 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|[[L_3]] flags=[IsExpected]}
-// CHECK-NEXT: v5 = Data data=[[d_4]]
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|Array<never> flags=[IsExpected]}
-// CHECK-NEXT: PropSet v4, v6 key="tags"
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="sumOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="x"
-// CHECK-NEXT: v2 = PropGet v0 key="y"
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="describe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_5]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = String string="named"
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

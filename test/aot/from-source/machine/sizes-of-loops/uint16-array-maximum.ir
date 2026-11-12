@@ -1,0 +1,22 @@
+# f1 = turn
+# -- source: uint16-array-maximum.ts
+# const heights = new Uint16Array(1000);
+# function turn(i: number): number {
+#   let greatest = i & 1;
+#   for (let k = 0; k < heights.length; k++) {
+#     const height = heights[k]!;
+#     if (height > greatest) greatest = height;
+#   }
+#   return greatest;
+# }
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink(turn(input));
+# -- end of source
+# The compiler before this one: 18 instructions, 8 of them patches, a turn of the written loop steps by 64.
+# When the bound was taken: loop: operations 58, patches 0, moves 8, unlikely 6 ; loop: operations 10, patches 1, moves 1, unlikely 0.
+# RUN(X64): loops most:66,11 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 66
+# X64-NEXT: loop: at most 11

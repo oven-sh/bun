@@ -746,6 +746,18 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
     }
 
+    const bool actualIsCryptoKey = actual.isCell() && actual.asCell()->inherits<WebCore::JSCryptoKey>();
+    const bool expectedIsCryptoKey = expected.isCell() && expected.asCell()->inherits<WebCore::JSCryptoKey>();
+    if (actualIsCryptoKey || expectedIsCryptoKey) {
+        if (!actualIsCryptoKey || !expectedIsCryptoKey)
+            return false;
+        auto& actualKey = uncheckedDowncast<WebCore::JSCryptoKey>(actual.asCell())->wrapped();
+        auto& expectedKey = uncheckedDowncast<WebCore::JSCryptoKey>(expected.asCell())->wrapped();
+        if (!Bun::KeyObject::cryptoKeysEqual(actualKey, expectedKey))
+            return false;
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+    }
+
     const bool actualIsURL = actual.isCell() && actual.asCell()->inherits<WebCore::JSDOMURL>();
     const bool expectedIsURL = expected.isCell() && expected.asCell()->inherits<WebCore::JSDOMURL>();
     if (actualIsURL || expectedIsURL) {
@@ -960,7 +972,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAsyncFunction,
 
     auto* function = dynamicDowncast<JSFunction>(value);
 #if ENABLE(AOT)
-    if (value.isCell()) {
+    if (value.isCell() && value.asCell()->vm().hasCompiledCode()) {
         auto declaredAs = JSC::AOT::declaredAs(value.asCell());
         if (declaredAs != JSC::AOT::DeclaredAs::NotCompiled)
             return JSValue::encode(jsBoolean(declaredAs == JSC::AOT::DeclaredAs::AsyncFunction || declaredAs == JSC::AOT::DeclaredAs::AsyncGeneratorFunction));
@@ -993,7 +1005,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsGeneratorFunction,
     GET_FIRST_VALUE
     auto* function = dynamicDowncast<JSFunction>(value);
 #if ENABLE(AOT)
-    if (value.isCell()) {
+    if (value.isCell() && value.asCell()->vm().hasCompiledCode()) {
         auto declaredAs = JSC::AOT::declaredAs(value.asCell());
         if (declaredAs != JSC::AOT::DeclaredAs::NotCompiled)
             return JSValue::encode(jsBoolean(declaredAs == JSC::AOT::DeclaredAs::GeneratorFunction || declaredAs == JSC::AOT::DeclaredAs::AsyncGeneratorFunction));
@@ -1016,7 +1028,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsGeneratorObject,
     GET_FIRST_CELL
 
 #if ENABLE(AOT)
-    if (JSC::AOT::isGeneratorObject(cell))
+    if (cell->vm().hasCompiledCode() && JSC::AOT::isGeneratorObject(cell))
         return JSValue::encode(jsBoolean(true));
 #endif
     return JSValue::encode(jsBoolean(cell->type() == JSGeneratorType || cell->type() == JSAsyncGeneratorType));
@@ -1105,7 +1117,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsModuleNamespaceObject,
     GET_FIRST_CELL
 
 #if ENABLE(AOT)
-    if (JSC::AOT::isModuleNamespace(cell))
+    if (cell->vm().hasCompiledCode() && JSC::AOT::isModuleNamespace(cell))
         return JSValue::encode(jsBoolean(true));
 #endif
     return JSValue::encode(jsBoolean(cell->type() == ModuleNamespaceObjectType));

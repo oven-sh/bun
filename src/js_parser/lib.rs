@@ -5,6 +5,8 @@
 //! `StoreSlice<T>` / `StoreStr` here. A future refactor could thread a
 //! crate-wide `'bump` and rewrite these to `&'bump [T]` / `&'bump mut [T]`.
 
+#![feature(optimize_attribute)]
+
 pub mod error;
 pub mod function_identities;
 pub use error::Error;
@@ -26,6 +28,7 @@ pub mod scan;
 pub mod typescript;
 pub mod visit;
 
+pub use lower::import_meta_glob::*;
 pub use p::P;
 pub use parse::parse_entry::{Options as ParserOptions, Parser};
 

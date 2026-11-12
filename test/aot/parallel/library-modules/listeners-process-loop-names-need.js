@@ -1,5 +1,5 @@
 // The names of the events stand in a list that a loop goes over. None of them is a message from a parent process, so nothing of the channel to one is needed, as with a name that is written in the call.
-// STATISTIC: FunctionsLowered <= 600
+// STATISTIC: FunctionsLowered <= 600 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
 for (const name of ["SIGINT", "SIGTERM"]) process.on(name, () => console.log("got", name));
 ["SIGUSR2", "SIGHUP"].forEach(name => process.once(name, () => console.log("once", name)));
 const last = ["beforeExit", "exit"];

@@ -1,0 +1,17 @@
+# `mapLike` hands `f` on to itself, `ping` and `pong` hand it to each other, and all that any of them does with it is to call it: a ring keeps the word.
+# f1 = mapLike, f2 = ping, f3 = pong, f4 = maker
+# -- source: handed-round-a-ring-that-only-calls-it.ts
+# declare function sink(...values: unknown[]): void;
+# function mapLike(n: number, f: (n: number) => number): number { let t = f(n); for (let i = 0; i < n; i++) t += mapLike(i, f); return t; }
+# function ping(n: number, f: (n: number) => number): number { const t = n ? pong(n - 1, f) : f(1); return t + 1; }
+# function pong(n: number, f: (n: number) => number): number { const t = n ? ping(n - 1, f) : f(2); return t + 2; }
+# function maker(seed: number) { let sum = seed; const a = mapLike(3, n => (sum += n)); const b = ping(3, n => (sum -= n)); return a + b + sum; }
+# sink(maker(1), maker(2));
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK: function f1 
+# CHECK: parameter 1 {{*}}only-called
+# CHECK: function f2 
+# CHECK: parameter 1 {{*}}only-called
+# CHECK: function f3 
+# CHECK: parameter 1 {{*}}only-called

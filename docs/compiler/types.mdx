@@ -6,7 +6,7 @@ description: "What your TypeScript types do in a compiled program, and how to wr
 
 <Warning>Ahead-of-time compilation is experimental.</Warning>
 
-[`bun compile`](/compiler/aot) reads your TypeScript types and generates machine code that relies on them. It's still ordinary TypeScript. The only new errors are [type errors at build time](/compiler/aot#type-errors-stop-the-build). At run time a type never throws and never converts a value. A value that doesn't match its type gives the same result as under `bun run`, only slower.
+[`bun compile`](/compiler/aot) reads your TypeScript types and generates machine code that relies on them. It's still ordinary TypeScript. A [type error](/compiler/aot#type-errors-stop-the-build) stops the build. At run time a type never throws and never converts a value. A value that doesn't match its type gives the same result as under `bun run`, only slower.
 
 ## What types get you
 
@@ -22,9 +22,9 @@ function total(accounts: Account[]): number {
 }
 ```
 
-Every `Account` has the same fields in the same places, like a struct in Go or Rust. `account.balance` is one load from a fixed offset. The value is a raw 64-bit number with no tag to check. A call to `total` is a direct call that the compiler can inline.
+Every `Account` has the same fields in the same places, like a struct in Go or Rust, so `account.balance` is one load from a fixed offset. A call to `total` is a direct call that the compiler can inline.
 
-You don't have to annotate everything. A class in a `.js` file gets a fixed layout too, and the compiler follows each object from where it's created to where it's used. Annotations matter where it can't do that, such as the result of `JSON.parse` or the arguments of a route handler. Untyped code still compiles and works. It looks properties up at run time, so it runs slower.
+You don't have to annotate everything. The compiler follows each object from where it's created to where it's used, in `.js` files too. Annotations matter where it can't do that, such as the result of `JSON.parse` or the arguments of a route handler. Without them, that code looks properties up at run time, which is slower.
 
 ## When a value doesn't match its type
 
@@ -45,11 +45,7 @@ bun compile ./visits.ts && ./visits
 6
 ```
 
-`bun run` prints `6` too. TypeScript lets you call a value a `number` when it isn't one, through `any`, `as`, `!`, `JSON.parse` and `.d.ts` files. Where such a value can reach a declared type, the compiled code checks it first. That check is called a guard. Here the guard sees a string, so the call takes a slower version of `double` that behaves like plain JavaScript.
-
-- Nothing throws, and nothing is converted. The string stays a string.
-- The next call with a number takes the fast version again.
-- `undefined` and `null` pass every guard, whatever the declared type.
+`bun run` prints `6` too. TypeScript lets you call a value a `number` when it isn't one, through `any`, `as`, `!`, `JSON.parse` and `.d.ts` files. So where compiled code relies on a declared type, it checks the value first. That check is called a guard. Here the guard sees a string, and the call takes a slower version of `double` that behaves like plain JavaScript. Nothing throws, and the string stays a string.
 
 ## Write code that compiles well
 
@@ -66,31 +62,32 @@ console.log(page + 1);
 
 `as`, `any` and `!` do nothing at run time. With the cast, `page` is still a string and this prints `21`, compiled or not. With the conversion, the compiler knows that `page` is a number, so there's no guard to fail.
 
-### Declare the type where you parse
+### Build your own objects from what you parse
 
 ```ts
-const read = (text: string): any => JSON.parse(text); // [!code --]
-const read = (text: string): User => JSON.parse(text); // [!code ++]
+const user: User = JSON.parse(text); // [!code --]
+const { id, name } = JSON.parse(text); // [!code ++]
+const user: User = { id, name }; // [!code ++]
 ```
 
-Bun compiles a parser for the type that a `JSON.parse` call is declared as, whether by an annotation, a cast, a parameter or a return type. `response.json()` and `request.json()` work the same way. If the text matches, the objects get the fixed layout of `User`. If it doesn't, you get what `JSON.parse` normally returns. Nothing is validated. To reject bad data, take the value as `unknown`, check it, and [build a new object from it](/compiler/explain#unknown-object).
+`JSON.parse`, `response.json()` and `request.json()` return ordinary objects, whatever type you declare for the result. They don't have the fixed layout of `User`, so every read looks the property up. An object that [your own code creates](/compiler/explain#unknown-object) has the layout.
 
-### Declare every property
+### Keep computed keys in a `Map`
 
 ```ts
 class Counter {
   count = 0;
-  label?: string; // [!code ++]
+  labels = new Map<string, string>(); // [!code ++]
 }
-(counter as any).label = "visits"; // [!code --]
-counter.label = "visits"; // [!code ++]
+(counter as any)[key] = "visits"; // [!code --]
+counter.labels.set(key, "visits"); // [!code ++]
 ```
 
-Adding a property changes the object's shape. So do `Object.defineProperty`, `Object.setPrototypeOf` and a store with a computed key. Any `Counter` could be the one that changed, so every access to a `Counter` gets slower. For data with computed keys, use a `Map`.
+A store with a computed key can change the object's shape. So can `Object.defineProperty` and `Object.setPrototypeOf`. Any `Counter` could be the one that changed, so every access to a `Counter` gets slower.
 
 ## 32-bit integers
 
-To TypeScript, and under `bun run`, `int32` is a `number`. In an executable it takes four bytes instead of eight, and arithmetic on it skips the checks for fractions.
+To TypeScript, and under `bun run`, `int32` is a `number`. In an executable it takes four bytes instead of eight, and arithmetic on it skips the checks for fractions. It pays off in the fields of objects that you create by the million.
 
 ```ts cursor.ts icon="/icons/typescript.svg"
 import type { int32 } from "bun";
@@ -105,4 +102,6 @@ class Cursor {
 }
 ```
 
-The build has to prove that every value you store in an `int32` is a whole number in range. Where it can't, it stops, and the error says what to write. That's usually `| 0`, which gives the same value in every JavaScript engine. `int32` only counts as the whole type of a variable, field, parameter or return value. Inside `int32[]` or `Map<string, int32>` it's a `number`. It pays off in the fields of objects that you create by the million.
+The build has to prove that every value you store in an `int32` is a whole number in range. Where it can't, it stops (`TS100031`), and the error says what to write. That's usually `| 0`.
+
+`int32` only counts as the whole type of a variable, field, parameter or return value. Inside `int32[]` or `Map<string, int32>` it's a `number`.

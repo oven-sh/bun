@@ -8,5 +8,5 @@ export function f() {}
 
 export function outer() {
   function inner() {}
-  return () => inner;
+  return [inner, () => inner];
 }

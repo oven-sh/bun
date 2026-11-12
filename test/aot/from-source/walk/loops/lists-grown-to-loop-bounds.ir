@@ -1,0 +1,11 @@
+# -- source: main.cjs
+# function Table(wide) { this.readers = []; this.wide = wide; }
+# Table.prototype.read = function () { return 1; };
+# Table.prototype.skip = function () { return 2; };
+# Table.prototype.fill = function () { for (var index = 0; index <= 0xFFFF; index++) { if (index < 0x4000) this.readers[index] = this.read; else if (this.wide) this.readers[index] = this.skip; else this.readers[index] = this.read; } };
+# globalThis.tables = [new Table(false), new Table(true)];
+# for (const table of globalThis.tables) table.fill();
+# -- end of source
+# A full list that a loop fills up to a known bound asks for four times the room, and for no more than the bound.
+# RUN: emit f4 mechanisms=all
+# CHECK: Writes:{Elements, ArrayStorage, AllocatorState, RuntimeState, ArrayCapacity

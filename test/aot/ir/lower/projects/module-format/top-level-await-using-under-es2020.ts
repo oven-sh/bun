@@ -1,4 +1,5 @@
 // RUN: lower
+// OPTIONS: builtin-modules
 
 // TS2854 is a rule about the module format that tsc emits.
 

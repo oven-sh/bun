@@ -2,8 +2,7 @@
 // CHECK-LABEL: function {{*}}name="computed"
 // CHECK: b0([[this]]: {{*}}, [[k]]: anything, [[x]]: anything):
 // CHECK: [[computedBase]] = GetSuperBase {{*}}homeKind=ClassPrototype
-// CHECK: [[convertedK]] = Convert [[k]] declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK: [[key]] = Call [[convertedK]] calleeName="k"
+// CHECK: [[key]] = Call [[k]] calleeName="k"
 // CHECK: [[computedMethod]] = SuperGet [[computedBase]], [[this]], [[key]]
 // CHECK: = Call [[computedMethod]], [[this]], [[x]]
 // CHECK-NOT: calleeName
@@ -41,3 +40,6 @@ export const literal = {
     super.m();
   },
 };
+
+// A method has its body once reached code reads its name.
+export function readsTheNames(o: any) { return [o.computed, o.named]; }

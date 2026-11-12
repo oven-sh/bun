@@ -1,0 +1,16 @@
+# The list has no holes, so that an element inside its length is an int32: so is the greatest one that the loop carries.
+# LIBRARY: own
+# -- source: main.ts
+# class Box { items: number[] = []; constructor(n: number) { for (let i = 0; i < n; i++) this.items.push(i % 7); } greatest() { let most = 0; for (let i = 0; i < this.items.length; i++) if (this.items[i]! > most) most = this.items[i]!; return most; } }
+# publish((n: number) => new Box(n).greatest());
+# declare function publish(run: (n: number) => number): void;
+# -- end of source
+# RUN: walk f2:Body mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: HasArrayStorage {{*}}arrayStorage=Int32
+# CHECK: : int|whole @Double, {{*}}isInLoop=true isLoopHead=true
+# CHECK: i32 @Int32 = GetArrayElement
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run(5)); print(run(40)); print(run(0)); };
+# SHELL: 4
+# SHELL-NEXT: 6
+# SHELL-NEXT: 0

@@ -1,1 +1,1 @@
-{ "features": ["BigInt64Array"], "keptToday": true }
+{ "features": ["BigInt64Array"], "keptToday": ["BigInt64Array"] }

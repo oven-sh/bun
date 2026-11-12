@@ -1,13 +1,14 @@
 // A function that stores nothing into `this` and gives it to other code as an argument, or as one of two values that a constant holds, leaves it to that code to fill what `new` makes.
-// Where it has a name of its own or is what a function returns, and stands somewhere a constructor may stand, it has a layout without fields: the engine finds the fields.
+// Where it has a name of its own or is what a function returns, and stands somewhere a constructor may stand, it has a layout: what a function in sight stores on the parameter that takes `this` is listed, the engine finds the rest.
 // RUN(FILLED): link
-// FILLED: layout {{*}}kind=Instance name="Filled" {{*}}flags=[IsConstructorFunction]
+// FILLED: layout {{*}}kind=Instance name="Filled" {{*}}fields=[{key="size" {{*}}flags=[IsConstructorFunction]
+// RUN(DEFINED): link
+// DEFINED: layout {{*}}kind=Instance name="Defined" {{*}}fields=[{key="hidden" {{*}}form=[IsReadOnly, IsNotEnumerable, IsNotConfigurable]}] flags=[IsConstructorFunction]
 // RUN(KIND): link
 // KIND: layout {{*}}kind=Instance name="Kind" {{*}}flags=[IsConstructorFunction]
 // RUN(EITHER): link
-// EITHER: layout {{*}}kind=Instance name="Either" {{*}}flags=[IsConstructorFunction]
+// EITHER: layout {{*}}kind=Instance name="Either" {{*}}fields=[{key="size" {{*}}flags=[IsConstructorFunction]
 // RUN(OTHERS): link
-// OTHERS-NOT: layout {{*}}name="Defined"
 // OTHERS-NOT: layout {{*}}name="forward"
 // OTHERS-NOT: layout {{*}}name="listener"
 // OTHERS-NOT: layout {{*}}name="method"
@@ -21,7 +22,7 @@ function fill(made, options) {
 function Filled(options) {
   fill(this, options);
 }
-// A member of a global stores nothing under a name: what it is given stays an ordinary object.
+// A definition under a written name by a written descriptor is a store: the field has the attributes that the descriptor writes.
 function Defined(options) {
   Object.defineProperty(this, "hidden", { value: options });
 }

@@ -553,12 +553,15 @@ impl<'c, 'p, 's> Writer<'_, 'c, 'p, 's> {
                 let arguments = self.queries.class_type_arguments(found, ty);
                 self.write_type_arguments(site, b"class type argument", arguments);
             }
+            ShapeKind::ConstructorFunctionInstance(_) => self.write_type_members(site, ty),
             ShapeKind::Builtin { .. } => {
                 self.write_accepted_primitives(site, ty);
                 self.write_awaited_type(site, ty);
             }
             ShapeKind::Union(_) => self.write_awaited_type(site, ty),
-            ShapeKind::Function(signatures) => self.write_first_overload(site, signatures),
+            ShapeKind::Function(signatures) => {
+                self.write_first_overload(site, signatures.declared);
+            }
             ShapeKind::Anything(_)
             | ShapeKind::TypeVariable { .. }
             | ShapeKind::Never
@@ -661,10 +664,7 @@ impl<'c, 'p, 's> Writer<'_, 'c, 'p, 's> {
     }
 
     fn write_class_shape(&mut self, site: &Site, query: &[u8], shape: &ClassShape<'_>) {
-        let header = format!(
-            "computed instance {} computed static {}",
-            shape.has_computed_instance_name, shape.has_computed_static_name
-        );
+        let header = format!("computed instance {}", shape.has_computed_instance_name);
         self.emit(site, query, Ok(header.into_bytes()));
         let member_query = [query, b" member"].concat();
         let file = shape.declaration.file();
@@ -685,7 +685,8 @@ impl<'c, 'p, 's> Writer<'_, 'c, 'p, 's> {
             let ty = self.queries.return_type(function);
             self.emit_type(&site, b"returns", ty);
             let function = FunctionRef { file, function };
-            let signature = self.queries.function_signature(function);
+            let mut signature = self.queries.function_signature(function);
+            signature.result.checked = self.queries.function_result(function);
             let answer = self.signature_text(&signature);
             self.emit(&site, b"signature", Ok(answer));
             if let Some(implementation) = self.queries.overload_implementation(function) {
@@ -772,6 +773,17 @@ mod tests {
 
     #[test]
     fn line_of_first_and_last_byte() {
+        let of_separator = compute_ecma_line_starts("a\u{2028}b\nc".as_bytes());
+        assert_eq!(of_separator, [0, 4, 6]);
+        assert_eq!(compute_ecma_line_starts(b"a\r\nb\rc\nd"), [0, 3, 5, 7]);
+        let of_dash = compute_ecma_line_starts("\u{2014}\nb".as_bytes());
+        assert_eq!(of_dash, [0, 4]);
+        let mut long = "line \u{2014}\n".as_bytes().repeat(40);
+        let mut expected = compute_ecma_line_starts(&long);
+        assert_eq!(expected.len(), 41);
+        long.push(b'\r');
+        expected.push(long.len() as u32);
+        assert_eq!(compute_ecma_line_starts(&long), expected);
         let line_starts = compute_ecma_line_starts(b"ab\ncd\n");
         assert_eq!(line_number(&line_starts, 0), 1);
         assert_eq!(line_number(&line_starts, 2), 1);

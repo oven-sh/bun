@@ -1,0 +1,20 @@
+# -- source: a-second-misfit-behind-a-struck-start-joins-the-new-start.js
+# function mix(list, mask) {
+#   let seen = 0, at = 0;
+#   while (at < list.length) { const word = list[at++] | 0; if (word & mask) { seen = seen ^ word; continue; } seen = null; }
+#   return seen;
+# }
+# sink(mix([5, -6, 7], 4));
+# -- end of source
+# Two edges come round. The first strikes the guessed start of `seen` with an int32; what the second brings, null, was dropped, because what stands beside the parameter was noted only until the strike: the next walk misfitted again
+# and climbed a rung for nothing. It is noted to the end of the struck walk, and each misfit of that walk makes the new start of all of it.
+# f1 = mix
+# OPTIONS: check=Validate
+# RUN(COUNT): compile LoopVisits
+# COUNT: statistic LoopVisits 3
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: null|i32 {{*}}isLoopHead=true
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 7
+# SHELL: exited with 0

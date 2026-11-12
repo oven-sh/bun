@@ -1,0 +1,13 @@
+# -- source: main.cjs
+# function Box(n) { this.count = n; this.late(); }
+# Box.prototype.late = function () { this.total = 0; };
+# Box.prototype.add = function (k) { for (var i = 0; i < k; i++) this.total += i; return this.total; };
+# var b = new Box(3);
+# print(b.add(10) + b.count);
+# -- end of source
+# Nobody sees the object before the method that its constructor calls has filled the field.
+# RUN: walk f3:Body mechanisms=all
+# CHECK-NOT: GetSlotOrUndefined
+# CHECK-NOT: PutSlotOrAdd
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 48

@@ -833,12 +833,12 @@ describe.concurrent("a task that queues its successor each time it runs", () => 
     expect({ stdout: stdout.replace(/^\[macro\] .*\n/gm, ""), ...rest }).toEqual(prints("0,1,2,3,4,5,6,7,8,9,10,11\n"));
   });
 
-  test.serial("a chain of 12 tasks that the module of a macro starts is over before the macro is called", async () => {
+  test.serial("a chain of 40 tasks that the module of a macro starts is over before the macro is called", async () => {
     using dir = tempDir("task-chain-macro-module", {
       "macro.ts": `
         let links = 0;
         new PerformanceObserver(() => {
-          if (++links < 12) performance.mark("again");
+          if (++links < 40) performance.mark("again");
         }).observe({ entryTypes: ["mark"] });
         performance.mark("first");
         export function linksRun() {
@@ -851,7 +851,7 @@ describe.concurrent("a task that queues its successor each time it runs", () => 
       `,
     });
     const { stdout, ...rest } = await run(["main.ts"], { cwd: String(dir) });
-    expect({ stdout: stdout.replace(/^\[macro\] .*\n/gm, ""), ...rest }).toEqual(prints("12\n"));
+    expect({ stdout: stdout.replace(/^\[macro\] .*\n/gm, ""), ...rest }).toEqual(prints("40\n"));
   });
 
   test.serial("a rejection in a chain that a macro leaves behind fails the build", async () => {
@@ -860,8 +860,8 @@ describe.concurrent("a task that queues its successor each time it runs", () => 
         export async function leavesAChain() {
           let links = 0;
           new PerformanceObserver(() => {
-            // After the chain's first drain, so in the tick that runs once the macro has settled.
-            if (++links === 12) Promise.reject(new Error("rejected by the chain of the macro"));
+            // Several drains after the one that settles the macro.
+            if (++links === 30) Promise.reject(new Error("rejected by the chain of the macro"));
             if (links < 40) performance.mark("again");
           }).observe({ entryTypes: ["mark"] });
           performance.mark("first");
@@ -914,7 +914,7 @@ describe.concurrent("a task that queues its successor each time it runs", () => 
 
   // One drain of the task queue runs 9 generations. When the 9th ends the file, `bun test` runs the 10th before it
   // leaves the file.
-  test.each([8, 9, 10, 18])(
+  test.each([8, 9, 10, 18, 40])(
     "`bun test` runs the task that the last test queues behind %d generations in its file",
     async generations => {
       using dir = tempDir("task-chain-test-file-end", {
@@ -937,7 +937,7 @@ describe.concurrent("a task that queues its successor each time it runs", () => 
     },
   );
 
-  // The chain's first drain ends before the rejection. `bun test` runs the next drain before it leaves the file.
+  // The rejection is several drains behind the one that ends the file. `bun test` runs them before it leaves the file.
   // Serial: `--parallel` starts a process per core.
   test.serial.each([
     ["in one process", []],
@@ -952,7 +952,7 @@ describe.concurrent("a task that queues its successor each time it runs", () => 
           test("leaves a chain behind", () => {
             let links = 0;
             new PerformanceObserver(() => {
-              if (++links === 12) Promise.reject(new Error("rejected by the chain of file a"));
+              if (++links === 30) Promise.reject(new Error("rejected by the chain of file a"));
               if (links < 60) performance.mark("again");
             }).observe({ entryTypes: ["mark"] });
             performance.mark("first");
@@ -1109,22 +1109,31 @@ describe.concurrent("a task that queues its successor each time it runs", () => 
     const fixture = `
       // Each link handles the promise that the link before it rejected, and rejects one of its own.
       let links = 0, rejected;
-      const reported = new Set(), handledLater = new Set();
-      process.on("unhandledRejection", (error, promise) => reported.add(promise));
+      const reported = new Map(), handledLater = new Set();
+      process.on("unhandledRejection", (error, promise) => reported.set(promise, error.message));
       process.on("rejectionHandled", promise => handledLater.add(promise));
       new PerformanceObserver(() => {
         rejected?.catch(() => {});
         if (++links === 30) {
           return setImmediate(() => {
-            const allHandledLater = reported.size === handledLater.size && [...reported].every(promise => handledLater.has(promise));
-            console.log(JSON.stringify({ links, reported: reported.size > 0, allHandledLater }));
+            const allHandledLater = reported.size === handledLater.size && [...reported.keys()].every(promise => handledLater.has(promise));
+            console.log(JSON.stringify({ links, reported: [...reported.values()], allHandledLater }));
           });
         }
         rejected = Promise.reject(new Error("rejected by link " + links));
         performance.mark("again");
       }).observe({ entryTypes: ["mark"] });
       performance.mark("first");`;
-    expect(await run(["-e", fixture])).toEqual(prints('{"links":30,"reported":true,"allHandledLater":true}\n'));
+    // A drain runs 9 links, and the report follows each drain that leaves a rejection without its handler.
+    expect(await run(["-e", fixture])).toEqual(
+      prints(
+        JSON.stringify({
+          links: 30,
+          reported: ["rejected by link 9", "rejected by link 18", "rejected by link 27"],
+          allHandledLater: true,
+        }) + "\n",
+      ),
+    );
   });
 
   test("without a listener a chain ends at the first rejection that is reported", async () => {
@@ -1145,6 +1154,186 @@ describe.concurrent("a task that queues its successor each time it runs", () => 
       exitCode: 1,
       signalCode: null,
     });
+  });
+
+  // The start of a chain inside an immediate is the start of a drain: the next immediate sees how far one drain ran.
+  const producers = {
+    "a PerformanceObserver": `
+      new PerformanceObserver(() => next()).observe({ entryTypes: ["mark"] });
+      const queue = () => performance.mark("link");`,
+    "dns.resolve4()": `
+      import dns from "node:dns";
+      const queue = () => dns.resolve4("a..b", () => next());`,
+    "the close event of a MessagePort": `
+      const queue = () => {
+        const { port1 } = new MessageChannel();
+        port1.addEventListener("close", () => next());
+        port1.start();
+        port1.close();
+      };`,
+  };
+  describe.each(Object.entries(producers))("one drain of a chain of tasks from %s", (_, producer) => {
+    test.each([
+      [9, "9 links run, 0 tasks queued\n"],
+      [10, "9 links run, 1 tasks queued\n"],
+    ])("of %d links", async (links, stdout) => {
+      const fixture = `
+        import { getEventLoopStats } from "bun:internal-for-testing";
+        ${producer}
+        let links = 0;
+        function next() {
+          if (++links < ${links}) queue();
+        }
+        setImmediate(() => {
+          queue();
+          setImmediate(() => {
+            console.log(links, "links run,", getEventLoopStats().tasks, "tasks queued");
+            // The resolver keeps the process alive for a second after a query.
+            process.exit(0);
+          });
+        });`;
+      expect(await run(["-e", fixture])).toEqual(prints(stdout));
+    });
+  });
+
+  // Link 8 and the task that it queues are the 8th and 9th generation of the first drain. Link 9 and its task are
+  // the 9th generation and the first one of the next drain: the report of rejections runs between them.
+  test.each([
+    [8, "0 reported\n"],
+    [9, "1 reported\n"],
+    [10, "0 reported\n"],
+  ])("a rejection at link %d that the next task handles", async (at, stdout) => {
+    const fixture = `
+      import dns from "node:dns";
+      let links = 0, reported = 0;
+      process.on("unhandledRejection", () => reported++);
+      new PerformanceObserver(() => {
+        if (++links === ${at}) {
+          const rejected = Promise.reject(new Error("rejected by link " + links));
+          dns.resolve4("a..b", () => rejected.catch(() => {}));
+        }
+        if (links < 30) return performance.mark("again");
+        console.log(reported, "reported");
+        // The resolver keeps the process alive for a second after a query.
+        process.exit(0);
+      }).observe({ entryTypes: ["mark"] });
+      performance.mark("first");`;
+    expect(await run(["-e", fixture])).toEqual(prints(stdout));
+  });
+
+  // Bun.build() waits for an async plugin setup() with the event loop: a tick() inside the task that called it.
+  const waitInsideATask = `
+    const wait = promise =>
+      void Bun.build({
+        entrypoints: ["/wait.js"],
+        files: { "/wait.js": "" },
+        plugins: [{ name: "wait", setup: () => promise }],
+      }).catch(() => {});
+  `;
+
+  test("a wait inside a task returns while a chain runs", async () => {
+    const fixture = `${link}${waitInsideATask}
+      import dns from "node:dns";
+      const retry = () => dns.resolve4("a..b", () => { link(); retry(); });
+      dns.resolve4("a..b", () => {
+        retry();
+        wait(new Promise(resolve => setTimeout(resolve, 1)));
+        console.log("returned");
+        process.exit(0);
+      });`;
+    expect(await run(["-e", fixture])).toEqual(prints("returned\n"));
+  });
+
+  test("a wait inside a task runs the other tasks of its generation once", async () => {
+    const fixture = `${waitInsideATask}
+      import dns from "node:dns";
+      const order = [];
+      const { promise, resolve } = Promise.withResolvers();
+      setImmediate(() => {
+        order.push("immediate");
+        console.log(order.join());
+        // The resolver keeps the process alive for a second after a query.
+        process.exit(0);
+      });
+      for (let i = 1; i <= 5; i++) {
+        dns.resolve4("a..b", () => {
+          order.push("task " + i);
+          if (i === 5) resolve();
+          if (i === 1) {
+            wait(promise);
+            order.push("returned");
+          }
+        });
+      }`;
+    expect(await run(["-e", fixture])).toEqual(prints("task 1,task 2,task 3,task 4,task 5,returned,immediate\n"));
+  });
+
+  // The REPL runs the loop at the end of a line, and not again until the next line.
+  test("a chain of 40 that a line of the REPL starts is over before the next line", async () => {
+    const lines = [
+      `let links = 0; new PerformanceObserver(() => { if (++links < 40) performance.mark("again"); }).observe({ entryTypes: ["mark"] }); performance.mark("first"); 0`,
+      "links",
+      ".exit",
+    ];
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repl"],
+      env: bunEnv,
+      stdin: Buffer.from(lines.join("\n") + "\n"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // What each of the two lines evaluates to.
+    expect({ results: stdout.match(/^\d+$/gm), stderr, exitCode }).toEqual({
+      results: ["0", "40"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A plugin of `bun lint` runs in a VM whose loop runs only while a call waits. Serial: a debug build is slow to
+  // start the linter.
+  test.serial("a chain of 40 that a lint plugin's module starts is over before its rules run", async () => {
+    using dir = tempDir("task-chain-lint", {
+      "eslint.config.mjs": `
+        import plugin from "./plugin.mjs";
+        export default [{ plugins: { demo: plugin }, rules: { "demo/links": "error" } }];
+      `,
+      "plugin.mjs": `
+        let links = 0;
+        new PerformanceObserver(() => {
+          if (++links < 40) performance.mark("again");
+        }).observe({ entryTypes: ["mark"] });
+        performance.mark("first");
+        const create = context => ({ Program: node => context.report({ node, message: "links run: " + links }) });
+        export default { rules: { links: { create } } };
+      `,
+      "a.js": "a;\n",
+    });
+    const { stdout, exitCode } = await run(["lint", "--threads", "1", "-f", "json", "a.js"], { cwd: String(dir) });
+    expect({ messages: JSON.parse(stdout)[0].messages.map(message => message.message), exitCode }).toEqual({
+      messages: ["links run: 40"],
+      exitCode: 1,
+    });
+  });
+
+  test("a save is loaded again under --hot while a chain runs", async () => {
+    using dir = tempDir("task-chain-hot-save", {
+      "chain.js": `
+        ${link}
+        const { writeFileSync } = require("node:fs");
+        let links = 0;
+        new PerformanceObserver(() => {
+          link();
+          // The file that replaces this one prints and exits.
+          if (++links === 50) writeFileSync(__filename, 'console.log("loaded again"); process.exit(0);');
+          performance.mark("again");
+        }).observe({ entryTypes: ["mark"] });
+        performance.mark("first");
+      `,
+    });
+    const { stdout, exitCode, signalCode } = await run(["--hot", "chain.js"], { cwd: String(dir) });
+    expect({ stdout, exitCode, signalCode }).toEqual({ stdout: "loaded again\n", exitCode: 0, signalCode: null });
   });
 
   test("process.exit() in a link exits there", async () => {

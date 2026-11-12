@@ -299,6 +299,8 @@ impl Vm for ThreadVm {
                     }
                     vm.as_mut().auto_tick();
                 }
+                // Nothing runs this VM's loop until a later call waits.
+                vm.event_loop_mut().run_tasks_left();
                 returned = promise.result(global.vm());
                 if promise.status() == jsc::js_promise::Status::Rejected {
                     return Err(message_of(global, returned));

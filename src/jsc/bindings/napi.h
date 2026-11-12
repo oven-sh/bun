@@ -354,10 +354,12 @@ public:
     }
 
     // Node's pending_finalizers: refs whose value was swept during GC and whose finalizer runs on a later event-loop turn; ~NapiRef removes itself.
+    // One task per pending ref, queued here. A task that queued the next one would be a chain of tasks, and one drain of
+    // the task queue runs 9 links of a chain (`EventLoop::next_task_within`).
     void enqueueRefFinalizer(Zig::NapiRef* ref)
     {
         m_pendingRefFinalizers.add(ref);
-        queueRefFinalizerDrain();
+        Bun__napi_enqueue_finalizer(this, drainOneRefFinalizer, this, nullptr);
     }
 
     void dequeueRefFinalizer(Zig::NapiRef* ref)
@@ -651,18 +653,11 @@ private:
     // ListHashSet preserves insertion order so cleanup() can run finalizers in reverse
     // (LIFO), matching Node.js teardown semantics for napi_wrap references.
     WTF::ListHashSet<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
-    static void drainRefFinalizers(napi_env, void*, void*);
-    // At most one drain task is queued. A drain that has begun lets the next pending ref queue another.
-    void queueRefFinalizerDrain()
-    {
-        if (!std::exchange(m_isRefFinalizerDrainQueued, true))
-            Bun__napi_enqueue_finalizer(this, drainRefFinalizers, this, nullptr);
-    }
+    static void drainOneRefFinalizer(napi_env, void*, void*);
     WTF::ListHashSet<Zig::NapiRef*> m_pendingRefFinalizers;
     // The entry cleanup() is currently calling, if any (see BoundFinalizer::deactivate).
     const BoundFinalizer* m_currentFinalizer = nullptr;
     bool m_isFinishingFinalizers = false;
-    bool m_isRefFinalizerDrainQueued = false;
 
 public:
     // Set while a completion (async work's complete, a threadsafe function's call_js) runs for a

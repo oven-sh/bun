@@ -50,6 +50,8 @@ pub struct EventLoop {
     /// Set when teardown releases the queue: from then on `enqueue_task`
     /// releases instead of parking (nothing will tick this loop again).
     closed_for_tasks: bool,
+    /// The last `tick()` ended with tasks of this thread queued (`Drained::TasksLeft`).
+    last_tick_left_tasks: bool,
     /// Set when teardown goes on to destroy the JSC VM: the global object goes
     /// with it, in no particular order with the finalizers that still enqueue.
     global_is_going: bool,
@@ -129,6 +131,7 @@ impl Default for EventLoop {
         Self {
             tasks: Queue::init(),
             closed_for_tasks: false,
+            last_tick_left_tasks: false,
             global_is_going: false,
             immediate_tasks: Vec::new(),
             next_immediate_tasks: Vec::new(),
@@ -860,9 +863,9 @@ impl EventLoop {
     /// (a client that dials again when its dial fails); without a bound that
     /// chain keeps `tick()` from ever returning and timers / I/O never run. A
     /// drain that ends with tasks queued ends its `tick()`, and the next one
-    /// picks them up, after a non-blocking poll (`has_pending_tasks`). 9 is
-    /// libuv's count: `uv_run` runs its pending queue once before the poll and
-    /// at most 8 times after it.
+    /// picks them up: in the run loop after a non-blocking poll
+    /// (`has_pending_tasks`). 9 is libuv's count: `uv_run` runs its pending
+    /// queue once before the poll and at most 8 times after it.
     const GENERATIONS_PER_DRAIN: u32 = 9;
 
     /// Work is queued that the next `tick()` will run: the poll before it must
@@ -986,11 +989,30 @@ impl EventLoop {
         crate::top_scope!(scope, self.global_ref());
         self.entered_event_loop_count += 1;
         // `Err(Stopped)`: a fold or checkpoint met the VM's termination; the turn is over.
-        let _ = self.tick_turn(&mut scope);
+        self.last_tick_left_tasks = self.tick_turn(&mut scope).unwrap_or(false);
         self.entered_event_loop_count -= 1;
     }
 
-    fn tick_turn(&mut self, scope: &mut crate::TopExceptionScope) -> Result<(), Stopped> {
+    /// How many more times [`Self::run_tasks_left`] calls `tick()`.
+    const TICKS_FOR_TASKS_LEFT: u32 = 1024;
+
+    /// For a driver that stops running this loop here: a macro that has settled, a test file
+    /// that is over, a line of the REPL. When the last `tick()` ended with tasks queued, `tick()`
+    /// runs again until one ends with none, so a chain of tasks that ends is over here. A chain
+    /// that does not end stays queued after `TICKS_FOR_TASKS_LEFT` more ticks.
+    pub fn run_tasks_left(&mut self) {
+        let mut ticks = 0;
+        while self.last_tick_left_tasks
+            && ticks < Self::TICKS_FOR_TASKS_LEFT
+            && self.vm_ref().script_allowed()
+        {
+            self.tick();
+            ticks += 1;
+        }
+    }
+
+    /// `Ok(true)`: a drain ended with tasks queued (`Drained::TasksLeft`).
+    fn tick_turn(&mut self, scope: &mut crate::TopExceptionScope) -> Result<bool, Stopped> {
         let ctx = self.vm();
         self.plugin_request_refills_left = Self::CONCURRENT_REFILLS_PER_TICK;
         self.tick_concurrent();
@@ -1028,7 +1050,7 @@ impl EventLoop {
                 // Every task's exception was folded above; one still pending here escaped whoever
                 // produced it.
                 debug_assert!(false, "a task returned Ok with a JS exception pending");
-                return Ok(());
+                return Ok(false);
             }
             if refills == Self::CONCURRENT_REFILLS_PER_TICK {
                 break;
@@ -1051,7 +1073,8 @@ impl EventLoop {
 
         self.global_ref()
             .handle_rejected_promises()
-            .map_err(|_| Stopped)
+            .map_err(|_| Stopped)?;
+        Ok(tasks_left)
     }
 
     /// Tick the task queue without draining microtasks afterward.
@@ -1081,7 +1104,7 @@ impl EventLoop {
 
     /// Queues `task` from this thread. A task that is queued while the queue drains runs in a
     /// later generation (`next_task_within`): in the same drain while it has generations left,
-    /// else in the next `tick()`, after the loop has polled.
+    /// else in the next `tick()`.
     pub fn enqueue_task(&mut self, task: Task) {
         if self.closed_for_tasks {
             // Teardown already released the queue and this loop never ticks

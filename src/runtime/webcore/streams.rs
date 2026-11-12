@@ -447,8 +447,8 @@ impl Pending {
         prom
     }
 
-    /// Fulfils the pending read from a task of its own. The drain of the task queue that is
-    /// running takes it in its next generation: it does not wait for the loop to poll.
+    /// Fulfils the pending read from a task of its own, which a later generation of the task
+    /// queue's drain runs (`EventLoop::next_task_within`).
     pub(crate) fn run_on_next_tick(&mut self) {
         if self.state != PendingState::Pending {
             return;

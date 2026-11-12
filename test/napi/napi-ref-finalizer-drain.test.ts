@@ -53,17 +53,15 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("finalizers of wrapped objects
       }
       // The addon calls this from each finalizer.
       globalThis.onFinalize = () => {
-        if (++links >= 100 && Date.now() > giveUpAt) {
+        // The timer starts in the first link, so the chain runs when it is due.
+        if (++links === 1) setTimeout(() => { console.log("timer"); process.exit(0); }, 1);
+        if (links >= 100 && Date.now() > giveUpAt) {
           console.log("starved");
           process.exit(1);
         }
         wrapOneAndCollect();
       };
-      // From an immediate: the chain and the timer start in the same turn of the loop, after the start-up turns.
-      setImmediate(() => {
-        wrapOneAndCollect();
-        setTimeout(() => { console.log("timer"); process.exit(0); }, 1);
-      });
+      wrapOneAndCollect();
     `);
     expect(result).toEqual({ stdout: "timer\n", stderr: "", exitCode: 0 });
   });

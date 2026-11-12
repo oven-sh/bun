@@ -3954,10 +3954,10 @@ impl TestCommand {
     }
 
     /// `tick()` runs a bounded number of generations of tasks (`EventLoop::next_task_within`). When the one before this
-    /// ended the file, what the last step queued behind them runs here, before the file is left.
+    /// ended the file and left tasks queued, they run here, before the file is left (`EventLoop::run_tasks_left`).
     fn run_tasks_queued_at_file_end(vm: &VirtualMachine, buntest: &bun_test::BunTest) {
-        if buntest.phase == bun_test::Phase::Done && vm.event_loop_ref().has_pending_tasks() {
-            vm.event_loop_ref().tick();
+        if buntest.phase == bun_test::Phase::Done {
+            vm.event_loop_ref().run_tasks_left();
         }
     }
 

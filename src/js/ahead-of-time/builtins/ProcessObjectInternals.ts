@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 34b28730976f3729b1f08385ac19a7f622a31d5c76459e81ae77e00f2e40eba8.
+// Written against that file with the SHA-256 70d44c2d731be334066d86617cb7cc30446c02ab26d5aa96991bf7b980beb283.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -301,10 +301,20 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
 
     if (reader) {
       internalRead(this);
-    } else {
-      // The stream has not been ref()ed yet. If it is ever ref()ed,
-      // run internalRead()
-      needsInternalReadRefresh = true;
+      return;
+    }
+
+    // The stream has not been ref()ed yet. If it is ever ref()ed,
+    // run internalRead()
+    needsInternalReadRefresh = true;
+
+    // The Readable asks for data on behalf of a consumer (a 'readable' listener or
+    // flowing mode), so take the reader back, as net.Socket._read restarts its handle
+    // in Node. The 'pause' tick may have released it after the consumer attached:
+    // pause() then on('readable') in one 'data' handler leaves readableFlowing false
+    // at that tick. A destroyed stream stays released, or the process never exits.
+    if (!stream.destroyed && (stream.readableFlowing || stream._readableState.readableListening)) {
+      own();
     }
   }
   stream._read = triggerRead;

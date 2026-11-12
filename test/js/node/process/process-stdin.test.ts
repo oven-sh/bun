@@ -530,6 +530,7 @@ test.concurrent("switching from 'data' to 'readable' inside a 'data' handler kee
     stderr: "pipe",
     env: bunEnv,
   });
+  const stderr = proc.stderr.text();
   proc.stdin.write("hello");
   await proc.stdin.flush();
   const reader = proc.stdout.getReader();
@@ -539,19 +540,45 @@ test.concurrent("switching from 'data' to 'readable' inside a 'data' handler kee
     stdout += decoder.decode(r.value, { stream: true });
     if (stdout.includes("GOT1")) break;
   }
-  // A child that let go of stdin has exited by now. The EPIPE is swallowed so the
+  // A child that let go of stdin has exited by now. Its EPIPE is swallowed so the
   // comparison below shows what the child saw.
   try {
     proc.stdin.write("world");
     await proc.stdin.end();
-  } catch {}
+  } catch (e: any) {
+    if (e?.code !== "EPIPE") throw e;
+  }
   for (let r; !(r = await reader.read()).done;) stdout += decoder.decode(r.value, { stream: true });
 
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect({ stdout, exitCode, ...(exitCode === 0 ? {} : { stderr }) }).toEqual({
+  const exitCode = await proc.exited;
+  expect({ stdout, exitCode, ...(exitCode === 0 ? {} : { stderr: await stderr }) }).toEqual({
     stdout: "GOT1\n" + JSON.stringify(["data:hello", "readable:world", "end"]) + "\n",
     exitCode: 0,
   });
+});
+
+// destroy() with a 'readable' listener and a read in flight: the 'close' tick releases
+// the reader, the rejected read calls _read again, and _read must not take the reader
+// back on a destroyed stream. The parent keeps stdin open, so the child exits only when
+// stdin lets go of the event loop.
+test.concurrent("destroy() with a 'readable' listener lets the process exit", async () => {
+  const proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.stdin.on("readable", () => process.stdin.read());
+      setImmediate(() => process.stdin.destroy());
+      process.on("exit", () => console.log("EXIT " + process.stdin.destroyed));`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  const result = await stdioResult(proc);
+  proc.stdin.end();
+  expect(result).toEqual({ stdout: "EXIT true\n", exitCode: 0 });
 });
 
 // The native FileReader source over a pollable pipe used to drain the fd to

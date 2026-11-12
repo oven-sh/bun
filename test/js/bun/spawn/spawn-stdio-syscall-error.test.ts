@@ -800,8 +800,9 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
   // goes on reading a socket that hung up, but not one its stream stopped: the stream gets the rest when it asks.
   test.concurrent("node:child_process: a reader its stream stopped reads no more after the child hung up", async () => {
     const recvCap = 4096;
-    // The first chunk ends where `fill_scratch` (src/io/PipeReader.rs) delivers: once half of the 256 KiB read scratch
-    // (`PIPE_READ_BUFFER_SIZE`) is full. Retuning either moves this number; nothing else here depends on it.
+    // `fill_scratch` (src/io/PipeReader.rs) delivers the first chunk once half of its 256 KiB read scratch
+    // (`PIPE_READ_BUFFER_SIZE`) is full. The test needs that chunk to fill the stream's 64 KiB buffer and to leave some
+    // of the child's 136000 bytes unread.
     const firstChunk = Math.ceil((128 * 1024) / recvCap) * recvCap;
     expect(
       await runWithFault("child-process-hangup.mjs", {

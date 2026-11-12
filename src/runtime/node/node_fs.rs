@@ -7343,6 +7343,11 @@ impl NodeFS {
         matches!(errno, E::ENOENT | E::ENOTDIR | E::EPERM)
     }
 
+    /// An open that the OS refuses for length ends like `readdir_rel_too_long`: listed, not entered.
+    fn readdir_skips_subdir_open(errno: E) -> bool {
+        matches!(errno, E::ENAMETOOLONG) || Self::readdir_skips_subdir(errno)
+    }
+
     /// `openat(root_fd, rel)` can only answer ENAMETOOLONG. The entry is listed and not entered.
     #[inline]
     fn readdir_rel_too_long(rel: &[u8]) -> bool {
@@ -7407,7 +7412,9 @@ impl NodeFS {
             },
         );
         let fd = match open_res {
-            Err(err) if !is_root && Self::readdir_skips_subdir(err.get_errno()) => return Ok(()),
+            Err(err) if !is_root && Self::readdir_skips_subdir_open(err.get_errno()) => {
+                return Ok(());
+            }
             Err(err) => {
                 return Err(Self::readdir_error(
                     buf,
@@ -7589,7 +7596,7 @@ impl NodeFS {
                         return Err(err.with_path(args.path.slice()));
                     }
                     match err.get_errno() {
-                        errno if Self::readdir_skips_subdir(errno) => continue,
+                        errno if Self::readdir_skips_subdir_open(errno) => continue,
                         _ => {
                             // TODO: propagate file path (removed previously because it leaked the path)
                             return Err(err);

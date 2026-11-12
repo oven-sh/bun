@@ -433,6 +433,19 @@ describe.if(isPosix)("recursive readdir at the path length limit", () => {
     return entries;
   }
 
+  // A symlink whose target has a component longer than NAME_MAX: the OS answers
+  // ENAMETOOLONG when it opens the link.
+  function makeTreeWithLongLink(root: string): Entries {
+    fs.mkdirSync(join(root, "sub"));
+    fs.writeFileSync(join(root, "sub", "file.txt"), "");
+    fs.symlinkSync(repeat("x", 300), join(root, "sub", "link"));
+    return [
+      ["sub", "directory"],
+      ["sub/file.txt", "file"],
+      ["sub/link", "symlink"],
+    ];
+  }
+
   it("descends into a directory whose path is close to the limit", async () => {
     using dir = tempDir("readdir-near-limit", {});
     const entries = makeTreeNearTheLimit(String(dir));
@@ -467,6 +480,12 @@ describe.if(isPosix)("recursive readdir at the path length limit", () => {
     }).toEqual({ readdirSync: expected, "promises.readdir": expected });
   });
 
+  it("lists a symlink that the OS does not follow because of its length", async () => {
+    using dir = tempDir("readdir-long-link", {});
+    const entries = makeTreeWithLongLink(String(dir));
+    expect(await listInEveryForm(String(dir))).toEqual(inEveryForm(entries));
+  });
+
   // A link to its own directory, with a 255-byte name. Each level is 256 bytes
   // longer, so the link at MAX_PATH_BYTES - 1 is the last one that is followed.
   it("follows a symlink cycle up to the limit", async () => {
@@ -491,6 +510,12 @@ describe.if(isPosix)("recursive readdir at the path length limit", () => {
     it("close to the limit", async () => {
       using dir = tempDir("readdir-near-limit-node", {});
       const entries = makeTreeNearTheLimit(String(dir));
+      expect((await listInChild(node!, String(dir))).listing).toEqual(inEveryForm(entries));
+    });
+
+    it("for a symlink that the OS does not follow because of its length", async () => {
+      using dir = tempDir("readdir-long-link-node", {});
+      const entries = makeTreeWithLongLink(String(dir));
       expect((await listInChild(node!, String(dir))).listing).toEqual(inEveryForm(entries));
     });
   });

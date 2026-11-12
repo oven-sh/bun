@@ -120,6 +120,11 @@ An option you don't set keeps its default. With an ESLint config you get ESLint'
 
 You can pass a string, `"all"` or `"local"`, instead of the object. It sets `vars`.
 
+Bun keeps an import that nothing uses when it runs the file. So with `enableAutofixRemoval`, `--fix` leaves an unused import alone where Bun would run the file in another way without it, and `--fix-dangerously` removes it:
+
+- The file's only import from `vitest`, which gives a test file [the globals of `vitest`](/test/configuration#globals), or from `bun:test` or `@jest/globals` in a file that uses a global such as `test`.
+- An import in a file that has no `export` and no other import whose names the code uses. An `import` is then what makes Bun run the file as an ES module.
+
 By default, an unused parameter before a used one is allowed, because you can't remove it without moving the others:
 
 {/* good */}
@@ -170,4 +175,4 @@ With an oxlint config, the rule follows oxlint where the two differ:
 
 - Without an options object, variables and parameters that start with `_` are ignored.
 - A value that's only used through `typeof` in a type counts as used, unless `reportVarsOnlyUsedAsTypes` is `true`.
-- `fix` replaces `enableAutofixRemoval`. It's `{ "imports": ..., "variables": ... }`, and each is `"off"`, `"suggestion"` (default), `"fix"`, or `"safe-fix"`.
+- `fix` replaces `enableAutofixRemoval`. It's `{ "imports": ..., "variables": ... }`, and each is `"off"`, `"suggestion"` (default), `"fix"`, or `"safe-fix"`. `--fix` leaves an unused variable alone if its value has a `require()` and no `import` or `export` makes the file an ES module: the call can be what makes Bun run the file as CommonJS, and a `require("vitest")` gives a test file the globals of `vitest`.

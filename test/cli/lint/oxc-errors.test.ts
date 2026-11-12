@@ -6028,10 +6028,13 @@ describe.concurrent("bun lint with .oxlintrc.json", () => {
     });
 
     test("--fix only imports the globals", async () => {
+      // A file's first import of "vitest" changes how `bun test` runs it, so `--fix` only adds one to a file that
+      // loads "vitest" already: see run-mode.test.ts.
+      const loadsVitest = 'export * from "vitest";\n';
       const files = {
         "bound.test.ts": `import { expect, test } from "./harness";\n${body}\n`,
-        "mixed.test.ts": `import { test } from "@playwright/test";\n${body}\n`,
-        "globals.test.ts": `${body}\n`,
+        "mixed.test.ts": `import { test } from "@playwright/test";\n${body}\n${loadsVitest}`,
+        "globals.test.ts": `${body}\n${loadsVitest}`,
         "added.test.ts": `import { test } from "vitest";\nimport { vi } from "./harness";\nvi();\n${body}\n`,
       };
       using dir = tempDir("bun-lint-oxc-errors", { ".oxlintrc.json": JSON.stringify(config), ...files });
@@ -6050,7 +6053,7 @@ describe.concurrent("bun lint with .oxlintrc.json", () => {
       expect(Object.fromEntries(fixed)).toEqual({
         "bound.test.ts": files["bound.test.ts"],
         "mixed.test.ts": `import { expect } from 'vitest';\n${files["mixed.test.ts"]}`,
-        "globals.test.ts": `import { expect, test } from 'vitest';\n${body}\n`,
+        "globals.test.ts": `import { expect, test } from 'vitest';\n${files["globals.test.ts"]}`,
         "added.test.ts": `import { test, expect } from "vitest";\nimport { vi } from "./harness";\nvi();\n${body}\n`,
       });
       expect(JSON.parse(stdout).diagnostics).toEqual([]);

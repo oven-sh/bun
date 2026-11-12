@@ -8,7 +8,7 @@ FAIL more/reviews/typescript-eslint/no-unused-vars#2174 messages differ
 
 0 cases have their messages in another order
 
-19 cases have a fix that --fix holds back
+101 cases have a fix that --fix holds back
 
 632 rules, 627 without failures, 0 not implemented
 76549 cases passed, 7 failed, 258 skipped

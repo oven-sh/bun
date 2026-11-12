@@ -381,7 +381,8 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         text: 'import { test } from "vitest";\n' + importGreet + mock("vi") + greets(),
         prints: ["mock"],
       },
-      "a new import": { text: requireGreet + mock("vi") + greets(), prints: ["mock"] },
+      // The mock stays hoisted. The file's first import of `vitest` changes how it runs: see run-mode.test.ts.
+      "a new import": { text: requireGreet + mock("vi") + greets(), prints: ["mock"], dangerously: ["mock"] },
     },
   },
   {
@@ -402,13 +403,17 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         dangerously: ["mock"],
       },
 
+      // These keep what the calls do. Without its only load of `vitest`, the file runs in another way: see
+      // run-mode.test.ts.
       "vi.fn()": {
         text: 'const { vi, test } = require("vitest");\n' + requireGreet + spies("vi"),
         prints: ["runs dep.js", "real"],
+        dangerously: ["runs dep.js", "real"],
       },
       "an import from vitest": {
         text: 'import { vi, test } from "vitest";\n' + importGreet + mock("vi") + greets(),
         prints: ["mock"],
+        dangerously: ["mock"],
       },
     },
   },

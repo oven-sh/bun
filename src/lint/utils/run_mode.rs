@@ -145,7 +145,11 @@ pub fn has_runtime_use_without<'a>(
     let named = named.filter(|it| !it.is_type_only() && !is_removed(it));
     let names = (import.default().into_iter()).chain(import.namespace());
     import.is_side_effect()
-        || any_use(import, names.chain(named.map(|it| it.local())), is_runtime_use)
+        || any_use(
+            import,
+            names.chain(named.map(|it| it.local())),
+            is_runtime_use,
+        )
 }
 
 /// [`has_runtime_use_without`] for a fix that removes none of its names.
@@ -167,7 +171,11 @@ fn is_used(import: Import<'_>) -> bool {
 fn loaded_by(statement: Stmt<'_>, stays: bool) -> Option<Name<'_>> {
     match statement.kind() {
         StmtKind::Import(import) => {
-            let loads = if stays { has_runtime_use(import) } else { is_kept(import) };
+            let loads = if stays {
+                has_runtime_use(import)
+            } else {
+                is_kept(import)
+            };
             loads.then(|| import.spec())
         }
         StmtKind::ExportNamed(export) => {
@@ -178,7 +186,9 @@ fn loaded_by(statement: Stmt<'_>, stays: bool) -> Option<Name<'_>> {
             };
             export.spec().filter(|_| loads && !export.is_type_only())
         }
-        StmtKind::ExportStar { spec, type_only, .. } => spec.filter(|_| !type_only),
+        StmtKind::ExportStar {
+            spec, type_only, ..
+        } => spec.filter(|_| !type_only),
         StmtKind::ImportEquals(import) if !stays => match import.target() {
             ImportEqualsTarget::Require(source) => source,
             ImportEqualsTarget::Entity(_) => None,
@@ -265,9 +275,7 @@ fn is_export(statement: Stmt<'_>) -> bool {
 /// True if the file has a single `export {}`, which isn't `except`, and no fix removes it: the file would run in
 /// another way without it.
 fn has_lasting_empty_export<'a>(file: &'a File<'a>, except: Option<Stmt<'a>>) -> bool {
-    let is_empty = |it: &Stmt<'a>| {
-        matches!(it.kind(), StmtKind::ExportNamed(export) if export.items().is_empty())
-    };
+    let is_empty = |it: &Stmt<'a>| matches!(it.kind(), StmtKind::ExportNamed(export) if export.items().is_empty());
     let mut empty = file.body().iter().filter(is_empty);
     match (empty.next(), empty.next()) {
         (Some(only), None) => Some(only) != except && !keeps_run_mode_without(file, only),
@@ -290,7 +298,10 @@ fn has_use_strict<'a>(file: &'a File<'a>) -> bool {
 /// assigns to `module.exports`. Either one runs, so a file without an `import` or `export` is CommonJS.
 fn has_commonjs_code<'a>(file: &'a File<'a>) -> bool {
     let is_global = |name: &'static str| {
-        move |it: Reference<'a>| it.expr().filter(|it| it.is_ident(name) && it.symbol().is_none())
+        move |it: Reference<'a>| {
+            it.expr()
+                .filter(|it| it.is_ident(name) && it.symbol().is_none())
+        }
     };
     // Nothing around it is a condition, which can be a constant.
     let always_counts = |e: Expr<'a>| {
@@ -298,7 +309,10 @@ fn has_commonjs_code<'a>(file: &'a File<'a>) -> bool {
             Node::Expr(it) => !matches!(
                 it.kind(),
                 ExprKind::Cond { .. }
-                    | ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. }
+                    | ExprKind::Binary {
+                        op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                        ..
+                    }
             ),
             Node::Stmt(it) => matches!(it.tag(), StmtTag::Expr | StmtTag::Var | StmtTag::Return),
             _ => true,
@@ -310,7 +324,10 @@ fn has_commonjs_code<'a>(file: &'a File<'a>) -> bool {
         Node::Expr(call) => call.as_call().is_some_and(|call| call.callee() == it),
         _ => false,
     };
-    if requires.filter_map(is_global("require")).any(|it| is_called(it) && always_counts(it)) {
+    if requires
+        .filter_map(is_global("require"))
+        .any(|it| is_called(it) && always_counts(it))
+    {
         return true;
     }
     // `module.exports = a` and `module.exports.a = b`
@@ -368,9 +385,7 @@ pub fn keeps_module_format<'a>(file: &'a File<'a>, edit: Edit<'a>) -> bool {
         return false;
     }
     // These make it CommonJS unless it has an `import` that Bun keeps, or its package.json says `"type": "module"`.
-    let is_require = |it: Stmt<'a>| {
-        matches!(it.kind(), StmtKind::ImportEquals(it) if matches!(it.target(), ImportEqualsTarget::Require(_)))
-    };
+    let is_require = |it: Stmt<'a>| matches!(it.kind(), StmtKind::ImportEquals(it) if matches!(it.target(), ImportEqualsTarget::Require(_)));
     let asks_for_commonjs = is_global_used(file, &["require", "__dirname", "__filename"])
         || has_use_strict(file)
         || file.stmts_of_kind(StmtTag::ImportEquals).any(is_require);

@@ -2656,10 +2656,13 @@ describe.concurrent("--fix preserves behavior and comments", () => {
   test("--fix inserts an import below the hashbang, directives and file-level comments", async () => {
     const body = 'test("a", () => {\n  expect(1).toBe(1);\n});\n';
     const heads = ["// @ts-nocheck\n", '/// <reference types="node" />\n', '"use strict";\n', "#!/usr/bin/env bun\n"];
-    const files = Object.fromEntries(heads.map((head, i) => [`${i}.test.ts`, head + body]));
+    // `--fix` only inserts the line where Bun runs the file the same way afterwards: see run-mode.test.ts. So the
+    // files for Vitest load it already, and the ones for Jest are CommonJS already.
+    const [loadsVitest, isCommonJS] = ['export * from "vitest";\n', 'require("./setup");\n'];
+    const files = (tail: string) => Object.fromEntries(heads.map((head, i) => [`${i}.test.ts`, head + body + tail]));
     const [vitest, jest, first] = await Promise.all([
-      lint(files, ["--fix", "--rule", "vitest/prefer-importing-vitest-globals: warn"]),
-      lint(files, ["--fix", "--rule", "jest/prefer-importing-jest-globals: warn"]),
+      lint(files(loadsVitest), ["--fix", "--rule", "vitest/prefer-importing-vitest-globals: warn"]),
+      lint(files(isCommonJS), ["--fix", "--rule", "jest/prefer-importing-jest-globals: warn"]),
       lint({ "a.ts": '"use client";\nconst started = 1;\nimport { b } from "./b";\nconsole.log(started, b);\n' }, [
         "--fix",
         "--rule",
@@ -2667,7 +2670,7 @@ describe.concurrent("--fix preserves behavior and comments", () => {
       ]),
     ]);
     for (const [i, head] of heads.entries()) {
-      expect(vitest.texts[`${i}.test.ts`]).toBe(`${head}import { expect, test } from 'vitest';\n${body}`);
+      expect(vitest.texts[`${i}.test.ts`]).toBe(`${head}import { expect, test } from 'vitest';\n${body}${loadsVitest}`);
       expect(jest.texts[`${i}.test.ts`]).toStartWith(head);
       expect(jest.texts[`${i}.test.ts`]).toContain("@jest/globals");
     }
@@ -2783,24 +2786,30 @@ describe.concurrent("--fix preserves behavior and comments", () => {
       });
     });
 
+    // `--fix` only inserts the line where Bun runs the file the same way afterwards: see run-mode.test.ts. So each
+    // file ends with a line that loads `vitest`, or that makes it CommonJS.
     test.each([
-      ["vitest/prefer-importing-vitest-globals", "import { test } from 'vitest';\n"],
-      ["jest/prefer-importing-jest-globals", "const { test } = require('@jest/globals');\n"],
-    ])("%s: adds the import below the file header, above the first statement's comments", async (rule, statement) => {
-      const cases = Object.entries(heads).map(([name, [head, first]]) => [
-        name.replace(".ts", ".test.ts"),
-        [`${head}${first}test("a", () => {});\n`, `${head}${statement}${first}test("a", () => {});\n`].map(it =>
-          withLineBreaksOf(name, it),
-        ),
-      ]);
-      await expectFixed(rule, Object.fromEntries(cases));
-    });
+      ["vitest/prefer-importing-vitest-globals", "import { test } from 'vitest';\n", 'export * from "vitest";\n'],
+      ["jest/prefer-importing-jest-globals", "const { test } = require('@jest/globals');\n", 'require("./setup");\n'],
+    ])(
+      "%s: adds the import below the file header, above the first statement's comments",
+      async (rule, statement, tail) => {
+        const cases = Object.entries(heads).map(([name, [head, first]]) => [
+          name.replace(".ts", ".test.ts"),
+          [
+            `${head}${first}test("a", () => {});\n${tail}`,
+            `${head}${statement}${first}test("a", () => {});\n${tail}`,
+          ].map(it => withLineBreaksOf(name, it)),
+        ]);
+        await expectFixed(rule, Object.fromEntries(cases));
+      },
+    );
 
     test.each([
-      ["vitest/prefer-importing-vitest-globals", "import { test } from 'vitest';\n"],
-      ["jest/prefer-importing-jest-globals", "import { test } from '@jest/globals';\n"],
-    ])("%s: adds the import in a file that starts with comments and imports", async (rule, statement) => {
-      const rest = 'import { a } from "./a";\ntest("a", () => a);\n';
+      ["vitest/prefer-importing-vitest-globals", "import { test } from 'vitest';\n", 'export * from "vitest";\n'],
+      ["jest/prefer-importing-jest-globals", "import { test } from '@jest/globals';\n", ""],
+    ])("%s: adds the import in a file that starts with comments and imports", async (rule, statement, tail) => {
+      const rest = 'import { a } from "./a";\ntest("a", () => a);\n' + tail;
       await expectFixed(rule, {
         "header.test.ts": [`// Tests a.\n\n${rest}`, `// Tests a.\n\n${statement}${rest}`],
         "header-without-an-empty-line.test.ts": [`// Tests a.\n${rest}`, `${statement}// Tests a.\n${rest}`],

@@ -815,17 +815,9 @@ impl<'a> Printer<'a, '_> {
         let line = &source
             [..bun_core::strings::index_of_char_usize(source, b'\n').unwrap_or(source.len())];
         let line = bun_core::strings::trim_js_whitespace_end(line);
-        // Where lines are joined, the first is kept only if the printer of its text can keep it: see
-        // `print_sentence`.
-        let is_kept_when_joined = self.options.prose_wrap == ProseWrap::Preserve
-            || !bun_core::strings::contains_char(
-                bun_core::strings::trim_js_whitespace_end(source),
-                b'\n',
-            )
-            || self.kind(block.first_child) == Some(Kind::Sentence);
-        match is_kept_when_joined && !is_paragraph_on_its_own(line) {
-            true => KeptLineBreaks::First,
-            false => KeptLineBreaks::None,
+        match is_paragraph_on_its_own(line) {
+            true => KeptLineBreaks::None,
+            false => KeptLineBreaks::First,
         }
     }
 
@@ -845,6 +837,13 @@ impl<'a> Printer<'a, '_> {
                 .node(parent.first_child)
                 .map_or(0, |first| self.visual_column(first.start)),
             Some(parent) if parent.kind == Kind::Root => 0,
+            // The content of a block quote starts after `>` and the blank behind it, if there is one.
+            Some(parent) if parent.kind == Kind::Blockquote => {
+                let after = parent.start as usize + 1;
+                self.visual_column(parent.start)
+                    + 1
+                    + u32::from(matches!(self.original.get(after), Some(b' ' | b'\t')))
+            }
             _ => self.visual_column(block.start),
         };
         let mut decisions = vec![None];
@@ -947,7 +946,8 @@ impl<'a> Printer<'a, '_> {
             *self.kept_line_breaks.borrow_mut() = (id, kept, lines);
         }
         let kept = self.kept_line_breaks.borrow().1;
-        let is_first = node.previous == NONE && self.kind(node.parent) == Some(block.kind);
+        // The first line break of the block is in the sentence that starts on its first line.
+        let is_first = self.start_line(node) == self.start_line(block);
         (kept, is_first)
     }
 

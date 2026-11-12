@@ -2152,17 +2152,19 @@ describe.concurrent("bun fmt", () => {
         const files = {
           "a.md": "[a]: /url\n9. c\n10. d\n11. e\n",
           "b.md": "[a]: /url\n<x-y>\nb\n",
+          "d.md": "[a]: /url\n<x-y>\n2. b\n",
           // The first line stays whole, so that the next run finds the line break in the same place.
           "c.md": `[a]: /url\n${long}\n10. d\n`,
         };
         const result = await format(files, ["--prose-wrap=always"], { reads: Object.keys(files) });
         expect(result.files).toEqual({
           "a.md": "[a]: /url\n9. c\n10. d 11. e\n",
-          "b.md": "[a]: /url\n\n<x-y> b\n",
+          "b.md": "[a]: /url\n<x-y>\nb\n",
           "c.md": `[a]: /url\n${long}\n10. d\n`,
+          "d.md": "[a]: /url\n<x-y>\n2. b\n",
         });
         expect(Object.entries(result.files).map(([name, text]) => html(text!) === html(files[name as "a.md"]))).toEqual(
-          [true, true, true],
+          [true, true, true, true],
         );
         expect(result.exitCode).toBe(0);
       });

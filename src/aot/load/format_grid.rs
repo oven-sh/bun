@@ -183,6 +183,7 @@ const EVIDENCE: &[&str] = &[
     "console.log(require);", "console.log(this);", "this.a = 1;", "return;", "import.meta.url;", "console.log(import.meta.url);", "console.log(import.meta);", "await 0;",
     "import(\"./x\");", "module.exports;", "module.id;", "delete module.exports;", "module = 1;", "exports = 1;", "require = 1;", "var module;", "var exports = 1;",
     "let a = module;", "function module() {}", "arguments;", "console.log(arguments);", "eval(\"module\");", "with (unknown) module;", "new.target;",
+    "again: function f() {}", "if (unknown) function f() {}", "if (unknown) {} else function f() {}",
 ];
 
 #[rustfmt::skip]
@@ -299,6 +300,15 @@ const STATEMENTS: &[&str] = &[
     "var module; { var module; typeof module; }", "var module; { var module; module = 1; }", "{ var module; module = 1; }",
     "if (false) { var module; } { var module; module = 1; }", "function f(Object) { if (new Object()) {} else module.exports = 1; } f(unknown);",
     "const Set = unknown; new Set(), module;", "class Array {} new Array(1, 2), module;", "let Math = unknown; Math.PI, module;",
+    "outer: inner: function f() {}", "if (false) function f() {}", "if (unknown) function f() {} else function g() {}", "again: { function f() {} }",
+    "if (unknown) { function f() {} }", "again: function f();", "if (unknown) function f();", "namespace N { again: function f() {} }",
+    "function g() { \"use strict\"; again: function f() {} }", "function g() { \"use strict\"; if (unknown) function f() {} }",
+    "function g() { \"use strict\"; function h() { again: function f() {} } }", "(() => { \"use strict\"; if (unknown) function f() {} });",
+    "class C { a = () => { again: function f() {} }; }", "again: function f() { import.meta.url; }", "import type { T } from \"./y\"; again: function f() {}",
+    "import y = require(\"./y\"); again: function f() {}", "export type T = 1; if (unknown) function f() {}", "module.exports = 1; if (unknown) function module() {}",
+    "module.exports = 1; again: function module() {}", "@(function () { again: function f() {} }) class C {}",
+    "class C extends (function () { again: function f() {} }) {}", "class C { @(function () { again: function f() {} }) m() {} }",
+    "class C { [(function () { again: function f() {} })]() {} }",
 ];
 
 fn write_cells() -> Vec<String> {

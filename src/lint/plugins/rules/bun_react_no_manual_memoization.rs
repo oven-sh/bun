@@ -1,12 +1,16 @@
 use crate::bun::react_imports;
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::tokens::{TokenKind, skip_trivia};
 use bun_lint::utils::ts_utils::{
     is_start_of_arrow_function_body_needing_parentheses, is_start_of_expression_statement_needing_parentheses,
     is_strong_precedence_node, is_weak_precedence_parent,
 };
 use bun_lint_oxlint::ast_util::static_property_name;
-use bun_lint_react_compiler::{Discovered, Flavor, OPT_OUT_DIRECTIVES, discover, is_hook_call, would_compile};
+use bun_lint_react_compiler::{
+    Discovered, Flavor, OPT_IN_DIRECTIVES, OPT_OUT_DIRECTIVES, discover, is_hook_call, would_compile,
+};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::OnceCell;
 
@@ -55,8 +59,58 @@ fn is_react_api(callee: Expr<'_>, names: &[&str]) -> bool {
         || ast_utils::is_member_access_of_any(callee, names)
 }
 
+/// A comment that `bun build --react-compiler` takes for a `react-hooks` suppression. Its lexer looks for
+/// `eslint-disable` or `eslint-disable-next-line` anywhere in a comment, and for a `react-hooks` rule anywhere after.
+struct BuildSuppression {
+    start: u32,
+    is_block: bool,
+}
+
+fn build_suppressions<'a>(file: &'a File<'a>) -> Vec<BuildSuppression> {
+    let at_word_boundary = |s: &[u8]| s.first().is_none_or(u8::is_ascii_whitespace);
+    let mut found = Vec::new();
+    for comment in file.comments() {
+        let text = match comment.kind() {
+            TokenKind::Block => comment.text().strip_suffix(b"*/").unwrap_or_default(),
+            _ => comment.text(),
+        };
+        let Some(at) = strings::index_of(text, b"eslint-disable") else {
+            continue;
+        };
+        let after = text.get(at + b"eslint-disable".len()..).unwrap_or_default();
+        let matched = match after.strip_prefix(b"-next-line") {
+            Some(rest) => at_word_boundary(rest).then_some((false, rest)),
+            None => at_word_boundary(after).then_some((true, after)),
+        };
+        let Some((is_block, rest)) = matched else {
+            continue;
+        };
+        if strings::contains(rest, b"react-hooks/rules-of-hooks") || strings::contains(rest, b"react-hooks/exhaustive-deps")
+        {
+            found.push(BuildSuppression { start: comment.start(), is_block });
+        }
+    }
+    found
+}
+
+/// True if `bun build --react-compiler` skips `func` for one of `suppressions`. Its parser marks a function once its
+/// body is parsed, when the lexer is a token ahead, so a comment before the next token counts. A block comment marks
+/// every function after it. A next-line comment marks every function up to the first top-level one, whose check
+/// point is in `consumers`, in order.
+fn build_skips<'a>(func: Func<'a>, suppressions: &[BuildSuppression], consumers: &[u32]) -> bool {
+    let file = func.file();
+    let at = skip_trivia(file.text(), func.span().end);
+    suppressions.iter().any(|it| {
+        it.start < at && {
+            let consumer = consumers.get(consumers.partition_point(|&point| point <= it.start));
+            it.is_block || consumer.is_none_or(|&point| at <= point)
+        }
+    })
+}
+
 /// What the compiler would do with the functions of a file, found once the first use asks. The compiler port decides
-/// which ones it compiles, by the rules of `bun build --react-compiler`.
+/// which ones it compiles, by the rules of `bun build --react-compiler`, and the build's own reading of `react-hooks`
+/// suppressions adds to the skipped ones.
 struct Compiled<'a> {
     file: &'a File<'a>,
     found: OnceCell<Found<'a>>,
@@ -72,7 +126,6 @@ struct Found<'a> {
 
 impl<'a> Found<'a> {
     fn new(file: &'a File<'a>) -> Self {
-        let discovered = discover(file, FLAVOR).into_iter().map(|it| (it.func, it)).collect();
         let mut hook_calls: FxHashMap<Func<'a>, u32> = FxHashMap::default();
         let hooks = file.exprs_of_kind(ExprTag::Call).filter(|e| e.as_call().is_some_and(|it| is_hook_call(it, FLAVOR)));
         for e in hooks {
@@ -81,7 +134,30 @@ impl<'a> Found<'a> {
             }
         }
         let jsx = file.exprs_of_kind(ExprTag::Jsx).filter_map(|e| Node::Expr(e).enclosing_function());
-        Found { discovered, hook_calls, with_jsx: jsx.collect() }
+        let mut found = Found { discovered: FxHashMap::default(), hook_calls, with_jsx: jsx.collect() };
+        let suppressions = build_suppressions(file);
+        let mut consumers: Vec<u32> = match suppressions.is_empty() {
+            true => Vec::new(),
+            false => {
+                let top_level = file.funcs().filter(|it| it.has_body() && it.enclosing().is_none());
+                top_level.map(|it| skip_trivia(file.text(), it.span().end)).collect()
+            }
+        };
+        consumers.sort_unstable();
+        let discovered = discover(file, FLAVOR).into_iter().map(|mut it| {
+            it.skipped = it.skipped || !found.build_finds(it.func) || build_skips(it.func, &suppressions, &consumers);
+            (it.func, it)
+        });
+        found.discovered = discovered.collect();
+        found
+    }
+
+    /// True if `bun build --react-compiler` finds a hook call or JSX in `func` itself, or an opt-in directive. Unlike
+    /// the port, it doesn't look into the methods of an object literal.
+    fn build_finds(&self, func: Func<'a>) -> bool {
+        self.hook_calls.contains_key(&func)
+            || self.with_jsx.contains(&func)
+            || has_directive(func.body_statements().into_iter().flatten(), &OPT_IN_DIRECTIVES)
     }
 }
 
@@ -230,7 +306,7 @@ fn stays_compiled<'a>(compiled: &Compiled<'a>, e: Expr<'a>, kept: Expr<'a>) -> b
                 _ if becomes_declaration(e, kept) => func.name().map(Ident::name),
                 _ => return false,
             };
-            name.is_some() && would_compile(func, name, FLAVOR)
+            name.is_some() && would_compile(func, name, FLAVOR) && compiled.found().build_finds(func)
         }
         None => match component_of(kept, 4) {
             // A function inside `kept`, like `function Row() {} as FC`, is compiled as the callback of `memo()` only.

@@ -40,7 +40,7 @@ const ESLINT_SUPPRESSION_RULES: [&str; 4] = [
 ];
 
 /// Directives that opt a function into memoization
-const OPT_IN_DIRECTIVES: [&str; 2] = ["use forget", "use memo"];
+pub const OPT_IN_DIRECTIVES: [&str; 2] = ["use forget", "use memo"];
 
 /// Directives that opt a function out of memoization
 pub const OPT_OUT_DIRECTIVES: [&str; 2] = ["use no forget", "use no memo"];

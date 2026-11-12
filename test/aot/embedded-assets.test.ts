@@ -2151,6 +2151,76 @@ a write done new new
     });
   }, 120_000);
 
+  test("what the shell's mv moves is gone and what it leaves is there, also where it fails part-way", async () => {
+    const names = ["a", "b", "c", "d", "e", "f"];
+    using dir = tempDir("aot-mv-leaves-some", {
+      "app/main.mjs": `import { start } from "store"; console.log(await start());`,
+      "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.mjs" }`,
+      "app/node_modules/store/below.cjs": `exports.below = name => require("node:path").join(__dirname, "data", name);`,
+      "app/node_modules/store/index.mjs": `import fs from "node:fs";
+import path from "node:path";
+import { $ } from "bun";
+import { below } from "./below.cjs";
+const own = name => path.join(import.meta.dirname, "data", name);
+const text = file => { try { return fs.readFileSync(file, "utf8"); } catch (error) { return error.code; } };
+const said = [];
+const say = async (label, command, ...names) => {
+  const { exitCode } = await command.nothrow().quiet();
+  said.push([label, exitCode === 0, ...names.map(name => text(own(name)) + "/" + text(below(name)))].join(" "));
+};
+export const start = async () => {
+  for (const name of ["a", "b", "c", "d", "e", "f"]) fs.readFileSync(own(name + ".txt"));
+  fs.mkdirSync(below("into"));
+  fs.writeFileSync(below("into/e.txt"), "there");
+  await say("one under -n", $\`mv -n \${below("a.txt")} \${below("b.txt")}\`, "a.txt", "b.txt");
+  await say("part-way", $\`mv \${below("c.txt")} \${below("missing.txt")} \${below("d.txt")} \${below("into")}\`, "c.txt", "d.txt");
+  await say("some under -n", $\`mv -n \${below("e.txt")} \${below("f.txt")} \${below("into")}\`, "e.txt", "f.txt");
+  said.push(fs.readdirSync(below("into")).sort().join());
+  return said.join("\\n");
+};
+`,
+      ...Object.fromEntries(names.map(name => [`app/node_modules/store/data/${name}.txt`, name])),
+    });
+    const { plain, compiled } = await plainAndBeside(String(dir));
+    expect(plain).toEqual({
+      stdout: `one under -n true a/a b/b
+part-way false ENOENT/ENOENT d/d
+some under -n true e/e ENOENT/ENOENT
+c.txt,e.txt,f.txt
+`,
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(compiled).toEqual(plain);
+  }, 120_000);
+
+  test("a failed mv leaves what the disk does not have", async () => {
+    using dir = tempDir("aot-mv-of-embedded-file", {
+      "app/main.mjs": `import { start } from "store"; console.log(await start());`,
+      "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.cjs" }`,
+      "app/node_modules/store/index.cjs": `const fs = require("node:fs"), path = require("node:path");
+const at = name => path.join(__dirname, "data", name);
+exports.start = async () => {
+  for (const name of ["a", "b"]) fs.readFileSync(path.join(__dirname, "data", name + ".txt"));
+  fs.mkdirSync(at("into"), { recursive: true });
+  const { exitCode } = await Bun.$\`mv \${at("a.txt")} \${at("b.txt")} \${at("into")}\`.nothrow().quiet();
+  return [exitCode === 0, fs.readFileSync(at("a.txt"), "utf8"), fs.readFileSync(at("b.txt"), "utf8")].join();
+};
+`,
+      "app/node_modules/store/data/a.txt": "a",
+      "app/node_modules/store/data/b.txt": "b",
+    });
+    const [app, outfile] = [join(String(dir), "app"), join(String(dir), "built.exe")];
+    const built = await run(app, [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", outfile]);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
+    renameSync(app, join(String(dir), "moved-away"));
+    const compiled = await run(String(dir), [outfile], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+    expect(compiled).toEqual({ stdout: "false,a,b\n", stderr: "", exitCode: 0 });
+  }, 120_000);
+
   test("what a package removes or renames beside itself is gone for it, where the executable runs beside its sources", async () => {
     const at = (name: string) => `path.join(__dirname, ${JSON.stringify(name)})`;
     const ways = [

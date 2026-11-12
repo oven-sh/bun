@@ -488,6 +488,10 @@ impl Checker<'_, '_> {
             return Some(d);
         }
         let hir = self.hir(d.file);
+        // What a string holds is the run's. The tree may be gone before the build sorts what it reports.
+        if hir.is_in_known_evaluation(d.start) {
+            return None;
+        }
         let is_unconditional = self.is_unconditional_error(&d);
         // `SkipTypeChecking`
         if hir.check_directive == Some(false) && !is_unconditional {

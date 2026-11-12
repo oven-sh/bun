@@ -410,7 +410,7 @@ fn note_written_file(path: &[u8]) {
     }
 }
 
-/// As `forget_in_executable`, for an operand of the shell's `rm` or `mv`, which is relative to the shell's working directory. `rm -f` may have passed over it.
+/// As `forget_in_executable`, for an operand of the shell's `rm`, which is relative to the shell's working directory. `rm -f` may have passed over it.
 pub(crate) fn forget_shell_operand(cwd: &[u8], operand: &[u8], was_on_disk: bool) {
     let path = resolve_shell_operand(cwd, operand);
     match was_on_disk {
@@ -623,9 +623,11 @@ pub(crate) fn stat_embedded_shell_operand(cwd: &[u8], operand: &[u8]) -> Option<
     graph.stat(&path)
 }
 
-/// As `note_written_file`, for what the shell's `mv` has moved from `source`, which is still there if it has not.
+/// As behind `rename()`, for `source`, which the disk had and the shell's `mv` has moved to `target`, unless it is still there.
 pub(crate) fn note_moved_shell_operand(cwd: &[u8], source: &[u8], target: &[u8]) {
-    if !sys::exists(&resolve_shell_operand(cwd, source)) {
+    let source = resolve_shell_operand(cwd, source);
+    if !is_on_disk_at(FD::cwd(), &source) {
+        forget_in_executable(&source);
         note_written_file(&resolve_shell_operand(cwd, target));
     }
 }

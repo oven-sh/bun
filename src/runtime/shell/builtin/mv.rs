@@ -4,7 +4,7 @@ use bun_core::{ZBox, ZStr, strings};
 use bun_paths::{PathBuffer, resolve_path};
 use bun_ptr::BackRef;
 
-use crate::node::fs::{forget_shell_operand, note_moved_shell_operand, refuse_move};
+use crate::node::fs::{is_on_disk_at, note_moved_shell_operand, refuse_move};
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
@@ -237,6 +237,10 @@ impl Mv {
                     tasks.push(ShellMvBatchedTask {
                         cmd,
                         idx: i,
+                        was_on_disk: srcs
+                            .iter()
+                            .map(|it| is_on_disk_at(cwd, it.as_bytes()))
+                            .collect(),
                         sources: srcs,
                         target: ZBox::from_bytes(target),
                         target_fd: maybe_fd,
@@ -313,7 +317,7 @@ impl Mv {
     }
 
     fn batched_move_task_done(interp: &Interpreter, cmd: NodeId, task_idx: usize) {
-        let (all_done, had_err, moved, target, is_folder) = {
+        let (all_done, had_err, sources, was_on_disk, target, is_folder) = {
             let MvState::Executing {
                 task_count,
                 tasks_done,
@@ -324,28 +328,29 @@ impl Mv {
             else {
                 unreachable!()
             };
-            let mut moved = Vec::new();
             let target = ZBox::from_bytes(tasks[task_idx].target.as_bytes());
             if let Some(e) = tasks[task_idx].err.take() {
                 error_signal.store(true, Ordering::SeqCst);
                 if err.is_none() {
                     *err = Some(e);
                 }
-            } else {
-                moved = core::mem::take(&mut tasks[task_idx].sources);
             }
-            let is_folder = tasks[task_idx].target_fd.is_some() || moved.len() > 1;
+            let sources = core::mem::take(&mut tasks[task_idx].sources);
+            let was_on_disk = core::mem::take(&mut tasks[task_idx].was_on_disk);
+            let is_folder = tasks[task_idx].target_fd.is_some() || sources.len() > 1;
             *tasks_done += 1;
             (
                 *tasks_done >= *task_count,
                 err.is_some(),
-                moved,
+                sources,
+                was_on_disk,
                 target,
                 is_folder,
             )
         };
-        // One that stayed where it was, as under `-n`, is on the disk, which is asked first.
-        for source in &moved {
+        // A task that fails has moved those in front, and `-n` leaves some where they are.
+        let sources = sources.iter().zip(was_on_disk);
+        for (source, _) in sources.filter(|&(_, was_on_disk)| was_on_disk) {
             let (cwd, source) = (Builtin::shell(interp, cmd).cwd(), source.as_bytes());
             let name = bun_paths::basename(strings::without_trailing_slash(source));
             match is_folder {
@@ -355,7 +360,6 @@ impl Mv {
                 }
                 false => note_moved_shell_operand(cwd, source, target.as_bytes()),
             }
-            forget_shell_operand(cwd, source, true);
         }
         if all_done {
             if had_err {
@@ -470,6 +474,8 @@ pub(crate) struct ShellMvBatchedTask {
     /// can route to `Mv::batched_move_task_done`.
     pub(crate) idx: usize,
     pub(crate) sources: Vec<ZBox>,
+    /// Which of them the disk has had.
+    was_on_disk: Vec<bool>,
     pub(crate) target: ZBox,
     pub(crate) target_fd: Option<bun_sys::Fd>,
     pub(crate) no_clobber: bool,

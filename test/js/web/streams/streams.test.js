@@ -32,7 +32,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
+import { Duplex, finished, PassThrough, pipeline, Readable, Writable } from "node:stream";
 import {
   consumers as directConsumers,
   expected as directExpected,

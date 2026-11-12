@@ -2031,6 +2031,10 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
   this._peername = null;
   this._sockname = null;
   this._closeAfterHandlingError = false;
+  // node:http's. A member that the constructor gives lies in the object itself.
+  this.$isPrepared = false;
+  this.$ownReadableState = undefined;
+  this.$resumeUnlessFlowing = undefined;
 
   // Shut down the socket when we're finished with it.
   this.on("end", onSocketEnd);

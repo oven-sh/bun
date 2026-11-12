@@ -1,7 +1,5 @@
 const { isIPv4 } = require("internal/net/isIP");
 
-const queueMicrotask = globalThis.queueMicrotask;
-
 const { drainMicrotasks } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as { drainMicrotasks: () => void };
 
 const abortedSymbol = Symbol("aborted");
@@ -127,11 +125,6 @@ function emitEOFIncomingMessageOuter(self) {
 function clearServerParserIncoming(parser, req) {
   if (parser.incoming === req) parser.incoming = null;
 }
-// One microtask a request, in their order, and no function object for each.
-let requestsAtTheirEnd;
-function emitEOFOfNextRequest() {
-  emitEOFIncomingMessageOuter(requestsAtTheirEnd.shift());
-}
 function emitEOFIncomingMessage(self) {
   self[eofInProgress] = true;
   process.nextTick(emitEOFIncomingMessageOuter, self);
@@ -150,7 +143,7 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
   // inactivity timeout (socket.setTimeout / server.timeout) further out, like
   // Node.js does for reads on the socket.
   const socket = this.socket;
-  socket?._unrefTimer?.();
+  if (socket?.timeout) socket._unrefTimer?.();
 
   if (chunk && !this._dumped) {
     if (!this.push(chunk)) {
@@ -169,14 +162,7 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
 
   if (isLast) {
     try {
-      if (chunk) {
-        // Node's parser runs the promise jobs of the last chunk's 'data' listeners before parserOnMessageComplete pushes the EOF.
-        this[eofInProgress] = true;
-        (requestsAtTheirEnd ??= new (require("internal/fifo"))()).push(this);
-        queueMicrotask(emitEOFOfNextRequest);
-      } else {
-        emitEOFIncomingMessage(this);
-      }
+      emitEOFIncomingMessage(this);
     } finally {
       // Like Node's parserOnMessageComplete: a readStop above left the socket not flowing, which would swallow the next request's 'pause'.
       if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();

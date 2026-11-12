@@ -1,11 +1,9 @@
 // What the compiler reads in place of src/js/internal/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 73e5cc3ea232248741e2291db44571b6ee06f3e832537cf6e570db9f0725970d.
+// Written against that file with the SHA-256 8d5502a395a168c7a96037f88ca9baf584928988f82509e6d169af0b5c27a427.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { isIPv4 } = require("internal/net/isIP");
 const { queueTick1, queueTick2 } = require("internal/process/next_tick_queue");
-
-const queueMicrotask = globalThis.queueMicrotask;
 
 const { drainMicrotasks } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as { drainMicrotasks: () => void };
 
@@ -184,12 +182,6 @@ function emitEOFIncomingMessageOuter(self: $Node.IncomingMessage) {
 function clearServerParserIncoming(parser: $Node.HTTPParser | $Node.HttpServerParserShim, req: $Node.IncomingMessage) {
   if (parser.incoming === req) parser.incoming = null;
 }
-// One microtask a request, in their order, and no function object for each.
-type RequestQueue = import("internal/fifo").default<$Node.IncomingMessage>;
-let requestsAtTheirEnd: RequestQueue | undefined;
-function emitEOFOfNextRequest() {
-  emitEOFIncomingMessageOuter(requestsAtTheirEnd!.shift()!);
-}
 function emitEOFIncomingMessage(self: $Node.IncomingMessage) {
   self[eofInProgress] = true;
   queueTick1(emitEOFIncomingMessageOuter, self);
@@ -213,18 +205,26 @@ function onDataIncomingMessage(
   // inactivity timeout (socket.setTimeout / server.timeout) further out, like
   // Node.js does for reads on the socket.
   const socket = this.socket;
-  socket?._unrefTimer?.();
+  if (socket?.timeout) socket._unrefTimer?.();
+  return takeBodyDataInFull(this, socket, chunk, isLast);
+}
 
-  if (chunk && !this._dumped) {
-    if (!this.push(chunk)) {
+const takeBodyDataInFull = function onDataIncomingMessage(
+  req: $Node.IncomingMessage,
+  socket: $Node.IncomingMessage["socket"],
+  chunk: Buffer | undefined,
+  isLast: boolean,
+) {
+  if (chunk && !req._dumped) {
+    if (!req.push(chunk)) {
       ("unlikely");
       // Like Node's parserOnBody: pause the connection once the buffer fills.
       // Upgrade-with-body routes through its own handle so the socket's flow
       // state stays with the upgrade listener; _read() balances it.
       const finSent = socket?.[kHandle]?.finSent === true;
-      if (this.upgrade) this[kHandle]?.pause();
+      if (req.upgrade) req[kHandle]?.pause();
       // Nothing reads this body and a pause would hide the peer's FIN: uWS drops the later reads, so that FIN closes the connection.
-      else if (finSent && !this._consuming) socket![kHandle]!.stopParsing();
+      else if (finSent && !req._consuming) socket![kHandle]!.stopParsing();
       else if (socket && (finSent || !socket.writableEnded)) {
         socket.pause();
       }
@@ -233,17 +233,10 @@ function onDataIncomingMessage(
 
   if (isLast) {
     try {
-      if (chunk) {
-        // Node's parser runs the promise jobs of the last chunk's 'data' listeners before parserOnMessageComplete pushes the EOF.
-        this[eofInProgress] = true;
-        (requestsAtTheirEnd ??= new (require("internal/fifo"))<$Node.IncomingMessage>()).push(this);
-        queueMicrotask(emitEOFOfNextRequest);
-      } else {
-        emitEOFIncomingMessage(this);
-      }
+      emitEOFIncomingMessage(req);
     } finally {
       // Like Node's parserOnMessageComplete: a readStop above left the socket not flowing, which would swallow the next request's 'pause'.
-      if (!this.upgrade && socket && !socket._paused && socket.readable) {
+      if (!req.upgrade && socket && !socket._paused && socket.readable) {
         if (socket.$resumeUnlessFlowing !== undefined) socket.$resumeUnlessFlowing(false);
         else {
           ("unlikely");
@@ -252,7 +245,7 @@ function onDataIncomingMessage(
       }
     }
   }
-}
+};
 
 const METHODS = [
   "ACL",
@@ -724,6 +717,8 @@ export {
   responseRoad,
   serverSymbol,
   setMaxHTTPHeaderSize,
+  takeBodyDataInFull,
+  takeRequestTrailers,
   tlsSymbol,
   utcDate,
 };

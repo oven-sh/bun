@@ -1587,6 +1587,9 @@ internals.readableMethods = {
 if (IS_COMPILED_AHEAD_OF_TIME) internals.readableMethods.removeListener = Readable.prototype.removeListener;
 internals.finishResume = finishResume;
 internals.finishReadOfNothing = finishReadOfNothing;
+internals.readMoreLater = maybeReadMore;
+internals.readMoreOnNextTick = maybeReadMore_;
+internals.emitReadableNow = emitReadable_;
 
 Readable.prototype.pause = function (this: $Node.Readable) {
   const state: ReadableState =
@@ -2214,6 +2217,7 @@ const finishEnd = function endReadableNT(state: ReadableState, stream: $Node.Rea
 };
 
 internals.endOnNextTick = endReadableNT;
+internals.finishEnd = finishEnd;
 
 function endWritableNT(stream: $Node.Duplex) {
   const writable = stream.writable && !stream.writableEnded && !stream.destroyed;
@@ -2229,6 +2233,7 @@ function makeObjectReadable(): $Node.Readable {
 
 if (IS_COMPILED_AHEAD_OF_TIME) internals.makeObjectReadable = makeObjectReadable;
 if (IS_COMPILED_AHEAD_OF_TIME) internals.emitsToListeners = emitsToListeners;
+if (IS_COMPILED_AHEAD_OF_TIME) internals.emitData = emitData;
 if (IS_COMPILED_AHEAD_OF_TIME) internals.isPlainReadableAlone = isPlainReadableAlone;
 
 Readable.from = function (

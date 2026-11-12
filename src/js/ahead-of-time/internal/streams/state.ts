@@ -185,6 +185,12 @@ interface Internals {
   resumeRequestBody: ((stream: $Node.Readable, state: ReadableState) => boolean) | undefined;
   finishReadOfNothing: ((state: ReadableState) => void) | undefined;
   finishResume: ((stream: $Node.Readable, state: ReadableState) => void) | undefined;
+  readMoreLater: ((stream: $Node.Readable, state: ReadableState) => void) | undefined;
+  readMoreOnNextTick: ((stream: $Node.Readable, state: ReadableState) => void) | undefined;
+  emitReadableNow: ((stream: $Node.Readable) => void) | undefined;
+  finishEnd: ((state: ReadableState, stream: $Node.Readable) => void) | undefined;
+  onRequestBodyData:
+    ((this: $Node.IncomingMessage, chunk: Buffer | undefined, isLast: boolean, aborted: number) => void) | undefined;
   takeRequestCloseTick: ((request: $Node.IncomingMessage) => boolean) | undefined;
   destroyEndedRequest: ((state: ReadableState, stream: $Node.Readable) => boolean) | undefined;
   /** Only in what was compiled ahead of time. */
@@ -197,6 +203,8 @@ interface Internals {
   readableSideOfHeir?: { writable?: boolean };
   /** Only in what was compiled ahead of time. */
   emitsToListeners?: (stream: $Node.Readable, type: string) => boolean;
+  /** Only in what was compiled ahead of time. */
+  emitData?: (stream: $Node.Readable, chunk: unknown) => void;
   /** Only in what was compiled ahead of time. */
   isPlainReadableAlone?: (stream: $Node.AnyStream) => boolean;
   /** Compiled code only. Returns one of `Sides` of internal/streams/utils. Unless it is `Unknown`, inspecting the stream runs no user code. */
@@ -235,6 +243,11 @@ const internals: Internals = {
   resumeRequestBody: undefined,
   finishReadOfNothing: undefined,
   finishResume: undefined,
+  readMoreLater: undefined,
+  readMoreOnNextTick: undefined,
+  emitReadableNow: undefined,
+  finishEnd: undefined,
+  onRequestBodyData: undefined,
   takeRequestCloseTick: undefined,
   destroyEndedRequest: undefined,
 };

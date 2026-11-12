@@ -188,32 +188,47 @@ test("req.complete stays false while a declared body is still arriving", async (
   assert.deepStrictEqual(seen, { listener: false, nextTick: false, end: true });
 });
 
-test("'end' comes after the promise jobs of the last chunk's 'data' listeners", async () => {
-  const order: string[] = [];
-  const { promise: firstChunk, resolve: onFirstChunk } = Promise.withResolvers<void>();
-  const { promise: ended, resolve: onEnd, reject } = Promise.withResolvers<void>();
-  const server = http.createServer((req, res) => {
-    req.on("data", async chunk => {
-      order.push(`data ${chunk}`);
-      await null;
-      await null;
-      order.push(`jobs ${chunk}`);
-      onFirstChunk();
+for (const [framing, header, first, last] of [
+  ["Content-Length", "Content-Length: 5", "he", "llo"],
+  ["chunked", "Transfer-Encoding: chunked", "2\r\nhe\r\n", "3\r\nllo\r\n0\r\n\r\n"],
+]) {
+  test(`a ${framing} body is complete after the ticks and promise jobs of the last chunk's 'data' listeners`, async () => {
+    const order: string[] = [];
+    const { promise: firstChunk, resolve: onFirstChunk } = Promise.withResolvers<void>();
+    const { promise: ended, resolve: onEnd, reject } = Promise.withResolvers<void>();
+    const server = http.createServer((req, res) => {
+      req.on("data", async chunk => {
+        order.push(`data ${chunk}`);
+        await null;
+        await null;
+        order.push(`jobs ${chunk} ${req.complete}`);
+        await new Promise(process.nextTick);
+        order.push(`tick ${chunk} ${req.complete}`);
+        onFirstChunk();
+      });
+      req.on("end", () => {
+        order.push("end");
+        res.end();
+        onEnd();
+      });
     });
-    req.on("end", () => {
-      order.push("end");
-      res.end();
-      onEnd();
+    await withServer(server, async port => {
+      const socket = send(port, `POST / HTTP/1.1\r\nHost: x\r\n${header}\r\n\r\n${first}`, reject);
+      await firstChunk;
+      socket.write(last);
+      await ended;
     });
+    assert.deepStrictEqual(order, [
+      "data he",
+      "jobs he false",
+      "tick he false",
+      "data llo",
+      "jobs llo false",
+      "tick llo false",
+      "end",
+    ]);
   });
-  await withServer(server, async port => {
-    const socket = send(port, "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhe", reject);
-    await firstChunk;
-    socket.write("llo");
-    await ended;
-  });
-  assert.deepStrictEqual(order, ["data he", "jobs he", "data llo", "jobs llo", "end"]);
-});
+}
 
 // A write larger than the uWS cork buffer releases the cork, so the response that closes the connection is out before the body is parsed.
 for (const respond of ["write() and end()", "end(chunk)"]) {

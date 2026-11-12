@@ -1941,6 +1941,7 @@ impl NodeHTTPResponse {
         }
     }
 
+    /// The caller of a `last` call holds a ref.
     fn on_data_or_aborted(&self, chunk: &[u8], last: bool, event: AbortEvent, this_value: JSValue) {
         scoped_log!(
             NodeHTTPResponse,
@@ -1948,8 +1949,6 @@ impl NodeHTTPResponse {
             chunk.len(),
             last
         );
-        // On the last chunk, keep `self` alive across the JS callback below.
-        let _guard = last.then(|| self.ref_guard());
         if last && event == AbortEvent::None && self.body_read_state.get() == BodyReadState::Pending
         {
             self.body_read_state.set(BodyReadState::Complete);
@@ -1995,10 +1994,17 @@ impl NodeHTTPResponse {
             last as u8
         );
 
-        if last {
-            self.capture_request_trailers();
+        let this_value = self.get_this_value();
+        if !last {
+            return self.on_data_or_aborted(chunk, false, AbortEvent::None, this_value);
         }
-        self.on_data_or_aborted(chunk, last, AbortEvent::None, self.get_this_value());
+        self.capture_request_trailers();
+        let _guard = self.ref_guard();
+        if !chunk.is_empty() {
+            // Like llhttp's on_body and on_message_complete: ticks and promise jobs run between the last bytes and the end.
+            self.on_data_or_aborted(chunk, false, AbortEvent::None, this_value);
+        }
+        self.on_data_or_aborted(b"", true, AbortEvent::None, this_value);
     }
 
     /// Release the pin + GC root + byte owner taken by a zero-copy write.

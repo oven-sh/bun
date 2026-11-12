@@ -2335,6 +2335,8 @@ function nativeConnectionListener(server: Server, socket) {
   socket[kLastResponseWrite] = undefined;
   socket[kFinishedAtClose] = undefined;
   socket[kDetachedWhileClosing] = undefined;
+  socket[kConnectionState] = undefined;
+  socket[kHandedOff] = false;
   // In Node an assignment to one of these throws in strict mode. Here a server's socket has always kept the value.
   Object.defineProperties(socket, assignablePeerAddress);
 }

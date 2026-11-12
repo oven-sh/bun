@@ -15,6 +15,7 @@ const streamState = require("internal/streams/state");
 const { advanceFlags, addFlags, internals, createUnreadByteState } = streamState;
 const kState: typeof streamState.kState = streamState.kState;
 const EventEmitterPrototype = require("node:events").prototype;
+const kDecoderValue: typeof streamState.kDecoderValue = streamState.kDecoderValue;
 const { errorOrDestroy } = require("internal/streams/destroy");
 const shared = require("internal/shared");
 const {
@@ -33,10 +34,13 @@ const http = require("internal/http");
 const {
   emitErrorNextTickIfErrorListenerNT,
   NodeHTTPBodyReadState,
+  NodeHTTPResponseAbortEvent,
   emitEOFIncomingMessage,
   emitEOFIncomingMessageOuter,
   clearServerParserIncoming,
   onDataIncomingMessage,
+  takeBodyDataInFull,
+  takeRequestTrailers,
 } = http;
 // A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
 const kCapture: typeof shared.kCapture = shared.kCapture;
@@ -67,7 +71,12 @@ const hearsNothingButErrors = internals.hearsNothingButErrors!;
 const isPlainReadableState = internals.isPlainReadableState!;
 const finishReadOfNothing = internals.finishReadOfNothing!;
 const finishResume = internals.finishResume!;
+const readMoreLater = internals.readMoreLater!;
+const readMoreOnNextTick = internals.readMoreOnNextTick!;
+const emitReadableNow = internals.emitReadableNow!;
+const finishEnd = internals.finishEnd!;
 const emitsToListeners = internals.emitsToListeners!;
+const emitData = internals.emitData!;
 const { read, push, resume, removeAllListeners } = internals.readableMethods!;
 const { destroy, closeAfterThrow } = internals.destroyMethods!;
 const {
@@ -96,8 +105,12 @@ const kEndEmitted = 1 << 10;
 const kReading = 1 << 11;
 const kSync = 1 << 12;
 const kNeedReadable = 1 << 13;
+const kEmittedReadable = 1 << 14;
+const kReadableListening = 1 << 15;
 const kResumeScheduled = 1 << 16;
+const kMultiAwaitDrain = 1 << 17;
 const kReadingMore = 1 << 18;
+const kDataEmitted = 1 << 19;
 const kDefaultUTF8Encoding = 1 << 20;
 const kDecoder = 1 << 21;
 const kEncoding = 1 << 22;
@@ -122,6 +135,13 @@ const kDecoding = kDecoder | kEncoding;
 const kBodyResumed = kFlagsResumed | kDataListening;
 const kBodyAsked = (kBodyResumed | kReading | kNeedReadable) & ~kReadingMore;
 const kBodyReading = kFlagsReading | kDataListening;
+const kBodyGiven = (kBodyReading & ~kReading) | kDataEmitted;
+const kBodyReadingOn = kBodyGiven | kReading;
+const kBodyEnded = (kBodyGiven & ~kNeedReadable) | kEnded;
+const kBodyAwaited =
+  (kFlagsUntouched | kReadableListening | kNeedReadable | kHasFlowing | kReading) & ~(kSync | kReadingMore);
+const kBodyBuffered = (kBodyAwaited & ~(kReading | kNeedReadable)) | kEmittedReadable | kReadingMore;
+const kBodyAnnounced = (kBodyBuffered & ~kEmittedReadable) | kNeedReadable;
 const kDestroysItself = kAutoDestroy | kConstructed | kEnded | kEndEmitted;
 const kDestroysItselfMask = kDestroysItself | kDestroyed | kClosed | kCloseEmitted | kErrored;
 
@@ -628,7 +648,7 @@ const incomingMessageRead = function _read(this: $Node.IncomingMessage, _n: numb
   }
 
   if (!handle.ondata) {
-    handle.ondata = onDataIncomingMessage.bind(this);
+    handle.ondata = onBodyData.bind(this);
   }
 };
 IncomingMessage.prototype._read = incomingMessageRead;
@@ -1423,7 +1443,7 @@ function resumeRequestBody(stream: $Node.Readable, state: $Node.ReadableState): 
     }
     if (!handle.ondata) {
       ("unlikely");
-      handle.ondata = onDataIncomingMessage.bind(req);
+      handle.ondata = onBodyData.bind(req);
     }
   } catch (err) {
     errorOrDestroy(stream, err as Error);
@@ -1439,6 +1459,253 @@ function resumeRequestBody(stream: $Node.Readable, state: $Node.ReadableState): 
 }
 
 internals.resumeRequestBody = resumeRequestBody;
+
+function onBodyData(this: $Node.IncomingMessage, chunk: Buffer | undefined, isLast: boolean, aborted: number) {
+  return takeBodyData(this, chunk, isLast, aborted);
+}
+
+internals.onRequestBodyData = onBodyData;
+
+// `stream` and `chunk` as in addChunk(): a TypeError about a replaced emit() quotes the call.
+function takeBodyData(stream: $Node.IncomingMessage, bytes: Buffer | undefined, isLast: boolean, aborted: number) {
+  if (aborted !== NodeHTTPResponseAbortEvent.none) {
+    ("unlikely");
+    return onDataIncomingMessage.$call(stream, bytes, isLast, aborted);
+  }
+  // Only the native server hands over a body this way.
+  const socket: $Node.HttpServerSocket | null | undefined = stream.socket as any;
+  if (socket?.timeout) socket._unrefTimer?.();
+  // Behind the yes no read off the request runs code of the program: an accessor laid on one of its fields lies outside its slot.
+  if (!(IS_COMPILED_AHEAD_OF_TIME && $isPlainHeirOf(stream, IncomingMessage))) {
+    ("unlikely");
+    return takeBodyDataInFull(stream, socket, bytes, isLast);
+  }
+  const state = stream._readableState;
+  if (!(IS_COMPILED_AHEAD_OF_TIME && isPlainReadableState(state)) || !ticksAreUnseen()) {
+    ("unlikely");
+    return takeBodyDataInFull(stream, socket, bytes, isLast);
+  }
+  if (isLast && bytes === undefined) return takeEndOfBody(stream, state, socket);
+  const flags = state[kState];
+  const word = flags & ~(kDecoding | kDataEmitted);
+  if (
+    isLast ||
+    bytes === undefined ||
+    (word !== kBodyReading &&
+      (word !== kBodyAwaited || bytes.length * ((flags & kDecoder) !== 0 ? 2 : 1) >= state.highWaterMark)) ||
+    state.length !== 0 ||
+    stream._dumped ||
+    (!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(stream, "push", IncomingMessage)) &&
+      !findsWithoutAsking(stream, "push", push))
+  ) {
+    ("unlikely");
+    return takeBodyDataInFull(stream, socket, bytes, isLast);
+  }
+
+  const decoding = flags & ~kReading;
+  state[kState] = decoding;
+  const chunk = (flags & kDecoder) !== 0 ? state[kDecoderValue]!.write(bytes) : bytes;
+  const given = (flags & kDecoding) | kBodyGiven;
+  const length = chunk.length as number;
+  // The decoder's write() may be the program's.
+  const isAsTested = (flags & kDecoder) === 0 || (state[kState] === decoding && state.length === 0);
+  if (!isAsTested) {
+    ("unlikely");
+    if (length !== 0) addDecodedChunk(stream, state, chunk, length);
+  } else if (length !== 0 && word === kBodyReading) {
+    state.awaitDrainWriters = null;
+    state[kState] = given;
+    emitData(stream, chunk);
+  }
+  if (isAsTested && length !== 0 && word === kBodyAwaited) {
+    state.length = length;
+    state.buffer.push(chunk);
+    state[kState] = (flags & (kDecoding | kDataEmitted)) | kBodyBuffered;
+    queueTick1(emitReadableNow, stream);
+    queueTick2(readOn, stream, state);
+  } else if (isAsTested && state[kState] === given && state.length === 0) {
+    state[kState] = given | kReadingMore;
+    queueTick2(readOn, stream, state);
+  } else {
+    ("unlikely");
+    readMoreLater(stream, state);
+    if ((state[kState] & kEnded) !== 0 || (state.length >= state.highWaterMark && state.length !== 0)) {
+      const finSent = socket?.[kHandle]?.finSent === true;
+      if (stream.upgrade) stream[kHandle]?.pause();
+      // Nothing reads this body and a pause would hide the peer's FIN: uWS drops the later reads, so that FIN closes the connection.
+      else if (finSent && !stream._consuming) socket![kHandle]!.stopParsing();
+      else if (socket && (finSent || !socket.writableEnded)) socket.pause();
+    }
+  }
+}
+
+function takeEndOfBody(
+  req: $Node.IncomingMessage,
+  state: $Node.ReadableState,
+  socket: $Node.HttpServerSocket | null | undefined,
+) {
+  try {
+    req[eofInProgress] = true;
+    queueTick2(endBody, req, state);
+  } finally {
+    if (!req.upgrade && socket && !socket._paused && socket.readable) {
+      if (socket.$resumeUnlessFlowing !== undefined) http.requestRoad.resumeUnlessFlowing!(socket, false);
+      else {
+        ("unlikely");
+        socket.resume();
+      }
+    }
+  }
+}
+
+// As readable's addChunk() adds a chunk at the end, less its look for more, which the caller takes.
+function addDecodedChunk(
+  stream: $Node.IncomingMessage,
+  state: $Node.ReadableState,
+  chunk: string | Buffer,
+  length: number,
+) {
+  if ((state[kState] & (kFlowing | kSync | kDataListening)) === (kFlowing | kDataListening) && state.length === 0) {
+    if ((state[kState] & kMultiAwaitDrain) !== 0) (state.awaitDrainWriters as Set<$Node.AnyStream>).clear();
+    else state.awaitDrainWriters = null;
+    state[kState] |= kDataEmitted;
+    emitData(stream, chunk);
+    return;
+  }
+  state.length += length;
+  state.buffer.push(chunk);
+  if ((state[kState] & kNeedReadable) === 0) return;
+  state[kState] &= ~kNeedReadable;
+  if ((state[kState] & kEmittedReadable) === 0) {
+    state[kState] |= kEmittedReadable;
+    queueTick1(emitReadableNow, stream);
+  }
+}
+
+// A tick runs in a later turn than the one that queued it: what was asked there is asked again.
+const readOn = function maybeReadMore_(req: $Node.IncomingMessage, state: $Node.ReadableState) {
+  if (!(IS_COMPILED_AHEAD_OF_TIME && $isPlainHeirOf(req, IncomingMessage) && isPlainReadableState(state))) {
+    ("unlikely");
+    return readMoreOnNextTick(req, state);
+  }
+  const flags = state[kState];
+  const length = state.length;
+  if (
+    req._readableState !== state ||
+    (length === 0
+      ? (flags & ~kDecoding) !== (kBodyGiven | kReadingMore)
+      : (flags & ~(kDecoding | kDataEmitted)) !== kBodyAnnounced || length >= state.highWaterMark) ||
+    (!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(req, "read", IncomingMessage)) &&
+      !findsWithoutAsking(req, "read", read)) ||
+    (!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(req, "_read", IncomingMessage)) &&
+      !findsWithoutAsking(req, "_read", incomingMessageRead))
+  ) {
+    ("unlikely");
+    return readMoreOnNextTick(req, state);
+  }
+  const asked = flags | kReading | kSync;
+  state[kState] = asked;
+  try {
+    incomingMessageRead.$call(req, state.highWaterMark);
+  } catch (err) {
+    const stream: $Node.Readable = req;
+    errorOrDestroy(stream, err as Error);
+  }
+  // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
+  if (state[kState] !== asked || state.length !== length) {
+    ("unlikely");
+    finishReadOfNothing(state);
+    if (state.length !== length) return readMoreOnNextTick(req, state);
+    state[kState] &= ~kReadingMore;
+    return;
+  }
+  state[kState] = (flags | kReading) & ~kReadingMore;
+};
+
+function releaseParserOnNextTick(req: $Node.IncomingMessage) {
+  const socket = req.socket;
+  if (socket != null) {
+    const parser = socket.parser;
+    if (parser != null && parser.incoming === req) {
+      queueTick2(clearServerParserIncoming, parser, req);
+    }
+  }
+}
+
+function endBody(req: $Node.IncomingMessage, state: $Node.ReadableState) {
+  if (!(IS_COMPILED_AHEAD_OF_TIME && $isPlainHeirOf(req, IncomingMessage) && isPlainReadableState(state))) {
+    ("unlikely");
+    return emitEOFIncomingMessageOuter(req);
+  }
+  if (
+    req[kHandle] === undefined ||
+    req[noBodySymbol] ||
+    req._readableState !== state ||
+    (!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(req, "push", IncomingMessage)) &&
+      !findsWithoutAsking(req, "push", push)) ||
+    (!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(req, "read", IncomingMessage)) &&
+      !findsWithoutAsking(req, "read", read))
+  ) {
+    ("unlikely");
+    return emitEOFIncomingMessageOuter(req);
+  }
+  req.complete = true;
+  const rawTrailers = takeRequestTrailers(req);
+  if (rawTrailers !== undefined) {
+    ("unlikely");
+    req._addHeaderLines(rawTrailers, rawTrailers.length);
+    req.push(null);
+    return releaseParserOnNextTick(req);
+  }
+  let flags = state[kState];
+  if ((flags & (kEnded | kSync)) !== 0) {
+    ("unlikely");
+    req.push(null);
+    return releaseParserOnNextTick(req);
+  }
+  const wasReadingOn = (flags & ~kDecoding) === kBodyReadingOn;
+  let asked = flags;
+  if ((flags & kDecoder) !== 0) {
+    // The decoder's end() may be the program's: it finds the request no longer reading, as behind push(null).
+    asked = flags & ~kReading;
+    state[kState] = asked;
+    const rest = state[kDecoderValue]!.end();
+    if (rest?.length) {
+      ("unlikely");
+      state.buffer.push(rest);
+      state.length += rest.length as number;
+    }
+  }
+  flags = state[kState];
+  let isUnheard = false;
+  if (wasReadingOn && flags === asked && state.length === 0) {
+    isUnheard = isReadableUnheard(req);
+  }
+  if (!isUnheard) {
+    state[kState] = (flags & ~(kReading | kNeedReadable)) | kEnded | kEmittedReadable;
+    emitReadableNow(req);
+    return releaseParserOnNextTick(req);
+  }
+  state[kState] = (flags & kDecoding) | kBodyEnded;
+  if (ring.read === ring.write && ticksAreUnseen()) {
+    try {
+      releaseParserOnNextTick(req);
+    } catch (error) {
+      queueTick2(endOnNextTick, state, req);
+      throw error;
+    }
+    emitBodyEnd(req, state);
+  } else {
+    queueTick2(endOnNextTick, state, req);
+    releaseParserOnNextTick(req);
+  }
+}
+
+function emitBodyEnd(req: $Node.IncomingMessage, state: $Node.ReadableState) {
+  state[kState] |= kEndEmitted;
+  if (!emitsToListeners(req, "end")) req.emit("end");
+  return finishEnd(state, req);
+}
 
 function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable): boolean {
   const req: $Node.IncomingMessage = stream as any;

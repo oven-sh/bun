@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 9d176026578057eee38cda3d81dd4ad6eb678d0cc1eabc8b01905ac15d53e1a1.
+// Written against that file with the SHA-256 ded6f2207b1ea80f62edd4516ede66930c63539b54dc7c6e18f131e5c02565ad.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -179,6 +179,7 @@ const NumberIsNaN = Number.isNaN;
 const { IncomingMessage, readStart } = require("node:_http_incoming");
 const IncomingMessageOfLibrary = http.responseRoad.IncomingMessage!;
 const takeRequestCloseTick = streamInternals.takeRequestCloseTick!;
+const onBodyData = streamInternals.onRequestBodyData!;
 const { OutgoingMessage, parseUniqueHeadersOption } = require("node:_http_outgoing");
 const endsUnseen = http.requestRoad.endsUnseen!;
 const endUnseen = http.requestRoad.endUnseen!;
@@ -1610,7 +1611,7 @@ Server.prototype[kRealListen] = function (
       // the IncomingMessage as they arrive, and the push callback readStop()s
       // the socket (which emits 'pause' on it) once the buffer fills.
       if (hasBody) {
-        handle.ondata = onDataIncomingMessage.bind(http_req);
+        handle.ondata = onBodyData.bind(http_req);
       }
       // The response ahead lets go of the socket at its 'finish'.
       if (pipeline === undefined) drainMicrotasks();
@@ -1900,7 +1901,7 @@ function onNodeHTTPRequest(
     asksRequest ? undefined : method !== "HEAD",
   );
   if (hasBody) {
-    const onData = onDataIncomingMessage.bind(req);
+    const onData = onBodyData.bind(req);
     handle.onabort = socket[kBoundOnAbort] ??= onServerRequestEvent.bind(socket);
     handle.ondata = onData;
   } else handle.onabort = socket[kBoundOnAbort] ??= onServerRequestEvent.bind(socket);
@@ -2989,7 +2990,18 @@ function emitRequest(
 // Node's parserOnMessageComplete: a message without a body is complete once the listener returns, and the reads go on unless http paused them. EOF stays lazy (_read).
 function completeWithoutBody(req: $Node.IncomingMessage, socket: $Node.HttpServerSocket) {
   req.complete = true;
-  if (!socket._paused && socket.readable && socket.isPaused()) socket.resume();
+  if (socket._paused) return;
+  if (
+    IS_COMPILED_AHEAD_OF_TIME &&
+    $findsDeclaredMember(socket, "isPaused") &&
+    readsFlowUnseen(socket) &&
+    socket._readableState === socket.$ownReadableState &&
+    (flagsOf(socket._readableState) & (kFlowing | kPaused)) === kFlowing
+  ) {
+    return;
+  }
+  ("unlikely");
+  if (socket.readable && socket.isPaused()) socket.resume();
 }
 
 function resetSocketTimeout(server: $Node.HttpServer, socket: $Node.HttpSocket) {
@@ -3119,9 +3131,10 @@ function nativeConnectionListener(server: $Node.HttpServer, socket: $Node.HttpSe
   socket[kLastResponseWrite] = undefined;
   socket[kFinishedAtClose] = undefined;
   socket[kDetachedWhileClosing] = undefined;
+  socket[kConnectionState] = undefined;
+  socket[kHandedOff] = false;
   // In Node an assignment to one of these throws in strict mode. Here a server's socket has always kept the value.
   Object.defineProperties(socket, assignablePeerAddress!);
-  socket.$isPrepared = false;
   socket.$ownReadableState = socket._readableState;
   if (IS_COMPILED_AHEAD_OF_TIME) socket.$resumeUnlessFlowing = resumeUnlessFlowing;
 }
@@ -4684,7 +4697,11 @@ const finishExchange = function emitResponseFinished(exchange: Exchange): void {
     return finishExchangeInSteps(exchange, flags);
   }
   const idleTimeout = keepAliveTimeout + keepAliveTimeoutBuffer;
-  if (!isArmedFor(socket, idleTimeout) && socket.setTimeout !== netSocketSetTimeout) {
+  if (
+    !(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(socket, "setTimeout")) &&
+    !isArmedFor(socket, idleTimeout) &&
+    socket.setTimeout !== netSocketSetTimeout
+  ) {
     ("unlikely");
     return finishExchangeInSteps(exchange, flags);
   }

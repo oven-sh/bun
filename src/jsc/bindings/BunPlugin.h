@@ -159,6 +159,22 @@ public:
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
         // Data files that a reset has evicted under a mock whose end restores their original, with the test file in which their next load does not show it yet.
         WTF::UncheckedKeyHashMap<String, unsigned> dataFilesResetUnderMocks = {};
+        // What import() has given since the running test file started: its evaluation does not reach these a second time. And, for the run,
+        // which other module asked import() for which, with the test file that had fetched the asking module: 0 where none had fetched it as
+        // an ES module, and its calls count for every test file. See hasImporterThatEvaluationHasYetToReach().
+        WTF::UncheckedKeyHashSet<String> modulesImportedSinceTestFileStarted = {};
+        WTF::UncheckedKeyHashMap<std::pair<String, String>, unsigned> importCallsOfOtherModules = {};
+        String lastImporterByCall;
+        String lastKeyOfImportByCall;
+        bool isLastImporterByCallTestFile = false;
+        void didImportByCall(Zig::GlobalObject*, const String& importer, const String& key);
+        // What the mocks of the running test file have evicted from the registry and from the require cache. Its evaluation stays linked to them.
+        WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSCell>> modulesEvictedByTestFile = {};
+        WTF::UncheckedKeyHashSet<String> requireKeysEvictedByTestFile = {};
+        // The modules of the project that the running test file has mocked.
+        Vector<JSC::Strong<JSC::JSCell>> modulesMockedByTestFile = {};
+        // The running test file has reset the modules, ended a mock, or required an ES module: a mock of a package then keeps what is loaded.
+        bool leavesLoadedPackagesToTestFile = false;
         WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};
         // The pending loads those modules are waiting for. Each gets exactly one reaction. Weak, so a load that never settles doesn't keep its global object alive.
         WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};

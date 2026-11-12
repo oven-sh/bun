@@ -105,6 +105,24 @@ test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while i
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > and fails to load
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a Vitest test file with no mock call of its own still runs its imports one at a time > the transpiler cache doesn't mix up a file run as a test with the same file imported
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
+# These ask which modules of a later test file have run when a helper mocks a package. A compiled run has rules of its own for what has yet to run.
+test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > after a file in which an import failed > gets the mock from modules that the failed import left linked []
+test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > after a file in which an import failed > gets the mock from modules that the failed import left linked, from import() too []
+test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > gets from a mock what it gets when it runs alone > from a factory that takes the original []
+test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > gets from a mock what it gets when it runs alone > from a module that it imports first, with ["vi.mock","vi.doMock"] > []
+test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > gets from a mock what it gets when it runs alone > from a module that mocks packages with vi.mock() []
+test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > gets from a mock what it gets when it runs alone > from a module that mocks packages, one level down []
+test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > gets from a mock what it gets when it runs alone > from a test or a hook []
+test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > gets from a mock what it gets when it runs alone > in an import cycle []
+test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > gets from a mock what it gets when it runs alone > where a loaded package is left alone []
+test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > gets from a mock what it gets when it runs alone > where a module of an earlier file has asked import() for the module []
+test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > gets from a mock what it gets when it runs alone > where each file follows another file that mocks
+test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > gets from a mock what it gets when it runs alone > where its imports are calls of import() []
+test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > gets from a mock what it gets when it runs alone > where only a package imports the mocked package ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > gets from a mock what it gets when it runs alone > where the module that mocks asks import() for the module []
+test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > loads again what an earlier file required in a call []
+test/js/bun/test/mock/mock-module.test.ts: a test file that is linked to modules that an earlier test file loaded > what a module read from a package while an earlier file loaded it stays []
+#
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
 test/js/bun/test/vitest-flavor.test.ts: [test] globals = "vitest" > is part of the transpiler cache key

@@ -96,6 +96,7 @@
 #include "ErrorStackTrace.h"
 #include "IDLTypes.h"
 #include "ImportMetaObject.h"
+#include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
 #include "JS2Native.h"
 #include "JSAbortAlgorithm.h"
@@ -1250,6 +1251,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     RETURN_IF_EXCEPTION(scope, {});
     auto key = JSC::Identifier::fromString(vm, keyString);
 
+    // What this call runs, no module mock of the running test file follows: see hasImporterThatEvaluationHasYetToReach().
+    auto didRequire = makeScopeExit([&] {
+        globalObject->onLoadPlugins.leavesLoadedPackagesToTestFile = true;
+    });
     // The loader the requirer's require() binds ES modules to (CommonJS.ts requireESM).
     auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(callFrame->argument(1));
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, requirer ? requirer->moduleGraph() : nullptr);
@@ -4355,13 +4360,14 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     auto sourceURL = sourceOrigin.url();
     String sourceOriginStringHolder;
+    JSC::Identifier referrerKey;
     int64_t referrerAsyncOrder = -1;
     if (sourceURL.isEmpty()) {
         sourceOriginStringHolder = String("."_s);
     } else if (sourceURL.protocolIsFile()) {
         sourceOriginStringHolder = sourceURL.fileSystemPath();
         auto query = sourceURL.queryWithLeadingQuestionMark();
-        auto referrerKey = query.isEmpty()
+        referrerKey = query.isEmpty()
             ? JSC::Identifier::fromString(vm, sourceOriginStringHolder)
             : JSC::Identifier::fromString(vm, makeString(sourceOriginStringHolder, query));
         referrerAsyncOrder = loader->asyncEvaluationOrderForKey(referrerKey);
@@ -4407,6 +4413,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     if (globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
         Bun::didStartDynamicImport(globalObject, result, std::exchange(globalObject->onLoadPlugins.keyOfImportCall, {}));
         RETURN_IF_EXCEPTION(scope, nullptr);
+        globalObject->onLoadPlugins.didImportByCall(globalObject, referrerKey.isNull() ? referrer.string() : referrerKey.string(), key.string());
     }
     return result;
 }

@@ -20,6 +20,7 @@ const kHighWaterMark = Symbol("highWaterMark");
 const kPendingRead = Symbol("pendingRead");
 const kHasResized = Symbol("hasResized");
 const kRemainingChunk = Symbol("remainingChunk");
+const kReading = Symbol("reading");
 
 const MIN_BUFFER_SIZE = 512;
 let dynamicallyAdjustChunkSize = (_?) => (
@@ -39,6 +40,8 @@ interface NativeReadable extends $Node.Readable {
   [kHighWaterMark]: number;
   [kHasResized]: boolean;
   [kRemainingChunk]: Buffer | undefined;
+  /** Handle mode: the source's reader is started. */
+  [kReading]?: boolean;
   debugId: number;
 }
 
@@ -54,14 +57,12 @@ interface NativePtr {
   setReadCallback?: (callback: ReadCallback) => boolean;
 }
 
-// What a source in handle mode calls: with each chunk, with `null` at the end, with `undefined` and the error when a
-// read failed. `false` stops its reader until the next `setFlowing(true)`.
+// A source in handle mode calls it with each chunk, with the error when a read failed, with neither at the end. `false` stops its reader until `setFlowing(true)`.
 type ReadCallback = (chunk: Buffer | null | undefined, error?: Error) => boolean | void;
 
 let debugId = 0;
 
-// `handleMode` (child stdio): the source calls back with each chunk it reads, as a libuv handle does in Node, and
-// `_read()` only starts it. A source that declines is pulled from, as without the argument.
+// `handleMode` (child stdio): the source calls back with each chunk it reads, as a libuv handle does in Node, and `_read()` only starts it.
 function constructNativeReadable(
   readableStream: ReadableStream,
   options: $Node.ReadableOptions,
@@ -75,9 +76,6 @@ function constructNativeReadable(
   const stream = new Readable(options) as NativeReadable;
   stream._read = read;
   stream._destroy = destroy;
-  if (handleMode && bunNativePtr?.setReadCallback?.((chunk, error) => onRead(stream, chunk, error))) {
-    stream._read = readStart;
-  }
 
   if (!!$debug) {
     stream.debugId = ++debugId;
@@ -100,6 +98,11 @@ function constructNativeReadable(
   if (process.platform === "win32") {
     // Only used by node:tty on Windows
     stream.$start = ensureConstructed;
+  }
+
+  if (handleMode && registerReadCallback(stream, bunNativePtr)) {
+    stream[kReading] = false;
+    stream._read = readStart;
   }
 
   // https://github.com/oven-sh/bun/pull/12801
@@ -197,19 +200,35 @@ function read(this: NativeReadable, maxToRead: number) {
   }
 }
 
-// Handle mode's `_read()`: it starts the reader, or starts it again after onRead() returned false. It pushes nothing:
-// every chunk comes through onRead() on a later turn of the event loop.
+// setReadCallback is read off the class of `ptr`, not off `ptr`: a source whose class has none would answer with what a program put on Object.prototype.
+function registerReadCallback(stream: NativeReadable, ptr: NativePtr | undefined): boolean {
+  if (!$isObject(ptr)) return false;
+  const proto = $getPrototypeOf(ptr) as NativePtr | null;
+  if (proto === null) return false;
+  const setReadCallback = $getByIdDirect(proto, "setReadCallback");
+  if (!$isCallable(setReadCallback)) return false;
+  const callback: ReadCallback = (chunk, error) => onRead(stream, chunk, error);
+  return setReadCallback.$call(ptr, callback);
+}
+
+// Handle mode's `_read()`, as net.Socket's: it starts the reader unless it is started. It pushes nothing: chunks come through onRead() on later turns of the event loop.
 function readStart(this: NativeReadable) {
-  $debug(`[${this.debugId}] readStart`);
+  $debug(`[${this.debugId}] readStart${this[kReading] ? ", is already reading" : ""}`);
+  if (this[kReading]) return;
+  this[kReading] = true;
   this.$bunNativePtr!.setFlowing!(true);
 }
 
-// The source calls this from the event loop: what a 'data' listener throws goes to it, and the listener's ticks and
-// promise jobs run before the next call.
+// The source calls this from the event loop: what a 'data' listener throws goes to it, and the listener's ticks and promise jobs run before the next call.
 function onRead(stream: NativeReadable, chunk: Buffer | null | undefined, error?: Error) {
-  if (chunk) return stream.push(chunk);
-  if (chunk === null) stream.push(null);
-  else stream.destroy(error);
+  if (chunk) {
+    if (stream.push(chunk)) return true;
+    // The source stops its reader for this `false`: the next `_read()` has to start it again.
+    stream[kReading] = false;
+    return false;
+  }
+  if (error) stream.destroy(error);
+  else stream.push(null);
 }
 
 // Only handleNumberResult advances kRemainingChunk, before push(): a listener can pull again or throw.
@@ -289,8 +308,7 @@ function destroy(this: NativeReadable, error: any, cb: () => void) {
   }
 }
 
-// A pulling `_read()` pushes synchronously, so flow() stays one chunk ahead of the 'data' listener. Node's async
-// sources do not, and neither does handle mode: there only chunks that came while the stream was paused are dropped.
+// A pulling `_read()` pushes synchronously, so flow() stays one chunk ahead of the 'data' listener. Node's async sources do not. In handle mode only a pause leaves chunks here.
 function dropReadAhead(stream: NativeReadable) {
   const state = stream._readableState;
   // Paused: Node has this buffered too, and a later read() returns it.

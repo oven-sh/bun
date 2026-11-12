@@ -151,6 +151,7 @@ static_assert(Event::BUBBLING_PHASE == 3, "BUBBLING_PHASE in Event does not matc
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Events, JSEventDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSEventDOMConstructor>(callFrame->jsCallee());
@@ -597,11 +598,12 @@ bool JSEventOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, 
     return false;
 }
 
-void JSEventOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSEventOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsEvent = static_cast<JSEvent*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, &jsEvent->wrapped(), jsEvent);
+    return FinalizeResult::KeepImpl;
 }
 
 Event* JSEvent::toWrapped(JSC::VM& vm, JSC::JSValue value)

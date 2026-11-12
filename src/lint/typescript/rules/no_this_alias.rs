@@ -6,11 +6,11 @@ pub struct NoThisAlias {
     allowed_names: Vec<Box<[u8]>>,
 }
 
-const THIS_ASSIGNMENT: Message = Message::new(
+const THIS_ASSIGNMENT: &Message = &Message::new(
     "thisAssignment",
     "Unexpected aliasing of 'this' to local variable.",
 );
-const THIS_DESTRUCTURE: Message = Message::new(
+const THIS_DESTRUCTURE: &Message = &Message::new(
     "thisDestructure",
     "Unexpected aliasing of members of 'this' to local variables.",
 );
@@ -52,7 +52,7 @@ impl NoThisAlias {
             Some(name) => {
                 if !self.allowed_names.iter().any(|allowed| name == **allowed) {
                     cx.report(id, THIS_ASSIGNMENT)
-                        .hint("Use an arrow function instead. It has the this of the code around it.");
+                        .hint("Use an arrow function. It keeps the outer this.");
                 }
             }
             None => {

@@ -1,0 +1,33 @@
+# `if (!table.has(key)) table.set(key, 1); sum += table.get(key)` in a loop. has finds the key's place once and keeps it for the get behind it.
+# The set of the way where has said no writes the table's storage, which ended what was kept: it died where the ways meet, and the get looked the key up anew.
+# Where has said no the place lies below nought and tells nothing: the read at the place stands behind `place > -1`. So what is kept is as true behind that set as in front of it, and both ways bring it.
+# RUN(KEPT): walk f1:Body mechanisms=all
+# KEPT: = FindKeyInMap
+# KEPT: inlineBuiltin=MapSet
+# KEPT: = GetValueAtPlaceInMap
+# RUN(EVENT): compile LoopsUnswitched MapEntryIndicesSurvivingInserts
+# Link does not prove that the keys are numbers: the loop has no version for boxed ones.
+# The keys are handed to calls: a third version reads them out of int32 storage, and keeps the place like the two others.
+# EVENT: statistic LoopsUnswitched 1
+# EVENT: statistic MapEntryIndicesSurvivingInserts 3
+# RUN(SAID): run-in-shell mechanisms=all
+# SAID: 1024 8
+# SAID-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 1024 8
+# HELD-NEXT: exited with 0
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function sumOf(table: Map<number, number>, keys: number[]): number {
+#   let sum = 0;
+#   for (let i = 0; i < keys.length; i++) {
+#     const key = keys[i]!;
+#     if (!table.has(key)) table.set(key, i * 10);
+#     sum += table.get(key)!;
+#   }
+#   return sum;
+# }
+# const keys: number[] = JSON.parse("[1,2,3,1,2,9,4,4,1,7,3,9,12,1,5]");
+# const table = new Map<number, number>([[1, 100], [2, 7]]);
+# print(sumOf(table, keys), table.size);
+# -- end of source

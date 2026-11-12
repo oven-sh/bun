@@ -1,0 +1,23 @@
+# f1 = Sign, f2 = make, f3 = fits
+# -- source: a-stored-value-that-must-be-tested-is-asked-in-front-of-the-allocation-that-lists-it.ts
+# declare function sink(...values: unknown[]): void;
+# interface Sign { flags: number; name: string; id: number; parent?: Sign; members?: object; exports?: object; links?: object; }
+# function Sign(this: Sign, flags: number, name: string) { this.flags = flags; this.name = name; this.id = 0; this.parent = undefined; this.members = undefined; this.exports = undefined; this.links = undefined; }
+# const Maker: new (flags: number, name: string) => Sign = Sign as any;
+# function make(flags: any, name: any) { return new Maker(flags | 32, name); }
+# function fits() { return new Maker(7, "n"); }
+# function fill(sign: Sign, value: object) { sign.members = value; sign.exports = value; sign.links = value; sign.parent = sign; }
+# sink(make, fits, fill);
+# -- end of source
+# RUN(WALK): walk f2 mechanisms=all
+# WALK: TypeTest {{*}}testedType=
+# WALK: NewObject {{*}}fields=[0, 1, 2, 3, 4, 5, 6]
+# RUN(NONE): walk f2 mechanisms=all
+# NONE: code f2:Body
+# NONE-NOT: PutSlotOrAdd
+# RUN(CLOSED): walk f2 mechanisms=all
+# CLOSED: frequency=Rare
+# CLOSED: Construct
+# RUN(FITS): walk f3 mechanisms=all
+# FITS: NewObject {{*}}fields=[0, 1, 2, 3, 4, 5, 6]
+# FITS-NOT: PutSlotOrAdd

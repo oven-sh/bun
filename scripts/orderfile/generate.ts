@@ -1093,10 +1093,6 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
     );
     const installEnv = { BUN_INSTALL_CACHE_DIR: join(scratch, "install-cache") };
 
-    // `bun lint` is a command in canary builds only. A release build would look for a script of that name.
-    const revision = runCommand([bunProfile, "--revision"], { label: "bun --revision" });
-    const hasLint = revision.stdout.includes("canary");
-
     await checkpoint(interrupted);
     const steps: (Workload | WorkloadGroup)[] = [
       { name: "bun -e", args: ["-e", "console.log(1)"] },
@@ -1115,7 +1111,7 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
         env: { TERM: "xterm-256color" },
       },
       { name: "bun check", args: ["check"], cwd: project },
-      ...(hasLint ? [{ name: "bun lint", args: ["lint"], cwd: project }] : []),
+      { name: "bun lint", args: ["lint"], cwd: project },
       { name: "bun fmt", args: ["fmt"], cwd: project },
     ];
 

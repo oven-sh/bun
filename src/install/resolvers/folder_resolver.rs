@@ -178,7 +178,7 @@ fn normalize_package_json_path<'a>(
 
     let abs_len = if strings::starts_with_char(normalized, b'.') {
         let parts: [&[u8]; 2] = [normalized, b"package.json"];
-        FileSystem::instance()
+        FileSystem::get()
             .abs_buf_checked(&parts, &mut joined[..capacity])?
             .len()
     } else {
@@ -211,8 +211,8 @@ fn normalize_package_json_path<'a>(
     };
 
     // We store the folder name without package.json
-    let rel = FileSystem::instance().relative(
-        FileSystem::instance().top_level_dir(),
+    let rel = FileSystem::get().relative(
+        FileSystem::get().top_level_dir(),
         &joined[..abs_len - PACKAGE_JSON_LEN],
     );
     joined[abs_len] = 0;
@@ -238,8 +238,9 @@ fn read_package_json_from_disk(
     // needed simultaneously; borrowck rejects the overlap on `&mut self`,
     // so split via raw pointer once here. `lockfile` and `log` are disjoint
     // fields of `PackageManager`, and `parse{,_with_json}` only reaches
-    // `manager` through the `pm` argument (no re-entrant access to
-    // `lockfile`/`log` via `pm`).
+    // `manager` through the `pm` argument. Through `pm` it never derefs `log`,
+    // and it derefs `lockfile` only under `Features::workspaces`, which none
+    // of the `features` that `get_or_put` passes has.
     //
     // `log_mut()` reads the BACKREF `self.log: *mut Log` and returns the
     // disjoint CLI `Log` allocation (lifetime decoupled from `&self`); call it

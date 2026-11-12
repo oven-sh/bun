@@ -1,0 +1,38 @@
+# A list that a body makes in front of a loop is as its class makes it for as long as the body has handed it to nobody. What is done with it behind the loop says nothing of the turns:
+# the method that is read off it in a turn is the member of the class, though operands that may run other code stand between the read and the call, and the push stands in line.
+# The results reach a function that nobody has seen, so Link has no word of its own on these lists.
+# -- source: a-list-made-in-front-of-a-loop.ts
+# function storedBehind(items: any[]) { const list: unknown[] = []; for (const item of items) list.push({ a: item.a }); return { list }; }
+# function passedBehind(items: any[], take: (list: unknown[]) => unknown) { const list: unknown[] = []; for (const item of items) list.push({ a: item.a }); return take(list); }
+# function passedInTurn(items: any[], take: (list: unknown[]) => unknown) { const list: unknown[] = []; for (const item of items) { list.push({ a: item.a }); take(list); } return list; }
+# function passedInFront(items: any[], take: (list: unknown[]) => unknown) { const list: unknown[] = []; take(list); for (const item of items) list.push({ a: item.a }); return list; }
+# function secondLoop(items: any[], take: (list: unknown[]) => unknown) { const list: unknown[] = []; for (const item of items) list.push({ a: item.a }); take(list); for (const item of items) list.push({ b: item.b }); return list; }
+# function madeInTurn(rows: any[][], take: (list: unknown[]) => unknown) { for (const items of rows) { const list: unknown[] = []; for (const item of items) list.push({ a: item.a }); take(list); } }
+# function passedLaterInTurn(items: any[], take: (list: unknown[]) => unknown) { const list: unknown[] = []; let last = 0; for (const item of items) { last = list.push({ a: item.a }); if (item.a > 0) take(list); } return last; }
+# const unknown: any = (globalThis as any)[process.argv[2] ?? "structuredClone"];
+# const input = JSON.parse(process.argv[3] ?? '[{"a":1,"b":2}]');
+# console.log(unknown(storedBehind(input)), passedBehind(input, unknown), passedInTurn(input, unknown), passedInFront(input, unknown), secondLoop(input, unknown), madeInTurn([input], unknown), passedLaterInTurn(input, unknown));
+# -- end of source
+# RUN(STORED): walk f1 mechanisms=all
+# STORED: inlineBuiltin=ArrayPush
+# RUN(STOREDNEVER): walk f1 mechanisms=all
+# STOREDNEVER-NOT: calleeKey="push"
+# RUN(PASSED): walk f2 mechanisms=all
+# PASSED: inlineBuiltin=ArrayPush
+# RUN(PASSEDNEVER): walk f2 mechanisms=all
+# PASSEDNEVER-NOT: calleeKey="push"
+# RUN(MADEINTURN): walk f6 mechanisms=all
+# MADEINTURN: inlineBuiltin=ArrayPush
+# RUN(MADEINTURNNEVER): walk f6 mechanisms=all
+# MADEINTURNNEVER-NOT: calleeKey="push"
+# Where a way leads from the use back to the read, the list may be anything by then: the read and the call are made as they are written.
+# RUN(INTURN): walk f3 mechanisms=all
+# INTURN: calleeKey="push"
+# RUN(LATERINTURN): walk f7 mechanisms=all
+# LATERINTURN: calleeKey="push"
+# RUN(INFRONT): walk f4 mechanisms=all
+# INFRONT: calleeKey="push"
+# The first loop of the two stands in front of the use, the second behind it.
+# RUN(SECOND): walk f5 mechanisms=all
+# SECOND: inlineBuiltin=ArrayPush
+# SECOND: calleeKey="push"

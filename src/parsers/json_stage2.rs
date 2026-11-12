@@ -17,7 +17,7 @@ type DupMap = bun_collections::HashMap<u64, (), bun_collections::IdentityContext
 
 pub(crate) struct Parser<'a, 's, 'i> {
     contents: &'s [u8],
-    source: &'s Source,
+    source: &'s Source<'s>,
     log: &'a mut Log,
     idx: &'i mut StructuralIndex<'s>,
     pub cursor: usize,
@@ -44,7 +44,7 @@ impl<'s> LexerLog<'s> for Parser<'_, 's, '_> {
         self.log
     }
     #[inline]
-    fn source(&self) -> &'s Source {
+    fn source(&self) -> &'s Source<'s> {
         self.source
     }
     #[inline]
@@ -87,7 +87,7 @@ pub(crate) fn is_exotic_whitespace(cp: CodePoint) -> bool {
 
 impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     pub(crate) fn new(
-        source: &'s Source,
+        source: &'s Source<'s>,
         log: &'a mut Log,
         idx: &'i mut StructuralIndex<'s>,
         opts: JSONOptions,
@@ -1388,7 +1388,7 @@ fn decode_string_escapes<'s, const ALLOW_RAW_CONTROL: bool, L: LexerLog<'s, Err 
 
 struct MiniLog<'a, 's> {
     log: &'a mut Log,
-    source: &'s Source,
+    source: &'s Source<'s>,
     prev_error_loc: Loc,
 }
 
@@ -1397,7 +1397,7 @@ impl<'s> LexerLog<'s> for MiniLog<'_, 's> {
     fn log_mut(&mut self) -> &mut Log {
         self.log
     }
-    fn source(&self) -> &'s Source {
+    fn source(&self) -> &'s Source<'s> {
         self.source
     }
     fn prev_error_loc_mut(&mut self) -> &mut Loc {

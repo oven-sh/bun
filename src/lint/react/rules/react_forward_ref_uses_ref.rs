@@ -6,14 +6,14 @@ use bun_lint::utils::estree_compat::estree_span;
 /// Require all forwardRef components include a ref parameter.
 pub struct ForwardRefUsesRef;
 
-const MISSING_REF_PARAMETER: Message =
-    Message::new("missingRefParameter", "forwardRef is used with this component but no ref parameter is set");
-const ADD_REF_PARAMETER: Message = Message::new("addRefParameter", "Add a ref parameter");
-const REMOVE_FORWARD_REF: Message = Message::new("removeForwardRef", "Remove forwardRef wrapper");
-const OXLINT_FORWARD_REF_USES_REF: Message =
-    Message::new("", "Components wrapped with `forwardRef` must have a `ref` parameter");
-const OXLINT_REMOVE_FORWARD_REF_WRAPPER: Message = Message::new("", "remove `forwardRef` wrapper");
-const OXLINT_ADD_REF_PARAMETER: Message = Message::new("", "add `ref` parameter");
+const MISSING_REF_PARAMETER: &Message =
+    &Message::new("missingRefParameter", "forwardRef is used with this component but no ref parameter is set");
+const ADD_REF_PARAMETER: &Message = &Message::new("addRefParameter", "Add a ref parameter");
+const REMOVE_FORWARD_REF: &Message = &Message::new("removeForwardRef", "Remove forwardRef wrapper");
+const OXLINT_FORWARD_REF_USES_REF: &Message =
+    &Message::new("", "Components wrapped with `forwardRef` must have a `ref` parameter");
+const OXLINT_REMOVE_FORWARD_REF_WRAPPER: &Message = &Message::new("", "remove `forwardRef` wrapper");
+const OXLINT_ADD_REF_PARAMETER: &Message = &Message::new("", "add `ref` parameter");
 
 impl Rule for ForwardRefUsesRef {
     const META: Meta = Meta::plugin(Plugin::React, "forward-ref-uses-ref", Kind::Suggestion).has_suggestions();

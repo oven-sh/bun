@@ -1,0 +1,25 @@
+# f1 = count, f2 = add, f3 = lower
+# -- source: main.ts
+# function count(words: number[], n: number): number { const found: number[] = new Array(8).fill(0); for (let i = 0; i < n; i++) found[words[i]!]!++; return found[1]! + found[3]! * 10; }
+# function add(costs: number[], order: number[], n: number): number { let sum = 0; for (let r = 0; r < 4; r++) { const at = order[r]!; for (let i = 0; i < n; i++) sum += costs[at]! + i; } return sum; }
+# function lower(costs: number[], order: number[], n: number): number { const least: number[] = new Array(n).fill(Infinity); for (let i = 0; i < n; i++) { const at = order[i]!, cost = costs[at]! - i; if (cost < least[at]!) least[at] = cost; } return least[0]! + least[2]!; }
+# const words: number[] = [], costs: number[] = [], order: number[] = []; for (let i = 0; i < 40; i++) words.push((i * 3) % 8); for (let i = 0; i < 8; i++) { costs.push(i * 2); order.push((i * 5) % 8); }
+# print(count(words, 40), add(costs, order, 6), lower(costs, order, 8));
+# words[9] = undefined!; order[2] = undefined!;
+# print(count(words, 40), add(costs, order, 6), lower(costs, order, 8));
+# -- end of source
+# A key that is read off an array may be undefined. The update takes it as an int32 and restarts the iteration otherwise.
+# RUN: walk f1 mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=i32
+# CHECK: PutContiguousIndex
+# A key that is made before the loop is tested there.
+# RUN(INVARIANT): walk f2 mechanisms=all
+# INVARIANT: = TypeTest {{*}} testedType=i32
+# INVARIANT: isLoopHead=true
+# INVARIANT: = GetArrayElement {{*}} arrayStorage=
+# An array that is filled with Infinity holds doubles.
+# RUN(FILLED): walk f3 mechanisms=all
+# FILLED: PutDoubleIndex
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 55 228 2
+# ANSWERS-NEXT: 45 NaN Infinity

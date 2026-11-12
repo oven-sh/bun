@@ -393,7 +393,7 @@ JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject, bool& h
 
     hadMessage = true;
     auto ports = MessagePort::entanglePorts(*context, WTF::move(message->transferredPorts));
-    return message->message.releaseNonNull()->deserialize(*lexicalGlobalObject, lexicalGlobalObject, WTF::move(ports), SerializationErrorMode::NonThrowing);
+    return message->message.releaseNonNull()->deserialize(*lexicalGlobalObject, lexicalGlobalObject, WTF::move(ports), SerializationErrorMode::Throwing);
 }
 
 void MessagePort::dispatchEvent(Event& event)

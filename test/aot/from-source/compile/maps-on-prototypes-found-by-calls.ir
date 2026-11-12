@@ -1,0 +1,16 @@
+# -- source: maps-on-prototypes-found-by-calls.js
+# class Node { constructor(kind) { this.kind = kind; } isToken() { return this.kind < 3; } }
+# class Type { constructor(flags) { this.flags = flags; } isUnion() { return (this.flags & 4) !== 0; } }
+# const allocator = { node: () => Node, type: () => Type };
+# Object.defineProperties(allocator.node().prototype, { __debug: { get() { return "kind " + this.kind; } }, __text: { value() { return "node"; } } });
+# Object.defineProperties(allocator.type().prototype, { __debug: { get() { return "flags " + this.flags; } } });
+# function count(nodes, types) { let n = 0; for (let i = 0; i < nodes.length; i++) { if (nodes[i].isToken()) n++; if (types[i].isUnion()) n += 2; } return n; }
+# const nodes = [], types = []; for (let i = 0; i < 9; i++) { nodes.push(new Node(i)); types.push(new Type(i)); }
+# print(count(nodes, types), nodes[2].__debug, types[4].__debug, nodes[0].__text(), Object.keys(Object.getOwnPropertyDescriptors(Node.prototype)).length);
+# -- end of source
+# How TypeScript lays its debug accessors. Definitions one by one on a prototype that a call finds opened the classes behind it: the map goes by the call.
+# RUN(LAID): walk f0:Body mechanisms=all
+# LAID-NOT: = DefineOwnProperty
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 11 kind 2 flags 4 node 4
+# ANSWERS-NEXT: exited with 0

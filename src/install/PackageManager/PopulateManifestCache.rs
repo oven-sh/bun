@@ -364,9 +364,7 @@ pub fn populate_manifest_cache(
         unsafe { PackageManager::sleep_until(mgr, &mut run_closure, RunClosure::is_done) };
 
         if log_level.show_progress() {
-            // SAFETY: `mgr` is still the live provenance root; `sleep_until`
-            // has returned so no competing borrow exists.
-            unsafe { (*mgr).end_progress_bar() };
+            manager.end_progress_bar();
             Output::flush();
         }
 

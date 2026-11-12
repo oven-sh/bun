@@ -1,0 +1,30 @@
+# -- source: what-a-built-in-called-by-value-gives-is-asked-where-it-goes-out.ts
+# declare function id(value: unknown): any;
+# declare function print(...values: unknown[]): void;
+# function spell(codes: number[]) { const text = String.fromCharCode(...codes); print("spelled"); return text; }
+# function gather(lists: number[][]) { const made = new Set(...lists); print("gathered"); return made; }
+# print(spell(id([104, 105])).length);
+# print(gather(id([[1, 2, 2]])).size);
+# print("went on");
+# -- end of source
+# f1 = spell, f2 = gather
+# ONLY A DIRECT CALL OF A UNIT OF THE PROGRAM SHOWS WHAT IT GIVES: its returns are its door (isEnforced(ProofSource::ResultOfCall)). What a row of the table of built-ins says of a call by value, or a rule of a construction as written, has no such door:
+# THE DOOR OF SUCH A CALL IS THE NATIVE ONE: behind every call by value whose callee is one built-in the emitter asks the result for the whole kinds and the classes of its row (CallEmitter::defineResultOfCallByValue() > stopUnlessNativeResultIsAsWritten()). Where the callee is SHOWN to be that built-in, Walker::typeShown() takes exactly that much from the row, and neither the call nor the return asks a second time.
+# RUN(SPELL): walk f1 mechanisms=all
+# SPELL-LABEL: code f1:Body
+# SPELL: [[text]]: string {{*}} = CallList
+# SPELL-NOT: CheckProof [[text]]
+# SPELL: Return [[text]]
+# RUN(GATHER): walk f2 mechanisms=all
+# GATHER-LABEL: code f2:Body
+# GATHER: [[made]]: Set {{*}} = ConstructList
+# GATHER-NOT: CheckProof [[made]]
+# GATHER: Return [[made]]
+# THE GREEN CONTROL: a right program passes the checks.
+# RUN: run-in-shell mechanisms=all-Inlining
+# CHECK: spelled
+# CHECK-NEXT: 2
+# CHECK-NEXT: gathered
+# CHECK-NEXT: 2
+# CHECK-NEXT: went on
+# CHECK-NEXT: exited with 0

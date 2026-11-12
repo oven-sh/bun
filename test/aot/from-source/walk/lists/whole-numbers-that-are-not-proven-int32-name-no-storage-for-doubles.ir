@@ -1,0 +1,17 @@
+# -- source: main.cjs
+# "use strict";
+# function whole(a, b) { return [Math.floor(a), Math.floor(b) + 1]; }
+# function fractions(a, b) { return [Math.floor(a), b * 0.5]; }
+# sink(whole, fractions);
+# -- end of source
+# A literal of proven numbers that is only handed on was born for doubles wherever one element was not proven an int32. Numbers that are whole by their type are int32 nearly always, and the engine bears such a
+# list for int32: born for doubles it met lists of the other kind in concat and slice, which then go the slow way, and its readers made boxed numbers of doubles.
+# Now doubles are named only where some element may have a fraction. Whole numbers that are not proven int32 stay as they were: boxed.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewArray
+# RUN(SILENT): walk f1:Body mechanisms=all
+# SILENT-NOT: = NewArray {{*}}arrayStorage=
+# RUN(FRACTIONS): walk f2:Body mechanisms=all
+# FRACTIONS-LABEL: code f2:Body
+# FRACTIONS: = NewArray {{*}}arrayStorage=Double

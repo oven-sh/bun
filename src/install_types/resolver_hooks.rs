@@ -44,6 +44,13 @@ pub struct ExternalSlice<T> {
     _marker: PhantomData<T>,
 }
 
+// SAFETY: two `u32`s, whatever `T` is.
+unsafe impl<T> bun_core::Zeroable for ExternalSlice<T> {}
+// SAFETY: two `u32`s, whatever `T` is.
+unsafe impl<T: 'static> bun_core::NoUninit for ExternalSlice<T> {}
+// SAFETY: two `u32`s, whatever `T` is.
+unsafe impl<T: 'static> bun_core::AnyBitPattern for ExternalSlice<T> {}
+
 // Manual impls: the `(off, len)` pair is unconditionally
 // copyable/comparable regardless of `Type`. `#[derive]` would add spurious
 // `T: Copy/Clone/Default/PartialEq` bounds via `PhantomData<T>`, breaking
@@ -1427,7 +1434,7 @@ pub trait AutoInstaller {
         &mut self,
         package_id: PackageID,
         resolution: &Resolution,
-        buf: &'b mut [u8],
+        buf: &'b mut bun_core::PathBuffer,
     ) -> core::result::Result<&'b [u8], bun_core::Error>;
     fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState;
     /// `package_json_dir` means the same as in `project_folder`. The path of a `file:` tarball is

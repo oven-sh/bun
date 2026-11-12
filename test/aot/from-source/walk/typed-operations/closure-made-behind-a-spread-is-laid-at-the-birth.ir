@@ -1,0 +1,17 @@
+# `{ ...base, at() { return i; } }` in a loop: the copy is opened behind tests of the source, and the definition behind it is taken along: the closure that is made between them ends the row no longer.
+# The object is born with all three fields: nothing is added to it behind its birth.
+# f1 = row
+# -- source: main.ts
+# declare function print(value: any): void;
+# function row(base: { a: number; b: number }, i: number) { return { ...base, at() { return i; } }; }
+# const base = { a: 1, b: 2 };
+# const kept: any[] = [null, null];
+# let s = 0;
+# for (let i = 0; i < 10; i++) { const r = row(base, i); kept[i & 1] = r; s += r.at() + r.a; }
+# print(s + " " + Object.keys(kept[0]).join());
+# -- end of source
+# RUN(BIRTH): walk f0 mechanisms=all
+# BIRTH: NewObject -, {{*}}, {{*}}, {{*}} layout=
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 55 a,b,at
+# ANSWERS-NEXT: exited with 0

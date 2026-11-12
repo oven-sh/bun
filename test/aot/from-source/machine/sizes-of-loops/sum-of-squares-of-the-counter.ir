@@ -1,0 +1,17 @@
+# f1 = sumOfSquares
+# -- source: sum-of-squares-of-the-counter.ts
+# function sumOfSquares(limit: number): number {
+#   let sum = 0;
+#   for (let k = 0; k < limit; k++) sum += k * k;
+#   return sum;
+# }
+# declare const input: any;
+# (globalThis as any).answer = sumOfSquares(input | 0);
+# -- end of source
+# The compiler before this one: 6 instructions, 0 of them patches, a turn of the written loop steps by 1.
+# When the bound was taken: loop: operations 35, patches 0, moves 1, unlikely 6 ; loop: operations 8, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:36,8 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 36
+# X64-NEXT: loop: at most 8

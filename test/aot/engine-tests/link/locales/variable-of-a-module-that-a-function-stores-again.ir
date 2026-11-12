@@ -1,0 +1,44 @@
+# the first store of the body is a written tag, and a function stores what nobody knows behind it: the first text says nothing of a read behind the second store
+# var locale = "uk";  function change() { locale = globalThis.input; }  function show() { return (1).toLocaleString(locale); }  change();  show();
+# LIBRARY: own
+# RUN: locales mechanisms=all
+# CHECK: locale unknown NumberPrototypeToLocaleString at f1
+# RUN(NEVER): locales mechanisms=all
+# NEVER-NOT: locale constant
+
+variable g0 name="locale" module=m0 declared={type=anything} initialization=Undefined
+module m0 path="node:module" displayPath="node:module" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeModule body=f0
+module m1 path="main.js" displayPath="main.js" body=f2
+entry module=m1
+function f0 module=m0 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="uk"
+    v1 = NewClosure function=f1
+    v2 = NewClosure function=f3
+    PutModuleVariable v0 variable=g0
+    v4 = Call v2 calleeName="change"
+    v5 = Call v1 calleeName="show"
+    Return v5
+}
+function f1 name="show" module=m0 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Integer integer=1
+    v2 = PropGet v1 key="toLocaleString"
+    v3 = Call v2, v1, v0 calleeKey="toLocaleString"
+    Return v3
+}
+function f2 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m0 referrer=m1 specifier="node:module"
+    v1 = Undefined
+    Return v1
+}
+function f3 name="change" module=m0 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="input" [isFreeName]
+    PutModuleVariable v1 variable=g0
+    v3 = Undefined
+    Return v3
+}

@@ -1,0 +1,28 @@
+# -- source: main.cjs
+# const zero = JSON.parse("0"), held = JSON.parse("{}");
+# let counted = 0;
+# Object.defineProperty(held, "rows", { get() { counted++; return [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5]; } });
+# function f(data, w) { let s = 0; for (let i = 0; i < data[w].length; i++) s = s + data[w][i]; return s; }
+# print(f([held][zero], ["rows"][zero]), counted);
+# -- end of source
+# `data[w]` appears in the loop header and in the loop body. The holder and the key are parameters that the compiler knows nothing about.
+# Their use alone suggests "an array of arrays and an index". When the arguments were neither, the generic version ran: 10,710 instructions for a hundred iterations, where plain Bun takes 885.
+# Now the row is looked up in the preheader, as a row of a proven array is.
+# The lookup is the operation that runs no code and returns absent for everything except an own data property of a plain object under a string key.
+# If the row is found, the code dispatches on what the row is (an array of numbers, an array, bytes, typed arrays) and remembers the row across the iterations.
+# If the operation returns absent, the loop runs as it was built before. A hundred iterations now take 847 instructions.
+# Here the key names an accessor, so twelve iterations call the getter twenty-five times.
+# Fault injection, testing=UseGenericOwnKeyReads: the lookup in the preheader takes the generic path, which runs code. The getter is called once, silently.
+# RUN(EVENT): compile KeyedRowLookupsHoisted mechanisms=all
+# EVENT: statistic KeyedRowLookupsHoisted 1
+# RUN(CHECKED): compile KeyedRowLookupsHoisted mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: statistic KeyedRowLookupsHoisted 1
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 84 25
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 84 25
+# HELD-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=UseGenericOwnKeyReads
+# LIE: 84 1
+# LIE-NEXT: exited with 0

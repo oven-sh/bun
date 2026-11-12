@@ -4,6 +4,7 @@
 #include "BunClientData.h"
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
+#include "GeneratedSink.h"
 #include "JSDOMBinding.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObject.h"
@@ -268,7 +269,7 @@ void JSTransformStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_controller);
     visitor.appendHidden(thisObject->m_backpressureChangePromise);
     visitor.appendHidden(thisObject->m_pendingWriteChunk);
-    visitor.appendHidden(thisObject->m_nativeSinkCell);
+    visitor.appendHidden(thisObject->m_nativeSinkController);
     visitor.appendHidden(thisObject->m_nativeSinkReadyPromise);
     visitor.appendHidden(thisObject->m_codecPromise);
 }
@@ -283,7 +284,7 @@ void JSTransformStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_controller, "controller"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_backpressureChangePromise, "backpressureChangePromise"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pendingWriteChunk, "pendingWriteChunk"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_nativeSinkCell, "nativeSinkCell"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_nativeSinkController, "nativeSinkController"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_nativeSinkReadyPromise, "nativeSinkReadyPromise"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_codecPromise, "codecPromise"_s);
 }

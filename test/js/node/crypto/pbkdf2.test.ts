@@ -129,7 +129,7 @@ describe("invalid inputs", () => {
       });
       expect(() => {
         crypto.pbkdf2("password", "salt", 1, input, "sha256", outer);
-      }).toThrow(`The value of "keylen" is out of range. It must be >= 0 and <= 2147483647. Received ${input}`);
+      }).toThrow(`The value of "keylen" is out of range. It must be >= 0 && <= 2147483647. Received ${input}`);
       expect(outer).not.toHaveBeenCalled();
     });
   });
@@ -139,7 +139,7 @@ describe("invalid inputs", () => {
     (err as any).code = "ERR_CRYPTO_INVALID_DIGEST";
     let thrown: NodeJS.ErrnoException;
     try {
-      crypto.pbkdf2("password", "salt", 1, 1, "md55");
+      crypto.pbkdf2("password", "salt", 1, 1, "md55", () => {});
       expect.unreachable();
     } catch (e) {
       thrown = e as Error;
@@ -210,10 +210,15 @@ test("keylen=0 fails async via callback", async () => {
   expect(err.message).toBe("PBKDF2 derivation failed");
 });
 
-[-1, 2147483648, 4294967296, 2 ** 52].forEach(input => {
+[
+  [-1, "-1"],
+  [2147483648, "2147483648"],
+  [4294967296, "4294967296"],
+  [2 ** 52, "4_503_599_627_370_496"],
+].forEach(([input, received]) => {
   test(`${input} keylen`, () => {
     expect(() => crypto.pbkdf2("password", "salt", 1, input, "sha256")).toThrow(
-      `The value of "keylen" is out of range. It must be >= 0 and <= 2147483647. Received ${input}`,
+      `The value of "keylen" is out of range. It must be >= 0 && <= 2147483647. Received ${received}`,
     );
   });
 });
@@ -368,4 +373,45 @@ test("a throw inside the pbkdf2 callback is an uncaughtException, not an unhandl
   expect(stdout).toBe("callback: null 6f4ad8c78ec365c0\nuncaughtException: boom\n");
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+test("pbkdf2 takes a proxy of a function as its callback", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
+  crypto.pbkdf2("p", "s", 1, 4, "sha1", new Proxy((err, key) => (err ? reject(err) : resolve(key)), {}));
+  expect(await promise).toStrictEqual(crypto.pbkdf2Sync("p", "s", 1, 4, "sha1"));
+});
+
+test("pbkdf2 reports its arguments as Node does", () => {
+  expect(() => crypto.pbkdf2("p", "s", 1, 1, "md55")).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "callback" argument must be of type function. Received undefined',
+    }),
+  );
+  expect(() => crypto.pbkdf2("p", "s", 1, 1, "md55", 5)).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "callback" argument must be of type function. Received type number (5)',
+    }),
+  );
+  expect(() => crypto.pbkdf2("p", "s", 1, 1, 5)).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "digest" argument must be of type string. Received type number (5)',
+    }),
+  );
+  expect(() => crypto.pbkdf2("p", "s", 1, 1)).toThrow(
+    expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "digest" argument must be of type string. Received undefined',
+    }),
+  );
+  for (const [name, args] of [
+    ["password", [5, "s"]],
+    ["salt", ["p", 5]],
+  ] as const) {
+    expect(() => crypto.pbkdf2Sync(...args, 1, 1, "sha1")).toThrow(
+      `The "${name}" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received type number (5)`,
+    );
+  }
 });

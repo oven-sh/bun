@@ -1,6 +1,7 @@
 #pragma once
 #include "Bindgen/IDLTypes.h"
 #include "BunIDLConvertBase.h"
+#include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/JSBigIntInlines.h>
 #include <JavaScriptCore/MathCommon.h>
 #include <limits>
@@ -139,6 +140,27 @@ struct WebCore::Converter<Bun::Bindgen::IDLStrictDouble> : Bun::DefaultTryConver
         Ctx& ctx)
     {
         ctx.throwNotNumber(globalObject, scope);
+    }
+};
+
+template<>
+struct WebCore::Converter<Bun::Bindgen::IDLStrictDoubleOrDate> : Bun::DefaultTryConverter<Bun::Bindgen::IDLStrictDoubleOrDate> {
+    static constexpr bool conversionHasSideEffects = false;
+
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<double> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        if (value.isNumber())
+            return value.asNumber();
+        if (auto* date = dynamicDowncast<JSC::DateInstance>(value))
+            return date->internalNumber();
+        return std::nullopt;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwTypeMustBe(globalObject, scope, "a number or Date"_s);
     }
 };
 

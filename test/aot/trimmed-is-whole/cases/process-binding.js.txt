@@ -1,0 +1,82 @@
+// process.binding with a constant name: every name in the table in BunProcess.cpp, and one that is not in it. Reads every member of the result.
+//@ build --disallow-code-generation-from-strings
+function show(make) {
+  try {
+    const binding = make();
+    console.log(typeof binding, Object.entries(binding).map(([name, value]) => name + ":" + typeof value).sort().join());
+  } catch (error) {
+    console.log(String(error));
+  }
+}
+//// async_wrap
+show(() => process.binding("async_wrap"));
+//// buffer
+show(() => process.binding("buffer"));
+//// cares_wrap
+show(() => process.binding("cares_wrap"));
+//// config
+show(() => process.binding("config"));
+//// constants
+show(() => process.binding("constants"));
+//// contextify
+show(() => process.binding("contextify"));
+//// crypto
+show(() => process.binding("crypto"));
+//// crypto-x509
+show(() => process.binding("crypto/x509"));
+//// fs
+show(() => process.binding("fs"));
+//// fs_event_wrap
+show(() => process.binding("fs_event_wrap"));
+//// http_parser
+show(() => process.binding("http_parser"));
+//// icu
+show(() => process.binding("icu"));
+//// inspector
+show(() => process.binding("inspector"));
+//// js_stream
+show(() => process.binding("js_stream"));
+//// natives
+show(() => process.binding("natives"));
+//// os
+show(() => process.binding("os"));
+//// pipe_wrap
+show(() => process.binding("pipe_wrap"));
+//// process_wrap
+show(() => process.binding("process_wrap"));
+//// signal_wrap
+show(() => process.binding("signal_wrap"));
+//// spawn_sync
+show(() => process.binding("spawn_sync"));
+//// stream_wrap
+show(() => process.binding("stream_wrap"));
+//// tcp_wrap
+show(() => process.binding("tcp_wrap"));
+//// tls_wrap
+show(() => process.binding("tls_wrap"));
+//// tty_wrap
+show(() => process.binding("tty_wrap"));
+//// udp_wrap
+show(() => process.binding("udp_wrap"));
+//// url
+show(() => process.binding("url"));
+//// util
+show(() => process.binding("util"));
+//// uv
+show(() => process.binding("uv"));
+//// v8
+show(() => process.binding("v8"));
+//// zlib
+show(() => process.binding("zlib"));
+//// mine
+show(() => process.binding("mine"));
+//// what-safer-buffer-does
+const safer = {};
+if (!safer.kStringMaxLength) {
+  try {
+    safer.kStringMaxLength = process.binding("buffer").kStringMaxLength;
+  } catch {}
+}
+console.log(safer.kStringMaxLength);
+//// members-that-are-called
+console.log(process.binding("uv").errname(-2), process.binding("util").isDate(new Date(0)), process.binding("tty_wrap").isTTY(99), process.binding("crypto/x509").isX509Certificate({}), process.binding("constants").os.signals.SIGINT, process.binding("config").bits, process.binding("http_parser").methods.length > 0, process.binding("natives").fs.length);

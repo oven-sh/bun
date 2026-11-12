@@ -1,0 +1,27 @@
+# -- source: main.js
+# function target(a, b, c) { return "<" + [this && this.tag, arguments.length, a, b, c].join("/") + ">"; }
+# function forward() { return target.apply(this, arguments); }
+# function named(a) { return target.apply({ tag: "n" }, arguments); }
+# function notLast() { var got = target.apply(this, arguments); return "[" + got + "]"; }
+# function delegate() { return this.inner.show.apply(this.inner, arguments); }
+# globalThis.fs = { tag: "T", forward, named, notLast, delegate, inner: { tag: "i", show: target } };
+# const fs = globalThis.fs;
+# print(fs.forward(), fs.forward(1), fs.forward(1, 2), fs.forward(1, 2, 3), fs.forward(1, 2, 3, 4), fs.forward(1, 2, 3, 4, 5), fs.forward(1, 2, 3, 4, 5, 6, 7, 8, 9));
+# print(fs.named(), fs.named(1, 2), fs.named(1, 2, 3, 4, 5, 6), fs.notLast(), fs.notLast(1, 2, 3, 4, 5), [7].map(fs.forward).join(), fs.forward.call({ tag: "c" }, undefined));
+# print(fs.delegate(), fs.delegate(1, 2), fs.delegate(1, 2, 3, 4, 5, 6));
+# -- end of source
+# The function does nothing with `arguments` but hand it to `apply`. Its generic entry walks the body and reads its own arguments where they lie: up to four are passed on by their count as a plain call; no list and no arguments object is made. More than four: the list is made in that arm.
+# RUN: run-in-shell
+# CHECK: <T/0///> <T/1/1//> <T/2/1/2/> <T/3/1/2/3> <T/4/1/2/3> <T/5/1/2/3> <T/9/1/2/3>
+# CHECK-NEXT: <n/0///> <n/2/1/2/> <n/6/1/2/3> [<T/0///>] [<T/5/1/2/3>] </3/7/0/7> <c/1///>
+# CHECK-NEXT: <i/0///> <i/2/1/2/> <i/6/1/2/3>
+# CHECK-NEXT: exited with 0
+# RUN(FORM): walk f2:GenericCallEntry mechanisms=all
+# FORM-NOT: CreateRest
+# FORM: GetArgument
+# FORM: StrictEq
+# FORM: CreateRest
+# RUN(UNSEEN): walk f5:GenericCallEntry mechanisms=all
+# UNSEEN-NOT: CreateRest
+# UNSEEN: TypeTest {{*}}FunctionPrototypeApply
+# UNSEEN: CreateRest

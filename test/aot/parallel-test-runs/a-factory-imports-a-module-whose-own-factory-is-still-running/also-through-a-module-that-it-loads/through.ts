@@ -1,0 +1,1 @@
+export { name } from "./first";

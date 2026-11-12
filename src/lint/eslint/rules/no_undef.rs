@@ -9,7 +9,7 @@ pub struct NoUndef {
     considers_typeof: bool,
 }
 
-const UNDEF: Message = Message::new("undef", "'{{name}}' is not defined.");
+const UNDEF: &Message = &Message::new("undef", "'{{name}}' is not defined.");
 
 /// ESLint's `hasTypeOfOperator`.
 fn has_typeof_operator(reference: Reference) -> bool {
@@ -53,7 +53,7 @@ fn hint(reference: Reference) -> String {
     match text::spelling_suggestion(name.bytes(), declared.chain(globals)) {
         Some(close) => format!("Did you mean \"{}\"?", bstr::BStr::new(close)),
         None => {
-            "If it is a global variable, declare it in [lint.globals] in bunfig.toml.".to_owned()
+            "If it's a global, declare it in [lint.globals] in bunfig.toml.".to_owned()
         }
     }
 }

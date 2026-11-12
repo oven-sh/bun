@@ -14,8 +14,8 @@ interface WASIBindings {
   kill: (signal: string) => void;
   randomFillSync: <T extends ArrayBufferView>(array: T) => T;
   isTTY: (fd: number) => boolean;
-  fs: typeof import("node:fs");
-  path: typeof import("node:path");
+  fs: $BunModules["node:fs"];
+  path: $BunModules["node:path"];
 }
 
 interface WASIConfig {
@@ -410,7 +410,7 @@ const SIGNAL_MAP = {
   [WASI_SIGVTALRM]: "SIGVTALRM",
 };
 
-let fs;
+let fs: $BunModules["node:fs"];
 var SC_OPEN_MAX = 32768;
 
 var STDIN_DEFAULT_RIGHTS =
@@ -428,14 +428,14 @@ var STDOUT_DEFAULT_RIGHTS =
   WASI_RIGHT_FD_FILESTAT_GET |
   WASI_RIGHT_POLL_FD_READWRITE;
 var STDERR_DEFAULT_RIGHTS = STDOUT_DEFAULT_RIGHTS;
-var msToNs = ms => {
+var msToNs = (ms: number) => {
   const msInt = Math.trunc(ms);
 
   const decimal = BigInt(Math.round((ms - msInt) * 1e6));
   const ns = BigInt(msInt) * BigInt(1e6);
   return ns + decimal;
 };
-var nsToMs = ns => {
+var nsToMs = (ns: number | bigint) => {
   if (typeof ns === "number") {
     ns = Math.trunc(ns);
   }
@@ -443,8 +443,8 @@ var nsToMs = ns => {
   return Number(nsInt / BigInt(1e6));
 };
 var wrap =
-  f =>
-  (...args) => {
+  <A extends unknown[]>(f: (...args: A) => number) =>
+  (...args: A): number => {
     try {
       return f(...args);
     } catch (err) {
@@ -468,7 +468,7 @@ var stat = (wasi: WASI, fd: number) => {
   }
   if (entry.filetype === void 0) {
     const stats = wasi.fstatSync(entry.real);
-    const { filetype, rightsBase, rightsInheriting } = translateFileAttributes(wasi, fd, stats);
+    const { filetype, rightsBase, rightsInheriting } = translateFileAttributes(wasi, fd, stats as $Node.Stats);
     entry.filetype = filetype;
     if (!entry.rights) {
       entry.rights = {
@@ -479,7 +479,7 @@ var stat = (wasi: WASI, fd: number) => {
   }
   return entry;
 };
-var translateFileAttributes = (wasi, fd, stats) => {
+var translateFileAttributes = (wasi: WASI, fd: number | undefined, stats: $Node.Stats) => {
   switch (true) {
     case stats.isBlockDevice():
       return {
@@ -542,11 +542,11 @@ var translateFileAttributes = (wasi, fd, stats) => {
 };
 var warnedAboutSleep = false;
 
-var defaultConfig;
+var defaultConfig: Required<Pick<WASIConfig, "args" | "env" | "preopens" | "bindings" | "sleep">> | undefined;
 function getDefaults() {
   if (defaultConfig) return defaultConfig;
 
-  const defaultBindings = {
+  const defaultBindings: WASIBindings = {
     hrtime: () => process.hrtime.bigint(),
     exit: code => {
       process.exit(code);
@@ -654,7 +654,7 @@ class WASI {
         path: v,
       });
     }
-    const getiovs = (iovs, iovsLen) => {
+    const getiovs = (iovs: number, iovsLen: number) => {
       this.refreshMemory();
 
       const { view, memory } = this;
@@ -718,7 +718,7 @@ class WASI {
     // verify the result cannot escape that directory, either lexically
     // ("..", absolute paths) or through a symlink that already exists on the
     // host filesystem.
-    const RESOLVE_PATH = (stats, guestPath) => {
+    const RESOLVE_PATH = (stats: WASIFileDescriptor, guestPath: string) => {
       if (!stats.path) {
         throw new WASIError(WASI_EINVAL);
       }
@@ -731,7 +731,7 @@ class WASI {
       }
       const base = path.resolve(stats.path);
       const resolved = path.resolve(base, rel);
-      const isContained = (parent, child) =>
+      const isContained = (parent: string, child: string) =>
         child === parent || child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
       if (!isContained(base, resolved)) {
         throw new WASIError(WASI_ENOTCAPABLE);
@@ -772,7 +772,7 @@ class WASI {
     };
     const CPUTIME_START = Bun.nanoseconds();
     const timeOrigin = Math.trunc(performance.timeOrigin * 1e6);
-    const now = clockId => {
+    const now = (clockId: number) => {
       switch (clockId) {
         case WASI_CLOCK_MONOTONIC:
           return Bun.nanoseconds();
@@ -786,7 +786,7 @@ class WASI {
       }
     };
     this.wasiImport = {
-      args_get: (argv, argvBuf) => {
+      args_get: (argv: number, argvBuf: number) => {
         this.refreshMemory();
         let coffset = argv;
         let offset = argvBuf;
@@ -797,14 +797,14 @@ class WASI {
         });
         return WASI_ESUCCESS;
       },
-      args_sizes_get: (argc, argvBufSize) => {
+      args_sizes_get: (argc: number, argvBufSize: number) => {
         this.refreshMemory();
         this.view.setUint32(argc, args.length, true);
         const size = args.reduce((acc, a) => acc + Buffer.byteLength(a) + 1, 0);
         this.view.setUint32(argvBufSize, size, true);
         return WASI_ESUCCESS;
       },
-      environ_get: (environ, environBuf) => {
+      environ_get: (environ: number, environBuf: number) => {
         this.refreshMemory();
         let coffset = environ;
         let offset = environBuf;
@@ -815,7 +815,7 @@ class WASI {
         });
         return WASI_ESUCCESS;
       },
-      environ_sizes_get: (environCount, environBufSize) => {
+      environ_sizes_get: (environCount: number, environBufSize: number) => {
         this.refreshMemory();
         const envProcessed = Object.entries(this.env).map(([key, value]) => `${key}=${value}\0`);
         const size = envProcessed.reduce((acc, e) => acc + Buffer.byteLength(e), 0);
@@ -823,7 +823,7 @@ class WASI {
         this.view.setUint32(environBufSize, size, true);
         return WASI_ESUCCESS;
       },
-      clock_res_get: (clockId, resolution) => {
+      clock_res_get: (clockId: number, resolution: number) => {
         let res;
         switch (clockId) {
           case WASI_CLOCK_MONOTONIC:
@@ -843,7 +843,7 @@ class WASI {
         this.view.setBigUint64(resolution, res);
         return WASI_ESUCCESS;
       },
-      clock_time_get: (clockId, _precision, time) => {
+      clock_time_get: (clockId: number, _precision: bigint, time: number) => {
         this.refreshMemory();
         const n = now(clockId);
         if (n === null) {
@@ -852,26 +852,26 @@ class WASI {
         this.view.setBigUint64(time, BigInt(n), true);
         return WASI_ESUCCESS;
       },
-      fd_advise: wrap((fd, _offset, _len, _advice) => {
+      fd_advise: wrap((fd: number, _offset: bigint, _len: bigint, _advice: number) => {
         CHECK_FD(fd, WASI_RIGHT_FD_ADVISE);
         return WASI_ENOSYS;
       }),
-      fd_allocate: wrap((fd, _offset, _len) => {
+      fd_allocate: wrap((fd: number, _offset: bigint, _len: bigint) => {
         CHECK_FD(fd, WASI_RIGHT_FD_ALLOCATE);
         return WASI_ENOSYS;
       }),
-      fd_close: wrap(fd => {
+      fd_close: wrap((fd: number) => {
         const stats = CHECK_FD(fd, BigInt(0));
         fs.closeSync(stats.real);
         this.FD_MAP.delete(fd);
         return WASI_ESUCCESS;
       }),
-      fd_datasync: wrap(fd => {
+      fd_datasync: wrap((fd: number) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_DATASYNC);
         fs.fdatasyncSync(stats.real);
         return WASI_ESUCCESS;
       }),
-      fd_fdstat_get: wrap((fd, bufPtr) => {
+      fd_fdstat_get: wrap((fd: number, bufPtr: number) => {
         const stats = CHECK_FD(fd, BigInt(0));
         this.refreshMemory();
         if (stats.filetype == null) {
@@ -884,14 +884,14 @@ class WASI {
         this.view.setBigUint64(bufPtr + 8 + 8, BigInt(stats.rights.inheriting), true);
         return WASI_ESUCCESS;
       }),
-      fd_fdstat_set_flags: wrap((fd, flags) => {
+      fd_fdstat_set_flags: wrap((fd: number, flags: number) => {
         CHECK_FD(fd, WASI_RIGHT_FD_FDSTAT_SET_FLAGS);
         if (this.wasiImport.sock_fcntlSetFlags(fd, flags) == 0) {
           return WASI_ESUCCESS;
         }
         return WASI_ENOSYS;
       }),
-      fd_fdstat_set_rights: wrap((fd, fsRightsBase, fsRightsInheriting) => {
+      fd_fdstat_set_rights: wrap((fd: number, fsRightsBase: bigint, fsRightsInheriting: bigint) => {
         const stats = CHECK_FD(fd, BigInt(0));
         fsRightsBase = BigInt.asUintN(64, fsRightsBase);
         fsRightsInheriting = BigInt.asUintN(64, fsRightsInheriting);
@@ -907,7 +907,7 @@ class WASI {
         stats.rights.inheriting = fsRightsInheriting;
         return WASI_ESUCCESS;
       }),
-      fd_filestat_get: wrap((fd, bufPtr) => {
+      fd_filestat_get: wrap((fd: number, bufPtr: number) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_FILESTAT_GET);
         const rstats = this.fstatSync(stats.real);
         this.refreshMemory();
@@ -931,17 +931,17 @@ class WASI {
         this.view.setBigUint64(bufPtr, msToNs(rstats.ctimeMs), true);
         return WASI_ESUCCESS;
       }),
-      fd_filestat_set_size: wrap((fd, stSize) => {
+      fd_filestat_set_size: wrap((fd: number, stSize: bigint) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_FILESTAT_SET_SIZE);
         fs.ftruncateSync(stats.real, Number(stSize));
         return WASI_ESUCCESS;
       }),
-      fd_filestat_set_times: wrap((fd, stAtim, stMtim, fstflags) => {
+      fd_filestat_set_times: wrap((fd: number, stAtim: bigint, stMtim: bigint, fstflags: number) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_FILESTAT_SET_TIMES);
         const rstats = this.fstatSync(stats.real);
-        let atim = rstats.atime;
-        let mtim = rstats.mtime;
-        const n = nsToMs(now(WASI_CLOCK_REALTIME));
+        let atim: Date | number = rstats.atime;
+        let mtim: Date | number = rstats.mtime;
+        const n = nsToMs(now(WASI_CLOCK_REALTIME)!);
         const atimflags = WASI_FILESTAT_SET_ATIM | WASI_FILESTAT_SET_ATIM_NOW;
         if ((fstflags & atimflags) === atimflags) {
           return WASI_EINVAL;
@@ -963,20 +963,20 @@ class WASI {
         fs.futimesSync(stats.real, new Date(atim), new Date(mtim));
         return WASI_ESUCCESS;
       }),
-      fd_prestat_get: wrap((fd, bufPtr) => {
+      fd_prestat_get: wrap((fd: number, bufPtr: number) => {
         const stats = CHECK_FD(fd, BigInt(0));
         this.refreshMemory();
         this.view.setUint8(bufPtr, WASI_PREOPENTYPE_DIR);
         this.view.setUint32(bufPtr + 4, Buffer.byteLength(stats.fakePath ?? stats.path ?? ""), true);
         return WASI_ESUCCESS;
       }),
-      fd_prestat_dir_name: wrap((fd, pathPtr, pathLen) => {
+      fd_prestat_dir_name: wrap((fd: number, pathPtr: number, pathLen: number) => {
         const stats = CHECK_FD(fd, BigInt(0));
         this.refreshMemory();
         Buffer.from(this.memory.buffer).write(stats.fakePath ?? stats.path ?? "", pathPtr, pathLen, "utf8");
         return WASI_ESUCCESS;
       }),
-      fd_pwrite: wrap((fd, iovs, iovsLen, offset, nwritten) => {
+      fd_pwrite: wrap((fd: number, iovs: number, iovsLen: number, offset: bigint, nwritten: number) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_WRITE | WASI_RIGHT_FD_SEEK);
         let written = 0;
         getiovs(iovs, iovsLen).forEach(iov => {
@@ -989,7 +989,7 @@ class WASI {
         this.view.setUint32(nwritten, written, true);
         return WASI_ESUCCESS;
       }),
-      fd_write: wrap((fd, iovs, iovsLen, nwritten) => {
+      fd_write: wrap((fd: number, iovs: number, iovsLen: number, nwritten: number) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_WRITE);
         const IS_STDOUT = fd == WASI_STDOUT_FILENO;
         const IS_STDERR = fd == WASI_STDERR_FILENO;
@@ -1021,7 +1021,7 @@ class WASI {
         this.view.setUint32(nwritten, written, true);
         return WASI_ESUCCESS;
       }),
-      fd_pread: wrap((fd, iovs, iovsLen, offset, nread) => {
+      fd_pread: wrap((fd: number, iovs: number, iovsLen: number, offset: bigint, nread: number) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_READ | WASI_RIGHT_FD_SEEK);
         let read = 0;
         outer: for (const iov of getiovs(iovs, iovsLen)) {
@@ -1039,7 +1039,7 @@ class WASI {
         this.view.setUint32(nread, read, true);
         return WASI_ESUCCESS;
       }),
-      fd_read: wrap((fd, iovs, iovsLen, nread) => {
+      fd_read: wrap((fd: number, iovs: number, iovsLen: number, nread: number) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_READ);
         const IS_STDIN = fd == WASI_STDIN_FILENO;
         let read = 0;
@@ -1096,7 +1096,7 @@ class WASI {
         this.view.setUint32(nread, read, true);
         return WASI_ESUCCESS;
       }),
-      fd_readdir: wrap((fd, bufPtr, bufLen, cookie, bufusedPtr) => {
+      fd_readdir: wrap((fd: number, bufPtr: number, bufLen: number, cookie: bigint, bufusedPtr: number) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_READDIR);
         this.refreshMemory();
         const entries = fs.readdirSync(stats.path, { withFileTypes: true });
@@ -1156,7 +1156,7 @@ class WASI {
           if (bufPtr + nameLength >= startPtr + bufLen) {
             break;
           }
-          let memory_buffer = Buffer.from(this.memory.buffer);
+          let memory_buffer: Buffer = Buffer.from(this.memory.buffer);
           memory_buffer.write(entry.name, bufPtr);
           bufPtr += nameLength;
         }
@@ -1164,7 +1164,7 @@ class WASI {
         this.view.setUint32(bufusedPtr, Math.min(bufused, bufLen), true);
         return WASI_ESUCCESS;
       }),
-      fd_renumber: wrap((from, to) => {
+      fd_renumber: wrap((from: number, to: number) => {
         const fromEntry = CHECK_FD(from, BigInt(0));
         const toEntry = CHECK_FD(to, BigInt(0));
         fs.closeSync(fromEntry.real);
@@ -1172,7 +1172,7 @@ class WASI {
         this.FD_MAP.delete(to);
         return WASI_ESUCCESS;
       }),
-      fd_seek: wrap((fd, offset, whence, newOffsetPtr) => {
+      fd_seek: wrap((fd: number, offset: bigint, whence: number, newOffsetPtr: number) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_SEEK);
         this.refreshMemory();
         switch (whence) {
@@ -1193,7 +1193,7 @@ class WASI {
         this.view.setBigUint64(newOffsetPtr, stats.offset, true);
         return WASI_ESUCCESS;
       }),
-      fd_tell: wrap((fd, offsetPtr) => {
+      fd_tell: wrap((fd: number, offsetPtr: number) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_TELL);
         this.refreshMemory();
         if (!stats.offset) {
@@ -1202,30 +1202,30 @@ class WASI {
         this.view.setBigUint64(offsetPtr, stats.offset, true);
         return WASI_ESUCCESS;
       }),
-      fd_sync: wrap(fd => {
+      fd_sync: wrap((fd: number) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_SYNC);
         fs.fsyncSync(stats.real);
         return WASI_ESUCCESS;
       }),
-      path_create_directory: wrap((fd, pathPtr, pathLen) => {
+      path_create_directory: wrap((fd: number, pathPtr: number, pathLen: number) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_PATH_CREATE_DIRECTORY);
         if (!stats.path) {
           return WASI_EINVAL;
         }
         this.refreshMemory();
-        const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
+        const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
         fs.mkdirSync(RESOLVE_PATH(stats, p));
         return WASI_ESUCCESS;
       }),
-      path_filestat_get: wrap((fd, flags, pathPtr, pathLen, bufPtr) => {
+      path_filestat_get: wrap((fd: number, flags: number, pathPtr: number, pathLen: number, bufPtr: number) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_PATH_FILESTAT_GET);
         if (!stats.path) {
           return WASI_EINVAL;
         }
         this.refreshMemory();
-        const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
+        const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
         const resolved = RESOLVE_PATH(stats, p);
-        let rstats;
+        let rstats: $Node.Stats;
         if (flags) {
           rstats = fs.statSync(resolved);
         } else {
@@ -1248,61 +1248,81 @@ class WASI {
         this.view.setBigUint64(bufPtr, BigInt(rstats.ctime.getTime() * 1e6), true);
         return WASI_ESUCCESS;
       }),
-      path_filestat_set_times: wrap((fd, _dirflags, pathPtr, pathLen, stAtim, stMtim, fstflags) => {
-        const stats = CHECK_FD(fd, WASI_RIGHT_PATH_FILESTAT_SET_TIMES);
-        if (!stats.path) {
-          return WASI_EINVAL;
-        }
-        this.refreshMemory();
-        const rstats = this.fstatSync(stats.real);
-        let atim = rstats.atime;
-        let mtim = rstats.mtime;
-        const n = nsToMs(now(WASI_CLOCK_REALTIME));
-        const atimflags = WASI_FILESTAT_SET_ATIM | WASI_FILESTAT_SET_ATIM_NOW;
-        if ((fstflags & atimflags) === atimflags) {
-          return WASI_EINVAL;
-        }
-        const mtimflags = WASI_FILESTAT_SET_MTIM | WASI_FILESTAT_SET_MTIM_NOW;
-        if ((fstflags & mtimflags) === mtimflags) {
-          return WASI_EINVAL;
-        }
-        if ((fstflags & WASI_FILESTAT_SET_ATIM) === WASI_FILESTAT_SET_ATIM) {
-          atim = nsToMs(stAtim);
-        } else if ((fstflags & WASI_FILESTAT_SET_ATIM_NOW) === WASI_FILESTAT_SET_ATIM_NOW) {
-          atim = n;
-        }
-        if ((fstflags & WASI_FILESTAT_SET_MTIM) === WASI_FILESTAT_SET_MTIM) {
-          mtim = nsToMs(stMtim);
-        } else if ((fstflags & WASI_FILESTAT_SET_MTIM_NOW) === WASI_FILESTAT_SET_MTIM_NOW) {
-          mtim = n;
-        }
-        const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
-        fs.utimesSync(RESOLVE_PATH(stats, p), new Date(atim), new Date(mtim));
-        return WASI_ESUCCESS;
-      }),
-      path_link: wrap((oldFd, _oldFlags, oldPath, oldPathLen, newFd, newPath, newPathLen) => {
-        const ostats = CHECK_FD(oldFd, WASI_RIGHT_PATH_LINK_SOURCE);
-        const nstats = CHECK_FD(newFd, WASI_RIGHT_PATH_LINK_TARGET);
-        if (!ostats.path || !nstats.path) {
-          return WASI_EINVAL;
-        }
-        this.refreshMemory();
-        const op = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
-        const np = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
-        fs.linkSync(RESOLVE_PATH(ostats, op), RESOLVE_PATH(nstats, np));
-        return WASI_ESUCCESS;
-      }),
+      path_filestat_set_times: wrap(
+        (
+          fd: number,
+          _dirflags: number,
+          pathPtr: number,
+          pathLen: number,
+          stAtim: bigint,
+          stMtim: bigint,
+          fstflags: number,
+        ) => {
+          const stats = CHECK_FD(fd, WASI_RIGHT_PATH_FILESTAT_SET_TIMES);
+          if (!stats.path) {
+            return WASI_EINVAL;
+          }
+          this.refreshMemory();
+          const rstats = this.fstatSync(stats.real);
+          let atim: Date | number = rstats.atime;
+          let mtim: Date | number = rstats.mtime;
+          const n = nsToMs(now(WASI_CLOCK_REALTIME)!);
+          const atimflags = WASI_FILESTAT_SET_ATIM | WASI_FILESTAT_SET_ATIM_NOW;
+          if ((fstflags & atimflags) === atimflags) {
+            return WASI_EINVAL;
+          }
+          const mtimflags = WASI_FILESTAT_SET_MTIM | WASI_FILESTAT_SET_MTIM_NOW;
+          if ((fstflags & mtimflags) === mtimflags) {
+            return WASI_EINVAL;
+          }
+          if ((fstflags & WASI_FILESTAT_SET_ATIM) === WASI_FILESTAT_SET_ATIM) {
+            atim = nsToMs(stAtim);
+          } else if ((fstflags & WASI_FILESTAT_SET_ATIM_NOW) === WASI_FILESTAT_SET_ATIM_NOW) {
+            atim = n;
+          }
+          if ((fstflags & WASI_FILESTAT_SET_MTIM) === WASI_FILESTAT_SET_MTIM) {
+            mtim = nsToMs(stMtim);
+          } else if ((fstflags & WASI_FILESTAT_SET_MTIM_NOW) === WASI_FILESTAT_SET_MTIM_NOW) {
+            mtim = n;
+          }
+          const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
+          fs.utimesSync(RESOLVE_PATH(stats, p), new Date(atim), new Date(mtim));
+          return WASI_ESUCCESS;
+        },
+      ),
+      path_link: wrap(
+        (
+          oldFd: number,
+          _oldFlags: number,
+          oldPath: number,
+          oldPathLen: number,
+          newFd: number,
+          newPath: number,
+          newPathLen: number,
+        ) => {
+          const ostats = CHECK_FD(oldFd, WASI_RIGHT_PATH_LINK_SOURCE);
+          const nstats = CHECK_FD(newFd, WASI_RIGHT_PATH_LINK_TARGET);
+          if (!ostats.path || !nstats.path) {
+            return WASI_EINVAL;
+          }
+          this.refreshMemory();
+          const op: string = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
+          const np: string = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
+          fs.linkSync(RESOLVE_PATH(ostats, op), RESOLVE_PATH(nstats, np));
+          return WASI_ESUCCESS;
+        },
+      ),
       path_open: wrap(
         (
-          dirfd,
-          _dirflags,
-          pathPtr,
-          pathLen,
-          oflags,
+          dirfd: number,
+          _dirflags: number,
+          pathPtr: number,
+          pathLen: number,
+          oflags: number,
           fsRightsBase: bigint | number,
           fsRightsInheriting: bigint | number,
-          fsFlags,
-          fdPtr,
+          fsFlags: number,
+          fdPtr: number,
         ) => {
           try {
             const stats = CHECK_FD(dirfd, WASI_RIGHT_PATH_OPEN);
@@ -1364,7 +1384,7 @@ class WASI {
               neededInheriting |= WASI_RIGHT_FD_SEEK;
             }
             this.refreshMemory();
-            const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
+            const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
             if (p == "dev/tty") {
               this.view.setUint32(fdPtr, WASI_STDIN_FILENO, true);
               return WASI_ESUCCESS;
@@ -1460,63 +1480,67 @@ class WASI {
           return WASI_ESUCCESS;
         },
       ),
-      path_readlink: wrap((fd, pathPtr, pathLen, buf, bufLen, bufused) => {
-        const stats = CHECK_FD(fd, WASI_RIGHT_PATH_READLINK);
-        if (!stats.path) {
-          return WASI_EINVAL;
-        }
-        this.refreshMemory();
-        const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
-        const full = RESOLVE_PATH(stats, p);
-        const r = fs.readlinkSync(full);
-        const used = Buffer.from(this.memory.buffer).write(r, buf, bufLen);
-        this.view.setUint32(bufused, used, true);
-        return WASI_ESUCCESS;
-      }),
-      path_remove_directory: wrap((fd, pathPtr, pathLen) => {
+      path_readlink: wrap(
+        (fd: number, pathPtr: number, pathLen: number, buf: number, bufLen: number, bufused: number) => {
+          const stats = CHECK_FD(fd, WASI_RIGHT_PATH_READLINK);
+          if (!stats.path) {
+            return WASI_EINVAL;
+          }
+          this.refreshMemory();
+          const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
+          const full = RESOLVE_PATH(stats, p);
+          const r = fs.readlinkSync(full);
+          const used = Buffer.from(this.memory.buffer).write(r, buf, bufLen);
+          this.view.setUint32(bufused, used, true);
+          return WASI_ESUCCESS;
+        },
+      ),
+      path_remove_directory: wrap((fd: number, pathPtr: number, pathLen: number) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_PATH_REMOVE_DIRECTORY);
         if (!stats.path) {
           return WASI_EINVAL;
         }
         this.refreshMemory();
-        const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
+        const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
         fs.rmdirSync(RESOLVE_PATH(stats, p));
         return WASI_ESUCCESS;
       }),
-      path_rename: wrap((oldFd, oldPath, oldPathLen, newFd, newPath, newPathLen) => {
-        const ostats = CHECK_FD(oldFd, WASI_RIGHT_PATH_RENAME_SOURCE);
-        const nstats = CHECK_FD(newFd, WASI_RIGHT_PATH_RENAME_TARGET);
-        if (!ostats.path || !nstats.path) {
-          return WASI_EINVAL;
-        }
-        this.refreshMemory();
-        const op = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
-        const np = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
-        fs.renameSync(RESOLVE_PATH(ostats, op), RESOLVE_PATH(nstats, np));
-        return WASI_ESUCCESS;
-      }),
-      path_symlink: wrap((oldPath, oldPathLen, fd, newPath, newPathLen) => {
+      path_rename: wrap(
+        (oldFd: number, oldPath: number, oldPathLen: number, newFd: number, newPath: number, newPathLen: number) => {
+          const ostats = CHECK_FD(oldFd, WASI_RIGHT_PATH_RENAME_SOURCE);
+          const nstats = CHECK_FD(newFd, WASI_RIGHT_PATH_RENAME_TARGET);
+          if (!ostats.path || !nstats.path) {
+            return WASI_EINVAL;
+          }
+          this.refreshMemory();
+          const op: string = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
+          const np: string = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
+          fs.renameSync(RESOLVE_PATH(ostats, op), RESOLVE_PATH(nstats, np));
+          return WASI_ESUCCESS;
+        },
+      ),
+      path_symlink: wrap((oldPath: number, oldPathLen: number, fd: number, newPath: number, newPathLen: number) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_PATH_SYMLINK);
         if (!stats.path) {
           return WASI_EINVAL;
         }
         this.refreshMemory();
-        const op = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
-        const np = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
+        const op: string = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
+        const np: string = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
         fs.symlinkSync(op, RESOLVE_PATH(stats, np));
         return WASI_ESUCCESS;
       }),
-      path_unlink_file: wrap((fd, pathPtr, pathLen) => {
+      path_unlink_file: wrap((fd: number, pathPtr: number, pathLen: number) => {
         const stats = CHECK_FD(fd, WASI_RIGHT_PATH_UNLINK_FILE);
         if (!stats.path) {
           return WASI_EINVAL;
         }
         this.refreshMemory();
-        const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
+        const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
         fs.unlinkSync(RESOLVE_PATH(stats, p));
         return WASI_ESUCCESS;
       }),
-      poll_oneoff: (sin, sout, nsubscriptions, neventsPtr) => {
+      poll_oneoff: (sin: number, sout: number, nsubscriptions: number, neventsPtr: number) => {
         const startNs = BigInt(bindings.hrtime());
         let nevents = 0;
         let waitTimeNs = BigInt(0);
@@ -1626,18 +1650,18 @@ class WASI {
         }
         return WASI_ESUCCESS;
       },
-      proc_exit: rval => {
+      proc_exit: (rval: number) => {
         bindings.exit(rval);
         return WASI_ESUCCESS;
       },
-      proc_raise: sig => {
+      proc_raise: (sig: number) => {
         if (!(sig in SIGNAL_MAP)) {
           return WASI_EINVAL;
         }
         bindings.kill(SIGNAL_MAP[sig]);
         return WASI_ESUCCESS;
       },
-      random_get: (bufPtr, bufLen) => {
+      random_get: (bufPtr: number, bufLen: number) => {
         this.refreshMemory();
         // getRandomValues takes one integer-typed view and ignores any further
         // arguments, so a bare `buffer, bufPtr, bufLen` randomized all of linear
@@ -1657,15 +1681,15 @@ class WASI {
       sock_shutdown() {
         return WASI_ENOSYS;
       },
-      sock_fcntlSetFlags(_fd, _flags) {
+      sock_fcntlSetFlags(_fd: number, _flags: number) {
         return WASI_ENOSYS;
       },
-      sock_pollSocket(_fd, _eventtype, _timeout_ms) {
+      sock_pollSocket(_fd: number, _eventtype: string, _timeout_ms: number | bigint) {
         return WASI_ENOSYS;
       },
     };
   }
-  fstatSync(real_fd) {
+  fstatSync(real_fd: number) {
     if (real_fd <= 2) {
       try {
         return fs.fstatSync(real_fd);
@@ -1717,10 +1741,13 @@ class WASI {
       this.view = new DataView(this.memory.buffer);
     }
   }
-  setMemory(memory) {
+  setMemory(memory: WebAssembly.Memory) {
     this.memory = memory;
   }
-  start(instance, memory) {
+  start(
+    instance: { exports: { memory?: WebAssembly.Memory; _start?: () => void } | null },
+    memory?: WebAssembly.Memory | null,
+  ) {
     const exports2 = instance.exports;
     if (exports2 === null || typeof exports2 !== "object") {
       throw new Error(`instance.exports must be an Object. Received ${exports2}.`);
@@ -1736,9 +1763,9 @@ class WASI {
       exports2._start();
     }
   }
-  getImports(module2) {
+  getImports(module2: WebAssembly.Module) {
     let namespace: string | null = null;
-    const imports = WebAssembly.Module.imports(module2);
+    const imports: { module: string; name: string; kind: string }[] = WebAssembly.Module.imports(module2);
 
     for (let imp of imports) {
       if (imp.kind !== "function") {

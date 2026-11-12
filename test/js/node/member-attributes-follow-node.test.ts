@@ -14,6 +14,7 @@
  * https://github.com/nodejs/node/blob/v26.12.1/src/node_zlib.cc#L2067-L2073
  * https://github.com/nodejs/node/blob/v26.12.1/src/handle_wrap.cc#L171-L174
  * https://github.com/nodejs/node/blob/v26.12.1/src/tty_wrap.cc#L68-L81
+ * https://github.com/nodejs/node/blob/v26.12.1/lib/internal/bootstrap/realm.js#L169-L177 (internalBinding keeps one object for a name)
  * https://github.com/nodejs/node/blob/v26.12.1/lib/net.js#L1018-L1024 (pending) and #L2734-L2741 (listening)
  */
 import assert from "node:assert";
@@ -65,7 +66,7 @@ const zlibHandle: Attributes = {
   writeSync: "cew",
 };
 
-/** `make` returns a new object each time. Each member is on the first object that has it, from that one upwards. */
+/** Each member is on the first object that has it, from what `make` returns upwards: the same object at each `make`. */
 const rows: Record<string, { make: () => object; node: Attributes }> = {
   "a net.BlockList": {
     make: () => new net.BlockList(),
@@ -97,9 +98,14 @@ describe("a member has the attributes that Node.js gives it", () => {
   for (const [name, { make, node }] of Object.entries(rows)) {
     test(name, () => {
       const made = make();
+      const again = make();
       const attributes: Attributes = {};
-      for (const member of Object.keys(node))
-        attributes[member] = attributesOf(Object.getOwnPropertyDescriptor(holderOf(made, member), member)!);
+      for (const member of Object.keys(node)) {
+        const holder = holderOf(made, member);
+        // A member of an object that is built anew for each reader is redefined for nobody.
+        assert.strictEqual(holderOf(again, member), holder, `${member} is on one object`);
+        attributes[member] = attributesOf(Object.getOwnPropertyDescriptor(holder, member)!);
+      }
       assert.deepStrictEqual(attributes, node);
     });
   }
@@ -166,8 +172,33 @@ describe("a stand-in for an accessor is taken away again", () => {
   });
 });
 
-// Only in Bun: when Node.js runs this file it must not spawn itself again.
+test('a TTY that is stored to process.binding("tty_wrap") is there at the next call', () => {
+  const binding = ttyWrap();
+  const { TTY } = binding;
+  const standIn = function TTY() {};
+  binding.TTY = standIn;
+  try {
+    assert.strictEqual(ttyWrap().TTY, standIn);
+  } finally {
+    binding.TTY = TTY;
+  }
+});
+
+// Only in Bun: Node.js has no Bun.gc(), and when it runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {
+  test('what is stored to process.binding("tty_wrap") outlives a collection', () => {
+    // Stored in a call of its own: afterwards nothing but the binding holds the object.
+    (() => {
+      ttyWrap().standIn = { kept: true };
+    })();
+    Bun.gc(true);
+    try {
+      assert.deepStrictEqual(ttyWrap().standIn, { kept: true });
+    } finally {
+      delete ttyWrap().standIn;
+    }
+  });
+
   const { bunEnv, nodeExeAtLeast } = await import("harness");
   const node = nodeExeAtLeast("26.3.0");
 

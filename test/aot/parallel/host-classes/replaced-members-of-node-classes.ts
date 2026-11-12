@@ -43,6 +43,9 @@ function all(label: string, holder: object, name: string, typed: () => unknown, 
   say(label + " replaced by a getter", () => (Object.defineProperty(holder, name, { get: () => standIn("from a getter"), configurable: true }), both()));
   say(label + " put back", () => (Object.defineProperty(holder, name, original), both()));
   say(label + " deleted", () => [delete (holder as Record<string, unknown>)[name], name in holder]);
+  // A line for each: the call of a deleted method throws.
+  say(label + " used while deleted, with its type", typed);
+  say(label + " used while deleted, without a type", untyped);
   say(label + " put back again", () => (Object.defineProperty(holder, name, original), many()));
 }
 

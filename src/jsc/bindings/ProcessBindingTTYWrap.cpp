@@ -516,7 +516,7 @@ JSValue createBunTTYFunctions(Zig::GlobalObject* globalObject)
     return obj;
 }
 
-JSValue createNodeTTYWrapObject(JSC::JSGlobalObject* globalObject)
+JSObject* createNodeTTYWrapObject(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto* obj = constructEmptyObject(globalObject);

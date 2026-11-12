@@ -4838,7 +4838,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     if (moduleName == "stream_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED_ISSUE("stream_wrap", "4957");
     if (moduleName == "tcp_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("tcp_wrap");
     if (moduleName == "tls_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("tls_wrap");
-    if (moduleName == "tty_wrap"_s) return JSValue::encode(Bun::createNodeTTYWrapObject(globalObject));
+    if (moduleName == "tty_wrap"_s) return JSValue::encode(process->bindingTTYWrap());
     if (moduleName == "udp_wrap"_s) PROCESS_BINDING_NOT_IMPLEMENTED("udp_wrap");
     if (moduleName == "url"_s) PROCESS_BINDING_NOT_IMPLEMENTED("url");
     if (moduleName == "util"_s) RELEASE_AND_RETURN(throwScope, JSValue::encode(processBindingUtil(globalObject, vm)));
@@ -4899,6 +4899,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_memoryUsageStructure.visit(visitor);
     thisObject->m_bindingUV.visit(visitor);
     thisObject->m_bindingNatives.visit(visitor);
+    thisObject->m_bindingTTYWrap.visit(visitor);
     thisObject->m_emitHelperFunction.visit(visitor);
 }
 
@@ -6337,6 +6338,9 @@ void Process::finishCreation(JSC::VM& vm)
     });
     m_bindingNatives.initLater([](const JSC::LazyProperty<Process, JSC::JSObject>::Initializer& init) {
         init.set(Bun::ProcessBindingNatives::create(init.vm, ProcessBindingNatives::createStructure(init.vm, init.owner->globalObject())));
+    });
+    m_bindingTTYWrap.initLater([](const JSC::LazyProperty<Process, JSC::JSObject>::Initializer& init) {
+        init.set(Bun::createNodeTTYWrapObject(init.owner->globalObject()));
     });
     m_emitHelperFunction.initLater([](const JSC::LazyProperty<Process, JSFunction>::Initializer& init) {
         init.set(JSFunction::create(init.vm, init.owner->globalObject(), 2, "emit"_s, Process_functionEmitHelper, ImplementationVisibility::Private));

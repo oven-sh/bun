@@ -25,6 +25,7 @@ class Process : public WebCore::JSEventEmitter {
     LazyProperty<Process, Structure> m_memoryUsageStructure;
     LazyProperty<Process, JSObject> m_bindingUV;
     LazyProperty<Process, JSObject> m_bindingNatives;
+    LazyProperty<Process, JSObject> m_bindingTTYWrap;
     // Function that looks up "emit" on "process" and calls it with the provided arguments
     // Only used by internal code via passing to queueNextTick
     LazyProperty<Process, JSFunction> m_emitHelperFunction;
@@ -145,6 +146,7 @@ public:
     inline Structure* memoryUsageStructure() { return m_memoryUsageStructure.getInitializedOnMainThread(this); }
     inline JSObject* bindingUV() { return m_bindingUV.getInitializedOnMainThread(this); }
     inline JSObject* bindingNatives() { return m_bindingNatives.getInitializedOnMainThread(this); }
+    inline JSObject* bindingTTYWrap() { return m_bindingTTYWrap.getInitializedOnMainThread(this); }
 };
 
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);

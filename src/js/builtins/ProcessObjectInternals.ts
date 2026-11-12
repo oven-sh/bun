@@ -128,6 +128,10 @@ export function getStdinStream(
   var reader: import("node:stream/web").ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | undefined;
 
   let needsInternalReadRefresh = false;
+  // A read() on the current `reader` has not settled. One read at a time: _read() is
+  // re-entered from the rejected read of a released reader and from Readable paths that
+  // reset its own `reading` flag.
+  let readInFlight = false;
   // if true, while the stream is own()ed it will not
   let forceUnref = false;
 
@@ -155,6 +159,7 @@ export function getStdinStream(
       // rejection is handled there by observing that `reader` was cleared here.
       reader.releaseLock();
       reader = undefined;
+      readInFlight = false;
       $debug("released reader");
     }
     source?.updateRef?.(false);
@@ -222,9 +227,9 @@ export function getStdinStream(
   const originalRead = stream.read;
   stream.read = function (size) {
     const ret = originalRead.$call(this, size);
-    // An explicit read() must acquire the native reader: _read() without one only
-    // records needsInternalReadRefresh, which own() replays. Owning afterwards so a
-    // throwing size never refs stdin; read(0) kicks never own (pause() relies on it).
+    // An explicit read() is a consumer that _read() cannot see when no listener is
+    // attached, so it acquires the native reader itself. Owning afterwards so a
+    // throwing size never refs stdin; read(0) kicks never own here (pause() relies on it).
     if (size !== 0 && reader === undefined && !stream_destroyed) {
       own();
     }
@@ -244,6 +249,7 @@ export function getStdinStream(
     let value;
     try {
       $assert(readerForThisRead);
+      readInFlight = true;
       ({ value } = await readerForThisRead.read());
     } catch (err) {
       if (readerForThisRead !== reader) {
@@ -253,9 +259,11 @@ export function getStdinStream(
         triggerRead.$call(stream, undefined);
         return;
       }
+      readInFlight = false;
       stream.destroy(err);
       return;
     }
+    if (readerForThisRead === reader) readInFlight = false;
 
     try {
       if (value) {
@@ -280,6 +288,7 @@ export function getStdinStream(
   function triggerRead(_size) {
     $debug("_read();", reader);
 
+    if (readInFlight) return;
     if (reader) {
       internalRead(this);
       return;

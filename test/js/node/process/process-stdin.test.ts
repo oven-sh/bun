@@ -557,6 +557,87 @@ test.concurrent("switching from 'data' to 'readable' inside a 'data' handler kee
   });
 });
 
+// Each switch releases the native reader and takes it back. The rejected read of the
+// released reader re-enters _read, and so do Readable paths that reset its `reading`
+// flag, so without a guard one extra native read() stays pending per switch.
+test.concurrent("switching between 'data' and 'readable' repeatedly keeps one native read in flight", async () => {
+  const N = 6;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `let inflight = 0, max = 0;
+      const read = ReadableStreamDefaultReader.prototype.read;
+      ReadableStreamDefaultReader.prototype.read = function (...args) {
+        max = Math.max(max, ++inflight);
+        const p = read.apply(this, args);
+        p.then(() => inflight--, () => inflight--);
+        return p;
+      };
+      const seen = [];
+      let cycle = 0;
+      const onData = chunk => {
+        seen.push("data:" + chunk);
+        if (++cycle < ${N}) {
+          process.stdin.pause();
+          process.stdin.removeListener("data", onData);
+          process.stdin.on("readable", onReadable);
+        }
+        console.log("GOT " + cycle);
+      };
+      const onReadable = () => {
+        let c;
+        while ((c = process.stdin.read()) !== null) {
+          seen.push("readable:" + c);
+          if (++cycle < ${N}) {
+            process.stdin.removeListener("readable", onReadable);
+            process.stdin.on("data", onData);
+          }
+          console.log("GOT " + cycle);
+        }
+      };
+      process.stdin.on("data", onData);
+      process.stdin.on("end", () => seen.push("end"));
+      process.on("exit", () => console.log(JSON.stringify({ seen, max })));`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const stderr = proc.stderr.text();
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let stdout = "";
+  for (let i = 1; i <= N; i++) {
+    try {
+      proc.stdin.write("c" + i);
+      await proc.stdin.flush();
+    } catch (e: any) {
+      if (e?.code !== "EPIPE") throw e;
+    }
+    for (let r; !stdout.includes(`GOT ${i}\n`) && !(r = await reader.read()).done;) {
+      stdout += decoder.decode(r.value, { stream: true });
+    }
+  }
+  try {
+    await proc.stdin.end();
+  } catch (e: any) {
+    if (e?.code !== "EPIPE") throw e;
+  }
+  for (let r; !(r = await reader.read()).done;) stdout += decoder.decode(r.value, { stream: true });
+
+  const exitCode = await proc.exited;
+  const expected = [...Array(N).keys()].map(i => (i % 2 ? "readable:" : "data:") + "c" + (i + 1));
+  expect({ stdout, exitCode, ...(exitCode === 0 ? {} : { stderr: await stderr }) }).toEqual({
+    stdout:
+      [...Array(N).keys()].map(i => `GOT ${i + 1}\n`).join("") +
+      JSON.stringify({ seen: [...expected, "end"], max: 1 }) +
+      "\n",
+    exitCode: 0,
+  });
+});
+
 // destroy() with a 'readable' listener and a read in flight: the 'close' tick releases
 // the reader, the rejected read calls _read again, and _read must not take the reader
 // back on a destroyed stream. The parent keeps stdin open, so the child exits only when

@@ -340,7 +340,25 @@ export var __esm = (fn, res, err) => () => {
 // This is used for JSX inlining with React.
 export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
 
-export var __jsonParse = /* @__PURE__ */ a => JSON.parse(a);
+// An HTML import's manifest in a server bundle. `dir` is the directory of the output
+// file, and `root` leads from it to the output directory, which `Bun.serve()` resolves
+// the manifest's relative paths against.
+export var __jsonParse = /* @__PURE__ */ (a, dir) => {
+  a = JSON.parse(a);
+  if (dir !== undefined) {
+    var sep = dir.indexOf("\\") < 0 ? "/" : "\\";
+    for (var parts = a.root ? a.root.split("/") : [], i = 0; i < parts.length; i++) {
+      if (parts[i] === "..") {
+        // The root (`/`, `C:\`) keeps its separator.
+        var cut = Math.max(dir.lastIndexOf("/"), dir.lastIndexOf("\\"));
+        dir = dir.slice(0, cut === 0 || (cut === 2 && dir[1] === ":") ? cut + 1 : cut);
+      } else if (parts[i]) dir += sep + parts[i];
+    }
+    delete a.root;
+    __defProp(a, "dir", { value: dir });
+  }
+  return a;
+};
 
 export var __promiseAll = args => Promise.all(args);
 

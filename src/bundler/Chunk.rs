@@ -785,6 +785,7 @@ impl IntermediateOutput {
                                             graph,
                                             chunks,
                                             linker_graph,
+                                            from_chunk_dir,
                                         )
                                     ));
                                     continue;
@@ -967,6 +968,7 @@ impl IntermediateOutput {
                                         graph,
                                         linker_graph,
                                         chunks,
+                                        from_chunk_dir,
                                         &mut cursor,
                                     )
                                     .expect("unreachable");

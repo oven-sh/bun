@@ -693,6 +693,7 @@ impl<'a> Parser<'a> {
         expr: Expr,
         runtime_api_call: &'static [u8],
         symbols: js_ast::symbol::List<'a>,
+        pass_module_dir: bool,
     ) -> Result<crate::Result<'a>, Error> {
         // Move lexer/options out and leave inert
         // placeholders so `self` may drop without double-free.
@@ -742,7 +743,43 @@ impl<'a> Parser<'a> {
 
         // Optionally call a runtime API function to transform the expression
         if !runtime_api_call.is_empty() {
-            let args_slice: &mut [Expr] = p.arena.alloc_slice_fill_with(1, |_| expr);
+            let module_dir = if pass_module_dir {
+                Some(if p.options.output_format == options::Format::Cjs {
+                    // `module.path` of the CommonJS wrapper. A bundled module's own
+                    // `__dirname` is inlined and would shadow the wrapper's.
+                    let ref_ =
+                        p.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"module")?;
+                    p.record_usage(ref_);
+                    let module = p.new_expr(E::Identifier::init(ref_), expr.loc);
+                    p.new_expr(
+                        E::Dot {
+                            target: module,
+                            name: b"path".into(),
+                            name_loc: expr.loc,
+                            ..Default::default()
+                        },
+                        expr.loc,
+                    )
+                } else {
+                    let import_meta = p.new_expr(E::ImportMeta {}, expr.loc);
+                    p.new_expr(
+                        E::Dot {
+                            target: import_meta,
+                            name: b"dir".into(),
+                            name_loc: expr.loc,
+                            can_be_removed_if_unused: true,
+                            ..Default::default()
+                        },
+                        expr.loc,
+                    )
+                })
+            } else {
+                None
+            };
+            let args_slice: &mut [Expr] = match module_dir {
+                Some(dir) => p.arena.alloc_slice_copy(&[expr, dir]),
+                None => p.arena.alloc_slice_copy(&[expr]),
+            };
             let args = Vec::from_arena_slice(args_slice);
             final_expr = p.call_runtime(expr.loc, runtime_api_call, args);
         }

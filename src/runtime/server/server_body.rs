@@ -589,6 +589,7 @@ impl AnyRoute {
     fn bundled_html_manifest_item_from_js(
         argument: JSValue,
         index_path: &[u8],
+        bundle_dir: Option<&[u8]>,
         init_ctx: &mut ServerInitContext,
     ) -> JsResult<Option<AnyRoute>> {
         if !argument.is_object() {
@@ -603,6 +604,7 @@ impl AnyRoute {
             BunString::from_js(path_js, init_ctx.global)?,
             false,
         )?);
+        let is_index_route = path.path().slice() == index_path;
 
         // Construct the route by stripping paths above the root.
         //
@@ -611,15 +613,32 @@ impl AnyRoute {
         //    "/index-abc.js" -> "/index-abc.js"
         //    "index-abc.js" -> "/index-abc.js"
         //
+        let base_dir = bundle_dir.unwrap_or_else(|| FileSystem::get().top_level_dir());
         let path_slice = path.path().slice();
-        let cwd: &[u8] = if StandaloneModuleGraph::is_bun_standalone_file_path(path_slice) {
+        let route_root: &[u8] = if StandaloneModuleGraph::is_bun_standalone_file_path(path_slice) {
             StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes()
         } else {
-            FileSystem::get().top_level_dir()
+            base_dir
         };
 
-        let abs_path = FileSystem::get().abs(&[path_slice]);
-        let mut relative_path = FileSystem::get().relative(cwd, abs_path);
+        let mut long_path: Vec<u8> = Vec::new();
+        let abs_path = paths::resolve_path::join_abs_string_spill::<paths::platform::Loose>(
+            base_dir,
+            &mut long_path,
+            &[path_slice],
+        );
+        if abs_path.len() >= paths::MAX_PATH_BYTES {
+            return Err(init_ctx
+                .global
+                .throw_invalid_arguments(format_args!("Bundled file path is too long")));
+        }
+        if bundle_dir.is_some() && !paths::is_absolute(path_slice) {
+            path = Node::PathOrFileDescriptor::Path(Node::PathLike::owned(abs_path.to_vec()));
+        }
+        // A route has `/` on every platform; on Windows `relative` gives `..\a.js`.
+        let mut relative = FileSystem::get().relative(route_root, abs_path).to_vec();
+        paths::resolve_path::platform_to_posix_in_place(&mut relative[..]);
+        let mut relative_path: &[u8] = &relative;
 
         if relative_path.starts_with(b"./") {
             relative_path = &relative_path[2..];
@@ -628,7 +647,6 @@ impl AnyRoute {
                 relative_path = &relative_path[3..];
             }
         }
-        let is_index_route = path.path().slice() == index_path;
         let mut builder: Vec<u8> = Vec::new();
         if !relative_path.starts_with(b"/") {
             builder.push(b'/');
@@ -683,12 +701,59 @@ impl AnyRoute {
         let Some(files) = argument.get_array(init_ctx.global, b"files")? else {
             return Ok(None);
         };
+        // Set by the bundle to the output directory; the paths are relative to it. In a
+        // compiled bundle it is the virtual root, which does not hold the bundle's other outputs.
+        let dir = argument
+            .get_optional_slice(init_ctx.global, b"dir")?
+            .filter(|dir| {
+                paths::is_absolute(dir)
+                    && !strings::contains_char(dir, 0)
+                    && !StandaloneModuleGraph::is_bun_standalone_file_path(dir)
+            });
+        if dir
+            .as_ref()
+            .is_some_and(|dir| dir.len() >= paths::MAX_PATH_BYTES)
+        {
+            return Err(init_ctx
+                .global
+                .throw_invalid_arguments(format_args!("Bundled file path is too long")));
+        }
+        // A copied or re-bundled server file has none of its files under `dir`: then the cwd, as
+        // without `dir`.
+        let mut bundle_dir = dir.map(|dir| {
+            Box::<[u8]>::from(
+                paths::resolve_path::join_abs_string::<paths::platform::Loose>(&dir, &[b"."]),
+            )
+        });
+        if let Some(dir) = bundle_dir.as_deref() {
+            let mut iter = files.array_iterator(init_ctx.global)?;
+            while let Some(file_entry) = iter.next()? {
+                let Some(file_path) = file_entry.get_optional_slice(init_ctx.global, b"path")?
+                else {
+                    continue;
+                };
+                if strings::contains_char(file_path.slice(), 0)
+                    || !sys::exists(
+                        paths::resolve_path::join_abs_string::<paths::platform::Loose>(
+                            dir,
+                            &[file_path.slice()],
+                        ),
+                    )
+                {
+                    bundle_dir = None;
+                    break;
+                }
+            }
+        }
         let mut iter = files.array_iterator(init_ctx.global)?;
         let mut html_route: Option<AnyRoute> = None;
         while let Some(file_entry) = iter.next()? {
-            if let Some(item) =
-                Self::bundled_html_manifest_item_from_js(file_entry, index.slice(), init_ctx)?
-            {
+            if let Some(item) = Self::bundled_html_manifest_item_from_js(
+                file_entry,
+                index.slice(),
+                bundle_dir.as_deref(),
+                init_ctx,
+            )? {
                 html_route = Some(item);
             }
         }

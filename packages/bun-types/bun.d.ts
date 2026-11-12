@@ -7062,6 +7062,12 @@ declare module "bun" {
   interface HTMLBundle {
     index: string;
 
+    /**
+     * The absolute path of the build's output directory. `index` and each `files[].path` are relative to it.
+     * This only exists when built ahead of time with `Bun.build` or `bun build`, `target: "bun"` and `format: "esm"` or `"cjs"`. It is not enumerable.
+     */
+    readonly dir?: string;
+
     /** Array of generated output files with metadata. This only exists when built ahead of time with `Bun.build` or `bun build` */
     files?: Array<{
       /** Original source file path. */

@@ -16,7 +16,7 @@ use super::{
     is_derived_class,
 };
 use crate::ir::generated::{
-    Function, FunctionFlags, FunctionKind, HomeObjectKind, RuntimeErrorKind, SourceRange,
+    Function, FunctionFlags, FunctionKind, HomeObjectKind, RuntimeErrorKind,
 };
 use crate::ir::{DeclaredType, Edge, FunctionId, FunctionKey, StringId, TypeTable, ValueId};
 use crate::lower::call::Arguments;
@@ -47,10 +47,7 @@ impl FileLowering<'_, '_, '_, '_> {
             ClassOwner::Expr(expression) => hir[expression].end,
             ClassOwner::Stmt(statement) => hir[statement].loc.end,
         };
-        header.source_range = SourceRange {
-            start: node.text_start,
-            end,
-        };
+        header.source_range = self.written_range(node.text_start, end);
         header.kind = match is_derived_class(hir, class) {
             true => FunctionKind::DerivedConstructor,
             false => FunctionKind::BaseConstructor,
@@ -234,6 +231,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 return value;
             }
         };
+        if self.builder.is_undefined(value) {
+            return self.get_this();
+        }
         let join = self.create_block();
         let result = self.builder.add_parameter(join, None);
 

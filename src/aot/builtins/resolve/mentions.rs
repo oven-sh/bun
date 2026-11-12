@@ -1,7 +1,7 @@
 use super::SourceDialect;
 use super::mention_use::MentionUse;
 use super::module_cache::{is_function_that_loader_calls, is_module_cache, is_table_of_loaders};
-use super::resolver::{ExprState, FunctionsReadingThis, ResolvedValue, Resolver};
+use super::resolver::{ExprState, FunctionsReadingThis, ResolvedValue, Resolver, evaluates_text};
 use super::unnamed_uses::MOST_VARIABLES_FOLLOWED;
 use super::written_members::holder_of;
 use crate::builtins::runtime_uses::is_evaluator;
@@ -190,6 +190,7 @@ impl Resolver<'_, '_> {
 
     pub(super) fn mention(&mut self, id: BuiltinId) {
         self.output.gets_at_entries_of_module_cache |= is_module_cache(id);
+        self.output.mentions_text_evaluator_indirectly |= evaluates_text(id);
         self.output.mentioned.push(id);
     }
 

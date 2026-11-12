@@ -89,6 +89,14 @@ pub(super) fn collect_candidates(
         return;
     }
     if matches!(hir[e].kind, ExprKind::New(_))
+        && names_function_of(inputs, callee, &[b"node:sqlite"])
+        && opens_for_reading_only(inputs, hir.ids(call.args).nth(1))
+    {
+        let path = hir.ids(call.args).take(1);
+        add_operands_needed_on_disk(inputs, callee, path, candidates);
+        return;
+    }
+    if matches!(hir[e].kind, ExprKind::New(_))
         && names_function_of(inputs, callee, &MODULES_OF_DATABASES)
         && !opens_for_reading_only(inputs, hir.ids(call.args).nth(1))
     {

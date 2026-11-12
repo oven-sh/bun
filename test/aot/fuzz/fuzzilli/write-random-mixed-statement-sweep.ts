@@ -65,6 +65,14 @@ const simple: [kind: string, text: string][] = [
   ["list", "const [head = 1, ...tail] = list;\na += head | 0;\nlist = tail;"],
   ["list", "delete list[1];"],
   ["list", "list.length = 3;"],
+  ["list", "for (const item of [1, 2]) a += item;"],
+  ["list", "for (const item of [a, b, i]) b += +item;"],
+  ["list", "for (const [one, two] of [[1, 2], [i, 3]]) a = (a + one * two) | 0;"],
+  ["list", "for (const item of [i, s, null]) if (item === s) any = item;"],
+  ["list", "for (const item of new Set([i, a, 1])) a = (a + item) | 0;"],
+  ["list", "const [one, two = 3] = [a, i];\na = (one + two) | 0;"],
+  ["list", "a += Math.max(...[i, 2, a & 3]);"],
+  ["list", "any = [i, ...list.slice(0, 2), a].length;"],
   ["list", "a += list.length;"],
   ["list", "list = Array.from({ length: 4 }, (_, at) => at * a);"],
   ["list", "list = new Array(3).fill(i);"],
@@ -328,6 +336,7 @@ function write(seed: number): { name: string; text: string } {
   const functions = 1 + random(3);
   const bodies: string[] = [];
   const handed: string[] = [];
+  const wider: string[] = [];
   for (let at = 0; at < functions; at++) {
     const loop = pick(["for (let i = 0; i < 6; i++) {\n  S\n}", "for (let i = 0; i < n; i++) {\n  S\n}", "let i = 0;\nwhile (i < 5) {\n  S\n  i++;\n}", "for (const i of [0, 1, 2, 3]) {\n  S\n}", "[0, 1, 2].forEach(i => {\n  S\n});", "const i = n;\nS", "for (let i = 40; i > 0; i -= 3) {\n  S\n}", ...captured]); // prettier-ignore
     const isAwaiting = isAsync && !/forEach|=>|\(i\)|function/.test(loop);
@@ -375,8 +384,16 @@ function write(seed: number): { name: string; text: string } {
       } else text = `let ${place[0]}Of${at} = ${place[1]};\n${text}`;
     }
     bodies.push(text);
+    // Objects of the same names hold other kinds elsewhere.
+    if (fields.length && random(3) === 0) {
+      const field = pick(fields)[0];
+      wider.push(
+        `const wider${at} = { ${fields.map(one => `${one[0]}: ${one[1]}`).join(", ")} };\nwider${at}.${field} = JSON.parse('"w"');\nout.push(show(wider${at}.${field}));`,
+      );
+    }
+    if (random(6) === 0) wider.push(pick(["const widened = { x: 1, y: 2 };\nwidened.x = JSON.parse('\"w\"');\nout.push(show(widened.x));", "const widePoint = new Point(1, 2);\nwidePoint.x = JSON.parse('[1]');\nout.push(show(widePoint.x));", "const wideRows = [[1, 2], [3]];\nwideRows[1][0] = JSON.parse('\"w\"');\nout.push(show(wideRows));", "const wideList = [3, 1, 2];\nwideList[JSON.parse('1')] = JSON.parse('null');\nout.push(show(wideList));"])); // prettier-ignore
   }
-  const whole = bodies.join("\n");
+  const whole = [...bodies, ...wider].join("\n");
   const has = (word: RegExp) => word.test(whole);
   const lines = [
     ...(isTyped ? ["// @ts-nocheck"] : []),
@@ -390,13 +407,14 @@ function write(seed: number): { name: string; text: string } {
     ...(has(/\bsteps\(/) ? ["function steps(n) {\n  return n < 2 ? 1 : steps(n - 1) + 1;\n}"] : []),
     ...(has(/\bcounted\(/) ? ["function counted() {\n  return arguments.length + (arguments[0] | 0);\n}"] : []),
     ...(has(/\bupTo\(/) ? ["function* upTo(n) {\n  for (let at = 0; at < n; at++) yield at;\n}"] : []),
-    whole,
+    ...bodies,
     "for (const n of [3, 5]) {",
     ...bodies.map(
       (_, at) =>
         `  try {\n    ${isAsync ? "await " : ""}work${at}(n${handed[at]});\n  } catch (error) {\n    out.push(error.name);\n  }`,
     ),
     "}",
+    ...new Set(wider),
     'console.log(out.join("\\n").slice(0, 3000));',
     ...(isTyped ? ["export {};"] : []),
   ];

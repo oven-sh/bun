@@ -4978,6 +4978,8 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
     let rounds: Guarded<Vec<RoundReport>> = Guarded::new(Vec::new());
     // The files of the discarded tasks.
     let lost: Guarded<Vec<usize>> = Guarded::new(Vec::new());
+    // The files of which a part has given up at a limit, as indexes into `to_check`.
+    let gave_up_in_parts: Guarded<Vec<usize>> = Guarded::new(Vec::new());
     let note_cycles_entered = file_work
         .filter(|work| !(work.is_last_pass)())
         .and_then(|work| work.note_cycles_entered);
@@ -5378,6 +5380,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 checker.record_cycles_entered(note_cycles_entered.is_some());
                 let questions = file_work.and_then(|work| Some((work, work.after_file?)));
                 let parts_run = AtomicUsize::new(0);
+                let has_part_given_up = AtomicBool::new(false);
                 let run_parts = |count: usize,
                                  ask: &(dyn Fn(&mut Checker<'_, 's>, usize) + Sync),
                                  meanwhile: &mut dyn FnMut()| {
@@ -5407,6 +5410,9 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                         ask(&mut checker, part);
                         if checker.was_discarded() {
                             was_discarded.store(true, Ordering::Relaxed);
+                            if !checker.can_recheck_early() {
+                                has_part_given_up.store(true, Ordering::Relaxed);
+                            }
                         }
                         deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
                         queries.fetch_add(checker.work as usize, Ordering::Relaxed);
@@ -5421,6 +5427,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 let parts_of_visit = PartsOfVisit {
                     run: &run_parts,
                     in_parallel: &|count, work| host.parallel(count, work),
+                    has_given_up: is_last_round && gave_up_in_parts.lock().contains(&index),
                 };
                 let passes_over_depth_limit = file_work.is_some() && is_last_round;
                 checker.leave_depth_limit_unreported(passes_over_depth_limit);
@@ -5504,11 +5511,17 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                         let bytes = bytes_of(index);
                         progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
                     }
+                    // A limit that a part has reached is one of the visit: the file waits for the last round.
+                    let has_part_given_up = has_part_given_up.into_inner();
+                    if has_part_given_up {
+                        gave_up_in_parts.lock().push(index);
+                    }
+                    let can_recheck_early = checker.can_recheck_early() && !has_part_given_up;
                     let imports_awaited = {
                         let component_of = |index: usize| {
                             (program.files.components.of_file).get(to_check[index].idx())
                         };
-                        let mut seen = match checker.can_recheck_early() {
+                        let mut seen = match can_recheck_early {
                             true => reached_from(index),
                             false => Vec::new(),
                         };
@@ -5520,7 +5533,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                     };
                     {
                         let visit = &mut visits.lock()[index];
-                        visit.can_recheck_early = checker.can_recheck_early();
+                        visit.can_recheck_early = can_recheck_early;
                         visit.unresolved_cycle = checker.take_unresolved_cycle();
                         visit.was_discarded_at_cycle = !visit.unresolved_cycle.is_empty();
                         visit.imports_awaited = imports_awaited;

@@ -1,0 +1,171 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare const process: { env: Record<string, string | undefined> };
+# const values: { level?: string } = { level: process.env.NOT_SET ?? "3" };
+# function ofModule(n: number): number { let sum = 0; for (let i = 0; i < n; i++) sum = (sum * 31 + i * +values.level!) % 1000003; return sum; }
+# function ofParameter(n: number, text: string): number { let sum = 0; for (let i = 0; i < n; i++) sum = (sum * 31 + i * +text) % 1000003; return sum; }
+# function stored(n: number): number { let sum = 0; for (let i = 0; i < n; i++) { sum = (sum * 31 + i * +values.level!) % 1000003; values.level = "4"; } return sum; }
+# print([ofModule(50), ofParameter(50, "3"), ofParameter(50, "0.5"), ofParameter(50, "x"), stored(50), ofModule(50)].join(" "));
+# -- end of source
+# Each iteration converted one text anew, and nothing showed that the number is an integer. The text is converted before the loop: the version behind it divides exact integers.
+# A field that the loop stores into is converted in each iteration, as it was.
+# f1 = ofModule, f2 = ofParameter, f3 = stored
+# RUN(MODULE): walk f1 mechanisms=all
+# MODULE-LABEL: code f1:Body
+# MODULE: TypeTest {{*}} testedType=int[0, 65535]
+# MODULE: int[0, 1000002] @{{*}} isInLoop=true isLoopHead=true
+# MODULE-NOT: ToNumber
+# MODULE: Mod {{*}} form=Integers
+# RUN(PARAMETER): walk f2 mechanisms=all
+# PARAMETER-LABEL: code f2:Body
+# PARAMETER: TypeTest {{*}} testedType=int[0, 65535]
+# PARAMETER: int[0, 1000002] @{{*}} isInLoop=true isLoopHead=true
+# PARAMETER-NOT: ToNumber
+# PARAMETER: Mod {{*}} form=Integers
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=134 fields=[{key="level" declared={type=undefined|null|string flags=[IsExpected, OmitsNull]}}] place=134 ownFieldCount=1
+variable g0 name="values" module=m0 declared={type=undefined|null|number|string|symbol|bigint|absent|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsImmutable] place=8
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = Builtin builtin=Process @164
+    v7 = PropGet v6 key="env" @164
+    v8 = Convert v7 declared={type=builtin(ProcessEnv) flags=[IsExpected]} @164
+    v9 = PropGet v8 key="NOT_SET" @172
+    v10 = TypeTest v9 testedType=undefined|null @164
+    Branch v10 -> taken b1(| 0), notTaken b2(| 0) @164
+  b1(v11):
+    v12 = String string="3" @187
+    Jump -> next b3(v12) @187
+  b2(v13):
+    Jump -> next b3(v13) @164
+  b3(v14):
+    v15 = Convert v14 declared={type=undefined|null|string flags=[OmitsNull]} @164
+    v16 = NewObject -, v15 layout=L0 fields=[0] @155
+    v17 = FinishObject v16 @155
+    v18 = Convert v17 declared={type=undefined|null|number|string|symbol|bigint|L0 flags=[IsExpected, OmitsNull, OmitsUndefined]} @155
+    PutModuleVariable v18 variable=g0 @126
+    v20 = Builtin builtin=GlobalThis @653
+    v21 = PropGet v20 key="print" [isFreeName] @653
+    v22 = Integer integer=50 @669
+    v23 = Call v1, -, v22 calleeName="ofModule" @660
+    v24 = Integer integer=50 @686
+    v25 = String string="3" @690
+    v26 = Call v3, -, v24, v25 calleeName="ofParameter" @674
+    v27 = Integer integer=50 @708
+    v28 = String string="0.5" @712
+    v29 = Call v3, -, v27, v28 calleeName="ofParameter" @696
+    v30 = Integer integer=50 @732
+    v31 = String string="x" @736
+    v32 = Call v3, -, v30, v31 calleeName="ofParameter" @720
+    v33 = Integer integer=50 @749
+    v34 = Call v5, -, v33 calleeName="stored" @742
+    v35 = Integer integer=50 @763
+    v36 = Call v1, -, v35 calleeName="ofModule" @754
+    v37 = NewArray v23, v26, v29, v32, v34, v36 contents=number @659
+    v38 = PropGet v37 key="join" @659
+    v39 = String string=" " @773
+    v40 = Call v38, v37, v39 calleeKey="join" calleeName="join" @768
+    v41 = Convert v40 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @659
+    v42 = Call v21, -, v41 calleeName="print" @653
+    v43 = Undefined @653
+    Return v43 @653
+}
+function f1 name="ofModule" module=m0 position=194 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer @243
+    v2 = Convert v1 declared={type=number} @243
+    v3 = Integer @259
+    v4 = Convert v3 declared={type=number} @259
+    Jump -> next b1(v2, v4) @255
+  b1(v5: number, v6: number):
+    LoopHint @255
+    v8 = Less v6, v0 @262
+    Branch v8 -> taken b2(), notTaken b3() @262
+  b2():
+    v9 = Integer integer=31 @287
+    v10 = Mul v5, v9 @281
+    v11 = GetModuleVariable variable=g0 @297
+    v12 = CheckInitialized v11 name="values" @297
+    v13 = PropGet v12 key="level" @297
+    v14 = ToNumber v13 @296
+    v15 = Mul v6, v14 @292
+    v16 = Add v10, v15 @281
+    v17 = Integer integer=1000003 @314
+    v18 = Mod v16, v17 @280
+    v19 = Convert v18 declared={type=number} @274
+    v20 = Increment v6 @269
+    v21 = Convert v20 declared={type=number} @269
+    Jump -> next b1(v19, v21) @269
+  b3():
+    v22 = Convert v5 declared={type=number} @330
+    Return v22 @330
+}
+function f2 name="ofParameter" module=m0 position=337 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: undefined|null|string):
+    v2 = Integer @403
+    v3 = Convert v2 declared={type=number} @403
+    v4 = Integer @419
+    v5 = Convert v4 declared={type=number} @419
+    Jump -> next b1(v3, v5) @415
+  b1(v6: number, v7: number):
+    LoopHint @415
+    v9 = Less v7, v0 @422
+    Branch v9 -> taken b2(), notTaken b3() @422
+  b2():
+    v10 = Integer integer=31 @447
+    v11 = Mul v6, v10 @441
+    v12 = ToNumber v1 @456
+    v13 = Mul v7, v12 @452
+    v14 = Add v11, v13 @441
+    v15 = Integer integer=1000003 @465
+    v16 = Mod v14, v15 @440
+    v17 = Convert v16 declared={type=number} @434
+    v18 = Increment v7 @429
+    v19 = Convert v18 declared={type=number} @429
+    Jump -> next b1(v17, v19) @429
+  b3():
+    v20 = Convert v6 declared={type=number} @481
+    Return v20 @481
+}
+function f3 name="stored" module=m0 position=488 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer @535
+    v2 = Convert v1 declared={type=number} @535
+    v3 = Integer @551
+    v4 = Convert v3 declared={type=number} @551
+    Jump -> next b1(v2, v4) @547
+  b1(v5: number, v6: number):
+    LoopHint @547
+    v8 = Less v6, v0 @554
+    Branch v8 -> taken b2(), notTaken b3() @554
+  b2():
+    v9 = Integer integer=31 @581
+    v10 = Mul v5, v9 @575
+    v11 = GetModuleVariable variable=g0 @591
+    v12 = CheckInitialized v11 name="values" @591
+    v13 = PropGet v12 key="level" @591
+    v14 = ToNumber v13 @590
+    v15 = Mul v6, v14 @586
+    v16 = Add v10, v15 @575
+    v17 = Integer integer=1000003 @608
+    v18 = Mod v16, v17 @574
+    v19 = Convert v18 declared={type=number} @568
+    v20 = GetModuleVariable variable=g0 @617
+    v21 = CheckInitialized v20 name="values" @617
+    v22 = String string="4" @632
+    PropSet v21, v22 key="level" @617
+    v24 = Increment v6 @561
+    v25 = Convert v24 declared={type=number} @561
+    Jump -> next b1(v19, v25) @561
+  b3():
+    v26 = Convert v5 declared={type=number} @646
+    Return v26 @646
+}

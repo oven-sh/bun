@@ -25,4 +25,4 @@
 # OTHERS: code f3:Body
 # OTHERS: = CallBuiltin {{*}}overload=ArrayPrototypeShift/0
 # OTHERS-NOT: = ShapeTest
-# OTHERS: = PropGet {{*}}key="knot" [receiverIsNoObjectOfCompiledCode]
+# OTHERS: = PropGet {{*}}key="knot"

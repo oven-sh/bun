@@ -120,6 +120,7 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
         HeapSize::Huge => ReferenceWidth::Wide,
     };
     record.reports = reports_of(options);
+    record.excluded_code |= ExcludedCode::UNLISTED_GLOBALS;
     if request.lists_inlined_strings {
         record.reports |= ReportSet::INLINED_STRINGS;
     }

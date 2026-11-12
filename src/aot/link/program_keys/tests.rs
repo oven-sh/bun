@@ -202,7 +202,11 @@ fn next_function_key(key: FunctionKey) -> Option<FunctionKey> {
         FunctionKey::StaticInitializer(_) => FunctionKey::AccessorGetter { file, member },
         FunctionKey::AccessorGetter { .. } => FunctionKey::AccessorSetter { file, member },
         FunctionKey::AccessorSetter { .. } => FunctionKey::PrivateNameTest { file, member },
-        FunctionKey::PrivateNameTest { .. } => return None,
+        FunctionKey::PrivateNameTest { .. } => {
+            let call = ExprId(1);
+            FunctionKey::ModuleRequest { file, call }
+        }
+        FunctionKey::ModuleRequest { .. } => return None,
     })
 }
 
@@ -274,7 +278,8 @@ fn next_variable_key(key: VariableKey) -> Option<VariableKey> {
         VariableKey::InstanceOf(_) => VariableKey::InstanceAllocator(FILE),
         VariableKey::InstanceAllocator(_) => VariableKey::HasSeveralInstances(FILE),
         VariableKey::HasSeveralInstances(_) => VariableKey::EvaluationMark(FILE),
-        VariableKey::EvaluationMark(_) => return None,
+        VariableKey::EvaluationMark(_) => VariableKey::AddedStatic(SYMBOL),
+        VariableKey::AddedStatic(_) => return None,
     })
 }
 

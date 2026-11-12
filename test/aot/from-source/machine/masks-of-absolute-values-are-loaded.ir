@@ -8,7 +8,7 @@
 # REQUIRES: x86_64
 # RUN: bytes f1 mechanisms=all-Inlining
 # CHECK: unit f1:Body
-# CHECK-NEXT: size=136 frame=0@49-63,92-108
+# CHECK-NEXT: size=38 frame=none
 # RUN(SHELL): run-in-shell mechanisms=all-Inlining
 # SHELL: 0.25
 # SHELL-NEXT: -1.25

@@ -27,14 +27,14 @@ declare function $tryPutIndex(a: unknown[], k: number, value: unknown): boolean;
 declare function $tryCopyFilledElements(out: unknown[], from: unknown[], count: number): boolean;
 // Sorts a list of numbers by value, downward where `direction` is negative. False, with nothing stored, where the list holds anything else, NaN or -0. The list is writable.
 declare function $sortNumbers(a: unknown[], direction: number): boolean;
+// Sorts a list by `keys`, one number for each of its values: upward, or downward where `direction` is negative. Equal keys keep their order. False, with nothing stored, where a key is no number or NaN, or the list is not writable in place.
+declare function $sortByKeys(a: unknown[], keys: unknown[], direction: number): boolean;
+// A list with room for the keys of `n` values, which the next sort may use too.
+declare function $sortKeyArray<T>(n: number): T[];
 // The first `count` values of an array that this file made into one that the program holds. False, with nothing stored, where that one has no writable storage for them.
 declare function $tryPutElements(a: unknown[], from: unknown[], count: number): boolean;
 
 // The comparator sees the same calls in the same order as in arrayStableSort of JavaScriptCore's runtime/StableSort.h.
-
-function isCallable(value: unknown): boolean {
-  return typeof value === "function";
-}
 
 function isDoubleArray(array: unknown[]): boolean {
   return $arrayStorageKind(array) === $arrayStorageDouble;
@@ -443,7 +443,7 @@ function sortListOfAnyKind<T>(array: T[], length: number, comparator: unknown): 
 // The values of a list that holds neither a hole nor undefined, in an array that the comparator never sees. A number is boxed once here, not for every call.
 // Any other list is sorted here, and the answer is undefined.
 function takeValuesOrSort<T>(array: T[], comparator: unknown): T[] | undefined {
-  if (!isCallable(comparator)) {
+  if (typeof comparator !== "function") {
     // Native code would list a frame of its own above the one of sort().
     if (comparator !== undefined)
       $throwTypeError("Array.prototype.sort requires the comparator argument to be a function or undefined");
@@ -561,7 +561,7 @@ $overriddenName = "sort";
 export function sortTypedArray(this: any, comparator: unknown): any {
   // Behind the values, the scratch array of a merge holds 73 more.
   const mostValuesInArray = 0x10000000 - 73;
-  if (!isCallable(comparator) && comparator !== undefined)
+  if (typeof comparator !== "function" && comparator !== undefined)
     $throwTypeError("TypedArray.prototype.sort requires the comparator argument to be a function or undefined");
   const length = $typedArrayLength(this);
   if (length < 2) return this;
@@ -604,6 +604,29 @@ function trySortManyNumbers<T>(array: T[], kind: number, count: number, directio
   return $sortNumbers(array, direction);
 }
 
+// Boxed numbers. Nothing moves before all of them are known to be numbers that compare.
+function trySortBoxedNumbers<T>(array: T[], count: number, isDescending: boolean): boolean {
+  for (let index = 0; index < count; index = (index + 1) | 0) {
+    if (!$hasContiguousIndex(array, index)) return false;
+    const value: unknown = $getOwnContiguousIndex<unknown>(array, index);
+    if (typeof value !== "number" || value !== value) return false;
+  }
+  if (!isWritableBehindFirstStore<T>(array, $arrayStorageContiguous, count, $getOwnContiguousIndex<number>(array, 0)))
+    return false;
+  for (let index = 1; index < count; index = (index + 1) | 0) {
+    const value: number = $getOwnContiguousIndex<number>(array, index);
+    let position = index;
+    while (position > 0) {
+      const before: number = $getOwnContiguousIndex<number>(array, (position - 1) | 0);
+      if (!(isDescending ? before < value : value < before)) break;
+      $putOwnContiguousIndex(array, position, before);
+      position = (position - 1) | 0;
+    }
+    if (position !== index) $putOwnContiguousIndex(array, position, value);
+  }
+  return true;
+}
+
 // A short list of numbers, sorted where it lies. Any stable order of numbers is the order that sort() makes, and nothing watches: no comparator runs.
 // False where it meets something else: a hole, another kind of list, storage that is not writable. Numbers moved in front of a hole are moved as a stable sort moves them, and sort() ends with the same list.
 // Nothing is called behind the first store, so the kind, the length and the right to write are asked once.
@@ -631,6 +654,7 @@ function trySortNumbersInPlace<T>(array: T[], isDescending: boolean): boolean {
     }
     return true;
   }
+  if (kind === $arrayStorageContiguous) return trySortBoxedNumbers<T>(array, count, isDescending);
   if (kind !== $arrayStorageInt32) return false;
   if (!$hasContiguousIndex(array, 0) || !isWritableBehindFirstStore<T>(array, kind, count, $getOwnInt32Index(array, 0)))
     return false;
@@ -662,6 +686,56 @@ export function sortByReversedDifference<T>(array: T[], comparator: unknown): T[
   return $call<T[]>(sort, array, comparator);
 }
 
+// A sorted copy of a list of numbers, downward where `direction` is negative. Undefined where the list holds anything else, NaN or -0.
+function copySortedNumbers<T>(array: T[], direction: number): T[] | undefined {
+  const length = array.length;
+  if (length < 2 || (!isContiguousArray(array) && !isDoubleArray(array))) return undefined;
+  const from: T[] = $newContiguousArray<T>(length);
+  const isCopied: boolean = $tryCopyFilledElements(from, array, length);
+  if (!isCopied) return undefined;
+  const isSorted: boolean = $sortNumbers(from, direction | 0);
+  return isSorted ? $truncateNewArray<T>(from, length) : undefined;
+}
+
+// The compiler calls these two in the place of toSorted() where it sees such a comparator.
+$visibility = "Private";
+export function toSortedByDifference<T>(array: T[], comparator: unknown): T[] {
+  const sorted = copySortedNumbers<T>(array, 1);
+  return sorted === undefined ? $call<T[]>(toSorted, array, comparator) : sorted;
+}
+
+$visibility = "Private";
+export function toSortedByReversedDifference<T>(array: T[], comparator: unknown): T[] {
+  const sorted = copySortedNumbers<T>(array, -1);
+  return sorted === undefined ? $call<T[]>(toSorted, array, comparator) : sorted;
+}
+
+// The compiler copies sortByKeys() where a comparator is the difference of what one expression answers for each of its values, `(a, b) => rank(a) - rank(b)` (AOTWalkSortKeys.cpp). In the copy that expression stands in the place of the call of the comparator.
+// The copy does nothing that can be seen before $sortByKeys(). Where it would, and where it throws, it is left, and the program's own call is made. So nobody calls it.
+$visibility = "Private";
+export function sortByKeys<T>(array: T[], comparator: unknown, direction: number): T[] {
+  const kind = $arrayStorageKind(array);
+  const count = array.length;
+  if ((kind !== $arrayStorageContiguous && kind !== $arrayStorageInt32) || count < 2)
+    $throwTypeError("Array.prototype.sort requires the comparator argument to be a function or undefined");
+  const keys: unknown[] = $sortKeyArray<unknown>(count);
+  let index = 0;
+  for (; index < count && $hasContiguousIndex(array, index); index = (index + 1) | 0) {
+    const value: T = $getOwnContiguousIndex<T>(array, index);
+    if (value === undefined)
+      $throwTypeError("Array.prototype.sort requires the comparator argument to be a function or undefined");
+    const key: unknown = $call<unknown>(comparator, undefined, value);
+    if (typeof key !== "number")
+      $throwTypeError("Array.prototype.sort requires the comparator argument to be a function or undefined");
+    $putOwnContiguousIndex(keys, index, key);
+  }
+  if (index < count)
+    $throwTypeError("Array.prototype.sort requires the comparator argument to be a function or undefined");
+  const isSorted: boolean = $sortByKeys(array, keys, direction | 0);
+  if (!isSorted) $throwTypeError("Array.prototype.sort requires the comparator argument to be a function or undefined");
+  return array;
+}
+
 // Storage of another kind need not be as long as the list, as behind `a[300_000_000] = 1`, and the list may be longer than storage in one piece can be.
 // The copy grows with what is found, and a result that is longer than the copy is made as the program's own `new Array(length)` is. Array itself is not named here:
 // whoever sorts would hold all that stands behind that name.
@@ -691,7 +765,7 @@ function toSortedListOfOtherStorage<T>(array: T[], length: number, comparator: u
 }
 
 export function toSorted<T>(this: T[], comparator: unknown): T[] {
-  if (!isCallable(comparator)) return (this as any).toSorted(comparator);
+  if (typeof comparator !== "function") return (this as any).toSorted(comparator);
   const length = this.length;
   if (isContiguousArray(this)) {
     const from: T[] = $newContiguousArray<T>(length);

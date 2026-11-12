@@ -103,6 +103,7 @@ pub(super) struct FileRow {
     pub namespace_values: Vec<ModuleRef>,
     pub evaluating_sites: Vec<(SiteKey, StoredSite)>,
     pub unread_sites: Vec<(ExprId, bool)>,
+    pub destructured_holders: Vec<(ExprId, (SymbolId, ModuleRef))>,
     pub holders: Vec<Holder>,
     pub holders_by_call: OnceLock<Vec<u32>>,
     pub answer_members: Vec<(ExprId, AnswerMember)>,

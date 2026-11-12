@@ -29,24 +29,24 @@ export declare function weigh(parcel: Parcel): number;
   "alone.ts": `import { isClean, weigh } from "parcels/checks.js";
 import { open, spoil } from "parcels/shapes.js";
 const parcels = [open(JSON.parse("1")), spoil(open("two"), "wet")];
-(globalThis as any).kept = [isClean, weigh, parcels];
+(globalThis as any)[JSON.parse('"kept"')] = [isClean, weigh, parcels];
 console.log(parcels.map(one => isClean(one)).join(), parcels.map(one => weigh(one)).join());
 `,
 };
 const neighbors: Record<string, string> = {
   "typed-as-the-package-types.ts": `import type { Parcel } from "parcels/shapes.js";
 export const made: Parcel[] = [{ value: 1, faults: [] }, { value: 2, faults: [] }];
-(globalThis as any).neighbor = made;
+(globalThis as any)[JSON.parse('"neighbor"')] = made;
 `,
   "calls-the-package.ts": `import { isClean } from "parcels/checks.js";
 export const made = { value: 1, faults: [], extra: 7 };
-(globalThis as any).neighbor = isClean(made as any);
+(globalThis as any)[JSON.parse('"neighbor"')] = isClean(made as any);
 `,
-  "the-same-names.ts": `export const made = { value: 1, faults: [] as string[] };\n(globalThis as any).neighbor = made;\n`,
-  "the-same-names.js": `export const made = { value: 1, faults: [] };\nglobalThis.neighbor = made;\n`,
-  "one-more-name.ts": `export const made = { value: 1, faults: [] as string[], extra: 7 };\n(globalThis as any).neighbor = made;\n`,
-  "one-more-name.js": `export const made = { value: 1, faults: [], extra: 7 };\nglobalThis.neighbor = made;\n`,
-  "another-prototype.js": `export const made = { value: 1, faults: [] };\nObject.setPrototypeOf(made, { spoiled: true });\nglobalThis.neighbor = made;\n`,
+  "the-same-names.ts": `export const made = { value: 1, faults: [] as string[] };\n(globalThis as any)[JSON.parse('"neighbor"')] = made;\n`,
+  "the-same-names.js": `export const made = { value: 1, faults: [] };\nglobalThis[JSON.parse('"neighbor"')] = made;\n`,
+  "one-more-name.ts": `export const made = { value: 1, faults: [] as string[], extra: 7 };\n(globalThis as any)[JSON.parse('"neighbor"')] = made;\n`,
+  "one-more-name.js": `export const made = { value: 1, faults: [], extra: 7 };\nglobalThis[JSON.parse('"neighbor"')] = made;\n`,
+  "another-prototype.js": `export const made = { value: 1, faults: [] };\nObject.setPrototypeOf(made, { spoiled: true });\nglobalThis[JSON.parse('"neighbor"')] = made;\n`,
 };
 
 async function walkChecks(cwd: string, entry: string, said = "true,false 1,4") {

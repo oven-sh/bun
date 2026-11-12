@@ -1,4 +1,4 @@
-use bun_sema::bind::{ScopeId, SymbolId};
+use bun_sema::bind::{BindingKind, ScopeId, SymbolId};
 use bun_sema::hir::FnId;
 use bun_sema::util::SharedSort;
 
@@ -100,7 +100,8 @@ pub(super) fn find_initial_functions(
     }
     for &(scope, symbol, function) in &walk.hoisted_functions {
         let walked = walk.function_of_fn[function.idx()];
-        if scope == context.file_scope
+        if context.is_top_of_module_body(scope)
+            && context.input.bound.binding_kind(symbol) != BindingKind::Parameter
             && find_by_key(variables, BindingRef::Symbol(symbol)).is_some()
             && walked.is_some_and(|walked| captures.captures[walked.index()].is_empty())
         {

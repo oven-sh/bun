@@ -1,15 +1,16 @@
 // answers: without-library
 // # A descriptor lays a getter on a function object, under a name that is written, and the function asks itself under that name at every call. Where closures of that one function are all that arrives at the read, it expects the getter.
 // # Each closure has a getter with captures of its own: the code calls what the lookup has found.
-// # f1 = createLogger, f2 = log, f3 = enabled, f4 = enable
+// # createLogger is written once for each of its two calls (f2, f3): f7 = the log of the first, f8 = its getter enabled; f10 = the log of the second, f11 = its getter.
 // # RUN(HELD): link accesses held mechanisms=all
-// # HELD: read f2 {{*}} expects getter f3
+// # HELD: read f7 {{*}} expects getter f8
+// # HELD: read f10 {{*}} expects getter f11
 // # HELD-NOT: expects getter
 // # RUN(PROVEN): link accesses mechanisms=all
 // # PROVEN-NOT: expects getter
-// # RUN(WALK): walk f2 mechanisms=all
+// # RUN(WALK): walk f7 mechanisms=all
 // # WALK: = GetCachedGetter {{*}}key="enabled"
-// # WALK: = TypeTest {{*}}testedType=f3
+// # WALK: = TypeTest {{*}}testedType=f8
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 3 of 3 of 3

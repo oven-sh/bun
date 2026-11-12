@@ -1,4 +1,5 @@
 use super::answers::{ClassDeclaration, ClassParent, ClassRef, FunctionRef};
+use super::class_stores::find_prototype_object_held_by;
 use super::constructor_evidence::{FunctionAtPath, find_function_at_path};
 use super::constructor_function_parents::LinkedFunctions;
 use super::queries::Queries;
@@ -40,6 +41,10 @@ pub enum PrototypeOperation {
         object: u32,
         key: u32,
         descriptor: u32,
+    },
+    DefineProperties {
+        object: u32,
+        descriptors: u32,
     },
     /// `__publicField(this, "name", value)`: defines a field that the object has and stores one that it lacks.
     DefineField {
@@ -105,11 +110,16 @@ pub(in crate::check) struct PrototypeLinks<'s> {
     calls: &'s [FunctionCall],
     calls_passing_parameters: &'s [(FnId, FunctionCall)],
     calls_passing_this: &'s [(FnId, FunctionCall)],
+    /// Functions of the file, each with a function that passes it its own receiver.
+    receivers_passed: &'s [(FnId, FnId)],
+    /// The same for functions that are only known by the name that they are read under.
+    receivers_passed_by_name: &'s [(Atom, FnId)],
     copied_literals: &'s [(FnId, ExprId)],
     functions_sharing_prototype_objects: &'s [FnId],
     pub(super) linked_functions: OnceLock<LinkedFunctions<'s>>,
     pub(super) declarations_used_like_constructors: OnceLock<&'s [SymbolId]>,
     pub(super) declarations_named_by_new: OnceLock<&'s [SymbolId]>,
+    pub(super) functions_named_through_variables: OnceLock<&'s [FnId]>,
     pub(super) functions_constructed_at_paths: OnceLock<&'s [FnId]>,
     pub(super) initializers_at_paths: OnceLock<&'s [(FnId, FnId)]>,
     pub(super) constructor_symbols: OnceLock<&'s [SymbolId]>,
@@ -174,6 +184,14 @@ impl<'s> PrototypeLinks<'s> {
 
     pub(super) fn calls_passing_this_of(&self, function: FnId) -> &'s [(FnId, FunctionCall)] {
         entries_of(self.calls_passing_this, function)
+    }
+
+    pub(super) fn receivers_passed_to(&self, function: FnId) -> &'s [(FnId, FnId)] {
+        entries_of(self.receivers_passed, function)
+    }
+
+    pub(super) fn receivers_passed_by_name(&self) -> &'s [(Atom, FnId)] {
+        self.receivers_passed_by_name
     }
 
     pub(super) fn shares_prototype_object(&self, function: FnId) -> bool {
@@ -478,6 +496,7 @@ impl EndFinder<'_, '_, '_> {
                     NamedValue::PrototypeOperation(
                         PrototypeOperation::LinkClasses { .. }
                         | PrototypeOperation::CallFunction { .. }
+                        | PrototypeOperation::DefineProperties { .. }
                         | PrototypeOperation::DefineProperty { .. }
                         | PrototypeOperation::DefineField { .. },
                     )
@@ -534,6 +553,8 @@ struct LinkCollector<'c, 'p, 's> {
     calls: Vec<FunctionCall>,
     calls_passing_parameters: Vec<(FnId, FunctionCall)>,
     calls_passing_this: Vec<CallPassingThis>,
+    variables_given_receivers: Vec<(SymbolId, ExprId)>,
+    names_given_receivers: Vec<(Atom, ExprId)>,
     copied_literals: Vec<(FnId, ExprId)>,
 }
 
@@ -549,6 +570,8 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
             calls: Vec::new(),
             calls_passing_parameters: Vec::new(),
             calls_passing_this: Vec::new(),
+            variables_given_receivers: Vec::new(),
+            names_given_receivers: Vec::new(),
             copied_literals: Vec::new(),
         }
     }
@@ -627,6 +650,55 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
         {
             let call = FunctionCall { call, callee };
             self.calls_passing_this.push(CallPassingThis { this, call });
+        } else if let Some((_, MemberKey::Name(name))) = ends.hir.member_key(function) {
+            self.names_given_receivers.push((name, this));
+        } else if let ExprKind::Ident(_) = ends.hir[function].kind
+            && let Binding::Symbol(variable) = ends.bound.binding(function)
+        {
+            if let BindingInitializer::Expression(initializer) =
+                ends.bound.binding_initializer(ends.hir, variable)
+            {
+                self.add_name_given_receiver(initializer, this);
+            }
+            self.variables_given_receivers.push((variable, this));
+        }
+    }
+
+    fn add_name_given_receiver(&mut self, read: ExprId, this: ExprId) {
+        if let Some((_, MemberKey::Name(name))) = self.ends.hir.member_key(read) {
+            self.names_given_receivers.push((name, this));
+        }
+    }
+
+    fn visit_store_to_variable(&mut self, target: ExprId, value: ExprId) {
+        let ends = self.ends;
+        if !matches!(ends.hir[target].kind, ExprKind::Ident(_)) {
+            return;
+        }
+        let Binding::Symbol(variable) = ends.bound.binding(target) else {
+            return;
+        };
+        for index in 0..self.variables_given_receivers.len() {
+            let (given, this) = self.variables_given_receivers[index];
+            if given == variable {
+                self.add_name_given_receiver(value, this);
+            }
+        }
+    }
+
+    /// Calls by a name on an object other than `this` say nothing of the receiver.
+    fn drop_names_called_on_objects(&mut self, calls: &[ExprId]) {
+        for &call in calls {
+            if self.names_given_receivers.is_empty() {
+                return;
+            }
+            let Some((object, MemberKey::Name(called))) = self.ends.find_called_member(call) else {
+                continue;
+            };
+            if !matches!(self.ends.hir[object].kind, ExprKind::This) {
+                self.names_given_receivers
+                    .retain(|&(name, _)| name != called);
+            }
         }
     }
 
@@ -668,6 +740,7 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
                 self.visit_call_passing_receiver(call, receiver);
             }
             PrototypeOperation::CreateObject { .. }
+            | PrototypeOperation::DefineProperties { .. }
             | PrototypeOperation::DefineProperty { .. }
             | PrototypeOperation::DefineField { .. } => {}
         }
@@ -713,6 +786,8 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
     fn visit_store_of_shared_prototype_object(&mut self, target: ExprId, value: ExprId) {
         let ends = self.ends;
         let value = ends.hir.skip_type_assertions(value);
+        // `var proto = Constructor.prototype; factory.prototype = proto;`
+        let value = find_prototype_object_held_by(ends.hir, ends.bound, value).unwrap_or(value);
         let is_prototype_object = matches!(
             ends.hir.member_key(value),
             Some((_, MemberKey::Name(name))) if name == known::prototype
@@ -813,8 +888,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             }
             for (target, value) in stores {
                 collector.visit_store(target, value);
+                collector.visit_store_to_variable(target, value);
             }
             collector.add_links_that_literals_replace();
+            collector.drop_names_called_on_objects(expressions.of(ExprTag::Call));
         }
         let LinkCollector {
             owners_of_shared_prototype_objects,
@@ -822,9 +899,24 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             calls,
             mut calls_passing_parameters,
             calls_passing_this,
+            names_given_receivers,
             mut copied_literals,
             ..
         } = collector;
+        let find_receiver = |this: ExprId| self.c.this_container(file, this)?.ok();
+        let mut receivers_passed: Vec<(FnId, FnId)> = calls_passing_this
+            .iter()
+            .filter(|passing| passing.call.callee.file == file)
+            .filter_map(|passing| {
+                Some((passing.call.callee.function, find_receiver(passing.this)?))
+            })
+            .collect();
+        receivers_passed.sort_unstable();
+        receivers_passed.dedup();
+        let receivers_passed_by_name: Vec<(Atom, FnId)> = names_given_receivers
+            .iter()
+            .filter_map(|&(name, this)| Some((name, find_receiver(this)?)))
+            .collect();
         let mut links_of_declarations = Vec::new();
         let mut links_of_parameters = Vec::new();
         for link in links {
@@ -867,6 +959,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             calls: list_in(arena, &calls),
             calls_passing_parameters: list_in(arena, &calls_passing_parameters),
             calls_passing_this: list_in(arena, &calls_passing_this),
+            receivers_passed: list_in(arena, &receivers_passed),
+            receivers_passed_by_name: list_in(arena, &receivers_passed_by_name),
             copied_literals: list_in(arena, &copied_literals),
             functions_sharing_prototype_objects: list_in(
                 arena,
@@ -875,6 +969,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             linked_functions: OnceLock::new(),
             declarations_used_like_constructors: OnceLock::new(),
             declarations_named_by_new: OnceLock::new(),
+            functions_named_through_variables: OnceLock::new(),
             functions_constructed_at_paths: OnceLock::new(),
             initializers_at_paths: OnceLock::new(),
             constructor_symbols: OnceLock::new(),

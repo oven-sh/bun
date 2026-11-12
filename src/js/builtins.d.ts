@@ -401,7 +401,7 @@ declare function $requireCacheDidDelete(key: string, requirer?: JSCommonJSModule
 declare function $requireCacheWillSet(key: string, value: unknown, requirer?: JSCommonJSModule): void;
 /** Without a key: does this process hide any file from require.cache? */
 declare function $isHiddenFromRequireCache(key?: string | symbol): boolean | undefined;
-declare function $esmLoadSync(key: string, requirer?: JSCommonJSModule): any;
+declare function $esmLoadSync(key: string, requirer?: JSCommonJSModule, forRequire?: boolean): any;
 declare function $get(): TODO;
 declare function $handleEvent(): TODO;
 declare function $headers(): TODO;
@@ -437,7 +437,6 @@ declare function $requireCommonJS(
   userArgumentCount: number,
   userOptions: unknown,
 ): JSCommonJSModule | -1;
-declare function $requireESM(path: string, requirer?: JSCommonJSModule): any;
 declare function $requireNativeModule(id: string): any;
 declare const $requireMap: Map<string, JSCommonJSModule>;
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;

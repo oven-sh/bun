@@ -370,4 +370,6 @@ JSC::JSObject* compiledMockExportHolder(JSC::JSGlobalObject*, JSC::JSObject* mod
 void evictModulesThatHaveLoaded(Zig::GlobalObject*);
 void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& key);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
+// Whether `error` is what reading a `let`, `const` or `class` binding throws before it is initialized.
+bool isUninitializedVariableError(JSC::VM&, JSC::JSValue error);
 }

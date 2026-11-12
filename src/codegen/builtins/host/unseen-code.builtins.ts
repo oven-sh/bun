@@ -41,7 +41,6 @@ const nativeCodeOfLoaders = [
   "%PrivateGlobals%.internalRequire",
   "%PrivateGlobals%.loadEsmIntoCjs",
   "%PrivateGlobals%.requireCommonJS",
-  "%PrivateGlobals%.requireESM",
 ];
 
 // A worker has a heap of its own and starts with an entry point of the build: the loader of its realm refuses everything else.

@@ -32,7 +32,6 @@ const privateGlobalFunctions = [
   "pokePromiseAsHandled",
   "requireCacheWillSet",
   "requireCommonJS",
-  "requireESM",
   "requireNativeModule",
   "resolveSync",
   "toClass",

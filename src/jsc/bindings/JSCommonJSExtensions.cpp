@@ -269,16 +269,12 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     RETURN_IF_EXCEPTION(scope, {});
     if (result == jsNumber(-1)) {
         // ESM
-        JSC::JSFunction* requireESM = global->requireESMFromHijackedExtension();
-        JSC::MarkedArgumentBuffer args;
-        args.append(specifier);
-        JSC::CallData callData = JSC::getCallData(requireESM);
-        NakedPtr<JSC::Exception> returnedException = nullptr;
-        JSC::profiledCall(global, JSC::ProfilingReason::API, requireESM, callData, mod, args, returnedException);
-        if (returnedException) [[unlikely]] {
-            throwException(globalObject, scope, returnedException->value());
-            return {};
-        }
+        JSValue exports = loadESModuleForRequire(global, specifier, mod);
+        RETURN_IF_EXCEPTION(scope, {});
+        // An assignment, not setExportsObject(): the handler is handed any module object, and `exports` may be an accessor or read-only there.
+        JSC::PutPropertySlot slot(mod, true);
+        mod->methodTable()->put(mod, global, WebCore::clientData(vm)->builtinNames().exportsPublicName(), exports, slot);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return JSC::JSValue::encode(jsUndefined());

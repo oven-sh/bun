@@ -183,7 +183,6 @@ using namespace JSC;
     macro(requireCacheWillSet) \
     macro(isHiddenFromRequireCache) \
     macro(requireCommonJS) \
-    macro(requireESM) \
     macro(requireMap) \
     macro(requireNativeModule) \
     macro(resolveSync) \
@@ -277,10 +276,18 @@ public:
         }
         return m_inspectCustomPublicName;
     }
+    // The export that names what require() returns for an ES module. It is no identifier, so the list above cannot hold it.
+    const JSC::Identifier& moduleExportsPublicName() {
+        if (m_moduleExportsPublicName.isEmpty()) [[unlikely]] {
+            m_moduleExportsPublicName = Identifier::fromString(m_vm, "module.exports"_s);
+        }
+        return m_moduleExportsPublicName;
+    }
 
 private:
     JSC::VM& m_vm;
     JSC::Identifier m_inspectCustomPublicName {};
+    JSC::Identifier m_moduleExportsPublicName {};
     std::array<JSC::Identifier, count> m_publicNames;
     std::array<JSC::Identifier, count> m_privateNames;
 };

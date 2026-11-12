@@ -443,6 +443,64 @@ static JSValue commonJSExportsOfObjectModule(Zig::GlobalObject* globalObject, JS
     return wasModuleMock ? object : JSValue();
 }
 
+// The value of `name` on `moduleNamespace`, or undefined while its binding is not initialized.
+static JSValue getUnlessUninitialized(Zig::GlobalObject* globalObject, JSC::JSObject* moduleNamespace, JSC::PropertyName name)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = moduleNamespace->get(globalObject, name);
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        if (!Bun::isUninitializedVariableError(vm, exception->value()) || !scope.tryClearException())
+            return {};
+        return jsUndefined();
+    }
+    return value;
+}
+
+static JSValue commonJSExportsOfESModule(Zig::GlobalObject* globalObject, JSC::JSObject* moduleNamespace)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // [[HasProperty]] reads no binding, and the namespace of a vi.mock()ed module throws on a name that its factory left out.
+    const auto& moduleExportsName = WebCore::builtinNames(vm).moduleExportsPublicName();
+    bool hasModuleExports = moduleNamespace->hasProperty(globalObject, moduleExportsName);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue moduleExports = jsUndefined();
+    if (hasModuleExports) {
+        moduleExports = getUnlessUninitialized(globalObject, moduleNamespace, moduleExportsName);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    // Libraries expect `__esModule` on what require() returns for an ES module (#14411). A module that exports the name keeps its own.
+    JSValue esModule = getUnlessUninitialized(globalObject, moduleNamespace, vm.propertyNames->__esModule);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (esModule.isUndefined()) {
+        // Not strict: a namespace refuses the store for a name that it exports (#17816).
+        JSC::PutPropertySlot slot(moduleNamespace, false);
+        moduleNamespace->methodTable()->put(moduleNamespace, globalObject, vm.propertyNames->__esModule, jsBoolean(true), slot);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    return moduleExports.isUndefinedOrNull() ? JSValue(moduleNamespace) : moduleExports;
+}
+
+JSValue loadESModuleForRequire(Zig::GlobalObject* globalObject, JSValue key, JSCommonJSModule* requirer)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue moduleNamespace = JSValue::decode(loadESModuleSync(globalObject, key, requirer));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::JSObject* object = moduleNamespace.getObject();
+    if (!object) [[unlikely]] {
+        auto keyString = key.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        throwTypeError(globalObject, scope, makeString("require() failed to evaluate module \""_s, keyString, "\". This is an internal consistentency error."_s));
+        return {};
+    }
+    RELEASE_AND_RETURN(scope, commonJSExportsOfESModule(globalObject, object));
+}
+
 template<bool allowPromise>
 static JSValue handleVirtualModuleResult(
     Zig::GlobalObject* globalObject,

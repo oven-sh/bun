@@ -115,6 +115,13 @@ JSC::JSObject* appendNativeModuleExports(Zig::GlobalObject*, uint32_t registryID
 
 JSC::JSObject* createAsyncModuleRequiredError(JSC::JSGlobalObject*, const WTF::String& specifier);
 
+// The namespace of the ES module `key`, loaded and evaluated now by the loader of `requirer`. In a require cycle it is live.
+JSC::EncodedJSValue loadESModuleSync(Zig::GlobalObject*, JSValue key, JSCommonJSModule* requirer);
+// What require() returns for that module: the value of its "module.exports" export unless that is null or undefined,
+// and the namespace otherwise. It also lays the `__esModule` mark on the namespace.
+// An export that is not initialized yet counts as absent, each on its own.
+JSValue loadESModuleForRequire(Zig::GlobalObject*, JSValue key, JSCommonJSModule* requirer);
+
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* moduleObject,

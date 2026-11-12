@@ -303,20 +303,15 @@ const requireCacheFunctions = [
   ...moduleChildrenFunctions,
 ];
 
-// JSCommonJSExtensions.cpp builtinLoader(): the functions under ".js", ".ts" and ".json" call it for a file that turns out to be an ES module. Nobody has one of them but from the table of loaders.
-const functionsOfDefaultLoaders = functionsIn("builtins/CommonJS", "requireESMFromHijackedExtension");
-
 const streamedModuleFunctions = functionsIn("builtins/WasmStreaming", "consumeStream");
 
 const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFunctionSpec[]>> = {
   "%ModuleObject%.children": moduleChildrenFunctions,
   "%ModuleObject%.parent": moduleChildrenFunctions,
   "%ModuleRequire%.cache": requireCacheFunctions,
-  "%ModuleRequire%.extensions": functionsOfDefaultLoaders,
   "%ModuleRequire%.main": [...functionsIn("builtins/CommonJS", "main"), ...moduleChildrenFunctions],
   "%ModuleRequire%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
   "%ModuleRequirePrototype%.cache": requireCacheFunctions,
-  "%ModuleRequirePrototype%.extensions": functionsOfDefaultLoaders,
   // In an executable the getter is native code.
   "%ModuleRequirePrototype%.main": moduleChildrenFunctions,
   "%ModuleRequirePrototype%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
@@ -382,7 +377,6 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   ],
   "node:module._initPaths": [heldAs(b.functionIn("builtins/NodeModuleObject", "_initPaths"), "node:module._initPaths")],
   "node:module._cache": requireCacheFunctions,
-  "node:module._extensions": functionsOfDefaultLoaders,
   "process._rawDebug": [heldAs(processInternal("rawDebug"), "process._rawDebug")],
   "process.allowedNodeEnvironmentFlags": builtBy(
     "buildAllowedNodeEnvironmentFlags",

@@ -8513,6 +8513,11 @@ Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObj
     return Zig::JSModuleMock::createStructure(vm, globalObject, prototype);
 }
 
+bool isUninitializedVariableError(JSC::VM& vm, JSValue error)
+{
+    return !Zig::messageOfUninitializedVariableError(vm, error).isNull();
+}
+
 JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specifier, bool& wasModuleMock, Zig::BunPlugin::OnLoad::Matches& onLoad)
 {
     auto fallback = [&]() -> JSC::JSValue {

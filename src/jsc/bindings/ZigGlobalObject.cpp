@@ -1240,18 +1240,15 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject 
     return JSValue::encode(array);
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+JSC::EncodedJSValue Bun::loadESModuleSync(Zig::GlobalObject* globalObject, JSValue keyValue, Bun::JSCommonJSModule* requirer)
 {
-    Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue keyValue = callFrame->argument(0);
     auto keyString = keyValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     auto key = JSC::Identifier::fromString(vm, keyString);
 
-    // The loader the requirer's require() binds ES modules to (CommonJS.ts requireESM).
-    auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(callFrame->argument(1));
+    // The loader the requirer's require() binds ES modules to (CommonJS.ts overridableRequire).
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, requirer ? requirer->moduleGraph() : nullptr);
     RETURN_IF_EXCEPTION(scope, {});
     if (loader == globalObject->moduleLoader()) {
@@ -1353,6 +1350,17 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     Bun::evictModulesThatHaveLoaded(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(ns);
+}
+
+// $esmLoadSync(key, requirer, forRequire): the namespace of the module, or with `forRequire` what require() returns for it.
+JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(callFrame->argument(1));
+    if (callFrame->argument(2).isTrue())
+        RELEASE_AND_RETURN(scope, JSValue::encode(Bun::loadESModuleForRequire(globalObject, callFrame->argument(0), requirer)));
+    RELEASE_AND_RETURN(scope, Bun::loadESModuleSync(globalObject, callFrame->argument(0), requirer));
 }
 
 #define WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ConstructorName)                                                                                                            \
@@ -3366,16 +3374,16 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, Encod
     return JSValue::encode(stderrValue);
 }
 
-// The CommonJS `require()` machinery (`@requireESM`, `@loadEsmIntoCjs`,
-// `@internalRequire`) is only ever reached from inside CommonJS modules. A
-// process whose entry point is ESM (the common case for short scripts) never
-// touches it, so parsing/compiling these builtins during global object setup is
-// pure startup overhead. Register lazy custom-value getters instead: the first
-// `@`-reference from builtin code materializes the function and replaces the
-// accessor with the plain builtin function for subsequent fast access.
+// `@loadEsmIntoCjs` and `@internalRequire` are not reached at startup: the first
+// is what `import.meta.bakeBuiltin` loads an ES module with, the second is
+// require() of a native addon. Parsing/compiling these builtins during global
+// object setup is pure startup overhead. Register lazy custom-value getters
+// instead: the first `@`-reference from builtin code materializes the function
+// and replaces the accessor with the plain builtin function for subsequent fast
+// access.
 //
 // Note: these private names are only consumed via `op_get_from_scope` from
-// builtin JS (`$requireESM`, `$loadEsmIntoCjs`, `$internalRequire`), never via
+// builtin JS (`$loadEsmIntoCjs`, `$internalRequire`), never via
 // `getDirect`, so a custom accessor is a transparent substitute. (`@create*ReadableStream`
 // next to these *do* have `getDirect` callers and must stay eager.)
 #define BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getterName, codeGenerator, attributes)                                           \
@@ -3386,7 +3394,6 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, Encod
         JSC::JSFunction* fn = globalObject->putDirectBuiltinFunction(vm, globalObject, name, codeGenerator(vm), (attributes)); \
         return JSValue::encode(fn);                                                                                            \
     }
-BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getRequireESMBuiltin, commonJSRequireESMCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
 BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getLoadEsmIntoCjsBuiltin, commonJSLoadEsmIntoCjsCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
 BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getInternalRequireBuiltin, commonJSInternalRequireCodeGenerator, PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly)
 #undef BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER
@@ -3613,7 +3620,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_isHiddenFromRequireCache, 1, functionIsHiddenFromRequireCache },
         { BuiltinName::k_requireCacheDidDelete, 2, functionRequireCacheDidDelete },
         { BuiltinName::k_requireCacheCompiledEntry, 2, functionRequireCacheCompiledEntry },
-        { BuiltinName::k_esmLoadSync, 2, functionEsmLoadSync },
+        { BuiltinName::k_esmLoadSync, 3, functionEsmLoadSync },
         { BuiltinName::k_makeErrorWithCode, 2, jsFunctionMakeErrorWithCode },
         { BuiltinName::k_toClass, 1, jsFunctionToClass },
         { BuiltinName::k_inherits, 1, jsFunctionInherits },
@@ -3636,10 +3643,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     // i've noticed doing it as is will work somewhat but getDirect() wont be able to find them
 
     putDirectBuiltinFunction(vm, this, builtinNames.createFIFOPrivateName(), fifoCreateFIFOCodeGenerator(vm), PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    // These three are CommonJS-only and never reached on an ESM startup path; install
+    // These two are never reached on a startup path; install
     // lazy getters so their source isn't parsed during global object construction.
-    // (See getRequireESMBuiltin / getLoadEsmIntoCjsBuiltin / getInternalRequireBuiltin above.)
-    putDirectCustomAccessor(vm, builtinNames.requireESMPrivateName(), JSC::CustomGetterSetter::create(vm, getRequireESMBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
+    // (See getLoadEsmIntoCjsBuiltin / getInternalRequireBuiltin above.)
     putDirectCustomAccessor(vm, builtinNames.loadEsmIntoCjsPrivateName(), JSC::CustomGetterSetter::create(vm, getLoadEsmIntoCjsBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
     putDirectCustomAccessor(vm, builtinNames.internalRequirePrivateName(), JSC::CustomGetterSetter::create(vm, getInternalRequireBuiltin, nullptr), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::CustomValue);
 

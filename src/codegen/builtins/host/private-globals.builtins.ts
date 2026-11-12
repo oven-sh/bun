@@ -283,7 +283,6 @@ export default b.declarations(
     requireCacheWillSet: changesNothing(b.undefined),
     // `require` hands a CommonJS file to it.
     requireCommonJS: loadsIntoModuleObject,
-    requireESM: b.otherwiseBy(b.compiled("builtins/CommonJS", "requireESM")),
     // The realm makes the map with itself. Native code files module objects in it and takes out what the library has filed.
     requireMap: b.property(b.instance("Map"), {
       mutability: "AlwaysLocked",

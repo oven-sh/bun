@@ -1,10 +1,5 @@
 // This file contains functions used for the CommonJS module loader
 
-interface RequiredESMNamespace {
-  __esModule?: unknown;
-  "module.exports"?: unknown;
-}
-
 $getter;
 export function main() {
   return $requireMap.$get(Bun.main);
@@ -91,7 +86,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   const mod = $createCommonJSModule(id, {}, false, this);
   requireMap.$set(id, mod);
 
-  var out: JSCommonJSModule | RequiredESMNamespace | -1;
+  var out: JSCommonJSModule | -1;
 
   // This is where we load the module. We will see if Module._load and
   // Module._compile are actually important for compatibility.
@@ -123,37 +118,15 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   // -1 means we need to lookup the module from the ESM registry.
   if (out === -1) {
     try {
-      out = $requireESM(id, this) as RequiredESMNamespace;
+      // What require() returns for the module: ModuleLoader.cpp commonJSExportsOfESModule().
+      out = $esmLoadSync(id, this, true);
     } catch (exception) {
       // Since the ESM code is mostly JS, we need to handle exceptions here.
       requireMap.$delete(id);
       throw exception;
     }
 
-    const namespace = out;
-    // In a require cycle the namespace is live while the module body is still
-    // running, so an export named `__esModule` / `module.exports` may be in TDZ.
-    let esModule, moduleExports;
-    try {
-      esModule = namespace.__esModule;
-      moduleExports = namespace["module.exports"];
-    } catch {}
-    // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
-    // Various libraries expect __esModule to be set when using ESM from require().
-    // We don't want to always inject the __esModule export into every module,
-    // And creating an Object wrapper causes the actual exports to not be own properties.
-    // So instead of either of those, we make it so that the __esModule property can be set at runtime.
-    // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
-    // https://github.com/oven-sh/bun/issues/14411
-    if (esModule === undefined) {
-      try {
-        namespace.__esModule = true;
-      } catch {
-        // https://github.com/oven-sh/bun/issues/17816
-      }
-    }
-
-    return (mod.exports = moduleExports ?? namespace);
+    return (mod.exports = out);
   }
 
   const c = $evaluateCommonJSModule(mod, this);
@@ -217,35 +190,6 @@ export function requireESM(this, resolved: string, requirer?: JSCommonJSModule) 
     throw new TypeError(`require() failed to evaluate module "${resolved}". This is an internal consistentency error.`);
   }
   return exports;
-}
-
-export function requireESMFromHijackedExtension(this: JSCommonJSModule, id: string) {
-  $assert(this);
-  // Runs inside `$require`, which removes the require map entry if the user's handler lets this throw.
-  const namespace = $requireESM(id, this);
-
-  // See `overridableRequire`: TDZ-safe reads for the require-cycle case.
-  let esModule, moduleExports;
-  try {
-    esModule = namespace.__esModule;
-    moduleExports = namespace["module.exports"];
-  } catch {}
-  // In Bun, when __esModule is not defined, it's a CustomAccessor on the prototype.
-  // Various libraries expect __esModule to be set when using ESM from require().
-  // We don't want to always inject the __esModule export into every module,
-  // And creating an Object wrapper causes the actual exports to not be own properties.
-  // So instead of either of those, we make it so that the __esModule property can be set at runtime.
-  // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
-  // https://github.com/oven-sh/bun/issues/14411
-  if (esModule === undefined) {
-    try {
-      namespace.__esModule = true;
-    } catch {
-      // https://github.com/oven-sh/bun/issues/17816
-    }
-  }
-
-  this.exports = moduleExports ?? namespace;
 }
 
 $visibility = "Private";

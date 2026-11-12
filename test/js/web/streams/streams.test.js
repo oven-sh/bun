@@ -20,7 +20,17 @@ import {
   tmpdirSync,
 } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, createReadStream, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  createReadStream,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
 import {
@@ -2763,22 +2773,30 @@ describe("a stream over bytes in memory", () => {
     },
   );
 
-  // On Linux a Blob of 8 MiB or more lives in a memfd, and the stream of the Blob keeps that memfd open for as long
-  // as it keeps the bytes. It let go of them only when it was read once more after its last chunk, and a reader that
-  // has every byte does not make that read.
-  test.skipIf(!isLinux)("a Blob's stream lets go of the Blob's bytes with its last chunk", async () => {
+  // On Linux a Blob of 8 MiB or more lives in a memfd, where the kernel and the sandbox have memfd_create().
+  const IN_MEMFD = 8 * 1024 * 1024;
+  const isBlobMemfd = fd => {
+    try {
+      return readlinkSync("/proc/self/fd/" + fd).startsWith("/memfd:memfd-num-");
+    } catch {
+      return false;
+    }
+  };
+  function blobsLiveInMemfds() {
+    if (!isLinux) return false;
+    const blob = new Blob([Buffer.alloc(IN_MEMFD)]);
+    return blob.size === IN_MEMFD && readdirSync("/proc/self/fd").some(isBlobMemfd);
+  }
+
+  // The stream of such a Blob keeps the memfd open for as long as it keeps the bytes. It let go of them only when it
+  // was read once more after its last chunk, and a reader that has every byte does not make that read.
+  test.skipIf(!blobsLiveInMemfds())("a Blob's stream lets go of the Blob's bytes with its last chunk", async () => {
     const script = `
       import { readdirSync, readlinkSync } from "node:fs";
       import { Readable } from "node:stream";
-      const SIZE = 8 * 1024 * 1024;
-      const memfds = () =>
-        readdirSync("/proc/self/fd").filter(fd => {
-          try {
-            return readlinkSync("/proc/self/fd/" + fd).startsWith("/memfd:memfd-num-");
-          } catch {
-            return false;
-          }
-        }).length;
+      const SIZE = ${IN_MEMFD};
+      const isBlobMemfd = ${isBlobMemfd};
+      const memfds = () => readdirSync("/proc/self/fd").filter(isBlobMemfd).length;
       // [while the stream has bytes left, when it gave its last chunk]
       async function held(readerOf) {
         const before = memfds();

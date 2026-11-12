@@ -2278,6 +2278,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 bodies.push(_stmts);
             }
+            if declares_fn && p.keeps_case_clause_function() {
+                p.assign_case_fn_twins(&mut bodies);
+            }
             if !lowered_fns.is_empty() {
                 block = p.place_case_block_fns(cases, &mut bodies, &lowered_fns);
             }

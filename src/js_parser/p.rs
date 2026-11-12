@@ -3439,6 +3439,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.options.bundle || self.options.features.minify_identifiers
     }
 
+    /// Whether a plain function declared directly in a case clause stays a declaration. The engine then
+    /// creates it where the switch is entered, so every clause can call it.
+    pub(crate) fn keeps_case_clause_function(&self) -> bool {
+        !self.options.features.react_fast_refresh
+    }
+
     fn hoist_symbols(&mut self, mut scope: js_ast::StoreRef<js_ast::Scope>) {
         // This runs before the visit pass, so it walks the scope tree at the full
         // nesting depth the parser allowed; deep trees must error here instead of

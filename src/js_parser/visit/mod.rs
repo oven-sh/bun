@@ -1550,6 +1550,66 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Sloppy code reads a function outside its block through its `var` twin. For a function that stays a
+    /// declaration in a case clause, `var twin = f` goes to the head of the clause.
+    pub(crate) fn assign_case_fn_twins(&mut self, bodies: &mut [ListManaged<'a, Stmt>]) {
+        let p = self;
+        // SAFETY: current_scope is a valid arena ptr for the parse.
+        let has_direct_eval = p.current_scope().contains_direct_eval;
+        for body in bodies {
+            let mut twins: ListManaged<'a, G::Decl> = ListManaged::new_in(p.arena);
+            for stmt in body.iter() {
+                let StmtData::SFunction(declared) = stmt.data else {
+                    continue;
+                };
+                let Some(name) = declared.func.name else {
+                    continue;
+                };
+                let Some(&twin) = p.hoisted_ref_for_sloppy_mode_block_fn.get(&name.ref_) else {
+                    continue;
+                };
+                if has_direct_eval {
+                    // Direct "eval": neither name can change, so the two are one binding again.
+                    p.symbols[twin.inner_index() as usize].link.set(name.ref_);
+                    continue;
+                }
+                if twins.iter().any(
+                    |decl| matches!(decl.binding.data, BData::BIdentifier(id) if id.r#ref == twin),
+                ) {
+                    continue;
+                }
+                p.record_usage(name.ref_);
+                twins.push(G::Decl {
+                    binding: p.b(B::Identifier { r#ref: twin }, name.loc),
+                    value: Some(Expr::init_identifier(name.ref_, name.loc)),
+                });
+            }
+            if twins.is_empty() {
+                continue;
+            }
+            let relocated = p.maybe_relocate_vars_to_top_level(&twins, RelocateVarsMode::Normal);
+            if relocated.ok {
+                if let Some(assigns) = relocated.stmt {
+                    body.insert(0, assigns);
+                }
+            } else {
+                let decls = G::DeclList::from_bump_vec(twins);
+                let loc = decls.at(0).binding.loc;
+                body.insert(
+                    0,
+                    p.s(
+                        S::Local {
+                            kind: LocalKind::KVar,
+                            decls,
+                            ..Default::default()
+                        },
+                        loc,
+                    ),
+                );
+            }
+        }
+    }
+
     /// Whether `place_case_block_fns` decides where the `let` of the visited clause goes.
     pub(crate) fn lowered_case_body_fns(
         &self,
@@ -1789,7 +1849,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .kind
                                     == SymbolKind::HoistedFunction
                             {
-                                break 'list_getter &mut before;
+                                if kind != StmtsKind::SwitchStmt || !p.keeps_case_clause_function()
+                                {
+                                    break 'list_getter &mut before;
+                                }
+                                // Sloppy output gives the declaration an Annex B `var` in the enclosing function.
+                                // Nothing there may read it, so the name is taken for that function.
+                                if p.will_use_renamer() {
+                                    p.declare_temp_var(data.func.name.unwrap().ref_);
+                                }
                             }
                         }
                         StmtData::SEnum(_) => {

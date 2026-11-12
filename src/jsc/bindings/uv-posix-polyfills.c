@@ -327,8 +327,7 @@ UV_EXTERN int uv_sem_trywait(uv_sem_t* sem)
 
 #else /* !(defined(__APPLE__) && defined(__MACH__)) */
 
-// Copy-pasted from libuv (the sem_t path; the custom semaphore for glibc
-// older than 2.21 is not needed, bun requires a newer glibc)
+// Copy-pasted from libuv, without its fallback for glibc older than 2.21
 UV_EXTERN int uv_sem_init(uv_sem_t* sem, unsigned int value)
 {
     if (sem_init(sem, 0, value))

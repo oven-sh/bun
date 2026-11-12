@@ -228,7 +228,8 @@ describe("bundler", () => {
   });
 
   // 17. The option does not check a string-literal argument. When the code around the call
-  // handles the failure, a literal that does not resolve builds as it does without the option.
+  // handles the failure, a literal that does not resolve builds as it does without the option:
+  // import() and require.resolve() stay as run-time lookups, and require() becomes a throw.
   const handledLiteral: BundlerTestInput = {
     files: {
       "/entry.js": /* js */ `
@@ -243,10 +244,17 @@ describe("bundler", () => {
     target: "bun",
     allowUnresolved: [],
     onAfterBundle(api) {
-      expect(api.readFile("/out/entry.js").match(/import\("\.\/missing-[abc]\.js"\)/g)).toEqual([
-        'import("./missing-a.js")',
-        'import("./missing-b.js")',
-        'import("./missing-c.js")',
+      const calls = api
+        .readFile("/out/entry.js")
+        .split("\n")
+        .filter(line => line.includes("missing-"))
+        .map(line => line.trim());
+      expect(calls).toEqual([
+        'import("./missing-a.js").catch(() => {});',
+        'import("./missing-b.js").then(() => {}, () => {});',
+        'await import("./missing-c.js");',
+        '(()=>{throw new Error("Cannot require module "+"missing-d");})();',
+        '__require.resolve("missing-e");',
       ]);
     },
   };

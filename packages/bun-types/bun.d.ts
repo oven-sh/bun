@@ -3398,7 +3398,9 @@ declare module "bun" {
      *   `try` or `catch` block
      * - `import()` followed by `.catch()` or a two-argument `.then()`
      *
-     * Such a build succeeds and leaves the specifier unresolved.
+     * Such a build succeeds. The output keeps the `import()` or
+     * `require.resolve()` call, which looks the specifier up again at run
+     * time. The `require()` call becomes an expression that throws.
      *
      * The CLI flags are `--allow-unresolved <pattern>` and `--reject-unresolved`
      * (the same as `[]`).

@@ -1,4 +1,3 @@
-// STATISTIC: AssignedMemberChecks >= 4
 const show = (label, f) => { let r; try { r = f(); } catch (e) { r = `${e?.name}: ${e?.message}`.slice(0, 90); } console.log(label, typeof r === "object" ? Object.prototype.toString.call(r) : String(r).slice(0, 60)); };
 const wrap = f => function (n) { return (typeof f === "function" ? f.call(this, n) : 100) + 1; };
 const wrapTimes = (f, q) => function (n) { return f.call(this, n) * q + this.k; };

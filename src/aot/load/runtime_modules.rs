@@ -203,8 +203,13 @@ impl RuntimeModules {
             .and_then(|file| manifest.resolve(specifier, &file.archive_name));
         let resolution = match internal_module {
             Some(id) => RuntimeResolution::Module(HostModuleId(id)),
-            None if self.refuses(specifier, importer) => return None,
-            None => resolve_alias(manifest, specifier, self.aliases)?,
+            None => {
+                let resolution = resolve_alias(manifest, specifier, self.aliases)?;
+                if self.refuses(specifier, importer) {
+                    return None;
+                }
+                resolution
+            }
         };
         Some(match resolution {
             RuntimeResolution::Module(_) if self.omits_builtin_modules => {

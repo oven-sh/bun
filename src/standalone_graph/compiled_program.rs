@@ -909,19 +909,38 @@ pub fn has_written_files() -> bool {
     HAS_WRITTEN_FILES.load(core::sync::atomic::Ordering::Acquire)
 }
 
-/// Where the disk has the file that the program has written, if `name` is its path under the root of the executable. What another process has laid there is not trusted.
+/// Where the disk has the file that the program has written, if `name` is its path under the root of the executable. What another process has written there is not trusted before the program itself has started a process, and never as code.
 pub fn find_written_file(name: &[u8]) -> Option<Box<[u8]>> {
+    find_file_on_disk(name, true)
+}
+
+/// `find_written_file` for a module or a library: what another process has written there is not trusted.
+pub fn find_written_code(name: &[u8]) -> Option<Box<[u8]>> {
+    find_file_on_disk(name, false)
+}
+
+fn find_file_on_disk(name: &[u8], trusts_other_processes: bool) -> Option<Box<[u8]>> {
     if !has_written_files() || !is_bun_standalone_file_path(name) {
         return None;
     }
     let mut buffer = path_buffer_pool::get();
     let name = absolute_key(name, &mut buffer)?.as_bytes();
     let graph = StandaloneModuleGraph::get_ref();
-    let key = graph.and_then(|it| Some(it.lookup_file(name)?.name));
+    let file = graph.and_then(|it| it.lookup_file(name));
     let path = {
         let written = WRITTEN_FILES.lock();
-        let is_meant = |it: &&WrittenFile| *it.path == *name || key == Some(&*it.key);
-        written.iter().find(is_meant)?.path_on_disk.clone()
+        let is_meant =
+            |it: &&WrittenFile| *it.path == *name || file.is_some_and(|file| *file.name == *it.key);
+        written
+            .iter()
+            .find(is_meant)
+            .map(|it| it.path_on_disk.clone())
+    };
+    let Some(path) = path else {
+        return match trusts_other_processes {
+            true => graph?.find_changed_file(file?),
+            false => None,
+        };
     };
     // A write that fails leaves the copy in the executable.
     bun_sys::exists(&path).then_some(path)
@@ -949,10 +968,38 @@ fn record_written_file(path: &[u8], key: &[u8], path_on_disk: &[u8]) {
     }
 }
 
-/// What of the program the disk had when the program was about to start its first process, or to remove a folder. What is gone later was removed, by whomever.
+/// Differs once a file was written.
+#[derive(Copy, Clone, PartialEq, Eq)]
+struct FileVersion {
+    inode: u64,
+    size: u64,
+    modified: (i64, i64),
+    changed: (i64, i64),
+}
+
+impl FileVersion {
+    fn read(path: &[u8]) -> Option<Self> {
+        let stat = bun_sys::stat(&bun_core::ZBox::from_bytes(path)).ok()?;
+        let stat = bun_sys::PosixStat::init(&stat);
+        let (modified, changed) = (stat.mtime(), stat.ctime());
+        Some(Self {
+            inode: stat.ino,
+            size: stat.size,
+            modified: (modified.sec, modified.nsec),
+            changed: (changed.sec, changed.nsec),
+        })
+    }
+}
+
+struct FileFoundOnDisk {
+    path: Box<[u8]>,
+    version: FileVersion,
+}
+
+/// What the disk had of the program when the program was about to start its first process or to remove a folder. What is missing later was removed by someone, and what differs later was written by someone.
 struct FoundOnDisk {
     /// The files that nobody asked the build to embed, by their keys in the graph.
-    files: StringArrayHashMap<Box<[u8]>>,
+    files: StringArrayHashMap<FileFoundOnDisk>,
     /// Those files, and the folders with them and with entry points.
     paths: StringArrayHashMap<()>,
 }
@@ -1547,9 +1594,11 @@ impl StandaloneModuleGraph {
             return None;
         }
         let under_own_root = Self::key_under_own_root(program, key);
+        let path = key;
         let key = under_own_root.as_deref().unwrap_or(key);
         if program.entry_point_by_source_path(key).is_some() || program.holds_module_at(key) {
-            return Some(SourcePathKind::File);
+            let is_gone = Self::has_other_source_on_disk(program, key, path);
+            return (!is_gone).then_some(SourcePathKind::File);
         }
         let mut entry_points = program.entry_points_in_directory(key);
         let is_directory = entry_points.next().is_some() || program.holds_module_below(key);
@@ -2138,6 +2187,24 @@ impl StandaloneModuleGraph {
     /// For what may remove files of the program: `FoundOnDisk`.
     pub fn note_found_on_disk(&self) {
         FOUND_ON_DISK.get_or_init(|| self.find_on_disk());
+        if found_on_disk().is_some() {
+            HAS_WRITTEN_FILES.store(true, core::sync::atomic::Ordering::Release);
+        }
+    }
+
+    /// Where the disk has `file`, if that was written since the program has started its first process. A file that the disk did not have counts only in a folder that it had.
+    fn find_changed_file(&self, file: &File) -> Option<Box<[u8]>> {
+        let (program, found) = self.compiled_program.as_ref().zip(found_on_disk())?;
+        if !self.is_file_for_file_system_alone(file) {
+            return None;
+        }
+        if let Some(before) = found.files.get(file.name) {
+            let is_changed = FileVersion::read(&before.path)? != before.version;
+            return is_changed.then(|| before.path.clone());
+        }
+        let path = Self::path_on_build_machine(program, file.name)?;
+        let is_there = found.paths.contains(bun_paths::dirname(&path)?) && bun_sys::exists(&path);
+        is_there.then(|| path.into_boxed_slice())
     }
 
     fn find_on_disk(&self) -> FoundOnDisk {
@@ -2163,10 +2230,11 @@ impl StandaloneModuleGraph {
             };
             let folder = bun_paths::dirname(&path);
             if folder.is_some_and(|it| found.find_folder(it, &mut missing))
-                && bun_sys::exists(&path)
+                && let Some(version) = FileVersion::read(&path)
             {
-                let _ = found.files.put(key, path.as_slice().into());
                 let _ = found.paths.put(&path, ());
+                let path = path.into_boxed_slice();
+                let _ = found.files.put(key, FileFoundOnDisk { path, version });
             }
         }
         for entry_point in &program.entry_points {
@@ -2180,8 +2248,8 @@ impl StandaloneModuleGraph {
 
     /// Whether the disk had the file `key`, which nobody asked the build to embed, and has it no longer.
     pub(crate) fn has_file_vanished(&self, key: &[u8]) -> bool {
-        let path = found_on_disk().and_then(|found| found.files.get(key));
-        path.is_some_and(|path| !bun_sys::exists(path))
+        let found = found_on_disk().and_then(|found| found.files.get(key));
+        found.is_some_and(|found| !bun_sys::exists(&found.path))
     }
 
     /// Whether the disk had the folder `key` and has it no longer. What somebody asked the build to embed keeps its folder.
@@ -2380,6 +2448,42 @@ impl StandaloneModuleGraph {
             });
             if let Some(source) = source {
                 return is_file_on_disk(&[folder, &source[folder_in_graph.len()..]].concat());
+            }
+            let name = bun_paths::basename(folder);
+            if name != bun_paths::basename(folder_in_graph) {
+                return false;
+            }
+            cut += name.len() + 1;
+        }
+        false
+    }
+
+    fn has_other_source_on_disk(
+        program: &CompiledProgram,
+        key_in_graph: &[u8],
+        key: &[u8],
+    ) -> bool {
+        let mut cut = bun_paths::basename(key).len() + 1;
+        if cut >= key.len() || !bun_sys::exists(&key[..key.len() - cut]) {
+            return false;
+        }
+        while cut < key.len() && cut < key_in_graph.len() {
+            let folder = &key[..key.len() - cut];
+            let folder_in_graph = &key_in_graph[..key_in_graph.len() - cut];
+            let is_on_disk = |source: &[u8]| {
+                is_file_on_disk(&[folder, &source[folder_in_graph.len()..]].concat())
+            };
+            let mut entry_points = program.entry_points_in_directory(folder_in_graph);
+            let entry_point = entry_points.find(|it| it.source_path != key_in_graph);
+            let mut module: Option<Vec<u8>> = None;
+            program.for_each_module_below(folder_in_graph, &mut |path| {
+                module = (path != key_in_graph).then(|| path.to_vec());
+                module.is_none()
+            });
+            if entry_point.is_some_and(|it| is_on_disk(it.source_path))
+                || module.is_some_and(|it| is_on_disk(&it))
+            {
+                return true;
             }
             let name = bun_paths::basename(folder);
             if name != bun_paths::basename(folder_in_graph) {

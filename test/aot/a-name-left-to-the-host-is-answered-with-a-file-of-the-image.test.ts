@@ -301,6 +301,37 @@ export function probe() {
 export const first = () => one;
 `,
   },
+  "by a text that the build knows": {
+    "lib.mjs": String.raw`export function sum(a, b) {
+  let work = 0;
+  for (let i = 0; i < 2; i++) work = (work + i) | 0;
+  return work === 1 ? a + b : 0;
+}
+function twice(a) { return a + a; }
+export function spare(a) {
+  let work = 0;
+  for (let i = 0; i < 2; i++) work = (work + i) | 0;
+  return work === 1 ? twice(a) : 0;
+}
+export default "the default";
+`,
+    "main.mjs": String.raw`import { sum } from "./lib.mjs";
+let total = 0;
+for (let i = 0; i < 300; i++) total = (sum(total, i) + 1) | 0;
+console.log(String(total));
+const target = import.meta.dir + "/" + JSON.parse('"lib"') + ".mjs";
+const answer = { name: "late", setup(build) { build.onResolve({ filter: /^left-out$/ }, () => ({ path: target })); } };
+(0, eval)("Bun.plugin")(answer);
+let out = "asked";
+try { out = await (await import("./mid.mjs")).probe(); } catch (e) { out += "|" + e.name + ":" + String(e.message).replace(/'[^']*'/g, "'..'").slice(0, 60); }
+console.log(String(out));
+`,
+    "mid.mjs": String.raw`import * as got from "left-out";
+export function probe() {
+  return typeof got.sum + " " + Object.keys(got).sort().join("+") + " " + typeof got.spare;
+}
+`,
+  },
 };
 
 const refused: Record<string, Files> = {
@@ -355,7 +386,7 @@ for (let i = 0; i < 300; i++) total = (sum(total, i) + 1) | 0;
 console.log(String(total));
 const target = import.meta.dir + "/" + JSON.parse('"lib"') + ".mjs";
 const answer = { name: "late", setup(build) { build.onResolve({ filter: /^left-out$/ }, () => ({ path: target })); } };
-(0, eval)("Bun.plugin")(answer);
+(0, eval)(JSON.parse('"Bun.plugin"'))(answer);
 let out = "asked";
 try { out = await (await import("./mid.mjs")).probe(); } catch (e) { out += "|" + e.name + ":" + String(e.message).replace(/'[^']*'/g, "'..'").slice(0, 60); }
 console.log(String(out));

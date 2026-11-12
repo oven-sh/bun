@@ -7,9 +7,12 @@ use super::run_order::RunOrder;
 use super::{Constant, Decision, FoldedValue};
 use crate::atom::{Atom, known};
 use crate::bind::{
-    Binding, BindingInitializer, BindingKind, CommonJsVariable, Decl, ScopeKind, SymbolId,
+    Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit, CommonJsVariable, Decl,
+    Parent, PatParent, ScopeKind, SymbolId,
 };
-use crate::hir::{Chain, ExprId, ExprKind, ImportId, MemberKey, NodeData, UnOp};
+use crate::hir::{
+    Chain, ExprId, ExprKind, Flags, FnId, ImportId, MemberKey, NodeData, StmtKind, UnOp,
+};
 use crate::hir_from_data::DataValue;
 use crate::import_sites::is_in_with_scope;
 use crate::module_format::settled_main_module_operand;
@@ -71,10 +74,105 @@ impl<'s> Folder<'_, 's> {
                 return folded;
             }
         }
+        if let BindingKind::Parameter | BindingKind::Var = kind
+            && self.names_of_undefined().binary_search(&symbol).is_ok()
+            && self.has_static_lookup(e)
+            && !self.is_assignment_target(e)
+            && !self.is_delete_operand(e)
+        {
+            self.mark_folded_by_build_alone(e);
+            return self.decide(e, Decision::Constant(Constant::Undefined));
+        }
         match self.fold_enum_member_named(e, symbol) {
             Some(folded) => folded,
             None => self.fold_const_read(e, symbol, kind),
         }
+    }
+
+    /// Parameters that no argument is passed for, and variables that nothing stores to.
+    fn names_of_undefined(&self) -> &[SymbolId] {
+        self.names_of_undefined.get_or_init(|| {
+            let (hir, bound) = (self.hir, self.bound);
+            let mut names: Vec<SymbolId> = Vec::new();
+            for function in (0..hir.fns.len() as u32).map(FnId) {
+                let call = bound.get_immediately_invoked_function_expression(hir, function);
+                if call.is_some_and(|call| hir[call].args.len() < hir[function].params.len()) {
+                    let parameters = hir[function].params.iter();
+                    let symbols = parameters
+                        .filter_map(|it| bound.declared_symbol(Decl::Param(hir[it].pat)).some());
+                    names.extend(symbols.filter(|&it| self.is_parameter_without_argument(it)));
+                }
+            }
+            for declaration in hir.var_decls.iter().filter(|it| it.init.is_none()) {
+                let symbol = bound.declared_symbol(Decl::Var(declaration.pat)).some();
+                names.extend(symbol.filter(|&it| self.is_variable_without_value(it)));
+            }
+            names.sort_unstable();
+            names
+        })
+    }
+
+    /// `var name;` in a function, where nothing stores to it.
+    fn is_variable_without_value(&self, symbol: SymbolId) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let &[Decl::Var(pattern)] = bound.symbol(symbol).decls else {
+            return false;
+        };
+        let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
+            return false;
+        };
+        let Some(statement) = bound.var_stmt[declaration.idx()].some() else {
+            return false;
+        };
+        hir[declaration].init.is_none()
+            && bound.binding_stability(symbol) == BindingStability::NotInitializedOnce
+            && bound.stores_to(symbol).is_empty()
+            && !bound.runtime.is_stored_by_function_of_block(symbol)
+            && matches!(
+                bound.code_unit(bound.symbol_scope(symbol)),
+                CodeUnit::Function(_)
+            )
+            && match bound.parent_of_stmt(statement) {
+                Parent::FnBody(_) => true,
+                Parent::Stmt(around) => matches!(hir[around].kind, StmtKind::Block(_)),
+                _ => false,
+            }
+    }
+
+    /// The only call of the function stands where the function is written, and passes fewer arguments.
+    fn is_parameter_without_argument(&self, symbol: SymbolId) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let &[Decl::Param(pattern)] = bound.symbol(symbol).decls else {
+            return false;
+        };
+        let PatParent::Param(parameter) = bound.pat_parent[pattern.idx()] else {
+            return false;
+        };
+        let function = bound.param_fn[parameter.idx()];
+        let record = hir[parameter];
+        if record.default.is_some()
+            || record.flags.contains(Flags::REST)
+            || !bound.is_called_only_where_written(hir, function)
+            || !bound.is_stable_binding(symbol)
+        {
+            return false;
+        }
+        let call = bound.get_immediately_invoked_function_expression(hir, function);
+        let Some(call) = call.map(|call| hir[call]) else {
+            return false;
+        };
+        let is_spread = |argument: ExprId| matches!(hir[argument].kind, ExprKind::Spread(_));
+        let Some(index) = hir[function].params.iter().position(|it| it == parameter) else {
+            return false;
+        };
+        let mut parameters_in_front = hir[function].params.iter().take(index);
+        call.chain == Chain::No
+            && !hir.ids(call.args).any(is_spread)
+            && call.args.len() <= index
+            && parameters_in_front.all(|it| {
+                let name = bound.declared_symbol(Decl::Param(hir[it].pat));
+                hir[it].default.is_none() && name.some().is_some()
+            })
     }
 
     fn is_bound_through_name_in_place(&self, binding: Binding, name: Atom) -> bool {

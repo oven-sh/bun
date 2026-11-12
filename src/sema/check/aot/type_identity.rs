@@ -13,7 +13,7 @@ pub struct TypeIdentity(pub [u64; 2]);
 
 impl TypeIdentity {
     pub fn of_untyped_members<'a>(
-        members: impl Iterator<Item = (&'a [u8], ObjectMemberKind)>,
+        members: impl Iterator<Item = (&'a [u8], ObjectMemberKind)> + Clone,
     ) -> TypeIdentity {
         TypeIdentity(description::describe_untyped_members(members))
     }

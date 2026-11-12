@@ -148,7 +148,9 @@ impl<'s> Folder<'_, 's> {
             return Folded::new(Value::from(type_name), self.folded(operand).effects);
         }
         let type_of_literal = match self.hir[operand].kind {
-            ExprKind::Fn(_) => Some(known::function),
+            ExprKind::Fn(function) if !self.hir.is_evaluated_function(function) => {
+                Some(known::function)
+            }
             ExprKind::Regex { .. } => Some(known::object),
             _ => None,
         };

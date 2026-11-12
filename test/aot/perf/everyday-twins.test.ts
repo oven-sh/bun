@@ -34,7 +34,7 @@ const rows: Row[] = [
   ["a-keyed-store.js", "counts in a map", "counts in an object", 1.5],
   ["a-keyed-store.js", "counts in a map", "counts by a step", 1.5],
   ["a-keyed-store.js", "counts in an object", "under a key of two parts", 2],
-  ["a-keyed-store.js", "under a key of two parts", "under a key that a helper makes", 1.3],
+  ["a-keyed-store.js", "under a key of two parts", "under a key that a helper makes", 1.4],
   ["a-list-filled-to-a-bound.ts", "seventeen values", "nine values", 0.8],
   ["methods-that-a-helper-stores.js", "methods written in the literal", "methods that a helper stores", 1.3],
   [

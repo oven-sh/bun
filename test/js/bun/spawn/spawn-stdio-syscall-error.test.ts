@@ -383,36 +383,52 @@ process.on("exit", code => {
 });
 `;
 
-// One write of more than a stream's highWaterMark (64 KiB), once the parent says "go". One recv() returns all of it.
-const ONE_WRITE_CMD = ["sh", "-c", "read go; dd if=/dev/zero bs=66000 count=1 2>/dev/null; read done"];
+// At the parent's marker one write of more than a stream's highWaterMark (64 KiB), then the child's own marker.
+const ONE_WRITE_CMD = [
+  "sh",
+  "-c",
+  "while [ ! -e stopped-go ]; do sleep 0.01; done; dd if=/dev/zero bs=66000 count=1 2>/dev/null; : > stopped-written; read done",
+];
 
 // node:child_process, the same wakeup for a stream that is paused: the chunk fills its buffer, so it has stopped the
 // reader when the read behind the chunk fails. resume() hands the chunk to 'data' a few turns later.
 const CHILD_PROCESS_STOPPED_FIXTURE = /* js */ `
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+rmSync("stopped-go", { force: true });
+rmSync("stopped-written", { force: true });
 const events = [];
 let got = 0;
 const child = spawn(${JSON.stringify(ONE_WRITE_CMD[0])}, ${JSON.stringify(ONE_WRITE_CMD.slice(1))}, { stdio: ["pipe", "pipe", "ignore"] });
 const out = child.stdout;
+const nap = new Int32Array(new SharedArrayBuffer(4));
+const deadline = Date.now() + 15_000;
 out.on("data", chunk => {
   got += chunk.length;
   events.push("data");
 });
 out.pause();
-// 'resume' comes after the stream's first read request.
-out.once("resume", () => setImmediate(() => child.stdin.write("go\\n")));
+// 'resume' comes after the stream's first read request. The parent does not return to its event loop until the child
+// has written, so one recv() returns all of it.
+out.once("resume", () =>
+  setImmediate(() => {
+    writeFileSync("stopped-go", "");
+    while (!existsSync("stopped-written")) {
+      if (Date.now() > deadline) throw new Error("timed out waiting for the child");
+      Atomics.wait(nap, 0, 0, 1);
+    }
+    setImmediate(function wait() {
+      if (out.readableLength < 65536 && !out.destroyed && Date.now() < deadline) return setImmediate(wait);
+      events.push("buffered " + out.readableLength);
+      out.resume();
+    });
+  }),
+);
 out.on("error", e => events.push("stdout.error:" + e.code));
 out.on("end", () => events.push("stdout.end"));
 out.on("close", () => {
   events.push("stdout.close");
   child.stdin.end();
-});
-const deadline = Date.now() + 15_000;
-setImmediate(function wait() {
-  if (out.readableLength < 65536 && !out.destroyed && Date.now() < deadline) return setImmediate(wait);
-  events.push("buffered " + out.readableLength);
-  out.resume();
 });
 child.on("close", () => {
   events.push("close");

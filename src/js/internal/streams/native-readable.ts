@@ -20,7 +20,6 @@ const kHighWaterMark = Symbol("highWaterMark");
 const kPendingRead = Symbol("pendingRead");
 const kHasResized = Symbol("hasResized");
 const kRemainingChunk = Symbol("remainingChunk");
-const kUncaughtOnListenerThrow = Symbol("uncaughtOnListenerThrow");
 
 const MIN_BUFFER_SIZE = 512;
 let dynamicallyAdjustChunkSize = (_?) => (
@@ -40,7 +39,6 @@ interface NativeReadable extends $Node.Readable {
   [kHighWaterMark]: number;
   [kHasResized]: boolean;
   [kRemainingChunk]: Buffer | undefined;
-  [kUncaughtOnListenerThrow]: boolean;
   debugId: number;
 }
 
@@ -53,15 +51,21 @@ interface NativePtr {
   updateRef: (ref: boolean) => void;
   cancel: (error: any) => void;
   setFlowing?: (flowing: boolean) => void;
+  setReadCallback?: (callback: ReadCallback) => boolean;
 }
+
+// What a source in handle mode calls: with each chunk, with `null` at the end, with `undefined` and the error when a
+// read failed. `false` stops its reader until the next `setFlowing(true)`.
+type ReadCallback = (chunk: Buffer | null | undefined, error?: Error) => boolean | void;
 
 let debugId = 0;
 
-// `uncaughtOnListenerThrow`: a 'data' listener throw is an uncaughtException, as from Node's native read callback.
+// `handleMode` (child stdio): the source calls back with each chunk it reads, as a libuv handle does in Node, and
+// `_read()` only starts it. A source that declines is pulled from, as without the argument.
 function constructNativeReadable(
   readableStream: ReadableStream,
   options: $Node.ReadableOptions,
-  uncaughtOnListenerThrow: boolean = false,
+  handleMode: boolean = false,
 ): NativeReadable {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
   const bunNativePtr = readableStream.$bunNativePtr;
@@ -71,6 +75,9 @@ function constructNativeReadable(
   const stream = new Readable(options) as NativeReadable;
   stream._read = read;
   stream._destroy = destroy;
+  if (handleMode && bunNativePtr?.setReadCallback?.((chunk, error) => onRead(stream, chunk, error))) {
+    stream._read = readStart;
+  }
 
   if (!!$debug) {
     stream.debugId = ++debugId;
@@ -84,7 +91,6 @@ function constructNativeReadable(
   stream[kPendingRead] = false;
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
   stream[kCloseState] = [false];
-  stream[kUncaughtOnListenerThrow] = uncaughtOnListenerThrow;
 
   const highWaterMark = options.highWaterMark;
   stream[kHighWaterMark] = typeof highWaterMark === "number" ? highWaterMark : 256 * 1024;
@@ -191,6 +197,21 @@ function read(this: NativeReadable, maxToRead: number) {
   }
 }
 
+// Handle mode's `_read()`: it starts the reader, or starts it again after onRead() returned false. It pushes nothing:
+// every chunk comes through onRead() on a later turn of the event loop.
+function readStart(this: NativeReadable) {
+  $debug(`[${this.debugId}] readStart`);
+  this.$bunNativePtr!.setFlowing!(true);
+}
+
+// The source calls this from the event loop: what a 'data' listener throws goes to it, and the listener's ticks and
+// promise jobs run before the next call.
+function onRead(stream: NativeReadable, chunk: Buffer | null | undefined, error?: Error) {
+  if (chunk) return stream.push(chunk);
+  if (chunk === null) stream.push(null);
+  else stream.destroy(error);
+}
+
 // Only handleNumberResult advances kRemainingChunk, before push(): a listener can pull again or throw.
 function handleResult(stream: NativeReadable, result: any, chunk: Buffer | undefined, isClosed: boolean) {
   if (typeof result === "number") {
@@ -268,7 +289,8 @@ function destroy(this: NativeReadable, error: any, cb: () => void) {
   }
 }
 
-// `_read()` pushes synchronously, so flow() stays one chunk ahead of the 'data' listener. Node's async sources do not.
+// A pulling `_read()` pushes synchronously, so flow() stays one chunk ahead of the 'data' listener. Node's async
+// sources do not, and neither does handle mode: there only chunks that came while the stream was paused are dropped.
 function dropReadAhead(stream: NativeReadable) {
   const state = stream._readableState;
   // Paused: Node has this buffered too, and a later read() returns it.

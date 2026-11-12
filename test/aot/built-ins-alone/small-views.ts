@@ -237,7 +237,8 @@ const notCalled: Record<string, string> = {
   "Atomics.wait": "it asks for shared memory, which never lies in the cell",
   "Atomics.waitAsync": "it asks for shared memory, which never lies in the cell",
 };
-const isForTestsOfBunAlone = (path: string) => /(ArchiveInternals|InternalSourceMap|[Bb]un_string_jsc)/.test(path);
+const isForTestsOfBunAlone = (path: string) =>
+  /(ArchiveInternals|InternalSourceMap|[Bb]un_string_jsc|[Jj]peg_rows_testing)/.test(path);
 
 function callWith(entry: Listed, row: Row, taker: Operand, view: ArrayBufferView): boolean {
   const callee = reach(entry.token) as any;

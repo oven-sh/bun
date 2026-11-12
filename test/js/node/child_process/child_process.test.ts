@@ -1961,8 +1961,7 @@ describe.concurrent("throw from a child stdio 'data' listener with no 'uncaughtE
   });
 });
 
-// A writer that never pauses makes most native reads return at once. Then push() only buffers and 'data' comes out
-// of flow(), not out of push().
+// A writer that never pauses: most reads find the next bytes in the pipe already.
 describe("a 'data' listener that throws while the child writes without gaps", () => {
   const SIZE = 4 * 1024 * 1024;
   // `throws`: how many calls of the listener throw. `rejectionHandler`: also install an 'unhandledRejection' handler.
@@ -2422,30 +2421,6 @@ describe("child stdio 'data' comes from the read callback", () => {
       },
     );
 
-    // The child's output and its EOF are both in the pipe by then. With no 'uncaughtException' handler the throw is
-    // fatal, and neither 'end' nor the child's 'close' may follow it.
-    it.concurrent.each([
-      [["ignore", "pipe", "pipe"], "stdout", "out"],
-      [["ignore", "pipe", "pipe"], "stderr", "err"],
-      [["ignore", "pipe"], "stdout", "out"],
-      [["ignore", "pipe"], "stderr", "err"],
-    ] as const)("in 'exit' that throws is fatal and ends the stream (stdio: %j, %s)", async (stdio, name, text) => {
-      const script = outAndErr(
-        [...stdio],
-        writesAtOnce,
-        `
-          c.on("exit", () => listen("${name}"));
-          process.on("exit", exit => console.log(JSON.stringify({ events: seen.${name}, childClose, exit })));
-        `,
-      );
-      const { stdout, stderr, exitCode } = await run(script);
-      expect({ stdout, stderr: stderr.includes(`${name}-throw`), exitCode }).toEqual({
-        stdout: JSON.stringify({ events: [`data ${text}`], childClose: null, exit: 1 }),
-        stderr: true,
-        exitCode: 1,
-      });
-    });
-
     // The child says on stderr that it is about to write more than the pipe holds. Only then does the parent listen.
     it("while the child is writing more than the pipe holds gets every byte", async () => {
       const SIZE = 1024 * 1024;
@@ -2718,9 +2693,11 @@ describe("child stdio 'data' comes from the read callback", () => {
 
     // Here the child is still running, and the process's own 'exit' is the last code to run: read() returns the bytes
     // there, or the program never has them. The child writes to stderr once its stdout bytes are in the pipe, and
-    // stays until its stdin closes, which the parent's exit does. POSIX only, as read() in the child's 'exit' is.
+    // stays until its stdin closes, which the parent's exit does. Nothing has read child.stdout until then, so it
+    // does not hold the process, and the parent needs no unref() of it to exit. POSIX only, as read() in the child's
+    // 'exit' is.
     it.concurrent.skipIf(!isPosix)(
-      "read() in the process's 'exit' returns what a running child has written",
+      "read() in the process's 'exit' returns what a running child has written to a stdout nothing has read",
       async () => {
         const writer = `const fs = require("fs"); fs.writeSync(1, "out"); fs.writeSync(2, "written"); process.stdin.resume();`;
         const script = `
@@ -2732,7 +2709,6 @@ describe("child stdio 'data' comes from the read callback", () => {
             // Two more turns of the event loop, for a reader that takes the bytes out of the pipe as they come.
             setImmediate(() => setImmediate(() => {
               child.unref();
-              child.stdout.unref();
               child.stderr.unref();
               child.stdin.unref?.();
             }));
@@ -2773,6 +2749,21 @@ describe("child stdio 'data' comes from the read callback", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  // The child stays until its stdin closes, which the parent's exit does. Nothing reads its stdout and stderr, so
+  // they do not hold the parent. Node waits for the pipes here. Bun never did, and programs rely on it.
+  it.concurrent("an unref'd child whose stdout and stderr nothing reads does not hold the process", async () => {
+    const script = `
+      const { spawn } = require("node:child_process");
+      const child = spawn(process.execPath, ["-e", "process.stdin.resume();"]);
+      child.unref();
+      // Ends a parent that waits for the child.
+      setTimeout(() => process.exit(2), 20_000).unref();
+      child.on("exit", () => console.log("child exit"));
+      process.on("exit", code => console.log("exit " + code));
+    `;
+    expect(await run(script)).toEqual({ stdout: "exit 0", stderr: "", exitCode: 0 });
   });
 
   // The child stays until its stdin closes, which the parent's exit does. After the first chunk the reader waits

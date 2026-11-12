@@ -21,6 +21,7 @@ const kPendingRead = Symbol("pendingRead");
 const kHasResized = Symbol("hasResized");
 const kRemainingChunk = Symbol("remainingChunk");
 const kReading = Symbol("reading");
+const kUnread = Symbol("unread");
 
 const MIN_BUFFER_SIZE = 512;
 let dynamicallyAdjustChunkSize = (_?) => (
@@ -42,7 +43,18 @@ interface NativeReadable extends $Node.Readable {
   [kRemainingChunk]: Buffer | undefined;
   /** Handle mode: the source's reader is started. */
   [kReading]?: boolean;
+  /** Handle mode, until the first `_read()`: what the source read ahead of it. */
+  [kUnread]?: Unread;
   debugId: number;
+}
+
+interface Unread {
+  chunks: Buffer[];
+  bytes: number;
+  /** `null`: the source ended. An error: it failed. */
+  end: Error | null | undefined;
+  /** What `ref()` and `unref()` asked for. */
+  ref: boolean;
 }
 
 interface NativePtr {
@@ -101,7 +113,10 @@ function constructNativeReadable(
   }
 
   if (handleMode && registerReadCallback(stream, bunNativePtr)) {
-    stream[kReading] = false;
+    // The source reads from here on, as a libuv handle does in Node. Unlike there, what it reads before anything reads the stream does not hold the process, as on the pull path, which reads nothing until then.
+    bunNativePtr!.updateRef(false);
+    stream[kUnread] = { chunks: [], bytes: 0, end: undefined, ref: true };
+    stream[kReading] = true;
     stream._read = readStart;
   }
 
@@ -211,16 +226,46 @@ function registerReadCallback(stream: NativeReadable, ptr: NativePtr | undefined
   return setReadCallback.$call(ptr, callback);
 }
 
-// Handle mode's `_read()`, as net.Socket's: it starts the reader unless it is started. It pushes nothing: chunks come through onRead() on later turns of the event loop.
+// Handle mode's `_read()`, as net.Socket's: it starts the reader unless it is started. Chunks come through onRead() on later turns of the event loop.
 function readStart(this: NativeReadable) {
   $debug(`[${this.debugId}] readStart${this[kReading] ? ", is already reading" : ""}`);
+  const unread = this[kUnread];
+  if (unread !== undefined && !takeUnread(this, unread)) return;
   if (this[kReading]) return;
   this[kReading] = true;
   this.$bunNativePtr!.setFlowing!(true);
 }
 
+// The first `_read()`: something reads the stream. It takes what the source read ahead, inside `_read()` as on the pull path, and the source holds the process from here on unless the stream is unref'd. `false`: that fills the buffer, or it is all there is.
+function takeUnread(stream: NativeReadable, unread: Unread): boolean {
+  stream[kUnread] = undefined;
+  const { chunks, end } = unread;
+  let more = true;
+  for (let i = 0; i < chunks.length; i++) more = stream.push(chunks[i]);
+  if (end === undefined) {
+    if (unread.ref) stream.$bunNativePtr!.updateRef(true);
+    return more;
+  }
+  if (end === null) stream.push(null);
+  else stream.destroy(end);
+  return false;
+}
+
 // The source calls this from the event loop: what a 'data' listener throws goes to it, and the listener's ticks and promise jobs run before the next call.
 function onRead(stream: NativeReadable, chunk: Buffer | null | undefined, error?: Error) {
+  const unread = stream[kUnread];
+  if (unread !== undefined) {
+    // Not push(): the Readable would then call `_read()` itself, with nothing reading the stream.
+    if (!chunk) {
+      unread.end = error ?? null;
+      return;
+    }
+    unread.chunks.push(chunk);
+    // As push() answers.
+    if ((unread.bytes += chunk.byteLength) < stream._readableState.highWaterMark) return true;
+    stream[kReading] = false;
+    return false;
+  }
   if (chunk) {
     if (stream.push(chunk)) return true;
     // The source stops its reader for this `false`: the next `_read()` has to start it again.
@@ -301,6 +346,7 @@ function destroy(this: NativeReadable, error: any, cb: () => void) {
   if (ptr) {
     ptr.cancel(error);
   }
+  this[kUnread] = undefined;
   dropReadAhead(this);
   if (cb) {
     // `_destroy` reports its error through the callback.
@@ -326,7 +372,7 @@ function ref(this: NativeReadable) {
   const ptr = this.$bunNativePtr;
   if (ptr === undefined) return;
   if (this[kRefCount]++ === 0) {
-    ptr.updateRef(true);
+    setRef(this, ptr, true);
   }
 }
 
@@ -334,8 +380,15 @@ function unref(this: NativeReadable) {
   const ptr = this.$bunNativePtr;
   if (ptr === undefined) return;
   if (this[kRefCount]-- === 1) {
-    ptr.updateRef(false);
+    setRef(this, ptr, false);
   }
+}
+
+// Until something reads a stream in handle mode, the answer waits for takeUnread().
+function setRef(stream: NativeReadable, ptr: NativePtr, value: boolean) {
+  const unread = stream[kUnread];
+  if (unread !== undefined) unread.ref = value;
+  else ptr.updateRef(value);
 }
 
 export default { constructNativeReadable };

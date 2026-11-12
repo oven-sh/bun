@@ -5265,6 +5265,16 @@
       "endLine": 97,
       "endColumn": 27,
       "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/refs",
+      "severity": 2,
+      "message": "Error: Cannot access refs during render\n\nReact refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected (https://react.dev/reference/react/useRef).\n\n<dir>/unbound.tsx:107:14\n  105 |     const useDefault = () => {\n  106 |       declare function useRef<T>(value: T): { current: T };\n> 107 |       return useRef(0).current;\n      |              ^^^^^^^^^^^^^^^^^ Cannot access ref value during render\n  108 |     };\n  109 |     return useDefault;\n  110 |   })(),",
+      "line": 107,
+      "column": 14,
+      "endLine": 107,
+      "endColumn": 31,
+      "suggestions": []
      }
     ],
     "suppressed": []

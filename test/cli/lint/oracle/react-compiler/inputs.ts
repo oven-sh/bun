@@ -846,6 +846,32 @@ enum Kind {
     return useRandom.length;
   })(),
 }
+
+function defaultParameter(
+  make = (() => {
+    const useDefault = () => {
+      declare function useRef<T>(value: T): { current: T };
+      return useRef(0).current;
+    };
+    return useDefault;
+  })(),
+) {
+  const useRef = 1;
+  return [make, useRef];
+}
+
+function restParameter(
+  ...[make = (() => {
+    const useRest = () => {
+      declare function useRef<T>(value: T): { current: T };
+      return useRef(0).current;
+    };
+    return useRest;
+  })()]: any[]
+) {
+  const useRef = 1;
+  return [make, useRef];
+}
 `;
 
 /** Babel registers no binding for any of the four, so `useRef`, `React`, `Date` and `Math` are the globals. */

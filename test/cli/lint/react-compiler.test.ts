@@ -650,6 +650,9 @@ describe.concurrent(
           "react-hooks/syntax 88:3-88:6 Error: Cannot reassign a `const` variable",
           // `Math` is the global, and not the member `Math` of the enum that the hook is in.
           "react-hooks/purity 97:14-97:27 Error: Cannot call impure function during render",
+          // In the default value of a parameter, `useRef` is React's and not the one of the function's body. In a rest
+          // parameter it's the one of the body, so `useRest` has nothing.
+          "react-hooks/refs 107:14-107:31 Error: Cannot access refs during render",
         ],
         // The globals `useRef`, `React.useState`, `Date.now` and `Math.random`.
         "unbound-in-module.tsx": [

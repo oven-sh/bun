@@ -399,9 +399,9 @@ impl<'a> Converter<'a, '_> {
             let Some(outer) = scope.get_name(name) else {
                 continue;
             };
-            // The default value of a parameter doesn't see the variables of the function's body.
+            // The variables of the function's body aren't visible from the scope that Babel has for a parameter.
             let is_parameter = (outer.declaration_kinds()).contains(DeclarationKinds::PARAMETER);
-            if !is_parameter && is_in_parameters(scope, at) {
+            if !is_parameter && is_in_parameter_scope(scope, at) {
                 continue;
             }
             if let Some(found) = self.ref_of_symbol(outer) {
@@ -1666,11 +1666,20 @@ fn is_registered_by_babel(declaration: Declaration<'_>) -> bool {
     }
 }
 
-/// True if `at` is in the parameters of the function whose scope `scope` is.
-fn is_in_parameters(scope: Scope<'_>, at: u32) -> bool {
-    scope.kind() == ScopeKind::Function
-        && matches!(scope.node(), Node::Func(func)
-            if func.params().last().is_some_and(|last| at < last.span().end))
+/// True if `at` is in a parameter of the function whose scope `scope` is, and Babel has a scope for that parameter:
+/// its node is a pattern, which a rest parameter, a parameter property and a plain name aren't.
+fn is_in_parameter_scope(scope: Scope<'_>, at: u32) -> bool {
+    if scope.kind() != ScopeKind::Function {
+        return false;
+    }
+    let Node::Func(func) = scope.node() else {
+        return false;
+    };
+    func.params().around(at).is_some_and(|param| {
+        let is_pattern = param.default().is_some()
+            || matches!(param.pat().kind(), PatKind::Object(_) | PatKind::Array(_));
+        is_pattern && !param.is_rest() && !param.is_parameter_property()
+    })
 }
 
 /// True if the pattern binds a variable that's reassigned somewhere.

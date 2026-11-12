@@ -503,11 +503,11 @@ _http_server[Server][prototype] c-w object
 _http_server[Server][prototype]: object above=EventEmitter extensible=true
 _http_server[Server][prototype][constructor] c-w function
 _http_server[Server][prototype][constructor] = _http_server[Server]
-_http_server[Server][prototype][_requestCert] c-a accessor get=function set=undefined
-_http_server[Server][prototype][_rejectUnauthorized] c-a accessor get=function set=undefined
-_http_server[Server][prototype][_handshakeTimeout] c-a accessor get=function set=undefined
-_http_server[Server][prototype][_ALPNCallback] c-a accessor get=function set=undefined
-_http_server[Server][prototype][_SNICallback] c-a accessor get=function set=undefined
+_http_server[Server][prototype][_requestCert] c-a accessor get=function set=function
+_http_server[Server][prototype][_rejectUnauthorized] c-a accessor get=function set=function
+_http_server[Server][prototype][_handshakeTimeout] c-a accessor get=function set=function
+_http_server[Server][prototype][_ALPNCallback] c-a accessor get=function set=function
+_http_server[Server][prototype][_SNICallback] c-a accessor get=function set=function
 _http_server[Server][prototype][listening] cea accessor get=function set=undefined
 _http_server[Server][prototype][ref] cew function
 _http_server[Server][prototype][ref]: function function name="" length=0 above=Function extensible=true

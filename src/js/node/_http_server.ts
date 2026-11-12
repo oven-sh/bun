@@ -370,6 +370,7 @@ interface Server extends NodeHTTPServer {
   blockList?: import("node:net").BlockList;
   keepAlive: boolean;
   keepAliveInitialDelay: number;
+  _SNICallback?: import("node:tls").TlsOptions["SNICallback"];
 }
 const kConstructed = Symbol("kConstructed");
 
@@ -462,6 +463,12 @@ function initHttpServer(options, callback) {
 }
 $toClass(Server, "Server", EventEmitter);
 
+function assignTLSOption(server, name, value) {
+  const tlsServer = server[tlsSymbol];
+  if (tlsServer) tlsServer[name] = value;
+  else Object.defineProperty(server, name, { value, writable: true, configurable: true, enumerable: true });
+}
+
 // What net.ts's accept path and handshake handler read of a tls.Server. listen({ tls }) has the two certificate options only.
 Object.defineProperties(Server.prototype, {
   _requestCert: {
@@ -470,6 +477,9 @@ Object.defineProperties(Server.prototype, {
       const tlsServer = this[tlsSymbol];
       return tlsServer ? tlsServer._requestCert : this[kListenerGeneration]?.tls?.requestCert;
     },
+    set(value) {
+      assignTLSOption(this, "_requestCert", value);
+    },
   },
   _rejectUnauthorized: {
     configurable: true,
@@ -477,11 +487,17 @@ Object.defineProperties(Server.prototype, {
       const tlsServer = this[tlsSymbol];
       return tlsServer ? tlsServer._rejectUnauthorized : this[kListenerGeneration]?.tls?.rejectUnauthorized;
     },
+    set(value) {
+      assignTLSOption(this, "_rejectUnauthorized", value);
+    },
   },
   _handshakeTimeout: {
     configurable: true,
     get() {
       return this[tlsSymbol]?._handshakeTimeout ?? 120_000;
+    },
+    set(value) {
+      assignTLSOption(this, "_handshakeTimeout", value);
     },
   },
   _ALPNCallback: {
@@ -489,11 +505,17 @@ Object.defineProperties(Server.prototype, {
     get() {
       return this[tlsSymbol]?._ALPNCallback;
     },
+    set(value) {
+      assignTLSOption(this, "_ALPNCallback", value);
+    },
   },
   _SNICallback: {
     configurable: true,
     get() {
       return this[tlsSymbol]?._SNICallback;
+    },
+    set(value) {
+      assignTLSOption(this, "_SNICallback", value);
     },
   },
 });
@@ -2265,7 +2287,7 @@ function attachConnection(server: Server, socket) {
   http.onclose = onConnectionClosed.bind(http, server[kTrackedConnections]);
   if (socket.encrypted) {
     // The native SNI dispatch asks the object in the handle's `data`, which is this socket.
-    socket._SNICallback = server[tlsSymbol]?._SNICallback;
+    socket._SNICallback = server._SNICallback;
     socket.resetAndDestroy = resetAndDestroyNotTCP;
   } else {
     if (server[kListenerGeneration]?.isUnix) socket.resetAndDestroy = resetAndDestroyNotTCP;

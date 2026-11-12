@@ -783,6 +783,35 @@ test("a listening http server takes a TLSSocket that is emitted as 'connection' 
   expect(await tlsRequest(await listen(front as http.Server))).toEndWith("\r\n\r\n1");
 });
 
+describe("the members that tls.Server keeps its options in", () => {
+  const names = ["_requestCert", "_rejectUnauthorized", "_handshakeTimeout", "_ALPNCallback", "_SNICallback"];
+
+  test.each(names)("%s takes an assignment", name => {
+    for (const server of [http.createServer(), https.createServer(validCert)] as any[]) {
+      server[name] = 1;
+      expect(server[name]).toBe(1);
+    }
+  });
+
+  test("tls.Server can be called on an heir of https.Server", () => {
+    const heir = Object.create(https.Server.prototype);
+    (tls.Server as any).call(heir, { ...validCert, requestCert: true });
+    expect(heir._requestCert).toBe(true);
+  });
+
+  test.each(["listen()", "emit('connection')"])("an assigned _SNICallback is asked over %s", async kind => {
+    const server = https.createServer(validCert);
+    const asked: string[] = [];
+    (server as any)._SNICallback = (name: string, done: (err: null) => void) => (asked.push(name), done(null));
+    await using front = kind === "listen()" ? server : net.createServer(socket => server.emit("connection", socket));
+    const port = await listen(front as http.Server);
+    const client = tls.connect({ port, host: "127.0.0.1", servername: "a.example", rejectUnauthorized: false });
+    await once(client, "secureConnect");
+    client.destroy();
+    expect(asked).toEqual(["a.example"]);
+  });
+});
+
 describe("https.Server has the methods of tls.Server", () => {
   const read = (name: string) => readFileSync(join(import.meta.dirname, "../test/fixtures/keys", name), "utf8");
   // agent2 is self-signed. ca1 signs agent1, ca2 signs agent3.

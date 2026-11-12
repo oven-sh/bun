@@ -121,6 +121,38 @@ function compare(expected, received, resolved, left = 0) {
   return `resolved ${resolved}, received ${received.length} of ${expected.length} bytes, first difference at ${at}`;
 }
 
+// Runs this file again in the mode `writer`, with the FIFO as its stdout. The
+// child says on stderr when its write is under way, and nothing reads the
+// pipe before that.
+async function watchWriter(fifo, ...writer) {
+  const end = open(fifo);
+  const { left } = leaveRoom(end);
+  const child = Bun.spawn({
+    cmd: [process.execPath, import.meta.path, ...writer],
+    env: process.env,
+    stdin: "ignore",
+    stdout: end.wfd,
+    stderr: "pipe",
+  });
+  const reader = openSync(end.path, O_RDONLY);
+  closeSync(end.wfd);
+  const decoder = new TextDecoder();
+  let stderr = "";
+  let rest;
+  for await (const chunk of child.stderr) {
+    stderr += decoder.decode(chunk, { stream: true });
+    // To the end of the pipe: the child's exit closes the last write end.
+    if (stderr.includes("under way\n")) rest ??= readToEnd(reader);
+  }
+  const received = Buffer.from(await rest);
+  closeSync(end.rfd);
+  return {
+    stderr: stderr.replace(/resolved (\d+)\n/, ""),
+    write: compare(stamped(size), received, Number(/resolved (\d+)\n/.exec(stderr)?.[1]), left),
+    exitCode: await child.exited,
+  };
+}
+
 // Every way to give Bun.write a destination that it tries to write to at
 // once, before the work pool.
 const destinations = {
@@ -230,41 +262,32 @@ const modes = {
 
   // The headline case: a child whose stdout is a pipe uses process.stdout,
   // which puts the pipe in non-blocking mode, and then writes to Bun.stdout.
-  // The child says on stderr when the write is under way, and nothing reads
-  // the pipe before that.
-  async stdout(fifo) {
-    const end = open(fifo);
-    const { left } = leaveRoom(end);
-    const child = Bun.spawn({
-      cmd: [process.execPath, import.meta.path, "stdoutWriter"],
-      env: process.env,
-      stdin: "ignore",
-      stdout: end.wfd,
-      stderr: "pipe",
-    });
-    const reader = openSync(end.path, O_RDONLY);
-    closeSync(end.wfd);
-    const decoder = new TextDecoder();
-    let stderr = "";
-    let rest;
-    for await (const chunk of child.stderr) {
-      stderr += decoder.decode(chunk, { stream: true });
-      // To the end of the pipe: the child's exit closes the last write end.
-      if (stderr.includes("under way\n")) rest ??= readToEnd(reader);
-    }
-    const received = Buffer.from(await rest);
-    closeSync(end.rfd);
-    return {
-      stderr: stderr.replace(/resolved (\d+)\n/, ""),
-      write: compare(stamped(size), received, Number(/resolved (\d+)\n/.exec(stderr)?.[1]), left),
-      exitCode: await child.exited,
-    };
-  },
+  stdout: fifo => watchWriter(fifo, "stdoutWriter"),
   async stdoutWriter() {
     void process.stdout.isTTY;
     const write = Bun.write(Bun.stdout, stamped(size));
     process.stderr.write(`${Bun.peek.status(write)}, under way\n`);
     process.stderr.write(`resolved ${await write}\n`);
+  },
+
+  // The child writes to the number of the fd. Bun.file(1) shares what Bun
+  // knows of fd 1 with that number, and its size asks what fd 1 is: a pipe.
+  // What is left of the write then waits for room off the work pool. One of
+  // the pool's two threads (UV_THREADPOOL_SIZE=2) is held, and two reads of a
+  // file in a row need the other: a write that tries again and again on a
+  // pool thread would keep it from the second read.
+  stdoutByNumber: (fifo, blocker) => watchWriter(fifo, "stdoutByNumberWriter", blocker),
+  async stdoutByNumberWriter(blocker) {
+    void process.stdout.isTTY;
+    void Bun.file(1).size;
+    const release = await holdPoolThread(blocker);
+    const write = Bun.write(1, stamped(size));
+    const atOnce = Bun.peek.status(write);
+    await readFile(import.meta.path);
+    await readFile(import.meta.path);
+    process.stderr.write(`${atOnce}, under way\n`);
+    process.stderr.write(`resolved ${await write}\n`);
+    await release();
   },
 };
 

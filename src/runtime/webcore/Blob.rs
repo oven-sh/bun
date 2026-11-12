@@ -4910,8 +4910,12 @@ fn write_file_after_would_block(
     options: &WriteFileOptions,
 ) -> JsResult<JSValue> {
     let destination_blob = match path_or_blob {
-        // The synchronous attempt opened it on the disk, so the executable is not asked for it.
-        PathOrBlob::Path(path) => file_blob_on_disk(path, cx.global()),
+        // The synchronous attempt opened the path on the disk, so the executable is not asked for it.
+        PathOrBlob::Path(path @ PathOrFileDescriptor::Path(_)) => {
+            file_blob_on_disk(path, cx.global())
+        }
+        // The store that Bun keeps for fd 0, 1 or 2 knows whether a write to it can wait.
+        PathOrBlob::Path(fd) => Blob::find_or_create_file_from_path(fd, cx.global(), false),
         PathOrBlob::Blob(blob) => blob.dupe(),
     };
     let mut job = write_file::WriteFile::create(
@@ -5313,6 +5317,7 @@ fn file_blob_on_disk(
     path: &mut PathOrFileDescriptor<'static>,
     global_this: &JSGlobalObject,
 ) -> Blob {
+    debug_assert!(path.is_path());
     let empty = PathOrFileDescriptor::Path(PathLike::default());
     let path = core::mem::replace(path, empty).thread_isolated_copy();
     let store = bun_core::handle_oom(Store::init_file(path, None));

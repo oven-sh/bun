@@ -1828,6 +1828,12 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       expect(await run("stdout")).toEqual(printed({ stderr: "pending, under way\n", write: "exact", exitCode: 0 }));
     });
 
+    it("waits off the work pool for room in fd 1 when Bun knows that it is a pipe", async () => {
+      expect(await run("stdoutByNumber", { fifos: 2, env: { UV_THREADPOOL_SIZE: "2" } })).toEqual(
+        printed({ stderr: "pending, under way\n", write: "exact", exitCode: 0 }),
+      );
+    });
+
     it("keeps the path it opened open until the write ends", async () => {
       expect(await run("soleWriter", { fifos: 3, env: { UV_THREADPOOL_SIZE: "2" } })).toEqual(
         printed({ writeEnd: "open", write: "exact" }),

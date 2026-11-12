@@ -626,6 +626,8 @@ impl FileReader {
                 jsc::CommonAbortReason::UserAbort,
             )));
         }
+        // A cancelled source calls nobody, not even for the end its reader reports when it is closed below.
+        let _ = self.take_read_callback();
         if self.done.get() {
             return;
         }
@@ -859,6 +861,17 @@ impl FileReader {
             && self.read_callback.get()
             && !self.done.get()
             && !self.reader().is_done()
+    }
+
+    /// Leaves handle mode. The wrapper and the callback, if there is still one to call.
+    fn take_read_callback(&self) -> Option<(JSValue, JSValue)> {
+        if !self.read_callback.replace(false) {
+            return None;
+        }
+        let parent = self.parent_const();
+        let this_value = parent.this_jsvalue.get().try_get()?;
+        let callback = js::read_callback_take_cached(this_value, parent.global_this())?;
+        Some((this_value, callback))
     }
 
     /// Calls the read callback from the event loop: the ticks and promise jobs it queued run before the next call, as after a libuv read callback in Node. What the call asked for takes effect before that checkpoint, where a `_read()` starts the reader again.
@@ -1207,6 +1220,8 @@ impl readable_stream::SourceContext for FileReader {
     }
 
     fn wrapper_finalized(&self) {
+        // The read callback went with the wrapper.
+        self.read_callback.set(false);
         debug_assert!(!(self.done.get() && self.waiting_for_on_reader_done.get()));
         if self.done.get() || !self.waiting_for_on_reader_done.get() {
             return;

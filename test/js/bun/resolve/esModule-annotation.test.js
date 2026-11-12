@@ -69,7 +69,7 @@ describe('with type: "module"', () => {
   });
 });
 
-describe("exports object with a getter", () => {
+describe.concurrent("exports object with a getter", () => {
   // The getter takes module.exports off the path that reads a plain object. The rules above still apply.
   const getter = `Object.defineProperty(exports, "getter", { get: () => "value", enumerable: true });`;
   test.each([
@@ -97,7 +97,7 @@ describe("exports object with a getter", () => {
   });
 });
 
-describe("CJS exports the ESM wrapper cannot enumerate", () => {
+describe.concurrent("CJS exports the ESM wrapper cannot enumerate", () => {
   // Building the synthetic ESM namespace enumerates module.exports; if that throws, the import
   // fails with the real error instead of yielding an empty namespace.
   test.each([false, true])("ownKeys trap throws (__esModule: %p)", async esModule => {
@@ -121,7 +121,7 @@ describe("CJS exports the ESM wrapper cannot enumerate", () => {
   });
 });
 
-describe("CJS export that throws when the ESM wrapper reads it", () => {
+describe.concurrent("CJS export that throws when the ESM wrapper reads it", () => {
   // The export is undefined and the import succeeds, whatever kind of object module.exports is. Node gives the
   // same for these files: the three assignments make its lexer list the names.
   const names = `exports.before = 0; exports.boom = 0; exports.after = 0;`;
@@ -151,6 +151,19 @@ describe("CJS export that throws when the ESM wrapper reads it", () => {
       boom: undefined,
       after: 2,
     });
+  });
+
+  // With __esModule, the default export is the read of `default`: undefined here, and not module.exports.
+  test("node:vm context global with __esModule whose default throws", async () => {
+    using dir = tempDir("cjs-export-throws", {
+      "mod.cjs": `module.exports = require("node:vm").runInNewContext("this", {
+        __esModule: true,
+        get default() { throw new Error("default"); },
+        named: "named",
+      });`,
+    });
+    const ns = await import(join(String(dir), "mod.cjs"));
+    expect({ ...ns }).toStrictEqual({ default: undefined, named: "named" });
   });
 
   const throwingProxy = `${names}\nmodule.exports = new Proxy({ ${properties} }, {});`;
@@ -183,7 +196,8 @@ describe("CJS export that throws when the ESM wrapper reads it", () => {
     expect(await promise).toBe(0);
   });
 
-  test("vi.importActual() of the file behind vi.doMock()", async () => {
+  // Not concurrent: vi.doMock() changes state that all tests of the file share.
+  test.serial("vi.importActual() of the file behind vi.doMock()", async () => {
     using dir = tempDir("cjs-export-throws", { "mod.cjs": throwingProxy });
     const path = join(String(dir), "mod.cjs");
     const proxy = require(path);
@@ -252,7 +266,7 @@ describe("CJS export that throws when the ESM wrapper reads it", () => {
   });
 });
 
-describe("CJS exports behind a Proxy", () => {
+describe.concurrent("CJS exports behind a Proxy", () => {
   // The wrapper calls no trap but ownKeys and get, until a read throws. Then it looks that key up once.
   const traps = `{
     ownKeys(target) {
@@ -326,7 +340,7 @@ describe("CJS exports behind a Proxy", () => {
   });
 });
 
-test.each([
+test.concurrent.each([
   ["an Array", `["a", "b"]`, { 0: "a", 1: "b", length: 2 }],
   ["a Uint8Array", `new Uint8Array([5, 6])`, { 0: 5, 1: 6 }],
   ["a Proxy of an Array", `new Proxy(["a", "b"], {})`, { 0: "a", 1: "b", length: 2 }],
@@ -336,7 +350,7 @@ test.each([
   expect(named).toEqual(expected);
 });
 
-describe("node:vm context global as CJS exports", () => {
+describe.concurrent("node:vm context global as CJS exports", () => {
   test("a sandbox property reads as it does in the context", async () => {
     using dir = tempDir("cjs-vm-global", {
       "mod.cjs": `

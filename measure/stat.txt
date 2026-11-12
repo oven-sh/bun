@@ -1,0 +1,15 @@
+ src/event_loop/ConcurrentTask.rs                   |    1 +
+ src/io/PipeReader.rs                               |   20 +-
+ src/js/internal/streams/native-readable.ts         |  132 ++-
+ src/js/node/child_process.ts                       |   19 +-
+ src/js/private.d.ts                                |    6 +
+ .../webcore/streams/ReadCallbackAsyncContext.cpp   |   35 +
+ src/jsc/event_loop.rs                              |   53 +
+ src/runtime/dispatch.rs                            |    9 +-
+ src/runtime/webcore/FileReader.rs                  |  347 +++++-
+ src/runtime/webcore/ReadableStream.bind.ts         |   14 +-
+ test/js/bun/repl/repl.test.ts                      |  167 +++
+ .../js/bun/spawn/spawn-stdio-syscall-error.test.ts |  245 ++++-
+ test/js/node/child_process/child_process.test.ts   | 1144 +++++++++++++++++++-
+ test/js/node/stream/node-stream.test.js            |   59 +
+ 14 files changed, 2164 insertions(+), 87 deletions(-)

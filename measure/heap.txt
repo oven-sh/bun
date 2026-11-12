@@ -1,0 +1,6 @@
+== base
+{"n":100,"objectCount":0,"Promise":220,"Function":1957,"JSLexicalEnvironment":472,"Buffer":1,"Uint8Array":202,"ArrayBuffer":2,"Object":496,"types":117}
+{"n":400,"objectCount":0,"Promise":820,"Function":2557,"JSLexicalEnvironment":1372,"Buffer":1,"Uint8Array":801,"ArrayBuffer":2,"Object":496,"types":117}
+== arm
+{"n":100,"objectCount":0,"Promise":20,"Function":1762,"JSLexicalEnvironment":273,"Buffer":1,"Uint8Array":101,"ArrayBuffer":2,"Object":497,"types":116}
+{"n":400,"objectCount":0,"Promise":20,"Function":1762,"JSLexicalEnvironment":573,"Buffer":1,"Uint8Array":401,"ArrayBuffer":2,"Object":497,"types":116}

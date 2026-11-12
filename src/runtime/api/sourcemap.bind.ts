@@ -14,16 +14,17 @@ export const SourceMap = b.class({
     throws: true,
     length: 0,
   },
-  internalFields: ["lineLengths", "payload"],
   proto: {
     findEntry: { ...find, args: { lineOffset: b.any, columnOffset: b.any } },
     findOrigin: { ...find, args: { lineNumber: b.any, columnNumber: b.any } },
-    lineLengths: { internalField: "lineLengths" },
-    payload: { internalField: "payload" },
+    /** The constructor caches its `options.lineLengths`. A map of `findSourceMap()` computes the array on the first read. */
+    lineLengths: { getter: b.any.returning("Array", "undefined"), cache: true, capability: "js", throws: true },
+    /** The constructor caches its `payload`. A map of `findSourceMap()` writes a v3 document on the first read. */
+    payload: { getter: b.any.returning("object"), cache: true, capability: "js", throws: true },
   },
 });
 
-/** Returns before it looks at `path`: source maps are not enabled. */
+/** The map of a module that loaded while source maps were enabled (`--enable-source-maps`, `process.setSourceMapsEnabled(true)`). */
 export const findSourceMap = b.fn({
   args: { path: b.any },
   returns: SourceMap.optional,

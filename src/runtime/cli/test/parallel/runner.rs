@@ -392,6 +392,9 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
             argv.push(dupe_z(heap_prof.dir));
         }
     }
+    if ctx.args.enable_source_maps {
+        argv.push(lit(b"--enable-source-maps\0"));
+    }
     for preload in ctx.preloads.iter() {
         argv.push(lit(b"--preload\0"));
         argv.push(dupe_z(preload));

@@ -1,9 +1,6 @@
 //! This implements the JavaScript SourceMap class from Node.js.
 
-use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-
-use bstr::BStr;
 
 use bun_core::{self as bstring, strings};
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsStructure, JsWrapper};
@@ -18,23 +15,14 @@ pub(crate) struct JSSourceMap {
     names: Box<[bstring::String]>,
 }
 
-/// TODO: when we implement --enable-source-map CLI flag, set this to true.
-// Mutable global; AtomicBool for safe mutation.
-static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
-
+/// `module.findSourceMap(url)`: the map of a runtime-transpiled module whose text JSC compiled
+/// while source maps were enabled, from what runs to the file that was loaded. A module that
+/// loaded while they were off has no entry, and a switch after the load changes nothing, as in
+/// Node. Returns `None` for anything else: Node's `findSourceMap` never throws.
 pub(crate) fn find_source_map<'a>(
     cx: &mut JsScope<'a>,
     path: JsLocal<'a>,
 ) -> JsResult<Option<JsWrapper<'a, JSSourceMap>>> {
-    // Node.js doesn't enable source maps by default.
-    // In Bun, we do use them for almost all files since we transpile almost all files
-    // If we enable this by default, we don't have a `payload` object since we don't internally create one.
-    // This causes Next.js to emit errors like the below on start:
-    //       .next/server/chunks/ssr/[root-of-the-server]__012ba519._.js: Invalid source map. Only conformant source maps can be used to filter stack frames. Cause: TypeError: payload is not an Object. (evaluating '"sections" in payload')
-    if !ENABLE_SOURCE_MAPS.load(Ordering::Relaxed) {
-        return Ok(None);
-    }
-
     let global = cx.global();
     let source_url_value = path.to_js();
     if !source_url_value.is_string() {
@@ -54,39 +42,50 @@ pub(crate) fn find_source_map<'a>(
         }
     }
 
-    if let Some(source_url_index) = strings::index_of(source_url_slice.slice(), b"://") {
-        if &source_url_slice.slice()[..source_url_index] == b"file" {
-            let path = bun_url::path_from_file_url(&source_url_string);
-
-            if path.is_dead() {
-                return Err(global.throw_value(global.err_invalid_url(format_args!(
-                    "Invalid URL: {}",
-                    BStr::new(source_url_slice.slice())
-                ))));
-            }
-
-            // Replace the file:// URL with the absolute path.
-            drop(source_url_slice);
-            source_url_string = path;
-            source_url_slice = source_url_string.to_utf8();
+    // The table keys a module by its path. Node takes a `file:` URL or a path, which it makes a
+    // URL of: a path goes through one the same way, so that its separators are the platform's.
+    let is_file_url = strings::index_of(source_url_slice.slice(), b"://")
+        .is_some_and(|index| &source_url_slice.slice()[..index] == b"file");
+    if is_file_url || bun_paths::is_absolute(source_url_slice.slice()) {
+        let url = if is_file_url {
+            source_url_string.clone()
+        } else {
+            bun_url::file_url_from_string(&source_url_string)
+        };
+        let path = bun_url::path_from_file_url(&url);
+        if path.is_dead() {
+            return Ok(None);
         }
+        drop(source_url_slice);
+        source_url_string = path;
+        source_url_slice = source_url_string.to_utf8();
     }
 
     let source_url = source_url_slice.slice();
 
     // SAFETY: `bun_vm()` returns the live per-thread VM for a Bun-owned global.
     let vm = global.bun_vm().as_mut();
-    let Some(source_map) = vm.source_mappings().get(source_url) else {
+    // Node asks the `nodeModules` setting at each lookup.
+    if !vm.source_mappings().source_maps_support().node_modules
+        && bun_paths::strings::path_contains_node_modules_folder(source_url)
+    {
+        return Ok(None);
+    }
+    let Some(source_map) = vm.source_mappings().get_recorded(source_url) else {
         return Ok(None);
     };
+    // Bun's map has one source: the module itself. Node names a file by its URL.
+    let source = if bun_paths::is_absolute(source_url) {
+        bun_url::file_url_from_string(&source_url_string)
+    } else {
+        source_url_string.clone()
+    };
     drop(source_url_slice);
-    let fake_sources_array: Box<[bstring::String]> = Box::new([source_url_string]);
+    let sources: Box<[bstring::String]> = Box::new([source]);
 
-    // `SavedSourceMap::get` hands back a +1 ref as an `Arc<ParsedSourceMap>`;
-    // `Drop` on the field releases it — no manual `deref_()` needed.
     let this = JSSourceMap {
         sourcemap: source_map,
-        sources: fake_sources_array,
+        sources,
         names: Box::default(),
     };
     Ok(Some(this.into_js(&cx.heap)))
@@ -190,6 +189,40 @@ impl JSSourceMap {
 
     pub(crate) fn estimated_size(&self) -> usize {
         self.sources.len() * core::mem::size_of::<bstring::String>() + self.sourcemap.memory_cost()
+    }
+
+    /// Runs for a map of `findSourceMap()` only: the constructor caches the payload it was given.
+    /// Bun keeps the decoded mappings, so this writes them as a v3 document. The printer maps no
+    /// names, so `names` is empty.
+    pub(crate) fn get_payload(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
+        let sources =
+            JSValue::create_array_from_iter(global, self.sources.iter(), |s| s.to_js(global))?;
+        let names = JSValue::create_empty_array(global, 0)?;
+        let mappings = bun_string_jsc::create_utf8_for_js(global, self.sourcemap.vlq_mappings())?;
+
+        let payload = JSValue::create_empty_object(global, 4);
+        payload.put(global, b"version", JSValue::js_number(3.0));
+        payload.put(global, b"sources", sources);
+        payload.put(global, b"names", names);
+        payload.put(global, b"mappings", mappings);
+        Ok(payload)
+    }
+
+    /// The length of each line of the generated text, for a map of `findSourceMap()`. The
+    /// constructor caches the `lineLengths` option, and `undefined` is the answer without one.
+    pub(crate) fn get_line_lengths(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let line_lengths = self
+            .sourcemap
+            .line_lengths
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let Some(line_lengths) = line_lengths.as_deref() else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        JSValue::create_array_from_iter(cx.global(), line_lengths.iter(), |&length| {
+            Ok(JSValue::js_number(f64::from(length)))
+        })
     }
 
     fn mapping_name_to_js(&self, global: &JSGlobalObject, mapping: &Mapping) -> JsResult<JSValue> {

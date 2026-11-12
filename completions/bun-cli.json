@@ -5037,6 +5037,13 @@
       "multiple": false
     },
     {
+      "name": "enable-source-maps",
+      "description": "Keep the source map of each loaded module for module.findSourceMap().",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
       "name": "no-deprecation",
       "description": "Suppress all reporting of the custom deprecation.",
       "hasValue": false,

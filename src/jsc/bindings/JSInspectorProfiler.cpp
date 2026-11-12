@@ -6,6 +6,7 @@
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ControlFlowProfiler.h>
+#include <JavaScriptCore/FunctionExecutable.h>
 #include <JavaScriptCore/FunctionHasExecutedCache.h>
 #include <JavaScriptCore/HeapIterationScope.h>
 #include <JavaScriptCore/MarkedSpaceInlines.h>
@@ -84,7 +85,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_stopPreciseCoverage, (JSGlobalObject*, CallF
 
 // Returns a JSON string describing every script the control flow profiler has
 // data for: [{ url, scriptId, sourceLength, blocks: [[start, end, count]],
-// functions: [[start, end, executed]] }]. The JS layer in node/inspector.ts
+// functions: [[start, end, executed, name]] }]. The JS layer in node/inspector.ts
 // reshapes this into the V8 ScriptCoverage format.
 JSC_DECLARE_HOST_FUNCTION(jsFunction_collectPreciseCoverage);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * globalObject, CallFrame*))
@@ -96,11 +97,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
 
     // Enumerate SourceIDs by walking only the four ScriptExecutable subspaces
     // (not the whole heap). Providers whose executables were all GC'd are not
-    // reported, and offsets index the transpiled source for Bun-loaded modules;
-    // Bun appends an inline //# sourceMappingURL, so consumers that read the
-    // script source (v8-to-istanbul) can remap.
+    // reported. Offsets index the text JSC compiled, which for a module Bun
+    // loaded is the transpiled text, as V8's index the text it compiled: with
+    // source maps enabled, module.findSourceMap(url) gives the map and the
+    // line lengths of that text.
+    //
+    // The same walk names each function range: the cache of ranges has no
+    // name, and the FunctionExecutable that starts where a range starts has.
     Vector<Ref<JSC::SourceProvider>> providers;
     HashSet<SourceID> seenSourceIDs;
+    using FunctionStart = std::pair<SourceID, unsigned>;
+    UncheckedKeyHashMap<FunctionStart, String> functionNames;
     {
         HeapIterationScope iterationScope(vm.heap);
         vm.heap.forEachScriptExecutableSpace([&](auto& spaceAndSet) {
@@ -109,6 +116,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
                 auto* provider = executable->source().provider();
                 if (!provider)
                     return;
+                if (executable->isFunctionExecutable()) {
+                    auto* function = static_cast<FunctionExecutable*>(executable);
+                    String name = function->ecmaNameWithoutGC();
+                    if (!name.isEmpty()) {
+                        // V8 names an accessor "get x" and "set x".
+                        if (function->isGetter())
+                            name = makeString("get "_s, name);
+                        else if (function->isSetter())
+                            name = makeString("set "_s, name);
+                        functionNames.add(FunctionStart { provider->asID(), function->functionStart() }, WTF::move(name));
+                    }
+                }
                 if (!seenSourceIDs.add(provider->asID()).isNewEntry)
                     return;
                 providers.append(*provider);
@@ -154,9 +173,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
             if (JSC::isProgramOrModuleParseMode(parseMode) || JSC::isGeneratorOrAsyncFunctionBodyParseMode(parseMode))
                 continue;
             auto range = JSON::Array::create();
-            range->pushDouble(static_cast<double>(std::get<1>(functionRange)));
+            unsigned start = std::get<1>(functionRange);
+            range->pushDouble(static_cast<double>(start));
             range->pushDouble(static_cast<double>(std::get<2>(functionRange)) + 1);
             range->pushBoolean(std::get<0>(functionRange));
+            auto name = functionNames.find(FunctionStart { sourceID, start });
+            range->pushString(name == functionNames.end() ? emptyString() : name->value);
             functionArray->pushValue(WTF::move(range));
         }
         script->setValue("functions"_s, WTF::move(functionArray));

@@ -5501,8 +5501,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_setSourceMapsEnabled, (JSC::JSGlobalObject * le
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "enabled"_s, "boolean"_s, arg0);
     }
 
-    globalObject->processObject()->m_sourceMapsEnabled = arg0.toBoolean(globalObject);
+    bool enabled = arg0.asBoolean();
+    Bun__VM__setSourceMapsSupport(globalObject->bunVM(), BunSourceMapsSupport { enabled, enabled, enabled });
     return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_CUSTOM_GETTER(processSourceMapsEnabled, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue, JSC::PropertyName))
+{
+    return JSValue::encode(jsBoolean(Bun__VM__sourceMapsSupport(defaultGlobalObject(lexicalGlobalObject)->bunVM()).enabled));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_stubFunctionReturningArray, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -6303,6 +6309,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   setgroups                        Process_functionsetgroups                           Function 1
   initgroups                       Process_functioninitgroups                          Function 2
   setuid                           Process_functionsetuid                              Function 1
+  sourceMapsEnabled                processSourceMapsEnabled                            CustomAccessor|ReadOnly
 #endif
 @end
 */

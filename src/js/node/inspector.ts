@@ -283,7 +283,7 @@ function removeConsoleHooks() {
 }
 
 // Reshapes the raw control-flow-profiler data from jsFunction_collectPreciseCoverage
-// ([{ url, scriptId, sourceLength, blocks: [[start, end, count]], functions: [[start, end, executed]] }])
+// ([{ url, scriptId, sourceLength, blocks: [[start, end, count]], functions: [[start, end, executed, name]] }])
 // into the V8 ScriptCoverage list returned by Profiler.takePreciseCoverage:
 // each function gets an entry whose first range spans the whole function with its
 // call count, followed by the basic-block ranges inside it; blocks outside any
@@ -294,7 +294,7 @@ function buildScriptCoverageList(
     scriptId: number;
     sourceLength: number;
     blocks: Array<[number, number, number]>;
-    functions: Array<[number, number, boolean]>;
+    functions: Array<[number, number, boolean, string]>;
   }>,
   callCount: boolean,
   detailed: boolean,
@@ -384,10 +384,10 @@ function buildScriptCoverageList(
     });
 
     for (let i = 0; i < functions.length; i++) {
-      const [startOffset, endOffset, executed] = functions[i];
+      const [startOffset, endOffset, executed, functionName] = functions[i];
       if (!executed) {
         entries.push({
-          functionName: "",
+          functionName,
           ranges: [{ startOffset, endOffset, count: 0 }],
           isBlockCoverage: false,
         });
@@ -408,7 +408,7 @@ function buildScriptCoverageList(
         count = entryBlock[2];
       }
       entries.push({
-        functionName: "",
+        functionName,
         ranges: toRanges([startOffset, endOffset, count], ownBlocks),
         isBlockCoverage: detailed,
       });

@@ -686,18 +686,21 @@ console.log(
       expect(entry).toBeDefined();
       expect(entry.scriptId).toBeString();
 
-      // Whole-script entry spans the entire source and ran once.
+      // Whole-script entry spans the entire source and ran once. V8 names it "".
+      expect(entry.functions[0].functionName).toBe("");
       expect(entry.functions[0].isBlockCoverage).toBe(true);
       expect(entry.functions[0].ranges[0]).toEqual({ startOffset: 0, endOffset: codeLength, count: 1 });
 
       // add() was called 3 times.
       const addEntry = entryCoveringOffset(entry.functions, offsets.addBody);
+      expect(addEntry.functionName).toBe("add");
       expect(addEntry.isBlockCoverage).toBe(true);
       expect(addEntry.ranges[0].count).toBe(3);
 
       // classify() was called twice and never took the negative branch, so a
       // block range with count 0 covers the untaken branch.
       const classifyEntry = entryCoveringOffset(entry.functions, offsets.positiveReturn);
+      expect(classifyEntry.functionName).toBe("classify");
       expect(classifyEntry.ranges[0].count).toBe(2);
       expect(
         classifyEntry.ranges.some(
@@ -711,7 +714,7 @@ console.log(
       // neverCalled() reports a single function-granularity range with count 0.
       const neverCalledEntry = entryCoveringOffset(entry.functions, offsets.neverCalledBody);
       expect(neverCalledEntry).toEqual({
-        functionName: "",
+        functionName: "neverCalled",
         isBlockCoverage: false,
         ranges: [{ startOffset: expect.any(Number), endOffset: expect.any(Number), count: 0 }],
       });
@@ -758,6 +761,55 @@ console.log(
         "function neverCalled() { return 3; }",
         "y => y",
       ]);
+    });
+
+    test.concurrent('names each function as V8 does, and the script ""', async () => {
+      using dir = tempDir("inspector-coverage-names", {
+        "fixture.mjs": `
+          import { Session } from "node:inspector/promises";
+          const session = new Session();
+          session.connect();
+          await session.post("Profiler.enable");
+          await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+          const { pick, unused, Box, arrow } = await import("./named.ts");
+          pick(0, null);
+          new Box().size();
+          const { result } = await session.post("Profiler.takePreciseCoverage");
+          const { functions } = result.find(script => script.url.endsWith("/named.ts"));
+          console.log(JSON.stringify(functions.map(f => [f.functionName, f.ranges[0].count])));
+        `,
+        "named.ts": `
+          export function pick(a: number, b: string | null): string {
+            if (a > 1) return "big";
+            return b ?? "none";
+          }
+          export const unused = (): number => 1;
+          export const arrow = (n: number) => n;
+          export class Box {
+            size(): number {
+              return 1;
+            }
+            empty(): boolean {
+              return false;
+            }
+          }
+        `,
+      });
+
+      await using proc = Bun.spawn({ cmd: [bunExe(), "fixture.mjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      const names = JSON.parse(stdout) as [string, number][];
+      // The whole-script entry comes first and has no name.
+      expect(names[0]).toEqual(["", 1]);
+      expect(Object.fromEntries(names.slice(1))).toEqual({
+        pick: 1,
+        unused: 0,
+        arrow: 0,
+        size: 1,
+        empty: 0,
+      });
     });
 
     test.concurrent("what is skipped, or after a yield or an await that is not resumed, is a range", async () => {

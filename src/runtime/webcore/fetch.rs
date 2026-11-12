@@ -195,6 +195,25 @@ fn system_type_error(err: &bun_sys::Error, global_this: &JSGlobalObject) -> JSVa
     jsc::SystemError::from(err.to_system_error()).to_type_error_instance(global_this)
 }
 
+/// A pipe or a socket that no `slice()` bounds. It can be slow to end, or never end.
+fn is_unbounded_pipe(body: &HTTPRequestBody) -> bool {
+    if cfg!(windows) || !body.needs_to_read_file() || body.blob().size.get() != blob::MAX_SIZE {
+        return false;
+    }
+    let store = body.store().expect("needs_to_read_file implies store");
+    // `stat`, not `open`: opening a FIFO blocks until it has a writer.
+    let stat = match &store.data.as_file().pathlike {
+        PathOrFileDescriptor::Fd(fd) => bun_sys::fstat(*fd),
+        PathOrFileDescriptor::Path(path) => {
+            bun_sys::stat(path.slice_z(&mut bun_paths::path_buffer_pool::get()))
+        }
+    };
+    stat.is_ok_and(|stat| {
+        let mode = stat.st_mode as u32;
+        bun_sys::S::ISFIFO(mode) || bun_sys::S::ISSOCK(mode)
+    })
+}
+
 /// Returns the `TypeError` that `fetch("file:...")` rejects with if reading `file_blob` can only fail.
 fn file_url_unreadable_error(file_blob: &Blob, global_this: &JSGlobalObject) -> Option<JSValue> {
     // A file embedded in a standalone executable is a byte store and isn't on disk.
@@ -1172,10 +1191,8 @@ fn fetch_impl(
     // `body` is mutated in place for the sendfile/readfile paths and then
     // *moved* into `FetchOptions`.
 
-    if body.is_s3() {
+    if body.is_s3() || (compress.is_none() && is_unbounded_pipe(&body)) {
         'prepare_body: {
-            // is a S3 file we can use chunked here
-
             if let Some(stream) = ReadableStream::from_js(
                 ReadableStream::from_blob_copy_ref(
                     &global_this.js_thread(context),
@@ -1196,7 +1213,7 @@ fn fetch_impl(
             }
             let rejected_value = JSPromise::rejected_promise(
                 global_this,
-                global_this.create_error_instance(format_args!("Failed to start s3 stream")),
+                global_this.create_error_instance(format_args!("Failed to start the body stream")),
             )
             .to_js();
             body.detach();

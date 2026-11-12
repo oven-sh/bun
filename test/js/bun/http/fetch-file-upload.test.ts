@@ -11,8 +11,10 @@ import {
   tls,
   withoutAggressiveGC,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { once } from "node:events";
 import { closeSync, existsSync, openSync, readFileSync, truncateSync } from "node:fs";
+import { open } from "node:fs/promises";
 import net from "node:net";
 import { createServer as createTlsServer } from "node:tls";
 import { tmpdir } from "os";
@@ -281,6 +283,57 @@ describe.skipIf(isWindows)("Bun.stdin fed by a pipe uploads every byte", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+});
+
+// The writer only goes on when the origin has what came before, which it never gets from a client that reads to the end first.
+describe.skipIf(isWindows)("a pipe is uploaded while it's being written", () => {
+  test.concurrent.each(["Bun.stdin", "a FIFO"])("%s", async kind => {
+    using dir = tempDir("fetch-upload-pipe", {});
+    const fifo = join(String(dir), "fifo");
+    if (kind === "a FIFO") mkfifo(fifo);
+    const gotFirst = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        let text = "";
+        for await (const chunk of req.body!) {
+          text += Buffer.from(chunk).toString();
+          gotFirst.resolve();
+        }
+        return new Response(`${req.headers.get("content-type")} ${text}`);
+      },
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const [path, url] = process.argv.slice(1);
+         const body = Bun.file(path === "-" ? 0 : path, { type: "text/x-log" });
+         console.log(await (await fetch(url, { method: "POST", body })).text());`,
+        kind === "a FIFO" ? fifo : "-",
+        server.url.href,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (kind === "a FIFO") {
+      await using writer = await open(fifo, "w");
+      await writer.write("first ");
+      await gotFirst.promise;
+      await writer.write("second");
+    } else {
+      proc.stdin.write("first ");
+      await proc.stdin.flush();
+      await gotFirst.promise;
+      proc.stdin.write("second");
+    }
+    await proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "text/x-log first second\n", stderr: "", exitCode: 0 });
   });
 });
 

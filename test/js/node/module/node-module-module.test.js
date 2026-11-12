@@ -1494,6 +1494,30 @@ console.log("survived", require("./late.js"));`,
       expect(exitCode).toBe(0);
     });
 
+    // The getter makes the function, and the FTL hands a getter the global object of the code it compiles.
+    test("is a function of the module's realm when a function from a vm context reads it", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const vm = require("node:vm");
+           const read = vm.runInNewContext("(function (r) { return r.paths; })");
+           // Nothing is stored on a frozen function, so every read calls the getter.
+           const resolve = Object.freeze(require("node:module").createRequire(__filename).resolve);
+           let paths;
+           for (let i = 0; i < 300_000; i++) paths = read(resolve);
+           console.log(JSON.stringify([typeof paths, paths("./x").length, Object.getPrototypeOf(paths) === Function.prototype]));`,
+        ],
+        // Compile on the main thread so the tier-up point doesn't depend on scheduling.
+        env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["function", 1, true]);
+      expect(exitCode).toBe(0);
+    });
+
     test("is made for a module when something first asks for it", async () => {
       const count = 200;
       const files = {};

@@ -1002,38 +1002,6 @@ test.concurrent.each(["cache", "extensions"])(
   },
 );
 
-// The getter of require.resolve.paths makes a function, and the FTL hands it the context's global object.
-test.concurrent(
-  "require.resolve.paths is a function of the module's realm when read by a function from a vm context",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        /*js*/ `
-          const vm = require("node:vm");
-          const read = vm.runInNewContext("(function (r) { return r.paths; })");
-          // Nothing is stored on a frozen function, so every read calls the getter.
-          const resolve = Object.freeze(require("node:module").createRequire(__filename).resolve);
-          let paths;
-          for (let i = 0; i < 300_000; i++) paths = read(resolve);
-          console.log(JSON.stringify([typeof paths, paths("./x").length, Object.getPrototypeOf(paths) === Function.prototype]));
-        `,
-      ],
-      // Compile on the main thread so the tier-up point doesn't depend on scheduling.
-      env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: '["function",1,true]',
-      stderr: "",
-      exitCode: 0,
-    });
-  },
-);
-
 test("can't use export syntax in vm.Script", () => {
   // vm.Script now parses eagerly (like Node), so the SyntaxError surfaces at
   // construction rather than at runInThisContext()/createCachedData().

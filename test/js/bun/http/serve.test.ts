@@ -3305,6 +3305,31 @@ it("answers 413 without 100 Continue when Content-Length exceeds maxRequestBodyS
   });
 });
 
+// With no 100 Continue the client may skip the body, and its next request would be taken for it.
+it.each(["/fetch", "/static", "/file"])(
+  "closes the connection after %s answers a GET that got no 100 Continue",
+  async path => {
+    using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      maxRequestBodySize: 100,
+      routes: { "/static": new Response("ok"), "/file": new Response(file(import.meta.path)) },
+      fetch: () => new Response("ok"),
+    });
+    const socket = net.connect(server.port!, "127.0.0.1");
+    try {
+      socket.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 101\r\n\r\n`);
+      const ended = once(socket, "end");
+      let reply = "";
+      for await (const [chunk] of on(socket, "data")) if ((reply += chunk).includes("\r\n\r\n")) break;
+      expect(reply.match(/^(HTTP\/1\.1|Connection:) .*$/gm)).toEqual(["HTTP/1.1 200 OK", "Connection: close"]);
+      await ended;
+    } finally {
+      socket.destroy();
+    }
+  },
+);
+
 it("should support promise returned from error", async () => {
   const { promise, resolve } = Promise.withResolvers<string>();
 

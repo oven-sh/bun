@@ -1272,9 +1272,13 @@ public:
             user.httpRequest->setParameters(r->getParameters());
 
             /* Middleware? Automatically respond to expectations. RFC 9110 10.1.1: answer with the final status alone when the head already decides it. */
-            if (!httpContextData->flags.usingCustomExpectHandler && isExpect100Continue(user.httpRequest->getHeader("expect"))
-                && !(user.httpResponse->getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_REQUEST_BODY_TOO_LARGE)) {
-                user.httpResponse->writeContinue();
+            if (!httpContextData->flags.usingCustomExpectHandler && isExpect100Continue(user.httpRequest->getHeader("expect"))) {
+                if (user.httpResponse->getHttpResponseData()->state & HttpResponseData<SSL>::HTTP_REQUEST_BODY_TOO_LARGE) {
+                    /* The client may send the body or skip it, so the next byte can't be framed. */
+                    user.httpResponse->markCloseConnection(true);
+                } else {
+                    user.httpResponse->writeContinue();
+                }
             }
 
             handler(user.httpResponse, user.httpRequest);

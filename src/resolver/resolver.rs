@@ -3785,6 +3785,9 @@ impl<'a> Resolver<'a> {
                                 }
                                 return MatchStatus::Success;
                             }
+                            if esm.subpath != b"." {
+                                self.set_missing_target(&[pkg_dir_info.abs_path, esm.subpath]);
+                            }
                         }
                     }
                     Err(err) => {

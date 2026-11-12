@@ -109,6 +109,8 @@ it("import.meta.resolve returns the file a package names when the file is missin
         "no-such-package/missing.js",
         "#assets/there.txt",
         "#assets/missing/missing.txt",
+        "#assets/there.txt?raw",
+        "#assets/missing/missing.txt?raw",
         "#assets/folder",
         "with-exports",
         "with-exports/missing.js",
@@ -117,8 +119,9 @@ it("import.meta.resolve returns the file a package names when the file is missin
       ]) {
         let answer;
         try {
-          const path = Bun.fileURLToPath(import.meta.resolve(specifier));
-          answer = path.slice(import.meta.dirname.length).replaceAll("\\\\", "/");
+          const url = new URL(import.meta.resolve(specifier));
+          const path = Bun.fileURLToPath(url).slice(import.meta.dirname.length);
+          answer = path.replaceAll("\\\\", "/") + url.search;
         } catch {
           answer = "throws";
         }
@@ -139,6 +142,8 @@ it("import.meta.resolve returns the file a package names when the file is missin
     answers: {
       "#assets/there.txt": "/assets/there.txt",
       "#assets/missing/missing.txt": "/assets/missing/missing.txt",
+      "#assets/there.txt?raw": "/assets/there.txt?raw",
+      "#assets/missing/missing.txt?raw": "/assets/missing/missing.txt?raw",
       "#assets/folder": "/assets/folder",
       "with-exports": "/node_modules/with-exports/lib/main.js",
       "with-exports/missing.js": "/node_modules/with-exports/lib/missing.js",

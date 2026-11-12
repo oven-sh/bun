@@ -5563,6 +5563,8 @@ impl VirtualMachine {
         let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
+        // Set before resolving: `import.meta.resolve()` keeps the query when the file a package names is missing.
+        ret.query_string = query_string;
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
@@ -5706,7 +5708,6 @@ impl VirtualMachine {
             self.has_any_macro_remappings =
                 self.has_any_macro_remappings || self.transpiler.options.macro_remap.count() > 0;
         }
-        ret.query_string = query_string;
         let result_path = result
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
@@ -6008,13 +6009,13 @@ impl VirtualMachine {
         if mode == ResolveMode::Esm {
             jsc_vm.transpiler.resolver.resolves_for_code_from_disk = false;
         }
-        if resolve_result.is_err()
-            && mode == ResolveMode::ImportMetaResolve
-            && let Some(path) = jsc_vm.transpiler.resolver.missing_target.take()
-        {
-            return Ok(Ok(bun_core::String::clone_utf8(&path)));
-        }
-        if let Err(err) = resolve_result {
+        let missing_target = match resolve_result {
+            Err(_) if mode == ResolveMode::ImportMetaResolve => {
+                jsc_vm.transpiler.resolver.missing_target.take()
+            }
+            _ => None,
+        };
+        if let (Err(err), None) = (resolve_result, &missing_target) {
             let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
             let resolve_msg_index = log
@@ -6079,7 +6080,9 @@ impl VirtualMachine {
             *query = bun_core::String::clone_utf8(result.query_string);
         }
 
-        Ok(Ok(bun_core::String::clone_utf8(result.path)))
+        Ok(Ok(bun_core::String::clone_utf8(
+            missing_target.as_deref().unwrap_or(result.path),
+        )))
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {

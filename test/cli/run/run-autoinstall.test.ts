@@ -47,6 +47,34 @@ describe.concurrent("basic autoinstall", () => {
   }
 });
 
+// https://github.com/oven-sh/bun/issues/21617: as with a package in node_modules, import.meta.resolve() answers with
+// the file that a subpath of an auto-installed package names, even when the file isn't there.
+test("import.meta.resolve of a missing subpath of an auto-installed package returns its path", async () => {
+  using registry = fixtureRegistry();
+  using dir = tempDir("autoinstall-import-meta-resolve-missing", {
+    "index.mjs": `
+      import { dirname, relative } from "node:path";
+      const cache = process.env.BUN_INSTALL_CACHE_DIR;
+      const path = specifier => Bun.fileURLToPath(import.meta.resolve(specifier));
+      const folder = dirname(path("no-deps/index.js"));
+      let missing;
+      try {
+        missing = relative(folder, path("no-deps/missing.js"));
+      } catch (error) {
+        missing = error.code;
+      }
+      console.log(JSON.stringify({ inCache: relative(cache, folder).startsWith("no-deps@"), missing }));
+    `,
+    "bunfig.toml": registry.bunfig,
+  });
+  const { stdout, stderr, exitCode } = await runAutoInstall(String(dir), "index.mjs");
+  expect({ stdout, stderr }).toEqual({
+    stdout: JSON.stringify({ inCache: true, missing: "missing.js" }) + "\n",
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // In auto-install mode the project's own package.json is the lockfile's root
 // package (resolution tag `root`, not `npm`). With a name and an exact version
 // present, resolving any missing bare specifier used to read that resolution

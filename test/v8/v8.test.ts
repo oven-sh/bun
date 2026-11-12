@@ -533,9 +533,14 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
       ].join("\n");
       for (const buildMode of [BuildMode.release, BuildMode.debug]) {
         const output = await runOn(Runtime.bun, buildMode, "test_v8_template_holds_its_own_instance");
-        expect(output.replaceAll(/^\[\w+\].+$/gm, "").trim(), `addon built in ${BuildMode[buildMode]} mode`).toBe(
-          expected,
-        );
+        // The addon writes with std::endl, which is CRLF on Windows.
+        expect(
+          output
+            .replaceAll("\r\n", "\n")
+            .replaceAll(/^\[\w+\].+$/gm, "")
+            .trim(),
+          `addon built in ${BuildMode[buildMode]} mode`,
+        ).toBe(expected);
       }
     });
   });

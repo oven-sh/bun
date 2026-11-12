@@ -271,22 +271,25 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
   // syscall, then close. Before the fix the buffered bytes were silently
   // dropped, the write was acknowledged as flushed and the peer saw a clean
   // FIN terminating a truncated stream.
-  test("send → sustained EPROTOTYPE surfaces as 'error' + close, not silent truncation", async () => {
-    using p = await connectedPair();
-    const fd = (p.client as any)._handle.fd as number;
-    expect(fd).toBeGreaterThanOrEqual(0);
-    fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE" as any, repeat: -1, fd });
-    const errP = once(p.client, "error") as Promise<[NodeJS.ErrnoException]>;
-    // Not events.once(): that helper rejects its promise when 'error' fires
-    // first, and 'error' arriving before 'close' is exactly this contract.
-    const closeP = new Promise<void>(resolve => p.client.once("close", () => resolve()));
-    p.client.write(Buffer.alloc(64, "x"));
-    const [err] = await errP;
-    fault.clear();
-    expect({ code: err.code, syscall: err.syscall }).toEqual({ code: "EPROTOTYPE", syscall: "write" });
-    await closeP;
-    expect(p.client.destroyed).toBe(true);
-  });
+  test.each(["EPROTOTYPE", "EPERM"])(
+    "send → sustained %s surfaces as 'error' + close, not silent truncation",
+    async errno => {
+      using p = await connectedPair();
+      const fd = (p.client as any)._handle.fd as number;
+      expect(fd).toBeGreaterThanOrEqual(0);
+      fault.set({ syscall: "send", action: "errno", errno: errno as any, repeat: -1, fd });
+      const errP = once(p.client, "error") as Promise<[NodeJS.ErrnoException]>;
+      // Not events.once(): that helper rejects its promise when 'error' fires
+      // first, and 'error' arriving before 'close' is exactly this contract.
+      const closeP = new Promise<void>(resolve => p.client.once("close", () => resolve()));
+      p.client.write(Buffer.alloc(64, "x"));
+      const [err] = await errP;
+      fault.clear();
+      expect({ code: err.code, syscall: err.syscall }).toEqual({ code: errno, syscall: "write" });
+      await closeP;
+      expect(p.client.destroyed).toBe(true);
+    },
+  );
 
   // Server-side twin of the above. On kqueue the failed flush from the writable event
   // runs before the read dispatch (EV_EOF sets eof, not error), so the pending

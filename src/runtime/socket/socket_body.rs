@@ -97,6 +97,10 @@ pub(super) fn uv_status(errno: sys::SystemErrno) -> c_int {
 
 /// Why a send failed, from uSockets' numbering.
 fn send_errno(send_error: c_int) -> sys::SystemErrno {
+    // What uSockets reports for a send that left no WSA code.
+    if cfg!(windows) && send_error == 1 {
+        return sys::SystemErrno::ECONNRESET;
+    }
     uws::SocketGroup::errno(send_error).unwrap_or(sys::SystemErrno::ECONNRESET)
 }
 
@@ -2507,8 +2511,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
         Ok(match result {
             WriteResult::Fail => return Err(jsc::JsError::Thrown),
-            // The errno of a fatal send (< -1) is for node:net; this API documents -1.
-            WriteResult::Success { wrote, .. } => JSValue::js_number(wrote.max(-1) as f64),
+            WriteResult::SendFailed(_) => JSValue::js_number_from_int32(-1),
+            WriteResult::Success { wrote, .. } => JSValue::js_number(wrote as f64),
         })
     }
 
@@ -2578,43 +2582,48 @@ impl<const SSL: bool> NewSocket<SSL> {
             && !(SSL && self.flags.get().contains(Flags::REJECTED))
     }
 
-    /// One send of at most `i32::MAX` bytes. Returns what the socket took, or the negative errno of a send that failed for good.
-    fn try_send(&self, buffer: &[u8]) -> i32 {
+    /// One send of at most `i32::MAX` bytes. Returns what the socket took, or the errno of a send that failed for good.
+    fn try_send(&self, buffer: &[u8]) -> Result<usize, c_int> {
         let socket = self.socket.get();
         let buffer = &buffer[..buffer.len().min(i32::MAX as usize)];
         // The raw half of an `upgradeTLS` pair shares the TLS half's us_socket_t, where `write_check_error` would encrypt.
-        if self.flags.get().contains(Flags::BYPASS_TLS) {
-            return socket.raw_write(buffer);
-        }
-        let (res, fatal_errno) = socket.write_check_error(buffer);
+        let (res, fatal_errno) = if self.flags.get().contains(Flags::BYPASS_TLS) {
+            (socket.raw_write(buffer), 0)
+        } else {
+            socket.write_check_error(buffer)
+        };
         log!("write({}) = {}", buffer.len(), res);
-        if fatal_errno != 0 { -fatal_errno } else { res }
+        match fatal_errno {
+            0 => Ok(usize::try_from(res.max(0)).expect("int cast")),
+            errno => Err(errno),
+        }
     }
 
     /// An unbuffered write: the caller keeps what the socket didn't take.
-    fn send_unbuffered(&self, buffer: &[u8]) -> i32 {
-        let res = self.try_send(buffer);
-        self.count_written(usize::try_from(res.max(0)).expect("int cast"));
-        res
+    fn send_unbuffered(&self, buffer: &[u8]) -> Result<usize, c_int> {
+        self.try_send(buffer)
+            .inspect(|sent| self.count_written(*sent))
     }
 
-    /// The http2 parser's write. Returns -1 if the socket takes no writes.
+    /// The http2 parser's write. Returns -1 if the socket takes no writes, and less if the send failed for good.
     pub(crate) fn write_maybe_corked(&self, buffer: &[u8]) -> i32 {
         if !self.takes_writes() {
             return -1;
         }
-        self.send_unbuffered(buffer)
+        match self.send_unbuffered(buffer) {
+            Ok(sent) => i32::try_from(sent).expect("int cast"),
+            Err(_) => i32::MIN,
+        }
     }
 
     /// Sends `bytes` until the socket refuses some. Returns what it took, and the errno of a send that failed for good.
     fn send(&self, mut bytes: &[u8]) -> (usize, c_int) {
         let mut sent: usize = 0;
         loop {
-            let wrote = self.try_send(bytes);
-            if wrote < -1 {
-                return (sent, -wrote);
-            }
-            let wrote = usize::try_from(wrote.max(0)).expect("int cast");
+            let wrote = match self.try_send(bytes) {
+                Ok(wrote) => wrote,
+                Err(errno) => return (sent, errno),
+            };
             sent += wrote;
             bytes = &bytes[wrote..];
             // Only a whole `i32::MAX` slice leaves more to send without the socket having refused anything.
@@ -2671,19 +2680,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             self.write_behind_queue(global, data.to_js(), encoding.to_js())
         };
-        let WriteResult::Success { wrote, total } = result else {
-            return Err(jsc::JsError::Thrown);
-        };
-        if wrote < -1 {
-            let send_error = c_int::try_from(-wrote).expect("int cast");
-            if !SSL {
+        let (wrote, total) = match result {
+            WriteResult::Fail => return Err(jsc::JsError::Thrown),
+            WriteResult::SendFailed(send_error) if !SSL => {
                 let status = uv_status(send_errno(send_error));
                 return Ok(JSValue::js_number_from_int32(status));
             }
-            // A TLS write never fails in the same call, as in Node.
-            self.fail_queued_writes(send_error, PendingWrites::fail);
-            return Ok(JSValue::FALSE);
-        }
+            WriteResult::SendFailed(send_error) => {
+                // A TLS write never fails in the same call, as in Node.
+                self.fail_queued_writes(send_error, PendingWrites::fail);
+                return Ok(JSValue::FALSE);
+            }
+            WriteResult::Success { wrote, total } => (wrote, total),
+        };
         if usize::try_from(wrote.max(0)).expect("int cast") == total
             && !self.holds_unsent_tls_records()
         {
@@ -2746,10 +2755,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             .with_mut(|b| b.append_slice(buffer.slice()));
         let fatal_errno = self.send_queue();
         if fatal_errno != 0 {
-            return WriteResult::Success {
-                wrote: -(fatal_errno as isize),
-                total,
-            };
+            return WriteResult::SendFailed(fatal_errno);
         }
         if self.socket.get().is_detached() {
             return WriteResult::Success { wrote: -1, total };
@@ -2945,19 +2951,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         log!("writeOrEnd {}", bytes.len());
         if !buffer_unwritten_data {
-            return WriteResult::Success {
-                wrote: self.send_unbuffered(bytes) as isize,
-                total: bytes.len(),
+            return match self.send_unbuffered(bytes) {
+                Ok(sent) => WriteResult::Success {
+                    wrote: isize::try_from(sent).expect("int cast"),
+                    total: bytes.len(),
+                },
+                Err(errno) => WriteResult::SendFailed(errno),
             };
         }
         // Ahead of the send: a Duplex transport's `write()` can destroy the socket, and node:net reads the count there.
         self.count_written(bytes.len());
         let (sent, fatal_errno) = self.send(bytes);
         if fatal_errno != 0 {
-            return WriteResult::Success {
-                wrote: -(fatal_errno as isize),
-                total: bytes.len(),
-            };
+            return WriteResult::SendFailed(fatal_errno);
         }
         if sent < bytes.len() {
             self.buffered_data_for_node_net
@@ -3094,13 +3100,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
         let result = match result {
             WriteResult::Fail => return Err(jsc::JsError::Thrown),
+            WriteResult::SendFailed(send_error) => {
+                self.fail_queued_writes(send_error, PendingWrites::fail);
+                JSValue::js_number(-1.0)
+            }
             WriteResult::Success { wrote, total } => {
-                if wrote < -1 {
-                    self.fail_queued_writes(
-                        c_int::try_from(-wrote).expect("int cast"),
-                        PendingWrites::fail,
-                    );
-                } else if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
+                if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
                     let _ = self.internal_flush();
                 } else {
                     self.arm_tail_timeout();
@@ -3108,7 +3113,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 if queues_tail && wrote >= 0 {
                     JSValue::js_number(total as f64)
                 } else {
-                    JSValue::js_number(wrote.max(-1) as f64)
+                    JSValue::js_number(wrote as f64)
                 }
             }
         };
@@ -3466,7 +3471,13 @@ impl NativeCallbacks {
 
 enum WriteResult {
     Fail,
-    Success { wrote: isize, total: usize },
+    /// The send failed for good, with this errno in uSockets' numbering.
+    SendFailed(c_int),
+    /// `wrote` is -1 if the socket takes no writes.
+    Success {
+        wrote: isize,
+        total: usize,
+    },
 }
 
 /// The end of a write that has to come from the event loop.

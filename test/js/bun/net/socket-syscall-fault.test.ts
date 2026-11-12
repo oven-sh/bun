@@ -580,6 +580,26 @@ test.skipIf(skip).each(["reading", "paused"] as const)(
   },
 );
 
+test.skipIf(skip).each(["EPROTOTYPE", "EPERM"])(
+  "send → sustained %s: close() gets it for the tail of end(data)",
+  async errno => {
+    using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    const closed = Promise.withResolvers<NodeJS.ErrnoException | undefined>();
+    const socket = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      socket: { data() {}, close: (_, error) => closed.resolve(error) },
+    });
+    try {
+      fault.set({ syscall: "send", action: "errno", errno: errno as any, repeat: -1, fd: (socket as any).fd });
+      expect(socket.end("hello")).toBe(5);
+      expect(await closed.promise).toMatchObject({ code: errno, syscall: "write" });
+    } finally {
+      fault.clear();
+    }
+  },
+);
+
 describe.skipIf(skip)("a paused socket closes with the error of a failed send", () => {
   const cases = (["listen", "connect"] as const).flatMap(side =>
     (["tcp", "unix", "tls"] as const).flatMap(transport =>
@@ -705,7 +725,7 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
   /** Connects an http2 client and arms the send-errno rule on its socket fd
    * as soon as the session is connected (before the SETTINGS ACK window).
    * Every session and stream lifecycle event is recorded in `events`. */
-  async function connectAndJam(repeat: number) {
+  async function connectAndJam(repeat: number, errno = "EPROTOTYPE") {
     const frames: string[] = [];
     const events: string[] = [];
     let onFrame: (f: string) => void = f => frames.push(f);
@@ -721,7 +741,7 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
       // Recorded rather than asserted here: a throw inside the listener would
       // not reach the test body, while an unexpected event fails its toEqual.
       if (fd < 0) events.push("connect:no-fd");
-      fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE" as any, after: 0, repeat, fd });
+      fault.set({ syscall: "send", action: "errno", errno: errno as any, after: 0, repeat, fd });
     });
     const req = client.request({ ":path": "/" });
     req.on("error", e => events.push(`stream-error:${(e as any).code ?? e.message}`));
@@ -839,11 +859,11 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
     H2_TIMEOUT_MS,
   );
 
-  test.concurrent(
-    "sustained errno (forever) surfaces as session + stream close, not a silent half-alive jam",
-    () =>
+  test.concurrent.each(["EPROTOTYPE", "EPERM"])(
+    "sustained %s (forever) surfaces as session + stream close, not a silent half-alive jam",
+    errno =>
       serialized(async () => {
-        using h = await connectAndJam(-1);
+        using h = await connectAndJam(-1, errno);
         // No timers: the bounded retry exhausts within a handful of event-loop
         // turns of writable retries, then the transport is torn down. A
         // regression to the silent jam means these events never fire and the

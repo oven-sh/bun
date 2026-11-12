@@ -10,7 +10,7 @@
 // links the unmodified libicudata.a.
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, libcPathForDlopen } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, libcPathForDlopen, tempDir } from "harness";
 
 // Snapshots are CLDR-version-specific. Only check them where Bun bundles the
 // ICU they were generated against; macOS uses Apple's libicucore, so snapshot
@@ -189,12 +189,13 @@ describe("Intl.Collator", () => {
   });
 });
 
-// ICU reads its own default locale from LC_ALL, then LC_MESSAGES, then LANG the
-// first time a calendar or collator is opened. A value it cannot parse used to
-// leave that default unset, and the first Date#toString / localeCompare / Intl
-// constructor then crashed inside ICU. Bun's own default locale does not come
-// from these variables, so every value, parseable or not, must give the en-US
-// output. On Windows neither holds: ICU reads the system locale and JSC reports
+// Left alone, ICU takes its own default locale from LC_ALL, then LC_MESSAGES,
+// then LANG the first time a calendar or collator is opened. A value it cannot
+// parse used to leave that default unset, and the first Date#toString /
+// localeCompare / Intl constructor then crashed inside ICU. Bun's own default
+// locale does not come from these variables, and Bun sets ICU's itself, so
+// every value, parseable or not, must give the en-US output. On Windows the
+// variables decide nothing: ICU would read the system locale, and JSC reports
 // the UI language of the machine.
 describe.skipIf(isWindows).concurrent("locale variables in the environment", () => {
   const script = `console.log(JSON.stringify([
@@ -230,6 +231,98 @@ describe.skipIf(isWindows).concurrent("locale variables in the environment", () 
     );
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+
+  // `bun lint` compares with ICU's collator and starts no JS VM, so ICU read the
+  // host's locale there.
+  test("bun lint with a value that ICU cannot parse", async () => {
+    using dir = tempDir("intl-lint-lang", { "a.jsx": `export const a = <div b="1" A="2" c="3" />;\n` });
+    const lint = async (LANG: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "lint", "--rule", "react/jsx-sort-props: [error, {ignoreCase: true}]", "a.jsx"],
+        env: { ...bunEnv, LANG, LC_ALL: undefined, LC_MESSAGES: undefined },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      // stderr has the time that the run took.
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      return { stdout, exitCode };
+    };
+    const [unparseable, c] = await Promise.all([lint("abcdefghijkl"), lint("C")]);
+    expect(unparseable).toEqual(c);
+    expect(c).toEqual({ stdout: expect.stringContaining("react/jsx-sort-props"), exitCode: 1 });
+  });
+
+  // ICU gives a locale that has no data of its own the data of its default
+  // locale. With the host's locale as that default, what Intl.Locale says about
+  // such a locale followed the host: "la" had Arabic digits under LANG=ar_EG.UTF-8.
+  describe("Intl.Locale says the same as in this process", () => {
+    const answersOf = (tags: string[]) =>
+      tags.map(tag => {
+        const locale = new Intl.Locale(tag);
+        return {
+          tag,
+          calendars: locale.getCalendars(),
+          collations: locale.getCollations(),
+          hourCycles: locale.getHourCycles(),
+          numberingSystems: locale.getNumberingSystems(),
+          textInfo: locale.getTextInfo(),
+          timeZones: locale.getTimeZones(),
+          weekInfo: locale.getWeekInfo(),
+        };
+      });
+    type Answers = ReturnType<typeof answersOf>;
+
+    // Tags that ICU has no data for, as a whole or for collation.
+    const withoutData = ["la", "eu", "xx", "tlh", "und", "und-SA", "abcdefgh"];
+    // ICU has data for the language, and none for it in this script.
+    const inAnotherScript = ["de-Cyrl", "en-Arab", "ar-Latn", "fa-Latn", "zh-Latn"];
+    const withRegion = ["en-GB", "de-AT", "ar-EG", "fa-AF", "pt-BR", "sr-Latn-BA", "zh-Hant-TW"];
+    // Every locale of ICU without a region. The file has ICU's legacy names too,
+    // which are not tags.
+    const withoutRegion = readFileSync(new URL("./icu-locales.txt", import.meta.url), "utf8")
+      .split("\n")
+      .filter(tag => {
+        try {
+          return new Intl.Locale(tag).region === undefined;
+        } catch {
+          return false;
+        }
+      });
+    const tags = [...new Set([...withoutData, ...inAnotherScript, ...withRegion, ...withoutRegion])];
+    let here: string[] | undefined;
+
+    test.each([{ LANG: "ar_EG.UTF-8" }, { LC_ALL: "de_DE.UTF-8" }, { LC_MESSAGES: "fa_IR.UTF-8" }])(
+      "%o",
+      async vars => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", `console.log(JSON.stringify((${answersOf})(${JSON.stringify(tags)})))`],
+          env: { ...bunEnv, LANG: undefined, LC_ALL: undefined, LC_MESSAGES: undefined, ...vars },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+        const there: Answers = JSON.parse(stdout);
+        here ??= answersOf(tags).map(answer => JSON.stringify(answer));
+        // How many locales differ and the first of them, so that a failure names them.
+        const differs = there.flatMap((answer, index) =>
+          JSON.stringify(answer) === here![index] ? [] : [{ here: here![index], there: JSON.stringify(answer) }],
+        );
+        expect({ differ: differs.length, first: differs.slice(0, 3) }).toEqual({ differ: 0, first: [] });
+
+        const la = there[tags.indexOf("la")];
+        const eu = there[tags.indexOf("eu")];
+        expect({
+          la: { numberingSystems: la.numberingSystems, textInfo: la.textInfo },
+          eu: { collations: eu.collations },
+        }).toEqual({
+          la: { numberingSystems: ["latn"], textInfo: { direction: "ltr" } },
+          eu: { collations: ["emoji", "eor"] },
+        });
+      },
+    );
   });
 });
 

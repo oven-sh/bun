@@ -1,17 +1,8 @@
-// ICU derives its default locale lazily (on POSIX from LC_ALL / LC_MESSAGES /
-// LANG). When that value does not parse, for example LANG=abcdefghijkl or a
-// modifier too long to become a variant, the derivation leaves the default
-// unset and icu::Locale::getDefault() returns a null reference, so the first
-// ucal_open / ucol_open (Date#toString, localeCompare, any Intl constructor)
-// crashes inside ICU.
-//
-// Set the default to en_US, the locale Bun reports anyway, then let ICU derive
-// it from the environment as it would have done lazily. A failed derivation
-// keeps the previous default, so the environment is only ever parsed by ICU's
-// own code and a value it accepts behaves exactly as before.
+// ICU's default locale is never the host's: JS can see it (#48695), and a host value that ICU cannot parse crashes ICU (#39704).
 
 #include "root.h"
 
+#include <mutex>
 #include <unicode/utypes.h>
 
 // Apple's SDK has no <unicode/uloc.h>; utypes.h supplies U_CAPI + renaming.
@@ -21,13 +12,11 @@ U_CAPI void U_EXPORT2 uloc_setDefault(const char* localeID, UErrorCode* status);
 #if OS(LINUX) || OS(WINDOWS) || OS(FREEBSD)
 
 #include <cstring>
-#include <string_view>
 
-U_CAPI const char* U_EXPORT2 uloc_getDefault(void);
 extern "C" const unsigned char U_ICUDATA_ENTRY_POINT[];
 
 // `--trim` leaves 16 bytes in the place of the items of a language that the program does not name, and whoever opens one ends the process.
-static bool isBundleOfLocaleRemoved(std::string_view locale)
+static bool isItemRemovedByTrim(const char* name)
 {
     const unsigned char* package = U_ICUDATA_ENTRY_POINT;
     uint16_t headerSize;
@@ -38,53 +27,35 @@ static bool isBundleOfLocaleRemoved(std::string_view locale)
         std::memcpy(&word, contents + offset, sizeof(word));
         return word;
     };
-    auto findItem = [&](std::string_view stem) -> const unsigned char* {
-        char name[192];
-        constexpr std::string_view prefix = U_ICUDATA_NAME "/";
-        constexpr std::string_view suffix = ".res";
-        if (prefix.size() + stem.size() + suffix.size() >= sizeof(name))
-            return nullptr;
-        char* end = name;
-        for (std::string_view part : { prefix, stem, suffix }) {
-            std::memcpy(end, part.data(), part.size());
-            end += part.size();
-        }
-        *end = 0;
-        uint32_t low = 0;
-        uint32_t high = wordAt(0);
-        while (low < high) {
-            uint32_t middle = low + (high - low) / 2;
-            int order = std::strcmp(name, reinterpret_cast<const char*>(contents + wordAt(4 + 8 * middle)));
-            if (!order)
-                return contents + wordAt(8 + 8 * middle);
-            if (order < 0)
-                high = middle;
-            else
-                low = middle + 1;
-        }
-        return nullptr;
-    };
-
-    locale = locale.substr(0, locale.find('@'));
-    while (!locale.empty()) {
-        if (const unsigned char* item = findItem(locale))
-            return !std::memcmp(item, "BUNICUREMOVED\0\0\0", 16);
-        size_t underscore = locale.rfind('_');
-        locale = locale.substr(0, underscore == std::string_view::npos ? 0 : underscore);
+    uint32_t low = 0;
+    uint32_t high = wordAt(0);
+    while (low < high) {
+        uint32_t middle = low + (high - low) / 2;
+        int order = std::strcmp(name, reinterpret_cast<const char*>(contents + wordAt(4 + 8 * middle)));
+        if (!order)
+            return !std::memcmp(contents + wordAt(8 + 8 * middle), "BUNICUREMOVED\0\0\0", 16);
+        if (order < 0)
+            high = middle;
+        else
+            low = middle + 1;
     }
-    return false;
+    return true;
 }
 
 #endif
 
 extern "C" void Bun__ensureICUDefaultLocale()
 {
-    UErrorCode status = U_ZERO_ERROR;
-    uloc_setDefault("en_US", &status);
-    uloc_setDefault(nullptr, &status);
+    static std::once_flag once;
+    std::call_once(once, [] {
+        UErrorCode status = U_ZERO_ERROR;
 #if OS(LINUX) || OS(WINDOWS) || OS(FREEBSD)
-    // en and en_US are never removed.
-    if (isBundleOfLocaleRemoved(uloc_getDefault())) [[unlikely]]
-        uloc_setDefault("en_US", &status);
+        // ICU opens curr/<default locale>.res for dates in other locales. No item of the root locale is removed by language.
+        if (isItemRemovedByTrim(U_ICUDATA_NAME "/curr/en.res")) [[unlikely]] {
+            uloc_setDefault("", &status);
+            return;
+        }
 #endif
+        uloc_setDefault("en_US", &status);
+    });
 }

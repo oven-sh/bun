@@ -51,6 +51,8 @@ const untypedParameters = "TS7006: the parameters of the decorator have no types
 const esModuleInTdz = 'require(esm) while `__esModule` is in TDZ and "module.exports" is initialized';
 const namespaceOfCompiledFile =
   'a wrong answer today: compiled, require() of the file returns its namespace, where the value of its "module.exports" export is expected';
+const pathMadeAtRunTime =
+  "the module requires its own file by a path made at run time (import.meta.path), and a compiled program refuses such a path";
 
 // path -> test name as `bun test` prints it -> why it fails.
 // A type error stops the build.
@@ -104,7 +106,7 @@ const expectedFailures: Record<string, Record<string, string>> = {
     [`${esModuleInTdz} > the module requires itself`]: namespaceOfCompiledFile,
     [`${esModuleInTdz} > the module requires itself with import.meta.require()`]: namespaceOfCompiledFile,
     [`${esModuleInTdz} > the module requires itself with createRequire()`]: namespaceOfCompiledFile,
-    [`${esModuleInTdz} > the module requires itself with Module.prototype.require`]: namespaceOfCompiledFile,
+    [`${esModuleInTdz} > the module requires itself with Module.prototype.require`]: pathMadeAtRunTime,
     [`${esModuleInTdz} > a CommonJS file that the module requires requires it back`]: namespaceOfCompiledFile,
     [`${esModuleInTdz} > the module re-exports \`__esModule\` from a module that is still evaluating`]:
       namespaceOfCompiledFile,

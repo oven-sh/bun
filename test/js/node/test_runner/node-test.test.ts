@@ -260,8 +260,10 @@ describe("node:test", () => {
   });
 
   test("should reset the module-level mock tracker between --rerun-each iterations", async () => {
-    const { exitCode, stderr } = await runTests(["17-rerun-mock-reset.mjs"], {}, ["--rerun-each=3"]);
-    expect(stderr).toContain("3 pass");
+    const { exitCode, stderr } = await runTests(["17-rerun-mock-reset.mjs", "17b-rerun-mock-reset.js"], {}, [
+      "--rerun-each=3",
+    ]);
+    expect(stderr).toContain("6 pass");
     expect({ exitCode, stderr }).toMatchObject({
       exitCode: 0,
       stderr: expect.stringContaining("0 fail"),

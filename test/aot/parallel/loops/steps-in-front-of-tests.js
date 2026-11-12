@@ -1,5 +1,5 @@
 // Loops whose test steps the number it asks (while (i--), i-- > 0, i++ < n): starts of every kind, lists of every kind.
-// STATISTIC: StepsRestatedBehindTests >= 30
+// STATISTIC: StepsRedefinedAfterTests >= 30
 function whileDown(a, n) {
   let s = 0, turns = 0;
   let i = n; while (i--) { s += a[i]; if (++turns > 40) break; } return [s, i];

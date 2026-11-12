@@ -63,6 +63,8 @@ pub(in crate::lower) fn undeclared_wrapper_parameters(
     parameters.filter(move |&variable| !redeclared.iter().any(|entry| entry.1 == variable))
 }
 
+/// The names that the wrapped body of a file holds in slots of its own. A name that the text never stores to, and
+/// reaches by nothing but the name, is what it is in a file without a wrapper.
 #[derive(Copy, Clone, Default, Debug)]
 pub(in crate::lower) struct WrapperSlots(u8);
 
@@ -174,7 +176,9 @@ impl FileLowering<'_, '_, '_, '_> {
                 ..CommonJsState::default()
             };
         }
-        if keeps_wrapper(hir, bound, self.decisions(), self.builtins) {
+        if self.inputs.modules.may_run_as_original(self.file)
+            || keeps_wrapper(hir, bound, self.decisions(), self.builtins)
+        {
             return CommonJsState {
                 form: BodyForm::Wrapped,
                 keeps_first_exports: false,
@@ -205,12 +209,16 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn has_values_of_each_run(&self) -> bool {
-        self.body_form() == BodyForm::Plain && self.inputs.modules.may_be_reevaluated(self.file)
+        (self.body_form() == BodyForm::Plain || self.inputs.modules.may_run_as_original(self.file))
+            && self.inputs.modules.may_be_reevaluated(self.file)
     }
 
+    /// Without an `arguments` object, the source can reach the wrapper's arguments only by name. The wrapped body then
+    /// creates those values at its own entry, so `module` and `require` are not passed to any call.
     pub(super) fn is_passed_by_wrapper(&self, variable: CommonJsVariable) -> bool {
         variable == CommonJsVariable::Exports
             || self.scopes.arguments_object(CodeUnit::File) != ArgumentsObject::None
+            || self.inputs.modules.may_run_as_original(self.file)
     }
 
     fn find_plain_source(&self, variable: CommonJsVariable) -> VariableSource {
@@ -239,7 +247,8 @@ impl FileLowering<'_, '_, '_, '_> {
                 return match self.scopes.arguments_object(CodeUnit::File) {
                     ArgumentsObject::Mapped => VariableSource::MappedWrapperParameter,
                     ArgumentsObject::None | ArgumentsObject::Unmapped
-                        if self.scopes.wrapper_slots().contains(variable) =>
+                        if self.scopes.wrapper_slots().contains(variable)
+                            && self.is_read_by_name(variable) =>
                     {
                         VariableSource::WrapperParameter
                     }
@@ -280,6 +289,13 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
             }
         }
+    }
+
+    /// The scope walk passes over the names in a specifier that the build reads, as in `require(__filename)`.
+    fn is_read_by_name(&self, variable: CommonJsVariable) -> bool {
+        let slot = ScopeSlot::CommonJs(variable);
+        let stored = BindingRef::Slot(module::file_scope(self), slot);
+        variable == CommonJsVariable::Exports || self.scopes.placement(stored).is_some()
     }
 
     fn find_path_text(&self, owner: FileId, builtin: BuiltinId) -> Option<Vec<u8>> {
@@ -424,6 +440,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 let Some(mut joined) = resolve_paths(&[directory.clone(), written]) else {
                     continue;
                 };
+                // `./rules/` is the folder. `./rules` is rules.json where that file lies beside it.
                 if names_folder && joined.last() != Some(&b'/') {
                     joined.push(b'/');
                 }
@@ -666,6 +683,27 @@ pub(in crate::lower) fn keeps_wrapper(
     })
 }
 
+/// What `prepare` finds, for the parts of the file.
+#[derive(Clone)]
+pub(in crate::lower) struct SharedState {
+    commonjs: CommonJsState,
+    path_comparisons: Vec<super::PathComparison>,
+}
+
+impl SharedState {
+    pub(in crate::lower) fn of(file: &FileLowering<'_, '_, '_, '_>) -> SharedState {
+        SharedState {
+            commonjs: file.modules.commonjs,
+            path_comparisons: file.modules.path_comparisons.clone(),
+        }
+    }
+
+    pub(in crate::lower) fn give(self, file: &mut FileLowering<'_, '_, '_, '_>) {
+        file.modules.commonjs = self.commonjs;
+        file.modules.path_comparisons = self.path_comparisons;
+    }
+}
+
 pub(in crate::lower) fn prepare(file: &mut FileLowering<'_, '_, '_, '_>) {
     file.modules.commonjs = file.compute_state();
     if file.modules.commonjs.names_source_path {
@@ -845,9 +883,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn find_source(&self, variable: CommonJsVariable) -> VariableSource {
         match variable {
             CommonJsVariable::Module | CommonJsVariable::Require
-                if self.is_function_of_file_that_runs_again() =>
+                if self.is_function_of_file_that_runs_again()
+                    && self.file.body_form() == BodyForm::Plain =>
             {
                 VariableSource::WrapperParameter
+            }
+            CommonJsVariable::Filename | CommonJsVariable::Dirname => {
+                let slot = ScopeSlot::CommonJs(variable);
+                let stored = BindingRef::Slot(module::file_scope(self.file), slot);
+                match self.file.find_source(variable) {
+                    // A computed path may begin at a directory that the function doesn't name.
+                    VariableSource::WrapperParameter if !self.reaches_stored(stored) => {
+                        self.file.find_plain_source(variable)
+                    }
+                    source => source,
+                }
             }
             _ => self.file.find_source(variable),
         }
@@ -969,6 +1019,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Scope::Module,
             "a built-in of the realm is a Builtin value"
         );
+        if self.file.inputs.modules.has_instances(self.file.file) {
+            match builtin {
+                BuiltinId::ImportMeta => return self.emit_instance_import_meta(),
+                BuiltinId::ImportMetaUrl => {
+                    let meta = self.emit_instance_import_meta();
+                    let key = text_key(self.file, b"url");
+                    return self.emit_get(meta, PropertyName::Constant(key));
+                }
+                _ => {}
+            }
+        }
         let path = match self.file.is_commonjs_module() {
             true => find_wrapper_path(self.file.builtins, builtin),
             false => None,

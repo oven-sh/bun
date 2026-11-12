@@ -355,6 +355,33 @@ console.log(new Held().own, new Held().declared, show(Level.Own), show(3));
     errors: [],
     stdout: "1 undefined 4 Fine 3 undefined\n",
   },
+  "constants join the halves of a surrogate pair to a key that is also written whole, with Bun's types installed": {
+    files: {
+      ...scriptWithTypesOfBunInstalled(""),
+      "main.ts": `export {};
+const joined = \`\${"\\ud83d"}\${"\\ude00"}\`;
+const faces = { [joined]: 1, "\\u{1F600}": 2 };
+class Faces {
+  [joined] = 1;
+  "\\u{1F600}" = "two";
+}
+console.log(Object.keys(faces).length, faces["\\u{1F600}"], new Faces()["\\u{1F600}"]);
+`,
+    },
+    errors: [],
+    stdout: "1 2 two\n",
+  },
+  "a key written twice, with Bun's types installed": {
+    files: {
+      ...scriptWithTypesOfBunInstalled(""),
+      "main.ts": `export {};\nconst sizes = { small: 1, small: 2 };\nconsole.log(sizes.small);\n`,
+    },
+    errors: ["TS1117"],
+  },
+  "a key written twice, without a tsconfig.json": {
+    files: { "main.ts": `export {};\nconst sizes = { small: 1, small: 2 };\nconsole.log(sizes.small);\n` },
+    errors: ["TS1117"],
+  },
   "a script of a project that has Bun's types installed: a mistake of its own still stops the build": {
     files: scriptWithTypesOfBunInstalled(`const wrong: number = "text";\nconsole.log(wrong);\n`),
     errors: ["TS2322"],

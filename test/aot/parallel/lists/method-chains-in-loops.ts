@@ -1,5 +1,5 @@
 // In a loop, a chain of methods of lists is walked as a whole behind the test of its first list, so that each further link knows the list it is called on.
-// STATISTIC: MethodChainsKeptInArm >= 8
+// STATISTIC: MethodChainsKeptInBranches >= 8
 const lists: { [name: string]: number[] } = JSON.parse('{"whole":[1,2,3,4,5,6,7,8,9],"fractions":[0.5,1.5,-2.25,4],"one":[3],"none":[],"beyond":[1,4294967296,9007199254740991]}');
 const turns: number = JSON.parse("3");
 const holes: number[] = [1, 2, 3, 4, 5];

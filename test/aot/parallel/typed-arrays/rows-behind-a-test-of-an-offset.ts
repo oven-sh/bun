@@ -1,5 +1,5 @@
 // The turn asks itself whether the offset of the row lies from zero up: no front asks it, and a row without one above it runs in the typed turns too.
-// STATISTIC: AddendsWhoseSignIsLeftToTurns >= 3
+// STATISTIC: AddendSignsCheckedInIterations >= 3
 function up(row: Uint8Array, at: number, above: number, n: number): number { let s = 0; for (let i = 0; i < n; i++) { const b = above >= 0 ? row[above + i]! : 0; s += (row[at + i]! - b) & 255; } return s; }
 function upElse(row: Uint8Array, at: number, above: number, n: number): number { let s = 0; for (let i = 0; i < n; i++) { let b = 0; if (above < 0) b = 1; else b = row[above + i]!; s += (row[at + i]! - b) & 255; } return s; }
 function upStored(row: Uint8Array, above: number, n: number): number { let s = 0; for (let i = 0; i < n; i++) { if (above > -1) row[above + i] = i; s += row[i]!; } return s; }

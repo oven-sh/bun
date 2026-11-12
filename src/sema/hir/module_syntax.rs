@@ -31,6 +31,7 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
+    /// Returns true if the attribute that `import_attribute` reads under `key` is constant: every property is `name: value`, and exactly one is named `key`, with a string.
     pub fn is_import_attribute_settled(&self, attributes: ExprId, key: Atom) -> bool {
         let Some(ExprKind::Object(props)) = self.exprs.get(attributes.idx()).map(|it| it.kind)
         else {

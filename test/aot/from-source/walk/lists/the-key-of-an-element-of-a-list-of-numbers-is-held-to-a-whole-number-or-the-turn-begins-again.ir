@@ -50,8 +50,8 @@
 # -- end of source
 # f2 = made, f3 = scaled, f4 = round, f5 = texts
 # RUN(EVENT): compile NumberKeysGuardedInIterations mechanisms=all
-# One for each kind of storage that the turn tells apart.
-# EVENT: statistic NumberKeysGuardedInIterations 3
+# One: the list is asked in front for one kind of storage that takes both.
+# EVENT: statistic NumberKeysGuardedInIterations 1
 # RUN(MADE): walk f2 mechanisms=all
 # MADE-LABEL: code f2:Body
 # MADE: = TypeTest {{*}}testedType=i32
@@ -61,7 +61,7 @@
 # SCALED-LABEL: code f3:Body
 # SCALED: = TypeTest {{*}}testedType=i32
 # SCALED: = NumberToInteger
-# SCALED: = GetArrayElement {{*}}arrayStorage=Double level=Proven [keyIsIntegral]
+# SCALED: = GetArrayElement {{*}}arrayStorage=Double level=Proven [keyIsIntegral, admitsInt32Storage]
 # RUN(ROUND): walk f4 mechanisms=all
 # ROUND-LABEL: code f4:Body
 # ROUND-NOT: = NumberToInteger

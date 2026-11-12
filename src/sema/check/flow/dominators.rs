@@ -11,28 +11,55 @@ struct DominatedNode {
 #[derive(Default)]
 pub(super) struct FlowDominators {
     pub(super) file: Option<FileId>,
+    pub(super) index: Arc<DominatorIndex>,
+    /// Indexed like `DominatorIndex::calls`, each entry combined with its own index by an exclusive or, so that the list begins with
+    /// zeros.
+    last_busy_call: Vec<u32>,
+}
+
+impl std::ops::Deref for FlowDominators {
+    type Target = DominatorIndex;
+    #[inline]
+    fn deref(&self) -> &DominatorIndex {
+        &self.index
+    }
+}
+
+#[derive(Default)]
+pub(in crate::check) struct DominatorIndex {
     nodes: Vec<DominatedNode>,
     enclosing_loop: Vec<u32>,
     starts_of_many: Vec<u32>,
     tests: Vec<(u32, u32, u32)>,
     tests_by_property: Vec<(u32, u32, u32, u32)>,
     about_anything: Vec<(u32, u32)>,
-    conditions: Option<Vec<(u32, u32)>>,
+    conditions: OnceLock<Vec<(u32, u32)>>,
     calls: Vec<(u32, u32)>,
-    last_busy_call: Vec<u32>,
+    /// Indexed by flow node.
     below: Vec<BelowNode>,
+    /// Indexed like `Bound::flow_edges`: where the stretch of edges from this one on ends, in which
+    /// each edge is a later node than the edge before it.
     ascending_edges_end: Vec<u32>,
+    /// Indexed by flow node: the most `getTypeAtFlowNode` invocations in progress when a walk from
+    /// the node reaches the start of its function without a back edge.
     invocations_up_to: Vec<u32>,
 }
 
+/// What a flow node dominates.
 #[derive(Clone, Copy)]
 struct BelowNode {
+    /// The last node it dominates.
     last: u32,
+    /// How many nodes it dominates, itself included.
     count: u32,
+    /// The highest `invocations_up_to` among the nodes it dominates.
     most_invocations: u32,
+    /// Among the loops whose label it dominates and is not, the most invocations that a walk adds
+    /// between the label and its return to it round a back edge.
     longest_turn: u32,
 }
 
+/// A loop whose nodes are being numbered.
 struct OpenLoop {
     label: u32,
     last: u32,
@@ -61,7 +88,7 @@ impl NarrowingSubjects for TestRoots {
     fn add_union(&mut self) {}
 }
 
-impl FlowDominators {
+impl DominatorIndex {
     fn add(&mut self, node: u32, dominator: Option<u32>) {
         debug_assert_eq!(node as usize, self.nodes.len());
         let Some(up) = dominator else {
@@ -161,6 +188,8 @@ impl FlowDominators {
         }
     }
 
+    /// The last node up to `flow` and the first node after it that is a test about `root`, concerns
+    /// every reference, or is a call. 0 and `u32::MAX` if there is none.
     fn find_tests_and_calls_around(&self, root: u32, start: u32, flow: u32) -> (u32, u32) {
         let last = self
             .find_last_test_about(root, start, flow)
@@ -204,10 +233,30 @@ impl Checker<'_, '_> {
 impl Checker<'_, '_> {
     #[inline(never)]
     fn index_flow_dominators(&mut self, file: FileId) {
+        let index = match self.indexes_of_parts(file) {
+            Some(indexes) => Arc::clone(self.shared_index_of_dominators(file, &indexes.flow)),
+            None => Arc::new(self.create_index_of_dominators(file)),
+        };
+        self.flow_memo.dominators = FlowDominators {
+            file: Some(file),
+            last_busy_call: vec![0; index.calls.len()],
+            index,
+        };
+    }
+
+    pub(in crate::check) fn shared_index_of_dominators<'i>(
+        &self,
+        file: FileId,
+        indexes: &'i FlowIndexes,
+    ) -> &'i Arc<DominatorIndex> {
+        let create = || Arc::new(self.create_index_of_dominators(file));
+        indexes.dominators.get_or_init(create)
+    }
+
+    fn create_index_of_dominators(&self, file: FileId) -> DominatorIndex {
         let bound = self.bound(file);
         let count = bound.flow.len();
-        let mut index = FlowDominators {
-            file: Some(file),
+        let mut index = DominatorIndex {
             nodes: Vec::with_capacity(count),
             enclosing_loop: Vec::with_capacity(count),
             ..Default::default()
@@ -216,7 +265,7 @@ impl Checker<'_, '_> {
         index.invocations_up_to = Vec::with_capacity(count);
         let mut turns = vec![0; count];
         let mut open: Vec<OpenLoop> = Vec::new();
-        let close = |open: &mut Vec<OpenLoop>, index: &FlowDominators, turns: &mut Vec<u32>| {
+        let close = |open: &mut Vec<OpenLoop>, index: &DominatorIndex, turns: &mut Vec<u32>| {
             let Some(closed) = open.pop() else {
                 return;
             };
@@ -237,6 +286,7 @@ impl Checker<'_, '_> {
             index
                 .enclosing_loop
                 .push(open.last().map_or(0, |it| it.label));
+            // As in `index_narrowing_subjects`.
             let invocations = match node {
                 Flow::Start { .. } | Flow::StartInvoked { .. } => 0,
                 Flow::Assign {
@@ -339,7 +389,6 @@ impl Checker<'_, '_> {
         index.tests_by_property.shared_sort_unstable();
         index.about_anything.shared_sort_unstable();
         index.calls.shared_sort_unstable();
-        index.last_busy_call = (0..index.calls.len() as u32).collect();
         index.below = (0..count)
             .map(|node| BelowNode {
                 last: node as u32,
@@ -369,14 +418,14 @@ impl Checker<'_, '_> {
                 _ => at as u32 + 1,
             };
         }
-        self.flow_memo.dominators = index;
+        index
     }
 
     fn find_last_condition(&mut self, file: FileId, start: u32, up_to: u32) -> u32 {
         let flow = &self.bound(file).flow;
-        let index = &mut self.flow_memo.dominators;
+        let index = &self.flow_memo.dominators.index;
         let (nodes, starts_of_many) = (&index.nodes, &index.starts_of_many);
-        let conditions = index.conditions.get_or_insert_with(|| {
+        let conditions = index.conditions.get_or_init(|| {
             let mut conditions: Vec<(u32, u32)> = (flow.iter().zip(nodes).enumerate())
                 .filter(|(_, (node, _))| matches!(node, Flow::Cond { .. }))
                 .map(|(i, (_, it))| (it.start, i as u32))
@@ -385,9 +434,15 @@ impl Checker<'_, '_> {
             conditions.shared_sort_unstable();
             conditions
         });
-        FlowDominators::find_last_of(conditions, start, up_to)
+        DominatorIndex::find_last_of(conditions, start, up_to)
     }
 
+    /// Returns the index in `calls` of the last call at or in front of `from` that is not known to be idle, or that
+    /// this question does not go past, and `u32::MAX` if there is none.
+    ///
+    /// `last_busy_call[i]` is at most `i`, every call behind it up to `i` is idle, and AN ENTRY ONLY MOVES DOWN.
+    /// So nothing is evaluated between the chase and the writes: an evaluation can come in here again over the same
+    /// calls and move the entries further down, and what the chase found in front of it would move them up again.
     fn find_last_call_not_known_to_be_idle(
         &mut self,
         file: FileId,
@@ -398,7 +453,7 @@ impl Checker<'_, '_> {
         let memo = &mut self.flow_memo;
         let mut at = from;
         let found = loop {
-            let known = memo.dominators.last_busy_call[at as usize];
+            let known = memo.dominators.last_busy_call[at as usize] ^ at;
             if known == u32::MAX {
                 break u32::MAX;
             }
@@ -417,7 +472,8 @@ impl Checker<'_, '_> {
         };
         let mut at = from;
         while at != found {
-            let known = std::mem::replace(&mut memo.dominators.last_busy_call[at as usize], found);
+            let last = &mut memo.dominators.last_busy_call[at as usize];
+            let known = std::mem::replace(last, found ^ at) ^ at;
             debug_assert!(
                 found == u32::MAX || known != u32::MAX && found <= known,
                 "an entry only moves down: entry {at} held {known} and is given {found}"
@@ -462,12 +518,21 @@ impl Checker<'_, '_> {
             if self.flow_memo.dominators.file != Some(file) {
                 return u32::MAX;
             }
+            // Only calls that are now known to be idle are passed, so each iteration ends here or knows one more call.
             if !self.flow_memo.is_idle_call(file, FlowId(node)) {
                 return node;
             }
         }
     }
 
+    /// FOR SPEED. `at..end` are antecedents of one label, as indices of `Bound::flow_edges`. Returns
+    /// how many of those after the first have the type that the reference has at the first: they
+    /// lie below one dominator of the first, and between that dominator and the last of them
+    /// nothing concerns the reference, nor comes round to them in a loop. Each store in a `try`
+    /// block is an antecedent of the handler's label. `count_antecedents_with_type_of` leaps over
+    /// those of one run, and a loop ends a run. Without this, n references behind a `try` block of
+    /// n loops take n * n walks. Returns beside it how much deeper than the walk from the first a
+    /// walk from one of the others may get.
     #[inline(never)]
     pub(super) fn count_antecedents_below_dominator_with_type_of(
         &mut self,
@@ -552,6 +617,8 @@ impl Checker<'_, '_> {
         Some((count, deeper))
     }
 
+    /// How many invocations a walk has in progress at most between `flow` and `arrived_at`, which
+    /// dominates it, and how many more at most in a turn of a loop between them.
     pub(super) fn count_invocations_passed_by_skip(
         &self,
         flow: FlowId,

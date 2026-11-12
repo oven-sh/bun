@@ -273,7 +273,7 @@ mod tests {
         u32::MAX - 1,
     ];
 
-    fn fields_of_every_form() -> Vec<Field> {
+    fn fields_in_all_forms() -> Vec<Field> {
         let mut fields = Vec::new();
         for parts in 0..1 << FORM_AT {
             let id = |at: usize| IDS[(parts as usize + at) % IDS.len()];
@@ -329,8 +329,8 @@ mod tests {
     }
 
     #[test]
-    fn packed_layouts_come_back() {
-        let fields = fields_of_every_form();
+    fn packed_layouts_round_trip() {
+        let fields = fields_in_all_forms();
         let mut scratch = PackScratch::default();
         for first in 0..fields.len() {
             for end in [first, first + 1, fields.len()] {
@@ -347,7 +347,7 @@ mod tests {
     #[test]
     fn base_of_packed_layout_changes() {
         let mut scratch = PackScratch::default();
-        let layout = layout_of(63, &fields_of_every_form());
+        let layout = layout_of(63, &fields_in_all_forms());
         let mut packed = PackedLayout::new(&layout, &mut scratch);
         packed.set_base(None);
         let expected = Layout {
@@ -358,7 +358,7 @@ mod tests {
     }
 
     #[test]
-    fn layouts_shrink_to_a_tenth() {
+    fn packed_layouts_are_small() {
         let fields: Vec<Field> = (0..400)
             .map(|at| Field {
                 key: Some(PropertyKeyId::from_word(1000 + at * 3)),

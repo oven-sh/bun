@@ -1229,8 +1229,12 @@ impl Scan<'_, '_, '_> {
         let Binding::Symbol(id) = text.bound.binding(returned) else {
             return None;
         };
-        let is_declared_at_top = self.body.callback.is_none()
-            && text.bound.symbol_scope(id) == text.bound.top_scope(text.hir, CodeUnit::File);
+        let unit = self
+            .body
+            .callback
+            .map_or(CodeUnit::File, CodeUnit::Function);
+        let is_declared_at_top =
+            text.bound.symbol_scope(id) == text.bound.top_scope(text.hir, unit);
         let has_variable = matches!(
             text.bound.binding_kind(id),
             BindingKind::Var
@@ -2985,7 +2989,7 @@ impl CommonJsExports {
         true
     }
 
-    fn has_getter_over_unknown_names(&self, text: &ModuleText) -> bool {
+    fn has_getter_for_unknown_name(&self, text: &ModuleText) -> bool {
         let mut getters = text.aliases.iter().filter(|alias| alias.is_enumerable);
         getters.any(|alias| self.reads_unknown_name(alias.target))
     }

@@ -31,6 +31,7 @@ impl<'s> Folder<'_, 's> {
                 CommonJsVariable::Require | CommonJsVariable::Filename | CommonJsVariable::Dirname,
             ) if self.is_define_root(e) && !is_bound_through_name_in_place => {
                 let root = self.inputs.root(DefineRoot::Global(name));
+                let root = root.filter(|_| self.may_be_replaced(e, name));
                 let state = root.map(|root| PathState {
                     has_dynamic_root: !self.has_static_lookup(e),
                     ..root
@@ -46,10 +47,18 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
+    fn may_be_replaced(&self, e: ExprId, name: Atom) -> bool {
+        matches!(name, known::undefined | known::NaN | known::Infinity)
+            || !self.hir.is_in_known_evaluation(self.hir[e].pos)
+    }
+
     fn fold_symbol_read(&mut self, e: ExprId, symbol: SymbolId) -> Folded {
         let kind = self.bound.binding_kind(symbol);
         if kind == BindingKind::Import {
-            if self.is_process_import(symbol) && self.is_define_root(e) {
+            if self.is_process_import(symbol)
+                && self.is_define_root(e)
+                && !self.hir.is_in_known_evaluation(self.hir[e].pos)
+            {
                 let root = DefineRoot::Global(self.atoms.intern(b"process"));
                 let state = self.inputs.root(root).map(|root| PathState {
                     has_optional_link: true,
@@ -149,6 +158,17 @@ impl<'s> Folder<'_, 's> {
                 self.decide(e, Decision::Constant(Constant::Boolean(is_main)))
             }
             Some(_) | None => self.fold_read_out_of_literal(e, chain),
+        }
+    }
+
+    pub(super) fn may_read_main_of_import_meta(&self, meta: ExprId) -> bool {
+        let meta = self.find_outermost_cast(meta);
+        let member = self
+            .parent_expr(meta)
+            .and_then(|parent| self.hir.member_key(parent));
+        match member {
+            Some((object, MemberKey::Name(name))) if object == meta => name == known::main,
+            Some(_) | None => true,
         }
     }
 
@@ -265,7 +285,7 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    fn is_exported_variable(&self, symbol: SymbolId) -> bool {
+    pub(super) fn is_exported_variable(&self, symbol: SymbolId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let variables = self.exported_variables.get_or_init(|| {
             let exports = bound.table(bound.symbol(bound.file_symbol).exports);
@@ -360,6 +380,12 @@ impl<'s> Folder<'_, 's> {
         let Some(init) = init else {
             return Folded::UNKNOWN;
         };
+        if kind == BindingKind::Let
+            && !self.is_assignment_target(ident)
+            && let FoldedValue::Constant(constant) = self.folded_value(init)
+        {
+            self.constants_of_lets.push((ident, constant));
+        }
         let is_const = kind == BindingKind::Const;
         let is_inlined = self.is_inlined_by_bun_run(ident, symbol, init);
         if !is_inlined {

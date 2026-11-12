@@ -166,6 +166,7 @@ bitflags::bitflags! {
         const HANDS_ARGUMENTS_ON = 1 << 5;
         const READS_ELEMENTS_OF_ARGUMENTS = 1 << 6;
         const MAY_READ_ABOVE_ARGUMENTS = 1 << 7;
+        /// A function expression whose body or parameters mention its own name.
         const MENTIONS_OWN_NAME = 1 << 8;
     }
 }

@@ -109,6 +109,7 @@ A test that does not pass today is a `test.todo(..)` with its body.
 | --- | --- |
 | `bun test/aot/tools/bisect.ts <program> [--bun <bun>]` | Builds a program that differs from plain Bun with each switch, and prints the fewest that set the answer right |
 | `bun test/aot/tools/same-output.ts --before <bun> --after <bun> <program or folder>..` | Compares the IR and the machine code that two Buns make, for a change that is meant to change nothing |
+| `bun test/aot/tools/compare-check-orders.ts [--bun=<bun>] <program or folder>..` | Builds programs with their files type-checked in several orders. The messages and the IR must be the same in each |
 | `bun test/aot/tools/ir-test-from-source.ts main.ts > main.ir` | Drafts an `.ir` test of the engine from a small program |
 | `bun test/aot/tools/update-ir-tests.ts <file or folder>..` | Rewrites such a file from the source it holds, as `bun test -u` does for snapshots |
 

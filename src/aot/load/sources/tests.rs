@@ -199,6 +199,7 @@ fn with_freeze_input<R>(
         progress: None,
         left_out_bodies: None,
         discards_first_visits: false,
+        order: 1,
     };
     let loaded = load_program(&session, host, &request).expect("every entry point is found");
     then(&FreezeInput {
@@ -396,7 +397,7 @@ fn entry_point_uses_configured_name() {
 }
 
 #[test]
-fn stack_traces_of_program_run_in_place_have_paths_on_disk() {
+fn in_place_stack_traces_have_disk_paths() {
     let files = [
         ("main.ts", "import './src/deep.ts';"),
         ("src/deep.ts", "export {};"),
@@ -487,6 +488,7 @@ fn found_entry_point_follows_the_written_ones_under_its_own_name() {
             because: FoundBecause::NamedByData,
             started_at: None,
             starts: Vec::new(),
+            is_guess: false,
         }];
         let input = FreezeInput {
             options: &options,

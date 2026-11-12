@@ -311,7 +311,7 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
             m_sourcePositions = { OrdinalNumber::fromOneBasedInt(position->startOfExpression().line), OrdinalNumber::fromOneBasedInt(position->startOfExpression().column) };
             m_sourcePositionsState = SourcePositionsState::Calculated;
             m_isFunctionOrEval = frame.codeType() == JSC::FunctionCode || frame.codeType() == JSC::EvalCode;
-            if (!JSC::AOT::FunctionDescription(frame.compiledFrame().function).isHelperOfCompiler())
+            if (!JSC::AOT::FunctionDescription(frame.compiledFrame().function).isHelperOfCompiler() && !position->isInEvaluatedString)
                 m_compiledModule = position->source;
         }
         return;
@@ -518,7 +518,7 @@ String externalSourceMapDisplayPath()
 String sourceURL(const JSC::AOT::SourcePosition& position)
 {
     if (position.source)
-        return JSC::AOT::sourceURLOf(position.source);
+        return JSC::AOT::sourceURLOf(position);
     return hasExternalSourceMap() ? externalSourceMapFileURL() : String();
 }
 
@@ -534,7 +534,7 @@ String displayPath(const JSC::AOT::TraceFrame& frame, const JSC::AOT::SourcePosi
     if (JSC::AOT::FunctionDescription(frame.function).isHelperOfCompiler()) [[unlikely]]
         return JSC::AOT::compilerHelpersModule;
     if (position.source)
-        return JSC::AOT::displayPathOf(position.source);
+        return JSC::AOT::displayPathOf(position);
     return hasExternalSourceMap() ? externalSourceMapDisplayPath() : String();
 }
 #endif

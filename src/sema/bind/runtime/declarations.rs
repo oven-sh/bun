@@ -240,9 +240,44 @@ impl Declarations<'_, '_> {
                 }
             }
         }
+        let mut exported_values = Vec::new();
+        for (index, scope) in bound.scopes.iter().enumerate() {
+            for &(_, local) in bound.table(scope.locals) {
+                let listed = &bound.symbols[local.idx()];
+                let decls = &listed.decls[..];
+                if decls.len() < 2 || !listed.flags.contains(SymFlags::EXPORT_VALUE) {
+                    continue;
+                }
+                let (mut value, mut has_local_value) = (None, false);
+                for &decl in decls {
+                    let own = declaration_symbol(bound, decl);
+                    if own.is_none() || own == local {
+                        has_local_value |=
+                            own == local && declaration_creates_binding(hir, bound, decl);
+                        continue;
+                    }
+                    let entry = &mut symbol_scopes[own.idx()];
+                    if entry.is_none() {
+                        *entry = ScopeId(index as u32);
+                    }
+                    if value.is_none() && declaration_creates_binding(hir, bound, decl) {
+                        value = Some(own);
+                    }
+                }
+                // A value beside an export that is only declared stays the namespace's own.
+                let is_in_namespace = matches!(scope.kind, ScopeKind::Module(_));
+                let own_value = (has_local_value && is_in_namespace).then_some(local);
+                if let Some(value) = value.or(own_value)
+                    && has_bit(&valueless_symbols, listed.export_symbol.idx())
+                {
+                    exported_values.push((local, value));
+                }
+            }
+        }
+        exported_values.shared_sort_by_key(|entry| entry.0);
         for redeclaration in bound.redeclarations.iter() {
             let rejected = declaration_symbol(bound, redeclaration.decl);
-            if rejected.is_some() {
+            if rejected.is_some() && symbol_scopes[rejected.idx()].is_none() {
                 symbol_scopes[rejected.idx()] = symbol_scopes[redeclaration.symbol.idx()];
             }
         }
@@ -250,6 +285,7 @@ impl Declarations<'_, '_> {
         let declarations = &mut self.bound.runtime.declarations;
         declarations.valueless_symbols = valueless_symbols;
         declarations.bound_without_export = bound_without_export;
+        declarations.exported_values = exported_values;
         declarations.symbol_scopes = symbol_scopes;
         declarations.binding_kinds = binding_kinds;
     }

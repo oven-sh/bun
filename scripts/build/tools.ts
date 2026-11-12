@@ -405,8 +405,7 @@ function llvmSearchPaths(os: OS, arch: Arch): string[] {
     const defaultPrefix = arch === "aarch64" ? "/opt/homebrew" : "/usr/local";
     const brewPrefix = isExecutable(`${defaultPrefix}/bin/brew`)
       ? defaultPrefix
-      : (printed(ask("brew", ["--prefix"], { budgetMs: ANSWER_BUDGET_MS, stderr: "inherit" }))?.trim() ??
-        defaultPrefix);
+      : printed(ask("brew", ["--prefix"], { budgetMs: ANSWER_BUDGET_MS, stderr: "inherit" }))?.trim() || defaultPrefix;
     paths.push(`${brewPrefix}/opt/llvm@${LLVM_MAJOR}/bin`);
     paths.push(`${brewPrefix}/opt/llvm/bin`);
   }

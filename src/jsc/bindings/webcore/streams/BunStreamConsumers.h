@@ -20,5 +20,8 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionReadableStreamToFormData);
 // body: dynamicDowncast<JSReadableStream>(arg0)->{m_transferred = true, m_disturbed = true}.
 // Referenced by src/js/internal/streams/native-readable.ts via $newCppFunction.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream);
+// (stream, true): locks a native stream that nothing started, without a reader, and says whether it did.
+// (stream, false): unlocks it. Referenced by getStdinStream in src/js/builtins/ProcessObjectInternals.ts.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionLockNativeReadableStream);
 
 } // namespace WebCore

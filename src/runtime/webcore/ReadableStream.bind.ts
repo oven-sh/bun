@@ -79,6 +79,8 @@ export const FileInternalReadableStreamSource = b.class({
   internalFields: [...internalFields, "lockedStream"],
   proto: {
     cancel: members.cancel,
+    /** Drops the read that waits in the source for the `deliver` of a `pull`, with nothing read into it. `false`: none waits. */
+    cancelPull: { returns: b.bool, capability: "js", passThis: true },
     drain: members.drain,
     isClosed: members.isClosed,
     pull: members.pull,

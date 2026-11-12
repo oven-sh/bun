@@ -1453,6 +1453,25 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream, (JSGlobalObje
     return JSValue::encode(jsUndefined());
 }
 
+// `process.stdin` pulls the native source of the shared `Bun.stdin.stream()` itself, so it holds the stream without a
+// reader while it reads and lets go of it when it stops. It only takes a stream that nothing started and nothing holds:
+// a started source already feeds a controller.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionLockNativeReadableStream, (JSGlobalObject*, CallFrame* callFrame))
+{
+    auto* stream = dynamicDowncast<JSReadableStream>(callFrame->argument(0));
+    if (!stream) [[unlikely]]
+        return JSValue::encode(jsBoolean(false));
+    if (!callFrame->argument(1).isTrue()) {
+        stream->m_lockedWithoutReader = false;
+        return JSValue::encode(jsBoolean(false));
+    }
+    if (stream->m_bunMode != BunStreamMode::NativePending || isReadableStreamLocked(stream))
+        return JSValue::encode(jsBoolean(false));
+    stream->m_disturbed = true;
+    stream->m_lockedWithoutReader = true;
+    return JSValue::encode(jsBoolean(true));
+}
+
 // [reaction-convention] handlers (FOR_EACH_WEB_STREAMS_REACTION_HANDLER_BUN_CONSUMERS).
 
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onBufferedFastPathRejected, (JSGlobalObject * globalObject, CallFrame* callFrame))

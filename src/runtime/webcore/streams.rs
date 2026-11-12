@@ -465,6 +465,19 @@ impl Pending {
         self.state = PendingState::Pending;
     }
 
+    /// Drops the read that `handle_with` parked, unrun: its handler no longer waits for it. `false`: none is parked.
+    pub(crate) fn release_handler(&mut self) -> bool {
+        if self.state != PendingState::Pending {
+            return false;
+        }
+        let PendingFuture::Handler(handler) = &self.future else {
+            return false;
+        };
+        (handler.release)(handler.ctx);
+        self.state = PendingState::None;
+        true
+    }
+
     /// `handler` takes `result` from the task queue, on a later turn of the event loop: with
     /// `after_yield`, once the loop has polled again.
     pub(crate) fn run_later(handler: PendingHandler, result: StreamResult, after_yield: bool) {

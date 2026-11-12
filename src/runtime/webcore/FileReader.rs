@@ -14,7 +14,7 @@ use bun_sys::{self as sys, Fd, FdExt};
 use crate::webcore::SinkHandle;
 use crate::webcore::blob;
 use crate::webcore::jsc::SysErrorJsc as _;
-use crate::webcore::jsc::bindgen::{JsLocal, JsScope};
+use crate::webcore::jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
 use crate::webcore::jsc::{EnsureStillAlive, strong::Optional as Strong};
 use crate::webcore::node_types::PathOrFileDescriptor;
@@ -1072,6 +1072,24 @@ impl Source {
         let flag = flag.to_js();
         debug_assert!(flag.is_boolean());
         self.context.set_flowing(flag == JSValue::TRUE);
+    }
+
+    /// The Node stream that passed `deliver` to `pull()` lets go of the source, and the next reader can be another
+    /// one (`process.stdin` when it stops reading): the read that still waits in the source is dropped, with
+    /// nothing read into it. `false`: none waits, and a result that is queued still comes.
+    pub fn cancel_pull(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> bool {
+        if !self.context.pending.with_mut(|pending| pending.release_handler()) {
+            return false;
+        }
+        self.context
+            .pending_value
+            .with_mut(|view| view.clear_without_deallocation());
+        <FileReader as readable_stream::SourceContext>::js_deliver_set_cached(
+            this_value.to_js(),
+            cx.global(),
+            JSValue::UNDEFINED,
+        );
+        true
     }
 }
 

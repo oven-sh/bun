@@ -398,17 +398,23 @@ describe("addAbortSignal() on a ReadableStream that Bun drives", () => {
     await (read ?? expect(body.getReader().read()).rejects.toMatchObject({ name: "AbortError" }));
   });
 
-  it("leaves a native source alone that Readable.fromWeb() took over", async () => {
-    using dir = tempDir("abort-transferred-source", { "file.txt": Buffer.alloc(2_000_000, "x").toString() });
-    const controller = new AbortController();
-    const readable = Readable.fromWeb(addAbortSignal(controller.signal, file(join(String(dir), "file.txt")).stream()));
-    let length = 0;
-    for await (const chunk of readable) {
-      if (!length) controller.abort();
-      length += chunk.length;
-    }
-    expect(length).toBe(2_000_000);
-  });
+  it.each(["an unstarted", "a started"])(
+    "leaves %s native source alone that Readable.fromWeb() took over",
+    async state => {
+      using dir = tempDir("abort-transferred-source", { "file.txt": Buffer.alloc(2_000_000, "x").toString() + "end" });
+      const stream = file(join(String(dir), "file.txt")).stream();
+      // The stream keeps what it pulled before it was taken over, so only the end of the file is checked.
+      if (state === "a started") stream.getReader().releaseLock();
+      const controller = new AbortController();
+      const readable = Readable.fromWeb(addAbortSignal(controller.signal, stream));
+      let last;
+      for await (const chunk of readable) {
+        if (!last) controller.abort();
+        last = chunk;
+      }
+      expect(last.subarray(-3).toString()).toBe("end");
+    },
+  );
 
   it("cancels the stream under a textStream()", async () => {
     const cancelled = [];

@@ -627,12 +627,14 @@ void webStreamControllerErrorAndStopSource(JSGlobalObject* globalObject, JSReada
     // Nothing can reach the source of an errored stream, so it is stopped here. One that was transferred belongs to somebody else.
     JSNativeStreamSourceAdapter* adapter = nullptr;
     JSObject* unstartedHandle = nullptr;
-    if (stream->m_controllerKind == ControllerKind::Default) {
-        auto* controller = uncheckedDowncast<JSReadableStreamDefaultController>(stream->m_controller.get());
-        if (controller->m_algorithms.kind == SourceKind::Native)
-            adapter = uncheckedDowncast<JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
-    } else if (stream->m_bunMode == BunStreamMode::NativePending && !stream->nativeHandleDetached()) {
-        unstartedHandle = stream->m_nativePtr.get().getObject();
+    if (!stream->nativeHandleDetached()) {
+        if (stream->m_controllerKind == ControllerKind::Default) {
+            auto* controller = uncheckedDowncast<JSReadableStreamDefaultController>(stream->m_controller.get());
+            if (controller->m_algorithms.kind == SourceKind::Native)
+                adapter = uncheckedDowncast<JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
+        } else if (stream->m_bunMode == BunStreamMode::NativePending) {
+            unstartedHandle = stream->m_nativePtr.get().getObject();
+        }
     }
     webStreamControllerError(globalObject, stream, error);
     RETURN_IF_EXCEPTION(scope, void());

@@ -11,7 +11,6 @@
 #include "NodeAsyncHooks.h"
 
 #include <JavaScriptCore/ErrorInstance.h>
-#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSBoundFunction.h>

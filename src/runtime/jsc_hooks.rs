@@ -1447,6 +1447,21 @@ fn body_mixin_get_blob(
     value: JSValue,
     global: &JSGlobalObject,
 ) -> bun_jsc::JsResult<Option<JSValue>> {
+    bun_removable_features::call_removable_or!(
+        Bodies,
+        ReturnDefault,
+        { Ok(None) },
+        read_body_as_blob,
+        value,
+        global
+    )
+}
+
+#[inline(never)] // --trim cuts the readers of a body at the call.
+fn read_body_as_blob(
+    value: JSValue,
+    global: &JSGlobalObject,
+) -> bun_jsc::JsResult<Option<JSValue>> {
     use crate::webcore::body::{Action, BodyMixin as _};
     let cx = global.js_thread_of_caller();
     if let Some(resp) = value.as_class_ref::<crate::webcore::Response>() {

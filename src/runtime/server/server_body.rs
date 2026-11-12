@@ -900,6 +900,55 @@ fn idle_timeout_warning_user_data() -> *mut c_void {
     IDLE_TIMEOUT_WARNED.as_ptr().cast::<c_void>()
 }
 
+#[inline(never)] // Once, not once for each kind of server.
+fn copy_url_and_headers_of_mux_request(
+    request_object: &Request,
+    req: &uws::AnyRequest,
+    is_https: bool,
+) {
+    // SAFETY: create_from_h3 returns a +1-ref FetchHeaders; adopt into RAII wrapper.
+    request_object.set_fetch_headers(Some(unsafe {
+        crate::webcore::response::HeadersRef::adopt(FetchHeaders::create_from_h3(req.as_ptr()))
+    }));
+    let prefix: Option<Vec<u8>> = req
+        .header(b"host")
+        .filter(|host| Request::is_valid_host_header(host))
+        .map(|host| {
+            let fmt = bun_fmt::HostFormatter {
+                is_https,
+                host,
+                port: None,
+            };
+            let mut s = Vec::new();
+            let _ = write!(
+                &mut s,
+                "{}://{}",
+                if is_https { "https" } else { "http" },
+                fmt
+            );
+            s
+        });
+    let path = req.url();
+    if !path.is_empty() && path[0] == b'/' {
+        if let Some(mut s) = prefix {
+            s.extend_from_slice(path);
+            // Same WHATWG pass as `Request::ensure_url` for HTTP/1.
+            let href = bun_url::href_from_string(&StringView::from_bytes(&s));
+            request_object.url.set(if href.is_empty() {
+                BunString::clone_utf8(&s)
+            } else if core::ptr::eq(href.byte_slice().as_ptr(), s.as_ptr()) {
+                BunString::clone_latin1(&s[..href.length()])
+            } else {
+                href
+            });
+        } else {
+            request_object.url.set(BunString::clone_utf8(path));
+        }
+    } else {
+        request_object.url.set(BunString::clone_utf8(path));
+    }
+}
+
 fn warn_about_idle_timeout_once() {
     if !crate::cli::Command::get().debug.silent
         && !IDLE_TIMEOUT_WARNED.swap(true, core::sync::atomic::Ordering::Relaxed)
@@ -2358,46 +2407,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // `Request.url` and `.headers` read a `uws::Request` lazily. HTTP/2 and HTTP/3 have none, so both are filled in now.
         if MUX {
-            // SAFETY: freshly leaked. What follows takes `&Request`.
-            let request_object: &Request = unsafe { &*request_object_ptr };
-            // SAFETY: create_from_h3 returns a +1-ref FetchHeaders; adopt into RAII wrapper.
-            request_object.set_fetch_headers(Some(unsafe {
-                crate::webcore::response::HeadersRef::adopt(FetchHeaders::create_from_h3(
-                    req.as_ptr(),
-                ))
-            }));
-            let prefix: Option<Vec<u8>> = req
-                .header(b"host")
-                .filter(|host| Request::is_valid_host_header(host))
-                .map(|host| {
-                    let fmt = bun_fmt::HostFormatter {
-                        is_https: SSL,
-                        host,
-                        port: None,
-                    };
-                    let mut s = Vec::new();
-                    let _ = write!(&mut s, "{}://{}", if SSL { "https" } else { "http" }, fmt);
-                    s
-                });
-            let path = req.url();
-            if !path.is_empty() && path[0] == b'/' {
-                if let Some(mut s) = prefix {
-                    s.extend_from_slice(path);
-                    // Same WHATWG pass as `Request::ensure_url` for HTTP/1.
-                    let href = bun_url::href_from_string(&StringView::from_bytes(&s));
-                    request_object.url.set(if href.is_empty() {
-                        BunString::clone_utf8(&s)
-                    } else if core::ptr::eq(href.byte_slice().as_ptr(), s.as_ptr()) {
-                        BunString::clone_latin1(&s[..href.length()])
-                    } else {
-                        href
-                    });
-                } else {
-                    request_object.url.set(BunString::clone_utf8(path));
-                }
-            } else {
-                request_object.url.set(BunString::clone_utf8(path));
-            }
+            // SAFETY: freshly leaked.
+            copy_url_and_headers_of_mux_request(unsafe { &*request_object_ptr }, &req, SSL);
             ctx.req.set(None);
         }
 

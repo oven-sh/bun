@@ -65,6 +65,7 @@ feature WebStreams "ReadableStream, WritableStream and TransformStream"
 feature TextDecoderStream "TextDecoderStream"
 
 feature Bodies "Blob, File, Request, Response, Bun.stdin, Bun.stdout and Bun.stderr"
+  c-function Request__clone
 
 feature Worker "worker threads"
 

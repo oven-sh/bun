@@ -723,47 +723,11 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
     }
 
     fn render_missing_invalid_response(&self, value: JSValue) {
-        let class_name = value.get_class_info_name().unwrap_or(b"");
-        // Inspecting `value` can run user code (`[inspect.custom]`, `toString`), which can throw.
-        let mut inspect_error: Option<JSValue> = None;
-
-        if let Some(server) = self.server.get() {
-            // server is a BACKREF — valid while this RequestContext is alive
-            let global_this: &JSGlobalObject = server.global_this();
-
-            Output::enable_buffering();
-            let writer = Output::error_writer();
-
-            if class_name == b"Response" {
-                bun_core::err_generic!(
-                    "Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.",
-                );
-            } else if !value.is_empty() && !global_this.has_exception() {
-                let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
-                formatter.quote_strings = true;
-                let mut received: Vec<u8> = Vec::new();
-                match formatter.format_value::<false>(value, &mut received) {
-                    Ok(()) => bun_core::err_generic!(
-                        "Expected a Response object, but received '{}'",
-                        bstr::BStr::new(&received),
-                    ),
-                    Err(err) => {
-                        bun_core::err_generic!("Expected a Response object");
-                        inspect_error = Some(global_this.take_error(err));
-                    }
-                }
-                // `formatter` drops here.
-            } else {
-                bun_core::err_generic!("Expected a Response object");
-            }
-
-            Output::flush();
-            if !global_this.has_exception() {
-                jsc::ConsoleObject::write_trace(writer, global_this);
-            }
-            Output::flush();
-        }
-        // The formatter and `write_trace` above re-enter JS (getters, proxy
+        let inspect_error = self
+            .server
+            .get()
+            .and_then(|server| print_invalid_response_error(server.global_this(), value));
+        // Printing re-enters JS (getters, proxy
         // traps, Error.prepareStackTrace), which can synchronously abort or
         // end this request (e.g. AbortController.abort() inside a getter).
         // The `RequestContextRef` guard taken in `on_resolve` keeps the
@@ -1827,6 +1791,32 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         self.run_error_handler_with_status_code(js_err, status);
     }
 
+    fn render_range_not_satisfiable(&self, total: BlobSizeType) {
+        let resp = self.resp.get().expect("infallible: resp bound");
+        self.do_write_status(416);
+        if let Some(mut headers) = self
+            .response_mut()
+            .and_then(|response| response.swap_init_headers())
+        {
+            self.do_write_headers(&mut headers);
+        }
+        let mut buffer = [0u8; RangeRequest::CONTENT_RANGE_BUF];
+        resp.write_header(
+            b"content-range",
+            RangeRequest::format_content_range(
+                &mut buffer,
+                RangeRequest::Result::Unsatisfiable,
+                Some(total),
+            ),
+        );
+        resp.write_header(b"accept-ranges", b"bytes");
+        let close = resp.should_close_connection();
+        self.detach_response();
+        resp.end(b"", close);
+        self.end_request_streaming_and_drain();
+        self.deref();
+    }
+
     pub(crate) fn do_sendfile(&self, blob: Blob) {
         if self.is_aborted_or_ended() {
             return;
@@ -1843,91 +1833,25 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         let crate::webcore::blob::store::Data::File(file) = &blob_ref.store().unwrap().data else {
             unreachable!("do_sendfile called with non-file blob");
         };
-        let mut file_buf = bun_paths::path_buffer_pool::get();
-        let auto_close = !matches!(
-            file.pathlike,
-            crate::webcore::node_types::PathOrFileDescriptor::Fd(_)
-        );
-        let fd: bun_sys::Fd = if !auto_close {
-            file.pathlike.fd()
-        } else {
-            match bun_sys::open(
-                file.pathlike.path().slice_z(&mut file_buf),
-                bun_sys::O::RDONLY | bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC,
-                0,
-            ) {
-                bun_sys::Result::Ok(fd_) => fd_,
-                bun_sys::Result::Err(err) => {
-                    let status = self.file_open_error_status(err.get_errno());
-                    let js_err = err
-                        .with_path(file.pathlike.path().slice())
-                        .to_js(global_this);
-                    return self.fail_sendfile(js_err, status);
-                }
+        let BodyFile {
+            fd,
+            auto_close,
+            file_type,
+            pollable,
+            is_regular,
+            size: stat_size,
+        } = match BodyFile::open(&file.pathlike, global_this) {
+            Ok(opened) => opened,
+            Err((js_err, errno)) => {
+                let status = errno.map_or(500, |errno| self.file_open_error_status(errno));
+                return self.fail_sendfile(js_err, status);
             }
-        };
-
-        let stat: bun_sys::Stat = match bun_sys::fstat(fd) {
-            bun_sys::Result::Ok(s) => s,
-            bun_sys::Result::Err(err) => {
-                if auto_close {
-                    fd.close();
-                }
-                // Attach the path for the Path arm and the fd for the Fd arm.
-                let js_err = match &file.pathlike {
-                    crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
-                        err.with_path(p.slice()).to_js(global_this)
-                    }
-                    crate::webcore::node_types::PathOrFileDescriptor::Fd(pathlike_fd) => {
-                        err.with_fd(*pathlike_fd).to_js(global_this)
-                    }
-                };
-                return self.fail_sendfile(js_err, 500);
-            }
-        };
-
-        let mode = stat.st_mode as bun_sys::Mode;
-        let is_regular = bun_sys::S::ISREG(mode);
-        let (file_type, pollable): (bun_io::FileType, bool) = 'brk: {
-            if bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode) {
-                break 'brk (bun_io::FileType::Pipe, true);
-            }
-            if bun_sys::S::ISSOCK(mode) {
-                break 'brk (bun_io::FileType::Socket, true);
-            }
-            if bun_sys::S::ISDIR(mode) {
-                if auto_close {
-                    fd.close();
-                }
-                // Attach the path for the Path arm and the fd for the Fd arm.
-                let base_err = bun_sys::Error {
-                    errno: bun_sys::E::EISDIR as _,
-                    syscall: bun_sys::Tag::read,
-                    ..Default::default()
-                };
-                let err = match &file.pathlike {
-                    crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
-                        base_err.with_path(p.slice())
-                    }
-                    crate::webcore::node_types::PathOrFileDescriptor::Fd(pathlike_fd) => {
-                        base_err.with_fd(*pathlike_fd)
-                    }
-                };
-                let mut sys: jsc::SystemError = err.to_system_error().into();
-                sys.message = BunString::static_("Cannot stream a directory as a response body");
-                return self.fail_sendfile(
-                    sys.to_error_instance(global_this),
-                    self.file_open_error_status(bun_sys::E::EISDIR),
-                );
-            }
-            (bun_io::FileType::File, false)
         };
 
         let (original_size, blob_offset) = match blob_ref {
             AnyBlob::Blob(b) => (b.size.get(), b.offset.get()),
             _ => unreachable!(),
         };
-        let stat_size: BlobSizeType = BlobSizeType::try_from(stat.st_size.max(0)).unwrap();
 
         self.flags.set_needs_content_length(is_regular);
         let mut sendfile = SendfileContext {
@@ -1992,28 +1916,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                     if auto_close {
                         fd.close();
                     }
-                    let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
-                    self.do_write_status(416);
-                    if let Some(response) = self.response_mut() {
-                        if let Some(mut headers_) = response.swap_init_headers() {
-                            self.do_write_headers(&mut headers_);
-                            // `HeadersRef` releases the +1 ref in Drop; do NOT
-                            // call `.deref()` explicitly (would double-free).
-                            drop(headers_);
-                        }
-                    }
-                    let cr = RangeRequest::format_content_range(
-                        &mut crbuf,
-                        RangeRequest::Result::Unsatisfiable,
-                        Some(stat_size),
-                    );
-                    resp.write_header(b"content-range", cr);
-                    resp.write_header(b"accept-ranges", b"bytes");
-                    let close = resp.should_close_connection();
-                    self.detach_response();
-                    resp.end(b"", close);
-                    self.end_request_streaming_and_drain();
-                    self.deref();
+                    self.render_range_not_satisfiable(stat_size);
                     return;
                 }
             }
@@ -3479,31 +3382,10 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                 true
             }
             RangeRequest::Result::Unsatisfiable => {
-                let Some(resp) = self.resp.get() else {
+                if self.resp.get().is_none() {
                     return true;
-                };
-                self.do_write_status(416);
-                if let Some(mut headers) = self
-                    .response_mut()
-                    .and_then(|response| response.swap_init_headers())
-                {
-                    self.do_write_headers(&mut headers);
                 }
-                let mut buffer = [0u8; RangeRequest::CONTENT_RANGE_BUF];
-                resp.write_header(
-                    b"content-range",
-                    RangeRequest::format_content_range(
-                        &mut buffer,
-                        RangeRequest::Result::Unsatisfiable,
-                        Some(total),
-                    ),
-                );
-                resp.write_header(b"accept-ranges", b"bytes");
-                let close = resp.should_close_connection();
-                self.detach_response();
-                resp.end(b"", close);
-                self.end_request_streaming_and_drain();
-                self.deref();
+                self.render_range_not_satisfiable(total);
                 false
             }
         }
@@ -4471,6 +4353,127 @@ const fn exported_host_fns(
             Bun__HTTPRequestContextDebugMuxTLS__onResolveStream,
             Bun__HTTPRequestContextDebugMuxTLS__onRejectStream,
         ),
+    }
+}
+
+/// Returns what inspecting `value` threw: that can run user code (`[inspect.custom]`, `toString`).
+#[cold]
+fn print_invalid_response_error(global_this: &JSGlobalObject, value: JSValue) -> Option<JSValue> {
+    let class_name = value.get_class_info_name().unwrap_or(b"");
+    let mut inspect_error: Option<JSValue> = None;
+
+    Output::enable_buffering();
+    let writer = Output::error_writer();
+
+    if class_name == b"Response" {
+        bun_core::err_generic!(
+            "Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.",
+        );
+    } else if !value.is_empty() && !global_this.has_exception() {
+        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
+        formatter.quote_strings = true;
+        let mut received: Vec<u8> = Vec::new();
+        match formatter.format_value::<false>(value, &mut received) {
+            Ok(()) => bun_core::err_generic!(
+                "Expected a Response object, but received '{}'",
+                bstr::BStr::new(&received),
+            ),
+            Err(err) => {
+                bun_core::err_generic!("Expected a Response object");
+                inspect_error = Some(global_this.take_error(err));
+            }
+        }
+        // `formatter` drops here.
+    } else {
+        bun_core::err_generic!("Expected a Response object");
+    }
+
+    Output::flush();
+    if !global_this.has_exception() {
+        jsc::ConsoleObject::write_trace(writer, global_this);
+    }
+    Output::flush();
+    inspect_error
+}
+
+/// The file behind a `Bun.file()` response body.
+struct BodyFile {
+    fd: bun_sys::Fd,
+    auto_close: bool,
+    file_type: bun_io::FileType,
+    pollable: bool,
+    is_regular: bool,
+    size: BlobSizeType,
+}
+
+impl BodyFile {
+    /// The errno of a failure is there when it says something about the path.
+    #[inline(never)] // Once, not once for each kind of `RequestContext`.
+    fn open(
+        pathlike: &crate::webcore::node_types::PathOrFileDescriptor<'_>,
+        global_this: &JSGlobalObject,
+    ) -> Result<Self, (JSValue, Option<bun_sys::E>)> {
+        use crate::webcore::node_types::PathOrFileDescriptor;
+        let with_pathlike = |err: bun_sys::Error| match pathlike {
+            PathOrFileDescriptor::Path(path) => err.with_path(path.slice()),
+            PathOrFileDescriptor::Fd(fd) => err.with_fd(*fd),
+        };
+
+        let (fd, auto_close) = match pathlike {
+            PathOrFileDescriptor::Fd(fd) => (*fd, false),
+            PathOrFileDescriptor::Path(path) => {
+                let mut file_buf = bun_paths::path_buffer_pool::get();
+                let fd = bun_sys::open(
+                    path.slice_z(&mut file_buf),
+                    bun_sys::O::RDONLY | bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC,
+                    0,
+                )
+                .map_err(|err| {
+                    let errno = err.get_errno();
+                    (with_pathlike(err).to_js(global_this), Some(errno))
+                })?;
+                (fd, true)
+            }
+        };
+        let close = || {
+            if auto_close {
+                fd.close();
+            }
+        };
+
+        let stat = bun_sys::fstat(fd).map_err(|err| {
+            close();
+            (with_pathlike(err).to_js(global_this), None)
+        })?;
+
+        let mode = stat.st_mode as bun_sys::Mode;
+        if bun_sys::S::ISDIR(mode) {
+            close();
+            let err = with_pathlike(bun_sys::Error {
+                errno: bun_sys::E::EISDIR as _,
+                syscall: bun_sys::Tag::read,
+                ..Default::default()
+            });
+            let mut sys: jsc::SystemError = err.to_system_error().into();
+            sys.message = BunString::static_("Cannot stream a directory as a response body");
+            return Err((sys.to_error_instance(global_this), Some(bun_sys::E::EISDIR)));
+        }
+        let (file_type, pollable) = if bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode) {
+            (bun_io::FileType::Pipe, true)
+        } else if bun_sys::S::ISSOCK(mode) {
+            (bun_io::FileType::Socket, true)
+        } else {
+            (bun_io::FileType::File, false)
+        };
+
+        Ok(Self {
+            fd,
+            auto_close,
+            file_type,
+            pollable,
+            is_regular: bun_sys::S::ISREG(mode),
+            size: BlobSizeType::try_from(stat.st_size.max(0)).unwrap(),
+        })
     }
 }
 

@@ -37,18 +37,40 @@ enum Place {
     TypeArguments,
 }
 
+/// Finds a binding again in the output. The depth tells a name from a pattern that starts with that name.
+#[derive(Copy, Clone)]
+struct BindingKey {
+    /// Where the first name starts.
+    at: u32,
+    /// How many patterns that name is inside of: 0 for `a`, 1 for `{ a }`, 2 for `[{ a }]`.
+    depth: u8,
+}
+
+/// What finds an expression again: the declaration that it is the value of, or the statement that it is.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+enum Anchor {
+    /// [`BindingKey::depth`] of the declaration.
+    Binding(u8),
+    Statement,
+}
+
 #[derive(Copy, Clone, Debug)]
 struct Slot {
     place: Place,
+    /// [`BindingKey::depth`] of a [`Place::Binding`], and 0 at every other place.
+    depth: u8,
     key: u32,
     start: u32,
     end: u32,
 }
 
+const _: () = assert!(size_of::<Slot>() == 16);
+
 impl Slot {
     fn new(place: Place, key: u32, (start, end): (u32, u32)) -> Slot {
         Slot {
             place,
+            depth: 0,
             key,
             start,
             end,
@@ -239,18 +261,31 @@ impl<'a, 's> Syntax<'a, 's> {
         Some(self.angle_brackets(self.type_span(first).0, self.type_span(last).1))
     }
 
-    fn first_identifier(&self, pattern: PatId) -> Option<u32> {
+    fn binding_key(&self, pattern: PatId) -> Option<BindingKey> {
         let node = self.file.pats.get(pattern.idx())?;
-        match node.kind {
-            PatKind::Missing => None,
-            PatKind::Ident(_) => Some(node.pos),
+        let inner = match node.kind {
+            PatKind::Missing => return None,
+            PatKind::Ident(_) => {
+                return Some(BindingKey {
+                    at: node.pos,
+                    depth: 0,
+                });
+            }
             PatKind::Object(properties) => properties
                 .iter()
-                .find_map(|property| self.first_identifier(self.file[property].value)),
+                .find_map(|property| self.binding_key(self.file[property].value))?,
             PatKind::Array(elements) => elements
                 .iter()
-                .find_map(|element| self.first_identifier(self.file[element].pat)),
-        }
+                .find_map(|element| self.binding_key(self.file[element].pat))?,
+        };
+        Some(BindingKey {
+            depth: inner.depth.saturating_add(1),
+            ..inner
+        })
+    }
+
+    fn first_identifier(&self, pattern: PatId) -> Option<u32> {
+        self.binding_key(pattern).map(|key| key.at)
     }
 
     fn body_start(&self, function: FnId) -> Option<u32> {
@@ -293,7 +328,7 @@ impl<'a, 's> Syntax<'a, 's> {
         annotation: TypeNodeId,
         is_optional: bool,
     ) -> Option<Slot> {
-        let key = self.first_identifier(pattern)?;
+        let key = self.binding_key(pattern)?;
         let start = self.file[pattern].end;
         let end = match annotation.some() {
             Some(annotation) => self.type_span(annotation).1,
@@ -302,7 +337,10 @@ impl<'a, 's> Syntax<'a, 's> {
             }
             None => start,
         };
-        Some(Slot::new(Place::Binding, key, (start, end)))
+        Some(Slot {
+            depth: key.depth,
+            ..Slot::new(Place::Binding, key.at, (start, end))
+        })
     }
 
     fn function_slots(&self, id: FnId, slots: &mut Vec<Slot>) {
@@ -1715,14 +1753,15 @@ impl<'a, 's> Syntax<'a, 's> {
             .collect()
     }
 
-    fn anchored_expressions(&self) -> impl Iterator<Item = (u32, ExprId)> + '_ {
+    fn anchored_expressions(&self) -> impl Iterator<Item = (Anchor, u32, ExprId)> + '_ {
         let file = self.file;
         let initializers = file
             .var_decls
             .iter()
             .filter(|declaration| declaration.init.is_some())
             .filter_map(|declaration| {
-                Some((self.first_identifier(declaration.pat)?, declaration.init))
+                let key = self.binding_key(declaration.pat)?;
+                Some((Anchor::Binding(key.depth), key.at, declaration.init))
             });
         let statements = file
             .stmts
@@ -1731,11 +1770,43 @@ impl<'a, 's> Syntax<'a, 's> {
                 StmtKind::Return(value) | StmtKind::Throw(value) | StmtKind::Expr(value)
                     if value.is_some() =>
                 {
-                    Some((statement.start, value))
+                    Some((Anchor::Statement, statement.start, value))
                 }
                 _ => None,
             });
         initializers.chain(statements)
+    }
+
+    /// Each `name = value` that is a statement or an operand of the commas of one, as a declaration of the name.
+    fn assigned_values(&self) -> Vec<(Anchor, u32, ExprId)> {
+        let file = self.file;
+        let (mut assigned, mut pending) = (Vec::new(), Vec::new());
+        for statement in file.stmts.iter() {
+            if let StmtKind::Expr(value) = statement.kind {
+                pending.push(value);
+            }
+            while let Some(expr) = pending.pop() {
+                match file.exprs.get(expr.idx()).map(|expr| expr.kind) {
+                    Some(ExprKind::Binary {
+                        op: BinOp::Comma,
+                        left,
+                        right,
+                    }) => pending.extend([right, left]),
+                    Some(ExprKind::Assign {
+                        op: None,
+                        target,
+                        value,
+                    }) => match file.exprs.get(target.idx()) {
+                        Some(name) if matches!(name.kind, ExprKind::Ident(_)) => {
+                            assigned.push((Anchor::Binding(0), name.pos, value))
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+        }
+        assigned
     }
 
     fn value_names(&self) -> impl Iterator<Item = u32> + '_ {
@@ -2889,7 +2960,8 @@ fn add_types(
         });
     }
     let mut written: Vec<Option<Written<'_, '_>>> = Vec::new();
-    let mut source_slots: FxHashMap<(Place, u32, u32), Slot> = FxHashMap::default();
+    // By place, depth, source and position.
+    let mut source_slots: FxHashMap<(Place, u8, u32, u32), Slot> = FxHashMap::default();
     let mut optional_parameter_properties: FxHashMap<(u32, u32), (u32, bool)> =
         FxHashMap::default();
     for (index, (file, &(_, text, types))) in files.iter().zip(&texts).enumerate() {
@@ -2901,7 +2973,7 @@ fn add_types(
         let mut type_ranges = syntax.type_only_declarations();
         let declarations = merged(type_ranges.clone());
         for slot in outermost_only(syntax.slots(), &type_ranges) {
-            source_slots.insert((slot.place, index as u32, slot.key), slot);
+            source_slots.insert((slot.place, slot.depth, index as u32, slot.key), slot);
             type_ranges.push((slot.start, slot.end));
         }
         type_ranges.extend(syntax.cast_type_spans());
@@ -2919,9 +2991,10 @@ fn add_types(
                 continue;
             };
             source_slots.insert(
-                (Place::MemberType, index as u32, binding.key),
+                (Place::MemberType, 0, index as u32, binding.key),
                 Slot {
                     place: Place::MemberType,
+                    depth: 0,
                     ..binding
                 },
             );
@@ -2949,9 +3022,10 @@ fn add_types(
                     continue;
                 };
                 source_slots.insert(
-                    (place, index as u32, binding.key),
+                    (place, 0, index as u32, binding.key),
                     Slot {
                         place,
+                        depth: 0,
                         key: binding.key,
                         start: modifier.pos,
                         end: syntax.token_end(modifier.pos),
@@ -3019,18 +3093,20 @@ struct Transfer<'t, 'a, 's> {
 }
 
 impl<'a> Transfer<'_, 'a, '_> {
-    fn anchored_expressions(&self) -> FxHashMap<(u32, u32), ExprId> {
+    fn anchored_expressions(&self) -> FxHashMap<(Anchor, u32, u32), ExprId> {
         let (output, mappings) = (self.output, self.mappings);
-        let mut anchored: FxHashMap<(u32, u32), ExprId> = FxHashMap::default();
-        for (key, value) in output.anchored_expressions() {
-            if let Some(original) = mappings.original(key) {
-                anchored.entry(original).or_insert(value);
+        let mut anchored: FxHashMap<(Anchor, u32, u32), ExprId> = FxHashMap::default();
+        // The output can declare a name ahead of its value: `let name;`, and later `name = value`.
+        let assigned = output.assigned_values();
+        for (anchor, key, value) in output.anchored_expressions().chain(assigned) {
+            if let Some((source, original)) = mappings.original(key) {
+                anchored.entry((anchor, source, original)).or_insert(value);
             }
         }
         anchored
     }
 
-    fn copy_slots(&mut self, source_slots: &FxHashMap<(Place, u32, u32), Slot>) {
+    fn copy_slots(&mut self, source_slots: &FxHashMap<(Place, u8, u32, u32), Slot>) {
         let (output, mappings, written, linked) =
             (self.output, self.mappings, self.modules, self.linked);
         let (output_file, insertions) = (output.file, &mut self.insertions);
@@ -3067,7 +3143,7 @@ impl<'a> Transfer<'_, 'a, '_> {
             else {
                 continue;
             };
-            let Some(found) = source_slots.get(&(slot.place, source, key)) else {
+            let Some(found) = source_slots.get(&(slot.place, slot.depth, source, key)) else {
                 if slot.place == Place::ReturnType
                     && module
                         .types
@@ -3297,15 +3373,19 @@ impl<'a> Transfer<'_, 'a, '_> {
                 .stmts
                 .iter()
                 .filter_map(|statement| match statement.kind {
+                    // The output declares a variable for the value.
                     StmtKind::ExportDefault(value) => Some((
                         value,
-                        syntax.file.exprs.get(without_casts(value).idx())?.pos,
+                        (
+                            Anchor::Binding(0),
+                            syntax.file.exprs.get(without_casts(value).idx())?.pos,
+                        ),
                     )),
                     _ => None,
                 });
-            let anchored: FxHashMap<ExprId, u32> = syntax
+            let anchored: FxHashMap<ExprId, (Anchor, u32)> = syntax
                 .anchored_expressions()
-                .map(|(key, value)| (value, key))
+                .map(|(anchor, key, value)| (value, (anchor, key)))
                 .chain(default_exports)
                 .collect();
             let find = |expr: ExprId| {
@@ -3318,10 +3398,9 @@ impl<'a> Transfer<'_, 'a, '_> {
             let find_via_ancestor = |chain: &CastChain| {
                 let (mut at, mut way) = (chain.outermost, Vec::new());
                 let mut found = loop {
-                    if let Some(&found) = anchored
-                        .get(&at)
-                        .and_then(|&key| output_anchored.get(&(index as u32, key)))
-                    {
+                    if let Some(&found) = anchored.get(&at).and_then(|&(anchor, key)| {
+                        output_anchored.get(&(anchor, index as u32, key))
+                    }) {
                         break found;
                     }
                     let (parent, place) = places[at.idx()]?;

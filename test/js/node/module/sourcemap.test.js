@@ -275,7 +275,11 @@ describe("findSourceMap", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+    expect({ stdout, stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+      stdout: expect.any(String),
+      stderrIfFailed: "",
+      exitCode: 0,
+    });
     return JSON.parse(stdout);
   }
 
@@ -415,7 +419,11 @@ describe("findSourceMap", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+    expect({ stdout, stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+      stdout: expect.any(String),
+      stderrIfFailed: "",
+      exitCode: 0,
+    });
     const [evalMap, lineLengths] = JSON.parse(stdout);
     expect(evalMap).toBeNull();
     expect(lineLengths).toEqual(lineLengths.map(() => expect.any(Number)));
@@ -461,7 +469,12 @@ describe("findSourceMap", () => {
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ args, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ args, stderr: "", exitCode: 0 });
+        expect({ args, stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+          args,
+          stdout: expect.any(String),
+          stderr: "",
+          exitCode: 0,
+        });
         expect(stderr).toContain(" 2 pass");
         const [aHasMap, bEnabled] = stdout
           .trim()

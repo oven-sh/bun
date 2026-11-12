@@ -323,7 +323,7 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--expose-gc                       Expose gc() on the global object. Has no effect on Bun.gc()."
     ),
     parse_param!(
-        "--enable-source-maps              Keep the source map of each loaded module for module.findSourceMap()."
+        "--enable-source-maps              Keep the map Bun makes when it transpiles a module, for module.findSourceMap()."
     ),
     parse_param!(
         "--no-deprecation                  Suppress all reporting of the custom deprecation."
@@ -547,10 +547,7 @@ pub(crate) const AUTO_REQUIREMENT_ROWS: &[RequirementRow] = {
         (Long(b"dns-result-order"), Nothing),
         (Long(b"experimental-stream-iter"), Nothing),
         (Long(b"expose-gc"), Nothing),
-        (
-            Long(b"enable-source-maps"),
-            RuntimeRequirement::Feature(Feature::SourceMaps),
-        ),
+        (Long(b"enable-source-maps"), Nothing),
         (Long(b"no-deprecation"), Nothing),
         (Long(b"throw-deprecation"), Nothing),
         (Long(b"no-warnings"), Nothing),

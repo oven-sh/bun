@@ -1,6 +1,9 @@
 use core::ffi::c_void;
 use core::fmt;
-use std::sync::{Mutex, OnceLock};
+use core::sync::atomic::AtomicBool;
+use std::sync::OnceLock;
+
+use bun_threading::Guarded;
 
 use crate::Ordinal;
 use crate::internal_source_map::ObjectBrace;
@@ -43,8 +46,12 @@ pub struct ParsedSourceMap {
     /// The length of each line of the generated text, in UTF-16 code units and without its line
     /// break. Recorded when the text is compiled while source maps are enabled: it is what
     /// `module.findSourceMap(url).lineLengths` answers, so a coverage offset can become a line
-    /// and a column of this map. The last text compiled for the module is the one recorded.
-    pub line_lengths: Mutex<Option<Box<[u32]>>>,
+    /// and a column of this map. `None` after `text_changed`: the text that runs is not the
+    /// one this map is of.
+    pub line_lengths: Guarded<Option<Box<[u32]>>>,
+    /// The module was transpiled again to a text with nothing to map, and this map of the earlier
+    /// text was kept for the errors of that text. `module.findSourceMap()` does not answer with it.
+    pub text_changed: AtomicBool,
     /// The `mappings` of the v3 document that `module.findSourceMap(url).payload` answers, written
     /// on the first read.
     vlq_mappings: OnceLock<Box<[u8]>>,
@@ -78,7 +85,8 @@ impl Default for ParsedSourceMap {
             external_source_names: Vec::new(),
             underlying_provider: SourceContentPtr::NONE,
             standalone_module_graph: None,
-            line_lengths: Mutex::new(None),
+            line_lengths: Guarded::new(None),
+            text_changed: AtomicBool::new(false),
             vlq_mappings: OnceLock::new(),
         }
     }
@@ -230,7 +238,8 @@ impl ParsedSourceMap {
             external_source_names: Vec::new(),
             underlying_provider: SourceContentPtr::NONE,
             standalone_module_graph: None,
-            line_lengths: Mutex::new(None),
+            line_lengths: Guarded::new(None),
+            text_changed: AtomicBool::new(false),
             vlq_mappings: OnceLock::new(),
         }
     }
@@ -297,11 +306,7 @@ impl ParsedSourceMap {
         core::mem::size_of::<ParsedSourceMap>()
             + mappings_cost
             + self.external_source_names.len() * core::mem::size_of::<Box<[u8]>>()
-            + self.line_lengths.lock().map_or(0, |lengths| {
-                lengths
-                    .as_ref()
-                    .map_or(0, |lengths| core::mem::size_of_val(&**lengths))
-            })
+            // Not `line_lengths`: the collector asks while a reader can hold its lock.
             + self.vlq_mappings.get().map_or(0, |vlq| vlq.len())
     }
 

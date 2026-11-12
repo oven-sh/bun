@@ -501,6 +501,7 @@ export default b.declarations(
     capability: "heap",
     throws: true,
     uses: { path: b.inspected },
+    reads: externalState,
     implementation: b.generic,
   }),
   // A frozen object of what setSourceMapsSupport(), process.setSourceMapsEnabled() or --enable-source-maps stored.

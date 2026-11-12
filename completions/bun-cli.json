@@ -5038,7 +5038,7 @@
     },
     {
       "name": "enable-source-maps",
-      "description": "Keep the source map of each loaded module for module.findSourceMap().",
+      "description": "Keep the map Bun makes when it transpiles a module, for module.findSourceMap().",
       "hasValue": false,
       "required": false,
       "multiple": false

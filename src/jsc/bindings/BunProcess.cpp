@@ -6285,6 +6285,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   revision                         constructRevision                                   PropertyCallback
   send                             constructProcessSend                                PropertyCallback
   setSourceMapsEnabled             Process_setSourceMapsEnabled                           Function 1
+  sourceMapsEnabled                processSourceMapsEnabled                            CustomAccessor|ReadOnly
   setUncaughtExceptionCaptureCallback Process_setUncaughtExceptionCaptureCallback      Function 1
   stderr                           constructStderr                                     PropertyCallback
   stdin                            constructStdin                                      PropertyCallback
@@ -6309,7 +6310,6 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   setgroups                        Process_functionsetgroups                           Function 1
   initgroups                       Process_functioninitgroups                          Function 2
   setuid                           Process_functionsetuid                              Function 1
-  sourceMapsEnabled                processSourceMapsEnabled                            CustomAccessor|ReadOnly
 #endif
 @end
 */

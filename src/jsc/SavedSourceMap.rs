@@ -93,17 +93,17 @@ impl SavedSourceMap {
 
     /// Keeps the line lengths of the text that JSC compiled for the runtime-transpiled module at
     /// `path`, beside its map. `get_recorded` then answers for the module. Nothing is kept for a
-    /// module whose map is not in the table, or is not the runtime transpiler's (an external map,
-    /// or one of the standalone module graph).
+    /// module whose map is not in the table, is not the runtime transpiler's (an external map,
+    /// or one of the standalone module graph), or is of an earlier text of the module.
     pub fn record_line_lengths(&mut self, path: &[u8], line_lengths: Box<[u32]>) {
         let h = hash(path);
         self.lock();
         if let Some(slot) = self.map.get_mut(&h)
             && let Some(map) = Self::shell_locked(slot)
             && map.is_runtime_transpiled()
+            && !map.text_changed.load(Ordering::Relaxed)
         {
-            // `--hot` keeps the map when a rewrite has nothing to map: the table of the text that runs replaces the old one.
-            *map.line_lengths.lock().unwrap_or_else(|e| e.into_inner()) = Some(line_lengths);
+            *map.line_lengths.lock() = Some(line_lengths);
         }
         self.unlock();
     }
@@ -116,13 +116,8 @@ impl SavedSourceMap {
         let map = self
             .map
             .get_mut(&h)
-            .and_then(|slot| Self::shell_locked(slot))
-            .filter(|map| {
-                map.line_lengths
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .is_some()
-            });
+            .and_then(Self::shell_locked)
+            .filter(|map| map.line_lengths.lock().is_some());
         self.unlock();
         map
     }
@@ -323,7 +318,13 @@ impl SavedSourceMap {
         };
         if incoming.mapping_count() == 0 {
             self.lock();
-            let contains = self.map.contains_key(&hash(source.path.text));
+            let slot = self.map.get_mut(&hash(source.path.text));
+            let contains = slot.is_some();
+            if let Some(kept) = slot.and_then(Self::shell_locked) {
+                // The map stays for the errors of the earlier text. `findSourceMap()` must not pair it with the text that runs now.
+                kept.text_changed.store(true, Ordering::Relaxed);
+                *kept.line_lengths.lock() = None;
+            }
             self.unlock();
             if contains {
                 return Ok(());

@@ -42,29 +42,32 @@ pub(crate) fn find_source_map<'a>(
         }
     }
 
-    // The table keys a module by its path. Node takes a `file:` URL or a path, which it makes a
-    // URL of: a path goes through one the same way, so that its separators are the platform's.
-    let is_file_url = strings::index_of(source_url_slice.slice(), b"://")
-        .is_some_and(|index| &source_url_slice.slice()[..index] == b"file");
-    if is_file_url || bun_paths::is_absolute(source_url_slice.slice()) {
-        let url = if is_file_url {
-            source_url_string.clone()
-        } else {
-            bun_url::file_url_from_string(&source_url_string)
-        };
-        let path = bun_url::path_from_file_url(&url);
+    // SAFETY: `bun_vm()` returns the live per-thread VM for a Bun-owned global.
+    let vm = global.bun_vm().as_mut();
+
+    // The table keys a module by its absolute path. Node takes a `file:` URL or a path, which
+    // it resolves against the working directory as a URL does.
+    let has_scheme = strings::index_of(source_url_slice.slice(), b"://").is_some();
+    if has_scheme && source_url_slice.slice().starts_with(b"file://") {
+        let path = bun_url::path_from_file_url(&source_url_string);
         if path.is_dead() {
             return Ok(None);
         }
         drop(source_url_slice);
         source_url_string = path;
         source_url_slice = source_url_string.to_utf8();
+    } else if !has_scheme {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let path = bun_paths::resolve_path::join_abs_string_buf::<
+            bun_paths::resolve_path::platform::Auto,
+        >(vm.top_level_dir(), &mut *buf, &[source_url_slice.slice()]);
+        let path = bun_core::String::clone_utf8(path);
+        drop(source_url_slice);
+        source_url_string = path;
+        source_url_slice = source_url_string.to_utf8();
     }
 
     let source_url = source_url_slice.slice();
-
-    // SAFETY: `bun_vm()` returns the live per-thread VM for a Bun-owned global.
-    let vm = global.bun_vm().as_mut();
     // Node asks the `nodeModules` setting at each lookup.
     if !vm.source_mappings().source_maps_support().node_modules
         && bun_paths::strings::path_contains_node_modules_folder(source_url)
@@ -212,12 +215,8 @@ impl JSSourceMap {
     /// The length of each line of the generated text, for a map of `findSourceMap()`. The
     /// constructor caches the `lineLengths` option, and `undefined` is the answer without one.
     pub(crate) fn get_line_lengths(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let line_lengths = self
-            .sourcemap
-            .line_lengths
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let Some(line_lengths) = line_lengths.as_deref() else {
+        // A copy, so that no lock is held while the heap allocates.
+        let Some(line_lengths) = self.sourcemap.line_lengths.lock().clone() else {
             return Ok(JSValue::UNDEFINED);
         };
         JSValue::create_array_from_iter(cx.global(), line_lengths.iter(), |&length| {

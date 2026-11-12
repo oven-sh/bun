@@ -350,3 +350,168 @@ describe.concurrent("handler that calls the loader it replaced, for a module tha
     });
   });
 });
+
+// A default handler stores what require() returns for an ES module on the
+// module object that it is handed. ".js" and ".mjs" are one native loader,
+// and ".ts", ".cts" and ".mts" are the other.
+describe.concurrent("default handler, for an ES module", () => {
+  const tag = `v => (v?.custom === true ? "custom" : Object.prototype.toString.call(v))`;
+  // The file calls the default handler of its own extension on itself while it
+  // evaluates: "module.exports" is initialized then, and `__esModule` is in TDZ.
+  const callsOwnHandler = (ext: string) => `
+    import Module from "node:module";
+    const custom = { custom: true };
+    export { custom as "module.exports" };
+    const m = new Module(import.meta.path);
+    Module._extensions[${JSON.stringify(ext)}](m, import.meta.path);
+    console.log(JSON.stringify({ handler: (${tag})(m.exports) }));
+    export let __esModule = true;
+  `;
+  const extensions = [".mjs", ".js", ".ts", ".cts", ".mts"];
+  const files = {
+    ...Object.fromEntries(extensions.map(ext => ["direct" + ext, callsOwnHandler(ext)])),
+    "plain.mjs": `export const v = 1;\n`,
+    "store-fixture.cjs": `
+      const Module = require("module");
+      const file = require("path").join(__dirname, "plain.mjs");
+      const withSetter = new Module(file);
+      let stored;
+      Object.defineProperty(withSetter, "exports", { get: () => "getter", set: value => { stored = value; } });
+      Module._extensions[".mjs"](withSetter, file);
+      let frozen = "no error";
+      try {
+        Module._extensions[".mjs"](Object.freeze(new Module(file)), file);
+      } catch (e) {
+        frozen = e.constructor.name + ": " + e.message;
+      }
+      console.log(JSON.stringify({ stored: Object.prototype.toString.call(stored), read: withSetter.exports, frozen }));
+    `,
+    "delegate-fixture.cjs": `
+      const Module = require("module");
+      const original = Module._extensions[".mjs"];
+      let calls = 0;
+      Module._extensions[".mjs"] = function (module, filename) {
+        calls++;
+        return original.call(this, module, filename);
+      };
+      const ns = require("./plain.mjs");
+      const cached = require.cache[require.resolve("./plain.mjs")].exports === ns;
+      console.log(JSON.stringify({ calls, kind: Object.prototype.toString.call(ns), esModule: ns.__esModule, v: ns.v, cached }));
+    `,
+    // a.mjs has finished when require() returns. Its `__esModule` is the binding of late.mjs, which is still running.
+    "a.mjs": `
+      const custom = { custom: true };
+      export { custom as "module.exports" };
+      export { __esModule } from "./late.mjs";
+    `,
+    "late.mjs": `
+      globalThis.inner = globalThis.requireA();
+      export let __esModule = true;
+    `,
+    "delegate-tdz-fixture.cjs": `
+      const Module = require("module");
+      const original = Module._extensions[".mjs"];
+      let calls = 0;
+      Module._extensions[".mjs"] = function (module, filename) {
+        calls++;
+        return original.call(this, module, filename);
+      };
+      globalThis.requireA = () => require("./a.mjs");
+      require("./late.mjs");
+      const tag = ${tag};
+      console.log(JSON.stringify({ calls, inner: tag(globalThis.inner), later: tag(require("./a.mjs")) }));
+    `,
+  };
+
+  async function run(fixture: string) {
+    using dir = tempDir("require-extensions-es-module", files);
+    return await bunRun([path.join(String(dir), fixture)]);
+  }
+  const printed = (value: object) => ({ stdout: JSON.stringify(value), stderr: "", exitCode: 0, signalCode: null });
+
+  test.each(extensions)(
+    'called by a %s file on itself: a TDZ `__esModule` export does not hide "module.exports"',
+    async ext => {
+      expect(await run("direct" + ext)).toEqual(printed({ handler: "custom" }));
+    },
+  );
+
+  test('a handler that calls the loader it replaced: a TDZ `__esModule` export does not hide "module.exports"', async () => {
+    expect(await run("delegate-tdz-fixture.cjs")).toEqual(printed({ calls: 2, inner: "custom", later: "custom" }));
+  });
+
+  test("a handler that calls the loader it replaced gets the namespace with the `__esModule` mark", async () => {
+    expect(await run("delegate-fixture.cjs")).toEqual(
+      printed({ calls: 1, kind: "[object Module]", esModule: true, v: 1, cached: true }),
+    );
+  });
+
+  test("the store on the module object is an assignment: a setter runs, and a frozen module throws", async () => {
+    expect(await run("store-fixture.cjs")).toEqual(
+      printed({
+        stored: "[object Module]",
+        read: "getter",
+        frozen: "TypeError: Attempted to assign to readonly property.",
+      }),
+    );
+  });
+
+  // The namespace of a vi.mock()ed module throws when a name is read that the
+  // factory left out. A default handler that is handed such a module reads
+  // "module.exports" off that namespace.
+  test("called for a vi.mock()ed module that an import has loaded", async () => {
+    using dir = tempDir("require-extensions-es-module-mock", {
+      "no-key.mjs": `export const x = "real";\n`,
+      "marked-false.mjs": `export const x = "real";\n`,
+      "getter.mjs": `export const x = "real";\n`,
+      "handler.test.mjs": `
+        import { expect, test, vi } from "bun:test";
+        import Module from "node:module";
+        import path from "node:path";
+
+        let getterRan = 0;
+        vi.mock("./no-key.mjs", () => ({ x: 1 }));
+        vi.mock("./marked-false.mjs", () => ({ x: 2, __esModule: false }));
+        vi.mock("./getter.mjs", () => ({ x: 3, get "module.exports"() { getterRan++; return "from the getter"; } }));
+
+        function callHandler(name) {
+          const file = path.join(import.meta.dir, name);
+          const m = new Module(file);
+          Module._extensions[".mjs"](m, file);
+          return m.exports;
+        }
+
+        test("the factory has no such key: the handler stores the namespace and marks it", async () => {
+          const ns = await import("./no-key.mjs");
+          expect(() => ns["module.exports"]).toThrow('No "module.exports" export is defined on the mock of "./no-key.mjs"');
+          expect(ns.__esModule).toBe(undefined);
+          expect(callHandler("no-key.mjs")).toBe(ns);
+          expect(ns.__esModule).toBe(true);
+        });
+
+        test("the factory sets __esModule to false: it stays false", async () => {
+          const ns = await import("./marked-false.mjs");
+          expect(callHandler("marked-false.mjs")).toBe(ns);
+          expect(ns.__esModule).toBe(false);
+        });
+
+        test("the factory has a getter for the key: the handler stores its value and reads it once", async () => {
+          await import("./getter.mjs");
+          expect(callHandler("getter.mjs")).toBe("from the getter");
+          expect(getterRan).toBe(1);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./handler.test.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 3 pass");
+    expect(stderr).toContain(" 0 fail");
+    expect(exitCode).toBe(0);
+  });
+});

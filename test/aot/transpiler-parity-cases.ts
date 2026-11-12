@@ -48,6 +48,9 @@ const decorators = "ES Decorators";
 const decoratorExpressions = "ES Decorators > decorator expressions";
 const checkerSpeaksFirst = "the program is refused, in the words of the type checker and not of the parser";
 const untypedParameters = "TS7006: the parameters of the decorator have no types";
+const esModuleInTdz = 'require(esm) while `__esModule` is in TDZ and "module.exports" is initialized';
+const namespaceOfCompiledFile =
+  'a wrong answer today: compiled, require() of the file returns its namespace, where the value of its "module.exports" export is expected';
 
 // path -> test name as `bun test` prints it -> why it fails.
 // A type error stops the build.
@@ -96,6 +99,15 @@ const expectedFailures: Record<string, Record<string, string>> = {
     "bundler > ts/EnumTreeShaking/namespace-before.ts": "TS2304: nothing declares y",
     "bundler > ts/EnumTreeShaking/namespace-after.ts": "TS2304: nothing declares y",
     "bundler > ts/EnumRulesFrom_TypeScript_5_0/not-supported.ts": "TS2304: nothing declares capture",
+  },
+  "test/js/bun/resolve/require-esm-evaluating-cycle.test.ts": {
+    [`${esModuleInTdz} > the module requires itself`]: namespaceOfCompiledFile,
+    [`${esModuleInTdz} > the module requires itself with import.meta.require()`]: namespaceOfCompiledFile,
+    [`${esModuleInTdz} > the module requires itself with createRequire()`]: namespaceOfCompiledFile,
+    [`${esModuleInTdz} > the module requires itself with Module.prototype.require`]: namespaceOfCompiledFile,
+    [`${esModuleInTdz} > a CommonJS file that the module requires requires it back`]: namespaceOfCompiledFile,
+    [`${esModuleInTdz} > the module re-exports \`__esModule\` from a module that is still evaluating`]:
+      namespaceOfCompiledFile,
   },
 };
 

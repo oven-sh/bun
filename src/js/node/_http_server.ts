@@ -1006,7 +1006,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (isPipelinedDispatch) {
           pipeline = connectionState(socket);
           // Keeps this request's turn if a throw comes before its response exists.
-          pipeline.outgoing.push(kNoResponse);
+          pipeline.outgoing.push(null);
         }
 
         // Like Node.js's resetSocketTimeout (parserOnIncoming): a new request
@@ -2054,8 +2054,6 @@ function connectionState(socket) {
   return state;
 }
 
-const kNoResponse = { destroyed: true };
-
 function waitForSocket(res, socket, state) {
   pauseIfBackedUp(socket, state);
   res._onPendingData = state.onPendingData;
@@ -2072,7 +2070,7 @@ function startNextResponse(socket) {
   const res = state.outgoing[0];
   if (res === undefined) {
     if (socket[kHandedOff]) leaveHttp(socket);
-  } else if (!res.destroyed && res[kHandle]?.start()) {
+  } else if (res !== null && !res.destroyed && res[kHandle]?.start()) {
     state.outgoing.shift();
     res._onPendingData(-res.outputSize);
     res.outputSize = 0;
@@ -2468,12 +2466,12 @@ function nativeSocketOnClose(this: any) {
 function abortWaitingResponses(socket) {
   const outgoing = socket[kConnectionState]?.outgoing;
   if (outgoing === undefined) return;
-  for (let i = 0; i < outgoing.length; i++) abortRequest(outgoing[i].req);
+  for (let i = 0; i < outgoing.length; i++) abortRequest(outgoing[i]?.req);
   // They share one error, as in abortOutgoing().
   let error;
   while (outgoing.length) {
     const res = outgoing.shift();
-    if (res === kNoResponse) continue;
+    if (res === null) continue;
     failHeldCallbacks(res, (error ??= $ERR_STREAM_DESTROYED("write")));
     res.destroy(new ConnResetException("aborted"));
   }

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 af9f8caf2c3c9b7ade71a39692177742c5bdf2a4d90d5c920c407b09ded6c922.
+// Written against that file with the SHA-256 9d176026578057eee38cda3d81dd4ad6eb678d0cc1eabc8b01905ac15d53e1a1.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -551,8 +551,8 @@ interface ListenerGeneration {
 
 /** What a connection keeps about the responses that wait for it. */
 interface Pipeline {
-  /** In the order of their requests. */
-  outgoing: $Node.ServerResponse[];
+  /** In the order of their requests. Null for a request that has no response. */
+  outgoing: ($Node.ServerResponse | null)[];
   outgoingData: number;
   onPendingData: ((delta: number) => void) | undefined;
 }
@@ -641,6 +641,7 @@ declare global {
       _handle: NativeHTTPServer | null;
       /** `net.Socket` counts the sockets it accepts and closes for this server. */
       _connections: number;
+      _SNICallback?: NetServer["_SNICallback"];
       timeout: number;
       maxRequestsPerSocket: number | null;
       maxHeadersCount: number | null;
@@ -739,7 +740,7 @@ declare global {
     type HttpServerSocket = Socket;
 
     interface ServerResponseOptions extends OutgoingMessageOptions {
-      [kHandle]?: NodeHTTPResponse;
+      [kHandle]?: NodeHTTPResponse | null;
     }
 
     interface ServerResponse extends OutgoingMessage {
@@ -1461,7 +1462,7 @@ Server.prototype[kRealListen] = function (
       if (isPipelinedDispatch) {
         pipeline = connectionState(socket);
         // Keeps this request's turn if a throw comes before its response exists.
-        pipeline.outgoing.push(kNoResponse);
+        pipeline.outgoing.push(null);
       }
 
       // Like Node.js's resetSocketTimeout (parserOnIncoming): a new request
@@ -2803,8 +2804,6 @@ function connectionState(socket: $Node.HttpServerSocket) {
   return state;
 }
 
-const kNoResponse = { destroyed: true } as $Node.ServerResponse;
-
 function waitForSocket(res: $Node.ServerResponse, socket: $Node.HttpServerSocket, state: Pipeline) {
   pauseIfBackedUp(socket, state);
   res._onPendingData = state.onPendingData!;
@@ -2818,10 +2817,10 @@ function startNextResponse(socket: $Node.HttpServerSocket | null | undefined) {
   const state = socket?.[kConnectionState];
   if (state === undefined || socket!._httpMessage != null || socket!.writableEnded || socket!.destroyed) return;
   if (socket![kHandle] === undefined) return;
-  const res = state.outgoing[0] as $Node.ServerResponse | undefined;
+  const res = state.outgoing[0] as $Node.ServerResponse | null | undefined;
   if (res === undefined) {
     if (socket![kHandedOff]) leaveHttp(socket!);
-  } else if (!res.destroyed && res[kHandle]?.start()) {
+  } else if (res !== null && !res.destroyed && res[kHandle]?.start()) {
     state.outgoing.shift();
     res._onPendingData(-res.outputSize);
     res.outputSize = 0;
@@ -3282,12 +3281,12 @@ function nativeSocketOnClose(this: $Node.HttpServerSocket) {
 function abortWaitingResponses(socket: $Node.HttpServerSocket) {
   const outgoing = socket[kConnectionState]?.outgoing;
   if (outgoing === undefined) return;
-  for (let i = 0; i < outgoing.length; i++) abortRequest(outgoing[i].req);
+  for (let i = 0; i < outgoing.length; i++) abortRequest(outgoing[i]?.req);
   // They share one error, as in abortOutgoing().
   let error: Error | undefined;
   while (outgoing.length) {
-    const res = outgoing.shift()!;
-    if (res === kNoResponse) continue;
+    const res = outgoing.shift() as $Node.ServerResponse | null;
+    if (res === null) continue;
     failHeldCallbacks(res, (error ??= $ERR_STREAM_DESTROYED("write")));
     res.destroy(new ConnResetException("aborted"));
   }

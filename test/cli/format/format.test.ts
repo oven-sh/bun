@@ -1550,6 +1550,13 @@ describe.concurrent("bun fmt", () => {
         `// @flow\nabc.b().c<{ firstProperty: number, secondProperty: number, thirdProperty: number, fourth: number }>();\n`,
         `// @flow\nabc.b().c<{\n  firstProperty: number,\n  secondProperty: number,\n  thirdProperty: number,\n  fourth: number,\n}>();\n`,
       ],
+      // The last group breaks either way, because of the function's body, and still the one-line head only fits
+      // once the object type is broken.
+      [
+        "ts",
+        `test.skipIf(!builtin && head === closeDelimitedHead).each<Pick<BodyCase, "how" | "act" | "socketError"> & { request: string[]; other: number }>([1])("is truncated by $how", async ({ request, ...row }) => { x; });\n`,
+        `test.skipIf(!builtin && head === closeDelimitedHead).each<\n  Pick<BodyCase, "how" | "act" | "socketError"> & {\n    request: string[];\n    other: number;\n  }\n>([1])("is truncated by $how", async ({ request, ...row }) => {\n  x;\n});\n`,
+      ],
       // Wherever the chain is.
       ["ts", `const x = abc.b().c({ ${props} });\n`, `const x = abc.b().c(${broken()});\n`],
       ["ts", `x = abc.b().c({ ${props} });\n`, `x = abc.b().c(${broken()});\n`],

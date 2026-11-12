@@ -919,7 +919,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetSourceMapsSupport,
 {
     auto& vm = JSC::getVM(globalObject);
     BunSourceMapsSupport support = Bun__VM__sourceMapsSupport(defaultGlobalObject(globalObject)->bunVM());
-    JSObject* result = JSC::constructEmptyObject(vm, defaultGlobalObject(globalObject)->nullPrototypeObjectStructure());
+    JSObject* result = JSC::constructEmptyObject(globalObject);
     result->putDirect(vm, JSC::Identifier::fromString(vm, "enabled"_s), jsBoolean(support.enabled), 0);
     result->putDirect(vm, JSC::Identifier::fromString(vm, "nodeModules"_s), jsBoolean(support.nodeModules), 0);
     result->putDirect(vm, JSC::Identifier::fromString(vm, "generatedCode"_s), jsBoolean(support.generatedCode), 0);

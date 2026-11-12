@@ -547,7 +547,7 @@ describe("findSourceMap", () => {
         await import("./node_modules/dep/other.ts");
         const withNodeModules = [findSourceMap(depUrl), findSourceMap(import.meta.resolve("./node_modules/dep/other.ts"))?.constructor.name];
         console.log(JSON.stringify({
-          codes, before, plain, frozen: Object.isFrozen(plain) && Object.getPrototypeOf(plain) === null,
+          codes, before, plain, frozen: Object.isFrozen(plain),
           full: getSourceMapsSupport(), withoutNodeModules, withNodeModules,
           bad: [findSourceMap(), findSourceMap(1), findSourceMap("foo"), findSourceMap("file://%zz"), findSourceMap("node:fs")],
         }));

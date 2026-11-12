@@ -266,8 +266,8 @@ public:
                 continue;
             }
             auto *res = (HttpResponse<SSL> *) s;
-            /* The group's close sends a close_notify ahead of the reset. Not over a response that isn't finished or isn't sent. */
-            if ((SSL && !thread_ends && (!res->hasResponded() || !((AsyncSocket<SSL> *) s)->hasFullyDrained())) || res->isCloseDelimitedAndUnfinished()) {
+            /* The group's close looks like the end of a whole stream. Not over a response that isn't finished or isn't sent. */
+            if ((SSL && (!res->hasResponded() || !((AsyncSocket<SSL> *) s)->hasFullyDrained())) || res->isCloseDelimitedAndUnfinished()) {
                 us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
             }
         }

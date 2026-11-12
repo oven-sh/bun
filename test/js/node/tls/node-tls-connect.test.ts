@@ -4655,9 +4655,9 @@ async function pokeUnlessReset(socket: net.Socket) {
 // The relay sees how the TCP connection to the server ends.
 describe("a Bun.listen() TLS connection with unsent data", () => {
   it.concurrent.each([
-    { name: "is reset by stop(true)", leaves: "stop(true)", events: ["error ECONNRESET", "close true"] },
-    { name: "ends with a FIN when its Worker ends", leaves: "worker", events: ["end", "close false"] },
-  ])("$name", async ({ leaves, events: expected }) => {
+    { name: "is reset by stop(true)", leaves: "stop(true)" },
+    { name: "is reset when its Worker ends", leaves: "worker" },
+  ])("$name", async ({ leaves }) => {
     using dir = tempDir("leaves-with-unsent-data", {
       "server.mjs": `
         import { setSocketOptions } from "bun:internal-for-testing";
@@ -4672,6 +4672,8 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
               setSocketOptions(socket, 1, ${kernelBuffer});
               socket.write(Buffer.alloc(4 << 20, "b"));
               say("written");
+              // Until terminate(): a later turn can hand the kernel all that write() accepted.
+              if (!isMainThread) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
             },
           },
         });
@@ -4763,9 +4765,9 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
     proc.stdin.write("leave\n");
     await step("the server to leave", said.left.promise);
     server.resume();
-    if (leaves === "stop(true)") await pokeUnlessReset(server);
+    await pokeUnlessReset(server);
 
-    expect(await step("the connection to close", closed.promise)).toEqual<readonly string[]>(expected);
+    expect(await step("the connection to close", closed.promise)).toEqual(["error ECONNRESET", "close true"]);
     proc.stdin.end();
     const [, stderr, exitCode] = await Promise.all([stdout, proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
@@ -4777,7 +4779,7 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
 // stands still while the peer reads what the kernel holds, so the kernel has room again when the connection is closed. A
 // TLS 1.2 record shows its type to the relay: 23 is data, 21 is an alert.
 describe("a TLS connection with queued data gets no close_notify", () => {
-  const threadEnds = { leaves: "process.exit(0)", events: ["end", "close false"], lastRecord: 23 };
+  const threadEnds = { leaves: "process.exit(0)", events: ["error ECONNRESET", "close true"], lastRecord: 23 };
   // A reset drops what the kernel hasn't sent yet, so only a peer that reads on would get an alert ahead of it.
   const stopped = {
     leaves: "listener.stop(true)",
@@ -4796,6 +4798,7 @@ describe("a TLS connection with queued data gets no close_notify", () => {
     { server: "https.createServer()", call: "end(data)", ...timedOut, leaves: "listener.closeIdleConnections()" },
     { server: "Bun.listen()", call: "end(data)", ...threadEnds },
     { server: "Bun.serve()", call: "Response(data)", ...threadEnds },
+    { server: "Bun.serve()", call: "Response(unfinished)", ...threadEnds },
     { server: "Bun.serve() WebSocket", call: "send(data)", ...threadEnds },
     { server: "Bun.listen()", call: "end(data)", ...stopped },
     { server: "Bun.serve()", call: "Response(data)", ...stopped },
@@ -5007,7 +5010,7 @@ describe("a TLS connection with queued data gets no close_notify", () => {
     proc.stdin.write("leave\n");
     await step("the server to leave", said.left.promise);
     server.resume();
-    if ("readsOn" in row) await pokeUnlessReset(server);
+    if (events.includes("error ECONNRESET")) await pokeUnlessReset(server);
 
     expect(await step("the connection to close", closed.promise)).toEqual({ events, lastRecord });
     if (!client.closed) await step("the client to close", once(client, "close"));

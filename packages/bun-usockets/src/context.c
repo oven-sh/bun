@@ -115,18 +115,18 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
         struct us_socket_t *s = group->iterator;
         group->iterator = s->next;
         /* Its owner ended this stream, so nothing of it is held back: every wait is over, and the kernel goes on delivering what it took. */
-        if (!thread_ends && s->ssl && us_internal_ssl_sealed_close_notify(s)) {
+        if (s->ssl && us_internal_ssl_sealed_close_notify(s)) {
             us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
             continue;
         }
-        /* No close_notify from a thread that ends, whose answer nothing would read, nor after a write that fell short: the owner may hold the rest. */
-        us_socket_close(s, thread_ends ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : s->ssl && s->flags.last_write_failed ? LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+        /* A reset after a write that fell short: the owner may hold the rest. No close_notify from a thread that ends, whose answer nothing would read. */
+        us_socket_close(s, s->ssl && s->flags.last_write_failed ? LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET : thread_ends ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
         /* A TLS socket may have *deferred* that: us_internal_ssl_close with
          * code==0 sends close_notify and, on WANT_READ, waits for the peer's
          * reply. Callers (e.g. Listener.deinit) free the embedding storage
          * next, which would leave s->group dangling. */
         if (!us_socket_is_closed(s)) {
-            us_internal_socket_close_raw(s, thread_ends ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
+            us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
         }
     }
     group->iterator = 0;

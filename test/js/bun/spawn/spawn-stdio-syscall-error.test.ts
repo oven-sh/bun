@@ -21,9 +21,9 @@ const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 // SPAWN_FAULT_SEND_AT=N  the Nth send() on each AF_UNIX socket fails with ENOBUFS.
 // SPAWN_FAULT_REPORT=path  the failing recv() writes how many bytes that socket received before it to this file.
 // SPAWN_FAULT_READS_AFTER=path  how many recv() calls that socket got after the failing one (0 from the failure on).
-// With SPAWN_FAULT_RECV_AT, two more settings shape the reads before the failing one:
-// SPAWN_FAULT_RECV_EAGAIN_AT=N  the Nth recv() reads nothing and fails with EAGAIN.
-// SPAWN_FAULT_RECV_CAP=N  every recv() returns at most N bytes, as when the reader outpaces the writer.
+// SPAWN_FAULT_RECV_EAGAIN_AT=N  the Nth recv() reads nothing and fails with EAGAIN, so the reader has to wait.
+// SPAWN_FAULT_RECV_CAP=N  with SPAWN_FAULT_RECV_AT or SPAWN_FAULT_RECV_EAGAIN_AT: every recv() returns at most N
+//   bytes, as when the reader outpaces the writer.
 // SPAWN_FAULT_EPOLL_ADD_AT=N  the Nth EPOLL_CTL_ADD that waits for input on an AF_UNIX socket fails with ENOMEM, as
 //   when the kernel cannot watch one more fd. The count is over all sockets.
 const SHIM_C = /* c */ `
@@ -111,7 +111,7 @@ ssize_t recv(int fd, void *buf, size_t len, int flags) {
     real_recv = (ssize_t (*)(int, void *, size_t, int))dlsym(RTLD_NEXT, "recv");
     init_modes();
   }
-  if ((fail_recv_at > 0 || fail_recv_mid_fill > 0) && is_unix_sock(fd)) {
+  if ((fail_recv_at > 0 || fail_recv_mid_fill > 0 || eagain_recv_at > 0) && is_unix_sock(fd)) {
     if (recv_failed[fd]) {
       write_number("SPAWN_FAULT_READS_AFTER", ++recv_after_failure[fd]);
     } else if (fail_recv_mid_fill > 0 ? recv_had_bytes[fd] : ++recv_count[fd] == (unsigned)fail_recv_at) {
@@ -571,11 +571,13 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
   });
 
   // The kernel can refuse to watch one more fd: epoll_ctl fails with ENOMEM or ENOSPC. The reader reports that the
-  // way it reports a failed read.
+  // way it reports a failed read. It asks epoll only when a recv() finds nothing, and a writer that stays ahead of
+  // the reader never lets that happen, so the first recv() is made to find nothing.
   test.concurrent.each(["stdout", "stderr"] as const)(
     "node:child_process: an unhandled refusal by epoll to watch %s still ends in 'close'",
     async pipe => {
-      expect(await runWithFault(`child-process-unhandled-${pipe}.mjs`, { SPAWN_FAULT_EPOLL_ADD_AT: "1" })).toEqual({
+      const refused = { SPAWN_FAULT_EPOLL_ADD_AT: "1", SPAWN_FAULT_RECV_EAGAIN_AT: "1" };
+      expect(await runWithFault(`child-process-unhandled-${pipe}.mjs`, refused)).toEqual({
         parsed: { uncaught: ["ENOMEM"], [pipe]: ["close"], child: ["close"] },
         stderr: "",
         exitCode: 0,

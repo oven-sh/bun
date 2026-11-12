@@ -27,6 +27,7 @@ impl Glob {
             nocase: is_set("nocase"),
             noext: is_set("noext"),
             is_version_3: true,
+            optimization_level_2: false,
         };
         let pattern = group.str("pattern").unwrap_or_default();
         Glob(Minimatch::with(pattern.as_bytes(), options))

@@ -48,7 +48,13 @@ fn literal_braces(pattern: &[u8]) -> Vec<bool> {
 /// With `is_minimatch`:
 /// - A `*` that is a whole path segment needs at least one character, so `a/*` doesn't match `a/`.
 /// - `a//b` is `a/b`.
-fn common(pattern: &[u8], is_minimatch: bool, out: &mut Vec<u8>) {
+/// - With `single_member_class_is_literal`, `[.]` is the character `.`, so `[.]a` matches `.a` without `dot`.
+fn common(
+    pattern: &[u8],
+    is_minimatch: bool,
+    single_member_class_is_literal: bool,
+    out: &mut Vec<u8>,
+) {
     let is_literal = literal_braces(pattern);
     let mut at = 0;
     while let Some(&byte) = pattern.get(at) {
@@ -65,7 +71,17 @@ fn common(pattern: &[u8], is_minimatch: bool, out: &mut Vec<u8>) {
             }
             b'[' => {
                 if let Some(end) = class_end(pattern, at) {
-                    out.extend_from_slice(&pattern[at..end]);
+                    match single_member_class(&pattern[at..end])
+                        .filter(|_| single_member_class_is_literal)
+                    {
+                        Some(member) => {
+                            if is_special(member) {
+                                out.push(b'\\');
+                            }
+                            out.push(member);
+                        }
+                        None => out.extend_from_slice(&pattern[at..end]),
+                    }
                     at = end;
                     continue;
                 }
@@ -85,10 +101,42 @@ fn common(pattern: &[u8], is_minimatch: bool, out: &mut Vec<u8>) {
     }
 }
 
-/// Converts a minimatch pattern. [`Minimatch`] handles a leading `!` or `#` and the options.
-pub fn from_minimatch(pattern: &[u8]) -> Vec<u8> {
+/// The one ASCII member of a class like `[.]` or `[\.]`. A negated class, a range, and a class of more members are `None`.
+fn single_member_class(class: &[u8]) -> Option<u8> {
+    let inner = class.strip_prefix(b"[")?.strip_suffix(b"]")?;
+    let member = match inner {
+        [member] => *member,
+        [b'\\', member] => *member,
+        _ => return None,
+    };
+    (member.is_ascii() && !matches!(member, b'!' | b'^')).then_some(member)
+}
+
+/// Whether `byte` means something in a pattern outside of a class, so a literal one needs a `\`.
+fn is_special(byte: u8) -> bool {
+    matches!(
+        byte,
+        b'*' | b'?'
+            | b'['
+            | b']'
+            | b'{'
+            | b'}'
+            | b'('
+            | b')'
+            | b'!'
+            | b'@'
+            | b'+'
+            | b'|'
+            | b','
+            | b'\\'
+    )
+}
+
+/// Converts a minimatch pattern. [`Minimatch`] handles a leading `!` or `#` and the options. Versions later than 3 read
+/// a class of one member, `[.]`, as that character: `single_member_class_is_literal`.
+pub fn from_minimatch(pattern: &[u8], single_member_class_is_literal: bool) -> Vec<u8> {
     let mut out = Vec::with_capacity(pattern.len() + 4);
-    common(pattern, true, &mut out);
+    common(pattern, true, single_member_class_is_literal, &mut out);
     out
 }
 
@@ -121,8 +169,12 @@ pub struct MinimatchOptions {
     pub match_base: bool,
     pub nocase: bool,
     pub noext: bool,
-    /// minimatch 3 trims the pattern, and on Windows it reads `\` in a pattern as a separator. Later versions do neither.
+    /// minimatch 3 trims the pattern, and on Windows it reads `\` in a pattern as a separator. Later versions do neither,
+    /// and read a class of one member, `[.]`, as that character.
     pub is_version_3: bool,
+    /// `optimizationLevel: 2`: `.` and empty segments inside the pattern and the path go, and a segment followed by
+    /// `..` goes with it, before the match. Only versions later than 3 have it.
+    pub optimization_level_2: bool,
 }
 
 /// `new Minimatch(pattern, options)`
@@ -136,6 +188,8 @@ pub struct Minimatch {
     matches_file_name: bool,
     /// `nocase` is set. The pattern is already lower case.
     folds_case: bool,
+    /// `optimizationLevel: 2` is set.
+    collapses_dots: bool,
 }
 
 /// Escapes every `(` that isn't escaped yet, so that none of `?(` `*(` `+(` `@(` `!(` starts a group.
@@ -155,6 +209,67 @@ fn without_groups(pattern: &[u8]) -> Vec<u8> {
     out
 }
 
+/// minimatch's `levelTwoFileOptimize`: `a/./b` and `a//b` are `a/b`, `a/x/../b` is `a/b`, `./` is `.`. A leading `.` or
+/// `..` stays, and so does a trailing `/` and the `//` of a UNC path.
+fn collapse_dots<'a>(mut parts: Vec<&'a [u8]>) -> Vec<&'a [u8]> {
+    loop {
+        let mut did_something = false;
+        let mut at = 1;
+        while at + 1 < parts.len() {
+            let is_unc = at == 1 && parts[0].is_empty();
+            if parts[at] == b"." || (parts[at].is_empty() && !is_unc) {
+                parts.remove(at);
+                did_something = true;
+            } else {
+                at += 1;
+            }
+        }
+        if parts.len() == 2 && parts[0] == b"." && (parts[1] == b"." || parts[1].is_empty()) {
+            parts.pop();
+            did_something = true;
+        }
+        let mut at = 1;
+        while at < parts.len() {
+            if parts[at] == b".." && !matches!(parts[at - 1], b"" | b"." | b".." | b"**") {
+                parts.drain(at - 1..=at);
+                did_something = true;
+                at = (at - 1).max(1);
+            } else {
+                at += 1;
+            }
+        }
+        if !did_something {
+            return parts;
+        }
+    }
+}
+
+/// Whether [`collapse_dots`] can change `path`.
+fn has_dot_segments(path: &[u8]) -> bool {
+    strings::contains(path, b"/.") || strings::contains(path, b"//") || path == b"./"
+}
+
+fn collapse_dots_in_path(path: &[u8]) -> Cow<'_, [u8]> {
+    match has_dot_segments(path) {
+        true => Cow::Owned(collapse_dots(strings::split(path, b"/").collect()).join(&b'/')),
+        false => Cow::Borrowed(path),
+    }
+}
+
+/// [`collapse_dots`] over the segments of a pattern, which a `/` inside a group doesn't end.
+fn collapse_dots_in_pattern(pattern: &[u8]) -> Cow<'_, [u8]> {
+    if !has_dot_segments(pattern) {
+        return Cow::Borrowed(pattern);
+    }
+    let mut parts = Vec::new();
+    let mut start = 0;
+    for end in segment_ends(pattern) {
+        parts.push(&pattern[start..end]);
+        start = end + 1;
+    }
+    Cow::Owned(collapse_dots(parts).join(&b'/'))
+}
+
 impl Minimatch {
     pub fn with(source: &[u8], options: MinimatchOptions) -> Minimatch {
         let mut source = match options.is_version_3 {
@@ -168,7 +283,10 @@ impl Minimatch {
             true => 0,
             false => source.iter().take_while(|it| **it == b'!').count(),
         };
-        let mut text = from_minimatch(&source[bangs..]);
+        let mut text = from_minimatch(&source[bangs..], !options.is_version_3);
+        if options.optimization_level_2 {
+            text = collapse_dots_in_pattern(&text).into_owned();
+        }
         if options.noext {
             text = without_groups(&text);
         }
@@ -189,6 +307,7 @@ impl Minimatch {
             prefixes: ends.map(|end| parse(&text[..end])).collect(),
             matches_file_name: options.match_base && !strings::contains_char(&source, b'/'),
             folds_case: options.nocase,
+            collapses_dots: options.optimization_level_2,
         }
     }
 
@@ -209,9 +328,13 @@ impl Minimatch {
         let Some(pattern) = &self.pattern else {
             return false;
         };
+        let path = match self.collapses_dots {
+            true => collapse_dots_in_path(path),
+            false => Cow::Borrowed(path),
+        };
         let path = match self.folds_case {
             true => Cow::Owned(path.to_ascii_lowercase()),
-            false => Cow::Borrowed(path),
+            false => path,
         };
         // `a` also matches `a/`.
         let without_slash = path.strip_suffix(b"/");
@@ -342,7 +465,7 @@ pub fn from_picomatch(pattern: &[u8], how: Picomatch) -> Vec<u8> {
         at += len;
     }
     let mut out = Vec::with_capacity(grouped.len() + 8);
-    common(&grouped, false, &mut out);
+    common(&grouped, false, false, &mut out);
     if is_deep {
         out.extend_from_slice(b"{,/**}");
     }

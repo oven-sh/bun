@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/path.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 03984179ed1b60c8aaa162b928af21eb47feff5157782c9efb2f597fb4284cfb.
+// Written against that file with the SHA-256 dcdde3319f079d1ba65647f6759c4b9efb738e97e76eed7e31ce7f52d5d429aa.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:path"
@@ -91,7 +91,8 @@ posix.posix = posix;
 type Glob = import("bun").Glob;
 
 // the most-recently used glob is memoized in case `matchesGlob` is called in a
-// loop with the same pattern
+// loop with the same pattern. Node reads `\` in the pattern as `/` for both flavours (minimatch's
+// `windowsPathsNoEscape`), so the memo can be shared by them.
 let prevGlob: Glob | undefined;
 let prevPattern: string | undefined;
 // What validateString() of internal/validators does. That module would keep node:url and util.inspect in every executable that imports node:path.
@@ -115,18 +116,16 @@ function matchesGlob(isWindows: boolean, path: string, pattern: string) {
       glob = prevGlob;
     } else {
       validateString(pattern, "pattern");
-      if (isWindows) pattern = pattern.replaceAll("\\", "/");
-      glob = prevGlob = new Bun.Glob(pattern);
+      glob = prevGlob = new Bun.Glob(pattern.replaceAll("\\", "/"));
       prevPattern = pattern;
     }
   } else {
     validateString(pattern, "pattern");
-    if (isWindows) pattern = pattern.replaceAll("\\", "/");
-    glob = prevGlob = new Bun.Glob(pattern);
+    glob = prevGlob = new Bun.Glob(pattern.replaceAll("\\", "/"));
     prevPattern = pattern;
   }
 
-  return glob.match(path);
+  return glob.$globMatchNode(path);
 }
 
 posix.matchesGlob = matchesGlob.bind(null, false);

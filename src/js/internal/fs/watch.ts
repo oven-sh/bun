@@ -15,12 +15,12 @@ type WatchListener = (eventType: string, filename: unknown) => void;
 
 function makeGlobMatcher(glob: Glob): Matcher {
   return function matchGlob(filename) {
-    return glob.match(filename);
+    return glob.$globMatchNode(filename);
   };
 }
 function makeGlobOrBasenameMatcher(glob: Glob): Matcher {
   return function matchGlobOrBasename(filename) {
-    return glob.match(filename) || glob.match(basename(filename));
+    return glob.$globMatchNode(filename) || glob.$globMatchNode(basename(filename));
   };
 }
 function makeRegexMatcher(matcher: RegExp): Matcher {

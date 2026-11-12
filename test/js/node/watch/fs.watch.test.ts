@@ -1051,6 +1051,29 @@ describe("fs.watch", () => {
       expect(events).toEqual(expected);
     },
   );
+
+  // Node matches `ignore` with minimatch at its default `dot: false`: `*` does not match a name that starts with `.`.
+  test("a wildcard in `ignore` does not ignore a dot file", async () => {
+    const root = path.join(testDir, "ignore-dot");
+    fs.mkdirSync(root);
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const watcher = fs.watch(root, { ignore: "*" });
+    watcher.on("change", (event, filename) => {
+      if (filename === ".env") resolve();
+      else reject(new Error(`${event} ${filename} was not ignored`));
+    });
+    watcher.on("error", reject);
+    const interval = repeat(() => {
+      fs.writeFileSync(path.join(root, "visible"), "x");
+      fs.writeFileSync(path.join(root, ".env"), "x");
+    });
+    try {
+      await promise;
+    } finally {
+      clearInterval(interval);
+      watcher.close();
+    }
+  });
 });
 
 describe("fs.promises.watch", () => {

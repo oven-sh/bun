@@ -570,8 +570,7 @@ impl<'a> Printer<'a, '_> {
             .is_some_and(|next| self.end_line(item) + 1 < self.start_line(next))
     }
 
-    /// Prettier's `INLINE_NODE_TYPES`, and `Text`: the text of a risky paragraph, which `preprocess` keeps whole.
-    /// Prettier 3.9.9 has it as a block, and prints `*[a](b)[[]]*` as `_[a](b)`, an empty line, `[[]]_`.
+    /// Prettier's `INLINE_NODE_TYPES` and `Text`, to Prettier 3.9.9 a block: `*[a](b)[[]]*` gets an empty line in it.
     fn is_inline(kind: Kind) -> bool {
         matches!(
             kind,
@@ -1272,8 +1271,7 @@ impl<'a> Printer<'a, '_> {
                 .node(sibling)
                 .filter(|it| matches!(it.kind, Kind::Sentence | Kind::Text))?;
             if sentence.kind == Kind::Text {
-                // The whole text of a risky paragraph. Prettier 3.9.9 sees no word in it, and prints `snake*case*word`
-                // as `snake_case_word`. A letter or a digit is a word, CommonMark's punctuation or whitespace is not.
+                // Text of a risky paragraph. Prettier 3.9.9 sees no word in it: `a*b*c` becomes `a_b_c`.
                 let text = self.str(sentence.value);
                 let (c, _) = if is_last {
                     last_char(text)

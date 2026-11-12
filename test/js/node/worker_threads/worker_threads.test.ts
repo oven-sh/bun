@@ -1220,7 +1220,7 @@ test("hasRef() tracks unref() and listener changes made between close() and 'clo
 
 // The refs close() leaves in place for hasRef() are dropped when 'close' fires, so a
 // closed port cannot keep the process alive. Spawned: the failure mode is a hang.
-test("a closed port stops keeping the process alive once 'close' has fired", async () => {
+test.concurrent("a closed port stops keeping the process alive once 'close' has fired", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1248,7 +1248,7 @@ test("a closed port stops keeping the process alive once 'close' has fired", asy
 
 // Teardown can start while a close() is still waiting for its 'close' task (which is
 // then never run): the worker's stop phase has to drop the refs that task would have.
-test("a worker exiting right after closing ref'd ports shuts down cleanly", async () => {
+test.concurrent("a worker exiting right after closing ref'd ports shuts down cleanly", async () => {
   const w = new Worker(
     `const { parentPort, MessageChannel } = require("worker_threads");
      const { port1, port2 } = new MessageChannel();
@@ -1272,7 +1272,7 @@ test("a worker exiting right after closing ref'd ports shuts down cleanly", asyn
 // port. Linux is where that combination is verified clean (CI's ASAN lane); keep the
 // fixture on the main thread, since every exited worker thread leaves its thread_local
 // eventNames() table behind under Malloc=1, which LSan would report here.
-test.skipIf(!isASAN || !isLinux)("ports closed right before exit are released by the VM teardown", async () => {
+test.concurrent.skipIf(!isASAN || !isLinux)("ports closed right before exit are released by the VM teardown", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1351,11 +1351,32 @@ test("hasRef() survives collection of the unreferenced peer", () => {
   port1.close();
 });
 
+// A port kept alive only by ref() has no listener to tell the pipe where it lives,
+// so the peer's close never reached it and the ref was never released. Node closes
+// any port, listening or not, when its peer closes, and the process exits.
+test.concurrent("a port kept alive only by ref() lets the process exit once its peer closes", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { MessageChannel } = require("worker_threads");
+       const { port1, port2 } = new MessageChannel();
+       port1.ref();
+       port2.close();`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // signalCode null => it exited on its own rather than being killed.
+  expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+});
+
 // A collected peer does close the channel (bun collects entangled ports; node
 // never does), and once this side's 'close' has fired, ref() must stay a no-op:
 // a re-taken loop ref is never released. Spawned: the symptom is "the process
 // never exits".
-test("ref() inside 'close' after the peer is collected does not pin the loop", async () => {
+test.concurrent("ref() inside 'close' after the peer is collected does not pin the loop", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2583,9 +2604,9 @@ test("parentPort.unref() lets a listening worker exit", async () => {
 // Same close() timing as any other port (node): hasRef() is still true right after
 // parentPort.close() and false once its 'close' event runs. Results travel over a
 // separate port because parentPort itself is the one being closed.
-test("parentPort.hasRef() stays true after parentPort.close() until its 'close' event", async () => {
+test.concurrent("parentPort.hasRef() stays true after parentPort.close() until its 'close' event", async () => {
   const { port1, port2 } = new MessageChannel();
-  const { promise, resolve } = Promise.withResolvers<unknown>();
+  const { promise, resolve, reject } = Promise.withResolvers<unknown>();
   port1.on("message", resolve);
   const w = new Worker(
     `const { parentPort, workerData } = require("worker_threads");
@@ -2598,7 +2619,10 @@ test("parentPort.hasRef() stays true after parentPort.close() until its 'close' 
      const afterClose = parentPort.hasRef();`,
     { eval: true, workerData: { report: port2 }, transferList: [port2] },
   );
+  w.on("error", reject);
   const exited = new Promise<number>(resolve => w.on("exit", resolve));
+  // A worker that exits without reporting fails the assertion, not the timeout.
+  exited.then(code => reject(new Error(`worker exited with ${code} before reporting`)));
   expect(await promise).toEqual({ afterClose: true, inCloseEvent: false });
   expect(await exited).toBe(0);
   port1.close();

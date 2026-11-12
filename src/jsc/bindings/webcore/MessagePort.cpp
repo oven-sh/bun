@@ -555,6 +555,10 @@ void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
         m_hasRef = true;
         ref();
         Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, 1);
+        // A ref()'d port with no listener has not told the pipe where it lives, so
+        // the peer's close could never reach peerClosed() to release this ref.
+        if (auto* context = scriptExecutionContext())
+            m_pipe->registerCloseContext(m_side, *context, ThreadSafeWeakPtr<MessagePort> { *this });
     }
 }
 

@@ -1217,13 +1217,12 @@ describe("Bun.ModuleGraph — error attribution matrix", () => {
       "m.mjs": `export const main = import.meta.main; export const url = import.meta.url;`,
     });
     const file = join(String(d), "m.mjs");
-    const g = new ModuleGraphClass();
-    const space = await g.import(file + "?tenant=a b");
-    const accent = await g.import(file + "?name=\u00e9");
-    expect({ spaceMain: space.main, spaceUrl: space.url.endsWith("?tenant=a%20b"), accentMain: accent.main }).toEqual({
-      spaceMain: true,
-      spaceUrl: true,
-      accentMain: false,
+    const href = Bun.pathToFileURL(file).href;
+    const space = await new ModuleGraphClass().import(file + "?tenant=a b");
+    const accent = await new ModuleGraphClass().import(file + "?name=\u00e9");
+    expect({ space: [space.main, space.url], accent: [accent.main, accent.url] }).toEqual({
+      space: [true, href + "?tenant=a%20b"],
+      accent: [true, href + "?name=%C3%A9"],
     });
   });
   test("the first import() is main from the moment it is requested: a second one in the same tick, and evicting main from require.cache, do not change it", async () => {

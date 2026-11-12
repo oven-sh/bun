@@ -46,7 +46,7 @@ use bun_core::scoped_log;
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
     group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry,
-    HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
+    HandleUncaughtExceptionResult, Order, RefDataValue, ResultQueue, ScopeMode, StepResult,
 };
 use super::expect::expect_deferred::ExpectDeferred;
 use super::test_context::{self, TestContext};
@@ -1211,30 +1211,33 @@ fn end_test_at_stop(
     sequence_index: usize,
     entry: NonNull<ExecutionEntry>,
 ) {
-    let buntest = buntest_strong.get();
-    let buntest_ptr = NonNull::from(&mut *buntest);
-    let this = &mut buntest.execution;
-    // SAFETY: group points into this.groups; read-only.
+    // SAFETY: group points into the groups of the file; read-only.
     let seq_abs = unsafe { group.as_ref() }.sequence_start + sequence_index;
-    let sequence = &mut this.sequences[seq_abs];
-    let entry_data = EntryData {
-        sequence_index,
-        entry: entry.as_ptr() as *const (),
-        attempt: sequence.attempt,
+    let (context, group_index, entry_data) = {
+        let this = &mut buntest_strong.get().execution;
+        let sequence = &mut this.sequences[seq_abs];
+        let entry_data = EntryData {
+            sequence_index,
+            entry: entry.as_ptr() as *const (),
+            attempt: sequence.attempt,
+        };
+        if sequence.result == Result::Pending || sequence.remaining_retry_count > 0 {
+            sequence.result = Result::Skip;
+        }
+        (sequence.context.as_ref().map(Strong::get), this.group_index, entry_data)
     };
     // From here on, what the test reports or settles with is not an error of the run. That includes what the listeners of its signal do.
     buntest_strong
         .bun_test_root
         .get()
-        .mark_timed_out(this.group_index, entry_data);
-    if sequence.result == Result::Pending || sequence.remaining_retry_count > 0 {
-        sequence.result = Result::Skip;
-    }
-    // The listeners are user code, so no `&mut ExecutionSequence` is held across them.
-    if let Some(context) = sequence.context.as_ref().map(Strong::get) {
+        .mark_timed_out(group_index, entry_data);
+    // The listeners are user code that can reach the file, so no reference into it is held across them.
+    if let Some(context) = context {
         TestContext::abort_signal_at_stop(context, global_this);
     }
-    let sequence = &mut this.sequences[seq_abs];
+    let buntest = buntest_strong.get();
+    let buntest_ptr = NonNull::from(&mut *buntest);
+    let sequence = &mut buntest.execution.sequences[seq_abs];
     sequence.maybe_skip = true;
     if !sequence.executing {
         sequence.executing = true;
@@ -1246,66 +1249,59 @@ fn end_test_at_stop(
     Execution::advance_sequence(buntest_ptr, sequence, group);
 }
 
-/// In a file that `--bail` stopped: `None` if `entry` is part of the teardown of its test, which goes on under its own time limit. Else the test ends here and its sequence runs again, unless a result of `entry` is in the queue: the step of that result decides, whatever the time limit says.
+/// What a file that `--bail` stopped does with a sequence that `step_sequence_one` looks at.
+enum AtStop {
+    /// What a file that runs on does.
+    GoesOn,
+    /// Nothing in this step.
+    Rests(AdvanceSequenceStatus),
+    /// `end_test_at_stop`, which the caller runs once it uses no reference into the file any more.
+    Ends,
+}
+
+/// For the test that runs `entry`. Its teardown goes on under its own time limit. If a result of `entry` is in the queue, the step of that result decides, whatever the time limit says. Any other test ends.
 #[cold]
 fn in_flight_at_stop(
-    buntest_strong: &BunTestPtr,
-    global_this: &JSGlobalObject,
-    group: NonNull<ConcurrentGroup>,
+    this: &Execution,
+    queue: &ResultQueue,
+    seq_abs: usize,
     sequence_index: usize,
     entry: NonNull<ExecutionEntry>,
-) -> Option<Option<AdvanceSequenceStatus>> {
-    let buntest = buntest_strong.get();
-    // SAFETY: group points into buntest.execution.groups; read-only.
-    let seq_abs = unsafe { group.as_ref() }.sequence_start + sequence_index;
-    let sequence = &buntest.execution.sequences[seq_abs];
+) -> AtStop {
+    let sequence = &this.sequences[seq_abs];
     if !sequence.is_before_teardown(entry) {
-        return None;
+        return AtStop::GoesOn;
     }
     let entry_data = EntryData {
         sequence_index,
         entry: entry.as_ptr() as *const (),
         attempt: sequence.attempt,
     };
-    if buntest.has_result_of(buntest.execution.group_index, entry_data) {
-        return Some(Some(AdvanceSequenceStatus::Execute {
+    if BunTest::has_result_of(queue, this.group_index, entry_data) {
+        return AtStop::Rests(AdvanceSequenceStatus::Execute {
             timeout: Timespec::EPOCH,
-        }));
+        });
     }
-    end_test_at_stop(buntest_strong, global_this, group, sequence_index, entry);
-    Some(None)
+    AtStop::Ends
 }
 
-/// Whether a file that `--bail` stopped in the group `stopped_in` still starts `entry`: the teardown of a test, or a sequence that the file `owes`. Any other test goes to its teardown here, and a sequence that has not started ends.
+/// For the sequence that is about to start `entry`. The teardown of a test starts, and so does a sequence that the file `owes`. Any other test ends, and a sequence that has not started is dropped.
 #[cold]
-fn starts_after_stop(
-    buntest_strong: &BunTestPtr,
-    global_this: &JSGlobalObject,
-    group: NonNull<ConcurrentGroup>,
-    sequence_index: usize,
-    entry: NonNull<ExecutionEntry>,
-    stopped_in: usize,
-) -> bool {
-    let this = &mut buntest_strong.get().execution;
-    // SAFETY: group points into this.groups; read-only.
-    let seq_abs = unsafe { group.as_ref() }.sequence_start + sequence_index;
+fn starts_after_stop(this: &mut Execution, seq_abs: usize, entry: NonNull<ExecutionEntry>, stopped_in: usize) -> AtStop {
     let sequence = &this.sequences[seq_abs];
     if !sequence.starts_with(entry) {
-        if !sequence.is_before_teardown(entry) {
-            return true;
-        }
-        end_test_at_stop(buntest_strong, global_this, group, sequence_index, entry);
-        return false;
+        return if sequence.is_before_teardown(entry) { AtStop::Ends } else { AtStop::GoesOn };
     }
     if this.owes(stopped_in, seq_abs) {
-        return true;
+        return AtStop::GoesOn;
     }
     this.sequences[seq_abs].active_entry = None;
-    // SAFETY: group points into this.groups.
-    let group = unsafe { &mut *group.as_ptr() };
+    // The group that is stepped is the one that runs.
+    let group = &mut this.groups[this.group_index];
+    debug_assert!(group.sequence_start <= seq_abs && seq_abs < group.sequence_end);
     debug_assert!(group.remaining_incomplete_entries > 0);
     group.remaining_incomplete_entries = group.remaining_incomplete_entries.saturating_sub(1);
-    false
+    AtStop::Rests(AdvanceSequenceStatus::Done)
 }
 
 enum AdvanceSequenceStatus {
@@ -1359,10 +1355,15 @@ fn step_sequence_one(
                 timeout: Timespec::EPOCH,
             }));
         };
-        if this.stopped_in.is_some()
-            && let Some(status) = in_flight_at_stop(buntest_strong, global_this, group, sequence_index, active_entry_ptr)
-        {
-            return Ok(status);
+        if this.stopped_in.is_some() {
+            match in_flight_at_stop(this, &buntest.result_queue, seq_abs, sequence_index, active_entry_ptr) {
+                AtStop::GoesOn => {}
+                AtStop::Rests(status) => return Ok(Some(status)),
+                AtStop::Ends => {
+                    end_test_at_stop(buntest_strong, global_this, group, sequence_index, active_entry_ptr);
+                    return Ok(None); // run again
+                }
+            }
         }
         let sequence = &mut this.sequences[seq_abs];
         // SAFETY: arena-owned entry
@@ -1402,10 +1403,15 @@ fn step_sequence_one(
         group_log::log(format_args!("runOne: no more entries; sequence complete."));
         return Ok(Some(AdvanceSequenceStatus::Done));
     };
-    if let Some(stopped_in) = this.stopped_in
-        && !starts_after_stop(buntest_strong, global_this, group, sequence_index, next_item_ptr, stopped_in)
-    {
-        return Ok(None); // run again
+    if let Some(stopped_in) = this.stopped_in {
+        match starts_after_stop(this, seq_abs, next_item_ptr, stopped_in) {
+            AtStop::GoesOn => {}
+            AtStop::Rests(status) => return Ok(Some(status)),
+            AtStop::Ends => {
+                end_test_at_stop(buntest_strong, global_this, group, sequence_index, next_item_ptr);
+                return Ok(None); // run again
+            }
+        }
     }
     let sequence = &mut this.sequences[seq_abs];
     // SAFETY: arena-owned entry

@@ -1129,11 +1129,11 @@ impl BunTest {
         let _ = self.result_queue.write_item(result); // OOM/capacity: fire-and-forget
     }
 
-    /// Whether a result of `entry` waits in the queue: its callback has settled, and the step of that result has not run yet.
-    pub(crate) fn has_result_of(&self, group_index: usize, entry: EntryData) -> bool {
-        (0..self.result_queue.readable_length()).any(|at| {
+    /// Whether a result of `entry` waits in `queue`: its callback has settled, and the step of that result has not run yet.
+    pub(crate) fn has_result_of(queue: &ResultQueue, group_index: usize, entry: EntryData) -> bool {
+        (0..queue.readable_length()).any(|at| {
             matches!(
-                self.result_queue.peek_item(at),
+                queue.peek_item(at),
                 RefDataValue::Execution { group_index: group, entry_data: Some(data) } if group == group_index && data == entry
             )
         })

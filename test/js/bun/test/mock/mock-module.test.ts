@@ -1388,6 +1388,123 @@ describe.concurrent("the original of a mocked module", () => {
     );
   });
 
+  // A mock of a loaded module calls its factory before the mock is registered, and then patches the module in place. What the
+  // factory asked for by name must be the original, not the module that the patch overwrites.
+  describe.concurrent("asked for by name in the factory of a loaded module", () => {
+    const files = {
+      ...modules,
+      "same.test.ts": `
+        import { expect, jest, mock, test, vi } from "bun:test";
+        import * as os from "os";
+        import * as path from "path";
+        import * as mod from "./mod";
+        import * as thing from "./sub/thing";
+
+        const seen = {};
+        const patched = mock.module("os", async () => {
+          seen.actual = await vi.importActual("os");
+          return { ...seen.actual, hostname: () => "mocked:" + seen.actual.hostname() };
+        });
+        mock.module("./mod", () => {
+          const actual = jest.requireActual("./mod");
+          seen.required = actual;
+          return { ...actual, fn: () => "wrapped:" + actual.fn() };
+        });
+        mock.module("./sub/thing", () => {
+          seen.made = jest.createMockFromModule("./sub/thing");
+          return { ...seen.made, thing: "mocked" };
+        });
+        mock.module("path", () => {
+          seen.madePath = jest.createMockFromModule("path");
+          return { ...seen.madePath, basename: () => "mocked" };
+        });
+        mock.module("./dep", () => {
+          seen.notAwaited = vi.importActual("./dep");
+          return { dep: () => "mocked-dep" };
+        });
+
+        test("below the imports of the same file", async () => {
+          await patched;
+          expect(os.hostname()).toBe("mocked:" + seen.actual.hostname());
+          expect(seen.actual).not.toBe(os);
+          expect([mod.fn(), seen.required.fn(), globalThis.loads]).toEqual(["wrapped:real-fn", "real-fn", 1]);
+        });
+
+        test("jest.createMockFromModule() below the imports of the same file", () => {
+          expect([thing.thing, seen.made.thing, jest.isMockFunction(thing.f), thing.f()]).toEqual(["mocked", "real-thing", true, undefined]);
+          expect([path.basename("a/b"), jest.isMockFunction(path.dirname), path.dirname("a/b")]).toEqual(["mocked", true, undefined]);
+          expect(typeof seen.madePath.sep).toBe("string");
+        });
+
+        test("vi.importActual() that the factory did not wait for", async () => {
+          expect([mod.usesDep(), (await seen.notAwaited).dep()]).toEqual(["mocked-dep", "real-dep"]);
+        });
+      `,
+      "first.test.ts": `
+        import { test } from "bun:test";
+        import * as os from "os";
+        import * as mod from "./mod";
+        import * as thing from "./sub/thing";
+        test("loads them", () => void [os.hostname(), mod.fn(), thing.f()]);
+      `,
+      "preload.ts": `import "os"; import "./mod"; import "./sub/thing";`,
+      "second.test.ts": `
+        import { expect, jest, mock, test, vi } from "bun:test";
+        import * as os from "os";
+        import * as mod from "./mod";
+        import * as thing from "./sub/thing";
+
+        const seen = vi.hoisted(() => ({}));
+        vi.mock("os", async importOriginal => {
+          seen.actual = await vi.importActual("os");
+          seen.original = await importOriginal();
+          return { ...seen.actual, hostname: () => "mocked:" + seen.actual.hostname() };
+        });
+        jest.mock("./mod", () => {
+          const actual = jest.requireActual("./mod");
+          seen.required = actual;
+          return { ...actual, fn: () => "wrapped:" + actual.fn() };
+        });
+        const patched = mock.module("./sub/thing", async () => {
+          seen.thing = await vi.importActual("./sub/thing");
+          return { ...seen.thing, thing: "mocked" };
+        });
+
+        test("vi.importActual() and importOriginal() of a builtin", () => {
+          expect(os.hostname()).toBe("mocked:" + seen.actual.hostname());
+          expect(os.hostname()).toBe("mocked:" + seen.original.hostname());
+          expect(seen.actual).not.toBe(os);
+          expect(seen.actual).toBe(seen.original);
+          expect(require("node:os").hostname()).toBe(os.hostname());
+        });
+
+        test("jest.requireActual() of a module", () => {
+          expect(mod.fn()).toBe("wrapped:real-fn");
+          expect(seen.required.fn()).toBe("real-fn");
+          expect(seen.required.value).toBe("real");
+        });
+
+        test("vi.importActual() in a mock.module() factory", async () => {
+          await patched;
+          expect([thing.thing, seen.thing.thing, seen.thing.f()]).toEqual(["mocked", "real-thing", "real-f"]);
+          expect(globalThis.loads).toBe(1);
+        });
+      `,
+    };
+
+    test("by an earlier test file", async () => {
+      await expectFixturesToPass(files, 4, ["./first.test.ts", "./second.test.ts"]);
+    });
+
+    test("by a preload", async () => {
+      await expectFixturesToPass(files, 3, ["--preload", "./preload.ts", "./second.test.ts"]);
+    });
+
+    test("by the test file itself", async () => {
+      await expectFixturesToPass(files, 3, ["./same.test.ts"]);
+    });
+  });
+
   test.each(["mock.module", "vi.mock", "jest.mock"])(
     "require() returns the mock of %s() with an async factory that awaits nothing itself",
     async mockModule => {

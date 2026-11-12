@@ -1067,7 +1067,8 @@ static String messageOfUninitializedVariableError(JSC::VM& vm, JSValue error)
 }
 
 // Spreading a namespace throws on TDZ exports (import cycles) and on names a vi.mock() factory left out, so copy it with those as undefined.
-static JSObject* withoutUninitializedExports(Zig::GlobalObject* globalObject, JSObject* moduleNamespace)
+// With `alwaysCopy`, a copy even if every export is initialized: a patch of the module does not reach it.
+static JSObject* withoutUninitializedExports(Zig::GlobalObject* globalObject, JSObject* moduleNamespace, bool alwaysCopy = false)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1090,7 +1091,7 @@ static JSObject* withoutUninitializedExports(Zig::GlobalObject* globalObject, JS
         names.append(name);
         values.append(value);
     }
-    if (isInitialized)
+    if (isInitialized && !alwaysCopy)
         return moduleNamespace;
     RELEASE_AND_RETURN(scope, objectWithExports(globalObject, names, values));
 }
@@ -1296,6 +1297,51 @@ static bool patchesModuleBeingEvaluated(Zig::GlobalObject* globalObject, JSModul
     return record && !record->hasLiveExports() && record->status() >= JSC::CyclicModuleRecord::Status::Linked && !record->isSCCEvaluated();
 }
 
+// A copy of what the factory's own import gave. Once the factory has settled the module is patched, so the mock's saved originals are given. A builtin is loaded again.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionOriginalOfOwnImportDidLoad, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto [mock, original] = toModuleMockWith<JSC::JSPromise>(lexicalGlobalObject, scope, callframe->argument(1));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* imported = callframe->argument(0).getObject();
+    if (imported && mock->state == JSModuleMock::State::Running && !isBuiltinModuleKey(mock->specifier->tryGetValue().data)) {
+        JSObject* copy = withoutUninitializedExports(globalObject, imported, true);
+        if (scope.exception()) [[unlikely]]
+            original->rejectWithCaughtException(vm, scope);
+        else
+            original->fulfill(vm, copy);
+        return JSValue::encode(jsUndefined());
+    }
+    JSC::JSPromise* loading = importOriginalModule(globalObject, mock, false, String(), false);
+    if (scope.exception()) [[unlikely]]
+        original->rejectWithCaughtException(vm, scope);
+    else
+        original->pipeFrom(vm, loading);
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionOriginalOfOwnImportDidFail, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSPromise* original = toModuleMockWith<JSC::JSPromise>(lexicalGlobalObject, scope, callframe->argument(1)).second;
+    RETURN_IF_EXCEPTION(scope, {});
+    original->reject(vm, callframe->argument(0));
+    return JSValue::encode(jsUndefined());
+}
+
+static JSC::JSPromise* originalOfOwnImport(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::JSPromise* loading)
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSC::JSPromise* original = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    JSC::JSFunction* didLoad = JSC::JSFunction::create(vm, globalObject, 2, String(), jsFunctionOriginalOfOwnImportDidLoad, ImplementationVisibility::Private);
+    JSC::JSFunction* didFail = JSC::JSFunction::create(vm, globalObject, 2, String(), jsFunctionOriginalOfOwnImportDidFail, ImplementationVisibility::Private);
+    loading->performPromiseThenWithContext(vm, globalObject, didLoad, didFail, jsUndefined(), moduleMockWith(globalObject, mock, original));
+    return original;
+}
+
 // Returns a promise for `next` to settle. `next` is called once `loading` has settled, either way, with (mock, that promise) as its context.
 __attribute__((minsize)) static JSC::JSPromise* originalModuleAfter(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::JSPromise* loading, JSC::NativeFunction next)
 {
@@ -1394,6 +1440,19 @@ static Vector<JSObject*, 2> factoriesInAsyncContext(Zig::GlobalObject* globalObj
         frame = previous ? previous.getObject() : nullptr;
     }
     return factories;
+}
+
+// The mock of `key` whose factory the code runs in, while the mock is not registered: mockModule() calls the factory of a loaded module first.
+static JSModuleMock* unregisteredMockWhoseFactoryRuns(Zig::GlobalObject* globalObject, const String& key)
+{
+    if (registeredModuleMock(globalObject, key))
+        return nullptr;
+    for (JSObject* factory : factoriesInAsyncContext(globalObject)) {
+        auto* mock = uncheckedDowncast<JSModuleMock>(factory);
+        if (mock->state == JSModuleMock::State::Running && mock->specifier->tryGetValue().data == key)
+            return mock;
+    }
+    return nullptr;
 }
 
 #if ENABLE(AOT)
@@ -6935,6 +6994,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionImportActualModule, (JSC::JSGlobalObject * le
     if (loaded.compiledModule && Bun::isBunTest)
         JSC::AOT::noteHostImportInFlight(globalObject, *loaded.compiledModule, loading, factoriesInAsyncContext(globalObject).containsIf(isOwnFactory));
 #endif
+    if (JSModuleMock* mock = unregisteredMockWhoseFactoryRuns(globalObject, specifier.key))
+        return JSValue::encode(originalOfOwnImport(globalObject, mock, loading));
     return JSValue::encode(loading);
 }
 
@@ -6949,7 +7010,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireActualModule, (JSC::JSGlobalObject * l
 
     if (JSModuleMock* mock = registeredModuleMock(globalObject, specifier.key))
         RELEASE_AND_RETURN(scope, JSValue::encode(requireOriginalModule(globalObject, mock)));
-    RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, callerPath(vm, callframe), specifier.key)));
+    JSValue required = requireModuleKey(globalObject, callerPath(vm, callframe), specifier.key);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (JSModuleMock* mock = unregisteredMockWhoseFactoryRuns(globalObject, specifier.key))
+        RELEASE_AND_RETURN(scope, JSValue::encode(requireOriginalModule(globalObject, mock)));
+    return JSValue::encode(required);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionImportMockDidLoad, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
@@ -7034,6 +7099,10 @@ static JSC::EncodedJSValue requireMockModule(JSC::JSGlobalObject* lexicalGlobalO
 
     JSValue original = mock ? requireOriginalModule(globalObject, mock) : requireModuleKey(globalObject, from, specifier.key);
     RETURN_IF_EXCEPTION(scope, {});
+    if (JSModuleMock* running = !mock && fromOriginal ? unregisteredMockWhoseFactoryRuns(globalObject, specifier.key) : nullptr) {
+        original = requireOriginalModule(globalObject, running);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::mockObject(globalObject, original, false)));
 }
 

@@ -1726,9 +1726,12 @@ impl HTTPClient<'static> {
         }
     }
 
-    /// The consumer of the response body takes bytes again.
+    /// The consumer of the response body takes bytes again, or `body_unread` changed.
     pub(crate) fn receive_resumed(this: NonNull<Self>) {
         let client = Self::from_erased_backref(this);
+        let needs_slot = client.needs_slot();
+        // SAFETY: the request is in `in_flight`, and nothing else borrows it between two messages.
+        unsafe { AsyncHTTP::hold_slot(client.parent_async_http(), needs_slot) };
         match client.carrier {
             Carrier::Tcp(socket) => client.resume_receive::<false>(socket),
             Carrier::Tls(socket) => client.resume_receive::<true>(socket),
@@ -2275,6 +2278,12 @@ impl<'a> HTTPClient<'a> {
 
     fn is_in_progress(&self) -> bool {
         self.state.stage != Stage::Done && self.state.stage != Stage::Fail
+    }
+
+    /// False while only the program can move the request on: all of the response has arrived, or nothing reads its body.
+    pub(crate) fn needs_slot(&self) -> bool {
+        let arrived = matches!(self.carrier, Carrier::None) && self.state.is_done();
+        !arrived && !self.signals.get(signals::Field::BodyUnread)
     }
 
     /// Whether `on_close` sends the request again: it went out on a reused

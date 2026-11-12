@@ -384,6 +384,14 @@ pub(crate) fn run_task(
                 unsafe { bun_bundler::parse_task::on_complete(result) };
             })
         }
+        task_tag::FetchTaskletDelivered => {
+            feature_arm!(
+                [Fetch],
+                |delivered: crate::webcore::fetch::FetchTaskletDelivered| {
+                    crate::webcore::fetch::FetchTaskletDelivered::run(delivered);
+                }
+            )
+        }
         task_tag::FetchTaskletRequestDrain => {
             feature_arm!(
                 [Fetch],
@@ -883,7 +891,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 87,
+    task_tag::COUNT == 88,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1712,6 +1720,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::BundleV2ParseTaskResult => {
             release_in!([Bundler], BundleV2ParseTaskResult)
+        }
+        task_tag::FetchTaskletDelivered => {
+            release_in!([Fetch], crate::webcore::fetch::FetchTaskletDelivered)
         }
         task_tag::FetchTaskletRequestDrain => {
             release_in!([Fetch], crate::webcore::fetch::FetchTaskletRequestDrain)

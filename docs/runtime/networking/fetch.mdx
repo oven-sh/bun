@@ -542,6 +542,8 @@ By default, Bun limits the number of simultaneous `fetch` requests to 256, for t
 
 When the limit is exceeded, Bun queues requests and sends them as soon as the next request ends.
 
+A response whose body you are not reading does not count toward the limit. If the body is large, its connection stays open until you read the body, cancel it with `response.body.cancel()`, or the response is garbage collected.
+
 To raise the limit, set the `BUN_CONFIG_MAX_HTTP_REQUESTS` environment variable:
 
 ```sh

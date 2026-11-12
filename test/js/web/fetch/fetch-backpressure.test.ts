@@ -627,10 +627,10 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
     process.stdout.write(JSON.stringify({ got, peak, zeros }));
   `;
 
-  async function runClient(url: string, opts: object, script: string) {
+  async function runClient(url: string, opts: object, script: string, env?: Record<string, string>) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `const url=${JSON.stringify(url)};const opts=${JSON.stringify(opts)};${script}`],
-      env: bunEnv,
+      env: { ...bunEnv, ...env },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1372,31 +1372,229 @@ describe.concurrent("fetch() receive backpressure — the decompressor does not 
 
     test("held, and its Response is collected: the request ends", async () => {
       await using server = await serveWhole("content-length", "with the head");
-      // With one request at a time, the second one starts when the held one has ended.
-      const script = /* js */ `
-        const url = ${JSON.stringify(server.url)};
-        // Its own frame, so that nothing on this one still refers to the response afterwards.
-        async function abandon() {
-          return (await fetch(url)).status;
-        }
-        const first = await abandon();
-        let second;
-        fetch(url).then(async res => (second = (await res.bytes()).length));
-        while (second === undefined) {
-          await new Promise(setImmediate);
-          Bun.gc(true);
-        }
-        console.log(first, second);
-      `;
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", script],
-        env: { ...bunEnv, BUN_CONFIG_MAX_HTTP_REQUESTS: "1" },
-        stdout: "pipe",
-        stderr: "pipe",
+      // A request keeps its session alive, and a session closes its connections when it's collected.
+      // Its own frame, so that nothing on this one still refers to the response afterwards.
+      async function abandon() {
+        expect((await new Bun.FetchSession().fetch(server.url)).status).toBe(200);
+      }
+      await abandon();
+      await collectUntil(server.closed);
+    });
+
+    describe("held: it takes no request slot", () => {
+      async function expectAllHeads(url: string, opts: object) {
+        const script = /* js */ `
+          const responses = await Promise.all(Array.from({ length: 6 }, () => fetch(url, opts)));
+          const sizes = [];
+          for (const res of responses) sizes.push((await res.bytes()).length);
+          console.log(JSON.stringify({ sizes }));
+        `;
+        expect(await runClient(url, opts, script, { BUN_CONFIG_MAX_HTTP_REQUESTS: "2" })).toEqual({
+          sizes: Array(6).fill(SIZE),
+          stderr: "",
+          exitCode: 0,
+        });
+      }
+
+      test.each(["content-length", "chunked"] as Framing[])("%s", async framing => {
+        await using server = await serveWhole(framing, "with the head");
+        await expectAllHeads(server.url, {});
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr }).toEqual({ stdout: `200 ${SIZE}\n`, stderr: "" });
-      expect(exitCode).toBe(0);
+
+      test("through a CONNECT proxy", async () => {
+        await using server = await serveWhole("content-length", "with the head", true);
+        await using proxy = await serveConnectProxy();
+        await expectAllHeads(server.url, { proxy: proxy.url, tls: { ca: tls.cert } });
+      });
+
+      test("over HTTP/2", async () => {
+        const server = createSecureServer({ ...tls, allowHTTP1: false });
+        server.on("stream", (stream: ServerHttp2Stream) => {
+          stream.on("error", () => {});
+          stream.respond({ ":status": 200, "content-encoding": "gzip" });
+          stream.end(wire);
+        });
+        await using origin = await listening(server);
+        await expectAllHeads(`https://127.0.0.1:${origin.port}/`, { protocol: "http2", tls: { ca: tls.cert } });
+      });
+
+      test.skipIf(isWindows)("over HTTP/3", async () => {
+        await using server = Bun.serve({
+          port: 0,
+          tls,
+          http3: true,
+          http1: false,
+          fetch: () => new Response(wire, { headers: { "content-encoding": "gzip" } }),
+        });
+        await expectAllHeads(`https://127.0.0.1:${server.port}/`, { protocol: "http3", tls: { ca: tls.cert } });
+      });
+    });
+  });
+});
+
+// No collection runs in these clients, so no finalizer can give a slot back.
+describe.concurrent("fetch() gives the request slot of an unread body to the next request", () => {
+  async function run(script: string, url: string, opts: object = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const url = ${JSON.stringify(url)}, opts = ${JSON.stringify(opts)};${script}`],
+      env: { ...bunEnv, BUN_CONFIG_MAX_HTTP_REQUESTS: "4", BUN_JSC_useGC: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const printed = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
+
+  async function serveRaw(response: Buffer[], onRequest: (path: string) => unknown = () => {}) {
+    const sockets = new Set<import("node:net").Socket>();
+    const origin = createTcpServer(socket => {
+      sockets.add(socket);
+      socket.on("error", () => {});
+      socket.on("data", data => {
+        onRequest(data.toString("latin1").split(" ")[1]);
+        socket.write(Buffer.concat([Buffer.from("HTTP/1.1 200 OK\r\n"), ...response]));
+      });
+    });
+    await once(origin.listen(0, "127.0.0.1"), "listening");
+    return {
+      url: `http://127.0.0.1:${(origin.address() as import("node:net").AddressInfo).port}/`,
+      [Symbol.dispose]() {
+        origin.close();
+        for (const socket of sockets) socket.destroy();
+      },
+    };
+  }
+
+  const STATUSES = /* js */ `
+    let ok = 0;
+    const count = ({ status }) => void (status === 200 && ok++);
+    for (let i = 0; i < 6; i++) count(await fetch(url, opts));
+    await Promise.all(Array.from({ length: 6 }, () => fetch(url, opts).then(count)));
+    // Looking at \`body\` isn't reading it.
+    for (let i = 0; i < 6; i++) {
+      const res = await fetch(url, opts);
+      if (res.body) count(res);
+    }
+    console.log(ok);
+    process.exit(0);
+  `;
+
+  const big = Buffer.alloc(1024 * 1024, "a");
+  const gzipped = gzipSync(Buffer.alloc(64 * 1024 * 1024));
+  const quiet = [Buffer.from("Content-Length: 100000\r\n\r\nonly this much")];
+  test.each<[string, Buffer[]]>([
+    ["larger than the receive buffer", [Buffer.from(`Content-Length: ${big.length}\r\n\r\n`), big]],
+    [
+      "compressed, and held undecoded",
+      [Buffer.from(`Content-Encoding: gzip\r\nContent-Length: ${gzipped.length}\r\n\r\n`), gzipped],
+    ],
+    ["cut off by an origin that went quiet", quiet],
+    [
+      "chunked, and larger than the receive buffer",
+      [
+        Buffer.from(`Transfer-Encoding: chunked\r\n\r\n${big.length.toString(16)}\r\n`),
+        big,
+        Buffer.from("\r\n0\r\n\r\n"),
+      ],
+    ],
+    [
+      "chunked, and cut off by an origin that went quiet",
+      [Buffer.from("Transfer-Encoding: chunked\r\n\r\n186a0\r\nonly this much")],
+    ],
+  ])("the dropped bodies are %s", async (_, response) => {
+    using origin = await serveRaw(response);
+    expect(await run(STATUSES, origin.url)).toEqual(printed("18\n"));
+  });
+
+  test("over HTTP/2, with fewer streams on a connection than there are bodies", async () => {
+    const server = createSecureServer({ ...tls, allowHTTP1: false, settings: { maxConcurrentStreams: 5 } });
+    server.on("stream", (stream: ServerHttp2Stream) => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      stream.write("only this much");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const url = `https://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/`;
+      expect(await run(STATUSES, url, { protocol: "http2", tls: { ca: tls.cert } })).toEqual(printed("18\n"));
+    } finally {
+      server.close();
+    }
+  });
+
+  test.skipIf(isWindows)("over HTTP/3", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: () => new Response(new ReadableStream({ start: controller => controller.enqueue(PAYLOAD) })),
+    });
+    const url = `https://127.0.0.1:${server.port}/`;
+    expect(await run(STATUSES, url, { protocol: "http3", tls: { ca: tls.cert } })).toEqual(printed("18\n"));
+  });
+
+  test("bodies that are read after all the heads are in arrive whole", async () => {
+    using origin = await serveRaw([Buffer.from(`Content-Length: ${big.length}\r\n\r\n`), big]);
+    const script = /* js */ `
+      const responses = await Promise.all(Array.from({ length: 9 }, () => fetch(url)));
+      let total = 0;
+      for (const res of responses) total += (await res.bytes()).length;
+      console.log(total);
+    `;
+    expect(await run(script, origin.url)).toEqual(printed(`${9 * big.length}\n`));
+  });
+
+  // "/waits" can only start when a slot is free, and cancelling a body is what frees one. An aborted request
+  // fails without a slot, which shows that the HTTP thread has looked at everything that was queued before it.
+  describe.each(["right away", "in a later turn of the loop"])("a body that is taken %s holds its slot", when => {
+    test.each([
+      ["res.text()", "res.text().catch(() => {})"],
+      ["a reader", "res.body.getReader().read()"],
+      ["res.body.text()", "res.body.text().catch(() => {})"],
+      ["Bun.write()", "Bun.write(opts.file + i, res).catch(() => {})"],
+      ["Bun.serve()", "await forward(res)"],
+    ])("%s", async (_, take) => {
+      using dir = tempDir("fetch-slot-of-a-read-body", {});
+      const requests: string[] = [];
+      using origin = await serveRaw(quiet, path => path === "/aborted" || requests.push(path));
+      const script = /* js */ `
+        // Resolves when a client of the server has the first bytes.
+        function forward(res) {
+          const { port } = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(res.body) });
+          const socket = require("node:net").connect(port, "127.0.0.1");
+          socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          return new Promise(resolve => socket.once("data", resolve));
+        }
+        const controller = new AbortController();
+        for (let i = 0; i < 4; i++) {
+          const res = await fetch(url + "taken", { signal: controller.signal });
+          ${when === "right away" ? "" : "await new Promise(setImmediate);"}
+          ${take};
+        }
+        async function settle() {
+          for (let i = 0; i < 4; i++) {
+            const probe = new AbortController();
+            const aborted = fetch(url + "aborted", { signal: probe.signal }).catch(() => {});
+            probe.abort();
+            await aborted;
+            await require("node:fs/promises").stat(process.execPath);
+          }
+        }
+        await settle();
+        let state = "waiting";
+        const waits = fetch(url + "waits").then(() => (state = "answered"));
+        await settle();
+        console.log(state);
+        controller.abort();
+        console.log(await waits);
+        process.exit(0);
+      `;
+      // Not stderr: a server reports the abort of a body that it's sending.
+      const { stdout, exitCode } = await run(script, origin.url, { file: join(String(dir), "body") });
+      expect({ stdout, exitCode }).toEqual({ stdout: "waiting\nanswered\n", exitCode: 0 });
+      expect(requests).toEqual(["/taken", "/taken", "/taken", "/taken", "/waits"]);
     });
   });
 });

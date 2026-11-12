@@ -197,6 +197,17 @@ impl ProducerHold {
         self.source.get().is_some()
     }
 
+    /// Whether a reader, a native sink or a whole-body read has taken the held stream.
+    pub(crate) fn has_consumer(&self) -> bool {
+        self.source.get().is_some_and(|source| {
+            // SAFETY: live through our ref.
+            let source = unsafe { source.as_ref() };
+            source.reader_context.get().is_some()
+                || source.context.sink.get().is_some()
+                || source.context.buffer_action.get().is_some()
+        })
+    }
+
     /// The held stream, pinned for the guard's life: a consumer inside `on_data` can cancel the
     /// producer (which drops the hold), and the wrapper is not always rooted.
     pub(crate) fn bytes(&self) -> Option<PinnedBytes> {

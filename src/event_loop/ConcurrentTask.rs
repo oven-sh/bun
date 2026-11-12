@@ -82,6 +82,7 @@ pub mod task_tag {
         FdPipe,
         FetchTasklet,
         FetchTaskletDeinit,
+        FetchTaskletDelivered,
         FetchTaskletPromiseSettle,
         FetchTaskletRequestDrain,
         FSWatchTask,

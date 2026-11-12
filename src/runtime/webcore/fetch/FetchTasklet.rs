@@ -99,6 +99,35 @@ impl FetchTaskletRequestDrain {
     }
 }
 
+/// Runs after the reactions to the `fetch()` promise, where a program that wants the body right
+/// away asks for it. Same pointer, its own tag.
+#[repr(transparent)]
+pub(crate) struct FetchTaskletDelivered(FetchTasklet);
+impl Taskable for FetchTaskletDelivered {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletDelivered;
+    /// Carries the +1 `on_progress_update` took.
+    unsafe fn release_unrun(this: *mut Self) {
+        FetchTasklet::deref(this.cast::<FetchTasklet>());
+    }
+    /// Calls no script.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+impl FetchTaskletDelivered {
+    pub(crate) fn run(this: *mut Self) {
+        let this = this.cast::<FetchTasklet>();
+        let tasklet = FetchTasklet::from_raw_mut(this);
+        tasklet.set_body_unread(!tasklet.has_body_consumer());
+        let global_this = tasklet.global_this;
+        tasklet.mutex.lock();
+        let unread_bytes = tasklet.take_unread_bytes();
+        tasklet.mutex.unlock();
+        FetchTasklet::deref(this);
+        global_this.vm().report_extra_memory(unread_bytes);
+    }
+}
+
 impl Taskable for FetchTasklet {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTasklet;
     /// A progress hop the HTTP thread posted: it carries the +1 that
@@ -145,6 +174,8 @@ pub struct FetchTasklet {
 
     /// buffer used to stream response to JS
     pub(crate) scheduled_response_buffer: MutableString,
+    /// Body bytes received that the garbage collector hasn't been told about. Under `mutex`.
+    unreported_body_bytes: usize,
     /// response weak ref we need this to track the response JS lifetime
     pub(crate) response: jsc::Weak<FetchTasklet>,
     /// native response ref if we still need it when JS is discarted
@@ -989,8 +1020,10 @@ impl FetchTasklet {
                 cleanup(self);
                 return Ok(());
             }
+            let unread_bytes = self.take_unread_bytes();
             let r = self.on_body_received();
             cleanup(self);
+            global_this.vm().report_extra_memory(unread_bytes);
             return r;
         }
         // Run the user-supplied `checkServerIdentity` callback as soon as the
@@ -1143,6 +1176,12 @@ impl FetchTasklet {
         // SAFETY: `vm.event_loop()` is the live JS-thread loop.
         unsafe {
             (*vm.event_loop()).enqueue_task(Task::from_boxed(holder));
+            if self.is_waiting_body {
+                self.ref_();
+                (*vm.event_loop()).enqueue_task(Task::init(
+                    std::ptr::from_mut(self).cast::<FetchTaskletDelivered>(),
+                ));
+            }
         }
 
         dispatch_cleanup(self);
@@ -1751,8 +1790,31 @@ impl FetchTasklet {
     }
 
     pub(crate) fn on_stream_drained(&self) {
+        self.set_body_unread(false);
         self.unpark_body_stream();
         self.resume_receive();
+    }
+
+    fn has_body_consumer(&self) -> bool {
+        self.signal_store.body_receive_mode() == BodyReceiveMode::BufferAll
+            || self.response_stream.has_consumer()
+    }
+
+    /// What a dropped `Response` keeps alive, so it counts toward the next collection. A consumer reports what it makes of the bytes.
+    fn take_unread_bytes(&mut self) -> usize {
+        if self.signal_store.body_unread.load(Ordering::Relaxed) {
+            core::mem::take(&mut self.unreported_body_bytes)
+        } else {
+            0
+        }
+    }
+
+    fn set_body_unread(&self, unread: bool) {
+        let flag = &self.signal_store.body_unread;
+        if flag.load(Ordering::Relaxed) != unread {
+            flag.store(unread, Ordering::Relaxed);
+            self.schedule_receive_resume();
+        }
     }
 
     fn resume_receive(&self) {
@@ -1763,6 +1825,7 @@ impl FetchTasklet {
 
     /// A native sink was wired to the stream: something waits for bytes again.
     pub(crate) fn on_consumer_attached(&self) {
+        self.set_body_unread(false);
         self.unpark_body_stream();
     }
 
@@ -1804,6 +1867,7 @@ impl FetchTasklet {
         let this = Self::from_ctx(ctx);
         this.poll_ref
             .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
+        this.set_body_unread(false);
         if this.signal_store.receive_all() {
             this.schedule_receive_resume();
         }
@@ -1977,6 +2041,7 @@ impl FetchTasklet {
             request_body: fetch_options.body,
             request_body_streaming_buffer: None,
             scheduled_response_buffer: MutableString::default(),
+            unreported_body_bytes: 0,
             response: jsc::Weak::default(),
             native_response: JsCell::new(None),
             response_stream: Default::default(),
@@ -2583,6 +2648,10 @@ impl FetchTasklet {
                 return;
             }
         } else if success {
+            // Not what HTTP/2 and HTTP/3 deliver after the pause: every collection puts off JSC's sweeper, which runs the finalizer that stops it.
+            if task_ref.signal_store.body_receive_mode() != BodyReceiveMode::Paused {
+                task_ref.unreported_body_bytes += body.len().max(body_owned.len());
+            }
             let scheduled = &mut task_ref.scheduled_response_buffer;
             if body.is_empty() && !body_owned.is_empty() && scheduled.list.is_empty() {
                 scheduled.list = body_owned;

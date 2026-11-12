@@ -956,7 +956,8 @@ const SocketHandlers = {
     if (full) readStop(self, socket);
   },
   writeComplete(socket, status: number) {
-    onWriteComplete(socket.data, socket, status);
+    // send(message, socket) took `data` from the handle. Its net.Socket still waits for this write.
+    onWriteComplete(socket.data ?? socket[owner_symbol], socket, status);
   },
   end(socket) {
     const self = socket.data;

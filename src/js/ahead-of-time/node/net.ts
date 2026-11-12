@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 5d2e54412edf0315a72ea9aedcc4ca9810840ed1b73c1615d6214d4a089ff747.
+// Written against that file with the SHA-256 a3792794d7f3f5f6ea331fce962f1af8cecdf2f8e774e3189741a8fbcf82c466.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -1332,7 +1332,8 @@ const SocketHandlers = {
     if (full) readStop(self, socket);
   },
   writeComplete(socket, status: number) {
-    onWriteComplete(socket.data, socket, status);
+    // send(message, socket) took `data` from the handle. Its net.Socket still waits for this write.
+    onWriteComplete(socket.data ?? socket[owner_symbol], socket, status);
   },
   end(socket) {
     const self = socket.data;

@@ -65,7 +65,7 @@ pub struct CompiledPathAlias {
 pub struct NamesReadLater<T: 'static> {
     encoded: &'static [u8],
     entry_point_count: usize,
-    read: fn(&'static [u8], usize) -> Option<Box<[T]>>,
+    read: fn(&'static [u8], usize) -> Box<[T]>,
     names: OnceLock<Box<[T]>>,
 }
 
@@ -74,7 +74,7 @@ impl<T> NamesReadLater<T> {
     pub fn new(
         encoded: &'static [u8],
         entry_point_count: usize,
-        read: fn(&'static [u8], usize) -> Option<Box<[T]>>,
+        read: fn(&'static [u8], usize) -> Box<[T]>,
     ) -> NamesReadLater<T> {
         NamesReadLater {
             encoded,
@@ -96,7 +96,7 @@ impl<T> From<Box<[T]>> for NamesReadLater<T> {
     fn from(names: Box<[T]>) -> NamesReadLater<T> {
         NamesReadLater {
             names: OnceLock::from(names),
-            ..NamesReadLater::new(b"", 0, |_, _| None)
+            ..NamesReadLater::new(b"", 0, |_, _| Box::new([]))
         }
     }
 }
@@ -107,8 +107,7 @@ impl<T> core::ops::Deref for NamesReadLater<T> {
     fn deref(&self) -> &[T] {
         self.names.get_or_init(|| match self.encoded {
             b"" => Box::new([]),
-            encoded => (self.read)(encoded, self.entry_point_count)
-                .expect("the names of packages in this executable are corrupted"),
+            encoded => (self.read)(encoded, self.entry_point_count),
         })
     }
 }
@@ -730,6 +729,7 @@ impl CompiledProgram {
         }
     }
 
+    #[cfg(test)]
     pub fn with_package_names(
         mut self,
         package_names: Box<[CompiledPackageName]>,

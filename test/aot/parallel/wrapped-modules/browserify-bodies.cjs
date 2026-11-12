@@ -34,12 +34,12 @@ module.exports = JSON.parse('{"a":[1,2],"__proto__":3}');
 },{}],7:[function(require,module,exports){
 "use strict";
 var loads = 0;
-exports.load = function (n) { loads++; return n ? require("helper")(n) : require("./data").a; };
+exports.load = function (n) { loads++; return n ? require("./helper")(n) : require("./data").a; };
 exports.loads = () => loads;
 exports.absent = undefined;
-},{"helper":4,"./data":6}],8:[function(require,module,exports){
+},{"./helper":4,"./data":6}],8:[function(require,module,exports){
 "use strict";
-var lazy = require("./lazy"), helper = require("helper");
+var lazy = require("./lazy"), helper = require("./helper");
 out.push(String(lazy.load(6)), show(() => lazy.load(0)), String(lazy.loads()), String(helper === lazy), show(() => helper.Point));
 var sum = new helper.Point();
 for (var i = 0; i < 1000; i++) sum = sum.add(helper.make(i));
@@ -50,9 +50,9 @@ for (var k = 0; k < 2; k++) { try { var t = require("./thrower"); out.push(show(
 var seven = require("./seven");
 out.push(String(seven(3)), show(() => seven.own), show(() => seven.lost));
 helper.added = 1;
-out.push(show(() => require("helper").added), show(() => lazy.absent), show(() => lazy.absent()));
+out.push(show(() => require("./helper").added), show(() => lazy.absent), show(() => lazy.absent()));
 module.exports = { done: true };
 globalThis.later = () => require("./seven")(8);
-},{"./lazy":7,"helper":1,"./early":2,"./thrower":5,"./seven":4}]},{},[8]);
+},{"./lazy":7,"./helper":1,"./early":2,"./thrower":5,"./seven":4}]},{},[8]);
 out.push(String(later()), typeof require, typeof module);
 for (const line of out) console.log(line);

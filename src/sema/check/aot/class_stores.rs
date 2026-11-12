@@ -70,6 +70,16 @@ pub(super) enum ThisOwner {
     Function(FnId),
 }
 
+impl ThisOwner {
+    fn is_constructed_by(self, hir: &hir::File<'_>, function: FnId) -> bool {
+        match self {
+            ThisOwner::Instance(_) => hir[function].kind == FnKind::Constructor,
+            ThisOwner::Function(constructor) => function == constructor,
+            ThisOwner::Static(_) => false,
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum StoreForm {
     Plain,
@@ -594,13 +604,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 this_stores.extend(self.find_field_defined_by(file, site, operands, first_exits));
                 continue;
             }
-            if let Some(NamedValue::PrototypeOperation(PrototypeOperation::CopyProperties {
-                target,
-            })) = callee
-            {
-                self.add_fields_assigned_by(file, site, call, target, first_exits, this_stores);
-                continue;
-            }
             let Some((object, definitions)) = find_written_definitions(hir, bound, call, callee)
             else {
                 continue;
@@ -648,62 +651,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// `Object.assign(this, { a, b: 1 })`, which the lowering stores name by name.
-    fn add_fields_assigned_by(
-        &self,
-        file: FileId,
-        site: ExprId,
-        call: CallId,
-        target: u32,
-        first_exits: &mut FirstExits,
-        this_stores: &mut Vec<ThisStore>,
-    ) {
-        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
-        let Some(object) = find_operand_at(hir, call, target) else {
-            return;
-        };
-        let owner = find_this_held_by(hir, bound, object)
-            .and_then(|this| self.this_owner(file, this))
-            .filter(|owner| !matches!(owner, ThisOwner::Static(_)));
-        let Some(owner) = owner.filter(|_| !self.is_never_evaluated(file, site)) else {
-            return;
-        };
-        let is_in_every_construction =
-            self.is_in_every_construction(file, owner, site, first_exits);
-        for source in hir.ids(hir[call].args).skip(target as usize + 1) {
-            let ExprKind::Object(properties) = hir[hir.skip_type_assertions(source)].kind else {
-                continue;
-            };
-            let names = properties.iter().map(|id| {
-                let property = hir[id];
-                let is_plain = matches!(property.kind, PropKind::Init | PropKind::Shorthand);
-                match hir.runtime_property_key(id) {
-                    PropKey::Name(name) if is_plain && name != known::__proto__ => {
-                        Some((name, property.value))
-                    }
-                    _ => None,
-                }
-            });
-            let Some(names) = names.collect::<Option<SmallVec<[(Atom, ExprId); 8]>>>() else {
-                continue;
-            };
-            this_stores.extend(names.into_iter().map(|(name, value)| ThisStore {
-                owner,
-                name,
-                assign: value,
-                value,
-                form: StoreForm::Plain,
-                is_in_every_construction,
-                defined: MemberForm::default(),
-                is_stored_by_callee: false,
-                birth: match is_in_every_construction {
-                    true => hir[site].pos,
-                    false => u32::MAX,
-                },
-            }));
-        }
-    }
-
     /// The statement of a constructor's body that defines a field of `this`: the only place where the lowering leaves the helper out.
     fn find_field_defined_by(
         &self,
@@ -728,12 +675,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return None;
         };
         let owner = self.this_owner(file, this)?;
-        let is_of_construction = match owner {
-            ThisOwner::Instance(_) => hir[constructor].kind == FnKind::Constructor,
-            ThisOwner::Function(function) => function == constructor,
-            ThisOwner::Static(_) => false,
-        };
-        if !is_of_construction {
+        if !owner.is_constructed_by(hir, constructor) {
             return None;
         }
         let is_in_every_construction =
@@ -791,12 +733,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let Parent::FnBody(function) = bound.parent_of_stmt(statement) else {
             return false;
         };
-        let is_constructor = match owner {
-            ThisOwner::Instance(_) => hir[function].kind == FnKind::Constructor,
-            ThisOwner::Function(constructor) => function == constructor,
-            ThisOwner::Static(_) => false,
-        };
-        if !is_constructor {
+        if !owner.is_constructed_by(hir, function) {
             return false;
         }
         let first_super = match owner {

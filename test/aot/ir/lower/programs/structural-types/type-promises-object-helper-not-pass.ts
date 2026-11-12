@@ -103,9 +103,9 @@ show("data on the prototype: the source", () => source.count);
 // CHECK-NEXT: v2 = Undefined
 // CHECK-NEXT: v3 = PropGet v0 key="data"
 // CHECK-NEXT: v4 = PropGet v0 key="methods"
-// CHECK-NEXT: v5 = NewDictionary
+// CHECK-NEXT: v5 = CopyObject v3 [assigns]
 // CHECK-NEXT: v6 = Builtin builtin=ObjectAssign [isNotReadFromHolder]
-// CHECK-NEXT: v7 = Call v6, -, v5, v3, v4
+// CHECK-NEXT: v7 = Call v6, -, v5, v4
 // CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="dataBelow"

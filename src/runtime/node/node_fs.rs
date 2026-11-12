@@ -518,6 +518,17 @@ pub(crate) fn note_opened_for_write(path: &[u8], is_whole: bool) {
     let _ = is_whole;
 }
 
+/// As `note_opened_for_write`, for a file or a folder that was copied. macOS clones a folder whole.
+fn note_copied(path: &[u8]) {
+    note_opened_for_write(path, true);
+    #[cfg(target_os = "macos")]
+    if let Some(graph) = compiled_program_graph() {
+        for file in graph.find_files_on_disk_below(path) {
+            note_opened_for_write(&file, true);
+        }
+    }
+}
+
 /// For the completion of a call that a thread of the pool may have written files for.
 fn move_waiting_descriptors() {
     #[cfg(not(windows))]
@@ -2460,6 +2471,15 @@ mod _async_tasks {
             }
         }
 
+        /// As `record_written`, for each file of a folder that was not there.
+        #[cfg(target_os = "macos")]
+        fn record_written_folder(&self, dest: &OSPathSliceZ) {
+            if let Some(graph) = compiled_program_graph() {
+                let files = graph.find_files_on_disk_below(dest.as_bytes());
+                self.written.lock().extend(files);
+            }
+        }
+
         pub(crate) fn on_copy(
             &self,
             src: impl AsRef<[OSPathChar]>,
@@ -2934,7 +2954,7 @@ mod _async_tasks {
                         _ => {}
                     }
                 } else {
-                    this_ref.record_written(dest);
+                    this_ref.record_written_folder(dest);
                     return Ok(());
                 }
             }
@@ -9116,7 +9136,7 @@ impl NodeFS {
             args,
         );
         let copied = copied.or_else(|err| Self::copy_embedded_source(err, args));
-        copied.inspect(|()| note_opened_for_write(args.dest.slice(), true))
+        copied.inspect(|()| note_copied(args.dest.slice()))
     }
 
     /// The disk has failed with `err`. Copies the file that the program finds in the executable at `args.src`.

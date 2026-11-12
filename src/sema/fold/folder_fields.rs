@@ -81,7 +81,7 @@ impl Folder<'_, '_> {
     fn find_type_of_own_object(&self, e: ExprId) -> Option<Atom> {
         let hir = self.hir;
         if let ExprKind::Ident(_) = hir[e].kind {
-            let Binding::Symbol(variable) = self.bound.binding(e) else {
+            let Some(Binding::Symbol(variable)) = self.bound.static_binding(e) else {
                 return None;
             };
             let literal = self.find_literal_of(variable)?;
@@ -100,7 +100,7 @@ impl Folder<'_, '_> {
             return None;
         }
         let object = hir.skip_type_assertions(object);
-        match self.bound.binding(object) {
+        match self.bound.static_binding(object)? {
             _ if !matches!(hir[object].kind, ExprKind::Ident(_)) => None,
             Binding::Symbol(variable) => self.find_type_of_own_field(e, variable, name),
             Binding::CommonJs(CommonJsVariable::Module) => {
@@ -450,8 +450,8 @@ impl Folder<'_, '_> {
             | ExprKind::This
             | ExprKind::Fn(_) => true,
             ExprKind::Ident(_) => matches!(
-                self.bound.binding(e),
-                Binding::Symbol(_) | Binding::CommonJs(_)
+                self.bound.static_binding(e),
+                Some(Binding::Symbol(_) | Binding::CommonJs(_))
             ),
             ExprKind::Unary {
                 op: UnOp::Typeof | UnOp::Not | UnOp::Void,

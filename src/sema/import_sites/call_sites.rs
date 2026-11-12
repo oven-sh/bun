@@ -1407,45 +1407,75 @@ fn is_worker_threads(specifier: Atom) -> bool {
     specifier == known::worker_threads || specifier == known::node_worker_threads
 }
 
+enum Constructor {
+    Worker,
+    Class(ClassId),
+    Other,
+}
+
+impl Constructor {
+    fn worker_if(is_worker: bool) -> Constructor {
+        match is_worker {
+            true => Constructor::Worker,
+            false => Constructor::Other,
+        }
+    }
+}
+
 fn find_whether_constructor_is_worker(
     hir: &File<'_>,
     bound: &Bound<'_>,
     callee: ExprId,
 ) -> Option<bool> {
+    let mut callee = callee;
+    let mut met: FxHashSet<ClassId> = FxHashSet::default();
+    let is_worker = loop {
+        match find_constructor(hir, bound, callee)? {
+            Constructor::Worker => break true,
+            Constructor::Class(class) if hir[class].extends.is_some() => {
+                // A ring of classes constructs nothing.
+                if !met.insert(class) {
+                    return None;
+                }
+                callee = find_heritage_constructed(hir, bound, class)?;
+            }
+            Constructor::Class(_) | Constructor::Other => break false,
+        }
+    };
+    (is_worker || met.is_empty()).then_some(is_worker)
+}
+
+fn find_constructor(hir: &File<'_>, bound: &Bound<'_>, callee: ExprId) -> Option<Constructor> {
     let find_constant = |e| match expr_kind(hir, e) {
         Some(ExprKind::String(text)) => Some(Constant::String(text)),
         _ => None,
     };
     let export = find_export_of_module(hir, bound, callee, &find_constant, &is_worker_threads);
     if let Some(export) = export {
-        return Some(export == known::Worker);
+        return Some(Constructor::worker_if(export == known::Worker));
     }
     let constructor = follow_settled_bindings(hir, bound, callee);
     if let Some((object, MemberKey::Name(name))) = hir.member_key(constructor) {
         let object = follow_settled_bindings(hir, bound, object);
         let global_objects = [known::globalThis, known::global, known::self_];
-        return is_free_name(hir, bound, object, &global_objects).then_some(name == known::Worker);
+        return is_free_name(hir, bound, object, &global_objects)
+            .then(|| Constructor::worker_if(name == known::Worker));
     }
-    let is_worker = |class: ClassId| {
-        if hir[class].extends.is_none() {
-            return Some(false);
-        }
-        let heritage = find_heritage_constructed(hir, bound, class)?;
-        find_whether_constructor_is_worker(hir, bound, heritage).filter(|&is_worker| is_worker)
-    };
     match expr_kind(hir, constructor)? {
-        ExprKind::Class(class) => is_worker(class),
-        ExprKind::Fn(_) => Some(false),
-        ExprKind::Ident(_) if is_free_name(hir, bound, constructor, &[known::Worker]) => Some(true),
+        ExprKind::Class(class) => Some(Constructor::Class(class)),
+        ExprKind::Fn(_) => Some(Constructor::Other),
+        ExprKind::Ident(_) if is_free_name(hir, bound, constructor, &[known::Worker]) => {
+            Some(Constructor::Worker)
+        }
         ExprKind::Ident(_) if bound.binding(constructor) == Binding::Free => bound
             .dynamic_lookup_scope(NodeData::Expr(constructor))
             .is_none()
-            .then_some(false),
+            .then_some(Constructor::Other),
         ExprKind::Ident(_) => {
             let symbol = settled_symbol(hir, bound, constructor)?;
             match bound.binding_initializer(hir, symbol) {
-                BindingInitializer::Class(class) => is_worker(class),
-                BindingInitializer::Function(_) => Some(false),
+                BindingInitializer::Class(class) => Some(Constructor::Class(class)),
+                BindingInitializer::Function(_) => Some(Constructor::Other),
                 _ => None,
             }
         }
@@ -1453,7 +1483,7 @@ fn find_whether_constructor_is_worker(
     }
 }
 
-/// `class A extends Worker {}`: what `new A(..)` hands its arguments to. Only a class declared before `class` counts, so no chain leads back.
+/// `class A extends Worker {}`: what `new A(..)` hands its arguments to. Only a class declared before `class` counts.
 pub fn find_heritage_constructed(
     hir: &File<'_>,
     bound: &Bound<'_>,

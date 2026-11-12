@@ -708,6 +708,14 @@ impl FileLowering<'_, '_, '_, '_> {
         self.hir.skip_type_assertions(expression)
     }
 
+    /// The operand of type syntax that hands its value on as it is. `as` converts in a checked file.
+    pub(in crate::lower) fn unconverted_operand(&self, expression: ExprId) -> Option<ExprId> {
+        match self.hir[expression].kind {
+            ExprKind::As { .. } if self.is_checked() => None,
+            _ => self.hir.type_assertion_operand(expression),
+        }
+    }
+
     pub(in crate::lower) fn is_statically_resolved(&self, expression: ExprId) -> bool {
         is_decided(self, expression) || self.builtins.of_expr(expression).is_some()
     }

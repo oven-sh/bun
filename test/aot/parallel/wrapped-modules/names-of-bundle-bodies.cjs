@@ -29,7 +29,7 @@ var require_names = __commonJS({ "names.js"(exports, module) {
   const recursive = function self(n) { return n ? self(n - 1) + 1 : typeof self; };
   function* steps() { yield limit; yield count; }
   const later1 = async () => [limit, count, old];
-  exports.all = () => [limit, count, old, unset, typeof Item, closures.map(f => f()).join(), require("x"), recursive(2), [...steps()].join(), typeof module, module.exports === exports];
+  exports.all = () => [limit, count, old, unset, typeof Item, closures.map(f => f()).join(), require("./x"), recursive(2), [...steps()].join(), typeof module, module.exports === exports];
   exports.change = changes; exports.counts = counts; exports.Item = Item; exports.later = later1;
   later.push(() => exports.all().join("|"), () => changes(), () => declared(1), () => { Item = null; });
 } });

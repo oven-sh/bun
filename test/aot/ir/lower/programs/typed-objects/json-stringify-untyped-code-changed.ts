@@ -133,12 +133,7 @@ export const deeds = {
 // CHECK-NEXT: PropDefine v6, v4 key="text"
 // CHECK-NEXT: PropDefine v6, v1 key="id"
 // CHECK-NEXT: v10 = Undefined
-// CHECK-NEXT: v11 = TypeTest v10 testedType=object
-// CHECK-NEXT: Branch v11 -> taken b1(| 0), notTaken b2(v6)
-// CHECK-NEXT: b1(v12):
-// CHECK-NEXT: Jump -> next b2(v12)
-// CHECK-NEXT: b2(v13):
-// CHECK-NEXT: Return v13
+// CHECK-NEXT: Return v6
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="slowPaths"
 // CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {

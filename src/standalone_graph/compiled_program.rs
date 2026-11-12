@@ -785,7 +785,10 @@ fn try_read(
     let program = program.with_package_names_read_later(NamesReadLater::new(
         package_names,
         entry_point_count,
-        read_package_names,
+        |encoded, entry_point_count| {
+            read_package_names(encoded, entry_point_count)
+                .unwrap_or_else(|| StandaloneModuleGraph::exit_without_program())
+        },
     ));
     let program = program.with_root_below_working_directory(root_below_working_directory);
     let program = program.with_code_from_disk(header.flags & ALLOWS_CODE_FROM_DISK != 0);
@@ -801,7 +804,10 @@ fn try_read(
     let program = program.with_further_package_names(NamesReadLater::new(
         further_package_names,
         entry_point_count,
-        read_further_package_names,
+        |encoded, entry_point_count| {
+            read_further_package_names(encoded, entry_point_count)
+                .unwrap_or_else(|| StandaloneModuleGraph::exit_without_program())
+        },
     ));
     Some(program.with_path_aliases(path_aliases))
 }
@@ -1672,6 +1678,25 @@ impl StandaloneModuleGraph {
                 *slot = None;
             }
         }
+    }
+
+    /// The embedded files below the folder `name` that the disk has there, by their paths on the disk.
+    pub fn find_files_on_disk_below(&self, name: &[u8]) -> Vec<Box<[u8]>> {
+        let mut buffer = path_buffer_pool::get();
+        let path = absolute_key(name, &mut buffer);
+        let Some((program, path)) = self.compiled_program.as_ref().zip(path) else {
+            return Vec::new();
+        };
+        let path = path.as_bytes();
+        let Some(folder) = Self::key_under_own_root(program, path) else {
+            return Vec::new();
+        };
+        let keys = self.files.keys().iter();
+        let below = keys.filter(|key| is_at_or_below(key, &folder) && key.len() > folder.len());
+        below
+            .map(|key| [path, &key[folder.len()..]].concat().into_boxed_slice())
+            .filter(|it| bun_sys::exists(it))
+            .collect()
     }
 
     /// For a descriptor of an embedded path, returns the `lstat()` of the path with any changes made through the descriptor.

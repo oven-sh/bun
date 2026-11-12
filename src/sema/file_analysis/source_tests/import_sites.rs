@@ -4135,6 +4135,14 @@ const READS_AFTER_STORES: &[(&str, &[&str])] = &[
         "const o = { dir: path.join(here, 'a') }; if (E.C0) o.dir = path.join(here, 'b'); for (let i = 0; i < E.N; i++) { o.dir = path.join(here, 'c'); o.dir = path.join(o.dir, 'x'); } fs.readFileSync(path.join(o.dir, 'f'));",
         &["./a/f", "./b/f", "./c/x/f"],
     ),
+    (
+        "let file = path.join(here, 'a'); if (E.C0) file = path.join(here, 'b'); class A extends B { one() {} } class B extends C { two() {} } class C extends A { three() {} } exports.A = A; fs.readFileSync(file);",
+        &["./a", "./b"],
+    ),
+    (
+        "class A { down() {} } class B extends A {} class C extends B {} class D extends C {} class F extends D {} class G extends F {} class H extends G {} class I extends H {} class J extends I {} class K extends J {} class L extends K {} class M extends L {} class N extends M {} class O extends N {} class P extends O {} class Q extends P {} class R extends Q {} class S extends R {} const it = new S(), o = { dir: path.join(here, 'b') }; if (it.down) o.dir = path.join(here, 'a'); fs.readFileSync(path.join(o.dir, 'f'));",
+        &["./a/f"],
+    ),
 ];
 
 #[test]

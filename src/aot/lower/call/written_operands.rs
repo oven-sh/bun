@@ -619,9 +619,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Some(BuiltinId::ArrayFrom) => self.lower_array_from(call, site, tail),
             Some(BuiltinId::Object) => self.lower_empty_object(call, site),
             Some(BuiltinId::ObjectCreate) => self.lower_object_created_below(call, site, tail),
-            Some(BuiltinId::ObjectAssign) => self
-                .lower_assignment_to_new_object(call, site, tail)
-                .or_else(|| self.lower_assignment_of_literals(call, site)),
+            Some(BuiltinId::ObjectAssign) => self.lower_assignment_to_new_object(call, site, tail),
             Some(_) => None,
             None => match self.lower_call_of_assign_helper(call, site) {
                 Some(made) => Some(made),

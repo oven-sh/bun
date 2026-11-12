@@ -3405,15 +3405,21 @@ impl<'p, 's> Checker<'p, 's> {
             return ty;
         } else {
             // The call for the first such function contains the calls for the others.
-            let first = props.iter().find_map(|p| {
-                let value = hir[p].value;
-                match hir.exprs.get(value.idx())?.kind {
-                    ExprKind::Fn(f) if !is_parenthesized(hir, value) => {
-                        is_typed_with_literal(f).then_some(f)
+            let find_first = || {
+                props.iter().find_map(|p| {
+                    let value = hir[p].value;
+                    match hir.exprs.get(value.idx())?.kind {
+                        ExprKind::Fn(f) if !is_parenthesized(hir, value) => {
+                            is_typed_with_literal(f).then_some(f)
+                        }
+                        _ => None,
                     }
-                    _ => None,
-                }
-            });
+                })
+            };
+            let first = *self
+                .functions_typed_with_literals
+                .entry((file, literal))
+                .or_insert_with(find_first);
             first.map_or(
                 ObjectLiteralCheck::ForThis,
                 ObjectLiteralCheck::ForThisParameter,

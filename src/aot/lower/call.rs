@@ -1,5 +1,4 @@
 mod array_makers;
-mod assignment_of_literals;
 mod assignment_to_new_object;
 mod callee;
 mod copied_factory;
@@ -131,7 +130,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         if matches!(evaluation.tail, Tail::Yes { casts: None })
             && matches!(hir[call].kind, ExprKind::Call(_))
-            && let Some(value) = self.try_lower_self_tail_call(site)
+            && let Some(value) = self.try_lower_self_tail_call(call, site)
         {
             return value;
         }

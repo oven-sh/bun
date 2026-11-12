@@ -3,7 +3,8 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-// `bun test` keeps the barrel of the first test file and runs the CommonJS file when it is next requested. If the static import of a compiled run runs the file earlier, a notice names the file.
+// `bun test` keeps the barrel of the first test file and runs the CommonJS file when it is next requested. If the static import of a compiled run runs the file earlier, a notice names the file,
+// and the file's top-level code alone moves: in front of the test that reads its values, which are the same.
 const head = `import { jest, mock, test, vi } from "bun:test";\nimport { flag } from "./star.js";\nimport * as all from "./star.js";\nconst say = (...words) => console.log("SAID", ...words);\n`;
 const seconds = {
   "mock.module()": `mock.module("./dep.cjs", () => ({ flag: "second", plain: "second" }));`,
@@ -14,7 +15,15 @@ const firsts = {
   "vi.doMock() of the original": `vi.doMock("./dep.cjs", async original => ({ ...(await original()), flag: "first" }));`,
 };
 const saidIn = (text: string) => text.split("\n").filter(line => line.startsWith("SAID"));
-const isNamed = (text: string) => /^ {2}(dep\.cjs|star\.js)(\?actual)?[:,] .*\bran$/m.test(text);
+const namedIn = (text: string) => [...text.matchAll(/^ {2}(\S+)[:,] .*\bran$/gm)].map(([line]) => line.trim());
+// The last run of the file moves in front of what the second test file says first.
+function withEarlyRun(said: string[]) {
+  const from = said.lastIndexOf("SAID run dep");
+  const to = said.findIndex(line => line.startsWith("SAID b "));
+  expect(to).toBeGreaterThan(0);
+  expect(from).toBeGreaterThan(to);
+  return [...said.slice(0, to), said[from], ...said.slice(to, from), ...said.slice(from + 1)];
+}
 
 for (const [first, firstCall] of Object.entries(firsts)) {
   for (const [second, secondCall] of Object.entries(seconds)) {
@@ -32,9 +41,19 @@ for (const [first, firstCall] of Object.entries(firsts)) {
         run([bunExe(), "test", ...files], String(dir), bunEnv),
         run([bunExe(), "test", "--aot", ...files], String(dir), bunEnv),
       ]);
-      expect(saidIn(plain.stdout).length).toBeGreaterThan(8);
-      expect(compiled.exitCode).toBe(plain.exitCode);
-      if (!isNamed(compiled.stderr)) expect(saidIn(compiled.stdout)).toEqual(saidIn(plain.stdout));
+      const said = saidIn(plain.stdout);
+      const named = namedIn(compiled.stderr);
+      expect(said.length).toBeGreaterThan(8);
+      if (named.length) {
+        expect(compiled.stderr).toContain(
+          "1 compiled file didn't run again during this run where `bun test` runs a file again",
+        );
+        expect(named).toEqual(["dep.cjs, while b.test.js ran"]);
+      }
+      expect({ said: saidIn(compiled.stdout), exitCode: compiled.exitCode }).toEqual({
+        said: named.length ? withEarlyRun(said) : said,
+        exitCode: plain.exitCode,
+      });
     });
   }
 }

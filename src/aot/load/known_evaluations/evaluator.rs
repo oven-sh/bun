@@ -2138,9 +2138,9 @@ fn is_relative(specifier: &[u8]) -> bool {
     specifier.starts_with(b"./") || specifier.starts_with(b"../")
 }
 
-fn append_to_path(path: &[u8], added: &[u8]) -> Value {
+fn append_to_path(folder: &[u8], added: &[u8]) -> Value {
     match added.strip_prefix(b"/") {
-        Some(relative) => Value::Path(from_argument(path, relative).into()),
+        Some(relative) => Value::Path(from_argument(folder, relative).into()),
         None => Value::Unknown,
     }
 }

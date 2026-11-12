@@ -266,16 +266,7 @@ fn find_stable_function(hir: &hir::File<'_>, bound: &Bound<'_>, symbol: SymbolId
     if !bound.is_stable_binding(symbol) {
         return None;
     }
-    match bound.binding_initializer(hir, symbol) {
-        BindingInitializer::Function(function) => Some(function),
-        BindingInitializer::Expression(initializer) => {
-            match hir[hir.skip_type_assertions(initializer)].kind {
-                ExprKind::Fn(function) => Some(function),
-                _ => None,
-            }
-        }
-        _ => None,
-    }
+    bound.binding_initializer(hir, symbol).function(hir)
 }
 
 fn find_class_in_variable(

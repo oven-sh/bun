@@ -1,5 +1,5 @@
 use bun_sema::atom::known;
-use bun_sema::bind::{Decl, Parent, PropertyPlace, find_property_place};
+use bun_sema::bind::{Binding, Decl, Parent, PropertyPlace, find_property_place};
 use bun_sema::hir::{BinOp, ExprId, ExprKind, PatKind, StmtId, StmtKind, UnOp};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -138,13 +138,10 @@ impl FileLowering<'_, '_, '_, '_> {
         let (hir, bound) = (self.hir, self.bound);
         let is_place =
             |operand: ExprId| find_property_place(hir, bound, operand).as_ref() == Some(place);
-        let is_nothing = |operand: ExprId| {
-            matches!(
-                hir[operand].kind,
-                ExprKind::Null
-                    | ExprKind::Ident(known::undefined)
-                    | ExprKind::Unary { op: UnOp::Void, .. }
-            )
+        let is_nothing = |operand: ExprId| match hir[operand].kind {
+            ExprKind::Null | ExprKind::Unary { op: UnOp::Void, .. } => true,
+            ExprKind::Ident(known::undefined) => bound.binding(operand) == Binding::Free,
+            _ => false,
         };
         let names_undefined = |operand: ExprId| matches!(hir[operand].kind, ExprKind::String(text) if text == known::undefined);
         match hir[test].kind {

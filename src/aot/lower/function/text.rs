@@ -112,6 +112,7 @@ impl FileLowering<'_, '_, '_, '_> {
             (sign, end_of_expr(hir, decorator))
         });
         let mut not_evaluated: Vec<(u32, u32)> = decorators.collect();
+        let mut left_out: Vec<(u32, u32)> = Vec::new();
         replaced.extend(not_evaluated.iter().map(|&(start, end)| ReplacedText {
             start,
             end,
@@ -154,9 +155,11 @@ impl FileLowering<'_, '_, '_, '_> {
                     end,
                     text: Box::new(*b"0"),
                 }));
+                left_out.extend(&operands);
                 not_evaluated.extend(operands);
                 continue;
             }
+            left_out.push((statement.start, statement.loc.end));
             not_evaluated.push((statement.start, statement.loc.end));
             replaced.push(ReplacedText {
                 start: statement.start,
@@ -189,6 +192,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 self.counts_executions(),
             ));
         }
+        remove_parts_inside(&mut replaced, left_out);
         let written_end = hir.written_text_end();
         replaced.retain(|it| it.start <= written_end);
         let reparses = self.inputs.options.reparses_function_sources;
@@ -298,6 +302,25 @@ impl FileLowering<'_, '_, '_, '_> {
             });
         }
     }
+}
+
+fn remove_parts_inside(replaced: &mut Vec<ReplacedText>, mut left_out: Vec<(u32, u32)>) {
+    left_out.sort_unstable_by_key(|&(start, end)| (start, u32::MAX - end));
+    let mut outermost: Vec<(u32, u32)> = Vec::with_capacity(left_out.len());
+    for range in left_out {
+        if outermost.last().is_none_or(|last| last.1 < range.1) {
+            outermost.push(range);
+        }
+    }
+    replaced.retain(|part| {
+        let next = outermost.partition_point(|range| range.0 <= part.start);
+        let Some(&(start, end)) = next.checked_sub(1).and_then(|at| outermost.get(at)) else {
+            return true;
+        };
+        let is_written_for_stretch = (part.start, part.end) == (start, end);
+        let stands_behind = part.start >= end && *part.text != *b")";
+        is_written_for_stretch || stands_behind || part.end > end
+    });
 }
 
 pub(in crate::lower) fn print_number(number: f64, is_followed_by_dot: bool) -> Vec<u8> {

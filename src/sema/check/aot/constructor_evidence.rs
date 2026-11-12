@@ -893,16 +893,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             if !bound.is_stable_binding(symbol) {
                 return None;
             }
-            let function = match bound.binding_initializer(hir, symbol) {
-                BindingInitializer::Function(function) => function,
-                BindingInitializer::Expression(initializer) => {
-                    match hir[hir.skip_type_assertions(initializer)].kind {
-                        ExprKind::Fn(function) => function,
-                        _ => return None,
-                    }
-                }
-                _ => return None,
-            };
+            let function = bound.binding_initializer(hir, symbol).function(hir)?;
             (hir[function].kind != FnKind::Arrow).then_some(function)
         };
         named.iter().filter_map(find_function).collect()

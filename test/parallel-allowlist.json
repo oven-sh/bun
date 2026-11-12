@@ -1867,6 +1867,7 @@
     "aot/test-run-class-source-parameter-properties.test.ts",
     "aot/test-run-function-source-enum-namespace.test.ts",
     "aot/test-run-function-source-enum-read.test.ts",
-    "aot/typescript-that-tsc-rejects.test.ts"
+    "aot/typescript-that-tsc-rejects.test.ts",
+    "aot/a-damaged-list-of-package-names-says-so.test.ts"
   ]
 }

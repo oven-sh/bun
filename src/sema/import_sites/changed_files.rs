@@ -13,9 +13,7 @@ use super::{
     CallerRelativeRead, ChangedPath, ExportedText, ImportSpecifier, ResolvedForm, ScanInputs,
 };
 use crate::atom::{Atom, Interner, known};
-use crate::bind::{
-    Binding, BindingInitializer, BindingStability, Bound, Decl, Parent, PatParent, SymbolId,
-};
+use crate::bind::{Binding, BindingStability, Bound, Decl, Parent, PatParent, SymbolId};
 use crate::file_analysis::FileInputs;
 use crate::fold::{
     Constant, Decisions, FoldInputs, FoldedValue, Passes, find_members_below_module,
@@ -922,16 +920,7 @@ impl<'a, 's> TextsOfFile<'a, 's> {
         else {
             return None;
         };
-        let function = match bound.binding_initializer(hir, name) {
-            BindingInitializer::Function(function) => function,
-            BindingInitializer::Expression(value) => {
-                match hir[hir.skip_type_assertions(value)].kind {
-                    ExprKind::Fn(function) => function,
-                    _ => return None,
-                }
-            }
-            _ => return None,
-        };
+        let function = bound.binding_initializer(hir, name).function(hir)?;
         let find_written = |name: Atom| self.written_names.find_expressions(hir, name);
         if find_only_name_of(hir, bound, function, &find_written, true) != Some(name) {
             return None;

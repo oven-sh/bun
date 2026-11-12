@@ -12,6 +12,7 @@ use crate::hir::{
     BinOp, Chain, ExprId, ExprKind, File, Flags, MemberKey, NameKind, PatId, PatKind, PropKey,
     PropKind, StmtId, StmtKind, UnOp, VarKind,
 };
+use crate::import_sites::is_in_with_scope;
 use smallvec::SmallVec;
 
 #[derive(Copy, Clone)]
@@ -201,6 +202,7 @@ impl Folder<'_, '_> {
                 removal.depends_on_module_format = true;
                 true
             }
+            ExprKind::Ident(_) if is_in_with_scope(self.bound, e) => false,
             ExprKind::Ident(_) => match self.bound.binding(e) {
                 Binding::Symbol(symbol) => self.bound.binding_kind(symbol) != BindingKind::Import,
                 Binding::Free => {
@@ -350,7 +352,10 @@ impl Folder<'_, '_> {
                     path.push(self.atoms.bytes(name));
                     e = obj;
                 }
-                ExprKind::Ident(name) if self.bound.binding(e) == Binding::Free => {
+                ExprKind::Ident(name)
+                    if self.bound.binding(e) == Binding::Free
+                        && !is_in_with_scope(self.bound, e) =>
+                {
                     path.push(self.atoms.bytes(name));
                     break;
                 }

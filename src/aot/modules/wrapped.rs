@@ -946,6 +946,7 @@ impl WrappedModules {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builtins::id::BuiltinId;
     use crate::ir::run_serially;
     use crate::modules::testing::{file_named, with_graph};
 
@@ -1227,7 +1228,12 @@ var require_a = __commonJS((exports) => { require_b(); });
     }
 
     fn bodies_in(main: &str) -> usize {
+        bodies_replacing(main, &[])
+    }
+
+    fn bodies_replacing(main: &str, replaced: &[BuiltinId]) -> usize {
         with_graph(&[("main.cjs", main)], |_, bind_input| {
+            let replaced: Vec<u32> = replaced.iter().map(|it| it.to_wire()).collect();
             let files = bind_input.files;
             let helpers = KnownHelpers::compute(files, &run_serially);
             let every_object_has = |name| bind_input.every_object_has(name);
@@ -1235,7 +1241,7 @@ var require_a = __commonJS((exports) => { require_b(); });
                 files,
                 &helpers,
                 &every_object_has,
-                bind_input.replaced_builtins,
+                &replaced,
                 &|_| false,
                 &run_serially,
             );
@@ -1309,7 +1315,6 @@ require_(\"./a.js\");";
             "Promise.resolve().then(i.bind(i, 2));",
             "Promise.resolve().then(i.bind(i, globalThis.id));",
             "Promise.resolve().then(i.bind(i, 1), console.log);",
-            "Function.prototype.bind = () => {}; Promise.resolve().then(i.bind(i, 1));",
             "eval(\"\");",
             "e = null;",
             "for (var k in e) console.log(k);",
@@ -1334,6 +1339,12 @@ require_(\"./a.js\");";
             let main = webpack_bundle(body, "i(1);").replace("\"./b.js\"", name);
             assert_eq!(bodies_in(&main), 0, "{name}");
         }
+        let main = webpack_bundle(body, "Promise.resolve().then(i.bind(i, 1));");
+        assert_eq!(bodies_replacing(&main, &[]), 2);
+        assert_eq!(
+            bodies_replacing(&main, &[BuiltinId::FunctionPrototypeBind]),
+            0
+        );
         let main = webpack_bundle(body, "i(1);");
         let ahead = main.replace("(() => { var e", "(() => { globalThis.hook(i); var e");
         let in_a_function = format!("function again() {{ {main} }} again(); again();");

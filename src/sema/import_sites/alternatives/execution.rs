@@ -21,6 +21,7 @@ const SIZE_OF_STEP: usize = 16;
 const MOST_STATES: usize = 256;
 const MOST_ROUNDS: usize = 8;
 const DEEPEST_CALL: usize = 16;
+const DEEPEST_CONSTRUCTION: usize = 64;
 
 #[derive(Clone, PartialEq, Hash)]
 enum Value {
@@ -104,6 +105,7 @@ pub(super) struct Execution<'f, 'i, 'a, 's> {
     seen: FxHashMap<ExprId, Option<Values>>,
     functions_run: FxHashSet<FnId>,
     escaped: FxHashSet<FnId>,
+    escaped_classes: FxHashSet<ClassId>,
     keys_read: FxHashSet<Vec<u8>>,
     symbols_read: FxHashSet<SymbolId>,
     ends: Vec<State>,
@@ -111,6 +113,7 @@ pub(super) struct Execution<'f, 'i, 'a, 's> {
     calls: Vec<FnId>,
     loops: Vec<Range<u32>>,
     functions_running: Vec<FnId>,
+    constructions_running: usize,
     receivers: Vec<Value>,
     thrown: Vec<Vec<State>>,
     steps_left: u32,
@@ -132,6 +135,7 @@ pub(super) fn find_executed_values(
         seen: FxHashMap::default(),
         functions_run: FxHashSet::default(),
         escaped: FxHashSet::default(),
+        escaped_classes: FxHashSet::default(),
         keys_read: FxHashSet::default(),
         symbols_read: FxHashSet::default(),
         ends: Vec::new(),
@@ -139,6 +143,7 @@ pub(super) fn find_executed_values(
         calls: Vec::new(),
         loops: Vec::new(),
         functions_running: Vec::new(),
+        constructions_running: 0,
         receivers: Vec::new(),
         thrown: Vec::new(),
         steps_left: MOST_STEPS,
@@ -588,14 +593,22 @@ impl Execution<'_, '_, '_, '_> {
 
     fn escape_class(&mut self, class: ClassId) {
         let hir = self.follower.inputs.hir;
-        for member in hir[class].members.iter().map(|id| hir[id]) {
-            if !matches!(member.kind, MemberKind::Property) {
-                self.escaped.insert(member.func);
+        let mut next = Some(class);
+        while let Some(class) = next.filter(|it| self.escaped_classes.insert(*it)) {
+            for member in hir[class].members.iter().map(|id| hir[id]) {
+                if !matches!(member.kind, MemberKind::Property) {
+                    self.escaped.insert(member.func);
+                }
             }
+            next = self.find_class_extended(class);
         }
-        if let Some(extended) = self.find_class_extended(class) {
-            self.escape_class(extended);
-        }
+    }
+
+    /// `class`, the class it extends, and so on. Each class comes once, so a ring of classes ends.
+    fn lineage(&self, class: ClassId) -> impl Iterator<Item = ClassId> {
+        let mut met: FxHashSet<ClassId> = FxHashSet::default();
+        std::iter::successors(Some(class), |it| self.find_class_extended(*it))
+            .take_while(move |it| met.insert(*it))
     }
 
     fn find_class_extended(&self, class: ClassId) -> Option<ClassId> {
@@ -1516,20 +1529,15 @@ impl Execution<'_, '_, '_, '_> {
 
     fn find_method(&self, class: ClassId, key: &[u8]) -> Option<(MemberKind, FnId)> {
         let &ScanInputs { hir, atoms, .. } = self.follower.inputs;
-        let mut class = Some(class);
-        for _ in 0..DEEPEST_CALL {
-            let members = hir[class?].members.iter().map(|id| hir[id]);
-            let mut named = members.filter(|it| {
+        self.lineage(class).find_map(|class| {
+            let mut members = hir[class].members.iter().map(|id| hir[id]);
+            let named = members.find(|it| {
                 !it.flags.contains(Flags::STATIC)
                     && matches!(it.key, PropKey::Name(name) if atoms.bytes(name) == key)
                     && matches!(it.kind, MemberKind::Method | MemberKind::Getter)
             });
-            if let Some(member) = named.next() {
-                return Some((member.kind, member.func));
-            }
-            class = self.find_class_extended(class?);
-        }
-        None
+            named.map(|it| (it.kind, it.func))
+        })
     }
 
     fn join_texts(&self, parts: &[Value]) -> Value {
@@ -1740,11 +1748,13 @@ impl Execution<'_, '_, '_, '_> {
 
     fn has_setter(&self, class: ClassId, key: &[u8]) -> bool {
         let &ScanInputs { hir, atoms, .. } = self.follower.inputs;
-        let mut members = hir[class].members.iter().map(|id| hir[id]);
-        members.any(|it| {
-            it.kind == MemberKind::Setter
-                && matches!(it.key, PropKey::Name(name) if atoms.bytes(name) == key)
-        }) || (self.find_class_extended(class)).is_some_and(|it| self.has_setter(it, key))
+        self.lineage(class).any(|class| {
+            let mut members = hir[class].members.iter().map(|id| hir[id]);
+            members.any(|it| {
+                it.kind == MemberKind::Setter
+                    && matches!(it.key, PropKey::Name(name) if atoms.bytes(name) == key)
+            })
+        })
     }
 
     fn bind(&mut self, mut state: State, pattern: PatId, value: Value) -> Option<Vec<State>> {
@@ -2165,10 +2175,25 @@ impl Execution<'_, '_, '_, '_> {
         object: &Value,
         passed: &[Value],
     ) -> Ways<Value> {
-        let hir = self.follower.inputs.hir;
-        if self.functions_running.len() >= DEEPEST_CALL {
+        if self.functions_running.len() >= DEEPEST_CALL
+            || self.constructions_running >= DEEPEST_CONSTRUCTION
+        {
             return None;
         }
+        self.constructions_running += 1;
+        let made = self.run_construction(state, class, object, passed);
+        self.constructions_running -= 1;
+        made
+    }
+
+    fn run_construction(
+        &mut self,
+        state: State,
+        class: ClassId,
+        object: &Value,
+        passed: &[Value],
+    ) -> Ways<Value> {
+        let hir = self.follower.inputs.hir;
         let mut members = hir[class].members.iter().map(|id| hir[id]);
         let constructor = members.find(|it| it.kind == MemberKind::Constructor);
         let extended = self.find_class_extended(class);

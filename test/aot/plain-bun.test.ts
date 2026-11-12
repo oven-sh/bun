@@ -25,9 +25,9 @@ async function plain(program: string, env: Record<string, string> = {}) {
   return { stdout, exitCode };
 }
 
-// The optimizing JIT tiers skip the write-back of the sorted items, or the checks that go with it: in about one run in four,
-// and in every run when the JIT compiles on the main thread, which is why that run comes first. Without the JIT the output is
-// correct. Once the bug is fixed this test fails: change `test.failing` to `test`.
+// The optimizing JIT tiers skip the write-back of the sorted items, or the checks that go with it: where the JIT compiles on
+// the main thread, every run at one of these scales shows it. Without the JIT the output is correct. Once the bug is fixed
+// this test fails: change `test.failing` to `test`.
 test.failing(
   "Array.prototype.sort writes every sorted item back although the comparator has changed the array in its last comparison",
   async () => {
@@ -36,10 +36,10 @@ test.failing(
       stdout: storedOutput(program),
       exitCode: 0,
     };
-    const runs = await Promise.all([
-      plain(program, { BUN_JSC_useConcurrentJIT: "0" }),
-      ...Array.from({ length: 10 }, () => plain(program)),
-    ]);
+    const scales = ["0.7", "0.5", "0.07", "0.03"];
+    const runs = await Promise.all(
+      scales.map(scale => plain(program, { BUN_JSC_useConcurrentJIT: "0", BUN_JSC_jitPolicyScale: scale })),
+    );
     for (const run of runs) expect(run).toEqual(correct);
   },
   120_000,

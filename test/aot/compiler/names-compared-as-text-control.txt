@@ -350,6 +350,26 @@ allows src/aot/lower/member.rs a member of a function that plain Bun answers whi
     return name != known::arguments && name != known::caller;
 allows src/sema/import_sites/touched_exports.rs a member that leads from one module to the others
     matches!(member, b"parent" | b"children" | b"require")
+allows src/aot/modules/wrapped/bootstrap.rs what every function has of its own
+    let bytes = self.files.atoms.bytes(name);
+    matches!(
+        bytes,
+        b"name" | b"length" | b"prototype" | b"arguments" | b"caller"
+    )
+finds src/aot/modules/wrapped/bootstrap.rs matches!
+    matches!(self.files.atoms.bytes(name), b"require" | b"cache")
+allows src/aot/load/copied_factories.rs a member that is handed a function
+    matches!(self.atoms.bytes(name), b"every" | b"filter" | b"map")
+allows src/aot/load/objects_created_below.rs a member of the global Object
+    return self.atoms.bytes(name) != b"create" || self.bound.binding(object) != Binding::Free;
+allows src/aot/lower/layouts/object_types.rs a member of a list
+    return self.queries.atom_bytes(name) == b"forEach";
+allows src/sema/check/aot/class_stores.rs a member of a function in hand
+    let Some((object, MemberKey::Name(known::call | known::apply))) = hir.member_key(callee) else {
+allows src/sema/check/aot/constructor_evidence.rs the whole module
+    return name == known::exports || name == known::default;
+allows src/sema/import_sites/changed_files.rs the identifier eval as it is written
+    ExprKind::Ident(name) => name != known::eval,
 allows src/aot/compile/summary.rs the end of a written path
     let path = files.atoms.bytes(path);
     _ if path.ends_with(b"/") => [&own_name[..end], b"/", path, b"noop.js"].concat(),

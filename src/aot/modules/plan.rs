@@ -821,6 +821,15 @@ impl ModuleGraph {
         self.finish_member(accessed.module, binding, accessed.is_imported)
     }
 
+    /// `limit` of `__export(lib, { limit: () => limit }); lib.limit`: the variables of the file that members name.
+    pub fn bindings_read_as_members(&self, file: FileId) -> impl Iterator<Item = SymbolId> + '_ {
+        let members = self.row(file).fixed_members.iter();
+        members.filter_map(move |&(_, (_, member))| match member {
+            Member::Binding(symbol) if symbol.file == file => Some(symbol.id),
+            _ => None,
+        })
+    }
+
     fn stores_what_variable_holds(
         &self,
         file: FileId,

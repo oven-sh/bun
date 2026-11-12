@@ -256,8 +256,8 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
       "`Worker` behind the global object, and a read off `unknown` (section 8): a constructor that neither the binder nor the record of an import leads to may be the platform's, so its name counts, which only takes more in",
   },
   {
-    paths: /^src\/sema\/import_sites\/import_uses\.rs$/,
-    lines: /ExprKind::Ident\(name\) if name == known::eval\b/,
+    paths: /^src\/sema\/import_sites\/(changed_files|import_uses)\.rs$/,
+    lines: /ExprKind::Ident\(name\) (?:if name ==|=> name !=) known::eval\b/,
     reason:
       "the language makes a call a direct eval by the identifier `eval` as it is written, whatever it is bound to: a file that spells it is taken to read each of its imports",
   },
@@ -274,7 +274,7 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
   },
   {
     paths:
-      /^src\/sema\/fold\/folder_(names|operators)\.rs$|^src\/aot\/(builtins\/resolve\/module_objects|known_helpers\/(canonical|quiet)|load\/hoisted_mocks|lower\/expression\/global_path)\.rs$/,
+      /^src\/sema\/fold\/folder_(names|operators)\.rs$|^src\/aot\/(builtins\/resolve\/module_objects|known_helpers\/(canonical|quiet)|load\/hoisted_mocks|lower\/(expression\/global_path|layouts\/namespace_literals))\.rs$/,
     lines: /known::(?:undefined|RegExp|ShadowRealm)\b|\bconstant_globals\.contains\(&name\)/,
     reason:
       "a global by its name, where the binder has said that the identifier is free: Binding::Free stands beside the name or in front of the call",
@@ -321,6 +321,42 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     lines: /known::exports\b|== b"call"/,
     reason:
       "members of what browserify's runtime has made itself: in front of each name stands the binder's symbol of its object of bodies or of its cache",
+  },
+  {
+    paths: /^src\/aot\/modules\/wrapped\/bootstrap\.rs$/,
+    lines: /^b"name" \| b"length" \| b"prototype"/,
+    reason:
+      "a table of built-ins: what every function has of its own, asked of a key that webpack's runtime stores on its require function. A key that is in it only leaves the body as it is written",
+  },
+  {
+    paths: /^src\/aot\/load\/copied_factories\.rs$/,
+    lines: /b"(?:every|filter|find|findIndex|findLast|flatMap|forEach|map|reduce|reduceRight|some|sort)"/,
+    reason:
+      "whether a function is handed to a member that calls it again and again only chooses which factories are copied for their calls. A member of the program with such a name changes no answer",
+  },
+  {
+    paths: /^src\/aot\/load\/objects_created_below\.rs$/,
+    lines: /b"(?:create|Object|isPrototypeOf|call|apply)"/,
+    reason:
+      "`Object.create` where the binder has said that `Object` is free; and where a constant holds a literal of methods, the members behind which the file may name it: each mention reads the same object, so a member of the program with such a name changes no answer",
+  },
+  {
+    paths: /^src\/aot\/lower\/layouts\/object_types\.rs$/,
+    lines: /atom_bytes\(name\) [!=]= b"forEach"/,
+    reason:
+      "a member behind a value: the keys are those of the list that is gone through, where it is written as a literal, and they only give a layout more names",
+  },
+  {
+    paths: /^src\/sema\/check\/aot\/(class_stores|inferred_from_use)\.rs$/,
+    lines: /MemberKey::Name\(known::call\b/,
+    reason:
+      "a member behind a value: whoever follows a function has it in hand where it reads `call` or `apply` off it, and what is found is only expected",
+  },
+  {
+    paths: /^src\/sema\/check\/aot\/constructor_evidence\.rs$/,
+    lines: /known::(?:exports|default)\b/,
+    reason:
+      "a function that is stored under the name of a method is guessed to be one; under `exports` and `default` it is the whole module: the match only takes the guess away",
   },
   {
     paths: /^src\/aot\/load\/made_own_require\.rs$/,

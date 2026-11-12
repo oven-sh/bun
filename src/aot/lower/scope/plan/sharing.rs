@@ -45,6 +45,10 @@ pub(super) fn compute_sharing(
     let eval_bindings = uses.eval_uses.iter().map(|eval_use| eval_use.binding);
     let mut seen_by_eval: Vec<BindingRef> = eval_bindings.collect();
     sort_unique(&mut seen_by_eval);
+    let input = context.input;
+    let read_as_members = input.modules.bindings_read_as_members(input.file);
+    let mut read_as_members: Vec<SymbolId> = read_as_members.collect();
+    sort_unique(&mut read_as_members);
     debug_assert!(
         uses.uses.is_sorted(),
         "the users of a binding stand in order"
@@ -70,7 +74,7 @@ pub(super) fn compute_sharing(
         if !is_exported
             && !is_seen_by_eval
             && (context.is_holder_without_value(binding)
-                || is_captured_constant(context, owner, run))
+                || is_captured_constant(context, owner, run, &read_as_members))
         {
             readers.extend_from_slice(run);
             drop_users_behind_initialization(context, owner, &mut readers, &mut sharing);
@@ -262,11 +266,12 @@ fn find_time_of_only_super_call(context: &Context<'_, '_>, scope: ScopeId) -> Op
 }
 
 /// `var unit = "day"; C.prototype.get = function () { return this[unit]; };`: a closure made behind the declaration
-/// has the constant itself.
+/// has the constant itself. A member read names the variable.
 fn is_captured_constant(
     context: &Context<'_, '_>,
     owner: WalkedFunctionId,
     uses: &[(BindingRef, WalkedFunctionId)],
+    read_as_members: &[SymbolId],
 ) -> bool {
     let Some(&(BindingRef::Symbol(symbol), _)) = uses.first() else {
         return false;
@@ -274,6 +279,7 @@ fn is_captured_constant(
     let input = context.input;
     let decisions = &input.compiled.analysis.decisions;
     uses.iter().any(|&(_, user)| user != owner)
+        && read_as_members.binary_search(&symbol).is_err()
         && find_constant_initializer(input.hir, input.bound, decisions, symbol).is_some()
 }
 

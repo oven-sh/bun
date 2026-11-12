@@ -12,7 +12,9 @@
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { testaot, toolEnv } from "../shell/tools";
+// Not from ../shell/tools: when it is imported, that file may build a program and write an executable to learn whether this Bun is a front end.
+// Nothing here asks, and ../engine/answers.ts loads this file.
+import { testaot, toolEnv } from "../engine/testaot";
 
 /** `written`: a file that counts as success where it is there, whatever the exit code. What a signal has ended has not succeeded. */
 function run(cmd: string[], cwd: string, env: typeof bunEnv, written?: string) {
@@ -21,6 +23,18 @@ function run(cmd: string[], cwd: string, env: typeof bunEnv, written?: string) {
   if (hasDied || (exitCode !== 0 && !(written && existsSync(written))))
     throw new Error(`${cmd.join(" ")} ended with ${signalCode ?? exitCode}:\n${stderr}`);
   return stdout.toString().replaceAll("\r\n", "\n");
+}
+
+type Command = Parameters<typeof run>;
+
+/** As run(), but the thread is free while the command runs. */
+async function runBesideOthers(...[cmd, cwd, env, written]: Command) {
+  await using child = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  const hasDied = child.signalCode !== null || exitCode > 128;
+  if (hasDied || (exitCode !== 0 && !(written && existsSync(written))))
+    throw new Error(`${cmd.join(" ")} ended with ${child.signalCode ?? exitCode}:\n${stderr}`);
+  return stdout.replaceAll("\r\n", "\n");
 }
 
 type IRRecord = { kind: string; id?: string; lines: string[] };
@@ -64,30 +78,36 @@ const outsideQuotes = (line: string, change: (part: string) => string) =>
     .join("");
 
 /**
- * The records of the files of the program whose entry point is `source`, and of what they reach in the library, as IR text.
- * `unknownIDs`: the ids in them that name no record.
- * Without `keepsLibrary` no library function keeps its body.
+ * The commands that write the program of `source` into `folder`, print it, and say which of its functions nothing reaches.
+ * `text`: where the last of them reads what the second printed, and not the program.
  */
-export function recordsOfSource(source: string, keepsLibrary = true) {
-  using folder = tempDir("aot-ir-test-from-source", {});
-  const program = join(String(folder), "program.aot");
+function commandsOf(source: string, folder: string) {
+  const program = join(folder, "program.aot");
   // The engine may stop the build with a diagnostic, which is what some tests are about. The front end has written its program by then.
   // A line `// Flags: --aot-erase-types` in the program: the front end reads it as it reads a file without types.
   const sourceText = readFileSync(source, "utf8");
   const flags = /^\/\/ Flags:.* --aot-erase-types\b/m.test(sourceText) ? ["--aot-erase-types"] : [];
-  run(
-    // Only the program is wanted. The executable is as large as Bun, and writing it takes longer than the build.
-    [bunExe(), "compile", ...flags, `--aot-out=${program}`, "--aot-testing=NoExecutable", basename(source)],
-    dirname(resolve(source)),
-    bunEnv,
-    program,
-  );
-  const printed = run([testaot!, "print", program], String(folder), toolEnv);
-  const records = recordsOf(printed);
   // The front end writes a closed program, in which a free name that nobody defines ends what calls it. Its text has no such option: with a line
   // `// Flags: --open-world` in the program the library functions that the text reaches keep their bodies.
-  const linked = /^\/\/ Flags:.* --open-world\b/m.test(sourceText) ? join(String(folder), "program.ir") : program;
-  if (linked !== program) writeFileSync(linked, printed);
+  const linked = /^\/\/ Flags:.* --open-world\b/m.test(sourceText) ? join(folder, "program.ir") : program;
+  const commands: Record<"frontEnd" | "print" | "link", Command> = {
+    frontEnd: [
+      // Only the program is wanted. The executable is as large as Bun, and writing it takes longer than the build.
+      [bunExe(), "compile", ...flags, `--aot-out=${program}`, "--aot-testing=NoExecutable", basename(source)],
+      dirname(resolve(source)),
+      bunEnv,
+      program,
+    ],
+    print: [[testaot!, "print", program], folder, toolEnv],
+    link: [[testaot!, "link", linked, "functions"], folder, toolEnv, program],
+  };
+  return { ...commands, text: linked !== program ? linked : undefined };
+}
+
+/** The records that `testaot print` printed, and which of them are of the program's own files. `text`: where to write what it printed. */
+function programOf(printed: string, text: string | undefined) {
+  const records = recordsOf(printed);
+  if (text !== undefined) writeFileSync(text, printed);
   const byID = new Map(records.flatMap(record => (record.id ? [[record.id, record] as const] : [])));
 
   const ownModules = new Set(
@@ -97,12 +117,14 @@ export function recordsOfSource(source: string, keepsLibrary = true) {
   );
   if (!ownModules.size) throw new Error("the printed program has no module for the file");
   const isOwn = (record: IRRecord) => ownModules.has((record.kind === "module" ? record.id : moduleOf(record)) ?? "");
+  return { records, byID, isOwn };
+}
 
+/** `linked`: what `testaot link <program> functions` printed. */
+function recordsKept({ records, byID, isOwn }: ReturnType<typeof programOf>, linked: string, keepsLibrary: boolean) {
   // A line `function f3 unreached ..` for each function that nothing reaches. A build that stops early says nothing of any function:
   // then no library function keeps its body.
-  const linkedFunctions = run([testaot!, "link", linked, "functions"], String(folder), toolEnv, program)
-    .split("\n")
-    .filter(line => line.startsWith("function "));
+  const linkedFunctions = linked.split("\n").filter(line => line.startsWith("function "));
   const unreached = new Set(linkedFunctions.flatMap(line => /^function (f\d+) unreached\b/.exec(line)?.[1] ?? []));
   const reached = new Set(
     records
@@ -186,6 +208,28 @@ export function recordsOfSource(source: string, keepsLibrary = true) {
   );
   for (const id of unknownIDs) if (!text.some(line => line.includes(`${id}?`))) unknownIDs.delete(id);
   return { text, unknownIDs };
+}
+
+/**
+ * The records of the files of the program whose entry point is `source`, and of what they reach in the library, as IR text.
+ * `unknownIDs`: the ids in them that name no record.
+ * Without `keepsLibrary` no library function keeps its body.
+ */
+export function recordsOfSource(source: string, keepsLibrary = true) {
+  using folder = tempDir("aot-ir-test-from-source", {});
+  const { frontEnd, print, link, text } = commandsOf(source, String(folder));
+  run(...frontEnd);
+  const program = programOf(run(...print), text);
+  return recordsKept(program, run(...link), keepsLibrary);
+}
+
+/** As recordsOfSource(), but the thread is free while the commands run: ../engine/answers.ts makes many tests at once in its own process. */
+export async function recordsOfSourceBesideOthers(source: string, keepsLibrary = true) {
+  using folder = tempDir("aot-ir-test-from-source", {});
+  const { frontEnd, print, link, text } = commandsOf(source, String(folder));
+  await runBesideOthers(...frontEnd);
+  const program = programOf(await runBesideOthers(...print), text);
+  return recordsKept(program, await runBesideOthers(...link), keepsLibrary);
 }
 
 if (import.meta.main) {

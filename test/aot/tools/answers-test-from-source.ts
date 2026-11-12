@@ -23,7 +23,7 @@
 import { tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { recordsOfSource } from "./ir-test-from-source";
+import { recordsOfSource, recordsOfSourceBesideOthers } from "./ir-test-from-source";
 
 // The printer writes a text that holds a line break as a template with the break in it. Joined by a blank it would be another text than the program's.
 const endsInsideTemplate = (part: string, startsInside: boolean) =>
@@ -65,7 +65,10 @@ async function partsOf(source: string, isWithoutLibrary: boolean, countsAnswers 
   let answers = 0;
   const AsyncFunction = (async () => {}).constructor as FunctionConstructor;
   if (countsAnswers) await new AsyncFunction("report", `"use strict"; ${erased.join(" ")}`)(() => void answers++);
-  const { text, unknownIDs } = recordsOfSource(source, !isWithoutLibrary);
+  // A program that ran here may still wait for something. That may not go on before its answers are read and its test is printed: the commands hold the thread.
+  const { text, unknownIDs } = countsAnswers
+    ? recordsOfSource(source, !isWithoutLibrary)
+    : await recordsOfSourceBesideOthers(source, !isWithoutLibrary);
   const shell = [
     `(function () { "use strict";`,
     `const show = value => typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value);`,

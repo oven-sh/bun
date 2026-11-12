@@ -22,7 +22,7 @@
 // that somebody wrote hold for what the front end makes today? `--part=1/2` takes every second file.
 //
 // With --print-anew it writes nothing and takes one file, which may have no IR text at all, as those in ../from-source: it prints the file as
-// it would be written anew. ../engine/answers.ts runs what is printed.
+// it would be written anew. ../engine/answers.ts runs that text: `printedAnew` makes it there, in the process of the test.
 //
 // With --counts it then runs every file, marked or not. Where a check line fails and the nearest line of the output differs from it
 // only in numbers (`instructions: 14, patchpoints: 2`), the check line takes those numbers, and the old and the new line are printed.
@@ -30,9 +30,10 @@ import { tempDir } from "harness";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { basename, join } from "node:path";
-import { testaot, toolEnv } from "../shell/tools";
+// Not from ../shell/tools, as in ./ir-test-from-source.ts: ../engine/answers.ts loads this file.
+import { testaot, toolEnv } from "../engine/testaot";
 import { numberedByLegend, withoutInheritedFieldsAlone } from "./answers-test-from-source";
-import { recordsOfSource } from "./ir-test-from-source";
+import { recordsOfSource, recordsOfSourceBesideOthers } from "./ir-test-from-source";
 
 const sourceMark = /^# -- source: (\S+)$/;
 const endOfSource = "# -- end of source";
@@ -121,6 +122,51 @@ function failuresOf(path: string, lines: string[]) {
   return [`testaot printed: ${printed.join(" ")}${stderr}`];
 }
 
+/** The files of the program that the lines hold from `sourceAt` on, by name, and the name of the first. */
+function sourceOf(path: string, lines: string[], sourceAt: number) {
+  const end = lines.indexOf(endOfSource);
+  if (end < sourceAt) throw new Error(`${path}: there is no line "${endOfSource}"`);
+  const files: Record<string, string> = {};
+  let name = "";
+  for (const line of lines.slice(sourceAt, end)) {
+    const mark = sourceMark.exec(line);
+    if (mark) files[(name = mark[1])] = "";
+    else files[name] += line.replace(/^# ?/, "") + "\n";
+  }
+  return { files, entry: sourceMark.exec(lines[sourceAt])![1] };
+}
+
+/** The lines with `records` in place of their IR text. */
+function withRecords(lines: string[], records: string[]) {
+  // The IR text is what is no comment. Comments between its lines are check lines written by hand: they stay in front of it.
+  const marked = lines.findIndex(line => generatedMark.test(line));
+  const last = marked < 0 ? lines.length : marked;
+  const comments = lines.slice(0, last).filter(line => line.startsWith("#"));
+  // `# f1 = sum, f2 = Box`: the directives name the functions by the numbers that they have today.
+  return [
+    ...numberedByLegend(comments, records),
+    "",
+    ...records.map(withoutInheritedFieldsAlone),
+    ...lines.slice(last),
+  ];
+}
+
+/**
+ * What --print-anew prints of a file, and the ids in its records that name no record: each is written with a question mark, `f3?`.
+ * The thread is free while the commands run: ../engine/answers.ts makes the tests of many files at once in its own process.
+ */
+export async function printedAnew(path: string) {
+  const lines = readFileSync(path, "utf8").replace(/\n$/, "").split("\n");
+  const sourceAt = lines.findIndex(line => sourceMark.test(line));
+  if (sourceAt < 0) throw new Error("it has no source");
+  const { files, entry } = sourceOf(path, lines, sourceAt);
+  using folder = tempDir("aot-update-ir-tests", files);
+  const { text: records, unknownIDs } = await recordsOfSourceBesideOthers(join(String(folder), entry));
+  // A list of inherited fields is left out of the text, and what it alone named with it.
+  const isWritten = (id: string) => records.some(line => withoutInheritedFieldsAlone(line).includes(`${id}?`));
+  return { text: withRecords(lines, records).join("\n") + "\n", unknownIDs: [...unknownIDs].filter(isWritten) };
+}
+
 function update(path: string, checks?: "inputs" | "anew" | "print") {
   const before = readFileSync(path, "utf8");
   let lines = before.replace(/\n$/, "").split("\n");
@@ -129,28 +175,11 @@ function update(path: string, checks?: "inputs" | "anew" | "print") {
   if (sourceAt < 0 && marked() < 0) return "no mark";
 
   if (sourceAt >= 0) {
-    const end = lines.indexOf(endOfSource);
-    if (end < sourceAt) throw new Error(`${path}: there is no line "${endOfSource}"`);
-    const files: Record<string, string> = {};
-    let name = "";
-    for (const line of lines.slice(sourceAt, end)) {
-      const mark = sourceMark.exec(line);
-      if (mark) files[(name = mark[1])] = "";
-      else files[name] += line.replace(/^# ?/, "") + "\n";
-    }
+    const { files, entry } = sourceOf(path, lines, sourceAt);
     using folder = tempDir("aot-update-ir-tests", files);
-    const { text: records, unknownIDs } = recordsOfSource(join(String(folder), sourceMark.exec(lines[sourceAt])![1]));
+    const { text: records, unknownIDs } = recordsOfSource(join(String(folder), entry));
     if (unknownIDs.size) console.error(`${path}: these name no record: ${[...unknownIDs].join(" ")}`);
-    // The IR text is what is no comment. Comments between its lines are check lines written by hand: they stay in front of it.
-    const last = marked() < 0 ? lines.length : marked();
-    const comments = lines.slice(0, last).filter(line => line.startsWith("#"));
-    // `# f1 = sum, f2 = Box`: the directives name the functions by the numbers that they have today.
-    lines = [
-      ...numberedByLegend(comments, records),
-      "",
-      ...records.map(withoutInheritedFieldsAlone),
-      ...lines.slice(last),
-    ];
+    lines = withRecords(lines, records);
   }
   if (checks === "print") {
     if (sourceAt < 0) throw new Error("it has no source");
@@ -237,84 +266,86 @@ function updateCounts(paths: string[]) {
   return rewritten;
 }
 
-const takesCounts = process.argv.includes("--counts");
-const checks = process.argv.includes("--check-inputs")
-  ? "inputs"
-  : process.argv.includes("--check-anew")
-    ? "anew"
-    : process.argv.includes("--print-anew")
-      ? "print"
-      : undefined;
-const [part, parts] = (process.argv.find(argument => argument.startsWith("--part="))?.slice(7) ?? "1/1")
-  .split("/")
-  .map(Number);
-const paths = process.argv.slice(2).filter(argument => !argument.startsWith("--"));
-if (!testaot || paths.length === 0) {
-  console.error(
-    testaot
-      ? "usage: bun test/aot/tools/update-ir-tests.ts [--counts | --check-inputs | --check-anew | --print-anew] <file or folder> .."
-      : "there is no testaot",
-  );
-  process.exit(2);
-}
-if (checks && paths.some(path => statSync(path).isDirectory())) {
-  const files = paths
-    .flatMap(filesBelow)
-    .filter(
-      path =>
-        sourceMark.test(readFileSync(path, "utf8").split("\n", 1)[0]) ||
-        /^# -- source: /m.test(readFileSync(path, "utf8")),
-    )
-    .filter((_, index) => index % parts === part - 1);
-  const shares = Math.min(files.length, availableParallelism());
-  const children = Array.from({ length: shares }, (_, share) =>
-    Bun.spawn(
-      [
-        process.execPath,
-        import.meta.path,
-        `--check-${checks}`,
-        ...files.filter((_, index) => index % shares === share),
-      ],
-      {
-        stdout: "pipe",
-        stderr: "inherit",
-      },
-    ),
-  );
-  const printed = await Promise.all(children.map(child => new Response(child.stdout).text()));
-  const problems = printed.flatMap(text =>
-    text.split("\n").filter(line => line && !/^\d+ (as it was|stale|failed|passes|fails)/.test(line)),
-  );
-  console.log(
-    [
-      ...problems,
-      `${files.length} files with a source, ${problems.filter(line => !line.startsWith("  ")).length} stale or failed`,
-    ].join("\n"),
-  );
-  process.exit(problems.length ? 1 : 0);
-}
-const counts: Record<string, number> = {};
-for (const path of paths.flatMap(filesBelow)) {
-  let what = "failed";
-  try {
-    what = update(path, checks);
-  } catch (error) {
-    (checks && checks !== "print" ? console.log : console.error)(
-      `${path}: ${error instanceof Error ? error.message.split("\n")[0] : error}`,
+if (import.meta.main) {
+  const takesCounts = process.argv.includes("--counts");
+  const checks = process.argv.includes("--check-inputs")
+    ? "inputs"
+    : process.argv.includes("--check-anew")
+      ? "anew"
+      : process.argv.includes("--print-anew")
+        ? "print"
+        : undefined;
+  const [part, parts] = (process.argv.find(argument => argument.startsWith("--part="))?.slice(7) ?? "1/1")
+    .split("/")
+    .map(Number);
+  const paths = process.argv.slice(2).filter(argument => !argument.startsWith("--"));
+  if (!testaot || paths.length === 0) {
+    console.error(
+      testaot
+        ? "usage: bun test/aot/tools/update-ir-tests.ts [--counts | --check-inputs | --check-anew | --print-anew] <file or folder> .."
+        : "there is no testaot",
     );
-    process.exitCode = 1;
+    process.exit(2);
   }
-  counts[what] = (counts[what] ?? 0) + 1;
-  if (what === "written") console.log(path);
-}
-if (checks !== "print")
-  console.log(
-    Object.entries(counts)
-      .map(([what, count]) => `${count} ${what}`)
-      .join(", "),
-  );
-if (takesCounts) {
-  let total = 0;
-  for (let rewritten; (rewritten = updateCounts(paths)) > 0; ) total += rewritten;
-  console.log(`${total} check lines took other numbers`);
+  if (checks && paths.some(path => statSync(path).isDirectory())) {
+    const files = paths
+      .flatMap(filesBelow)
+      .filter(
+        path =>
+          sourceMark.test(readFileSync(path, "utf8").split("\n", 1)[0]) ||
+          /^# -- source: /m.test(readFileSync(path, "utf8")),
+      )
+      .filter((_, index) => index % parts === part - 1);
+    const shares = Math.min(files.length, availableParallelism());
+    const children = Array.from({ length: shares }, (_, share) =>
+      Bun.spawn(
+        [
+          process.execPath,
+          import.meta.path,
+          `--check-${checks}`,
+          ...files.filter((_, index) => index % shares === share),
+        ],
+        {
+          stdout: "pipe",
+          stderr: "inherit",
+        },
+      ),
+    );
+    const printed = await Promise.all(children.map(child => new Response(child.stdout).text()));
+    const problems = printed.flatMap(text =>
+      text.split("\n").filter(line => line && !/^\d+ (as it was|stale|failed|passes|fails)/.test(line)),
+    );
+    console.log(
+      [
+        ...problems,
+        `${files.length} files with a source, ${problems.filter(line => !line.startsWith("  ")).length} stale or failed`,
+      ].join("\n"),
+    );
+    process.exit(problems.length ? 1 : 0);
+  }
+  const counts: Record<string, number> = {};
+  for (const path of paths.flatMap(filesBelow)) {
+    let what = "failed";
+    try {
+      what = update(path, checks);
+    } catch (error) {
+      (checks && checks !== "print" ? console.log : console.error)(
+        `${path}: ${error instanceof Error ? error.message.split("\n")[0] : error}`,
+      );
+      process.exitCode = 1;
+    }
+    counts[what] = (counts[what] ?? 0) + 1;
+    if (what === "written") console.log(path);
+  }
+  if (checks !== "print")
+    console.log(
+      Object.entries(counts)
+        .map(([what, count]) => `${count} ${what}`)
+        .join(", "),
+    );
+  if (takesCounts) {
+    let total = 0;
+    for (let rewritten; (rewritten = updateCounts(paths)) > 0; ) total += rewritten;
+    console.log(`${total} check lines took other numbers`);
+  }
 }

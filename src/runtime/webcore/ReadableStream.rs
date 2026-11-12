@@ -1375,7 +1375,11 @@ impl<C: SourceContext> NewSource<C> {
             self.reader_context.set(Some(cx.context().id()));
         }
         let this_jsvalue = this_value.to_js();
-        C::js_deliver_set_cached(this_jsvalue, global_this, callback.to_js());
+        C::js_deliver_set_cached(
+            this_jsvalue,
+            global_this,
+            callback.to_js().with_async_context_if_needed(global_this),
+        );
         this_jsvalue.protect();
         streams::Pending::run_later(
             self.delivery(Self::call_cancel_callback),
@@ -1401,7 +1405,12 @@ impl<C: SourceContext> NewSource<C> {
         deliver: JSValue,
         result: streams::Result,
     ) {
-        C::js_deliver_set_cached(this_jsvalue, global_this, deliver);
+        // The listeners run with the `AsyncLocalStorage` stores of the read that asked, as those of a promise's reaction do.
+        C::js_deliver_set_cached(
+            this_jsvalue,
+            global_this,
+            deliver.with_async_context_if_needed(global_this),
+        );
         // The wrapper holds `deliver`, which holds the Node stream: all three stay until the result is delivered or dropped.
         this_jsvalue.protect();
         match result {

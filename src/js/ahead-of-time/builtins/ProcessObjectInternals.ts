@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 3dd23cbd11bcdb5241b48951d0ce1499cb8fa73e28eab348aa1dbf884b8b4411.
+// Written against that file with the SHA-256 1eea775334e06b76221b3e6b1cca3c607da658621b3cc10b761ef5c0915d4571.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -304,10 +304,8 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
       return;
     }
 
-    // No reader: own() replays this read. A live consumer (flowing, or a 'readable'
-    // listener) takes the reader back here, as net.Socket._read restarts its handle in
-    // Node. The 'pause' tick may have released it after the consumer attached.
     needsInternalReadRefresh = true;
+    // A live consumer takes the reader back, as net.Socket._read restarts its handle in Node.
     if (!stream.destroyed && (stream.readableFlowing || stream._readableState.readableListening)) {
       own();
     }

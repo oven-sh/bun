@@ -3121,7 +3121,14 @@ describe("expect()", () => {
     expect({ a: 1, b: 2 }).not.toContainAllKeys([expect.any(String), "zzz"]);
     expect({ a: 1, b: 2 }).not.toContainAllKeys(["zzz", expect.any(String)]);
     expect({ a: 1, b: 2, c: 3 }).not.toContainAllKeys([expect.any(String), expect.any(String), "zzz"]);
-    expect(() => expect({ a: 1, b: 2 }).toContainAllKeys([expect.any(String), "zzz"])).toThrow(
+    // With colors on, escape codes split this text, so the plain message is compared.
+    let message = "";
+    try {
+      expect({ a: 1, b: 2 }).toContainAllKeys([expect.any(String), "zzz"]);
+    } catch (e) {
+      message = stripVTControlCharacters(ANY(e).message);
+    }
+    expect(message).toContain(
       isBun
         ? 'Expected to contain all keys: [\n  Any<String>, "zzz"\n]\nReceived: [ "a", "b" ]'
         : "Expected object to contain all keys",

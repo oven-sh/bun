@@ -379,6 +379,10 @@ function createHappyDOM(_: NodeJS.Require, exports: any, options: any): Environm
 
 // Without --isolate, modules outlive a file and hold on to DOM nodes, so the window has to outlive it too.
 const kept = new $Map<string, Environment>();
+// The kept windows that have options. `value` is a parse of `text` that no package was given, so nothing changes it.
+type KeptWithOptions = { packagePath: string; text: string; value?: unknown; environment: Environment };
+let keptWithOptions: KeptWithOptions[] | undefined;
+let isDeepStrictEqual: ((actual: unknown, expected: unknown) => boolean) | undefined;
 // require() of a module with top-level await throws only the first time, so rethrow that error for every file.
 const failedToLoad = new $Map<string, unknown>();
 
@@ -441,17 +445,52 @@ function open(
   const id = `${packagePath}\n${optionsText ?? ""}`;
   const last = kept.$get(id);
   if (last && !isClosed(last.window)) return last;
-  // Which names a new window gives globalThis depends on the names that are there.
-  beforeCreating();
 
   let options;
-  try {
-    options = optionsText === undefined ? undefined : JSON.parse(optionsText);
-  } catch (error) {
-    return `its options are not JSON: ${(error as Error).message}`;
+  if (optionsText !== undefined) {
+    try {
+      options = JSON.parse(optionsText);
+    } catch (error) {
+      beforeCreating();
+      return `its options are not JSON: ${(error as Error).message}`;
+    }
+    if (keptWithOptions) {
+      // Another spelling of a kept window's options gets that window. As in vitest, the values are compared.
+      for (let i = 0; i < keptWithOptions.length; i++) {
+        const other = keptWithOptions[i];
+        if (other.packagePath !== packagePath) continue;
+        // Options nested too deeply to compare get a window of their own.
+        try {
+          isDeepStrictEqual ??= $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsDeepStrictEqual", 3);
+          if (!isDeepStrictEqual!(options, (other.value ??= JSON.parse(other.text)))) continue;
+        } catch {
+          continue;
+        }
+        if (!isClosed(other.environment.window)) {
+          kept.$set(id, other.environment);
+          return other.environment;
+        }
+        // A file closed that window. The one made below is listed in its place.
+        keptWithOptions[i] = keptWithOptions[keptWithOptions.length - 1];
+        keptWithOptions.length--;
+        break;
+      }
+    }
   }
+  // Which names a new window gives globalThis depends on the names that are there.
+  beforeCreating();
   const environment = (name === "jsdom" ? createJSDOM : createHappyDOM)(requireFromTest, found.load(), options ?? {});
-  if (keep && typeof environment !== "string") kept.$set(id, environment);
+  if (keep && typeof environment !== "string") {
+    kept.$set(id, environment);
+    if (optionsText !== undefined) {
+      $arrayPush((keptWithOptions ??= []), {
+        __proto__: null,
+        packagePath,
+        text: optionsText,
+        environment,
+      } as KeptWithOptions);
+    }
+  }
   return environment;
 }
 

@@ -57,7 +57,9 @@ If a comment names a package that isn't installed or an environment that isn't s
 
 By default, test files share one global object and one module registry. Files with the same environment and options also share one window, so a module that read `document.body` when it was imported still has the right element in the next file. Bun restores the globals after each file, so a file that runs in `node` doesn't see `document`.
 
-With [`--isolate` or `--parallel`](/test/parallel), every file gets its own window and its own copy of every module. Use them when files in different environments import the same DOM library, because a shared module stays bound to the first window it saw.
+Options are the same when they are the same JSON value: spacing and the order of keys don't matter, and `null` counts as no options. A file with any other options gets its own window, also when they are `{}` or only set a default.
+
+With [`--isolate` or `--parallel`](/test/parallel), every file gets its own window and its own copy of every module. Use them when files in different environments, or with different options, import the same DOM library, because a shared module stays bound to the first window it saw.
 
 The DOM package itself is the exception: each process loads it once, outside the files' globals, so its code stays compiled from file to file. As in Vitest's `vmThreads` and `vmForks` pools, the plain arrays, promises and functions that jsdom's own code creates belong to another realm:
 

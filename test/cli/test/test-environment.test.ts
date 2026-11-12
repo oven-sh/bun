@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { mkdirSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 // Split in two because `bun test` scans a test file's whole text for these names, this file's included.
 const VITEST = "@vitest" + "-environment";
@@ -217,9 +218,9 @@ describe.concurrent("test environment", () => {
       "5.test.js jsdom#3 http://localhost:3000",
       ["jsdom#4", { html: "<!DOCTYPE html>", ...jsdomDefaults, url: "https://example.com/f", ...jsdomMoreDefaults }],
       "6.test.js jsdom#4 https://example.com/f",
-      ["jsdom#5", { html: "<!DOCTYPE html>", ...jsdomDefaults, url: "http://localhost:3000", ...jsdomMoreDefaults }],
-      "7.test.js jsdom#5 http://localhost:3000",
-      "8.test.js jsdom#5 http://localhost:3000",
+      // As in vitest, `null` is no options, so files without options get the window of 5.test.js.
+      "7.test.js jsdom#3 http://localhost:3000",
+      "8.test.js jsdom#3 http://localhost:3000",
     ]);
     expect(summary(stderr)).toEqual(["8 pass", "0 fail"]);
     expect(exitCode).toBe(0);
@@ -641,6 +642,261 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(0);
     });
 
+    describe("files share the window of options that are the same JSON value", () => {
+      const options = (text: string) => `// ${VITEST}-options ${text}\n`;
+      const windowOf = (stdout: string[]) =>
+        Object.fromEntries(stdout.filter(line => !line.startsWith("open ")).map(line => line.split(" ")));
+
+      // With --isolate every file has its own copy of screen.js, so there two windows are right.
+      test.each([
+        [[], 2],
+        [["--rerun-each=2"], 4],
+        [["--isolate"], 2],
+      ] as const)("a module that read the document when it was imported %j", async (flags, passes) => {
+        using dir = tempDir("test-environment", {
+          ...fakePackages,
+          "screen.js": `export const body = document.body;`,
+          ...Object.fromEntries(
+            [`{"url":"https://example.com/"}`, `{ "url": "https://example.com/" }`].map((text, i) => [
+              `${i + 1}.test.js`,
+              `// ${VITEST} happy-dom
+              ${options(text)}
+              import { test, expect } from "bun:test";
+              import { body } from "./screen.js";
+              test("is bound to this file's document", () => {
+                expect(body).toBe(document.body);
+              });`,
+            ]),
+          ),
+        });
+        const { stderr, exitCode } = await bunTest(String(dir), ...flags, "./1.test.js", "./2.test.js");
+        expect(summary(stderr)).toEqual([`${passes} pass`, "0 fail"]);
+        expect(exitCode).toBe(0);
+      });
+
+      // [what the file's comment is, the comment]. The files of one array have the same options, and no two arrays do.
+      const sameOptions: [string, string][][] = [
+        [
+          ["a URL", options(`{"url":"https://example.com/1"}`)],
+          ["with spaces", options(`{ "url": "https://example.com/1" }`)],
+          ["with a trailing space", options(`{"url":"https://example.com/1"} `)],
+          ["in a block comment", `/* ${VITEST}-options {"url":"https://example.com/1"} */\n`],
+          ["in a Jest docblock", `/**\n * ${JEST}-options {"url":"https://example.com/1"}\n */\n`],
+          ["with an escape", options(`{"url":"https:\\/\\/example.com\\/1"}`)],
+        ],
+        [
+          ["a URL and a width", options(`{"url":"https://example.com/2","width":100}`)],
+          ["in another order", options(`{"width":100,"url":"https://example.com/2"}`)],
+          ["with the width as 1e2", options(`{"url":"https://example.com/2","width":1e2}`)],
+          ["with the width twice", options(`{"url":"https://example.com/2","width":5,"width":100}`)],
+        ],
+        [
+          ["nested options", options(`{"url":"https://example.com/3","x":{"a":[1,{"b":2,"c":3}],"d":null}}`)],
+          ["in another nested order", options(`{"x":{"d":null,"a":[1,{"c":3,"b":2}]},"url":"https://example.com/3"}`)],
+        ],
+        // As in vitest, falsy options are no options.
+        [
+          ["no comment", ""],
+          ["null", options("null")],
+          ["false", options("false")],
+          ["0", options("0")],
+          ["an empty string", options(`""`)],
+        ],
+        [["another URL", options(`{"url":"https://example.com/4"}`)]],
+        [["another width", options(`{"url":"https://example.com/2","width":101}`)]],
+        [
+          [
+            "a nested array in another order",
+            options(`{"url":"https://example.com/3","x":{"a":[{"b":2,"c":3},1],"d":null}}`),
+          ],
+        ],
+        [["a __proto__ key for the width", options(`{"url":"https://example.com/2","__proto__":{"width":100}}`)]],
+        [["a width that JSON.stringify prints as null", options(`{"url":"https://example.com/2","width":1e400}`)]],
+        [["null for the width", options(`{"url":"https://example.com/2","width":null}`)]],
+        [["an array for the width", options(`{"url":"https://example.com/2","width":[]}`)]],
+        [["an object for the width", options(`{"url":"https://example.com/2","width":{}}`)]],
+        // An object is options of its own, also one that sets nothing or only a default.
+        [["an empty object", options("{}")]],
+        [["the default URL", options(`{"url":"http://localhost:3000"}`)]],
+      ];
+
+      test.each([
+        ["happy-dom", "as listed"],
+        ["jsdom", "in reverse"],
+      ] as const)("%s, with the spellings %s", async (name, order) => {
+        const groups = order === "as listed" ? sameOptions : sameOptions.map(group => group.toReversed()).reverse();
+        const files = groups.flat();
+        using dir = tempDir("test-environment", {
+          ...fakePackages,
+          ...Object.fromEntries(files.map(([, comment], i) => [`${i}.test.js`, comment + logEnvironment])),
+        });
+        const { stdout, stderr, exitCode } = await bunTest(
+          String(dir),
+          `--environment=${name}`,
+          ...files.map((_, i) => `./${i}.test.js`),
+        );
+        expect(summary(stderr)).toEqual([`${files.length} pass`, "0 fail"]);
+        // Each file, by the first file that ran in its window.
+        const windows = windowOf(stdout);
+        const firstIn: Record<string, string> = {};
+        expect(
+          Object.fromEntries(files.map(([title], i) => [title, (firstIn[windows[`${i}.test.js`]] ??= title)])),
+        ).toEqual(Object.fromEntries(groups.flatMap(group => group.map(([title]) => [title, group[0][0]]))));
+        expect(exitCode).toBe(0);
+      });
+
+      test("a file goes back to the window that another spelling of its options opened", async () => {
+        using dir = tempDir("test-environment", {
+          ...fakePackages,
+          "1.test.js": options(`{"url":"https://example.com/x"}`) + logEnvironment,
+          "2.test.js": options(`{"url":"https://example.com/y"}`) + logEnvironment,
+          "3.test.js": options(`{ "url": "https://example.com/x" }`) + logEnvironment,
+          "4.test.js": options(`{ "url": "https://example.com/y" }`) + logEnvironment,
+          // The same options for another package are another window.
+          "5.test.js": `// ${VITEST} jsdom\n${options(`{"url" : "https://example.com/x"}`)}${logEnvironment}`,
+          "6.test.js": `// ${VITEST} jsdom\n${options(`{ "url": "https://example.com/x" }`)}${logEnvironment}`,
+        });
+        const { stdout, stderr, exitCode } = await bunTest(String(dir), "--environment=happy-dom");
+        expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
+          "1.test.js happy-dom#1 https://example.com/x",
+          "2.test.js happy-dom#2 https://example.com/y",
+          "3.test.js happy-dom#1 https://example.com/x",
+          "4.test.js happy-dom#2 https://example.com/y",
+          "5.test.js jsdom#1 https://example.com/x",
+          "6.test.js jsdom#1 https://example.com/x",
+        ]);
+        expect(summary(stderr)).toEqual(["6 pass", "0 fail"]);
+        expect(exitCode).toBe(0);
+      });
+
+      // A window that close() closes and that the test below lists, collected or not.
+      const closableHappyDOM = `${fakePackages["node_modules/happy-dom/index.js"]}
+        const { Window } = exports;
+        exports.Window = class extends Window {
+          constructor(...args) {
+            super(...args);
+            this.close = () => (this.closed = true);
+            (process.windows ??= []).push(new WeakRef(this));
+          }
+        };`;
+      const printsWindows = `
+        test("windows", () => {
+          Bun.gc(true);
+          console.log(...process.windows.map(window => window.deref()?.environment ?? "collected"));
+        });`;
+
+      test("a window that a file closed is replaced for every spelling of its options, and not kept", async () => {
+        const closes = `import { afterAll } from "bun:test";\nafterAll(() => window.close());\n`;
+        using dir = tempDir("test-environment", {
+          ...fakePackages,
+          "node_modules/happy-dom/index.js": closableHappyDOM,
+          "1.test.js": options(`{"url":"https://example.com/x"}`) + closes + logEnvironment,
+          "2.test.js": options(`{ "url": "https://example.com/x" }`) + logEnvironment,
+          "3.test.js": options(`{"url":"https://example.com/x"}`) + logEnvironment,
+          "4.test.js": `${options(`{"url": "https://example.com/x"}`)}${logEnvironment}${printsWindows}`,
+          "5.test.js": closes + logEnvironment,
+          "6.test.js": options("null") + logEnvironment,
+          "7.test.js": logEnvironment,
+        });
+        const { stdout, stderr, exitCode } = await bunTest(String(dir), "--environment=happy-dom");
+        expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
+          "1.test.js happy-dom#1 https://example.com/x",
+          "2.test.js happy-dom#2 https://example.com/x",
+          "3.test.js happy-dom#2 https://example.com/x",
+          "4.test.js happy-dom#2 https://example.com/x",
+          "collected happy-dom#2",
+          "5.test.js happy-dom#3 http://localhost:3000",
+          "6.test.js happy-dom#4 http://localhost:3000",
+          "7.test.js happy-dom#4 http://localhost:3000",
+        ]);
+        expect(summary(stderr)).toEqual(["8 pass", "0 fail"]);
+        expect(exitCode).toBe(0);
+      });
+
+      test("of two closed windows, the one that a file asks for again is replaced and not kept", async () => {
+        const closes = `import { afterAll } from "bun:test";\nafterAll(() => window.close());\n`;
+        using dir = tempDir("test-environment", {
+          ...fakePackages,
+          "node_modules/happy-dom/index.js": closableHappyDOM,
+          "1.test.js": options(`{"url":"https://example.com/x"}`) + logEnvironment,
+          "2.test.js": options(`{"url":"https://example.com/y"}`) + closes + logEnvironment,
+          "3.test.js": options(`{"url":"https://example.com/x"}`) + closes + logEnvironment,
+          "4.test.js": options(`{ "url": "https://example.com/y" }`) + logEnvironment,
+          "5.test.js": `${options(`{"url":"https://example.com/y"}`)}${logEnvironment}${printsWindows}`,
+        });
+        const { stdout, stderr, exitCode } = await bunTest(String(dir), "--environment=happy-dom");
+        expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
+          "1.test.js happy-dom#1 https://example.com/x",
+          "2.test.js happy-dom#2 https://example.com/y",
+          "3.test.js happy-dom#1 https://example.com/x",
+          "4.test.js happy-dom#3 https://example.com/y",
+          "5.test.js happy-dom#3 https://example.com/y",
+          // No file asked for the first window's options again, so it is still listed.
+          "happy-dom#1 collected happy-dom#3",
+        ]);
+        expect(summary(stderr)).toEqual(["6 pass", "0 fail"]);
+        expect(exitCode).toBe(0);
+      });
+
+      test("options nested too deeply to compare get a window each", async () => {
+        const nested = (depth: number) => Buffer.alloc(depth, "[").toString() + Buffer.alloc(depth, "]").toString();
+        const isComparable = (text: string) => {
+          try {
+            return isDeepStrictEqual(JSON.parse(text), JSON.parse(text));
+          } catch {
+            return false;
+          }
+        };
+        // How deep that is depends on the build, so take twice the depth that this process can't compare.
+        let depth = 1000;
+        while (isComparable(nested(depth))) depth *= 2;
+        // Bun passes its own `console`, so the nesting does not reach the package, which prints its options.
+        const deep = (space: string) => options(`{${space}"console":${nested(depth * 2)}}`);
+        using dir = tempDir("test-environment", {
+          ...fakePackages,
+          "1.test.js": deep("") + logEnvironment,
+          "2.test.js": deep(" ") + logEnvironment,
+          "3.test.js": deep("") + logEnvironment,
+        });
+        const { stdout, stderr, exitCode } = await bunTest(String(dir), "--environment=happy-dom");
+        expect(windowOf(stdout)).toEqual({
+          "1.test.js": "happy-dom#1",
+          "2.test.js": "happy-dom#2",
+          "3.test.js": "happy-dom#1",
+        });
+        expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
+        expect(exitCode).toBe(0);
+      });
+
+      test("what a package or a test does to the options it was given changes nothing", async () => {
+        using dir = tempDir("test-environment", {
+          ...fakePackages,
+          "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
+            const { Window } = exports;
+            exports.Window = class extends Window {
+              constructor(options) {
+                super(options);
+                this.given = options;
+              }
+            };`,
+          "1.test.js": `${options(`{"url":"https://example.com/x","viewport":{"width":100}}`)}
+            import { afterAll } from "bun:test";
+            afterAll(() => void (given.viewport.width = 200));
+            ${logEnvironment}`,
+          "2.test.js": options(`{ "url": "https://example.com/x", "viewport": { "width": 100 } }`) + logEnvironment,
+          "3.test.js": options(`{ "url": "https://example.com/x", "viewport": { "width": 200 } }`) + logEnvironment,
+        });
+        const { stdout, stderr, exitCode } = await bunTest(String(dir), "--environment=happy-dom");
+        expect(windowOf(stdout)).toEqual({
+          "1.test.js": "happy-dom#1",
+          "2.test.js": "happy-dom#1",
+          "3.test.js": "happy-dom#2",
+        });
+        expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
+        expect(exitCode).toBe(0);
+      });
+    });
+
     test("window changes carry over only to later files of the same environment", async () => {
       using dir = tempDir("test-environment", {
         ...fakePackages,
@@ -711,39 +967,40 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(0);
     });
 
+    // Each file undoes the patches first thing, so only the runner's work between two files sees them.
+    const patches = `
+      import { afterAll } from "bun:test";
+      process.undoPatches?.();
+      afterAll(() => {
+        const undo = [];
+        const patch = (object, key, value) => {
+          const original = Object.getOwnPropertyDescriptor(object, key);
+          undo.push(() => (original ? Object.defineProperty(object, key, original) : delete object[key]));
+          Object.defineProperty(object, key, { value, writable: true, configurable: true });
+        };
+        const { defineProperty, getOwnPropertyDescriptor } = Object;
+        process.undoPatches = () => {
+          Object.defineProperty = defineProperty;
+          Object.getOwnPropertyDescriptor = getOwnPropertyDescriptor;
+          for (let i = undo.length; i--; ) undo[i]();
+        };
+        const nothing = function* () {};
+        const refuse = () => {
+          throw new Error("patched");
+        };
+        for (const prototype of [Array.prototype, Map.prototype, Set.prototype]) patch(prototype, Symbol.iterator, nothing);
+        for (const key of ["get", "set", "has", "delete", "forEach", "keys", "entries"]) patch(Map.prototype, key, refuse);
+        for (const key of ["push", "concat", "forEach", "map"]) patch(Array.prototype, key, refuse);
+        for (const key of ["get", "set", "value", "writable", "enumerable", "configurable"]) patch(Object.prototype, key, refuse);
+        for (const key of ["defineProperty", "deleteProperty", "getOwnPropertyDescriptor", "ownKeys"]) patch(Reflect, key, refuse);
+        for (const key of ["getOwnPropertyNames", "getOwnPropertySymbols", "keys", "getOwnPropertyDescriptor", "defineProperty"]) patch(Object, key, refuse);
+        patch(globalThis, "Map", refuse);
+        patch(globalThis, "Set", refuse);
+        patch(globalThis, "Object", refuse);
+      });
+    `;
+
     test("switching environments works even if a file leaves builtins patched", async () => {
-      // Each file undoes the patches first thing, so only the runner's work between two files sees them.
-      const patches = `
-        import { afterAll } from "bun:test";
-        process.undoPatches?.();
-        afterAll(() => {
-          const undo = [];
-          const patch = (object, key, value) => {
-            const original = Object.getOwnPropertyDescriptor(object, key);
-            undo.push(() => (original ? Object.defineProperty(object, key, original) : delete object[key]));
-            Object.defineProperty(object, key, { value, writable: true, configurable: true });
-          };
-          const { defineProperty, getOwnPropertyDescriptor } = Object;
-          process.undoPatches = () => {
-            Object.defineProperty = defineProperty;
-            Object.getOwnPropertyDescriptor = getOwnPropertyDescriptor;
-            for (let i = undo.length; i--; ) undo[i]();
-          };
-          const nothing = function* () {};
-          const refuse = () => {
-            throw new Error("patched");
-          };
-          for (const prototype of [Array.prototype, Map.prototype, Set.prototype]) patch(prototype, Symbol.iterator, nothing);
-          for (const key of ["get", "set", "has", "delete", "forEach", "keys", "entries"]) patch(Map.prototype, key, refuse);
-          for (const key of ["push", "concat", "forEach", "map"]) patch(Array.prototype, key, refuse);
-          for (const key of ["get", "set", "value", "writable", "enumerable", "configurable"]) patch(Object.prototype, key, refuse);
-          for (const key of ["defineProperty", "deleteProperty", "getOwnPropertyDescriptor", "ownKeys"]) patch(Reflect, key, refuse);
-          for (const key of ["getOwnPropertyNames", "getOwnPropertySymbols", "keys", "getOwnPropertyDescriptor", "defineProperty"]) patch(Object, key, refuse);
-          patch(globalThis, "Map", refuse);
-          patch(globalThis, "Set", refuse);
-          patch(globalThis, "Object", refuse);
-        });
-      `;
       using dir = tempDir("test-environment", {
         ...fakePackages,
         "1.test.js": `// ${VITEST} happy-dom\n${patches}${logEnvironment}`,
@@ -763,6 +1020,34 @@ describe.concurrent("test environment", () => {
         "5.test.js node ",
       ]);
       expect(summary(stderr)).toEqual(["5 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("another spelling of a window's options finds it even if a file leaves builtins patched", async () => {
+      // Also what a read of a property that an object does not have finds between two files.
+      const inherited = `
+        const { prototype } = Object;
+        delete prototype.value;
+        afterAll(() => void (prototype.value = { url: "https://example.com/y" }));
+      `;
+      const options = (text: string) => `// ${VITEST}-options ${text}\n${patches}${inherited}${logEnvironment}`;
+      using dir = tempDir("test-environment", {
+        ...fakePackages,
+        "1.test.js": options(`{"url":"https://example.com/x"}`),
+        "2.test.js": options(`{ "url": "https://example.com/x" }`),
+        "3.test.js": options(`{"url":"https://example.com/y"}`),
+        "4.test.js": options(`{"url": "https://example.com/x"}`),
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir), "--environment=happy-dom");
+      expect(stderr).not.toContain("error:");
+      expect(warnings(stderr)).toEqual([]);
+      expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
+        "1.test.js happy-dom#1 https://example.com/x",
+        "2.test.js happy-dom#1 https://example.com/x",
+        "3.test.js happy-dom#2 https://example.com/y",
+        "4.test.js happy-dom#1 https://example.com/x",
+      ]);
+      expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
       expect(exitCode).toBe(0);
     });
 
@@ -807,30 +1092,43 @@ describe.concurrent("test environment", () => {
     });
 
     // Deleting several hundred names and defining them again for each file makes JSC stop caching reads of globals.
-    test("the names stay on globalThis between files of one environment", async () => {
-      using dir = tempDir("test-environment", {
-        ...fakePackages,
-        "bunfig.toml": `[test]\nenvironment = "happy-dom"\n`,
-        "1.test.js": `globalThis.definedByTheFirstFile = true;\n${logEnvironment}`,
-        "2.test.js": `
-          import { expect, test } from "bun:test";
-          test("order", () => {
-            const names = Object.getOwnPropertyNames(globalThis);
-            expect(names).toContain("definedByTheFirstFile");
-            expect(names.indexOf("document")).toBeLessThan(names.indexOf("definedByTheFirstFile"));
-          });`,
-        "3.test.js": `// ${VITEST} node\n${logEnvironment}`,
-        "4.test.js": logEnvironment,
-      });
-      const { stdout, stderr, exitCode } = await bunTest(String(dir));
-      expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
-        "1.test.js happy-dom#1 http://localhost:3000",
-        "3.test.js node ",
-        "4.test.js happy-dom#1 http://localhost:3000",
-      ]);
-      expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
-      expect(exitCode).toBe(0);
-    });
+    test.each([
+      ["no options", "", "", "http://localhost:3000", "happy-dom#1"],
+      [
+        "another spelling of the options",
+        `// ${VITEST}-options {"url":"https://example.com/x"}\n`,
+        `// ${VITEST}-options { "url": "https://example.com/x" }\n`,
+        "https://example.com/x",
+        "happy-dom#2",
+      ],
+      ["falsy options after none", "", `// ${VITEST}-options null\n`, "http://localhost:3000", "happy-dom#1"],
+    ])(
+      "the names stay on globalThis between files of one environment: %s",
+      async (_, first, second, url, windowOfLastFile) => {
+        using dir = tempDir("test-environment", {
+          ...fakePackages,
+          "bunfig.toml": `[test]\nenvironment = "happy-dom"\n`,
+          "1.test.js": `${first}globalThis.definedByTheFirstFile = true;\n${logEnvironment}`,
+          "2.test.js": `${second}
+            import { expect, test } from "bun:test";
+            test("order", () => {
+              const names = Object.getOwnPropertyNames(globalThis);
+              expect(names).toContain("definedByTheFirstFile");
+              expect(names.indexOf("document")).toBeLessThan(names.indexOf("definedByTheFirstFile"));
+            });`,
+          "3.test.js": `// ${VITEST} node\n${logEnvironment}`,
+          "4.test.js": logEnvironment,
+        });
+        const { stdout, stderr, exitCode } = await bunTest(String(dir));
+        expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
+          `1.test.js happy-dom#1 ${url}`,
+          "3.test.js node ",
+          `4.test.js ${windowOfLastFile} http://localhost:3000`,
+        ]);
+        expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
+        expect(exitCode).toBe(0);
+      },
+    );
 
     test("tears down the rest of the environment when one global can't be restored", async () => {
       using dir = tempDir("test-environment", {
@@ -1228,6 +1526,78 @@ describe.concurrent("test environment", () => {
       expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
         "preload happy-dom#1",
         "1.test.js happy-dom#2 https://example.com/",
+        "2.test.js happy-dom#1 http://localhost:3000",
+      ]);
+      expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("without --isolate, a first file whose options are falsy gets the project's window", async () => {
+      using dir = tempDir("test-environment", {
+        ...fakePackages,
+        "preload.js": preload,
+        "1.test.js": `// ${VITEST}-options null\n${logEnvironment}`,
+        "2.test.js": logEnvironment,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(
+        String(dir),
+        "--preload=./preload.js",
+        "--environment=happy-dom",
+        "./1.test.js",
+        "./2.test.js",
+      );
+      expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
+        "preload happy-dom#1",
+        "1.test.js happy-dom#1 http://localhost:3000",
+        "2.test.js happy-dom#1 http://localhost:3000",
+      ]);
+      expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
+
+    // A window that is set up for the preloads alone fails the file if it can't be. The file's own only warns.
+    test.each(["", "null"])(
+      "without --isolate, a first file with a comment and the options %j only warns if its package throws",
+      async options => {
+        using dir = tempDir("test-environment", {
+          ...throwingJSDOM,
+          "preload.js": preload,
+          "1.test.js": `// ${VITEST} jsdom\n${options && `// ${VITEST}-options ${options}\n`}${logEnvironment}`,
+        });
+        const { stdout, stderr, exitCode } = await bunTest(
+          String(dir),
+          "--preload=./preload.js",
+          "--environment=jsdom",
+        );
+        expect(warnings(stderr)).toEqual([
+          `warn: ${cannotSetUp("jsdom", join(String(dir), "1.test.js"))}: no window today`,
+        ]);
+        expect(stdout).toEqual(["preload node", "1.test.js node "]);
+        expect(summary(stderr)).toEqual(["1 pass", "0 fail"]);
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test("without --isolate, a first file whose options are not JSON has the preloads run in the project's window", async () => {
+      using dir = tempDir("test-environment", {
+        ...fakePackages,
+        "preload.js": preload,
+        "1.test.js": `// ${VITEST} happy-dom\n// ${VITEST}-options nope\n${logEnvironment}`,
+        "2.test.js": logEnvironment,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(
+        String(dir),
+        "--preload=./preload.js",
+        "--environment=happy-dom",
+        "./1.test.js",
+        "./2.test.js",
+      );
+      expect(warnings(stderr)).toEqual([
+        `warn: ${cannotSetUp("happy-dom", join(String(dir), "1.test.js"))}: its options are not JSON: JSON Parse error: Unexpected identifier "nope"`,
+      ]);
+      expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
+        "preload happy-dom#1",
+        "1.test.js node ",
         "2.test.js happy-dom#1 http://localhost:3000",
       ]);
       expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);

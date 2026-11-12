@@ -2,12 +2,12 @@
 
 use super::jest::Jest;
 use bun_core::lexer::end_of_run;
-use bun_core::{Output, Timespec, TimespecMockMode};
+use bun_core::{EncodedSlice, Output, Timespec, TimespecMockMode};
 use bun_core::strings;
 use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::{VirtualMachine, runtime_hooks};
 use bun_jsc::{
-    JSInternalPromise, JSPromise, JSValue, JsError, JsResult,
+    EncodedSliceJsc as _, JSInternalPromise, JSPromise, JSValue, JsError, JsResult,
     StringJsc as _, Strong, bun_string_jsc, js_promise,
 };
 use bun_options_types::context::TestEnvironment;
@@ -155,6 +155,10 @@ impl Environment {
         vm: &mut VirtualMachine,
         path: &[u8],
     ) -> crate::Result<Option<*mut JSInternalPromise>> {
+        // Vitest does `envOptions ? ... : null` with the parsed options.
+        if self.options.as_deref().is_some_and(|text| is_falsy(vm, text)) {
+            self.options = None;
+        }
         let kind = match &self.comment {
             None => self.project,
             Some(Ok(kind)) => *kind,
@@ -213,6 +217,23 @@ impl Environment {
 
 pub(crate) fn is_in_preload() -> bool {
     VirtualMachine::get().is_in_preload
+}
+
+/// Whether options are JSON for a falsy value. A text that begins an object or an array never is, so it is not parsed.
+#[optimize(size)]
+fn is_falsy(vm: &VirtualMachine, options: &[u8]) -> bool {
+    if matches!(options.first(), Some(b'{' | b'[')) {
+        return false;
+    }
+    let global = vm.global();
+    match EncodedSlice::from_bytes(options).to_json_object(global) {
+        Ok(value) => !value.to_boolean(),
+        // environment.ts reports options that are not JSON.
+        Err(err) => {
+            let _ = global.take_exception(err);
+            false
+        }
+    }
 }
 
 fn rejected(vm: &VirtualMachine, err: JsError) -> crate::Result<*mut JSInternalPromise> {

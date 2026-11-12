@@ -542,9 +542,9 @@ private:
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_REQUEST_BODY_TOO_LARGE;
                 }
 
-                /* The parser treats everything after a CONNECT as tunnel data, and Bun.serve has no tunnel to give it to. */
+                /* The parser treats everything after a CONNECT as tunnel data, and Bun.serve has no tunnel to give it to. A stopped server takes no request behind this one. */
                 if constexpr (!IsNodeHttp) {
-                    if (httpResponseData->isConnectRequest) [[unlikely]] {
+                    if (httpResponseData->isConnectRequest || (httpResponseData->state & HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE)) [[unlikely]] {
                         httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
                     }
                 }
@@ -1078,6 +1078,10 @@ private:
         us_socket_t *returned = onData<false>(s, replayed.mutableSpan().data() + start, (int) length);
         if (!us_socket_is_closed(s) && us_socket_kind(s) == socketKind()) {
             httpResponseData->replayedRequestBytes = nullptr;
+            /* What was parked can be less than a head. */
+            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE) {
+                reinterpret_cast<HttpResponse<SSL> *>(s)->closeWhenIdle();
+            }
         }
         /* The peer's FIN came during the response ahead. These requests, or the WebSocket that one of them became, get it now. */
         if (peerEnded && !us_socket_is_closed(s)) {

@@ -158,10 +158,9 @@ public:
             writeHeaderLine("Transfer-Encoding", "chunked");
         }
         /* RFC 9112 9.6: a client that doesn't see "close" puts the socket back in its pool and loses the next request on it. */
-        if (httpResponseData->closesAfterResponse() && !(httpResponseData->state & Data::HTTP_WROTE_CONNECTION_HEADER)) [[unlikely]] {
+        if ((httpResponseData->state & (Data::HTTP_CONNECTION_CLOSE | Data::HTTP_WROTE_CONNECTION_HEADER)) == Data::HTTP_CONNECTION_CLOSE) [[unlikely]] {
             writeHeaderLine("Connection", "close");
-            /* Nothing may follow a response that says "close", so a graceful stop's mark becomes a hard close. */
-            httpResponseData->state |= Data::HTTP_WROTE_CONNECTION_HEADER | Data::HTTP_CONNECTION_CLOSE;
+            httpResponseData->state |= Data::HTTP_WROTE_CONNECTION_HEADER;
         }
         if (writeContentLength) {
             char digits[utils::U64_MAX_DIGITS];
@@ -355,12 +354,16 @@ public:
         return true;
     }
 
-    /* Bun.serve's graceful stop, for a connection that closeIfIdle() left open. */
+    /* Bun.serve's graceful stop, for a connection that closeIfIdle() left open. It gets one more dispatch at most: of a request that was parked by now, or if it has none in flight. */
     void closeWhenIdle() {
         HttpResponseData<SSL> *data = getHttpResponseData();
         data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
+        if (!data->parkedRequestBytes.isEmpty()) {
+            return;
+        }
         /* Idle and left open: the response is complete and still drains. */
         if ((data->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || data->isIdle) {
+            data->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
             return;
         }
         data->idleTimeout = timeoutAfterStop(data->idleTimeout);

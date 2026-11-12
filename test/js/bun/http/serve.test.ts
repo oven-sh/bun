@@ -6513,6 +6513,122 @@ describe("requests pipelined behind a pending response", () => {
     expect(parseResponses(client.reply)).toEqual([ok("/hold"), ok("/after")]);
   });
 
+  it("answers only the first of the held requests after a graceful stop()", async () => {
+    const handler = holdingHandler();
+    using server = serve({ port: 0, hostname: "127.0.0.1", fetch: handler.fetch });
+    using client = await connectRaw(server);
+    client.write(get("/hold/1") + get("/hold/2") + get("/hold/3"));
+    await Promise.race([handler.entered("/hold/1"), client.untilClosed()]);
+    await probe(server);
+    const stopped = server.stop();
+    for (const path of ["/hold/1", "/hold/2", "/hold/3"]) {
+      await Promise.race([handler.entered(path), client.untilClosed()]);
+      // One event loop turn, so the handler's promise is pending when it returns.
+      await new Promise(resolve => setImmediate(resolve));
+      handler.release(path);
+    }
+    await client.untilClosed();
+    await stopped;
+    expect({
+      hits: handler.hits,
+      closes: client.reply.split("HTTP/1.1 ").map(r => r.includes("Connection: close")),
+    }).toEqual({
+      hits: ["/hold/1", "/probe", "/hold/2"],
+      closes: [false, false, true],
+    });
+  });
+
+  it.each([
+    ["request", ""],
+    [
+      "WebSocket upgrade",
+      "Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n",
+    ],
+  ])("drops a %s that arrives after a graceful stop()", async (_, headers) => {
+    const handler = holdingHandler();
+    using server = serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: (req, server) => (server.upgrade(req) ? undefined : handler.fetch(req)),
+      websocket: { message() {} },
+    });
+    using client = await connectRaw(server);
+    using lastProbe = await connectRaw(server);
+    client.write(get("/hold"));
+    lastProbe.write(get("/probe").slice(0, -2));
+    await Promise.race([handler.entered("/hold"), client.untilClosed()]);
+    await probe(server);
+    const stopped = server.stop();
+    client.write(get("/late", headers));
+    lastProbe.write("\r\n");
+    expect(await lastProbe.responses(1)).toEqual([ok("/probe")]);
+    handler.release("/hold");
+    await client.until(() => client.reply.split("HTTP/1.1 ").length > 2);
+    expect(client.reply.match(/HTTP\/1\.1 [^\r]*|Connection: [^\r]*/g)).toEqual([
+      "HTTP/1.1 200 OK",
+      "Connection: close",
+    ]);
+    await stopped;
+  });
+
+  describe("holds less than 512 KiB", () => {
+    const post = (size: number) => {
+      const head = (length: number) => `POST /upload HTTP/1.1\r\nHost: x\r\nContent-Length: ${length}\r\n\r\n`;
+      const length = size - head(size).length;
+      return head(length) + Buffer.alloc(length, "u").toString();
+    };
+
+    it.each([
+      [512 * 1024 - 1, [ok("/hold"), ok("/upload")]],
+      [512 * 1024, []],
+    ])("behind a handler that hasn't answered (%d bytes)", async (size, expected) => {
+      const handler = holdingHandler();
+      using server = serve({ port: 0, hostname: "127.0.0.1", fetch: handler.fetch });
+      using client = await connectRaw(server);
+      client.write(get("/hold"));
+      await handler.entered("/hold");
+      client.write(post(size));
+      if (expected.length) for (let i = 0; i < 10; i++) await probe(server);
+      else await client.untilClosed();
+      handler.release("/hold");
+      expect(await client.responses(2)).toEqual(expected);
+    });
+
+    it("and waits with the rest behind a body that is draining", async () => {
+      const big = Buffer.alloc(8 * 1024 * 1024, "x");
+      using server = serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: async req => new Response(req.method === "GET" ? big : String((await req.bytes()).length)),
+      });
+      using client = await connectRaw(server);
+      client.write(get("/first"));
+      await client.until(() => client.reply.length > 0);
+      const upload = post(900_000);
+      client.write(upload);
+      const [first, second] = await client.responses(2);
+      expect([first.body.length, second.body]).toEqual([
+        big.length,
+        String(upload.length - upload.indexOf("\r\n\r\n") - 4),
+      ]);
+    });
+  });
+
+  it("ends a graceful stop() for a client that sent a part of a head behind the pending response", async () => {
+    const handler = holdingHandler();
+    using server = serve({ port: 0, hostname: "127.0.0.1", idleTimeout: 0, fetch: handler.fetch });
+    using client = await connectRaw(server);
+    client.write(get("/hold") + "GET / HTT");
+    await Promise.race([handler.entered("/hold"), client.untilClosed()]);
+    await probe(server);
+    let stopped = false;
+    server.stop().then(() => (stopped = true));
+    handler.release("/hold");
+    expect(await client.responses(1)).toEqual([ok("/hold")]);
+    for (let i = 0; i < 5 && !stopped; i++) await sweep();
+    expect(stopped).toBe(true);
+  });
+
   it("closes a connection the client reset before the response ahead was sent", async () => {
     let socket!: net.Socket;
     using server = serve({

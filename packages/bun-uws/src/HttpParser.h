@@ -744,7 +744,7 @@ struct HttpResponseData;
             /* A replay parks the tail of its own buffer. Take the buffer back and move the start, so N parked requests don't cost N copies. */
             if (WTF::Vector<char> *replayed = std::exchange(replayedRequestBytes, nullptr)) {
                 const uintptr_t begin = (uintptr_t) replayed->mutableSpan().data();
-                if (parkedRequestBytes.isEmpty() && (uintptr_t) data >= begin && (uintptr_t) data + length <= begin + replayed->size()) {
+                if (parkedRequestBytes.isEmpty() && length >= replayed->size() / 2 && (uintptr_t) data >= begin && (uintptr_t) data + length <= begin + replayed->size()) {
                     parkedRequestBytesStart = (unsigned int) ((uintptr_t) data - begin);
                     replayed->shrink(parkedRequestBytesStart + length);
                     parkedRequestBytes = std::exchange(*replayed, {});

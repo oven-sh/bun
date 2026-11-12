@@ -302,11 +302,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* node:http: requests that were dispatched and whose responses wait for the connection (JSNodeHTTPServerSocket::startResponse). */
     uint32_t nodeHttpQueuedPipelinedCount = 0;
 
-    /* Returns true if the response in flight is the last one on this connection. A graceful stop still answers a parked request. */
-    bool closesAfterResponse() const {
-        return (state & HTTP_CONNECTION_CLOSE) || ((state & HTTP_CLOSE_WHEN_IDLE) && this->parkedRequestBytes.isEmpty());
-    }
-
     /* Whether the connection should be torn down once the in-flight response (if
      * any) has completed and all buffered outgoing data has been flushed. A peer
      * that sent its FIN still gets answers to the requests it sent before it. */

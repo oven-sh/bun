@@ -46,6 +46,9 @@ pub struct FileAnalysis<'s> {
     pub module_relative_reads: &'s [(ExprId, Atom)],
     /// The same of paths that are not known in between, as in `fs.readFileSync(path.join(import.meta.dirname, "lang", `${name}.json`))`: the operand, the start and the end.
     pub module_relative_patterns: &'s [(ExprId, Atom, Atom)],
+    /// What the order of the stores rules out, as far as that is followed. It is embedded too.
+    pub reads_ruled_out: &'s [(ExprId, Atom)],
+    pub patterns_ruled_out: &'s [(ExprId, Atom, Atom)],
     pub caller_relative_reads: &'s [CallerRelativeRead],
     /// Path operands of file reads, queries and folder listings with a value that can't be resolved, as in `fs.existsSync(path.join(folder, "package.json"))`.
     pub unknown_path_reads: &'s [ExprId],

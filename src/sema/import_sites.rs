@@ -245,6 +245,8 @@ pub(crate) struct ImportScan<'s> {
     pub paths_of_changed_files: &'s [ChangedPath],
     pub module_relative_reads: &'s [(ExprId, Atom)],
     pub module_relative_patterns: &'s [(ExprId, Atom, Atom)],
+    pub reads_ruled_out: &'s [(ExprId, Atom)],
+    pub patterns_ruled_out: &'s [(ExprId, Atom, Atom)],
     pub caller_relative_reads: &'s [CallerRelativeRead],
     pub unknown_path_reads: &'s [ExprId],
     pub path_queries: &'s [ExprId],

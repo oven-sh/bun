@@ -2877,6 +2877,31 @@ a blob third
     120_000,
   );
 
+  test("a package reads with what its caller passes in place of a function that writes", async () => {
+    using dir = tempDir("aot-functions-passed-for-defaults", {
+      "app/package.json": `{ "name": "app" }`,
+      "app/main.cjs": `const fs = require("node:fs");
+const passed = require("passed");
+const read = file => fs.readFileSync(file, "utf8");
+console.log(passed.one(read), passed.two(read), passed.three(), passed.four(), passed.five(read));
+`,
+      "app/node_modules/passed/package.json": `{ "name": "passed", "version": "1.0.0", "main": "./index.cjs" }`,
+      "app/node_modules/passed/index.cjs": `const fs = require("node:fs"), path = require("node:path");
+exports.one = (write = Bun.write) => write(path.join(__dirname, "one.txt"));
+exports.two = function (write = fs.writeFileSync) { return write(path.join(__dirname, "two.txt")); };
+exports.three = (read = fs.readFileSync) => read(path.join(__dirname, "three.txt"), "utf8");
+exports.four = () => ((write = fs.writeFileSync) => write(path.join(__dirname, "four.txt"), "utf8"))(fs.readFileSync);
+exports.five = use => use(path.join(__dirname, "five.txt"));
+`,
+      ...Object.fromEntries(
+        ["one", "two", "three", "four", "five"].map(name => [`app/node_modules/passed/${name}.txt`, name]),
+      ),
+    });
+    const { plain, compiled } = await bothWays(String(dir), "./main.cjs");
+    expect(plain).toEqual({ stdout: "one two three four five\n", stderr: "", exitCode: 0 });
+    expect(compiled).toEqual(plain);
+  }, 120_000);
+
   test("a package chooses its file by what JavaScript answers", async () => {
     const rows = {
       "added numbers": `let v = 0; if (process.env.A) v += 1;`,

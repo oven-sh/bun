@@ -194,9 +194,27 @@ fn find_function_passed(inputs: &ScanInputs<'_, '_>, callee: ExprId) -> Option<(
     }
     let no_names = |_: Atom| Vec::new();
     let passed = find_arguments_where_written(hir, bound, function, &no_names);
-    let passed = passed.and_then(|it| hir.ids(it).nth(place));
-    let mut functions = hir[parameter].default.some().into_iter().chain(passed);
-    functions.find_map(|it| find_function_named(inputs, hir.skip_type_assertions(it)))
+    let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
+    let passed = passed.filter(|it| !hir.ids(*it).any(is_spread));
+    let given = passed.and_then(|it| hir.ids(it).nth(place));
+    let find_named = |it: ExprId| find_function_named(inputs, hir.skip_type_assertions(it));
+    let default = hir[parameter].default.some().and_then(find_named);
+    let reads = |&(holder, name): &(Holder, Atom)| reads_operand(holder, inputs.atoms.bytes(name));
+    match given {
+        Some(given) => find_named(given).or_else(|| default.filter(reads)),
+        None if passed.is_some() => default,
+        None => default.filter(reads),
+    }
+}
+
+fn reads_operand(holder: Holder, name: &[u8]) -> bool {
+    match holder {
+        Holder::Bun => name != b"write",
+        Holder::Fs | Holder::FsPromises => {
+            let mut changed = operands_changed_by_function_of_fs(name).iter();
+            !changed.any(|it| it.0 == 0)
+        }
+    }
 }
 
 /// `fs.readFileSync` in `const read = fs.readFileSync.bind(fs)`.

@@ -86,11 +86,20 @@ fn end_of_body(hir: &File<'_>, function: FnId) -> Option<u32> {
     match hir[function].body {
         FnBody::None => None,
         FnBody::Expr(expression) => Some(hir[expression].end),
-        FnBody::Block(statements) => {
-            let last = hir.ids(statements).next_back()?;
-            Some(hir[last].loc.end)
-        }
+        FnBody::Block(statements) => match hir.ids(statements).next_back() {
+            Some(last) => Some(hir[last].loc.end),
+            None => end_of_parameters(hir, function),
+        },
     }
+}
+
+fn end_of_parameters(hir: &File<'_>, function: FnId) -> Option<u32> {
+    let last = hir[function].params.iter().last()?;
+    if hir[function].kind == FnKind::Arrow {
+        return Some(hir[function].anchor);
+    }
+    let default = hir[last].default.some();
+    Some(default.map_or(0, |it| hir[it].end).max(hir[last].loc.end))
 }
 
 fn begins_with_parenthesis(text: &[u8]) -> bool {

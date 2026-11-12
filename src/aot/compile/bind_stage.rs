@@ -522,6 +522,7 @@ struct FileRead {
     /// The call only asks about the file.
     is_query: bool,
     is_listing: bool,
+    is_ruled_out: bool,
 }
 
 /// The folders of their own that the files of the program make the working directory.
@@ -594,8 +595,13 @@ fn list_file_reads(
         path: from_argument(folder, files.atoms.bytes(path)),
         is_query,
         is_listing: is_listing(operand),
+        is_ruled_out: false,
     };
     let mut reads: Vec<FileRead> = read.map(|it| create(folder, it)).collect();
+    reads.extend(analysis.reads_ruled_out.iter().map(|it| FileRead {
+        is_ruled_out: true,
+        ..create(folder, (it.0, it.1, is_query(it.0)))
+    }));
     for folder in folders_entered {
         let below = analysis.reads_below_working_folder.iter();
         reads.extend(below.map(|it| create(folder, (it.0, it.1, is_query(it.0)))));
@@ -727,6 +733,7 @@ fn find_adjacent_web_assembly(
         let analysis = files.analysis(file);
         let folder = dirname::<Posix>(files.module(file).file_name());
         let read = analysis.module_relative_reads.iter();
+        let read = read.chain(analysis.reads_ruled_out);
         let handed_on = analysis.named_paths.iter().map(|it| (it.operand, it.path));
         let named = read.copied().chain(handed_on);
         let named = named.filter(|it| files.atoms.bytes(it.1).ends_with(b".wasm"));
@@ -813,7 +820,8 @@ fn warn_about_unembedded_reads(
                 provider.embed_named_file(path_of(file), to_native(&path));
             }
         }
-        for &(operand, prefix, suffix) in analysis.module_relative_patterns {
+        let patterns = analysis.module_relative_patterns.iter();
+        for &(operand, prefix, suffix) in patterns.chain(analysis.patterns_ruled_out) {
             let (prefix, suffix) = (files.atoms.bytes(prefix), files.atoms.bytes(suffix));
             let Some((pattern, entry)) = PathPattern::new(folder, prefix, suffix).zip(entry) else {
                 continue;
@@ -870,6 +878,9 @@ fn warn_about_unembedded_reads(
                     let code = Code::FileEmbeddedImplicitly;
                     diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[&name]));
                 }
+                continue;
+            }
+            if read.is_ruled_out {
                 continue;
             }
             let module = path_of(file);

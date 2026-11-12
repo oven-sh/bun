@@ -3864,7 +3864,7 @@ const MODULE_RELATIVE_READS: &[(&str, &str, &[&str])] = &[
     (
         "a.cjs",
         "const fs = require('fs'), path = require('path'); class K { dir = path.join(__dirname, 'conf'); down(s) { this.dir = path.join(this.dir, s); } } const k = new K(), o = { dir: path.join(__dirname, 'data'), other: path.join(__dirname, 'other') }; const put = (t, s) => { t.dir = s; }; put(o, path.join(o.other, 'x')); put(k, path.join(k.dir, 'y')); fs.readFileSync(path.join(o.dir, 'a.txt'));",
-        &["./conf/y/a.txt", "./data/a.txt", "./other/x/a.txt"],
+        &["./other/x/a.txt"],
     ),
     (
         "a.cjs",
@@ -4004,12 +4004,12 @@ const MODULE_RELATIVE_READS: &[(&str, &str, &[&str])] = &[
     (
         "a.cjs",
         "const fs = require('fs'), path = require('path'); class K1 { dir = path.join(__dirname, 'conf'); } class K2 { dir = path.join(__dirname, 'data'); } const o1 = new K1(), o2 = new K2(); o2.dir = path.join(__dirname, 'z'); fs.readFileSync(path.join(o2.dir, 'a.txt'));",
-        &["./data/a.txt", "./z/a.txt"],
+        &["./z/a.txt"],
     ),
     (
         "a.cjs",
         "const fs = require('fs'), path = require('path'); class K2 { constructor() { this.dir = path.join(__dirname, 'data'); return shared; } } class K1 { dir = path.join(__dirname, 'conf'); } const shared = new K1(), o2 = new K2(); fs.readFileSync(path.join(o2.dir, 'a.txt'));",
-        &["./conf/a.txt", "./data/a.txt"],
+        &["./conf/a.txt"],
     ),
     (
         "a.cjs",
@@ -4024,7 +4024,7 @@ const MODULE_RELATIVE_READS: &[(&str, &str, &[&str])] = &[
     (
         "a.cjs",
         "const fs = require('fs'), path = require('path'); const o2 = { dir: path.join(__dirname, 'data'), other: 1 }; Object.assign(o2, { dir: path.join(__dirname, 'z') }); fs.readFileSync(path.join(o2.dir, 'a.txt'));",
-        &["./data/a.txt", "./z/a.txt"],
+        &["./z/a.txt"],
     ),
 ];
 
@@ -4068,6 +4068,11 @@ fn finds_module_relative_reads() {
                 .map(|&(_, path)| s.workspace.text(path).to_string())
                 .collect();
             assert_eq!(described, paths, "{text}");
+            let mut ruled_out = s.analysis.reads_ruled_out.iter();
+            assert!(
+                !ruled_out.any(|it| s.analysis.module_relative_reads.contains(it)),
+                "{text}"
+            );
             let lays_nothing_else = s.analysis.names_from_data_files.is_empty()
                 && s.analysis.other_file_queries.is_empty()
                 && s.analysis.data_file_queries.is_empty()
@@ -4081,7 +4086,7 @@ fn finds_module_relative_reads() {
 const READS_AFTER_STORES: &[(&str, &[&str])] = &[
     (
         "const base = { dir: path.join(here, 'a') }; const o = { ...base }; Object.assign(o, { dir: path.join(o.dir, '../b') }); fs.readFileSync(path.join(o.dir, 'f'));",
-        &["./a/f", "./b/f"],
+        &["./b/f"],
     ),
     (
         "const o = { dir: path.join(here, 'a') }; const unused = (t, s) => { t.dir = s; }; const out = []; o.dir = path.join(o.dir, '..', 'b'); fs.promises.readFile(path.join(o.dir, 'f')).then(t => out.push(t), e => out.push(e));",
@@ -4089,11 +4094,11 @@ const READS_AFTER_STORES: &[(&str, &[&str])] = &[
     ),
     (
         "class K { dir = path.join(here, 'a'); down(s) { this.dir = path.join(this.dir, s); } } class L { constructor() { this.dir = path.join(here, 'c'); return new K(); } } const k = new K(), l = new L(); k.dir = path.join(here, 'b'); fs.readFileSync(path.join(k.dir, 'f')); fs.readFileSync(path.join(l.dir, 'f'));",
-        &["./a/f", "./a/f", "./b/f", "./b/f", "./c/f"],
+        &["./a/f", "./b/f"],
     ),
     (
         "const o = { dir: path.join(here, 'a') }; let i = 0; do { o.dir = path.join(here, 'b'); if (E.C0) break; } while (i++ < 2); while (E.C1) { o.dir = path.join(here, 'c'); if (E.C0) continue; break; } for (const k in E) o.dir = path.join(here, 'd'); fs.readFileSync(path.join(o.dir, 'f'));",
-        &["./a/f", "./b/f", "./c/f", "./d/f"],
+        &["./b/f", "./c/f", "./d/f"],
     ),
     (
         "const o = { dir: path.join(here, 'a') }; if (E.C0) o.dir = path.join(o.dir, 'x'); if (E.C0) o.dir = path.join(o.dir, '..'); fs.readFileSync(path.join(o.dir, 'f'));",
@@ -4101,31 +4106,39 @@ const READS_AFTER_STORES: &[(&str, &[&str])] = &[
     ),
     (
         "const o = { dir: path.join(here, 'a') }; const put = (t, s) => { t.dir = s; }; put(o, path.join(here, 'b')); fs.readFileSync(path.join(o.dir, 'f'));",
-        &["./a/f", "./b/f"],
+        &["./b/f"],
+    ),
+    (
+        "const o = { dir: here }; for (const s of ['a', 'b']) o.dir = path.join(o.dir, s); fs.readFileSync(path.join(o.dir, 'f'));",
+        &["./a/b/f"],
     ),
     (
         "const o = { dir: path.join(here, 'a') }; switch (E.K) { case '1': o.dir = path.join(here, 'b'); break; default: o.dir = path.join(here, 'c'); } fs.readFileSync(path.join(o.dir, 'f'));",
-        &["./a/f", "./b/f", "./c/f"],
+        &["./b/f", "./c/f"],
     ),
     (
         "const o = { dir: path.join(here, 'a') }; try { o.dir = path.join(here, 'b'); if (E.C0 === '1') throw 1; } catch (e) { o.dir = path.join(o.dir, e ? 'c' : 'd'); } fs.readFileSync(path.join(o.dir, 'f'));",
-        &["./a/c/f", "./a/d/f", "./a/f", "./b/c/f", "./b/d/f", "./b/f"],
+        &["./b/f", "./b/c/f", "./b/d/f"],
     ),
     (
         "const base = { dir: path.join(here, 'a'), other: path.join(here, 'b') }; const o = { ...base }; Object.assign(o, { dir: path.join(o.other, 'c') }); [o.other] = [path.join(here, 'd')]; o.none ??= here; fs.readFileSync(path.join(o.dir, o.other === base.other ? 'x' : 'f'));",
-        &["./a/f", "./a/x", "./b/c/f", "./b/c/x"],
+        &["./b/c/f", "./b/c/x"],
     ),
     (
         "class K { dir = here; down(s) { this.dir = path.join(this.dir, s); return this; } read(n) { return fs.readFileSync(path.join(this.dir, n)); } } const a = new K().down('a'), b = new K().down('b'); a.read('f'); b.read('g');",
-        &["./a/f", "./b/g", "./f", "./g"],
+        &["./a/f", "./b/g"],
     ),
     (
         "const out = []; const say = (n, f) => { let t; try { t = f(); } catch (e) { t = '!' + (e?.code ?? e?.name); } out.push(n + ' ' + String(t).trim()); }; const o = { dir: path.join(here, 'a') }; o.dir = path.join(o.dir, '..', 'b'); say('q', () => fs.readFileSync(path.join(o.dir, 'f'))); Promise.all([]).then(() => out.push('end'), e => out.push(e.code));",
-        &["./a/f", "./b/f"],
+        &["./b/f"],
     ),
     (
         "const o = { dir: path.join(here, 'a') }; exports.set = d => { o.dir = path.join(here, d); }; if (E.C0) o.dir = path.join(here, 'b'); exports.read = () => fs.readFileSync(path.join(o.dir, 'f'));",
         &["./a/f", "./b/f"],
+    ),
+    (
+        "const o = { dir: path.join(here, 'a') }; if (E.C0) o.dir = path.join(here, 'b'); for (let i = 0; i < E.N; i++) { o.dir = path.join(here, 'c'); o.dir = path.join(o.dir, 'x'); } fs.readFileSync(path.join(o.dir, 'f'));",
+        &["./a/f", "./b/f", "./c/x/f"],
     ),
     (
         "let file = path.join(here, 'a'); if (E.C0) file = path.join(here, 'b'); class A extends B { one() {} } class B extends C { two() {} } class C extends A { three() {} } exports.A = A; fs.readFileSync(file);",
@@ -4133,7 +4146,7 @@ const READS_AFTER_STORES: &[(&str, &[&str])] = &[
     ),
     (
         "class A { down() {} } class B extends A {} class C extends B {} class D extends C {} class F extends D {} class G extends F {} class H extends G {} class I extends H {} class J extends I {} class K extends J {} class L extends K {} class M extends L {} class N extends M {} class O extends N {} class P extends O {} class Q extends P {} class R extends Q {} class S extends R {} const it = new S(), o = { dir: path.join(here, 'b') }; if (it.down) o.dir = path.join(here, 'a'); fs.readFileSync(path.join(o.dir, 'f'));",
-        &["./a/f", "./b/f"],
+        &["./a/f"],
     ),
 ];
 
@@ -4153,8 +4166,29 @@ fn finds_reads_after_stores() {
             let mut paths = paths.to_vec();
             paths.sort_unstable();
             assert_eq!(described, paths, "{text}");
+            let mut ruled_out = s.analysis.reads_ruled_out.iter();
+            assert!(
+                !ruled_out.any(|it| s.analysis.module_relative_reads.contains(it)),
+                "{text}"
+            );
         });
     }
+}
+
+#[test]
+fn keeps_reads_that_stores_rule_out() {
+    let text = "const fs = require('fs'), path = require('path'); const o = { file: path.join(__dirname, 'a') }; Object.assign(o, { file: path.join(__dirname, 'b') }); fs.readFileSync(o.file);";
+    with_workspace(|w| {
+        let s = &w.analyze(&Source::new("a.cjs", text), &w.fold_inputs(&TARGET));
+        let reported: Vec<_> = (s.analysis.module_relative_reads.iter())
+            .map(|it| s.workspace.text(it.1).to_string())
+            .collect();
+        let ruled_out: Vec<_> = (s.analysis.reads_ruled_out.iter())
+            .map(|it| s.workspace.text(it.1).to_string())
+            .collect();
+        assert_eq!(reported, ["./b"]);
+        assert_eq!(ruled_out, ["./a"]);
+    });
 }
 
 const KNOWN_LOAD_NAMES: &[(&str, &str, &[&str])] = &[

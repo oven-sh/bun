@@ -147,6 +147,8 @@ fn create_analysis<'s>(
         paths_of_changed_files: scan.paths_of_changed_files,
         module_relative_reads: scan.module_relative_reads,
         module_relative_patterns: scan.module_relative_patterns,
+        reads_ruled_out: scan.reads_ruled_out,
+        patterns_ruled_out: scan.patterns_ruled_out,
         caller_relative_reads: scan.caller_relative_reads,
         unknown_path_reads: scan.unknown_path_reads,
         path_queries: scan.path_queries,

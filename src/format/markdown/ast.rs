@@ -79,11 +79,6 @@ impl Str {
         self.len & Str::NULL != 0
     }
 
-    /// Where the string starts in the text, if it is a range of it.
-    pub(crate) fn source_start(self) -> Option<u32> {
-        (self.len & (Str::OWNED | Str::NULL) == 0).then_some(self.start)
-    }
-
     /// The substring from `start` to `end`.
     pub(crate) fn slice(self, start: usize, end: usize) -> Str {
         Str {

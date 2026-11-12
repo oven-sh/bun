@@ -835,7 +835,9 @@ impl<'a> Printer<'a, '_> {
     /// marker alone is that item's text: it goes behind the marker. Any other line indented into the item is its
     /// text, and Prettier joins or keeps it. The content of an item starts after its marker and one to four
     /// blanks, or one if there are more, or none. A line indented like code under the block's container is no
-    /// item either.
+    /// item either. The lines are those of the source, with the markers of the containers on them, so columns
+    /// are compared among lines with the same markers. The text behind a marker alone is joined only if it is one
+    /// line.
     fn item_line_breaks(&self, block: &Node) -> Vec<Option<bool>> {
         let source = self.source(block);
         let code_column = 4 + match self.node(block.parent) {
@@ -854,7 +856,11 @@ impl<'a> Printer<'a, '_> {
             let line_len =
                 bun_core::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len());
             let line = &rest[..line_len];
-            let indent = line.len() - line.trim_ascii_start().len();
+            // The markers of the block quotes around the block are on every line but the first.
+            let indent = line
+                .iter()
+                .take_while(|&&byte| matches!(byte, b' ' | b'\t' | b'>'))
+                .count();
             let start = block.start + (offset + indent) as u32;
             let column = self.visual_column(start);
             let word = Self::list_marker_at_start(&line[indent..]);
@@ -884,21 +890,30 @@ impl<'a> Printer<'a, '_> {
             }
             offset += line_len + 1;
         }
+        // Joined behind the marker, a text of two or more lines would be an item whose other lines are printed
+        // without the item's indentation, which the next run indents: Prettier's output is stable.
+        for at in 1..decisions.len() {
+            if decisions[at] == Some(false) && decisions.get(at + 1) == Some(&None) {
+                decisions[at] = None;
+            }
+        }
         decisions
     }
 
-    /// `item_line_breaks` for the break before the line that starts at `start` in the text, in the block that
-    /// `sentence` is in. Text that is a copy, in a block quote, has no `start`: then the break is printed as
-    /// Prettier prints it.
-    fn line_break_before_item(&self, sentence: NodeId, start: Option<u32>) -> Option<bool> {
-        let (Some(start), Some((id, block))) = (start, self.block_of(sentence)) else {
-            return None;
-        };
+    /// `item_line_breaks` for the line break in `sentence` behind `line_breaks` others, in the block that the
+    /// sentence is in. Its text can be a copy, without the markers of a block quote: the lines are the same.
+    fn line_break_before_item(
+        &self,
+        sentence: NodeId,
+        node: &Node,
+        line_breaks: usize,
+    ) -> Option<bool> {
+        let (id, block) = self.block_of(sentence)?;
         let cache = self.kept_line_breaks.borrow();
         if cache.0 != id {
             return None;
         }
-        let line = (self.tree.line(start) - self.start_line(block)) as usize;
+        let line = (self.start_line(node) - self.start_line(block)) as usize + line_breaks + 1;
         cache.2.get(line).copied().flatten()
     }
 
@@ -1262,8 +1277,7 @@ impl<'a> Printer<'a, '_> {
             let is_kept = has_newline
                 && match kept {
                     KeptLineBreaks::Items => {
-                        let start = node.value.source_start().map(|at| at + white_end as u32);
-                        match self.line_break_before_item(id, start) {
+                        match self.line_break_before_item(id, node, line_breaks) {
                             Some(true) => true,
                             Some(false) => {
                                 parts.content(Doc::from(" "));
@@ -1380,7 +1394,7 @@ impl<'a> Printer<'a, '_> {
             let after_next = tokens.get(index + 2);
             let break_before_item = match (token.kind, kept) {
                 (TokenKind::Newline, KeptLineBreaks::Items) => {
-                    next.and_then(|next| self.line_break_before_item(id, next.value.source_start()))
+                    next.and_then(|_| self.line_break_before_item(id, node, line_breaks))
                 }
                 _ => None,
             };
@@ -1398,9 +1412,13 @@ impl<'a> Printer<'a, '_> {
                 && !after_next.is_some_and(|it| it.kind == TokenKind::NoSpace)
                 && !(self.options.prose_wrap == ProseWrap::Preserve && is_next_fake_setext_line))
                 || (can_break && self.must_not_start_line(node, tokens, index + 1));
+            // The first line before the break that `KeptLineBreaks::First` keeps stays whole, so that the next run
+            // finds the break in the same place.
+            let is_on_kept_line =
+                kept == KeptLineBreaks::First && is_first_sentence && line_breaks == 0;
             let prose_wrap = if is_kept {
                 ProseWrap::Preserve
-            } else if joins || break_before_item == Some(false) {
+            } else if joins || break_before_item == Some(false) || is_on_kept_line {
                 ProseWrap::Never
             } else {
                 self.options.prose_wrap

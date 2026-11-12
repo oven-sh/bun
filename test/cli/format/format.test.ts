@@ -2058,6 +2058,7 @@ describe.concurrent("bun fmt", () => {
         ["    a\n2. *b*\n3. c\n", "    a\n\n2. _b_\n3. c\n", "    a\n\n2. _b_ 3. c\n"],
         ["    a\n-\n  b\n", "    a\n\n- b\n", "    a\n\n-\nb\n"],
         ["[a]: /url\n<x-y> \n", "[a]: /url\n<x-y>\n", "[a]: /url\n\n<x-y>\n"],
+        [">     a\n> 2. b\n> 3. c\n", ">     a\n>\n> 2. b\n> 3. c\n", ">     a\n>\n> 2. b 3. c\n"],
       ] as const;
 
       test.each(rows)("%j", async (before, after, byPrettier) => {
@@ -2147,11 +2148,21 @@ describe.concurrent("bun fmt", () => {
       test("--prose-wrap=always joins the lines after the first", async () => {
         // The first line decides whether the definition and the text are kept together. The rest wraps.
         const html = (text: string) => Bun.markdown.html(text).replace(/\s+/g, " ");
-        const files = { "a.md": "[a]: /url\n9. c\n10. d\n11. e\n", "b.md": "[a]: /url\n<x-y>\nb\n" };
+        const long = "9. " + "word ".repeat(20).trim();
+        const files = {
+          "a.md": "[a]: /url\n9. c\n10. d\n11. e\n",
+          "b.md": "[a]: /url\n<x-y>\nb\n",
+          // The first line stays whole, so that the next run finds the line break in the same place.
+          "c.md": `[a]: /url\n${long}\n10. d\n`,
+        };
         const result = await format(files, ["--prose-wrap=always"], { reads: Object.keys(files) });
-        expect(result.files).toEqual({ "a.md": "[a]: /url\n9. c\n10. d 11. e\n", "b.md": "[a]: /url\n\n<x-y> b\n" });
+        expect(result.files).toEqual({
+          "a.md": "[a]: /url\n9. c\n10. d 11. e\n",
+          "b.md": "[a]: /url\n\n<x-y> b\n",
+          "c.md": `[a]: /url\n${long}\n10. d\n`,
+        });
         expect(Object.entries(result.files).map(([name, text]) => html(text!) === html(files[name as "a.md"]))).toEqual(
-          [true, true],
+          [true, true, true],
         );
         expect(result.exitCode).toBe(0);
       });
@@ -2184,6 +2195,8 @@ describe.concurrent("bun fmt", () => {
           "after-marker.md": "    a\n-\n    b\n",
           "emphasis.md": "    a\n2. *b*\n   3. c\n",
           "second-line.md": "    a\n2. b\n   c\n   3. d\n",
+          // Two lines behind a marker alone are not put behind it: the second would need the item's indentation.
+          "two-lines.md": "    a\n-\n  b\n  c\n",
         };
         const result = await format(files, ["--prose-wrap=always"], { reads: Object.keys(files) });
         expect(result.files).toEqual({
@@ -2192,6 +2205,7 @@ describe.concurrent("bun fmt", () => {
           "after-marker.md": "    a\n\n- b\n",
           "emphasis.md": "    a\n\n2. _b_ 3. c\n",
           "second-line.md": "    a\n\n2. b c 3. d\n",
+          "two-lines.md": "    a\n\n- b c\n",
         });
         expect(result.exitCode).toBe(0);
       });

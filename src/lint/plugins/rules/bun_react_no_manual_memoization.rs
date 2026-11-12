@@ -120,14 +120,26 @@ fn build_checks_callback_by_name<'a>(func: Func<'a>) -> bool {
     })
 }
 
-/// The function whose body `e` is in. The build searches the body, not the default of a parameter.
+/// The function whose body the build finds `e` in. Its search goes through statements, expressions, the initializer
+/// of a variable and the value of a property: not through a parameter, a binding pattern, a class, a type, a computed
+/// key or an `import()`.
 fn body_function<'a>(e: Expr<'a>) -> Option<Func<'a>> {
-    let level = Node::Expr(e).ancestors().find_map(|it| match it {
-        Node::Func(func) => Some(Some(func)),
-        Node::Param(_) => Some(None),
-        _ => None,
-    });
-    level.flatten()
+    let mut child = Node::Expr(e);
+    for node in Node::Expr(e).ancestors() {
+        let searched = match node {
+            Node::Func(func) => return Some(func),
+            Node::Expr(parent) => !matches!(parent.kind(), ExprKind::ImportCall { .. }),
+            Node::Stmt(_) | Node::Case(_) => true,
+            Node::VarDecl(declaration) => matches!(child, Node::Expr(it) if declaration.init() == Some(it)),
+            Node::Prop(prop) => matches!(child, Node::Expr(it) if prop.value() == Some(it)),
+            _ => false,
+        };
+        if !searched {
+            return None;
+        }
+        child = node;
+    }
+    None
 }
 
 /// A comment that `bun build --react-compiler` takes for a `react-hooks` suppression. Its lexer looks for

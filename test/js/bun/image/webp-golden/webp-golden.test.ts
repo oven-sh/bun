@@ -1,5 +1,5 @@
 // For these files and images, `Bun.Image` reads and writes WebP exactly as it did with libwebp 1.6.0: the same pixels,
-// the same errors, the same bytes. The exceptions are what libwebp has fixed since, and say so. record.ts says where the
+// the same errors, the same bytes. The exceptions are what libwebp has changed since, and say so. record.ts says where the
 // expected results come from.
 import { describe, expect, test } from "bun:test";
 import { emptyProcessMaxRSS, isASAN, isDebug, runFixtureMaxRSS } from "harness";
@@ -180,27 +180,34 @@ describe("libwebp's history", () => {
 
   const refused = { error: "ERR_IMAGE_DECODE_FAILED" };
   const size = { width: 1, height: 1, format: "webp" };
-  const pixel = (rgba: string, icc?: string) => ({
-    width: 1,
-    height: 1,
-    rgba: hash(hex(rgba)),
+  const pixels = (width: number, height: number, rgba: Uint8Array, icc?: string) => ({
+    width,
+    height,
+    rgba: hash(rgba),
     icc: icc === undefined ? undefined : hash(Buffer.from(icc)),
   });
+  const pixel = (rgba: string, icc?: string) => pixels(1, 1, hex(rgba), icc);
   const [gray, clear, color] = ["7f7f7fff", "00000000", "221133ff"];
   const lossySize = { ...size, width: 5, height: 3 };
-  const lossyPixels = {
-    ...pixel(
-      "757d83ff899197ffa2abb1ffb5bdc4ffc4ccd5ff757d83ff899197ffa2ab" +
-        "b1ffb5bdc4ffc4ccd5ff757d83ff899197ffa2abb1ffb5bdc4ffc4ccd5ff",
-    ),
-    width: 5,
-    height: 3,
-  };
+  const lossyRgba = hex(
+    "757d83ff899197ffa2abb1ffb5bdc4ffc4ccd5ff757d83ff899197ffa2ab" +
+      "b1ffb5bdc4ffc4ccd5ff757d83ff899197ffa2abb1ffb5bdc4ffc4ccd5ff",
+  );
+  const lossyPixels = pixels(5, 3, lossyRgba);
+  /** `lossyBits` with a lossless alpha plane. */
+  const withAlpha = (payload: string) => riff([vp8x(ALPHA, "040000020000"), alph(payload), chunk("VP8 ", lossyBits)]);
+  const lossyPixelsWithAlpha = (...alpha: number[]) =>
+    pixels(
+      5,
+      3,
+      lossyRgba.map((byte, i) => (i % 4 === 3 ? alpha[i >> 2] : byte)),
+    );
   const losslessSize = { ...size, width: 12 };
-  const losslessPixels = {
-    ...pixel("0da804de2b2c06de2b2c04de0d2c06580da804de0da806582b2c06582ba804580d2c06de0da806580da806580d2c04de"),
-    width: 12,
-  };
+  const losslessPixels = pixels(
+    12,
+    1,
+    hex("0da804de2b2c06de2b2c04de0d2c06580da804de0da806582b2c06582ba804580d2c06de0da806580da806580d2c04de"),
+  );
 
   test.each([
     ["a lossy image", riff([lossy]), size, pixel(gray)],
@@ -392,6 +399,40 @@ describe("libwebp's history", () => {
       riff([hex("b201009d012a01800a000290")]),
       { ...size, height: 10 },
       refused,
+    ],
+
+    // e9e8ece3, after 1.6.0, a speed-up. The last code of an alpha plane may go past the end of the data. These end after 8 of
+    // its 9 bits, and the last bit tells two symbols apart. It is a 0 now. It was the bit that is 64 bits back, a 1 in these.
+    [
+      "alpha that ends inside a literal",
+      withAlpha("01ff9711119000b66dd8c841504e77ff1111dd1d00ff"),
+      lossySize,
+      lossyPixelsWithAlpha(2, 4, 4, 4, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 9),
+    ],
+    [
+      "alpha that ends inside a literal, or a copy of more pixels than are left",
+      withAlpha("01ff9711119020b66d18c951504e67efff3fbe88081c00ff"),
+      lossySize,
+      lossyPixelsWithAlpha(1, 1, 1, 4, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 9),
+    ],
+    [
+      "alpha that ends inside a distance of more pixels than there are, or of one",
+      withAlpha("01ff9711112010240de1ffdf151112c0b60d1b39f87f6b2ca2daff"),
+      lossySize,
+      refused,
+    ],
+    [
+      "alpha that ends inside a distance of a row, or of one pixel",
+      withAlpha("01ff9711112010240de1ffdf151112c0b60d1b39f87f6b2c025aff"),
+      lossySize,
+      lossyPixelsWithAlpha(1, 1, 1, 1, 2, 1, 1, 1, 1, 2, 1, 1, 1, 1, 2),
+    ],
+    // As in 1.6.0: all of a code that starts where the data ends is made of the bits 64 bits back. Zeros would make a 1 of the 4.
+    [
+      "alpha that ends in front of its last code",
+      withAlpha("01ff9711119000b66dd8c841504e77ff1111787f7f00"),
+      lossySize,
+      lossyPixelsWithAlpha(1, 1, 1, 5, 8, 8, 1, 1, 1, 1, 1, 1, 1, 1, 4),
     ],
 
     ["an animation", riff([vp8x(ICCP | ANIMATION), iccp, anim, anmf(lossy)]), size, refused],

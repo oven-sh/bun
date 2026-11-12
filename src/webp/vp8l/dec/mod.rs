@@ -112,12 +112,14 @@ fn read_symbol(
     table_start: usize,
     br: &mut BitReader<'_>,
 ) -> Checked<usize> {
-    let mut index = table_start + (br.prefetch_bits() & HUFFMAN_TABLE_MASK) as usize;
+    let next_bits = br.prefetch_bits();
+    let mut index = table_start + (next_bits & HUFFMAN_TABLE_MASK) as usize;
     let mut code = tables.at(index)?;
     if code.bits() > HUFFMAN_TABLE_BITS {
         br.skip_bits(HUFFMAN_TABLE_BITS);
         let mask = (1 << (code.bits() - HUFFMAN_TABLE_BITS)) - 1;
-        index += code.value() as usize + (br.prefetch_bits() & mask) as usize;
+        // Not prefetched anew: `bit_pos` may be 64 or more by now.
+        index += code.value() as usize + ((next_bits >> HUFFMAN_TABLE_BITS) & mask) as usize;
         code = tables.at(index)?;
     }
     br.skip_bits(code.bits());

@@ -8,13 +8,17 @@
 // from the last Bun that used libwebp (1.4.4, libwebp 1.6.0, Linux x64), and this script refuses to run on any other:
 // what a later Bun records is what it does, not what it should do.
 //
-// The exception is the cases that are `fixed`: libwebp has corrected what it did with them in 1.6.0, and `bun_webp` has
-// the corrections. This script keeps them as they are, and a case that it adds may need the same.
+// The exception is the cases that are `fixed`: libwebp has changed what it did with them in 1.6.0, and `bun_webp` has
+// the changes. This script keeps them as they are, and a case that it adds may need the same.
 // - Lossy encodes. 1.6.0 counted the uses of one probability as those of another, until 80bda3fd. The results come from
 //   `WebPEncodeRGBA`, and `WebPMuxAssemble` for a profile, of libwebp 1.6.0 with that commit.
 // - Decodes of a bitstream that goes on behind the end of its chunk. 1.6.0 read on, to the end of the file. Since c3fe5bb6
 //   the bitstream ends with its chunk, and `WebPDecode` refuses these files. The same commit has `WebPGetInfo` accept a lossy
 //   frame without a chunk header that ends in its first partition. No case is such a file so far.
+// - Decodes of an alpha plane whose data ends inside its last code, which `WebPDecode` allows if a palette is the plane's only
+//   transform. If the code has more than 8 bits and the data at most 8 of them, 1.6.0 took the rest from 64 bits back. Since
+//   e9e8ece3 they are zeros: another plane, an error for a plane, or a plane for an error. That commit is a speed-up and does
+//   not say so.
 //
 // No case is a damaged lossy file whose coefficients overflow 16 bits: libwebp's SSE2 code and its C code decode
 // those to different pixels. `bun_webp` does what the C code does, and webp-golden.test.ts has cases of its own for that.

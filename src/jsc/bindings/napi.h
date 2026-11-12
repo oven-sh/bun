@@ -384,14 +384,16 @@ public:
     };
 
     // The event loop's turn for this env (NapiEnv::run_pending_finalizer in napi_body.rs): the one finalizer that
-    // the turn runs, if any is left. `another` says whether the caller has to queue the next turn, which takes
-    // over this turn's ref to the env. Otherwise the caller drops that ref.
+    // the turn runs, if any is left. `another` says whether the caller has to queue the next turn, which has its
+    // own ref to the env from here.
     FinalizerCall takePendingFinalizer(bool& another)
     {
         auto* finalizer = first(m_pendingFinalizers);
         FinalizerCall call = finalizer ? takeForCall(*finalizer) : FinalizerCall {};
         another = !m_isCleaningUp && !m_pendingFinalizers.isEmpty();
         m_pendingFinalizersScheduled = another;
+        if (another)
+            ref();
         return call;
     }
 

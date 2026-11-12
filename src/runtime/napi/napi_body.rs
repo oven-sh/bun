@@ -118,7 +118,7 @@ unsafe extern "C" {
     fn NapiEnv__asyncWorkLeftThreadPool(env: *mut NapiEnv);
     fn NapiEnv__asyncWorkCompleted(env: *mut NapiEnv);
     /// The env's next pending finalizer (`fun` stays `None` if it has none left). Returns whether
-    /// another turn has to be queued; that turn takes over the caller's reference to the env.
+    /// another turn has to be queued; that turn has its own reference to the env.
     fn NapiEnv__takePendingFinalizer(
         env: *mut NapiEnv,
         fun: *mut napi_finalize,
@@ -157,23 +157,19 @@ impl NapiEnv {
     ) -> JsResult<()> {
         let (mut fun, mut data, mut hint): (napi_finalize, _, _) =
             (None, ptr::null_mut(), ptr::null_mut());
-        // SAFETY: the queued task holds a reference to the env; this is its JS thread.
+        // SAFETY: the queued task held this reference; this is the env's JS thread.
+        let env = unsafe { NapiEnvRef::adopt(this) };
+        // SAFETY: live env, as above.
         let another = unsafe {
             NapiEnv__takePendingFinalizer(this, &raw mut fun, &raw mut data, &raw mut hint)
         };
         // The next turn is queued before the finalizer runs: the finalizer can do
         // anything, including end the VM.
-        let _last_turn = if another {
+        if another {
             event_loop.enqueue_task(Task::init(this));
-            None
-        } else {
-            // SAFETY: no other turn is queued, so this one's reference is ours to drop.
-            Some(unsafe { NapiEnvRef::adopt(this) })
-        };
+        }
         let Some(fun) = fun else { return Ok(()) };
-        // SAFETY: a queued turn or `_last_turn` keeps the env alive.
-        let env = unsafe { &*this };
-        let _hs = NapiHandleScope::open_scoped(env);
+        let _hs = NapiHandleScope::open_scoped(&env);
         fun(this, data, hint);
         env.surface_exception(env.to_js())
     }

@@ -21,6 +21,7 @@ use std::rc::Rc;
 pub(crate) mod lib_error {
     pub(crate) const PROTO: i32 = -505;
     pub(crate) const STREAM_CLOSED: i32 = -510;
+    pub(crate) const FLOW_CONTROL: i32 = -524;
     pub(crate) const BAD_CLIENT_MAGIC: i32 = -903;
     pub(crate) const FLOODED: i32 = -904;
     pub(crate) const TOO_MANY_CONTINUATIONS: i32 = -905;
@@ -730,14 +731,23 @@ impl Connection {
                 sink.on_remote_custom_setting(id, value);
             }
         }
-        // §6.9.2: the change shifts every stream's send window, but not the connection's.
+        // §6.9.2: the change shifts every stream's send window, but not the connection's. One past 2^31-1 is a connection error.
         let snapshot = self.remote_settings.get();
         let delta = snapshot.initial_window_size as i64 - old_initial_window as i64;
         if delta != 0 {
-            // nghttp2 ends the session if a window passes 2^31-1 here. Such a window stays as it was instead.
+            let mut overflowed = false;
             self.streams.for_each(|s| {
-                let _ = update(&s.send_window, |w| w.shift(delta));
+                overflowed |= !s.is_closed() && update(&s.send_window, |w| w.shift(delta)).is_err();
             });
+            if overflowed {
+                self.local_connection_error(
+                    sink,
+                    ErrorCode::FLOW_CONTROL_ERROR,
+                    lib_error::FLOW_CONTROL,
+                    b"SETTINGS: stream flow-control window overflow",
+                );
+                return true;
+            }
         }
         // §6.5.3: ACK first. The peer goes by its old receive window until it sees the ACK.
         self.send_settings_ack(sink);

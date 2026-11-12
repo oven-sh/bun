@@ -2210,6 +2210,63 @@ describe("SETTINGS_INITIAL_WINDOW_SIZE changes on open streams (RFC 9113 §6.9.2
       raw.close();
     }
   });
+
+  const overflow = Buffer.concat([windowUpdate(1, 1), initialWindowSettings(0x7fffffff)]);
+  const FLOW_CONTROL_ERROR_SESSION = { code: "ERR_HTTP2_ERROR", message: "Flow control error" };
+
+  test("a client ends the session when the change takes a window past 2^31-1", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    const sessionError = once(client, "error");
+    try {
+      client.request({ ":method": "POST", ":path": "/" }).on("error", () => {});
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.socket!.write(Buffer.concat([encodeFrame(FrameType.SETTINGS, 0, 0), overflow]));
+      expect(goawayErrorCode(await raw.waitFor(f => f.type === FrameType.GOAWAY))).toBe(ErrorCode.FLOW_CONTROL_ERROR);
+      expect((await sessionError)[0]).toMatchObject(FLOW_CONTROL_ERROR_SESSION);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("a server ends the session when the change takes a window past 2^31-1", async () => {
+    const server = http2.createServer();
+    server.on("stream", stream => stream.on("error", () => {}));
+    const sessionError = once(server, "sessionError");
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      await openPostStream(c);
+      c.send(overflow);
+      expect(goawayErrorCode(await c.waitForGoaway())).toBe(ErrorCode.FLOW_CONTROL_ERROR);
+      expect((await sessionError)[0]).toMatchObject(FLOW_CONTROL_ERROR_SESSION);
+    } finally {
+      c.destroy();
+      server.close();
+    }
+  });
+
+  test("the window of a closed stream can't overflow", async () => {
+    const c = await RawH2.connect(port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      // One write, so the stream is still in the table. The credit is more than the response takes.
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET")),
+          windowUpdate(1, 100),
+          initialWindowSettings(0x7fffffff),
+          encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8)),
+        ]),
+      );
+      const answer = await c.waitFor(f => f.type === FrameType.PING || f.type === FrameType.GOAWAY);
+      expect(answer.type).toBe(FrameType.PING);
+    } finally {
+      c.destroy();
+    }
+  });
 });
 
 describe("SETTINGS ack ordering (RFC 9113 §6.5.3)", () => {

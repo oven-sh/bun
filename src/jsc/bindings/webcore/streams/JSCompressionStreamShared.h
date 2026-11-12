@@ -20,6 +20,9 @@ namespace WebStreams {
 
 std::optional<CompressionFormat> parseCompressionFormat(JSC::JSGlobalObject*, JSC::JSValue formatValue);
 
+// One chunk, not the Streams set-up value: test-webstreams-compression-buffer-source.js awaits a write that nothing reads.
+inline constexpr double codecReadableHighWaterMark = 1;
+
 struct CodecOptions {
     size_t highWaterMark;
     std::optional<int32_t> level;

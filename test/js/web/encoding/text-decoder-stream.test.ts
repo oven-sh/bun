@@ -314,3 +314,24 @@ test("TextDecoderStream does not call a patched TextDecoder.prototype.decode", a
     TextDecoder.prototype.decode = original;
   }
 });
+
+// The stream is set up with a readable highWaterMark of 0
+// (https://streams.spec.whatwg.org/#transformstream-set-up): a chunk is decoded when a read asks
+// for it, so nothing is taken from the source ahead of the first read.
+test("pipeThrough(new TextDecoderStream()) pulls its source once before any read", async () => {
+  let pulls = 0;
+  const { promise: pulledTwice, resolve } = Promise.withResolvers<void>();
+  const source = new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (++pulls === 2) resolve();
+        controller.enqueue(new Uint8Array([65]));
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  const decoded = source.pipeThrough(new TextDecoderStream());
+  expect(await Promise.race([pulledTwice.then(() => "twice"), Bun.sleep(0).then(() => "once")])).toBe("once");
+  expect(pulls).toBe(1);
+  await decoded.cancel();
+});

@@ -165,6 +165,27 @@ test("cancelling the readable inside the chunk's toString() rejects the write in
   await writer.abort("bye"); // must settle
 });
 
+// The stream is set up with a readable highWaterMark of 0
+// (https://streams.spec.whatwg.org/#transformstream-set-up): a chunk is encoded when a read asks
+// for it, so nothing is taken from the source ahead of the first read.
+test("pipeThrough(new TextEncoderStream()) pulls its source once before any read", async () => {
+  let pulls = 0;
+  const { promise: pulledTwice, resolve } = Promise.withResolvers<void>();
+  const source = new ReadableStream<string>(
+    {
+      pull(controller) {
+        if (++pulls === 2) resolve();
+        controller.enqueue("A");
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  const encoded = source.pipeThrough(new TextEncoderStream());
+  expect(await Promise.race([pulledTwice.then(() => "twice"), Bun.sleep(0).then(() => "once")])).toBe("once");
+  expect(pulls).toBe(1);
+  await encoded.cancel();
+});
+
 // Native-sink output path: when the readable is consumed by a native sink
 // (here HTTPResponseSink via Bun.serve), the encoder writes into a reusable
 // scratch buffer and straight to the sink instead of wrapping each

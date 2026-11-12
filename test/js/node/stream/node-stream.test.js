@@ -3,7 +3,7 @@ import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import { compose, Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
 import { text } from "node:stream/consumers";
 import { finished as finishedP } from "node:stream/promises";
 import { join } from "path";
@@ -1490,6 +1490,46 @@ describe("webstreams adapters (Node v26 sync)", () => {
       err: "",
     });
     expect(exitCode).toBe(0);
+  });
+
+  // Node.js builds TextEncoderStream and TextDecoderStream on a default TransformStream, whose
+  // readable highWaterMark is 0: a chunk is transformed when the readable side is read. So a
+  // write through an adapter completes with that read, not before it (Node.js v26.3.0).
+  describe.each([
+    ["TextEncoderStream", () => new TextEncoderStream(), "a"],
+    ["TextDecoderStream", () => new TextDecoderStream(), Buffer.from("a")],
+  ])("%s behind an adapter", (_name, make, chunk) => {
+    const nextData = readable => new Promise(resolve => readable.once("data", resolve));
+    it.each([
+      [
+        "Writable.fromWeb(stream.writable)",
+        stream => ({
+          writable: Writable.fromWeb(stream.writable, { decodeStrings: false }),
+          read: async () => (await stream.readable.getReader().read()).value,
+        }),
+      ],
+      [
+        "Duplex.fromWeb(stream)",
+        stream => {
+          const duplex = Duplex.fromWeb(stream, { decodeStrings: false });
+          return { writable: duplex, read: () => nextData(duplex) };
+        },
+      ],
+      [
+        "compose(stream)",
+        stream => {
+          const duplex = compose(stream);
+          return { writable: duplex, read: () => nextData(duplex) };
+        },
+      ],
+    ])("%s: the first write completes when the readable side is read", async (_label, adapt) => {
+      const { writable, read } = adapt(make());
+      const { promise: written, resolve } = Promise.withResolvers();
+      writable.write(chunk, resolve);
+      expect(await Promise.race([written.then(() => "completed"), Bun.sleep(0).then(() => "pending")])).toBe("pending");
+      expect(Buffer.from(await read()).toString()).toBe("a");
+      await written;
+    });
   });
 });
 

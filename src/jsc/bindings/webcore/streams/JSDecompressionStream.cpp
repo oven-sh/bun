@@ -173,7 +173,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDecompressionStreamCon
         CompressionStreamCoder__destroy(std::exchange(static_cast<JSDecompressionStream*>(cell)->m_coder, nullptr));
     }));
 
-    setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::Decompression);
+    setUpNativeTransformStream(lexicalGlobalObject, stream, TransformerKind::Decompression, codecReadableHighWaterMark);
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(stream);

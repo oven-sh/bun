@@ -505,10 +505,12 @@ void writableStreamDefaultControllerWrite(JSC::JSGlobalObject*, JSWritableStream
 
 // TransformStreamOperations.cpp
 
+// https://streams.spec.whatwg.org/#transformstream-set-up: "Let readableHighWaterMark be 0."
+inline constexpr double transformStreamSetUpReadableHighWaterMark = 0;
 // Initializes an already-allocated JSTransformStream SUBCLASS as a TransformStream with the
-// given native transformer kind (writable/readable HWM = 1/1, no size algorithms, trivial
+// given native transformer kind (writable HWM = 1, no size algorithms, trivial
 // start). The controller's algorithmContext is `stream` itself.
-void setUpNativeTransformStream(JSC::JSGlobalObject*, JSTransformStream*, TransformerKind); // userJS: yes — TransformStreamOperations.cpp
+void setUpNativeTransformStream(JSC::JSGlobalObject*, JSTransformStream*, TransformerKind, double readableHighWaterMark); // userJS: yes — TransformStreamOperations.cpp
 void initializeTransformStream(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSPromise* startPromise, double writableHighWaterMark, JSC::JSObject* writableSizeAlgorithm, double readableHighWaterMark, JSC::JSObject* readableSizeAlgorithm); // userJS: yes — TransformStreamOperations.cpp
 void transformStreamError(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSValue error); // userJS: yes — TransformStreamOperations.cpp
 void transformStreamErrorWritableAndUnblockWrite(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSValue error); // userJS: yes — TransformStreamOperations.cpp

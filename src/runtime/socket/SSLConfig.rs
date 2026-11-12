@@ -167,7 +167,7 @@ impl ParsedTls {
         generated: &generated::TLSOptions,
         is_server: bool,
     ) -> JsResult<Self> {
-        let given = Self::given(global, generated)?;
+        let given = Self::given(global, generated, is_server)?;
         Ok(Self(given.map(|given| vm.tls_config(given, is_server))))
     }
 
@@ -175,6 +175,7 @@ impl ParsedTls {
     pub(crate) fn given(
         global: &JSGlobalObject,
         generated: &generated::TLSOptions,
+        is_server: bool,
     ) -> JsResult<Option<bun_http::ssl_config::Builder>> {
         let mut result = bun_http::ssl_config::Builder::default();
         // `result` cleanup handled by Drop on error-path `?`
@@ -233,6 +234,10 @@ impl ParsedTls {
             || result.allow_partial_trust_chain;
 
         result.ca = handle_file_for_field(global, "ca", &generated.ca)?;
+        result.ca_is_empty =
+            matches!(&generated.ca, generated::TLSOptionsFile::Array(list) if list.is_empty());
+        // It doesn't turn a server's TLS on.
+        any = any || (result.ca_is_empty && !is_server);
         result.cert = handle_file_for_field(global, "cert", &generated.cert)?;
         result.key = handle_file_for_field(global, "key", &generated.key)?;
         result.crl = handle_file_for_field(global, "crl", &generated.crl)?;

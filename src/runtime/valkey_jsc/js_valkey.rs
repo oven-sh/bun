@@ -1979,7 +1979,7 @@ impl Options {
                 };
             } else if tls.is_object() {
                 let options = TLSOptions::from_js(global_object, tls)?;
-                let Some(given) = ParsedTls::given(global_object, &options)? else {
+                let Some(given) = ParsedTls::given(global_object, &options, false)? else {
                     return Err(global_object.throw_invalid_argument_type("tls", "tls", "object"));
                 };
                 this.tls = valkey::TLS::Custom(Box::new(given));

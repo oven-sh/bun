@@ -115,43 +115,62 @@ test.concurrent("an empty list trusts nothing", async () => {
   });
 });
 
-test.concurrent("an empty default list also applies to an empty ca next to other options", async () => {
+test.concurrent.each([
+  ["", "OK", "OK"],
+  ["other", "OK", "OK"],
+  ["good", refused.fetch, "REFUSED"],
+])("an empty ca uses the built-in store, not the default list [%s]", async (list, verdict, native) => {
   const result = await run(
     `
-    tls.setDefaultCACertificates([]);
-    const opts = { tls: { ca: [], serverName: "localhost" } };
-    console.log(JSON.stringify({ fetch: await viaFetch(opts), ws: await viaWs(opts) }));
-  `,
-    { SSL_CERT_FILE: "good" },
-  );
-  expect(result).toEqual({ fetch: "DEPTH_ZERO_SELF_SIGNED_CERT", ws: "REFUSED" });
-});
-
-test.concurrent.each([
-  ["other", refused.fetch, "REFUSED"],
-  ["good", "OK", "OK"],
-])(
-  "an empty ca next to other options uses the default list, not the built-in store (%s)",
-  async (list, verdict, ws) => {
-    const result = await run(
-      `
     tls.setDefaultCACertificates([${list}]);
-    const opts = { tls: { ca: [], serverName: "localhost" } };
-    const viaTls = () => {
+    const viaTls = options => {
       const { promise, resolve } = Promise.withResolvers();
-      const socket = tls.connect({ port: server.port, host: "127.0.0.1", servername: "localhost", ca: [] });
+      const socket = tls.connect({ port: server.port, host: "localhost", ...options });
       socket.on("secureConnect", () => { socket.destroy(); resolve("OK"); });
       socket.on("error", e => resolve(e.code));
       return promise;
     };
-    console.log(JSON.stringify({ fetch: await viaFetch(opts), ws: await viaWs(opts), tls: await viaTls() }));
+    const viaConnect = tls => {
+      const { promise, resolve } = Promise.withResolvers();
+      Bun.connect({
+        hostname: "localhost",
+        port: server.port,
+        tls,
+        socket: { data() {}, handshake(socket) { resolve(socket.authorized ? "OK" : "REFUSED"); socket.end(); } },
+      });
+      return promise;
+    };
+    const all = async tls => ({
+      fetch: await viaFetch({ tls }),
+      session: await viaFetch({ session: new Bun.FetchSession({ tls }) }),
+      ws: await viaWs({ tls }),
+      connect: await viaConnect(tls),
+      tls: await viaTls(tls),
+    });
+    console.log(JSON.stringify([await all({ ca: [] }), await all({ ca: [], serverName: "localhost" })]));
   `,
-      // The built-in store trusts the server only in the row whose list doesn't.
-      list === "other" ? { SSL_CERT_FILE: "good" } : undefined,
-    );
-    expect(result).toEqual({ fetch: verdict, ws, tls: verdict });
-  },
-);
+    // The built-in store trusts the server only in the rows whose list doesn't.
+    list === "good" ? undefined : { SSL_CERT_FILE: "good" },
+  );
+  const expected = { fetch: verdict, session: verdict, ws: native, connect: native, tls: verdict };
+  expect(result).toEqual([expected, expected]);
+});
+
+test.concurrent("a server with an empty ca doesn't take client certificates of the default list", async () => {
+  const result = await run(`
+    tls.setDefaultCACertificates([other]);
+    const options = { cert: good, key, ca: [], requestCert: true, rejectUnauthorized: true };
+    const native = Bun.serve({ port: 0, tls: options, fetch: () => new Response("ok") });
+    const node = (await import("node:https")).createServer(options, (req, res) => res.end("ok"));
+    await new Promise(resolve => node.listen(0, resolve));
+    const client = { tls: { ca: good, cert: clientCert, key: clientKey } };
+    console.log(JSON.stringify([
+      (await viaFetch(client, native.url)) === "OK",
+      (await viaFetch(client, "https://localhost:" + node.address().port)) === "OK",
+    ]));
+  `);
+  expect(result).toEqual([false, false]);
+});
 
 // fetch.preconnect() does nothing on Windows.
 test.skipIf(isWindows).concurrent.each(["http", "https"])(

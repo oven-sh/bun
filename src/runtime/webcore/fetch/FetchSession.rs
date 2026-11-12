@@ -74,7 +74,7 @@ pub(crate) fn parse_tls(global: &JSGlobalObject, tls: JSValue) -> JsResult<TlsOp
         }
     }
     // `tls: {}` is a request without TLS options.
-    parsed.given = ParsedTls::given(global, &TLSOptions::from_js(global, tls)?)?;
+    parsed.given = ParsedTls::given(global, &TLSOptions::from_js(global, tls)?, false)?;
     Ok(parsed)
 }
 

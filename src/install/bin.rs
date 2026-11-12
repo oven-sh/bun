@@ -1990,6 +1990,7 @@ impl BinConflicts {
 }
 
 const NODE_GYP: &[u8] = b"node-gyp";
+const ELECTRON_NODE_GYP: &[u8] = b"@electron/node-gyp";
 
 /// Finds the bins of `dependency_id`'s dependencies that its scripts would find in a package that
 /// it does not depend on. `tree_id` is the hoisted tree it is placed in.
@@ -2097,12 +2098,28 @@ fn can_be_default_node_gyp(lockfile: &Lockfile, placed: DependencyID) -> bool {
     let resolution = &lockfile.packages.items_resolution()[package_id];
     let name = lockfile.str(&lockfile.packages.items_name()[package_id]);
     let alias = lockfile.str(&lockfile.buffers.dependencies[placed as usize].name);
-    (resolution.tag == resolution::Tag::Npm && name == NODE_GYP)
+    (resolution.tag == resolution::Tag::Npm && matches!(name, NODE_GYP | ELECTRON_NODE_GYP))
+        || (alias == ELECTRON_NODE_GYP && is_only_for_electron_rebuild(lockfile, package_id))
         || resolution.tag == resolution::Tag::Workspace
         || (alias == NODE_GYP
             && (lockfile.declared_by_root_or_workspace(alias, resolution)
                 || lockfile.is_overridden_dependency(placed)))
         || lockfile.has_trusted_dependency(alias, name, resolution)
+}
+
+/// `@electron/rebuild@3.7` installs its node-gyp from GitHub.
+fn is_only_for_electron_rebuild(lockfile: &Lockfile, package_id: usize) -> bool {
+    let packages = lockfile.packages.slice();
+    (packages.items_resolutions().iter())
+        .zip(packages.items_name())
+        .zip(packages.items_resolution())
+        .filter(|((rows, _), _)| {
+            (rows.get(lockfile.buffers.resolutions.as_slice()).iter())
+                .any(|&id| id as usize == package_id)
+        })
+        .all(|((_, name), resolution)| {
+            resolution.tag == resolution::Tag::Npm && lockfile.str(name) == b"@electron/rebuild"
+        })
 }
 
 /// The tree and the dependency that `name_hash` resolves to in `ancestors`.

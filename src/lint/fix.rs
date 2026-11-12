@@ -1,11 +1,12 @@
 //! Changes to the source text.
 
-use crate::ast::File;
+use crate::ast::{File, Stmt};
 use crate::context::IntoText;
 use crate::span::{Span, Spanned};
-use crate::tokens::{Token, TokenKind};
-use crate::utils::ast_utils::is_on_one_line;
+use crate::tokens::{Token, TokenKind, skip_trivia};
+use crate::utils::ast_utils::{continues_statement, is_on_one_line, is_statement_list_parent};
 use crate::utils::directives::match_directives_pattern;
+use crate::utils::fix_tracker::FixTracker;
 use bun_core::strings;
 
 /// Replaces `span` with `text`.
@@ -420,6 +421,32 @@ impl<'a> Fixer<'a> {
             span: at.span(),
             text: Vec::new(),
         }
+    }
+
+    /// Removes a whole statement. `None` if that loses a comment, or changes what the code around it is.
+    pub fn remove_statement(self, statement: Stmt<'a>) -> Option<Fix> {
+        let (file, span) = (self.file, statement.span());
+        // An `if` or a loop would take the next statement for its body, and so would a `// @ts-ignore` above.
+        if !is_statement_list_parent(statement.parent()) || self.has_directive_before(span) {
+            return None;
+        }
+        let text = file.text();
+        // Nothing else continues the statement before, so most files need no tokens for this.
+        let may_continue = matches!(
+            text.get(skip_trivia(text, span.end) as usize),
+            Some(b'(' | b'[' | b'`' | b'/' | b'+' | b'-' | b'<')
+        );
+        let fix = match may_continue.then(|| file.token_before(span)).flatten() {
+            Some(previous) if continues_statement(file, previous, file.token_after(span)?) => {
+                return None;
+            }
+            // A fix that removes the statement before has to wait for the next pass, which sees what is before then.
+            Some(previous) => FixTracker::new(self)
+                .retain_range(previous.span())
+                .remove(span),
+            None => self.remove(span),
+        };
+        self.keeps_comments(&fix).then_some(fix)
     }
 
     /// `insertTextBefore`, `insertTextBeforeRange`

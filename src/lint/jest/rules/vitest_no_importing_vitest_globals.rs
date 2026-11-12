@@ -67,6 +67,38 @@ impl Rule for NoImportingVitestGlobals {
 
 const REMOVE_THIS: &str = "Remove this global vitest import";
 
+/// True if the global `local` is what `imported` of `source` is. `bun test` has no global `assert` or `chai`.
+fn is_the_global<'a>(source: &[u8], imported: Name<'a>, local: Name<'a>) -> bool {
+    // `@effect/vitest` 4.1.4 declares these three itself: its `it` has `it.effect()`.
+    let is_own = source == b"@effect/vitest" && local.is_any(&["it", "beforeAll", "beforeEach"]);
+    imported == local && local.is_any(&VITEST_GLOBALS) && !local.is_any(&["assert", "chai"]) && !is_own
+}
+
+/// True if the file has an `export { name }`, which needs `name` to stay declared.
+fn is_exported_by_name<'a>(file: &'a File<'a>, name: Name<'a>) -> bool {
+    let names_it = |it: ExportSpec<'a>| it.local().name() == name;
+    let exports_it = |it: Stmt<'a>| match it.kind() {
+        StmtKind::ExportNamed(export) => !export.has_from() && export.items().iter().any(names_it),
+        _ => false,
+    };
+    file.body().iter().any(exports_it)
+}
+
+fn is_vitest_import(statement: Stmt) -> bool {
+    matches!(statement.kind(), StmtKind::Import(import) if is_vitest_import_source(import.spec().bytes()))
+}
+
+/// True if the file is the same kind of file without its imports of Vitest.
+fn stays_the_same_kind<'a>(file: &'a File<'a>) -> bool {
+    if utils::visible::is_module_without(file, is_vitest_import) {
+        return true;
+    }
+    // Bun then runs a file with `require` as CommonJS, which isn't strict. For TypeScript it's a script, whose names are global.
+    let declares_names = || file.body().iter().any(|it| it.tag() != StmtTag::Expr && !is_vitest_import(it));
+    let awaits = || file.exprs_of_kind(ExprTag::Await).any(|it| Node::Expr(it).enclosing_function().is_none());
+    !file.mentions_any(&["require", "module", "exports"]) && (file.is_javascript() || !declares_names() && !awaits())
+}
+
 fn check_import<'a>(node: Stmt<'a>, import_decl: Import<'a>, cx: &Cx<'a, NoImportingVitestGlobals>) {
     let is_global = |it: &ImportSpec| !it.is_type_only() && !it.imported().is_string() && it.local().name().is_any(&VITEST_GLOBALS);
     let Some(first_global) = import_decl.named().iter().find(is_global) else {
@@ -74,20 +106,33 @@ fn check_import<'a>(node: Stmt<'a>, import_decl: Import<'a>, cx: &Cx<'a, NoImpor
     };
     let report = cx.report(first_global, NO_IMPORTING_VITEST_GLOBALS).first_label(REMOVE_THIS);
     let others = import_decl.named().iter().filter(is_global).skip(1);
-    others.fold(report, |report, it| report.label(it, REMOVE_THIS)).fix(|fixer| {
-        let others = usize::from(import_decl.default().is_some()) + usize::from(import_decl.namespace().is_some());
-        if others == 0 && import_decl.named().iter().all(|it| is_global(&it)) {
-            return Some(fixer.remove(node));
+    // The fix writes these back. It drops specifiers imported under a string name.
+    let is_kept = |it: &ImportSpec| !is_global(it) && (it.is_type_only() || !it.imported().is_string());
+    let removes_statement = || import_decl.named().iter().all(|it| is_global(&it));
+    // The fix is oxlint's, which goes by the local name alone.
+    let is_safe = || {
+        let (file, source) = (cx.file(), import_decl.spec().bytes());
+        let is_unchanged = |it: ImportSpec<'a>| {
+            let (imported, local) = (it.imported().name(), it.local().name());
+            is_kept(&it) || is_the_global(source, imported, local) && !is_exported_by_name(file, local)
+        };
+        import_decl.named().iter().all(is_unchanged) && (!removes_statement() || stays_the_same_kind(file))
+    };
+    others.fold(report, |report, it| report.label(it, REMOVE_THIS)).fix_where_safe(is_safe, |fixer| {
+        // oxlint's text for names next to a default import is `import  } from "vitest"`.
+        if import_decl.default().is_some() {
+            return None;
+        }
+        if removes_statement() {
+            return fixer.remove_statement(node);
         }
         let mut import_text = Vec::new();
-        // The fix drops specifiers imported under a string name.
-        for specifier in import_decl.named().iter().filter(|it| !is_global(it) && (it.is_type_only() || !it.imported().is_string())) {
+        for specifier in import_decl.named().iter().filter(is_kept) {
             import_text.extend_from_slice(if import_text.is_empty() { "" } else { ", " }.as_bytes());
             import_text.extend_from_slice(specifier.text());
         }
-        let start = import_decl.default().map(|it| it.span()).or_else(|| import_decl.namespace_span());
-        let start = start.or_else(|| import_decl.named().first().map(ImportSpec::span))?.start;
-        Some(fixer.replace(Span::new(start, import_decl.named().last()?.span().end), import_text))
+        let specifiers = Span::new(import_decl.named().first()?.span().start, import_decl.named().last()?.span().end);
+        Some(fixer.replace(specifiers, import_text)).filter(|it| fixer.keeps_comments(it))
     });
 }
 
@@ -109,6 +154,31 @@ fn is_global_property(property: &PatProp) -> bool {
     property.key().and_then(|it| it.name()).is_some_and(|it| it.is_any(&VITEST_GLOBALS))
 }
 
+/// The fix writes these back. It drops properties with a computed key.
+fn is_kept_property(property: &PatProp) -> bool {
+    !is_global_property(property) && property.key().is_some_and(|key| key.name().is_some())
+}
+
+/// True if every name of the statement is the same thing after the fix, which is oxlint's and goes by the keys alone.
+fn leaves_names_unchanged<'a>(file: &'a File<'a>, node: Stmt<'a>, declarations: List<'a, VarDecl<'a>>) -> bool {
+    let is_unchanged = |it: PatProp<'a>, source: Name<'a>| {
+        let is_replaced = |key, local| is_the_global(source.bytes(), key, local) && !is_exported_by_name(file, local);
+        let names = (it.key().and_then(|key| key.name()), it.value().kind());
+        // A default can be the value in use.
+        is_kept_property(&it) || it.default().is_none() && matches!(names, (Some(key), PatKind::Ident(local)) if is_replaced(key, local))
+    };
+    // The fix writes a declaration back without its type annotation.
+    let is_written_alike = |it: VarDecl<'a>| match vitest_require(it) {
+        Some((properties, source)) => it.ty().is_none() && properties.iter().all(|it| is_unchanged(it, source)),
+        None => true,
+    };
+    // A `let` can be assigned, a `var` can be the body of an `if`, and in a function the name can be an outer variable's.
+    declarations.first().is_some_and(|it| it.var_kind() == VarKind::Const)
+        && matches!(node.parent(), Node::File(_))
+        && !node.is_exported()
+        && declarations.iter().all(is_written_alike)
+}
+
 fn check_variable_declaration<'a>(
     node: Stmt<'a>,
     declarations: List<'a, VarDecl<'a>>,
@@ -126,7 +196,7 @@ fn check_variable_declaration<'a>(
         }
         None => cx.report_file(NO_IMPORTING_VITEST_GLOBALS),
     };
-    report.fix(|fixer| {
+    report.fix_where_safe(|| leaves_names_unchanged(cx.file(), node, declarations), |fixer| {
         let variable_modifier = match declarations.first()?.var_kind() {
             VarKind::Const => "const",
             VarKind::Let => "let",
@@ -139,21 +209,18 @@ fn check_variable_declaration<'a>(
                 rendered.push(declaration.text().to_vec());
                 continue;
             };
-            // The fix drops properties with a computed key.
-            let non_global_imports: SmallVec<[&[u8]; 8]> = (properties.iter())
-                .filter(|it| !is_global_property(it) && it.key().is_some_and(|key| key.name().is_some()))
-                .map(|it| it.text())
-                .collect();
+            let non_global_imports: SmallVec<[&[u8]; 8]> = properties.iter().filter(is_kept_property).map(|it| it.text()).collect();
             if !non_global_imports.is_empty() {
                 let names = non_global_imports.join(b", ".as_slice());
                 rendered.push([b"{ ".as_slice(), &names, b" } = require('".as_slice(), import_source.bytes(), b"')".as_slice()].concat());
             }
         }
         if rendered.is_empty() {
-            return Some(fixer.remove(node.span_without_export()));
+            // oxlint's text leaves an `export` to the next statement.
+            return if node.is_exported() { None } else { fixer.remove_statement(node) };
         }
         let declarations = rendered.join(b", ".as_slice());
         let code = [variable_modifier.as_bytes(), b" ".as_slice(), &declarations, b";".as_slice()].concat();
-        Some(fixer.replace(node.span_without_export(), code))
+        Some(fixer.replace(node.span_without_export(), code)).filter(|it| fixer.keeps_comments(it))
     });
 }

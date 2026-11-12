@@ -602,7 +602,8 @@ function onRequestTimeout(socket) {
 
 Server.prototype.ref = function () {
   // Only what unref() let go of: a socket can have an unref() of the program's own.
-  if (this._unref) for (const socket of this[kHandedOffSockets]) socket.ref();
+  const handedOff = this[kHandedOffSockets];
+  if (this._unref && handedOff) for (const socket of handedOff) socket.ref();
   this._unref = false;
   this[serverSymbol]?.ref?.();
   return this;
@@ -611,7 +612,8 @@ Server.prototype.ref = function () {
 Server.prototype.unref = function () {
   this._unref = true;
   this[serverSymbol]?.unref?.();
-  for (const socket of this[kHandedOffSockets]) socket.unref();
+  const handedOff = this[kHandedOffSockets];
+  if (handedOff) for (const socket of handedOff) socket.unref();
   return this;
 };
 
@@ -636,7 +638,7 @@ Server.prototype.closeAllConnections = function () {
 Server.prototype._emitCloseIfDrained = function () {
   // This server has no 'close' listener on them, as in Node, so it forgets the closed ones now and then.
   const handedOff = this[kHandedOffSockets];
-  if (handedOff.size > 2 * this._connections + 16) {
+  if (handedOff && handedOff.size > 2 * this._connections + 16) {
     for (const socket of handedOff) if (socket.destroyed) handedOff.delete(socket);
   }
   if (this._connections === 0 && this[kPendingDrainClose])

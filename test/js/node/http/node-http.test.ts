@@ -4381,6 +4381,12 @@ it("standalone ServerResponse refuses write(null) and write()", () => {
   expect(() => (res as any).write()).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
 });
 
+it("ref() and unref() work on an heir of Server.prototype that no constructor has run on", () => {
+  const heir = Object.create(Server.prototype);
+  expect(heir.unref()).toBe(heir);
+  expect(heir.ref()).toBe(heir);
+});
+
 it("standalone ServerResponse end() after writeHead() sets writableEnded (#25632)", async () => {
   // With no native handle and no socket assigned, end() after writeHead() must
   // still transition to `finished` / `writableEnded` and buffer the rendered

@@ -2076,7 +2076,9 @@ describe.concurrent("bun fmt", () => {
 
       // A line that continues a list item without its indentation, `c`, and a setext heading of such lines. As MDX
       // these print what Prettier prints: remark-parse 8 reads `<b>` as part of the item, and a setext heading as
-      // `## -`. Each row has the text, Bun's output as Markdown, and Prettier's.
+      // `## -`. In a block quote the tag is printed with the marker, so `c` keeps Prettier's empty line before it:
+      // without it, `c` would move into the quote on the second run. Each row has the text, Bun's output as Markdown,
+      // and Prettier's.
       test.each([
         ["- a\n<b>\nc\n", "- a\n<b>\nc\n", "- a\n<b>\n\nc\n"],
         ["- a\n<b>\nc\n- d\n", "- a\n<b>\nc\n- d\n", "- a\n<b>\n\nc\n\n- d\n"],
@@ -2102,16 +2104,6 @@ describe.concurrent("bun fmt", () => {
         // That flavor puts an empty line after indented code, and before a setext heading.
         expect(Object.values(asOxfmt.files).map(text => Bun.markdown.html(text!))).toEqual([html, html]);
         expect(asOxfmt.exitCode).toBe(0);
-      });
-
-      test("in a block quote", async () => {
-        // `c` stays in the quote. The tree has it after the quote, so a second run prints it with the marker.
-        const before = "> a\n<b>\nc\n";
-        const html = Bun.markdown.html(before);
-        const result = await format({ "a.md": before, "b.md": "> a\n> <b>\nc\n" }, [], { reads: ["a.md", "b.md"] });
-        expect(result.files).toEqual({ "a.md": "> a\n> <b>\nc\n", "b.md": "> a\n> <b>\n> c\n" });
-        expect(Object.values(result.files).map(text => Bun.markdown.html(text!))).toEqual([html, html]);
-        expect(result.exitCode).toBe(0);
       });
 
       // A line that starts with a marker is joined to the line before it, so that it doesn't start a list. After
@@ -2156,6 +2148,8 @@ describe.concurrent("bun fmt", () => {
           "comment.md": "- a\n\n  <!-- b -->\n\n  - c\n",
           "other-list.md": "    x\n2. b\n- c\n",
           "rule.md": "    x\n2. b\n---\n- c\n",
+          // `c` leaves the quote, as with Prettier. Without the empty line it would leave it on the second run.
+          "quote.md": "> a\n<b>\nc\n",
         };
         const result = await format(files, [], { reads: Object.keys(files) });
         expect(result.files).toEqual({
@@ -2163,6 +2157,23 @@ describe.concurrent("bun fmt", () => {
           "comment.md": "- a\n\n  <!-- b -->\n  - c\n",
           "other-list.md": "    x\n\n2. b\n\n- c\n",
           "rule.md": "    x\n\n2. b\n---\n\n- c\n",
+          "quote.md": "> a\n> <b>\n\nc\n",
+        });
+        expect(result.exitCode).toBe(0);
+      });
+
+      test("a line that continues an item is still joined", async () => {
+        // Indented to the item's content, or by a tab, `3. c` is text of the item `b`, so the line break is a space.
+        const files = {
+          "spaces.md": "    a\n2. b\n   3. c\n",
+          "tab.md": "    a\n2. b\n\t3. c\n",
+          "after-marker.md": "    a\n-\n    b\n",
+        };
+        const result = await format(files, ["--prose-wrap=always"], { reads: Object.keys(files) });
+        expect(result.files).toEqual({
+          "spaces.md": "    a\n\n2. b 3. c\n",
+          "tab.md": "    a\n\n2. b 3. c\n",
+          "after-marker.md": "    a\n\n- b\n",
         });
         expect(result.exitCode).toBe(0);
       });

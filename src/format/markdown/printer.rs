@@ -670,9 +670,11 @@ impl<'a> Printer<'a, '_> {
     /// - HTML that only an empty line ends (a `<div>`, a `<x-y>` on its own line: CommonMark 4.6, kinds 6 and 7) keeps
     ///   the empty line after it. Prettier 3.9.9 drops it before a list in a list item, `- <div>\n\n  - b` becomes
     ///   `- <div>\n  - b`, and the item is then a line of the HTML. Prettier 3.10.0 keeps it after any HTML there.
-    /// - A complete tag on a line without the markers of its containers, `- a\n<b>\nc`, does not end the paragraph
+    /// - A complete tag on a line without the markers of its list item, `- a\n<b>\nc`, does not end the paragraph
     ///   before it. To micromark it ends the paragraph and the containers, so Prettier prints an empty line before `c`,
-    ///   which takes `c` out of the list, and another before a `- d` that follows `c`, which makes the list loose.
+    ///   which takes `c` out of the list, and another before a `- d` that follows `c`, which makes the list loose. In
+    ///   a block quote the tag is printed with the marker, `> a\n> <b>`, after which `c` would be in the quote on the
+    ///   next run only: there Prettier's empty line stays.
     /// - The line after a definition was a line of the definition's paragraph. Prettier prints an empty line between
     ///   them, after which `9. c` is a list that starts at 9, `<x-y>` an HTML block, `2.` an empty item.
     /// - A marker alone on a line after indented code is a paragraph to micromark, `    a\n-\n- b`, and two of them
@@ -682,9 +684,7 @@ impl<'a> Printer<'a, '_> {
             return true;
         }
         match previous.kind {
-            Kind::List | Kind::Blockquote if self.is_paragraph_like(node) => {
-                self.ends_in_lazy_html(previous)
-            }
+            Kind::List if self.is_paragraph_like(node) => self.ends_in_lazy_html(previous),
             Kind::Definition if self.is_paragraph_like(node) => {
                 self.kept_line_breaks(node) == KeptLineBreaks::First
             }
@@ -701,12 +701,12 @@ impl<'a> Printer<'a, '_> {
             || (node.kind == Kind::Heading && !self.is_mdx && self.is_setext_heading(node))
     }
 
-    /// True if the last leaf of `container` is HTML on a line without the container's markers, printed right after
-    /// its paragraph. oxfmt prints an empty line before such HTML, except in a tight item: what follows is then a
-    /// paragraph after the container however the two are separated.
-    fn ends_in_lazy_html(&self, container: &Node) -> bool {
-        let mut node = container;
-        while matches!(node.kind, Kind::List | Kind::ListItem | Kind::Blockquote) {
+    /// True if the last leaf of `list` is HTML on a line without the item's markers, printed right after its
+    /// paragraph. oxfmt prints an empty line before such HTML, except in a tight item: what follows is then a
+    /// paragraph after the list however the two are separated.
+    fn ends_in_lazy_html(&self, list: &Node) -> bool {
+        let mut node = list;
+        while matches!(node.kind, Kind::List | Kind::ListItem) {
             let Some(last) = self.node(node.last_child) else {
                 return false;
             };
@@ -826,32 +826,57 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// True if the line break before `word`, at `start` in the text, stays in a block whose lines are items. The line
-    /// is an item: it starts with a marker, and is not indented like code under the block's container. Or a marker
-    /// alone is before the break, `marker_before`: joined, `word` is in that item, unless its line is indented into
-    /// the item. `start` is unknown for text that is a copy, in a block quote: then the break stays.
+    /// True if the line break before `word`, at `start` in the text, stays in a block whose lines are items.
+    /// `before` is the first word of the line before the break, where it starts, and whether it is that whole line.
+    /// The break stays where `word` is an item: it is a marker, on a line that is not indented into the item before
+    /// it, or like code under the block's container. And where the line before is a marker alone: joined, `word`
+    /// is in that item, unless its line is indented into it. Text that is a copy, in a block quote, has no `start`:
+    /// then the line is joined, as Prettier joins it.
     fn is_kept_before_item(
         &self,
         sentence: NodeId,
         word: &[u8],
         start: Option<u32>,
-        marker_before: Option<&[u8]>,
+        before: Option<(&[u8], Option<u32>, bool)>,
     ) -> bool {
-        if marker_before.is_none() && Self::list_marker_at_start(word).is_none() {
+        let marker_before =
+            before.filter(|(line, ..)| Self::list_marker_at_start(line) == Some(line));
+        let is_alone_before = marker_before.is_some_and(|(_, _, is_alone)| is_alone);
+        if !is_alone_before && Self::list_marker_at_start(word).is_none() {
             return false;
         }
         let (Some(start), Some((_, block))) = (start, self.block_of(sentence)) else {
-            return true;
+            return false;
         };
-        let content_column = match self.node(block.parent) {
-            Some(parent) if parent.kind == Kind::ListItem => self
-                .node(parent.first_child)
-                .map_or(0, |first| self.column(first.start)),
-            Some(parent) if parent.kind == Kind::Root => 0,
-            _ => self.column(block.start),
+        let bound = match marker_before {
+            Some((marker, Some(marker_start), _)) => {
+                self.visual_column(marker_start) + marker.len() as u32 + 1
+            }
+            _ => {
+                let content_column = match self.node(block.parent) {
+                    Some(parent) if parent.kind == Kind::ListItem => self
+                        .node(parent.first_child)
+                        .map_or(0, |first| self.visual_column(first.start)),
+                    Some(parent) if parent.kind == Kind::Root => 0,
+                    _ => self.visual_column(block.start),
+                };
+                content_column + 4
+            }
         };
-        let indent = marker_before.map_or(4, |marker| marker.len() as u32 + 1);
-        self.column(start) < content_column + indent
+        self.visual_column(start) < bound
+    }
+
+    /// The column of `offset` as CommonMark counts it: a tab advances to the next multiple of four.
+    fn visual_column(&self, offset: u32) -> u32 {
+        let line_start = self.tree.line_start(offset) as usize;
+        let line = self
+            .original
+            .get(line_start..offset as usize)
+            .unwrap_or_default();
+        line.iter().fold(0, |column, &byte| match byte {
+            b'\t' => (column + 4) / 4 * 4,
+            _ => column + 1,
+        })
     }
 
     /// The line breaks of the block that `sentence` is in that stay, and whether the first line of the block ends in
@@ -1199,14 +1224,19 @@ impl<'a> Printer<'a, '_> {
             let is_kept = has_newline
                 && match kept {
                     KeptLineBreaks::Items => {
-                        let start = node.value.source_start().map(|at| at + white_end as u32);
+                        let source_start = node.value.source_start();
+                        let at = |index: usize| source_start.map(|start| start + index as u32);
                         let line_start =
                             bun_core::strings::last_index_of_char(&text[..white_start], b'\n')
                                 .map_or(0, |at| at + 1);
                         let line = &text[line_start..white_start];
-                        let marker_before =
-                            Self::list_marker_at_start(line).filter(|it| it.len() == line.len());
-                        self.is_kept_before_item(id, word, start, marker_before)
+                        let indent = line.len() - line.trim_ascii_start().len();
+                        let first = &line[indent..];
+                        let first =
+                            &first[..first.iter().take_while(|&&byte| !is_white(byte)).count()];
+                        let is_alone = first.len() == line.len() - indent;
+                        let before = Some((first, at(line_start + indent), is_alone));
+                        self.is_kept_before_item(id, word, at(white_end), before)
                     }
                     KeptLineBreaks::First => is_first_sentence && line_breaks == 0,
                     KeptLineBreaks::None => false,
@@ -1316,17 +1346,26 @@ impl<'a> Printer<'a, '_> {
             let is_kept = token.kind == TokenKind::Newline
                 && match kept {
                     KeptLineBreaks::Items => next.is_some_and(|next| {
-                        let marker_before = index
-                            .checked_sub(1)
-                            .and_then(|at| tokens.get(at))
-                            .filter(|_| index == 1 || is_newline(tokens.get(index - 2)))
-                            .map(|it| self.str(it.value))
-                            .filter(|it| Self::list_marker_at_start(it) == Some(it));
+                        // The first word of the line before, and whether it is that whole line.
+                        let line_start = (0..index)
+                            .rev()
+                            .find(|&at| tokens[at].kind == TokenKind::Newline)
+                            .map_or(0, |at| at + 1);
+                        let before = tokens[line_start..index]
+                            .iter()
+                            .position(Token::is_word)
+                            .map(|at| {
+                                let first = &tokens[line_start + at];
+                                let is_alone = tokens[line_start + at + 1..index]
+                                    .iter()
+                                    .all(|it| !it.is_word());
+                                (self.str(first.value), first.value.source_start(), is_alone)
+                            });
                         self.is_kept_before_item(
                             id,
                             self.str(next.value),
                             next.value.source_start(),
-                            marker_before,
+                            before,
                         )
                     }),
                     KeptLineBreaks::First => is_first_sentence && line_breaks == 0,

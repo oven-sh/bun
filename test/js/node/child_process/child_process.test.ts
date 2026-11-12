@@ -2241,6 +2241,114 @@ describe("child stdio 'data' comes from the read callback", () => {
     });
   });
 
+  // The reader wraps process.nextTick, Promise.prototype.then and Buffer's allocators before it loads
+  // node:child_process, and counts their calls between two 'data' events. In Node the stream queues one tick there,
+  // its own maybeReadMore, and each chunk is a Buffer over an ArrayBuffer of its own. A stream that is pulled from
+  // also calls then() for each chunk it waits for, and cuts its chunks out of one buffer with subarray().
+  //
+  // The writer sends a block when the reader has acknowledged the one before, and exits after the last
+  // acknowledgement, so the child's exit is not among the calls.
+  describe("per chunk the stream queues one tick, and makes no promise and no Buffer but the chunk", () => {
+    const files = {
+      "writer.js": `
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const [fd, blocks, blockSize] = process.argv.slice(2).map(Number);
+        const nap = new Int32Array(new SharedArrayBuffer(4));
+        const deadline = Date.now() + 15_000;
+        const block = Buffer.alloc(blockSize, 97);
+        for (let k = 1; k <= blocks; k++) {
+          for (let written = 0; written < blockSize; ) written += fs.writeSync(fd, block, written);
+          // The reader adds a byte to the file for each block it has read all of.
+          while (fs.statSync(path.join(__dirname, "acks")).size < k) {
+            if (Date.now() > deadline) throw new Error("timed out waiting for the acknowledgement of block " + k);
+            Atomics.wait(nap, 0, 0, 1);
+          }
+        }
+      `,
+      "reader.js": `
+        const calls = { ticks: 0, thens: 0, bufferAllocs: 0, bufferViews: 0 };
+        let counting = false;
+        function count(object, method, as) {
+          const original = object[method];
+          object[method] = function () {
+            if (counting) calls[as]++;
+            return original.apply(this, arguments);
+          };
+        }
+        count(process, "nextTick", "ticks");
+        count(Promise.prototype, "then", "thens");
+        for (const method of ["alloc", "allocUnsafe", "allocUnsafeSlow"]) count(Buffer, method, "bufferAllocs");
+        for (const method of ["subarray", "slice"]) count(Buffer.prototype, method, "bufferViews");
+
+        const { spawn } = require("node:child_process");
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const name = process.argv[2];
+        const [blocks, blockSize] = process.argv.slice(3).map(Number);
+        const fd = name === "stdout" ? 1 : 2;
+        const child = spawn(process.execPath, [path.join(__dirname, "writer.js"), fd, blocks, blockSize].map(String), {
+          stdio: ["ignore", fd === 1 ? "pipe" : "inherit", fd === 2 ? "pipe" : "inherit"],
+        });
+        let chunks = 0, bytes = 0, acknowledged = 0, shared = 0;
+        function acknowledge() {
+          counting = false;
+          fs.appendFileSync(path.join(__dirname, "acks"), ".");
+          counting = bytes < blocks * blockSize;
+        }
+        child[name].on("data", chunk => {
+          counting = false;
+          chunks++;
+          bytes += chunk.length;
+          // A chunk cut out of a buffer that other chunks share is a view of a part of its ArrayBuffer.
+          if (!Buffer.isBuffer(chunk) || chunk.byteOffset !== 0 || chunk.buffer.byteLength !== chunk.length) shared++;
+          // Sent on a later turn: by then the stream has asked for more, so the next block finds it waiting.
+          for (; acknowledged < Math.floor(bytes / blockSize); acknowledged++) setImmediate(acknowledge);
+          // Counted from the end of the first call to the start of the last one.
+          counting = bytes < blocks * blockSize;
+        });
+        child.on("close", code => {
+          const perChunk = {};
+          for (const key in calls) perChunk[key] = calls[key] / (chunks - 1);
+          console.log(JSON.stringify({ code, bytes, perChunk, chunksOfASharedBuffer: shared }));
+        });
+      `,
+      acks: "",
+    };
+    async function count(name: "stdout" | "stderr", blocks: number, blockSize: number) {
+      using dir = tempDir("child-stdio-per-chunk", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "reader.js", name, String(blocks), String(blockSize)],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+    const asInNode = (bytes: number) => ({
+      stdout: JSON.stringify({
+        code: 0,
+        bytes,
+        perChunk: { ticks: 1, thens: 0, bufferAllocs: 0, bufferViews: 0 },
+        chunksOfASharedBuffer: 0,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+
+    // Each block is written to a pipe that is being waited on, so every chunk is read on a turn of its own.
+    it.concurrent("with a writer that waits for the reader (child.stdout)", async () => {
+      expect(await count("stdout", 64, 1024)).toEqual(asInNode(64 * 1024));
+    });
+
+    // Most reads find the next bytes in the pipe already, and several chunks come in one wakeup of the reader.
+    it("with a writer that never pauses (child.stderr)", async () => {
+      expect(await count("stderr", 1, 4 * 1024 * 1024)).toEqual(asInNode(4 * 1024 * 1024));
+    });
+  });
+
   describe("a listener attached late", () => {
     // Node gives a program this one last chance to read the output of a child that is gone. Nothing has read the
     // pipes until then, with a stdio array of 3 entries and with a shorter one.

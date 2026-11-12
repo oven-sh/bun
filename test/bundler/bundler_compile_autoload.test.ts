@@ -584,11 +584,15 @@ console.log("PRELOAD");
     },
     runtimeFiles: {
       "/bunfig.toml": `logLevel = "debug"`,
+      "/.env": `TEST_VAR=from_dotenv`,
     },
     run: {
       stdout: "ok",
       setCwd: true,
+      env: { BUN_CONFIG_VERBOSE_FETCH: "" },
       validate({ stderr }) {
+        // At "debug" bun prints how long it took to read .env: the level reached the executable.
+        expect(stderr).toContain(`] ".env"\n`);
         expect(stderr.split("\n").filter(line => line.endsWith("x-probe: 1"))).toEqual([]);
       },
     },

@@ -931,10 +931,11 @@ function onSNIResolution(state, err, context) {
 }
 
 // `socket.data` is the net.Socket that owns the handle. Until 'open' hands an accepted handle to one, it's the net.Server.
+// It's undefined once send(message, socket) has taken the handle, which stays open here until the receiver has it.
 const SocketHandlers = {
   data(socket, buffer) {
     const self = socket.data;
-    if (isOfEarlierConnection(self, socket)) return;
+    if (!self || isOfEarlierConnection(self, socket)) return;
     self._unrefTimer();
     // TLS took over the fd; the wrapped socket reads nothing: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L723-L727
     if (socket[kAdoptedTLSRaw]) return;
@@ -956,14 +957,15 @@ const SocketHandlers = {
     if (full) readStop(self, socket);
   },
   writeComplete(socket, status: number) {
-    onWriteComplete(socket.data, socket, status);
+    onWriteComplete(socket.data ?? socket[owner_symbol], socket, status);
   },
   end(socket) {
     const self = socket.data;
-    if (!isOfEarlierConnection(self, socket)) onReadEnd(self);
+    if (self && !isOfEarlierConnection(self, socket)) onReadEnd(self);
   },
   close(socket, err?: NativeSocketError) {
-    onHandleClose(socket.data, socket, err);
+    const self = socket.data;
+    if (self) onHandleClose(self, socket, err);
   },
   // Node's onnewsessionclient: emit once the handshake is verified. Until then, the handshake handler emits it.
   session(socket: Socket<TLSSocketInstance>, session) {
@@ -1454,7 +1456,7 @@ const OnreadHandlers = {
   ...SocketHandlers,
   data(socket, buffer) {
     const self = socket.data;
-    if (isOfEarlierConnection(self, socket)) return;
+    if (!self || isOfEarlierConnection(self, socket)) return;
     self._unrefTimer();
     if (socket[kAdoptedTLSRaw]) return;
     const tail = self[kOnreadTail];

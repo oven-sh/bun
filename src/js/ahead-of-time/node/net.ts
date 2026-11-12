@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 5d2e54412edf0315a72ea9aedcc4ca9810840ed1b73c1615d6214d4a089ff747.
+// Written against that file with the SHA-256 4fbb6528eec99659a764f6256c78561547556b9991e7074d6336136f65e7c0c9.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -1307,10 +1307,11 @@ function onSNIResolution(state: SNIState, err: unknown, context?: unknown) {
 }
 
 // `socket.data` is the net.Socket that owns the handle. Until 'open' hands an accepted handle to one, it's the net.Server.
+// It's undefined once send(message, socket) has taken the handle, which stays open here until the receiver has it.
 const SocketHandlers = {
   data(socket, buffer) {
     const self = socket.data;
-    if (isOfEarlierConnection(self, socket)) return;
+    if (!self || isOfEarlierConnection(self, socket)) return;
     self._unrefTimer();
     // TLS took over the fd; the wrapped socket reads nothing: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L723-L727
     if (socket[kAdoptedTLSRaw]) return;
@@ -1332,14 +1333,15 @@ const SocketHandlers = {
     if (full) readStop(self, socket);
   },
   writeComplete(socket, status: number) {
-    onWriteComplete(socket.data, socket, status);
+    onWriteComplete(socket.data ?? socket[owner_symbol], socket, status);
   },
   end(socket) {
     const self = socket.data;
-    if (!isOfEarlierConnection(self, socket)) onReadEnd(self);
+    if (self && !isOfEarlierConnection(self, socket)) onReadEnd(self);
   },
   close(socket, err?: NativeSocketError) {
-    onHandleClose(socket.data, socket, err);
+    const self = socket.data;
+    if (self) onHandleClose(self, socket, err);
   },
   // Node's onnewsessionclient: emit once the handshake is verified. Until then, the handshake handler emits it.
   session(socket: $Node.SocketHandle<$Node.TLSSocket>, session) {
@@ -1830,7 +1832,7 @@ const OnreadHandlers = {
   ...SocketHandlers,
   data(socket, buffer) {
     const self = socket.data;
-    if (isOfEarlierConnection(self, socket)) return;
+    if (!self || isOfEarlierConnection(self, socket)) return;
     self._unrefTimer();
     if (socket[kAdoptedTLSRaw]) return;
     const tail = self[kOnreadTail];

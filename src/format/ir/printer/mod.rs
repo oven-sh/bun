@@ -879,8 +879,11 @@ impl<'d> Printer<'d> {
             return self.print_variant(most_expanded, PrintMode::Expanded);
         }
         let before = &self.buffers.before_try;
-        let (unstable, holders, expanded_group) =
-            (before.unstable.len(), before.holders.len(), self.expanded_group);
+        let (unstable, holders, expanded_group) = (
+            before.unstable.len(),
+            before.holders.len(),
+            self.expanded_group,
+        );
         if self.try_expanded(flattest)? {
             return Ok(());
         }

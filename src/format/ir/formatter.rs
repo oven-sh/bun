@@ -279,9 +279,10 @@ impl Storage {
                             false
                         }
                     },
-                    FormatElement::BestFitting(it) => {
-                        self.variants(*it).first().is_some_and(|&first| self.stays_expanded(first))
-                    }
+                    FormatElement::BestFitting(it) => self
+                        .variants(*it)
+                        .first()
+                        .is_some_and(|&first| self.stays_expanded(first)),
                     _ => false,
                 };
                 if stays_expanded {

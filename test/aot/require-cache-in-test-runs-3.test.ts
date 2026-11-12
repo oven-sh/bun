@@ -64,6 +64,9 @@ async function expectCompiledToRunAsPlain(
   }
   const plain = await seen();
   expect(plain.exitCode).toBe(0);
+  // An AOT build by a debug build of Bun dies in about half of its runs of a race between the threads of the engine
+  // (oven-sh/bun#48169), and a test run has no switch for one thread: there the plain run alone is held.
+  if (isDebug) return;
   for (const words of ["TestRunLayers:0"]) expect(await seen(words, "--aot")).toEqual(plain);
 }
 
@@ -285,8 +288,7 @@ const ringOfESModules = gap(
     ],
   ] as const,
 );
-// A debug build of Bun dies now and then of a race between the threads of the engine (oven-sh/bun#48169), and a test run has no
-// switch for one thread: such a build is left out of this row.
+// The row owes a compiled run, which a debug build of Bun cannot give (expectCompiledToRunAsPlain): it is left out there.
 eachRow(isDebug ? [] : [ringOfESModules])(
   "ES modules that require each other in a ring are listed while the second runs",
   async (files, owed) => {

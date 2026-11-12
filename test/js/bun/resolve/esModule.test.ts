@@ -31,17 +31,18 @@ test("require of self sets __esModule", () => {
   expect(Object.getOwnPropertyNames(Self)).toBeEmpty();
 });
 
-// The namespace objects of a realm share a Structure and a prototype, and the prototype has an `__esModule` accessor: the
-// marker that require() sets. A property cache that keys what a lookup finds on the prototype on that Structure would also
-// answer for a namespace object that has the property itself. Each test runs a site on a namespace object without an
-// `__esModule` export until the JIT has compiled it, and then uses the site on an object that answers the lookup itself.
+// Namespace objects share a Structure and a prototype. A cache of a hit on the prototype would answer for all of them.
 describe.concurrent("a site that the JIT compiled on a namespace without an `__esModule` export", () => {
   const files = {
     "package.json": JSON.stringify({ type: "module" }),
     "warm.mjs": `
+      import { numberOfDFGCompiles } from "bun:jsc";
+
       // Calls \`fn\` often enough that the JIT compiles it and its property caches form.
       export function warm(fn, ...args) {
         for (let i = 0; i < 2000; i++) fn(...args);
+        // With the JIT off this count is not zero for a function that has run.
+        if (!numberOfDFGCompiles(fn)) throw new Error("the JIT did not compile the site");
       }
     `,
     "plain.mjs": `export const x = 1;`,
@@ -58,12 +59,11 @@ describe.concurrent("a site that the JIT compiled on a namespace without an `__e
     "exports-y.mjs": `export const y = "export";`,
   };
 
-  // With BUN_JSC_useConcurrentJIT=0 the JIT compiles a function on the thread that runs it, after a fixed number of calls.
-  // BUN_JSC_useJIT=1 keeps the JIT on when the environment of the test run turns it off: `bunEnv` hands that on.
   async function run(cmd: string[], fixture: Record<string, string>, env: Record<string, string> = {}) {
     using dir = tempDir("esmodule-jit", { ...files, ...fixture });
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...cmd],
+      // The JIT is on whatever the test run's environment says, and compiles a function after a fixed number of calls.
       env: { ...bunEnv, BUN_JSC_useJIT: "1", BUN_JSC_useConcurrentJIT: "0", ...env },
       cwd: String(dir),
       stdout: "pipe",
@@ -110,7 +110,7 @@ describe.concurrent("a site that the JIT compiled on a namespace without an `__e
             reflectGet: [reflectGet(exportsTrue), reflectGet(exportsFalse)],
             reflectGetWithReceiver: [reflectGetWithReceiver(exportsTrue), reflectGetWithReceiver(exportsFalse)],
             interopRequireDefault: interopRequireDefault(exportsTrue) === exportsTrue,
-            ofOtherFile: [ofOtherFile(commonJS), ofOtherFile(jsonArray) === jsonArray.__esModule],
+            ofOtherFile: [ofOtherFile(commonJS), ofOtherFile(jsonArray)],
           }),
         );
       `,
@@ -342,6 +342,7 @@ describe.concurrent("a site that the JIT compiled on a namespace without an `__e
   test("an object that inherits from a namespace reads the exports of that namespace", async () => {
     const { stdout, stderr, exitCode } = await run(["entry.mjs"], {
       "entry.mjs": `
+        import { jscDescribe } from "bun:jsc";
         import * as plain from "./plain.mjs";
         import * as exportsY from "./exports-y.mjs";
         import { warm } from "./warm.mjs";
@@ -361,18 +362,25 @@ describe.concurrent("a site that the JIT compiled on a namespace without an `__e
         }
         const overPlain = Object.setPrototypeOf(makeObject(), plain);
         const overExportsY = Object.setPrototypeOf(makeObject(), exportsY);
+        const structureOf = object => /StructureID: (\\d+)/.exec(jscDescribe(object))[1];
 
         const read = object => object.y;
         const has = object => "y" in object;
         warm(read, overPlain);
         warm(has, overPlain);
 
-        console.log(JSON.stringify({ read: String(read(overExportsY)), has: has(overExportsY) }));
+        console.log(
+          JSON.stringify({
+            oneStructure: structureOf(overPlain) === structureOf(overExportsY),
+            read: String(read(overExportsY)),
+            has: has(overExportsY),
+          }),
+        );
       `,
     });
 
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ read: "export", has: true });
+    expect(JSON.parse(stdout)).toEqual({ oneStructure: true, read: "export", has: true });
     expect(exitCode).toBe(0);
   });
 
@@ -388,19 +396,18 @@ describe.concurrent("a site that the JIT compiled on a namespace without an `__e
           import * as exportsY from "./exports-y.mjs";
           import { warm } from "./warm.mjs";
 
-          const prototype = Object.getPrototypeOf(plain);
-          if (prototype) prototype.y = "prototype";
+          Object.getPrototypeOf(plain).y = "prototype";
 
           const read = ns => ns.y;
           warm(read, plain);
-          console.log(read(exportsY));
+          console.log(JSON.stringify([read(plain), read(exportsY)]));
         `,
       },
       env,
     );
 
     expect(stderr).toBe("");
-    expect(stdout).toBe("export\n");
+    expect(JSON.parse(stdout)).toEqual(["prototype", "export"]);
     expect(exitCode).toBe(0);
   });
 

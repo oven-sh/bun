@@ -1,0 +1,29 @@
+# `sum(a, 1, 2)`, called in a loop, for a callee that adds its arguments up in a for-of: in the copy each step finds its position a known integer and the state holds the list, so the step is the argument.
+# No list is made, nothing is read out of one, no loop of the callee is left, and the sum is a sum of integers.
+# OPTIONS: check=Validate
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: frame 1 callee=f1
+# CHECK-NOT: NewArray
+# CHECK-NOT: GetArrayLength
+# CHECK-NOT: GetArrayElement
+# CHECK: = Add {{*}} form=Integers
+# Outside a loop no copy is made for the turns of a for-of: a callee that is too large to be copied for its size is called.
+# RUN(ONCE): walk f4 mechanisms=all
+# ONCE-LABEL: code f4:Body
+# ONCE-NOT: callee=f2
+# A for-of of the unit's own body over a list in sight, outside of loops, stays a loop: laid out turn by turn it was a tenth more code on a program of 100,000 lines.
+# RUN(OWN): walk f5 mechanisms=all
+# OWN-LABEL: code f5:Body
+# OWN: LoopHint
+# -- source: turns-of-a-for-of-over-the-list-of-a-call-are-written-out-from-source.ts
+# declare function sink(...values: unknown[]): void;
+# function sum(...values: number[]): number { let s = 0; for (const value of values) s += value; return s; }
+# function run(n: number): number { let total = 0; for (let i = 0; i < n; i++) total += sum(i & 3, 1, 2); return total; }
+# function gather(to: number[], ...values: number[]): number[] { for (const value of values) { if (value > 0) to.push(value); else if (value < -10) to.push(-value); else to.unshift(value); } return to; }
+# function once(to: number[], a: number): number[] { return gather(to, a); }
+# class Square { side: number; constructor(side: number) { this.side = side; } area(): number { return this.side * this.side; } }
+# class Disc { radius: number; constructor(radius: number) { this.radius = radius; } area(): number { return 3 * this.radius * this.radius; } }
+# function describe(size: number): number { const shapes = [new Square(size), new Disc(size + 1)]; let total = 0; for (const shape of shapes) total += shape.area(); return total; }
+# sink(run, once, describe);
+# -- end of source

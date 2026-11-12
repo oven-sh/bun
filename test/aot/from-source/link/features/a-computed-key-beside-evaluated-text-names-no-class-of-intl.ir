@@ -1,0 +1,13 @@
+# text is evaluated and a member is called under a key that nobody knows: whatever that finds is in reach, and nothing of it is named
+# -- source: a-computed-key-beside-evaluated-text-names-no-class-of-intl.ts
+# declare const input: any;
+# declare const table: any;
+# new Function(input)();
+# table[input]();
+# -- end of source
+# RUN: features
+# CHECK: by IntlCollator unnamed
+# RUN(NEVER): features
+# NEVER-NOT: by Intl{{*}} named
+# NEVER-NOT: by Temporal{{*}} named
+# NEVER-NOT: by WebAssembly{{*}} named

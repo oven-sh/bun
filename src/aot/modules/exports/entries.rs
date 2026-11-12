@@ -11,7 +11,7 @@ use crate::modules::{BindInput, ExportStatement, ModuleRef, find_library_files};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingKind, Bound, Decl, SymbolId};
 use bun_sema::file_analysis::FileAnalysis;
-use bun_sema::hir::{self, ExportSpecId, ImportId, StmtId};
+use bun_sema::hir::{self, ExportSpecId, Flags, FnBody, ImportId, StmtId};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{FileId, FileRole, Files, Sym};
 
@@ -32,32 +32,27 @@ pub(in crate::modules) enum ExportEntry {
     },
 }
 
+#[derive(Clone)]
 pub(in crate::modules) struct ExportEntries {
     pub file: FileId,
     pub own: Vec<(Atom, ExportEntry)>,
     pub stars: Vec<u32>,
-    /// The names that the file imports, or exports again, of CommonJS files.
     pub commonjs_imports: Vec<WrittenImport>,
-    /// `BindInput::typescript_drops_absent_exports`, of a TypeScript module: a link leaves out what the module exports of another module that lacks the name.
     pub drops_absent_exports: bool,
 }
 
-/// A name of a CommonJS file, where an ES module writes it.
 #[derive(Copy, Clone, Debug)]
 pub(in crate::modules) struct WrittenImport {
     pub imported: CommonJsImport,
     pub written: WrittenPart,
-    /// The module exports the name.
     pub asked_by: Option<ExportStatement>,
-    /// `ExportEntries::drops_absent_exports` of a module that exports the name.
     pub is_dropped_if_absent: bool,
 }
 
+#[derive(Clone)]
 pub(in crate::modules) struct CollectedEntries {
-    /// Of the modules that have an export table, in the order of the files.
     pub tables: Vec<ExportEntries>,
     pub commonjs_imports: Vec<WrittenImport>,
-    /// The CommonJS files that `import()` or `export *` name.
     pub commonjs_namespace_loads: Vec<FileId>,
 }
 
@@ -125,7 +120,8 @@ pub(in crate::modules) fn collect_export_entries(
         };
         module.own = collector.collect_own_entries();
         module.stars = collector.collect_stars();
-        module.commonjs_imports = collector.collect_commonjs_imports(&module.own);
+        let has_stars = !module.stars.is_empty();
+        module.commonjs_imports = collector.collect_commonjs_imports(&module.own, has_stars);
     });
     let tables = entries.iter_mut();
     let commonjs_imports = tables.flat_map(|module| module.commonjs_imports.drain(..));
@@ -153,7 +149,6 @@ struct EntryCollector<'a, 's> {
 }
 
 impl EntryCollector<'_, '_> {
-    /// A CommonJS file, or an ES module, which may hand on the names of one with `export *`.
     fn exporting_file_at(&self, site: usize) -> Option<FileId> {
         match &self.scan.sites[site] {
             ScannedSite::Module(module) => {
@@ -195,7 +190,11 @@ impl EntryCollector<'_, '_> {
         }
     }
 
-    fn collect_commonjs_imports(&self, own: &[(Atom, ExportEntry)]) -> Vec<WrittenImport> {
+    fn collect_commonjs_imports(
+        &self,
+        own: &[(Atom, ExportEntry)],
+        has_stars: bool,
+    ) -> Vec<WrittenImport> {
         let mut imports = Vec::new();
         for index in 0..self.hir.imports.len() as u32 {
             self.add_names_of_import(ImportId(index), &mut imports);
@@ -217,7 +216,6 @@ impl EntryCollector<'_, '_> {
                 _ => None,
             };
             let Some(written) = written else {
-                // `import { name } from "m"; export { name }`.
                 let mut of_statements = imports.iter_mut();
                 let import = of_statements.find(|import| {
                     import.written.order.site == site
@@ -239,7 +237,7 @@ impl EntryCollector<'_, '_> {
                 },
                 written,
                 asked_by,
-                is_dropped_if_absent: self.drops_absent_exports,
+                is_dropped_if_absent: self.drops_absent_exports || has_stars,
             }));
         }
         imports
@@ -274,6 +272,7 @@ impl EntryCollector<'_, '_> {
                 let site = self.find_value_site(ImportSiteKind::ExportStar(statement), symbol)?;
                 Some(ExportEntry::Namespace { site })
             }
+            Decl::Enum(_) | Decl::Module(_) if !self.is_first_of_its_name(declaration) => None,
             Decl::Var(_)
             | Decl::Fn(_)
             | Decl::Class(_)
@@ -281,11 +280,36 @@ impl EntryCollector<'_, '_> {
             | Decl::Module(_)
             | Decl::ImportEquals(_)
             | Decl::ExportExpr(_) => {
-                let local = self.bound.declared_symbol(declaration);
-                let has_value = local.is_some() && self.bound.has_runtime_value(local);
-                has_value.then_some(ExportEntry::Local(local))
+                let local = self.bound.exported_variable(declaration)?;
+                Some(ExportEntry::Local(local))
             }
             _ => None,
+        }
+    }
+
+    fn is_first_of_its_name(&self, declaration: Decl) -> bool {
+        let bound = self.bound;
+        let binding = bound.declared_symbol(declaration);
+        let Some(scope) = bound.symbol_scope(binding).some() else {
+            return true;
+        };
+        let locals = bound.scopes[scope.idx()].locals;
+        let local = bound.lookup(locals, bound.symbol(binding).name);
+        let declarations = &bound.symbol(local.unwrap_or(binding)).decls;
+        let first = declarations.iter().find(|&&it| self.produces_code(it));
+        first.is_none_or(|&first| first == declaration)
+    }
+
+    fn produces_code(&self, declaration: Decl) -> bool {
+        let is_ambient = |flags: Flags| flags.contains(Flags::AMBIENT);
+        match declaration {
+            Decl::Class(it) => !is_ambient(self.hir[it].flags),
+            Decl::Fn(it) => {
+                !is_ambient(self.hir[it].flags) && !matches!(self.hir[it].body, FnBody::None)
+            }
+            Decl::Enum(it) => !is_ambient(self.hir[it].flags),
+            Decl::Module(it) => self.bound.makes_namespace_object(self.hir, it),
+            _ => false,
         }
     }
 
@@ -313,7 +337,6 @@ impl EntryCollector<'_, '_> {
     }
 
     fn find_import_declaration(&self, local: SymbolId) -> Option<(ImportId, ImportedName)> {
-        // `/** @import { f } from "./types" */ function f() {}`: the name has both declarations, and is the function.
         if self.bound.binding_kind(local) != BindingKind::Import {
             return None;
         }
@@ -368,8 +391,12 @@ impl EntryCollector<'_, '_> {
 
 #[cfg(test)]
 mod tests {
+    use super::collect_export_entries;
     use crate::modules::ExportBinding;
+    use crate::modules::module_set::collect_modules;
+    use crate::modules::requests::scan_files;
     use crate::modules::testing::{file_named, with_graph};
+    use bstr::BStr;
 
     fn assert_exported_variables(files: &[(&str, &str)], expected: &[(&str, &str)]) {
         with_graph(files, |graph, input| {
@@ -381,6 +408,77 @@ mod tests {
                     panic!("{exporter}: {:?}", export.binding);
                 };
                 assert_eq!(symbol.file, file_named(input, declaring_file), "{exporter}");
+            }
+        });
+    }
+
+    #[test]
+    fn export_behind_the_first_declaration_is_lost() {
+        let exported = "export namespace K { export const a = 1 }";
+        let local = "namespace K { export const b = 1 }";
+        let cases = [
+            ("class.ts", format!("class K {{}} {exported}"), "look"),
+            (
+                "function.ts",
+                format!("function K() {{}} {exported}"),
+                "look",
+            ),
+            ("enum.ts", format!("enum K {{ b }} {exported}"), "look"),
+            (
+                "enums.ts",
+                "enum K { b } export enum K { c = 1 }".into(),
+                "look",
+            ),
+            ("namespace.ts", format!("{local} {exported}"), "look"),
+            ("three.ts", format!("{local} {exported} {local}"), "look"),
+            (
+                "default.ts",
+                format!("export default class K {{}} {exported}"),
+                "default look",
+            ),
+            (
+                "types.ts",
+                format!("interface K {{}} namespace K {{ type T = 1 }} {exported}"),
+                "K look",
+            ),
+            ("first.ts", format!("{exported} {local}"), "K look"),
+            (
+                "class-first.ts",
+                format!("export class K {{}} {local}"),
+                "K look",
+            ),
+            (
+                "both.ts",
+                format!("export enum K {{ b }} {exported}"),
+                "K look",
+            ),
+        ];
+        let texts = cases
+            .each_ref()
+            .map(|(_, text, _)| format!("{text} export const look = 1"));
+        let imports = cases
+            .each_ref()
+            .map(|(name, ..)| ["import './", name, "';"].concat())
+            .concat();
+        let mut program = vec![("main.ts", imports.as_str())];
+        program.extend(
+            cases
+                .iter()
+                .zip(&texts)
+                .map(|((name, ..), text)| (*name, text.as_str())),
+        );
+        with_graph(&program, |graph, input| {
+            for (file, _, names) in &cases {
+                let exports = graph.exports(file_named(input, file)).iter();
+                let mut found: Vec<&[u8]> = exports
+                    .map(|export| input.files.atoms.bytes(export.name))
+                    .collect();
+                found.sort_unstable();
+                assert_eq!(
+                    BStr::new(&found.join(&b" "[..])),
+                    BStr::new(names),
+                    "{file}"
+                );
             }
         });
     }
@@ -414,5 +512,33 @@ mod tests {
             ),
         ];
         assert_exported_variables(&files, &[("merged.ts", "values.ts")]);
+    }
+
+    #[test]
+    fn import_calls_and_stars_load_namespaces_of_commonjs_files() {
+        let main = "import { named } from './named.cjs'; export * from './star.cjs';\n\
+                    export * as all from './star_as.cjs'; import('./called.cjs');\n\
+                    import('./module.js'); console.log(named);\n\
+                    export const load = (name) => import(`./pages/${name}.cjs`);";
+        let files = [
+            ("main.js", main),
+            ("named.cjs", "exports.named = 1"),
+            ("star.cjs", "exports.a = 1"),
+            ("star_as.cjs", "exports.b = 1"),
+            ("called.cjs", "exports.c = 1"),
+            ("module.js", "export {}"),
+            ("pages/home.cjs", "exports.d = 1"),
+        ];
+        with_graph(&files, |_, input| {
+            let scans = scan_files(input);
+            let modules = collect_modules(input, &scans);
+            let entries = collect_export_entries(input, &scans, &modules);
+            let mut loads = entries.commonjs_namespace_loads;
+            loads.sort_unstable();
+            let names = ["star.cjs", "star_as.cjs", "called.cjs", "pages/home.cjs"];
+            let mut expected = names.map(|name| file_named(input, name));
+            expected.sort_unstable();
+            assert_eq!(loads, expected);
+        });
     }
 }

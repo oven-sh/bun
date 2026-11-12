@@ -1,0 +1,174 @@
+#### static-fields-in-order.js
+class A {
+  static first = 1;
+  static make() {
+    return new A();
+  }
+  static second = A.first + 1;
+  static third;
+}
+console.log(A.first, A.second, A.third, A.make() instanceof A);
+console.log(Object.keys(A).join());
+console.log(Reflect.ownKeys(A).filter(key => !["length", "name", "prototype"].includes(key)).join());
+console.log(JSON.stringify(Object.getOwnPropertyDescriptor(A, "second")));
+#### static-fields-in-order.js prints
+1 2 undefined true
+first,second,third
+make,first,second,third
+{"value":2,"writable":true,"enumerable":true,"configurable":true}
+#### static-fields-stored-and-inherited.js
+class Base {
+  static count = 0;
+  static bump() {
+    return ++Base.count;
+  }
+}
+class Heir extends Base {
+  static own = "heir";
+}
+Base.bump();
+Base.bump();
+console.log(Base.count, Heir.count, Object.hasOwn(Heir, "count"), "count" in Heir);
+Heir.count = 10;
+console.log(Base.count, Heir.count, Object.hasOwn(Heir, "count"));
+console.log(Object.keys(Base).join(), Object.keys(Heir).join());
+#### static-fields-stored-and-inherited.js prints
+2 2 false true
+2 10 true
+count own,count
+#### static-fields-around-a-look.js
+class A {
+  static a = 1;
+  static seen = Object.keys(A).join();
+  static b = 2;
+}
+console.log(A.seen, Object.keys(A).join());
+#### static-fields-around-a-look.js prints
+a a,seen,b
+#### static-fields-redefined-and-deleted.js
+class A {
+  static kept = 1;
+  static hidden = 2;
+  static gone = 3;
+  static 0 = "element";
+}
+Object.defineProperty(A, "kept", { value: 10, writable: true, enumerable: true, configurable: true });
+console.log(A.kept, Object.keys(A).join());
+Object.defineProperty(A, "hidden", { enumerable: false });
+console.log(delete A.gone, A.gone, A.hidden, A[0], Object.keys(A).join());
+#### static-fields-redefined-and-deleted.js prints
+10 0,kept,hidden,gone
+true undefined 2 element 0,kept
+#### static-fields-named-like-those-of-a-function.js
+class A {
+  static name = "renamed";
+  static length = 7;
+  static z = 1;
+}
+console.log(A.name, A.length, Object.keys(A).sort().join());
+#### static-fields-named-like-those-of-a-function.js prints
+renamed 7 length,name,z
+#### static-field-that-native-code-puts-again.js
+class A {
+  static stack = "mine";
+  static other = 1;
+}
+Error.captureStackTrace(A);
+console.log(A.stack === "mine", A.other);
+#### static-field-that-native-code-puts-again.js prints
+false 1
+#### parents-that-only-the-evaluation-knows.js
+function mixin(Base) {
+  return class extends Base {
+    mixed() {
+      return "mixed " + this.base();
+    }
+  };
+}
+class Root {
+  base() {
+    return "root";
+  }
+}
+class Other {
+  base() {
+    return "other";
+  }
+}
+class Leaf extends mixin(Root) {
+  leaf() {
+    return this.mixed();
+  }
+}
+class Second extends mixin(Other) {
+  leaf() {
+    return this.mixed();
+  }
+}
+console.log(new Leaf().leaf(), new Second().leaf());
+const Parent = process.argv.length > 100 ? Root : Other;
+class Chosen extends Parent {
+  chosen() {
+    return this.base();
+  }
+}
+console.log(new Chosen().chosen(), Object.getPrototypeOf(Chosen) === Other);
+class Failure extends Error {
+  kind() {
+    return "failure";
+  }
+}
+console.log(new Failure("x").kind(), new Failure("x") instanceof Error);
+#### parents-that-only-the-evaluation-knows.js prints
+mixed root mixed other
+other true
+failure true
+#### parent-other-than-written.ts
+class Shape {
+  area() {
+    return 0;
+  }
+  static sides() {
+    return 0;
+  }
+}
+class Square {
+  area() {
+    return 4;
+  }
+  static sides() {
+    return 4;
+  }
+}
+const table: Record<string, any> = { Shape, Square };
+const Base: typeof Shape = table[Date.now() < 0 ? "Shape" : "Square"];
+class Circle extends Base {
+  twice() {
+    return this.area() * 2;
+  }
+}
+class Ring extends Circle {}
+function area(circle: Circle) {
+  return circle.area();
+}
+console.log(new Circle().twice(), area(new Circle()), area(new Ring()), Circle.sides(), Ring.sides());
+console.log(Object.getPrototypeOf(Circle) === Square);
+#### parent-other-than-written.ts prints
+8 4 4 4 4
+true
+#### parent-laid-under-a-class-later.js
+class Above {
+  found() {
+    return "above";
+  }
+}
+class Below {}
+function look(object) {
+  return typeof object.found;
+}
+console.log(look(new Below()), look(new Below()));
+Object.setPrototypeOf(Below.prototype, Above.prototype);
+console.log(look(new Below()), new Below().found());
+#### parent-laid-under-a-class-later.js prints
+undefined undefined
+function above

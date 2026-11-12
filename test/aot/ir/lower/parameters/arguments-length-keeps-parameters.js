@@ -1,12 +1,12 @@
 // RUN: lower
-// CHECK-LABEL: function {{*}}name="f"{{*}}flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] length=2 {{*}}parameters=[{type=anything}, {type=anything}] results=
-// CHECK: b0([[count]]: {{*}}, [[a]]: anything, [[b]]: anything, [[rest]]: {{*}}):
-// CHECK: = CreateUnmappedArguments [[count]], [[rest]], [[a]], [[b]]
+// CHECK-LABEL: function {{*}}name="f"{{*}}flags=[HasArgumentCount, HasExplicitName] length=2 {{*}}parameters=[{type=anything}, {type=anything}] results=
+// CHECK: b0([[count]]: {{*}}, [[a]]: anything, [[b]]: anything):
+// CHECK: = StrictEq [[count]],
 // CHECK: Return [[a]]
 // CHECK: Return [[b]]
 
 // RUN(ONE): lower
-// ONE-COUNT-1: = CreateUnmappedArguments
+// ONE-NOT: HasHiddenRest
 // ONE-NOT: = Create
 // ONE-NOT: MappedArgument
 

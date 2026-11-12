@@ -1,0 +1,30 @@
+# -- source: main.cjs
+# "use strict";
+# function add(a, b) { return (a + b) | 0; }
+# const names = {};
+# Object.defineProperty(names, "add", { enumerable: true, get: function () { return add; } });
+# function called(t) { let s = 0; for (let i = 0; i < t + 3; i++) s = (s + names.add(i, t)) | 0; return s; }
+# print(called(1), called(2));
+# -- end of source
+# f1 = add, f2 = called, f3 = get
+# What bundlers write for an export: a getter by a descriptor written at the site, on a record. TWO THINGS WERE MISSING.
+# Link followed the object into the getter and noted the definition, but what the getter returns came to no node: `names.add(i, t)` called nobody it knew and the record left with the call.
+# It now flows into the field as the answer of a literal's getter does, BESIDE every note of a definition in sight: no leave is taken away.
+# And the slot was planned as a literal's accessor (enumerable, configurable): this descriptor creates one that cannot be configured: the run time asks for equal attributes before it lays a getter into a slot,
+# so the field left its slot at the definition and every typed read failed at IsSlotFilled. A listed field that accessors alone fill is planned in the ONE form that the written descriptors create.
+# RUN(FIELD): link fields mechanisms=all
+# FIELD: field L1.0 "add" {{*}}filled-by-accessors-alone form=not-configurable.accessor.
+# RUN(HELD): link held calls mechanisms=all
+# HELD: call f2 {{*}}-> f1
+# RUN(CALLED): walk f2 mechanisms=all
+# CALLED: callee=f1
+# CALLED: = IsSlotFilled {{*}}key="add"
+# Since a-getter-that-a-written-descriptor-lays-for-good-is-proven-once-it-is-laid.ir the half in the slot is proven once it is laid: the walk looks whether the slot is filled and tests the getter no more.
+# RUN(GETTER): walk f2 mechanisms=all
+# GETTER-NOT: testedType=f3
+# RUN(ANSWER): run-in-shell
+# ANSWER: 10 20
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 10 20
+# CHECKED-NEXT: exited with 0

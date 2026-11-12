@@ -1,7 +1,7 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::decorator_metadata::{
     DesignKey, DesignValue, Metadata, MetadataCollector, MetadataGlobal, MetadataReference,
-    SerializedMetadata, entity_names, find_metadata_binding,
+    SerializedMetadata, entity_names, find_metadata_binding, find_metadata_reference,
 };
 use bun_sema::bind::{Binding, SymbolId};
 use bun_sema::hir::{ClassId, FnId, MemberId, NameId, Span, TypeNodeId};
@@ -17,6 +17,7 @@ use crate::lower::scope::BindingForm;
 struct MetadataRoot {
     binding: Binding,
     name: Atom,
+    member: Atom,
     global: Option<MetadataGlobal>,
 }
 
@@ -147,6 +148,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn read_metadata_root(&mut self, root: MetadataRoot, is_for_typeof: bool) -> ValueId {
+        let value = self.read_metadata_binding(root, is_for_typeof);
+        if root.member.is_none() {
+            return value;
+        }
+        let key = self.file.name_key(root.member);
+        self.emit_get(value, PropertyName::Constant(key))
+    }
+
+    fn read_metadata_binding(&mut self, root: MetadataRoot, is_for_typeof: bool) -> ValueId {
         match root.binding {
             Binding::Free => {
                 let value = self.emit_free_name_get(root.name, is_for_typeof);
@@ -175,14 +185,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn find_type_name_root(&self, node: TypeNodeId) -> Option<MetadataRoot> {
         let hir = self.file.hir;
         let references = self.file.bound.runtime.implicit_references();
-        let binding = find_metadata_binding(references, MetadataReference::TypeName(node));
+        let found = find_metadata_reference(references, MetadataReference::TypeName(node));
         debug_assert!(
-            binding.is_some(),
+            found.is_some(),
             "the binder records the binding of every visited name"
         );
+        let found = found?;
         Some(MetadataRoot {
-            binding: binding?,
+            binding: found.binding,
             name: hir[entity_names(hir, node).at(0)].text,
+            member: found.member,
             global: None,
         })
     }
@@ -193,6 +205,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         MetadataRoot {
             binding: find_metadata_binding(references, reference).unwrap_or(Binding::Free),
             name: global.name(),
+            member: Atom::NONE,
             global: Some(global),
         }
     }

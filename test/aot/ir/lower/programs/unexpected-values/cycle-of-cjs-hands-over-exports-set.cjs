@@ -55,43 +55,39 @@ first.uses("after the exports object was replaced,");
 // CHECK: function {{*}}
 // CHECK: module=[[m_0]] kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = NewObject layout=[[L_1]]
 // CHECK-NEXT: v1 = FinishObject v0
 // CHECK-NEXT: PutModuleVariable v1 variable=[[g_2]]
 // CHECK-NEXT: EvaluateModule module=[[m_3]] referrer=[[m_0]] [isBare, isCallOfRequire]
-// CHECK-NEXT: v4 = Boolean boolean=true
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_4]]
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: v8 = String string="after both modules ran,"
-// CHECK-NEXT: v9 = Call v6, v7, v8 calleeName="first.uses"
-// CHECK-NEXT: v10 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|Array flags=[IsExpected]}
-// CHECK-NEXT: v12 = IteratorOpen v11
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2():
+// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_4]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_5]] flags=[IsExpected]}
+// CHECK-NEXT: v6 = PropGet v5 key="uses"
+// CHECK-NEXT: v7 = String string="after both modules ran,"
+// CHECK-NEXT: v8 = Call v6, v5, v7 calleeKey="uses" calleeName="first.uses"
+// CHECK-NEXT: v9 = PropGet v5 key="report"
+// CHECK-NEXT: v10 = IteratorOpen v9
+// CHECK-NEXT: Jump -> next b1()
+// CHECK-NEXT: b1():
 // CHECK-NEXT: LoopHint
-// CHECK-NEXT: v14 = IteratorResume v12
-// CHECK-NEXT: v15 = ResultAt v14
-// CHECK-NEXT: v16 = ResultAt v14 index=1
-// CHECK-NEXT: Branch v15 -> taken b3(), notTaken b4()
+// CHECK-NEXT: v12 = IteratorResume v10
+// CHECK-NEXT: v13 = ResultAt v12
+// CHECK-NEXT: v14 = ResultAt v12 index=1
+// CHECK-NEXT: Branch v13 -> taken b2(), notTaken b3()
+// CHECK-NEXT: b2():
+// CHECK-NEXT: v15 = Undefined
+// CHECK-NEXT: Return v15
 // CHECK-NEXT: b3():
-// CHECK-NEXT: v17 = Undefined
-// CHECK-NEXT: Return v17
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5() handler=b6():
-// CHECK-NEXT: v18 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v19 = PropGet v18 key="console" [isFreeName]
-// CHECK-NEXT: v20 = Convert v19 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v21 = PropGet v20 key="log"
-// CHECK-NEXT: v22 = Convert v21 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v23 = Call v22, v20, v16 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b6() role=IterationCleanup subject=v12:
-// CHECK-NEXT: v24 = CatchException
-// CHECK-NEXT: IteratorClose v12 completion=Throw
-// CHECK-NEXT: Rethrow v24
+// CHECK-NEXT: Jump -> next b4()
+// CHECK-NEXT: b4() handler=b5():
+// CHECK-NEXT: v16 = Builtin builtin=GlobalThis
+// CHECK-NEXT: v17 = PropGet v16 key="console" [isFreeName]
+// CHECK-NEXT: v18 = Convert v17 declared={type=builtin(Console) flags=[IsExpected]}
+// CHECK-NEXT: v19 = PropGet v18 key="log"
+// CHECK-NEXT: v20 = Convert v19 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+// CHECK-NEXT: v21 = Call v20, v18, v14 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: Jump -> next b1()
+// CHECK-NEXT: b5() role=IterationCleanup subject=v10:
+// CHECK-NEXT: v22 = CatchException
+// CHECK-NEXT: IteratorClose v10 completion=Throw
+// CHECK-NEXT: Rethrow v22
 // CHECK-NEXT: }

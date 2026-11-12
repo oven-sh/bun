@@ -1,4 +1,5 @@
 // RUN: lower
+// OPTIONS: builtin-modules
 // CHECK-LABEL: function {{*}}name="noPendingAwait"
 // CHECK: builtin=CompilerHelpersGetDisposeMethod
 // CHECK-NEXT: = Call {{*}}, -, [[second]]
@@ -8,8 +9,10 @@
 
 declare function resource(): Disposable;
 declare function asyncResource(): AsyncDisposable;
+declare function use(value: unknown): void;
 
 export async function noPendingAwait() {
   await using a = asyncResource();
   using b = resource();
+  use(0);
 }

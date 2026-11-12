@@ -97,14 +97,14 @@ for (let round = 0; rounds === 0 || round < rounds; round++) {
         writeFileSync(join(folder, others[other]), others[other + 1], "latin1");
       }
       const command = [bun, "build", "--compile", "--aot", ...flags, "./program." + extension, "--outfile", "program"];
-      const built = await spawn([...command, "--aot-report", "report.json"], folder, seconds);
-      try {
-        const { statistics } = JSON.parse(readFileSync(join(folder, "report.json"), "utf8"));
-        for (const [counter, value] of Object.entries<number>(statistics))
-          if (value > (largestSeen.get(counter) ?? 0)) largestSeen.set(counter, value);
-        mkdirSync(finds, { recursive: true });
-        writeFileSync(join(finds, `counters-${process.pid}.json`), JSON.stringify(Object.fromEntries(largestSeen)));
-      } catch {}
+      const built = await spawn([...command, "--explain=statistics"], folder, seconds);
+      const counters = [...built.stderr.matchAll(/^([A-Z][A-Za-z0-9]*) (\d+)$/gm)];
+      if (built.end === "0" && counters.length === 0)
+        throw new Error(`the build printed no counters under --explain=statistics:\n${built.stderr.slice(-4000)}`);
+      for (const [, counter, value] of counters)
+        if (Number(value) > (largestSeen.get(counter) ?? 0)) largestSeen.set(counter, Number(value));
+      mkdirSync(finds, { recursive: true });
+      writeFileSync(join(finds, `counters-${process.pid}.json`), JSON.stringify(Object.fromEntries(largestSeen)));
       const name = `${kind}-${extension}-${size}`;
       const head = `${kind} .${extension} size ${size}, seed ${seed}, ${text.length} bytes\n${command.join(" ")}\n`;
       const grew = before ? built.took / before.took : 0;

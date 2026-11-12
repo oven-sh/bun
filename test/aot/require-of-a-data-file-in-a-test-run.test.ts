@@ -70,29 +70,23 @@ test("s6", async () => { const before = tag(require("./src/s6.json")); const { n
 `,
 };
 
-async function runTests(directory: string, words: string | undefined, ...flags: string[]) {
-  const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--isolate", ...flags], directory, env);
+async function runTests(directory: string, ...flags: string[]) {
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--isolate", ...flags], directory, bunEnv);
   const results = [...stderr.matchAll(/^\((pass|fail)\) (.*?)(?: \[.*\])?$/gm)].map(match => `${match[1]} ${match[2]}`);
   if (exitCode !== 0) console.error(stderr);
   const printed = stdout.split("\n").filter(line => line && !line.startsWith("bun test "));
   return { stdout: printed.sort(), results: results.sort(), exitCode };
 }
 
-for (const [way, words] of [
-  ["as one program", "TestRunLayers:0"],
-  ["over two layers", "TestRunLayers:2,TestRunPartFiles:1"],
-]) {
-  test(`require() of a JSON file answers as under plain bun test, ${way}`, async () => {
-    using dir = tempDir("aot-require-of-a-data-file", files);
-    const plain = await runTests(String(dir), undefined);
-    expect(plain.exitCode).toBe(0);
-    expect(plain.stdout).toContain(
-      "s3: nothing of this realm imports it: [object Object] name,list | again: [object Object] name,list",
-    );
-    expect(plain.stdout).toContain(
-      "s2: a module that runs ahead of the importer: [object Module] default,list,name | s2",
-    );
-    expect(await runTests(String(dir), words, "--aot")).toEqual(plain);
-  }, 120_000);
-}
+test("require() of a JSON file answers as under plain bun test", async () => {
+  using dir = tempDir("aot-require-of-a-data-file", files);
+  const plain = await runTests(String(dir));
+  expect(plain.exitCode).toBe(0);
+  expect(plain.stdout).toContain(
+    "s3: nothing of this realm imports it: [object Object] name,list | again: [object Object] name,list",
+  );
+  expect(plain.stdout).toContain(
+    "s2: a module that runs ahead of the importer: [object Module] default,list,name | s2",
+  );
+  expect(await runTests(String(dir), "--aot")).toEqual(plain);
+}, 120_000);

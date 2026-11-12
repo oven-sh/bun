@@ -1,0 +1,16 @@
+# `total += points[i].x` in a loop, the contents of the list proven to be points or nothing: the read looked for a hole, and the test in full behind it asked "a cell?" and then for the layout: three branches a read.
+# What is no hole, no marker and no number is a cell: (word - 16) >> 48 == 0 asks both at once. The read leaves its hole to the test; where the test fails, and nothing goes on from there, the hole is made undefined.
+# LIBRARY: own
+# -- source: main.ts
+# class Point { x: number; constructor(x: number) { this.x = x; } }
+# function sum(points: Point[]): number { let total = 0; const size = points.length; for (let i = 0; i < size; i++) total += points[i].x; return total; }
+# function tell(points: Point[]): void { try { print(sum(points)); } catch (error) { print((error as Error).constructor.name, (error as Error).message.startsWith("undefined is not an object")); } }
+# const points = [new Point(1.5), new Point(2.5), new Point(4)];
+# tell(points);
+# declare function print(...values: unknown[]): void;
+# -- end of source
+# RUN(X64): emit f1:Body mechanisms=all
+# REQUIRES(X64): x86_64
+# X64: = ZShr(
+# RUN(SHELL): run-in-shell 0;
+# SHELL: 8

@@ -538,10 +538,8 @@ impl PosixSpawnResult {
 
                     // The spawn fails below. Kill first: a child that waits on a pipe this process holds would block wait4 forever.
                     _ => {
-                        // SAFETY: `self.pid` is the un-reaped child posix_spawn just returned.
-                        unsafe {
-                            libc::kill(self.pid, libc::SIGKILL);
-                        }
+                        // `self.pid` is the un-reaped child posix_spawn just returned.
+                        crate::ffi::kill(self.pid, libc::SIGKILL);
                         let _ = posix_spawn::wait4(self.pid, 0, None);
                     }
                 }

@@ -1,0 +1,16 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# type Options = { a?: number; b?: number };
+# const defaults = { a: 1, b: 2 };
+# function settle(options: Options) { return { ...defaults, ...options }; }
+# function main() { let total = 0; for (let i = 0; i < 1000; i++) { const settled = settle({ b: i & 7 }); total += settled.a + settled.b; } return total; }
+# print(main());
+# -- end of source
+# Both sources are in sight: the literal of the call by its allocation, `defaults` because the one object of its variable is born with every name of its layout and Link proves that no object of that layout gains, loses or redefines a name. So the run of copies asks no test, the literal is born whole, nothing but reads takes it, and it is never made.
+# RUN: run-in-shell
+# CHECK: 4500
+# CHECK-NEXT: exited with 0
+# RUN(FORM): walk f2 mechanisms=all
+# FORM-NOT: CopyDataProperties
+# FORM-NOT: HasKeyOrder
+# FORM: GetSlot {{*}} key="a"

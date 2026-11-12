@@ -1,0 +1,3 @@
+// A context that a job enters is that job's: what runs next does not see it.
+import { AsyncLocalStorage } from "node:async_hooks"; const als = new AsyncLocalStorage(), s = () => String(als.getStore()); const J = async () => { await 0; new Bun.ModuleGraph(); als.enterWith("in"); };
+import http from "node:http"; import net from "node:net"; let n = 0; const v = http.createServer((q, r) => { if (n++ === 0) J(); else console.log(s()); r.end("ok"); }).listen(0, () => { const c = net.connect(v.address().port); c.write("GET / HTTP/1.1\r\nHost: a\r\n\r\nGET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n"); c.on("data", () => {}); c.on("close", () => v.close()); });

@@ -1,9 +1,9 @@
 use bun_sema::program::FileId;
 
-use crate::compile::testing::lower_program_with_limits;
+use crate::compile::testing::{lower_program_with_limits, with_lowering_inputs};
 use crate::ir::generated::{FieldForm, LayoutKind};
-use crate::ir::{Id, LayoutKey};
-use crate::lower::{Fragment, LoweredFile};
+use crate::ir::{Id, LayoutKey, Opcode};
+use crate::lower::{Fragment, LoweredFile, UnitTables};
 use crate::statistics::{LimitId, LimitValues};
 
 const PLAIN: FieldForm = FieldForm(0);
@@ -12,33 +12,43 @@ const FIXED: FieldForm = FieldForm(
 );
 
 #[track_caller]
-fn lower_module(source: &str) -> Fragment {
-    let files = [("main.cjs", source)];
-    let mut lowered = lower_program_with_limits(&files, LimitValues::for_host());
+fn lower_only_module(files: &[(&str, &str)]) -> Fragment {
+    let mut lowered = lower_program_with_limits(files, LimitValues::for_host());
     assert_eq!(lowered.len(), 1);
     lowered.remove(0).1.fragment
 }
 
+#[track_caller]
+fn lower_module(source: &str) -> Fragment {
+    lower_only_module(&[("main.cjs", source)])
+}
+
+fn with_tables<R>(fragment: &Fragment, read: impl FnOnce(&UnitTables) -> R) -> R {
+    let tables = fragment.tables.take();
+    let answer = read(&tables);
+    fragment.tables.put_back(tables);
+    answer
+}
+
 fn describe_exports(fragment: &Fragment) -> Vec<(String, FieldForm)> {
-    let mut layouts = fragment.layouts.iter().filter(|(id, layout)| {
-        let is_container = matches!(fragment.layout_keys[id.index()], LayoutKey::Container(_));
-        is_container && layout.kind == LayoutKind::Record
-    });
-    let Some((_, layout)) = layouts.next() else {
-        return Vec::new();
-    };
-    assert!(layouts.next().is_none(), "a module has one exports object");
-    let fields = layout.fields.iter().map(|field| {
-        let key = field.key.expect("a field of an exports object has a name");
-        let text = fragment
-            .property_keys
-            .get(key)
-            .text
-            .expect("the name is a text");
-        let name = String::from_utf8_lossy(fragment.strings.get(text)).into_owned();
-        (name, field.form)
-    });
-    fields.collect()
+    with_tables(fragment, |tables| {
+        let mut layouts = fragment.layouts.iter().filter(|(id, layout)| {
+            let is_container = matches!(tables.layout_keys[id.index()], LayoutKey::Container(_));
+            is_container && layout.kind == LayoutKind::Record
+        });
+        let Some((_, layout)) = layouts.next() else {
+            return Vec::new();
+        };
+        assert!(layouts.next().is_none(), "a module has one exports object");
+        let fields = layout.fields.iter().map(|field| {
+            let key = field.key.expect("a field of an exports object has a name");
+            let text = tables.property_keys.get(key).text;
+            let text = text.expect("the name is a text");
+            let name = String::from_utf8_lossy(tables.strings.get(text)).into_owned();
+            (name, field.form)
+        });
+        fields.collect()
+    })
 }
 
 #[track_caller]
@@ -48,6 +58,18 @@ fn names_of(source: &str) -> Vec<String> {
         .into_iter()
         .map(|it| it.0)
         .collect()
+}
+
+#[track_caller]
+fn count_objects_made_by_body(fragment: &Fragment) -> usize {
+    let body = fragment.module.body.expect("the module has a body");
+    let mut functions = fragment.functions.iter();
+    let found = functions.find(|(function, _)| *function == body);
+    let (_, body) = found.expect("the fragment defines the body of its module");
+    let values = body.body.blocks().flat_map(|block| block.values());
+    values
+        .filter(|value| value.opcode == Opcode::NewObject)
+        .count()
 }
 
 fn find_fragment(lowered: &[(FileId, LoweredFile)], defines_exports_layout: bool) -> &Fragment {
@@ -225,7 +247,6 @@ fn names_over_the_limit_are_no_fields() {
 #[test]
 fn whoever_requires_a_module_names_its_layout() {
     let files = [
-        // Somebody looks at the object, so the module has one.
         (
             "main.cjs",
             "module.exports = Object.keys(require(\"./names.cjs\"));",
@@ -240,13 +261,95 @@ fn whoever_requires_a_module_names_its_layout() {
         LayoutKey::Container(symbol) => symbol.file == module.file,
         _ => false,
     };
-    assert!(requirer.layout_keys.iter().any(names_layout_of_module));
-    let mut defined_keys = requirer
-        .layouts
-        .iter()
-        .map(|(id, _)| &requirer.layout_keys[id.index()]);
-    assert!(
-        !defined_keys.any(names_layout_of_module),
-        "only its own file defines the layout"
-    );
+    let (is_named, is_defined) = with_tables(requirer, |tables| {
+        let mut named = requirer.layouts_named_by_code.iter();
+        let mut defined = requirer.layouts.iter();
+        (
+            named.any(|id| names_layout_of_module(&tables.layout_keys[id.index()])),
+            defined.any(|(id, _)| names_layout_of_module(&tables.layout_keys[id.index()])),
+        )
+    });
+    assert!(is_named);
+    assert!(!is_defined, "only its own file defines the layout");
+}
+
+#[test]
+fn names_of_every_module_are_listed_before_any_file_is_lowered() {
+    let files = [
+        (
+            "main.cjs",
+            "module.exports = Object.keys(require(\"./names.cjs\"));",
+        ),
+        (
+            "names.cjs",
+            "exports.b = 1; Object.defineProperty(exports, \"a\", { value: 2 });",
+        ),
+    ];
+    with_lowering_inputs(&files, |loaded, inputs, main| {
+        let created = inputs.names_created_on_exports;
+        assert!(created.of(main).is_empty());
+        let mut others = loaded.compiled_files().iter().filter(|&&file| file != main);
+        let names = others.next().expect("the program has a second module");
+        let listed: Vec<(&[u8], FieldForm)> = created
+            .of(*names)
+            .iter()
+            .map(|it| (loaded.atoms.bytes(it.name), it.form))
+            .collect();
+        assert_eq!(listed, [(&b"b"[..], PLAIN), (&b"a"[..], FIXED)]);
+    });
+}
+
+#[test]
+fn a_body_that_replaces_its_exports_unseen_makes_no_object() {
+    for source in [
+        "module.exports = class Foo {};",
+        "module.exports = function () {};",
+        "Math.random(); module.exports = function () {};",
+        "module.exports = function () {}; module.exports.a = 1;",
+        "module.exports = function () {}, module.exports.a = 1;",
+        "exports = module.exports = function () {}; exports.a = 1;",
+        "module.exports = function () { return module.exports; };",
+        "module.exports = function () {}; const late = () => module.exports;",
+        "if (false) exports.dead = this; module.exports = function () {};",
+    ] {
+        let fragment = lower_module(source);
+        assert_eq!(count_objects_made_by_body(&fragment), 0, "{source}");
+    }
+}
+
+#[test]
+fn a_body_that_shows_the_object_it_begins_with_makes_it() {
+    for source in [
+        "exports.a = 1;",
+        "exports.a = 1; module.exports = function () {};",
+        "module.exports = function () {}; exports.a = 1;",
+        "module.exports = function () {}; this.a = 1;",
+        "module.exports = function () {}; const [a = this] = [];",
+        "module.exports = function () {}; class Derived extends this.Base {}",
+        "module.exports = [module.exports];",
+        "const early = () => module.exports; module.exports = function () {};",
+        "module.exports = function () {}; function early() { return module.exports; }",
+        "module.exports = function () {}; class Early { read() { return module.exports; } }",
+        "if (Math.random() > 2) return; module.exports = function () {};",
+        "if (Math.random() > 2) module.exports = function () {};",
+        "module.exports = function () {}; Object.keys(module);",
+        "module.exports = require(\"./main.cjs\");",
+        "module.exports = function () {}; exports = 1;",
+    ] {
+        let fragment = lower_module(source);
+        assert_eq!(count_objects_made_by_body(&fragment), 1, "{source}");
+    }
+}
+
+#[test]
+fn a_factory_of_elements_that_is_read_from_the_object_shows_it() {
+    for (factory, expected) in [("h", 0), ("exports.h", 1)] {
+        let configuration =
+            format!(r#"{{"compilerOptions":{{"jsx":"react","jsxFactory":"{factory}"}}}}"#);
+        let fragment = lower_only_module(&[
+            ("main.jsx", "<a />; module.exports = function () {};"),
+            ("tsconfig.json", configuration.as_str()),
+        ]);
+        assert_eq!(count_objects_made_by_body(&fragment), expected, "{factory}");
+    }
 }

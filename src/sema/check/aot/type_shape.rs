@@ -1,8 +1,8 @@
-use super::answers::{ClassRef, TypeParameterRef};
+use super::answers::{ClassRef, FunctionRef};
 use super::builtin_types::{BuiltinTypeClass, Denotation};
 use super::trust::Trust;
 use crate::atom::Atom;
-use crate::types::{SigId, TypeId};
+use crate::types::{MapperId, SigId, TypeId};
 
 mod builtin_subtypes;
 mod intersections;
@@ -47,12 +47,24 @@ bitflags::bitflags! {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct FunctionSignatures<'c> {
+    pub declared: &'c [SigId],
+    pub(super) mapper: MapperId,
+}
+
+impl FunctionSignatures<'_> {
+    pub(super) const NONE: FunctionSignatures<'static> = FunctionSignatures {
+        declared: &[],
+        mapper: MapperId::IDENTITY,
+    };
+}
+
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum ShapeKind<'c> {
     Anything(AnythingReason),
     TypeVariable {
         constraint: Option<TypeId>,
-        parameter: Option<TypeParameterRef>,
     },
     Never,
     Undefined,
@@ -75,7 +87,7 @@ pub enum ShapeKind<'c> {
     },
     Symbol,
     AnyObject,
-    Function(&'c [SigId]),
+    Function(FunctionSignatures<'c>),
     ClassConstructor(ClassRef),
     Array {
         element: TypeId,
@@ -90,9 +102,9 @@ pub enum ShapeKind<'c> {
         arguments: &'c [TypeId],
     },
     Class(ClassRef),
+    ConstructorFunctionInstance(FunctionRef),
     Object,
     Union(&'c [TypeId]),
-    /// `int32`, or `int32 & T`. `base` is the type without the tag.
     Int32 {
         base: TypeId,
     },
@@ -123,7 +135,10 @@ impl<'c> TypeShape<'c> {
     }
 
     pub fn has_members(self) -> bool {
-        matches!(self.kind, ShapeKind::Object | ShapeKind::Class(_))
+        matches!(
+            self.kind,
+            ShapeKind::Object | ShapeKind::Class(_) | ShapeKind::ConstructorFunctionInstance(_)
+        )
     }
 
     pub(super) fn builtin_denotation(self) -> Option<Denotation> {

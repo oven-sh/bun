@@ -1,4 +1,6 @@
 // Loads one program after another. Each imports a package of its own in one way.
+// A CommonJS file cannot await its own import(): it exports the promise and this file awaits it. Else `bun <file>` prints that line among the lines of the programs behind it, where the threads
+// of its transpiler decide.
 console.log("## flag-and-default.default.mjs");
 await import("./flag-and-default.default.mjs");
 console.log("## flag-and-default.re-exported.mjs");
@@ -20,7 +22,7 @@ await import("./flag-false.dynamic-import.mjs");
 console.log("## flag-false.re-exported.mjs");
 await import("./flag-false.re-exported.mjs");
 console.log("## flag-late.dynamic-import.cjs");
-await import("./flag-late.dynamic-import.cjs");
+await import("./flag-late.dynamic-import.cjs").then(file => file.default);
 console.log("## flag-late.re-exported.mjs");
 await import("./flag-late.re-exported.mjs");
 console.log("## flag-by-helper.require.cjs");
@@ -44,7 +46,7 @@ await import("./function-flagged.named.mjs");
 console.log("## function-flagged.re-exported.mjs");
 await import("./function-flagged.re-exported.mjs");
 console.log("## primitive.dynamic-import.cjs");
-await import("./primitive.dynamic-import.cjs");
+await import("./primitive.dynamic-import.cjs").then(file => file.default);
 console.log("## primitive.re-exported.mjs");
 await import("./primitive.re-exported.mjs");
 console.log("## null-exports.require.cjs");
@@ -84,7 +86,7 @@ await import("./getter-throws.dynamic-import.mjs");
 console.log("## getter-throws.re-exported.mjs");
 await import("./getter-throws.re-exported.mjs");
 console.log("## keywords.dynamic-import.cjs");
-await import("./keywords.dynamic-import.cjs");
+await import("./keywords.dynamic-import.cjs").then(file => file.default);
 console.log("## keywords.re-exported.mjs");
 await import("./keywords.re-exported.mjs");
 console.log("## thenable.require.cjs");

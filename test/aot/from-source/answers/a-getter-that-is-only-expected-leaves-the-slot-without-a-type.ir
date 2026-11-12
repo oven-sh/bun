@@ -1,0 +1,20 @@
+# -- source: main.cjs
+# "use strict";
+# function add(a, b) { return (a + b) | 0; }
+# function sub(a, b) { return (a - b) | 0; }
+# const lib = { base: 1 };
+# Object.defineProperty(lib, "add", { configurable: true, get: function () { return add; } });
+# function called(t) { let s = 1; for (let i = 0; i < t; i++) s = lib.add(s, i); return s; }
+# print(called(5));
+# Object.defineProperty(lib, "add", { configurable: true, get: function () { return sub; } });
+# print(called(5));
+# -- end of source
+# The other side of the-slot-of-a-proven-getter-takes-the-closures-of-that-function-alone.ir: nothing is proven of the half in this slot (it may be replaced, and is): the slot takes every getter.
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: "add" appended {{*}}accessor
+# RUN(TYPE): plan layouts mechanisms=all
+# TYPE-NOT: "add" appended {{*}}type=
+# RUN(ANSWER): run-in-shell
+# ANSWER: 11
+# ANSWER-NEXT: -9
+# ANSWER-NEXT: exited with 0

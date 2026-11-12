@@ -1,0 +1,41 @@
+# Another file of the program may run a second time, so nothing says that the program runs in one global, and each global has its own symbol under the key of `tag`.
+# The two accesses know nothing of their receivers and stay by name: an object that has the field in a slot, one that has no such field, a number. Each comes again and again, so every road is taken cold and warm.
+# -- source: main.js
+# const tag = Symbol("tag");
+# function tagOf(o) { return o[tag]; }
+# function setTag(o, v) { o[tag] = v; }
+# function callTag(o, v) { return o[tag](v); }
+# function twice(v) { return v * 2; }
+# const box = { name: "box", [tag]: -1 };
+# const bare = {};
+# for (let turn = 0; turn < 8; turn++) {
+#   print(tagOf(box));
+#   setTag(box, turn);
+#   print(tagOf(bare));
+#   setTag(bare, box);
+#   print(tagOf(turn));
+# }
+# print(tagOf(tagOf(bare)));
+# print(Object.getOwnPropertySymbols(bare)[0] === tag);
+# setTag(bare, twice);
+# const first = callTag(bare, 21);
+# print(first);
+# print(callTag(bare, first));
+# -- end of source
+# OPTIONS: several-realms
+# RUN: run-in-shell
+# CHECK: -1
+# CHECK-NEXT: undefined
+# CHECK-NEXT: undefined
+# CHECK-NEXT: 0
+# CHECK-NEXT: [object Object]
+# CHECK-NEXT: undefined
+# CHECK: 6
+# CHECK-NEXT: [object Object]
+# CHECK-NEXT: undefined
+# CHECK-NEXT: 7
+# CHECK-NEXT: true
+# CHECK-NEXT: 42
+# CHECK-NEXT: 84
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same

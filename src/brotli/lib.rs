@@ -12,7 +12,7 @@ use c::BrotliDecoder;
 
 #[allow(non_snake_case)]
 pub mod BrotliAllocator {
-    bun_alloc::c_thunks_for_zone!("brotli");
+    bun_alloc::c_thunks_for_zone!(c"brotli");
     pub use malloc_size as alloc;
 }
 

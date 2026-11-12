@@ -1,0 +1,43 @@
+# -- source: decided.ts
+# declare function id<T>(value: T): T;
+# declare function report(value: string): void;
+# namespace Watch {
+#   export function sure(holds: boolean, note?: string, more?: string | (() => string)): void {
+#     if (!holds) {
+#       note = note ? "not so: " + note : "not so.";
+#       if (more) note += "\n" + (typeof more === "string" ? more : more());
+#       for (let turn = 0; turn < 3; turn++) report(note + turn);
+#       const failure = new Error(note);
+#       report(String(failure.message.length));
+#       throw failure;
+#     }
+#   }
+# }
+# function starts(text: string, place: number): boolean { Watch.sure(place === 0); return text.length > place; }
+# function make(text: string, first: any) {
+#   let place: any = first;
+#   function step(): number {
+#     while (true) {
+#       const mark = text.charCodeAt(place);
+#       if (place === 0) { if (mark === 35 && starts(text, place)) { place = place + 1; continue; } }
+#       return place;
+#     }
+#   }
+#   return step;
+# }
+# report(String(make(id("#!"), id(0))() + make(id("#!"), id(-0))() * 10 + make(id("##"), id(1))() * 100 + make(id("!#"), id(0))() * 1000 + make(id("#"), id(0.5))() * 10000));
+# try { starts(id("#!"), id(1)); } catch (failure) { report("caught " + (failure as Error).message); }
+# -- end of source
+# In a loop a comparison that is found again keeps its name, and the head of the long callee, which returns at once where its argument holds, laid a second test of it with the call behind.
+# The way has decided the argument: no test is laid and the call is gone. f3 = sure, f4 = step
+# RUN: walk f4 mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK-NOT: function=f3
+# RUN(RUNS): run-in-shell mechanisms=all globalThis.id = value => value; globalThis.report = value => print(String(value));
+# RUNS: 5111
+# RUNS: not so.0
+# RUNS: not so.1
+# RUNS: not so.2
+# RUNS: 7
+# RUNS: caught not so.
+# RUNS: exited with 0

@@ -1,0 +1,17 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# function column(width: any, cells: Float64Array, at: number): number {
+#   let sum = 0;
+#   for (let row = 0; row < 8; row++) sum += cells[(row * width + at) | 0]!;
+#   return sum;
+# }
+# sink(column);
+# -- end of source
+# f1 = column
+# Nobody knows what `width` is. The loop multiplies it, and the product ends in an operator on bits and then as the key of an element: the loop makes a whole number of it. So it is expected to be an int32,
+# not merely a number: asked for a number, its products were reckoned as doubles and made whole again at every key. The body takes it as the guard of its parameters has asked it: an int32 in a register.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: b0(v0: i32 @Int32
+# RUN(NUMBER): walk f1 mechanisms=all
+# NUMBER-NOT: , v0 form=Numbers

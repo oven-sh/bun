@@ -2,13 +2,14 @@
 // the order of the loads and stores: every distance between the views from forty elements below to forty above, every length from 0 to 70, views that begin at any element of the buffer,
 // every kind of element, a target that is shorter or longer than the source, counters that go up and go down, and indices beside the counter.
 const buffer = new ArrayBuffer(2048);
-const bytes = new Uint8Array(buffer);
+// Around each copy of at most 70 elements the whole buffer is filled and summed up: by words, which takes a quarter of the turns that bytes take.
+const words = new Int32Array(buffer);
 
 function fill(seed: number): void {
   let state = seed | 1;
-  for (let k = 0; k < bytes.length; k++) {
+  for (let k = 0; k < words.length; k++) {
     state = (Math.imul(state, 1103515245) + 12345) | 0;
-    bytes[k] = state >>> 16;
+    words[k] = state ^ (state >>> 15);
   }
 }
 
@@ -19,7 +20,7 @@ function fillWithSmallNumbers(view: Float32Array | Float64Array, seed: number): 
 
 function digest(): number {
   let sum = 0;
-  for (let k = 0; k < bytes.length; k++) sum = (Math.imul(sum, 31) + bytes[k]!) | 0;
+  for (let k = 0; k < words.length; k++) sum = (Math.imul(sum, 31) + words[k]!) | 0;
   return sum;
 }
 

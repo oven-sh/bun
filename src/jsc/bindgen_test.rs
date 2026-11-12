@@ -128,8 +128,7 @@ pub(crate) fn describe_anything(value: TestAnything<'_>) -> Vec<u8> {
         TestAnything::Integer(integer) => format!("integer {integer}").into_bytes(),
         TestAnything::Text(text) => format!("text {text}").into_bytes(),
         TestAnything::Bytes(buffer) => {
-            // SAFETY: `buffer` holds a ref on it, and nothing else borrows it here.
-            let buffer: crate::ArrayBuffer = unsafe { (*buffer.get()).as_array_buffer() };
+            let buffer: crate::ArrayBuffer = buffer.as_array_buffer();
             format!("bytes {}", buffer.byte_slice().len()).into_bytes()
         }
         TestAnything::Blob(_) => b"blob".to_vec(),

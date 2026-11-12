@@ -1,1 +1,0 @@
-exports.label = "copied two";

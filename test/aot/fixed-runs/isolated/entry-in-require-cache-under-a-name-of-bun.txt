@@ -1,0 +1,37 @@
+A test stores an entry in require.cache under one of Bun's own names: require() answers it, import and process.getBuiltinModule() look in no cache.
+#### get-builtin-module.test.js
+import { test } from "bun:test";
+test("a stored entry", () => {
+  const real = require("bun:sqlite");
+  require.cache["bun:sqlite"] = { exports: { fake: "sqlite" } };
+  const asked = process.getBuiltinModule("bun:sqlite");
+  console.log("| CASE asked:", asked.fake, asked === real, typeof asked.Database);
+  console.log("| CASE required:", require("bun:sqlite").fake);
+});
+#### own-names.test.js
+import { test } from "bun:test";
+import { Database } from "bun:sqlite";
+test("an entry under one of Bun's own names", async () => {
+  const required = require("./src/required.cjs");
+  console.log("| CASE before:", typeof require("bun:sqlite").Database, required.seen());
+  const entry = { exports: { fake: "sqlite" } };
+  require.cache["bun:sqlite"] = entry;
+  require.cache.ws = { exports: { fake: "ws" } };
+  require.cache[require.resolve("undici")] = { exports: { fake: "undici" } };
+  console.log("| CASE stored:", require("bun:sqlite") === entry.exports, required.seen());
+  console.log("| CASE imports:", typeof Database, typeof (await import("bun:sqlite")).Database);
+  const name = "bun:sqlite";
+  console.log("| CASE by a name:", require(name).fake, import.meta.require("bun:sqlite").fake);
+  delete require.cache["bun:sqlite"];
+  delete require.cache.ws;
+  delete require.cache.undici;
+  console.log("| CASE deleted:", typeof require("bun:sqlite").Database, required.seen());
+  require.cache.bun = { exports: { fake: "bun" } };
+  console.log("| CASE bun:", require("bun").fake, typeof require("bun").file);
+});
+#### package.json
+{}
+#### src/required.cjs
+exports.seen = () => [require("bun:sqlite").fake, require("ws").fake, require("undici").fake].join();
+#### tsconfig.json
+{}

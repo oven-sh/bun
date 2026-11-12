@@ -1,0 +1,206 @@
+# -- source: main.js
+# class Painter {
+#   box(text) {
+#     return "[" + text + "]";
+#   }
+#   line(of) {
+#     return of.text + ";";
+#   }
+#   sheet(sheet) {
+#     let top = "";
+#     let boxes = "";
+#     for (let i = 0; i < sheet.heads.length; i++) boxes += this.box(sheet.heads[i]);
+#     top += this.line({ text: boxes });
+#     let rest = "";
+#     for (let i = 0; i < sheet.lines.length; i++) {
+#       const line = sheet.lines[i];
+#       boxes = "";
+#       for (let k = 0; k < line.length; k++) boxes += this.box(line[k]);
+#       rest += this.line({ text: boxes });
+#     }
+#     if (rest) rest = `<${rest}>`;
+#     return "(" + top + ")" + rest;
+#   }
+# }
+# const painter = new Painter();
+# globalThis.kept = painter;
+# print(painter.sheet({ heads: ["a", "b"], lines: [["1", "2"], ["3"], []] }));
+# -- end of source
+# This is the program of the-last-walk-of-a-loop-whose-plain-walk-a-purchase-replaced-fits-its-row-when-it-is-walked-alone.ir, which reports nothing with check=ReplayFinalLoopVisits.
+# Fault injection, testing=UnderstateEffects:RowOfLoop/all/WhatIsSeen: every loop summary that is recorded as the one that a retained visit of a loop was made under says that the loop does nothing.
+# The second walker repeats each retained visit alone under its recorded summary. It finds that the visit does more than the summary says, and it fails the build with a named internal error.
+# OPTIONS: check=ReplayFinalLoopVisits testing=UnderstateEffects:RowOfLoop/all/WhatIsSeen
+# DIAGNOSTIC: LoopSummaryMismatch
+# RUN: walk f4 mechanisms=all
+# CHECK-NOT: code f4:Body
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 kind=Instance name="Painter" module=m0 position=6 constructor=f1 place=6
+layout L1 module=m0 position=266 fields=[{key="text" declared={type=anything}}] place=266 ownFieldCount=1
+layout L2 module=m0 position=680 fields=[{key="heads" declared={type=undefined|null|string|Array flags=[IsExpected]} flags=[IsRequired]}, {key="lines" declared={type=undefined|null|Array<undefined|null|string|Array> flags=[IsExpected]} flags=[IsRequired]}] place=680 ownFieldCount=2
+data d0 root=Object{layout=L2 members=[{key="heads" value=Array{contents=anything elements=[String{value="a"}, String{value="b"}]}}, {key="lines" value=Array{contents=anything elements=[Array{contents=anything elements=[String{value="1"}, String{value="2"}]}, Array{contents=anything elements=[String{value="3"}]}, Array{contents=anything}]}}]} module=m0
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=28
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = NewClass v0 layout=L0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = NewClosure function=f2 @18
+    DefineMethod v1, v3 layout=L0 key="box" @18
+    v5 = NewClosure function=f3 @65
+    DefineMethod v1, v5 layout=L0 index=1 key="line" @65
+    v7 = NewClosure function=f4 @108
+    DefineMethod v1, v7 layout=L0 index=2 key="sheet" @108
+    v9 = FinishClass v1 layout=L0 @0
+    v10 = Convert v9 declared={type=f1 flags=[IsFromCompiler]} @0
+    v11 = Convert v9 declared={type=f1 flags=[IsFromCompiler]} @0
+    v12 = Construct v11 calleeName="Painter" @622
+    v13 = Builtin builtin=GlobalThis @633
+    v14 = PropGet v13 key="globalThis" [isFreeName] @633
+    v15 = Convert v14 declared={type=builtin(GlobalThis) flags=[IsExpected]} @633
+    PropSet v15, v12 key="kept" @633
+    v17 = Builtin builtin=GlobalThis @660
+    v18 = PropGet v17 key="print" [isFreeName] @660
+    v19 = PropGet v12 key="sheet" @666
+    v20 = Data data=d0 @680
+    v21 = Call v19, v12, v20 calleeKey="sheet" calleeName="painter.sheet" @674
+    v22 = Call v18, -, v21 calleeName="print" @660
+    v23 = Undefined @660
+    Return v23 @660
+}
+function f1 name="Painter" module=m0 position=6 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @6
+    v2 = NewObject v1 layout=L0 @6
+    v3 = Convert v2 declared={type=L0} @6
+    Return v3 @6
+}
+function f2 name="box" module=m0 position=18 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = String string="[" @41
+    v2 = Add v1, v0 @47
+    v3 = String string="]" @54
+    v4 = Add v2, v3 @54
+    Return v4 @54
+}
+function f3 name="line" module=m0 position=65 kind=Method flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L1):
+    v1 = PropGet v0 key="text" @87
+    v2 = String string=";" @97
+    v3 = Add v1, v2 @97
+    Return v3 @97
+}
+function f4 name="sheet" module=m0 position=108 kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=undefined|null|L2 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: undefined|null|L2):
+    v2 = String string="" @137
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]} @137
+    v4 = String string="" @157
+    v5 = Convert v4 declared={type=undefined|null|string flags=[IsExpected]} @157
+    v6 = Integer @178
+    v7 = Convert v6 declared={type=i32 flags=[IsExpected]} @178
+    Jump -> next b1(v5, v7) @174
+  b1(v8, v9):
+    LoopHint @174
+    v11 = PropGet v1 key="heads" @185
+    v12 = PropGet v11 key="length" @191
+    v13 = Less v9, v12 @185
+    Branch v13 -> taken b2(), notTaken b3() @185
+  b2():
+    v14 = PropGet v0 key="box" @219
+    v15 = PropGet v1 key="heads" @228
+    v16 = ElemGet v15, v9 @234
+    v17 = Call v14, v0, v16 calleeKey="box" calleeName="this.box" @224
+    v18 = Add v8, v17 @219
+    v19 = Convert v18 declared={type=undefined|null|string flags=[IsExpected]} @210
+    v20 = Increment v9 @205
+    v21 = Convert v20 declared={type=i32 flags=[IsExpected]} @205
+    Jump -> next b1(v19, v21) @205
+  b3():
+    v22 = PropGet v0 key="line" @256
+    v23 = NewObject -, v8 layout=L1 fields=[0] @266
+    v24 = FinishObject v23 @266
+    v25 = Call v22, v0, v24 calleeKey="line" calleeName="this.line" @261
+    v26 = Add v3, v25 @256
+    v27 = Convert v26 declared={type=undefined|null|string flags=[IsExpected]} @249
+    v28 = String string="" @299
+    v29 = Convert v28 declared={type=undefined|null|string flags=[IsExpected]} @299
+    v30 = Integer @320
+    v31 = Convert v30 declared={type=i32 flags=[IsExpected]} @320
+    Jump -> next b4(v29, v31) @316
+  b4(v32, v33):
+    LoopHint @316
+    v35 = PropGet v1 key="lines" @327
+    v36 = PropGet v35 key="length" @333
+    v37 = Less v33, v36 @327
+    Branch v37 -> taken b5(), notTaken b9() @327
+  b5():
+    v38 = PropGet v1 key="lines" @373
+    v39 = ElemGet v38, v33 @379
+    v40 = Convert v39 declared={type=undefined|null|string|Array flags=[IsExpected]} @373
+    v41 = String string="" @403
+    v42 = Convert v41 declared={type=undefined|null|string flags=[IsExpected]} @395
+    v43 = Integer @426
+    v44 = Convert v43 declared={type=i32 flags=[IsExpected]} @426
+    Jump -> next b6(v42, v44) @422
+  b6(v45, v46):
+    LoopHint @422
+    v48 = PropGet v40 key="length" @433
+    v49 = Less v46, v48 @433
+    Branch v49 -> taken b7(), notTaken b8() @433
+  b7():
+    v50 = PropGet v0 key="box" @460
+    v51 = ElemGet v40, v46 @469
+    v52 = Call v50, v0, v51 calleeKey="box" calleeName="this.box" @465
+    v53 = Add v45, v52 @460
+    v54 = Convert v53 declared={type=undefined|null|string flags=[IsExpected]} @451
+    v55 = Increment v46 @446
+    v56 = Convert v55 declared={type=i32 flags=[IsExpected]} @446
+    Jump -> next b6(v54, v56) @446
+  b8():
+    v57 = PropGet v0 key="line" @493
+    v58 = NewObject -, v45 layout=L1 fields=[0] @503
+    v59 = FinishObject v58 @503
+    v60 = Call v57, v0, v59 calleeKey="line" calleeName="this.line" @498
+    v61 = Add v32, v60 @493
+    v62 = Convert v61 declared={type=undefined|null|string flags=[IsExpected]} @485
+    v63 = Increment v33 @347
+    v64 = Convert v63 declared={type=i32 flags=[IsExpected]} @347
+    Jump -> next b4(v62, v64) @347
+  b9():
+    v65 = ToBoolean v32 @535
+    Branch v65 -> taken b10(| 0), notTaken b11(v32) @535
+  b10(v66):
+    v67 = String string="<" @548
+    v68 = ToString v32 @552
+    v69 = String string=">" @552
+    v70 = Strcat v67, v68, v69 @548
+    v71 = Convert v70 declared={type=undefined|null|string flags=[IsExpected]} @541
+    Jump -> next b11(v71) @541
+  b11(v72):
+    v73 = String string="(" @572
+    v74 = Add v73, v27 @578
+    v75 = String string=")" @584
+    v76 = Add v74, v75 @584
+    v77 = Add v76, v72 @590
+    Return v77 @590
+}
+function f5 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private

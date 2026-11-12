@@ -1,0 +1,36 @@
+# typeof <the binding doConnect of node_net_binding.bind.ts>, in a module of the library; setImmediate(() => {})
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f3 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:process/tick_ring" displayPath="internal:process/tick_ring" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalProcessTick_ring body=f1
+module m2 path="/$bun/js/builtins/JSBufferPrototype.ts" displayPath="/$bun/js/builtins/JSBufferPrototype.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=JSBufferPrototypeToJSON function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="internal/process/tick_ring"
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="setImmediate" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(SetImmediate) flags=[IsExpected]}
+    v4 = NewClosure function=f2
+    v5 = Call v3, -, v4 calleeName="setImmediate"
+    Return v5
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NativeBinding builtin=NativeBindgenNode_net_bindingBindTsDoConnect
+    v1 = TypeOf v0
+    Return v1
+}
+function f2 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 name="toJSON" module=m2 kind=Method role=Library flags=[HasExplicitName] enclosingRuntimeFunction=JSBufferPrototypeToJSON thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

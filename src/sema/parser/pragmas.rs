@@ -1,7 +1,9 @@
 //! The pragmas in the comments before the first token: `/// <reference .. />`, `// @ts-check` and
-//! `// @ts-nocheck`, `/* @jsx h */` and similar. For `bun compile`, the JSX pragmas in all comments.
+//! `// @ts-nocheck`, `/* @jsx h */` and similar. For `bun compile`, the JSX pragmas in all comments outside tags.
 
 mod code_pragmas;
+
+pub(crate) use code_pragmas::{CommentMark, comment_marks};
 
 use bun_sema::atom::Atom;
 use bun_sema::hir::{
@@ -34,7 +36,7 @@ pub(crate) fn process_pragmas_into_fields(
         }
     }
     if file.kind == FileKind::Tsx && compiles {
-        file.jsx_pragmas = code_pragmas::code_jsx_pragmas(text, &file.comments, intern);
+        file.jsx_pragmas = code_pragmas::code_jsx_pragmas(text, file, intern);
     }
     true
 }

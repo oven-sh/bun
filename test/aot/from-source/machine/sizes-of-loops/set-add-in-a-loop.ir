@@ -1,0 +1,19 @@
+# f1 = distinct
+# -- source: set-add-in-a-loop.ts
+# function distinct(names: string[]): number {
+#   const seen = new Set<string>();
+#   for (let k = 0; k < names.length; k++) seen.add(names[k]!);
+#   return seen.size;
+# }
+# declare const input: any;
+# const names: string[] = [];
+# names.push(String(input));
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = distinct(names);
+# -- end of source
+# The compiler before this one: 4 instructions, 3 of them patches.
+# When the bound was taken: loop: operations 11, patches 3, moves 5, unlikely 1 ; loop: operations 14, patches 3, moves 5, unlikely 1.
+# RUN(X64): loops most:16,19 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 16
+# X64-NEXT: loop: at most 19

@@ -626,6 +626,29 @@ describe("bundler", () => {
       stdout: "impl version 19.0.0\nrendered",
     },
   });
+  // The same when the file only calls a member of it.
+  itBundled("cjs2esm/ReactSpecificUnwrappingNamespaceStillCalled", {
+    files: {
+      "/entry.js": /* js */ `
+        import { render } from "react-dom";
+        console.log(render());
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        var impl = require('./impl');
+        console.log('impl says', impl.describe());
+        module.exports = impl;
+      `,
+      "/node_modules/react-dom/impl.js": /* js */ `
+        exports.render = function render() { return "rendered"; };
+        exports.describe = function describe() { return "described"; };
+      `,
+    },
+    cjs2esm: true,
+    minifySyntax: true,
+    run: {
+      stdout: "impl says described\nrendered",
+    },
+  });
   // The re-exported file turns out to be CommonJS (its exports are not
   // statically known), so the linker keeps the converted file a CommonJS
   // wrapper around `module.exports = require()`.
@@ -2413,6 +2436,23 @@ describe("bundler", () => {
       stdout: "this:a none:b",
     },
   });
+  // TypeScript drops an import that nothing uses. A star import with only callees is used.
+  itBundled("cjs2esm/StarImportOnlyCalledInTypeScriptStaysImported", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as ns from "./lib.cjs";
+        console.log(ns.who("a"));
+      `,
+      "/lib.cjs": /* js */ `
+        "use strict";
+        exports.who = function (s) { return (this === undefined ? "none" : "this") + ":" + s; };
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "this:a",
+    },
+  });
   // `ns.name` and `ns.name()` are two import items of one name. A name with no
   // export is reported once, at its first use.
   const missingMemberCalledAndRead: [name: string, files: Record<string, string>, warning: string][] = [
@@ -2472,6 +2512,38 @@ describe("bundler", () => {
       `,
     },
     cjs2esm: true,
+    run: {
+      stdout: "init init init",
+    },
+  });
+  // A re-exported default import gives the module its CommonJS wrapper back, so the
+  // same guard through a barrel reads the real `module.exports`.
+  itBundled("cjs2esm/ReExportedDefaultImportDotDefaultGuardedCallTakesTheOtherBranch", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import viaFrom, { named } from "./from.mjs";
+        import viaLocal from "./local.mjs";
+        console.log(
+          viaFrom.default ? viaFrom.default() : viaFrom.init(),
+          named.default?.() ?? named.init(),
+          viaLocal.default ? viaLocal.default() : viaLocal.init(),
+        );
+      `,
+      "/from.mjs": /* js */ `
+        export { default, default as named } from "./one.cjs";
+      `,
+      "/local.mjs": /* js */ `
+        import lib from "./two.cjs";
+        export { lib as default };
+      `,
+      "/one.cjs": /* js */ `
+        exports.init = function () { return "init"; };
+      `,
+      "/two.cjs": /* js */ `
+        exports.init = function () { return "init"; };
+      `,
+    },
+    cjs2esm: { unhandled: ["/one.cjs", "/two.cjs"] },
     run: {
       stdout: "init init init",
     },

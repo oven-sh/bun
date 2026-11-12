@@ -3439,6 +3439,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.options.bundle || self.options.features.minify_identifiers
     }
 
+    /// Whether a plain function of a case clause stays a declaration: the engine creates it at the switch entry.
+    pub(crate) fn keeps_case_clause_function(&self) -> bool {
+        // Sloppy output makes it a `var` of the enclosing function too, which only a renamer can name apart.
+        if !self.will_use_renamer() {
+            return false;
+        }
+        // The Fast Refresh statements of a function have to run before its first call.
+        if self.options.features.react_fast_refresh {
+            return false;
+        }
+        let mut scope = self.current_scope_ref();
+        while !scope.kind_stops_hoisting() || scope.kind == js_ast::scope::Kind::FunctionArgs {
+            scope = scope.parent.unwrap();
+        }
+        // A direct eval there forbids a new name, and the text that it evaluates can read the `var`.
+        !scope.parsed_direct_eval
+    }
+
     fn hoist_symbols(&mut self, mut scope: js_ast::StoreRef<js_ast::Scope>) {
         // This runs before the visit pass, so it walks the scope tree at the full
         // nesting depth the parser allowed; deep trees must error here instead of

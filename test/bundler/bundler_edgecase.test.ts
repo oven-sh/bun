@@ -4483,6 +4483,403 @@ describe("bundler", () => {
       run: { file: "/out/entry.js", stdout: "true 1 true later" },
     });
   }
+  // A function declared directly in a case clause is a binding of the whole
+  // switch block, and it exists before the first case test runs. In a bundle it
+  // stays a declaration, so every clause can call it. A cjs or iife bundle of a
+  // module is a sloppy script, where the declaration is also a `var` of the
+  // enclosing function. The bundler names the function for that scope, so the
+  // `var` takes no name that the function reads from outside.
+  for (const [name, options] of [
+    ["Esm", { format: "esm" }],
+    ["Cjs", { format: "cjs" }],
+    ["Iife", { format: "iife" }],
+    ["Minified", { format: "cjs", minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true }],
+  ] as const) {
+    itBundled(`edgecase/SwitchCaseFunctionDeclaration${name}`, {
+      files: {
+        "/entry.mjs": /* js */ `
+          function g() { return "module-level"; }
+          // A name that a generated variable could take.
+          var _discriminant = 2;
+          function otherClause(v) {
+            switch (v) {
+              case 1: function g() { return 4 } break;
+              case 2: return [typeof g, g()];
+            }
+            return "none";
+          }
+          function readsOuter(v) {
+            switch (v) { case 1: function g() { return "case" } }
+            return g();
+          }
+          function shadow() {
+            function f() { return "function-level" }
+            switch (1) { case 1: function f() { return "case" } }
+            return f();
+          }
+          function closesOverCaseLet(v) {
+            switch (v) {
+              case 2: try { return g(); } catch (e) { return e.constructor.name; }
+              case 1: let x = "x1"; function g() { return x } return g();
+            }
+          }
+          function outerCallee(v) {
+            switch (v) {
+              case 1: function g() { return "inner" } return g();
+              case 2: return g();
+            }
+          }
+          // The discriminant reads the module-level \`g\`, not the function of the clause.
+          function discriminantReadsOuter() {
+            switch (g()) {
+              case "module-level": return g();
+              case "unreached": function g() { return "inner" }
+              default: return "?";
+            }
+          }
+          function discriminantReadsOuterFromCaseTest() {
+            switch (g()) {
+              case "module-level": let x = "x"; return g();
+              case "unreached": function g() { return "inner" + x }
+              default: return "?";
+            }
+          }
+          // A renamer can give the function of the clause the name of this parameter.
+          function discriminantIsAParameter(g2) {
+            switch (g2) {
+              case "param": return g();
+              case "unreached": function g() { return "inner" }
+              default: return "?";
+            }
+          }
+          const top = [];
+          switch (_discriminant + 0) {
+            case 1: function t() { return "top" } break;
+            case 2: top.push(t());
+          }
+          console.log(JSON.stringify([
+            otherClause(1), otherClause(2), readsOuter(0), readsOuter(1), shadow(),
+            closesOverCaseLet(1), closesOverCaseLet(2), outerCallee(1), outerCallee(2), top, typeof t,
+            discriminantReadsOuter(), discriminantReadsOuterFromCaseTest(), discriminantIsAParameter("param"),
+          ]));
+          export {};
+        `,
+      },
+      target: "bun",
+      ...options,
+      run: {
+        stdout:
+          '["none",["function",4],"module-level","module-level","function-level","x1","ReferenceError","inner","inner",["top"],"undefined","inner","innerx","inner"]',
+      },
+    });
+  }
+  // In sloppy code the function is also a `var` of the enclosing function
+  // (Annex B). The bundler gives that `var` its own name and assigns it in the
+  // clause of the declaration, as in any other block.
+  for (const minify of [false, true]) {
+    itBundled(`edgecase/SwitchCaseFunctionDeclarationSloppy${minify ? "Minified" : ""}`, {
+      files: {
+        "/entry.cjs": /* js */ `
+          function afterSwitch(v) {
+            switch (v) {
+              case 1: function g() { return 4 } break;
+              case 2: return [typeof g, g()];
+            }
+            return typeof g;
+          }
+          // The parameter has the name that the \`var\` of \`g\` gets.
+          function renamedCapture(g2) {
+            switch (g2()) {
+              case "param": return g();
+              case "unreached": function g() { return "inner" }
+              default: return "?";
+            }
+          }
+          // At the top level the \`var\` is declared outside the block that holds the switch.
+          var topLevel = [];
+          switch (1) {
+            case 1: function entered() { return "entered" }
+            case 2: topLevel.push(entered());
+          }
+          switch (2) {
+            case 1: function skipped() { return "skipped" }
+            case 2: topLevel.push(skipped());
+          }
+          topLevel.push(typeof entered, typeof skipped);
+          console.log(JSON.stringify([
+            afterSwitch(1), afterSwitch(2), afterSwitch(3), renamedCapture(() => "param"), topLevel,
+          ]));
+        `,
+      },
+      format: "esm",
+      target: "bun",
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      minifyWhitespace: minify,
+      run: { stdout: '["function",["function",4],"undefined","inner",["entered","skipped","function","undefined"]]' },
+    });
+  }
+  // A direct eval forbids renaming, so the function and its `var` cannot have
+  // two names. The declaration stays, as in any other block. The eval in the
+  // later clause used to be seen after the first clause was already lowered,
+  // and the bundle declared `let q` and `var q` side by side. In a class the
+  // code is strict, but the parser has made the `var` before it knows that.
+  itBundled("edgecase/SwitchCaseFunctionDeclarationDirectEvalInLaterClause", {
+    files: {
+      "/entry.cjs": /* js */ `
+        function f(v) {
+          switch (v) {
+            case 1: function q() { return "q" } break;
+            case 2: eval(""); return q();
+          }
+          return typeof q;
+        }
+        class InClass {
+          method(v) {
+            switch (v) {
+              case 1: function q() { return "q" } break;
+              case 2: eval(""); return q();
+            }
+            return typeof q;
+          }
+        }
+        const inClass = new InClass();
+        // At the top level the \`var\` is a variable of the file.
+        switch (globalThis.notSet ?? 1) {
+          case 1: function topLevel() { return "t" } break;
+          case 2: eval(""); topLevel();
+        }
+        console.log(JSON.stringify([
+          f(1), f(2), f(3), inClass.method(1), inClass.method(2), inClass.method(3), typeof topLevel,
+        ]));
+      `,
+    },
+    format: "cjs",
+    target: "bun",
+    run: { stdout: '["function","q","undefined","undefined","q","undefined","function"]' },
+  });
+  // A direct eval of the enclosing function outside the switch: the text that it
+  // evaluates would read the `var` that sloppy output gives a declaration. So
+  // the function is a `let` of the switch block there, as before.
+  for (const format of ["cjs", "iife"] as const) {
+    itBundled(`edgecase/SwitchCaseFunctionDeclarationDirectEvalOutsideSwitch${format === "cjs" ? "Cjs" : "Iife"}`, {
+      files: {
+        "/entry.mjs": /* js */ `
+          function g() { return "module-level"; }
+          function after(v) {
+            switch (v) { case 1: function g() { return "case"; } break; }
+            return eval("typeof g + ':' + g()");
+          }
+          function before(v) {
+            var seen = eval("g()");
+            switch (v) { case 1: function g() { return "case"; } break; }
+            return [seen, g()];
+          }
+          function inClosure(v) {
+            const read = () => eval("g()");
+            switch (v) { case 1: function g() { return "case"; } break; }
+            return read();
+          }
+          console.log(JSON.stringify([after(1), after(3), before(1), inClosure(1)]));
+          export {};
+        `,
+      },
+      format,
+      target: "bun",
+      run: {
+        stdout: '["function:module-level","function:module-level",["module-level","module-level"],"module-level"]',
+      },
+    });
+  }
+  // Sloppy code: a binding of the same name between the switch and the function
+  // stops the `var` of the function (Annex B.3.3). The bundle must not declare
+  // one: a `var` cannot stand inside the scope of a `let` of its name.
+  itBundled("edgecase/SwitchCaseFunctionDeclarationSloppyVarStopped", {
+    files: {
+      "/entry.cjs": /* js */ `
+        function forIn() {
+          var seen = [];
+          for (let f in { key: 0 }) {
+            switch (1) { case 1: function f() { return "fn"; } }
+            seen.push(typeof f);
+          }
+          try { f; seen.push("var"); } catch (e) { seen.push(e.constructor.name); }
+          return seen;
+        }
+        function forOf() {
+          var seen = [];
+          for (let f of [0]) {
+            switch (1) { case 1: function f() { return "fn"; } }
+            seen.push(typeof f);
+          }
+          try { f; seen.push("var"); } catch (e) { seen.push(e.constructor.name); }
+          return seen;
+        }
+        function enclosingLet() {
+          var seen = [];
+          {
+            let f = 123;
+            {
+              switch (1) { case 1: function f() { return "fn"; } }
+            }
+            seen.push(typeof f);
+          }
+          try { f; seen.push("var"); } catch (e) { seen.push(e.constructor.name); }
+          return seen;
+        }
+        function catchPattern() {
+          var seen = [];
+          try { throw {}; } catch ({ f }) {
+            switch (1) { case 1: function f() { return "fn"; } }
+            seen.push(typeof f);
+          }
+          try { f; seen.push("var"); } catch (e) { seen.push(e.constructor.name); }
+          return seen;
+        }
+        function outerSwitch() {
+          var seen = [];
+          switch (0) {
+            default:
+              let f;
+              switch (1) { case 1: function f() { return "fn"; } }
+              seen.push(typeof f);
+          }
+          try { f; seen.push("var"); } catch (e) { seen.push(e.constructor.name); }
+          return seen;
+        }
+        console.log(JSON.stringify([forIn(), forOf(), enclosingLet(), catchPattern(), outerSwitch()]));
+      `,
+    },
+    format: "cjs",
+    target: "bun",
+    run: {
+      stdout:
+        '[["string","ReferenceError"],["number","ReferenceError"],["number","ReferenceError"],["undefined","ReferenceError"],["undefined","ReferenceError"]]',
+    },
+  });
+  // React Fast Refresh puts `var _s = $RefreshSig$()` and `_s(Comp, "hash")`
+  // behind a function that calls hooks, and they have to run before its first
+  // call. So with Fast Refresh the function is still a `let` at the head of its
+  // clause, with those statements behind it.
+  itBundled("edgecase/SwitchCaseFunctionDeclarationReactFastRefresh", {
+    files: {
+      "/entry.tsx": /* js */ `
+        globalThis.$RefreshSig$ = () => fn => fn;
+        globalThis.$RefreshReg$ = () => {};
+        function useThing() { return 1; }
+        function afterReturn(v) {
+          switch (v) {
+            case 1: return Comp();
+              function Comp() { return "comp" + useThing(); }
+          }
+        }
+        function twoInOneClause(v) {
+          switch (v) {
+            case 1:
+              function First() { return "first" + useThing(); }
+              function Second() { return "second" + useThing(); }
+              return First() + Second();
+          }
+        }
+        console.log(JSON.stringify([afterReturn(1), twoInOneClause(1)]));
+      `,
+      "/node_modules/react-refresh/runtime.js": /* js */ `
+        export const createSignatureFunctionForTransform = () => fn => fn;
+        export const register = () => {};
+      `,
+    },
+    backend: "api",
+    target: "bun",
+    reactFastRefresh: true,
+    run: { stdout: '["comp1","first1second1"]' },
+  });
+  // The React Compiler outlines a callback of a component into a function that
+  // goes after the component. In a case clause that is inside the switch block,
+  // where the callback can still read the bindings of the block. Node runs the
+  // bundle: Bun would transpile this sloppy script once more.
+  itBundled("edgecase/SwitchCaseFunctionDeclarationReactCompiler", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useState } from "react";
+        function declaredFirst(kind) {
+          switch (kind) {
+            case "declared":
+              const suffix = "!";
+              function Item({ label }) {
+                const [n] = useState(1);
+                return <button onClick={() => "clicked" + suffix} data-label={label + n} />;
+              }
+              return Item;
+          }
+        }
+        function declaredLater(kind) {
+          switch (kind) {
+            case "other":
+              return Row;
+            case "declared":
+              function Row({ label }) {
+                const [n] = useState(2);
+                return <button onClick={() => "row"} data-label={label + n} />;
+              }
+          }
+        }
+        const item = declaredFirst("declared")({ label: "x" });
+        const row = declaredLater("other")({ label: "y" });
+        console.log(item.props["data-label"], item.props.onClick(), row.props["data-label"], row.props.onClick());
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `exports.useState = value => [value, () => {}];`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = size => new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    onAfterBundle(api) {
+      // Both callbacks are outlined: the components name them.
+      expect(api.readFile("/out.js").match(/onClick: _temp\d*,/g)).toHaveLength(2);
+    },
+    run: { runtime: "node", stdout: "x1 clicked! y2 row" },
+  });
+  // The switch stands in a component. It is printed as it is written, so the
+  // compiler still takes the component.
+  itBundled("edgecase/SwitchCaseFunctionDeclarationInReactCompilerComponent", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useState } from "react";
+        function Badge({ kind, label }) {
+          const [n] = useState(1);
+          let text = label;
+          switch (kind) {
+            case "loud":
+              const times = 2;
+              function shout(s) { return s.toUpperCase(); }
+              text = shout(label).repeat(times);
+              break;
+            case "count":
+              text = label + n;
+              break;
+          }
+          return <span data-text={text} />;
+        }
+        console.log(Badge({ kind: "loud", label: "a" }).props["data-text"], Badge({ kind: "count", label: "b" }).props["data-text"]);
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `exports.useState = value => [value, () => {}];`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = size => new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    onAfterBundle(api) {
+      // The memo cache of the compiled component.
+      expect(api.readFile("/out.js")).toMatch(/function Badge\(t0\) \{\s+let \$ = \$c\(\d+\);/);
+    },
+    run: { stdout: "AA b1" },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

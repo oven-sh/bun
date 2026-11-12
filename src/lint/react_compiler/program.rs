@@ -1277,11 +1277,6 @@ fn has_memo_cache_function_import<'a>(
         }
 }
 
-/// oxc's `lint()`, i.e. `run_compiler` and `compile_program`: all of the file's diagnostics, in oxc's order. For
-/// [`Flavor::Eslint`], the `CompileError` events from the plugin's `runReactCompiler` that its rules don't drop because
-/// of a comment.
-///
-/// A `"use no memo"` at the top of the file has no effect when nothing is emitted.
 /// The functions the compiler would compile in `file`. Empty if it leaves the file alone.
 fn functions_to_compile<'a>(file: &'a File<'a>, flavor: Flavor) -> Vec<CompileSource<'a>> {
     if has_memo_cache_function_import(file, REACT_COMPILER_RUNTIME_MODULE, flavor) {
@@ -1350,6 +1345,11 @@ pub fn is_hook_call(call: Call<'_>, flavor: Flavor) -> bool {
     expr_is_hook(call.callee(), flavor) && is_regular_call(call)
 }
 
+/// oxc's `lint()`, i.e. `run_compiler` and `compile_program`: all of the file's diagnostics, in oxc's order. For
+/// [`Flavor::Eslint`], the `CompileError` events from the plugin's `runReactCompiler` that its rules don't drop because
+/// of a comment.
+///
+/// A `"use no memo"` at the top of the file has no effect when nothing is emitted.
 pub(crate) fn compile_program<'a>(
     file: &'a File<'a>,
     flavor: Flavor,

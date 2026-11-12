@@ -4,8 +4,8 @@
 //! (`src/js_parser/lower/hoist_test_mocks.rs`). `test/cli/lint/run-mode.test.ts` runs both against the tables here.
 //!
 //! A function here answers for every `"type"` a package.json can have, and for every other fix that `--fix` can apply
-//! in the same pass. It holds the fix back when only dead code could tell. Only call them from
-//! [`Report::fix_where_safe`].
+//! in the same pass. It holds the fix back when only dead code could tell, and never in a declaration file, which
+//! doesn't run. Only call them from [`Report::fix_where_safe`].
 //!
 //! [`Report::fix_where_safe`]: crate::context::Report::fix_where_safe
 
@@ -227,6 +227,9 @@ pub fn changes_globals<'a>(
     source: &[u8],
     is_declared: impl Fn(&[u8]) -> bool,
 ) -> bool {
+    if file.is_declaration_file() {
+        return false;
+    }
     // A load that ends has to leave one that stays. A load that starts only has to find one.
     let (except, stays) = match edit {
         Edit::AddsImport | Edit::AddsRequire => (None, false),
@@ -338,7 +341,11 @@ pub fn keeps_module_format<'a>(file: &'a File<'a>, edit: Edit<'a>) -> bool {
         Edit::AddsImport | Edit::AddsRequire | Edit::RemovesRequire => None,
     };
     let others = || file.body().iter().filter(move |it| Some(*it) != except);
-    if others().any(is_export) || has_lasting_empty_export(file, except) {
+    // Bun doesn't run a declaration file.
+    if file.is_declaration_file()
+        || others().any(is_export)
+        || has_lasting_empty_export(file, except)
+    {
         return true;
     }
     let imports = || others().filter_map(Stmt::as_import);

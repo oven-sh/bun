@@ -1,0 +1,16 @@
+# -- source: main.js
+# function Message() { this.raw = 1; }
+# const above = { get: function () { return 100; } };
+# Object.defineProperty(Message.prototype, "headers", { __proto__: above, configurable: true });
+# function read(message) { let sum = 0; for (let i = 0; i < 3; i++) sum += message.headers; return sum; }
+# print(read(new Message()));
+# -- end of source
+# f0 = the module
+# THE REFUSAL BESIDE an-accessor-laid-by-a-descriptor-with-null-above-it-is-known.ir: with another object above it the descriptor holds more than its body lays: `get` is found on `above`. It stays out of sight.
+# RUN(SUMMARY): summary f0
+# SUMMARY: DefinesByDescriptor {{*}} "headers"
+# SUMMARY-NOT: descriptor-in-sight
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 300
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 300

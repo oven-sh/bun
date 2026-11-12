@@ -1,0 +1,13 @@
+# the body that is being walked is not copied into itself, so its stores run in the callee: an allocation that listed them would be a cell for nothing
+# f1 = Tree
+# -- source: constructor-function-that-constructs-itself-lists-nothing.ts
+# declare function sink(...values: unknown[]): void;
+# function Tree(this: any, depth: number) { this.depth = depth; this.size = 1; this.child = depth > 0 ? new (Tree as any)(depth - 1) : null; }
+# sink(Tree);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewObject
+# CHECK: = CallDirect {{*}}function=f1
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = NewObject {{*}}fields=[

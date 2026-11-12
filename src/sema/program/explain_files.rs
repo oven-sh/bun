@@ -24,7 +24,7 @@ impl Files<'_> {
             atoms: &self.atoms,
             modules: &self.modules,
             by_path: &self.by_path,
-            roots: &self.options.files,
+            roots: self.root_file_names,
             starts: self.starts,
             libs_end: self.libs_end,
             roots_end: self.roots_end,

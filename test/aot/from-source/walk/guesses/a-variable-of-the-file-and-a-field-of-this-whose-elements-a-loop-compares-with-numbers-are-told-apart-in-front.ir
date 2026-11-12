@@ -1,0 +1,23 @@
+# -- source: a-variable-of-the-file-and-a-field-of-this-whose-elements-a-loop-compares-with-numbers-are-told-apart-in-front.js
+# let held = null;
+# function take(x) { held = x; }
+# function equal() { let n = 0; for (let i = 0; i < held.length; i++) if (held[i] === 3) n++; return n; }
+# class Scanner { constructor(bytes) { this.bytes = bytes; } equal() { let n = 0; for (let i = 0; i < this.bytes.length; i++) if (this.bytes[i] === 3) n++; return n; } }
+# function scan(x) { return new Scanner(x).equal(); }
+# const table = { equal, take, scan }, names = JSON.parse('["equal", "take", "scan"]');
+# for (const one of [new Uint8Array([3, 1, 3]), [1, 2, 3, , "3"], "1233"]) {
+#   table[names[1]](one);
+#   print(table[names[0]](), table[names[2]](one));
+# }
+# -- end of source
+# A loop that compares a holder's elements with written numbers is built for a list and for bytes. The holder may be a variable of the file that the loop reads anew in each turn, or a field of `this`, a
+# holder that is proven: both were told apart in front of a loop only where the element goes through an operator, or, the variable, meets a character.
+# f2 = equal, f5 = the method equal
+# RUN(VARIABLE): walk f2:Body mechanisms=all
+# VARIABLE: = GetTypedArrayElement
+# RUN(FIELD): walk f5:Body mechanisms=all
+# FIELD: = GetTypedArrayElement
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 2 2
+# ANSWERS: 1 1
+# ANSWERS: 0 0

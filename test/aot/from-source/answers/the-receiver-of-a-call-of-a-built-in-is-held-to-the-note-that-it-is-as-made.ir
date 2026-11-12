@@ -1,0 +1,23 @@
+# -- source: the-receiver-of-a-call-of-a-built-in-is-held-to-the-note-that-it-is-as-made.ts
+# declare function print(...values: unknown[]): void;
+# function pass(x: unknown): unknown { return x; }
+# function main(): string { const promise: any = Promise.resolve(1); let asked = 0; Object.defineProperty(promise, "constructor", { get() { asked++; return Promise; } });
+#   const held: unknown = JSON.parse("true") ? promise : 1; const same: any = Promise.resolve(held); Promise.prototype.then.call(same, pass); return String(asked); }
+# print(main());
+# -- end of source
+# LIBRARY: own
+# An overload matches by the pristine aspects that are known of its receiver: then() on a pristine promise does not read `constructor`.
+# This promise has an own `constructor` getter that counts its calls.
+# Fault injection, testing=IgnoreAlternativeOverloads: where a call may resolve to several overloads, only the first is consulted on whether its result is fresh, although another returns the operand.
+# So the result is marked pristine.
+# With testing=CheckProofsAtRunTime (--aot-harden=proof-checks) the cell is checked where the mark is relied on, and the process crashes with a named error.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 2
+# RIGHT-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED: 2
+# HARDENED-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,IgnoreAlternativeOverloads
+# LIE: bun: internal AOT error: redundancy elimination check failed
+# LIE-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# LIE: crashed with

@@ -1,0 +1,9 @@
+# the red control: Link finds what the key may name among the fields of the literal: no member of a built-in has the place of that call
+# -- source: a-method-of-the-programs-own-object-called-under-a-key-of-the-run-gives-no-place.ts
+# const handlers = { one() { return 1; }, two() { return 2; } };
+# console.log(handlers[process.argv[2] as "one"](), new URLPattern("/a").test("/a"));
+# -- end of source
+# RUN: features
+# CHECK: by URLPattern named
+# RUN(NEVER): features
+# NEVER-NOT: unnamed at f0

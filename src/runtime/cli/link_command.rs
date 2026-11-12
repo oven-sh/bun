@@ -68,10 +68,10 @@ pub(crate) fn load_package_for_link(
     let mut lockfile = Lockfile::default();
     let mut package = Package::default();
 
-    let package_json_source = match bun_ast::to_source(
-        manager.original_package_json_path.as_zstr(),
-        Default::default(),
-    ) {
+    // A copy: the source borrows its path while `parse` below borrows `manager` mutably.
+    let package_json_path =
+        bun_core::ZBox::from_bytes(manager.original_package_json_path.as_bytes());
+    let package_json_source = match bun_ast::to_source(&package_json_path, Default::default()) {
         Ok(s) => s,
         Err(e) => {
             Output::err_generic(
@@ -254,7 +254,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
             use bun_core::ZStr;
             use bun_paths::{platform, resolve_path};
             let top_level = bun_paths::string_paths::without_trailing_slash_windows_path(
-                FileSystem::instance().top_level_dir(),
+                FileSystem::get().top_level_dir(),
             );
             let mut link_path_buf = bun_paths::path_buffer_pool::get();
             link_path_buf.0[..top_level.len()].copy_from_slice(top_level);
@@ -278,7 +278,7 @@ fn link(ctx: command::Context) -> crate::Result<()> {
         #[cfg(not(windows))]
         {
             if let Err(e) = node_modules.sym_link(
-                FileSystem::instance().top_level_dir_without_trailing_slash(),
+                FileSystem::get().top_level_dir_without_trailing_slash(),
                 name,
                 // is_directory
                 true,

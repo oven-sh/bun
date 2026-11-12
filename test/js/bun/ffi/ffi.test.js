@@ -73,6 +73,16 @@ it("ffi print", async () => {
   ).toBe(true);
 });
 
+it("viewSource throws its error though Error.isError is replaced", () => {
+  const original = Error.isError;
+  Error.isError = () => false;
+  try {
+    expect(() => viewSource({ made_up: { args: ["no such type"], returns: "void" } })).toThrow(TypeError);
+  } finally {
+    Error.isError = original;
+  }
+});
+
 function getTypes(fast) {
   const int64_t = fast ? "i64_fast" : "int64_t";
   const uint64_t = fast ? "u64_fast" : "uint64_t";

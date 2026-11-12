@@ -1,0 +1,26 @@
+# The store goes through a declared union of two records, the read under the written name `true` asks one of them.
+# f5 = readOfMember, f6 = run
+# -- source: what-a-store-through-a-union-lays-under-a-boolean-is-found-on-the-one-record-under-the-written-name.ts
+# declare function sink(...values: unknown[]): void;
+# interface A { kind: string; x: number }
+# interface B { kind: string; y: string }
+# interface Item { v: number }
+# function makeA(n: number): A { return { kind: "a", x: n }; }
+# function makeB(n: number): B { return { kind: "b", y: "t" }; }
+# function makeItem(n: number): Item { return { v: n }; }
+# function layThrough(value: A | B, n: number): void { (value as any)[(n > 2) as any] = makeItem(5); }
+# function readOfMember(b: B): unknown { return (b as any).true; }
+# function run(n: number): number {
+#   const b = makeB(n);
+#   layThrough(n > 4 ? makeA(n) : b, n);
+#   const found: any = readOfMember(b);
+#   return found ? found.v : -1;
+# }
+# let total = 0;
+# for (let n = 0; n < 6; n++) total += run(n);
+# sink(total);
+# -- end of source
+# RUN: link fields functions mechanisms=all
+# CHECK: field L0.0 "v" proven=i32
+# CHECK: function f5 {{*}}result=undefined|L0
+# CHECK: function f6 {{*}}result=i32

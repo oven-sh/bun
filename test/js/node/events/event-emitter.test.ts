@@ -1,7 +1,8 @@
 import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { createRequire } from "module";
+import { join } from "path";
 
 // this is also testing that imports with default and named imports in the same statement work
 // our transpiler transform changes this to a var with import.meta.require
@@ -1205,4 +1206,58 @@ describe("native EventEmitter propagates an exception from a `_events` getter", 
     nativeProto.emit.call(obj, "x");
     expect(fired).toBe(1);
   });
+});
+
+// The loop stands in module code, where the JIT enters it while it runs. An array of 48 or 64 bytes a call is 12 collections or more.
+test.each([
+  ["one listener, no argument", `emitter.on("x", listener);`, `emitter.emit("x")`],
+  ["one listener, one argument", `emitter.on("x", listener);`, `emitter.emit("x", i)`],
+  ["one listener, four arguments", `emitter.on("x", listener);`, `emitter.emit("x", i, i, i, i)`],
+  ["two listeners, one argument", `emitter.on("x", listener); emitter.on("x", () => {});`, `emitter.emit("x", i)`],
+  [
+    "a listener that returns a promise",
+    `const settled = Promise.resolve(); emitter.on("x", () => settled);`,
+    `emitter.emit("x", i)`,
+  ],
+])(
+  "emit() compiled by the JIT makes no array of its arguments: %s",
+  async (_, listen, emit) => {
+    using dir = tempDir("emit-makes-no-array", {
+      "emit.js": `
+      const emitter = new (require("node:events"))();
+      let heard = 0;
+      const listener = () => { heard++; };
+      ${listen}
+      for (let i = 0; i < 2_000_000; i++) ${emit};
+      console.log(require("bun:jsc").numberOfDFGCompiles(emitter.emit));
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(String(dir), "emit.js")],
+      env: { ...bunEnv, BUN_JSC_logGC: "1", BUN_JSC_useConcurrentJIT: "0", BUN_GC_TIMER_DISABLE: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    if (Number(stdout) === 0 || Number(stdout) >= 1_000_000) return; // This Bun runs without the optimizing JIT.
+    expect(stderr.match(/(Eden|Full)Collection/g)?.length ?? 0).toBeLessThan(6);
+  },
+  60_000,
+);
+
+// One more call for every event with several listeners is a sixth more in the interpreter.
+test("emit() itself calls each of several listeners", () => {
+  const emitter = new EventEmitter();
+  let stack = "";
+  emitter.on("x", () => {});
+  emitter.on("x", function second() {
+    stack = new Error().stack!;
+  });
+  emitter.emit("x");
+  const functions = stack
+    .split("\n")
+    .slice(1, 3)
+    .map(line => line.trim().split(" ")[1]);
+  expect(functions).toEqual(["second", "emit"]);
 });

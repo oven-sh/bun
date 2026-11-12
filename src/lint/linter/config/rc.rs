@@ -18,7 +18,8 @@ use crate::context::Severity;
 use crate::fix::SuggestionKind;
 use crate::js_plugin;
 use crate::linter::registry::{
-    Registry, canonical_oxlint_plugin, is_oxlint_rule_key, oxlint_rule_key, parse_rule_id,
+    Registry, canonical_oxlint_plugin, is_oxlint_rule_key, oxlint_rule_key, oxlint_written_name,
+    parse_rule_id,
 };
 use crate::linter::resolved::find_js_rule;
 use crate::options::Json;
@@ -319,19 +320,9 @@ struct WrittenRule {
 fn written_rules(json: &Json) -> Vec<WrittenRule> {
     let rules = json.get(b"rules").and_then(Json::as_object);
     let to_written_rule = |(id, setting): &(Vec<u8>, Json)| {
-        let ((prefix, name), key) = (parse_rule_id(id), oxlint_rule_key(id));
-        let plugin = match (prefix, parse_rule_id(&key).0) {
-            (b"", b"") => Cow::Borrowed(&b"eslint"[..]),
-            (b"", key_prefix) => Cow::Borrowed(key_prefix),
-            (prefix, _) => canonical_oxlint_plugin(prefix),
-        };
-        let plugin = match &*plugin {
-            b"jsx-a11y" => &b"jsx_a11y"[..],
-            b"react-perf" => b"react_perf",
-            plugin => plugin,
-        };
+        let (plugin, name) = oxlint_written_name(id);
         WrittenRule {
-            plugin: plugin.to_vec(),
+            plugin,
             name: name.to_vec(),
             id: id.clone(),
             setting: setting.clone(),

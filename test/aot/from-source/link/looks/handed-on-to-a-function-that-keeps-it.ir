@@ -1,0 +1,15 @@
+# `keeper` stores what arrives. `outer` hands on to `middle`, and `middle` to `keeper`: the word is taken back from both.
+# f1 = keeper, f2 = middle, f3 = outer, f4 = caller
+# -- source: handed-on-to-a-function-that-keeps-it.ts
+# declare function sink(...values: unknown[]): void;
+# let kept: unknown;
+# function keeper(p: { a: number }): number { kept = p; return 1; }
+# function middle(p: { a: number }): number { let t = 0; for (let i = 0; i < 2; i++) t += p.a; return t + keeper(p); }
+# function outer(o: { a: number }): number { return middle(o) + o.a; }
+# function caller(x: number) { return outer({ a: x }); }
+# sink(caller(1), caller(2), kept);
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK-LABEL: function f1
+# CHECK-NOT: only-looked-at
+# CHECK-LABEL: function f4

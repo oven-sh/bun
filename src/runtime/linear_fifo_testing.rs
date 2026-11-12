@@ -11,12 +11,9 @@
 //!
 //! Lives in `bun_runtime` (not `bun_collections`) because it needs the JSC
 //! types; `bun_runtime` already depends on both `bun_collections` and
-//! `bun_jsc`. Registered via `$newRustFunction("collections/linear_fifo.rs",
-//! "TestingAPIs.orderedRemoveProbe", 1)` — the path is only the codegen key;
-//! the implementation is this Rust function (see `dispatch_js2native.rs`).
+//! `bun_jsc`.
 
 use bun_collections::linear_fifo::{LinearFifo, StaticBuffer};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 /// A 16-slot static buffer matches the real `weak_refs` FIFO in the dev
 /// server's source-map store and makes `POWERS_OF_TWO` true.
@@ -32,12 +29,7 @@ type ProbeFifo = LinearFifo<i32, StaticBuffer<i32, 16>>;
 ///       write 12, read 12, write 8 → head=12 count=8, remove offset 5.
 ///
 /// Any other scenario value returns an empty array.
-pub(crate) fn ordered_remove_probe(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let scenario = frame.argument(0).to_int32();
-
+pub(crate) fn ordered_remove_probe(scenario: i32) -> impl Iterator<Item = i32> {
     let mut fifo = ProbeFifo::init();
     match scenario {
         0 => {
@@ -67,14 +59,5 @@ pub(crate) fn ordered_remove_probe(
         _ => {}
     }
 
-    let len = fifo.readable_length();
-    let array = JSValue::create_empty_array(global, len)?;
-    for i in 0..len {
-        array.put_index(
-            global,
-            i as u32,
-            JSValue::js_number_from_int32(fifo.peek_item(i)),
-        )?;
-    }
-    Ok(array)
+    (0..fifo.readable_length()).map(move |i| fifo.peek_item(i))
 }

@@ -592,7 +592,9 @@ describe("bundler", () => {
         },
         onAfterBundle(api) {
           const payload = readFileSync(api.outfile).toString("latin1");
-          expect(payload).toMatch(/import\.meta\.require\("(\/\$bunfs|B:\/~BUN)\/root\/[^"]+\.js"\)/);
+          // Not `expect(payload).toMatch()`: a matcher that fails prints what it received, and this is a whole executable.
+          const offset = payload.search(/import\.meta\.require\("(\/\$bunfs|B:\/~BUN)\/root\/[^"]+\.js"\)/);
+          expect(offset, "no import.meta.require() of a chunk in the payload").toBeGreaterThanOrEqual(0);
         },
       });
     }

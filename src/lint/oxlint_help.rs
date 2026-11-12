@@ -99,7 +99,7 @@ impl Help {
 }
 
 /// Looks up the entry for `rule`'s `message`, which must be oxlint's version of the message.
-pub(crate) fn of(rule: &Meta, message: Message) -> Option<Help> {
+pub(crate) fn of(rule: &Meta, message: &'static Message) -> Option<Help> {
     let key = rule.key ^ message.key.rotate_left(16);
     let at = INDEX.binary_search_by_key(&key, |it| it.0).ok()?;
     NonZeroU32::new(at as u32 + 1).map(Help)

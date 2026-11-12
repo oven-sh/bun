@@ -194,7 +194,7 @@ export function generate(random: Random): Made {
           "var f = g;",
           "for (f of [g]);",
           "for (var f of [g]);",
-          // In sloppy mode plain Bun keeps such a function scoped to its block.
+          // Only in a module, where such a function stays in its block. In sloppy code it is also a `var` of the function around it.
           ...(isModule || kind === "module" ? [`{\nfunction f(m) {\nreturn "c" + m;\n}\n}`] : []),
           "let f = g;",
           "for (const each of [g]) f = each;",

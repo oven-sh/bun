@@ -1,7 +1,7 @@
 use core::num::NonZeroU32;
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_aot::engine::{self, RejectedOptionWord};
+use bun_aot::engine::{self, RejectedOptionWord, StoredStringsForm};
 use bun_clap as clap;
 use bun_core::{CodeGenerationFromStrings, Global, strings};
 use bun_options_types::aot_options::{AotOptions, ExplainSet, HeapSize};
@@ -648,6 +648,17 @@ pub(crate) fn apply_developer_word<'a>(
         "testing" if text == b"NoExecutable" => options.writes_no_executable = true,
         "testing" if text == b"FirstTexts" => options.takes_first_texts = true,
         "testing" if text == b"DiscardsFirstVisits" => options.discards_first_visits = true,
+        "testing" if text == b"LowersInParts" => options.lowers_small_files_in_parts = true,
+        "testing" if text.starts_with(b"CheckOrder=") => {
+            let order = strings::parse_int::<u32>(&text[b"CheckOrder=".len()..], 10);
+            let is_permutation = |order: &u32| order % 2 == 1;
+            let invalid = OptionError::DeveloperWord {
+                key,
+                word: option_word(key, value),
+                sentence: b"takes an odd number".to_vec(),
+            };
+            options.check_order = order.ok().filter(is_permutation).ok_or(invalid)?;
+        }
         "testing" if text == b"TypeErrorsWarn" => options.type_errors_warn = true,
         "testing" if text == b"IsolatedCodeFromDisk" => {
             if !options.loads_code_from_disk || options.runs_in_place {
@@ -906,7 +917,18 @@ fn read_build_flags<'c>(
 #[inline(never)]
 pub(crate) fn parse_build_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     if let Some(executable) = args.option(b"--aot-stored-strings") {
-        print_stored_strings_and_exit(executable);
+        print_stored_strings_and_exit(
+            "--aot-stored-strings",
+            executable,
+            StoredStringsForm::ZeroTerminated,
+        );
+    }
+    if let Some(executable) = args.option(b"--aot-stored-strings-json") {
+        print_stored_strings_and_exit(
+            "--aot-stored-strings-json",
+            executable,
+            StoredStringsForm::JsonLines,
+        );
     }
     let origin = if cmd == Tag::CompileCommand {
         RequestOrigin::CompileCommand

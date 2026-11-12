@@ -274,7 +274,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let placement = self.file.scopes.placement(binding);
         match placement.map(|placement| placement.storage) {
-            Some(Storage::Field { .. } | Storage::Variable(_)) => true,
+            Some(Storage::Field { .. } | Storage::Variable(_) | Storage::Instance { .. }) => true,
             Some(Storage::Local) | None => false,
         }
     }
@@ -683,7 +683,7 @@ fn emit_member_read(
                 lowering.get_binding(Binding::Symbol(symbol.id), name)
             } else {
                 let name = lowering.file.intern_atom(name);
-                lowering.emit_variable_read(VariableKey::Symbol(symbol), name)
+                lowering.emit_exported_variable_read(symbol, name, None)
             }
         }
         Member::Undefined | Member::Marker(false) => lowering.builder.undefined(),

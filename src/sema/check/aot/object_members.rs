@@ -70,19 +70,22 @@ fn replace_written_type(lookup: MemberLookup, written: WrittenType) -> MemberLoo
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
+    /// The type whose members `ty` has: the declared type of `this`, or what is left of a union whose other members
+    /// are `never`. `(A | B) & A` is `A | (B & A)`.
     #[inline]
-    pub(super) fn declared_type_of_this(&mut self, ty: TypeId) -> TypeId {
-        if let TypeData::ThisParam(symbol) = self.c.data(ty) {
-            return self.c.declared_type(*symbol);
+    pub(super) fn resolve_object_type(&mut self, ty: TypeId) -> TypeId {
+        match self.c.data(ty) {
+            TypeData::ThisParam(symbol) => self.c.declared_type(*symbol),
+            TypeData::Union(_) => self.c.reduced(ty),
+            _ => ty,
         }
-        ty
     }
 
     pub(super) fn compute_object_members(
         &mut self,
         ty: TypeId,
     ) -> Result<&'c [ObjectMember], GaveUp> {
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         let shape = self.type_shape(ty)?;
         if !shape.has_members() {
             return Ok(&[]);
@@ -107,7 +110,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         &mut self,
         ty: TypeId,
     ) -> Result<Vec<CheckedMember>, GaveUp> {
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         let shape = self.type_shape(ty)?;
         if !shape.has_members() {
             return Ok(Vec::new());
@@ -133,8 +136,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         instance: TypeId,
         base: TypeId,
     ) -> Result<Option<(Vec<MemberTypedOtherwise>, Option<MethodsAbove>)>, GaveUp> {
-        let instance = self.declared_type_of_this(instance);
-        let base = self.declared_type_of_this(base);
+        let instance = self.resolve_object_type(instance);
+        let base = self.resolve_object_type(base);
         let (&TypeData::Ref { target: class, .. }, &TypeData::Ref { target: above, .. }) =
             (self.c.data(instance), self.c.data(base))
         else {
@@ -268,7 +271,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         &mut self,
         ty: TypeId,
     ) -> Result<&'c [ListedMember], GaveUp> {
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         let shape = self.type_shape(ty)?;
         if !shape.has_members() {
             return Ok(&[]);
@@ -295,7 +298,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         ty: TypeId,
         member: ListedMember,
     ) -> PositionTypes {
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         let members = self.c.members(ty);
         let Some(members) = members else {
             debug_assert!(false, "a listed member belongs to a type with members");
@@ -318,7 +321,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         ty: TypeId,
         member: ListedMember,
     ) -> bool {
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         let Some(members) = self.c.members(ty) else {
             return true;
         };
@@ -347,7 +350,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         &mut self,
         ty: TypeId,
     ) -> Result<&'c [IndexSignature], GaveUp> {
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         if !self.type_shape(ty)?.has_members() {
             return Ok(&[]);
         }

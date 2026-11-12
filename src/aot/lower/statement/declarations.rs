@@ -257,7 +257,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let is_only_a_name = self.file.scopes.is_never_named(symbol)
             && !bound.is_visible_to_eval(symbol)
             && bound.symbol(symbol).parent.is_none()
-            && bound.is_stable_binding(symbol);
+            && bound.is_stable_binding(symbol)
+            && !(self.file.inputs.modules.commonjs()).is_exported_binding(self.file.file, symbol);
         if !is_only_a_name {
             return false;
         }
@@ -489,8 +490,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(binding) = bound.declared_symbol(declaration).some() else {
             return;
         };
-        let member = bound.export_symbol_of_value_symbol_if_exported(binding);
-        if member == binding || !bound.symbol(member).decls.contains(&declaration) {
+        let member = bound.exported_value(binding);
+        if member == binding || !bound.is_exported_by_container(declaration) {
             return;
         }
         let value = self.get_binding(Binding::Symbol(binding), name);

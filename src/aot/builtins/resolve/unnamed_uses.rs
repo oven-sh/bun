@@ -1,7 +1,6 @@
 use super::mention_use::{MentionUse, lookup_passes_holder_linked_anew};
-use super::module_values::reads_what_wrapper_hands_in;
 use super::resolver::{ExprState, Resolver};
-use super::{SourceDialect, passes_every_assertion};
+use super::{SourceDialect, passes_every_assertion, reads_what_wrapper_hands_in};
 use crate::builtins::names::BuiltinNames;
 use crate::builtins::runtime_uses::{
     SyntaxWithHelpers, is_name_of_language_member_with_code, is_name_under_which_evaluator_hangs,

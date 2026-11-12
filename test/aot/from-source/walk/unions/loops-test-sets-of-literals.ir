@@ -1,0 +1,24 @@
+# -- source: main.ts
+# type Shape = { type: "circle"; radius: number; tag: number } | { type: "square"; side: number; tag: number } | { type: "line"; length: number; tag: number } | { type: "dot"; x: number; tag: number } | { type: "text"; size: number; tag: number };
+# function measure(shapes: Shape[]): number {
+#   let sum = 0;
+#   for (const shape of shapes) { if (shape.type === "circle") sum += 1; if (shape.type === "square") sum += 2; if (shape.type === "line") sum += 3; if (shape.type === "dot") sum += 4; if (shape.type === "text") sum += 5; }
+#   return sum;
+# }
+# const shapes: Shape[] = [];
+# for (let i = 0; i < 100; i++) {
+#   if (i % 5 === 0) shapes.push({ type: "circle", radius: i, tag: i }); else if (i % 5 === 1) shapes.push({ type: "square", side: i, tag: i }); else if (i % 5 === 2) shapes.push({ type: "line", length: i, tag: i }); else if (i % 5 === 3) shapes.push({ type: "dot", x: i, tag: i }); else shapes.push({ type: "text", size: i, tag: i });
+# }
+# (globalThis as unknown as { kept: unknown }).kept = shapes;
+# let sum = 1;
+# for (let i = 0; i < 10; i++) sum = (sum * 31 + measure(shapes)) % 1000003;
+# print(sum);
+# -- end of source
+# No family holds the five layouts. In a loop they are tested as one set, as literals of a field tell them apart: no read of the field is left to the name.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = PropGet {{*}}key="type"
+# CHECK: = GetSlot {{*}}key="type" receivers=[L0, L1, L2, L3, L4] level=Proven
+# RUN(ANSWER): run-in-shell
+# ANSWER: 136474
+# ANSWER-NEXT: exited with 0

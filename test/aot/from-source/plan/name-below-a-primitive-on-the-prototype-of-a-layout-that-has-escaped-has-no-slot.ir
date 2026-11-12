@@ -1,4 +1,4 @@
-# unseen code has an object of the layout, and with it the prototype object: nobody can say what comes to lie there under the name, and the flow has lost sight of the object. So the name keeps no slot, as before
+# unseen code has an object of the layout, and with it the prototype object: nobody can say what comes to lie there under the name. The name is appended where nothing in sight lays a function or an accessor under it: each access asks the guard of the members above
 # function lose(c) { c.gone++; return c.id; }   sink(lose(other), other)
 # f1 = Lost, f2 = lose. The records are made from the source
 # -- source: name-below-a-primitive-on-the-prototype-of-a-layout-that-has-escaped-has-no-slot.js
@@ -11,4 +11,4 @@
 # RUN: plan layouts mechanisms=all
 # CHECK: slot 0 "id"
 # RUN(ESCAPED): plan layouts mechanisms=all
-# ESCAPED-NOT: "gone" appended
+# ESCAPED: "gone" appended

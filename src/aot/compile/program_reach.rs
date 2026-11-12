@@ -68,6 +68,7 @@ pub(crate) struct ProgramReachInput<'a, 's> {
     pub isolates_code_from_disk: bool,
     pub mocks_any_module: bool,
     pub files_started_by_runner: &'a [FileId],
+    /// Sorted. What these files import runs, though its package declares no side effects.
     pub files_with_kept_imports: &'a [FileId],
     pub starts_of_workers: &'a [(FileId, ExprId, FileId)],
     pub beside: Beside<'a>,
@@ -580,7 +581,9 @@ impl<'a, 's> FileScan<'a, 's> {
         let written_at = self.hir[statement].loc;
         let written_at = written_at.pos..written_at.end;
         let name = match self.hir[statement].kind {
-            StmtKind::Enum(declared) => self.bound.declared_symbol(Decl::Enum(declared)),
+            StmtKind::Enum(declared) if !self.hir[declared].flags.contains(Flags::AMBIENT) => {
+                self.bound.declared_symbol(Decl::Enum(declared))
+            }
             StmtKind::ExportDefault(_) => self.bound.declared_symbol(Decl::ExportExpr(statement)),
             _ => {
                 self.add_part(Part::Statement(statement), written_at, &[]);
@@ -2649,6 +2652,7 @@ impl<'a, 's> Walk<'a, 's> {
                 };
                 loads.take_file_found(&mut reacher, file);
             }
+            // The name goes to the loader's functions, and the loader finds the file by its path.
             if found.stores_loader_function {
                 for file in take(&mut found.files_that_computed_names_may_ask_for) {
                     let mut reacher = Reacher {
@@ -2772,6 +2776,8 @@ impl<'a, 's> Walk<'a, 's> {
             .collect()
     }
 
+    /// One walk. `seeded_last` are seeded when everything else has run dry, and the last of the answer lists the files that
+    /// were not alive then. The marks only ever get set, so what is alive at the end does not hang on the order.
     fn run(
         &mut self,
         in_parallel: InParallel<'_>,
@@ -3279,30 +3285,50 @@ impl Reacher<'_, '_, '_> {
         }
     }
 
+    fn read_name_from_object(&self, file: FileId, name: Atom) {
+        if self.walk.names_read_from_objects.insert((file, name)) {
+            self.read_name_from_files_that_hand_it_on(file, name);
+        }
+    }
+
     fn read_name_from_files_that_hand_it_on(&self, file: FileId, name: Atom) {
         let walk = self.walk;
-        let graph = walk.input.graph;
-        let (mut file, mut name) = (file, name);
-        while let Some((source, listed)) = graph.find_what_hands_on_names(file, name) {
-            let ModuleRef::File(source) = source else {
-                return;
+        let (graph, atoms) = (walk.input.graph, &walk.input.files.atoms);
+        let mut pending: SmallVec<[(FileId, Atom); 4]> = smallvec![(file, name)];
+        while let Some((file, name)) = pending.pop() {
+            let mut read = |source: FileId, name: Atom| {
+                if walk.names_read_from_objects.insert((source, name)) {
+                    pending.push((source, name));
+                }
             };
-            if !walk.names_read_from_objects.insert((source, listed)) {
-                return;
+            if let Some((source, listed)) = graph.find_what_hands_on_names(file, name) {
+                if let ModuleRef::File(source) = source {
+                    read(source, listed);
+                }
+                continue;
             }
-            (file, name) = (source, listed);
-        }
-        for &(_, star) in graph.unlisted_stars_that_bring(file, name) {
-            walk.names_read_from_objects.insert((star, name));
-        }
-        if !graph.is_brought_by_star(file, name) {
-            return;
-        }
-        for &source in graph.files_named_by_stars(file) {
-            if graph.lists_export(ModuleRef::File(source), name, &walk.input.files.atoms)
-                && walk.names_read_from_objects.insert((source, name))
-            {
-                self.read_name_from_files_that_hand_it_on(source, name);
+            for &(_, star) in graph.unlisted_stars_that_bring(file, name) {
+                read(star, name);
+            }
+            if graph.is_brought_by_star(file, name) {
+                for &source in graph.files_named_by_stars(file) {
+                    if graph.lists_export(ModuleRef::File(source), name, atoms) {
+                        read(source, name);
+                    }
+                }
+            }
+            if !graph.has_dynamic_names(file) || !graph.takes_export_from_star(file, name, atoms) {
+                continue;
+            }
+            // The run searches these stars too, and the name of a file hides the same name behind its own stars.
+            for request in graph.requests(file) {
+                if let ModuleRef::File(star) = request.target
+                    && request.is_dynamic_star_export
+                    && graph.has_dynamic_names(star)
+                    && graph.lists_export(request.target, name, atoms)
+                {
+                    read(star, name);
+                }
             }
         }
     }
@@ -3310,10 +3336,8 @@ impl Reacher<'_, '_, '_> {
     fn reach_export(&mut self, module: ModuleRef, name: Atom) -> bool {
         let walk = self.walk;
         let module = module_with_code(module);
-        if let ModuleRef::File(file) = module
-            && walk.names_read_from_objects.insert((file, name))
-        {
-            self.read_name_from_files_that_hand_it_on(file, name);
+        if let ModuleRef::File(file) = module {
+            self.read_name_from_object(file, name);
         }
         if walk.has_stored_names(module) {
             return self.reach_named_member(module, name);
@@ -3710,6 +3734,7 @@ pub(crate) fn find_root_folders_spelled(
     folders_of_root[folders_of_root.len() - most.unwrap_or(0)..].join(&b"/"[..])
 }
 
+/// The file may lie below, beside or above the root directory. `path.join(__dirname, "..", "app")` spells a path too: the reads of `node:fs` hold it joined.
 fn count_root_folders_spelled(files: &Files<'_>, file: FileId, folders_of_root: &[&[u8]]) -> usize {
     let directory = directory_of(files.module(file).file_name());
     let folders_of_file: Vec<&[u8]> = split(directory, b"/").collect();
@@ -3728,6 +3753,7 @@ fn count_root_folders_spelled(files: &Files<'_>, file: FileId, folders_of_root: 
         }
         let parts: Vec<&[u8]> = split(text, b"/").collect();
         let ups = parts.iter().take_while(|part| **part == b"..").count();
+        // The climb ends in a folder that holds the root directory.
         let Some(top) = folders_of_file.len().checked_sub(ups) else {
             continue;
         };
@@ -3933,10 +3959,13 @@ fn find_who_hands_on_what(
                 }
             }
         }
+        // A taker that hands the name on by itself too is an exporter already, and is taken from all the same.
+        let mut followed: FxHashSet<(FileId, ExportedItem)> = FxHashSet::default();
         while let Some((file, item)) = commonjs_items.pop() {
             for &file in takers_by_star.get(&file).into_iter().flatten() {
                 let is_by_star = true;
-                if add_exporter(item, Exporter { file, is_by_star }) {
+                add_exporter(item, Exporter { file, is_by_star });
+                if followed.insert((file, item)) {
                     commonjs_items.push((file, item));
                 }
             }
@@ -4024,6 +4053,7 @@ pub(crate) struct LeftOutCode {
     names_read_from_objects: SharedSet<(FileId, Atom)>,
     bound_variables: SharedSet<Sym>,
     pub holds_every_load_by_unknown_name: bool,
+    /// Sorted. In the program, and not yet when the entry points that are seeded last were still to come.
     pub files_alive_through_last_seeds_alone: Vec<FileId>,
 }
 

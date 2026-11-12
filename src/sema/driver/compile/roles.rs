@@ -21,6 +21,7 @@ pub fn decide_roles<'s>(
     for demotion in &demoted {
         roles[demotion.file.idx()] = FileRole::Inferred;
     }
+    // Its semantic errors are dropped, so its types are not held to be true.
     for &file in files.compiled_files() {
         let is_trusted = roles[file.idx()] == FileRole::Checked;
         if is_trusted && loaded.origin(file) == FileOrigin::EvaluatedText {

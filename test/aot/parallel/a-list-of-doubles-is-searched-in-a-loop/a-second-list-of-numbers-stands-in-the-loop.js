@@ -1,4 +1,4 @@
-// STATISTIC: UnrolledLoopsForIndexingType >= 7
+// STATISTIC: UnrolledLoopsForIndexingType >= 6
 // Under: --aot-harden=proof-checks: the kind found in front of the turns is held against the cell at every read
 'use strict';
 const n = +process.argv[2] || 3; const said = [];

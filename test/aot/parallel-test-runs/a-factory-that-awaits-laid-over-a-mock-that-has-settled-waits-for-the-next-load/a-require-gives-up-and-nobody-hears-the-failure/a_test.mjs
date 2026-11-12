@@ -1,4 +1,6 @@
 import { test, vi } from "bun:test";
+// Runs the event loop that many times: jobs, unhandled rejections and immediates run each time, and no clock decides.
+const spinEventLoop = async (count = 20) => { while (count-- > 0) await new Promise(done => setImmediate(done)); };
 let open;
 const gate = new Promise(done => (open = done));
 let calls = 0;
@@ -19,6 +21,6 @@ test("t", async () => {
   }
   console.log("SAID reel", reel);
   open();
-  await new Promise(done => setTimeout(done, 20));
+  await spinEventLoop();
   console.log("SAID calls", calls);
 });

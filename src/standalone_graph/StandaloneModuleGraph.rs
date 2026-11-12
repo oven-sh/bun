@@ -195,13 +195,21 @@ impl StandaloneModuleGraph {
         if !is_bun_standalone_file_path(name) {
             return self.find_at_source_path(name);
         }
+        // What the program has written is on the disk: `find_written_file`.
+        if compiled_program::find_written_file(name).is_some() {
+            return None;
+        }
         self.lookup_file(name)
+            .filter(|file| !compiled_program::is_removed_by_program(file.name))
+            .filter(|file| !self.has_file_vanished(file.name))
     }
 
-    /// What a program reads as data: not the file of a compiled entry point, which is in the graph for its name alone.
+    /// What a program reads as data: not the file of a compiled entry point or a file that the program only asks about, which are in the graph for their names alone.
     pub fn find_data(&self, name: &[u8]) -> Option<&File> {
         let file = self.find_ref(name)?;
-        (!self.is_file_of_compiled_entry_point(file)).then_some(file)
+        let is_named_alone =
+            self.is_file_of_compiled_entry_point(file) || self.has_no_file_contents(file);
+        (!is_named_alone).then_some(file)
     }
 
     pub fn contains_file(&self, name: &[u8]) -> bool {
@@ -281,7 +289,18 @@ impl StandaloneModuleGraph {
                 listed.push(entry);
             }
         }
+        if !is_bun_standalone_file_path(name) {
+            let name = strings::without_trailing_slash(name);
+            listed.retain(|(below, is_folder)| {
+                self.holds_at_source_path(&[name, b"/", below].concat(), *is_folder)
+            });
+        }
         Some(listed)
+    }
+
+    /// Whoever walks a folder holds its path for as long as the process lives.
+    pub fn keep_folder_path(path: &[u8]) -> &'static [u8] {
+        keep_key_of_directory_with_code_alone(strings::without_trailing_slash(path))
     }
 
     pub(crate) fn list_folder(&self, name: &[u8], recursive: bool) -> Vec<(Box<[u8]>, bool)> {
@@ -312,13 +331,35 @@ impl StandaloneModuleGraph {
             })
         };
         for (index, key) in self.files.keys().iter().enumerate() {
-            if !is_compiled_entry_point(index) {
+            let is_removed = || {
+                compiled_program::is_removed_by_program(key)
+                    && compiled_program::find_written_file(key).is_none()
+            };
+            if !is_compiled_entry_point(index) && !is_removed() && !self.has_file_vanished(key) {
                 push(key, false);
             }
         }
         for key in self.dirs.keys() {
-            push(key, true);
+            if key.starts_with(name)
+                && !compiled_program::is_removed_by_program(key)
+                && !self.has_folder_vanished(key)
+            {
+                push(key, true);
+            }
         }
+        let mut push_with_folders = |key: &[u8]| {
+            let mut end = prefix.len();
+            while recursive
+                && key.starts_with(&prefix)
+                && let Some(length) = strings::index_of_char(&key[end..], b'/')
+            {
+                end += length as usize;
+                push(&key[..end], true);
+                end += 1;
+            }
+            push(key, false);
+        };
+        compiled_program::for_each_written_file(name, &mut push_with_folders);
         if let Some(program) = &self.compiled_program {
             let mut source_path: Vec<u8> = Vec::new();
             for entry_point in program.entry_points_in_directory(name) {
@@ -433,7 +474,8 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
         self.files.values().get(file as usize).map(|file| file.name)
     }
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&'static [u8]> {
-        self.lookup_file(name).map(|f| f.name)
+        let file = self.lookup_file(name)?;
+        (!self.has_no_file_contents(file)).then_some(file.name)
     }
 
     fn base_public_path_with_default_suffix(&self) -> &'static [u8] {

@@ -84,6 +84,8 @@ pub fn load_program<'s>(
     let brings_bun_types =
         is_application && !has_bun_types_installed && take_bun_types_of_host(host, options);
     let has_bun_types = has_bun_types_installed || brings_bun_types;
+    // A folder without a tsconfig.json is read as under the one that `bun init` writes. With the library of the DOM in sight
+    // Bun's declarations leave to it what they declare themselves otherwise, the `text()` of a stream among it.
     let is_read_as_after_bun_init =
         is_application && has_bun_types && project.config_path.is_empty();
     if is_read_as_after_bun_init && !options.specifies_lib {
@@ -252,6 +254,8 @@ pub fn load_program<'s>(
     })
 }
 
+/// Makes the checker's program in a frame of its own. The program is large and is moved into the
+/// arena once, so nothing of it lies on the stack under the rest of `load_program`.
 #[inline(never)]
 fn make_checker<'s>(
     session: &'s Session,
@@ -359,12 +363,26 @@ impl<'a> FileFinder<'a> {
     }
 
     pub fn find_entry_point(&self, specifier: &[u8]) -> Option<Vec<u8>> {
+        self.find_entry_point_as(specifier, CodeImportForm::Static)
+    }
+
+    /// No plugin is asked.
+    pub fn find_entry_point_on_disk(&self, specifier: &[u8]) -> Option<Vec<u8>> {
+        self.find_entry_point_as(specifier, CodeImportForm::Macro)
+    }
+
+    /// A plugin that fails stops no build: the file is left out.
+    pub fn find_guessed_entry_point(&self, specifier: &[u8]) -> Option<Vec<u8>> {
+        self.find_entry_point_as(specifier, CodeImportForm::Guess)
+    }
+
+    fn find_entry_point_as(&self, specifier: &[u8], form: CodeImportForm) -> Option<Vec<u8>> {
         let resolution = self.resolver.resolve_code(&CodeRequest {
             specifier,
             importer: b"",
             directory: &self.code.working_directory,
             kind: CodeImportKind::EntryPoint,
-            form: CodeImportForm::Static,
+            form,
         });
         match resolution {
             CodeResolution::File(file) if file.host_module.is_none() => Some(file.path.to_vec()),

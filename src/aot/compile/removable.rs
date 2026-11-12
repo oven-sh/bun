@@ -73,6 +73,7 @@ impl Primitive {
     }
 }
 
+/// `&&`, `||`, `??` or `+`, where both operands can run.
 fn primitive_of_operator(op: BinOp, left: Primitive, right: Primitive) -> Primitive {
     match (op, left, right) {
         (BinOp::And | BinOp::Or, left, right) => left.merge(right),
@@ -172,6 +173,7 @@ pub(crate) struct Removable<'a, 's> {
     hoists_classes: bool,
     modules: Option<(&'a ModuleGraph, FileId)>,
     member_constants: RefCell<FxHashMap<EnumMemberId, Option<Primitive>>>,
+    /// Every member with a lower number has an entry in `member_constants`.
     settled_members: Cell<u32>,
     parents_above_long_chains: RefCell<FxHashMap<ExprId, Parent>>,
     is_value_taken: Cell<bool>,
@@ -724,6 +726,7 @@ impl<'a, 's> Removable<'a, 's> {
         })
     }
 
+    /// A chain of operators nests on the left, as deep as it is long.
     fn binary_chain(&self, mut op: BinOp, mut left: ExprId, mut right: ExprId) -> bool {
         let mut outer: SmallVec<[(BinOp, ExprId, ExprId, bool); 2]> = SmallVec::new();
         let is_innermost_removable = loop {
@@ -874,6 +877,7 @@ impl<'a, 's> Removable<'a, 's> {
         let Some(Binding::Symbol(symbol)) = self.find_static_binding(object) else {
             return false;
         };
+        // `lib.f; var lib = require("./x.mjs");` reads a member of undefined.
         self.has_initializer_run_at(object, symbol)
             && self.modules.is_some_and(|(modules, file)| {
                 matches!(modules.member(file, member), Some(Member::Binding(_)))
@@ -1043,6 +1047,8 @@ impl<'a, 's> Removable<'a, 's> {
         if let Some(&constant) = self.member_constants.borrow().get(&member) {
             return constant;
         }
+        // An initializer names members that are written in front of it, which have lower numbers. They are settled from
+        // the first on, so a question about one member never stands inside a question about another, however long the chain.
         for earlier in (self.settled_members.get()..=member.0).map(EnumMemberId) {
             if !self.member_constants.borrow().contains_key(&earlier) {
                 self.member_constants.borrow_mut().insert(earlier, None);

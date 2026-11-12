@@ -367,9 +367,16 @@ mod _impl {
                 use crate::cli::command::Tag;
                 let as_node =
                     crate::cli::PRETEND_TO_BE_NODE.load(core::sync::atomic::Ordering::Relaxed);
-                let cmd = if as_node { Tag::RunAsNodeCommand } else { Tag::AutoCommand };
+                let cmd = if as_node {
+                    Tag::RunAsNodeCommand
+                } else {
+                    Tag::AutoCommand
+                };
                 let aliases = crate::cli::arguments::short_aliases_of(cmd);
-                let flag = aliases.iter().find(|(from, _)| *from == p).map_or(p, |(_, to)| *to);
+                let flag = aliases
+                    .iter()
+                    .find(|(from, _)| *from == p)
+                    .map_or(p, |(_, to)| *to);
                 if crate::cli::script_or_command::has_value_in_next_argument(flag) {
                     args.push(BunString::clone_utf8(arg));
                     prev = Some(arg);

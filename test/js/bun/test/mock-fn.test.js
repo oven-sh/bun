@@ -4280,9 +4280,7 @@ if (isBun) {
           expect(other.prototype.constructor).toBe(other);
         });
 
-        // The receiver of these stores is a Proxy, and the native setter behind a fresh `prototype` refuses an object
-        // that is not the mock. A store through a Proxy ends in a definition on the mock, and Bun's JavaScriptCore
-        // gives the value of that definition to the setter, with the mock.
+        // The native setter behind a fresh `prototype` refuses an object that is not the mock, such as the Proxy.
         test.each([
           ["a Proxy", mocked => new Proxy(mocked, {})],
           ["a Proxy of a Proxy", mocked => new Proxy(new Proxy(mocked, {}), {})],

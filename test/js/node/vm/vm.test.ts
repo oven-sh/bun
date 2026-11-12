@@ -4018,17 +4018,8 @@ describe.concurrent("an exception thrown by an EventTarget listener from a vm co
   });
 });
 
-// A store can reach a native setter of the engine through a receiver that does not hold the property. The engine asks the
-// receiver for its own property, and two kinds of receiver answer with another object's: a Proxy without a
-// getOwnPropertyDescriptor trap (its target's) and the global of a context (its contextified object's). The setter has
-// to get the object that holds the property and that object's realm, not the receiver and the realm of the context.
-//
-// With a Proxy as the receiver it does. The store ends in a definition on the target, and Bun's JavaScriptCore gives the
-// value of that definition to the setter, with the target and its realm.
-//
-// With the global of a context as the receiver it does not. JavaScriptCore gives the setter the global of the context,
-// as the object and as the realm. https://github.com/oven-sh/WebKit/pull/993 changes that. With a WebKit that has it,
-// the `failing` tests pass and the `todo` test can run: remove both marks.
+// `failing` and `todo` until https://github.com/oven-sh/WebKit/pull/993: with the global of a context as the receiver,
+// the native setter behind a property of the contextified object gets that global, as the object and as the realm.
 describe.concurrent("a store with a receiver from a context runs the native setter of the holder", () => {
   const fixture = `
     const vm = require("node:vm");
@@ -4105,9 +4096,7 @@ describe.concurrent("a store with a receiver from a context runs the native sett
     });
   });
 
-  // The setter takes the global of the context for Bun's global object and writes past the end of it. A build with
-  // assertions aborts there, so this does not run as a `failing` test. Node.js does not take a function for the
-  // contextified object, so it has no answer for this store.
+  // Not `failing`: the setter writes past the end of the global of the context, and a build with assertions aborts.
   test.todo("Error.prepareStackTrace, Reflect.set() with the global of a context as the receiver", async () => {
     const receiver = "Reflect.set() with the global of a context as the receiver";
     expect(await storeInItsOwnProcess("Error.prepareStackTrace", receiver)).toEqual({
@@ -4116,8 +4105,7 @@ describe.concurrent("a store with a receiver from a context runs the native sett
     });
   });
 
-  // A `failing` test takes every failure of its body for the expected one. So each store with such a test also has a
-  // test that its child process ends well, which holds with and without the change. Both read one run of the child.
+  // A `failing` test passes on a crash too, so a second test reads the same run of the child and expects a clean exit.
   const once = <T>(run: () => Promise<T>) => {
     let result: Promise<T> | undefined;
     return () => (result ??= run());
@@ -4168,9 +4156,7 @@ describe.concurrent("a store with a receiver from a context runs the native sett
     expect({ stderr, exitCode }).toEqual(endedWell);
   });
 
-  // The setters of onmessage and onerror take the global object of the main realm when they are given another object.
-  // That is the holder unless the holder is the global object of another realm. The store prints
-  // {"realm":[],"main":["function","function"]}.
+  // The handlers go to the main realm. The store prints {"realm":[],"main":["function","function"]}.
   ifShadowRealm.failing("a ShadowRealm's onmessage and onerror, the global of a context as the receiver", async () => {
     expect((await storeInAShadowRealm()).stdout).toBe(
       `{"realm":["message: delivered","error: delivered"],"main":["object","object"]}\n`,

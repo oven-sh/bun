@@ -4581,15 +4581,21 @@ describe.concurrent("an ES module that got a mock from require() is evaluated ag
     );
   });
 
-  // These two keep the mock of the first file, as docs/test/mocks.mdx says. The right value in the second file is "mock 2".
+  // created.js and builtin.js keep the mock of the first file, as docs/test/mocks.mdx says. Each test.failing() states what they must get once that is fixed.
   test("but not yet one that required a mocked Node.js builtin, or got the mock from createRequire()", async () => {
-    const file = (nth: number, kept: string) => `
+    const file = (nth: number, unfixed: "test" | "test.failing") => `
       import { expect, mock, test } from "bun:test";
       mock.module("./dep.cjs", () => ({ name: "mock ${nth}" }));
       mock.module("node:os", () => ({ name: "mock ${nth}" }));
-      test("file ${nth}", async () => {
-        const seen = [(await import("./first.js")).seen(), (await import("./created.js")).seen(), (await import("./builtin.js")).seen()];
-        expect(seen).toEqual(["mock ${nth}", "${kept}", "${kept}"]);
+      test("two that called require() for a file", async () => {
+        const seen = [(await import("./first.js")).seen(), (await import("./second.js")).seen()];
+        expect(seen).toEqual(["mock ${nth}", "mock ${nth}"]);
+      });
+      ${unfixed}("one that got it from createRequire()", async () => {
+        expect((await import("./created.js")).seen()).toBe("mock ${nth}");
+      });
+      ${unfixed}("one that called require() for the builtin", async () => {
+        expect((await import("./builtin.js")).seen()).toBe("mock ${nth}");
       });
     `;
     await expectFixturesToPass(
@@ -4605,10 +4611,10 @@ describe.concurrent("an ES module that got a mock from require() is evaluated ag
           const os = require("node:os");
           export const seen = () => os.name;
         `,
-        "1.test.js": file(1, "mock 1"),
-        "2.test.js": file(2, "mock 1"),
+        "1.test.js": file(1, "test"),
+        "2.test.js": file(2, "test.failing"),
       },
-      2,
+      6,
     );
   });
 });

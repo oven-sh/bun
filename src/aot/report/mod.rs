@@ -37,7 +37,9 @@ pub use self::levels::{
 pub use self::message::{
     ReportMessage, add_messages_to_log, is_json_report, is_message_report, write_lines,
 };
-pub use self::source_texts::{ModuleLocator, ModuleOrigin, ModuleSource, SourceTexts};
+pub use self::source_texts::{
+    FunctionSources, ModuleLocator, ModuleOrigin, ModuleSource, SourceTexts,
+};
 pub use self::summary::{write_developer_options, write_summary};
 use crate::engine::EngineResult;
 use crate::ir::generated::ReportSet;
@@ -120,6 +122,8 @@ mod tests {
         function: ABSENT_WORD,
         cost: AccessCost::ByName,
         loop_depth: 0,
+        origin: ABSENT_WORD,
+        has_other_origins: 0,
     }];
     const GUARD: &[TypeTestRecord] = &[TypeTestRecord {
         location: PLACE,

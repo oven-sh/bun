@@ -512,7 +512,10 @@ pub fn with_executable_image<R>(
     path: &ZStr,
     use_image: impl FnOnce(&mut Image<'_>) -> R,
 ) -> bun_sys::Maybe<R> {
-    let file = bun_sys::File::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?;
+    // Otherwise opening a named pipe waits for a writer.
+    let without_waiting = if cfg!(unix) { bun_sys::O::NONBLOCK } else { 0 };
+    let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | without_waiting;
+    let file = bun_sys::File::open(path, flags, 0)?;
     let len = file.get_end_pos()?;
     let mut read = |offset: usize, out: &mut [u8]| matches!(file.pread_all(out, offset as u64), Ok(count) if count == out.len());
     let read = &mut read;

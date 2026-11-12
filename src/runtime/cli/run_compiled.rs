@@ -1373,6 +1373,15 @@ pub(crate) fn refused_changes() -> Vec<Vec<u8>> {
     core::mem::take(&mut *refused)
 }
 
+/// `bun test --aot --rerun-each`: the runner loads each test file several times in one realm.
+pub(crate) static TEST_FILES_RUN_AGAIN: AtomicBool = AtomicBool::new(false);
+
+/// BunCompiledModules.cpp.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__AOT__runsTestFilesAgain() -> bool {
+    TEST_FILES_RUN_AGAIN.load(Ordering::Relaxed)
+}
+
 /// BunCompiledModules.cpp. The runner has a test file whose load has settled and whose `describe` callbacks it has yet to call. It turns the
 /// event loop once in between.
 #[unsafe(no_mangle)]
@@ -1425,7 +1434,10 @@ pub(crate) extern "C" fn Bun__AOT__recordRefusedChange(
 ) {
     let said = refusal.to_owned_slice();
     if let Some(file_and_why) = said.strip_prefix(RAN_FROM_SOURCE) {
-        return add_file_run_from_source(file_and_why);
+        return add_note_on_file(RAN_FROM_SOURCE, file_and_why);
+    }
+    if let Some(file_and_why) = said.strip_prefix(RAN_MORE_OFTEN) {
+        return add_note_on_file(RAN_MORE_OFTEN, file_and_why);
     }
     if let Some(quoted) = said.strip_prefix(KEPT_RUN) {
         return add_file_that_kept_its_run(&quoted[1..quoted.len() - 1]);
@@ -1443,7 +1455,7 @@ pub(crate) extern "C" fn Bun__AOT__recordRefusedChange(
 }
 
 /// `file_and_why`: "'<path>': <why>".
-fn add_file_run_from_source(file_and_why: &[u8]) {
+fn add_note_on_file(kind: &[u8], file_and_why: &[u8]) {
     let Some(end) = bun_core::strings::index_of(file_and_why, b"': ") else {
         return;
     };
@@ -1451,7 +1463,7 @@ fn add_file_run_from_source(file_and_why: &[u8]) {
     let file = RUNNING_TEST_FILE.lock().clone();
     add_refused_change(
         [
-            RAN_FROM_SOURCE,
+            kind,
             &path_below_project(&path)[..],
             &file_and_why[end + 1..],
             b", while ",
@@ -1575,6 +1587,7 @@ pub(crate) const LOADED_ADDON: &[u8] = b"Loaded ";
 pub(crate) const UNREACHED_FILE: &[u8] = b"Cannot reach ";
 pub(crate) const RAN_FROM_SOURCE: &[u8] = b"Ran from source ";
 pub(crate) const KEPT_RUN: &[u8] = b"Kept the run of ";
+pub(crate) const RAN_MORE_OFTEN: &[u8] = b"Ran more often ";
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__AOT__recordMissingExport(

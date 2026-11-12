@@ -7,10 +7,11 @@ use smallvec::SmallVec;
 use super::FunctionLowering;
 use super::call::{self};
 use super::control::{CleanupLanding, CleanupPath};
+use super::member::PropertyName;
 use super::statement::statements_behind;
 use crate::builtins::id::BuiltinId;
-use crate::ir::generated::BlockRole;
-use crate::ir::{Edge, LocalVariable, ValueId};
+use crate::ir::generated::{BlockRole, RuntimeErrorKind};
+use crate::ir::{Edge, LocalVariable, TypeTable, ValueId, WellKnownSymbol};
 
 const HAS_AWAIT_STATE: &str = "a scope with an asynchronous resource has its await state";
 
@@ -161,6 +162,35 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         add_resource(self, scope, declaration, value, Some(initializer));
     }
 
+    // GetDisposeMethod, with the engine's messages. A read in the program's own code is resolved like any other.
+    fn lower_dispose_method(&mut self, value: ValueId) -> ValueId {
+        let found = self.create_block();
+        let method = self.builder.add_parameter(found, None);
+        let nothing = self.create_block();
+        let present = self.branch_if_nullish(value, nothing);
+
+        let error = RuntimeErrorKind::ResourceNotObject;
+        let object = self.builder.require_object(present, error);
+        let key = self.file.symbol_key(WellKnownSymbol::Dispose);
+        let read = self.emit_get(object, PropertyName::Constant(key));
+
+        let functions = self.split_on_type(read, TypeTable::FUNCTION);
+        self.builder.switch_to(functions.not_taken);
+        let absent = self.create_block();
+        self.branch_if_nullish(functions.not_taken_value, absent);
+        self.emit_throw_runtime_error(RuntimeErrorKind::DisposeMethodNotCallable, None);
+        self.continue_in(absent);
+        self.emit_throw_runtime_error(RuntimeErrorKind::DisposeMethodAbsent, None);
+        self.builder.switch_to(functions.taken);
+        self.jump_with(found, &[functions.taken_value]);
+
+        self.continue_in(nothing);
+        let undefined = self.builder.undefined();
+        self.jump_with(found, &[undefined]);
+        self.continue_in(found);
+        method
+    }
+
     fn emit_disposal(
         &mut self,
         resource: Resource,
@@ -259,11 +289,13 @@ fn add_resource(
     let Some(hint) = get_dispose_hint(decl.kind) else {
         unreachable!("add_resource takes a using declaration");
     };
-    let helper = match hint {
-        DisposeHint::Sync => BuiltinId::CompilerHelpersGetDisposeMethod,
-        DisposeHint::Async => BuiltinId::CompilerHelpersGetAsyncDisposeMethod,
+    let method = match hint {
+        DisposeHint::Sync => lowering.lower_dispose_method(value),
+        DisposeHint::Async => {
+            let helper = BuiltinId::CompilerHelpersGetAsyncDisposeMethod;
+            lowering.emit_builtin_call(helper, &[value])
+        }
     };
-    let method = lowering.emit_builtin_call(helper, &[value]);
     lowering.begin_cleanup(BlockRole::DisposalCleanup, Some(value));
     scope.resources.push(Resource {
         value,

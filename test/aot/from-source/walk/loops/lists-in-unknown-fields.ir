@@ -1,0 +1,16 @@
+# f1 = sum
+# -- source: main.mjs
+# function sum(o, n) { let s = 0; for (let i = 0; i < n; i++) s = (s + o.t[i & 7]) | 0; return s; }
+# const numbers = JSON.parse('{"t":[1,2,3,4,5,6,7,8]}'), view = JSON.parse('{"t":[1,2,3,4,5,6,7,8]}'), doubles = JSON.parse('{"t":[1.5,2,3,4,5,6,7,8]}');
+# view.t = new Int32Array([3, 0, 0, 0, 0, 0, 0, 0]);
+# print(sum(numbers, 20), sum(view, 20), sum(doubles, 20));
+# -- end of source
+# The field is read once before the loop by its site. Arrays, bytes and the other views have a version each.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: testedType=Int32Array
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="t"
+# CHECK: testedType=Array
+# RUN(COUNT): compile UnknownFieldLoopsVersioned mechanisms=all
+# COUNT: statistic UnknownFieldLoopsVersioned
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 82 9 82

@@ -18,6 +18,7 @@ use crate::load::{EntryPointKind, SourceKind, is_in_node_modules};
 use crate::test_run_report::say_files_that_may_run_again;
 use crate::test_runs::runs_unseen_code;
 use bun_sema::bind::{Bound, CodeUnit, FnOwner, Parent};
+use bun_sema::components::strongly_connected_components;
 use bun_sema::fold::Decisions;
 use bun_sema::hir::{self, ExprId, ExprKind, FnId, PatId, PatKind, PropKey, StmtId, StmtKind};
 use bun_sema::import_sites::ImportSiteKind;
@@ -177,7 +178,15 @@ pub(super) fn find_files_that_run_again(
             started.push(entry_point.file);
         }
     }
-    let settled_times = walk_startup(&loads, &started, &is_commonjs, &mut possible_loads);
+    let (start_times, settled_times) =
+        walk_startup(&loads, &started, &is_commonjs, &mut possible_loads);
+    add_cyclic_import_loads(
+        &loads,
+        &modules.compiled_files,
+        &start_times,
+        &is_commonjs,
+        &mut possible_loads,
+    );
     let may_be_loaded_behind_throw = find_files_that_may_be_loaded_behind_throw(
         &loads,
         &modules.compiled_files,
@@ -684,7 +693,7 @@ fn walk_startup(
     started: &[FileId],
     is_commonjs: &dyn Fn(FileId) -> bool,
     possible_loads: &mut Vec<PossibleLoad>,
-) -> Vec<u32> {
+) -> (Vec<u32>, Vec<u32>) {
     let file_count = loads.by_file.len();
     let mut walk = StartupWalk {
         loads,
@@ -704,7 +713,49 @@ fn walk_startup(
     for &entry_point in started {
         walk.start_entry_point(entry_point);
     }
-    walk.settled_times
+    (walk.start_times, walk.settled_times)
+}
+
+/// An import cycle swallows the error of a CommonJS file that an ES module on the cycle imports. What the file loads may be loaded again after the throw.
+fn add_cyclic_import_loads(
+    loads: &Loads,
+    all_files: &[FileId],
+    start_times: &[u32],
+    is_commonjs: &dyn Fn(FileId) -> bool,
+    possible_loads: &mut Vec<PossibleLoad>,
+) {
+    let mut edges = vec![Vec::new(); loads.by_file.len()];
+    for &file in all_files {
+        let of_file = loads.of(file).iter();
+        let during_load = of_file.filter(|load| load.timing != LoadTiming::Deferred);
+        edges[file.idx()].extend(during_load.filter_map(|load| Some(load.target?.0)));
+    }
+    let component_of = strongly_connected_components(&edges).0;
+    let mut is_added = vec![false; loads.by_file.len()];
+    for &importer in all_files {
+        if is_commonjs(importer) {
+            continue;
+        }
+        let imports = loads.of(importer).iter().take_while(|load| load.is_hoisted);
+        for target in imports.filter_map(|load| load.target) {
+            if !is_commonjs(target)
+                || component_of[target.idx()] != component_of[importer.idx()]
+                || core::mem::replace(&mut is_added[target.idx()], true)
+            {
+                continue;
+            }
+            let earliest_time = match start_times[target.idx()] {
+                NEVER => 0,
+                time => time,
+            };
+            let of_file = loads.of(target).iter();
+            possible_loads.extend(of_file.map(|load| PossibleLoad {
+                earliest_time,
+                target: load.target,
+                may_be_caught: true,
+            }));
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

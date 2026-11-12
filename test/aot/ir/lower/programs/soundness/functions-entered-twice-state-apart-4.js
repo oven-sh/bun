@@ -800,20 +800,21 @@ await (async () => {
 // CHECK-NEXT: v4 = ToBoolean v2
 // CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2()
 // CHECK-NEXT: b1(v5):
-// CHECK-NEXT: v6 = Builtin builtin=Object
-// CHECK-NEXT: v7 = Builtin builtin=ObjectValues
-// CHECK-NEXT: v8 = GetEnvironmentField v0 layout=[[L_1]]
-// CHECK-NEXT: v9 = CheckInitialized v8 name="o"
-// CHECK-NEXT: v10 = Call v7, v6, v9 calleeName="Object.values"
-// CHECK-NEXT: v11 = Integer
-// CHECK-NEXT: v12 = ElemGet v10, v11
-// CHECK-NEXT: v13 = Integer integer=1
-// CHECK-NEXT: v14 = Sub v2, v13
-// CHECK-NEXT: v15 = Call v12, v10, v14
+// CHECK-NEXT: v6 = NarrowByTest v2, v5
+// CHECK-NEXT: v7 = Builtin builtin=Object
+// CHECK-NEXT: v8 = Builtin builtin=ObjectValues
+// CHECK-NEXT: v9 = GetEnvironmentField v0 layout=[[L_1]]
+// CHECK-NEXT: v10 = CheckInitialized v9 name="o"
+// CHECK-NEXT: v11 = Call v8, v7, v10 calleeName="Object.values"
+// CHECK-NEXT: v12 = Integer
+// CHECK-NEXT: v13 = ElemGet v11, v12
+// CHECK-NEXT: v14 = Integer integer=1
+// CHECK-NEXT: v15 = Sub v6, v14
+// CHECK-NEXT: v16 = Call v13, v11, v15
 // CHECK-NEXT: Jump -> next b2()
 // CHECK-NEXT: b2():
-// CHECK-NEXT: v16 = Undefined
-// CHECK-NEXT: Return v16
+// CHECK-NEXT: v17 = Undefined
+// CHECK-NEXT: Return v17
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="call"
 // CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_3]] flags=[IsExpected]}] results=[{type=anything}] {

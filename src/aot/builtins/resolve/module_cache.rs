@@ -70,6 +70,7 @@ impl Resolver<'_, '_> {
         self.output.loses_sight_of_module_cache |= may_be_written;
     }
 
+    /// `Object.assign(Module, hooks)`, `lay(Module)`, `Module[name] = hook`, `lay(require)`: whoever holds the object may store a function for the loader.
     pub(super) fn note_holder_of_loader_functions_out_of_sight(
         &mut self,
         holder: ExprId,
@@ -86,11 +87,12 @@ impl Resolver<'_, '_> {
         {
             self.output.places_that_hand_module_cache_on.push(holder);
             if self.assigns_module_cache_to_name(holder, id) {
-                self.output.module_caches_handed_on.push(holder);
+                self.output.passed_module_caches.push(holder);
             }
         }
     }
 
+    /// `({ cache } = require)`
     fn assigns_module_cache_to_name(&self, holder: ExprId, id: BuiltinId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let Parent::Expr(user) = bound.parent_of_expr(self.outermost_assertion_of(holder)) else {
@@ -116,7 +118,7 @@ impl Resolver<'_, '_> {
         })
     }
 
-    fn find_call_that_deletes(&self, table: ExprId) -> Option<(ExprId, ExprId)> {
+    fn find_deleting_call(&self, table: ExprId) -> Option<(ExprId, ExprId)> {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut operand = table;
         while let Parent::Expr(parent) = bound.parent_of_expr(operand)
@@ -199,6 +201,7 @@ impl Resolver<'_, '_> {
         (let_out.get_or_init(|| self.find_variables_let_out_of_sight())).contains(&variable)
     }
 
+    /// `require.cache[key]` in a file whose direct eval may replace `require`: the keys that the file spells count all the same.
     pub(super) fn note_cache_of_unresolved_require(&mut self, require: ExprId) {
         let Some(table) = self.find_member_of(require) else {
             return;
@@ -246,7 +249,7 @@ impl Resolver<'_, '_> {
             self.output.gets_at_entries_of_module_cache = true;
             return;
         }
-        if let Some((deletion, key)) = self.find_call_that_deletes(table) {
+        if let Some((deletion, key)) = self.find_deleting_call(table) {
             self.output.entries_deleted_from_module_cache.push(deletion);
             let key = match hir.index_member_key(hir.skip_type_assertions(key)) {
                 MemberKey::Name(text) | MemberKey::PrivateName(text) => {
@@ -271,7 +274,7 @@ impl Resolver<'_, '_> {
         self.output.hands_module_cache_on |= is_handed_on;
         if is_handed_on && self.input.dialect == SourceDialect::Program {
             self.output.places_that_hand_module_cache_on.push(table);
-            self.output.module_caches_handed_on.push(table);
+            self.output.passed_module_caches.push(table);
         }
     }
 }

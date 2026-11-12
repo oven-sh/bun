@@ -8,6 +8,6 @@
 # COPIES: = TypeTest {{*}} testedType=Array #
 # -- source: main.js
 # function each(make, give) { const into = make(); for (let i = 0; i < 100; i++) into[i] = give(i); return into; }
-# function fill(make, value) { const into = make(); for (let i = 0; i < 100; i++) into[i] = value; return into; }
+# function fill(make, value) { const into = make(); let sum = 0; for (let i = 0; i < 100; i++) { into[i] = value; sum += i; } return sum ? into : 0; }
 # globalThis.kept = [each, fill];
 # -- end of source

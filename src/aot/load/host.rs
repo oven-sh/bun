@@ -5,7 +5,7 @@ use std::ops::Range;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use bstr::BStr;
-use bun_ast::{Loader, Loc};
+use bun_ast::{Loader, Loc, Log};
 use bun_core::CodeGenerationFromStrings;
 use bun_core::strings::{contains_char, is_all_whitespace};
 use bun_paths::fs::PathName;
@@ -14,7 +14,8 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_resolve_builtins::Alias;
 use bun_sema::atom::Interner;
-use bun_sema::hir::{self, ExprId, File, NodeData};
+use bun_sema::bind::Bound;
+use bun_sema::hir::{self, CallId, ExprId, File, NodeData};
 use bun_sema::hir_from_data::{DataValue, FOLDER_OF_DATABASE, HostValue};
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{HostLoader, HostModuleId};
@@ -28,7 +29,9 @@ use bun_sema::resolve::{
 use bun_sema::session::{Arena, Session};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::Libs;
-use bun_sema_driver::host::{AlreadyRead, Disk, from_argument, from_native, is_bundled, to_native};
+use bun_sema_driver::host::{
+    AlreadyRead, Disk, from_argument, from_native, is_bundled, is_regular_file, to_native,
+};
 use bun_sema_parser::{CompileParseOptions, appears_to_be_binary, parse_for_compile};
 use bun_threading::Guarded;
 
@@ -45,6 +48,7 @@ use crate::load::contents::worker_entries::{
     find_way_named_as_in_executable,
 };
 use crate::load::contents::{ScanInput, scan_file};
+use crate::load::copied_factories;
 use crate::load::data_modules::parse_data_module;
 use crate::load::disk_delegation::{
     delegate_host_services_to_disk, delegate_runtime_config_parsers_to_disk,
@@ -53,6 +57,7 @@ use crate::load::externals::{contains, is_external};
 use crate::load::import_functions;
 use crate::load::import_meta_glob;
 use crate::load::is_host_path;
+use crate::load::known_evaluations::{self, CodeBeside};
 use crate::load::loaders::{
     BY_NAME, HostLoaderKind, gives_data, host_loader_kind, is_taken_by_written_type,
     loader_by_name, loader_by_path, loader_named_by_path, parses_text_as_data, script_kind_of,
@@ -67,6 +72,7 @@ use crate::load::module_paths::{
 use crate::load::modules_with_queries::{
     ModulesWithQueries, find_worker_constructor, has_vite_suffix,
 };
+use crate::load::objects_created_below::construct_objects_created_below;
 use crate::load::plugin_modules::{DeferredReads, ModuleText, PluginModules, PluginResolution};
 use crate::load::react_compiler::{self, ReactCompiler};
 use crate::load::runtime_modules::{RuntimeModules, RuntimeResolution};
@@ -179,6 +185,7 @@ pub(crate) struct LoadHost<'a> {
     has_found_entry_points: AtomicBool,
     files_of_packages_that_worker_may_start: Guarded<Vec<Vec<u8>>>,
     may_store_path_of_main_module: AtomicBool,
+    may_load_files_again: AtomicBool,
     may_start_workers: AtomicBool,
     has_file_that_asks_for_what_unseen_code_finds: AtomicBool,
     levels_above_root: AtomicUsize,
@@ -341,6 +348,7 @@ impl<'a> LoadHost<'a> {
         Some(path)
     }
 
+    /// Sorted.
     pub(crate) fn data_urls_in_program(&self) -> Vec<Vec<u8>> {
         self.data_urls_in_program.lock().iter().cloned().collect()
     }
@@ -355,6 +363,18 @@ impl<'a> LoadHost<'a> {
     pub(crate) fn note_files_of_packages_that_worker_may_start(&self, files: &[Vec<u8>]) {
         *self.files_of_packages_that_worker_may_start.lock() =
             collect_entry_point_paths(self.disk, self.input.options, files);
+    }
+
+    pub(crate) fn hold_failed_loads(&self) {
+        self.plugins.hold_failures();
+    }
+
+    pub(crate) fn take_failed_loads(&self) -> Vec<(Vec<u8>, Log)> {
+        self.plugins.take_failed_loads()
+    }
+
+    pub(crate) fn say(&self, log: &mut Log) {
+        self.input.messages.say(log);
     }
 
     pub(crate) fn into_leftovers(self) -> Box<dyn Send> {
@@ -408,6 +428,7 @@ impl<'a> LoadHost<'a> {
             has_found_entry_points: AtomicBool::new(false),
             files_of_packages_that_worker_may_start: Guarded::new(Vec::new()),
             may_store_path_of_main_module: AtomicBool::new(false),
+            may_load_files_again: AtomicBool::new(false),
             may_start_workers: AtomicBool::new(options.aot.loads_code_from_disk),
             levels_above_root: AtomicUsize::new(0),
             levels_of_texts: Guarded::new(FxHashMap::default()),
@@ -830,6 +851,12 @@ impl<'a> LoadHost<'a> {
                 self.embed_asset(path, read(path));
             }
         }
+        // Behind the load, nothing else asks for what plugins say of reads that fail.
+        if self.reads_in_background_after_load {
+            for (_, mut log) in self.take_failed_loads() {
+                self.say(&mut log);
+            }
+        }
         let (provider, messages) = (self.input.provider, self.input.messages);
         let _ = messages.with_log(|log| provider.check_embedded_files(log));
     }
@@ -1075,6 +1102,47 @@ impl LoadHost<'_> {
         }
     }
 
+    fn write_known_evaluations<'s>(
+        &self,
+        arena: &'s Arena,
+        atoms: &Interner<'s>,
+        (path, hir): (&[u8], &mut File<'s>),
+        source: &ParsedSource,
+        is_module: bool,
+    ) -> TreeChange {
+        let options = &self.input.options.aot;
+        // A coverage report has no lines for what a string holds.
+        match source.kind == SourceKind::Program
+            && options.code_generation_from_strings == CodeGenerationFromStrings::Allowed
+            && !options.counts_executions
+        {
+            true => {
+                let beside = CodeBeside {
+                    path,
+                    read_file: &|file| self.read_embedded_file(path, file),
+                };
+                known_evaluations::write_known_evaluations(arena, atoms, hir, is_module, &beside)
+            }
+            false => TreeChange::Unchanged,
+        }
+    }
+
+    /// The contents of a file that the executable holds where the module at `path` reads it: one of its own package, or an
+    /// asset.
+    fn read_embedded_file(&self, path: &[u8], file: &[u8]) -> Option<Vec<u8>> {
+        let (provider, native) = (self.input.provider, to_native(file));
+        let package = provider.find_package_folder(to_native(path));
+        let is_in_package = package.is_some_and(|folder| {
+            let rest = native.strip_prefix(&folder[..]);
+            rest.is_some_and(|rest| matches!(rest.first(), Some(b'/' | b'\\')))
+        });
+        // A read of a pipe waits.
+        match (is_in_package || provider.is_in_asset(native)) && is_regular_file(file) {
+            true => self.disk.read(file).map(Cow::into_owned),
+            false => None,
+        }
+    }
+
     fn compile_components_and_expand_globs<'s>(
         &self,
         arena: &'s Arena,
@@ -1093,6 +1161,7 @@ impl LoadHost<'_> {
 impl CodeHost for LoadHost<'_> {
     delegate_runtime_config_parsers_to_disk!(disk);
 
+    // The program may only read such a file. Like text that may be evaluated, nothing in it stops the build.
     fn is_evaluated_text(&self, path: &[u8]) -> bool {
         self.is_among(&self.files_of_packages_that_worker_may_start.lock(), path)
     }
@@ -1134,7 +1203,8 @@ impl CodeHost for LoadHost<'_> {
             CodeImportForm::Static
             | CodeImportForm::Dynamic
             | CodeImportForm::ResolveOnly
-            | CodeImportForm::WrittenByHost => self.plugins.resolve(request),
+            | CodeImportForm::WrittenByHost
+            | CodeImportForm::Guess => self.plugins.resolve(request),
         };
         match resolution {
             PluginResolution::Path(path) => return HostResolution::Path(path),
@@ -1555,6 +1625,20 @@ impl CodeHost for LoadHost<'_> {
         (loader != BY_NAME).then_some(loader)
     }
 
+    fn may_load_files_again(&self) -> bool {
+        self.may_load_files_again.load(Ordering::Relaxed)
+    }
+
+    fn loader_of_module_form(&self, path: &[u8]) -> Option<HostLoader> {
+        // There the realms share what the first load has made of the text.
+        if self.input.options.aot.runs_in_several_realms {
+            return None;
+        }
+        let loader = self.default_loader(path);
+        script_kind_of(loader)?;
+        Some(to_host_loader_of_attribute(loader))
+    }
+
     fn parse_code<'s>(
         &self,
         arena: &'s Arena,
@@ -1584,6 +1668,7 @@ impl CodeHost for LoadHost<'_> {
         let is_named_as_code =
             !is_from_plugin && script_kind_of(self.default_loader(path)).is_some();
         let parse_data = |loader: Loader, plugin_module: Option<PluginModuleName>| {
+            // The text was read as the file's name says, with its byte order mark taken off.
             let reads_raw_bytes = crate::load::loaders::reads_raw_bytes;
             let is_decoded = !is_from_plugin
                 && !is_background_read
@@ -1799,6 +1884,9 @@ impl CodeHost for LoadHost<'_> {
         let source = parsed_source_mut(payload);
         self.write_import_functions(arena, atoms, request.hir, source);
         self.compile_components_and_expand_globs(arena, atoms, request, source);
+        let is_module = request.module_format == ModuleFormat::Esm;
+        let file = (request.path, &mut *request.hir);
+        self.write_known_evaluations(arena, atoms, file, source, is_module);
         true
     }
 
@@ -1828,7 +1916,47 @@ impl CodeHost for LoadHost<'_> {
         {
             return TreeChange::ChangedAndUnfinished;
         }
-        self.import_names_or_compile_components(arena, atoms, request, source)
+        let change = self.import_names_or_compile_components(arena, atoms, request, source);
+        let file = (request.path, &mut *request.hir);
+        match self.write_known_evaluations(arena, atoms, file, source, false) {
+            TreeChange::Unchanged => change,
+            written => written,
+        }
+    }
+
+    fn find_settled_evals<'s>(
+        &self,
+        hir: &File<'s>,
+        bound: &Bound<'s>,
+        atoms: &Interner<'s>,
+    ) -> Vec<CallId> {
+        // A test may replace the methods of strings.
+        match self.input.options.load.runs_tests {
+            true => Vec::new(),
+            false => known_evaluations::find_settled_evals(hir, bound, atoms),
+        }
+    }
+
+    fn copy_factories<'s>(
+        &self,
+        arena: &'s Arena,
+        atoms: &Interner<'s>,
+        hir: &mut File<'s>,
+        bound: &Bound<'s>,
+        payload: &mut Option<HostPayload>,
+    ) -> TreeChange {
+        let source = parsed_source_mut(payload);
+        // A coverage report counts the lines of a factory.
+        match source.kind == SourceKind::Program && !self.input.options.aot.counts_executions {
+            true => match copied_factories::copy_factories(arena, atoms, hir, bound) {
+                // A test may replace the functions of `Object`.
+                TreeChange::Unchanged if !self.input.options.load.runs_tests => {
+                    construct_objects_created_below(arena, atoms, hir, bound)
+                }
+                change => change,
+            },
+            false => TreeChange::Unchanged,
+        }
     }
 
     fn finish_file(
@@ -1852,6 +1980,14 @@ impl CodeHost for LoadHost<'_> {
         if builtin_uses::asks_for_what_unseen_code_finds(request, source) {
             self.has_file_that_asks_for_what_unseen_code_finds
                 .store(true, Ordering::Relaxed);
+        }
+        let builtins = &source.builtins;
+        if load.runs_tests
+            && (builtins.reaches_module_cache()
+                || builtins.loses_sight_of_module_cache()
+                || builtins.resets_modules())
+        {
+            self.may_load_files_again.store(true, Ordering::Relaxed);
         }
         if source.builtins.may_store_path_of_main_module() {
             self.may_store_path_of_main_module

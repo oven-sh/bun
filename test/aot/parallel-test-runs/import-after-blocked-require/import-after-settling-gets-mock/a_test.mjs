@@ -1,8 +1,9 @@
 import { test, vi } from "bun:test";
 import { requireH, importH } from "./helper.mjs";
-const restT = time => new Promise(done => setTimeout(done, time));
+// Runs the event loop that many times: jobs, unhandled rejections and immediates run each time, and no clock decides.
+const spinEventLoop = async (count = 20) => { while (count-- > 0) await new Promise(done => setImmediate(done)); };
 const requireT = name => { try { return require(name).seen; } catch (error) { return "threw " + error.name; } };
-const importT = async name => { try { const names = await Promise.race([import(name), restT(400)]); return names === undefined ? "waits" : names.seen; } catch (error) { return "rejected " + error.name; } };
+const importT = async name => { try { return (await import(name)).seen; } catch (error) { return "rejected " + error.name; } };
 let calls = 0;
 const gate = Promise.withResolvers();
 test("an import behind a require that was refused", async () => {
@@ -10,7 +11,7 @@ test("an import behind a require that was refused", async () => {
   console.log("SAID 1 " + requireT("./tank.mjs"));
   console.log("SAID 2 " + (await importT("./tank.mjs")));
   gate.resolve();
-  await restT(50);
+  await spinEventLoop();
   console.log("SAID 3 " + (await importT("./tank.mjs")));
   gate.resolve();
   console.log("SAID calls " + calls);

@@ -5,5 +5,5 @@ export const look = () => "kiln " + glaze;
 globalThis.lit();
 await globalThis.door;
 fetchIt();
-await new Promise(done => setTimeout(done, 20));
+while (!globalThis.isAnswered) await new Promise(done => setTimeout(done, 1));
 glaze = "dry";

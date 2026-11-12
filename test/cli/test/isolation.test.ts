@@ -1433,6 +1433,39 @@ describe.concurrent("bun test --isolate=modules", () => {
     await passes(fixtures, 2);
   });
 
+  // onmessage, onerror and Error.prepareStackTrace are data properties to a script, with native code behind them. The
+  // next file gets them back by a definition of the value they had, and that definition has to reach the native side.
+  test("what a file stored in onmessage, onerror and Error.prepareStackTrace is gone for the next file", async () => {
+    const stdout = await passes(
+      {
+        "a.test.js": `
+          test("a", () => {
+            Error.prepareStackTrace = () => "formatted by a";
+            globalThis.onmessage = event => console.log("a's onmessage got " + event.data);
+            globalThis.onerror = event => console.log("a's onerror got " + event.error);
+          });
+        `,
+        "b.test.js": `
+          test("b", () => {
+            const lines = [new Error("of b").stack.split("\\n")[0], String(onmessage), String(onerror)];
+            dispatchEvent(new MessageEvent("message", { data: "for nobody" }));
+            dispatchEvent(new ErrorEvent("error", { error: "for nobody" }));
+            globalThis.onmessage = event => lines.push("b's onmessage got " + event.data);
+            dispatchEvent(new MessageEvent("message", { data: "for b" }));
+            globalThis.onmessage = null;
+            Error.prepareStackTrace = () => "formatted by b";
+            lines.push(new Error("of b").stack);
+            console.log(JSON.stringify(lines));
+          });
+        `,
+      },
+      2,
+    );
+    expect(stdout.split("\n").filter(line => line.startsWith("[") || line.includes(" got "))).toEqual([
+      `["Error: of b","null","null","b's onmessage got for b","formatted by b"]`,
+    ]);
+  });
+
   test("Bun.main, import.meta.main, process.argv and Bun.argv name the running file", async () => {
     const file = `
       import { basename } from "node:path";

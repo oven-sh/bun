@@ -11,7 +11,7 @@
 # ALL-NEXT: 5
 # ALL-NEXT: exited with 0
 # -- source: main.mjs
-# const scanner = { scan: () => 1, position: 0 };
+# const scanner = (0, { scan: () => 1, position: 0 });
 # Object.defineProperty(scanner, "shownToDebuggers", { get() { return 5; }, enumerable: true });
 # print(scanner.scan() + " " + scanner.position);
 # let last;

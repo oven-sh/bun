@@ -660,6 +660,10 @@ mod tests {
         let found = read_back("a.js", text, &[("[] = list", "")]);
         let expected = "it does not parse: (list) { if (false) var ; return";
         assert_eq!(found.as_deref(), Some(expected));
+        let text = "function list() { first(), second; return 1; }";
+        let found = read_back("a.js", text, &[(" second", "")]);
+        let expected = "it does not parse: nction list() { first(),; return";
+        assert_eq!(found.as_deref(), Some(expected));
         let text = "function typed(value) { return value; }";
         let found = read_back("a.ts", text, &[("(value)", "(value: number)")]);
         let expected = "a type stands in the text and not in the tree";

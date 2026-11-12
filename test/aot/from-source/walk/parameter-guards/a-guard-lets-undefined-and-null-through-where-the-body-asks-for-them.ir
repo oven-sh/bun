@@ -12,7 +12,7 @@
 # print(sum);
 # -- end of source
 # RUN: plan units mechanisms=all
-# CHECK: unit f2:ParameterGuard {{*}} tests (undefined|null|L0, i32)
+# CHECK: unit f2:ParameterGuard {{*}} tests (-, i32)
 # CHECK: unit f3:ParameterGuard {{*}} tests (L0, i32)
 # RUN(SHELL): run-in-shell
 # SHELL: 130

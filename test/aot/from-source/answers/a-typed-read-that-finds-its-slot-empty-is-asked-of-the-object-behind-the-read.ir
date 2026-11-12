@@ -9,7 +9,7 @@
 # (globalThis as any).parcels = parcels;
 # const looks = id(look), looksAtFresh = id(lookAtFresh);
 # print(looks(parcels[0]), looksAtFresh(1));
-# (Parcel.prototype as any).fragile = "above";
+# id(Parcel.prototype).fragile = "above";
 # print(looks(parcels[1]), looksAtFresh(2));
 # -- end of source
 # LIBRARY: own

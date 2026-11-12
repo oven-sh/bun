@@ -1,7 +1,6 @@
 use super::mention_use::{MentionUse, lookup_passes_holder_linked_anew};
-use super::module_values::reads_what_wrapper_hands_in;
 use super::resolver::{ExprState, Resolver};
-use super::{SourceDialect, passes_every_assertion};
+use super::{SourceDialect, passes_every_assertion, reads_what_wrapper_hands_in};
 use crate::builtins::names::BuiltinNames;
 use crate::builtins::runtime_uses::{
     SyntaxWithHelpers, is_name_of_language_member_with_code, is_name_under_which_evaluator_hangs,
@@ -429,6 +428,24 @@ impl Resolver<'_, '_> {
                     | ExprKind::JsxText(name) => is_such(name),
                     _ => false,
                 }))
+    }
+
+    pub(super) fn may_read_function_constructor(&self) -> bool {
+        let hir = self.input.hir;
+        let is_taken = |&read: &ExprId| {
+            let key = hir.member_key(read).map(|member| member.1);
+            matches!(key, Some(MemberKey::Name(known::constructor)))
+                && !matches!(
+                    self.classify_use(read),
+                    MentionUse::Holder | MentionUse::Inspected
+                )
+        };
+        let mut pattern_keys = hir.pat_props.iter().map(|property| property.key);
+        let mut kinds = hir.exprs.iter().map(|expr| expr.kind);
+        self.output.may_call_evaluator
+            || self.computed.iter().any(is_taken)
+            || pattern_keys.any(|key| key == PropKey::Name(known::constructor))
+            || kinds.any(|kind| matches!(kind, ExprKind::String(known::constructor)))
     }
 
     fn note_text_taken_by_pattern(&mut self, name: Atom) {

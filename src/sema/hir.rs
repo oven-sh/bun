@@ -600,7 +600,7 @@ pub struct ListBlock<'s> {
     /// In bytes.
     size: usize,
     used: usize,
-    /// `Arena::alloc_block`. Null: the block lies by itself.
+    /// The chunk of `Arena::alloc_block`. Null: the block has an allocation of its own.
     chunk: *mut BlockChunk,
     arena: PhantomData<&'s Arena>,
 }
@@ -927,6 +927,8 @@ pub struct LazyCells {
     pub(crate) names_used_otherwise_than_called:
         LazyCell<Box<[(crate::bind::SymbolId, crate::import_sites::OtherUse)]>>,
     pub(crate) identifiers_by_name: LazyCell<Box<[(Atom, ExprId)]>>,
+    /// `File::is_valid_evaluation`
+    pub(crate) early_errors_in_evaluations: LazyCell<Box<[u32]>>,
 }
 
 /// A `OnceLock` that can be emptied while nothing reads the file.
@@ -983,6 +985,7 @@ static EMPTY_FILE_CELLS: LazyCells = LazyCells {
     names_that_hold_own_requires: LazyCell::new(),
     names_used_otherwise_than_called: LazyCell::new(),
     identifiers_by_name: LazyCell::new(),
+    early_errors_in_evaluations: LazyCell::new(),
 };
 
 /// Copies `list` to a block of exactly its size in `arena` and clears it. `list` keeps its capacity.
@@ -2928,6 +2931,38 @@ pub struct FunctionWrittenByLoader {
     pub end_in_text: u32,
 }
 
+/// `call` evaluates `arguments`, as far as the build can tell, which gives `function`. The functions of a call follow its
+/// written arguments. Their texts follow the written text of the file. Set by the loader.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct KnownEvaluation {
+    pub call: CallId,
+    pub function: ExprId,
+    /// The expressions from this one to `function` are in the text.
+    pub first_expression: ExprId,
+    /// The text of an eval. The parameters and the body that `Function` takes.
+    pub arguments: IdList<Atom>,
+    /// Where the text of the function is in the text of the file.
+    pub start: u32,
+    pub end: u32,
+    /// `Function` sees the global scope alone.
+    pub is_in_global_scope: bool,
+}
+
+/// `call` enters `function`, a copy of `factory` with all that is in it, where its callee is a closure of `factory`. `sequence`
+/// is the copy and then the call. The text of the copy follows the text of the file. Set by the loader.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct CopiedFactory {
+    pub sequence: ExprId,
+    pub call: CallId,
+    pub function: ExprId,
+    pub factory: FnId,
+    /// Where the copy is in the text of the file.
+    pub start: u32,
+    pub end: u32,
+    /// Where `factory` is.
+    pub written_start: u32,
+}
+
 /// The parser's output for one source file.
 #[derive(Default)]
 pub struct FileIn<S: Storage> {
@@ -2966,6 +3001,12 @@ pub struct FileIn<S: Storage> {
     pub exports_that_others_touch: S::Few<Atom>,
     pub texts_written_by_loader: S::Few<TextWrittenByLoader>,
     pub functions_written_by_loader: S::Few<FunctionWrittenByLoader>,
+    /// Sorted by call and by start.
+    pub known_evaluations: S::Few<KnownEvaluation>,
+    /// The direct evals that evaluate no other strings than those of `known_evaluations`, sorted. Set by the loader.
+    pub settled_evals: S::Few<CallId>,
+    /// Sorted by sequence and by start.
+    pub copied_factories: S::Few<CopiedFactory>,
     /// Has a top-level `import` or `export`.
     pub has_module_syntax: bool,
     /// The parser rejected the file, so the HIR is partial or empty. Only parse errors are reported for it.
@@ -3390,6 +3431,95 @@ impl<S: Storage> FileIn<S> {
             .any(|&(start, end)| (start..end).contains(&pos))
     }
 
+    /// Where the text that was read ends. The texts of `known_evaluations` and of `copied_factories` follow it.
+    pub fn written_text_end(&self) -> u32 {
+        match self.known_evaluations.is_empty() && self.copied_factories.is_empty() {
+            true => self.text.len() as u32,
+            false => self.source_len,
+        }
+    }
+
+    /// The build replaces no names there: the program evaluates the text as it is.
+    #[inline]
+    pub fn is_in_known_evaluation(&self, pos: u32) -> bool {
+        !self.known_evaluations.is_empty()
+            && pos >= self.source_len
+            && !self.is_in_copied_factory(pos)
+    }
+
+    #[inline]
+    pub fn is_in_copied_factory(&self, pos: u32) -> bool {
+        (self.copied_factories.first()).is_some_and(|first| pos >= first.start)
+    }
+
+    /// The program enters copies of the factory that is written there.
+    pub fn is_in_factory_with_copies(&self, pos: u32) -> bool {
+        (self.copied_factories.iter())
+            .any(|it| (it.written_start..it.written_start + (it.end - it.start)).contains(&pos))
+    }
+
+    fn copied_factory_at(&self, pos: u32) -> Option<&CopiedFactory> {
+        let all = &self.copied_factories[..];
+        all[..all.partition_point(|it| it.start <= pos)].last()
+    }
+
+    /// Where the file has what is at `pos`, if that is in a copy.
+    #[inline]
+    pub fn written_position(&self, pos: u32) -> u32 {
+        match self.copied_factories.is_empty() {
+            true => pos,
+            false => self.find_written_position(pos),
+        }
+    }
+
+    fn find_written_position(&self, pos: u32) -> u32 {
+        let copied = self.copied_factory_at(pos);
+        copied.map_or(pos, |it| pos - it.start + it.written_start)
+    }
+
+    #[inline]
+    pub fn copied_factory_of(&self, sequence: ExprId) -> Option<&CopiedFactory> {
+        let all = &self.copied_factories[..];
+        match all.is_empty() {
+            true => None,
+            false => {
+                let found = all.binary_search_by_key(&sequence, |it| it.sequence);
+                found.ok().map(|index| &all[index])
+            }
+        }
+    }
+
+    /// Where the call is that evaluates what is at `pos`, or enters the copy there. `pos` itself in the text that was read.
+    pub fn position_of_evaluation(&self, pos: u32) -> u32 {
+        if let Some(copied) = self.copied_factory_at(pos) {
+            return self[self[copied.call].callee].pos;
+        }
+        let all = &self.known_evaluations[..];
+        match all.partition_point(|it| it.start <= pos) {
+            0 => pos,
+            count => self[self[all[count - 1].call].callee].pos,
+        }
+    }
+
+    pub fn known_evaluations_of(&self, call: CallId) -> &[KnownEvaluation] {
+        let all = &self.known_evaluations[..];
+        let first = all.partition_point(|it| it.call < call);
+        let count = all[first..].partition_point(|it| it.call == call);
+        &all[first..first + count]
+    }
+
+    #[inline]
+    pub fn is_settled_eval(&self, call: CallId) -> bool {
+        !self.settled_evals.is_empty() && self.settled_evals.binary_search(&call).is_ok()
+    }
+
+    /// The arguments of `call` that the program writes.
+    pub fn written_args(&self, call: CallId) -> IdList<ExprId> {
+        let args = self[call].args;
+        let known = self.known_evaluations_of(call).len() as u32;
+        IdList::new(args.start, args.len - known)
+    }
+
     /// `NodeFlagsJSDoc`, `NodeFlagsReparsed` for the node at `pos`: true if it's in a JSDoc comment of a JavaScript
     /// file.
     #[inline]
@@ -3694,6 +3824,9 @@ macro_rules! file_in_storage {
             exports_that_others_touch: $few!($this.exports_that_others_touch),
             texts_written_by_loader: $few!($this.texts_written_by_loader),
             functions_written_by_loader: $few!($this.functions_written_by_loader),
+            known_evaluations: $few!($this.known_evaluations),
+            settled_evals: $few!($this.settled_evals),
+            copied_factories: $few!($this.copied_factories),
             has_module_syntax: $this.has_module_syntax,
             has_errors: $this.has_errors,
             ran_out_of_stack: $this.ran_out_of_stack,
@@ -3848,6 +3981,9 @@ impl FileBuilder {
             exports_that_others_touch,
             texts_written_by_loader,
             functions_written_by_loader,
+            known_evaluations,
+            settled_evals,
+            copied_factories,
             has_module_syntax,
             has_errors,
             ran_out_of_stack,
@@ -3958,6 +4094,9 @@ impl FileBuilder {
         exports_that_others_touch.clear();
         texts_written_by_loader.clear();
         functions_written_by_loader.clear();
+        known_evaluations.clear();
+        settled_evals.clear();
+        copied_factories.clear();
         *has_module_syntax = Default::default();
         *has_errors = Default::default();
         *ran_out_of_stack = Default::default();
@@ -4147,6 +4286,22 @@ impl FileBuilder {
 }
 
 impl File<'_> {
+    /// Takes the positions of the early errors in the texts of `known_evaluations`.
+    pub fn set_early_errors_in_evaluations(&self, positions: Box<[u32]>) {
+        let cell = &self.lazy.cells.early_errors_in_evaluations;
+        cell.get_or_init(|| positions);
+    }
+
+    /// The text is JavaScript. False before the early errors of the file are known.
+    pub fn is_valid_evaluation(&self, evaluation: &KnownEvaluation) -> bool {
+        let Some(errors) = self.lazy.cells.early_errors_in_evaluations.get() else {
+            return false;
+        };
+        errors
+            .iter()
+            .all(|at| !(evaluation.start..=evaluation.end).contains(at))
+    }
+
     /// Returns the same file for a program that shares it with others. The lists of nodes stay where they are, and
     /// on-demand data is computed once for all programs. Everything else in the `File` is in `arena`, which belongs to
     /// `session`.
@@ -4232,6 +4387,7 @@ impl<'s> File<'s> {
             cells.names_that_hold_own_requires.clear();
             cells.names_used_otherwise_than_called.clear();
             cells.identifiers_by_name.clear();
+            cells.early_errors_in_evaluations.clear();
         }
     }
 }

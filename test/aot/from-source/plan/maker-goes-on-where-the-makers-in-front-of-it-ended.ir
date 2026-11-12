@@ -17,7 +17,7 @@
 # -- end of source
 # `createTypeReference()` stores behind `createObjectType()`, which stores behind `createTypeWithSymbol()`, which stores behind `createType()`, which constructs: an object has the names of all its makers, the innermost first.
 # So an order of the image goes through the whole row of makers. It begins with what the layout lists, and also with what the constructor function creates ON EVERY WAY: `if (tracing) this.checker = checker` creates nothing in nearly every run.
-# What a maker stores on which other makers build lies in the cell, like what the constructor of a base class stores. What the last maker of a row stores only its own kind of object gets: it stays out of line. All but one: 24 + 6 x 8 bytes take a cell of 80, and the word that is left over takes the name that the program names most often.
+# What a maker stores on which other makers build lies in the cell, like what the constructor of a base class stores. What the last maker of a row stores only its own kind of object gets: it lies there too, since 24 + 8 x 8 bytes fit within one size class more, and narrow references make the cell 80 again.
 # RUN: plan orders mechanisms=all
 # CHECK: orders L0
 # CHECK: order {{*}}: "flags" "checker" | "id" "symbol" "value"
@@ -25,8 +25,8 @@
 # CHECK: order {{*}}: "flags" | "id" "symbol" "value"
 # RUN(CELL): plan layouts mechanisms=all
 # CELL: layout L0 CompiledObject
-# CELL: slot 3 "symbol" appended JSValue Inline
+# CELL: slot 3 "symbol" appended {{*}} Inline
 # CELL: slot 4 "objectFlags" appended {{*}} Inline
 # CELL: slot 5 "members" appended JSValue Inline
-# CELL: slot 6 "target" appended JSValue Inline offset=72
-# CELL: slot 7 "value" appended JSValue OutOfLine
+# CELL: slot 6 "target" appended {{*}} Inline
+# CELL: slot 7 "value" appended {{*}} Inline

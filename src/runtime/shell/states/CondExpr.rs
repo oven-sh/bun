@@ -1,5 +1,6 @@
 //! https://www.gnu.org/software/bash/manual/bash.html#Bash-Conditional-Expressions
 
+use crate::node::fs::stat_embedded_shell_operand;
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
@@ -192,15 +193,20 @@ impl CondExpr {
         path: &[u8],
     ) {
         // Evaluate `op` against the stat result.
-        let _ = path;
         debug_assert!(matches!(
             interp.as_condexpr(this).state,
             CondExprState::WaitingStat
         ));
         let op = interp.as_condexpr(this).node.op;
-        let exit = match stat {
-            Err(_) => 1,
-            Ok(st) => {
+        let cwd = interp.as_condexpr(this).base.shell().cwd();
+        let operand = path.strip_suffix(b"\0").unwrap_or(path);
+        let embedded = match stat {
+            Err(_) => stat_embedded_shell_operand(cwd, operand),
+            Ok(_) => None,
+        };
+        let exit = match stat.as_ref().ok().or(embedded.as_ref()) {
+            None => 1,
+            Some(st) => {
                 let mode = st.st_mode as _;
                 let ok = match op {
                     ast::CondExprOp::DashF => bun_sys::S::ISREG(mode),

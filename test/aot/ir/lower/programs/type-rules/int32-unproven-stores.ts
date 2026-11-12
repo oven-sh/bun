@@ -1,6 +1,6 @@
 // RUN: lower
 // OPTIONS: builtin-modules
-// DIAGNOSTIC: UnprovenInt32 40
+// DIAGNOSTIC: UnprovenInt32 39
 
 // A value stored into an `int32` that is not one by proof stops the build, and the message says what was found and what to write. type-rules/int32-checked-at-run-time has the flows that the build does not see.
 import type { int32 } from "bun";
@@ -115,35 +115,30 @@ console.log(kept, cursor, point, subtract(1, 2), times(1, 2), half(1), negative(
 // CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=undefined|i32 flags=[IsInt32Promise]}] results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything, v1: undefined|i32):
 // CHECK-NEXT: v2 = GetConstructPrototype v0 layout=[[L_1]]
-// CHECK-NEXT: v3 = NewObject v2 layout=[[L_1]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=[[L_1]]}
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v6 = CheckInitialized v5 name="given"
-// CHECK-NEXT: v7 = Integer
-// CHECK-NEXT: v8 = ElemGet v6, v7
-// CHECK-NEXT: v9 = Convert v8 declared={type=i32 flags=[IsInt32Promise]}
-// CHECK-NEXT: v10 = TypeTest v1 testedType=undefined
-// CHECK-NEXT: Branch v10 -> taken b1(| 0), notTaken b2(| 0)
-// CHECK-NEXT: b1(v11):
-// CHECK-NEXT: v12 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v13 = CheckInitialized v12 name="given"
-// CHECK-NEXT: v14 = Integer integer=1
-// CHECK-NEXT: v15 = ElemGet v13, v14
-// CHECK-NEXT: v16 = Convert v15 declared={type=i32 flags=[IsInt32Promise]}
-// CHECK-NEXT: Jump -> next b3(v16)
-// CHECK-NEXT: b2(v17):
-// CHECK-NEXT: Jump -> next b3(v17)
-// CHECK-NEXT: b3(v18):
-// CHECK-NEXT: PropDefine v4, v18 key="start"
-// CHECK-NEXT: v20 = Integer
-// CHECK-NEXT: v21 = Convert v20 declared={type=i32}
-// CHECK-NEXT: PropDefine v4, v21 key="line"
-// CHECK-NEXT: PropDefine v4, v9 key="column"
+// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_2]]
+// CHECK-NEXT: v4 = CheckInitialized v3 name="given"
+// CHECK-NEXT: v5 = Integer
+// CHECK-NEXT: v6 = ElemGet v4, v5
+// CHECK-NEXT: v7 = Convert v6 declared={type=i32 flags=[IsInt32Promise]}
+// CHECK-NEXT: v8 = TypeTest v1 testedType=undefined
+// CHECK-NEXT: Branch v8 -> taken b1(| 0), notTaken b2(| 0)
+// CHECK-NEXT: b1(v9):
+// CHECK-NEXT: v10 = GetModuleVariable variable=[[g_2]]
+// CHECK-NEXT: v11 = CheckInitialized v10 name="given"
+// CHECK-NEXT: v12 = Integer integer=1
+// CHECK-NEXT: v13 = ElemGet v11, v12
+// CHECK-NEXT: v14 = Convert v13 declared={type=i32 flags=[IsInt32Promise]}
+// CHECK-NEXT: Jump -> next b3(v14)
+// CHECK-NEXT: b2(v15):
+// CHECK-NEXT: Jump -> next b3(v15)
+// CHECK-NEXT: b3(v16):
+// CHECK-NEXT: v17 = Integer
+// CHECK-NEXT: v18 = Convert v17 declared={type=i32}
+// CHECK-NEXT: v19 = NewObject v2 layout=[[L_1]]
+// CHECK-NEXT: v20 = Convert v19 declared={type=[[L_1]]}
+// CHECK-NEXT: PropDefine v20, v16 key="start"
+// CHECK-NEXT: PropDefine v20, v18 key="line"
+// CHECK-NEXT: PropDefine v20, v7 key="column"
 // CHECK-NEXT: v24 = Undefined
-// CHECK-NEXT: v25 = TypeTest v24 testedType=object
-// CHECK-NEXT: Branch v25 -> taken b4(| 0), notTaken b5(v4)
-// CHECK-NEXT: b4(v26):
-// CHECK-NEXT: Jump -> next b5(v26)
-// CHECK-NEXT: b5(v27):
-// CHECK-NEXT: Return v27
+// CHECK-NEXT: Return v20
 // CHECK-NEXT: }

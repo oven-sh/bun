@@ -1,4 +1,4 @@
-import { expect, it } from "bun:test";
+import { expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isASAN, isWindows } from "harness";
 import { join } from "path";
 
@@ -231,3 +231,33 @@ it.concurrent("a timer that ends itself through _repeat or _idleTimeout does not
     exitCode: 0,
   });
 });
+
+// The innermost run of the callback ends the interval, which makes its object weak, and the outermost one goes on with it.
+it.each([1, 2])(
+  "an interval that the innermost of %i nested run(s) ended and the outermost goes on with keeps firing",
+  depth => {
+    jest.useFakeTimers();
+    try {
+      let calls = 0;
+      (function start() {
+        let timer = setInterval(() => {
+          calls++;
+          if (calls === depth + 1) timer._repeat = null;
+          if (calls > depth) return;
+          const outermost = calls === 1;
+          timer.refresh();
+          jest.advanceTimersByTime(10);
+          timer._repeat = 10;
+          if (outermost) timer = null;
+        }, 10);
+      })();
+      jest.advanceTimersByTime(10);
+      Bun.gc(true);
+      const before = calls;
+      jest.advanceTimersByTime(200);
+      expect(calls - before).toBeGreaterThanOrEqual(10);
+    } finally {
+      jest.useRealTimers();
+    }
+  },
+);

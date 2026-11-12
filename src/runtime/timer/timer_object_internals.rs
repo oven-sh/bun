@@ -652,6 +652,12 @@ impl TimerObjectInternals {
                     // `ref_()` above pins the parent across the deref.
                     match s.event_loop_timer_state() {
                         EventLoopTimerState::FIRED => {
+                            // A nested run of the callback may have ended the interval and downgraded.
+                            if matches!(s.this_value.get(), JsRef::Weak(_)) {
+                                s.this_value.with_mut(|r| {
+                                    r.upgrade(JSGlobalObject::opaque_ref(global_this))
+                                });
+                            }
                             // If we didn't clear the setInterval, reschedule it starting from
                             // SAFETY: `state` is the boxed per-thread `RuntimeState`;
                             // single-threaded JS heap so no concurrent `&mut` to

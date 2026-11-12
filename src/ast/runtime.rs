@@ -106,9 +106,7 @@ impl ReactCompilerMode {
         matches!(self, Self::Ssr)
     }
 
-    /// Which modules the compiler considers: every JavaScript-like loader
-    /// outside `node_modules`, narrowed by the caller's path filter. The path
-    /// checks are closures so that nothing scans with the compiler off.
+    /// Every JavaScript-like loader outside `node_modules`, narrowed by the caller's path filter.
     #[inline]
     pub fn for_module(
         self,

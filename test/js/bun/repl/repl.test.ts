@@ -958,6 +958,17 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(1);
     });
 
+    // `-e` exits once the loop has drained, so an uncaught error ends it, and the stream it came from stops with it.
+    test("-e with a throwing 'data' listener on a child's stdout calls it once and exits with code 1", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith([
+        "-e",
+        `const child = require("node:child_process").spawn(process.execPath, ["-e", "process.stdout.write(Buffer.alloc(4 * 1024 * 1024, 97))"], { stdio: ["ignore", "pipe", "ignore"] }); let calls = 0; child.stdout.on("data", () => { calls++; throw new Error("boom"); }); process.on("exit", code => console.log(JSON.stringify({ code, calls })));`,
+      ]);
+      expect(stdout).toBe('{"code":1,"calls":1}\n');
+      expect(stderr).toMatch(/^error: boom\n +at /m);
+      expect(exitCode).toBe(1);
+    });
+
     test("-e preserves process.exitCode set by the script", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-e", "process.exitCode = 42"]);
       expect(stdout).toBe("");

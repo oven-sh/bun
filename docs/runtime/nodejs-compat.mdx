@@ -173,7 +173,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:sqlite`](https://nodejs.org/api/sqlite.html)
 
-🟢 Fully implemented. `backup()` runs synchronously and blocks the event loop for the duration of the copy (Node runs it on a worker thread). A `Buffer`/`Uint8Array` database path must be valid UTF-8 (Node passes the raw bytes through; Bun rejects non-UTF-8 with `ERR_INVALID_ARG_VALUE`). On macOS, Bun uses the system `libsqlite3.dylib`. `loadExtension()` requires a full SQLite build, and so do `createSession()`/`applyChangeset()` on older macOS releases. To use a full SQLite build, call `require("bun:sqlite").Database.setCustomSQLite(path)` before opening a database. A connection throws `ERR_INVALID_STATE` when its own authorizer callback uses it, and when a function that a write calls uses it while a session is open. Node allows both.
+🟢 Fully implemented. `backup()` runs synchronously and blocks the event loop for the duration of the copy (Node runs it on a worker thread). A `Buffer`/`Uint8Array` database path must be valid UTF-8 (Node passes the raw bytes through; Bun rejects non-UTF-8 with `ERR_INVALID_ARG_VALUE`). On macOS, Bun uses the system `libsqlite3.dylib`. `loadExtension()` requires a full SQLite build, and so do `createSession()`/`applyChangeset()` on older macOS releases. To use a full SQLite build, call `require("bun:sqlite").Database.setCustomSQLite(path)` before opening a database. A connection throws `ERR_INVALID_STATE` when its own authorizer callback uses it. Node allows it.
 
 ### [`node:test`](https://nodejs.org/api/test.html)
 

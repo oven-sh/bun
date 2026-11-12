@@ -67,10 +67,6 @@ pub struct FileReader {
     pub(crate) read_start_queued: Cell<bool>,
     /// Handle mode is arming the poll with a chunk in hand: a failure it reports now is delivered after that chunk.
     pub(crate) arming: Cell<bool>,
-    /// Handle mode, for the stdio of `node:child_process`: each read completion calls the function in the wrapper's `readCallback` slot from the event loop. No pull is parked, nothing is read inline, and `flowing` says whether the reader is started.
-    pub(crate) read_callback: Cell<bool>,
-    /// The task that starts the reader in handle mode is in the queue.
-    pub(crate) read_start_queued: Cell<bool>,
 }
 
 impl Default for FileReader {
@@ -97,8 +93,6 @@ impl Default for FileReader {
             read_callback: Cell::new(false),
             read_start_queued: Cell::new(false),
             arming: Cell::new(false),
-            read_callback: Cell::new(false),
-            read_start_queued: Cell::new(false),
         }
     }
 }
@@ -478,11 +472,6 @@ impl FileReader {
         }
 
         self.started.set(true);
-
-        // Handle mode reads nothing here: `set_flowing(true)` starts the reader.
-        if self.read_callback.get() {
-            return streams::Start::Ready;
-        }
 
         // Handle mode reads nothing here: `set_flowing(true)` starts the reader.
         if self.read_callback.get() {

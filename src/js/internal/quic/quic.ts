@@ -4442,7 +4442,7 @@ class QuicEndpoint {
     const {
       retryTokenExpiration,
       tokenExpiration,
-      maxConnectionsPerHost = 100,
+      maxConnectionsPerHost,
       maxConnectionsTotal = 10_000,
       disableStatelessReset,
       addressLRUSize,
@@ -4658,7 +4658,7 @@ class QuicEndpoint {
 
   /**
    * Maximum concurrent connections per remote IP address.
-   * 0 means unlimited (default).
+   * 0 means unlimited. Only enforced once it is set.
    * @type {number}
    */
   get maxConnectionsPerHost() {

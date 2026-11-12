@@ -1159,6 +1159,26 @@ describe("maxConnectionsPerHost", () => {
     expect(outcome).toBe("opened");
   });
 
+  test("is only enforced once it's set", async () => {
+    const server = await listen(session => session.closed.catch(() => {}), {
+      sni: { "*": { keys: [key], certs: [cert] } },
+      alpn: ["quic-test"],
+    });
+    const endpoint = new QuicEndpoint();
+    const reported = (server as any).maxConnectionsPerHost;
+    const outcomes = new Set<string>();
+    for (let i = 0; i <= reported; i++) outcomes.add(await (await dialTo(server.address!, endpoint)).outcome);
+    (server as any).maxConnectionsPerHost = reported;
+    const afterSetting = await (await dialTo(server.address!, endpoint)).outcome;
+    endpoint.destroy();
+    server.destroy();
+    expect({ reported, outcomes: [...outcomes], afterSetting }).toEqual({
+      reported: 100,
+      outcomes: ["opened"],
+      afterSetting: "ERR_QUIC_TRANSPORT_ERROR",
+    });
+  });
+
   test("holds for handshakes that run at the same time", async () => {
     const server = await limitedToOne();
     const dials = await Promise.all([dialTo(server.address!), dialTo(server.address!), dialTo(server.address!)]);

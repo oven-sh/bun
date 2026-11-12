@@ -73,6 +73,7 @@ const kEmptyObject = { __proto__: null };
 class QuicEndpointState {
   /** @type {DataView} */
   #handle;
+  #hasMaxConnectionsPerHost = false;
 
   /**
    * @param {symbol} privateSymbol
@@ -127,12 +128,15 @@ class QuicEndpointState {
   get maxConnectionsPerHost() {
     const handle = this.#handle;
     if (handle === undefined) return undefined;
+    // Node's default is reported and not enforced: the native side reads 0 until a limit is set.
+    if (!this.#hasMaxConnectionsPerHost) return 100;
     return DataViewPrototypeGetUint16(handle, IDX_STATE_ENDPOINT_MAX_CONNECTIONS_PER_HOST, kIsLittleEndian);
   }
 
   set maxConnectionsPerHost(val) {
     const handle = this.#handle;
     if (handle === undefined) return;
+    this.#hasMaxConnectionsPerHost = true;
     DataViewPrototypeSetUint16(handle, IDX_STATE_ENDPOINT_MAX_CONNECTIONS_PER_HOST, val, kIsLittleEndian);
   }
 

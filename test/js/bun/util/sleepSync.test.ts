@@ -177,14 +177,14 @@ it.skipIf(!canSetTimerSlack)("sleepSync ends at its deadline when signals interr
       "-e",
       `
       let heard = 0;
-      const { promise: heardAll, resolve } = Promise.withResolvers();
       process.on("SIGUSR2", () => {
-        if (++heard === 10) resolve();
+        heard++;
       });
       require("node:fs").writeFileSync("/proc/self/timerslack_ns", "200000000");
       const slack = require("node:fs").readFileSync("/proc/self/timerslack_ns", "utf8").trim();
       ${sleepsWhileSignalled(10)}
-      await heardAll;
+      // The listener runs when the event loop turns. A signal that got lost shows as a count below ten, not as a hang.
+      for (let turns = 0; heard < 10 && turns < 1000; turns++) await new Promise(resolve => setImmediate(resolve));
       // A sleep that is on time ends between its deadline and one slack later. The rest is room for a busy machine.
       const onTime = sleeps.every(elapsed => elapsed >= 100 && elapsed < 1500);
       console.log(JSON.stringify({ slack, heard, sleeps: onTime ? "on time" : sleeps }));

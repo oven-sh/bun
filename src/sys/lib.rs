@@ -1577,9 +1577,7 @@ mod safe_libc {
             len: libc::off_t,
             advice: c_int,
         ) -> c_int;
-        // `&` / `Option<&mut>` to POD `timespec`: non-null when present, valid
-        // for read/write. A bad clock, flag or time is the returned error
-        // number (`EINVAL`/`ENOTSUP`), never UB.
+        // `timespec` is POD, by reference. A bad clock, flag or time is the returned error number, never UB.
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         pub safe fn clock_nanosleep(
             clock_id: libc::clockid_t,

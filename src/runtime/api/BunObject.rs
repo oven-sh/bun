@@ -756,8 +756,7 @@ pub(crate) fn sleep_sync<'a>(heap: &JsHeap<'a>, milliseconds: f64) -> bindgen::R
     let handed_off = unsafe { bun_alloc::mimalloc::mi_on_thread_idle_start() };
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
     if !duration.is_zero() {
-        // After a signal the kernel's count of the time left is too long: it leaves out the handler, and Linux adds
-        // the thread's timer slack. So the sleep counts the time itself.
+        // After a signal the kernel's time left is too long: it omits the handler, and Linux adds the timer slack.
         let started = std::time::Instant::now();
         let mut left = duration;
         loop {

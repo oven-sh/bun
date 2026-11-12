@@ -75,7 +75,7 @@ enum BunSocket {
 #[derive(Default)]
 struct NativeSocket {
     socket: Cell<BunSocket>,
-    /// The attached socket closed. Sticky until `attach`; `onWrite` tells the session.
+    /// No write reaches the transport any more: the attached socket closed, or a rejected send ended its writes. Sticky until `attach`; once the socket has closed, `onWrite` tells the session.
     closed: Cell<bool>,
 }
 
@@ -618,9 +618,8 @@ pub(crate) struct H2FrameParser {
     has_nonnative_backpressure: Cell<bool>,
     /// True while flush() has bytes out in an onWrite dispatch to a JS-backed socket.
     js_socket_flushing: Cell<bool>,
-    /// A native write returned a terminal result (socket closed, shut down, or the kernel
-    /// rejected the send). Latched once; the deferred tick closes the transport.
-    transport_write_fatal: Cell<bool>,
+    /// The errno of a native write that the kernel rejected, in uSockets' numbering, or 0. Latched once; the deferred tick ends the writes of the socket. `REJECTED_SOCKET_CLOSED` once that socket has closed.
+    transport_write_fatal: Cell<i32>,
     draining: Cell<Draining>,
     /// An outbound header block the HPACK encoder could not emit. Latched once; the deferred
     /// tick reports it, because it is detected inside a user submit call.
@@ -1288,6 +1287,7 @@ impl H2FrameParser {
     /// A header block the HPACK encoder cannot emit fails the whole session in nghttp2, so node
     /// reports ERR_HTTP2_SESSION_ERROR (COMPRESSION_ERROR) rather than resetting the stream.
     /// The stream is left open for the session teardown to error, matching node's request error.
+    /// After a rejected send nothing is reported (`on_auto_flush`): the close of the socket ends that session.
     fn schedule_header_compression_session_error(&self) {
         if self.pending_header_compression_error.get() {
             return;
@@ -1350,7 +1350,7 @@ impl H2FrameParser {
         let total = pending.len() - offset;
         let written: usize = if result < 0 {
             if Self::is_transport_fatal_write_result(result) {
-                self.note_transport_write_fatal();
+                self.note_transport_write_fatal(result);
             }
             0
         } else {
@@ -1383,7 +1383,7 @@ impl H2FrameParser {
             );
             let written: u32 = if result < 0 {
                 if Self::is_transport_fatal_write_result(result) {
-                    self.note_transport_write_fatal();
+                    self.note_transport_write_fatal(result);
                 }
                 0
             } else {
@@ -1429,7 +1429,7 @@ impl H2FrameParser {
                 );
                 let written: u32 = if result < 0 {
                     if Self::is_transport_fatal_write_result(result) {
-                        self.note_transport_write_fatal();
+                        self.note_transport_write_fatal(result);
                     }
                     0
                 } else {
@@ -1459,7 +1459,7 @@ impl H2FrameParser {
                 let result: i32 = socket.write_maybe_corked(bytes);
                 let written: u32 = if result < 0 {
                     if Self::is_transport_fatal_write_result(result) {
-                        self.note_transport_write_fatal();
+                        self.note_transport_write_fatal(result);
                     }
                     0
                 } else {
@@ -1490,13 +1490,17 @@ impl H2FrameParser {
         let result: i32 = socket.write_maybe_corked(bytes);
         let written: u32 = if result < 0 {
             if Self::is_transport_fatal_write_result(result) {
-                self.note_transport_write_fatal();
+                self.note_transport_write_fatal(result);
             }
             0
         } else {
             u32::try_from(result).expect("int cast")
         };
         if (written as usize) < bytes.len() {
+            // A rejected send ended the writes: this one completes as sent, like node's `ClearOutgoing`.
+            if self.native_socket.closed.get() {
+                return true;
+            }
             let pending = &bytes[written as usize..];
             // ops not all data was sent, lets buffer again
             let _ = self.write_buffer.with_mut(|wb| wb.write(pending));
@@ -1734,7 +1738,9 @@ impl H2FrameParser {
             // takes it.
             return 0;
         }
-        self.unregister_auto_flush();
+        if !self.tick_is_owed() {
+            self.unregister_auto_flush();
+        }
         bun_output::scoped_log!(H2FrameParser, "uncork {:p}", corked_ptr);
         // The slot's ref on `self`, released once the corked bytes are written.
         let _slot_ref = Self::set_corked(None);
@@ -1777,13 +1783,13 @@ impl H2FrameParser {
         debug_assert!(!found_existing);
     }
 
+    /// A write that drains the buffer must not cancel the deferred tick that a pending session error or a rejected send waits for; `on_auto_flush` releases that registration itself.
+    fn tick_is_owed(&self) -> bool {
+        self.pending_header_compression_error.get() || self.transport_write_fatal.get() != 0
+    }
+
     fn unregister_auto_flush(&self) {
         if !self.auto_flusher.get().registered.get() {
-            return;
-        }
-        // A write that drains the buffer must not cancel the deferred tick a pending session
-        // error is waiting on; on_auto_flush releases the registration once it has reported it.
-        if self.pending_header_compression_error.get() {
             return;
         }
         debug_assert!(self.auto_flusher.get().registered.get());
@@ -1808,8 +1814,7 @@ impl H2FrameParser {
     /// Windows CI agents). -1 (socket closed/shut down/not writable yet) is NOT
     /// latched: those are routine during setup and teardown and the close path that
     /// produced them owns the lifecycle. Latch the fatal and let the deferred tick
-    /// close the transport - the failing write can be deep inside frame emission, so
-    /// the close must not run under the caller's stack.
+    /// end the writes of the socket (`end_writes_after_rejected_send`), unless a later write of the same flush cycle drains what this one left.
     /// Errno classification lives in `us_socket_write_check_error` (socket.c):
     /// would-block/transient errnos re-arm writable and are never reported
     /// here, known peer-gone errnos are reported immediately, and every other
@@ -1820,40 +1825,44 @@ impl H2FrameParser {
     /// succeed - re-buffering it would wait forever for a writable event that
     /// the socket layer deliberately stopped polling for (observed as an h2
     /// session that never writes again and never errors). Windows fatal codes
-    /// arrive as raw negated WSA values and mean the same thing.
+    /// are WSA values in the same form and mean the same thing.
     fn is_transport_fatal_write_result(result: i32) -> bool {
         result < -1
     }
 
-    fn note_transport_write_fatal(&self) {
-        if !self.transport_write_fatal.get() {
-            self.transport_write_fatal.set(true);
+    /// `result` is the `-1 - errno` of `NewSocket::write_maybe_corked`.
+    fn note_transport_write_fatal(&self, result: i32) {
+        if self.transport_write_fatal.get() == 0 {
+            self.transport_write_fatal.set(-1 - result);
             self.register_auto_flush();
         }
     }
 
-    /// Runs from the deferred tick (never under a write): closes the native socket so the
-    /// normal socket-close teardown runs (native callback detach, JS 'close', session
-    /// destroy) - the same path a peer disconnect takes. Closes WITHOUT detaching: a
-    /// close_and_detach here severed the JS wrapper before on_close could dispatch, so
-    /// the session saw neither 'error' nor 'close' and callers waiting on the failure
-    /// hung (grpc-js against a refused server). Not-yet-established sockets are left
-    /// alone entirely - the connect-error path owns their failure delivery.
-    fn close_transport_after_fatal_write(&self) {
-        match self.native_socket.get() {
-            BunSocket::Tls(socket) | BunSocket::TlsWriteonly(socket) => {
-                Self::close_socket_for_dead_transport::<true>(socket.get());
-            }
-            BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) => {
-                Self::close_socket_for_dead_transport::<false>(socket.get());
-            }
-            BunSocket::None => {}
+    /// `transport_write_fatal` once the socket of a rejected send has closed: no write tells the session any more, so the deferred tick does. -1 is no errno.
+    const REJECTED_SOCKET_CLOSED: i32 = -1;
+
+    /// Runs from the deferred tick when no later write drained what a rejected send left. `reject_send` ends the write side, and the loop closes the socket once it has read what the peer sent (a close from here would drop it); later writes complete as sent. Returns false for a socket that is not established, whose connect error owns the failure.
+    fn end_writes_after_rejected_send(&self) -> bool {
+        let (BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket)) = self.native_socket.get()
+        else {
+            // A TLS send never latches (`NativeSocketWrite for &TLSSocket`).
+            return false;
+        };
+        let handler = socket.get().socket.get();
+        handler.reject_send(self.transport_write_fatal.get());
+        if handler.rejected_send_error() == 0 {
+            return false;
         }
+        bun_output::scoped_log!(H2FrameParser, "endWritesAfterRejectedSend");
+        self.native_socket.closed.set(true);
+        self.write_buffer.with_mut(|wb| wb.clear_and_free());
+        self.write_buffer_offset.set(0);
+        true
     }
 
     /// The kernel rejected a send of the session's socket, which closes once what the peer sent before has been read.
     pub(crate) fn has_rejected_send(&self) -> bool {
-        if self.transport_write_fatal.get() {
+        if self.transport_write_fatal.get() != 0 {
             return true;
         }
         match self.native_socket.get() {
@@ -1861,44 +1870,54 @@ impl H2FrameParser {
             BunSocket::Tls(socket) | BunSocket::TlsWriteonly(socket) => {
                 socket.get().socket.get().rejected_send_error() != 0
             }
-            _ => false,
+            BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) => {
+                socket.get().socket.get().rejected_send_error() != 0
+            }
+            BunSocket::None => false,
         }
     }
 
-    fn close_socket_for_dead_transport<const SSL: bool>(socket: &crate::socket::NewSocket<SSL>) {
-        let handler = socket.socket.get();
-        if !handler.is_established() {
-            return;
-        }
-        handler.close(bun_uws::CloseCode::Normal);
+    /// Hands the registration of an owed tick to the cork: the flush that follows releases it with the cork, and the frames that it writes take it again.
+    fn cork_takes_owed_tick(&self) {
+        self.cork();
     }
 
     pub(crate) fn on_auto_flush(&self) -> bool {
         let _keepalive = self.keepalive();
         // Flushing can call JS (a JS transport's write, write callbacks, the socket's 'close').
         self.global_this.bun_vm().deferred_task_called_js.set(true);
-        if self.transport_write_fatal.get() {
-            // The close cancels open streams, so deliver the rest of this frame (its END_STREAM) first.
-            if !self.deferred.get().is_empty() {
-                return true;
-            }
-            // Returning `false` makes DeferredTaskQueue::run remove the entry, so only the registration's flag and ref are released here.
-            self.auto_flusher.get().registered.set(false);
-            self.deref();
+        if self.transport_write_fatal.get() != 0 {
+            let socket_closed = self.transport_write_fatal.get() == Self::REJECTED_SOCKET_CLOSED;
             // An empty write buffer here means a later write in the same flush()
             // cycle already drained the bytes the failing send left behind (racy
             // one-off errnos, e.g. macOS EPROTOTYPE) - the transport recovered.
-            if self.has_backpressure() {
-                // `registered` is already clear, so the detach() this re-enters leaves run()'s map entry alone.
-                self.close_transport_after_fatal_write();
-            } else {
-                self.transport_write_fatal.set(false);
+            let dead = !socket_closed && self.has_backpressure();
+            if !dead || !self.end_writes_after_rejected_send() {
+                // Returning `false` makes DeferredTaskQueue::run remove the entry, so only the registration's flag and ref are released here.
+                self.auto_flusher.get().registered.set(false);
+                self.deref();
+                if !dead {
+                    self.transport_write_fatal.set(0);
+                }
+                if socket_closed {
+                    // The session ends an `allowHalfOpen` socket when it hears of the closed transport.
+                    self.call_on_write(JSValue::UNDEFINED);
+                }
+                return false;
             }
-            return false;
+            self.transport_write_fatal.set(0);
+            self.cork_takes_owed_tick();
         }
         if self.pending_header_compression_error.get() {
+            if self.has_rejected_send() {
+                // The close of the socket ends this session now. No frame of it leaves any more, this block included.
+                self.pending_header_compression_error.set(false);
+                self.cork_takes_owed_tick();
+                let _ = self.flush();
+                return true;
+            }
             // Keep the pending latch set across dispatch+flush: re-entrant detach() ->
-            // uncork()/unregister_auto_flush() must early-return at the guard instead of
+            // uncork() must keep the registration (`tick_is_owed`) instead of
             // mutating the task map run() iterates (aliasing UB). Cleared once back here.
             self.dispatch_with_2_extra(
                 js::on_error_get_cached,
@@ -2017,6 +2036,10 @@ impl H2FrameParser {
             }
         };
         if total_written < total {
+            // As in `generic_write`: a rejected send ended the writes, and the batch completes as sent.
+            if self.native_socket.closed.get() {
+                return;
+            }
             // Copy the unwritten tail in wire order; write_buffer drains on writable.
             let mut skip = total_written;
             let mut buffered: usize = 0;
@@ -2172,7 +2195,7 @@ impl NativeSocketWrite for &TLSSocket {
     fn write_maybe_corked(&mut self, buf: &[u8]) -> i32 {
         // Forward to the inherent NewSocket<true>::write_maybe_corked (R-2: now
         // takes `&self`). UFCS to avoid resolving back to this trait impl.
-        // No fatal latch: its close would drop what the peer sent before; the TLS layer closes after reading it.
+        // No fatal latch: the TLS layer ends the writes itself, and closes after it has read what the peer sent.
         TLSSocket::write_maybe_corked(*self, buf).max(-1)
     }
 }
@@ -4106,7 +4129,9 @@ impl H2FrameParser {
     }
 
     fn owes_output(&self) -> bool {
-        self.has_unsent_output() && !self.transport_write_fatal.get() && self.socket_takes_output()
+        self.has_unsent_output()
+            && self.transport_write_fatal.get() == 0
+            && self.socket_takes_output()
     }
 
     /// Returns true if a draining parser holds back the socket's FIN. `finish_draining` sends it after the output.
@@ -4123,8 +4148,15 @@ impl H2FrameParser {
         // detach_native_socket can drop the socket's last ref (Writeonly deref),
         // so match on_native_read/on_native_writable and hold our own +1.
         let _keepalive = self.keepalive();
+        let ended_by_rejected_send =
+            self.native_socket.closed.get() && !matches!(self.native_socket.get(), BunSocket::None);
         self.native_socket.note_socket_closed();
         self.detach_native_socket();
+        // At exit the tick never runs, and its registration would keep the parser.
+        if ended_by_rejected_send && !VirtualMachine::get().is_shutting_down() {
+            self.transport_write_fatal.set(Self::REJECTED_SOCKET_CLOSED);
+            self.register_auto_flush();
+        }
         // Free the kept output now instead of when the wrapper is collected.
         if self.draining.replace(Draining::No) != Draining::No {
             self.write_buffer.with_mut(|wb| wb.clear_and_free());
@@ -4194,7 +4226,7 @@ impl H2FrameParser {
             outbound_queue_size: Cell::new(0),
             has_nonnative_backpressure: Cell::new(false),
             js_socket_flushing: Cell::new(false),
-            transport_write_fatal: Cell::new(false),
+            transport_write_fatal: Cell::new(0),
             draining: Cell::new(Draining::No),
             pending_header_compression_error: Cell::new(false),
             tx_tracker: Cell::new(TxFrameTracker::default()),
@@ -4418,7 +4450,9 @@ impl H2FrameParser {
     /// this function can be called multiple times, it will erase stream info
     pub(crate) fn detach(&self, keep_output: bool) {
         self.uncork();
-        self.unregister_auto_flush();
+        if !self.tick_is_owed() {
+            self.unregister_auto_flush();
+        }
         let draining = keep_output && self.owes_output();
         if !draining {
             self.draining.set(Draining::No);

@@ -2905,6 +2905,10 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     if (hasChunk) this[kEndingWithChunk] = true;
     try {
       return super.end(chunk, encoding, callback);
+    } catch (err) {
+      // A chunk that write() refuses leaves the writable open.
+      if (!this._writableState.ending) this[bunHTTP2StreamStatus] &= ~StreamState.EndedCalled;
+      throw err;
     } finally {
       // Only the synchronous window is bridged: a chunk buffered behind an in-flight
       // write dispatches later, when `ending` is already set.

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 0841e02cea5f77cf84db19451c7f5c244b8208e8b8234697c74934cac60e31de.
+// Written against that file with the SHA-256 69ded6bcdcbe551348d75d148b77f62d4f7e93a4c4fe14c745bf65f037704166.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -2982,6 +2982,10 @@ class Http2Stream extends (Duplex as $Node.DuplexConstructor) {
     if (hasChunk) this[kEndingWithChunk] = true;
     try {
       return super.end(chunk, encoding, callback);
+    } catch (err) {
+      // A chunk that write() refuses leaves the writable open.
+      if (!this._writableState.ending) this[bunHTTP2StreamStatus] &= ~StreamState.EndedCalled;
+      throw err;
     } finally {
       // Only the synchronous window is bridged: a chunk buffered behind an in-flight
       // write dispatches later, when `ending` is already set.

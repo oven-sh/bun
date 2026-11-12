@@ -9243,6 +9243,36 @@ it.skipIf(!isLinux)("streams build no frames for what they have buffered when th
   });
 });
 
+it("end(chunk) sends its chunk after an end() that threw", async () => {
+  const endTwice = stream => {
+    expect(() => stream.end({ not: "a chunk" })).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    stream.end("fallback");
+  };
+  const text = async stream => {
+    let body = "";
+    await once(
+      stream.on("data", chunk => (body += chunk)),
+      "end",
+    );
+    return body;
+  };
+  const server = http2.createServer();
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    const req = client.request({ ":method": "POST" });
+    endTwice(req);
+    const [stream] = await once(server, "stream");
+    const request = await text(stream);
+    stream.respond();
+    endTwice(stream);
+    expect({ request, response: await text(req) }).toEqual({ request: "fallback", response: "fallback" });
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
 it("res.end() calls its callback once when the client leaves before the response is sent", async () => {
   const chunk = Buffer.alloc(65536, "x");
   for (const requests of [1, 5]) {

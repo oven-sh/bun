@@ -340,8 +340,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionInternalGetWindowSize,
 }
 
 static const HashTableValue TTYWrapPrototypeValues[] = {
-    { "getWindowSize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TTYWrap_functionGetWindowSize, 1 } },
-    { "setRawMode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::NativeFunctionType, TTYWrap_functionSetMode, 0 } },
+    { "getWindowSize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, TTYWrap_functionGetWindowSize, 1 } },
+    { "setRawMode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, TTYWrap_functionSetMode, 0 } },
 };
 
 class TTYWrapPrototype final : public JSC::JSNonFinalObject {
@@ -526,7 +526,7 @@ JSValue createNodeTTYWrapObject(JSC::JSGlobalObject* globalObject)
     TTYWrapPrototype* prototype = TTYWrapPrototype::create(vm, globalObject, TTYWrapPrototype::createStructure(vm, globalObject));
     TTYWrapConstructor* constructor = TTYWrapConstructor::create(vm, globalObject, TTYWrapConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), prototype);
 
-    obj->putDirect(vm, Identifier::fromString(vm, "TTY"_s), constructor, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
+    obj->putDirect(vm, Identifier::fromString(vm, "TTY"_s), constructor, 0);
 
     return obj;
 }

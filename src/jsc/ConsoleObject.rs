@@ -586,8 +586,35 @@ fn message_with_type_and_level_(
         }
     }
 
+    // Matches Node: a string first arg joins the marker with ": " and stays the format string.
+    let mut assert_args: Vec<JSValue> = Vec::new();
+    // A heap `Vec<JSValue>` is invisible to the GC's stack scan; root the prefix.
+    let mut _prefix_guard: Option<jsc::ProtectedJSValue> = None;
+    if message_type == MessageType::Assert && print_length > 0 {
+        use crate::StringJsc as _;
+        let first = vals[0];
+        if first.is_string_literal() {
+            let mut prefixed = b"Assertion failed: ".to_vec();
+            prefixed.extend_from_slice(&first.to_js_string_view(global)?.to_utf8());
+            let prefixed = crate::bun_string_jsc::owned_utf8_into_js(global, prefixed)?;
+            _prefix_guard = Some(prefixed.protected());
+            assert_args.push(prefixed);
+            assert_args.extend_from_slice(&vals[1..print_length]);
+        } else {
+            let marker = BunString::static_("Assertion failed").to_js(global)?;
+            _prefix_guard = Some(marker.protected());
+            assert_args.push(marker);
+            assert_args.extend_from_slice(&vals[..print_length]);
+        }
+    }
+    let format_args: &[JSValue] = if assert_args.is_empty() {
+        &vals[..print_length]
+    } else {
+        &assert_args
+    };
+
     if print_length > 0 {
-        format2(level, global, &vals[..print_length], writer, print_options)?;
+        format2(level, global, format_args, writer, print_options)?;
     } else if message_type == MessageType::Log {
         // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
         // the only later uses are in the mutually-exclusive `Trace` block, and

@@ -8043,10 +8043,6 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
     ModuleImporters importersOf;
     Vector<String> waiting;
     UncheckedKeyHashSet<String> seen;
-    auto isFetchedByAnotherLoad = [&](const String& key) {
-        auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key));
-        return entry && isBeingFetchedWithoutFactory(globalObject, entry) && (!isInNodeModules(key) || isInNodeModules(target)) && !isCompiledFileNotImporting(globalObject, key, target);
-    };
     auto add = [&](const String& key) {
         if (!seen.add(key).isNewEntry)
             return;
@@ -8063,7 +8059,7 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
         } else if (auto* mock = registeredModuleMock(globalObject, key); mock && mock->state == JSModuleMock::State::Settled && !mock->importsOriginal) {
             // What is being fetched is the mock's own module, which imports nothing.
             return;
-        } else if (isFetchedByAnotherLoad(key)) {
+        } else if (auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key)); entry && isBeingFetchedWithoutFactory(globalObject, entry) && (!isInNodeModules(key) || isInNodeModules(target)) && !isCompiledFileNotImporting(globalObject, key, target)) {
             // Another load is fetching it, and it may import the mock. In the chain it would get the original, for that load too, so treat it as waiting.
             // A package doesn't import the project's modules. A copy of it would only run its side effects a second time.
             running.waitingModules.add(key);
@@ -8098,8 +8094,8 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
         if (!importCalls)
             importCalls = pendingImportCalls(globalObject);
         for (auto& [promise, key] : *importCalls) {
-            // An import() of what another load still fetches is not followed: the statements that name that module say whether it waits.
-            if (isFetchedByAnotherLoad(key) || !JSC::AbstractModuleRecord::importPromiseGatesAsyncDependency(promise, cyclic))
+            // An import() of a module that has yet to be fetched is not followed: the statements that name that module say whether it waits.
+            if ((key != target && !recordOf(key) && !registeredModuleMock(globalObject, key)) || !JSC::AbstractModuleRecord::importPromiseGatesAsyncDependency(promise, cyclic))
                 continue;
             addImporter(importersOf, importer, key);
             add(key);

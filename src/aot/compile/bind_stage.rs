@@ -927,7 +927,7 @@ fn warn_about_unembedded_reads(
             match is_not_embedded {
                 true => diagnostics.add(Some(view), warning),
                 false => {
-                    if let Some(warning) = Diagnostics::render(view, warning) {
+                    if let Some(warning) = diagnostics.render_unless_silenced(view, warning) {
                         provider.warn_if_not_embedded(to_native(path), warning);
                     }
                 }

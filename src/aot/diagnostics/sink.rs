@@ -49,6 +49,8 @@ impl Diagnostics {
             withheld: Vec::new(),
             has_run_to_end: false,
             should_list_silenced: false,
+            #[cfg(debug_assertions)]
+            has_read_ignore_comments: false,
         }
     }
 
@@ -76,11 +78,15 @@ impl Diagnostics {
         self.add_with_locator(locator.as_mut(), diagnostic);
     }
 
-    /// Renders a warning as `add` would, for a caller that may emit it later.
-    pub(crate) fn render(view: ProgramView<'_, '_>, warning: Diagnostic) -> Option<Msg> {
+    /// Renders a warning as `add` would.
+    pub(super) fn render_entry(view: ProgramView<'_, '_>, warning: Diagnostic) -> Option<Entry> {
         let mut kept = Diagnostics::new();
         kept.add(Some(view), warning);
-        kept.entries.pop().map(|entry| entry.message)
+        kept.entries.pop()
+    }
+
+    pub(super) fn render(view: ProgramView<'_, '_>, warning: Diagnostic) -> Option<Msg> {
+        Diagnostics::render_entry(view, warning).map(|entry| entry.message)
     }
 
     #[allow(clippy::needless_pass_by_value)]

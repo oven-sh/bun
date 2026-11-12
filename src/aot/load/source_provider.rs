@@ -303,7 +303,7 @@ pub trait SourceProvider: Sync {
         None
     }
 
-    /// Emits `warning` later if `node:fs` won't find `source_path` in the executable.
+    /// Emits `warning` later if `node:fs` won't find `source_path` in the executable. One that a comment silenced comes as the note of `--explain`.
     fn warn_if_not_embedded(&self, _source_path: &[u8], _warning: Msg) {}
 
     fn parse_data<'s>(

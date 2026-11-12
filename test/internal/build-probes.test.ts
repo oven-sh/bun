@@ -149,7 +149,11 @@ test.skipIf(isWindows)("a tool that failed is asked again where the search comes
 });
 
 test.skipIf(isWindows)("a tool that runs out of time has given no answer", () => {
-  using dir = standIns("probe-budget", { "hangs": "#!/bin/sh\nexec sleep 60\n" });
+  using dir = standIns("probe-budget", {
+    "hangs": "#!/bin/sh\nexec sleep 60\n",
+    // SIGTERM does not end this one. If the timer left it alive, it would say so two seconds later.
+    "ignores-sigterm": `#!/bin/sh\ntrap '' TERM\nsleep 2 >/dev/null 2>&1\n: > "$0.outlived-the-timer"\n`,
+  });
   const hangs = join(String(dir), "hangs");
   let error: unknown;
   try {
@@ -165,6 +169,11 @@ test.skipIf(isWindows)("a tool that runs out of time has given no answer", () =>
     message: `\`${hangs} --version\` did not answer in 0.05s`,
     cause: "ETIMEDOUT",
   });
+
+  // The ask returns when the timer ends the program, not when the program chooses to end.
+  const ignores = join(String(dir), "ignores-sigterm");
+  expect(noAnswer(() => ask(ignores, [], { budgetMs: 50 }))).toBe(`\`${ignores}\` did not answer in 0.05s`);
+  expect(existsSync(`${ignores}.outlived-the-timer`)).toBe(false);
 });
 
 // The codes are what this kernel says, so the test is for this kernel.

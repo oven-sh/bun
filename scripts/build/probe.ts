@@ -44,9 +44,8 @@ export function printed(answer: Answer): string | undefined {
 /**
  * The spawn errors that are about the file: nothing is at that path, or the machine does not run what is there as
  * a program. Windows says EFTYPE for a file that is no executable and EPERM for one it refuses, and macOS says
- * EBADARCH for a binary of another CPU (Node.js has no name for that errno, so only Bun reports it as this). Every
- * other error (ETIMEDOUT, ETXTBSY, EAGAIN, E2BIG, ...) is taken as no answer, because nothing says it is about the
- * file.
+ * EBADARCH for a binary of another CPU. Every other error (ETIMEDOUT, ETXTBSY, EAGAIN, E2BIG, ...) is taken as no
+ * answer, because nothing says it is about the file.
  */
 const cannotRunCodes = new Set([
   "ENOENT",
@@ -59,6 +58,15 @@ const cannotRunCodes = new Set([
   "EFTYPE",
   "EBADARCH",
 ]);
+/** EBADARCH on macOS. Node.js has no name for it and gives the code "Unknown system error -86". */
+const darwinBadArch = -86;
+
+function isAboutTheFile(error: NodeJS.ErrnoException): boolean {
+  return (
+    (error.code !== undefined && cannotRunCodes.has(error.code)) ||
+    (process.platform === "darwin" && error.errno === darwinBadArch)
+  );
+}
 
 const noAnswerHint =
   'That is not a "no", so configure stops here instead of going on with another tool or a default. ' +
@@ -80,12 +88,13 @@ export function ask(exe: string, args: readonly string[], options: AskOptions): 
     encoding: "utf8",
     // stdin: on Windows CI the parent's can be a handle that blocks the child's CRT init, and no question reads it.
     stdio: ["ignore", "pipe", options.stderr ?? "pipe"],
-    ...(options.budgetMs !== null && { timeout: options.budgetMs }),
+    // SIGKILL: a program can ignore SIGTERM, and spawnSync then waits for it as long as it likes.
+    ...(options.budgetMs !== null && { timeout: options.budgetMs, killSignal: "SIGKILL" as const }),
     ...(options.env !== undefined && { env: { ...process.env, ...options.env } }),
     ...(options.cwd !== undefined && { cwd: options.cwd }),
   });
   const error: NodeJS.ErrnoException | undefined = result.error;
-  if (error?.code !== undefined && cannotRunCodes.has(error.code)) return { cannotRun: error };
+  if (error !== undefined && isAboutTheFile(error)) return { cannotRun: error };
   if (error !== undefined || typeof result.status !== "number") {
     const what =
       error === undefined

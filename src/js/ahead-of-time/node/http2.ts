@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/http2.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 93be3c0aefe189c368d034e48e5b57aed61e040eac8932230f4196300854bcde.
+// Written against that file with the SHA-256 1d0e760b50b9b4761a24d35abdf26d23a4fd0197085c5260fef4f81ef0be0d46.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:http2"
@@ -6464,6 +6464,11 @@ class ClientHttp2Session extends Http2Session {
       }
       const stream_id = parser.getNextStream();
       if (stream_id === 0) break;
+      if (req[kQueuedRequest] === undefined) {
+        // Another session's transport ran inside getNextStream() and submitted or destroyed the request.
+        if (stream_id > 0) parser.setStreamContext(stream_id, undefined);
+        continue;
+      }
       queue.delete(req);
       req[kQueuedRequest] = undefined;
       // Like node, submit in the request() caller's async context, not the context of whatever freed the slot.

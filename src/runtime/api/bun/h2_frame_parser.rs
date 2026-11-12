@@ -1308,8 +1308,10 @@ impl H2FrameParser {
         CORKED_H2.with(|c| unsafe { (**c.as_ptr()).as_ref().map(RefPtr::as_ptr) })
     }
 
+    /// Runs JS if another session with a JS transport has the slot, so take it before anything whose order on the wire matters.
     fn cork(&self) {
-        if let Some(corked) = Self::corked() {
+        // That JS can cork again, for any session.
+        while let Some(corked) = Self::corked() {
             if std::ptr::eq(corked, self.as_ctx_ptr()) {
                 // already corked
                 return;
@@ -3538,6 +3540,10 @@ impl H2FrameParser {
             self.send_no_trailers(&stream);
             return Ok(());
         }
+        self.cork();
+        if !stream.state().can_send() {
+            return Ok(());
+        }
 
         let encoded = if self.is_over_send_limit(&scratch.block) {
             Err(crate::Error::UnableToEncode)
@@ -3689,6 +3695,8 @@ impl H2FrameParser {
     }
 
     pub(crate) fn get_next_stream(&self, _: &mut JsScope<'_>) -> i32 {
+        // RFC 9113 §5.1.1: a stream that JS opens from here on would reach the wire ahead of this id.
+        self.cork();
         let id = self.get_next_stream_id();
         if id > MAX_STREAM_ID {
             return -1;
@@ -3730,6 +3738,7 @@ impl H2FrameParser {
             Some(&mut scratch.block),
         )?;
 
+        self.cork();
         match self.encode_header_list(&mut scratch) {
             Ok(()) => {}
             Err(crate::Error::Alloc(bun_alloc::AllocError)) => {
@@ -3767,7 +3776,7 @@ impl H2FrameParser {
             .unwrap_or(JSValue::UNDEFINED)
     }
 
-    /// `undefined` closes a pushed stream whose PUSH_PROMISE never left. It was never on the wire, so no reset is sent.
+    /// `undefined` closes a stream whose first frame never left. It was never on the wire, so no reset is sent.
     pub(crate) fn set_stream_context(
         &self,
         cx: &mut JsScope<'_>,
@@ -3903,6 +3912,11 @@ impl H2FrameParser {
             }
             return Err(err);
         }
+        self.cork();
+        // JS only marks the headers as sent once this returns, so JS that ran meanwhile can respond a second time.
+        if stream.is_closed() || stream.sent_final_headers.get() {
+            return Ok(());
+        }
         stream.request_method.set(
             scratch
                 .block
@@ -3974,6 +3988,7 @@ impl H2FrameParser {
         }
         // Before the write: a synchronous JS transport handles the peer's answer inside it.
         let _ = self.engine.streams.apply(&stream, StreamEvent::SendHeaders);
+        stream.sent_final_headers.set(!informational);
         self.write_header_block(FrameType::Headers, flags, stream_id, b"", &scratch.encoded);
         if end_stream {
             self.sent_end_stream(&stream, false);

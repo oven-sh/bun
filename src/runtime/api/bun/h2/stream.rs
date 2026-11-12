@@ -106,6 +106,8 @@ pub(crate) struct Stream {
     pub request_method: Cell<Option<RequestMethod>>,
 
     pub send_window: Cell<SendWindow>,
+    /// The request or the final response went out.
+    pub sent_final_headers: Cell<bool>,
     /// END_STREAM goes out on the trailers, not on the last DATA frame.
     pub wait_for_trailers: Cell<bool>,
     pub padding_strategy: Cell<PaddingStrategy>,
@@ -139,6 +141,7 @@ impl Stream {
             opened_after_goaway: Cell::new(false),
             request_method: Cell::new(None),
             send_window: Cell::new(SendWindow::new(initial_send)),
+            sent_final_headers: Cell::new(false),
             wait_for_trailers: Cell::new(false),
             padding_strategy: Cell::new(PaddingStrategy::None),
             queue: JsCell::new(VecDeque::new()),

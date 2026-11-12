@@ -8742,6 +8742,116 @@ it("http2 server sends each session's frames to its own peer under interleaved r
   }
 });
 
+describe("frames written while another session's transport hands over the cork", () => {
+  // `other` has a frame corked, so the next write of any session runs its transport's write(), which calls `nested`.
+  async function withHandover(run) {
+    const server = http2.createServer();
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const connect = () => http2.connect(`http://127.0.0.1:${server.address().port}`);
+    let nested;
+    const transport = new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        const call = nested;
+        nested = undefined;
+        call?.();
+        callback();
+      },
+    });
+    const sessions = [connect(), connect(), http2.connect("http://localhost", { createConnection: () => transport })];
+    const [client, third, other] = sessions;
+    try {
+      await Promise.all([once(client, "remoteSettings"), once(third, "remoteSettings"), once(other, "connect")]);
+      await run({
+        server,
+        client,
+        third,
+        arm(call) {
+          other.ping(() => {});
+          nested = call;
+        },
+      });
+      expect(nested).toBeUndefined();
+    } finally {
+      for (const session of sessions) session.destroy();
+      server.close();
+    }
+  }
+  const echo = (stream, headers) => stream.respond({ "x-echo": headers["x-name"] }, { endStream: true });
+  // Not a GET, whose end() flushes the cork.
+  const post = (session, name) => once(session.request({ ":method": "POST", "x-name": name }), "response");
+  const echoed = async responses => (await Promise.all(responses)).map(([headers]) => headers["x-echo"]);
+
+  it.each(["client", "third"])("a request of the %s session goes out", which =>
+    withHandover(async ctx => {
+      ctx.server.on("stream", echo);
+      const responses = [];
+      ctx.arm(() => responses.push(post(ctx[which], "nested")));
+      responses.push(post(ctx.client, "outer"));
+      expect(await echoed(responses)).toEqual(["nested", "outer"]);
+    }),
+  );
+
+  it("a queued request is submitted once", () =>
+    withHandover(async ({ server, client, arm }) => {
+      const names = [];
+      server.on("stream", (stream, headers) => names.push(headers["x-name"]));
+      client.request({ ":method": "POST", "x-name": "first" }).on("error", () => {});
+      const [{ session }] = await once(server, "stream");
+      session.settings({ maxConcurrentStreams: 1 });
+      await once(client, "remoteSettings");
+      const dropped = client.request({ ":method": "POST", "x-name": "dropped" });
+      client.request({ ":method": "POST", "x-name": "last" }).on("error", () => {});
+      client.once("remoteSettings", () => arm(() => dropped.destroy()));
+      session.settings({ maxConcurrentStreams: 2 });
+      await once(server, "stream");
+      expect(names).toEqual(["first", "last"]);
+    }));
+
+  it("a stream that responds meanwhile sends one response", () =>
+    withHandover(async ({ server, client, arm }) => {
+      const req = client.request();
+      const [stream] = await once(server, "stream");
+      arm(() => stream.end("nested"));
+      stream.respond();
+      expect(Buffer.concat(await req.toArray()).toString()).toBe("nested");
+      await new Promise((resolve, reject) => client.ping(err => (err ? reject(err) : resolve())));
+    }));
+
+  // Each block adds a field to the HPACK table and then names it by index, so the peer has to decode the blocks in the order of their encoding.
+  it.each([
+    ["respond()", "response", (stream, fields) => stream.respond(fields)],
+    ["additionalHeaders()", "headers", (stream, fields) => stream.additionalHeaders({ ":status": 103, ...fields })],
+    ["sendTrailers()", "trailers", (stream, fields) => stream.sendTrailers(fields)],
+    [
+      "pushStream()",
+      "stream",
+      (stream, fields) => stream.pushStream(fields, (_, pushed) => pushed.on("error", () => {})),
+    ],
+  ])("%s keeps header blocks in order", (_, event, send) =>
+    withHandover(async ({ server, client, arm }) => {
+      const received = [];
+      const done = Promise.withResolvers();
+      const onBlock = headers => received.push(headers["x-name"]) === 2 && done.resolve();
+      client.on("error", done.reject);
+      client.on("stream", (pushed, headers) => onBlock(headers));
+      const streams = [];
+      for (let i = 0; i < 2; i++) {
+        client.request().on(event, onBlock).on("error", done.reject).resume();
+        const [stream] = await once(server, "stream");
+        streams.push(stream.on("error", () => {}));
+        if (event !== "trailers") continue;
+        stream.respond({}, { waitForTrailers: true });
+        await Promise.all([once(stream, "wantTrailers"), stream.end()]);
+      }
+      arm(() => send(streams[1], { "x-name": ["nested", "nested"] }));
+      send(streams[0], { "x-name": ["outer", "outer"] });
+      await done.promise;
+      expect(received).toEqual(["nested, nested", "outer, outer"]);
+    }),
+  );
+});
+
 it("fails the whole session when an outbound header block cannot be encoded", async () => {
   // A header block the HPACK encoder cannot emit is a COMPRESSION_ERROR (9) against the
   // session in node, so the session and the in-flight request both see

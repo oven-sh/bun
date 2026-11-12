@@ -6340,6 +6340,11 @@ class ClientHttp2Session extends Http2Session {
       }
       const stream_id = parser.getNextStream();
       if (stream_id === 0) break;
+      if (req[kQueuedRequest] === undefined) {
+        // Another session's transport ran inside getNextStream() and submitted or destroyed the request.
+        if (stream_id > 0) parser.setStreamContext(stream_id, undefined);
+        continue;
+      }
       queue.delete(req);
       req[kQueuedRequest] = undefined;
       // Like node, submit in the request() caller's async context, not the context of whatever freed the slot.

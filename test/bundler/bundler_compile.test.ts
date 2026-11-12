@@ -1354,6 +1354,21 @@ describe("bundler", () => {
     },
     run: { stdout: new Array(7).fill("true").join("\n") },
   });
+  // The bundler folds a direct `import.meta.main` read in the entry point. Every other read reaches the runtime
+  // getter, which compares the module against `Bun.main`. In the executable on Windows, `Bun.main` is
+  // `B:/~BUN/root/x` and `import.meta.path` is `B:\~BUN\root\x`. https://github.com/oven-sh/bun/issues/48689
+  itBundled("compile/ImportMetaMainRuntimeGetter", {
+    compile: true,
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        const meta = import.meta;
+        const { main } = import.meta;
+        console.log(meta.main, main, import.meta?.main, Reflect.get(import.meta, "main"));
+      `,
+    },
+    run: { stdout: "true true true true" },
+  });
   itBundled("compile/SourceMap", {
     target: "bun",
     compile: true,

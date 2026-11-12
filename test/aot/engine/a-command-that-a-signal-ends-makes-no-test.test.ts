@@ -45,22 +45,25 @@ async function made(
 
 if (whyNoTestaot) skipOrFail(whyNoTestaot);
 else {
-  test.skipIf(isWindows).each(ways)(
+  test.concurrent.skipIf(isWindows).each(ways)(
     "%s %s: a link that stops behind the written program makes the test",
     async (tool, flag, file) => {
       expect(await made("stops-at-link", tool, flag, file)).toEqual({ isMade: true, stderr: "", exitCode: 0 });
     },
   );
 
-  test.skipIf(isWindows).each(ways)("%s %s: a link that a signal ends makes none", async (tool, flag, file) => {
-    expect(await made("dies-at-link", tool, flag, file)).toEqual({
-      isMade: false,
-      stderr: expect.stringMatching(/[\\/]dies-at-link link \S+program\.aot functions ended with SIGKILL:/),
-      exitCode: 1,
-    });
-  });
+  test.concurrent.skipIf(isWindows).each(ways)(
+    "%s %s: a link that a signal ends makes none",
+    async (tool, flag, file) => {
+      expect(await made("dies-at-link", tool, flag, file)).toEqual({
+        isMade: false,
+        stderr: expect.stringMatching(/[\\/]dies-at-link link \S+program\.aot functions ended with SIGKILL:/),
+        exitCode: 1,
+      });
+    },
+  );
 
-  test.skipIf(isWindows).each(ways)(
+  test.concurrent.skipIf(isWindows).each(ways)(
     "%s %s: a command that fails where nothing is written makes none",
     async (tool, flag, file) => {
       expect(await made("refuses-to-print", tool, flag, file)).toEqual({
@@ -71,7 +74,10 @@ else {
     },
   );
 
-  test.skipIf(isWindows)("the command that failed says what it wrote where ./answers.ts reads it", async () => {
-    expect((await made("refuses-to-print", ...ways[0])).stderr).toMatch(/ ended with 3:\nit refuses\n/);
-  });
+  test.concurrent.skipIf(isWindows)(
+    "the command that failed says what it wrote where ./answers.ts reads it",
+    async () => {
+      expect((await made("refuses-to-print", ...ways[0])).stderr).toMatch(/ ended with 3:\nit refuses\n/);
+    },
+  );
 }

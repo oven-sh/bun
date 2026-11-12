@@ -15,14 +15,18 @@ const commonJS = `globalThis.runs = (globalThis.runs ?? 0) + 1;
 let calls = 0;
 exports.count = () => ++calls;
 exports.read = () => calls;`;
-const loads = { "import()": (name: string) => `await import("${name}")`, "require()": (name: string) => `require("${name}")` };
+const loads = {
+  "import()": (name: string) => `await import("${name}")`,
+  "require()": (name: string) => `require("${name}")`,
+};
 const programs: [string, string, string, string, string][] = [];
 for (const [name, text, titles] of [
   ["./counter.mjs", esModule, ["import()", "require()"]],
   ["./counter.cjs", commonJS, ["import()"]],
 ] as const) {
   for (const call of ["vi.mock", "jest.mock"]) {
-    for (const title of titles) programs.push([`${call}() over ${name} that ${title} loaded`, name, text, call, loads[title](name)]);
+    for (const title of titles)
+      programs.push([`${call}() over ${name} that ${title} loaded`, name, text, call, loads[title](name)]);
   }
 }
 

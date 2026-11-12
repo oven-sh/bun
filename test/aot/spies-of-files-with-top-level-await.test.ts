@@ -18,7 +18,8 @@ export function count() {
 const show = `const show = (label, { db, count }) =>
   console.log("SAID", label, vi.isMockFunction(db.query), db.query("a"), vi.isMockFunction(count), count(), globalThis.runs);`;
 const start = `import { jest, test, vi } from "bun:test";\n${show}\n`;
-const loadsFirst = (name: string) => `import { count } from "${name}";\n${start}test("t", () => console.log("SAID first", count()));`;
+const loadsFirst = (name: string) =>
+  `import { count } from "${name}";\n${start}test("t", () => console.log("SAID first", count()));`;
 const resets = `${start}test("t", () => {\n  jest.resetModules();\n});`;
 const file = { "lib.mjs": body };
 const library = {
@@ -71,7 +72,11 @@ for (const [kind, files, name] of [
 }
 programs.push([
   "vi.mock() of a package that an earlier test file loaded",
-  { ...library, "a.test.mjs": loadsFirst("lib"), "b.test.mjs": `${start}test("t", async () => {\n  vi.mock("lib", { spy: true });\n  show("imported", await import("lib"));\n});` },
+  {
+    ...library,
+    "a.test.mjs": loadsFirst("lib"),
+    "b.test.mjs": `${start}test("t", async () => {\n  vi.mock("lib", { spy: true });\n  show("imported", await import("lib"));\n});`,
+  },
   "./a.test.mjs ./b.test.mjs",
   ["SAID first 1", "SAID imported true rows of a true 1 2"],
 ]);

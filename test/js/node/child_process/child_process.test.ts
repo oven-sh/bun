@@ -1570,12 +1570,12 @@ it("child.stdout.pause() after flowing stops native reads and blocks the child",
   }
 });
 
-// child.stdout and child.stderr read ahead: `_read()` pushes each native pull
-// result synchronously, so while the stream flows Readable holds the next chunk
-// in its buffer when a 'data' listener runs. destroy() left that chunk there and
-// flow() emitted it after destroy() returned, with `destroyed === true`. Node's
-// child stdio is a net.Socket that pushes asynchronously, so no 'data' follows
-// destroy() there.
+// child.stdout and child.stderr used to read ahead: `_read()` pushed each native
+// pull result synchronously, so while the stream flowed Readable held the next
+// chunk in its buffer when a 'data' listener ran. destroy() left that chunk there
+// and flow() emitted it after destroy() returned, with `destroyed === true`.
+// Node's child stdio is a net.Socket that pushes asynchronously, so no 'data'
+// follows destroy() there.
 it.concurrent.each(["stdout", "stderr"] as const)(
   "child.%s.destroy() inside a 'data' listener stops 'data' and 'end'",
   async name => {
@@ -1707,24 +1707,23 @@ describe("spawn/execFile({signal}) does not leak abort listeners on spawn failur
   });
 });
 
-// A 'data' handler runs inside the native read loop that delivered its chunk,
-// and node streams pull again from there, so that pull reads synchronously,
-// nested in the outer loop, and can run all the way to EOF. The reader used to
-// collect a nested read in a heap buffer it freed as soon as the chunk was
-// handed over, while FileReader kept pointing at a tail that did not fit the
-// pull buffer (heap-use-after-free under ASAN, corrupt or short output
-// otherwise).
+// A 'data' handler runs inside the native read loop that delivered its chunk. The head is bigger than half of the
+// reader's 256 KiB scratch, so it is handed over from the middle of that loop, and the handler does not return until
+// the tail and EOF are in the socket.
 //
-// Pinned down with two markers: the head is bigger than half of the reader's
-// 256 KiB scratch, so it is flushed to JS from the middle of the outer loop,
-// and the 'data' handler does not return until the tail and EOF are in the
-// socket. The tail is bigger than the 64 KiB pull buffer.
-describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
-  it("delivers a tail read to EOF that does not fit the pull buffer", async () => {
-    const HEAD = 136 * 1024;
-    const TAIL = 96 * 1024;
-    using dir = tempDir("child-stdout-nested-pull", {
-      "producer.js": `
+// child.stdout gets its chunks from the reader, which goes on to read the tail into the scratch the head came out of:
+// the head has to own its bytes. A stream that pulls (Readable.fromWeb) pulls again from inside the handler, and that
+// pull reads synchronously, nested in the outer loop, all the way to EOF. The reader used to collect a nested read in
+// a heap buffer it freed as soon as the chunk was handed over, while FileReader kept pointing at a tail that did not
+// fit the 64 KiB pull buffer (heap-use-after-free under ASAN, corrupt or short output otherwise).
+describe.skipIf(!isPosix)("a tail and an EOF that arrive while a 'data' listener runs", () => {
+  it.each(["child.stdout", "Readable.fromWeb(Bun.spawn().stdout)"])(
+    "%s delivers a head over half the scratch and a tail read to EOF",
+    async source => {
+      const HEAD = 136 * 1024;
+      const TAIL = 96 * 1024;
+      using dir = tempDir("child-stdout-nested-pull", {
+        "producer.js": `
         const fs = require("node:fs");
         const [headMarker, headDone, tailMarker, tailDone] = process.argv.slice(2);
         const deadline = Date.now() + 15_000;
@@ -1745,8 +1744,9 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
         fs.closeSync(1);
         fs.writeFileSync(tailDone, "");
       `,
-      "reader.js": `
+        "reader.js": `
         const { spawn } = require("node:child_process");
+        const { Readable } = require("node:stream");
         const fs = require("node:fs");
         const path = require("node:path");
         const file = name => path.join(__dirname, name);
@@ -1757,27 +1757,33 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
             Bun.sleepSync(1);
           }
         }
-        const child = spawn(
-          process.execPath,
-          [file("producer.js"), file("head"), file("head-done"), file("tail"), file("tail-done")],
-          { stdio: ["ignore", "pipe", "inherit"] },
-        );
+        const argv = [file("producer.js"), file("head"), file("head-done"), file("tail"), file("tail-done")];
+        let stdout, closed;
+        if (process.argv[2] === "child.stdout") {
+          const child = spawn(process.execPath, argv, { stdio: ["ignore", "pipe", "inherit"] });
+          stdout = child.stdout;
+          closed = new Promise(resolve => child.on("close", resolve));
+        } else {
+          const proc = Bun.spawn({ cmd: [process.execPath, ...argv], stdio: ["ignore", "pipe", "inherit"] });
+          stdout = Readable.fromWeb(proc.stdout);
+          closed = new Promise(resolve => stdout.on("close", () => resolve(proc.exited)));
+        }
         const chunks = [];
-        // 'resume' is emitted after the stream's first read() has been issued
-        // and found the socket empty, so the head written now is picked up by
+        // 'resume' is emitted after the stream's first read() has been issued,
+        // with the socket still empty, so the head written now is picked up by
         // the poll it armed and arrives in one wake.
-        child.stdout.once("resume", () => {
+        stdout.once("resume", () => {
           fs.writeFileSync(file("head"), "");
           waitFor("head-done");
         });
-        child.stdout.on("data", chunk => {
+        stdout.on("data", chunk => {
           chunks.push(chunk);
           if (chunks.length === 1) {
             fs.writeFileSync(file("tail"), "");
             waitFor("tail-done");
           }
         });
-        child.on("close", exitCode => {
+        closed.then(exitCode => {
           const out = Buffer.concat(chunks);
           console.log(
             JSON.stringify({
@@ -1790,26 +1796,33 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
           );
         });
       `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "reader.js"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout:
-        JSON.stringify({ exitCode: 0, firstChunkOverHalfScratch: true, length: HEAD + TAIL, head: true, tail: true }) +
-        "\n",
-      stderr: "",
-      exitCode: 0,
-    });
-    // The budget covers the failure modes: a symbolized ASAN report takes
-    // several seconds, and the fixtures give up on their markers after 15 s so
-    // their own error, not a test timeout, is what gets reported.
-  }, 30_000);
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "reader.js", source],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout:
+          JSON.stringify({
+            exitCode: 0,
+            firstChunkOverHalfScratch: true,
+            length: HEAD + TAIL,
+            head: true,
+            tail: true,
+          }) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      // The budget covers the failure modes: a symbolized ASAN report takes
+      // several seconds, and the fixtures give up on their markers after 15 s so
+      // their own error, not a test timeout, is what gets reported.
+    },
+    30_000,
+  );
 });
 
 // Node dispatches child stdio 'data' from its native read callback, so a
@@ -2034,6 +2047,607 @@ it.concurrent("a child stdio 'data' listener that throws keeps the chunk from th
 // Node hands each chunk of child.stdout and child.stderr to 'data' from the pipe's read callback. After each chunk the
 // listener's ticks run, then its promise jobs, and only then the next chunk or 'end'.
 describe("child stdio 'data' comes from the read callback", () => {
+  // The tests that read megabytes run one at a time. The light ones run concurrently.
+
+  // Byte i is i % 251, so output that lost, repeated or reordered a chunk does not compare equal.
+  const pattern = `size => { const b = Buffer.alloc(size); for (let i = 0; i < 251; i++) b[i] = i; for (let n = 251; n < size; n *= 2) b.copyWithin(n, 0, n); return b; }`;
+  const gaplessWriter = (size: number) => `const pattern = ${pattern}; process.stdout.write(pattern(${size}));`;
+  // Writes 8 MiB, and exits 0 when the parent closes the pipe under it.
+  const writerUntilClosed = (name: "stdout" | "stderr") =>
+    `const s = process.${name}; s.on("error", () => process.exit(0)); const c = Buffer.alloc(1 << 16, 97); let w = 0; (function f() { while (w < ${8 * 1024 * 1024}) { w += c.length; if (!s.write(c)) { s.once("drain", f); return; } } })();`;
+
+  // A child that writes "out" and "err", and listeners that throw on each chunk.
+  const writesAtOnce = `process.stdout.write("out"); process.stderr.write("err");`;
+  const outAndErr = (stdio: string[], writer: string, rest: string) => `
+    const { spawn } = require("node:child_process");
+    const seen = { stdout: [], stderr: [] };
+    const c = spawn(process.execPath, ["-e", ${JSON.stringify(writer)}], { stdio: ${JSON.stringify(stdio)} });
+    function listen(name) {
+      c[name].on("data", d => {
+        seen[name].push("data " + d);
+        throw new Error(name + "-throw");
+      });
+      c[name].on("end", () => seen[name].push("end"));
+      c[name].on("close", () => seen[name].push("close"));
+    }
+    let childClose = null;
+    c.on("close", code => (childClose = code));
+    ${rest}
+  `;
+
+  async function run(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  describe.concurrent("order", () => {
+    // Marker files pace a writer and a reader that must not return to its event loop. Both give up after 15 s, so a
+    // pair that stalls ends by itself and says what it waited for.
+    const waitFor = `
+      const nap = new Int32Array(new SharedArrayBuffer(4));
+      const deadline = Date.now() + 15_000;
+      function waitFor(name) {
+        while (!fs.existsSync(path.join(__dirname, name))) {
+          if (Date.now() > deadline) throw new Error("timed out waiting for " + name);
+          Atomics.wait(nap, 0, 0, 1);
+        }
+      }
+    `;
+    async function runReader(dir: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "reader.js"],
+        cwd: dir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+
+    // The child writes a chunk for each line on its stdin, and the parent sends the next line from whichever of the
+    // tick and the promise job runs last. So every chunk is read on a turn of its own.
+    it("a listener's tick runs before its promise job", async () => {
+      const writer = `let k = 0; process.stdin.on("data", () => require("fs").writeSync(1, String(++k)));`;
+      const script = `
+        const { spawn } = require("node:child_process");
+        const child = spawn(process.execPath, ["-e", ${JSON.stringify(writer)}], { stdio: ["pipe", "pipe", "inherit"] });
+        const order = [];
+        let n = 0;
+        // 'resume' comes after the stream's first read request, so chunk 1 is written to a pipe that is being waited on.
+        child.stdout.once("resume", () => child.stdin.write("go\\n"));
+        child.stdout.on("data", chunk => {
+          const k = ++n;
+          order.push("d" + k + "=" + chunk);
+          let left = 2;
+          const done = () => {
+            if (--left > 0) return;
+            if (k < 3) child.stdin.write("go\\n");
+            else child.stdin.end();
+          };
+          process.nextTick(() => { order.push("t" + k); done(); });
+          Promise.resolve().then(() => { order.push("j" + k); done(); });
+        });
+        child.stdout.on("end", () => order.push("end"));
+        child.on("close", code => console.log(order.join(" ") + " close=" + code));
+      `;
+      expect(await run(script)).toEqual({
+        stdout: "d1=1 t1 j1 d2=2 t2 j2 d3=3 t3 j3 end close=0",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The first listener call returns only when chunk 2 and the EOF are in the pipe. The POSIX reader goes on reading
+    // after the call, in the same wakeup: the tick and the promise job of chunk 1 must still run before chunk 2, and
+    // those of chunk 2 before 'end'.
+    it.skipIf(!isPosix)(
+      "a chunk and the EOF that are already in the pipe wait for the listener's tick and promise job",
+      async () => {
+        using dir = tempDir("child-stdout-order", {
+          "writer.js": `
+            const fs = require("node:fs");
+            const path = require("node:path");
+            ${waitFor}
+            waitFor("go1");
+            fs.writeSync(1, "1");
+            waitFor("go2");
+            fs.writeSync(1, "2");
+            fs.closeSync(1);
+            fs.writeFileSync(path.join(__dirname, "written2"), "");
+          `,
+          "reader.js": `
+            const { spawn } = require("node:child_process");
+            const fs = require("node:fs");
+            const path = require("node:path");
+            ${waitFor}
+            const child = spawn(process.execPath, [path.join(__dirname, "writer.js")], { stdio: ["ignore", "pipe", "inherit"] });
+            const order = [];
+            let n = 0;
+            // 'resume' comes after the stream's first read request, so chunk 1 is written to a pipe that is being waited on.
+            child.stdout.once("resume", () => fs.writeFileSync(path.join(__dirname, "go1"), ""));
+            child.stdout.on("data", chunk => {
+              const k = ++n;
+              order.push("d" + k + "=" + chunk);
+              process.nextTick(() => order.push("t" + k));
+              Promise.resolve().then(() => order.push("j" + k));
+              if (k === 1) {
+                fs.writeFileSync(path.join(__dirname, "go2"), "");
+                waitFor("written2");
+              }
+            });
+            child.stdout.on("end", () => order.push("end"));
+            child.on("close", code => console.log(order.join(" ") + " close=" + code));
+          `,
+        });
+        expect(await runReader(String(dir))).toEqual({
+          stdout: "d1=1 t1 j1 d2=2 t2 j2 end close=0",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    // The listener takes itself off and comes back from a promise job. Each block is in the pipe before the call for
+    // the block before it returns, and a block that is emitted before that job finds no listener.
+    it("a listener that removes itself and comes back from a promise job misses no chunk", async () => {
+      const BLOCKS = 6;
+      using dir = tempDir("child-stdout-reattach", {
+        "writer.js": `
+          const fs = require("node:fs");
+          const path = require("node:path");
+          ${waitFor}
+          for (let k = 0; k < ${BLOCKS}; k++) {
+            if (k > 0) waitFor("seen" + (k - 1));
+            fs.writeSync(1, Buffer.alloc(1024, 97 + k));
+            fs.writeFileSync(path.join(__dirname, "written" + k), "");
+          }
+        `,
+        "reader.js": `
+          const { spawn } = require("node:child_process");
+          const fs = require("node:fs");
+          const path = require("node:path");
+          ${waitFor}
+          const out = spawn(process.execPath, [path.join(__dirname, "writer.js")], { stdio: ["ignore", "pipe", "inherit"] }).stdout;
+          const got = [];
+          let end = 0;
+          function onData(chunk) {
+            got.push(chunk);
+            const k = chunk[chunk.length - 1] - 97;
+            fs.writeFileSync(path.join(__dirname, "seen" + k), "");
+            if (k + 1 < ${BLOCKS}) waitFor("written" + (k + 1));
+            out.removeListener("data", onData);
+            Promise.resolve().then(() => out.on("data", onData));
+          }
+          out.on("data", onData);
+          out.on("end", () => end++);
+          process.on("exit", () => {
+            const runs = Buffer.concat(got).toString("latin1").replace(/(.)\\1*/g, run => run[0] + run.length + " ").trim();
+            console.log(runs + " end=" + end);
+          });
+        `,
+      });
+      expect(await runReader(String(dir))).toEqual({
+        stdout: "a1024 b1024 c1024 d1024 e1024 f1024 end=1",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  describe("a listener attached late", () => {
+    // Node gives a program this one last chance to read the output of a child that is gone. Nothing has read the
+    // pipes until then, with a stdio array of 3 entries and with a shorter one.
+    it.concurrent.each([[["ignore", "pipe", "pipe"]], [["ignore", "pipe"]]])(
+      "in 'exit' gets what the child wrote before it exited (stdio: %j)",
+      async stdio => {
+        const script = `
+          const { spawn } = require("node:child_process");
+          const c = spawn(
+            process.execPath,
+            ["-e", 'process.stdout.write(Buffer.alloc(3000, "o")); process.stderr.write(Buffer.alloc(3000, "e"));'],
+            { stdio: ${JSON.stringify(stdio)} },
+          );
+          const got = { stdout: "", stderr: "" };
+          const events = [];
+          c.on("exit", code => {
+            events.push("exit " + code);
+            for (const name of ["stdout", "stderr"]) {
+              c[name].on("data", d => (got[name] += d));
+              c[name].on("end", () => events.push(name + " end"));
+            }
+          });
+          c.on("close", code => {
+            events.push("close " + code);
+            console.log(JSON.stringify({
+              stdout: got.stdout === Buffer.alloc(3000, "o").toString(),
+              stderr: got.stderr === Buffer.alloc(3000, "e").toString(),
+              events: events.sort(),
+            }));
+          });
+        `;
+        expect(await run(script)).toEqual({
+          stdout: JSON.stringify({
+            stdout: true,
+            stderr: true,
+            events: ["close 0", "exit 0", "stderr end", "stdout end"],
+          }),
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    // The child's output and its EOF are both in the pipe by then. With no 'uncaughtException' handler the throw is
+    // fatal, and neither 'end' nor the child's 'close' may follow it.
+    it.concurrent.each([
+      [["ignore", "pipe", "pipe"], "stdout", "out"],
+      [["ignore", "pipe", "pipe"], "stderr", "err"],
+      [["ignore", "pipe"], "stdout", "out"],
+      [["ignore", "pipe"], "stderr", "err"],
+    ] as const)("in 'exit' that throws is fatal and ends the stream (stdio: %j, %s)", async (stdio, name, text) => {
+      const script = outAndErr(
+        [...stdio],
+        writesAtOnce,
+        `
+          c.on("exit", () => listen("${name}"));
+          process.on("exit", exit => console.log(JSON.stringify({ events: seen.${name}, childClose, exit })));
+        `,
+      );
+      const { stdout, stderr, exitCode } = await run(script);
+      expect({ stdout, stderr: stderr.includes(`${name}-throw`), exitCode }).toEqual({
+        stdout: JSON.stringify({ events: [`data ${text}`], childClose: null, exit: 1 }),
+        stderr: true,
+        exitCode: 1,
+      });
+    });
+
+    // The child says on stderr that it is about to write more than the pipe holds. Only then does the parent listen.
+    it("while the child is writing more than the pipe holds gets every byte", async () => {
+      const SIZE = 1024 * 1024;
+      const writer = `const pattern = ${pattern}; process.stderr.write("writing", () => process.stdout.write(pattern(${SIZE})));`;
+      const script = `
+        const { spawn } = require("node:child_process");
+        const pattern = ${pattern};
+        const child = spawn(process.execPath, ["-e", ${JSON.stringify(writer)}], { stdio: ["ignore", "pipe", "pipe"] });
+        const chunks = [];
+        let end = 0;
+        child.stderr.once("data", () => {
+          child.stdout.on("data", chunk => chunks.push(chunk));
+          child.stdout.on("end", () => end++);
+        });
+        child.on("close", code => {
+          console.log(JSON.stringify({ code, intact: Buffer.concat(chunks).equals(pattern(${SIZE})), end }));
+        });
+      `;
+      expect(await run(script)).toEqual({
+        stdout: JSON.stringify({ code: 0, intact: true, end: 1 }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // pause() stops 'data' at once. The reader goes on until the stream's buffer is full, and stops. resume() hands
+  // over what was buffered and starts the reader again. The chunks are compared at the end, so one whose bytes the
+  // reader wrote over while it was buffered shows too.
+  it("pause() inside a 'data' listener, then resume() on a later turn", async () => {
+    const SIZE = 2 * 1024 * 1024;
+    const PAUSES = 4;
+    const script = `
+      const { spawn } = require("node:child_process");
+      const pattern = ${pattern};
+      const child = spawn(process.execPath, ["-e", ${JSON.stringify(gaplessWriter(SIZE))}], {
+        stdio: ["ignore", "pipe", "inherit"],
+      });
+      const out = child.stdout;
+      const chunks = [];
+      let bytes = 0, pauses = 0, paused = false, dataWhilePaused = 0, resumedWithBufferedChunk = 0, end = 0;
+      const deadline = Date.now() + 20_000;
+      out.on("data", chunk => {
+        if (paused) dataWhilePaused++;
+        chunks.push(chunk);
+        bytes += chunk.length;
+        if (pauses === ${PAUSES}) return;
+        pauses++;
+        paused = true;
+        out.pause();
+        setImmediate(function wait() {
+          // Resume once the reader has put the next chunk into the stream's buffer.
+          if (out.readableLength === 0 && bytes < ${SIZE} && Date.now() < deadline) return setImmediate(wait);
+          if (out.readableLength > 0) resumedWithBufferedChunk++;
+          paused = false;
+          out.resume();
+        });
+      });
+      out.on("end", () => end++);
+      child.on("close", code => {
+        const intact = Buffer.concat(chunks).equals(pattern(${SIZE}));
+        console.log(JSON.stringify({ code, intact, pauses, resumedWithBufferedChunk, dataWhilePaused, end }));
+      });
+    `;
+    expect(await run(script)).toEqual({
+      stdout: JSON.stringify({
+        code: 0,
+        intact: true,
+        pauses: PAUSES,
+        resumedWithBufferedChunk: PAUSES,
+        dataWhilePaused: 0,
+        end: 1,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The chunk that comes while the stream is paused is emitted by resume(), not by the reader. A listener that throws
+  // on it must not stop the stream either: chunk 3 is written after the throw was reported.
+  it.concurrent("a 'data' listener that throws on the chunk resume() hands over does not stop the stream", async () => {
+    const writer = `let k = 0; process.stdin.on("data", () => { require("fs").writeSync(1, String(++k)); if (k === 3) process.exit(0); });`;
+    const script = `
+      const { spawn } = require("node:child_process");
+      const child = spawn(process.execPath, ["-e", ${JSON.stringify(writer)}], { stdio: ["pipe", "pipe", "inherit"] });
+      const out = child.stdout;
+      const seen = [];
+      const deadline = Date.now() + 15_000;
+      process.on("uncaughtException", (e, origin) => {
+        seen.push(origin + ":" + e.message);
+        child.stdin.write("go\\n");
+      });
+      // 'resume' comes after the stream's first read request, so chunk 1 is written to a pipe that is being waited on.
+      out.once("resume", () => child.stdin.write("go\\n"));
+      out.on("data", chunk => {
+        seen.push("data " + chunk);
+        if (String(chunk) === "1") {
+          out.pause();
+          child.stdin.write("go\\n");
+          setImmediate(function wait() {
+            if (out.readableLength === 0 && Date.now() < deadline) return setImmediate(wait);
+            seen.push("buffered " + out.readableLength);
+            out.resume();
+          });
+        } else if (String(chunk) === "2") {
+          throw new Error("data-throw");
+        }
+      });
+      out.on("end", () => seen.push("end"));
+      child.on("close", code => console.log(seen.join(", ") + ", close " + code));
+    `;
+    expect(await run(script)).toEqual({
+      stdout: "data 1, buffered 1, data 2, uncaughtException:data-throw, data 3, end, close 0",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Nobody kills the child: destroy() has to close the pipe, so that the child's write fails and it exits.
+  it.concurrent.each([
+    ["stdout", 1],
+    ["stderr", 1],
+    ["stdout", 3],
+  ] as const)(
+    "child.%s.destroy() inside 'data' call %d ends 'data', skips 'end' and lets the child exit",
+    async (name, at) => {
+      const script = `
+        const { spawn } = require("node:child_process");
+        const child = spawn(process.execPath, ["-e", ${JSON.stringify(writerUntilClosed(name))}], {
+          stdio: ["ignore", "${name === "stdout" ? "pipe" : "inherit"}", "${name === "stderr" ? "pipe" : "inherit"}"],
+        });
+        const stream = child.${name};
+        const events = [];
+        let calls = 0;
+        stream.on("data", () => {
+          if (++calls < ${at}) return;
+          if (calls > ${at}) return events.push("data after destroy");
+          stream.destroy();
+          events.push("destroyed");
+        });
+        stream.on("end", () => events.push("end"));
+        stream.on("error", e => events.push("error " + e.code));
+        stream.on("close", () => events.push("stream close"));
+        child.on("close", (code, signal) => {
+          events.push("child close");
+          console.log(JSON.stringify({ events, code, signal }));
+        });
+      `;
+      expect(await run(script)).toEqual({
+        stdout: JSON.stringify({ events: ["destroyed", "stream close", "child close"], code: 0, signal: null }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // With fewer than 3 stdio entries child.stdout and child.stderr used to be built at their first use. In 'exit',
+  // after the child is gone, that was from bytes already read.
+  describe.concurrent("stdout and stderr of a 2-entry stdio array", () => {
+    const handled = {
+      stdout: JSON.stringify({
+        stdout: ["data out", "uncaughtException", "end", "close"],
+        stderr: ["data err", "uncaughtException", "end", "close"],
+        childClose: 0,
+        exit: 0,
+      }),
+      stderr: "",
+      exitCode: 0,
+    };
+    const report = `
+      process.on("uncaughtException", (e, origin) => seen[e.message.split("-")[0]].push(origin));
+      process.on("exit", exit => console.log(JSON.stringify({ ...seen, childClose, exit })));
+    `;
+
+    // The child writes when it is told to, which is after both streams asked for their first read.
+    it("a throwing 'data' listener on each is an uncaughtException on each", async () => {
+      const writesOnLine = `process.stdin.once("data", () => { ${writesAtOnce} process.stdin.pause(); });`;
+      const script = outAndErr(
+        ["pipe", "pipe"],
+        writesOnLine,
+        `
+          ${report}
+          let reading = 0;
+          for (const name of ["stdout", "stderr"]) {
+            listen(name);
+            c[name].once("resume", () => {
+              if (++reading === 2) c.stdin.end("go\\n");
+            });
+          }
+        `,
+      );
+      expect(await run(script)).toEqual(handled);
+    });
+
+    it("so is one from listeners attached in 'exit'", async () => {
+      const script = outAndErr(
+        ["ignore", "pipe"],
+        writesAtOnce,
+        `
+          ${report}
+          c.on("exit", () => { listen("stdout"); listen("stderr"); });
+        `,
+      );
+      expect(await run(script)).toEqual(handled);
+    });
+  });
+
+  // These take the bytes out of the stream's buffer, so the reader stops each time the buffer is full and the
+  // consumer's read starts it again.
+  describe("consumers that read from the buffer", () => {
+    const SIZE = 1024 * 1024;
+    it.each(["for await", "read()", "read(1000)"] as const)("%s gets every byte in order", async how => {
+      const script = `
+        const { spawn } = require("node:child_process");
+        const pattern = ${pattern};
+        const child = spawn(process.execPath, ["-e", ${JSON.stringify(gaplessWriter(SIZE))}], {
+          stdio: ["ignore", "pipe", "inherit"],
+        });
+        const out = child.stdout;
+        const chunks = [];
+        const closed = new Promise(resolve => child.on("close", resolve));
+        (async () => {
+          if (${JSON.stringify(how)} === "for await") {
+            for await (const chunk of out) {
+              chunks.push(chunk);
+              await null;
+            }
+          } else {
+            await new Promise(resolve => {
+              out.on("readable", () => {
+                for (let chunk; (chunk = out.${how === "read(1000)" ? "read(1000)" : "read()"}) !== null; ) chunks.push(chunk);
+              });
+              out.on("end", resolve);
+            });
+          }
+          const code = await closed;
+          console.log(JSON.stringify({ code, intact: Buffer.concat(chunks).equals(pattern(${SIZE})), many: chunks.length > 1 }));
+        })();
+      `;
+      expect(await run(script)).toEqual({
+        stdout: JSON.stringify({ code: 0, intact: true, many: true }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent("leaving a for await loop destroys the stream and lets the child exit", async () => {
+      const script = `
+        const { spawn } = require("node:child_process");
+        const child = spawn(process.execPath, ["-e", ${JSON.stringify(writerUntilClosed("stdout"))}], {
+          stdio: ["ignore", "pipe", "inherit"],
+        });
+        const closed = new Promise(resolve => child.on("close", resolve));
+        (async () => {
+          let chunks = 0;
+          for await (const chunk of child.stdout) {
+            chunks++;
+            break;
+          }
+          const code = await closed;
+          console.log(JSON.stringify({ chunks, destroyed: child.stdout.destroyed, code }));
+        })();
+      `;
+      expect(await run(script)).toEqual({
+        stdout: JSON.stringify({ chunks: 1, destroyed: true, code: 0 }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // The child writes "a" and the first two bytes of "€", and the third byte and "b" once the parent has seen the "a".
+  it.concurrent("setEncoding() joins a character whose bytes come in two chunks", async () => {
+    const writer = `const fs = require("fs"); const euro = Buffer.from("\\u20ac"); fs.writeSync(1, Buffer.concat([Buffer.from("a"), euro.subarray(0, 2)])); process.stdin.once("data", () => { fs.writeSync(1, Buffer.concat([euro.subarray(2), Buffer.from("b")])); process.stdin.pause(); });`;
+    const script = `
+      const { spawn } = require("node:child_process");
+      const child = spawn(process.execPath, ["-e", ${JSON.stringify(writer)}], { stdio: ["pipe", "pipe", "inherit"] });
+      const seen = [];
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", s => {
+        seen.push(s);
+        if (seen.length === 1) child.stdin.end("go\\n");
+      });
+      child.on("close", code => console.log(JSON.stringify({ seen, code })));
+    `;
+    expect(await run(script)).toEqual({
+      stdout: JSON.stringify({ seen: ["a", "\u20acb"], code: 0 }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The child stays until its stdin closes, which the parent's exit does. After the first chunk the reader waits
+  // for the next one, and must not hold the parent.
+  it.concurrent(
+    "an unref'd child with unref'd pipes does not hold the process while its stdout is being read",
+    async () => {
+      const script = `
+        const { spawn } = require("node:child_process");
+        const child = spawn(process.execPath, ["-e", 'process.stdout.write("ready"); process.stdin.resume();'], {
+          stdio: ["pipe", "pipe", "ignore"],
+        });
+        child.stdout.on("data", d => {
+          console.log("data " + d);
+          child.unref();
+          child.stdout.unref();
+          child.stdin.unref?.();
+        });
+        child.on("exit", () => console.log("child exit"));
+        process.on("exit", code => console.log("exit " + code));
+      `;
+      expect(await run(script)).toEqual({ stdout: "data ready\nexit 0", stderr: "", exitCode: 0 });
+    },
+  );
+
+  // captureRejections turns the rejection of an async listener into the stream's 'error'. That is the stream's own
+  // emit at work, which the reader leaves alone.
+  it.concurrent("with captureRejections an async 'data' listener that rejects destroys the stream", async () => {
+    const script = `
+      const events = require("node:events");
+      events.captureRejections = true;
+      const { spawn } = require("node:child_process");
+      const c = spawn(process.execPath, ["-e", "process.stdout.write(String(1))"], { stdio: ["ignore", "pipe", "inherit"] });
+      const seen = [];
+      c.stdout.on("error", e => seen.push("stream error: " + e.message));
+      c.stdout.on("data", async () => { seen.push("data"); throw new Error("async-boom"); });
+      c.stdout.on("end", () => seen.push("end"));
+      c.stdout.on("close", () => seen.push("stream close"));
+      process.on("unhandledRejection", e => seen.push("unhandledRejection: " + e.message));
+      process.on("uncaughtException", e => seen.push("uncaughtException: " + e.message));
+      c.on("close", code => seen.push("close " + code));
+      process.on("exit", () => console.log(seen.join(" | ")));
+    `;
+    expect(await run(script)).toEqual({
+      stdout: "data | stream error: async-boom | stream close | close 0",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // An unhandled error does not end a --hot run, so the stream has to go on: the second chunk, 'end' and 'close'
   // all come after the throw. On POSIX no timer runs after the error there, but immediates do: they wait for 'close'.
   // Not concurrent: a --hot run stays even with nothing left to do, and `bun test` kills what a timed-out test

@@ -913,18 +913,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         Some(self.c.sig_of_fn(node.file, function))
     }
 
-    /// `getContextuallyTypedParameterType` for parameter `index` of the function at `function`, with or without an annotation.
-    pub fn contextual_parameter_type(&mut self, function: NodeRef, index: usize) -> Option<TypeId> {
-        let (hir, at) = self.valid(function)?;
-        let function_id = hir.function_of(at).some()?;
-        let outer = self.c.begin_recheck();
-        let ty = self
-            .c
-            .contextual_param_type(function.file, function_id, index);
-        self.c.end_recheck(outer);
-        ty
-    }
-
     /// `context_free_type_of_expression` as a tool sees it when it asks before anything has resolved the call `node`.
     /// The call is resolved again, without a contextual type. Anything but a call gets plain
     /// `context_free_type_of_expression`.

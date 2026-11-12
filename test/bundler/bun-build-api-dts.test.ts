@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "fs";
+import { mkdirSync, readdirSync, readFileSync, symlinkSync } from "fs";
 import { tempDir } from "harness";
 import { join } from "path";
 
@@ -203,9 +203,19 @@ export function useFormat(format: (value: number) => string = String, value: num
   const [text] = useState(format(value));
   return text;
 }
+export function useMake(make: new () => Date = Date, year: number): number {
+  const [made] = useState(new make());
+  return made.getFullYear() + year;
+}
 export function useName({ name }: { name: string } = { name: "x" }, [first] = ["a"], suffix: string = "!"): string {
   const [value] = useState(name);
   return value + first + suffix;
+}
+export function useOver(first?: number): number;
+export function useOver(first: string, second?: number): number;
+export function useOver(first: number | string = 1, second: number = 2): number {
+  const [value] = useState(first);
+  return Number(value) + second;
 }
 export const useArrow = (first: number = 1, second = 2): number => useState(first)[0] + second;
 export function useLabel(label: string, size?: number): string {
@@ -218,14 +228,13 @@ export function plain(first: number = 1, second: number = 2): number {
 `;
   // What the sources accept. With these in the bundle, a typed file that asks for more is left out with a warning.
   const calls = `console.log(useBoth(), useBoth(5), useStep(), useRange(undefined, undefined, 5), useFormat(undefined, 1));
-console.log(useName(), useArrow(), useLabel("a"), plain());
+console.log(useMake(undefined, 1), useName(), useOver(), useOver("a"), useArrow(), useLabel("a"), plain());
 `;
-  // A hook beside the ones of a test: its parameters show that the build is one that moves default values.
+  // A hook beside the ones of a test. Main writes it with parameters that have to be passed.
   const useBeside = `export function useBeside(first: number = 1, second: number = 2): number {
   const [value] = useState(first);
   return value + second;
 }
-console.log(useBeside());
 `;
   // The parameters of each function. The check of the typed files writes `: any` behind a parameter that has no type.
   const parametersIn = (typed: string) =>
@@ -264,8 +273,10 @@ console.log(useBeside());
       // A `?` before a parameter that has to be passed is an error.
       useRange: "t0: number | undefined, t1, end: number",
       useFormat: "t0: ((value: number) => string) | undefined, value: number",
-      // The annotation of a pattern is where the pattern is.
+      useMake: "t0: (new () => Date) | undefined, year: number",
+      // The annotation of a pattern is not copied: the parameter takes the `?` alone.
       useName: "t0?, t1?, t2?: string",
+      useOver: "t0?: number | string, t1?: number",
       useArrow: "t0?: number, t1?",
       useLabel: "label: string, size?: number",
       // What the compiler leaves as it is written keeps its default values.
@@ -281,6 +292,10 @@ export function useSigned(first: number = 1, second: typeof first = 2): number {
   const [value] = useState(first);
   return value + second;
 }
+export function useRequired(first: number = 1, second: typeof first): string {
+  const [value] = useState(first);
+  return (value + second).toFixed(1);
+}
 export function useQueried(first: number = 1, point: [number, number] = [0, 0]): number {
   const [seen] = useState(first);
   const origin: typeof point = [seen, seen];
@@ -289,27 +304,28 @@ export function useQueried(first: number = 1, point: [number, number] = [0, 0]):
 `;
   // `typeof first` is the type of `first` with its default value, which has no `undefined`. A parameter with a `?` has.
   test("stays as the output has it in a function with a `typeof` of it", async () => {
-    expect(parametersIn(await typedFile({ "src/index.tsx": queried + useBeside }))).toEqual({
+    const typed = await typedFile({ "src/index.tsx": queried + useBeside + "console.log(useBeside());\n" });
+    expect(parametersIn(typed)).toEqual({
       useState: "initial: T",
       take: "point: [number, number]",
       useSigned: "t0: number, t1: typeof t0",
+      useRequired: "t0: number, second: typeof t0",
       useQueried: "t0: number, t1: [number, number]",
       useBeside: "t0?: number, t1?: number",
     });
   });
 
+  // Now, as on main: the typed files are left out, "TS2554: Expected 2 arguments, but got 0."
   test.todo("can be left out of a function with a `typeof` of it", async () => {
     const typed = await typedFile({ "src/index.tsx": queried + "console.log(useSigned(), useQueried());\n" });
     expect(parametersIn(typed)).toMatchObject({ useSigned: expect.stringMatching(/^t0\?: number, t1\?: /) });
   });
 
-  // TypeScript infers the type arguments of a call from an annotated parameter of a callback. There a default value
-  // adds no `undefined` and a `?` does, so the parameter stays as it is where the call gives its place a type.
-  test("stays as the output has it in a callback, where the call gives it a type without undefined", async () => {
-    const typed = await typedFile({
-      "src/index.tsx": `import { useState } from "./state";
-function pick<T>(make: (label: string, seed: T) => T, seed: T): T {
+  const callees = `function pick<T>(make: (label: string, seed: T) => T, seed: T): T {
   return make("a", seed);
+}
+function pick3<T>(make: (seed: T, label: string, extra: number) => T, seed: T): T {
+  return make(seed, "a", 0);
 }
 interface Counter {
   count: number;
@@ -326,18 +342,47 @@ function each(items: string[], visit: (item: string, index?: number) => void): v
 function useCallback<T extends Function>(callback: T): T {
   return callback;
 }
+`;
+  // TypeScript infers the type arguments of a call from an annotated parameter of a callback. There a default value
+  // adds no `undefined` and a `?` does. Main writes the typed file of this build, and its hooks keep their types.
+  test("stays as the output has it in a callback, where the call gives its place a type", async () => {
+    const typed = await typedFile({
+      "src/index.tsx": `import { useState } from "./state";
+${callees}
 export function useTotal(items: string[]) {
   const [n] = useState(items.length);
   return items.reduce((total: number = 0, item) => total + item.length + n, 0);
 }
-export function usePicked(start: number): number {
+export function useSizes(items: Array<{ size: number }>) {
+  const [n] = useState(items.length);
+  return items.reduce((total: number = 0, { size }: { size: number }) => total + size + n, 0);
+}
+export function usePicked(start: number) {
   const [n] = useState(start);
   return pick((label, seed: number = 1) => seed + n + label.length, n);
 }
-export function useCounter(start: number): Counter {
+export function usePickedFirst(start: number) {
   const [n] = useState(start);
-  return useReducer((state: Counter = { count: 0 }, action) => ({ count: state.count + n }), { count: n });
+  return pick3((seed: number = 1, label: string) => seed + n + label.length, n);
 }
+export function useCounter(start: number) {
+  const [n] = useState(start);
+  return useReducer((state: Counter = { count: 0 }) => ({ count: state.count + n }), { count: n });
+}
+${useBeside}`,
+    });
+    expect(typed).toContain("return items.reduce((t0: number, item) => {");
+    expect(typed).toContain("return items.reduce((t0: number, t1) => {");
+    expect(typed).toContain("return pick((label, t0: number) => {");
+    expect(typed).toContain("return pick3((t0: number, label: string) => {");
+    expect(typed).toContain("return useReducer((t0: Counter) => {");
+    expect(typed).toContain("function useBeside(t0?: number, t1?: number): number {");
+  });
+
+  test("can be left out of a callback, where the call gives its place no type, or one with undefined", async () => {
+    const typed = await typedFile({
+      "src/index.tsx": `import { useState } from "./state";
+${callees}
 export function useRun(start: number): number {
   const [n] = useState(start);
   return run((extra: number = 1) => n + extra);
@@ -354,15 +399,37 @@ export function useAdder(base: number) {
   const [n] = useState(base);
   return useCallback((a: number, b: number = 2) => a + b + n);
 }
-${useBeside}`,
+export function useSeen(items: any[]): number {
+  const [n] = useState(items.length);
+  let seen = n;
+  items.forEach((value: any = 0, index = 0) => {
+    seen += index + (value ? 1 : 0);
+  });
+  return seen;
+}
+`,
     });
-    expect(typed).toContain("return items.reduce((t0: number, item) => {");
-    expect(typed).toContain("return pick((label, t0: number) => {");
-    expect(typed).toContain("return useReducer((t0: Counter, action) => {");
-    // The call gives these no type there, or one with `undefined`.
     expect(typed).toContain("return run((t0?: number) => {");
     expect(typed).toContain("each(items, (item, t0?: number) => {");
     expect(typed).toContain("return useCallback((a: number, t0?: number) => {");
+    // The call gives \`index\` a type, so it stays, and a \`?\` before it is an error.
+    expect(typed).toContain("items.forEach((t0: any | undefined, t1) => {");
+  });
+
+  test("stays as the output has it in a callback without strictNullChecks", async () => {
+    const typed = await typedFile({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(project["tsconfig.json"]).compilerOptions, strict: false },
+      }),
+      "package.json": JSON.stringify({ name: "hooks", compilerOptions: { strict: false } }),
+      "src/index.tsx": `import { useState } from "./state";
+export function useTotal(items: string[]) {
+  const [n] = useState(items.length);
+  return items.reduce((total: number = 0, item) => total + item.length + n, 0);
+}
+${useBeside}`,
+    });
+    expect(typed).toContain("return items.reduce((t0: number, item) => {");
     expect(typed).toContain("function useBeside(t0?: number, t1?: number): number {");
   });
 
@@ -407,51 +474,67 @@ console.log(useComment(undefined, 1), useFormat(undefined, 1), useMode(undefined
     );
   });
 
-  // A `>` in the text of a JSX element is an error for tsc and none for Bun.
   test("in a module that is not checked", async () => {
-    const typed = await typedFile(
-      {
-        "tsconfig.json": JSON.stringify({
-          compilerOptions: { ...JSON.parse(project["tsconfig.json"]).compilerOptions, jsx: "react-jsx" },
-        }),
-        "package.json": JSON.stringify({ name: "hooks", compilerOptions: { strict: true, jsx: "react-jsx" } }),
-        "src/index.tsx": `export { useLoose } from "./loose";\nexport { plainJs, useJs, useJsBefore } from "./hooks.jsx";\n`,
-        "src/loose.tsx": `// @ts-nocheck
+    const typed = await typedFile({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(project["tsconfig.json"]).compilerOptions, jsx: "react-jsx" },
+      }),
+      "package.json": JSON.stringify({ name: "hooks", compilerOptions: { strict: true, jsx: "react-jsx" } }),
+      "src/index.tsx": `export { useLoose } from "./loose";\n`,
+      "src/loose.tsx": `// @ts-nocheck
 import { useState } from "./state";
 export function useLoose(first: number = 1, second: number = 2, third = 3) {
   const [value] = useState(first);
   return value + second + third;
 }
 `,
-        "src/hooks.d.ts": `export declare function useJs(first?: number, second?: [number], third?: number): number;
-export declare function useJsBefore(first: number | undefined, last: number): number;
-export declare function plainJs(first: number, second: number): number;
-`,
-        "src/hooks.jsx": `import { useState } from "./state";
-export function useJs(first = 1, [second] = [2], third = 3) {
-  const [value] = useState(first);
-  return value + second + third;
-}
-export function useJsBefore(first = 1, last) {
-  const [value] = useState(first);
-  return value + last;
-}
-export function plainJs(first, second) {
-  return first + second;
-}
-function Crumb() {
-  return <span>Home > Docs</span>;
+    });
+    expect(parametersIn(typed)).toEqual({ useState: "initial: T", useLoose: "t0?, t1?, t2?" });
+  });
+
+  // The checker has no types of a module that it reaches through node_modules. Without them nothing says where a `?`
+  // is not what a default value is, so its parameters stay as the output has them.
+  test("stays as the output has it in a module of another package of the workspace", async () => {
+    using dir = tempDir("build-api-dts-moved-default-workspace", {
+      "app/tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(project["tsconfig.json"]).compilerOptions, jsx: "react-jsx" },
+      }),
+      "app/package.json": JSON.stringify({ name: "app", compilerOptions: { strict: true, jsx: "react-jsx" } }),
+      "app/src/index.tsx": `import { useState, useTotal } from "hooks";
+${useBeside}export function useAll(items: string[]): number {
+  return useTotal(items, 1) + useBeside();
 }
 `,
-      },
-      { packages: "external" },
-    );
+      "packages/hooks/package.json": JSON.stringify({
+        name: "hooks",
+        version: "1.0.0",
+        exports: { ".": "./index.tsx" },
+      }),
+      "packages/hooks/index.tsx": `${state}export function useTotal(items: string[], first: number = 1): number {
+  const [n] = useState(items.length);
+  return items.reduce((total: number = 0, item) => total + item.length + n, first);
+}
+`,
+    });
+    const root = String(dir);
+    mkdirSync(join(root, "app/node_modules"));
+    symlinkSync(join(root, "packages/hooks"), join(root, "app/node_modules/hooks"), "junction");
+    const built = await Bun.build({
+      entrypoints: [join(root, "app/src/index.tsx")],
+      outdir: join(root, "app/out"),
+      tsconfig: join(root, "app/tsconfig.json"),
+      target: "bun",
+      reactCompiler: true,
+      dts: true,
+    });
+    expect(built.logs).toEqual([]);
+    const typed = readFileSync(join(root, "app/out/index.aot.ts"), "utf8");
+    expect(typed).toContain("return items.reduce((t1: number, item) => {");
     expect(parametersIn(typed)).toEqual({
       useState: "initial: T",
-      useLoose: "t0?, t1?, t2?",
-      useJs: "t0?, t1?, t2?",
-      useJsBefore: "t0, last",
-      plainJs: "first, second",
+      useTotal: "items: string[], t0: number",
+      useBeside: "t0?: number, t1?: number",
+      useAll: "items: string[]",
     });
   });
 

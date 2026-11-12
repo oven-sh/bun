@@ -3,8 +3,8 @@ use bun_ast::op::Level;
 use bun_sema::atom::Interner;
 use bun_sema::check::Checker;
 use bun_sema::check::services::{
-    Child, NodeRef, Relation, Services, SymbolFlags, SymbolOp, SymbolRef, SymbolTable, TypeFlags,
-    TypeFormatFlags,
+    Child, NodeRef, Relation, Services, SignatureKind, SymbolFlags, SymbolOp, SymbolRef,
+    SymbolTable, TypeFlags, TypeFormatFlags, TypeTest,
 };
 use bun_sema::check::spans::{compute_ecma_line_starts, skip_trivia, skip_trivia_back, token_end};
 use bun_sema::config::find_config_of_package;
@@ -13,7 +13,7 @@ use bun_sema::json::Json;
 use bun_sema::program::FileId;
 use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
-use bun_sema::types::TypeId;
+use bun_sema::types::{SigId, TypeId};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 
 struct Source<'a> {
@@ -37,14 +37,10 @@ enum Place {
     TypeArguments,
 }
 
-/// The output can have a default value in the function body: `(a = 1)` as `(t0) { let a = t0 === undefined ? 1 : t0`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Parameter {
-    /// No parameter, or a pattern or a rest parameter without a default value: nothing that can take a `?`.
     Other,
-    /// `a = 1`
     WithDefault,
-    /// `a`, `a?: T`
     Name,
 }
 
@@ -69,12 +65,9 @@ impl Slot {
     }
 }
 
-/// A parameter that has a default value in the source.
 #[derive(Copy, Clone)]
 struct DefaultedParameter {
-    function: FnId,
     annotation: TypeNodeId,
-    /// A `?` on it is an error: a parameter behind it has to be passed.
     is_before_required: bool,
 }
 
@@ -168,25 +161,6 @@ fn is_typescript(path: &[u8]) -> bool {
         .any(|extension| path.ends_with(extension))
 }
 
-fn summarize<'s>(
-    session: &'s Session,
-    atoms: &Interner<'s>,
-    path: &[u8],
-    text: &[u8],
-    kind: ScriptKind,
-) -> File<'s> {
-    bun_sema_parser::summarize_as(
-        Dialect::default(),
-        session.arena(),
-        path,
-        Some(kind),
-        text,
-        atoms,
-        false,
-        true,
-    )
-}
-
 fn parse<'s>(
     session: &'s Session,
     atoms: &Interner<'s>,
@@ -198,7 +172,16 @@ fn parse<'s>(
     } else {
         ScriptKind::Ts
     };
-    let file = summarize(session, atoms, path, text, kind);
+    let file = bun_sema_parser::summarize_as(
+        Dialect::default(),
+        session.arena(),
+        path,
+        Some(kind),
+        text,
+        atoms,
+        false,
+        true,
+    );
     match file.has_errors || file.has_parse_diagnostics || file.ran_out_of_stack {
         true => Err(TypedFilesError::NotTypeScript {
             path: path.to_vec(),
@@ -211,51 +194,45 @@ fn parse<'s>(
     }
 }
 
-/// Whether the parameter at `at` is a pattern or a name before `=`: it can have a default value and no slot.
-fn may_have_default_without_slot(text: &[u8], at: u32) -> bool {
-    let at = at as usize;
-    if matches!(text.get(at), Some(b'{' | b'[')) {
-        return true;
-    }
-    let after = skip_trivia(text, token_end(text, at, false));
-    text.get(after) == Some(&b'=') && token_end(text, after, false) == after + 1
-}
-
-/// Each parameter, by where it starts, that takes a `?` where the output has its default value in the function body.
 fn defaulted_parameters(
     syntax: &Syntax<'_, '_>,
-    types: Option<&ModuleTypes>,
+    types: &ModuleTypes,
 ) -> FxHashMap<u32, DefaultedParameter> {
     let file = syntax.file;
+    let start = |parameter: ParamId| file[file[parameter].pat].pos;
+    let has_default = |parameter: &ParamId| file[*parameter].default.is_some();
+    let is_given = |parameter: &ParamId| {
+        types
+            .parameters_given_by_context
+            .contains(&start(*parameter))
+    };
+    let queried: FxHashSet<u32> = types.locals.iter().map(|local| local.1).collect();
     let mut found = FxHashMap::default();
-    let functions = file.fns.iter().zip(0u32..);
-    for (function, id) in functions.filter(|(function, _)| Syntax::has_javascript(function)) {
-        let last_required = file.last_required_parameter(function.params);
-        let parameters = function.params.iter().map(|parameter| &file[parameter]);
-        for (place, parameter) in parameters.enumerate() {
-            if parameter.default.is_some() {
+    for function in file.fns.iter() {
+        let defaulted = || function.params.iter().filter(has_default);
+        // `typeof a` is the type of `a` with its default value, which has no `undefined`.
+        if !Syntax::has_javascript(function) || defaulted().any(|id| queried.contains(&start(id))) {
+            continue;
+        }
+        let last_given = function
+            .params
+            .iter()
+            .rposition(|id| has_default(&id) && is_given(&id));
+        let last_required = file
+            .last_required_parameter(function.params)
+            .max(last_given);
+        for (place, id) in function.params.iter().enumerate() {
+            if has_default(&id) && !is_given(&id) {
                 found.insert(
-                    file[parameter.pat].pos,
+                    start(id),
                     DefaultedParameter {
-                        function: FnId(id),
-                        annotation: parameter.ty,
+                        annotation: file[id].ty,
                         is_before_required: last_required.is_some_and(|last| place < last),
                     },
                 );
             }
         }
     }
-    let Some(types) = types else {
-        return found;
-    };
-    // `typeof a` is the type of the parameter `a` as the source has it: with its default value, and no `undefined`.
-    let queried: FxHashSet<FnId> = (types.locals.iter())
-        .filter_map(|&(_, binding)| Some(found.get(&binding)?.function))
-        .collect();
-    found.retain(|binding, parameter| {
-        !queried.contains(&parameter.function)
-            && !types.parameters_given_by_context.contains(binding)
-    });
     found
 }
 
@@ -385,6 +362,13 @@ impl<'a, 's> Syntax<'a, 's> {
         Some(Slot::new(Place::Binding, key, (start, end)))
     }
 
+    fn may_have_default_without_slot(&self, parameter: u32) -> bool {
+        let is_pattern = matches!(self.byte(parameter), b'{' | b'[');
+        is_pattern
+            || (parameter as usize) < self.text.len()
+                && self.word(self.after_trivia(self.token_end(parameter))) == b"="
+    }
+
     fn parameter_shape(&self, parameter: &Param) -> Parameter {
         let is_name = matches!(self.file[parameter.pat].kind, PatKind::Ident(_));
         if parameter.default.is_some() {
@@ -396,7 +380,6 @@ impl<'a, 's> Syntax<'a, 's> {
         }
     }
 
-    /// `T | undefined` reads as another type for these: `() => void | undefined`.
     fn is_parenthesized_in_a_union(&self, annotation: TypeNodeId) -> bool {
         matches!(
             self.file[annotation].kind,
@@ -1544,7 +1527,6 @@ impl Written<'_, '_> {
         self.text(start, end).trim_ascii().to_vec()
     }
 
-    /// The text of a slot whose type starts at `annotation`, as one that takes `undefined` too: `: T | undefined`.
     fn text_with_undefined(&self, slot: &Slot, annotation: u32, is_parenthesized: bool) -> Vec<u8> {
         let (open, close): (&[u8], &[u8]) = if is_parenthesized {
             (b"(", b") | undefined")
@@ -1552,10 +1534,8 @@ impl Written<'_, '_> {
             (b"", b" | undefined")
         };
         // Not trimmed where the two meet: a `//` comment before the type ends at its line break.
-        let (before, ty) = (
-            self.text(slot.start, annotation),
-            self.text(annotation, slot.end),
-        );
+        let before = &self.syntax.text[slot.start as usize..annotation as usize];
+        let ty = self.text(annotation, slot.end);
         [before.trim_ascii_start(), open, ty.trim_ascii_end(), close].concat()
     }
 
@@ -3103,7 +3083,6 @@ fn add_types(
         javascript,
         output: &output,
         mappings: &mappings,
-        sources,
         modules: &written[..sources.len()],
         linked: &linked,
         type_references,
@@ -3112,7 +3091,7 @@ fn add_types(
         hoisted: Vec::new(),
         optional_parameter_properties,
     };
-    transfer.copy_slots(&source_slots, &session, &atoms);
+    transfer.copy_slots(&source_slots);
     transfer.annotate_generated_code();
     transfer.copy_casts();
     transfer.type_enum_and_namespace_objects();
@@ -3126,7 +3105,6 @@ struct Transfer<'t, 'a, 's> {
     javascript: &'a [u8],
     output: &'t Syntax<'a, 's>,
     mappings: &'t Mappings,
-    sources: &'t [Source<'a>],
     modules: &'t [Option<Written<'a, 's>>],
     linked: &'t Linked,
     type_references: FxHashSet<(&'t [u8], &'t [u8])>,
@@ -3148,17 +3126,10 @@ impl<'a> Transfer<'_, 'a, '_> {
         anchored
     }
 
-    fn copy_slots<'p>(
-        &mut self,
-        source_slots: &FxHashMap<(Place, u32, u32), Slot>,
-        session: &'p Session,
-        atoms: &Interner<'p>,
-    ) {
+    fn copy_slots(&mut self, source_slots: &FxHashMap<(Place, u32, u32), Slot>) {
         let (output, mappings, written, linked) =
             (self.output, self.mappings, self.modules, self.linked);
         let (output_file, insertions) = (output.file, &mut self.insertions);
-        let sources = self.sources;
-        // [`defaulted_parameters`] of each source that one was looked for in.
         let mut defaults_of: FxHashMap<u32, FxHashMap<u32, DefaultedParameter>> =
             FxHashMap::default();
         let parameter_count_of: FxHashMap<u32, usize> = output_file
@@ -3188,40 +3159,35 @@ impl<'a> Transfer<'_, 'a, '_> {
                 );
                 continue;
             }
-            let module = written[source as usize].as_ref();
-            let checked = module.filter(|module| !module.is_unchecked());
-            let is_name = slot.parameter == Parameter::Name;
-            // The slot of a parameter says whether it has a default value, in a module that is not checked too.
-            let found = (if is_name { module } else { checked })
-                .and_then(|_| source_slots.get(&(slot.place, source, key)));
-            if is_name
-                && match found {
-                    Some(found) => found.parameter == Parameter::WithDefault,
-                    None => may_have_default_without_slot(sources[source as usize].text, key),
-                }
+            if slot.parameter == Parameter::Name
+                && let Some(module) = written[source as usize].as_ref()
             {
-                let parameters = defaults_of.entry(source).or_insert_with(|| match module {
-                    Some(module) => defaulted_parameters(&module.syntax, module.types),
-                    // JavaScript is parsed only where the output may have moved a default value of it.
-                    None => {
-                        let Source { path, text } = sources[source as usize];
-                        let file = summarize(session, atoms, path, text, ScriptKind::Jsx);
-                        match file.has_errors || file.ran_out_of_stack {
-                            true => FxHashMap::default(),
-                            false => defaulted_parameters(&Syntax { file: &file, text }, None),
-                        }
-                    }
+                let found = source_slots.get(&(slot.place, source, key));
+                let has_default = match found {
+                    Some(found) => found.parameter == Parameter::WithDefault,
+                    None => module.syntax.may_have_default_without_slot(key),
+                };
+                let parameters = has_default.then(|| {
+                    defaults_of.entry(source).or_insert_with(|| {
+                        // Without the types of this text, nothing says where a `?` is not what a default value is.
+                        let types =
+                            (module.types).filter(|types| types.text[..] == *module.syntax.text);
+                        types.map_or_else(FxHashMap::default, |types| {
+                            defaulted_parameters(&module.syntax, types)
+                        })
+                    })
                 });
-                if let Some(&default) = parameters.get(&key) {
-                    // A pattern has no slot, and what is not checked has no types.
-                    let annotated = checked.zip(found).zip(default.annotation.some());
-                    let text = match (annotated, default.is_before_required) {
-                        (Some(((module, found), annotation)), true) => module.text_with_undefined(
+                if let Some(&default) = parameters.and_then(|parameters| parameters.get(&key)) {
+                    let annotation = (default.annotation.some())
+                        .filter(|_| !module.is_unchecked())
+                        .zip(found);
+                    let text = match (annotation, default.is_before_required) {
+                        (Some((annotation, found)), true) => module.text_with_undefined(
                             found,
                             module.syntax.type_span(annotation).0,
                             module.syntax.is_parenthesized_in_a_union(annotation),
                         ),
-                        (Some(((module, found), _)), false) => {
+                        (Some((_, found)), false) => {
                             [b"?", &module.trimmed_text(found.start, found.end)[..]].concat()
                         }
                         (None, true) => Vec::new(),
@@ -3231,10 +3197,17 @@ impl<'a> Transfer<'_, 'a, '_> {
                     continue;
                 }
             }
-            let (Some(module), Some(found)) = (checked, found) else {
-                let types = checked.and_then(|module| module.types);
+            let Some(module) = written[source as usize]
+                .as_ref()
+                .filter(|module| !module.is_unchecked())
+            else {
+                continue;
+            };
+            let Some(found) = source_slots.get(&(slot.place, source, key)) else {
                 if slot.place == Place::ReturnType
-                    && types.is_some_and(|types| types.functions_returning_undefined.contains(&key))
+                    && module
+                        .types
+                        .is_some_and(|types| types.functions_returning_undefined.contains(&key))
                 {
                     insertions.add(slot.start, Order::Slot, b": undefined".to_vec());
                 }
@@ -4273,7 +4246,6 @@ pub struct ModuleTypes {
     pub globals: Vec<u32>,
     pub augmented_modules: Vec<(u32, Box<[u8]>)>,
     pub locals: Vec<(u32, u32)>,
-    /// Where a parameter with a default value starts, if the contextual signature of its function has a type without `undefined` there.
     pub parameters_given_by_context: Vec<u32>,
     pub emitted_declarations: Box<[u8]>,
 }
@@ -4386,12 +4358,32 @@ fn target_of_declaration(
     })
 }
 
-/// `notes_parameters`: the build can move a default value into the function body, as the React Compiler does.
-pub fn module_types(
-    checker: &mut Checker<'_, '_>,
+fn contextual_signatures(
+    services: &mut Services<'_, '_, '_>,
     file: FileId,
-    notes_parameters: bool,
-) -> Option<ModuleTypes> {
+    function: Node,
+) -> Vec<SigId> {
+    let node = NodeRef {
+        file,
+        node: function,
+    };
+    let Some(context) = services.apparent_type_of_contextual_type(node) else {
+        return Vec::new();
+    };
+    let parts = match services.type_flags(context).contains(TypeFlags::UNION) {
+        true => services.constituents(context),
+        false => &[context][..],
+    };
+    let mut signatures = Vec::new();
+    for &part in parts {
+        signatures.extend_from_slice(services.signatures_of_type(part, SignatureKind::Call));
+    }
+    // A call can infer a type argument as the type of the function itself.
+    signatures.retain(|&signature| services.signature_info(signature).declaration != Some(node));
+    signatures
+}
+
+pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<ModuleTypes> {
     if !is_project_source(checker, file) {
         return None;
     }
@@ -4586,17 +4578,41 @@ pub fn module_types(
                 functions_returning_undefined.push(Syntax::function_key(function));
             }
         }
+        // TypeScript infers from the annotation of a callback's parameter, where a default value adds no `undefined` and a `?` does.
+        let strict_null_checks = services.compiler_options().strict_null_checks;
         let mut parameters_given_by_context = Vec::new();
-        let noted = if notes_parameters { &hir.fns[..] } else { &[] };
-        for (function, id) in noted.iter().zip(0u32..) {
-            let node = hir.node(FnId(id));
+        for (function, id) in hir.fns.iter().zip(0u32..) {
             let parameters = function.params.iter().map(|parameter| &hir[parameter]);
-            for (index, parameter) in parameters.enumerate() {
-                if parameter.default.is_some()
-                    && let Some(ty) =
-                        services.contextual_parameter_type(NodeRef { file, node }, index)
-                    && !services.is_related(Relation::Assignable, TypeId::UNDEFINED, ty)
-                {
+            let mut defaulted = (parameters.enumerate())
+                .filter(|(_, parameter)| parameter.default.is_some())
+                .peekable();
+            let signatures = match function.kind {
+                FnKind::Expr | FnKind::Arrow if defaulted.peek().is_some() => {
+                    Some(contextual_signatures(services, file, hir.node(FnId(id))))
+                }
+                FnKind::Method => None,
+                _ => continue,
+            };
+            for (index, parameter) in defaulted {
+                let is_given = signatures.as_ref().is_none_or(|signatures| {
+                    signatures.iter().any(|&signature| {
+                        let expected = services.signature_info(signature).parameters;
+                        match (expected.get(index), expected.last()) {
+                            (Some(&at), _) => {
+                                let ty = services.type_of_symbol(at);
+                                let undefined = TypeId::UNDEFINED;
+                                !strict_null_checks
+                                    || !services.is_related(Relation::Assignable, undefined, ty)
+                            }
+                            (None, Some(&rest)) => {
+                                let ty = services.type_of_symbol(rest);
+                                services.type_test(TypeTest::ArrayLike, ty)
+                            }
+                            (None, None) => false,
+                        }
+                    })
+                });
+                if is_given {
                     parameters_given_by_context.push(hir[parameter.pat].pos);
                 }
             }

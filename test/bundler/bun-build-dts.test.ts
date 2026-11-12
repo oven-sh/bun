@@ -218,4 +218,98 @@ export const useAdder: Same<typeof typed.useAdder, typeof declared.useAdder> = t
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(await bun(String(dir), "check", "--no-pretty", "same.ts")).toMatchObject({ stdout: "", exitCode: 0 });
   });
+
+  // TypeScript infers the type arguments of a call from an annotated parameter of a callback, where a default value
+  // adds no `undefined` and a `?` does. Main writes the typed file of this build: only `useBeside` has another type there.
+  test("--react-compiler: a hook keeps its type where a call gives the parameter of a callback a type", async () => {
+    const callees = {
+      fold: "fold(items, (total: number = 0) => count(n, total), 0)",
+      foldItem: "fold(items, (total: number = 0, item: string) => count(n, total, item), 0)",
+      on: "on((payload: number = 0) => use(n, payload))",
+      useReducer: "useReducer((state: number = 0) => count(n, state), 0)",
+      useReducerOf: "useReducer((state: Counter = { count: 0 }) => ({ count: count(n, state) }), { count: n })",
+      store: "new Store((state: number = 0) => count(n, state), 0).state",
+      configure: "configure({ initial: n, onChange: (value: number = 0) => use(n, value) })",
+      pipeline: "pipeline(0, (value: number = 0) => count(n, value), (value: number = 0) => count(n, value))",
+      memoize: "memoize((argument: number = 0) => count(n, argument))",
+      watch: "watch((previous: number = 0) => count(n, previous), 0)",
+      curried: "curried((first: number = 0) => (second: number) => second + count(n, first))",
+      reduce: "items.reduce((total: number = 0, item) => total + item.length + n, 0)",
+    };
+    const names = Object.keys(callees).map(name => "use" + name[0].toUpperCase() + name.slice(1));
+    using dir = tempDir("build-dts-moved-default-callback", {
+      ...project,
+      "src/lib.ts": `export function useState<T>(initial: T): [T] {
+  return [initial];
+}
+export function count(...values: unknown[]): number {
+  return values.length;
+}
+export function use(...values: unknown[]): void {}
+export interface Counter {
+  count: number;
+}
+export function fold<U>(items: string[], step: (total: U, item: string, index: number) => U, initial: U): U {
+  return items.reduce((total, item, index) => step(total, item, index), initial);
+}
+export function on<T>(handler: (payload: T, meta: { at: number }) => void): T[] {
+  return [];
+}
+export type AnyActionArg = [] | [any];
+export function useReducer<S, A extends AnyActionArg>(
+  reducer: (prevState: S, ...args: A) => S,
+  initialState: S,
+): [S, (...args: A) => void] {
+  return [initialState, () => {}];
+}
+export class Store<T> {
+  constructor(
+    public reduce: (state: T, action: string) => T,
+    public state: T,
+  ) {}
+}
+export function configure<T>(options: { initial: T; onChange: (value: T, previous: T) => void }): T {
+  return options.initial;
+}
+export function pipeline<T>(initial: T, ...steps: Array<(value: T, index: number) => T>): T {
+  return steps.reduce((value, step, index) => step(value, index), initial);
+}
+export function memoize<A, R>(compute: (argument: A, cache: Map<A, R>) => R): (argument: A) => R {
+  const cache = new Map<A, R>();
+  return argument => compute(argument, cache);
+}
+export function watch<T>(get: (previous: T, tick: number) => T, initial: T): T;
+export function watch(get: (previous: string, tick: number) => string): string;
+export function watch(get: (previous: any, tick: number) => any, initial?: any): any {
+  return get(initial, 0);
+}
+export function curried<T>(make: (first: T, label: string) => (second: T) => T): T | undefined {
+  return undefined;
+}
+`,
+      "src/index.tsx": `import { Counter, Store, configure, count, curried, fold, memoize, on, pipeline, use, useReducer, useState, watch } from "./lib";
+${names
+  .map(
+    (name, index) => `export function ${name}(items: string[]) {
+  const [n] = useState(items.length);
+  return ${Object.values(callees)[index]};
+}
+`,
+  )
+  .join("")}export function useBeside(first: number = 1, second: number = 2): number {
+  const [value] = useState(first);
+  return value + second;
+}
+`,
+      "same.ts": `import * as declared from "./out/index";
+import * as typed from "./out/index.aot";
+type Same<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+${[...names, "useBeside"]
+  .map(name => `export const ${name}: Same<typeof typed.${name}, typeof declared.${name}> = true;\n`)
+  .join("")}`,
+    });
+    const built = await bun(String(dir), ...withCompiler);
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(await bun(String(dir), "check", "--no-pretty", "same.ts")).toMatchObject({ stdout: "", exitCode: 0 });
+  });
 });

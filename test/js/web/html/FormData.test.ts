@@ -979,6 +979,7 @@ it.each([
   ["banner", "image/webp"],
   ["a.txt", "text/plain"],
   ["a.json", "text/plain; charset=iso-8859-1"],
+  ["a.html", "Text/HTML; Charset=X"],
 ])("a multipart file part named %s keeps its Content-Type %s", async (filename, type) => {
   const body =
     "--formboundary\r\n" +
@@ -994,7 +995,7 @@ it.each([
   const file = formData.get("file") as File;
   expect({ name: file.name, type: file.type, text: await file.text() }).toEqual({
     name: filename,
-    type,
+    type: type.toLowerCase(),
     text: "content",
   });
 });

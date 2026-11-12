@@ -446,6 +446,7 @@ function open(
   if (last && !isClosed(last.window)) return last;
 
   let options;
+  let value;
   if (optionsText !== undefined) {
     try {
       options = JSON.parse(optionsText);
@@ -477,6 +478,8 @@ function open(
         break;
       }
     }
+    // Parsed again, and before the package runs: it is given `options`, and it can replace JSON.parse too.
+    if (keep) value = JSON.parse(optionsText);
   }
   // Which names a new window gives globalThis depends on the names that are there.
   beforeCreating();
@@ -484,12 +487,7 @@ function open(
   if (keep && typeof environment !== "string") {
     kept.$set(id, environment);
     if (optionsText !== undefined) {
-      $arrayPush((keptWithOptions ??= []), {
-        packagePath,
-        text: optionsText,
-        value: JSON.parse(optionsText),
-        environment,
-      });
+      $arrayPush((keptWithOptions ??= []), { packagePath, text: optionsText, value, environment });
     }
   }
   return environment;

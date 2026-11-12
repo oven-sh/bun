@@ -871,7 +871,7 @@ describe.concurrent("test environment", () => {
         expect(exitCode).toBe(0);
       });
 
-      test("what a package or a test does to the options it was given changes nothing", async () => {
+      test("what a package does to JSON.parse, or a test to the options that the package was given, changes nothing", async () => {
         using dir = tempDir("test-environment", {
           ...fakePackages,
           "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
@@ -880,6 +880,10 @@ describe.concurrent("test environment", () => {
               constructor(options) {
                 super(options);
                 this.given = options;
+                // Until the runner has this window, JSON.parse is the package's own.
+                const { parse } = JSON;
+                JSON.parse = () => ({});
+                queueMicrotask(() => void (JSON.parse = parse));
               }
             };`,
           "1.test.js": `${options(`{"url":"https://example.com/x","viewport":{"width":100}}`)}

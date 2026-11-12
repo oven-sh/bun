@@ -2672,6 +2672,9 @@ describe.concurrent("bun fmt", () => {
       // Prettier measures a comment after the value of a tagged key against the key, not the tag.
       ["!!str a: 1\n  # x\n# y\n", "!!str a: 1\n# y\n# x\n"],
       ["a:\n  !!str b: 1\n    # x\n", "a:\n  !!str b: 1\n  # x\n"],
+      // A tab doesn't count as indentation.
+      ["a: 1\n\t# x\n", "a: 1\n# x\n"],
+      ["a:\n  b: 1\n \t# x\n", "a:\n  b: 1\n# x\n"],
     ])("%j", async (before, after) => {
       const result = await format({ "a.yaml": before, "b.yaml": after }, [], { reads: ["a.yaml", "b.yaml"] });
       expect(result.files).toEqual({ "a.yaml": after, "b.yaml": after });
@@ -2689,6 +2692,8 @@ describe.concurrent("bun fmt", () => {
       ["a:\n  !!str b: 1\n    # x\n", "a:\n  !!str b: 1\n    # x\n"],
       ["a: |\n    text\n  # x\n# y\n", "a: |\n  text\n# x\n# y\n"],
       ["- |\n  text\n # x\n# y\n", "- |\n  text\n  # x\n# y\n"],
+      ["a:\n  b: |\n    text\n   # x\n# y\n", "a:\n  b: |\n    text\n  # x\n# y\n"],
+      ["a: 1\n\t# x\n", "a: 1\n  # x\n"],
     ])("with an .oxfmtrc.json, %j", async (before, after) => {
       const files = { "a.yaml": before, "b.yaml": after, ".oxfmtrc.json": "{}\n" };
       const result = await format(files, [], { reads: ["a.yaml", "b.yaml"] });

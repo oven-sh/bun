@@ -327,6 +327,17 @@ impl<'a> Context<'_, 'a> {
         }
     }
 
+    /// The indentation of the line `line` before `offset`, as `yaml`'s lexer counts it: its spaces, up to a tab.
+    fn spaces_at_the_start_of_line(&self, line: u32, offset: u32) -> u32 {
+        let start =
+            (self.line_starts.get(line.saturating_sub(1) as usize)).map_or(offset, |&it| it);
+        let before = self
+            .text
+            .get(start as usize..offset as usize)
+            .unwrap_or_default();
+        before.iter().take_while(|&&b| b == b' ').count() as u32
+    }
+
     /// `transformOffset`, reusing `known` if it's at the same offset.
     fn point_near(&self, offset: u32, known: Point) -> Point {
         if known.offset == offset {
@@ -1088,8 +1099,6 @@ impl<'a> Context<'_, 'a> {
         let is_open = last_value.is_none();
         let value_takes_indented =
             last_value.is_some_and(|it| !matches!(it.kind, Kind::BlockFolded | Kind::BlockLiteral));
-        // oxfmt: each collection, the innermost first, takes the comments indented more than its items, but for a
-        // mapping whose last value is a block scalar. A comment that none takes ends the document, with all after it.
         let root_takes_indented =
             is_nested || content.kind == Kind::Sequence || value_takes_indented;
         let is_oxfmt = self.is_oxfmt;
@@ -1101,16 +1110,20 @@ impl<'a> Context<'_, 'a> {
             if token_point.line <= last_line || is_open {
                 continue;
             }
-            let indent = token_point.column.saturating_sub(1);
+            let indent = match a_tab_indents_a_comment(is_oxfmt) {
+                true => token_point.column.saturating_sub(1),
+                false => self.spaces_at_the_start_of_line(token_point.line, token.start),
+            };
             let is_taken = end_comments.is_empty()
-                && match is_oxfmt {
+                && match comments_leave_by_the_root_alone(is_oxfmt) {
                     true => root_takes_indented && indent > root_indent,
                     false => value_takes_indented && indent > inner_indent,
                 };
             if is_taken {
                 continue;
             }
-            leave_root &= is_oxfmt || bound.is_none_or(|bound| indent < bound);
+            leave_root &= comments_leave_by_the_root_alone(is_oxfmt)
+                || bound.is_none_or(|bound| indent < bound);
             end_comments.push(comment);
         }
         if !leave_root {
@@ -1380,8 +1393,24 @@ fn is_explicit_mapping_key(nodes: &[Node<'_>], id: Id) -> bool {
     })
 }
 
-/// `is_oxfmt`: oxfmt measures a comment against the column of the mapping, which is that of its first key's tag or
-/// anchor. Prettier measures it against the key itself, as `yaml-unist-parser` places the item.
+/// oxfmt has no stack of open collections. Each collection, the innermost first, takes the comments indented more
+/// than its items, but for a mapping whose last value is a block scalar. A comment that none takes ends the
+/// document, and so does everything after it.
+fn comments_leave_by_the_root_alone(is_oxfmt: bool) -> bool {
+    is_oxfmt
+}
+
+/// oxfmt counts a tab before a comment as indentation. `yaml`'s lexer counts the spaces at the start of the line.
+fn a_tab_indents_a_comment(is_oxfmt: bool) -> bool {
+    is_oxfmt
+}
+
+/// oxfmt measures a comment after a mapping's value against the column of the mapping, which is that of its first
+/// key's tag or anchor. Prettier measures it against the key itself, as `yaml-unist-parser` places the item.
+fn a_comment_is_measured_from_the_key_properties(is_oxfmt: bool) -> bool {
+    is_oxfmt
+}
+
 fn should_own_end_comment(nodes: &[Node<'_>], id: Id, comment: Position, is_oxfmt: bool) -> bool {
     let node = &nodes[id.index()];
     if node.position.start.offset < comment.start.offset
@@ -1399,10 +1428,14 @@ fn should_own_end_comment(nodes: &[Node<'_>], id: Id, comment: Position, is_oxfm
     match node.kind {
         Kind::SequenceItem => comment.start.column > node.position.start.column,
         Kind::MappingKey | Kind::MappingValue => {
-            let parent_column = node.parent.map_or(0, |parent| match is_oxfmt {
-                true => column_of_item_with_properties(nodes, parent),
-                false => nodes[parent.index()].position.start.column,
-            });
+            let parent_column =
+                node.parent.map_or(
+                    0,
+                    |parent| match a_comment_is_measured_from_the_key_properties(is_oxfmt) {
+                        true => column_of_item_with_properties(nodes, parent),
+                        false => nodes[parent.index()].position.start.column,
+                    },
+                );
             comment.start.column > parent_column
                 && match (node.children.first(), node.children.len()) {
                     (None, _) => true,

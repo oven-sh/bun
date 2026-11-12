@@ -1656,7 +1656,7 @@ describe.concurrent("bun test --isolate=modules", () => {
       const realProcess = require("node:process");
       console.log(JSON.stringify([realProcess.env.ADDED, realProcess.listenerCount("exit"), "added" in realProcess, "added" in Math]));
     });`;
-    const files = {
+    using dir = tempDir("isolate-modules-no-process", {
       "a.test.js": `test("a", () => {
         process.env.ADDED = "1";
         process.on("exit", () => {});
@@ -1666,9 +1666,13 @@ describe.concurrent("bun test --isolate=modules", () => {
       });`,
       "b.test.js": read("b"),
       "c.test.js": read("c"),
-    };
-    const lines = (await passes(files, 3)).split("\n").filter(line => line.startsWith("["));
+    });
+    const names = ["./a.test.js", "./b.test.js", "./c.test.js"];
+    const { stdout, stderr } = await runTests(String(dir), ["--isolate=modules"], names);
+    const lines = stdout.split("\n").filter(line => line.startsWith("["));
     expect(lines).toEqual(Array(2).fill(JSON.stringify([null, 0, false, false])));
+    // How a run with such a global object is judged is not asserted here, only that it gets to its end.
+    expect(stderr).toContain("Ran 3 tests across 3 files.");
   });
 
   test("keeps what node:perf_hooks and node:worker_threads add to the builtins when they load", async () => {

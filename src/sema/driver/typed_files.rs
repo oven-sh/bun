@@ -3212,8 +3212,8 @@ impl<'a> Transfer<'_, 'a, '_> {
             let text = module.trimmed_text(found.start, found.end);
             let is_computed = module.syntax.is_in_computed_key(found.key);
             let (order, text) = match slot.place {
-                Place::MemberType if text == b"?" => match stated {
-                    Some(stated) => (Order::Slot, [b"?: ", &stated.text[..]].concat()),
+                Place::MemberType if text == b"?" || text.is_empty() => match stated {
+                    Some(stated) => (Order::Slot, [&text[..], b": ", &stated.text].concat()),
                     None => (Order::Slot, text),
                 },
                 Place::MemberType
@@ -4088,8 +4088,17 @@ impl<'a> Transfer<'_, 'a, '_> {
                         };
                         if let Some(stated) = stated {
                             let modifiers = file.modifier_list(member.modifiers);
-                            let end = syntax.member_type_span(member).1;
-                            let typed = module.declared(modifiers, member.start, end);
+                            let (name_end, end) = syntax.member_type_span(member);
+                            let mark = syntax.after_trivia(name_end);
+                            // `declare` allows no `!` (TS1255).
+                            let typed = match member.flags.contains(Flags::DEFINITE) {
+                                true => [
+                                    module.declared(modifiers, member.start, mark),
+                                    module.text(mark + 1, end),
+                                ]
+                                .concat(),
+                                false => module.declared(modifiers, member.start, end),
+                            };
                             add(place, &[&b"declare "[..], &typed, &stated, b";"].concat());
                         }
                     }

@@ -242,10 +242,12 @@ const wrong: string = box.held;
       "index.ts": `export class Logger {
   level;
   prefix?;
+  ready!: boolean;
   constructor(verbose: boolean) {
     this.level = verbose ? "debug" : "warn";
     if (verbose) this.prefix = "> ";
   }
+  start(): void { this.ready = true; }
 }
 `,
     },
@@ -256,7 +258,8 @@ const wrong: number = new Logger(false).level;
 `,
     reads: ["new Logger(true).level", "new Logger(true).prefix"],
     errors: ["(4,7): TS2322"],
-    written: ["declare level: string;", "declare prefix?: string | undefined;"],
+    // `declare` allows no `!` (TS1255).
+    written: ["declare level: string;", "declare prefix?: string | undefined;", "declare ready: boolean;"],
   },
   "quoted-and-numeric-names": {
     files: {
@@ -825,6 +828,23 @@ export class Box {
     const typed = readFileSync(join(String(dir), "out/index.aot.ts"), "utf8");
     expect(typed).toContain("interface Hidden { h: string }\n");
     expect(typed).toContain("declare hidden: Hidden;\n");
+  });
+
+  // Beside an `accessor` field the bundle keeps a field for a parameter property.
+  test("a parameter property whose field the bundle keeps gets its type at that field", async () => {
+    using dir = tempDir("build-dts-assigned-fields-kept-parameter", {
+      ...project(assigned),
+      "src/index.ts": `export class Box {
+  accessor first = 1;
+  constructor(public held = null as string | null, readonly size = 1) {}
+  clear(): void { this.held = null; }
+}
+`,
+    });
+    const build = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const typed = readFileSync(join(String(dir), "out/index.aot.ts"), "utf8");
+    expect(typed).toContain("  public held: string | null;\n  readonly size: number;\n");
   });
 
   // The bundle gives such a class `constructor() { super(...arguments); }`, which is TS2556 in a typed file.

@@ -1103,9 +1103,7 @@ impl FileSink {
         self.flush_buffered(|result| result.to_js(cx))
     }
 
-    /// `flush()`, up to the value that it returns: `report` takes it. A `Pending` result has credited the pending
-    /// slot and not opened it.
-    // PERF: inlined with `report`, so that `flush()` from JS pays no call and no copy of the result for the split.
+    /// `flush()` up to its result, which `report` takes: inlined with it, so `flush()` from JS moves the result once.
     #[inline(always)]
     fn flush_buffered<R>(&self, report: impl FnOnce(streams::Writable) -> R) -> sys::Result<R> {
         let had_buffered_data = self.writer.get().has_pending_data();
@@ -1788,20 +1786,7 @@ impl FlushPendingTask {
     }
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-// Requests of a node stream over a sink: `child.stdin`, `process.stdout`, a `tty.WriteStream`
-// ───────────────────────────────────────────────────────────────────────────
-//
-// Node completes the end and the close of such a stream from libuv, never in the turn of the
-// loop that asked: the shutdown request from the pending queue, the close from the close
-// callbacks that follow that turn's immediates. `EventLoop::enqueue_completion_task` and
-// `EventLoop::enqueue_closing_task` are those two places.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L536-L558
-// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L346-L358
-// https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/core.c#L445-L483
-
-/// What a node stream waits for. A `Close` takes the place of a `Shutdown`: libuv cancels the shutdown request
-/// of a stream that is closed first, and a destroyed Writable ignores the callback.
+/// What a node stream over the sink waits for. A `Close` replaces a `Shutdown`, as libuv cancels the shutdown of a handle that closes.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StreamRequest {
     None,
@@ -1868,8 +1853,7 @@ impl bun_event_loop::Taskable for CloseTask {
 }
 
 impl ShutdownTask {
-    /// # Safety
-    /// `task` is the `shutdown_task` of a live `FileSink`, which holds a ref for the task while `queued` is set.
+    /// Safety: `task` is the `shutdown_task` of a live `FileSink`, which holds a ref for the task while `queued` is set.
     pub(crate) unsafe fn run_from_js_thread(task: *mut ShutdownTask) {
         // SAFETY: fn contract. `_guard` takes over that ref and keeps the sink across the callback.
         unsafe {
@@ -1914,8 +1898,7 @@ impl ShutdownTask {
 }
 
 impl CloseTask {
-    /// # Safety
-    /// `task` is the `close_task` of a live `FileSink`, which holds a ref for the task while `queued` is set.
+    /// Safety: `task` is the `close_task` of a live `FileSink`, which holds a ref for the task while `queued` is set.
     pub(crate) unsafe fn run_from_js_thread(task: *mut CloseTask) {
         // SAFETY: fn contract. `_guard` takes over that ref and keeps the sink across the callback.
         unsafe {
@@ -1942,11 +1925,7 @@ impl CloseTask {
     }
 }
 
-/// `_final` of a node stream over `sink`, a `FileSink`: flushes as `flush()` does. `true`: `callback` is called
-/// from the event loop once everything is written, with the error of the write if it failed, and never before
-/// this returns. That is where libuv completes the shutdown request of Node's `net.Socket`. `false`: the sink
-/// writes in its caller's turn, as the `SyncWriteStream` that Node has over a regular file does, and no write
-/// is parked. It is flushed, and the caller calls back.
+/// `_final` of a node stream: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L536-L558 (the contract is in FileSink.bind.ts).
 pub(crate) fn shutdown(
     cx: &mut JsScope<'_>,
     sink: JsLocal<'_>,
@@ -1962,8 +1941,7 @@ pub(crate) fn shutdown(
     unsafe {
         let _guard = RefPtr::init_ref(this);
         let completes_from_loop = (*this).completes_from_loop();
-        // A write that is parked flushes everything, and reports through the slot: also the error of a
-        // writer that has closed since, which waits there for its task.
+        // A parked write flushes everything and reports through the slot, also the error of a writer that closed since.
         let parked = (*this).pending.get().state == streams::PendingState::Pending;
         let mut errno = 0;
         if !parked && !(*this).done.get() {
@@ -1988,9 +1966,7 @@ pub(crate) fn shutdown(
     Ok(true)
 }
 
-/// `_destroy` of a node stream over `sink`, a `FileSink`: ends the sink as `end()` does, with no promise.
-/// `true`: `callback` is called from the event loop once the descriptor is closed, behind the immediates of
-/// that loop turn. That is where libuv runs the close callback of Node's handle. `false`: `sink` holds no sink.
+/// `_destroy` of a node stream: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L346-L358 (the contract is in FileSink.bind.ts).
 pub(crate) fn close(
     cx: &mut JsScope<'_>,
     sink: JsLocal<'_>,
@@ -2006,8 +1982,7 @@ pub(crate) fn close(
         (*this).set_request(StreamRequest::Close, &cx.js_thread(), callback.to_js());
         // Node drops the error of a write that its destroy() cuts off.
         let _ = (*this).end(None);
-        // `on_close` queues the completion, now or once the writer has pushed out what it holds. A writer that
-        // closed before this request reports nothing more, whatever its buffer still holds.
+        // `on_close` queues the completion. A writer that closed before this request reports nothing more.
         if !(*this).close_task.queued.get()
             && !((*this).writer_is_open() && (*this).writer.get().has_pending_data())
         {
@@ -2018,8 +1993,7 @@ pub(crate) fn close(
 }
 
 impl FileSink {
-    /// Whether writes reach the descriptor through the event loop: a pipe, a socket, a terminal. Not a regular
-    /// file, and not a writer that has closed.
+    /// Whether an open writer reaches the descriptor through the event loop: a pipe, a socket, a terminal.
     fn completes_from_loop(&self) -> bool {
         #[cfg(unix)]
         {
@@ -2084,11 +2058,7 @@ impl FileSink {
         })
     }
 
-    /// A `Shutdown` that waits behind nothing in the pending slot completes, unless the writer still holds bytes.
-    /// The slot settles ahead of them in two cases: the `run_pending_later` task of an earlier flush settles a
-    /// later write, and on POSIX a drain reports before the tail that its callback buffered. A flush on Windows
-    /// does not report a uv_write in flight either. The request then arms the slot, with no promise, and
-    /// `run_pending` comes back here when the bytes are out or have failed.
+    /// Completes a `Shutdown`, or arms the pending slot for it while the writer holds bytes: the slot can settle ahead of them.
     fn complete_shutdown_once_written(&self, errno: u16) {
         if errno == 0 && self.writer_is_open() && self.writer.get().has_pending_data() {
             self.pending
@@ -2125,16 +2095,14 @@ impl FileSink {
         ));
     }
 
-    /// The reader gets end-of-file and the descriptor stays open until `close`, as libuv does right before it
-    /// completes the shutdown request: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L641-L657
+    /// End-of-file for the reader, with the descriptor kept: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L641-L657
     fn half_close(&self) {
         #[cfg(unix)]
         if !self.done.get()
             && !self.writer.get().has_pending_data()
             && self.writer.get().get_poll().is_some()
         {
-            // The writer has not closed, so `fd` is still this sink's descriptor. A descriptor that is not a
-            // socket refuses: its reader gets end-of-file at the close.
+            // A descriptor that is not a socket refuses: its reader gets end-of-file at the close.
             let _ = sys::shutdown_write(self.fd.get());
         }
     }

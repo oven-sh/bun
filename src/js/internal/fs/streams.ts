@@ -675,9 +675,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
 let shutdownSink: ((sink: FileSink, cb: (err?: any) => void) => boolean) | undefined;
 let closeSink: ((sink: FileSink, cb: () => void) => boolean) | undefined;
 
-// A sink over a pipe, a socket or a terminal calls back from the event loop, once it has written everything: where the shutdown request of node's net.Socket completes.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L536-L558
-// A sink over a regular file has written everything when it returns false, as node's SyncWriteStream has.
+// Over a pipe, a socket or a terminal the sink calls `cb` from the event loop, as the shutdown request of node's net.Socket.
 function finalFast(this: FSStream, cb: (err?: any) => void) {
   const fileSink = this[kWriteStreamFastPath];
   if (!fileSink || fileSink === true) {
@@ -795,8 +793,7 @@ writeStreamPrototype._writev = function (data, cb) {
 writeStreamPrototype._destroy = function (err, cb) {
   const sink = this[kWriteStreamFastPath];
   if (sink && sink !== true) {
-    // As node's net.Socket: the sink closes, and 'close' comes from the event loop once it has, not from destroy().
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L346-L358
+    // As node's net.Socket: 'close' comes from the event loop once the sink has closed, not from destroy().
     this.fd = null;
     const emitClose = emitCloseOfSink.bind(undefined, this, err ? true : false);
     closeSink ??= $bindgen("FileSink.bind.ts", "close");

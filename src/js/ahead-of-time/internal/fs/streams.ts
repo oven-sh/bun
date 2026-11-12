@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/fs/streams.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 a1e553c897696bc6800ebffff1eb0ba233e6f799b0b6dcb0c40a96745289073b.
+// Written against that file with the SHA-256 0401e417e7a2be25cf1354e08014f7070ae4acc0ebc015d7881064a8ee8dafd4.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
@@ -834,9 +834,7 @@ function underscoreWriteFast(this: $Node.WriteStream, data: Buffer, encoding: st
 let shutdownSink: ((sink: FileSink, cb: ErrorCallback) => boolean) | undefined;
 let closeSink: ((sink: FileSink, cb: () => void) => boolean) | undefined;
 
-// A sink over a pipe, a socket or a terminal calls back from the event loop, once it has written everything: where the shutdown request of node's net.Socket completes.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L536-L558
-// A sink over a regular file has written everything when it returns false, as node's SyncWriteStream has.
+// Over a pipe, a socket or a terminal the sink calls `cb` from the event loop, as the shutdown request of node's net.Socket.
 function finalFast(this: $Node.WriteStream, cb: ErrorCallback) {
   const fileSink = this[kWriteStreamFastPath];
   if (!fileSink || fileSink === true) {
@@ -965,8 +963,7 @@ writeStreamPrototype._writev = function (this: $Node.WriteStream, data: $Node.Ch
 writeStreamPrototype._destroy = function (this: $Node.WriteStream, err: Error | null, cb: ErrorCallback) {
   const sink = this[kWriteStreamFastPath];
   if (sink && sink !== true) {
-    // As node's net.Socket: the sink closes, and 'close' comes from the event loop once it has, not from destroy().
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L346-L358
+    // As node's net.Socket: 'close' comes from the event loop once the sink has closed, not from destroy().
     this.fd = null;
     const emitClose = emitCloseOfSink.bind(undefined, this, err ? true : false);
     closeSink ??= $bindgen("FileSink.bind.ts", "close");

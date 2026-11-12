@@ -75,15 +75,11 @@ pub struct EventLoop {
     /// until the queue is empty (a task that re-posts itself there never lets
     /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
     pub yield_tasks: Vec<Task>,
-    /// Tasks that complete the close of a handle. `auto_tick` runs them after this turn's
-    /// immediates and before the poll, where libuv runs close callbacks: Node emits a socket's
-    /// 'close' there.
+    /// Close completions: `auto_tick` runs them between this turn's immediates and the poll, where libuv runs close callbacks.
     pub closing_tasks: Vec<Task>,
-    /// [`EventLoop::enqueue_completion_task`] while `completes_before_poll`: run behind the
-    /// closing tasks, not behind the poll in `tasks`.
+    /// What `enqueue_completion_task` takes while `completes_before_poll`: run behind the closing tasks.
     pub completion_tasks: Vec<Task>,
-    /// `auto_tick` is between the start of its immediates and the end of its closing tasks. What
-    /// libuv completes from its pending queue comes, for a request made here, before the next poll.
+    /// `auto_tick` is between the start of its immediates and the end of its closing tasks.
     completes_before_poll: bool,
 
     pub concurrent_tasks: ConcurrentQueue,
@@ -1138,8 +1134,7 @@ impl EventLoop {
         self.closing_tasks.push(task);
     }
 
-    /// For what libuv completes from its pending queue (a shutdown request): after the turn
-    /// that asked for it, and before the next poll.
+    /// For what libuv completes from its pending queue (a shutdown request): behind the asking turn, ahead of the next poll.
     pub fn enqueue_completion_task(&mut self, task: Task) {
         if self.completes_before_poll && !self.closed_for_tasks {
             self.completion_tasks.push(task);
@@ -1148,9 +1143,7 @@ impl EventLoop {
         }
     }
 
-    /// `auto_tick`, before its immediates. Returns what [`EventLoop::set_completes_before_poll`]
-    /// takes back behind the closing tasks: an `auto_tick` nested in an immediate leaves the
-    /// outer one's state as it found it.
+    /// `auto_tick`, before its immediates: returns the state that `set_completes_before_poll` restores, for a nested `auto_tick`.
     pub fn begin_immediates(&mut self) -> bool {
         core::mem::replace(&mut self.completes_before_poll, true)
     }

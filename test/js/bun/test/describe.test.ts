@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { afterEach, beforeAll, beforeEach, describe, expect, jest, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, tempDir } from "harness";
 
 describe("blocks should handle a number, string, anonymous class, named class, or function for the first arg", () => {
   const numberMock = jest.fn();
@@ -283,4 +283,120 @@ test("deeply nested describe() doesn't overflow the native stack", async () => {
   expect(stderr).toInclude("\n 1 pass");
   expect(stderr).toInclude("\n 0 fail");
   expect(exitCode).toBe(0);
+});
+
+// A hook or a test of "vitest" can get Vitest's Suite of the describe() that it is in.
+describe.concurrent("the Suite of a describe()", () => {
+  async function runTests(files: Record<string, string>, stack?: "1 MB") {
+    using test_dir = tempDir("describe-suite", files);
+    const cmd = [bunExe(), "test"];
+    await using proc = Bun.spawn({
+      // Linux sizes the main thread's stack from `ulimit -s`.
+      cmd: stack && isLinux ? ["sh", "-c", `ulimit -s 1024 && exec "$@"`, "sh", ...cmd] : cmd,
+      cwd: String(test_dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { log: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")), stderr, exitCode };
+  }
+
+  test("has the Suite of the describe() around it as its suite", async () => {
+    const { log, stderr, exitCode } = await runTests({
+      "a.test.js": `
+        import { afterAll, describe, test } from "vitest";
+
+        describe("a", () => {
+          let a;
+          afterAll(({}, suite) => console.log("afterAll of a:", suite === a, "suite" in suite, suite.file.file === suite.file));
+          describe("b", () => {
+            describe("c", () => {
+              test("in c", ({ task }) => {
+                a = task.suite.suite.suite;
+                console.log(task.suite.name, task.suite.suite.name, a.name, task.file === a.file);
+              });
+            });
+            test("in b", ({ task }) => console.log(task.suite.name, task.suite.suite === a));
+          });
+        });
+      `,
+    });
+    expect(stderr).toInclude("\n 2 pass");
+    expect({ log, exitCode }).toEqual({
+      log: ["c b a true", "b true", "afterAll of a: true false true"],
+      exitCode: 0,
+    });
+  });
+
+  // A Suite is built when a test or hook first needs it, with the Suite of each describe() around it that has none yet.
+  describe("of a deeply nested describe() doesn't overflow the native stack", () => {
+    // A debug build needs about 2 seconds for 10,000 levels. Its native frames are larger, so 2,000 overflowed 1 MB too.
+    const levels = isDebug ? 2000 : 10000;
+
+    test.each([
+      { from: "vitest", title: "a test reads task", leaf: `test("leaf", ({ task }) => count(task.suite));` },
+      { from: "vitest", title: "beforeAll", leaf: `beforeAll(({}, suite) => count(suite)); test("leaf", () => {});` },
+      { from: "vitest", title: "afterAll", leaf: `afterAll(({}, suite) => count(suite)); test("leaf", () => {});` },
+      {
+        from: "vitest",
+        title: "TestRunner.getCurrentTest()",
+        leaf: `test("leaf", () => count(TestRunner.getCurrentTest().suite));`,
+      },
+      {
+        from: "vitest",
+        title: "a test.extend() fixture reads task",
+        leaf: `
+          const it = test.extend({ innermost: async ({ task }, use) => { await use(task.suite); } });
+          it("leaf", ({ innermost }) => count(innermost));
+        `,
+      },
+      {
+        from: "bun:test",
+        title: "aroundAll",
+        leaf: `aroundAll(async (runSuite, {}, suite) => { count(suite); await runSuite(); }); test("leaf", () => {});`,
+      },
+      {
+        from: "bun:test",
+        title: "aroundEach at the top of the file",
+        top: `aroundEach(async (runTest, context, suite) => { count(suite); await runTest(); });`,
+        leaf: `test("leaf", () => {});`,
+      },
+      {
+        from: "bun:test",
+        title: "test.for reads task",
+        leaf: `test.for([1])("leaf %i", (row, { task }) => count(task.suite));`,
+      },
+    ])('$title, from "$from"', async ({ from, leaf, top = "" }) => {
+      const { log, stderr, exitCode } = await runTests(
+        {
+          "describe-deep.test.js": `
+            import * as runner from "${from}";
+            const { afterAll, aroundAll, aroundEach, beforeAll, describe, test, TestRunner } = runner;
+
+            // Prints how many Suites there are from the innermost to the outermost.
+            function count(suite) {
+              let suites = 0;
+              for (let outer = suite; outer; outer = outer.suite) suites++;
+              console.log(suites);
+            }
+            ${top}
+            let depth = ${levels};
+            function nest() {
+              if (depth-- <= 0) {
+                ${leaf}
+                return;
+              }
+              describe(nest);
+            }
+            nest();
+          `,
+        },
+        "1 MB",
+      );
+      expect(stderr).toInclude("\n 1 pass");
+      expect(stderr).toInclude("\n 0 fail");
+      expect({ log, exitCode }).toEqual({ log: [String(levels)], exitCode: 0 });
+    });
+  });
 });

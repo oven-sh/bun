@@ -3,6 +3,7 @@
 use core::ptr::NonNull;
 use std::rc::Rc;
 
+use bun_collections::smallvec::SmallVec;
 use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
@@ -587,6 +588,14 @@ fn put_full_names(
     Ok(())
 }
 
+fn new_suite(global: &JSGlobalObject, base: &BaseScope) -> JsResult<JSValue> {
+    let task = JSValue::create_empty_object(global, 10);
+    task.put(global, b"type", ascii(global, "suite")?);
+    task.put(global, b"mode", ascii(global, mode(base))?);
+    task.put(global, b"meta", JSValue::create_empty_object_with_null_prototype(global));
+    Ok(task)
+}
+
 /// Vitest's `Suite` for a describe block, or its `File` for the root scope. Cached in `DescribeScope::task`.
 #[optimize(size)]
 pub(crate) fn suite_task(
@@ -597,33 +606,57 @@ pub(crate) fn suite_task(
     let root: *mut DescribeScope = &raw mut *buntest.collection.root_scope;
     // SAFETY: `scope` is in `buntest`'s describe tree, or is the preload hook scope above it.
     let scope = if unsafe { (*scope).base.parent.is_none() } { root } else { scope };
-    // SAFETY: as above; the borrow ends before the recursive calls.
+    // SAFETY: as above.
     if let Some(task) = unsafe { &(*scope).task } {
         return Ok(task.get());
     }
-    let task = JSValue::create_empty_object(global, 10);
     // SAFETY: as above.
-    unsafe { (*scope).task = Some(Strong::create(task, global)) };
-    // SAFETY: as above.
-    let base = unsafe { &(*scope).base };
-    task.put(global, b"type", ascii(global, "suite")?);
-    task.put(global, b"mode", ascii(global, mode(base))?);
-    task.put(global, b"meta", JSValue::create_empty_object_with_null_prototype(global));
-    if scope == root {
-        let name = bun_string_jsc::create_utf8_for_js(global, &file_name(buntest))?;
-        task.put(global, b"name", name);
-        task.put(global, b"fullName", name);
-        task.put(global, b"filepath", bun_string_jsc::create_utf8_for_js(global, file_path(buntest))?);
-        task.put(global, b"file", task);
-        return Ok(task);
+    let file = match unsafe { &(*root).task } {
+        Some(file) => file.get(),
+        None => {
+            // SAFETY: as above.
+            let file = new_suite(global, unsafe { &(*root).base })?;
+            let name = bun_string_jsc::create_utf8_for_js(global, &file_name(buntest))?;
+            file.put(global, b"name", name);
+            file.put(global, b"fullName", name);
+            file.put(global, b"filepath", bun_string_jsc::create_utf8_for_js(global, file_path(buntest))?);
+            file.put(global, b"file", file);
+            // SAFETY: as above.
+            unsafe { (*root).task = Some(Strong::create(file, global)) };
+            file
+        }
+    };
+
+    // Uses an explicit stack instead of recursion, because `describe()` can nest arbitrarily deep.
+    let mut missing: SmallVec<[*mut DescribeScope; 8]> = SmallVec::new();
+    let mut next = Some(scope);
+    let mut parent = loop {
+        let Some(scope) = next.filter(|&scope| scope != root) else {
+            break None;
+        };
+        // SAFETY: `scope` is a describe block around the one asked for, or is that one. A parent outlives its children.
+        if let Some(task) = unsafe { &(*scope).task } {
+            break Some(task.get());
+        }
+        missing.push(scope);
+        // SAFETY: as above.
+        next = unsafe { (*scope).base.parent };
+    };
+    while let Some(scope) = missing.pop() {
+        // SAFETY: as above.
+        let base = unsafe { &(*scope).base };
+        let task = new_suite(global, base)?;
+        task.put(global, b"name", bun_string_jsc::create_utf8_for_js(global, base.name.as_deref().unwrap_or(b""))?);
+        put_full_names(global, task, buntest, base)?;
+        task.put(global, b"file", file);
+        if let Some(parent) = parent {
+            task.put(global, b"suite", parent);
+        }
+        // SAFETY: as above. The Suite is complete, so a build that fails leaves none in the cache.
+        unsafe { (*scope).task = Some(Strong::create(task, global)) };
+        parent = Some(task);
     }
-    task.put(global, b"name", bun_string_jsc::create_utf8_for_js(global, base.name.as_deref().unwrap_or(b""))?);
-    put_full_names(global, task, buntest, base)?;
-    task.put(global, b"file", suite_task(global, buntest, root)?);
-    if let Some(parent) = base.parent.filter(|&parent| parent != root) {
-        task.put(global, b"suite", suite_task(global, buntest, parent)?);
-    }
-    Ok(task)
+    Ok(parent.unwrap_or(file))
 }
 
 /// Rejects rather than throws, so the report shows the error's own stack and not the `throw` site's.

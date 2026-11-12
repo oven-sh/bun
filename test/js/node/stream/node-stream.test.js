@@ -1,5 +1,5 @@
 import { exposedInternals } from "bun:internal-for-testing";
-import { afterEach, describe, expect, it, jest } from "bun:test";
+import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
@@ -715,13 +715,9 @@ it("Readable.fromWeb: a stream that ended while paused still delivers every byte
 // only through maybeReadMore_, which stops when the push came from its own _read() and never reads for a paused stream
 // at highWaterMark 0. The source reads only when _read() asks, so the stream stopped there: no more text, no 'end'.
 describe("Readable.fromWeb over a native source: a pull inside _read() that returns bytes the decoder holds back", () => {
-  afterEach(() => {
-    delete Object.prototype.setFlowing;
-  });
-
   // A stream whose native source returns what the test scripts, one step a pull. _read() calls `setFlowing?.(true)`
   // on the source first and the Blob source has no setFlowing, so one on Object.prototype runs with the source as
-  // `this`.
+  // `this`. The stream's first read() is made here, while that property exists, so no other stream can reach it.
   function scripted(script, options) {
     const log = { pulls: 0 };
     Object.defineProperty(Object.prototype, "setFlowing", {
@@ -741,7 +737,13 @@ describe("Readable.fromWeb over a native source: a pull inside _read() that retu
         };
       },
     });
-    return { stream: Readable.fromWeb(new Blob(["unused"]).stream(), options), log };
+    try {
+      const stream = Readable.fromWeb(new Blob(["unused"]).stream(), options);
+      stream.read(0);
+      return { stream, log };
+    } finally {
+      delete Object.prototype.setFlowing;
+    }
   }
   // Steps. A pull returns its bytes at once, copied into the view it was given or in an array of their own, or it
   // returns false at EOF, or a promise of one of those.
@@ -1041,9 +1043,7 @@ describe("Readable.fromWeb over a native source: a pull inside _read() that retu
         stderr: "",
         exitCode: 0,
       });
-      // The fixtures give up on their markers after 15 s, so their own error, not a test timeout, is what gets reported.
     },
-    30_000,
   );
 
   // A fetch body keeps the bytes that do not fit the buffer of the pull that waits for them, and returns them to the

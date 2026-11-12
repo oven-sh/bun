@@ -1903,8 +1903,5 @@ it.skipIf(!isPosix)(
       stderr: "",
       exitCode: 0,
     });
-    // The fixtures give up on their markers after 15 s, so their own error,
-    // not a test timeout, is what gets reported.
   },
-  30_000,
 );

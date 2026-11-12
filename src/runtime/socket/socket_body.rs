@@ -912,6 +912,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             socket: self.ref_guard(),
             this_value: jsc::Strong::create(this_value, &global),
             handlers: Rc::clone(handlers),
+            _cell_root: handlers.root_cell(&global),
             status,
         });
         handlers
@@ -988,6 +989,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Hold the socket alive for the rest of the dispatch: `internal_flush`
         // and the drain callback can both re-enter JS and close it.
         let _guard = RefPtr::from_this(this);
+        let _cell = handlers.keep_cell_alive();
         if !this.internal_flush() || this.socket.get().is_detached() {
             return Ok(());
         }
@@ -2195,6 +2197,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
         let handlers = this.get_handlers();
+        let _cell = handlers.keep_cell_alive();
         log!(
             "onClose {}",
             if handlers.mode == super::SocketMode::Server {
@@ -2655,6 +2658,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         // A Duplex transport's `write()` runs JS, which can close this socket.
         let _guard = self.ref_guard();
+        let _cell = handlers.keep_cell_alive();
         let result = if self.buffered_data_for_node_net.get().len() == 0 {
             self.write_or_end::<false>(
                 global,
@@ -3471,6 +3475,8 @@ pub(crate) struct DeferredWriteCompletion<const SSL: bool> {
     /// A closed socket holds its wrapper weakly.
     this_value: jsc::Strong,
     handlers: Rc<Handlers>,
+    /// A `connect()` made before the task runs puts another cell in the wrapper's slot.
+    _cell_root: jsc::Strong,
     /// `None`: close the socket if its reads are still stopped. `on_close` reports the failed write.
     status: Option<c_int>,
 }

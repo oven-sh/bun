@@ -100,6 +100,13 @@ impl Handlers {
         self.cell.root(global)
     }
 
+    /// Keeps the cell alive for a frame that reads it after running JS: a `connect()` made there puts another cell in the wrapper's slot.
+    #[inline]
+    #[must_use = "the cell is collectable as soon as this drops"]
+    pub(crate) fn keep_cell_alive(&self) -> bun_jsc::EnsureStillAlive {
+        bun_jsc::EnsureStillAlive(self.cell())
+    }
+
     /// Records the listener that accepted these sockets (server mode only), or
     /// clears it when that listener is dropped.
     pub(crate) fn set_listener(&self, listener: Option<NonNull<SocketListener>>) {
@@ -212,6 +219,7 @@ impl Handlers {
         self.vm.event_loop_ref().enter();
         Scope {
             handlers: Rc::clone(self),
+            _cell: self.keep_cell_alive(),
             _context: context,
         }
     }
@@ -455,6 +463,7 @@ impl Handlers {
 /// to invoke outlive a `close()` from inside them.
 pub(crate) struct Scope {
     pub(crate) handlers: Rc<Handlers>,
+    _cell: bun_jsc::EnsureStillAlive,
     _context: bun_jsc::virtual_machine::ContextScope<'static>,
 }
 

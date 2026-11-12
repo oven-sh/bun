@@ -271,7 +271,7 @@ describe.skipIf(!isDebug && !isASAN)("work that comes back after its worker bega
 });
 
 const cc = isWindows ? null : process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-test.concurrent.skipIf(!cc)("napi_queue_async_work fails in a finalizer during a worker's final GC", async () => {
+test.concurrent.skipIf(!cc)("napi_queue_async_work fails in a finalizer once a worker's VM has closed", async () => {
   using dir = tempDir("worker-late-napi", {});
   const addon = path.join(String(dir), "addon.node");
   await using build = Bun.spawn({
@@ -289,13 +289,15 @@ test.concurrent.skipIf(!cc)("napi_queue_async_work fails in a finalizer during a
     stderr: "inherit",
   });
   expect(await build.exited).toBe(0);
-  // The worker keeps the external reachable, so it's only finalized when the worker's heap is destroyed.
+  // The worker keeps the external reachable, so it's finalized when the addon's env is torn down. The
+  // fixture's other async work is still on the thread pool when the worker exits, so that waits until
+  // the worker's VM has closed.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `new (require("node:worker_threads").Worker)(
-        "globalThis.keep = require(" + JSON.stringify(process.argv[1]) + ").queueFromFinalizer();",
+        "globalThis.keep = require(" + JSON.stringify(process.argv[1]) + ").queueFromFinalizer(); process.exit(0);",
         { eval: true },
       );`,
       addon,

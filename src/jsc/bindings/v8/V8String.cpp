@@ -364,6 +364,23 @@ String::Utf8Value::~Utf8Value()
     fastFree(str_);
 }
 
+#if OS(WINDOWS)
+char* String::Utf8Value::operator*()
+{
+    return str_;
+}
+
+const char* String::Utf8Value::operator*() const
+{
+    return str_;
+}
+
+size_t String::Utf8Value::length() const
+{
+    return length_;
+}
+#endif
+
 int String::Length() const
 {
     auto jsString = localToObjectPointer<JSString>();

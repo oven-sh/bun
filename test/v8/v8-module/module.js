@@ -346,8 +346,18 @@ module.exports = debugMode => {
       const proxyTarget = {};
       const { proxy: revoked, revoke } = Proxy.revocable({}, {});
       revoke();
-      const [ctor, plain] = nativeModule.test_v8_object_set_native_data_property(new Proxy(proxyTarget, {}), revoked);
+      const fixed = {};
+      Object.defineProperty(fixed, "fixed", { value: 1 });
+      Object.defineProperty(fixed, "0", { value: 2 });
+      const array = [1, 2];
+      const [ctor, plain] = nativeModule.test_v8_object_set_native_data_property(
+        new Proxy(proxyTarget, {}),
+        revoked,
+        fixed,
+        array,
+      );
       console.log("proxy target keys =", JSON.stringify(Object.keys(proxyTarget)));
+      console.log("fixed =", fixed.fixed, fixed[0], "array length =", array.length);
       console.log("ctor.prototype is object =", typeof ctor.prototype === "object" && ctor.prototype !== null);
       console.log("plain[0] =", plain[0]);
       console.log("ctor.level =", ctor.level);
@@ -369,7 +379,8 @@ module.exports = debugMode => {
     },
 
     test_v8_function_template_has_instance() {
-      const [ctor, constructed] = nativeModule.test_v8_function_template_has_instance();
+      const [ctor, constructed, fromObjectTemplate] = nativeModule.test_v8_function_template_has_instance();
+      console.log("ObjectTemplate::New(isolate, F) instance instanceof F =", fromObjectTemplate instanceof ctor);
       const fromCreate = Object.create(ctor.prototype);
       console.log("Object.create(F.prototype) =", nativeModule.has_instance(fromCreate));
       console.log("instanceof for Object.create =", fromCreate instanceof ctor);

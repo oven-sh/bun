@@ -1,5 +1,8 @@
 #include "ObjectTemplate.h"
 #include "FunctionTemplate.h"
+#include "Function.h"
+#include "GlobalInternals.h"
+#include "ZigGlobalObject.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JavaScriptCore/LazyPropertyInlines.h"
@@ -74,9 +77,23 @@ Structure* ObjectTemplate::createStructure(JSC::VM& vm, JSC::JSGlobalObject* glo
 
 InternalFieldObject* ObjectTemplate::newInstance()
 {
+    auto* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject());
+    auto& vm = JSC::getVM(zigGlobal);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* structure = m_objectStructure.get(this);
-    auto* newInstance = InternalFieldObject::create(globalObject()->vm(), structure, this, m_internalFieldCount);
-    applyTemplateProperties(globalObject(), newInstance, m_properties, m_accessors);
+    auto* newInstance = InternalFieldObject::create(vm, structure, this, m_internalFieldCount);
+    // As in V8, an instance of a template with a constructor gets the constructor's prototype.
+    if (auto* constructor = m_constructor.get()) {
+        auto* function = constructor->makeFunction(vm, zigGlobal, zigGlobal->V8GlobalInternals());
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        JSC::JSValue prototype = function->get(zigGlobal, vm.propertyNames->prototype);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (prototype.isObject()) {
+            newInstance->setPrototypeDirect(vm, prototype);
+        }
+    }
+    applyTemplateProperties(zigGlobal, newInstance, m_properties, m_accessors);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     return newInstance;
 }
 

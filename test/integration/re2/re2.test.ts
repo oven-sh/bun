@@ -52,7 +52,7 @@ describe("re2", () => {
         log(new RE2("1").test(1.5), new RE2("undefined").test(undefined), String(new RE2("x", "g")));
         log("aXbXc".split(new RE2("X")), "abc".search(new RE2("c")), "a1b22".replace(new RE2("\\\\d+", "g"), (m, i) => "[" + m + "@" + i + "]"));
         log(new RE2("(\\\\w)(\\\\d)?").exec("a").length, new RE2("(?<n>x)").exec("x").groups, Object.getPrototypeOf(new RE2("(?<n>x)").exec("x").groups));
-        const big = "x".repeat(100000) + "needle";
+        const big = Buffer.alloc(100000, "x").toString() + "needle";
         log(new RE2("needle").test(big), new RE2("needle").exec(big).index);
         log(RE2.getUtf8Length("héllo"), RE2.getUtf16Length(Buffer.from("héllo")));
         try {
@@ -119,5 +119,5 @@ describe("re2", () => {
       "[true,true,1]",
     ]);
     expect(exitCode).toBe(0);
-  }, 600_000);
+  }, 120_000);
 });

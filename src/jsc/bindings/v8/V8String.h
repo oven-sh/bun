@@ -139,9 +139,17 @@ public:
     public:
         BUN_EXPORT Utf8Value(Isolate* isolate, Local<v8::Value> obj);
         BUN_EXPORT ~Utf8Value();
+#if OS(WINDOWS)
+        // Inline in v8-primitive.h without V8_INLINE, so an addon built with MSVC /Ob0
+        // (node-gyp --debug) imports them instead of emitting them.
+        BUN_EXPORT char* operator*();
+        BUN_EXPORT const char* operator*() const;
+        BUN_EXPORT size_t length() const;
+#else
         char* operator*() { return str_; }
         const char* operator*() const { return str_; }
         size_t length() const { return length_; }
+#endif
 
         Utf8Value(const Utf8Value&) = delete;
         void operator=(const Utf8Value&) = delete;

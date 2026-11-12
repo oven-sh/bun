@@ -4223,6 +4223,12 @@ mod v8_api {
         pub(super) fn v8_String_Utf8Value_ctor() -> *mut c_void;
         #[link_name = "??1Utf8Value@String@v8@@QEAA@XZ"]
         pub(super) fn v8_String_Utf8Value_dtor() -> *mut c_void;
+        #[link_name = "??DUtf8Value@String@v8@@QEAAPEADXZ"]
+        pub(super) fn v8_String_Utf8Value_deref() -> *mut c_void;
+        #[link_name = "??DUtf8Value@String@v8@@QEBAPEBDXZ"]
+        pub(super) fn v8_String_Utf8Value_deref_const() -> *mut c_void;
+        #[link_name = "?length@Utf8Value@String@v8@@QEBA_KXZ"]
+        pub(super) fn v8_String_Utf8Value_length() -> *mut c_void;
         #[link_name = "?BooleanValue@Value@v8@@QEBA_NPEAVIsolate@2@@Z"]
         pub(super) fn v8_Value_BooleanValue() -> *mut c_void;
         #[link_name = "?ByteLength@ArrayBuffer@v8@@QEBA_KXZ"]
@@ -5517,6 +5523,9 @@ pub(crate) fn fix_dead_code_elimination() {
             v8_Map_Delete,
             v8_String_Utf8Value_ctor,
             v8_String_Utf8Value_dtor,
+            v8_String_Utf8Value_deref,
+            v8_String_Utf8Value_deref_const,
+            v8_String_Utf8Value_length,
             v8_Value_BooleanValue,
             v8_ArrayBuffer_ByteLength,
             v8_SharedArrayBuffer_ByteLength,

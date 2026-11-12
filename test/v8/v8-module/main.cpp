@@ -2275,6 +2275,19 @@ void test_v8_object_set_native_data_property(
     LOG_EXPR(on_proxy.FromJust());
   }
 
+  // info[2]: an object with a non-configurable own "fixed" and "0". info[3]: an array.
+  for (const char *key : {"fixed", "0"}) {
+    Maybe<bool> on_fixed = info[2].As<Object>()->SetNativeDataProperty(
+        context, String::NewFromUtf8(isolate, key).ToLocalChecked(),
+        data_echo_getter, nullptr,
+        String::NewFromUtf8Literal(isolate, "replaced"));
+    LOG_EXPR(on_fixed.FromJust());
+  }
+  Maybe<bool> on_length = info[3].As<Object>()->SetNativeDataProperty(
+      context, String::NewFromUtf8Literal(isolate, "length"), data_echo_getter,
+      nullptr, String::NewFromUtf8Literal(isolate, "replaced"));
+  LOG_EXPR(on_length.FromJust());
+
   object_accessor_set_count = 0;
   Local<Value> results[] = {ctor, plain};
   info.GetReturnValue().Set(Array::New(isolate, results, 2));
@@ -2318,8 +2331,8 @@ void test_v8_function_template_has_instance(
 
   // The driver reparents objects and asks again through has_instance().
   has_instance_template.Reset(isolate, tpl);
-  Local<Value> results[] = {ctor, constructed};
-  info.GetReturnValue().Set(Array::New(isolate, results, 2));
+  Local<Value> results[] = {ctor, constructed, with_explicit_constructor};
+  info.GetReturnValue().Set(Array::New(isolate, results, 3));
 }
 
 void has_instance(const FunctionCallbackInfo<Value> &info) {

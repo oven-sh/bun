@@ -34,11 +34,12 @@ namespace node {
 
 namespace Buffer {
 
+// Node's CHECK(val->IsArrayBufferView()). The type check reads the handle's kind first, so
+// a number or an oddball aborts with this message instead of being read as a cell.
 static JSC::JSArrayBufferView* viewOf(v8::Local<v8::Value> val, const char* caller)
 {
-    auto* view = val->localToObjectPointer<JSC::JSArrayBufferView>();
-    RELEASE_ASSERT(view, "%s: not an ArrayBufferView", caller);
-    return view;
+    RELEASE_ASSERT(val->IsArrayBufferView(), "%s: not an ArrayBufferView", caller);
+    return val->localToObjectPointer<JSC::JSArrayBufferView>();
 }
 
 bool HasInstance(v8::Local<v8::Value> val)

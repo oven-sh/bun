@@ -238,8 +238,10 @@ Maybe<bool> Object::SetNativeDataProperty(
     RETURN_IF_EXCEPTION(scope, Nothing<bool>());
 
     // V8 leaves an own property that is not configurable as it is and returns false.
-    unsigned existingAttributes = 0;
-    if (object->structure()->get(vm, identifier, existingAttributes) != JSC::invalidOffset && (existingAttributes & JSC::PropertyAttribute::DontDelete)) {
+    JSC::PropertyDescriptor existing;
+    bool hasOwn = object->getOwnPropertyDescriptor(globalObject, identifier, existing);
+    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
+    if (hasOwn && !existing.configurable()) {
         return Just(false);
     }
 
@@ -262,10 +264,12 @@ Maybe<bool> Object::SetPrototypeV2(Local<Context> context, Local<Value> prototyp
         return Just(true);
     }
     // V8 returns Nothing for a prototype that [[SetPrototypeOf]] refuses (a cycle, a
-    // non-extensible object) and leaves no exception. It swallows a Proxy trap's throw too.
+    // non-extensible object) and leaves no exception. It swallows a Proxy trap's throw
+    // too, but not an exception the addon threw before the call.
+    bool hadException = !!scope.exception();
     bool success = object->setPrototype(vm, globalObject, proto, false);
     if (scope.exception()) [[unlikely]] {
-        if (object->inherits<JSC::ProxyObject>()) {
+        if (!hadException && object->inherits<JSC::ProxyObject>()) {
             scope.clearExceptionExceptTermination();
         }
         return Nothing<bool>();

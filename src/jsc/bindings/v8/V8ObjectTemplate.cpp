@@ -23,10 +23,11 @@ Local<ObjectTemplate> ObjectTemplate::New(Isolate* isolate, Local<FunctionTempla
 
 MaybeLocal<Object> ObjectTemplate::NewInstance(Local<Context> context)
 {
-
     auto& vm = context->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* thisObj = localToObjectPointer();
     auto* newInstance = thisObj->newInstance();
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<Object>());
     return MaybeLocal<Object>(context->currentHandleScope()->createLocal<Object>(vm, newInstance));
 }
 

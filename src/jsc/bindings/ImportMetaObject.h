@@ -61,8 +61,7 @@ public:
     /// stated in https://github.com/oven-sh/bun/pull/9399
     static ImportMetaObject* createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier);
 
-    /// The `url` that createFromSpecifier() gives the object made for `specifier`. Compare a module key
-    /// against `url` through this, not against `import.meta.path`: the path loses the key's separators.
+    /// The `url` that createFromSpecifier() gives the object made for `specifier`.
     static WTF::String urlForSpecifier(const String& specifier);
 
     DECLARE_INFO;

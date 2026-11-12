@@ -28,10 +28,10 @@ enum class ListenerRemoval : bool {
     Announce,
 };
 
-// What the 'removeListener' listeners get besides the listener. `receiver` is their `this`: the object whose method removes, or the `this` of the emit that fires a once() listener.
-// `eventName` is the name as the program passed it. Without one they get the event type as a string or a symbol.
 struct RemovalAnnouncement {
+    // The `this` of the 'removeListener' listeners.
     JSC::JSValue receiver;
+    // As the program passed it. Empty: the event type, as a string or a symbol.
     JSC::JSValue eventName;
 };
 

@@ -1,5 +1,5 @@
-// The turns of the outer loop fill the rows that they find, so no row is asked in them: read as raw numbers, whole numbers would be stored back as fractions are.
-// STATISTIC: ArraysGuardedInIterations = 0
+// The turns of the outer loop fill the rows that they find: the rows are asked whether they hold doubles or int32s, and each is stored into as its kind is.
+// STATISTIC: WalkLoopsVersioned >= 5
 class Table {
   private readonly rows: number[][] = [];
   constructor(

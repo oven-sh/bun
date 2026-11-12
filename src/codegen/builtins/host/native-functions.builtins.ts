@@ -252,7 +252,7 @@ export default b.declarations(
     implementation: b.hostCall,
   }),
   // It lists the own keys of the source and asks first the target, then the source and then `replacements` for the property under each: no getter of any runs. What the target lacks is defined on it as it stands on the source, a value with the value that `replacements` has under the key.
-  b.static(cpp("BunCompiledModules.cpp", "jsFunctionDefineOwnPropertiesLeftOut"), {
+  b.static(cpp("BunCompiledModules.cpp", "jsFunctionDefineMissingProperties"), {
     ...operandCodeOnly,
     args: { target: b.object, source: b.object, replacements: b.union(b.object, b.undefined) },
     returns: b.undefined,

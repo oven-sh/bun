@@ -1,4 +1,7 @@
-use crate::modules::testing::{file_named, with_graph_of_test_files};
+use crate::compile::testing::with_bind_input_of_test_files;
+use crate::ir::generated::ImportPhase;
+use crate::modules::testing::{bind_whole_program, file_named, with_graph_of_test_files};
+use crate::modules::{BindInput, ModuleGraph, ModuleRef};
 
 const GAUGE: (&str, &str) = (
     "gauge.cjs",
@@ -19,7 +22,7 @@ fn files_that_run_again<'a>(
 }
 
 #[test]
-fn an_es_package_that_a_mock_names_may_run_again_and_nothing_around_it() {
+fn mocked_package_reloads_with_importers() {
     let es = r#"{ "type": "module", "main": "index.js" }"#;
     let test_file = "import { test, vi } from 'bun:test';\nimport './reader.ts';\nvi.mock('kit');\nvi.mock('old');\nvi.mock('./own.ts');\ntest('t', () => import('kit'));";
     let files = [
@@ -42,7 +45,15 @@ fn an_es_package_that_a_mock_names_may_run_again_and_nothing_around_it() {
         code.filter(|name| graph.may_be_reevaluated(file_named(input, name)))
             .collect()
     });
-    assert_eq!(marked, ["node_modules/kit/index.js"]);
+    assert_eq!(
+        marked,
+        [
+            "reader.ts",
+            "own.ts",
+            "node_modules/kit/index.js",
+            "node_modules/old/index.js"
+        ]
+    );
 }
 
 fn reloadable_files<'a>(files: &[(&'a str, &str)], test_files: usize) -> Vec<&'a str> {
@@ -74,6 +85,45 @@ fn a_mocked_file_and_its_importers_are_reloadable() {
     );
 }
 
+fn reloadable_commonjs_files<'a>(files: &[(&'a str, &str)], test_files: usize) -> Vec<&'a str> {
+    with_graph_of_test_files(files, test_files, 0, |graph, input| {
+        let is_marked = &graph.test_run().is_reloadable_commonjs;
+        let names = files.iter().map(|&(name, _)| name);
+        names
+            .filter(|name| is_marked[file_named(input, name).idx()])
+            .collect()
+    })
+}
+
+#[test]
+fn evicted_commonjs_files_may_run_again() {
+    let files = [
+        (
+            "a.test.ts",
+            "import { mock } from 'bun:test';\nimport './user.cjs';\nimport './reader.ts';\nmock.module('./gauge.cjs', () => ({}));\nmock.module('node:os', () => ({}));",
+        ),
+        ("b.test.ts", "import './above.cjs';\nimport './aside.cjs';"),
+        ("gauge.cjs", "exports.word = 1;"),
+        (
+            "user.cjs",
+            "exports.word = () => require('./gauge.cjs').word;",
+        ),
+        ("above.cjs", "exports.user = require('./reader.ts');"),
+        (
+            "reader.ts",
+            "import './system.cjs';\nimport os from 'node:os';\nexport const host = os;",
+        ),
+        ("system.cjs", "exports.os = require('node:os');"),
+        ("aside.cjs", "exports.far = 1;"),
+    ];
+    assert_eq!(
+        reloadable_commonjs_files(&files, 2),
+        ["gauge.cjs", "user.cjs", "above.cjs"]
+    );
+    let without_mock = [("a.test.ts", "import './gauge.cjs';"), files[2]];
+    assert!(reloadable_commonjs_files(&without_mock, 1).is_empty());
+}
+
 #[test]
 fn importers_of_a_mocked_built_in_module_are_reloadable() {
     let files = [
@@ -92,6 +142,36 @@ fn importers_of_a_mocked_built_in_module_are_reloadable() {
         ),
     ];
     assert_eq!(reloadable_files(&files, 2), ["a.test.ts", "reader.ts"]);
+}
+
+#[test]
+fn instances_of_es_modules() {
+    let files = [
+        (
+            "a.test.ts",
+            "import { vi } from 'bun:test';\nimport { read } from './user.ts';\nimport './old.cjs';\nvi.doMock('./dep.ts', () => ({}));\nread();",
+        ),
+        (
+            "user.ts",
+            "import { who } from './dep.ts';\nexport const read = () => who;\nexport let count = 0;\nlet hidden = 1;\nhidden++;",
+        ),
+        ("old.cjs", "exports.dep = require('./dep.ts');"),
+        ("dep.ts", "export const who = 1;"),
+    ];
+    with_graph_of_test_files(&files, 1, 0, |graph, input| {
+        let (user, dep) = (file_named(input, "user.ts"), file_named(input, "dep.ts"));
+        let layout = graph.instance_layout(user);
+        let layout = layout.expect("user.ts imports a mocked file");
+        assert_eq!(layout.exports().len(), 2);
+        assert_eq!(layout.links(), [dep]);
+        assert_eq!(layout.field_of_link(dep), Some(2));
+        assert_eq!(layout.field_of_mock(ModuleRef::File(dep)), Some(3));
+        assert_eq!(layout.field_of_namespace(ImportPhase::Evaluation), 4);
+        assert_eq!(layout.field_of_scope(), 6);
+        assert!(graph.has_instances(file_named(input, "a.test.ts")));
+        assert!(graph.is_reloadable(file_named(input, "old.cjs")));
+        assert!(!graph.has_instances(file_named(input, "old.cjs")));
+    });
 }
 
 #[test]
@@ -198,4 +278,133 @@ fn a_hoisted_statement_runs_in_front_of_the_imports_that_are_written_above_it() 
     );
     let files = [("a.test.ts", &in_place[..]), panel, GAUGE];
     assert!(files_that_run_again(&files, 1, 0).is_empty());
+}
+
+#[test]
+fn path_through_barrels() {
+    let files = [
+        (
+            "a.test.ts",
+            "import { vi } from 'bun:test';\nimport { value } from './outer.ts';\nvi.doMock('./leaf.ts', () => ({}));\nvalue;",
+        ),
+        ("outer.ts", "export * from './inner.ts';"),
+        ("inner.ts", "export { leaf as value } from './leaf.ts';"),
+        ("leaf.ts", "export const leaf = 1;"),
+    ];
+    with_graph_of_test_files(&files, 1, 0, |graph, input| {
+        let file = |name| file_named(input, name);
+        let (outer, inner, leaf) = (file("outer.ts"), file("inner.ts"), file("leaf.ts"));
+        let value = input.files.atoms.intern(b"value");
+        let path = graph.find_path_to_declaration(outer, value, leaf);
+        assert_eq!(path, Some(vec![outer, inner, leaf]));
+        let path = graph.find_path_to_holder(outer, value, inner);
+        assert_eq!(path, Some(vec![outer, inner]));
+        assert_eq!(graph.find_path_to_declaration(inner, value, outer), None);
+        let layout = graph.instance_layout(outer).expect("it may load again");
+        assert_eq!(layout.links(), [inner]);
+        let files = |&path| graph.files_of_path(path);
+        let reexports: Vec<_> = layout.reexports().iter().map(files).collect();
+        assert_eq!(reexports, [vec![inner, leaf]]);
+        let after_scope = layout.field_of_scope() + 1;
+        let field_of = |path: &[_]| graph.field_of_path(outer, graph.intern_path(path)?);
+        assert_eq!(field_of(&[inner, leaf]), Some(after_scope));
+        assert_eq!(field_of(&[inner]), layout.field_of_link(inner));
+    });
+}
+
+#[test]
+fn path_leaves_star_cycle() {
+    let files = [
+        (
+            "a.test.ts",
+            "import { vi } from 'bun:test';\nimport { leaf } from './outer.ts';\nvi.doMock('./leaf.ts', () => ({}));\nleaf;",
+        ),
+        (
+            "outer.ts",
+            "export * from './inner.ts';\nexport * from './leaf.ts';",
+        ),
+        (
+            "inner.ts",
+            "export * from './outer.ts';\nexport const own = 1;",
+        ),
+        ("leaf.ts", "export const leaf = 1;"),
+    ];
+    with_graph_of_test_files(&files, 1, 0, |graph, input| {
+        let file = |name| file_named(input, name);
+        let (outer, inner, leaf) = (file("outer.ts"), file("inner.ts"), file("leaf.ts"));
+        let name = input.files.atoms.intern(b"leaf");
+        let path = graph.find_path_to_declaration(outer, name, leaf);
+        assert_eq!(path, Some(vec![outer, leaf]));
+        let path = graph.find_path_to_declaration(inner, name, leaf);
+        assert_eq!(path, Some(vec![inner, outer, leaf]));
+    });
+}
+
+#[test]
+fn reloadable_files_of_one_realm() {
+    let files = [
+        (
+            "calls.test.ts",
+            "import { mock } from 'bun:test';\nmock.module('./dep.ts', () => ({}));\nawait import('./user.ts');",
+        ),
+        (
+            "mocks.test.ts",
+            "import { mock } from 'bun:test';\nimport './other.ts';\nmock.module('./leaf.ts', () => ({}));",
+        ),
+        (
+            "imports.test.ts",
+            "import './user.ts';\nimport './other.ts';",
+        ),
+        ("user.ts", "import './dep.ts';"),
+        ("dep.ts", "export const dep = 1;"),
+        ("other.ts", "import './leaf.ts';"),
+        ("leaf.ts", "export const leaf = 1;"),
+    ];
+    let reloadable = |graph: &ModuleGraph, input: &BindInput<'_, '_>| -> Vec<&str> {
+        let names = files.iter().map(|&(name, _)| name);
+        let is_reloadable = |name: &&str| graph.is_reloadable(file_named(input, name));
+        names.filter(is_reloadable).collect()
+    };
+    with_bind_input_of_test_files(&files, 3, 0, |input| {
+        let graph = bind_whole_program(input);
+        assert_eq!(reloadable(&graph, input).len(), 6);
+        let input = BindInput {
+            runs_in_several_realms: true,
+            ..*input
+        };
+        let graph = bind_whole_program(&input);
+        assert_eq!(
+            reloadable(&graph, &input),
+            ["imports.test.ts", "user.ts", "dep.ts"]
+        );
+        let input = BindInput {
+            entry_points_run_again: true,
+            ..input
+        };
+        let graph = bind_whole_program(&input);
+        assert_eq!(reloadable(&graph, &input).len(), 6);
+    });
+}
+
+#[test]
+fn reloadable_files_of_preload() {
+    let files = [
+        ("a.test.ts", "import './user.ts';"),
+        (
+            "preload.ts",
+            "import { mock } from 'bun:test';\nimport './user.ts';\nmock.module('./dep.ts', () => ({}));",
+        ),
+        ("user.ts", "import './dep.ts';"),
+        ("dep.ts", "export const dep = 1;"),
+    ];
+    with_bind_input_of_test_files(&files, 1, 1, |input| {
+        let input = BindInput {
+            runs_in_several_realms: true,
+            ..*input
+        };
+        let graph = bind_whole_program(&input);
+        for (name, _) in files {
+            assert!(graph.is_reloadable(file_named(&input, name)), "{name}");
+        }
+    });
 }

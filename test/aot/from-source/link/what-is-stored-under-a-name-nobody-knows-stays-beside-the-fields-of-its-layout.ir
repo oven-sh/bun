@@ -14,7 +14,7 @@
 # put(number() | 0, 5); lose(number() | 0, 6); sink(get(number() | 0), get(number() | 0), leaked);
 # -- end of source
 # RUN: link fields mechanisms=all
-# CHECK: field L0.0 "v" proven=i32
+# CHECK: field L0.0 "v" proven=int[0, 2147483647]
 # CHECK-NOT: field L1.0 "w" proven=
 # RUN(SHELL): run-in-shell const all = [7, 8, 7, 9]; let at = 0; globalThis.number = () => all[at++]; globalThis.sink = (a, b, c) => print(a + " " + b + " " + c[8].w);
 # SHELL: 5 -1 6

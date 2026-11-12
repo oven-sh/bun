@@ -1,0 +1,17 @@
+# -- source: main.ts
+# declare const sink: any;
+# declare const numbers: number[];
+# function pack(a: number, b: number): number { let x = 0; for (let i = 0; i < a; i++) x ^= Math.imul(b, i); return ((x << 16) | b) >>> 0; }
+# function same(a: number, b: number): boolean { return pack(a, b) === pack(b, a); }
+# function mixed(a: number, b: number): number { return pack(a, b) ^ b; }
+# sink(same(numbers[0]!, numbers[1]!), mixed(numbers[2]!, numbers[3]!));
+# -- end of source
+# A result that is an unsigned 32-bit integer is returned as the integer it is.
+# RUN(PLAN): plan units
+# PLAN: unit f1:Body {{*}} -> (Int64)
+# RUN(SAME): walk f2 mechanisms=all
+# SAME: : int[0, 4294967295] @Int64 = CallDirect {{*}}function=f1
+# SAME: = StrictEq {{*}}form=Integers
+# RUN(MIXED): walk f3 mechanisms=all
+# MIXED: : int[0, 4294967295] @Int64 = CallDirect {{*}}function=f1
+# MIXED: : i32 @Int32 = BitXor

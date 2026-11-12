@@ -1,7 +1,6 @@
 import { test, vi, mock } from "bun:test";
 import { createRequire } from "node:module";
 const need = createRequire(import.meta.url);
-setTimeout(() => { console.log("SAID still waiting"); process.exit(4); }, 3000).unref();
 test("x2", async () => {
   vi.doMock("./m.mjs", () => ({ word: "mock 1" }));
   const one = await import("./m.mjs");

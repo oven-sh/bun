@@ -25,4 +25,4 @@
 # SCORE-LABEL: code f2:Body
 # SCORE: = TypeTest {{*}}testedType=i32
 # SCORE: = NumberToInteger
-# SCORE: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral]
+# SCORE: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral

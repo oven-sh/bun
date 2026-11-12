@@ -410,6 +410,7 @@ fn binding_summary(binding: Resolution) -> Summary {
 fn provider_summary(provider: Resolution) -> Summary {
     Summary {
         provider,
+        has_unmocked_provider: true,
         ..Summary::EMPTY
     }
 }
@@ -418,6 +419,7 @@ fn required(resolution: Resolution, (module, name): NodeKey) -> ResolvedName {
     ResolvedName {
         resolution,
         required_name: Some(RequiredName::new(ModuleRef::File(module), name)),
+        is_compared_only_with_mocks: false,
     }
 }
 
@@ -1110,6 +1112,18 @@ fn binding_beside_provider_is_compared_at_run_time() {
     let [first, second] = [2, 3].map(|file| provider_summary(synthetic(file)));
     let joined = first.join(second, inner_key).join(binding, outer_key);
     assert_eq!(joined.resolve(), required(variable, outer_key));
+
+    let of_mock = Summary {
+        has_unmocked_provider: false,
+        ..provider_summary(Resolution::DynamicStar {
+            module: FileId(6),
+            name,
+        })
+    };
+    let joined = binding.join(of_mock, inner_key).resolve();
+    assert!(joined.is_compared_only_with_mocks);
+    let joined = binding.join(of_mock, inner_key).join(first, outer_key);
+    assert!(!joined.resolve().is_compared_only_with_mocks);
 }
 
 #[test]

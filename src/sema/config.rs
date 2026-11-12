@@ -1569,7 +1569,7 @@ impl GlobPattern {
         Some(matched)
     }
 
-    /// Matches the parts of `directory`, so that a name in it is matched alone.
+    /// Matches the parts of `directory`, so that a name in it can be matched by itself.
     fn in_directory<'a>(&'a self, directory: &[&[u8]]) -> DirectoryPattern<'a> {
         let mut entered = DirectoryPattern {
             pattern: self,

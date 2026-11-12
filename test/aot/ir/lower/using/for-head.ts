@@ -1,8 +1,11 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // CHECK-LABEL: function {{*}}name="loopHead"
-// CHECK: [[helper]] = Builtin builtin=CompilerHelpersGetDisposeMethod
-// CHECK-NEXT: = Call [[helper]], -, [[resource]]
+// CHECK: TypeTest [[resource]] testedType=undefined|null
+// CHECK: [[read]] = PropGet {{*}} key=@@dispose
+// CHECK-NEXT: TypeTest [[read]] testedType=function
+// CHECK: Jump -> next [[found]]({{*}})
+// CHECK-NEXT: [[found]]({{*}}):
 // CHECK-NEXT: Jump -> next [[covered]]()
 // CHECK-NEXT: [[covered]]() handler=[[landing]]():
 // CHECK-NEXT: Jump -> next [[header]]()

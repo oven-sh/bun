@@ -238,7 +238,7 @@ impl Resolver<'_, '_> {
                 MemberKey::Name(name)
                     if input.names.atom_of(name_of_module_cache()) == Some(name) =>
                 {
-                    self.find_module_cache_of_made_require(object)
+                    self.find_created_require_cache(object)
                 }
                 _ => None,
             };

@@ -444,6 +444,9 @@ function sortListOfAnyKind<T>(array: T[], length: number, comparator: unknown): 
 // Any other list is sorted here, and the answer is undefined.
 function takeValuesOrSort<T>(array: T[], comparator: unknown): T[] | undefined {
   if (!isCallable(comparator)) {
+    // Native code would list a frame of its own above the one of sort().
+    if (comparator !== undefined)
+      $throwTypeError("Array.prototype.sort requires the comparator argument to be a function or undefined");
     (array as any).sort(comparator);
     return undefined;
   }

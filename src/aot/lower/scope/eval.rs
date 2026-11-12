@@ -3,13 +3,13 @@ mod bindings;
 use bun_sema::atom::Atom;
 use bun_sema::bind::{self, Binding, CodeUnit, ScopeId, ScopeKind, SymbolId};
 use bun_sema::fold::Constant;
-use bun_sema::hir::{ClassId, ExprId, ExprKind, FnKind, IdList};
+use bun_sema::hir::{CallId, ClassId, ExprId, ExprKind, FnKind, IdList};
 
 use super::BindingForm;
 use super::identifiers::BindingRead;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{ECMAMode, EvalScope, EvalScopeFlags};
-use crate::ir::{Edge, EvalScopeId, ValueId};
+use crate::ir::{BlockId, Edge, EvalScopeId, StringId, ValueId, VariableKey};
 use crate::lower::call::{self, Arguments, Callee};
 use crate::lower::{FileLowering, FunctionLowering, commonjs, expression};
 use crate::modules::ModuleKind;
@@ -34,15 +34,15 @@ pub(crate) fn lower_direct_eval(
     call: ExprId,
 ) -> ValueId {
     let hir = lowering.file.hir;
-    let ExprKind::Call(site) = hir[call].kind else {
+    let ExprKind::Call(call_id) = hir[call].kind else {
         unreachable!("lower_direct_eval takes a Call expression");
     };
-    let site = hir[site];
+    let site = hir[call_id];
     let callee = lowering.file.skip_type_syntax(site.callee);
     let callee_name = lowering.file.identifier_name(callee);
     lowering.set_position(hir[callee].pos);
     let (function, this) = lowering.lower_identifier_callee(callee);
-    let arguments = lowering.lower_arguments(site.args);
+    let arguments = lowering.lower_arguments(hir.written_args(call_id));
     lowering.set_position(hir[call].pos);
     let eval = lowering.emit_builtin_itself(BuiltinId::Eval);
     let is_eval = lowering.builder.strict_eq(function, eval);
@@ -60,7 +60,10 @@ pub(crate) fn lower_direct_eval(
     lowering.continue_in(direct);
     let evaluated = match lowering.file.find_binding_named_by_text(call, site.args) {
         Some((binding, name)) => lowering.read_binding(binding, name, BindingRead::Value),
-        None => lowering.emit_direct_eval(call, &arguments),
+        None => {
+            lowering.lower_known_evaluations(call_id, &arguments, join);
+            lowering.emit_direct_eval(call, &arguments)
+        }
     };
     lowering.jump_with(join, &[evaluated]);
 
@@ -181,6 +184,34 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    /// Where the string is one that the build has compiled, jumps to `join` with its function.
+    fn lower_known_evaluations(&mut self, call: CallId, arguments: &Arguments, join: BlockId) {
+        let Arguments::Values(arguments) = arguments else {
+            return;
+        };
+        let (hir, Some(&text)) = (self.file.hir, arguments.first()) else {
+            return;
+        };
+        let all = hir.known_evaluations_of(call).iter();
+        let known: Vec<_> = all.filter(|it| hir.is_valid_evaluation(it)).collect();
+        if known.is_empty() {
+            return;
+        }
+        let texts = known.iter().filter_map(|it| hir.ids(it.arguments).next());
+        let strings: Vec<StringId> = texts.map(|text| self.file.intern_atom(text)).collect();
+        let blocks: Vec<BlockId> = known.iter().map(|_| self.create_block()).collect();
+        let edges: Vec<Edge<'static>> = blocks.iter().map(|&block| Edge::to(block)).collect();
+        let other = self.create_block();
+        self.builder
+            .switch_string(text, &strings, &edges, Edge::to(other));
+        for (evaluation, block) in known.into_iter().zip(blocks) {
+            self.continue_in(block);
+            let function = self.lower_expression(evaluation.function);
+            self.jump_with(join, &[function]);
+        }
+        self.continue_in(other);
+    }
+
     fn list_names_of_file(&mut self, eval_scope: bind::EvalScope) -> NamesOfFileForEvals {
         if let Some(names) = &self.file.modules.names_of_file_for_evals {
             return names.clone();
@@ -240,6 +271,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             bindings,
             outer: names_of_file.listed_once,
         });
+        let own_file = self.file.file;
+        let mark = self
+            .file
+            .ensure_variable(VariableKey::EvaluationMark(own_file));
+        let yes = self.builder.boolean(true);
+        self.builder.put_module_variable(mark, yes);
         self.builder
             .direct_eval(scope, text, this_value, new_target, &operands)
     }

@@ -1,7 +1,7 @@
 # -- source: main.js
 # function sum(box) { let s = 0; for (let i = 0; i < box.bytes.length; i++) s += box.bytes[i]; return s; }
 # const go = { sum }[JSON.parse('"sum"')];
-# console.log(go({ bytes: new Uint8Array(300).fill(3) }));
+# console.log(go({ bytes: [new Uint8Array(300).fill(3), [1, 2]][JSON.parse("0")] }));
 # -- end of source
 # The field is read in every turn. In front of the loop the box is asked for its shape and whether the slot is filled, failing to the closed copy; the slot is read once, and what it gives is told apart as what a variable holds is. In the copy for byte arrays no turn reads the slot.
 # RUN(WALK): walk f1 mechanisms=all

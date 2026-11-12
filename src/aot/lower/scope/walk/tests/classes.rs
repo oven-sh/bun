@@ -141,7 +141,7 @@ fn field_initializers_belong_to_initializers() {
 }
 
 #[test]
-fn values_of_fields_that_cannot_see_the_object_belong_to_the_constructor_that_stores() {
+fn independent_field_values_belong_to_constructor() {
     let class = |value: &str| {
         format!(
             "export class C {{ a; b = {value}; c = () => this.a; \

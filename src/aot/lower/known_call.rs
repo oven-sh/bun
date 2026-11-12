@@ -23,7 +23,8 @@ use crate::ir::{BlockId, Edge, FunctionId, FunctionKey, PropertyKeyId, TypeTable
 use crate::known_helpers::{
     HeldFunction, Helper, KnownCallee, KnownReference, PrivateFieldAccess, PrivateMemberKind,
     PrivateStateKind, PrivateStateRole, PrivateStateSite, ResolveInput, ResolvedReference, Shape,
-    resolve_callee, resolve_loaded_reference, resolve_private_field_call, resolve_reference,
+    resolve_callee, resolve_loaded_reference, resolve_private_field_call, resolve_public_field,
+    resolve_reference,
 };
 use crate::load::sources::parsed_source;
 
@@ -91,6 +92,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let (files, modules) = (self.file.queries.files(), self.file.inputs.modules);
         let states = helpers.private_states(files, modules, self.file.file);
         if let Some(state) = states.and_then(|states| states.site(call)) {
+            if self.file.counts_executions() {
+                return None;
+            }
             return match state.role {
                 PrivateStateRole::Definition => {
                     self.lower_private_state_definition(call, site, state)
@@ -114,7 +118,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if !is_lowered(self.file, callee.file) {
             return None;
         }
-        match callee.helper(helpers)? {
+        let helper = callee.helper(helpers)?;
+        // A coverage report counts the functions and the lines of a helper. The exports of a star are linked by the build.
+        let inputs = self.file.inputs;
+        if inputs.options.counts_executions
+            && inputs.sources.is_in_coverage_report(callee.file)
+            && !matches!(helper, Helper::ExportStar)
+        {
+            return None;
+        }
+        match helper {
             Helper::ExportStar => self.lower_export_star(call, site, &callee),
             Helper::CreateClass => self.lower_create_class(call, site, &callee),
             Helper::Typeof => {
@@ -124,7 +137,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 Some(self.builder.type_of(value))
             }
             Helper::ImportDefault => self.lower_import_default(call, site, &callee),
-            Helper::PublicField => self.lower_public_field(call, site, &callee),
+            Helper::PublicField => self.lower_public_field(call, site),
             Helper::ClassPrivateFieldGet | Helper::ClassPrivateFieldIn => {
                 self.lower_static_member_access(call, site)
             }
@@ -246,6 +259,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let placement = file.scopes.placement(binding);
         match placement.map(|placement| placement.storage) {
             Some(Storage::Variable(_)) => true,
+            Some(Storage::Instance { .. }) => self.reaches_stored(file.instance_slot()),
             Some(Storage::Field { scope, .. }) => {
                 let captured = self.find_captured_value(Capture::Environment(scope));
                 captured.is_some() || self.is_enclosing_scope(scope)
@@ -576,32 +590,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         super::call::emit_call(self, define, Some(object), &[target, key, descriptor]);
     }
 
-    fn lower_public_field(
-        &mut self,
-        call: ExprId,
-        site: Call,
-        callee: &KnownCallee,
-    ) -> Option<ValueId> {
+    fn lower_public_field(&mut self, call: ExprId, site: Call) -> Option<ValueId> {
         let hir = self.file.hir;
-        let helpers = self.file.inputs.known_helpers;
-        let &[held] = &callee.functions[..] else {
-            return None;
-        };
-        let known = helpers.function(callee.file, held.definition)?;
-        let is_certain = !callee.needs_guard() && callee.holds_from_the_start;
-        if !is_certain || !known.relies_on_facts || site.args.len() != 3 {
+        let callee = resolve_public_field(&resolve_input(self.file), self.file.file, site.callee)?;
+        let has_value = site.args.len() == 3;
+        if !has_value && site.args.len() != 2 {
             return None;
         }
-        let answers_value = known.shape == Shape::PublicFieldAnswersValue;
-        let [reference] = known.references[..] else {
-            return None;
-        };
-        let defines = resolve_reference(
-            &resolve_input(self.file),
-            callee.file,
-            reference,
-            &|shape| shape == Shape::DefineNormalPropertyDefinesWhatIsThereAndStoresWhatIsNot,
-        )?;
+        let answers_value = callee.shape == Shape::PublicFieldAnswersValue;
         let written = hir.skip_type_assertions(hir.id_at(site.args, 1));
         let ExprKind::String(name) = hir[written].kind else {
             return None;
@@ -614,7 +610,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let handed = hir.skip_type_assertions(hir.id_at(site.args, 0));
         let is_this_of_construction =
             is_in_constructor && matches!(hir[handed].kind, ExprKind::This);
-        if defines.needs_guard || name == known::__proto__ || !is_this_of_construction {
+        if name == known::__proto__ || !is_this_of_construction {
             return None;
         }
         let unwritten = [known::get, known::set];
@@ -625,13 +621,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return None;
         }
         let bound = self.file.queries.files().bound(callee.file);
-        let scope = bound.fns[defines.function.definition.idx()].scope;
+        let scope = bound.fns[callee.defines.definition.idx()].scope;
         let mode = match bound.is_strict_scope(scope) {
             true => ECMAMode::Strict,
             false => ECMAMode::Sloppy,
         };
         let object = self.lower_expression(hir.id_at(site.args, 0));
-        let value = self.lower_expression(hir.id_at(site.args, 2));
+        let value = match has_value {
+            true => self.lower_expression(hir.id_at(site.args, 2)),
+            false => self.builder.undefined(),
+        };
         self.set_position(hir[call].pos);
         let key = PropertyName::Constant(self.file.name_key(name));
         let (is_there, is_not, done) = (
@@ -1425,6 +1424,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
             obfuscates: false,
             counts_executions: false,
             runs_tests: false,
+            divides_small_files: false,
         };
         let lowered = lower_program(files, options);
         let fragments = lowered.iter().map(|(_, lowered)| &lowered.fragment);

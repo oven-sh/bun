@@ -235,7 +235,7 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
     RETURN_IF_EXCEPTION(scope, );
     WTF::String importer = from.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, );
-    Bun::throwIfHeldUnderTypesAlone(defaultGlobalObject(globalObject), known.isNull() ? resolved : known, specifier, importer, true);
+    Bun::throwIfOnlyTyped(defaultGlobalObject(globalObject), known.isNull() ? resolved : known, specifier, importer, true);
     RETURN_IF_EXCEPTION(scope, );
     size_t query = resolved.find('?');
     StringView path = query == notFound ? StringView(resolved) : StringView(resolved).left(static_cast<unsigned>(query));

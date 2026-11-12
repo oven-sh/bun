@@ -25,8 +25,8 @@ use crate::ir::generated::{
     DeclaredRecord, Field, FieldFlags, Layout, LayoutKind, LimitId, NameClass, PositionFlags,
 };
 use crate::ir::{
-    DeclaredType, Id, LayoutId, LayoutKey, PropertyKeyId, PropertyKeyKind, TypeId, WellKnownSymbol,
-    classify_name,
+    DeclaredType, Id, LayoutId, LayoutKey, PropertyKeyId, PropertyKeyKind, TypeId, TypeTable,
+    WellKnownSymbol, classify_name,
 };
 use crate::lower::{CheckerTypeId, FileLowering, SourceKind};
 use crate::modules::ModuleRef;
@@ -37,6 +37,7 @@ const _: () = assert!(WellKnownSymbol::COUNT <= 1 << u8::BITS);
 const KIND_OF_TEXT: u8 = PropertyKeyKind::Text.to_wire() as u8;
 const KIND_OF_CREATED_SYMBOL: u8 = PropertyKeyKind::CreatedSymbol.to_wire() as u8;
 
+/// What `describe_key()` says of a created symbol: the rest, and the file that creates it.
 fn split_home(key: &[u8]) -> Option<(&[u8], FileId)> {
     let [KIND_OF_CREATED_SYMBOL, ..] = key else {
         return None;
@@ -45,6 +46,10 @@ fn split_home(key: &[u8]) -> Option<(&[u8], FileId)> {
     Some((rest, FileId(u32::from_be_bytes(*home))))
 }
 
+/// `mark`: what else tells the layout apart. It is no key.
+///
+/// Layouts are numbered in the order of their identities, the first word first, and the number of a file moves with the files that are merely listed.
+/// So the first word says nothing of the files that create the symbols among the keys, and the file of the first of them breaks ties.
 fn identity_of_keys<'a>(
     keys: impl Iterator<Item = (&'a [u8], ObjectMemberKind)> + Clone,
     mark: Option<&'a [u8]>,
@@ -87,6 +92,9 @@ pub enum ObjectTypeKey {
     Names {
         flags: TypeIdentity,
         has_place: bool,
+    },
+    Literals {
+        file: FileId,
     },
 }
 
@@ -1011,15 +1019,21 @@ impl FileLowering<'_, '_, '_, '_> {
 
     pub(super) fn define_object_type_layout(&mut self, layout: LayoutId, types: &[CheckerTypeId]) {
         let has_home = self.fragment.layout_key(layout).home_file().is_some();
+        let mut literals: SmallVec<[CheckerTypeId; 4]> = SmallVec::new();
+        let mut has_written_type = false;
         for &ty in types {
             let origin = match has_home {
                 true => None,
                 false => Some(self.queries.object_origin(ty)),
             };
-            if matches!(origin, Some(ObjectOrigin::ObjectLiteral { .. })) {
+            if let Some(ObjectOrigin::ObjectLiteral { file, .. }) = origin {
                 self.define_names_of_type_from(layout, ty, origin);
+                if file == self.file {
+                    literals.push(ty);
+                }
                 continue;
             }
+            has_written_type = true;
             if !has_home && self.is_said_by_an_earlier_file(ty) {
                 continue;
             }
@@ -1038,6 +1052,83 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             self.define_type(layout, definition, key);
         }
+        if !has_written_type && self.is_checked() && !self.layouts.is_growing(layout) {
+            self.define_types_of_literals(layout, &literals);
+        }
+    }
+
+    /// The types that the checker infers for the fields of literals without a written type.
+    /// They say what a field is expected to hold, and only where no written type does.
+    fn define_types_of_literals(&mut self, layout: LayoutId, literals: &[CheckerTypeId]) {
+        let mut united: Option<FieldsOfType> = None;
+        for &ty in literals {
+            let Some(found) = self.infer_fields_of_literal(ty) else {
+                return;
+            };
+            let Some(united) = &mut united else {
+                united = Some(found);
+                continue;
+            };
+            for (field, other) in united.fields.iter_mut().zip(&found.fields) {
+                debug_assert_eq!(field.key, other.key, "one layout has one set of names");
+                let types = &mut self.fragment.types;
+                field.declared.ty = types.union(field.declared.ty, other.declared.ty);
+                field.declared.flags = field.declared.flags & other.declared.flags;
+            }
+        }
+        let Some(mut united) = united else {
+            return;
+        };
+        let says_nothing = |field: &Field| field.declared.ty == TypeTable::ANYTHING;
+        if united.fields.iter().all(says_nothing) || self.layouts.is_growing(layout) {
+            return;
+        }
+        for field in &mut united.fields {
+            field.declared = field.declared.inferred();
+        }
+        let key = ObjectTypeKey::Literals { file: self.file };
+        let definition = self.create_definition(None, united.fields, united.declared_order);
+        self.fragment
+            .define_object_type(layout, definition, Some(key));
+    }
+
+    fn infer_fields_of_literal(&mut self, ty: CheckerTypeId) -> Option<FieldsOfType> {
+        let members = self.queries.listed_members(ty).ok()?;
+        let listed = self.sort_listed_fields(ty, members);
+        let mut fields = Vec::with_capacity(listed.len());
+        for &(name, member) in listed.iter() {
+            let declared = match self.is_member_function(ty, member) {
+                true => DeclaredType::untyped(),
+                false => self.position_declared_by_member(ty, member),
+            };
+            fields.push(Field {
+                key: Some(self.find_key(name)),
+                declared,
+                flags: listed_member_flags(member),
+                ..Field::default()
+            });
+        }
+        Some(FieldsOfType {
+            fields,
+            declared_order: find_declared_order(&listed),
+            is_kept: true,
+        })
+    }
+
+    fn is_member_function(&mut self, ty: CheckerTypeId, member: ListedMember) -> bool {
+        if member.kind == ObjectMemberKind::Method {
+            return true;
+        }
+        let Ok(checked) = self.queries.listed_member_types(ty, member).checked else {
+            return false;
+        };
+        let Ok(shape) = self.queries.type_shape(checked) else {
+            return false;
+        };
+        matches!(
+            shape.kind,
+            ShapeKind::Function(_) | ShapeKind::ClassConstructor(_)
+        )
     }
 
     fn find_place(

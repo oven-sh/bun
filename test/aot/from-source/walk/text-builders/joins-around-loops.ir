@@ -1,0 +1,22 @@
+# f1 = tag, f2 = twice
+# -- source: main.ts
+# interface Node { name: string; kids: Node[] }
+# function tag(node: Node): string { let text = "<" + node.name; for (const kid of node.kids) text += tag(kid); return text + "/" + node.name + ">"; }
+# function twice(names: string[]): string { let text = "(" + names.length; for (const name of names) text += name; return text + text + ")"; }
+# const leaf: Node = { name: "b", kids: [] };
+# print(tag({ name: "a", kids: [leaf, { name: "c", kids: [leaf] }] }), twice(["x", "yz"]), twice([]));
+# -- end of source
+# The parts of the join that enters the loop and of the join after the loop go into the builder. Neither join is made.
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: form=Strings
+# CHECK: StackStringBuilderAppendConstant {{*}} string="<"
+# CHECK: StackStringBuilderAppendConstant {{*}} string="/"
+# CHECK: StackStringBuilderAppendConstant {{*}} string=">"
+# CHECK-NEXT: = StackStringBuilderFinish
+# A string that is read after its join is finished before it.
+# RUN(TWICE): walk f2 mechanisms=all
+# TWICE: StackStringBuilderAppendConstant {{*}} string="("
+# TWICE: = StackStringBuilderFinish
+# TWICE: = Strcat
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: <a<b/b><c<b/b>/c>/a> (2xyz(2xyz) (0(0)

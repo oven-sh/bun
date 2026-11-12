@@ -5,8 +5,8 @@ use smallvec::SmallVec;
 
 use super::variables::{BodyForm, WRAPPER_PARAMETERS, emit_entry_value};
 use crate::builtins::resolve::reads_what_wrapper_hands_in;
-use crate::ir::generated::{Function, FunctionFlags, FunctionKind};
-use crate::ir::{DeclaredType, FunctionId, FunctionKey, ValueId};
+use crate::ir::generated::{Function, FunctionFlags, FunctionKind, FunctionSyntax};
+use crate::ir::{DeclaredType, FunctionId, FunctionKey, TypeTable, ValueId};
 use crate::lower::function::{self, EntryArguments};
 use crate::lower::scope::{BindingForm, BindingRef, ScopeSlot};
 use crate::lower::{FileLowering, FunctionLowering, convert, module, object};
@@ -39,7 +39,11 @@ impl FileLowering<'_, '_, '_, '_> {
         let key = FunctionKey::WrappedModuleBody(self.file);
         let wrapped = self.declare_function(key, create_wrapped_header);
         let own_module = ModuleRef::File(self.file);
+        let may_run_as_original = self.inputs.modules.may_run_as_original(self.file);
         let mut lowering = FunctionLowering::begin(self, function);
+        if may_run_as_original {
+            lowering.emit_run_as_original(wrapped);
+        }
         lowering.note_first_load();
         let first_exports = lowering.emit_first_exports(own_module);
         let first_exports = first_exports.unwrap_or_else(|| lowering.builder.undefined());
@@ -122,6 +126,33 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    /// Where the run time runs the file as the original of its mock, it passes what a wrapper function gets. Nothing of
+    /// the file's own run changes.
+    fn emit_run_as_original(&mut self, wrapped: FunctionId) {
+        let module = self.file.module_id();
+        let exports = self.builder.original_argument(module, 0);
+        let own_run = self.create_block();
+        let split = self.split_on_type(exports, TypeTable::UNDEFINED);
+        self.builder.switch_to(split.taken);
+        self.jump(own_run);
+        self.builder.switch_to(split.not_taken);
+        let exports = split.not_taken_value;
+        let mut values: SmallVec<[ValueId; 5]> = SmallVec::new();
+        values.push(exports);
+        for index in 1..WRAPPER_PARAMETERS.len() as u32 {
+            values.push(self.builder.original_argument(module, index));
+        }
+        let arguments = EntryArguments {
+            this: Some(exports),
+            new_target: None,
+            parameters: &values,
+        };
+        self.emit_direct_call(wrapped, arguments);
+        let undefined = self.builder.undefined();
+        self.emit_return(undefined, None);
+        self.continue_in(own_run);
+    }
+
     fn emit_first_exports(&mut self, module: ModuleRef) -> Option<ValueId> {
         let variable = self.file.ensure_whole_exports_variable(module)?;
         let layout = match module {
@@ -216,6 +247,7 @@ fn create_wrapped_header(file: &mut FileLowering<'_, '_, '_, '_>) -> Function {
     let mut header = function::create_header(file, key, FunctionKind::Plain, 0);
     header.flags |= file.scopes.entry_flags(FunctionKey::ModuleBody(file.file));
     header.flags |= FunctionFlags::HAS_THIS;
+    header.syntax |= FunctionSyntax::IS_WRAPPED_MODULE_BODY;
     if !file.hir.is_strict {
         header.flags |= FunctionFlags::IS_SLOPPY;
     }

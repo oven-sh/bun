@@ -1950,14 +1950,15 @@ impl RendererImpl for Builder<'_> {
         else {
             return Ok(());
         };
-        // An emphasis around one that keeps its marker keeps its own: CommonMark may pair its runs with the kept ones.
+        // The emphasis around one that keeps its marker keeps its own: CommonMark may pair its runs with the kept ones.
         if matches!(kind, Kind::Emphasis | Kind::Strong) && number == 1 {
-            if let Some(parent) = self
-                .tree
-                .get_mut(parent)
-                .filter(|it| matches!(it.kind, Kind::Emphasis | Kind::Strong))
-            {
-                parent.number = 1;
+            let mut ancestor = parent;
+            while let Some(node) = self.tree.get_mut(ancestor) {
+                if matches!(node.kind, Kind::Emphasis | Kind::Strong) {
+                    node.number = 1;
+                    break;
+                }
+                ancestor = node.parent;
             }
         }
         if matches!(kind, Kind::Image | Kind::ImageReference) {

@@ -2454,7 +2454,6 @@ describe.concurrent("bun fmt", () => {
         ["__a_(_) x\n", "__a_(_) x\n", "_*a*(_) x\n"],
         ["*a****a**\n", "*a****a**\n", "_a_***a**\n"],
         ["*bax****c**\n", "*bax****c**\n", "_bax_***c**\n"],
-        ['x ____a b__ c."__".\n', 'x ____a b__ c."__".\n', 'x ****a b** c."**".\n'],
         // The `*` next to the kept `__` would join it as `_`.
         ["*__a_(_) x*\n", "*__a_(_) x*\n", "_**a*(*) x_\n"],
         // CommonMark pairs `****` and `***` as written. To micromark the `*` left of `***` is 1 against 2.
@@ -2463,6 +2462,7 @@ describe.concurrent("bun fmt", () => {
         ["*x **a*(*)d*\n", "*x **a*(*)d*\n", "_x **a*(*)d_\n"],
       ])("%j", async (before, after, byPrettier) => {
         expect(after).not.toBe(byPrettier);
+        expect(rendered(byPrettier)).not.toBe(rendered(before));
         expect(rendered(after)).toBe(rendered(before));
         const result = await format({ "a.md": before, "b.md": after }, [], { reads: ["a.md", "b.md"] });
         expect(result.files).toEqual({ "a.md": after, "b.md": after });

@@ -1229,8 +1229,6 @@ impl Parser<'_> {
 
         // Process potential closers from left to right
         let mut closer_idx: usize = 0;
-        // The closer is one that has just paired and has a shorter run now: micromark looks at every opener for it.
-        let mut is_shortened = false;
         while closer_idx < len {
             if !self.emph_delims[closer_idx].can_close
                 || self.emph_delims[closer_idx].remaining == 0
@@ -1240,10 +1238,7 @@ impl Parser<'_> {
             }
 
             // Look backward for a matching opener
-            let opener_bottom = match core::mem::take(&mut is_shortened) && counts_what_is_left {
-                true => 0,
-                false => openers_bottom[opener_bottom_key(&self.emph_delims[closer_idx])],
-            };
+            let opener_bottom = openers_bottom[opener_bottom_key(&self.emph_delims[closer_idx])];
             let mut found_match = false;
             if closer_idx > opener_bottom {
                 let mut from = closer_idx;
@@ -1368,7 +1363,6 @@ impl Parser<'_> {
                         // to this same index, allowing another matching attempt with the
                         // remaining delimiter characters
                         closer_idx = closer_idx.wrapping_sub(1);
-                        is_shortened = true;
                     }
                     break;
                 }

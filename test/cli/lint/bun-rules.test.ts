@@ -1219,6 +1219,8 @@ const rules: Record<string, Case[]> = {
     // the parameters of a component.
     `${memo}const Row = memo((props, context) => <li />);`,
     `import { forwardRef, memo } from "react";\nconst Input = forwardRef((props, r) => <input ref={r} />);\nexport default memo(Input);`,
+    `import { forwardRef, memo } from "react";\nconst Input = forwardRef((props, r) => <input ref={r} />) as Ref;\nexport default memo(Input);`,
+    `import { forwardRef, memo } from "react";\nconst Input = forwardRef(((props, r) => <input ref={r} />) satisfies Fn)!;\nexport default memo(Input);`,
     // The build looks for JSX and hook calls in the function itself, not in the methods of an object in it.
     `${memo}function Toolbar({ onSave }) {\n  const actions = {\n    save() {\n      return <Button onClick={onSave} />;\n    },\n  };\n  return render(actions);\n}\nexport default memo(Toolbar);`,
     // The build's lexer is a token ahead of its parser, so a comment right after a function marks that function.

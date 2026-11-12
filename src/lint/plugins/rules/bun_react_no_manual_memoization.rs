@@ -60,21 +60,53 @@ fn is_react_api(callee: Expr<'_>, names: &[&str]) -> bool {
         || ast_utils::is_member_access_of_any(callee, names)
 }
 
+/// `e` without the casts on it, which the build's parser drops: `e as T`, `e satisfies T`, `e!`, `e<T>`.
+fn without_casts(mut e: Expr<'_>) -> Expr<'_> {
+    while let ExprKind::As { expr, .. }
+    | ExprKind::AsConst(expr)
+    | ExprKind::Satisfies { expr, .. }
+    | ExprKind::NonNull(expr)
+    | ExprKind::Instantiation { expr, .. } = e.kind()
+    {
+        e = expr;
+    }
+    e
+}
+
+/// The outermost of the casts around `e`.
+fn through_casts(mut e: Expr<'_>) -> Expr<'_> {
+    while let Node::Expr(parent) = e.parent()
+        && matches!(
+            parent.kind(),
+            ExprKind::As { .. }
+                | ExprKind::AsConst(_)
+                | ExprKind::Satisfies { .. }
+                | ExprKind::NonNull(_)
+                | ExprKind::Instantiation { .. }
+        )
+    {
+        e = parent;
+    }
+    e
+}
+
 /// The name `bun build --react-compiler` gives the callback of a `memo()` or `forwardRef()` that initializes a
 /// variable: the variable's. The port gives it none.
 fn declarator_name_of_callback<'a>(func: Func<'a>) -> Option<Name<'a>> {
     let Node::Expr(e) = func.owner() else {
         return None;
     };
-    let Node::Expr(call_expr) = e.parent() else {
+    let callback = through_casts(e);
+    let Node::Expr(call_expr) = callback.parent() else {
         return None;
     };
     let call = call_expr.as_call()?;
-    if call.args().first() != Some(e) || !is_react_api(call.callee(), &["memo", "forwardRef"]) {
+    if call.args().first() != Some(callback) || !is_react_api(call.callee(), &["memo", "forwardRef"]) {
         return None;
     }
-    match call_expr.parent() {
-        Node::VarDecl(declaration) if declaration.init() == Some(call_expr) => declaration.pat().as_ident(),
+    let init = through_casts(call_expr);
+    match init.parent() {
+        Node::VarDecl(declaration) if declaration.init() == Some(init) => declaration.pat().as_ident(),
         _ => None,
     }
 }
@@ -250,6 +282,7 @@ fn component_of(e: Expr<'_>, depth: u8) -> Option<Component<'_>> {
     if depth == 0 {
         return None;
     }
+    let e = without_casts(e);
     if e.tag() == ExprTag::Class {
         return Some(Component::Class);
     }
@@ -260,9 +293,6 @@ fn component_of(e: Expr<'_>, depth: u8) -> Option<Component<'_>> {
         && is_react_api(call.callee(), &["forwardRef"])
     {
         return component_of(call.args().first()?, depth - 1);
-    }
-    if let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) = e.kind() {
-        return component_of(expr, depth - 1);
     }
     if e.as_ident().is_none() {
         return Some(Component::Other);

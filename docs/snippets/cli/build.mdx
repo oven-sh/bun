@@ -120,12 +120,13 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--allow-unresolved" type="string" default="*">
-  Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Pass <code>''</code> to allow
-  opaque specifiers
+  Allow import()/require()/require.resolve() arguments that are not string literals if they match one of these glob
+  patterns. Pass <code>''</code> to allow opaque specifiers
 </ParamField>
 
 <ParamField path="--reject-unresolved" type="boolean">
-  Fail the build on any dynamic import()/require() specifier that cannot be resolved at build time
+  Fail the build on any import()/require()/require.resolve() argument that is not a string literal. This flag does not
+  change how Bun resolves string-literal specifiers
 </ParamField>
 
 <ParamField path="--packages" type="string" default="bundle">

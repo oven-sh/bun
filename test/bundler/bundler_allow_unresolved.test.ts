@@ -1,5 +1,5 @@
-import { describe } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { describe, expect } from "bun:test";
+import { type BundlerTestInput, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   // 1. Default passes — dynamic import with no allowUnresolved → build succeeds
@@ -97,7 +97,7 @@ describe("bundler", () => {
     },
   });
 
-  // 8. try/catch does NOT bypass
+  // 8. try/catch does NOT bypass the check of a non-literal argument
   itBundled("allow-unresolved/TryCatchDoesNotBypass", {
     files: {
       "/entry.js": /* js */ `
@@ -112,7 +112,7 @@ describe("bundler", () => {
     },
   });
 
-  // 9. .catch() does NOT bypass
+  // 9. .catch() does NOT bypass the check of a non-literal argument
   itBundled("allow-unresolved/DotCatchDoesNotBypass", {
     files: {
       "/entry.js": /* js */ `
@@ -142,7 +142,7 @@ describe("bundler", () => {
     },
   });
 
-  // 11. require() in try/catch does NOT bypass
+  // 11. require() of a non-literal argument in try/catch does NOT bypass
   itBundled("allow-unresolved/RequireTryCatchDoesNotBypass", {
     files: {
       "/entry.js": /* js */ `
@@ -226,4 +226,32 @@ describe("bundler", () => {
     backend: "cli",
     allowUnresolved: ["./locales/*.json"],
   });
+
+  // 17. The option does not check a string-literal argument. When the code around the call
+  // handles the failure, a literal that does not resolve builds as it does without the option.
+  const handledLiteral: BundlerTestInput = {
+    files: {
+      "/entry.js": /* js */ `
+        import("./missing-a.js").catch(() => {});
+        import("./missing-b.js").then(() => {}, () => {});
+        try { await import("./missing-c.js") } catch {}
+        try { require("missing-d") } catch {}
+        try { require.resolve("missing-e") } catch {}
+      `,
+    },
+    outdir: "/out",
+    target: "bun",
+    allowUnresolved: [],
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.js").match(/import\("\.\/missing-[abc]\.js"\)/g)).toEqual([
+        'import("./missing-a.js")',
+        'import("./missing-b.js")',
+        'import("./missing-c.js")',
+      ]);
+    },
+  };
+  itBundled("allow-unresolved/HandledLiteralIsNotChecked", handledLiteral);
+
+  // 18. CLI path: --reject-unresolved does not check a string-literal argument
+  itBundled("allow-unresolved/CLIHandledLiteralIsNotChecked", { ...handledLiteral, backend: "cli" });
 });

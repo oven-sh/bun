@@ -813,10 +813,10 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react"
         ),
         parse_param!(
-            "--allow-unresolved <STR>...      Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Use '\\<empty\\>' for opaque specifiers. Default is '*' (allow all)."
+            "--allow-unresolved <STR>...      Allow import()/require()/require.resolve() arguments that are not string literals if they match one of these glob patterns. Use '\\<empty\\>' for opaque specifiers. Default is '*' (allow all)."
         ),
         parse_param!(
-            "--reject-unresolved              Fail the build on any dynamic import()/require() specifier that cannot be resolved at build time."
+            "--reject-unresolved              Fail the build on any import()/require()/require.resolve() argument that is not a string literal."
         ),
         parse_param!(
             "--packages <STR>                 Add dependencies to bundle or keep them external. \"external\", \"bundle\" is supported. Defaults to \"bundle\"."

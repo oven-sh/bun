@@ -8,9 +8,9 @@
 // BASE-NEXT: Jump -> next [[join]]([[result]])
 // BASE-NOT: TypeTest
 // BASE-LABEL: function {{*}}name="FallsOff" {{*}}kind=BaseConstructor
-// BASE: [[undefined]] = Undefined
-// BASE: = TypeTest [[undefined]] testedType=object
+// BASE: [[made]] = Convert {{*}}declared={type=L
 // BASE-NOT: TypeTest
+// BASE: Return [[made]]
 // BASE-LABEL: function {{*}}name="DerivedReturnsValue"
 
 // RUN(DERIVED): lower
@@ -19,9 +19,8 @@
 // DERIVED: = TypeTest {{*}}testedType=undefined
 // DERIVED: = NewRuntimeError runtimeError=DerivedConstructorResult name="DerivedReturnsValue"
 // DERIVED-LABEL: function {{*}}name="DerivedFallsOff" {{*}}kind=DerivedConstructor
-// DERIVED: = TypeTest {{*}}testedType=object
-// DERIVED: = TypeTest {{*}}testedType=undefined
-// DERIVED: = NewRuntimeError runtimeError=DerivedConstructorResult name="DerivedFallsOff"
+// DERIVED-NOT: TypeTest
+// DERIVED-NOT: NewRuntimeError
 
 declare const v: any;
 

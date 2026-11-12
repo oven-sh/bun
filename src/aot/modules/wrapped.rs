@@ -1,7 +1,7 @@
 use super::namespace_members::find_outermost_type_assertion;
 use crate::builtins::ResolvedBuiltins;
 use crate::ir::{InParallel, for_each_mut};
-use crate::known_helpers::{Helper, KnownHelpers, Quiet, Shape};
+use crate::known_helpers::{Helper, KnownFunction, KnownHelpers, Quiet, Shape};
 use crate::load::sources::parsed_source;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
@@ -21,6 +21,10 @@ use std::cell::OnceCell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
+mod bootstrap;
+mod browserify;
+use self::bootstrap::Bootstrap;
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum InnerModuleKind {
     CommonJs,
@@ -36,6 +40,7 @@ pub struct InnerModule {
     pub caches_evaluation_error: bool,
     pub exports_parameter: Option<SymbolId>,
     pub module_parameter: Option<SymbolId>,
+    pub require_parameter: Option<SymbolId>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -43,6 +48,15 @@ enum Role {
     Holder,
     ExportsParameter,
     ModuleParameter,
+    Require,
+    BootstrapState,
+}
+
+#[derive(Copy, Clone)]
+struct RuntimeOfBundle {
+    literal: ExprId,
+    require: SymbolId,
+    call: ExprId,
 }
 
 #[derive(Default)]
@@ -50,7 +64,11 @@ struct FileModules {
     modules: Box<[InnerModule]>,
     by_callback: Box<[(FnId, u32)]>,
     calls: Box<[(ExprId, u32)]>,
+    requests: Box<[(ExprId, u32)]>,
     names_super: bool,
+    bootstrap: Option<RuntimeOfBundle>,
+    helpers: Box<[(Atom, KnownFunction)]>,
+    names_of_require: Box<[SymbolId]>,
 }
 
 #[derive(Default)]
@@ -101,6 +119,7 @@ struct Candidate {
     defined_at: u32,
     sites: Vec<SiteTime>,
     calls: Vec<ExprId>,
+    requests: Vec<ExprId>,
     is_refused: bool,
 }
 
@@ -118,6 +137,9 @@ struct Finder<'a, 's> {
     by_symbol: Vec<(SymbolId, Role, u32)>,
     names_super: bool,
     this_positions: OnceCell<ThisPositions>,
+    bootstrap: Option<Bootstrap>,
+    every_object_has: &'a (dyn Fn(Atom) -> bool + Sync),
+    replaced_builtins: &'a [u32],
 }
 
 fn find_by_key<K: Ord + Copy, T: Copy>(
@@ -240,6 +262,16 @@ impl Finder<'_, '_> {
         }
     }
 
+    fn reads_own_this(&self, function: FnId) -> bool {
+        self.bound.fns[function.idx()].contains_this || {
+            let jsx_takes_this = self.files.analysis(self.file).jsx_takes_this();
+            let positions = self
+                .this_positions
+                .get_or_init(|| ThisPositions::of(self.hir, jsx_takes_this));
+            positions.evaluates_own_this(self.hir, function)
+        }
+    }
+
     fn can_be_body(&self, callback: FnId, kind: InnerModuleKind) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let record = hir[callback];
@@ -251,14 +283,7 @@ impl Finder<'_, '_> {
             && !record.flags.intersects(Flags::ASYNC | Flags::GENERATOR)
             && record.this_param.is_none()
             && matches!(record.body, FnBody::Block(_));
-        let reads_this = bound.fns[callback.idx()].contains_this || {
-            let jsx_takes_this = self.files.analysis(self.file).jsx_takes_this();
-            let positions = self
-                .this_positions
-                .get_or_init(|| ThisPositions::of(hir, jsx_takes_this));
-            positions.evaluates_own_this(hir, callback)
-        };
-        if !is_plain || has_own_name || sees_its_call || reads_this {
+        if !is_plain || has_own_name || sees_its_call || self.reads_own_this(callback) {
             return false;
         }
         if record.kind == FnKind::Arrow && bound.file_uses_arguments() {
@@ -343,17 +368,19 @@ impl Finder<'_, '_> {
                 caches_evaluation_error: shape.caches_evaluation_error,
                 exports_parameter,
                 module_parameter,
+                require_parameter: None,
             },
             defined_at: hir[call].end,
             sites: Vec::new(),
             calls: Vec::new(),
+            requests: Vec::new(),
             is_refused: false,
         })
     }
 
-    fn collect_candidates(&mut self) {
+    fn collect_candidates(&mut self, has_helpers: bool) {
         let hir = self.hir;
-        for statement in hir.ids(hir.body) {
+        for statement in hir.ids(hir.body).filter(|_| has_helpers) {
             let StmtKind::Var(declarations) = hir[statement].kind else {
                 continue;
             };
@@ -366,10 +393,28 @@ impl Finder<'_, '_> {
                 }
             }
         }
+        self.find_bootstrap();
+        if self.bootstrap.is_none() {
+            self.find_bundle();
+        }
+        if let Some(bootstrap) = &self.bootstrap
+            && !bootstrap.is_browserify()
+        {
+            self.by_symbol
+                .push((bootstrap.require, Role::Require, u32::MAX));
+            let state = [bootstrap.modules, bootstrap.cache];
+            self.by_symbol
+                .extend(state.map(|symbol| (symbol, Role::BootstrapState, u32::MAX)));
+        }
         for (candidate, index) in self.candidates.iter().zip(0..) {
             let module = candidate.module;
             self.by_callback.push((module.callback, index));
-            self.by_symbol.push((module.holder, Role::Holder, index));
+            if let Some(holder) = module.holder.some() {
+                self.by_symbol.push((holder, Role::Holder, index));
+            }
+            if let Some(parameter) = module.require_parameter {
+                self.by_symbol.push((parameter, Role::Require, index));
+            }
             if let Some(parameter) = module.exports_parameter {
                 self.by_symbol
                     .push((parameter, Role::ExportsParameter, index));
@@ -450,7 +495,8 @@ impl Finder<'_, '_> {
         let Some(&outermost) = functions.last() else {
             return Some(SiteTime::At(hir[call].pos));
         };
-        if let Some(around) = self.candidate_of_callback(outermost) {
+        let mut outermost_first = functions.iter().rev();
+        if let Some(around) = outermost_first.find_map(|&it| self.candidate_of_callback(it)) {
             return Some(SiteTime::WithBodyOf(around));
         }
         Some(SiteTime::At(match hir[outermost].kind {
@@ -536,14 +582,23 @@ impl Finder<'_, '_> {
                 continue;
             };
             let index = index as usize;
-            if bound
+            let is_looked_up = bound
                 .dynamic_lookup_scope(NodeData::Expr(expression))
-                .is_some()
-            {
-                self.candidates[index].is_refused = true;
+                .is_some();
+            if is_looked_up {
+                match self.candidates.get_mut(index) {
+                    Some(candidate) => candidate.is_refused = true,
+                    None => self.refuse_bootstrap(),
+                }
                 continue;
             }
             match role {
+                Role::Require => self.read_mention_of_require(expression, end_of_head, index),
+                Role::BootstrapState => {
+                    if !self.is_in_require_function(expression) {
+                        self.refuse_bootstrap();
+                    }
+                }
                 Role::Holder => {
                     let call = find_plain_call_of(hir, bound, expression);
                     let time = call.and_then(|call| self.find_site_time(call, end_of_head));
@@ -567,7 +622,10 @@ impl Finder<'_, '_> {
             if let Binding::Symbol(symbol) = binding
                 && let Some((_, _, index)) = find_by_key(&self.by_symbol, symbol, |entry| entry.0)
             {
-                self.candidates[index as usize].is_refused = true;
+                match self.candidates.get_mut(index as usize) {
+                    Some(candidate) => candidate.is_refused = true,
+                    None => self.refuse_bootstrap(),
+                }
             }
         }
     }
@@ -633,13 +691,18 @@ impl Finder<'_, '_> {
         for (candidate, first_call) in self.candidates.iter_mut().zip(first_calls) {
             candidate.is_refused |= first_call < candidate.defined_at;
         }
+        self.refuse_bodies_naming_outer_scope();
         let holders = self.count_holders_by_statement();
         for index in 0..self.candidates.len() {
             let statement = self.candidates[index].module.statement;
+            if statement.is_none() {
+                continue;
+            }
             let declares_holders_alone =
                 holders.get(&statement) == Some(&self.count_declarations(statement));
             self.candidates[index].is_refused |= !declares_holders_alone;
         }
+        self.settle_bootstrap();
     }
 
     fn finish(self) -> FileModules {
@@ -650,23 +713,40 @@ impl Finder<'_, '_> {
         let modules: Box<[InnerModule]> = accepted.clone().map(|it| it.module).collect();
         let mut by_callback = Vec::with_capacity(modules.len());
         let mut calls = Vec::new();
+        let mut requests = Vec::new();
         for (candidate, index) in accepted.zip(0..) {
+            requests.extend(candidate.requests.iter().map(|&call| (call, index)));
             by_callback.push((candidate.module.callback, index));
             calls.extend(candidate.calls.iter().map(|&call| (call, index)));
         }
         by_callback.sort_unstable_by_key(|entry: &(FnId, u32)| entry.0);
         calls.sort_unstable_by_key(|entry: &(ExprId, u32)| entry.0);
+        requests.sort_unstable_by_key(|entry: &(ExprId, u32)| entry.0);
         FileModules {
             modules,
             by_callback: by_callback.into_boxed_slice(),
             calls: calls.into_boxed_slice(),
+            requests: requests.into_boxed_slice(),
             names_super: self.names_super,
+            names_of_require: self.names_of_require(),
+            helpers: self.helpers_of_bootstrap(),
+            bootstrap: self.bootstrap.map(|it| RuntimeOfBundle {
+                literal: it.literal,
+                require: it.require,
+                call: it.call,
+            }),
         }
     }
 }
 
-fn find_in_file(files: &Files<'_>, helpers: &KnownHelpers, file: FileId) -> FileModules {
-    let compiled = files.compiled(file).filter(|_| helpers.has_functions(file));
+fn find_in_file(
+    files: &Files<'_>,
+    helpers: &KnownHelpers,
+    every_object_has: &(dyn Fn(Atom) -> bool + Sync),
+    replaced_builtins: &[u32],
+    file: FileId,
+) -> FileModules {
+    let compiled = files.compiled(file);
     let (Some(compiled), Some(source)) = (compiled, parsed_source(files, file)) else {
         return FileModules::default();
     };
@@ -684,9 +764,12 @@ fn find_in_file(files: &Files<'_>, helpers: &KnownHelpers, file: FileId) -> File
         by_symbol: Vec::new(),
         names_super: false,
         this_positions: OnceCell::new(),
+        bootstrap: None,
+        every_object_has,
+        replaced_builtins,
     };
     finder.collect_exported_symbols();
-    finder.collect_candidates();
+    finder.collect_candidates(helpers.has_functions(file));
     if finder.candidates.is_empty() {
         return FileModules::default();
     }
@@ -700,13 +783,12 @@ impl WrappedModules {
     pub fn compute(
         files: &Files<'_>,
         helpers: &KnownHelpers,
+        every_object_has: &(dyn Fn(Atom) -> bool + Sync),
+        replaced_builtins: &[u32],
         may_be_reevaluated: &(dyn Fn(FileId) -> bool + Sync),
         in_parallel: InParallel<'_>,
     ) -> WrappedModules {
         let mut wrapped = WrappedModules::default();
-        if !helpers.has_bindings() {
-            return wrapped;
-        }
         let mut found: Vec<(FileId, FileModules)> = files
             .compiled_files()
             .iter()
@@ -714,7 +796,8 @@ impl WrappedModules {
             .collect();
         for_each_mut(&mut found, in_parallel, &|(file, modules)| {
             if !may_be_reevaluated(*file) {
-                *modules = find_in_file(files, helpers, *file);
+                let (has, replaced) = (every_object_has, replaced_builtins);
+                *modules = find_in_file(files, helpers, has, replaced, *file);
             }
         });
         wrapped
@@ -753,6 +836,14 @@ impl WrappedModules {
             .filter_map(move |&(call, index)| Some((call, &found?.modules[index as usize])))
     }
 
+    /// The calls that make a function which evaluates a module.
+    pub fn requests_in(&self, file: FileId) -> impl Iterator<Item = (ExprId, &InnerModule)> {
+        let found = self.files.get(file.idx());
+        let requests = found.map_or(&[][..], |found| &found.requests[..]);
+        let requests = requests.iter();
+        requests.filter_map(move |&(call, index)| Some((call, &found?.modules[index as usize])))
+    }
+
     pub fn of_call(&self, files: &Files<'_>, file: FileId, call: ExprId) -> Option<&InnerModule> {
         let found = self.files.get(file.idx())?;
         if found.calls.is_empty() {
@@ -773,7 +864,52 @@ impl WrappedModules {
             return None;
         }
         let functions = find_functions_around(files.hir(file), files.bound(file), expression)?;
-        self.of_callback(file, *functions.last()?)
+        let mut outermost_first = functions.iter().rev();
+        outermost_first.find_map(|&function| self.of_callback(file, function))
+    }
+
+    /// The object literal that holds the bodies of the modules in a bundler's runtime.
+    pub fn is_literal_of_bodies(&self, file: FileId, expression: ExprId) -> bool {
+        let bootstrap = self.files.get(file.idx()).and_then(|found| found.bootstrap);
+        bootstrap.is_some_and(|it| it.literal == expression)
+    }
+
+    /// The call that starts browserify's runtime: all that it does is evaluate its entry.
+    pub fn is_start_of_bundle(&self, file: FileId, expression: ExprId) -> bool {
+        let bootstrap = self.files.get(file.idx()).and_then(|found| found.bootstrap);
+        bootstrap.is_some_and(|it| it.call == expression)
+    }
+
+    /// The helper that `callee` names as a member of the function that evaluates the bodies in webpack's runtime.
+    pub fn helper_of_member(
+        &self,
+        files: &Files<'_>,
+        file: FileId,
+        callee: ExprId,
+    ) -> Option<&KnownFunction> {
+        let found = self.files.get(file.idx())?;
+        if found.helpers.is_empty() {
+            return None;
+        }
+        let (hir, bound) = (files.hir(file), files.bound(file));
+        let (object, MemberKey::Name(name)) = hir.member_key(hir.skip_type_assertions(callee))?
+        else {
+            return None;
+        };
+        let object = hir.skip_type_assertions(object);
+        let (ExprKind::Ident(_), Binding::Symbol(symbol)) =
+            (hir[object].kind, bound.binding(object))
+        else {
+            return None;
+        };
+        found.names_of_require.binary_search(&symbol).ok()?;
+        let helper = found.helpers.iter().find(|helper| helper.0 == name)?;
+        Some(&helper.1)
+    }
+
+    /// The function that evaluates the bodies in webpack's runtime.
+    pub fn require_function(&self, file: FileId) -> Option<SymbolId> {
+        self.files.get(file.idx())?.bootstrap?.require.some()
     }
 
     #[cfg(test)]
@@ -810,6 +946,7 @@ impl WrappedModules {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::builtins::id::BuiltinId;
     use crate::ir::run_serially;
     use crate::modules::testing::{file_named, with_graph};
 
@@ -830,7 +967,8 @@ var __esmRethrows = (fn, res, err) => () => {
 "#;
 
     fn compute(files: &Files<'_>, helpers: &KnownHelpers) -> WrappedModules {
-        WrappedModules::compute(files, helpers, &|_| false, &run_serially)
+        let nothing_has = |_: Atom| false;
+        WrappedModules::compute(files, helpers, &nothing_has, &[], &|_| false, &run_serially)
     }
 
     fn holders_in(body: &str) -> Vec<String> {
@@ -936,7 +1074,8 @@ lazy();
         with_graph(&[("main.mjs", main.as_str())], |_, bind_input| {
             let files = bind_input.files;
             let helpers = KnownHelpers::compute(files, &run_serially);
-            let wrapped = WrappedModules::compute(files, &helpers, &|_| true, &run_serially);
+            let wrapped =
+                WrappedModules::compute(files, &helpers, &|_| false, &[], &|_| true, &run_serially);
             assert!(
                 wrapped
                     .of_file(file_named(bind_input, "main.mjs"))
@@ -1086,6 +1225,133 @@ var require_a = __commonJS((exports) => { require_b(); });
         assert_eq!(holders_in(two_holders), ["require_a", "require_b"]);
         let another_variable = "var require_a = __commonJS((exports) => {}), other = 1;";
         assert_eq!(holders_in(another_variable), [""; 0]);
+    }
+
+    fn bodies_in(main: &str) -> usize {
+        bodies_replacing(main, &[])
+    }
+
+    fn bodies_replacing(main: &str, replaced: &[BuiltinId]) -> usize {
+        with_graph(&[("main.cjs", main)], |_, bind_input| {
+            let replaced: Vec<u32> = replaced.iter().map(|it| it.to_wire()).collect();
+            let files = bind_input.files;
+            let helpers = KnownHelpers::compute(files, &run_serially);
+            let every_object_has = |name| bind_input.every_object_has(name);
+            let wrapped = WrappedModules::compute(
+                files,
+                &helpers,
+                &every_object_has,
+                &replaced,
+                &|_| false,
+                &run_serially,
+            );
+            wrapped.of_file(file_named(bind_input, "main.cjs")).len()
+        })
+    }
+
+    fn webpack_bundle(first_body: &str, use_of_modules: &str) -> String {
+        format!(
+            "(() => {{ var e = {{ 1: {first_body}, \"./b.js\": (e, t) => {{ t.b = 1; }} }}, t = {{}};
+function i(n) {{ var r = t[n]; if (void 0 !== r) return r.exports; var s = t[n] = {{ exports: {{}} }}; return e[n](s, s.exports, i), s.exports }}
+i.d = () => {{}};
+{use_of_modules}
+}})();"
+        )
+    }
+
+    #[test]
+    fn webpack_bodies_are_inner_modules() {
+        let body = "(e, t, i) => { t.a = i(\"./b.js\").b; }";
+        for use_of_modules in [
+            "console.log(i(1).a);",
+            "(() => { var a = i(\"1\"); console.log(a.a); })();",
+            "var later = () => i(1); later();",
+            "Promise.resolve().then(i.bind(i, 1)).then((it) => console.log(it.a));",
+            "",
+        ] {
+            let main = webpack_bundle(body, use_of_modules);
+            assert_eq!(bodies_in(&main), 2, "{use_of_modules}");
+        }
+        for body in [
+            "function (e, t, i) { e.exports = class {}; }",
+            "(e) => { e.exports = require(\"node:fs\"); }",
+            "(e, t, i) => { i.d(t, {}); }",
+            "() => {}",
+        ] {
+            let main = webpack_bundle(body, "i(1);");
+            assert_eq!(bodies_in(&main), 2, "{body}");
+        }
+        let unminified =
+            "var modules = ({ \"./a.js\": ((module, exports, require) => { exports.a = 1; }) });
+var cache = {};
+function require_(id) {
+  var cached = cache[id];
+  if (cached !== undefined) { return cached.exports; }
+  var module = cache[id] = { id: id, loaded: false, exports: {} };
+  modules[id].call(module.exports, module, module.exports, require_);
+  module.loaded = true;
+  return module.exports;
+}
+require_(\"./a.js\");";
+        assert_eq!(bodies_in(unminified), 1);
+    }
+
+    #[test]
+    fn keeps_bodies_reachable_elsewhere() {
+        let body = "(e, t, i) => { t.a = 1; }";
+        for use_of_modules in [
+            "i(globalThis.id);",
+            "i(2);",
+            "globalThis.require = i;",
+            "i.m = e;",
+            "i.c = t;",
+            "i.t = function (n) { return this(n); };",
+            "delete i.d;",
+            "i(1, 2);",
+            "new i(1);",
+            "i?.(1);",
+            "globalThis.later = i.bind(i, 1);",
+            "Promise.resolve().then(i.bind(null, 1));",
+            "Promise.resolve().then(i.bind(i, 2));",
+            "Promise.resolve().then(i.bind(i, globalThis.id));",
+            "Promise.resolve().then(i.bind(i, 1), console.log);",
+            "eval(\"\");",
+            "e = null;",
+            "for (var k in e) console.log(k);",
+        ] {
+            let main = webpack_bundle(body, use_of_modules);
+            assert_eq!(bodies_in(&main), 0, "{use_of_modules}");
+        }
+        for body in [
+            "function (e, t, i) { t.a = this; }",
+            "(e, t, i) => { t.a = outer; }",
+            "(e, t, i) => { i = null; }",
+            "(e, t, i) => { t.a = i; }",
+            "(e, t, i) => { t.a = e.id; }",
+            "async (e, t, i) => {}",
+            "(e, t, i, more) => {}",
+            "globalThis.body",
+        ] {
+            let main = webpack_bundle(body, "var outer = 1; i(1);");
+            assert_eq!(bodies_in(&main), 0, "{body}");
+        }
+        for name in ["\"constructor\"", "toString", "__defineGetter__"] {
+            let main = webpack_bundle(body, "i(1);").replace("\"./b.js\"", name);
+            assert_eq!(bodies_in(&main), 0, "{name}");
+        }
+        let main = webpack_bundle(body, "Promise.resolve().then(i.bind(i, 1));");
+        assert_eq!(bodies_replacing(&main, &[]), 2);
+        assert_eq!(
+            bodies_replacing(&main, &[BuiltinId::FunctionPrototypeBind]),
+            0
+        );
+        let main = webpack_bundle(body, "i(1);");
+        let ahead = main.replace("(() => { var e", "(() => { globalThis.hook(i); var e");
+        let in_a_function = format!("function again() {{ {main} }} again(); again();");
+        let in_a_loop = format!("for (var k = 0; k < 2; k++) {{ {main} }}");
+        for main in [ahead, in_a_function, in_a_loop] {
+            assert_eq!(bodies_in(&main), 0, "{main}");
+        }
     }
 
     #[test]

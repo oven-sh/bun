@@ -1093,6 +1093,7 @@ impl<'s> Program<'s> {
             fns_around: Default::default(),
             this_containers_around: Default::default(),
             spread_indices_of_many: Default::default(),
+            functions_typed_with_literals: Default::default(),
             times_cut_short: std::cell::Cell::new(0),
             exprs_by_kind: [None, None],
             shared_indexes: None,
@@ -1922,6 +1923,9 @@ pub struct Checker<'p, 's> {
     grown_signatures: FxHashMap<SigId, (SigId, SigId)>,
     /// `spread_indices` of the array literals and the calls with many elements or arguments.
     spread_indices_of_many: FxHashMap<(FileId, ExprId), Option<(usize, usize)>>,
+    /// The first function in each object literal whose signature requests the literal's type.
+    /// See `check_containing_object_literal_cached`.
+    functions_typed_with_literals: FxHashMap<(FileId, ExprId), Option<FnId>>,
     /// Non-cacheable query results, kept for reuse while the computation that made them
     /// non-cacheable is in flight. See `cache_provisionally`.
     provisional: FxHashMap<Query, Provisional>,

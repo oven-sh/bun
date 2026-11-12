@@ -1,3 +1,4 @@
+# LIBRARY: own
 # -- source: an-element-that-every-reader-reckons-with-is-read-once-as-a-number.ts
 # declare function sink(value: unknown): void;
 # function sums(x: number[], y: number[]): number { let sx = 0, sy = 0, sxy = 0, sxx = 0, syy = 0; for (let i = 0; i < x.length; i++) { sx += x[i]; sy += y[i]; sxy += x[i] * y[i]; sxx += x[i] * x[i]; syy += y[i] * y[i]; } return sx + sy * 3 + sxy * 5 + sxx * 7 + syy * 11; }

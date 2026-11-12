@@ -12,7 +12,7 @@ use bun_ptr::RefPtr;
 use crate::webcore::Blob;
 use crate::webcore::blob::SizeType;
 use crate::webcore::blob::store::{Bytes, Data, IsAllAscii, Store};
-use bun_standalone_graph::File;
+use bun_standalone_graph::{File, Graph, is_bun_standalone_file_path};
 
 /// The process-wide template of an embedded file's `Blob`: store, content
 /// type and a shared `name`. `global_this` is null; `file_blob` stamps it per VM.
@@ -72,6 +72,29 @@ fn template_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleG
             .expect("Blob::new returned null")
             .cast()
     })
+}
+
+fn is_view_of(store: &Store, file: &File) -> bool {
+    let contents = file.utf8_contents();
+    let Data::Bytes(bytes) = &store.data else {
+        return false;
+    };
+    core::ptr::eq(bytes.slice(), contents)
+}
+
+/// Whether `blob` is an entire file that the build was asked to embed below the root of the executable. Such a file never changes.
+pub(crate) fn is_asset(blob: &Blob) -> bool {
+    let graph = Graph::get_ref().filter(|it| it.compiled_program.is_some());
+    let (Some(graph), Some(store)) = (graph, blob.store()) else {
+        return false;
+    };
+    let path = store
+        .get_path()
+        .filter(|it| is_bun_standalone_file_path(it));
+    let is_whole = blob.offset.get() == 0 && blob.size.get() >= store.size();
+    let file = path.and_then(|it| graph.find_data(it));
+    is_whole
+        && file.is_some_and(|it| is_view_of(store, it) && !graph.is_file_for_file_system_alone(it))
 }
 
 /// A fresh dupe of the template, owned by `global`'s VM.

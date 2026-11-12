@@ -5,7 +5,7 @@ use crate::builtins::{BuiltinId, table};
 use crate::emit::FunctionsWithoutCode;
 use crate::ir::generated::{
     BuiltinUsedAtStart, ModuleFlags, ModuleKind, NameClass, OpenedName, ReplaceableBuiltin,
-    SourceStamp,
+    SourceStamp, WebAssemblyModule,
 };
 use crate::ir::parallel::map_each;
 use crate::ir::{Id, ModuleId, StringId};
@@ -73,6 +73,15 @@ impl Build<'_> {
                 return Err(Stage::LinkAndEmit);
             }
         };
+        for (file, bytes) in core::mem::take(&mut self.adjacent_web_assembly) {
+            let project = ProjectId::Application;
+            let named_by = Some(ProgramFile { project, file });
+            if let Some(index) = modules.iter().position(|it| it.file() == named_by) {
+                let module = ModuleId::new(index);
+                let modules = &mut program.web_assembly_modules;
+                modules.push(WebAssemblyModule { module, bytes });
+            }
+        }
         let (mut with_names, mut with_value, mut facades) = (0, 0, 0);
         for &module in &modules {
             let (project, own) = match module {

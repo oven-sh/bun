@@ -1286,6 +1286,14 @@ JSC::AOT::findWithAVX2  [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------
+# The ahead-of-time compiler's search of a Latin-1 string for another. Gate:
+# operationAOTStringFind8() asks CPUFeatureSet::host() for AVX2 (CPUID and XGETBV).
+# (1 symbols)
+# ----------------------------------------------------------------------------
+JSC::AOT::findStringWithAVX2  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
 # Bun's Highway kernels for the scanner of `bun check`, `bun lint` and `bun fmt`. Gate: hwy::SupportedTargets via CPUID.
 # (18 symbols)
 # ----------------------------------------------------------------------------

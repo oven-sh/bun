@@ -1,7 +1,7 @@
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, Decl, InitialState, ScopeId, SymbolId};
+use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, InitialState, ScopeId, SymbolId};
 use bun_sema::check::aot::FunctionRef;
-use bun_sema::hir::{ExprId, ExprKind, FnId, MemberKey, PatKind, PropKey, PropKind, StmtId};
+use bun_sema::hir::{ExprId, ExprKind, FnId, MemberKey, PropKey, PropKind, StmtId};
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
@@ -80,20 +80,21 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn inner_parameter(&self, callback: FnId, index: usize) -> Option<SymbolId> {
-        let parameter = self.hir[callback].params.iter().nth(index)?;
-        let pattern = self.hir[parameter].pat;
-        let PatKind::Ident(_) = self.hir[pattern].kind else {
-            return None;
-        };
-        Some(self.bound.declared_symbol(Decl::Param(pattern)))
+    pub(in crate::lower) fn is_literal_of_bodies(&self, expression: ExprId) -> bool {
+        let wrapped = self.inputs.modules.wrapped();
+        wrapped.is_literal_of_bodies(self.file, expression)
     }
 
     pub(super) fn inner_parameters(&self, callback: FnId) -> [Option<SymbolId>; 2] {
-        [
-            self.inner_parameter(callback, 0),
-            self.inner_parameter(callback, 1),
-        ]
+        match self
+            .inputs
+            .modules
+            .wrapped()
+            .of_callback(self.file, callback)
+        {
+            Some(inner) => [inner.exports_parameter, inner.module_parameter],
+            None => [None, None],
+        }
     }
 
     fn names_symbol(&self, name: ExprId, symbol: Option<SymbolId>) -> bool {
@@ -110,16 +111,19 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(in crate::lower) fn find_destructured_module(&self, source: ExprId) -> Option<ModuleRef> {
-        let call = self.skip_type_syntax(source);
-        let ExprKind::Call(_) = self.hir[call].kind else {
-            return None;
-        };
+        let source = self.skip_type_syntax(source);
         let modules = self.inputs.modules;
-        match modules.site(self.file, call)? {
-            Site::Evaluate { target, .. } if !modules.is_site_read_as_value(self.file, call) => {
-                Some(target)
-            }
-            Site::Evaluate { .. } | Site::AsToday => None,
+        match self.hir[source].kind {
+            ExprKind::Ident(_) => modules.module_of_destructured_holder(self.file, source),
+            ExprKind::Call(_) => match modules.site(self.file, source)? {
+                Site::Evaluate { target, .. }
+                    if !modules.is_site_read_as_value(self.file, source) =>
+                {
+                    Some(target)
+                }
+                Site::Evaluate { .. } | Site::AsToday => None,
+            },
+            _ => None,
         }
     }
 }
@@ -131,6 +135,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let own_file = ModuleRef::File(file.file);
         if modules.inner_modules(file.file).is_empty() {
             return own_file;
+        }
+        if let FunctionKey::ModuleRequest { call, .. } = self.key {
+            return modules.find_requester(file.file, call).unwrap_or(own_file);
         }
         let mut next = file.top_scope_of(self.key);
         while let Some(scope) = next {
@@ -279,7 +286,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    fn lower_root(&mut self, access: ExprId) -> Option<Holder> {
+    pub(in crate::lower) fn lower_root(&mut self, access: ExprId) -> Option<Holder> {
         let hir = self.file.hir;
         let mut root = access;
         let mut first_key = None;
@@ -415,7 +422,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             module @ ModuleRef::Inner { callback, .. } => {
                 let object = file.skip_type_syntax(object);
                 let names_exports = is_named_exports
-                    && file.names_symbol(object, file.inner_parameter(callback, 1));
+                    && file.names_symbol(object, file.inner_parameters(callback)[1]);
                 names_exports.then_some(module)
             }
             module @ ModuleRef::File(_) => {
@@ -439,7 +446,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let module = self.current_module();
         let is_mention = match (module, file.hir[expression].kind) {
             (ModuleRef::Inner { callback, .. }, ExprKind::Ident(_)) => {
-                file.names_symbol(expression, file.inner_parameter(callback, 0))
+                file.names_symbol(expression, file.inner_parameters(callback)[0])
             }
             (ModuleRef::File(_), ExprKind::Ident(_)) => {
                 let names_exports = file.bound.binding(expression)

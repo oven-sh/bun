@@ -29,7 +29,7 @@ pub fn parse_appended_expressions(
     file: FileBuilder,
     expressions: &[AppendedExpression],
     atoms: &Interner<'_>,
-    accepts: &AppendedExpressionFilter,
+    accepts: &AppendedExpressionFilter<'_>,
 ) -> (FileBuilder, Vec<Option<(ExprId, ExprId)>>) {
     let text = file.text.clone();
     SCRATCH.with_borrow_mut(|all| {

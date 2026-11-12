@@ -71,6 +71,9 @@ impl FileBinder<'_, '_> {
             .unread_sites
             .shared_sort_unstable_by_key(|&(call, _)| call);
         imports
+            .destructured_holders
+            .shared_sort_unstable_by_key(|&(holder, _)| holder);
+        imports
             .accessed
             .shared_sort_unstable_by_key(|&(member, _)| member);
         imports
@@ -323,8 +326,9 @@ impl FileBinder<'_, '_> {
             let is_resolved_at_run_time = bound
                 .dynamic_lookup_scope(NodeData::Expr(reference))
                 .is_some();
-            let is_value =
-                is_resolved_at_run_time || self.bind_member_path(reference, root.stands_for);
+            let is_value = is_resolved_at_run_time
+                || (!self.bind_destructured_holder(reference, root)
+                    && self.bind_member_path(reference, root.stands_for));
             if !is_value {
                 continue;
             }
@@ -341,6 +345,28 @@ impl FileBinder<'_, '_> {
                 self.imports.namespaces_handed_out.push(module);
             }
         }
+    }
+
+    /// `const { name } = holder`
+    fn bind_destructured_holder(&mut self, reference: ExprId, root: Root) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let is_answer = matches!(
+            root.stands_for,
+            StandsFor::Exports(_) | StandsFor::RequiredNamespace(_)
+        );
+        if root.holder.is_none() || !is_answer {
+            return false;
+        }
+        let initializer = find_outermost_type_assertion(hir, bound, reference);
+        let Parent::VarInit(declaration) = bound.parent_of_expr(initializer) else {
+            return false;
+        };
+        if !self.bind_pattern(hir[declaration].pat, root.stands_for) {
+            return false;
+        }
+        let destructured = (reference, (root.symbol, root.stands_for.module()));
+        self.imports.destructured_holders.push(destructured);
+        true
     }
 
     fn look_at_root(&mut self, root: Root, holders: &mut [Holder]) {
@@ -389,7 +415,7 @@ impl FileBinder<'_, '_> {
     fn is_dead_site(&self, site: &PlannedSite) -> bool {
         let decisions = &self.analysis.decisions;
         match site.key {
-            SiteKey::Call(call) => decisions.is_dead_expr(call),
+            SiteKey::Call(call) | SiteKey::Request(call) => decisions.is_dead_expr(call),
             SiteKey::ImportEquals(declaration) => {
                 decisions.is_dead_stmt(self.hir[declaration].stmt)
             }
@@ -431,6 +457,7 @@ impl FileBinder<'_, '_> {
         }
         let call = match site.key {
             SiteKey::Call(call) => call,
+            SiteKey::Request(_) => return self.look_at(answer),
             SiteKey::ImportEquals(declaration) => {
                 let symbol = self.bound.declared_symbol(Decl::ImportEquals(declaration));
                 let is_holder = symbol.is_some()
@@ -507,7 +534,7 @@ impl FileBinder<'_, '_> {
             return None;
         }
         let helpers = context.known_helpers;
-        let known = helpers.certain_callee(context.files, self.file, call.callee)?;
+        let known = helpers.callee_returning_marked_value(context.files, self.file, call.callee)?;
         if !matches!(
             known.shape.helper(),
             Helper::ImportStar | Helper::ImportDefault
@@ -597,6 +624,8 @@ impl FileBinder<'_, '_> {
             runs_once: site.position == SitePosition::InOrder,
             is_of_ordinary_object: is_ordinary_object,
             has_marker: false,
+            passes_over_marker: false,
+            reads_own_default: false,
             may_hold_answer: false,
             is_looked_at: false,
             is_called_through: false,
@@ -643,6 +672,8 @@ impl FileBinder<'_, '_> {
             && (asks_for_marker_alone || self.has_name_once_run(target, known::default));
         Some(CopiedExports {
             has_marker,
+            passes_over_marker,
+            reads_own_default: !asks_for_marker_alone,
             may_hold_answer: is_ordinary_object
                 && (asks_for_marker_alone
                     || passes_over_marker

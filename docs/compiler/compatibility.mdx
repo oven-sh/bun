@@ -59,17 +59,18 @@ These work:
 
 These throw a `TypeError`:
 
-- Replacing, redefining or deleting a member that exists: `Array.prototype.push = f`, `Object.defineProperty(Array.prototype, "push", d)`, `delete Array.prototype.push`. The same goes for `Promise`, `Date`, `RegExp`, `Map`, `Set`, `Buffer`, the typed arrays, `Request`, `Response`, `Headers` and `URL`.
+- Replacing, redefining or deleting a member that exists: `Array.prototype.push = f`, `Object.defineProperty(Array.prototype, "push", d)`, `delete Array.prototype.push`. The same goes for `Promise`, `Date`, `RegExp`, `Map`, `Set`, `Buffer`, the typed arrays, `Request`, `Response`, `Headers` and `URL`, for `createRequire` of `node:module`, and for what `process` inherits, as in `Object.getPrototypeOf(process).on = f`.
+- Changing what one of these inherits from: `Object.setPrototypeOf(Array.prototype, null)`.
 - Anything added to `Object.prototype`: `Object.prototype.extra = 1`.
 - Replacing a global that the language itself uses: `globalThis.Array = List`, `globalThis.Map = Other`.
 - What the language looks up by itself, added to a prototype that doesn't have it: `Array.prototype[Symbol.toPrimitive]`, `Array.prototype.then`, `Array.prototype.toJSON`, `RegExp.prototype.toJSON`, `Array.prototype[0]`.
 - `process.versions`, `process.release` and `process.isBun`, which tell a program what runtime it's on.
 
-`Reflect.set()`, `Reflect.defineProperty()` and `Reflect.deleteProperty()` return `false` for these, as they do for any read-only property.
+`Reflect.set()`, `Reflect.defineProperty()`, `Reflect.deleteProperty()` and `Reflect.setPrototypeOf()` return `false` for these, as they do for any read-only property.
 
 Their property descriptors are what `bun run` reports, `writable: true` included. The exception is `Buffer.concat`, which reports `writable: false`. `minizlib` 3, which `tar` 7 and `npm` use, reads that descriptor and replaces the function only if it is writable.
 
-The build has to see the assignment to `Date.now` and the others in the first list. It can't see [code from a string](#code-from-strings), so `eval("Date.now = () => 5")` throws.
+The build has to see the assignment to `Date.now`, `process.argv` and the others that can be replaced. Spell out the object and the name. It can't see [code from a string](#code-from-strings), so `eval("Date.now = () => 5")` throws if your code uses `Date.now`.
 
 If the line that throws is in a package, look the package up in [Libraries](/compiler/libraries).
 
@@ -94,8 +95,9 @@ bun compile ./strings.ts && ./strings
 There's one exception. Some libraries make many similar functions from a template, as in `eval(template.replace("NAME", "add"))` or `new Function("a", "b", "return a " + operator + " b")`. Where the build can work out such strings from the constants of the file, it compiles the function. For `eval` the string has to be one function in parentheses. The executable uses the function where the strings turn out to be the same.
 
 - Where the build can't tell that a call evaluates code, the call throws an `EvalError`. `fn[name](code)` does if `"constructor"` isn't written anywhere in your code.
-- Code from a string can `import()` your entry points. Any other file may throw `Cannot load`. Pass the module to that code instead. `new Function("path", "return import(path)")` and `eval("import('./a.js')")`, with strings that are written out like that, are compiled as that `import()`.
-- A script from a string can't declare a built-in global at its top level. `vm.runInThisContext("let Array = 5")` throws a `SyntaxError`. It works in a block, in a function or in a `node:vm` context of its own.
+- Code from a string can `import()` your entry points. Any other file may throw `Cannot load`. Pass the module to that code instead. From a JSON file in the executable it gets the `default` export. A named one throws a `ReferenceError` when it's read, unless an `import` of yours names it. `new Function("path", "return import(path)")` and `eval("import('./a.js')")`, with strings that are written out like that, are compiled as that `import()`.
+- Code from a string finds the `module` of a file only if your own code uses one. If it doesn't, `process.mainModule` may be `undefined`, and what `process.mainModule.children` holds throws `Cannot access the module object`. Write `void module.children;` in one of your files.
+- A script from a string can't declare a built-in global at its top level. `vm.runInThisContext("let Array = 5")` throws a `SyntaxError`, and `function Array() {}` a `TypeError`. It works in a block, in a function or in a `node:vm` context of its own.
 
 Interpreted code is fine for a template or a config file. It costs you when a library generates its hot code this way, as zod 4, ajv, fast-json-stringify and Elysia do.
 
@@ -108,10 +110,11 @@ If your program needs no code from strings, build with [`--disallow-code-generat
 
 ## Unused built-ins
 
-An executable holds the parts of Bun's own JavaScript that your code uses. When [code from a string](#code-from-strings) uses another part, such as `Bun.$` or `console.Console`, it gets an error that it can catch. Write `void Bun.$` anywhere in your code to keep that part.
+An executable holds the parts of Bun's own JavaScript that your code uses. When [code from a string](#code-from-strings) uses another part, such as `Bun.$` or a function of `node:util`, it gets an error that it can catch. Write `void Bun.$` anywhere in your code to keep that part, or import the function by name.
 
 ```txt
 Error: Bun.$ was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code.
+Error: 'promisify' was not compiled into this executable because nothing that the compiler can follow calls it. To keep it, import it by name: import { promisify } from "node:util".
 ```
 
 An event can lead to such a part too. Called without a receiver, `dispatchEvent()` and `addEventListener()` work on the global object, and `event.target` is the global object. The build follows that where your code writes the method's name. It doesn't if the name is only known at run time, as in `const send = signal[process.env.METHOD]; send(event)`, or if it comes out of a `for...in`. Reading `event.target.process.finalization` then throws:
@@ -206,8 +209,9 @@ Every `import`, and every `require()` of a constant path, is resolved at build t
 | In your program                                                  | In an executable                                                            |
 | ---------------------------------------------------------------- | --------------------------------------------------------------------------- |
 | `Module._resolveFilename = hook`                                 | Called for dynamic paths only. The build warns (`TS100080`)                 |
-| `Module._extensions[".js"] = loader`                             | Called for dynamic paths only                                               |
+| `Module._extensions[".js"] = loader`                             | Called for dynamic paths only. Can't change the source or run a file twice  |
 | `delete require.cache[path]`, `require.cache[path] = entry`      | Do nothing. A module runs once. The build warns (`TS100091`, `TS100092`)    |
+| `require.cache["url"] = entry`, for a built-in module            | Works if the key is written out. A computed one throws                      |
 | `Object.keys(require.cache)`                                     | Doesn't list compiled modules                                               |
 | `Bun.plugin()` at run time                                       | Asked about dynamic paths only. It can't replace a module that was compiled |
 | A tracer that patches modules as they load, like OpenTelemetry's | Sees none of them                                                           |
@@ -307,7 +311,7 @@ With that field, a package says that loading its files does nothing except defin
 | Any of these in an entry point                   | The file runs                          |
 | `require("pure")`, `await import("pure")`        | The file runs                          |
 
-The field in your own `package.json` covers your own files, so `import "./setup.ts"` is removed too, except in an entry point. The entry points are the files that you build and the files that a `Worker` starts from.
+A use in a function that nothing calls doesn't count. The field in your own `package.json` covers your own files, so `import "./setup.ts"` is removed too, except in an entry point. The entry points are the files that you build and the files that a `Worker` starts from.
 
 If you import such a package for what it does when it loads, like a polyfill or a plugin that registers itself, its field is wrong. Build with `--ignore-dce-annotations`. `zod@3.25.76` is such a package: after `import * as z from "zod/v4"`, every message is `Invalid input`.
 
@@ -331,7 +335,9 @@ An executable can collect an object earlier or later than `bun run` does. Only a
 
 ## Error messages
 
-The class of an error and the lines in its stack trace are the same as under `bun run`. The paths in the stack trace are relative to the folder you ran the build in: `./src/server.ts:12:9`. `getFileName()` of a call site, which packages use to find files, returns the path that `import.meta.path` has. An uncaught error prints without the source excerpt that `bun run` shows above it.
+Most errors that only compiled code throws end with a link to this page, and say what to write instead.
+
+The class of an error and the lines in its stack trace are the same as under `bun run`, with two exceptions. A code file with a mistake that `bun run`'s transpiler finds, such as a name that's declared twice, throws a `SyntaxError` instead of a `BuildMessage`. A frame shows the name that you wrote for a function, whatever `Object.defineProperty(fn, "name", ...)` set later. The paths in the stack trace are relative to the folder you ran the build in: `./src/server.ts:12:9`. `getFileName()` of a call site, which packages use to find files, returns the path that `import.meta.path` has. An uncaught error prints without the source excerpt that `bun run` shows above it.
 
 A message that quotes your code can differ. An executable quotes what you wrote, and leaves out functions and literals that span lines. `bun run` quotes what its transpiler printed.
 

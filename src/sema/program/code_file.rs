@@ -479,6 +479,8 @@ fn analyze_with_host<'s>(
     let settings = tree.request.settings;
     let resolve = |specifier: &[u8]| resolve_macro_import(context, path, specifier);
     let mut is_transformed = false;
+    let mut are_evals_settled = false;
+    let mut are_factories_copied = false;
     if let Some(module_format) = find_format_by_syntax(&tree.hir) {
         let mut request = EarlyTransformRequest {
             path,
@@ -536,6 +538,21 @@ fn analyze_with_host<'s>(
                 }
                 TreeChange::Unchanged => {}
             }
+        }
+        if !tree.hir.known_evaluations.is_empty()
+            && !std::mem::replace(&mut are_evals_settled, true)
+        {
+            let settled = host.find_settled_evals(&tree.hir, &bound, atoms);
+            if !settled.is_empty() {
+                tree.hir.settled_evals = ArenaFew::from_iter_in(settled.into_iter(), arena);
+                continue;
+            }
+        }
+        if !std::mem::replace(&mut are_factories_copied, true)
+            && host.copy_factories(arena, atoms, &mut tree.hir, &bound, &mut tree.payload)
+                == TreeChange::Changed
+        {
+            continue;
         }
         return (bound, analysis, file.host_values);
     }

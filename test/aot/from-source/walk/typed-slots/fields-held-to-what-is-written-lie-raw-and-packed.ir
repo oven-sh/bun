@@ -16,7 +16,8 @@
 # RUN(PLAN): plan layouts mechanisms=all
 # PLAN: "flags" OptionalInt32 Inline
 # PLAN: "ready" OptionalBoolean Inline
-# PLAN: "name" OptionalCell32 Inline
+# As many are narrow as make the cell a size smaller: one reference stays boxed, which costs no byte.
+# PLAN: "name" JSValue Inline
 # PLAN: "other" OptionalCell32 Inline
 # PLAN: "next" OptionalCell32 Inline
 # RUN(WITHHELD): plan layouts mechanisms=all-TypedSlots

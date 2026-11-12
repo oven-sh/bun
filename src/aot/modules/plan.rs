@@ -319,6 +319,7 @@ pub(super) struct Plan {
     inner_callbacks: Vec<FnId>,
     keeps_module_object: Vec<bool>,
     reaches_module_objects: Vec<bool>,
+    exposes_global_object: Vec<bool>,
     is_found_by_name: Vec<bool>,
     is_every_require_seen: bool,
     is_namespace_seen: Vec<bool>,
@@ -380,6 +381,7 @@ impl Plan {
             inner_callbacks: inner_modules.map(|inner| inner.1).collect(),
             keeps_module_object: vec![false; order.numbers.len()],
             reaches_module_objects: vec![false; order.numbers.len()],
+            exposes_global_object: vec![false; order.numbers.len()],
             is_found_by_name: vec![false; order.numbers.len()],
             is_every_require_seen: false,
             is_namespace_seen: vec![false; order.numbers.len()],
@@ -620,6 +622,27 @@ impl ModuleGraph {
         Some(self.finish_site(site))
     }
 
+    /// The module that the function evaluates which the call makes.
+    pub fn requested_module(&self, file: FileId, call: ExprId) -> Option<Site> {
+        let site = self.find_stored_site(file, SiteKey::Request(call))?;
+        Some(self.finish_site(site))
+    }
+
+    /// The module around a call that evaluates a module, or that makes a function that does.
+    pub fn find_referrer(&self, file: FileId, call: ExprId) -> Option<ModuleRef> {
+        let keys = [SiteKey::Call(call), SiteKey::Request(call)];
+        let site = keys
+            .into_iter()
+            .find_map(|key| self.find_stored_site(file, key))?;
+        Some(site.referrer)
+    }
+
+    /// The module around the call that makes such a function.
+    pub fn find_requester(&self, file: FileId, call: ExprId) -> Option<ModuleRef> {
+        let site = self.find_stored_site(file, SiteKey::Request(call))?;
+        Some(site.referrer)
+    }
+
     pub fn site(&self, file: FileId, call: ExprId) -> Option<Site> {
         if let Some(site) = self.stored_site(file, call) {
             return Some(site);
@@ -712,6 +735,24 @@ impl ModuleGraph {
         (!holders[at].is_needed_as_value).then_some(holders[at].view)
     }
 
+    /// The holder in `const { name } = holder`, where each name is read from the module.
+    pub fn module_of_destructured_holder(&self, file: FileId, holder: ExprId) -> Option<ModuleRef> {
+        let (symbol, module) = find(&self.row(file).destructured_holders, holder)?;
+        self.holder(file, symbol).is_some().then_some(module)
+    }
+
+    pub fn destructured_holders(
+        &self,
+        file: FileId,
+    ) -> impl Iterator<Item = (ExprId, ModuleRef)> + '_ {
+        let holders = self.row(file).destructured_holders.iter();
+        holders.filter_map(move |&(holder, (symbol, module))| {
+            self.holder(file, symbol)
+                .is_some()
+                .then_some((holder, module))
+        })
+    }
+
     pub fn call_of_holder(&self, file: FileId, symbol: SymbolId) -> Option<ExprId> {
         let holders = self.holders(file);
         let at = holders
@@ -787,6 +828,15 @@ impl ModuleGraph {
         };
         let accessed = find(&row.accessed, access)?;
         self.finish_member(accessed.module, binding, accessed.is_imported)
+    }
+
+    /// `limit` of `__export(lib, { limit: () => limit }); lib.limit`: the variables of the file that members name.
+    pub fn bindings_read_as_members(&self, file: FileId) -> impl Iterator<Item = SymbolId> + '_ {
+        let members = self.row(file).fixed_members.iter();
+        members.filter_map(move |&(_, (_, member))| match member {
+            Member::Binding(symbol) if symbol.file == file => Some(symbol.id),
+            _ => None,
+        })
     }
 
     fn stores_what_variable_holds(
@@ -1134,6 +1184,10 @@ impl ModuleGraph {
         plan.has(&plan.reaches_module_objects, module)
     }
 
+    pub fn exposes_global_object(&self, module: ModuleRef) -> bool {
+        self.plan.has(&self.plan.exposes_global_object, module)
+    }
+
     pub fn originals_beside_mocks_may_run(&self) -> bool {
         self.plan.originals_beside_mocks_may_run
     }
@@ -1254,6 +1308,11 @@ impl ModuleGraph {
             .add(|plan| &mut plan.reaches_module_objects, module);
     }
 
+    pub fn set_exposes_global_object(&mut self, module: ModuleRef) {
+        self.plan
+            .add(|plan| &mut plan.exposes_global_object, module);
+    }
+
     pub fn asks_loader_functions(&self) -> bool {
         self.plan.asks_loader_functions
     }
@@ -1341,6 +1400,7 @@ impl ModuleGraph {
             self.settle_requests(prefixes, &data_files, in_parallel);
         steps.end("plan: requests");
         self.plan.is_every_require_seen = self.plan.reaches_module_objects.contains(&true)
+            || self.plan.exposes_global_object.contains(&true)
             || self.plan.may_mock_every_module
             || self.plan.may_be_mocked.contains(&true);
         self.plan.is_finished = true;

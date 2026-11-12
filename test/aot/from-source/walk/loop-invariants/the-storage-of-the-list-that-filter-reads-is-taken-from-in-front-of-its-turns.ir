@@ -8,7 +8,7 @@
 # TAKEN-LABEL: code f1:Body
 # TAKEN: = HasContiguousIndex {{*}} storage={{*}} [isInBounds]
 # TAKEN: = GetOwnContiguousIndex {{*}} storage=
-# TAKEN: = TryPutIndex
+# TAKEN: = AppendElement
 # RUN(GROWS): walk f2 mechanisms=all
 # GROWS-LABEL: code f2:Body
 # GROWS-NOT: = HasContiguousIndex {{*}} storage=

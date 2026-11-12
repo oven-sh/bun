@@ -12,7 +12,7 @@ use super::made_requires::{
 };
 use super::named_paths::{
     add_forwarding_functions, collect_candidates, find_database_read, find_named_paths,
-    find_paths_created,
+    find_paths_created, is_relative_path,
 };
 use super::parameters::{find_names_exported_for, find_parameter_named};
 use super::{
@@ -32,7 +32,7 @@ use crate::hir::{
     ImportedFileChanger, MemberKey, MemberKind, NodeData, PropId, PropKey, PropKind, StmtKind,
     UnOp, VarKind,
 };
-use crate::util::{FxHashSet, SharedSort};
+use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_core::strings;
 
 pub const WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY: [&[u8]; 3] =
@@ -887,6 +887,7 @@ pub(super) struct ScannedCalls {
     pub(super) reads_below_working_folder: Vec<(ExprId, Atom)>,
     pub(super) named_paths: Vec<NamedPath>,
     pub(super) paths_created: Vec<Atom>,
+    pub(super) web_assembly_names: Vec<(ExprId, Atom)>,
     pub(super) reading_functions: Vec<SymbolId>,
     pub(super) own_folder_arguments: Vec<(ExprId, Option<ExprId>)>,
     pub(super) path_queries: Vec<ExprId>,
@@ -955,6 +956,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut named_paths = Vec::new();
     let mut created_operands = Vec::new();
     let mut paths_created = Vec::new();
+    let mut web_assembly_names = Vec::new();
     let mut reading_functions = Vec::new();
     let mut own_folder_arguments = Vec::new();
     for index in 0..hir.exprs.len() {
@@ -980,6 +982,13 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
                     if let Some(key) = find_key_stored_in_cache(inputs, call, &mut alternatives) {
                         keys_stored_in_caches.push(key);
                     }
+                }
+                ExprKind::String(name)
+                    if inputs.atoms.bytes(name).ends_with(b".wasm")
+                        && is_relative_path(inputs.atoms.bytes(name))
+                        && !decisions.is_dead_expr(call) =>
+                {
+                    web_assembly_names.push((call, name));
                 }
                 _ => {}
             }
@@ -1011,7 +1020,8 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
             known_operands.extend(named.made);
             let is_discarded = matches!(bound.parent_of_expr(call), Parent::Stmt(statement)
                 if matches!(hir[statement].kind, StmtKind::Expr(_)));
-            file_object_paths.extend(named.made.filter(|_| !is_discarded));
+            let made = named.made.filter(|_| !is_discarded);
+            file_object_paths.extend(made.map(|path| (path, call)));
             changed_operands.extend(named.changed.iter().map(|it| it.0.operand));
             created_operands.extend(named.created);
             known_operands.extend(named.created);
@@ -1145,18 +1155,46 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let is_used = |path: &ExprId| {
         changed_operands.contains(path) || reads.iter().any(|&(operand, _)| operand == *path)
     };
-    file_object_paths.retain(|path| !is_used(path));
-    reads.extend(file_object_paths.into_iter().map(|path| (path, false)));
+    let mut is_written_alone = |made: ExprId| {
+        let texts = texts_of_file.get_or_insert_with(create_texts);
+        texts.is_written_alone(made)
+    };
+    file_object_paths.retain(|it| !is_used(&it.0) && !is_written_alone(it.1));
+    reads.extend(file_object_paths.into_iter().map(|it| (it.0, false)));
     for &operand in changed_operands.iter().chain(&created_operands) {
         let texts = texts_of_file.get_or_insert_with(create_texts);
         find_paths_created(inputs, texts, operand, &mut paths_created);
     }
     known_operands.extend(reads.iter().map(|it| it.0).chain(changed_operands));
+    let mut found_reads = Vec::with_capacity(reads.len());
+    let mut unsure: FxHashMap<ExprId, bool> = FxHashMap::default();
     for (operand, is_query) in reads {
         let texts = texts_of_file.get_or_insert_with(create_texts);
         let found = texts.find_module_relative_reads(operand);
-        if !texts.is_path_fully_known(operand) {
+        let found_count = found.paths.len() + found.patterns.len();
+        let is_known = texts.is_path_fully_known(operand);
+        if !is_known {
             unknown_path_reads.push(operand);
+        }
+        if found_count > 0 || !is_known {
+            *unsure.entry(operand).or_default() |= found_count > 0;
+        }
+        found_reads.push((operand, is_query, found));
+    }
+    let executed = match unsure.is_empty() {
+        true => FxHashMap::default(),
+        false => {
+            let texts = texts_of_file.get_or_insert_with(create_texts);
+            texts.find_executed_reads(unsure)
+        }
+    };
+    for (operand, is_query, mut found) in found_reads {
+        let texts = texts_of_file.get_or_insert_with(create_texts);
+        if let Some(paths) = executed.get(&operand) {
+            let text = |atom: Atom| inputs.atoms.bytes(atom);
+            found.paths.extend(paths.iter().copied());
+            (found.paths).shared_sort_unstable_by_key(|it| text(*it));
+            found.paths.dedup();
         }
         if entered_operands.contains(&operand) {
             folders_entered.extend(found.paths.iter().map(|&path| (operand, path)));
@@ -1244,6 +1282,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         reads_below_working_folder,
         named_paths,
         paths_created,
+        web_assembly_names,
         reading_functions,
         own_folder_arguments,
         known_load_names,
@@ -1370,45 +1409,75 @@ fn is_worker_threads(specifier: Atom) -> bool {
     specifier == known::worker_threads || specifier == known::node_worker_threads
 }
 
+enum Constructor {
+    Worker,
+    Class(ClassId),
+    Other,
+}
+
+impl Constructor {
+    fn worker_if(is_worker: bool) -> Constructor {
+        match is_worker {
+            true => Constructor::Worker,
+            false => Constructor::Other,
+        }
+    }
+}
+
 fn find_whether_constructor_is_worker(
     hir: &File<'_>,
     bound: &Bound<'_>,
     callee: ExprId,
 ) -> Option<bool> {
+    let mut callee = callee;
+    let mut met: FxHashSet<ClassId> = FxHashSet::default();
+    let is_worker = loop {
+        match find_constructor(hir, bound, callee)? {
+            Constructor::Worker => break true,
+            Constructor::Class(class) if hir[class].extends.is_some() => {
+                // A ring of classes constructs nothing.
+                if !met.insert(class) {
+                    return None;
+                }
+                callee = find_heritage_constructed(hir, bound, class)?;
+            }
+            Constructor::Class(_) | Constructor::Other => break false,
+        }
+    };
+    (is_worker || met.is_empty()).then_some(is_worker)
+}
+
+fn find_constructor(hir: &File<'_>, bound: &Bound<'_>, callee: ExprId) -> Option<Constructor> {
     let find_constant = |e| match expr_kind(hir, e) {
         Some(ExprKind::String(text)) => Some(Constant::String(text)),
         _ => None,
     };
     let export = find_export_of_module(hir, bound, callee, &find_constant, &is_worker_threads);
     if let Some(export) = export {
-        return Some(export == known::Worker);
+        return Some(Constructor::worker_if(export == known::Worker));
     }
     let constructor = follow_settled_bindings(hir, bound, callee);
     if let Some((object, MemberKey::Name(name))) = hir.member_key(constructor) {
         let object = follow_settled_bindings(hir, bound, object);
         let global_objects = [known::globalThis, known::global, known::self_];
-        return is_free_name(hir, bound, object, &global_objects).then_some(name == known::Worker);
+        return is_free_name(hir, bound, object, &global_objects)
+            .then(|| Constructor::worker_if(name == known::Worker));
     }
-    let is_worker = |class: ClassId| {
-        if hir[class].extends.is_none() {
-            return Some(false);
-        }
-        let heritage = find_heritage_constructed(hir, bound, class)?;
-        find_whether_constructor_is_worker(hir, bound, heritage).filter(|&is_worker| is_worker)
-    };
     match expr_kind(hir, constructor)? {
-        ExprKind::Class(class) => is_worker(class),
-        ExprKind::Fn(_) => Some(false),
-        ExprKind::Ident(_) if is_free_name(hir, bound, constructor, &[known::Worker]) => Some(true),
+        ExprKind::Class(class) => Some(Constructor::Class(class)),
+        ExprKind::Fn(_) => Some(Constructor::Other),
+        ExprKind::Ident(_) if is_free_name(hir, bound, constructor, &[known::Worker]) => {
+            Some(Constructor::Worker)
+        }
         ExprKind::Ident(_) if bound.binding(constructor) == Binding::Free => bound
             .dynamic_lookup_scope(NodeData::Expr(constructor))
             .is_none()
-            .then_some(false),
+            .then_some(Constructor::Other),
         ExprKind::Ident(_) => {
             let symbol = settled_symbol(hir, bound, constructor)?;
             match bound.binding_initializer(hir, symbol) {
-                BindingInitializer::Class(class) => is_worker(class),
-                BindingInitializer::Function(_) => Some(false),
+                BindingInitializer::Class(class) => Some(Constructor::Class(class)),
+                BindingInitializer::Function(_) => Some(Constructor::Other),
                 _ => None,
             }
         }
@@ -1416,7 +1485,7 @@ fn find_whether_constructor_is_worker(
     }
 }
 
-/// `class A extends Worker {}`: what `new A(..)` hands its arguments to. Only a class declared before `class` counts, so no chain leads back.
+/// `class A extends Worker {}`: what `new A(..)` hands its arguments to. Only a class declared before `class` counts.
 pub fn find_heritage_constructed(
     hir: &File<'_>,
     bound: &Bound<'_>,

@@ -2194,6 +2194,190 @@ c.txt,e.txt,f.txt
     expect(compiled).toEqual(plain);
   }, 120_000);
 
+  test.each(["beside its sources", "where its files are gone"])(
+    "a package reads what other threads have copied and written, %s",
+    async place => {
+      const rows = ["copied", "called back", "cp", "written", "opened", "shell", "folder/shell", "folder/deep/shell"];
+      const some = ["a", "b", "c", "d", "e", "f", "g", "h"].map(name => `some/${name}`);
+      using dir = tempDir("aot-writes-of-other-threads", {
+        "app/main.mjs": `import { start } from "store"; console.log(await start());`,
+        "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.mjs" }`,
+        "app/node_modules/store/below.cjs": `exports.below = name => require("node:path").join(__dirname, "data", name);`,
+        "app/node_modules/store/index.mjs": `import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { $ } from "bun";
+import { below } from "./below.cjs";
+const own = name => path.join(import.meta.dirname, "data", name);
+const from = fs.mkdtempSync(path.join(os.tmpdir(), "copied-from-"));
+const said = [];
+const say = async (write, ...names) => {
+  const opened = names.map(name => fs.openSync(own(name)));
+  for (const name of names) {
+    fs.mkdirSync(path.dirname(path.join(from, name)), { recursive: true });
+    fs.writeFileSync(path.join(from, name), "new");
+  }
+  await write(path.join(from, names[0]), below(names[0]));
+  for (const [index, name] of names.entries()) {
+    // On Windows a file that was opened keeps its bytes.
+    const kept = process.platform === "win32" ? "new" : fs.readFileSync(opened[index], "utf8");
+    said.push([name, fs.readFileSync(own(name), "utf8"), kept].join(" "));
+    fs.closeSync(opened[index]);
+  }
+};
+export const start = async () => {
+  try {
+    await say((source, target) => fs.promises.copyFile(source, target), "copied");
+    await say((source, target) => new Promise(done => fs.copyFile(source, target, done)), "called back");
+    await say((source, target) => fs.promises.cp(source, target), "cp");
+    await say((source, target) => fs.promises.writeFile(target, "new"), "written");
+    await say(async (source, target) => {
+      const handle = await fs.promises.open(target, "w");
+      await handle.writeFile("new");
+      await handle.close();
+    }, "opened");
+    await say((source, target) => $\`cp \${source} \${target}\`, "shell");
+    await say(() => $\`cp -R \${path.join(from, "folder")} \${below("")}\`, "folder/shell", "folder/deep/shell");
+    const some = ["a", "b", "c", "d", "e", "f", "g", "h"].map(name => "some/" + name);
+    fs.mkdirSync(path.join(from, "some"));
+    for (const name of [...some, "some/folder"]) fs.writeFileSync(path.join(from, name), "new");
+    fs.mkdirSync(below("some/folder"));
+    const { exitCode } = await $\`cp -R \${path.join(from, "some")} \${below("")}\`.nothrow().quiet();
+    said.push("laid " + fs.readFileSync(own("folder/laid"), "utf8"));
+    const isSame = name => fs.readFileSync(own(name), "utf8") === fs.readFileSync(below(name), "utf8");
+    said.push("some " + (exitCode !== 0) + " " + some.every(isSame));
+  } finally {
+    fs.rmSync(from, { recursive: true });
+  }
+  return said.join("\\n");
+};
+`,
+        ...Object.fromEntries(
+          [...rows, ...some, "folder/laid"].map(name => [`app/node_modules/store/data/${name}`, "first"]),
+        ),
+      });
+      const [app, copy, outfile] = ["app", "copy", "built.exe"].map(it => join(String(dir), it));
+      cpSync(app, copy, { recursive: true });
+      const built = await run(app, [bunExe(), "build", "--compile", "--aot", "./main.mjs", "--outfile", outfile]);
+      expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+        stderr: "",
+        exitCode: 0,
+      });
+      if (place !== "beside its sources") {
+        renameSync(app, join(String(dir), "moved-away"));
+        for (const folder of ["folder/deep", "some"]) {
+          mkdirSync(join(app, "node_modules/store/data", folder), { recursive: true });
+        }
+      }
+      // The program has not written this one, so it is not trusted.
+      writeFileSync(join(app, "node_modules/store/data/folder/laid"), "laid");
+      const env = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
+      const plain = await run(copy, [bunExe(), "run", "./main.mjs"], env);
+      const compiled = await run(String(dir), [outfile], { ...env, BUN_JSC_crashIfInterpreterIsUsed: "1" });
+      const stdout = [...rows.map(name => `${name} new new`), "laid first", "some true true", ""].join("\n");
+      expect(plain).toEqual({ stdout, stderr: "", exitCode: 0 });
+      expect(compiled).toEqual(plain);
+    },
+    120_000,
+  );
+
+  // On Windows a file that was opened keeps its bytes.
+  test.skipIf(isWindows)(
+    "what a package has open follows the writes of a Worker and of other threads",
+    async () => {
+      using dir = tempDir("aot-descriptors-of-threads", {
+        "app/main.mjs": `import { start } from "store";
+const workers = ["one", "two", "three"].map(() => new Worker(new URL("./worker.mjs", import.meta.url).href));
+const ask = (index, request) => new Promise((done, fail) => {
+  workers[index].onmessage = event => done(event.data);
+  workers[index].onerror = event => fail(event.message);
+  workers[index].postMessage(request);
+});
+console.log(await start(ask, index => workers[index].terminate()));
+for (const worker of workers) worker.terminate();
+`,
+        "app/worker.mjs": `import fs from "node:fs";
+import { below, openForWorker } from "store";
+self.onmessage = ({ data: { opens, writes, removes, moves } }) => {
+  if (writes) fs.writeFileSync(below(writes), "new");
+  if (removes) fs.unlinkSync(below(removes));
+  if (moves) fs.renameSync(below(moves), below(moves + ".moved"));
+  self.postMessage(opens ? openForWorker(opens) : "done");
+};
+`,
+        "app/node_modules/store/package.json": `{ "name": "store", "version": "1.0.0", "exports": "./index.mjs" }`,
+        "app/node_modules/store/below.cjs": `exports.below = name => require("node:path").join(__dirname, "data", name);`,
+        "app/node_modules/store/index.mjs": `import fs from "node:fs";
+import path from "node:path";
+export { below } from "./below.cjs";
+import { below } from "./below.cjs";
+const own = name => path.join(import.meta.dirname, "data", name);
+export const openForWorker = name => fs.openSync(own(name));
+export const start = async (ask, terminate) => {
+  const said = [], read = descriptor => fs.readFileSync(descriptor, "utf8");
+  for (const name of ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]) fs.readFileSync(own(name));
+  // Each is the first that this thread does with its descriptor, or at all, behind the write.
+  const [a, b, c, d, e, f] = ["a", "b", "c", "d", "e", "f"].map(name => fs.openSync(own(name)));
+  await ask(0, { writes: "a" });
+  said.push("Bun.file " + (await Bun.file(a).text()));
+  await ask(0, { writes: "b" });
+  said.push("a child " + Bun.spawnSync({ cmd: ["cat"], stdin: b }).stdout);
+  await ask(0, { writes: "c", removes: "c" });
+  said.push("removed " + read(c));
+  await ask(0, { writes: "d", moves: "d" });
+  said.push("moved " + read(d));
+  const part = Buffer.alloc(1);
+  fs.readSync(e, part);
+  await ask(0, { writes: "e" });
+  said.push("begun " + part + read(e));
+  const handed = await ask(0, { opens: "g" });
+  fs.writeFileSync(below("g"), "new");
+  said.push("opened by a Worker " + read(handed));
+  const other = await ask(0, { opens: "h" });
+  await ask(1, { writes: "h" });
+  said.push("opened by a Worker, written by another " + read(other));
+  const left = await ask(2, { opens: "i" });
+  terminate(2);
+  fs.writeFileSync(below("i"), "new");
+  said.push("opened by a Worker that has ended " + read(left));
+  const handle = await fs.promises.open(own("j"));
+  await ask(0, { writes: "j" });
+  said.push("a handle " + (await handle.readFile("utf8")));
+  await handle.close();
+  const written = fs.promises.writeFile(below("f"), "new");
+  for (let seen, start = Date.now(); (seen = fs.readFileSync(below("f"), "utf8")) !== "new"; ) {
+    if (Date.now() - start > 30_000) throw new Error("the write that is not awaited: " + JSON.stringify(seen));
+  }
+  said.push("not awaited " + read(f));
+  await written;
+  return said.join("\\n");
+};
+`,
+        ...Object.fromEntries([..."abcdefghij"].map(name => [`app/node_modules/store/data/${name}`, "first"])),
+      });
+      const { plain, compiled } = await plainAndBeside(String(dir));
+      expect(plain).toEqual({
+        stdout: [
+          "Bun.file new",
+          "a child new",
+          "removed new",
+          "moved new",
+          "begun few",
+          "opened by a Worker new",
+          "opened by a Worker, written by another new",
+          "opened by a Worker that has ended new",
+          "a handle new",
+          "not awaited new",
+          "",
+        ].join("\n"),
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(compiled).toEqual(plain);
+    },
+    120_000,
+  );
+
   test("a failed mv leaves what the disk does not have", async () => {
     using dir = tempDir("aot-mv-of-embedded-file", {
       "app/main.mjs": `import { start } from "store"; console.log(await start());`,
@@ -2692,6 +2876,217 @@ a blob third
     },
     120_000,
   );
+
+  test("a package chooses its file by what JavaScript answers", async () => {
+    const rows = {
+      "added numbers": `let v = 0; if (process.env.A) v += 1;`,
+      "a sum of numbers": `let v = 0; if (process.env.A) v = v + 1 + 1;`,
+      "steps up": `let v = 0; if (process.env.A) v++;`,
+      "steps down": `let v = 0; if (process.env.A) --v;`,
+      "subtracted": `let v = 2; if (process.env.A) v -= 1;`,
+      "booleans": `let v = false; if (process.env.A) v = true;`,
+      "nothing": `let v; if (process.env.A) v = null;`,
+      "a number and a string": `let v = 1; if (process.env.A) v = "a"; v = v + 1;`,
+      "added booleans": `let v = true; if (process.env.A) v += true;`,
+      "minus zero": `let v = -0; if (process.env.A) v = 1;`,
+      "no number": `let v = NaN; if (process.env.A) v = Infinity;`,
+      "fractions": `let v = 0.5; if (process.env.A) v += 1;`,
+      "a large number": `let v = 1e21; if (process.env.A) v = 1;`,
+      "bigints": `let v = 1n; if (process.env.A) v += 1n;`,
+      "compared bigints": `let n = 16n, v = "a"; if (process.env.A) n = 0x10n; if (n === 0x10n) v = "b";`,
+      "or": `let v = ""; if (process.env.A) v = "b"; v ||= "a";`,
+      "and": `let v = ""; if (process.env.A) v = "b"; v &&= "a"; v ||= "c";`,
+      "missing": `let v = null; if (process.env.A) v = ""; v ??= "a"; v ||= "b";`,
+      "zero as a string": `let v = "a"; const zero = process.env.A ? "0" : ""; if (zero) v = "b";`,
+      "a default of a pattern": `const { A = "a" } = process.env; let v = "b"; if (A === "a") v = "c";`,
+      "a default of a parameter": `function choose(x = "a") { return x === "a" ? "b" : "c"; } let v = choose(process.env.A);`,
+      "a thrown error": `let v = "a"; try { if (process.env.A) null.x; v = "b"; } catch { v = "c"; }`,
+      "an error of a call": `let v = "a"; try { v = "b"; JSON.parse(process.env.A ? "{" : "{}"); v = "ab"; } catch { v += "c"; }`,
+      "an error after a store": `let v = "a"; try { v = "b"; process.env.A.x.y; } catch { v += "c"; }`,
+      "finally": `let v = "a"; function f() { try { if (process.env.A) throw 1; v = "b"; } finally { v += "c"; } } try { f(); } catch {}`,
+      "thrown in catch": `let v = "a"; try { try { throw 1; } catch { v = "b"; if (process.env.A) throw 2; } } catch { v = "c"; }`,
+      "a variable of each iteration": `let v = "a"; for (const x of ["one", "two"]) { let y; if (x === "one") y = "b"; y ??= "c"; v = y; }`,
+      "a constant of each iteration": `let v = "a"; for (const x of JSON.parse("[1,0]")) { if (x) v = "b"; else if (v === "b") v = "c"; }`,
+      "closures of calls": `function make(n) { return () => n; } const one = make("a"), two = make("b"); let v = one();`,
+      "closures of a loop": `const all = []; for (const n of ["a", "b"]) all.push(() => n); let v = all[0]();`,
+      "methods of classes of calls": `function make(n) { return class { get() { return n; } }; } const One = make("a"), Two = make("b"); let v = new One().get();`,
+      "a variable of an earlier call": `function pick(flag) { var f; if (flag) f = "b"; return f || "a"; } pick(true); let v = pick(false);`,
+      "this": `function f() { return this ? "a" : "b"; } let v = f();`,
+      "this of an arrow": `class A { constructor() { this.n = "a"; this.get = () => this.n; } } class B { constructor(run) { this.n = "b"; this.run = run; } call() { return this.run(); } } let v = new B(new A().get).call();`,
+      "an optional call": `let v = "a"; const o = process.env.A ? { set() {} } : undefined; o?.set((v = "b"));`,
+      "an inherited name": `let v = "b"; const o = {}; if (o.toString) v = "a";`,
+      "super": `class P { get() { return "a"; } } class C extends P { get() { return super.get(); } } let v = new C().get();`,
+      "the order of a store": `let o = { n: "a" }; const p = o; o.n = (o = { n: "c" }, "b"); let v = p.n;`,
+      "new of a function": `let v = "c"; function F(n) { v = n; } F("a"); new F("b");`,
+      "a switch": `let v; switch (process.env.A) { default: v = "a"; case "2": v = (v ?? "") + "b"; break; case "1": v = "c"; }`,
+      "a label": `let v = "a"; outer: for (;;) { for (;;) { v = "b"; break outer; } }`,
+      "the kind of a value": `let v = "a"; if (typeof process.env.A === "string") v = "b";`,
+      "an order of numbers": `let v = "a"; if (process.env.A < 2) v = "b";`,
+      "a getter": `const o = { get n() { return process.env.A ? "a" : "b"; } }; let v = o.n;`,
+      "a spread object": `const o = { n: "a", ...(process.env.A && { n: "b" }) }; let v = o.n;`,
+      "a joined list": `let v = ["a", process.env.A ? "b" : "c"].join("");`,
+      "a method of a string": `let v = (process.env.A ? "A" : "B").toLowerCase();`,
+      "a deleted field": `const o = { n: "a" }; if (process.env.A) delete o.n; let v = o.n ?? "b";`,
+      "a converted object": `let v = "a"; const o = { valueOf() { v = "b"; return 1; } }; if (process.env.A) +o;`,
+      "a loop": `let v = 0; while (v < 2) v += 1;`,
+      "a variable that is set": `let v = "a"; const key = "SET_" + "LATER"; if (!process.env.SET_LATER) { process.env[key] = "1"; v = "b"; } if (process.env.SET_LATER) v += "c";`,
+    };
+    const values = [
+      "0",
+      "1",
+      "2",
+      "-1",
+      "0.5",
+      "1.5",
+      "01",
+      "true",
+      "false",
+      "null",
+      "undefined",
+      "NaN",
+      "Infinity",
+      "1e+21",
+    ];
+    values.push("a", "b", "c", "ab", "ac", "bc", "a1");
+    const names = Object.keys(rows);
+    using dir = tempDir("aot-executed-choices", {
+      "app/package.json": `{ "name": "app" }`,
+      "app/main.cjs": `const { read } = require("chooser");\nfor (const line of read()) console.log(line);\n`,
+      "app/node_modules/chooser/package.json": `{ "name": "chooser", "version": "1.0.0", "main": "./index.cjs" }`,
+      "app/node_modules/chooser/index.cjs": `const attempt = (name, load) => {
+  try { return name + ": " + load(); } catch (error) { return name + ": " + error.code; }
+};
+exports.read = () => [
+${names.map((name, index) => `  attempt(${JSON.stringify(name)}, () => require("./${index}.cjs")),`).join("\n")}
+];
+`,
+      ...Object.fromEntries(
+        Object.values(rows).flatMap((code, index) => [
+          [
+            `app/node_modules/chooser/${index}.cjs`,
+            `const fs = require("node:fs"), path = require("node:path");
+${code}
+module.exports = fs.readFileSync(path.join(__dirname, \`files/${index}/\${v}.txt\`), "utf8");
+`,
+          ],
+          ...values.map(value => [`app/node_modules/chooser/files/${index}/${value}.txt`, value]),
+        ]),
+      ),
+    });
+    const [app, outfile] = ["app", "built.exe"].map(it => join(String(dir), it));
+    const built = await run(app, [bunExe(), "build", "--compile", "--aot", "./main.cjs", "--outfile", outfile]);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
+    const environments = [{ A: "1" }, { A: "2" }, { A: undefined }];
+    const all = environments.map(it => ({ ...bunEnv, SET_LATER: undefined, ...it }));
+    const plain = await Promise.all(all.map(env => run(app, [bunExe(), "run", "./main.cjs"], env)));
+    renameSync(app, join(String(dir), "moved-away"));
+    const compiled = await Promise.all(all.map(env => run(String(dir), [outfile], env)));
+    for (const { stdout, exitCode } of plain) {
+      expect({ lines: stdout.split("\n").length, exitCode }).toEqual({ lines: names.length + 1, exitCode: 0 });
+    }
+    expect(compiled).toEqual(plain);
+  }, 120_000);
+
+  test("a package chooses its file by a variable of the environment that it compares loosely", async () => {
+    const rows = {
+      "one": "process.env.CHOSEN == 1",
+      "one first": "1 == process.env.CHOSEN",
+      "a boolean": "process.env.CHOSEN == true",
+      "not one": "!(process.env.CHOSEN != 1)",
+      "zero": "process.env.EMPTY == 0",
+      "no truth": "process.env.EMPTY == false",
+      "null": "process.env.UNSET == null",
+      "undefined": "process.env.UNSET == undefined",
+      "not null": "process.env.CHOSEN != null",
+      "a number and a boolean": "one == true",
+      "nothing": "nothing == undefined",
+      "a string": "process.env.CHOSEN == '1'",
+    };
+    const names = Object.keys(rows);
+    using dir = tempDir("aot-loosely-compared-environment", {
+      "app/package.json": `{ "name": "app" }`,
+      "app/main.cjs": `const { read } = require("chooser");\nfor (const line of read()) console.log(line);\n`,
+      "app/node_modules/chooser/package.json": `{ "name": "chooser", "version": "1.0.0", "main": "./index.cjs" }`,
+      "app/node_modules/chooser/index.cjs": `exports.read = () => [
+${names.map((_, index) => `  require("./${index}.cjs"),`).join("\n")}
+];
+`,
+      ...Object.fromEntries(
+        Object.entries(rows).flatMap(([name, test], index) => [
+          [
+            `app/node_modules/chooser/${index}.cjs`,
+            `const fs = require("node:fs"), path = require("node:path");
+let one = 1, nothing = null;
+let file = path.join(__dirname, "files/${index}-first.txt");
+if (${test}) file = path.join(__dirname, "files/${index}-chosen.txt");
+module.exports = fs.readFileSync(file, "utf8");
+`,
+          ],
+          [`app/node_modules/chooser/files/${index}-first.txt`, `${name}: first`],
+          [`app/node_modules/chooser/files/${index}-chosen.txt`, `${name}: chosen`],
+        ]),
+      ),
+    });
+    const [app, outfile] = ["app", "built.exe"].map(it => join(String(dir), it));
+    const built = await run(app, [bunExe(), "build", "--compile", "--aot", "./main.cjs", "--outfile", outfile]);
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
+    const environments = [{ CHOSEN: "1", EMPTY: "" }, { CHOSEN: "2", EMPTY: "some", UNSET: "set" }, {}];
+    const all = environments.map(it => ({ ...bunEnv, CHOSEN: undefined, EMPTY: undefined, UNSET: undefined, ...it }));
+    const plain = await Promise.all(all.map(env => run(app, [bunExe(), "run", "./main.cjs"], env)));
+    renameSync(app, join(String(dir), "moved-away"));
+    const compiled = await Promise.all(
+      all.map(env => run(String(dir), [outfile], { ...env, BUN_JSC_crashIfInterpreterIsUsed: "1" })),
+    );
+    expect(plain[0]).toEqual({ stdout: names.map(it => `${it}: chosen\n`).join(""), stderr: "", exitCode: 0 });
+    expect(compiled).toEqual(plain);
+  }, 120_000);
+
+  test("a route of Bun.serve() may be a file that --asset embeds", async () => {
+    using dir = tempDir("aot-route-of-embedded-file", {
+      "app/package.json": `{ "name": "server" }`,
+      "app/favicon.ico": "an icon",
+      "app/page.html": "a page",
+      "app/main.mjs": `import path from "node:path";
+const at = name => Bun.file(path.join(import.meta.dir, name));
+using server = Bun.serve({
+  port: 0,
+  routes: { "/favicon.ico": at("favicon.ico"), "/page": at("page.html"), "/response": new Response(at("page.html")) },
+  fetch: () => new Response("no route"),
+});
+for (const route of ["/favicon.ico", "/page", "/response", "/other"]) {
+  const answer = await fetch(new URL(route, server.url));
+  console.log(route, answer.status, answer.headers.get("content-type"), await answer.text());
+}
+const head = await fetch(new URL("/favicon.ico", server.url), { method: "HEAD" });
+console.log("HEAD", head.status, head.headers.get("content-length"));
+`,
+    });
+    const { plain, compiled } = await bothWays(
+      String(dir),
+      "./main.mjs",
+      "--asset",
+      "./favicon.ico",
+      "--asset",
+      "./page.html",
+    );
+    expect(plain).toEqual({
+      stdout: `/favicon.ico 200 image/x-icon an icon
+/page 200 text/html;charset=utf-8 a page
+/response 200 text/html;charset=utf-8 a page
+/other 200 text/plain;charset=utf-8 no route
+HEAD 200 7
+`,
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(compiled).toEqual(plain);
+  }, 120_000);
 
   test.skipIf(!isLinux)(
     "an embedded folder is opened where no temporary folder can be made",

@@ -708,6 +708,14 @@ impl FunctionBuilder {
         self.write_variable(variable, narrowed);
     }
 
+    pub fn is_undefined(&self, value: ValueId) -> bool {
+        self.opcode_of(value) == Some(Opcode::Undefined)
+    }
+
+    pub fn is_absent(&self, value: ValueId) -> bool {
+        self.opcode_of(value) == Some(Opcode::Absent)
+    }
+
     pub fn is_undefined_or_null(&self, value: ValueId) -> bool {
         matches!(
             self.opcode_of(value),

@@ -174,9 +174,21 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         prop: &Prop<'_>,
         property_index: u32,
     ) -> ListedMember {
+        // What a spread copies from an accessor is the value that it reads.
+        let is_copied = matches!(prop.source, PropSource::Copy(..));
+        let kind = match member_kind(prop.flags) {
+            ObjectMemberKind::Getter
+            | ObjectMemberKind::Setter
+            | ObjectMemberKind::GetterAndSetter
+                if is_copied =>
+            {
+                ObjectMemberKind::Field
+            }
+            kind => kind,
+        };
         ListedMember {
             name: self.member_name(prop.name),
-            kind: member_kind(prop.flags),
+            kind,
             is_optional: prop.flags.contains(PropFlags::OPTIONAL),
             property_index,
         }

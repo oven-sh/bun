@@ -8,7 +8,7 @@ extern "C" fn JSMock__isInPreload(global: &JSGlobalObject) -> bool {
     if vm.is_in_preload {
         return true;
     }
-    // The runner belongs to the main thread.
+    // Only the main thread has a runner. Workers and the VMs of macros have none.
     if !vm.is_main_thread {
         return false;
     }

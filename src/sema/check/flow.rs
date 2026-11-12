@@ -7418,7 +7418,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let last = self.last_assignment_pos(file, symbol);
         let hir = self.hir(file);
-        let pos = hir.position_of_evaluation(hir[e].pos);
+        let pos = match hir.is_in_copied_factory(last) {
+            true => hir[e].pos,
+            false => hir.position_of_evaluation(hir[e].pos),
+        };
         last == 0 || last < self.end_of_token_before(file, pos)
     }
 

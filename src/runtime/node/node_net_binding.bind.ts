@@ -13,10 +13,10 @@ export const newDetachedSocket = b.fn({
 const promiseOfSocket = table
   .instance("Promise")
   .holding({ value: table.union(table.instance("TCPSocket"), table.instance("TLSSocket")), reason: table.any }).fresh;
-/** `Bun.connect()` with a socket that is there already: `Listener::connect_inner`. The handlers of the options get that socket. */
+/** `Bun.connect()` with a socket that is there already: `Listener::connect_inner`. The handlers of the options get that socket. Undefined if the socket can't drop the connection it has. */
 export const doConnect = b.fn({
   args: { socket: SocketHandle, options: b.any },
-  returns: b.any.returning(promiseOfSocket.spec),
+  returns: b.any.returning(table.union(promiseOfSocket, table.undefined).spec),
   capability: "js",
   throws: true,
   uses: { socket: [...table.retainedByNativeCode, table.storedIn(socket)], options: socketOptions },

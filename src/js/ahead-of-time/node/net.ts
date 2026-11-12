@@ -601,10 +601,8 @@ function lazyBlockList(): $Node.BlockListConstructor {
   return (BlockList ??= $bindgen("BlockList.bind.ts", "BlockList") as $Node.BlockListConstructor);
 }
 const newDetachedSocket: (isSSL: boolean) => SocketHandle = $bindgen("node_net_binding.bind.ts", "newDetachedSocket");
-const doConnect: (handle: SocketHandle | null, options: NativeConnectOptions) => Promise<unknown> = $bindgen(
-  "node_net_binding.bind.ts",
-  "doConnect",
-);
+const doConnect: (handle: SocketHandle | null, options: NativeConnectOptions) => Promise<unknown> | undefined =
+  $bindgen("node_net_binding.bind.ts", "doConnect");
 
 const addServerName = $bindgen("Listener.bind.ts", "addServerName") as (
   listener: ListenerHandle,

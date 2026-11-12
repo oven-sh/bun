@@ -1624,6 +1624,32 @@ describe("Socket fd adoption", () => {
     });
   });
 
+  // In its own process: the assertion it used to fail aborts.
+  it.skipIf(isWindows).each([
+    ["port", `1, "127.0.0.1"`],
+    ["path", `"missing.sock"`],
+  ])("connect(%s) on a socket over a pipe fails with EISCONN", async (_, address) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const socket = new (require("node:net").Socket)({ fd: 1, readable: false, writable: true });
+          socket.on("error", err => console.error("error", err.code, err.syscall));
+          socket.on("close", hadError => console.error("close", hadError));
+          socket.write("before");
+          socket.connect(${address});
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "before", stderr: "error EISCONN connect\nclose true\n" });
+    expect(exitCode).toBe(0);
+  });
+
   it.skipIf(isWindows)("fails a write to a pipe without a reader the way node does", async () => {
     const { rfd, wfd } = openFifo("no-reader.fifo");
     fs.closeSync(rfd);

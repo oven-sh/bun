@@ -619,7 +619,9 @@ fn is_within_other_read(
     let bound = files.bound(file);
     let mut inner = read.operand;
     while let Parent::Expr(outer) = bound.parent_of_expr(inner) {
-        if (reads.iter()).any(|it| it.operand == outer && it.path == read.path) {
+        let is_around =
+            |it: &FileRead| it.operand == outer && it.path == read.path && !it.is_ruled_out;
+        if reads.iter().any(is_around) {
             return true;
         }
         inner = outer;
@@ -1160,7 +1162,7 @@ fn find_excluded_named_paths(
                     listed.is_some_and(|it| !it.is_empty())
                         && is_excluded_folder(files, sources, provider, &path, None)
                 };
-                !reads.iter().any(|it| it.path == path)
+                !reads.iter().any(|it| it.path == path && !it.is_ruled_out)
                     && (provider.is_embeddable_only_by_asset(to_native(module), to_native(&path))
                         || holds_files())
             }

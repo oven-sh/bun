@@ -1190,15 +1190,21 @@ async function measureGrowthOfBuild(
 }
 
 /**
- * What a run holds at most. Linux counts for a child what the process that starts it holds, until the child runs its program: a driver that
- * held 334 MB was told so of /bin/true. So a process that holds little starts it.
+ * A run below a process that holds little and prints how the run ended and what it held at most. Linux counts for a child what the process that
+ * starts it holds, until the child runs its program: a driver that held 334 MB was told so of /bin/true.
  */
-async function mostResidentBelowSmallProcess(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
+const startBelowSmallProcess: typeof start = (cmd, cwd, env) => {
   const script = `const child = Bun.spawn({ cmd: ${JSON.stringify(cmd)}, stdio: ["ignore", "ignore", "ignore"] });
     await child.exited;
-    console.log(child.resourceUsage().maxRSS);`;
-  const { output } = await start([process.execPath, "-e", script], cwd, env);
-  return Math.round(Number(output.stdout) / 2 ** 20);
+    console.log(child.exitCode + " " + child.resourceUsage().maxRSS);`;
+  return start([process.execPath, "-e", script], cwd, env);
+};
+
+/** What the small process told, where it ended by itself and its run ended as `run` did. */
+function mostResidentTold(told: Output, run: Output) {
+  const [, exitCode, bytes] = /^(\d+) (\d+)\n$/.exec(told.stdout) ?? [];
+  const isTold = told.exitCode === 0 && !told.overLimit && exitCode === `${run.exitCode}`;
+  return isTold ? Math.round(Number(bytes) / 2 ** 20) : undefined;
 }
 
 /** Every way to build a file is held to one run of the reference. */
@@ -1299,8 +1305,8 @@ async function run(program: Program): Promise<void> {
     const { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: _, ...envOfRuns } = env;
     const stored = program.output;
     const withSlotOfRun = program.runsByItself ? withEverySlot : withSlot;
-    const runReference = async (entry = program.path) => {
-      if (!program.comparesWithCompiled) return withSlotOfRun(() => start([process.execPath, entry], cwd, envOfRuns));
+    const runReference = async (entry = program.path, run = start) => {
+      if (!program.comparesWithCompiled) return withSlotOfRun(() => run([process.execPath, entry], cwd, envOfRuns));
       const other = nextExecutable("reference");
       let remove = () => {};
       try {
@@ -1323,7 +1329,7 @@ async function run(program: Program): Promise<void> {
         );
         remove = noteExecutable(other);
         if (built.output.exitCode !== 0) return built;
-        return await withSlotOfRun(() => start([other], cwd, envOfRuns));
+        return await withSlotOfRun(() => run([other], cwd, envOfRuns));
       } finally {
         remove();
       }
@@ -1363,28 +1369,30 @@ async function run(program: Program): Promise<void> {
     compiled.output.stderr = withoutLinesOfImage(compiled.output.stderr);
     // What compiled code lays in store ahead of a deed shows in nothing that a program prints. Of 8,046 programs the worst held 1.48 times what plain Bun held.
     // Not where a program grows its data on purpose, where collections are off for a count, or under a sanitizer.
-    const mostOfPlain = plain?.mostResidentMB ?? 0;
-    const bound = 2 * mostOfPlain + 64;
+    // Both sides are told with the driver's memory in them, and the watcher may look at neither at its most: what looks too much is run again.
+    const isTooMuch = (most: number, mostOfPlain: number) => most > 2 * mostOfPlain + 64;
     if (
       !isASAN &&
       !moreFlags.length &&
       runsAreAsUsersRunThem &&
       !program.growth &&
       !asksFirstBuild &&
-      mostOfPlain &&
-      compiled.mostResidentMB > bound
+      plain &&
+      (isTooMuch(compiled.mostResidentMB, plain.mostResidentMB) || isTooMuch(compiled.peakMB, plain.peakMB))
     ) {
-      const mostOfCompiled = await withSlotOfRun(() =>
-        mostResidentBelowSmallProcess([executable], cwd, { ...envOfRuns, ...program.envOfExecutable }),
+      const again = await withSlotOfRun(() =>
+        startBelowSmallProcess([executable], cwd, { ...envOfRuns, ...program.envOfExecutable }),
       );
-      // What told nothing fails as well.
-      if (!(mostOfCompiled <= bound))
+      const plainAgain = await runReference(program.path, startBelowSmallProcess);
+      const most = mostResidentTold(again.output, compiled.output);
+      const mostOfPlain = mostResidentTold(plainAgain.output, plain.output);
+      if (most === undefined || mostOfPlain === undefined || isTooMuch(most, mostOfPlain))
         return fail(
           program,
           "memory",
-          `it held ${mostOfCompiled} MB at most, and plain Bun ${mostOfPlain} MB`,
-          compiled.output,
-          plain?.output,
+          `it held ${most ?? "untold"} MB at most, and plain Bun ${mostOfPlain ?? "untold"} MB`,
+          again.output,
+          plainAgain.output,
         );
     }
     const askedOfRun = [...(asksFirstBuild ? program.counts : []), ...program.countsInEveryBuild];

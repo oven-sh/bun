@@ -15,7 +15,8 @@ use bun_paths::resolve_path::dirname;
 use bun_resolve_builtins::Alias;
 use bun_sema::atom::Interner;
 use bun_sema::bind::Bound;
-use bun_sema::hir::{self, CallId, ExprId, File, NodeData};
+use bun_sema::fold::Decisions;
+use bun_sema::hir::{self, ExprId, File, NodeData};
 use bun_sema::hir_from_data::{DataValue, FOLDER_OF_DATABASE, HostValue};
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{HostLoader, HostModuleId};
@@ -1924,31 +1925,19 @@ impl CodeHost for LoadHost<'_> {
         }
     }
 
-    fn find_settled_evals<'s>(
-        &self,
-        hir: &File<'s>,
-        bound: &Bound<'s>,
-        atoms: &Interner<'s>,
-    ) -> Vec<CallId> {
-        // A test may replace the methods of strings.
-        match self.input.options.load.runs_tests {
-            true => Vec::new(),
-            false => known_evaluations::find_settled_evals(hir, bound, atoms),
-        }
-    }
-
     fn copy_factories<'s>(
         &self,
         arena: &'s Arena,
         atoms: &Interner<'s>,
         hir: &mut File<'s>,
         bound: &Bound<'s>,
+        decisions: &Decisions<'s>,
         payload: &mut Option<HostPayload>,
     ) -> TreeChange {
         let source = parsed_source_mut(payload);
         // A coverage report counts the lines of a factory.
         match source.kind == SourceKind::Program && !self.input.options.aot.counts_executions {
-            true => match copied_factories::copy_factories(arena, atoms, hir, bound) {
+            true => match copied_factories::copy_factories(arena, atoms, hir, bound, decisions) {
                 // A test may replace the functions of `Object`.
                 TreeChange::Unchanged if !self.input.options.load.runs_tests => {
                     construct_objects_created_below(arena, atoms, hir, bound)

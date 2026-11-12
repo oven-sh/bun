@@ -2877,6 +2877,28 @@ a blob third
     120_000,
   );
 
+  test("a path that is passed on is warned of, also where a read of it is ruled out", async () => {
+    using dir = tempDir("aot-path-passed-on", {
+      "app/package.json": `{ "name": "app" }`,
+      "app/big.bin": "big",
+      "app/other.txt": "other",
+      "app/main.cjs": `const fs = require("node:fs"), path = require("node:path");
+const { load } = require("loader");
+const o = { file: path.join(__dirname, "big.bin") };
+console.log(load(path.join(__dirname, "big.bin")));
+Object.assign(o, { file: path.join(__dirname, "other.txt") });
+console.log(fs.readFileSync(o.file, "utf8"));
+`,
+      "app/node_modules/loader/package.json": `{ "name": "loader", "version": "1.0.0", "main": "./index.cjs" }`,
+      "app/node_modules/loader/index.cjs": `const fs = require("node:fs");
+exports.load = file => fs.existsSync(file);
+`,
+    });
+    const { plain, built } = await bothWays(String(dir), "./main.cjs");
+    expect(plain).toEqual({ stdout: "true\nother\n", stderr: "", exitCode: 0 });
+    expect(warnings(built)).toEqual(["warn TS100098 other.txt", "warn TS100172 big.bin"]);
+  }, 120_000);
+
   test("a package reads with what its caller passes in place of a function that writes", async () => {
     using dir = tempDir("aot-functions-passed-for-defaults", {
       "app/package.json": `{ "name": "app" }`,

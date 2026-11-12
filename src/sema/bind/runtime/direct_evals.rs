@@ -32,9 +32,7 @@ pub(super) fn find_direct_evals(
         {
             continue;
         }
-        if let Some(call) = find_call_of_name(hir, bound, ident)
-            && !matches!(hir[call].kind, ExprKind::Call(site) if hir.is_settled_eval(site))
-        {
+        if let Some(call) = find_call_of_name(hir, bound, ident) {
             direct_evals.push(DirectEval {
                 call,
                 scope,

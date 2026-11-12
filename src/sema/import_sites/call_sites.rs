@@ -937,6 +937,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut reads: Vec<(ExprId, bool)> = Vec::new();
     let mut file_object_paths = Vec::new();
     let mut changed_operands = Vec::new();
+    let mut operands_that_may_change = Vec::new();
     let mut walked_lists = Vec::new();
     let mut known_load_names = Vec::new();
     let mut followed_loads = Vec::new();
@@ -1026,7 +1027,11 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
                 if matches!(hir[statement].kind, StmtKind::Expr(_)));
             let made = named.made.filter(|_| !is_discarded);
             file_object_paths.extend(made.map(|path| (path, call)));
-            changed_operands.extend(named.changed.iter().map(|it| it.0.operand));
+            let changed = named.changed.iter().map(|it| it.0.operand);
+            match named.may_call_another_function {
+                true => operands_that_may_change.extend(changed),
+                false => changed_operands.extend(changed),
+            }
             created_operands.extend(named.created);
             known_operands.extend(named.created);
             if let Some(operand) = named.listed {
@@ -1165,7 +1170,8 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     };
     file_object_paths.retain(|it| !is_used(&it.0) && !is_written_alone(it.1));
     reads.extend(file_object_paths.into_iter().map(|it| (it.0, false)));
-    for &operand in changed_operands.iter().chain(&created_operands) {
+    let written = changed_operands.iter().chain(&operands_that_may_change);
+    for &operand in written.chain(&created_operands) {
         let texts = texts_of_file.get_or_insert_with(create_texts);
         find_paths_created(inputs, texts, operand, &mut paths_created);
     }

@@ -211,6 +211,28 @@ pub(crate) fn declare_source_function(
     })
 }
 
+pub(in crate::lower) fn create_header_of_missing_function(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    function: FnId,
+    name: Option<StringId>,
+) -> Function {
+    let flags = match file.is_checked() {
+        true => FunctionFlags::IS_CHECKED,
+        false => FunctionFlags::default(),
+    };
+    Function {
+        name,
+        module: file.module_id(),
+        position: file.hir.written_position(file.hir[function].start),
+        kind: FunctionKind::Plain,
+        role: file.source.function_role(),
+        flags,
+        this_type: DeclaredType::untyped(),
+        results: vec![DeclaredType::untyped()],
+        ..Function::default()
+    }
+}
+
 pub(crate) fn declare_source_function_with(
     file: &mut FileLowering<'_, '_, '_, '_>,
     function: FnId,

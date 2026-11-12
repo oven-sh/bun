@@ -2979,6 +2979,38 @@ const PATHS_OF_CHANGED_FILES: &[(&str, &[&str])] = &[
         &["/p/a.js"],
     ),
     (
+        "import { writeFileSync } from 'node:fs'; (write => write('/p/a.js', text))(writeFileSync, ...others);",
+        &["/p/a.js"],
+    ),
+    (
+        "import { writeFileSync } from 'node:fs'; ((write = writeFileSync) => write('/p/a.js', text))();",
+        &["/p/a.js"],
+    ),
+    (
+        "import { writeFileSync } from 'node:fs'; ((write = writeFileSync) => write('/p/a.js', text))(undefined);",
+        &["/p/a.js"],
+    ),
+    (
+        "import { writeFileSync } from 'node:fs'; ((write = writeFileSync) => write('/p/a.js', text))(void 0);",
+        &["/p/a.js"],
+    ),
+    (
+        "import { writeFileSync } from 'node:fs'; ((write = writeFileSync) => write('/p/a.js', text))(...others);",
+        &["/p/a.js"],
+    ),
+    (
+        "import { writeFileSync } from 'node:fs'; function save(text, write = writeFileSync) { write('/p/a.js', text); } save(text);",
+        &["/p/a.js"],
+    ),
+    (
+        "import { renameSync } from 'node:fs'; export const move = (rename = renameSync) => rename('/p/a.js', '/p/b.js');",
+        &["/p/a.js and below", "/p/b.js and below"],
+    ),
+    (
+        "export const save = (text, write = Bun.write) => write(Bun.file('/p/a.js'), text);",
+        &["/p/a.js"],
+    ),
+    (
         "import { renameSync } from 'node:fs'; renameSync('/p/a.js', '/p/b.js');",
         &["/p/a.js and below", "/p/b.js and below"],
     ),
@@ -3088,6 +3120,8 @@ const CALLS_THAT_CHANGE_NO_FILE_THAT_IS_KNOWN: &[&str] = &[
     "import { writeFileSync } from 'node:fs'; if (false) writeFileSync('/p/a.js', text);",
     "import { writeFileSync } from 'node:fs'; writeFileSync(...all);",
     "export {}; other.file('/p/a.js').write(text);",
+    "import { writeFileSync } from 'node:fs'; (write => write('/p/a.js', text))(...others, writeFileSync);",
+    "import { writeFileSync } from 'node:fs'; ((write = writeFileSync) => write('/p/a.js', text))(other);",
 ];
 
 fn describe_paths_of_changed_files(text: &str) -> Vec<String> {
@@ -3121,6 +3155,11 @@ fn paths_that_a_file_spells_to_calls_which_change_what_is_there() {
 }
 
 const MODULE_RELATIVE_READS: &[(&str, &str, &[&str])] = &[
+    (
+        "a.cjs",
+        "const fs = require('fs'), path = require('path'); (read => read(path.join(__dirname, 'a.txt')))(fs.readFileSync, ...process.argv);",
+        &["./a.txt"],
+    ),
     (
         "a.cjs",
         "const fs = require('fs'), path = require('path'); const read = fs.readFileSync.bind(fs); read(path.join(__dirname, 'a.txt')); fs.readFileSync.call(fs, path.join(__dirname, 'b.txt')); fs.readFileSync.apply(fs, [path.join(__dirname, 'c.txt'), 'utf8']); fs.readFileSync.apply(fs, process.argv);",
@@ -4175,20 +4214,79 @@ fn finds_reads_after_stores() {
     }
 }
 
+const READS_RULED_OUT: &[(&str, &[&str])] = &[
+    (
+        "const fs = require('fs'), path = require('path'), E = process.env, here = __dirname; class A { down() {} } class B extends A {} class C extends B {} class D extends C {} class F extends D {} class G extends F {} class H extends G {} class I extends H {} class J extends I {} class K extends J {} class L extends K {} class M extends L {} class N extends M {} class O extends N {} class P extends O {} class Q extends P {} class R extends Q {} class S extends R {} const it = new S(), o = { dir: path.join(here, 'b') }; if (it.down) o.dir = path.join(here, 'a'); fs.readFileSync(path.join(o.dir, 'f'));",
+        &["./b/f"],
+    ),
+    (
+        "const fs = require('fs'), path = require('path'), E = process.env, here = __dirname; class K { dir = here; down(s) { this.dir = path.join(this.dir, s); return this; } read(n) { return fs.readFileSync(path.join(this.dir, n)); } } const a = new K().down('a'), b = new K().down('b'); a.read('f'); b.read('g');",
+        &["./f", "./g"],
+    ),
+    (
+        "const fs = require('fs'), path = require('path'), E = process.env, here = __dirname; class K { dir = path.join(here, 'a'); down(s) { this.dir = path.join(this.dir, s); } } class L { constructor() { this.dir = path.join(here, 'c'); return new K(); } } const k = new K(), l = new L(); k.dir = path.join(here, 'b'); fs.readFileSync(path.join(k.dir, 'f')); fs.readFileSync(path.join(l.dir, 'f'));",
+        &["./a/f", "./b/f", "./c/f"],
+    ),
+    (
+        "const fs = require('fs'), path = require('path'), E = process.env, here = __dirname; const base = { dir: path.join(here, 'a') }; const o = { ...base }; Object.assign(o, { dir: path.join(o.dir, '../b') }); fs.readFileSync(path.join(o.dir, 'f'));",
+        &["./a/f"],
+    ),
+    (
+        "const fs = require('fs'), path = require('path'), E = process.env, here = __dirname; const base = { dir: path.join(here, 'a'), other: path.join(here, 'b') }; const o = { ...base }; Object.assign(o, { dir: path.join(o.other, 'c') }); [o.other] = [path.join(here, 'd')]; o.none ??= here; fs.readFileSync(path.join(o.dir, o.other === base.other ? 'x' : 'f'));",
+        &["./a/f", "./a/x"],
+    ),
+    (
+        "const fs = require('fs'), path = require('path'), E = process.env, here = __dirname; const o = { dir: path.join(here, 'a') }; const put = (t, s) => { t.dir = s; }; put(o, path.join(here, 'b')); fs.readFileSync(path.join(o.dir, 'f'));",
+        &["./a/f"],
+    ),
+    (
+        "const fs = require('fs'), path = require('path'), E = process.env, here = __dirname; const o = { dir: path.join(here, 'a') }; let i = 0; do { o.dir = path.join(here, 'b'); if (E.C0) break; } while (i++ < 2); while (E.C1) { o.dir = path.join(here, 'c'); if (E.C0) continue; break; } for (const k in E) o.dir = path.join(here, 'd'); fs.readFileSync(path.join(o.dir, 'f'));",
+        &["./a/f"],
+    ),
+    (
+        "const fs = require('fs'), path = require('path'), E = process.env, here = __dirname; const o = { dir: path.join(here, 'a') }; switch (E.K) { case '1': o.dir = path.join(here, 'b'); break; default: o.dir = path.join(here, 'c'); } fs.readFileSync(path.join(o.dir, 'f'));",
+        &["./a/f"],
+    ),
+    (
+        "const fs = require('fs'), path = require('path'), E = process.env, here = __dirname; const o = { dir: path.join(here, 'a') }; try { o.dir = path.join(here, 'b'); if (E.C0 === '1') throw 1; } catch (e) { o.dir = path.join(o.dir, e ? 'c' : 'd'); } fs.readFileSync(path.join(o.dir, 'f'));",
+        &["./a/c/f", "./a/d/f", "./a/f"],
+    ),
+    (
+        "const fs = require('fs'), path = require('path'), E = process.env, here = __dirname; const out = []; const say = (n, f) => { let t; try { t = f(); } catch (e) { t = '!' + (e?.code ?? e?.name); } out.push(n + ' ' + String(t).trim()); }; const o = { dir: path.join(here, 'a') }; o.dir = path.join(o.dir, '..', 'b'); say('q', () => fs.readFileSync(path.join(o.dir, 'f'))); Promise.all([]).then(() => out.push('end'), e => out.push(e.code));",
+        &["./a/f"],
+    ),
+    (
+        "const fs = require('fs'), path = require('path'); class K { dir = path.join(__dirname, 'conf'); down(s) { this.dir = path.join(this.dir, s); } } const k = new K(), o = { dir: path.join(__dirname, 'data'), other: path.join(__dirname, 'other') }; const put = (t, s) => { t.dir = s; }; put(o, path.join(o.other, 'x')); put(k, path.join(k.dir, 'y')); fs.readFileSync(path.join(o.dir, 'a.txt'));",
+        &["./conf/y/a.txt", "./data/a.txt"],
+    ),
+    (
+        "const fs = require('fs'), path = require('path'); class K1 { dir = path.join(__dirname, 'conf'); } class K2 { dir = path.join(__dirname, 'data'); } const o1 = new K1(), o2 = new K2(); o2.dir = path.join(__dirname, 'z'); fs.readFileSync(path.join(o2.dir, 'a.txt'));",
+        &["./data/a.txt"],
+    ),
+    (
+        "const fs = require('fs'), path = require('path'); class K2 { constructor() { this.dir = path.join(__dirname, 'data'); return shared; } } class K1 { dir = path.join(__dirname, 'conf'); } const shared = new K1(), o2 = new K2(); fs.readFileSync(path.join(o2.dir, 'a.txt'));",
+        &["./data/a.txt"],
+    ),
+    (
+        "const fs = require('fs'), path = require('path'); const o2 = { dir: path.join(__dirname, 'data'), other: 1 }; Object.assign(o2, { dir: path.join(__dirname, 'z') }); fs.readFileSync(path.join(o2.dir, 'a.txt'));",
+        &["./data/a.txt"],
+    ),
+];
+
 #[test]
 fn keeps_reads_that_stores_rule_out() {
-    let text = "const fs = require('fs'), path = require('path'); const o = { file: path.join(__dirname, 'a') }; Object.assign(o, { file: path.join(__dirname, 'b') }); fs.readFileSync(o.file);";
-    with_workspace(|w| {
-        let s = &w.analyze(&Source::new("a.cjs", text), &w.fold_inputs(&TARGET));
-        let reported: Vec<_> = (s.analysis.module_relative_reads.iter())
-            .map(|it| s.workspace.text(it.1).to_string())
-            .collect();
-        let ruled_out: Vec<_> = (s.analysis.reads_ruled_out.iter())
-            .map(|it| s.workspace.text(it.1).to_string())
-            .collect();
-        assert_eq!(reported, ["./b"]);
-        assert_eq!(ruled_out, ["./a"]);
-    });
+    for &(text, paths) in READS_RULED_OUT {
+        with_workspace(|w| {
+            let s = &w.analyze(&Source::new("a.cjs", text), &w.fold_inputs(&TARGET));
+            let ruled_out = s.analysis.reads_ruled_out.iter();
+            let mut described: Vec<String> = ruled_out
+                .map(|&(_, path)| s.workspace.text(path).to_string())
+                .collect();
+            described.sort();
+            described.dedup();
+            assert_eq!(described, paths, "{text}");
+        });
+    }
 }
 
 const KNOWN_LOAD_NAMES: &[(&str, &str, &[&str])] = &[

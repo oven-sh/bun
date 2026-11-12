@@ -1,6 +1,6 @@
 mod bindings;
 
-use bun_sema::atom::{Atom, known};
+use bun_sema::atom::Atom;
 use bun_sema::bind::{self, Binding, CodeUnit, ScopeId, ScopeKind, SymbolId};
 use bun_sema::fold::Constant;
 use bun_sema::hir::{CallId, ClassId, ExprId, ExprKind, FnKind, IdList};
@@ -8,7 +8,7 @@ use bun_sema::hir::{CallId, ClassId, ExprId, ExprKind, FnKind, IdList};
 use super::BindingForm;
 use super::identifiers::BindingRead;
 use crate::builtins::id::BuiltinId;
-use crate::ir::generated::{ECMAMode, EvalScope, EvalScopeFlags, FunctionKind, RuntimeErrorKind};
+use crate::ir::generated::{ECMAMode, EvalScope, EvalScopeFlags};
 use crate::ir::{BlockId, Edge, EvalScopeId, StringId, ValueId, VariableKey};
 use crate::lower::call::{self, Arguments, Callee};
 use crate::lower::{FileLowering, FunctionLowering, commonjs, expression};
@@ -62,10 +62,7 @@ pub(crate) fn lower_direct_eval(
         Some((binding, name)) => lowering.read_binding(binding, name, BindingRead::Value),
         None => {
             lowering.lower_known_evaluations(call_id, &arguments, join);
-            match hir.is_settled_eval(call_id) {
-                true => lowering.emit_settled_eval_end(call_id, &arguments),
-                false => lowering.emit_direct_eval(call, &arguments),
-            }
+            lowering.emit_direct_eval(call, &arguments)
         }
     };
     lowering.jump_with(join, &[evaluated]);
@@ -189,17 +186,15 @@ impl FileLowering<'_, '_, '_, '_> {
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     /// Where the string is one that the build has compiled, jumps to `join` with its function.
     fn lower_known_evaluations(&mut self, call: CallId, arguments: &Arguments, join: BlockId) {
-        let Arguments::Values(arguments) = arguments else {
-            return;
-        };
-        let (hir, Some(&text)) = (self.file.hir, arguments.first()) else {
-            return;
-        };
+        let hir = self.file.hir;
         let all = hir.known_evaluations_of(call).iter();
         let known: Vec<_> = all.filter(|it| hir.is_valid_evaluation(it)).collect();
         if known.is_empty() {
             return;
         }
+        let Some(text) = self.emit_evaluated_string(arguments) else {
+            return;
+        };
         let texts = known.iter().filter_map(|it| hir.ids(it.arguments).next());
         let strings: Vec<StringId> = texts.map(|text| self.file.intern_atom(text)).collect();
         let blocks: Vec<BlockId> = known.iter().map(|_| self.create_block()).collect();
@@ -213,31 +208,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.jump_with(join, &[function]);
         }
         self.continue_in(other);
-    }
-
-    /// No string arrives here but one that isn't JavaScript. What strict code refuses may be JavaScript in sloppy code.
-    fn emit_settled_eval_end(&mut self, call: CallId, arguments: &Arguments) -> ValueId {
-        let hir = self.file.hir;
-        let mut known = hir.known_evaluations_of(call).iter();
-        let name = self.file.intern_atom(known::eval);
-        if known.any(|it| !hir.is_valid_evaluation(it)) {
-            let Some(text) = self.emit_evaluated_string(arguments) else {
-                return self.builder.undefined();
-            };
-            let flags = match self.builder.function().kind {
-                FunctionKind::Arrow => EvalScopeFlags::IS_IN_ARROW_FUNCTION,
-                _ => EvalScopeFlags::default(),
-            };
-            let scope = self.file.fragment.add_eval_scope(EvalScope {
-                mode: self.mode(),
-                flags,
-                ..EvalScope::default()
-            });
-            let this_value = self.builder.undefined();
-            return (self.builder).direct_eval(scope, text, this_value, None, &[]);
-        }
-        self.emit_throw_runtime_error(RuntimeErrorKind::OmittedFromExecutable, Some(name));
-        self.builder.undefined()
     }
 
     fn list_names_of_file(&mut self, eval_scope: bind::EvalScope) -> NamesOfFileForEvals {

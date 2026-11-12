@@ -1,5 +1,4 @@
 mod evaluator;
-mod settled;
 mod strings;
 mod values;
 
@@ -18,7 +17,6 @@ use bun_sema_parser::{AppendedExpression, parse_appended_expressions};
 use rustc_hash::FxHashSet;
 
 use self::evaluator::{Evaluator, TEXT_PER_SOURCE};
-pub(crate) use self::settled::find_settled_evals;
 use crate::engine::describe_regexp_syntax_error;
 use crate::load::import_functions::declares;
 use crate::load::react_compiler::module_items::finish_file;
@@ -62,7 +60,8 @@ fn find_evaluating_calls(hir: &File<'_>) -> Vec<EvaluatingCall> {
     }
     found.sort_unstable();
     let functions = (0..hir.fns.len() as u32).map(FnId);
-    let with_end = functions.filter_map(|it| Some((hir[it].start, end_of_body(hir, it)?, it)));
+    let with_end =
+        functions.filter_map(|it| Some((start_of_code(hir, it), end_of_body(hir, it)?, it)));
     let mut ranges: Vec<(u32, u32, FnId)> = with_end.collect();
     ranges.sort_unstable_by_key(|range| (range.0, Reverse(range.1)));
     let mut ranges = ranges.into_iter().peekable();
@@ -80,6 +79,13 @@ fn find_evaluating_calls(hir: &File<'_>) -> Vec<EvaluatingCall> {
         }
     });
     calls.collect()
+}
+
+fn start_of_code(hir: &File<'_>, function: FnId) -> u32 {
+    match hir[function].kind {
+        FnKind::Arrow => hir[function].start,
+        _ => hir[function].anchor.max(hir[function].start),
+    }
 }
 
 fn end_of_body(hir: &File<'_>, function: FnId) -> Option<u32> {

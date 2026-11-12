@@ -47,3 +47,13 @@ test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > after it has removed its mock, or all of them
 # This one: the factory has a parameter, so compiled code has an original of its own for it, and the importers that get the original as they are run another. The closing notice names the file.
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > while the test loads a module that waits for that and imports the mock too
+# These: a sum, an enum member or a string behind `?.` is the key, as in `vi?.["importActual"](path)`. Plain prints `vi.importActual(path)` for each, reads the path and runs the mocked file not at all. Compiled runs it first.
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > is not evaluated for a factory that requests another module by a folded key ["--coverage"]
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > is not evaluated for a factory that requests another module by a folded key []
+# These cannot pass: --aot refuses --inspect, as docs/compiler/debugging.mdx says. The compiled copy runs no file.
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > is evaluated before a factory that requests it by name, however the factory is passed ["--inspect=127.0.0.1:0"]
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > is evaluated before a factory that requests it in another wording ["--inspect=127.0.0.1:0"]
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > is not evaluated for a factory that requests another module ["--inspect=127.0.0.1:0"]
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > is not evaluated for a factory that requests another module by a folded key ["--inspect=127.0.0.1:0"]
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > is not evaluated for a package that a preload mocks with the original of another ["--inspect=127.0.0.1:0"]
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > is not evaluated for a request in code that never runs ["--inspect=127.0.0.1:0"]

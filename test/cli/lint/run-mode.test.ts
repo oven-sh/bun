@@ -558,6 +558,17 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         prints: ["0 strict"],
         dangerously: ["0 sloppy"],
       },
+      // Each one is what keeps the file an ES module once the other has its fix.
+      "two imports of a file that asks for CommonJS": {
+        file: "a.test.ts",
+        text:
+          'import { Point } from "./point";\nimport { Size } from "./size";\nconst { origin } = require("./point");\n' +
+          "const at: Point = origin;\nlet size: Size | undefined;\n" +
+          prints("at.x", "typeof size", mode),
+        files: { ...point, "size.ts": "export type Size = { width: number };\n" },
+        prints: ["0 undefined strict"],
+        dangerously: ["0 undefined sloppy"],
+      },
 
       "an import of types": {
         file: "a.test.ts",
@@ -590,6 +601,15 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         fixed:
           'import type { Mock } from "vitest";\nimport { vi } from "vitest";\nexport const mock: Mock = vi.fn();\n' +
           prints(globals),
+      },
+      // Bun doesn't run it.
+      "in a declaration file": {
+        file: "types.d.ts",
+        text: 'import { Point } from "./point";\nimport path = require("node:path");\ndeclare const at: Point;\nexport = at;\n',
+        files: point,
+        prints: [],
+        fixed:
+          'import type { Point } from "./point";\nimport path = require("node:path");\ndeclare const at: Point;\nexport = at;\n',
       },
     },
   },
@@ -685,6 +705,12 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
       "an import equals of vitest": {
         file: "a.test.ts",
         text: 'import all = require("vitest");\n' + prints(globals),
+        prints: ["of vitest"],
+        dangerously: ["of bun:test"],
+      },
+      "two imports of vitest": {
+        file: "a.test.ts",
+        text: 'import { vi } from "vitest";\nimport { expect } from "vitest";\n' + prints(globals),
         prints: ["of vitest"],
         dangerously: ["of bun:test"],
       },
@@ -926,6 +952,34 @@ for (const group of groups) {
     }
   });
 }
+
+describe("@typescript-eslint/no-unused-vars with @typescript-eslint/no-useless-empty-export", () => {
+  // The unused import goes, because the `export {}` stays. Each of the two keeps the file an ES module for the other.
+  // They aren't on adjacent lines, where only one of two fixes is applied in a pass.
+  test.concurrent(
+    "--fix removes one of the two",
+    async () => {
+      const rest =
+        'const { sep } = require("node:path");\nexport {};\n' + prints("sep.length", mode).replaceAll("TAG", '"@@"');
+      using dir = tempDir("bun-lint-run-mode-pair", {
+        "bunfig.toml":
+          only("@typescript-eslint/no-unused-vars", "{ enableAutofixRemoval = { imports = true } }") +
+          '"@typescript-eslint/no-useless-empty-export" = "warn"\n',
+        "point.ts": point["point.ts"],
+        "a.test.ts": 'import { origin } from "./point";\n' + rest,
+      });
+      const printed = async () => {
+        const { stdout } = await run(String(dir), "test");
+        return stdout.split("\n").filter(it => it.startsWith("@@"));
+      };
+      expect(await printed()).toEqual(["@@ 1 strict"]);
+      await run(String(dir), "lint", "--fix");
+      expect(readFileSync(join(String(dir), "a.test.ts"), "utf8")).toBe(rest);
+      expect(await printed()).toEqual(["@@ 1 strict"]);
+    },
+    longLimit,
+  );
+});
 
 describe("vitest/prefer-importing-vitest-globals with vitest/no-importing-vitest-globals", () => {
   // One rule adds the import that the other removes. Neither is a fix that keeps how the file runs.

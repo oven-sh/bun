@@ -1,5 +1,7 @@
 use core::ffi::c_void;
 
+use bun_core::EncodedSlice;
+
 use crate::{JSGlobalObject, JSValue, JsError};
 
 // All JSC__VM__* shims take only a `JSC::VM*` (and at most a
@@ -33,6 +35,7 @@ unsafe extern "C" {
     safe fn JSC__VM__collectAsyncIdle(vm: &VM);
     safe fn JSC__VM__shrinkFootprintNow(vm: &VM) -> bool;
     safe fn JSC__VM__setStartupJITDeferralScale(vm: &VM, scale: f64);
+    safe fn JSC__VM__setTimeZone(vm: &VM, time_zone: &EncodedSlice) -> bool;
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
     safe fn JSC__VM__isEntered(vm: &VM) -> bool;
@@ -125,6 +128,11 @@ impl VM {
     /// Multiply JSC's LLInt->Baseline and Baseline->DFG tier-up thresholds by `scale` (1 = normal). Mutator thread only.
     pub fn set_startup_jit_deferral_scale(&self, scale: f64) {
         JSC__VM__setStartupJITDeferralScale(self, scale)
+    }
+
+    /// Sets the time zone of the process and drops this VM's cached dates. `false`: ICU does not know the name.
+    pub fn set_time_zone(&self, time_zone: &EncodedSlice) -> bool {
+        JSC__VM__setTimeZone(self, time_zone)
     }
 
     pub fn execution_forbidden(&self) -> bool {

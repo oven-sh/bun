@@ -794,7 +794,7 @@ fn note_first_loads_of_earlier_process(vm: &VirtualMachine, list: &[u8]) {
             break;
         }
         bun_jsc::compiled_program::note_first_load_in_earlier_process(
-            vm.global(),
+            vm.jsc_vm(),
             path,
             was_synchronous,
         );

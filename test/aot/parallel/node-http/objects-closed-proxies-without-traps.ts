@@ -215,6 +215,7 @@ for (const target of ["request", "response", "socket"] as const) {
     await once(server.listen(0, "127.0.0.1"), "listening");
     const { port } = server.address() as AddressInfo;
     const ended = Promise.withResolvers<void>();
+    const requestClosed = Promise.withResolvers<void>();
     let request = http.request({ port, host: "127.0.0.1", method: "POST", agent: false }, givenResponse => {
       let response = givenResponse;
       watch("response", response, ["error", "end"]);
@@ -224,8 +225,13 @@ for (const target of ["request", "response", "socket"] as const) {
       attempt("reading", () => response.resume());
     });
     watch("request", request, ["close", "error", "finish"]);
+    request.on("close", () => requestClosed.resolve());
     request.end("body");
     if (target === "request") request = close(request);
+    // A frozen response fails before it destroys its socket, so its request closes only when the server's FIN arrives:
+    // no number of turns of the loop says when. Every request closes, so this wait is the first, and the one for the
+    // response's close, which may not come, begins with nothing else on its way.
+    await withinReason("the request's close", requestClosed.promise);
     await withinReason("the response's close", ended.promise);
     await turns();
     server.closeAllConnections();

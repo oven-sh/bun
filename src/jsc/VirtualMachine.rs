@@ -6595,8 +6595,7 @@ impl VirtualMachine {
         self.undo_source_maps_support();
     }
 
-    /// `process.setSourceMapsEnabled()` and `module.setSourceMapsSupport()` set the switch of
-    /// this VM. Put the startup value back so a file's call stays with that file.
+    /// Put the startup value back so a file's `process.setSourceMapsEnabled()` stays with that file.
     fn undo_source_maps_support(&mut self) {
         self.source_mappings
             .set_source_maps_support(SourceMapsSupport::all(

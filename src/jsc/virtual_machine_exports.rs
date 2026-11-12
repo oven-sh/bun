@@ -26,13 +26,11 @@ pub fn script_execution_status(this: &VirtualMachine) -> i32 {
     this.script_execution_status() as i32
 }
 
-/// `module.getSourceMapsSupport()` and `process.sourceMapsEnabled`.
 // HOST_EXPORT(Bun__VM__sourceMapsSupport, c)
 pub fn source_maps_support(this: &VirtualMachine) -> bun_jsc::saved_source_map::SourceMapsSupport {
     this.source_mappings.source_maps_support()
 }
 
-/// `module.setSourceMapsSupport()` and `process.setSourceMapsEnabled()`.
 // HOST_EXPORT(Bun__VM__setSourceMapsSupport, c)
 pub fn set_source_maps_support(
     this: &VirtualMachine,
@@ -41,10 +39,7 @@ pub fn set_source_maps_support(
     this.source_mappings.set_source_maps_support(support);
 }
 
-/// `Zig::SourceProvider::create` calls this for a module's text while source maps are enabled. The
-/// line lengths are what `module.findSourceMap(url).lineLengths` answers. Lines end where the
-/// printer ends them in the map: at `\n`, `\r\n`, a bare `\r`, U+2028 or U+2029, and a `\r` of
-/// `\r\n` counts in its line, as in Node.
+/// The line lengths of a module's text, for `module.findSourceMap(url).lineLengths`.
 // HOST_EXPORT(Bun__VM__recordSourceLineLengths, c)
 pub fn record_source_line_lengths(this: &mut VirtualMachine, path: &BunString, source: &BunString) {
     let path = path.to_utf8();
@@ -52,8 +47,6 @@ pub fn record_source_line_lengths(this: &mut VirtualMachine, path: &BunString, s
     if !support.applies_to(path.slice()) {
         return;
     }
-    // Code that is not a file: Node keeps the map of a `blob:` module under `generatedCode` only,
-    // and none of `bun -e` or stdin.
     if bun_jsc::saved_source_map::is_eval_or_stdin(path.slice())
         || (!support.generated_code && !bun_jsc::saved_source_map::is_file_module(path.slice()))
     {
@@ -68,6 +61,7 @@ pub fn record_source_line_lengths(this: &mut VirtualMachine, path: &BunString, s
         .record_line_lengths(path.slice(), line_lengths);
 }
 
+/// Lines end where the printer ends them in the map, and the `\r` of a `\r\n` is in its line, as in Node.
 fn line_lengths_of(units: impl ExactSizeIterator<Item = u16>) -> Box<[u32]> {
     let mut lengths = Vec::new();
     let mut line_start = 0u32;

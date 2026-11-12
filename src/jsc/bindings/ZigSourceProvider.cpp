@@ -141,8 +141,6 @@ Ref<SourceProvider> SourceProvider::create(
         BunString str = Bun::toString(provider->sourceURL());
         Bun__addSourceProviderSourceMap(globalObject->bunVM(), provider.ptr(), &str);
     } else if (!isBuiltin) {
-        // While source maps are enabled, `module.findSourceMap()` answers with the map of this
-        // text and the lengths of its lines.
         if (Bun__VM__sourceMapsSupport(globalObject->bunVM()).enabled) {
             BunString providerURL = Bun::toString(provider->sourceURL());
             WTF::String providerSourceString = provider->source().toStringWithoutCopying();

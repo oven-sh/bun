@@ -97,13 +97,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
 
     // Enumerate SourceIDs by walking only the four ScriptExecutable subspaces
     // (not the whole heap). Providers whose executables were all GC'd are not
-    // reported. Offsets index the text JSC compiled, which for a module Bun
-    // loaded is the transpiled text, as V8's index the text it compiled: with
-    // source maps enabled, module.findSourceMap(url) gives the map and the
-    // line lengths of that text.
-    //
-    // The same walk names each function range: the cache of ranges has no
-    // name, and the FunctionExecutable that starts where a range starts has.
+    // reported. Offsets index the text JSC compiled, as V8's do: with source
+    // maps enabled, module.findSourceMap(url) maps them.
+    // The same walk names each function range, from the FunctionExecutable
+    // that starts where the range starts.
     Vector<Ref<JSC::SourceProvider>> providers;
     HashSet<SourceID> seenSourceIDs;
     using FunctionStart = std::pair<SourceID, unsigned>;

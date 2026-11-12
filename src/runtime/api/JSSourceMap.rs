@@ -15,10 +15,7 @@ pub(crate) struct JSSourceMap {
     names: Box<[bstring::String]>,
 }
 
-/// `module.findSourceMap(url)`: the map of a runtime-transpiled module whose text JSC compiled
-/// while source maps were enabled, from what runs to the file that was loaded. A module that
-/// loaded while they were off has no entry, and a switch after the load changes nothing, as in
-/// Node. Returns `None` for anything else: Node's `findSourceMap` never throws.
+/// The map of a module that loaded while source maps were enabled, as in Node. Never throws.
 pub(crate) fn find_source_map<'a>(
     cx: &mut JsScope<'a>,
     path: JsLocal<'a>,
@@ -45,8 +42,7 @@ pub(crate) fn find_source_map<'a>(
     // SAFETY: `bun_vm()` returns the live per-thread VM for a Bun-owned global.
     let vm = global.bun_vm().as_mut();
 
-    // The table keys a module by its absolute path. Node takes a `file:` URL or a path, which
-    // it resolves against the working directory as a URL does.
+    // The table keys a module by its absolute path.
     let has_scheme = strings::index_of(source_url_slice.slice(), b"://").is_some();
     if has_scheme && source_url_slice.slice().starts_with(b"file://") {
         let path = bun_url::path_from_file_url(&source_url_string);
@@ -77,7 +73,6 @@ pub(crate) fn find_source_map<'a>(
     let Some(source_map) = vm.source_mappings().get_recorded(source_url) else {
         return Ok(None);
     };
-    // Bun's map has one source: the module itself. Node names a file by its URL.
     let source = if bun_paths::is_absolute(source_url) {
         bun_url::file_url_from_string(&source_url_string)
     } else {
@@ -194,9 +189,7 @@ impl JSSourceMap {
         self.sources.len() * core::mem::size_of::<bstring::String>() + self.sourcemap.memory_cost()
     }
 
-    /// Runs for a map of `findSourceMap()` only: the constructor caches the payload it was given.
-    /// Bun keeps the decoded mappings, so this writes them as a v3 document. The printer maps no
-    /// names, so `names` is empty.
+    /// For a map of `findSourceMap()`: the constructor caches the payload it was given.
     pub(crate) fn get_payload(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global = cx.global();
         let sources =
@@ -212,10 +205,8 @@ impl JSSourceMap {
         Ok(payload)
     }
 
-    /// The length of each line of the generated text, for a map of `findSourceMap()`. The
-    /// constructor caches the `lineLengths` option, and `undefined` is the answer without one.
+    /// For a map of `findSourceMap()`: the constructor caches its `lineLengths` option.
     pub(crate) fn get_line_lengths(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        // A copy, so that no lock is held while the heap allocates.
         let Some(line_lengths) = self.sourcemap.line_lengths.lock().clone() else {
             return Ok(JSValue::UNDEFINED);
         };

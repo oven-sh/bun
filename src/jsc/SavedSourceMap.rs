@@ -18,9 +18,7 @@ pub struct SavedSourceMap {
     /// Only accessed between [`Self::lock`] and [`Self::unlock`].
     map: HashTable,
     mutex: Mutex,
-    /// A [`SourceMapsSupport`] as bits, so a reader sees one whole write. Seeded from
-    /// `--enable-source-maps` (a Worker inherits it with the flags of its parent), and set by
-    /// `process.setSourceMapsEnabled()` and `module.setSourceMapsSupport()` for one VM.
+    /// A [`SourceMapsSupport`] as bits, so a reader sees one whole write.
     source_maps_support: AtomicU8,
 }
 
@@ -61,21 +59,19 @@ impl SourceMapsSupport {
         }
     }
 
-    /// Whether the map of the module at `path` is kept for `module.findSourceMap()`: Node leaves
-    /// out a path under `node_modules` unless `nodeModules` is set.
+    /// Node leaves out a path under `node_modules` unless `nodeModules` is set.
     pub fn applies_to(self, path: &[u8]) -> bool {
         self.enabled
             && (self.node_modules || !bun_paths::strings::path_contains_node_modules_folder(path))
     }
 }
 
-/// Whether the module at `path` is a file, which Node keeps a map of: not `bun -e` or stdin
-/// (`[eval]` and `[stdin]` in the working directory) and not a URL such as `blob:`.
+/// Not `bun -e`, stdin, or a URL such as `blob:`.
 pub fn is_file_module(path: &[u8]) -> bool {
     bun_paths::is_absolute(path) && !is_eval_or_stdin(path)
 }
 
-/// The script of `bun -e` or of stdin. Node keeps no map of either, whatever the switch says.
+/// Node keeps no map of either, whatever the switch says.
 pub fn is_eval_or_stdin(path: &[u8]) -> bool {
     let name = bun_paths::basename(path);
     name == b"[eval]" || name == b"[stdin]"
@@ -91,10 +87,8 @@ impl SavedSourceMap {
             .store(support.to_bits(), Ordering::Relaxed);
     }
 
-    /// Keeps the line lengths of the text that JSC compiled for the runtime-transpiled module at
-    /// `path`, beside its map. `get_recorded` then answers for the module. Nothing is kept for a
-    /// module whose map is not in the table, is not the runtime transpiler's (an external map,
-    /// or one of the standalone module graph), or is of an earlier text of the module.
+    /// Keeps the line lengths of the text JSC compiled beside the runtime transpiler's map of it,
+    /// which `get_recorded` then answers with.
     pub fn record_line_lengths(&mut self, path: &[u8], line_lengths: Box<[u32]>) {
         let h = hash(path);
         self.lock();
@@ -108,8 +102,7 @@ impl SavedSourceMap {
         self.unlock();
     }
 
-    /// The map of the runtime-transpiled module at `path` whose text was compiled while source maps
-    /// were enabled, with its line lengths. Reads no external map.
+    /// The map with line lengths of the module at `path`. Reads no external map.
     pub fn get_recorded(&mut self, path: &[u8]) -> Option<Arc<ParsedSourceMap>> {
         let h = hash(path);
         self.lock();
@@ -122,9 +115,8 @@ impl SavedSourceMap {
         map
     }
 
-    /// The `Arc<ParsedSourceMap>` of a runtime-transpiled module's slot, with the blob of a
-    /// fresh entry promoted to its shell as `get_with_content` does. `None` for an external map.
-    /// The table holds one strong ref, the caller gets another.
+    /// The `Arc<ParsedSourceMap>` of a slot, promoting a fresh blob to its shell. `None` for an
+    /// external map. The table holds one strong ref, the caller gets another.
     fn shell_locked(slot: &mut *mut c_void) -> Option<Arc<ParsedSourceMap>> {
         let tagged = Value::from(Some(*slot));
         if tagged.tag() == Value::case::<InternalSourceMap>() {
@@ -321,7 +313,6 @@ impl SavedSourceMap {
             let slot = self.map.get_mut(&hash(source.path.text));
             let contains = slot.is_some();
             if let Some(kept) = slot.and_then(Self::shell_locked) {
-                // The map stays for the errors of the earlier text. `findSourceMap()` must not pair it with the text that runs now.
                 kept.text_changed.store(true, Ordering::Relaxed);
                 *kept.line_lengths.lock() = None;
             }
@@ -387,9 +378,6 @@ impl SavedSourceMap {
             return SourceMap::ParseUrl::default();
         };
 
-        // Runtime-transpiled module: the blob in a refcounted ParsedSourceMap
-        // shell (no VLQ decode, no Mapping.List), so callers can hold a ref
-        // while the table mutates.
         if let Some(result) = Self::shell_locked(mapping) {
             self.unlock();
             return SourceMap::ParseUrl {

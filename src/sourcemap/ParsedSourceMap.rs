@@ -43,17 +43,13 @@ pub struct ParsedSourceMap {
     /// Set for a map of the standalone module graph: what its source code is read from.
     pub standalone_module_graph: Option<&'static crate::SerializedSourceMap::Loaded>,
 
-    /// The length of each line of the generated text, in UTF-16 code units and without its line
-    /// break. Recorded when the text is compiled while source maps are enabled: it is what
-    /// `module.findSourceMap(url).lineLengths` answers, so a coverage offset can become a line
-    /// and a column of this map. `None` after `text_changed`: the text that runs is not the
-    /// one this map is of.
+    /// Of the generated text, in UTF-16 code units, without the line breaks: what
+    /// `module.findSourceMap(url).lineLengths` answers.
     pub line_lengths: Guarded<Option<Box<[u32]>>>,
-    /// The module was transpiled again to a text with nothing to map, and this map of the earlier
-    /// text was kept for the errors of that text. `module.findSourceMap()` does not answer with it.
+    /// The module was transpiled again to a text with nothing to map, and this map stayed for the
+    /// errors of the earlier text.
     pub text_changed: AtomicBool,
-    /// The `mappings` of the v3 document that `module.findSourceMap(url).payload` answers, written
-    /// on the first read.
+    /// The `mappings` text of `module.findSourceMap(url).payload`, written on the first read.
     vlq_mappings: OnceLock<Box<[u8]>>,
 }
 
@@ -244,8 +240,7 @@ impl ParsedSourceMap {
         }
     }
 
-    /// The map that the runtime transpiler wrote for a module, from the text that runs to the file
-    /// that was loaded. Not a map of the standalone module graph, nor one read from a file.
+    /// Not a map of the standalone module graph, nor one read from a file.
     pub fn is_runtime_transpiled(&self) -> bool {
         self.internal.is_some() && self.standalone_module_graph.is_none()
     }
@@ -306,7 +301,6 @@ impl ParsedSourceMap {
         core::mem::size_of::<ParsedSourceMap>()
             + mappings_cost
             + self.external_source_names.len() * core::mem::size_of::<Box<[u8]>>()
-            // Not `line_lengths`: the collector asks while a reader can hold its lock.
             + self.vlq_mappings.get().map_or(0, |vlq| vlq.len())
     }
 

@@ -1,9 +1,9 @@
 // Port of Node.js lib/internal/fs/glob.js (v26.3.0):
-//   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/lib/internal/fs/glob.js
-// plus nodejs/node 74dcdbb5f1, ab7f4c88b7, 54a1311d9e: the walker of v24.22.1 (v26.12.1 adds only `maxDepth`),
+//   https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/fs/glob.js
 // backed by a vendored copy of minimatch (Node's deps/minimatch/index.js, ISC license):
-//   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/deps/minimatch/index.js
+//   https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/deps/minimatch/index.js
 // embedded below lazyMinimatch(); the vendored block is third-party and not edited but for types — the port above it follows bun's style.
+// The port also has nodejs/node 74dcdbb5f1, ab7f4c88b7, 54a1311d9e: the walker is that of v24.22.1 (v26.12.1 adds only `maxDepth`).
 //
 // This is not backed by Bun.Glob: the vendored test-fs-glob.mjs (448 cases at v26.3.0)
 // exercises minimatch-specific semantics — withFileTypes Dirents, the
@@ -1098,7 +1098,7 @@ interface MinimatchFunction extends Omit<MinimatchModule, "minimatch"> {
 let _minimatch: MinimatchModule | undefined;
 // ─────────────────────────────────────────────────────────────────────────
 // Vendored: Node.js deps/minimatch/index.js (v26.3.0, ISC license). The code is unmodified; the types are added.
-//   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/deps/minimatch/index.js
+//   https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/deps/minimatch/index.js
 // ─────────────────────────────────────────────────────────────────────────
 function lazyMinimatch(): MinimatchModule {
   if (_minimatch) return _minimatch;

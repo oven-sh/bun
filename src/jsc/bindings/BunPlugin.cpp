@@ -4281,6 +4281,11 @@ static String callerPath(JSC::VM& vm, JSC::CallFrame* callframe)
 // A module whose body is on the stack makes the call again when it runs again. One that only has a function there passed the call on, and stays loaded.
 __attribute__((minsize)) static void addModulesWhoseBodyRuns(JSC::VM& vm, JSC::CallFrame* callframe, const String& file, WTF::UncheckedKeyHashSet<String>& modules)
 {
+#if ENABLE(AOT)
+    // A frame of compiled code has no code block. The compiler knows which of its frames are bodies.
+    if (vm.hasCompiledCode())
+        JSC::AOT::forEachEvaluatingModuleOnStack(vm, callframe, [&](JSC::AOT::ModuleID body) { modules.add(JSC::AOT::moduleFilePath(body)); });
+#endif
     JSC::StackVisitor::visit(callframe, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
         JSC::CodeBlock* codeBlock = visitor->codeBlock();
         if (!codeBlock)
@@ -5942,8 +5947,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     if (!mock->isFromPreload) {
         auto& mockingModules = globalObject->onLoadPlugins.mockingModules;
         String file = callerPath(vm, callframe);
-        // Only the test runner reads the set, on the main thread. `bun test --aot` makes the calls of a compiled body again instead: recordBodyMock().
-        if (Bun::isBunTest && !vm.hasCompiledCode() && globalObject->scriptExecutionContext()->isMainThread())
+        // Only the test runner reads the set, on the main thread.
+        if (Bun::isBunTest && globalObject->scriptExecutionContext()->isMainThread())
             addModulesWhoseBodyRuns(vm, callframe, file, mockingModules);
         mockingModules.add(WTF::move(file));
     }

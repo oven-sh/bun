@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync, unprivilegedSpawnOptions } from "harness";
 import { execFileSync, execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -400,6 +400,28 @@ describe("fs.promises.mkdir", () => {
   });
 });
 
+// Runs recursive mkdir on process.argv[2], promises then sync, and prints the
+// error fields as JSON.
+const probe = `
+  import fs from "node:fs";
+  const target = process.argv[2];
+  const pick = e => ({ code: e.code, syscall: e.syscall, path: e.path });
+  const result = {};
+  try {
+    await fs.promises.mkdir(target, { recursive: true });
+    result.async = "ok";
+  } catch (e) {
+    result.async = pick(e);
+  }
+  try {
+    fs.mkdirSync(target, { recursive: true });
+    result.sync = "ok";
+  } catch (e) {
+    result.sync = pick(e);
+  }
+  process.stdout.write(JSON.stringify(result));
+`;
+
 // The same arm on POSIX: mkdir on a symlink reports EEXIST, and the probe that
 // follows the link fails. Node reports the probe error.
 describe.skipIf(isWindows)("fs.mkdir - recursive on a symlink the probe cannot follow", () => {
@@ -416,22 +438,33 @@ describe.skipIf(isWindows)("fs.mkdir - recursive on a symlink the probe cannot f
     await expectProbeError(loop, "ELOOP");
   });
 
-  // root bypasses the search permission check
-  it.skipIf(process.getuid?.() === 0)(
-    "symlink into an unsearchable directory: reports EACCES instead of EEXIST",
-    async () => {
-      using dir = tempDir("mkdir-eacces", { "inaccessible/target": "" });
-      const inaccessible = path.join(String(dir), "inaccessible");
-      const link = path.join(String(dir), "link");
-      fs.symlinkSync(path.join(inaccessible, "target"), link);
-      fs.chmodSync(inaccessible, 0o000);
-      try {
-        await expectProbeError(link, "EACCES");
-      } finally {
-        fs.chmodSync(inaccessible, 0o700);
-      }
-    },
-  );
+  // root bypasses the search permission check, so the mkdir runs in an
+  // unprivileged child.
+  it("symlink into an unsearchable directory: reports EACCES instead of EEXIST", async () => {
+    using dir = tempDir("mkdir-eacces", { "inaccessible/target": "", "probe.mjs": probe });
+    const inaccessible = path.join(String(dir), "inaccessible");
+    const link = path.join(String(dir), "link");
+    fs.symlinkSync(path.join(inaccessible, "target"), link);
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
+    fs.chmodSync(inaccessible, 0o000);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "probe.mjs", link],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        ...unprivileged,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const expected = { code: "EACCES", syscall: "mkdir", path: link };
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ async: expected, sync: expected });
+      expect(exitCode).toBe(0);
+    } finally {
+      fs.chmodSync(inaccessible, 0o700);
+    }
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/43651
@@ -443,7 +476,6 @@ describe.skipIf(isWindows)("fs.mkdir - recursive on a symlink the probe cannot f
 describe.skipIf(!isWindows)("fs.mkdir - recursive with denied attributes (Windows)", () => {
   const fixture = `
     import { dlopen, FFIType, ptr } from "bun:ffi";
-    import fs from "node:fs";
 
     const kernel32 = dlopen("kernel32.dll", {
       GetCurrentProcess: { args: [], returns: FFIType.u64 },
@@ -479,28 +511,14 @@ describe.skipIf(!isWindows)("fs.mkdir - recursive with denied attributes (Window
       throw new Error("AdjustTokenPrivileges " + kernel32.GetLastError());
     }
 
-    const target = process.argv[2];
-    const pick = e => ({ code: e.code, syscall: e.syscall, path: e.path });
-    const result = {};
-    try {
-      await fs.promises.mkdir(target, { recursive: true });
-      result.async = "ok";
-    } catch (e) {
-      result.async = pick(e);
-    }
-    try {
-      fs.mkdirSync(target, { recursive: true });
-      result.sync = "ok";
-    } catch (e) {
-      result.sync = pick(e);
-    }
-    process.stdout.write(JSON.stringify(result));
+    ${probe}
   `;
 
   // NTFS answers an attribute query if the object grants FILE_READ_ATTRIBUTES
   // or the parent grants FILE_LIST_DIRECTORY, so deny Everyone on the chain.
   // The test process owns the entries, so it keeps WRITE_DAC for the cleanup.
   async function mkdirWithDenied(root: string, deny: string[], target: string) {
+    const expected = { code: "EPERM", syscall: "mkdir", path: target };
     const denied: string[] = [];
     try {
       for (const d of deny) {
@@ -516,8 +534,8 @@ describe.skipIf(!isWindows)("fs.mkdir - recursive with denied attributes (Window
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ async: expected, sync: expected });
       expect(exitCode).toBe(0);
-      return JSON.parse(stdout);
     } finally {
       for (const d of denied.reverse()) {
         execFileSync("icacls", [d, "/remove:d", "*S-1-1-0"], { stdio: "pipe" });
@@ -532,9 +550,7 @@ describe.skipIf(!isWindows)("fs.mkdir - recursive with denied attributes (Window
     const b = path.join(a, "b");
     const target = path.join(b, "c");
     fs.mkdirSync(target, { recursive: true });
-
-    const expected = { code: "EPERM", syscall: "mkdir", path: target };
-    expect(await mkdirWithDenied(root, [target, b, a], target)).toEqual({ async: expected, sync: expected });
+    await mkdirWithDenied(root, [target, b, a], target);
   });
 
   // The first mkdir of a\b\c reports ENOENT because a\b is a file. The walk-up
@@ -546,8 +562,6 @@ describe.skipIf(!isWindows)("fs.mkdir - recursive with denied attributes (Window
     const a = path.join(root, "a");
     const b = path.join(a, "b");
     const target = path.join(b, "c");
-
-    const expected = { code: "EPERM", syscall: "mkdir", path: target };
-    expect(await mkdirWithDenied(root, [b, a], target)).toEqual({ async: expected, sync: expected });
+    await mkdirWithDenied(root, [b, a], target);
   });
 });

@@ -32,8 +32,10 @@ pub(crate) struct SecureContext {
     /// `BunSocketContextOptions.digest()` — exactly the fields that reach
     /// `us_ssl_ctx_from_options`. Stored so an `intern()` WeakGCMap hit (keyed by
     /// the low 64 bits) can do a full content-equality check before reusing.
-    /// Also `ctx`'s session id context, so `addCACert` folds each added certificate into it.
-    pub(crate) digest: Cell<[u8; 32]>,
+    /// Also part of `ctx`'s session id context, so `addCACert` folds each added certificate into it.
+    digest: Cell<[u8; 32]>,
+    /// The `sessionIdContext` option, padded with zeros.
+    session_name: Cell<[u8; SESSION_NAME_MAX]>,
     /// Approximate cert/key/CA byte length plus the BoringSSL `SSL_CTX` floor
     /// (~50 KB), so the GC can account for the off-heap allocation.
     pub(crate) extra_memory: usize,
@@ -241,9 +243,11 @@ impl SecureContext {
         let sc = SecureContext {
             ctx,
             digest: Cell::new(d),
+            session_name: Cell::default(),
             extra_memory: ctx_opts.approx_cert_bytes() + SSL_CTX_BASE_COST,
             shared: false,
         };
+        sc.apply_session_id_context();
         Ok(sc.into_js(&cx.heap))
     }
 
@@ -318,6 +322,7 @@ impl SecureContext {
         Ok(SecureContext {
             ctx,
             digest: Cell::new(d),
+            session_name: Cell::default(),
             extra_memory: ctx_opts.approx_cert_bytes() + SSL_CTX_BASE_COST,
             shared: true,
         })
@@ -365,11 +370,60 @@ impl SecureContext {
         hasher.update(bytes);
         hasher.r#final(&mut folded);
         self.digest.set(folded);
-        // SAFETY: `ctx` is live; the call copies the 32 bytes.
-        unsafe {
-            boringssl::SSL_CTX_set_session_id_context(ctx, folded.as_ptr(), folded.len());
-        }
+        self.apply_session_id_context();
         Ok(())
+    }
+
+    /// `secureContext.context.setSessionIdContext(name)`, for the `sessionIdContext` option.
+    pub(crate) fn set_session_id_context<'a>(
+        &self,
+        cx: &mut JsScope<'a>,
+        name: &[u8],
+    ) -> bindgen::Result<'a, ()> {
+        self.own_ctx(&cx.heap)?;
+        let mut padded = [0u8; SESSION_NAME_MAX];
+        let Some(head) = padded.get_mut(..name.len()) else {
+            return Err(cx
+                .global()
+                .throw_type_error(format_args!(
+                    "sessionIdContext must be at most {SESSION_NAME_MAX} bytes. Received {}",
+                    name.len()
+                ))
+                .into());
+        };
+        head.copy_from_slice(name);
+        self.session_name.set(padded);
+        self.apply_session_id_context();
+        Ok(())
+    }
+
+    /// A resumed handshake skips client authentication, so this covers all that decides who is let in.
+    pub(crate) fn session_id_context(&self) -> [u8; 32] {
+        let mut id = self.digest.get();
+        let name = self.session_name.get();
+        // SAFETY: `self.ctx` is live.
+        let verifies = unsafe { boringssl::SSL_CTX_get_verify_mode(self.ctx.as_ptr()) }
+            != boringssl::SSL_VERIFY_NONE;
+        if name == [0; SESSION_NAME_MAX] && !verifies {
+            return id;
+        }
+        let mut hasher = bun_sha_hmac::SHA256::init();
+        hasher.update(&id);
+        hasher.update(&name);
+        if verifies {
+            // Another process with these ticket keys can have other default roots. Whatever `ca` says: a context that SNI selects may have none.
+            hasher.update(c::us_get_default_ca_store_digest());
+        }
+        hasher.r#final(&mut id);
+        id
+    }
+
+    fn apply_session_id_context(&self) {
+        let id = self.session_id_context();
+        // SAFETY: `self.ctx` is live; the call copies the 32 bytes.
+        unsafe {
+            boringssl::SSL_CTX_set_session_id_context(self.ctx.as_ptr(), id.as_ptr(), id.len());
+        }
     }
 
     /// The `SSL_CTX` for a member that changes it. A digest-interned one also serves other consumers, so it's refused.
@@ -435,6 +489,8 @@ impl SecureContext {
 const SSL_CTX_BASE_COST: usize = 50 * 1024;
 /// A 16-byte name, a 16-byte HMAC key and a 16-byte AES key.
 const TICKET_KEYS_LEN: usize = 48;
+/// `SSL_MAX_SID_CTX_LENGTH`, Node's limit.
+const SESSION_NAME_MAX: usize = 32;
 
 use bun_uws_sys::socket_context::c;
 

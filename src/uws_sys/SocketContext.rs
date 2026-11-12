@@ -348,6 +348,8 @@ pub mod c {
         ) -> *mut SSL_CTX;
         // safe: no args; reads a process-global counter — no preconditions.
         pub safe fn us_ssl_ctx_live_count() -> c_long;
+        // safe: no args; computed once per process and never freed.
+        pub safe fn us_get_default_ca_store_digest() -> &'static [u8; 32];
         /// Appends the certificates in the NUL-terminated PEM `content` to
         /// `ctx`'s trust store; returns 0 when nothing could be added.
         pub fn us_ssl_ctx_add_ca_cert(

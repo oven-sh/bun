@@ -1388,6 +1388,7 @@ declare namespace $Node {
   interface NativeSecureContext {
     addCACert(pem: string | ArrayBufferView): void;
     getTicketKeys(): ArrayBuffer | ArrayBufferView;
+    setSessionIdContext(name: string): void;
     setTicketKeys(keys: ArrayBuffer | SharedArrayBuffer | ArrayBufferView): void;
   }
   interface NativeSecureContextConstructor {

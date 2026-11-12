@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tls.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 182c9443caf3211e90fe458bc8a71d8954b3ff065009e08c79c3d224faefbf72.
+// Written against that file with the SHA-256 5e691efcb6bc5b86e5558d7794dfb220225059e2d78d94925d327b82bdc2a242.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:tls"
@@ -122,6 +122,7 @@ declare global {
       ca: TLSMaterial;
       crl: TLSMaterial;
       allowPartialTrustChain: boolean | undefined;
+      sessionIdContext: string | undefined;
       sessionTimeout: number | undefined;
       ticketKeys: Uint8Array | undefined;
       sigalgs: string | null | undefined;
@@ -576,10 +577,11 @@ function newNativeSecureContext(options: TLSOptions, cached = false) {
   maybeWarnAboutExtraCACerts();
   options = processPfxOptions(options);
   options.servername = sniName(options.servername);
-  // A bundle's CAs and the ticket keys change the context once it's built, so it can't be the shared cached one.
+  // These change the context once it's built, so it can't be the shared cached one.
   const pfxExtraCAs = options._pfxExtraCACerts;
   const ticketKeys = options.ticketKeys;
-  if (pfxExtraCAs || ticketKeys != null) cached = false;
+  const sessionIdContext = options.sessionIdContext;
+  if (pfxExtraCAs || ticketKeys != null || sessionIdContext != null) cached = false;
   // Node counts a falsy key, cert or ca as absent (test-tls-options-boolean-check.js). The native parser only takes null.
   options.key = normalizePemKeyOption(options.key, options.passphrase) || null;
   options.cert ||= null;
@@ -595,6 +597,7 @@ function newNativeSecureContext(options: TLSOptions, cached = false) {
   if (pfxExtraCAs) {
     for (const pem of pfxExtraCAs) ctx.addCACert(pem);
   }
+  if (sessionIdContext != null) ctx.setSessionIdContext(sessionIdContext);
   if (ticketKeys != null) ctx.setTicketKeys(ticketKeys);
   return ctx;
 }
@@ -666,6 +669,11 @@ const kNativeSecureContextCtor: typeof netSymbols.kNativeSecureContextCtor = CAN
 const kUpgradeServerTLS: typeof netSymbols.kUpgradeServerTLS = CAN_REPLACE_BUILT_IN_FUNCTIONS
   ? (Symbol.for("::bunUpgradeServerTLS::") as typeof netSymbols.kUpgradeServerTLS)
   : netSymbols.kUpgradeServerTLS;
+
+// The default of a server in Node: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1423-L1518
+function defaultSessionIdContext(): string {
+  return StringPrototypeSlice.$call(Bun.SHA1.hash(ArrayPrototypeJoin.$call(process.argv, " "), "hex"), 0, 32);
+}
 
 // `target` is a tls.Server or a server-side TLSSocket: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L929
 function takeServerCallbacks(target, options) {
@@ -1136,6 +1144,7 @@ function Server(this: $Node.TLSServer, options?, secureConnectionListener?): voi
   this.ca = undefined;
   this.crl = undefined;
   this.allowPartialTrustChain = undefined;
+  this.sessionIdContext = undefined;
   this.sessionTimeout = undefined;
   this.ticketKeys = undefined;
   this.sigalgs = undefined;
@@ -1205,6 +1214,7 @@ function Server(this: $Node.TLSServer, options?, secureConnectionListener?): voi
       given.crl ||= undefined;
       given.ciphers ||= undefined;
       given.secureOptions ||= undefined;
+      given.sessionIdContext ||= undefined;
       given.sessionTimeout ||= undefined;
       given.ticketKeys ||= undefined;
       given.servername ||= undefined;
@@ -1230,6 +1240,7 @@ function Server(this: $Node.TLSServer, options?, secureConnectionListener?): voi
         ca,
         crl: given.crl,
         allowPartialTrustChain: !!given.allowPartialTrustChain,
+        sessionIdContext: given.sessionIdContext ?? defaultSessionIdContext(),
         sessionTimeout: given.sessionTimeout,
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1482-L1483: omitting it keeps the previous keys
         ticketKeys: given.ticketKeys || this.ticketKeys,
@@ -1279,7 +1290,7 @@ function Server(this: $Node.TLSServer, options?, secureConnectionListener?): voi
     ];
   };
 
-  this.setSecureContext(options);
+  this.setSecureContext(options ?? {});
   maybeWarnAboutExtraCACerts();
   // Matches Node's tls.Server handshakeTimeout default + validation:
   // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/internal/tls/wrap.js#L1386

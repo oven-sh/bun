@@ -1,6 +1,8 @@
 #include "./root_certs_header.h"
 #include "./internal/internal.h"
+#include <array>
 #include <mutex>
+#include <set>
 #include <string.h>
 #include <string_view>
 #include <unordered_set>
@@ -409,6 +411,55 @@ std::vector<X509 *> us_get_openssl_default_certs() {
   for (X509 *cert : us_get_openssl_default_cert_dir()) add(cert);
   ERR_clear_error();
   return certs;
+}
+
+extern "C" const uint8_t *us_get_default_ca_store_digest() {
+  using digest_t = std::array<uint8_t, SHA256_DIGEST_LENGTH>;
+  static digest_t result;
+  static std::once_flag once;
+  std::call_once(once, []() {
+    std::set<digest_t> digests;
+    auto add = [&](const uint8_t *der, size_t len) {
+      digest_t digest;
+      SHA256(der, len, digest.data());
+      digests.insert(digest);
+    };
+    auto add_lazy = [&](const X509_LAZY_CERT_SET *set) {
+      for (size_t i = 0; set != nullptr && i < X509_LAZY_CERT_SET_num(set); i++) {
+        const CRYPTO_BUFFER *der = X509_LAZY_CERT_SET_get0_der(set, i);
+        add(CRYPTO_BUFFER_data(der), CRYPTO_BUFFER_len(der));
+      }
+    };
+    auto add_parsed = [&](auto *object, auto i2d) {
+      uint8_t *der = nullptr;
+      int len = i2d(object, &der);
+      if (len < 0) Bun__outOfMemory();
+      add(der, len);
+      OPENSSL_free(der);
+    };
+    auto add_certs = [&](const STACK_OF(X509) *certs) {
+      for (size_t i = 0; i < sk_X509_num(certs); i++) add_parsed(sk_X509_value(certs, i), i2d_X509_AUX);
+    };
+
+    us_default_ca_sources_t sources = Bun__defaultCASources();
+    if (sources.bundled) add_lazy(us_get_bundled_root_cert_set());
+    const us_openssl_default_cert_file &file = us_get_openssl_default_cert_file();
+    add_lazy(file.certs);
+    add_certs(file.trusted);
+    for (size_t i = 0; i < sk_X509_CRL_num(file.crls); i++) add_parsed(sk_X509_CRL_value(file.crls, i), i2d_X509_CRL);
+    for (X509 *cert : us_get_openssl_default_cert_dir()) add_parsed(cert, i2d_X509_AUX);
+    add_certs(us_get_root_extra_cert_instances());
+    if (sources.system) {
+      add_lazy(us_get_root_system_certs().lazy);
+      add_certs(us_get_root_system_certs().parsed);
+    }
+
+    SHA256_CTX all;
+    SHA256_Init(&all);
+    for (const digest_t &digest : digests) SHA256_Update(&all, digest.data(), digest.size());
+    SHA256_Final(result.data(), &all);
+  });
+  return result.data();
 }
 
 // Process-wide immutable default store. Safe to share across SSL_CTXs that

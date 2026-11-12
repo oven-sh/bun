@@ -5607,6 +5607,224 @@ describe("session ticket keys", () => {
     );
     expect(server.getTicketKeys()).toEqual(before);
   });
+
+  describe("sessionIdContext", () => {
+    const keysDir = join(import.meta.dir, "../test/fixtures/keys");
+    const read = (name: string) => readFileSync(join(keysDir, name), "utf8");
+    // ca1 signs agent1, ca2 signs agent3.
+    const agent1 = { key: read("agent1-key.pem"), cert: read("agent1-cert.pem") };
+    const versions = ["TLSv1.2", "TLSv1.3"] as const;
+
+    // What the server says, and whether the handshake was a resumption.
+    async function visit(port: number, options: tls.ConnectionOptions) {
+      const client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ...options });
+      const seen = { said: "", reused: false, session: undefined as Buffer | undefined };
+      client.on("session", session => (seen.session = session));
+      client.on("data", chunk => (seen.said += chunk));
+      client.on("secureConnect", () => {
+        seen.reused = client.isSessionReused();
+        client.write("GET / HTTP/1.0\r\n\r\n");
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      client.on("error", () => {}).on("close", resolve);
+      await promise;
+      return seen;
+    }
+
+    const greet = (socket: TLSSocket) => socket.on("error", () => {}).once("data", () => socket.end("x"));
+    const withContext = <T extends Pick<Server, "addContext">>(server: T) => (
+      server.addContext("agent1", agent1),
+      server
+    );
+    const servers: Record<string, (options: tls.TlsOptions) => net.Server> = {
+      "tls.createServer()": options => createServer(options, greet),
+      "https.createServer()": options => https.createServer(options, (req, res) => res.end("x")),
+      "http2.createSecureServer()": options =>
+        http2.createSecureServer({ ...options, allowHTTP1: true }, (req, res) => res.end("x")),
+      "setSecureContext()": options => {
+        const server = createServer(COMMON_CERT, greet);
+        server.setSecureContext(options);
+        return server;
+      },
+      "createSecureContext()": options => {
+        const secureContext = tls.createSecureContext(options);
+        return net.createServer(socket => greet(new TLSSocket(socket, { isServer: true, secureContext })));
+      },
+      "addContext()": options => withContext(createServer(options, greet)),
+      "addContext() of an https.Server": options =>
+        withContext(https.createServer(options, (req, res) => res.end("x"))),
+      "SNICallback": options =>
+        createServer({ ...options, SNICallback: (name, done) => done(null, tls.createSecureContext(agent1)) }, greet),
+      "an SNICallback that answers later": options =>
+        createServer(
+          { ...options, SNICallback: (name, done) => setImmediate(done, null, tls.createSecureContext(agent1)) },
+          greet,
+        ),
+      "setKeyCert()": options =>
+        createServer(
+          {
+            ...options,
+            ALPNCallback(this: TLSSocket, { protocols }) {
+              this.setKeyCert(tls.createSecureContext(agent1));
+              return protocols[0];
+            },
+          },
+          greet,
+        ),
+    };
+
+    describe.each(versions)("%s", maxVersion => {
+      it.each(Object.keys(servers))("keeps the sessions of servers with the same keys apart, %s", async kind => {
+        const ticketKeys = crypto.randomBytes(48);
+        const [first, same, other] = ["one", "one", "other"].map(sessionIdContext =>
+          servers[kind]({ ...COMMON_CERT, ticketKeys, sessionIdContext }).listen(0, "127.0.0.1"),
+        );
+        try {
+          await Promise.all([first, same, other].map(server => once(server, "listening")));
+          const options = { maxVersion, servername: "agent1", ALPNProtocols: ["http/1.1"] };
+          const port = (server: net.Server) => (server.address() as AddressInfo).port;
+          const { session } = await visit(port(first), options);
+          expect({
+            same: (await visit(port(same), { ...options, session })).reused,
+            other: (await visit(port(other), { ...options, session })).reused,
+          }).toEqual({ same: true, other: false });
+        } finally {
+          for (const server of [first, same, other]) server.close();
+        }
+      });
+    });
+
+    it.each(versions)(
+      "getTicketKeys() leaves the sessions so far alone, and a copy resumes them (%s)",
+      async maxVersion => {
+        const options = { ...COMMON_CERT, ca: read("ca1-cert.pem"), requestCert: true };
+        const [first, second] = [createServer(options, greet), createServer(options, greet)];
+        try {
+          await Promise.all([first, second].map(server => once(server.listen(0, "127.0.0.1"), "listening")));
+          const { session } = await visit((first.address() as AddressInfo).port, { maxVersion, ...agent1 });
+          second.setTicketKeys(first.getTicketKeys());
+          for (const server of [first, second]) {
+            expect(await visit((server.address() as AddressInfo).port, { maxVersion, session })).toMatchObject({
+              said: "x",
+              reused: true,
+            });
+          }
+        } finally {
+          first.close();
+          second.close();
+        }
+      },
+    );
+
+    it("is a hash of process.argv on a server that names none", () => {
+      const ofArgv = crypto.createHash("sha1").update(process.argv.join(" ")).digest("hex").slice(0, 32);
+      const named: any = createServer({ ...COMMON_CERT, sessionIdContext: "named" });
+      expect(named.sessionIdContext).toBe("named");
+      named.setSecureContext(COMMON_CERT);
+      expect(
+        [named, createServer(), createServer({ sessionIdContext: "" })].map((server: any) => server.sessionIdContext),
+      ).toEqual([ofArgv, ofArgv, ofArgv]);
+    });
+
+    it("is a string of at most 32 bytes", () => {
+      for (const create of [tls.createSecureContext, createServer]) {
+        expect(() => create({ sessionIdContext: 1 as any })).toThrow(
+          expect.objectContaining({
+            code: "ERR_INVALID_ARG_TYPE",
+            message: 'The "options.sessionIdContext" property must be of type string. Received type number (1)',
+          }),
+        );
+        create({ sessionIdContext: Buffer.alloc(32, "é").toString() });
+        expect(() => create({ sessionIdContext: Buffer.alloc(32, "é").toString() + "a" })).toThrow(
+          new TypeError("sessionIdContext must be at most 32 bytes. Received 33"),
+        );
+      }
+    });
+
+    // A server in a process of its own that takes client certificates of the default roots.
+    async function serveFrom(dir: string, env: Record<string, string>, ...args: string[]) {
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "server.js", ...args],
+        cwd: dir,
+        env: {
+          ...bunEnv,
+          NODE_USE_SYSTEM_CA: undefined,
+          NODE_EXTRA_CA_CERTS: undefined,
+          SSL_CERT_FILE: "",
+          SSL_CERT_DIR: "",
+          ...env,
+        },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const { value } = await proc.stdout.getReader().read();
+      return Object.assign(proc, { port: Number(Buffer.from(value!).toString()) });
+    }
+    const serverScript = (setup: string) => `
+      const tls = require("node:tls");
+      const identity = ${JSON.stringify(COMMON_CERT)}, keys = Buffer.alloc(48, 7), otherCA = ${JSON.stringify(read("ca2-cert.pem"))};
+      const greet = socket => socket.on("error", () => {}).once("data", () => socket.end("let in"));
+      const create = options => tls.createServer({ ...identity, requestCert: true, ...options }, greet);
+      const server = ${setup};
+      server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+      process.stdin.on("end", () => process.exit(0)).resume();`;
+    const files = { "ca1.pem": read("ca1-cert.pem"), "hashed/468820ba.0": read("ca1-cert.pem") };
+    const extraCA = { NODE_EXTRA_CA_CERTS: "ca1.pem" };
+
+    it.concurrent.each([
+      ["NODE_EXTRA_CA_CERTS", extraCA, "create({ ticketKeys: keys })"],
+      ["SSL_CERT_FILE", { SSL_CERT_FILE: "ca1.pem" }, "create({ ticketKeys: keys })"],
+      ["SSL_CERT_DIR", { SSL_CERT_DIR: "hashed" }, "create({ ticketKeys: keys })"],
+      // Only the system store reads a file that is not named after a hash.
+      ...(isLinux
+        ? [["NODE_USE_SYSTEM_CA", { NODE_USE_SYSTEM_CA: "1", SSL_CERT_DIR: "." }, "create({ ticketKeys: keys })"]]
+        : []),
+      ["setTicketKeys()", extraCA, "create(); server.setTicketKeys(keys)"],
+      [
+        "new TLSSocket()",
+        extraCA,
+        `require("node:net").createServer(socket =>
+          greet(new tls.TLSSocket(socket, { isServer: true, secureContext, requestCert: true, rejectUnauthorized: true })),
+        );
+        const secureContext = tls.createSecureContext({ ...identity, ticketKeys: keys })`,
+      ],
+      ["addContext()", extraCA, `create({ ticketKeys: keys, ca: otherCA }); server.addContext("localhost", identity)`],
+    ] as [string, Record<string, string>, string][])(
+      "a session doesn't resume in a process with other default roots, %s",
+      async (_, env, setup) => {
+        using dir = tempDir("ticket-keys-roots", { ...files, "server.js": serverScript(setup) });
+        const started = Promise.all([
+          serveFrom(String(dir), env),
+          serveFrom(String(dir), env),
+          serveFrom(String(dir), {}),
+        ]);
+        await using first = (await started)[0];
+        await using sameRoots = (await started)[1];
+        await using otherRoots = (await started)[2];
+        for (const maxVersion of versions) {
+          const options = { maxVersion, servername: "localhost" };
+          const { said, session } = await visit(first.port, { ...options, ...agent1 });
+          expect(said).toBe("let in");
+          expect(await visit(sameRoots.port, { ...options, session })).toMatchObject({ said: "let in", reused: true });
+          expect(await visit(otherRoots.port, { ...options, ...agent1, session })).toMatchObject({
+            said: "",
+            reused: false,
+          });
+        }
+      },
+    );
+
+    it.concurrent("a session doesn't resume in a process with other arguments", async () => {
+      using dir = tempDir("ticket-keys-argv", { ...files, "server.js": serverScript("create({ ticketKeys: keys })") });
+      const started = Promise.all([serveFrom(String(dir), extraCA, "a"), serveFrom(String(dir), extraCA, "b")]);
+      await using first = (await started)[0];
+      await using otherArguments = (await started)[1];
+      const { session } = await visit(first.port, agent1);
+      expect(await visit(first.port, { session })).toMatchObject({ said: "let in", reused: true });
+      expect(await visit(otherArguments.port, { session })).toMatchObject({ said: "", reused: false });
+    });
+  });
 });
 
 // The kernel rejects a send() to a peer that is gone. That ends the writes, not the reads.

@@ -1356,11 +1356,32 @@ void us_ssl_set_inline_reject(SSL *ssl) {
   SSL_set_verify(ssl, SSL_VERIFY_PEER, us_inline_reject_verify_callback);
 }
 
+/* Narrows the sessions a connection resumes to those of what it has so far and of one more thing. */
+static void ssl_session_id_context_begin(SHA256_CTX *sid_ctx, const SSL *ssl) {
+  size_t length;
+  const uint8_t *accepted = SSL_get0_session_id_context(ssl, &length);
+  SHA256_Init(sid_ctx);
+  SHA256_Update(sid_ctx, accepted, length);
+}
+
+static void ssl_session_id_context_end(SHA256_CTX *sid_ctx, SSL *ssl, const uint8_t *selected, size_t length) {
+  uint8_t both[SHA256_DIGEST_LENGTH];
+  SHA256_Update(sid_ctx, selected, length);
+  SHA256_Final(both, sid_ctx);
+  SSL_set_session_id_context(ssl, both, sizeof(both));
+}
+
 /* As in Node's TLSWrap::SetVerifyMode, the policy is the socket's, not the one its shared SSL_CTX was built with. */
 void us_ssl_set_verify_mode(SSL *ssl, int request_cert, int reject_unauthorized) {
   int mode = !request_cert        ? SSL_VERIFY_NONE
              : reject_unauthorized ? SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT
                                    : SSL_VERIFY_PEER;
+  if (request_cert && SSL_is_server(ssl) && SSL_get_verify_mode(ssl) == SSL_VERIFY_NONE) {
+    /* What SecureContext::session_id_context() adds for a context that verifies by itself. */
+    SHA256_CTX sid_ctx;
+    ssl_session_id_context_begin(&sid_ctx, ssl);
+    ssl_session_id_context_end(&sid_ctx, ssl, us_get_default_ca_store_digest(), SHA256_DIGEST_LENGTH);
+  }
   SSL_set_verify(ssl, mode, us_verify_callback);
 }
 
@@ -3305,6 +3326,9 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
  * (RFC 6066 section 3; openssl/ssl.h: "partition session caches between SNI
  * hosts") and must not be relaxed for parity with another runtime. */
 static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
+  /* The connection is still its server's, so its sessions belong to both. */
+  SHA256_CTX sid_ctx;
+  ssl_session_id_context_begin(&sid_ctx, ssl);
   struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
   if (rare && rare->has_key_cert) {
     rare->has_key_cert = 0;
@@ -3316,6 +3340,9 @@ static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
     SSL_CTX_free(blank);
   }
   SSL_set_SSL_CTX(ssl, ctx);
+  size_t length;
+  const uint8_t *selected = SSL_get0_session_id_context(ssl, &length);
+  ssl_session_id_context_end(&sid_ctx, ssl, selected, length);
 }
 
 /* us_ssl_ctx_build_raw sets FAIL_IF_NO_PEER_CERT iff the options have request_cert and reject_unauthorized. */
@@ -3604,10 +3631,13 @@ int us_ssl_set_key_cert(SSL *ssl, SSL_CTX *ctx, const unsigned char *sid_ctx, si
   SSL_certs_clear(ssl);
   if (!SSL_use_certificate(ssl, leaf) || !SSL_use_PrivateKey(ssl, key) ||
       (sk_X509_num(chain) > 0 && !SSL_set1_chain(ssl, chain)) ||
-      !SSL_set1_verify_cert_store(ssl, SSL_CTX_get_cert_store(ctx)) ||
-      !SSL_set_session_id_context(ssl, sid_ctx, sid_ctx_length)) {
+      !SSL_set1_verify_cert_store(ssl, SSL_CTX_get_cert_store(ctx))) {
     return 0;
   }
+  SHA256_CTX both;
+  ssl_session_id_context_begin(&both, ssl);
+  ssl_session_id_context_end(&both, ssl, sid_ctx, sid_ctx_length);
+  sid_ctx = SSL_get0_session_id_context(ssl, &sid_ctx_length);
   SSL_set_client_CA_list(ssl, SSL_dup_CA_list(SSL_CTX_get_client_CA_list(ctx)));
   /* After the ServerHello the new session already has the old session id context, but the client is verified against `ctx`'s CAs. */
   SSL_SESSION *session = SSL_in_init(ssl) && !SSL_session_reused(ssl) ? SSL_get_session(ssl) : NULL;

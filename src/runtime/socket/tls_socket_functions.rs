@@ -816,7 +816,7 @@ impl Members<'_> {
                 // A client keeps no session id context (see `us_internal_ssl_attach`).
                 boringssl::SSL_set_session_id_context(ssl_ptr, core::ptr::null(), 0);
             } else {
-                let sid_ctx = (*sc).digest.get();
+                let sid_ctx = (*sc).session_id_context();
                 if ffi::us_ssl_set_key_cert(
                     ssl_ptr.cast(),
                     ctx.as_ptr().cast(),

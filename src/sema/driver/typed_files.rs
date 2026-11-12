@@ -299,6 +299,15 @@ impl<'a, 's> Syntax<'a, 's> {
         })
     }
 
+    /// The key of a pattern that is the target of an assignment: its start, as the key of a name is.
+    fn assigned_key(&self, pattern: PatId) -> Option<BindingKey> {
+        let node = self.file.pats.get(pattern.idx())?;
+        Some(BindingKey {
+            at: node.pos,
+            depth: 0,
+        })
+    }
+
     fn first_identifier(&self, pattern: PatId) -> Option<u32> {
         self.binding_key(pattern).map(|key| key.at)
     }
@@ -1808,7 +1817,7 @@ impl<'a, 's> Syntax<'a, 's> {
         initializers.chain(statements)
     }
 
-    /// Each `name = value` that is a statement or an operand of the commas of one, as a declaration of the name.
+    /// Each `target = value` that is a statement or an operand of the commas of one, as a declaration of the target.
     fn assigned_values(&self) -> Vec<(Anchor, u32, ExprId)> {
         let file = self.file;
         let (mut assigned, mut pending) = (Vec::new(), Vec::new());
@@ -1828,9 +1837,11 @@ impl<'a, 's> Syntax<'a, 's> {
                         target,
                         value,
                     }) => match file.exprs.get(target.idx()) {
-                        Some(name) if matches!(name.kind, ExprKind::Ident(_)) => {
-                            assigned.push((Anchor::Binding(0), name.pos, value))
-                        }
+                        Some(Expr {
+                            kind: ExprKind::Ident(_) | ExprKind::Object(_) | ExprKind::Array(_),
+                            pos,
+                            ..
+                        }) => assigned.push((Anchor::Binding(0), *pos, value)),
                         _ => {}
                     },
                     _ => {}
@@ -3423,13 +3434,6 @@ impl<'a> Transfer<'_, 'a, '_> {
                 .map(|(anchor, key, value)| (value, (anchor, key)))
                 .chain(default_exports)
                 .collect();
-            // The first step that the React Compiler declares such a pattern in has the value.
-            let first_steps: FxHashMap<ExprId, BindingKey> = syntax
-                .file
-                .var_decls
-                .iter()
-                .filter_map(|it| Some((it.init.some()?, syntax.split_key(it.pat)?)))
-                .collect();
             let find = |expr: ExprId| {
                 let (shape, key) = syntax.shape(expr);
                 [Some(key), syntax.name_of_dotted_index(expr)]
@@ -3440,13 +3444,22 @@ impl<'a> Transfer<'_, 'a, '_> {
             let find_via_ancestor = |chain: &CastChain| {
                 let (mut at, mut way) = (chain.outermost, Vec::new());
                 let mut found = loop {
-                    let keys = anchored.get(&at).copied().into_iter().chain(
-                        (first_steps.get(&at)).map(|key| (Anchor::Binding(key.depth), key.at)),
-                    );
-                    let mut in_output = keys.filter_map(|(anchor, key)| {
+                    let key = anchored.get(&at).copied();
+                    let in_output = |(anchor, key): (Anchor, u32)| {
                         output_anchored.get(&(anchor, index as u32, key))
-                    });
-                    if let Some(&found) = in_output.next() {
+                    };
+                    // The output can have the pattern of a declaration in steps, or as the target of an assignment.
+                    let in_another_form = || {
+                        let Some((Anchor::Binding(1..), _)) = key else {
+                            return None;
+                        };
+                        let pattern = syntax.file.var_decls.iter().find(|it| it.init == at)?.pat;
+                        [syntax.split_key(pattern), syntax.assigned_key(pattern)]
+                            .into_iter()
+                            .flatten()
+                            .find_map(|key| in_output((Anchor::Binding(key.depth), key.at)))
+                    };
+                    if let Some(&found) = key.and_then(in_output).or_else(in_another_form) {
                         break found;
                     }
                     let (parent, place) = places[at.idx()]?;

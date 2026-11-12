@@ -308,6 +308,18 @@ export function useList(props: { n: number }): number[] {
   list.push(1);
   return list;
 }
+export function useParts(props: { n: number }): [number[], string] {
+  const [held] = useState(0);
+  const { rows: kept, label: text } = make(props.n + held) as { rows: number[]; label: string };
+  kept.push(1);
+  return [kept, text];
+}
+export function usePair(props: { n: number }): [number[], string] {
+  const [held] = useState(0);
+  const [items, name] = make(props.n + held) as [number[], string];
+  items.push(1);
+  return [items, name];
+}
 `,
       });
       const { typed } = await built(dir, "./src/index.tsx", target, "--react-compiler", ...flags);
@@ -340,6 +352,9 @@ export function useList(props: { n: number }): number[] {
           ...(memoizes ? [`label, rows;`] : []),
           // A memo block assigns the name in a statement. The cast is on the value, not around the statement.
           `list = make(props.n + held) as number[]`,
+          // A memo block assigns a pattern in a statement too.
+          `{ rows: kept, label: text } = make(props.n + held) as { rows: number[]; label: string }`,
+          `[items, name] = make(props.n + held) as [number[], string]`,
         ]),
       ).toEqual([]);
     },
@@ -356,7 +371,7 @@ export function useList(props: { n: number }): number[] {
         ...base,
         "src/index.ts": `export async function load(): Promise<string> {
   const lazy = await import("./lazy");
-  return lazy.b + lazy.a + lazy.second + lazy.first + lazy.copy.id + lazy.read() + lazy.local.a + lazy.default.size;
+  return lazy.b + lazy.a + lazy.second + lazy.first + lazy.copy.id + lazy.read() + lazy.local.a + lazy.f + lazy.e + lazy.default.size;
 }
 `,
         "src/lazy.ts": `interface Config {
@@ -376,6 +391,7 @@ export function read(): string {
 }
 const raw: unknown = JSON.parse("{}");
 export const local = (true ? raw : raw) as { a: number };
+export const { e, f } = (true ? raw : raw) as { e: number; f: string };
 const seed: number = Math.random();
 export default new Map([["a", seed]]) as Map<string, number | undefined>;
 `,
@@ -384,12 +400,13 @@ export default new Map([["a", seed]]) as Map<string, number | undefined>;
       // The type check of the typed file gives `any` to a name that a function reads. That is a later step, so it is not
       // a part of what this test reads.
       expect(typed.replaceAll(": any", "")).toContain(
-        "var source: { a: number; b: string }, a, b, pair: [number, string], first, second, config: Config, copy, c, d, raw: unknown, local, seed: number, lazy_default;",
+        "var source: { a: number; b: string }, a, b, pair: [number, string], first, second, config: Config, copy, c, d, raw: unknown, local, e, f, seed: number, lazy_default;",
       );
       // The output assigns each value in a statement. The cast is on the value, not around the statement.
       expect(
         missingIn(typed, [
           "local = raw as { a: number }",
+          "{ e, f } = raw as { e: number; f: string }",
           `new Map([["a", seed]]) as Map<string, number | undefined>;`,
         ]),
       ).toEqual([]);

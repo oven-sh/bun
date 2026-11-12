@@ -370,7 +370,7 @@ function holdRejectedWrite(self, handle, negErrno, callback) {
   self[kwriteCallback] = callback;
   self[kRejectedWrite] = writeErrnoException(negErrno);
   // It holds the loop as any pending write does (_write).
-  if ((self[kended] || self[kPausedUnref]) && !self[kUserUnrefed]) handle.ref?.();
+  if (pendingWriteHoldsLoop(self)) handle.ref?.();
   if (self[kPausedUnref]) setImmediate(failRejectedWriteOfStoppedReader, self);
   return true;
 }
@@ -982,10 +982,20 @@ function restorePausedHold(self, handle) {
   if (!self[kUserUnrefed]) handle?.ref?.();
 }
 
-// The write that was holding the loop (_write) just drained; a socket whose
-// reads are over (peer FIN) or stopped is back at rest and lets go again.
+// The handle has queued the write. One that waits for the connect or for the TLS wrap keeps its chunk in _pendingData.
+function writeWaitsForDrain(self) {
+  return self[kwriteCallback] != null && self._pendingData == null;
+}
+
+// A write that waits for the native drain holds the loop for a handle that does not, as libuv's uv_write_t does.
+function pendingWriteHoldsLoop(self) {
+  // Not TLS after unref(): its write may wait for the handshake, where Node holds nothing, or in the engine, unseen here.
+  return self[kUserUnrefed] ? !self.encrypted : self[kended] || self[kPausedUnref];
+}
+
+// The write that was holding the loop (_write) just drained; the socket is back at rest and lets go again.
 function unrefAfterDrain(self, handle) {
-  if ((self[kended] || self[kPausedUnref]) && !self[kUserUnrefed] && handle === self._handle) handle.unref?.();
+  if (pendingWriteHoldsLoop(self) && handle === self._handle) handle.unref?.();
 }
 
 function finishSocketEnd(self) {
@@ -2989,6 +2999,8 @@ Socket.prototype.unref = function unref() {
     this.once("connect", this.unref);
     return this;
   }
+  // A write that waits for the native drain keeps its hold; unrefAfterDrain lets go.
+  if (writeWaitsForDrain(this) && pendingWriteHoldsLoop(this)) return this;
   (socket[kAdoptedTLSRaw] ?? socket).unref();
   return this;
 };
@@ -3116,9 +3128,8 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     callback(new Error("overlapping _write()"));
   } else {
     this[kwriteCallback] = callback;
-    // A pending write holds the loop even on a handle whose FIN/pause dropped
-    // its hold (libuv: the uv_write_t is active); unrefAfterDrain lets go again.
-    if ((this[kended] || this[kPausedUnref]) && !this[kUserUnrefed]) socket.ref?.();
+    // unrefAfterDrain lets go again.
+    if (pendingWriteHoldsLoop(this)) socket.ref?.();
   }
 };
 

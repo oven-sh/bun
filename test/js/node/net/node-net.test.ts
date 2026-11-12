@@ -899,6 +899,74 @@ it("socket should keep process alive if unref is not called", async () => {
 // Node never resumes a socket on the user's behalf: afterConnect only calls
 // read(0) (lib/net.js), so bytes that arrive before a 'data' listener is
 // attached stay buffered instead of being emitted to nobody and lost.
+// libuv counts a write in flight whatever the handle holds, so in node a write that waits for the kernel keeps the
+// process alive after socket.unref() too. Both ends of the fixture are on one loop, and nothing but that write holds
+// it. It runs unchanged under node v26.3.0, which prints the same lines.
+describe.concurrent("a write that waits for drain holds the loop on a socket that unref() was called on", () => {
+  const fixture = join(import.meta.dir, "node-net-unref-pending-write-fixture.js");
+  // Over a unix path the kernel takes the rest of a write only once the peer reads. Over TCP, which Windows gets, an
+  // acknowledgement can make room before that.
+  const transport = isWindows ? [] : ["s.sock"];
+  // A debug build takes seconds to start, and more while the runs share the processors.
+  const timeout = 30_000;
+
+  async function run(writer: string, unrefWhen: string, peerDoes: string) {
+    using dir = tempDir("net-unref-write", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture, writer, unrefWhen, peerDoes, ...transport],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), exitCode, ...(exitCode === 0 ? {} : { stderr }) };
+  }
+
+  it.each([
+    ["unref() before the writes, in 'connect'", "client", "before"],
+    ["unref() after the writes, in 'connect'", "client", "after"],
+    ["unref() before the writes, in 'connection'", "server", "before"],
+    ["unref() after the writes, in 'connection'", "server", "after"],
+    ["unref() after the writes, in 'connection' under pauseOnConnect", "paused-server", "after"],
+    ["the writes, then unref(), after 'connection'", "server", "later"],
+    ["a write of 16 MB, then unref(), while it dials", "client", "dialing"],
+    ["a write of one byte, then unref(), while it dials", "client", "dialing, one byte"],
+  ])(
+    "until the write completes: %s",
+    async (_, writer, unrefWhen) => {
+      expect(await run(writer, unrefWhen, "reads")).toEqual({
+        stdout: JSON.stringify({ callbacks: "all" }),
+        exitCode: 0,
+      });
+    },
+    timeout,
+  );
+
+  // On Windows a send that fails for good still counts as a drain (see on_writable).
+  it.skipIf(isWindows)(
+    "until the write fails, when the peer destroys its end",
+    async () => {
+      expect(await run("client", "after", "destroys")).toEqual({
+        stdout: JSON.stringify({ callbacks: "all, the last one failed", closed: true }),
+        exitCode: 0,
+      });
+    },
+    timeout,
+  );
+
+  it(
+    "and a ref() made while the write waits still holds it after the write",
+    async () => {
+      expect(await run("client", "before", "replies")).toEqual({
+        stdout: JSON.stringify({ callbacks: "all", reply: true }),
+        exitCode: 0,
+      });
+    },
+    timeout,
+  );
+});
+
 it("a connected socket is not flowing until the user reads from it", async () => {
   const { promise: received, resolve: onClose, reject } = Promise.withResolvers<string>();
   const server = createServer(c => {

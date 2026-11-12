@@ -1047,6 +1047,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         ctx.ctx().handle_reject(err);
     }
 
+    #[optimize(size)]
     fn handle_reject(&self, value: JSValue) {
         if self.is_aborted_or_ended() {
             return;
@@ -1791,6 +1792,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         self.run_error_handler_with_status_code(js_err, status);
     }
 
+    #[optimize(size)]
     fn render_range_not_satisfiable(&self, total: BlobSizeType) {
         let resp = self.resp.get().expect("infallible: resp bound");
         self.do_write_status(416);
@@ -2886,6 +2888,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         req.ctx().handle_reject_stream(cx.global(), err.to_js());
     }
 
+    #[optimize(size)]
     pub(crate) fn handle_reject_stream(&self, global_this: &JSGlobalObject, err: JSValue) {
         stream_log!("handleRejectStream");
 
@@ -3487,6 +3490,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         self.do_render_with_body(value, owned_readable);
     }
 
+    #[optimize(size)]
     pub(crate) fn render_production_error(&self, status: u16) {
         if let Some(resp) = self.resp.get() {
             // `AnyResponse` is a `Copy` handle; methods take `self` by value.
@@ -3554,6 +3558,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         false
     }
 
+    #[optimize(size)]
     fn finish_running_error_handler(&self, value: JSValue, status: u16) {
         self.forbid_upgrade();
         let Some(server) = self.server.get() else {
@@ -3596,6 +3601,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         vm.log_mut().unwrap().reset();
     }
 
+    #[optimize(size)]
     pub(crate) fn run_error_handler_with_status_code_dont_check_responded(
         &self,
         value: JSValue,
@@ -3657,6 +3663,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         self.finish_running_error_handler(value, status);
     }
 
+    #[optimize(size)]
     fn process_on_error_promise(
         &self,
         promise_js: JSValue,

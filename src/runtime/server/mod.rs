@@ -1241,6 +1241,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     #[cold]
+    #[optimize(size)]
     fn apply_phase_without_listener(&self) {
         let phase = self.phase();
         if phase < Phase::Closed {
@@ -1565,6 +1566,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// Register HTTP routes on `self.app` (and `h2_app`/`h3_app` when present). Returns
     /// the JS `RouteList` value for codegen-backed user routes, or `.zero` when
     /// there are none.
+    #[optimize(size)]
     fn set_routes(&self) -> JSValue {
         use bun_http_types::Method as http_method;
         let mut route_list_value = JSValue::ZERO;

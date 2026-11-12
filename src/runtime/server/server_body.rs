@@ -1525,6 +1525,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// transfers to `self.config`; the caller's `new_config` is left in a
     /// valid-but-emptied state and its `Drop` frees whatever was *not* taken.
     /// Any `Some(ws)` is adopted unconditionally, as on the initial serve.
+    #[optimize(size)]
     pub(crate) fn apply_reload(
         &self,
         new_config: &mut ServerConfig,
@@ -2134,7 +2135,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             req.set_yield(true);
             return;
         }
-        self.on_pending_request();
         req.set_yield(false);
 
         let buffer_writer = bun_js_printer::BufferWriter::init();
@@ -2157,7 +2157,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         resp.write_header_int(b"Age", 0);
         let buffer = writer.ctx.written();
         resp.end(buffer, false);
-        self.on_request_complete();
     }
 
     /// Calls a handler of the `routes` option. `upgrade_ctx`: the request is a WebSocket handshake `server.upgrade()` can accept.

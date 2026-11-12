@@ -1534,10 +1534,9 @@ class ChildProcess extends EventEmitter {
         if (options[kFromNode]) this.#closesNeeded += 1;
       }
 
-      if (hasSocketsToEagerlyLoad) {
-        for (let item of this.stdio!) {
-          item?.ref?.();
-        }
+      // stdout and stderr are built now in any case: built after the child exited they wrap bytes already read.
+      for (let item of hasSocketsToEagerlyLoad ? this.stdio! : [this.stdout, this.stderr]) {
+        item?.ref?.();
       }
     } catch (ex) {
       const exCode =

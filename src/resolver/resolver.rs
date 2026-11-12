@@ -3610,6 +3610,9 @@ impl<'a> Resolver<'a> {
                                 out.is_node_module = true;
                                 return MatchStatus::Success;
                             }
+                            if esm.subpath != b"." {
+                                this.set_missing_target(&[pkg_dir_info.abs_path, esm.subpath]);
+                            }
                         }
                     }
                     Err(err) => {
@@ -3888,7 +3891,7 @@ impl<'a> Resolver<'a> {
         if !status.is_success() {
             self.esm_failure.get_or_insert(esm_resolution.status);
             if names_a_path {
-                let target = strings::without_leading_path_separator(&esm_resolution.path);
+                let target = bun_paths::without_leading_sep(&esm_resolution.path);
                 self.set_missing_target(&[abs_package_path, target]);
             }
         }
@@ -3900,9 +3903,9 @@ impl<'a> Resolver<'a> {
         if self.missing_target.is_some() {
             return;
         }
-        let mut buffer = bun_paths::path_buffer_pool::get();
-        if let Some(path) = self.fs_ref().abs_buf_checked(parts, &mut buffer[..]) {
-            self.missing_target = Some(Box::from(path));
+        let mut path = AbsPath::new();
+        if let Some(path) = abs_path_in(&mut path, parts) {
+            self.missing_target = Some(Box::from(&path[..]));
         }
     }
 

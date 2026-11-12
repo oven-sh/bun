@@ -1,0 +1,54 @@
+# -- source: main.cjs
+# 'use strict';
+# const make = i => ({ x: i + 0.5, y: i % 7, z: i * 3, name: 'n' + i });
+# const kept = make(1);
+# const rows = JSON.parse('[{"x":0.5,"y":0,"z":0,"name":"n0"},{"x":1.5,"y":1,"z":3,"name":"n1"},{"x":2.5,"y":2,"z":6,"name":"n2"}]');
+# const pairs = JSON.parse('[{"a":1,"b":2},{"a":3,"b":4},{"a":5,"b":6}]');
+# function total(from) { let sum = from & 1; for (let i = 0; i < rows.length; i++) { const row = rows[i]; sum += row.x * 2 + row.y - row.z; } return sum; }
+# const area = (p, q) => p.x * q.y - p.y * q.x;
+# function areas(from) { let sum = from & 1; for (let i = 1; i < rows.length; i++) sum += area(rows[i - 1], rows[i]); return sum; }
+# const seen = { n111: 1 }, label = (row, from) => row.name + from + row.y;
+# function labels(from) { let count = 0; for (const row of rows) if (seen[label(row, from)]) count++; return count; }
+# function Pair(pair) { var given = pair || {}; this.a = given.a; this.b = given.b; }
+# function firsts(from) { let sum = from & 1; for (let i = 0; i < pairs.length; i++) sum += new Pair(pairs[i]).a; return sum; }
+# let said = kept.x;
+# for (let t = 0; t < 4; t++) said = said * 3 + total(t) + areas(t) + labels(t) + firsts(t);
+# print(said);
+# -- end of source
+# The names read off `row` are the keys of the literal in `make`, so the front end writes that layout as what is expected. Link says of the layout that its objects stay with compiled code, and the
+# row comes out of a parse: the test could never pass, every row failed it and left the typed copy. The layout is not tested for there. The row stays shaped like it: what is read off it under a name
+# is expected to be of the kind that the layout's field holds, so the products in `area`, copied in line, ask for numbers in both copies of the loop, and `row.name + from` asks for a text, not for a number because a number stands beside it. A read that stays generic says that its receiver is no object of compiled code, so that its stub asks the structure first. In `Pair` the names are those of its own instances; with that layout gone the empty literal that
+# stands in for a missing pair is no guess either, for it answers none of the names: the reads stay one operation each and the instance still falls away.
+# f1 = Pair, f2 = total, f3 = areas, f4 = labels, f5 = firsts
+# RUN(COUNT): compile UnescapedShapesDroppedFromSpeculations mechanisms=all
+# COUNT-NOT: statistic UnescapedShapesDroppedFromSpeculations 0
+# RUN(PARSED): walk f2 mechanisms=all
+# PARSED-LABEL: code f2:Body
+# PARSED-NOT: = ShapeTest
+# PARSED: = PropGet {{*}}key="x"
+# PARSED: testedType=number
+# PARSED-NOT: = ShapeTest
+# RUN(KINDS): walk f3 mechanisms=all
+# KINDS-LABEL: code f3:Body
+# KINDS-NOT: = ShapeTest
+# KINDS: = Mul {{*}}form=Numbers
+# KINDS: = Mul {{*}}form=Numbers
+# KINDS: = Mul {{*}}form=Numbers
+# KINDS: = Mul {{*}}form=Numbers
+# KINDS-NOT: = ShapeTest
+# RUN(TEXT): walk f4 mechanisms=all
+# TEXT-LABEL: code f4:Body
+# TEXT: = PropGet {{*}}key="name" [receiverIsNoObjectOfCompiledCode]
+# TEXT: testedType=string
+# TEXT: = Strcat
+# RUN(STUB): bytes f4:Body mechanisms=all
+# STUB-NOT: Stub ReadAtSite.Of
+# STUB: Stub ReadAtSiteAskingStructureFirst.OfAnyValue
+# STUB-NOT: Stub ReadAtSite.Of
+# RUN(LITERAL): walk f5 mechanisms=all
+# LITERAL-LABEL: code f5:Body
+# LITERAL-NOT: = ShapeTest
+# LITERAL: = PropGet {{*}}key="a"
+# LITERAL-NOT: = PutSlotOrAdd
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 680.5

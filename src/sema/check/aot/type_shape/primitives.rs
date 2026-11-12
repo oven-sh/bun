@@ -18,14 +18,19 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         ty: TypeId,
     ) -> Result<PrimitiveKinds, GaveUp> {
         let mut accepted = PrimitiveKinds::empty();
-        let ty = self.declared_type_of_this(ty);
+        let ty = self.resolve_object_type(ty);
         if !self.type_shape(ty)?.can_accept_primitives() {
             return Ok(accepted);
         }
+        // A class of many members, most of them inherited, is not listed to find that no primitive has the first of them.
+        let no_primitive_has_what_is_required = PRIMITIVE_SOURCES.iter().all(|&(_, source)| {
+            self.c.has_required_properties_of_unlisted_class(source, ty) == Some(false)
+        });
+        if no_primitive_has_what_is_required {
+            return Ok(accepted);
+        }
         let members = self.c.members(ty);
-        // A string satisfies `Iterable<T>` for some `T`, and is not assignable to it while `T` is free.
         let for_some_arguments = self.c.permissive_instantiation(ty);
-        // That a source shares no property with a type of optional properties alone is an error for whoever writes the assignment.
         let relation = match self.c.is_weak_type(for_some_arguments) {
             true => Relation::Comparable,
             false => Relation::Assignable,

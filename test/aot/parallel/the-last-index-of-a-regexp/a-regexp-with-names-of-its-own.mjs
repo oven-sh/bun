@@ -1,0 +1,10 @@
+const a = /a/g;
+a.tag = 1;
+const set = (r, v) => { r.lastIndex = v; };
+for (let i = 0; i < 100; i++) set(a, i);
+for (let i = 0; i < 200; i++) a["p" + i] = i;
+delete a.p0;
+set(a, 7);
+const heir = { __proto__: a };
+set(heir, 8);
+console.log(a.lastIndex, heir.lastIndex, a.tag, a.p199);

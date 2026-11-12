@@ -2,12 +2,12 @@ use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, StoreKind, SymbolId};
 use bun_sema::hir::{ExprId, ExprKind, NodeData, PatId, PatKind};
 
+use super::dynamic::DynamicIdentifier;
 use super::{BindingForm, BindingRef, DeadZone, IdentifierTarget, bindings};
 use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
 use crate::ir::ValueId;
 use crate::lower::member::PropertyName;
-use crate::lower::statement::Printed;
 use crate::lower::{FileLowering, FunctionLowering};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -18,45 +18,13 @@ pub(super) enum BindingRead {
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_identifier(&mut self, identifier: ExprId) -> ValueId {
-        if self.record_printed_initializer(identifier) {
-            return self.read_identifier(identifier, BindingRead::Value);
-        }
-        let position = self.position();
-        let recorded = match self.file.bound.binding(identifier) {
-            Binding::Symbol(_) => self.file.name_position(identifier),
-            _ => self.file.recorded_name_position(identifier),
-        };
-        self.builder.record_position(recorded);
-        if recorded == position {
-            return self.read_identifier(identifier, BindingRead::Value);
-        }
-        self.set_position_of_text_elsewhere(recorded, self.file.hir[identifier].pos);
-        let value = self.read_identifier(identifier, BindingRead::Value);
-        self.set_position(position);
-        value
+        self.read_identifier(identifier, BindingRead::Value)
     }
 
     pub(crate) fn lower_identifier_for_typeof(&mut self, identifier: ExprId) -> ValueId {
-        if !self.record_printed_initializer(identifier) {
-            self.builder.record_position(self.file.hir[identifier].pos);
-        }
         self.read_identifier(identifier, BindingRead::TypeOf)
     }
 
-    // Where Bun's transpiler prints an initializer in place of the name, JSC records what the initializer records, and nothing for the name.
-    fn record_printed_initializer(&mut self, identifier: ExprId) -> bool {
-        let Some(printed) = self.file.find_printed_in_place(identifier) else {
-            return false;
-        };
-        if let Printed::Initializer(initializer) = printed
-            && let Some(&recorded) = self.records_of_initializers.get(&initializer)
-        {
-            self.builder.record_position(recorded);
-        }
-        true
-    }
-
-    // What a store has just left in a variable. The source text has no read there.
     pub(crate) fn read_stored_identifier(&mut self, identifier: ExprId) -> ValueId {
         self.read_identifier(identifier, BindingRead::Value)
     }
@@ -65,18 +33,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         &mut self,
         identifier: ExprId,
     ) -> (ValueId, Option<ValueId>) {
-        if self.file.find_inlined_constant(identifier).is_some() {
-            return (self.lower_identifier(identifier), None);
-        }
-        if let Some(found) = self.resolve_dynamic_binding(identifier) {
-            let function = self.get_dynamic_value(identifier, found.holder, BindingRead::Value);
-            return (function, Some(found.with_base));
-        }
-        let Some(container) = self.file.find_member_container(identifier) else {
-            return (self.lower_identifier(identifier), None);
+        let object = match self.find_dynamic_identifier(identifier) {
+            Some(DynamicIdentifier::Name(found)) => {
+                let function = self.get_dynamic_value(identifier, found.holder, BindingRead::Value);
+                return (function, Some(found.with_base));
+            }
+            Some(DynamicIdentifier::MemberOf(object)) => object,
+            None => match self.file.find_member_container(identifier) {
+                Some(container) => self.get_container_object(container),
+                None => return (self.lower_identifier(identifier), None),
+            },
         };
         let name = self.file.identifier_name(identifier);
-        let object = self.get_container_object(container);
         let key = self.file.name_key(name);
         let function = self.emit_get(object, PropertyName::Constant(key));
         (function, Some(object))
@@ -110,6 +78,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 name,
                 holder,
             } => self.get_dynamic_target(binding, name, holder),
+            IdentifierTarget::MemberOf {
+                name, container, ..
+            } => {
+                let key = self.file.name_key(name);
+                self.emit_get(container, PropertyName::Constant(key))
+            }
         }
     }
 
@@ -130,6 +104,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 name,
                 holder,
             } => self.store_dynamic_binding(binding, name, holder, value),
+            IdentifierTarget::MemberOf {
+                binding,
+                name,
+                container,
+            } => self.store_member_of(container, binding, name, value, source),
         }
     }
 
@@ -164,6 +143,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.write_variable(local.variable, value);
     }
 
+    pub(crate) fn rebind_narrowed_local(
+        &mut self,
+        symbol: SymbolId,
+        narrowed: ValueId,
+        value: ValueId,
+    ) {
+        let local = self.scopes.find_local(BindingRef::Symbol(symbol));
+        let local = local.expect("find_tested_local found the local");
+        self.builder
+            .write_narrowed_variable(local.variable, narrowed, value);
+    }
+
     pub(super) fn read_binding(
         &mut self,
         binding: Binding,
@@ -183,18 +174,35 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(super) fn delete_binding(&mut self, binding: Binding, name: Atom) -> ValueId {
         match bindings::normalize_binding(self.file, binding) {
             Binding::Free => self.emit_free_name_delete(name),
-            Binding::Symbol(_) | Binding::Arguments(_) | Binding::CommonJs(_) => {
-                self.builder.boolean(false)
-            }
+            Binding::Symbol(symbol) => match self.file.scopes.form(symbol) {
+                BindingForm::ContainerMember { container } => {
+                    let object = self.get_container_object(container);
+                    let key = self.file.name_key(name);
+                    self.emit_delete(object, PropertyName::Constant(key))
+                }
+                _ => self.builder.boolean(false),
+            },
+            Binding::Arguments(_) | Binding::CommonJs(_) => self.builder.boolean(false),
         }
     }
 
+    #[inline]
+    fn find_dynamic_identifier(&mut self, identifier: ExprId) -> Option<DynamicIdentifier> {
+        let bound = self.file.bound;
+        bound.dynamic_lookup_scope(NodeData::Expr(identifier))?;
+        self.resolve_dynamic_identifier(identifier)
+    }
+
     fn read_identifier(&mut self, identifier: ExprId, read: BindingRead) -> ValueId {
-        if let Some(constant) = self.file.find_inlined_constant(identifier) {
-            return self.emit_constant(constant);
-        }
-        if let Some(found) = self.resolve_dynamic_binding(identifier) {
-            return self.get_dynamic_value(identifier, found.holder, read);
+        match self.find_dynamic_identifier(identifier) {
+            Some(DynamicIdentifier::Name(found)) => {
+                return self.get_dynamic_value(identifier, found.holder, read);
+            }
+            Some(DynamicIdentifier::MemberOf(object)) => {
+                let key = self.file.name_key(self.file.identifier_name(identifier));
+                return self.emit_get(object, PropertyName::Constant(key));
+            }
+            None => {}
         }
         let name = self.file.identifier_name(identifier);
         let binding = self.file.bound.binding(identifier);
@@ -203,17 +211,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 if let Some(builtin) = self.file.find_locked_global(identifier) {
                     return self.emit_locked_builtin(builtin);
                 }
-                // A report names a built-in where it is written.
-                if self.file.builtins.of_expr(identifier).is_none() {
-                    self.set_position(self.file.name_position(identifier));
-                }
                 let value = self.read_binding(binding, name, read);
                 self.expect_resolved_path(identifier, value)
             }
-            // The type of `const zero = 0` is `number`, since TypeScript's `0` is also the type of `-0`. The read stays for
-            // its dead zone.
             Binding::Symbol(symbol)
-                if read == BindingRead::Value && self.file.is_constant_zero(symbol) =>
+                if read == BindingRead::Value
+                    && self.file.is_constant_zero(symbol)
+                    && !self.file.may_be_answered_by_mock(symbol) =>
             {
                 self.read_binding(binding, name, read);
                 self.builder.integer(0)
@@ -227,12 +231,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn resolve_identifier_target(&mut self, identifier: ExprId) -> IdentifierTarget {
         let name = self.file.identifier_name(identifier);
         let binding = self.file.bound.binding(identifier);
-        if let Some(found) = self.resolve_dynamic_binding(identifier) {
-            return IdentifierTarget::Dynamic {
-                binding,
-                name,
-                holder: found.holder,
-            };
+        match self.find_dynamic_identifier(identifier) {
+            Some(DynamicIdentifier::Name(found)) => {
+                return IdentifierTarget::Dynamic {
+                    binding,
+                    name,
+                    holder: found.holder,
+                };
+            }
+            Some(DynamicIdentifier::MemberOf(container)) => {
+                return IdentifierTarget::MemberOf {
+                    binding,
+                    name,
+                    container,
+                };
+            }
+            None => {}
         }
         let is_dead_zone_tested = match binding {
             Binding::Symbol(symbol) if self.file.is_plain_assignment_target(symbol, identifier) => {
@@ -310,7 +324,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn find_member_container(&self, identifier: ExprId) -> Option<SymbolId> {
+    pub(in crate::lower) fn find_member_container(&self, identifier: ExprId) -> Option<SymbolId> {
         let symbol = match self.bound.binding(identifier) {
             Binding::Symbol(symbol) => symbol,
             Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => return None,
@@ -321,6 +335,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    #[inline]
     pub(super) fn identifier_name(&self, identifier: ExprId) -> Atom {
         let ExprKind::Ident(name) = self.hir[identifier].kind else {
             unreachable!("the expression is an identifier");

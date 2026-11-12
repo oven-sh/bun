@@ -1,6 +1,6 @@
 // RUN: link
 // CHECK: layout {{*}}kind=Instance name="F" {{*}}fields=[{key="b" {{*}}originLayout=[[i]] originField=1}, {key="a" {{*}}originLayout=[[i]] originField=0}] supertypes=[{{*}}[[i]]] flags=[IsConstructorFunction]
-// CHECK: layout [[i]] name="I"
+// CHECK: layout [[i]] {{*}}fields=[{key="a"{{*}}{key="b"
 
 // RUN(UNTYPED): link
 // UNTYPED-NOT: layout {{*}}name="G"{{*}}supertypes=

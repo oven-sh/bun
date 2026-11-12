@@ -1,0 +1,33 @@
+# A pattern that goes by the protocol keeps three words: the iterator, its `next`, and whether it is done. The walk lays them into heap words, which is a cell with a header of 64 bytes.
+# Where those words are alive at no suspension, and nothing mentions them but the reads and stores of the words themselves, they lie in a slot of the machine frame: no cell is made, no barrier follows a store,
+# and what the words hold is kept alive by the scan of the stack. The slot is dead at suspensions: it is not saved with the frame.
+# take: nothing suspends at all. takeThenWait: the function suspends, behind the pattern. takeAndWait: the await stands between two steps of the pattern, so the words live across it: they stay in the heap.
+# drain, drainAndWait: a loop that goes by the protocol alone keeps no words at all: the iterator and its `next` are values of the walk, which a suspension saves with the frame like any other.
+# -- source: words.ts
+# declare function sink(...values: unknown[]): void;
+# function own(n: number) { return { [Symbol.iterator]() { let i = 0; return { next() { return i < n ? { done: false, value: i++ } : { done: true, value: 0 }; } }; } }; }
+# function take(n: number) { const [first, ...rest] = own(n); return first + rest.length; }
+# async function takeThenWait(n: number) { const [first, ...rest] = own(n); await null; return first + rest.length; }
+# async function takeAndWait(n: number) { const [first = await 1, ...rest] = own(n); return first + rest.length; }
+# function drain(n: number) { let s = 0; for (const v of own(n)) s += v; return s; }
+# async function drainAndWait(n: number) { let s = 0; for (const v of own(n)) { s += v; await null; } return s; }
+# sink(take(3), takeThenWait(3), takeAndWait(3), drain(3), drainAndWait(3));
+# -- end of source
+# f2 = take, f3 = takeThenWait, f4 = takeAndWait, f5 = drain, f6 = drainAndWait
+# RUN: walk f2 f3:CoroutineBody f4:CoroutineBody mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = NewHeapWords numberOfWords=3
+# CHECK-LABEL: code f3:CoroutineBody
+# CHECK: = NewHeapWords numberOfWords=3
+# CHECK-LABEL: code f4:CoroutineBody
+# CHECK: = NewHeapWords numberOfWords=3
+# RUN(LOOPS): walk f5 f6:CoroutineBody mechanisms=all
+# LOOPS-NOT: NewHeapWords
+# RUN(PLAIN): frame f2 mechanisms=all
+# PLAIN: slot0 at {{*}}, 24 bytes, dead at suspensions
+# RUN(ELSEWHERE): frame f3:CoroutineBody mechanisms=all
+# ELSEWHERE: slot0 at {{*}}, 24 bytes, dead at suspensions
+# RUN(INSIDE): frame f4:CoroutineBody mechanisms=all
+# INSIDE-NOT: 24 bytes
+# RUN(WITHHELD): frame f2 mechanisms=all-CellsInFrames
+# WITHHELD-NOT: 24 bytes

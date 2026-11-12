@@ -1,0 +1,27 @@
+# -- source: main.cjs
+# function hash(key) {
+#   switch (typeof key) {
+#     case "undefined": return 0;
+#     case "object": if (!key) return 0;
+#     case "function": return key.hashCode();
+#     case "boolean": return key | 0;
+#     case "number": if ((key | 0) == key) return key; key = "" + key;
+#     case "string": var h = 0; for (var i = 0; i < key.length; i++) h = (((31 * h) | 0) + key.charCodeAt(i)) | 0; return h;
+#     default: throw new Error("bad");
+#   }
+# }
+# function whole() { let sum = 0; for (let i = 0; i < 400; i++) sum += hash(i & 255); return sum; }
+# function strings() { let sum = 0; for (let i = 0; i < 40; i++) sum += hash("k" + (i & 1)); return sum; }
+# print(whole(), strings());
+# -- end of source
+# The call passes an int32, so one comparison is left of the callee and its loop is not walked. For a string its loop is left, and it is called. f1 = hash, f2 = whole, f3 = strings
+# RUN(WHOLE): walk f2:Body mechanisms=all
+# WHOLE-LABEL: code f2:Body
+# WHOLE: callee=f1
+# WHOLE-NOT: CallDirect
+# WHOLE: Return
+# RUN(STRINGS): walk f3:Body mechanisms=all
+# STRINGS-LABEL: code f3:Body
+# STRINGS: function=f1
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 42936 134620

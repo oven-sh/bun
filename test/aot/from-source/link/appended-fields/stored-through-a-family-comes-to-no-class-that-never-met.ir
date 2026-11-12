@@ -1,0 +1,24 @@
+# If a name that is stored through a family went to every member, one store through a class with five hundred below it would give five hundred layouts a field. It belongs to the members whose objects may be known by the family: those that met another member.
+# Five classes meet and the store goes through their family. Class C never meets another: no store through the family comes to its objects, and it ought to get no field.
+# TODO: Link: where a family is born out of a type of the table every member is noted as met, so a name that is stored through a class with what extends it is appended to every class below it
+# -- source: stored-through-a-family-comes-to-no-class-that-never-met.ts
+# class U { k = "u"; }
+# class A extends U { x = 1; }
+# class B extends U { y = 2; }
+# class C extends U { z = 3; }
+# class D extends U { w = 4; }
+# class E extends U { v = 5; }
+# class F extends U { u = 6; }
+# class G extends U { s = 7; }
+# function tag(u: U) { (u as any).t = 1; }
+# const a = new A(), b = new B(), c = new C(), e = new E(), f = new F(), g = new G();
+# const n = Date.now();
+# tag(n > 4 ? a : n > 3 ? b : n > 2 ? e : n > 1 ? f : g);
+# function read(u: C) { return (u as any).t; }
+# read(c as any);
+# -- end of source
+# RUN: link fields mechanisms=all
+# CHECK: field L1.2 "t" appended proven=i32 writers-known
+# CHECK: field L3.1 "k"
+# CHECK-NOT: field L3.2
+# CHECK: field L5.2 "t" appended proven=i32 writers-known

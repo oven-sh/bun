@@ -2,14 +2,18 @@
 #[path = "source_provider/tests.rs"]
 mod tests;
 
+use crate::compile::{EntryPointPaths, FolderPaths};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::log_diagnostic;
 use crate::load::data_modules::parse_json;
 use crate::load::loaders::loader_name;
 use bstr::BStr;
 use bun_ast::runtime::ReactCompilerMode;
-use bun_ast::{ASTMemoryAllocator, Ast, ImportKind, Loader, Loc, Log, Source, Stmt, Symbol};
-use bun_js_parser::{Define, Parser, ParserOptions};
+use bun_ast::{ASTMemoryAllocator, ImportKind, Loader, Loc, Log, Msg, Source};
+use bun_js_parser::{
+    Define, ExpandedImportMetaGlob, ImportMetaGlobHost, Parser, ParserOptions,
+    record_import_meta_globs,
+};
 use bun_options_types::jsx;
 use bun_react_compiler::{Observer, observe};
 use bun_sema::atom::Interner;
@@ -23,6 +27,18 @@ use std::borrow::Cow;
 
 #[derive(Debug)]
 pub struct Failed;
+
+#[derive(Debug)]
+pub enum DataFailure {
+    InvalidText,
+    Build,
+}
+
+impl From<Failed> for DataFailure {
+    fn from(_: Failed) -> DataFailure {
+        DataFailure::Build
+    }
+}
 
 #[derive(Copy, Clone)]
 pub struct ModuleName<'a> {
@@ -83,15 +99,6 @@ pub struct SourceFile<'a> {
     pub loader: Loader,
 }
 
-pub struct MacroCall<'a, 's> {
-    pub importer: &'a [u8],
-    /// Where the call starts in the source of the importer.
-    pub position: u32,
-    pub macro_path: &'a [u8],
-    pub export_name: &'a [u8],
-    pub arguments: &'a [&'s DataValue<'s>],
-}
-
 pub struct ComponentFile<'a> {
     pub module: ModuleName<'a>,
     pub contents: &'a [u8],
@@ -99,20 +106,27 @@ pub struct ComponentFile<'a> {
     pub mode: ReactCompilerMode,
     pub settings: &'a TranspileSettings,
     pub is_entry_point: bool,
-    /// Some import has attributes, so it may be `with { type: "macro" }`.
-    pub can_import_macros: bool,
 }
 
-/// A file as Bun's transpiler has read it with the options of `bun run`.
-pub struct TranspiledTree<'a> {
-    pub tree: &'a Ast<'a>,
-    /// Those of `tree`.
-    pub symbols: Vec<Symbol>,
-    pub source: &'a Source<'a>,
-    pub arena: &'a Arena,
+pub struct PathsOfProgram<'a> {
+    pub entry_points: &'a [EntryPointPaths],
+    pub folders: &'a [FolderPaths],
+    pub program_files: &'a [EntryPointPaths],
+}
+
+pub struct RefusedText<'a> {
+    pub path: &'a [u8],
+    pub is_syntax_error: bool,
+    pub message: &'a [u8],
+    pub line: i32,
+    pub column: i32,
+    pub offset: usize,
+    pub length: usize,
 }
 
 pub trait SourceProvider: Sync {
+    fn work_beside_engine(&self, _paths: &PathsOfProgram<'_>) {}
+
     fn fold_options<'s>(
         &self,
         arena: &'s Arena,
@@ -120,29 +134,16 @@ pub trait SourceProvider: Sync {
         log: &mut Log,
     ) -> FoldOptions<'s>;
 
-    /// The `Define` of the transpiler: what the build puts in place of names, as `fold_options` lists it.
     fn define(&self) -> Option<&Define> {
         None
     }
 
-    /// The flags for which `feature()` of "bun:bundle" answers true, as `fold_options` lists them.
-    fn enabled_features(&self) -> Vec<&[u8]> {
-        Vec::new()
-    }
-
-    /// What `bun run` prints for each of `statements`, which come with how often their first line is indented.
-    /// `None`: there is no printer here, or it fails.
-    fn print_as_run(
-        &self,
-        _file: TranspiledTree<'_>,
-        _statements: &[(Stmt, u32)],
-    ) -> Option<Vec<Box<[u8]>>> {
+    fn outfile(&self) -> Option<&[u8]> {
         None
     }
 
     fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed>;
 
-    /// Which file runs for an import that no plugin has resolved.
     fn find_file(&self, host: &dyn Host, search: &FileSearch<'_>) -> FoundCode {
         find_file_plainly(host, search)
     }
@@ -157,37 +158,153 @@ pub trait SourceProvider: Sync {
         true
     }
 
-    /// What a `data:` URL holds. `None` for any other specifier, and for a URL that cannot be decoded.
+    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad>;
+
+    /// The loader of a `data:` URL that is written where it is loaded, or `None` if a bundle leaves it to the run time.
+    fn data_url_loader(&self, _url: &[u8]) -> Option<Loader> {
+        None
+    }
+
     fn decode_data_url(&self, _url: &[u8]) -> Option<Vec<u8>> {
         None
     }
 
-    /// How the run time reads the text of `new Blob(parts, { type })` as a module.
     fn loader_of_blob(&self, _type: Option<&[u8]>) -> Option<Loader> {
         None
     }
 
-    /// The `href` of `new URL(text, base)`. `None`: the constructor throws.
     fn write_url(&self, _text: &[u8], _base: Option<&[u8]>) -> Option<Vec<u8>> {
         None
     }
 
-    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad>;
-
-    /// True if the embedded path of a `file` loader module does not depend on its contents.
     fn asset_paths_ignore_contents(&self) -> bool {
         false
     }
 
-    /// Replaces the contents of a file that `parse_data` embedded with empty contents.
     fn set_embedded_contents(&self, _file: &SourceFile<'_>, _log: &mut Log) -> Result<(), Failed> {
         Ok(())
     }
 
-    fn clear_embedded_files(&self) {}
+    fn keep_where_text_is_refused(&self, _refused: &RefusedText<'_>) {}
 
-    /// Puts the file into the executable as it is, at the path of its module. The loader of the run time reads it there.
-    fn embed_at_module_path(&self, _file: &SourceFile<'_>, _module_path: &[u8]) {}
+    /// `source_path`: where the file lies on the disk of the build.
+    fn keep_bytes_of_data_file(&self, _source_path: &[u8]) {}
+
+    /// A compiled file that `node:fs` finds in the executable. Told only of a program of which `keep_bytes_of_data_file` was told.
+    fn keep_path_of_code_that_file_system_sees(&self, _source_path: &[u8]) {}
+
+    /// Whether `--asset` puts files into the executable.
+    fn embeds_assets(&self) -> bool {
+        false
+    }
+
+    /// How many folders above the root directory the highest `--asset` lies. The executable mounts them as it mounts folders with code.
+    fn highest_asset_level(&self) -> usize {
+        0
+    }
+
+    /// Whether `source_path`, which `module_path` reads, is a file that `node:fs` won't find in the executable but `--asset` would embed: no `--asset` names it or a parent folder, and `keep_bytes_of_data_file` was not called for it.
+    fn is_embeddable_only_by_asset(&self, _module_path: &[u8], _source_path: &[u8]) -> bool {
+        false
+    }
+
+    /// Whether an `--asset` names `source_path` or a parent folder.
+    fn is_in_asset(&self, _source_path: &[u8]) -> bool {
+        false
+    }
+
+    /// Whether `module_path` is no file of an installed package, in an executable that its sources needn't lie beside.
+    fn is_own_module_of_project(&self, _module_path: &[u8]) -> bool {
+        false
+    }
+
+    /// Whether `source_path`, which `module_path` names, is a file or a folder of the program that lies on the disk of the build.
+    fn is_on_disk(&self, _module_path: &[u8], _source_path: &[u8]) -> bool {
+        false
+    }
+
+    /// Whether `keep_bytes_of_data_file` was called for `source_path` and `--asset` would embed it where `node:fs` finds it. Whether `node:fs` finds it without `--asset` is known only once the executable's file list is final.
+    fn is_embedding_undecided(&self, _module_path: &[u8], _source_path: &[u8]) -> bool {
+        false
+    }
+
+    /// Whether `--asset` embeds the file or folder `source_path` and that path, as written, climbs two or more folders above the root directory while `module_path` lies at or below it. The folder of such a module is `/$bunfs/root` or lies below it, and that has one folder above it.
+    fn is_asset_unreachable(&self, _module_path: &[u8], _source_path: &[u8]) -> bool {
+        false
+    }
+
+    /// The first link between the innermost `--asset` around `source_path` and that file. The link itself can be an asset: that one is followed.
+    fn find_symlink_in_asset(&self, _source_path: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Returns true if code that finds `source_path` by a search reads it, as a `package.json`. A question about such a file counts as a read.
+    fn is_searched_for(&self, _source_path: &[u8]) -> bool {
+        false
+    }
+
+    /// Returns true if `embed_file_implicitly()` has embedded `source_path`. A read needs its bytes.
+    fn is_embedded_implicitly(&self, _source_path: &[u8], _is_query: bool) -> bool {
+        false
+    }
+
+    /// Embeds each `package.json` between `module_path` and the root of its package in `node_modules`, and returns those not embedded before.
+    fn embed_package_json_files(&self, _module_path: &[u8]) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
+
+    /// The folder of the installed package that `module_path` is a file of.
+    fn find_package_folder(&self, _module_path: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Whether a file of an installed package hands `folder` to a search that finds a `package.json` on the disk, and another one or none in the executable.
+    fn search_misses_manifest(&self, _module_path: &[u8], _folder: &[u8]) -> bool {
+        false
+    }
+
+    /// A search that climbs from a module finds the nearest `package.json`, so one that is embedded implicitly needs every nearer one embedded too.
+    /// Embeds those. Where one can't be embedded, the ones above it are no longer embedded. Returns each added path with the one that a search would have found.
+    fn fill_package_json_gaps(&self, _module_paths: &[&[u8]]) -> Vec<(Vec<u8>, Vec<u8>)> {
+        Vec::new()
+    }
+
+    /// The program reads a file whose path isn't known at build time. It may be any that it has found there.
+    fn note_reads_of_unknown_paths(&self) {}
+
+    /// Embeds `source_path`, which `module_path` reads through a path known at build time, and returns true. Only a file inside `node_modules` and the `package.json` nearest above `entry_path` qualify. Everything else of the application needs `--asset`. `is_query`: the call asks about the file and doesn't read its contents. A file that no call reads is embedded without its bytes, unless the program reads a path that isn't known.
+    fn embed_file_implicitly(
+        &self,
+        _entry_path: &[u8],
+        _module_path: &[u8],
+        _source_path: &[u8],
+        _is_query: bool,
+    ) -> bool {
+        false
+    }
+
+    /// The bytes of the file at `source_path`, if it is there and holds WebAssembly.
+    fn read_web_assembly(&self, _source_path: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Embeds `source_path`, which `module_path` names, if it lies in an installed package and may be read as a file.
+    fn embed_named_file(&self, _module_path: &[u8], _source_path: &[u8]) -> bool {
+        false
+    }
+
+    /// The files in `folder` that `embed_file_implicitly` may embed, because it lies in an installed package. With `reaches_below` those below it too, but none for the folder of a whole package.
+    fn list_files_to_embed(&self, _folder: &[u8], _reaches_below: bool) -> Vec<Vec<u8>> {
+        Vec::new()
+    }
+
+    /// The files in `folder` itself, if no `--asset` names it or a parent folder and one could.
+    fn list_excluded_folder(&self, _folder: &[u8]) -> Option<Vec<Vec<u8>>> {
+        None
+    }
+
+    /// Emits `warning` later if `node:fs` won't find `source_path` in the executable.
+    fn warn_if_not_embedded(&self, _source_path: &[u8], _warning: Msg) {}
 
     fn parse_data<'s>(
         &self,
@@ -195,38 +312,32 @@ pub trait SourceProvider: Sync {
         arena: &'s Arena,
         atoms: &Interner<'s>,
         log: &mut Log,
-    ) -> Result<DataModule<'s>, Failed>;
+    ) -> Result<DataModule<'s>, DataFailure>;
 
-    fn run_macro<'s>(
-        &self,
-        _call: &MacroCall<'_, 's>,
-        _arena: &'s Arena,
-        _atoms: &Interner<'s>,
-        log: &mut Log,
-    ) -> Result<&'s DataValue<'s>, Failed> {
-        Err(report_unsupported(log, b"macros without the bundler"))
+    fn bundle_pages(&self, pages: &[&[u8]], log: &mut Log) -> Result<Vec<Vec<u8>>, Failed> {
+        match pages.is_empty() {
+            true => Ok(Vec::new()),
+            false => Err(report_unsupported(
+                log,
+                b"an import of an HTML page without the bundler",
+            )),
+        }
     }
 
-    /// Parses `file` with the parser options of `bun build` and the React Compiler enabled, and reports each compiled
-    /// function to `observer`. Returns false if the file has an error.
     fn compile_components(&self, file: &ComponentFile<'_>, observer: &mut dyn Observer) -> bool {
         compile_components_without_bundler(file, self.define(), observer)
     }
 
-    fn bundle_pages<'s>(
-        &self,
-        pages: &[&[u8]],
-        _arena: &'s Arena,
-        _atoms: &Interner<'s>,
-        log: &mut Log,
-    ) -> Result<Vec<&'s DataValue<'s>>, Failed> {
-        if pages.is_empty() {
-            return Ok(Vec::new());
-        }
-        Err(report_unsupported(log, b"HTML pages without the bundler"))
+    fn expand_globs(&self, file: &ComponentFile<'_>) -> Vec<ExpandedImportMetaGlob> {
+        expand_globs_without_bundler(file, self.define())
     }
 
     fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed>;
+}
+
+/// `bun run` makes an empty module of such a text and asks no parser (`Transpiler::parse` in bundler/transpiler.rs).
+pub fn is_short_blank_text(text: &[u8]) -> bool {
+    text.len() < 33 && text.iter().all(|byte| matches!(byte, b'\n' | b'\r' | b' '))
 }
 
 pub fn apply_jsx_settings(pragma: &mut jsx::Pragma, settings: &JsxSettings) {
@@ -254,6 +365,27 @@ pub fn compile_components_without_bundler(
     define: Option<&Define>,
     observer: &mut dyn Observer,
 ) -> bool {
+    observe(observer, || parse_without_bundler(file, define, None))
+}
+
+pub fn expand_globs_without_bundler(
+    file: &ComponentFile<'_>,
+    define: Option<&Define>,
+) -> Vec<ExpandedImportMetaGlob> {
+    // SAFETY: the function reads neither the pointer nor the slices.
+    let host = unsafe { ImportMetaGlobHost::new(std::ptr::null_mut(), |_, _, _| None) };
+    let mut expanded = Vec::new();
+    record_import_meta_globs(&mut expanded, || {
+        parse_without_bundler(file, define, Some(host))
+    });
+    expanded
+}
+
+fn parse_without_bundler(
+    file: &ComponentFile<'_>,
+    define: Option<&Define>,
+    glob_host: Option<ImportMetaGlobHost>,
+) -> bool {
     let arena = Arena::new();
     let mut store = ASTMemoryAllocator::borrowing(&arena);
     let _scope = store.enter();
@@ -265,8 +397,9 @@ pub fn compile_components_without_bundler(
     options.warn_about_unbundled_modules = false;
     options.tree_shaking = true;
     options.is_entry_point = file.is_entry_point;
-    options.import_meta_main_value = Some(file.is_entry_point);
+    options.import_meta_main_value = (!file.is_entry_point).then_some(false);
     options.use_define_for_class_fields = file.settings.use_define_for_class_fields != Some(false);
+    options.import_meta_glob = glob_host;
     let has_legacy_decorators =
         file.settings.experimental_decorators || file.settings.emits_decorator_metadata;
     let features = &mut options.features;
@@ -288,9 +421,8 @@ pub fn compile_components_without_bundler(
         }
     };
     let mut log = Log::init();
-    let parsed = observe(observer, || {
-        Parser::init(options, &mut log, &source, define, &arena).and_then(|parser| parser.parse())
-    });
+    let parsed =
+        Parser::init(options, &mut log, &source, define, &arena).and_then(|parser| parser.parse());
     parsed.is_ok() && !log.has_errors()
 }
 
@@ -338,8 +470,14 @@ impl SourceProvider for WithoutServices {
         arena: &'s Arena,
         atoms: &Interner<'s>,
         log: &mut Log,
-    ) -> Result<DataModule<'s>, Failed> {
+    ) -> Result<DataModule<'s>, DataFailure> {
         match file.loader {
+            Loader::Json | Loader::Jsonc if file.contents.iter().all(u8::is_ascii_whitespace) => {
+                Ok(DataModule::Value {
+                    default: &DataValue::Object(&[]),
+                    exports_keys: true,
+                })
+            }
             Loader::Json | Loader::Jsonc => match parse_json(file.contents, arena, atoms) {
                 Some(default) => Ok(DataModule::Value {
                     default,
@@ -352,12 +490,11 @@ impl SourceProvider for WithoutServices {
                         Loc::EMPTY,
                         format_args!("\"{path}\" is not valid JSON"),
                     );
-                    Err(Failed)
+                    Err(DataFailure::InvalidText)
                 }
             },
             Loader::Text => {
                 #[allow(clippy::disallowed_methods)]
-                // a JavaScript string holds no ill-formed UTF-8
                 let text = String::from_utf8_lossy(file.contents);
                 Ok(DataModule::Value {
                     default: arena.alloc(DataValue::String(atoms.intern(text.as_bytes()))),
@@ -367,7 +504,7 @@ impl SourceProvider for WithoutServices {
             _ => {
                 let name = loader_name(file.loader);
                 let feature = format!("the \"{name}\" loader without the bundler");
-                Err(report_unsupported(log, feature.as_bytes()))
+                Err(report_unsupported(log, feature.as_bytes()).into())
             }
         }
     }

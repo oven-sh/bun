@@ -1,0 +1,18 @@
+# the function is found under a key of a loop, so every primitive may come as this by escape alone: nobody has seen one, and the rows of Object.getPrototypeOf for primitives answer by escape alone
+# -- source: main.js
+# function init(inst) {
+#   const own = Object.getPrototypeOf(inst);
+#   console.log(typeof own.extra);
+#   const proto = Made.prototype;
+#   for (const k in proto) {
+#     inst[k] = proto[k];
+#   }
+# }
+# function Made() {
+#   init(this);
+# }
+# console.log(typeof new Made());
+# -- end of source
+# RUN: link lookups mechanisms=all
+# CHECK: lookup called ObjectGetPrototypeOf
+# CHECK-NOT: lookup let-go

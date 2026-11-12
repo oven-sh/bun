@@ -2,21 +2,17 @@
 // CHECK-LABEL: function {{*}}name="calls"
 // CHECK: [[madeKey]] = Call {{*}}calleeName="f"
 // CHECK: [[made]] = Call {{*}}calleeName="g"
-// CHECK-NEXT: [[madeObject]] = Convert [[made]] declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: = ElemHas [[madeObject]], [[madeKey]]
+// CHECK-NEXT: = ElemHas [[made]], [[madeKey]]
 // CHECK-LABEL: function {{*}}name="computed"
 // CHECK-NEXT: ([[k]]: anything, [[holder]]: anything):
-// CHECK: [[computedObject]] = Convert [[holder]] declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: = ElemHas [[computedObject]], [[k]]
+// CHECK: = ElemHas [[holder]], [[k]]
 // CHECK-LABEL: function {{*}}name="index"
 // CHECK-NEXT: ([[indexed]]: anything):
 // CHECK: [[two]] = Integer integer=2
-// CHECK-NEXT: [[indexedObject]] = Convert [[indexed]] declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: = ElemHas [[indexedObject]], [[two]]
+// CHECK-NEXT: = ElemHas [[indexed]], [[two]]
 // CHECK-LABEL: function {{*}}name="name"
 // CHECK-NEXT: ([[named]]: anything):
-// CHECK: [[namedObject]] = Convert [[named]] declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: = PropHas [[namedObject]] key="a"
+// CHECK: = PropHas [[named]] key="a"
 
 // RUN(NOWHERE): lower
 // NOWHERE-NOT: ToPropertyKey

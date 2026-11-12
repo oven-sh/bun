@@ -1,0 +1,10 @@
+# A field that the program uses as an index and stores no fraction into: the bound of a counter and a term of a key are speculated to be int32s.
+# RUN(EVENT): compile IntegerFieldsSpeculated mechanisms=all
+# EVENT: statistic IntegerFieldsSpeculated 1
+# -- source: main.cjs
+# function Big(array, t) { this.array = array; this.t = t; }
+# function last() { return this.array[this.t - 1] & 255; }
+# Big.prototype.last = last;
+# function moveBy(x, r) { for (var i = 0; i < x.t; ++i) r[i + x.t] = x.array[i]; }
+# const made = new Big(sink(), sink()); sink(made); moveBy(made, sink()); sink(made.last(), moveBy);
+# -- end of source

@@ -1,5 +1,5 @@
 // RUN: link
-// CHECK: layout [[i]] name="I"
+// CHECK: layout [[i]] {{*}}fields=[{key="a"
 // CHECK: function {{*}}name="create"
 // CHECK: = NewObject {{*}}layout=[[i]] fields=[0]
 // CHECK: data {{*}}root=Object{layout=[[i]] members=

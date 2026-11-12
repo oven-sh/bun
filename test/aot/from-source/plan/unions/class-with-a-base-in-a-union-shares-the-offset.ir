@@ -1,0 +1,20 @@
+# one member of the union has a written base, whose field lies where the base has it. The declaration of `kind` below the base starts behind the end of the base, and the other member lays its own `kind` there too: one offset, one load. The other fields of both go into the bytes that are left, and no cell grows
+# L0 = Base, L1 = Decl, L2 = Expr . f1 = kindOf . The union is written so that it holds the whole row of classes: { Decl, Expr } alone cuts across the family { Base, Decl } and is no family.
+# -- source: class-with-a-base-in-a-union-shares-the-offset.ts
+# declare function sink(...values: unknown[]): void;
+# class Base { id: number; constructor() { this.id = 0; } }
+# class Decl extends Base { extra: number; kind: number; constructor() { super(); this.extra = 1; this.kind = 2; } }
+# class Expr { kind: number; more: number; other: number; constructor() { this.kind = 3; this.more = 4; this.other = 5; } }
+# function kindOf(n: Base | Expr) { return (n as Decl | Expr).kind; }
+# sink(kindOf(new Decl()), kindOf(new Expr()), new Base().id);
+# -- end of source
+# RUN: plan layouts mechanisms=none+TypedOperations
+# CHECK: layout L1 CompiledObject size=[[sizeOfDecl]]
+# CHECK: "kind" {{*}}offset=[[kind]]
+# CHECK: layout L2 CompiledObject size=[[sizeOfExpr]]
+# CHECK: "kind" {{*}}offset=[[kind]]
+# RUN(WITHHELD): plan layouts mechanisms=none
+# WITHHELD: layout L1 CompiledObject size=[[sizeOfDecl]]
+# WITHHELD: "extra" {{*}}offset=[[behindBase]]
+# WITHHELD: layout L2 CompiledObject size=[[sizeOfExpr]]
+# WITHHELD: "more" {{*}}offset=[[behindBase]]

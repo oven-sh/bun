@@ -29,6 +29,7 @@ fn closure_behind_the_last_store_copies() {
         "let c = 0; try { c = f(); } catch { c = 1; } return () => c;",
         "let c = 0; c = 7; return () => () => c;",
         "var c; c = n; return () => c;",
+        "let c = 0; c = 5; return inner; function inner() { return c; }",
     ];
     for statements in copied {
         assert_eq!(storage_of_c(statements), Storage::Local, "{statements}");
@@ -47,7 +48,7 @@ fn closure_that_a_store_can_follow_shares() {
         "let c = 0; c = 1; f(() => { c++; }); return () => c;",
         "let c = 0; let read; try { c = 1; read = () => c; } finally { c = 2; } return read;",
         "let c = 0; let read; switch (n) { case 0: read = () => c; case 1: c = 9; } return read;",
-        "let c = 0; c = 5; return inner; function inner() { return c; }",
+        "let c = 0; f(inner); c = 5; return inner; function inner() { return c; }",
         "let c = 0; c = 1; class A { static { c = 2; } } return () => c;",
         "let c = 0; c = 1; eval(n); return () => c;",
     ];

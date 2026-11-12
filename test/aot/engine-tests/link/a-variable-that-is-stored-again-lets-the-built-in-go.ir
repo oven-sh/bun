@@ -1,0 +1,46 @@
+# let pick = other;  function start() { return pick({ port: 0 }); }  function other() {}  if (process.argv[2]) pick = Bun.serve;  start();
+# The variable is stored again, so the front end does not call it immutable, and nobody knows in the other body what it holds: the store lets the function go, as every store into a variable did.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: causes mechanisms=all
+# CHECK: cause RunsUnseenCode BunServe
+# CHECK: unseen-code can-run
+
+layout L0 module=m0 fields=[{key="port" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="pick" module=m0 declared={type=anything}
+module m0 path="main.mjs" displayPath="main.mjs" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f1
+    v3 = Builtin builtin=Process
+    v4 = PropGet v3 key="argv"
+    v5 = Integer integer=2
+    v6 = ElemGet v4, v5
+    Branch v6 -> taken b1(), notTaken b2()
+  b1():
+    v7 = Builtin builtin=Bun
+    v8 = PropGet v7 key="serve"
+    PutModuleVariable v8 variable=g0
+    Jump -> next b2()
+  b2():
+    v10 = Call v2 calleeName="start"
+    v11 = Undefined
+    Return v11
+}
+function f1 name="start" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = CheckInitialized v0 name="pick"
+    v2 = Integer
+    v3 = NewObject -, v2 layout=L0 fields=[0]
+    v4 = FinishObject v3
+    v5 = Call v1, -, v4 calleeName="pick"
+    Return v5
+}
+function f2 name="other" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

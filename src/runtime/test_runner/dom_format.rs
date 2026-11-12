@@ -173,7 +173,7 @@ fn is_dom(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
 fn classify(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Dom>> {
     if !matches!(
         value.js_type(),
-        JSType::FinalObject | JSType::ProxyObject | JSType::Array
+        JSType::FinalObject | JSType::CompiledObject | JSType::ProxyObject | JSType::Array
     ) {
         return Ok(None);
     }

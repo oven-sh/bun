@@ -1,0 +1,18 @@
+# f1 = keep
+# -- source: store-a-reference-into-a-variable-of-the-module.ts
+# type Entry = { weight: number };
+# let newest: Entry | null = null;
+# function keep(entry: Entry): void {
+#   newest = entry;
+# }
+# declare const input: any;
+# keep({ weight: +input });
+# if (input) keep({ weight: 1.5 });
+# (globalThis as any).answer = newest;
+# -- end of source
+# The compiler before this one: 3 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 6, patches 0, moves 1, unlikely or rare 0.
+# RUN(X64): steps most:7 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 7

@@ -1,0 +1,27 @@
+# -- source: main.js
+# "use strict";
+# const unseen = (x) => [x][JSON.parse("0")];
+# let kept = null;
+# const target = unseen({
+#   apply(self, list) {
+#     const said = (kept === list ? "same" : "other") + ":" + list[0] + ":" + list.length + ":" + (list.extra | 0);
+#     kept = list; list[0] = "changed"; list.extra = 1; list.length = 1;
+#     return said;
+#   },
+# });
+# function relay() { let said = ""; for (let i = 0; i < 2; i++) said = said + target.apply(this, arguments) + "|"; return said; }
+# function underName() { const all = arguments; let said = ""; for (let i = 0; i < 2; i++) said = said + target.apply(this, all) + "|"; return said; }
+# function ownList(a, b) { const pair = [a, b]; let said = ""; for (let i = 0; i < 2; i++) said = said + target.apply(this, pair) + "|"; return said; }
+# function overList() { let said = ""; for (const k of [1, 2]) said = said + target.apply(this, arguments) + "|"; return said; }
+# function inTurn(a, b) { let said = ""; for (let i = 0; i < 2; i++) { const pair = [a, b]; said = said + target.apply(this, pair) + "|"; } return said; }
+# for (const f of [relay, underName, ownList, overList, inTurn]) print(unseen(f)("a", "b"));
+# -- end of source
+# The call is the one mention of the list in the text, and it runs once a turn. The turns of the loop are written out, and `apply` is not the built-in: the arm that calls as written may not make the list again, or each turn would hand over a new object where the program made one.
+# A list that is made in the turn is a new one each turn, in plain as well.
+# RUN: run-in-shell
+# CHECK: other:a:2:0|same:changed:1:1|
+# CHECK-NEXT: other:a:2:0|same:changed:1:1|
+# CHECK-NEXT: other:a:2:0|same:changed:1:1|
+# CHECK-NEXT: other:a:2:0|same:changed:1:1|
+# CHECK-NEXT: other:a:2:0|other:a:2:0|
+# CHECK-NEXT: exited with 0

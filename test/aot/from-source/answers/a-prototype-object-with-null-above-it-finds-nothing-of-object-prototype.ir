@@ -1,0 +1,11 @@
+# -- source: main.js
+# function Plain() { this.raw = 1; }
+# Plain.prototype = { __proto__: null, twice: function () { return this.raw * 2; } };
+# function read(plain) { return plain.twice() + " " + typeof plain.toString + " " + ("hasOwnProperty" in plain); }
+# print(read(new Plain()));
+# -- end of source
+# THE SIBLING THAT MUST NOT MOVE: a literal with null above it that is stored as a function's `prototype`: its instances find nothing of Object.prototype. followObjectsMadeToBePrototypes() refused it because it "had left" at SetLiteralPrototype; it refuses it by name now.
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 2 undefined false
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 2 undefined false

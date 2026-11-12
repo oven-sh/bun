@@ -53,6 +53,26 @@ test("bun test --aot takes decorators as bun test compiles them: by the tsconfig
   }
 });
 
+test("a tsconfig.json above the working directory says nothing about how bun test compiles, with --aot too", async () => {
+  using dir = tempDir("tsconfig-governs-each-file", {
+    "tsconfig.json": config({ experimentalDecorators: true, useDefineForClassFields: false }),
+    "below/marked.test.ts": `let count = 0, stores = 0;
+function mark(value: Function, context: ClassDecoratorContext) { count = arguments.length; }
+@mark
+class Marked {}
+Object.defineProperty(Marked.prototype, "level", { set(value: number) { stores++; }, configurable: true });
+class Derived extends Marked { level = 5; }
+test("marked", () => { new Derived(); console.log(Marked.name + " got " + count + ", stores: " + stores); });
+`,
+  });
+  for (const aot of [[], ["--aot"]]) {
+    const below = await run(join(String(dir), "below"), "test", ...aot, "marked.test.ts");
+    expect(codes(below.said)).toEqual([]);
+    expect(below.said).toContain("Marked got 2, stores: 0");
+    expect(below.exitCode).toBe(0);
+  }
+});
+
 const runtime = (name: string, result: string, made: string) => ({
   [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "1.0.0" }),
   [`node_modules/${name}/jsx-runtime.ts`]: `export function jsx(tag: string, props: { children?: unknown }): ${result} { return ${made}; }\nexport const jsxs = jsx;\nexport const jsxDEV = jsx;\nexport const Fragment = "fragment";\nexport namespace JSX {\n  export type Element = ${result};\n  export interface IntrinsicElements { [name: string]: { children?: unknown } }\n}\n`,

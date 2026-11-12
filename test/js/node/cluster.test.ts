@@ -784,6 +784,36 @@ test.concurrent.each([
   });
 });
 
+describe.skipIf(isWindows).concurrent("a send() without a callback that the other end never took", () => {
+  const leaves = {
+    "job.js": `
+    require("node:cluster");
+    process.once("disconnect", () => require("node:fs").writeFileSync("left", ""));
+    process.send("ready");`,
+  };
+  const send = `worker.once("message", () => {
+    worker.disconnect();
+    while (!fs.existsSync("left"));
+    worker.send("lost");
+  });`;
+
+  test("is no 'error' if nobody listens on the worker", async () => {
+    expect(await runWorker(send, leaves)).toEqual({
+      stdout: ["online, ready, disconnect, exit 0"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("is an 'error' for a listener on the worker", async () => {
+    expect(await runWorker(`worker.on("error", err => events.push(err.code)); ${send}`, leaves)).toEqual({
+      stdout: ["online, ready, EPIPE, disconnect, exit 0"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
   // `kHandle` is a private symbol that only `cluster.fork()` sets, so a
   // `cluster.Worker({ process })` built around a plain object (how Node's own

@@ -2493,8 +2493,7 @@ impl<'a> Parser<'a> {
                                     is_top_level: true,
                                 })?;
                                 p.is_import_item.insert(item.name.ref_, ());
-                                // The dev server prints each module alone, so an import item
-                                // has to print as a member of its namespace.
+                                // ensure every e_import_identifier holds the namespace
                                 if p.options.features.hot_module_reloading {
                                     let symbol =
                                         &mut p.symbols[item.name.ref_.inner_index() as usize];

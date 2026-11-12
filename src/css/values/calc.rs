@@ -393,7 +393,7 @@ impl<V: CalcValue> Calc<V> {
                     i,
                     (),
                     |_, a, b| {
-                        // Not `a % b`: the f32 operands are rounded, so `rem(25%, 5%)` would be 5%.
+                        // Not `a % b`: the f32 operands are rounded, so `rem(1px, .1px)` would be .1px.
                         a - b * (a / b).trunc()
                     },
                     |_, a, b| MathFunction::Rem {
@@ -1535,12 +1535,6 @@ macro_rules! calc_protocol_forwarders {
         impl protocol::TryMap for $T { #[inline] fn try_map(&self, f: impl Fn(f32) -> f32) -> Option<Self> { Some(self.$m(f)) } }
         calc_protocol_forwarders!(@ $T; $($r)*);
     };
-    (@ $T:ty; try_op: forward, $($r:tt)*) => {
-        impl protocol::TryOp for $T {
-            #[inline] fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> { <$T>::try_op(*self, *rhs, ctx, f) }
-        }
-        calc_protocol_forwarders!(@ $T; $($r)*);
-    };
     // Closure-ish syntax so `$this/$rhs/$ctx/$f` carry call-site hygiene into
     // the param list (macro_rules! fn-params are hygienic — `self` does not
     // resolve in a `:block` from the call site, so the caller binds it via
@@ -1588,7 +1582,8 @@ calc_protocol_forwarders!(Percentage {
     try_from_angle: none,
     try_sign: sign,
     try_map: forward_copy,
-    try_op: forward,
+    // A fold can land a whole step off: f32 rounds the stored 0.3, and round()/rem()/mod() jump.
+    try_op: |_this, _rhs, _ctx, _f| { None },
     try_op_to: |this, rhs, ctx, f| { Some(this.op_to(*rhs, ctx, f)) },
     partial_cmp: forward_copy,
     is_compatible: always_true,
@@ -1706,7 +1701,7 @@ macro_rules! dim_pct_protocol {
                         Some(DimensionPercentage::Dimension(<$D as protocol::TryOp>::try_op(a, b, ctx, f)?))
                     }
                     (DimensionPercentage::Percentage(a), DimensionPercentage::Percentage(b)) => {
-                        Some(DimensionPercentage::Percentage(Percentage { v: f(ctx, a.v, b.v) }))
+                        Some(DimensionPercentage::Percentage(<Percentage as protocol::TryOp>::try_op(a, b, ctx, f)?))
                     }
                     _ => None,
                 }

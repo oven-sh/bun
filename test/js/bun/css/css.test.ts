@@ -8553,6 +8553,28 @@ describe("math functions", () => {
     minify_test("a{rotate:atan2(1in,10px)}", "a{rotate:1.467rad}");
   });
 
+  // A percentage is an f32 fraction, and 0.3f32 / 0.01f32 is 30.000002: a fold gave 31%, 60%, 10% and 5%.
+  describe("two percentages stay as written", () => {
+    minify_test("a{width:round(up,30%,1%)}", "a{width:round(up,30%,1%)}");
+    minify_test("a{width:round(down,65%,5%)}", "a{width:round(down,65%,5%)}");
+    minify_test("a{width:mod(70%,10%)}", "a{width:mod(70%,10%)}");
+    minify_test("a{width:rem(65%,5%)}", "a{width:rem(65%,5%)}");
+    minify_test("a{width:hypot(30%,40%)}", "a{width:hypot(30%,40%)}");
+    minify_test("a{width:round(up,calc(10% + 20%),1%)}", "a{width:round(up,30%,1%)}");
+    minify_test("a{width:calc(round(up,30%,1%) + 1px)}", "a{width:calc(round(up,30%,1%) + 1px)}");
+    minify_test(
+      "a{background:conic-gradient(red round(up,30%,1%),blue)}",
+      "a{background:conic-gradient(red round(up,30%,1%),#00f)}",
+    );
+    // A value that is only a percentage cannot hold a function: the declaration stays as written.
+    minify_test("a{opacity:round(up,30%,1%)}", "a{opacity:round(up,30%,1%)}");
+    minify_test("a{color:rgb(round(up,30%,1%) 0 0)}", "a{color:rgb(round(up,30%,1%)0 0)}");
+    minify_test("a{font-stretch:mod(70%,10%)}", "a{font-stretch:mod(70%,10%)}");
+    // Still folded: two lengths of one unit, and min(), which only compares.
+    minify_test("a{width:round(up,30px,1px)}", "a{width:30px}");
+    minify_test("a{width:min(30%,40%)}", "a{width:30%}");
+  });
+
   describe("rem() keeps the sign of the dividend", () => {
     minify_test("a{margin-left:rem(-18px,5px)}", "a{margin-left:-3px}");
     minify_test("a{rotate:rem(140deg,-90deg)}", "a{rotate:50deg}");

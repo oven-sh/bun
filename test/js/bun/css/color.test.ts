@@ -786,6 +786,14 @@ describe("numbers in a color", () => {
     expect(color(input, "css")).toBe(expected);
     expect(color(expected, "css")).toBe(expected);
   });
+
+  // A fold on the stored fractions gave #4f0000 for the first and lab(10% 20 30) for the second.
+  test.each(["rgb(round(up, 30%, 1%) 0 0)", "lab(mod(70%, 10%) 20 30)", "rgb(0 0 0 / round(up, 30%, 1%))"])(
+    "%s is not folded",
+    input => {
+      expect(color(input, "css")).toBeNull();
+    },
+  );
 });
 
 describe("output formats", () => {

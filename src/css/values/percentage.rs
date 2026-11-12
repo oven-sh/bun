@@ -101,17 +101,6 @@ impl Percentage {
     ) -> R {
         op_fn(ctx, self.v, other.v)
     }
-
-    pub(crate) fn try_op<C>(
-        self,
-        other: Percentage,
-        ctx: C,
-        op_fn: impl Fn(C, f32, f32) -> f32,
-    ) -> Option<Percentage> {
-        Some(Percentage {
-            v: op_fn(ctx, self.v, other.v),
-        })
-    }
 }
 
 pub enum DimensionPercentage<D> {

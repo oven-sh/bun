@@ -884,6 +884,18 @@ impl FileReader {
             && !self.reader().is_done()
     }
 
+    /// The source ended. The callback hears of `err`, else of the end, in a call of its own, and is dropped.
+    fn end_read_callback(&self, err: Option<sys::Error>) {
+        let Some((this_value, callback)) = self.take_read_callback() else {
+            return;
+        };
+        let Some(err) = err else {
+            return self.call_read_callback(this_value, callback, &[JSValue::NULL]);
+        };
+        let err = err.to_js(self.parent_const().global_this());
+        self.call_read_callback(this_value, callback, &[JSValue::UNDEFINED, err]);
+    }
+
     /// Leaves handle mode. The wrapper and the callback, if there is still one to call.
     fn take_read_callback(&self) -> Option<(JSValue, JSValue)> {
         if !self.read_callback.replace(false) {
@@ -961,6 +973,8 @@ impl FileReader {
                 }
                 sink.end(None);
             }
+        } else if self.read_callback.get() {
+            self.end_read_callback(None);
         } else {
             self.consume_reader_buffer();
             if self.pending.get().state == streams::PendingState::Pending {
@@ -1004,10 +1018,18 @@ impl FileReader {
         let _pin = unsafe { RefPtr::init_ref(parent) };
 
         let sink = *self.sink.get();
+        let mut for_read_callback = None;
         if sink.is_some() {
             let err = streams::StreamError::Error(err);
             self.detach_sink(Some(&err));
             sink.end(Some(err));
+        } else if self.read_callback.get() {
+            if self.flowing.get() && !self.arming.get() {
+                for_read_callback = Some(err);
+            } else {
+                // The callback stopped the reader, or has yet to get the chunk in hand: it is told at the next read start, or after that chunk.
+                self.read_error.set(Some(err));
+            }
         } else if self.pending.get().state == streams::PendingState::Pending {
             self.pending.with_mut(|p| {
                 p.result = streams::Result::Err(streams::StreamError::Error(err));
@@ -1024,6 +1046,11 @@ impl FileReader {
             unsafe { Source::decrement_count(parent) };
         }
         self.close_after_error();
+
+        // The read callback hears of the error with the reader released and closed: a `cancel()` from that call has nothing left to do.
+        if let Some(err) = for_read_callback {
+            self.end_read_callback(Some(err));
+        }
     }
 
     /// An errored stream is never cancelled, so release the poll and the fd here.

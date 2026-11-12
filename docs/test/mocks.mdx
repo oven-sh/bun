@@ -416,7 +416,7 @@ This also works when the mocked module is part of an import cycle. The modules t
 
 If the factory loads another module with `import()`, `require()` or `vi.importActual()`, and that module imports the one being mocked, it gets the original instead of waiting for the mock. That copy is private to the factory. The rest of the program loads the module again and gets the mock.
 
-A module that waits for the mocked module at a top-level `await import()` counts as one that imports it. So does one that awaits the `import()` through `.then()`, `Promise.all()` or an async function. If the module waits in another way, such as through `Promise.race()`, or starts to wait only after the factory has asked for it, the factory and the module wait for each other, and the test file fails with `never finished loading`.
+A module that waits for the mocked module at a top-level `await import()` counts as one that imports it. So does one that awaits the `import()` through `.then()`, `Promise.all()` or an async function. If the module waits in another way, such as through `Promise.race()`, or starts to wait only after the factory has asked for it, the factory and the module wait for each other, and the test file fails with `never finished loading`. The same happens if the program has replaced `Promise.prototype.then` or `Promise[Symbol.species]`: Bun then cannot see which module awaits an `import()`.
 
 When one import leads to several mocked modules, Bun calls their factories one at a time, in the order the modules are imported, as Vitest does. A factory that imports another mocked module gets that mock, whose factory is called first if it hasn't been.
 

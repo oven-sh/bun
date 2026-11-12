@@ -918,7 +918,7 @@ struct HttpResponseData;
                 }
                 return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_REQUEST);
             }
-            bool isConnect = !isHTTPMethod && ((data - start) == 7 && data[0] == 32 && memcmp(start, "CONNECT", 7) == 0);
+            bool isConnect = (data - start) == 7 && data[0] == 32 && memcmp(start, "CONNECT", 7) == 0;
             /* Also accept proxy-style absolute URLs (http://... or https://...) as valid request targets */
             bool isProxyStyleURL = !isHTTPMethod && !isConnect && data[0] == 32 && isHTTPorHTTPSPrefixForProxies(data + 1, end) == 1;
             if (isHTTPMethod || isConnect || isProxyStyleURL) [[likely]] {

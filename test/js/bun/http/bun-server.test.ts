@@ -2962,6 +2962,7 @@ describe.concurrent("closes the connection after the response to a CONNECT reque
     ["head in one read", [head + next], notAProxy],
     ["head split across reads", [head.slice(0, 40), head.slice(40) + next], notAProxy],
     ["handler responds later", [head + next], () => immediate().then(notAProxy)],
+    ["origin-form target", [head.replace("example.com:443", "/a") + next], notAProxy],
   ] as const)("%s", async (_, writes, fetch) => {
     // The idle timeout must not be what closes the connection.
     await using server = Bun.serve({ port: 0, hostname: "127.0.0.1", idleTimeout: 255, fetch });

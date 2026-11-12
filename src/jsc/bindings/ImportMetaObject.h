@@ -83,6 +83,7 @@ public:
     LazyProperty<JSObject, JSString> fileProperty;
     LazyProperty<JSObject, JSString> pathProperty;
     LazyProperty<JSObject, JSFunction> resolveProperty;
+    LazyProperty<JSObject, JSFunction> resolveSyncProperty;
 
     // The Bun.ModuleGraph the module belongs to: import.meta.main is whether it is the
     // graph's first import, and import.meta.require requires into the graph. Null otherwise.
@@ -90,7 +91,7 @@ public:
     void setModuleGraph(JSC::VM&, Bun::JSModuleGraph*);
 
     // The engine made it for a module of the executable, so its require() is a loader of the executable, whoever calls it.
-    bool isOfCompiledModule { false };
+    void setIsOfCompiledModule();
 
 private:
     static ImportMetaObject* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url);

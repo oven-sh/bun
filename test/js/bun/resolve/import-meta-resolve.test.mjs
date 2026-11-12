@@ -130,9 +130,6 @@ wrapped("import.meta.resolve works without its import.meta", () => {
     assert.strictEqual(Reflect.apply(resolve, receiver, ["./haha.mjs"]), relativeToThisFile("./haha.mjs"));
     assert.strictEqual(resolve.bind(receiver)("./haha.mjs"), relativeToThisFile("./haha.mjs"));
   }
-  // It is also what a read through an object below import.meta, or through a Proxy of it, finds.
-  assert.strictEqual(Object.create(import.meta).resolve("./haha.mjs"), relativeToThisFile("./haha.mjs"));
-  assert.strictEqual(new Proxy(import.meta, {}).resolve("./haha.mjs"), relativeToThisFile("./haha.mjs"));
 });
 
 wrapped("import.meta.resolve does not read a variable named path where it is called", () => {

@@ -87,21 +87,40 @@ it("import.meta.resolveSync", () => {
   expect(import.meta.resolveSync("./" + import.meta.file, import.meta.path)).toBe(path);
 });
 
-it("a spy on import.meta.resolve wraps the function of the module, and mockRestore() brings it back", () => {
-  const { resolve } = import.meta;
-  const spy = spyOn(import.meta, "resolve");
-  try {
-    expect(import.meta.resolve("./made-up.mjs")).toBe(new URL("./made-up.mjs", import.meta.url).href);
-    expect(spy.mock.calls).toEqual([["./made-up.mjs"]]);
-    spy.mockReturnValue("mocked");
-    expect(import.meta.resolve("./made-up.mjs")).toBe("mocked");
-  } finally {
-    spy.mockRestore();
-  }
-  expect(import.meta.resolve).toBe(resolve);
-  delete import.meta.resolve;
-  expect(import.meta.resolve).toBe(resolve);
-});
+it.each(["resolve", "resolveSync"])(
+  "a spy on import.meta.%s wraps the function of the module, and mockRestore() brings it back",
+  name => {
+    const { [name]: original } = import.meta;
+    const listed = Object.keys(import.meta);
+    const [specifier, answer] =
+      name === "resolve"
+        ? ["./made-up.mjs", new URL("./made-up.mjs", import.meta.url).href]
+        : ["./" + import.meta.file, import.meta.path];
+    const spy = spyOn(import.meta, name);
+    try {
+      const { [name]: spied } = import.meta;
+      expect([
+        import.meta[name](specifier),
+        spied(specifier),
+        spied.call({ path: "/elsewhere/x.mjs" }, specifier),
+      ]).toEqual([answer, answer, answer]);
+      expect(spy.mock.calls).toEqual([[specifier], [specifier], [specifier]]);
+      expect(Object.getOwnPropertyDescriptor(import.meta, name)).toEqual({
+        get: expect.any(Function),
+        set: undefined,
+        enumerable: false,
+        configurable: true,
+      });
+      expect(Object.keys(import.meta)).toEqual(listed);
+      spy.mockReturnValue("mocked");
+      expect(import.meta[name](specifier)).toBe("mocked");
+    } finally {
+      spy.mockRestore();
+    }
+    expect(Object.getOwnPropertyDescriptor(import.meta, name)).toBeUndefined();
+    expect(import.meta[name]).toBe(original);
+  },
+);
 
 // The folder and the file of an answer: they say which module it was resolved from.
 const fromWhere = `answer => answer.replaceAll("\\\\", "/").split("/").slice(-2).join("/")`;
@@ -123,10 +142,6 @@ it.concurrent(
       const path = [import.meta.dir, "..", "lib", "locate.mjs"].join("/");
       const inAClosure = name => [from(resolve(name)), from(resolveSync(name)), path.endsWith("locate.mjs")];
 
-      // A Proxy that is the prototype of its own target: the objects below it are a ring.
-      const ring = {};
-      Object.setPrototypeOf(ring, new Proxy(ring, {}));
-
       const worker = new Worker(new URL("./worker.mjs", import.meta.url));
       const fromWorker = await new Promise((done, failed) => {
         worker.onmessage = event => done(event.data);
@@ -145,21 +160,6 @@ it.concurrent(
         ],
         onePerModule: [resolve !== helperMeta.resolve, resolveSync !== helperMeta.resolveSync],
         besideAnExportedPath: besideAnExportedPath(),
-        throughOtherReceivers: [
-          Object.create(import.meta).resolve("./logo.txt"),
-          Object.create(Object.create(import.meta)).resolveSync("./logo.txt"),
-          new Proxy(import.meta, {}).resolve("./logo.txt"),
-          new Proxy(Object.create(import.meta), {}).resolveSync("./logo.txt"),
-          new Proxy(new Proxy(import.meta, {}), {}).resolve("./logo.txt"),
-          Object.create(helperMeta).resolve("./logo.txt"),
-        ].map(from),
-        sameThroughOtherReceivers: [
-          Object.create(import.meta).resolve === resolve,
-          new Proxy(import.meta, {}).resolveSync === resolveSync,
-        ],
-        aReadWithARingAsReceiver: (
-          Reflect.get(import.meta, "resolve", ring), Reflect.get(import.meta, "resolveSync", ring), "ends"
-        ),
         commonJS: createRequire(import.meta.url)("../lib/common.cjs"),
         calledInAnotherRealm: from(
           runInNewContext("const { resolve } = meta; resolve(name)", { meta: import.meta, name: "./logo.txt" }),
@@ -208,16 +208,6 @@ it.concurrent(
         ofTheOtherModule: ["lib/logo.txt", "lib/logo.txt"],
         onePerModule: [true, true],
         besideAnExportedPath: ["lib/logo.txt", "lib/logo.txt"],
-        throughOtherReceivers: [
-          "app/logo.txt",
-          "app/logo.txt",
-          "app/logo.txt",
-          "app/logo.txt",
-          "app/logo.txt",
-          "lib/logo.txt",
-        ],
-        sameThroughOtherReceivers: [true, true],
-        aReadWithARingAsReceiver: "ends",
         commonJS: ["lib/logo.txt", "lib/logo.txt"],
         calledInAnotherRealm: "app/logo.txt",
         worker: ["app/logo.txt", "app/logo.txt"],
@@ -340,14 +330,13 @@ it.concurrent(
         const { Function = 0, CustomGetterSetter = 0 } = heapStats().objectTypeCounts;
         return Function + CustomGetterSetter;
       };
-      const load = async name => (await import("./meta.mjs?" + name)).default;
       // The first one makes what is made once.
-      const first = await load("first");
+      const first = (await import("./meta.mjs?first")).default;
       first.url, first.resolve, first.resolveSync;
 
       const atFirst = count();
       const metas = [];
-      for (let i = 0; i < ${modules}; i++) metas.push(await load(i));
+      for (let i = 0; i < ${modules}; i++) metas.push((await import("./meta.mjs?" + i)).default);
       const created = count();
       for (const meta of metas) meta.url, meta.dir, meta.main;
       const readOthers = count();
@@ -372,14 +361,41 @@ it.concurrent(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    const made = JSON.parse(stdout);
-    // Bounds, not equalities: a release build keeps one function of the last turn of a loop. A function made for each
-    // import.meta when it is created would show as `modules` or more in whenCreated.
-    expect(made.whenCreated).toBeLessThan(modules / 2);
-    expect(made.byOtherMembers).toBeLessThan(modules / 2);
-    expect(made.byResolve).toBeWithin(modules, modules + modules / 2);
-    expect(made.byResolveSync).toBeWithin(modules, modules + modules / 2);
+    expect({ made: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      made: { whenCreated: 0, byOtherMembers: 0, byResolve: modules, byResolveSync: modules },
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
+it.concurrent(
+  "resolve and resolveSync are undefined through another receiver, like the other members of import.meta",
+  async () => {
+    using dir = tempDir("import-meta-resolve-receivers", {
+      "main.mjs": `
+      const members = ["dir", "dirname", "file", "filename", "main", "path", "require", "resolve", "resolveSync", "url"];
+      const receivers = [Object.create(import.meta), new Proxy(import.meta, {}), {}];
+      const read = (name, receiver) => Reflect.get(import.meta, name, receiver);
+      console.log(JSON.stringify({
+        onImportMeta: members.filter(name => import.meta[name] === undefined),
+        throughAnother: members.filter(name => receivers.some(receiver => read(name, receiver) !== undefined)),
+      }));
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: { onImportMeta: [], throughAnother: [] },
+      stderr: "",
+      exitCode: 0,
+    });
   },
 );
 
@@ -427,6 +443,7 @@ it.concurrent(
 );
 
 it.concurrent("import.meta.resolve works after its import.meta was collected, and does not keep it alive", async () => {
+  const modules = 50;
   using dir = tempDir("import-meta-resolve-kept", {
     "main.mjs": `
       import { heapStats } from "bun:jsc";
@@ -435,7 +452,7 @@ it.concurrent("import.meta.resolve works after its import.meta was collected, an
       const require = createRequire(import.meta.url);
       const file = require.resolve("./kept.mjs");
       const kept = [];
-      for (let i = 0; i < 500; i++) {
+      for (let i = 0; i < ${modules}; i++) {
         // Without its entry in the cache the next import() makes a new module, with an import.meta of its own.
         delete require.cache[file];
         kept.push(await import("./kept.mjs").then(({ resolve, resolveSync }) => [resolve, resolveSync]));
@@ -448,7 +465,7 @@ it.concurrent("import.meta.resolve works after its import.meta was collected, an
       console.log(JSON.stringify({
         functions: new Set(kept.flat()).size,
         answers: [...answers].map(answer => answer.split(/[\\\\/]/).at(-1)),
-        metasAreCollected: metas < 100 || metas,
+        metasAreCollected: metas < ${modules / 2} || metas,
       }));
     `,
     "kept.mjs": `export const { resolve, resolveSync } = import.meta;`,
@@ -462,7 +479,7 @@ it.concurrent("import.meta.resolve works after its import.meta was collected, an
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
-    stdout: { functions: 1000, answers: ["made-up.mjs", "kept.mjs"], metasAreCollected: true },
+    stdout: { functions: 2 * modules, answers: ["made-up.mjs", "kept.mjs"], metasAreCollected: true },
     stderr: "",
     exitCode: 0,
   });

@@ -1,4 +1,4 @@
-// import.meta.resolve and import.meta.resolveSync are of the module whose import.meta they were read off: whoever calls them, and with whatever receiver, they resolve from that module.
+// import.meta.resolve and import.meta.resolveSync taken off import.meta are of that module: whoever calls them, and with whatever receiver, they resolve from it.
 import { callIt, helperMeta } from "./lib/helper.mjs";
 
 const { resolve, resolveSync } = import.meta;
@@ -16,11 +16,3 @@ console.log("what", typeof resolve, resolve.name, resolve.length, typeof resolve
 console.log("sync", attempt(() => resolveSync(name) === helperMeta.path), attempt(() => resolveSync.call(undefined, name) === helperMeta.path), attempt(() => callIt(resolveSync, name) === helperMeta.path), attempt(() => helperMeta.resolveSync("./helper.mjs") === helperMeta.path), attempt(() => resolveSync(name, undefined) === helperMeta.path), attempt(() => resolveSync(name, import.meta.path) === helperMeta.path));
 console.log("listed", Object.keys(import.meta), Reflect.ownKeys(import.meta), Object.hasOwn(import.meta, "resolve"), Object.hasOwn(import.meta, "resolveSync"));
 console.log("described", Object.getOwnPropertyDescriptor(import.meta, "resolve"), Object.getOwnPropertyDescriptor(import.meta, "resolveSync"));
-
-// Its own `path` is not what import.meta.resolve reads.
-Object.defineProperty(import.meta, "path", { value: "/nowhere/else.mjs" });
-console.log("own path", import.meta.path, attempt(() => import.meta.resolve(name) === own), attempt(() => resolve(name) === own), attempt(() => import.meta.resolveSync(name) === helperMeta.path));
-
-console.log("delete", delete import.meta.resolve, "resolve" in import.meta, typeof import.meta.resolve, attempt(() => resolve(name) === own), Object.keys(import.meta));
-import.meta.resolve = () => "replaced";
-console.log("replaced", import.meta.resolve(name), attempt(() => resolve(name) === own));

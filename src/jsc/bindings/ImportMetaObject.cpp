@@ -40,7 +40,6 @@
 
 #include "JSDOMURL.h"
 #include <JavaScriptCore/JSNativeStdFunction.h>
-#include <JavaScriptCore/ProxyObject.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -653,65 +652,23 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
     return JSValue::encode(jsBoolean(isMain));
 }
 
-// The import.meta that a receiver inherits from or is a Proxy of: a read through it still finds the function. No trap runs.
-static NEVER_INLINE ImportMetaObject* importMetaBehind(JSObject* receiver)
-{
-    // A Proxy can be the prototype of its own target, which closes the chain into a ring. Prototypes alone cannot.
-    Vector<ProxyObject*, 4> proxies;
-    for (JSObject* object = receiver; object;) {
-        if (auto* meta = dynamicDowncast<ImportMetaObject>(object))
-            return meta;
-        if (auto* proxy = dynamicDowncast<ProxyObject>(object)) {
-            if (proxy->isRevoked() || proxies.contains(proxy))
-                return nullptr;
-            proxies.append(proxy);
-            object = proxy->target();
-            continue;
-        }
-        JSValue prototype = object->getPrototypeDirect();
-        object = prototype.isObject() ? asObject(prototype) : nullptr;
-    }
-    return nullptr;
-}
-
-static ALWAYS_INLINE ImportMetaObject* importMetaOfResolver(JSValue receiver)
-{
-    if (auto* meta = dynamicDowncast<ImportMetaObject>(receiver)) [[likely]]
-        return meta;
-    return receiver.isObject() ? importMetaBehind(asObject(receiver)) : nullptr;
-}
-
 // Each import.meta makes its own `resolve` and `resolveSync` over the path of its module. Neither reads `this`.
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_resolve, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
-    ImportMetaObject* meta = importMetaOfResolver(JSValue::decode(thisValue));
-    if (!meta) [[unlikely]]
+    ImportMetaObject* thisObject = dynamicDowncast<ImportMetaObject>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    return JSValue::encode(meta->resolveProperty.getInitializedOnMainThread(meta));
+    return JSValue::encode(thisObject->resolveProperty.getInitializedOnMainThread(thisObject));
 }
 
-// A second field would take every import.meta from a 96-byte cell to a 112-byte one, so a private name holds this one.
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_resolveSync, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
-    ImportMetaObject* meta = importMetaOfResolver(JSValue::decode(thisValue));
-    if (!meta) [[unlikely]]
+    ImportMetaObject* thisObject = dynamicDowncast<ImportMetaObject>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
-    auto& vm = JSC::getVM(globalObject);
-    const Identifier& keptUnder = builtinNames(vm).resolveSyncPrivateName();
-    if (JSValue made = meta->getDirect(vm, keptUnder))
-        return JSValue::encode(made);
-
-    JSString* modulePath = meta->pathProperty.getInitializedOnMainThread(meta);
-    JSFunction* function = JSNativeStdFunction::create(
-        vm, meta->globalObject(), 1, "resolveSync"_s,
-        [modulePath](JSGlobalObject* global, CallFrame* callFrame) -> EncodedJSValue {
-            return importMetaResolveSync(uncheckedDowncast<Zig::GlobalObject>(global), modulePath, callFrame);
-        },
-        modulePath);
-    meta->putDirect(vm, keptUnder, function, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    return JSValue::encode(function);
+    return JSValue::encode(thisObject->resolveSyncProperty.getInitializedOnMainThread(thisObject));
 }
 
 static const HashTableValue ImportMetaObjectPrototypeValues[] = {
@@ -801,34 +758,47 @@ JSC::Structure* ImportMetaObject::createStructure(JSC::VM& vm, JSC::JSGlobalObje
     return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), ImportMetaObject::info());
 }
 
+template<bool isOfCompiledModule>
+static void initializeImportMetaRequire(const JSC::LazyProperty<JSC::JSObject, JSC::JSCell>::Initializer& init)
+{
+    auto scope = DECLARE_THROW_SCOPE(init.vm);
+    ImportMetaObject* meta = uncheckedDowncast<ImportMetaObject>(init.owner);
+
+    WTF::URL url = isAbsolutePath(meta->url) ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
+    WTF::String path;
+
+    if (url.isValid()) {
+        if (url.protocolIsFile()) {
+            path = url.fileSystemPath();
+        } else {
+            path = url.path().toString();
+        }
+    } else {
+        path = meta->url;
+    }
+
+    auto* object = Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path, meta->moduleGraph());
+    RETURN_IF_EXCEPTION(scope, );
+    ASSERT(object);
+    if (isOfCompiledModule)
+        Bun::didCreateRequireOfCompiledModule(object);
+    init.set(uncheckedDowncast<JSFunction>(object));
+}
+
+void ImportMetaObject::setIsOfCompiledModule()
+{
+    requireProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSCell>::Initializer& init) {
+        initializeImportMetaRequire<true>(init);
+    });
+}
+
 void ImportMetaObject::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
     this->requireProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSCell>::Initializer& init) {
-        auto scope = DECLARE_THROW_SCOPE(init.vm);
-        ImportMetaObject* meta = uncheckedDowncast<ImportMetaObject>(init.owner);
-
-        WTF::URL url = isAbsolutePath(meta->url) ? WTF::URL::fileURLWithFileSystemPath(meta->url) : WTF::URL(meta->url);
-        WTF::String path;
-
-        if (url.isValid()) {
-            if (url.protocolIsFile()) {
-                path = url.fileSystemPath();
-            } else {
-                path = url.path().toString();
-            }
-        } else {
-            path = meta->url;
-        }
-
-        auto* object = Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path, meta->moduleGraph());
-        RETURN_IF_EXCEPTION(scope, );
-        ASSERT(object);
-        if (meta->isOfCompiledModule)
-            Bun::didCreateRequireOfCompiledModule(object);
-        init.set(uncheckedDowncast<JSFunction>(object));
+        initializeImportMetaRequire<false>(init);
     });
     this->urlProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSString>::Initializer& init) {
         ImportMetaObject* meta = uncheckedDowncast<ImportMetaObject>(init.owner);
@@ -895,6 +865,16 @@ void ImportMetaObject::finishCreation(VM& vm)
             },
             modulePath));
     });
+    this->resolveSyncProperty.initLater([](const JSC::LazyProperty<JSC::JSObject, JSC::JSFunction>::Initializer& init) {
+        ImportMetaObject* meta = uncheckedDowncast<ImportMetaObject>(init.owner);
+        JSString* modulePath = meta->pathProperty.getInitializedOnMainThread(meta);
+        init.set(JSNativeStdFunction::create(
+            init.vm, meta->globalObject(), 1, "resolveSync"_s,
+            [modulePath](JSGlobalObject* global, CallFrame* callFrame) -> EncodedJSValue {
+                return importMetaResolveSync(uncheckedDowncast<Zig::GlobalObject>(global), modulePath, callFrame);
+            },
+            modulePath));
+    });
 }
 
 void ImportMetaObject::setModuleGraph(JSC::VM& vm, Bun::JSModuleGraph* graph)
@@ -916,6 +896,7 @@ void ImportMetaObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     fn->fileProperty.visit(visitor);
     fn->pathProperty.visit(visitor);
     fn->resolveProperty.visit(visitor);
+    fn->resolveSyncProperty.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN(ImportMetaObject);

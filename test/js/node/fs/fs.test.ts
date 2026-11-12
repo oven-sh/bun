@@ -19,6 +19,7 @@ import {
   tempDirWithFiles,
   tmpdirSync,
 } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import fs, {
   closeSync,
   constants,
@@ -59,7 +60,6 @@ import fs, {
   writeSync,
   writevSync,
 } from "node:fs";
-import { AsyncLocalStorage } from "node:async_hooks";
 import * as os from "node:os";
 import path, { dirname, relative, resolve } from "node:path";
 import { inspect, promisify } from "node:util";

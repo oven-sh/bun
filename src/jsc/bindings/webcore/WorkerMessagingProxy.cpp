@@ -388,6 +388,8 @@ void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& c
 
 void WorkerMessagingProxy::workerThreadStarted()
 {
+    // node posts 'online' from its worker bootstrap, which has taken workerData by then.
+    ASSERT(m_options.kind != WorkerOptions::Kind::Node || !m_options.workerDataAndEnvironmentData);
     // Stays Pending: what an 'online' handler posts is queued until workerGlobalScopeStarted().
     {
         Locker lock { m_pendingTasksLock };

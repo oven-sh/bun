@@ -2562,6 +2562,60 @@ describe("'online' precedes the worker's first message", () => {
   });
 });
 
+// The thread resolves its entry before it reports that it is up: 'online' for a node:worker_threads
+// Worker, 'open' for the Worker global. So a listener of that event that changes the working
+// directory does not change the file that a relative specifier names. A build that reports first
+// loses the file in about one worker of twenty, hence the rounds.
+test.each([
+  ["'online'", "node"],
+  ["'open'", "web"],
+])("a Worker resolves a relative entry before %s", async (_, kind) => {
+  using dir = tempDir("worker-entry-resolved-before-online", {
+    "entry.js": `postMessage("ran");`,
+    "elsewhere/empty.txt": "",
+  });
+  // Fewer on a debug build, where a worker takes about a second to start.
+  const rounds = isDebug ? 4 : 32;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker: NodeWorker } = require("node:worker_threads");
+       const home = process.cwd();
+       (async () => {
+         const heard = [];
+         for (let i = 0; i < ${rounds}; i++) {
+           process.chdir(home);
+           heard.push(await new Promise(resolve => {
+             if (${JSON.stringify(kind)} === "node") {
+               const worker = new NodeWorker("./entry.js");
+               worker.on("online", () => process.chdir("elsewhere"));
+               worker.on("message", resolve);
+               worker.on("error", error => resolve("error: " + error.code));
+             } else {
+               const worker = new Worker("./entry.js");
+               worker.addEventListener("open", () => process.chdir("elsewhere"));
+               worker.onmessage = event => resolve(event.data);
+               worker.onerror = event => { event.preventDefault(); resolve("error: " + event.message); };
+             }
+           }));
+         }
+         console.log(JSON.stringify(heard));
+       })();`,
+    ],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ heard: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+    heard: Array.from({ length: rounds }, () => "ran"),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // ─── worker teardown vs. work still in flight ────────────────────────────────
 // Each of these terminates a worker (or exits the process) while some off-thread
 // or cross-thread work of that worker is still pending. They exercise the

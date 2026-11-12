@@ -15,9 +15,9 @@
 //!
 //! Thread lifecycle (`thread_main`):
 //!   1. `start_vm()`  — arena, env snapshot, `VirtualMachine`, publish its handle (`vm_handle`).
-//!   2. `spin()`      — 'online', load the entry point, `workerGlobalScopeStarted`, run the
-//!                      event loop until it drains or termination is requested,
-//!                      `beforeExit` on a natural drain.
+//!   2. `spin()`      — the node bootstrap, 'online', load the entry point,
+//!                      `workerGlobalScopeStarted`, run the event loop until it drains or
+//!                      termination is requested, `beforeExit` on a natural drain.
 //!   3. `shutdown()`  — 'exit' handlers, stop phase, join own children, JSC VM
 //!                      teardown, free per-thread state, `workerGlobalScopeDestroyed`.
 //!   Then the thread drops its self-ref and returns; the parent joins it.
@@ -1095,7 +1095,7 @@ impl WebWorker {
         Ok(vm)
     }
 
-    /// Phase 2: post 'online', load the entry point, run the event loop.
+    /// Phase 2: run the node bootstrap, post 'online', load the entry point, run the event loop.
     /// Runs inside `holdAPILock`. Always ends by calling `shutdown()`.
     ///
     /// Returns `()` so the thread can unwind-free fall out of the
@@ -1123,9 +1123,6 @@ impl WebWorker {
             return self.shutdown();
         }
 
-        // 'online' before the entry runs, as in node: it precedes anything the entry posts.
-        WebWorker__workerThreadStarted(self.messaging_proxy);
-
         // `preloads` is owned by `self` (heap `WebWorker` outlives the VM).
         // `preload: Vec<Box<[u8]>>` — clone the boxes (cheap, ≤handful).
         vm.as_mut().preload.clone_from(&self.preloads);
@@ -1134,11 +1131,38 @@ impl WebWorker {
         // the raw specifier). The returned slice is BORROWED — every exit from
         // spin() goes through shutdown() which is noreturn, so a `defer free`
         // here would never run anyway.
+        // A relative specifier resolves against the process's working directory as it
+        // is now, so this stays ahead of the bootstrap. What it found is reported behind 'online'.
         let dot_slash = OnceCell::new();
         // SAFETY: `vm_ptr` is the live worker-thread VM.
-        let path = match unsafe {
+        let resolved = unsafe {
             resolve_entry_point_specifier(vm_ptr, &self.unresolved_specifier, &dot_slash)
-        } {
+        };
+
+        // Node runs its worker bootstrap (parentPort, stdio, process overrides)
+        // ahead of user code; ours is node:worker_threads' module body.
+        if self.is_node_worker {
+            let global = vm.global();
+            if let Err(err) = jsc::host_fn::from_js_host_call_generic(global, || {
+                Bun__Worker__loadNodeWorkerThreadsModule(global)
+            }) {
+                let exception = global.take_exception(err);
+                let _ = vm.as_mut().uncaught_exception(global, exception, false);
+                if !self.exit_called.load(Ordering::Relaxed) {
+                    vm.as_mut().exit_handler.exit_code = 1;
+                }
+                self.flush_logs(vm);
+                WebWorker__entrySettled(global);
+                return self.shutdown();
+            }
+        }
+
+        // 'online' where node posts it: behind the bootstrap, ahead of anything the entry
+        // posts and of the error of an entry that does not resolve.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/main/worker_thread.js#L148
+        WebWorker__workerThreadStarted(self.messaging_proxy);
+
+        let path = match resolved {
             Ok(p) => p,
             Err(unresolved) => {
                 vm.as_mut().exit_handler.exit_code = 1;
@@ -1168,28 +1192,10 @@ impl WebWorker {
             return self.shutdown();
         }
 
-        // Terminated while resolving — exit code 0, no error.
+        // Terminated before the entry loads — exit code 0, no error.
         if self.has_requested_terminate() {
             self.flush_logs(vm);
             return self.shutdown();
-        }
-
-        // Node runs its worker bootstrap (parentPort, stdio, process overrides)
-        // ahead of user code; ours is node:worker_threads' module body.
-        if self.is_node_worker {
-            let global = vm.global();
-            if let Err(err) = jsc::host_fn::from_js_host_call_generic(global, || {
-                Bun__Worker__loadNodeWorkerThreadsModule(global)
-            }) {
-                let exception = global.take_exception(err);
-                let _ = vm.as_mut().uncaught_exception(global, exception, false);
-                if !self.exit_called.load(Ordering::Relaxed) {
-                    vm.as_mut().exit_handler.exit_code = 1;
-                }
-                self.flush_logs(vm);
-                WebWorker__entrySettled(global);
-                return self.shutdown();
-            }
         }
 
         // `path` borrows the resolver's process-lifetime string store, the

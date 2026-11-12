@@ -4491,7 +4491,8 @@ describe.concurrent("a spy on an export of a module that a mock patches in place
           import * as oldestFirst from "./oldest-first.ts";
           globalThis.own = [oldestFirst.greet, newestFirst.greet];
           test("the mocks end oldest first", () => {
-            spyOn(oldestFirst, "greet").mockReturnValue("spied");
+            // The two ends leave the function of a mock in the export, and nothing there holds the spy. Its restore at the end of the file puts the module's own function back.
+            globalThis.keptFromCollection = spyOn(oldestFirst, "greet").mockReturnValue("spied");
             mock.module("./oldest-first.ts", () => ({ greet: () => "mock of the module" }));
             mock.module("./oldest-first-barrel.ts", () => ({ greet: () => "mock of the barrel" }));
             expect(oldestFirst.greet("q")).toBe("mock of the barrel");

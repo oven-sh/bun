@@ -827,18 +827,33 @@ describe("bun", () => {
     runInCwdSuccess({ cwd: String(dir), pattern: "*", target_pattern: /out-pkga/ });
   });
 
-  test("a `..` segment after a symlinked directory under `**` matches nothing", () => {
+  // `lnk/..` is `elsewhere/real` for the file system, and `packages/a` as text in a joined path.
+  // Each has a package. Behind a symlinked directory the walk is not changed, so it finds neither.
+  // On Windows the two readings are one: `..` is taken off as text before the system sees it.
+  test.skipIf(isWindows)("a `.` or `..` segment behind a symlinked directory under `**` matches nothing", () => {
     using dir = tempDir("filter-globstar-dotdot-link", {
       "packages/a/package.json": JSON.stringify({ name: "a", scripts: { present: "echo out-a" } }),
+      "packages/a/nested/package.json": JSON.stringify({ name: "nested", scripts: { present: "echo out-nested" } }),
       "elsewhere/real/package.json": JSON.stringify({ name: "real", scripts: { present: "echo out-real" } }),
       "elsewhere/real/other/package.json": JSON.stringify({ name: "other", scripts: { present: "echo out-other" } }),
-      "elsewhere/real/sub/keep": "",
-      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*", "packages/**/lnk/../*"] }),
+      "elsewhere/real/sub/deep/keep": "",
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: [
+          "packages/*",
+          "packages/**/lnk/../*",
+          "packages/**/lnk/deep/../../*",
+          "packages/**/lnk/./deep/../../*",
+        ],
+      }),
     });
-    // "junction" so the link is creatable on unprivileged Windows; the type is ignored on POSIX.
-    symlinkSync(join(String(dir), "elsewhere", "real", "sub"), join(String(dir), "packages", "a", "lnk"), "junction");
-    // `lnk/..` is `elsewhere/real`, but as text in a joined path it is `packages/a`.
-    runInCwdSuccess({ cwd: String(dir), pattern: "*", target_pattern: /out-a/, antipattern: /out-(real|other)/ });
+    symlinkSync(join(String(dir), "elsewhere", "real", "sub"), join(String(dir), "packages", "a", "lnk"));
+    runInCwdSuccess({
+      cwd: String(dir),
+      pattern: "*",
+      target_pattern: /out-a/,
+      antipattern: /out-(real|other|nested)/,
+    });
   });
 
   test("warning names which package.json failed to parse", async () => {

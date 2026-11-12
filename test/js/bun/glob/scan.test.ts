@@ -1273,6 +1273,58 @@ describe("a `.` or `..` segment after `**/name`", () => {
     expect(norm(await Array.fromAsync(new Glob("**/sub/../f.txt").scan({ cwd: String(dir) })))).toEqual(fromSub);
   });
 
+  // The tree is three directories deep, so `**/` is one of four `*` prefixes. The scan starts one
+  // level down, so that a `../..` from the top stays inside the fixture.
+  test("the `**` form lists what the `*` forms list together", () => {
+    using dir = tempDir(
+      "glob-scan-globstar-dot-stars",
+      Object.fromEntries(Object.entries(files).map(([file, text]) => ["root/" + file, text])),
+    );
+    const cwd = path.join(String(dir), "root");
+    const scan = (pattern: string, options: GlobScanOptions) => [...new Glob(pattern).scanSync({ cwd, ...options })];
+    const differ: Record<string, unknown> = {};
+    let listed = 0;
+    for (const options of [{}, { dot: true, onlyFiles: false }] as GlobScanOptions[]) {
+      for (const name of ["sub", "s*", "*", "dir/sub", "deep"]) {
+        for (const dots of ["..", ".", "../.."]) {
+          for (const rest of ["f.txt", "*", "sub/*.txt", ""]) {
+            const tail = `${name}/${dots}/${rest}`;
+            const stars = ["", "*/", "*/*/", "*/*/*/"].flatMap(depth => scan(depth + tail, options));
+            const globstar = norm(scan("**/" + tail, options));
+            if (stars.length) listed++;
+            if (!Bun.deepEquals(globstar, norm([...new Set(stars)])))
+              differ[`${tail} ${JSON.stringify(options)}`] = globstar;
+          }
+        }
+      }
+    }
+    expect(differ).toEqual({});
+    expect(listed).toBeGreaterThan(50);
+  });
+
+  // The walk finds a plain name after the segment with a stat, and a failed stat is an error.
+  test.skipIf(isWindows).each(["sub/./self", "sub/../sub/self"])(
+    "a failed stat of %j throws as the `*` form does",
+    tail => {
+      using dir = tempDir("glob-scan-globstar-dot-eloop", { "dir/sub/keep.txt": "x" });
+      fs.symlinkSync("self", path.join(String(dir), "dir", "sub", "self"));
+      const failure = (pattern: string, absolute = false) => {
+        try {
+          [...new Glob(pattern).scanSync({ cwd: String(dir), absolute })];
+        } catch (error: any) {
+          return { code: error.code, syscall: error.syscall, path: error.path };
+        }
+      };
+      expect(failure("**/" + tail)).toEqual({ code: "ELOOP", syscall: "fstatat", path: "dir/" + tail });
+      expect(failure("**/" + tail)).toEqual(failure("*/" + tail));
+      expect(failure("**/" + tail, true)).toEqual({
+        code: "ELOOP",
+        syscall: "fstatat",
+        path: path.join(String(dir), "dir", "sub", "self"),
+      });
+    },
+  );
+
   // These patterns listed nothing before Bun 1.3.12 too.
   test.each(["**/sub/..", "**/sub/.", "**/./f.txt", "**/../top.txt", "**/./", "**/.", "**/.."])(
     "%j lists nothing: the segment ends the pattern or follows the `**`",
@@ -1282,11 +1334,13 @@ describe("a `.` or `..` segment after `**/name`", () => {
     },
   );
 
+  // `dir/lnk/..` is `d2` for the file system and `dir` as text in a joined path. Which of the two a
+  // scan means is not settled, so behind a followed symlink the walk is not changed.
   describe.skipIf(!canCreateDirSymlink)("behind a followed symlink", () => {
-    // `dir/lnk` is `d2/sub`.
+    // `dir/lnk` is `d2/sub`. Both readings of `dir/lnk/..` have an `f.txt`.
     function linkedTree() {
       const dir = tempDir("glob-scan-globstar-dot-link", {
-        "dir/keep.txt": "x",
+        "dir/f.txt": "x",
         "d2/f.txt": "x",
         "d2/sub/g.txt": "x",
         "d2/sub/deep/h.txt": "x",
@@ -1297,27 +1351,25 @@ describe("a `.` or `..` segment after `**/name`", () => {
     const scan = (cwd: string, pattern: string, absolute = false) =>
       norm([...new Glob(pattern).scanSync({ cwd, followSymlinks: true, absolute })]);
 
-    test("`.` is the directory that the link names", () => {
-      using dir = linkedTree();
-      expect(scan(String(dir), "**/dir/lnk/./g.txt")).toEqual(["dir/lnk/./g.txt"]);
-      expect(scan(String(dir), "**/lnk/./g.txt")).toEqual(["dir/lnk/./g.txt"]);
-    });
-
-    test("`..` from a directory below the link stays below it", () => {
-      using dir = linkedTree();
-      const cwd = String(dir).replaceAll("\\", "/");
-      expect(scan(String(dir), "**/lnk/deep/../g.txt")).toEqual(["dir/lnk/deep/../g.txt"]);
-      expect(scan(String(dir), "**/lnk/deep/../g.txt", true)).toEqual([`${cwd}/dir/lnk/g.txt`]);
-    });
-
-    // A known gap: `lnk/..` is `d2`, which has `f.txt`, but as text in an absolute path it is `dir`.
-    // The walk leaves the segment unresolved: https://github.com/oven-sh/bun/pull/46366
-    test.each(["**/lnk/../f.txt", "**/lnk/./../f.txt"])("%j lists nothing", pattern => {
+    test.each([
+      "**/lnk/../f.txt",
+      "**/lnk/./../f.txt",
+      "**/lnk/./g.txt",
+      "**/lnk/deep/../g.txt",
+      "**/lnk/deep/../../f.txt",
+      "**/lnk/./deep/../../f.txt",
+    ])("%j lists nothing", pattern => {
       using dir = linkedTree();
       expect({ relative: scan(String(dir), pattern), absolute: scan(String(dir), pattern, true) }).toEqual({
         relative: [],
         absolute: [],
       });
+    });
+
+    test("a directory that no link leads to still lists", () => {
+      using dir = linkedTree();
+      // `dir/lnk/deep` is the same directory, reached through the link.
+      expect(scan(String(dir), "**/deep/../g.txt")).toEqual(["d2/sub/deep/../g.txt"]);
     });
   });
 });

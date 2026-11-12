@@ -2032,17 +2032,14 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     /// No entry is named `.` or `..`: that member of a multi-index set gets a work item of its own.
     #[cold]
     fn requeue_dot_component(&mut self, item: &mut WorkItem<A>) {
-        let Some((dot, goes_up)) =
-            dot_member(&self.pattern_components, &self.pattern, &item.active)
-        else {
-            return;
-        };
-        let is_link_target =
-            item.fd.is_some() || self.followed_links.len() > item.followed_links_len;
-        // The kernel and an absolute join disagree on `link/..`, so it stays unresolved (#46366).
-        if goes_up && is_link_target {
+        // Behind a followed link, `..` is one directory for the kernel and can be another in a
+        // joined path. The set stays as it is there.
+        if !self.followed_links.is_empty() {
             return;
         }
+        let Some(dot) = dot_member(&self.pattern_components, &self.pattern, &item.active) else {
+            return;
+        };
         item.active.unset(dot);
         let active = self.single_set(dot as u32);
         // The caller copied the path into its buffer already.
@@ -2309,13 +2306,9 @@ fn is_dot_segment(component: &[u8]) -> bool {
     matches!(component, b"." | b"..")
 }
 
-/// The `.` or `..` member of `active`, and whether the run of them that starts there holds a `..`.
+/// The `.` or `..` member of `active`, unless its run ends the pattern: that run lists nothing.
 #[inline(never)]
-fn dot_member(
-    components: &[Component],
-    pattern: &[u8],
-    active: &ComponentSet,
-) -> Option<(usize, bool)> {
+fn dot_member(components: &[Component], pattern: &[u8], active: &ComponentSet) -> Option<usize> {
     let mut members = active.iterator::<true, true>();
     let dot = loop {
         let index = members.next()?;
@@ -2323,12 +2316,10 @@ fn dot_member(
             break index;
         }
     };
-    let goes_up = components[dot..]
+    let ends_pattern = components[dot..]
         .iter()
-        .map(|component| component.pattern_slice(pattern))
-        .take_while(|text| is_dot_segment(text))
-        .any(|text| text == b"..");
-    Some((dot, goes_up))
+        .all(|component| matches!(component.syntax_hint, SyntaxHint::Dot | SyntaxHint::DotBack));
+    (!ends_pattern).then_some(dot)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

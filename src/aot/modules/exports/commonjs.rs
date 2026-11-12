@@ -258,6 +258,10 @@ impl Resolver<'_, '_> {
         let Some(file) = self.es_module_file(module) else {
             return Source::Unknown;
         };
+        // The load of a module with dynamic names is left to run time, so no request leads an importer to what lies behind it.
+        if self.tables.has_dynamic_names(module) {
+            return Source::Unknown;
+        }
         let resolved = self.tables.resolve(self.modules, file, name);
         if resolved.required_name.is_some() {
             return Source::Unknown;

@@ -98,10 +98,8 @@ impl Resolver<'_, '_> {
         is_made.then(made_require)
     }
 
-    pub(super) fn find_module_cache_of_made_require(
-        &self,
-        require: ExprId,
-    ) -> Option<ResolvedValue> {
+    /// The table in `const { cache } = createRequire(import.meta.url)` and in `make().cache`.
+    pub(super) fn find_created_require_cache(&self, require: ExprId) -> Option<ResolvedValue> {
         let input = self.input;
         let is_require = input.dialect == SourceDialect::Program
             && (self.find_made_require(require).is_some()

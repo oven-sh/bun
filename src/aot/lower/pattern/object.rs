@@ -40,7 +40,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let name = match property.key {
                 PropKey::Computed(key) => {
                     let name = self.lower_computed_name_read_by_pattern(key);
-                    self.report_destructuring_behind(key);
+                    self.report_destructuring_after(key);
                     name
                 }
                 PropKey::None | PropKey::Name(_) | PropKey::Private(_) => {

@@ -12,6 +12,7 @@ use super::compare_code_units;
 use super::deferred_exports::mirrors_an_object;
 use super::failures::{ModuleFailure, ModuleFailureId};
 use super::imports::NamedMember;
+use super::instances::InstanceLayout;
 use super::interop::{Interop, ModuleKind};
 use super::known_members::list_data_linked_by_names_alone;
 use super::order::SiteKey;
@@ -61,8 +62,12 @@ pub struct ModuleGraph {
     pub(super) commonjs_exports: CommonJsExports,
     pub(super) plan: Plan,
     pub(super) member_stores: Vec<OnceLock<MemberStores>>,
+    pub(super) instance_layouts: Vec<OnceLock<InstanceLayout>>,
+    pub(super) reexport_paths: super::reexport_paths::GuardedReexportPaths,
     pub(super) data_linked_by_names_alone: Box<[FileId]>,
     pub(super) forms_require_checks_first: Vec<(FileId, FileId)>,
+    /// The ES modules of the files that are compiled as CommonJS files too.
+    pub(super) module_forms: Box<[FileId]>,
     pub(super) folders_of_databases: Vec<FileId>,
     pub(super) star_names_left_out: StarNamesLeftOut,
     pub(super) names_laid_on_object_prototype: Vec<Box<[u8]>>,
@@ -113,6 +118,7 @@ pub(super) struct FileRow {
     pub named_by_stars: Vec<FileId>,
     pub names_from_stars: Vec<Atom>,
     pub names_of_unlisted_stars: Vec<(Atom, FileId)>,
+    pub name_stars: Vec<(Atom, FileId)>,
     pub reaches_mock: bool,
 }
 
@@ -452,7 +458,8 @@ impl ModuleGraph {
         !self.placeholder_files.is_empty() && self.placeholder_files.binary_search(&file).is_ok()
     }
 
-    fn find_requests_passed_on(
+    /// For each file that passes its requests on to its importers, the requests that its imports lead to, each once, in the order of a depth-first search.
+    fn find_forwarded_requests(
         &self,
         left_out_files: &[FileId],
     ) -> FxHashMap<FileId, Vec<ModuleRequest>> {
@@ -487,6 +494,7 @@ impl ModuleGraph {
         let (component_of, components) = strongly_connected_components(&edges);
         let mut passed_on: Vec<Vec<ModuleRequest>> = vec![Vec::new(); files.len()];
         let mut pending: Vec<&ModuleRequest> = Vec::new();
+        // A component comes after those that it imports, so only a file of the same component has no list yet.
         for component in &components {
             for &node in component {
                 let mut found = Vec::new();
@@ -524,7 +532,7 @@ impl ModuleGraph {
 
     fn pass_requests_through(&mut self, left_out_files: &[FileId]) {
         let is_left_out = |file: FileId| left_out_files.binary_search(&file).is_ok();
-        let passed_on_by = self.find_requests_passed_on(left_out_files);
+        let passed_on_by = self.find_forwarded_requests(left_out_files);
         let key_of = |request: &ModuleRequest| {
             let kind = core::mem::discriminant(&request.kind);
             (request.target, kind)
@@ -533,6 +541,7 @@ impl ModuleGraph {
         let of_files = self.rows.iter().map(|row| &row.requests);
         for written in of_files.chain(&self.plan.inner_requests) {
             let mut passed_on: Vec<ModuleRequest> = Vec::with_capacity(written.len());
+            // The places of the requests, kept from the first file on that is left out.
             let mut places: Option<FxHashMap<_, usize>> = None;
             for &request in written {
                 match request.target {
@@ -659,6 +668,14 @@ impl ModuleGraph {
         }
     }
 
+    pub fn takes_export_from_star(&self, file: FileId, name: Atom, atoms: &Interner<'_>) -> bool {
+        let exports = &self.row(file).exports;
+        let name_bytes = atoms.bytes(name);
+        let position = exports
+            .binary_search_by(|export| compare_code_units(atoms.bytes(export.name), name_bytes));
+        position.is_ok_and(|position| exports[position].is_from_star_export)
+    }
+
     pub fn lists_export(&self, module: ModuleRef, name: Atom, atoms: &Interner<'_>) -> bool {
         let ModuleRef::File(file) = module else {
             return false;
@@ -765,6 +782,10 @@ impl ModuleGraph {
         let start = forms.partition_point(|entry| entry.0 < file);
         let count = forms[start..].partition_point(|entry| entry.0 == file);
         &forms[start..start + count]
+    }
+
+    pub fn is_module_form(&self, file: FileId) -> bool {
+        self.module_forms.binary_search(&file).is_ok()
     }
 
     pub fn is_every_export_asked_for(&self, module: ModuleRef) -> bool {
@@ -930,8 +951,24 @@ impl ModuleGraph {
         debug_assert!(external_kinds.is_sorted_by(|a, b| external_key(a.0) < external_key(b.0)));
         self.mocked_library_modules.sort_unstable();
         self.mocked_library_modules.dedup();
+        self.module_forms = self.list_module_forms();
         self.settle_holders();
         self
+    }
+
+    fn list_module_forms(&self) -> Box<[FileId]> {
+        let is_kind = |file: FileId, kind: ModuleKind| {
+            self.find_row(file)
+                .is_some_and(|row| row.interop.kind == kind)
+        };
+        let forms = self.forms_require_checks_first.iter();
+        let forms = forms.filter(|&&(file, form)| {
+            is_kind(file, ModuleKind::CommonJs) && is_kind(form, ModuleKind::SourceText)
+        });
+        let mut forms: Vec<FileId> = forms.map(|it| it.1).collect();
+        forms.sort_unstable();
+        forms.dedup();
+        forms.into_boxed_slice()
     }
 
     pub fn names_left_to_loader(

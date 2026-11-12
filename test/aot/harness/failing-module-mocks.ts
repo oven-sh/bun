@@ -12,15 +12,7 @@ const knownDifferences: [cases: RegExp, what: string][] = [
     "the potter keeps the first failure of the kiln, and the factory fails the test",
   ],
   [
-    /^an-es-file--imported-by-a-file--(a-factory-over-the-original|a-factory)--mocked-the-second-time--nothing-between--in-the-next-test-file$/,
-    "the potter keeps the first failure of the kiln for the next test file",
-  ],
-  [
-    /^an-es-file--required--a-factory-over-(the-original|import-actual)--mocked-both-times--(nothing-between|unmocked)--in-the-next-test-file$/,
-    "the kiln failed under the first mock and does not run again for the second, in the next test file",
-  ],
-  [
-    /^an-es-package--imported-by-a-file--a-factory--mocked-the-second-time--nothing-between--in-the-next-test-file$/,
+    /^an-es-file--imported-by-a-file--a-factory-over-the-original--mocked-the-second-time--nothing-between--in-the-next-test-file$/,
     "the potter keeps the first failure of the kiln for the next test file",
   ],
 ];

@@ -55,5 +55,6 @@ Write `<subject>.ts` with `export function generate(random: Random, typed: boole
 | `sources.ts`, `family.ts`, `sources/` | the registry of sources, and sources that are lists |
 | `grammar.ts` | the general-purpose generator |
 | `mutate.ts`, `tokens.ts` | mutation of the programs in `../parallel` |
+| `misstated-facts.ts` | misstates each fact of the whole-program analysis in programs, and lists the facts that no program would miss. It needs a local build of the engine |
 | the other `*.ts`, `generators/`, `case-scripts/` | generators, one subject each |
 | `fuzzilli/` | a Fuzzilli profile and driver. See `fuzzilli/README.md` |

@@ -1,0 +1,16 @@
+# -- source: main.ts
+# type Kind = "add" | "remove" | "insert";
+# function fields(list: { type: Kind }[]): number { let r = 0; for (const t of list) { if (t.type === "add") r += 1; r = r * 3 % 1003; if ("remove" === t.type) r += 2; } return r; }
+# function elements(list: Kind[]): number { let r = 0; for (let i = 0; i < list.length; i++) if (list[i] === "insert") r += i + 1; return r; }
+# function parameter(k: Kind): number { let r = 0; for (let i = 0; i < 9; i++) { if (k === "add") r += i; r = r * 3 % 1003; } return r; }
+# function texts(list: { type: string }[]): number { let r = 0; for (const t of list) { if (t.type === "add") r += 1; r = r * 3 % 1003; } return r; }
+# const listed = JSON.parse('[{"type":"add"},{"type":7},{"type":null},{"type":"rem"},{"type":["add"]},{"type":"remove"}]'); listed[3].type += "ove";
+# const kinds = "insert add insert".split(" ") as Kind[]; kinds.push("in" + kinds[0]!.slice(2) as Kind, 7 as never, null as never);
+# print(fields(listed), elements(kinds), parameter(kinds[1]!), parameter(-3n as never), texts(listed));
+# -- end of source
+# In a loop a text of a field that is written as a union of literals (fields()) is asked for its flags, and a name for its header. Where a text is written (texts()), nothing changes.
+# RUN: compile LiteralHeadersCompared mechanisms=all
+# CHECK: statistic LiteralHeadersCompared 2
+# RUN(ANSWER): run-in-shell
+# ANSWER: 749 8 706 0 729
+# ANSWER-NEXT: exited with 0

@@ -73,8 +73,9 @@ pub use written_type::declares_type_alone;
 
 pub(in crate::check) use class_stores::{StoreIndex, WrittenStores};
 pub(in crate::check) use dead_code::DeadCodeRanges;
+pub(in crate::check) use inferred_from_use::Subject;
 pub(in crate::check) use left_out_bodies::LeftOutOfCheck;
 pub(in crate::check) use program_symbols::ProgramSymbols;
-pub(in crate::check) use prototype_links::PrototypeLinks;
+pub(in crate::check) use prototype_links::LinksOfFile;
 
 pub use crate::program::FileRole;

@@ -8,7 +8,9 @@
 # -- end of source
 # The compiler before this one: 30 instructions, 16 of them patches, a turn of the written loop steps by 4.
 # When the bound was taken: loop: operations 17, patches 1, moves 1, unlikely 0.
-# RUN(X64): loops most:18 f1 mechanisms=all-Inlining
+# Since the bytes of an iteration are held below the length before the loop: eight iterations in 116, 14.5 an element.
+# RUN(X64): loops most:116,19 f1 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f1:Body
-# X64-NEXT: loop: at most 18
+# X64-NEXT: loop: at most 116
+# X64-NEXT: loop: at most 19

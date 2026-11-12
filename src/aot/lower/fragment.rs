@@ -17,14 +17,16 @@ use super::layouts::ObjectTypeKey;
 use super::tables::{SharedTables, TableLengths, TaskState, UnitTables};
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{
-    Data, DeclaredRecord, EvalScope, ExpectedResult, Function, FunctionVisibility, Layout,
-    LayoutFlags, RuntimeFunctionEntry, SourcePositions, SourceRange, Variable,
+    Data, DeclaredRecord, EvalScope, ExpectedResult, Field, Function, FunctionRole,
+    FunctionVisibility, Layout, LayoutFlags, ModuleInstance, ModuleLink, RuntimeFunctionEntry,
+    SourcePositions, SourceRange, Variable,
 };
 use crate::ir::{
     DataId, EvalScopeId, ExpectedResultId, FunctionId, FunctionKey, Id, LayoutId, LayoutKey,
     ModuleFailureId, ModuleId, PropertyKeyId, PropertyKeyTable, Reference, StringTable, TypeTable,
     VariableId, VariableKey,
 };
+use crate::link::TableIds;
 use crate::modules::{self, ModuleRef};
 
 #[derive(Default, Clone)]
@@ -55,12 +57,28 @@ pub struct Fragment {
     pub data: Vec<(DataId, Data)>,
     pub expected_results: Vec<(ExpectedResultId, ExpectedResult)>,
     pub declared_records: Vec<DeclaredRecord>,
+    pub module_instances: Vec<ModuleInstance>,
+    pub module_links: Vec<ModuleLink>,
     pub supertype_edges: Vec<(LayoutId, LayoutId)>,
     pub function_type_edges: Vec<(FunctionId, FunctionId)>,
     pub builtin_members: Vec<(FunctionId, BuiltinId)>,
     pub(crate) family_facts: FamilyFacts,
     pub runtime_functions: Vec<RuntimeFunctionEntry>,
     pub module: ModuleFragment,
+}
+
+impl Fragment {
+    /// The signatures of a fragment are one record, and few of those of a part are kept.
+    pub(in crate::lower) fn remap_code(&mut self, ids: &TableIds) {
+        let map = ids.as_map();
+        let functions = self.functions.iter_mut().map(|(_, function)| function);
+        for function in functions.filter(|it| it.role != FunctionRole::Signature) {
+            Arc::make_mut(function).remap_ids(&map);
+        }
+        for (_, layout) in &mut self.layouts {
+            layout.remap_ids(&map);
+        }
+    }
 }
 
 struct KeyTable<K> {
@@ -205,6 +223,10 @@ fn sort_and_dedup<T: Ord>(mut list: Vec<T>) -> Vec<T> {
     list
 }
 
+fn new_id<I: Id>(ids: &[Option<I>], id: I) -> I {
+    ids[id.index()].expect("every record of a part has a place in the tables of the file")
+}
+
 fn is_function_type(key: FunctionKey) -> bool {
     matches!(
         key,
@@ -224,6 +246,9 @@ pub(crate) struct FragmentBuilder {
     function_keys: KeyTable<FunctionKey>,
     layout_keys: KeyTable<LayoutKey>,
     layouts_named_in_file: Vec<LayoutId>,
+    layouts_named_in_parts: Vec<LayoutId>,
+    /// What other parts say of a layout that one part defines.
+    declared_by_other_parts: FxHashMap<LayoutId, (LayoutFlags, Option<FunctionId>)>,
     code_layout_count: Option<usize>,
     variable_keys: KeyTable<VariableKey>,
     module_keys: KeyTable<ModuleRef>,
@@ -246,6 +271,8 @@ pub(crate) struct FragmentBuilder {
     expected_result_count: u32,
     expected_results: Vec<(ExpectedResultId, ExpectedResult)>,
     declared_records: Vec<DeclaredRecord>,
+    module_instances: Vec<ModuleInstance>,
+    module_links: Vec<ModuleLink>,
     supertype_edges: Vec<(LayoutId, LayoutId)>,
     function_type_edges: Vec<(FunctionId, FunctionId)>,
     runtime_functions: Vec<RuntimeFunctionEntry>,
@@ -276,6 +303,8 @@ impl FragmentBuilder {
             function_keys: finders.functions.with_keys(tables.function_keys),
             layout_keys: finders.layouts.with_keys(tables.layout_keys),
             layouts_named_in_file: Vec::new(),
+            layouts_named_in_parts: Vec::new(),
+            declared_by_other_parts: FxHashMap::default(),
             code_layout_count: None,
             variable_keys: finders.variables.with_keys(tables.variable_keys),
             module_keys: finders.modules.with_keys(tables.module_keys),
@@ -300,6 +329,8 @@ impl FragmentBuilder {
             expected_result_count: tables.expected_result_count,
             expected_results: Vec::new(),
             declared_records: Vec::new(),
+            module_instances: Vec::new(),
+            module_links: Vec::new(),
             supertype_edges: Vec::new(),
             function_type_edges: Vec::new(),
             runtime_functions: Vec::new(),
@@ -541,6 +572,22 @@ impl FragmentBuilder {
         self.declared_records.push(declared);
     }
 
+    pub(crate) fn add_module_instance(&mut self, instance: ModuleInstance) {
+        self.module_instances.push(instance);
+    }
+
+    pub(crate) fn add_module_link(&mut self, link: ModuleLink) {
+        self.module_links.push(link);
+    }
+
+    pub(crate) fn add_layout_field(&mut self, layout: LayoutId, field: Field) -> u32 {
+        let mut layouts = self.layouts.iter_mut().rev();
+        let defined = layouts.find(|it| it.0 == layout);
+        let fields = &mut defined.expect("the file defines the layout").1.fields;
+        fields.push(field);
+        fields.len() as u32 - 1
+    }
+
     pub(crate) fn add_expected_result(&mut self, expected: ExpectedResult) -> ExpectedResultId {
         expected.for_each_reference(&mut |reference| self.note_what_is_built(reference));
         self.add_described_result(expected)
@@ -582,6 +629,160 @@ impl FragmentBuilder {
         })
     }
 
+    pub(in crate::lower) fn is_function_defined(&self, key: FunctionKey) -> bool {
+        let id = self.function_keys.ids.get(&key);
+        id.is_some_and(|&id| self.function_keys.defined_in[id as usize] == self.visit)
+    }
+
+    /// The places of what `tables` hold in the tables of this file.
+    fn number_tables_of_part(&mut self, tables: &UnitTables) -> TableIds {
+        let mut ids = TableIds::default();
+        for &key in &tables.module_keys {
+            ids.modules.push(Some(self.declare_module(key)));
+        }
+        for &key in &tables.module_failure_keys {
+            ids.module_failures
+                .push(Some(self.declare_module_failure(key)));
+        }
+        for &key in &tables.function_keys {
+            ids.functions.push(Some(self.declare_function(key)));
+        }
+        for &key in &tables.layout_keys {
+            ids.layouts.push(Some(self.declare_layout(key)));
+        }
+        for &key in &tables.variable_keys {
+            ids.variables.push(Some(self.declare_variable(key)));
+        }
+        for string in tables.strings.ids() {
+            let string = self.strings.intern_string_of(&tables.strings, string);
+            ids.strings.push(Some(string));
+        }
+        for key in tables.property_keys.as_slice() {
+            let mut key = *key;
+            key.remap_ids(&ids.as_map());
+            ids.property_keys.push(Some(self.property_keys.intern(key)));
+        }
+        for ty in tables.types.types().iter() {
+            let mut ty = ty.to_type();
+            ty.remap_ids(&ids.as_map());
+            ids.types.push(Some(self.types.intern(ty)));
+        }
+        let records = |first: u32, count: u32| first..first + count;
+        let of_file = records(self.eval_scope_count, tables.eval_scope_count);
+        ids.eval_scopes = of_file.clone().map(|it| Some(Id::from_word(it))).collect();
+        self.eval_scope_count = of_file.end;
+        let of_file = records(self.data_count, tables.data_count);
+        ids.data = of_file.clone().map(|it| Some(Id::from_word(it))).collect();
+        self.data_count = of_file.end;
+        let of_file = records(self.expected_result_count, tables.expected_result_count);
+        ids.expected_results = of_file.clone().map(|it| Some(Id::from_word(it))).collect();
+        self.expected_result_count = of_file.end;
+        ids
+    }
+
+    /// Where this file has what a part of it has lowered under tables of its own.
+    pub(in crate::lower) fn number_part(&mut self, part: &Fragment) -> TableIds {
+        debug_assert_eq!(part.file, self.file);
+        let tables = part.tables.take();
+        self.number_tables_of_part(&tables)
+    }
+
+    /// Adds what a part of the file has lowered. `ids`: `number_part`. `Fragment::remap_code` has come before it.
+    pub(in crate::lower) fn absorb(&mut self, part: Fragment, ids: &TableIds) {
+        let map = ids.as_map();
+        let layout_of = |layout: LayoutId| new_id(&ids.layouts, layout);
+        let function_of = |function: FunctionId| new_id(&ids.functions, function);
+        let key_of = |key: PropertyKeyId| new_id(&ids.property_keys, key);
+        for (id, mut function) in part.functions {
+            let id = function_of(id);
+            if self.function_keys.is_defined(id, self.visit) {
+                // A signature, or what the members of a class share: whoever names it lowers it.
+                continue;
+            }
+            if function.role == FunctionRole::Signature {
+                Arc::make_mut(&mut function).remap_ids(&map);
+            }
+            self.define_shared_function(id, function);
+        }
+        let mut object_types = part.object_types.iter().peekable();
+        for (index, (id, layout)) in (0u32..).zip(part.layouts) {
+            let id = layout_of(id);
+            let ty = object_types.next_if(|&&(of_layout, _)| of_layout == index);
+            if let LayoutKey::ObjectType { .. } = self.layout_key(id) {
+                self.define_object_type(id, layout, ty.map(|&(_, ty)| ty));
+                continue;
+            }
+            debug_assert!(ty.is_none());
+            if !self.is_layout_defined(id) {
+                self.define_layout(id, layout);
+            } else {
+                let said = self.declared_by_other_parts.entry(id).or_default();
+                said.0 |= layout.flags;
+                said.1 = said.1.or(layout.constructor);
+            }
+        }
+        for layout in part.layouts_named_by_code {
+            self.layouts_named_in_parts.push(layout_of(layout));
+        }
+        for layout in part.allocated_layouts {
+            self.note_allocation(layout_of(layout));
+        }
+        for key in part.written_keys {
+            self.note_write(key_of(key));
+        }
+        for key in part.read_keys {
+            self.note_read(key_of(key));
+        }
+        for key in part.keys_laid_by_descriptors {
+            self.note_key_laid_by_descriptor(key_of(key));
+        }
+        for (id, mut variable) in part.variables {
+            let id = new_id(&ids.variables, id);
+            if !self.is_variable_defined(id) {
+                variable.remap_ids(&map);
+                self.define_variable(id, variable);
+            }
+        }
+        for (id, mut scope) in part.eval_scopes {
+            scope.remap_ids(&map);
+            self.eval_scopes.push((new_id(&ids.eval_scopes, id), scope));
+        }
+        for (id, mut data) in part.data {
+            data.remap_ids(&map);
+            self.data.push((new_id(&ids.data, id), data));
+        }
+        for (id, mut expected) in part.expected_results {
+            expected.remap_ids(&map);
+            let id = new_id(&ids.expected_results, id);
+            self.expected_results.push((id, expected));
+        }
+        for mut declared in part.declared_records {
+            declared.module = new_id(&ids.modules, declared.module);
+            for name in &mut declared.names {
+                *name = key_of(*name);
+            }
+            self.declared_records.push(declared);
+        }
+        debug_assert!(part.module_instances.is_empty() && part.module_links.is_empty());
+        debug_assert!(part.runtime_functions.is_empty());
+        for (layout, supertype) in part.supertype_edges {
+            self.add_supertype(layout_of(layout), layout_of(supertype));
+        }
+        for (source, target) in part.function_type_edges {
+            self.add_function_type_edge(function_of(source), function_of(target));
+        }
+        for (source, target) in part.family_facts.conversions {
+            let (source, target) = (new_id(&ids.types, source), new_id(&ids.types, target));
+            self.family_facts.record_conversion(source, target);
+        }
+        for layout in part.family_facts.layouts_with_members_without_layout {
+            self.family_facts
+                .layouts_with_members_without_layout
+                .push(layout_of(layout));
+        }
+        self.said_types.extend(part.said_types);
+    }
+
     pub(crate) fn finish(mut self, module: ModuleFragment, state: &mut TaskState) -> Fragment {
         debug_assert_eq!(self.visit, state.visit);
         debug_assert!(
@@ -594,7 +795,14 @@ impl FragmentBuilder {
                 .data
                 .is_none_or(|data| self.data.iter().any(|&(id, _)| id == data))
         );
+        let declared_by_other_parts = take(&mut self.declared_by_other_parts);
         for (id, layout) in &mut self.layouts {
+            if !declared_by_other_parts.is_empty()
+                && let Some(&(flags, constructor)) = declared_by_other_parts.get(id)
+            {
+                layout.flags |= flags;
+                layout.constructor = layout.constructor.or(constructor);
+            }
             let marked_in = &self.marks.layout_written_under_dictionary_type_in;
             if is_marked(marked_in, *id, self.visit) {
                 layout.flags |= LayoutFlags::IS_WRITTEN_UNDER_DICTIONARY_TYPE;
@@ -602,6 +810,12 @@ impl FragmentBuilder {
         }
         if let Some(count) = self.code_layout_count {
             self.layouts_named_in_file.truncate(count);
+        }
+        if !self.layouts_named_in_parts.is_empty() {
+            self.layouts_named_in_file
+                .append(&mut self.layouts_named_in_parts);
+            self.layouts_named_in_file.sort_unstable();
+            self.layouts_named_in_file.dedup();
         }
         self.layouts_named_in_file.sort_unstable();
         self.allocated_layouts.sort_unstable();
@@ -656,6 +870,8 @@ impl FragmentBuilder {
             data: self.data,
             expected_results: self.expected_results,
             declared_records: self.declared_records,
+            module_instances: self.module_instances,
+            module_links: self.module_links,
             supertype_edges: sort_and_dedup(self.supertype_edges),
             function_type_edges: sort_and_dedup(self.function_type_edges),
             builtin_members: Vec::new(),

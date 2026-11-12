@@ -4,7 +4,7 @@
 # The texts are printed in the order of their characters: /deep120000/ would stand in front of /flat120000/.
 # -- source: the-frames-that-the-engine-goes-over-draw-on-the-allowance.ts
 # function throws(turns: number): number { let done = 0; for (let i = 0; i < turns; i++) { try { JSON.parse("{"); } catch {} done++; } return done; }
-# function deep(depth: number, turns: number): number { return depth > 0 ? deep(depth - 1, turns) : throws(turns); }
+# function deep(depth: number, turns: number): number { return depth > 0 ? deep(depth - 1, turns) + 0 : throws(turns); }
 # new RegExp("flat" + throws(120000));
 # new RegExp("deep" + deep(100, 120000));
 # -- end of source

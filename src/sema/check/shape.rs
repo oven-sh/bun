@@ -7719,8 +7719,11 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some((known, _)) = self.known_constraint(ty) {
             return known;
         }
+        // What is stored about a node or a symbol is found by whoever requests it next, so it must not depend on whether lowering
+        // requested it first.
         if self.answers_lowering
             && matches!(data, TypeData::Cond { .. })
+            && !self.stack.iter().any(|q| q.syntax().is_some())
             && self.has_costly_base_constraint(ty)
         {
             self.cut_constraint_short();

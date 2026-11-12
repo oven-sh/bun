@@ -84,6 +84,24 @@ pub struct QueryStatistics {
     pub usages_walked: u64,
 }
 
+impl QueryStatistics {
+    pub(super) fn add(&mut self, other: &QueryStatistics) {
+        let add_each = |own: &mut [u32], others: &[u32]| {
+            for (own, other) in own.iter_mut().zip(others) {
+                *own += other;
+            }
+        };
+        self.asked += other.asked;
+        add_each(&mut self.limit_hits, &other.limit_hits);
+        add_each(&mut self.gave_up, &other.gave_up);
+        add_each(&mut self.members_gave_up, &other.members_gave_up);
+        self.closed_cycles += other.closed_cycles;
+        self.union_members_compared += other.union_members_compared;
+        self.types_inferred += other.types_inferred;
+        self.usages_walked += other.usages_walked;
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum WrittenType {
     Written(TypeId),

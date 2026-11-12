@@ -3,6 +3,7 @@ use super::mention_use::MentionUse;
 use super::mentions::mentioned_id;
 use super::module_cache::is_function_that_loader_calls;
 use super::resolver::{AliasSource, ExprState, HolderKind, ResolvedValue, Resolver};
+use super::unnamed_uses::MOST_VARIABLES_FOLLOWED;
 use super::{SourceDialect, SpyCall, passes_every_assertion};
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinKind, BuiltinName, MemberLookup, Mutability, Platforms,
@@ -387,12 +388,13 @@ pub(super) fn find_what_opens_where_handed_on(
 }
 
 impl Resolver<'_, '_> {
+    /// Whether code of the program gets the object as `this` when it calls the member that the call replaces.
     pub(super) fn exposes_first_operand(&self, call: CallId, function: BuiltinId) -> bool {
         let hir = self.input.hir;
         let mut operands = hir.ids(hir[call].args).skip(1);
         match find_writer(function) {
             Some(Writer::Spy) => {
-                *(self.shows_receivers_of_spies).get_or_init(|| self.spies_show_receivers())
+                *(self.exposes_spy_receivers).get_or_init(|| self.spies_expose_receivers())
             }
             Some(Writer::MemberOfOperand) => operands
                 .nth(1)
@@ -409,6 +411,163 @@ impl Resolver<'_, '_> {
                 })
             }),
             _ => false,
+        }
+    }
+
+    pub(super) fn note_imported_replacements(&mut self, object: ExprId, id: BuiltinId) {
+        if !self.input.runs_tests {
+            return;
+        }
+        let hir = self.input.hir;
+        let operand = self.outermost_assertion_of(object);
+        let Parent::Expr(user) = self.input.bound.parent_of_expr(operand) else {
+            return;
+        };
+        let ExprKind::Call(call) = hir[user].kind else {
+            return;
+        };
+        let mut operands = hir.ids(hir[call].args);
+        if operands.next() != Some(operand) {
+            return;
+        }
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        let Some(function) = mentioned_id(self.state(callee)).map(table::canonical_id) else {
+            return;
+        };
+        let mut found: Vec<ExprId> = Vec::new();
+        match find_writer(function) {
+            Some(Writer::Spy) => found.extend_from_slice(
+                self.imported_spy_implementations
+                    .get_or_init(|| self.find_imported_spy_implementations()),
+            ),
+            Some(Writer::MemberOfOperand) => {
+                if let Some(descriptor) = operands.nth(1) {
+                    self.collect_imported_from_descriptor(descriptor, &mut found);
+                }
+            }
+            Some(Writer::MemberOfReceiverOperand) => {
+                if let Some(value) = operands.nth(1) {
+                    self.collect_imported_functions(value, &mut found);
+                }
+            }
+            Some(Writer::KeysOfOperands) => {
+                for operand in operands {
+                    for (_, value) in self.written_properties(operand) {
+                        match function {
+                            BuiltinId::ObjectDefineProperties => {
+                                self.collect_imported_from_descriptor(value, &mut found);
+                            }
+                            _ => self.collect_imported_functions(value, &mut found),
+                        }
+                    }
+                }
+            }
+            _ => return,
+        }
+        let found = found.into_iter().map(|value| (id, value));
+        self.output.imported_replacements.extend(found);
+    }
+
+    fn written_properties(&self, object: ExprId) -> Vec<(PropKey, ExprId)> {
+        let hir = self.input.hir;
+        match hir[hir.skip_type_assertions(object)].kind {
+            ExprKind::Object(properties) => properties
+                .iter()
+                .map(|property| &hir[property])
+                .filter(|property| property.kind != PropKind::Spread)
+                .map(|property| (property.key, property.value))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn collect_imported_from_descriptor(&self, descriptor: ExprId, found: &mut Vec<ExprId>) {
+        for (key, value) in self.written_properties(descriptor) {
+            if matches!(key, PropKey::Name(known::value | known::get | known::set)) {
+                self.collect_imported_functions(value, found);
+            }
+        }
+    }
+
+    fn find_imported_spy_implementations(&self) -> Vec<ExprId> {
+        let hir = self.input.hir;
+        let mut found = Vec::new();
+        for member in self.evaluated_exprs() {
+            let Some((
+                object,
+                MemberKey::Name(
+                    known::mockImplementation
+                    | known::mockImplementationOnce
+                    | known::withImplementation,
+                ),
+            )) = hir.member_key(member)
+            else {
+                continue;
+            };
+            let callee = self.outermost_assertion_of(member);
+            let Parent::Expr(user) = self.input.bound.parent_of_expr(callee) else {
+                continue;
+            };
+            let ExprKind::Call(call) = hir[user].kind else {
+                continue;
+            };
+            if hir[call].callee == callee
+                && let Some(first) = hir.ids(hir[call].args).next()
+                && !self.is_mock_of_another_object(object)
+            {
+                self.collect_imported_functions(first, &mut found);
+            }
+        }
+        found
+    }
+
+    /// Adds the imported names that the value is, or that a call which makes the value is given.
+    fn collect_imported_functions(&self, value: ExprId, found: &mut Vec<ExprId>) {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let is_imported = |name: ExprId| {
+            let Binding::Symbol(name) = bound.binding(name) else {
+                return false;
+            };
+            matches!(
+                *bound.symbol(name).decls,
+                [Decl::ImportSpec(_) | Decl::ImportDefault(_) | Decl::ImportNamespace(_)]
+            )
+        };
+        let mut value = hir.skip_type_assertions(value);
+        for _ in 0..=MOST_VARIABLES_FOLLOWED {
+            if let Some((object, MemberKey::Name(_))) = hir.member_key(value) {
+                let object = hir.skip_type_assertions(object);
+                if matches!(hir[object].kind, ExprKind::Ident(_)) && is_imported(object) {
+                    found.push(value);
+                }
+                return;
+            }
+            match hir[value].kind {
+                ExprKind::Ident(_) if is_imported(value) => return found.push(value),
+                ExprKind::Ident(_) => {}
+                ExprKind::Call(call) => {
+                    for operand in hir.ids(hir[call].args) {
+                        let operand = hir.skip_type_assertions(operand);
+                        if matches!(hir[operand].kind, ExprKind::Ident(_)) && is_imported(operand) {
+                            found.push(operand);
+                        }
+                    }
+                    return;
+                }
+                _ => return,
+            }
+            let Binding::Symbol(name) = bound.binding(value) else {
+                return;
+            };
+            let [Decl::Var(pattern)] = *bound.symbol(name).decls else {
+                return;
+            };
+            match bound.pat_parent[pattern.idx()] {
+                PatParent::Var(declaration) if hir[declaration].init.is_some() => {
+                    value = hir.skip_type_assertions(hir[declaration].init);
+                }
+                _ => return,
+            }
         }
     }
 
@@ -434,7 +593,8 @@ impl Resolver<'_, '_> {
         })
     }
 
-    fn spies_show_receivers(&self) -> bool {
+    /// A spy calls its implementation with the receiver, and lists the receivers as mock.contexts and mock.instances.
+    fn spies_expose_receivers(&self) -> bool {
         let hir = self.input.hir;
         self.evaluated_exprs().any(|member| {
             let Some((object, MemberKey::Name(name))) = hir.member_key(member) else {
@@ -473,6 +633,7 @@ impl Resolver<'_, '_> {
         }
     }
 
+    /// Whether the chain of calls begins at a mock of no object, or at a spy on an object that is no built-in.
     fn is_mock_of_another_object(&self, mock: ExprId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut mock = hir.skip_type_assertions(mock);
@@ -663,6 +824,7 @@ impl Resolver<'_, '_> {
         self.find_written_keys_once(key, &mut SmallVec::new())
     }
 
+    /// The names that an operand of a call spells, where every value that it may have is written in the program.
     pub(super) fn find_names_written_as_key(&self, key: ExprId) -> SmallVec<[BuiltinName; 2]> {
         let keys = self.find_written_keys(key).unwrap_or_default();
         let names = keys.iter().filter_map(|key| match *key {

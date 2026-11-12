@@ -275,6 +275,8 @@ fn is_relative(text: &[u8]) -> bool {
     text.starts_with(b"./") || text.starts_with(b"../") || text == b"." || text == b".."
 }
 
+/// An import site of the file may have a specifier that stands in no statement and no string of the file, or may stand in
+/// a statement that never runs. Only folding and the scan of the calls find such a site.
 fn has_sites_that_need_folding(hir: &File<'_>, atoms: &Interner<'_>) -> bool {
     let names_loader = |name: Atom| name == known::require || name == known::createRequire;
     let key_names_loader = |key: PropKey| key.name().is_some_and(names_loader);
@@ -345,7 +347,9 @@ fn has_sites_that_need_folding(hir: &File<'_>, atoms: &Interner<'_>) -> bool {
 }
 
 struct SitesOfFile {
+    /// The specifier, and whether the site exports what it imports again.
     specifiers: Vec<(Atom, bool)>,
+    /// The file evaluates a name that the test runner gives every file, and declares nothing under it.
     has_test_runner_name: bool,
 }
 
@@ -390,6 +394,8 @@ fn list_specifiers(sites: Vec<(ImportSiteKind, Atom)>) -> Vec<(Atom, bool)> {
         .collect()
 }
 
+/// Where a string spells a path that is exported again, it depends on the call around the string whether that is a site of
+/// its own.
 fn spells_exported_path(hir: &File<'_>, specifiers: &[(Atom, bool)]) -> bool {
     let is_exported_again = |text: Atom| {
         let mut exported = specifiers.iter().filter(|it| it.1);
@@ -535,9 +541,11 @@ fn find_last_word(file: &[u8]) -> &[u8] {
 struct LastWords<'a> {
     numbers: FxHashMap<&'a [u8], u32>,
     longest: usize,
+    /// The words of the files that are asked about have the numbers below this.
     number_asked: u32,
 }
 
+/// The words that `text` writes. `None` where one of them is of a file that is asked about: the look ends there.
 fn find_last_words_written(text: &[u8], words: &LastWords<'_>) -> Option<WordsWritten> {
     const LONGEST_EXTENSION: usize = 4;
     let mut written: Vec<u32> = Vec::new();

@@ -1,0 +1,13 @@
+# A super call into a class that is a parameter answers with unseen objects and the objects of the program's own classes: a speculation expects the class, and nothing is proven.
+# RUN: link variables held mechanisms=all
+# CHECK: proven=absent|L0
+# RUN(PROVEN): link variables mechanisms=all
+# PROVEN-NOT: proven=absent|L
+# -- source: mixin-instances-are-expected.mjs
+# const Mixin = Base => class extends Base { count = 1; add(n) { return n + this.count; } };
+# class Root { total = 1; }
+# const Counted = Mixin(Root);
+# const counted = new Counted();
+# function run(times) { let sum = 0; for (let i = 0; i < times; i++) sum += counted.add(i); return sum; }
+# console.log(run(8));
+# -- end of source

@@ -35,7 +35,7 @@ pub trait Alloc: Allocator + Clone + Send + Sync {
     /// A list of numbers, allocated from it, that several tables share.
     type Shared: std::ops::Deref<Target = [u32]> + Clone + Send + Sync;
     fn share(&self, list: &[u32]) -> Self::Shared;
-    /// Frees `block` once no thread still reads it, and returns true. Returns false if nothing tells when that is.
+    /// Frees `block` once no thread reads it, and returns true. Returns false if that cannot be known.
     ///
     /// # Safety
     /// `block` was allocated here with `layout`. From now on no thread finds it anymore.

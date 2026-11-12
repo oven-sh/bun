@@ -431,6 +431,16 @@ const nodeCryptoBinding = ["native:Cpp:node_crypto_binding.cpp:createNodeCryptoB
 const warningsOfRejections = "%WarningsOfRejections%";
 const promises = [warningsOfRejections];
 
+// A test run may run a file from source. Compiled code never calls these functions: the interpreter does. No text can name these entries: the build names them for test runs.
+// The second function calls functions of others, which only code that the build did not see keeps.
+const interpretedFiles = "%InterpretedFiles%";
+const functionsOfInterpreter = [
+  b.functionIn("IteratorHelpers", "performIteration"),
+  b.functionIn("DisposableStackPrototype", "getDisposeMethod"),
+];
+const interpretedAsyncFiles = "%InterpretedAsyncFiles%";
+const asyncFunctionsOfInterpreter = [b.functionIn("DisposableStackPrototype", "getAsyncDisposeMethod")];
+
 // The overload for a delay that fits a timer says that it runs no code.
 const timersWithOtherDelays = ["setInterval", "setTimeout"].map(path => ({ path, when: b.whenCallRunsOtherCode }));
 
@@ -807,6 +817,8 @@ const undeclaredNativeCode = "%UndeclaredNativeCode%";
 export default b.declarations(
   b.namespace(undeclaredNativeCode, {}, { callsFunctions: warningFunctionsOfUndeclaredCode }),
   b.namespace(warningsOfRejections, {}, { listsAllMembers: true }),
+  b.namespace(interpretedFiles, {}, { callsFunctions: functionsOfInterpreter }),
+  b.namespace(interpretedAsyncFiles, {}, { callsFunctions: asyncFunctionsOfInterpreter }),
   ...nativeCalls,
   callsOfInspect,
   Object.entries(loadedModulesByPath).flatMap(([path, loads]) => b.extend(path, { loads })),

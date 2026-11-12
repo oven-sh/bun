@@ -1278,6 +1278,14 @@ jsimd_ycc_extxrgb_convert_avx2           [AVX, AVX2]
 jsimd_ycc_rgb_convert_avx2               [AVX, AVX2]
 
 # ----------------------------------------------------------------------------
+# The ahead-of-time compiler's search of an array for a value. Gate: findBox() asks
+# CPUFeatureSet::host() for AVX2 (CPUID and XGETBV).
+# (1 symbols)
+# ----------------------------------------------------------------------------
+JSC::AOT::findWithAVX2  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
 # Bun's Highway kernels for the scanner of `bun check`, `bun lint` and `bun fmt`. Gate: hwy::SupportedTargets via CPUID.
 # (18 symbols)
 # ----------------------------------------------------------------------------

@@ -3197,6 +3197,10 @@ export interface FunctionField extends Omit<SignatureOptions, "rustPath" | "cppS
   name?: string;
   /** Also a member function of the generated C++ class. It takes `globalObject` and a `JSValue` for each argument, and converts them as a call from JS does. */
   calledFromCpp?: boolean;
+  /** Defaults to the class's. Not for an `@@` key. */
+  configurable?: boolean;
+  /** Defaults to the class's. Not for an `@@` key. */
+  enumerable?: boolean;
 }
 
 /** A member function of the generated C++ class that is defined in Rust. */
@@ -3390,11 +3394,22 @@ export class Method extends Signature {
   readonly invalidThis: "throw" | "undefined";
   readonly privateSymbol: string | undefined;
   readonly functionName: string | undefined;
+  readonly configurable: boolean | undefined;
+  readonly enumerable: boolean | undefined;
   readonly calledFromCpp: boolean;
   /** A property of the prototype or the constructor, so JS can call it. */
   readonly isProperty: boolean;
-  constructor(name: string, options: FunctionField, isStatic = false, sharedThis = false, isProperty = true) {
+  constructor(name: string, field: FunctionField, isStatic = false, sharedThis = false, isProperty = true) {
+    // The table of built-ins takes every key that a signature does not know for a column, and has none for these two.
+    const { configurable, enumerable, ...options } = field;
     super(options, !isStatic && !!options.passThis, isProperty);
+    this.configurable = configurable;
+    this.enumerable = enumerable;
+    assert(
+      (configurable === undefined && enumerable === undefined) ||
+        (isProperty && !options.privateSymbol && !wellKnownSymbol(name)),
+      `${name}: configurable and enumerable are for a property with a string key`,
+    );
     this.name = name;
     this.isProperty = isProperty;
     this.calledFromCpp = !!options.calledFromCpp;
@@ -3790,6 +3805,11 @@ export class ClassType extends NamedType {
     this.protoMembers = members(options.proto ?? {}, false);
     this.staticMembers = members(options.static ?? {}, true);
     assert(this.construct || !options.call, "call needs a constructor object: add construct");
+    for (const [key, callable] of Object.entries({ call: options.call, callInstance: options.callInstance }))
+      assert(
+        !callable || !("configurable" in callable || "enumerable" in callable),
+        `${key} is no property: it has no configurable and no enumerable`,
+      );
     this.call = options.call ? (members({ call: options.call }, true)[0] as FunctionDefinition) : null;
     this.callInstance = options.callInstance
       ? (members({ callInstance: options.callInstance }, false)[0] as FunctionDefinition)

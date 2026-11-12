@@ -390,6 +390,76 @@ describe("symbol-keyed methods", () => {
   );
 });
 
+describe("methods of the prototype", () => {
+  const timeout = setTimeout(() => {}, 1000);
+  const immediate = setImmediate(() => {});
+  clearTimeout(timeout);
+  clearImmediate(immediate);
+
+  // What Node.js v26.12.1 has. A method of its class is not enumerable, and `close`, which lib/timers.js assigns, is:
+  // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/timers.js#L215, #L746 and lib/timers.js#L186
+  it.each([
+    ["Timeout", "close", timeout, true],
+    ["Timeout", "hasRef", timeout, false],
+    ["Timeout", "ref", timeout, false],
+    ["Timeout", "refresh", timeout, false],
+    ["Timeout", "unref", timeout, false],
+    ["Immediate", "hasRef", immediate, false],
+    ["Immediate", "ref", immediate, false],
+    ["Immediate", "unref", immediate, false],
+  ] as const)("%s.prototype.%s is writable and configurable", (name, method, timer, enumerable) => {
+    const { value, ...attributes } = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(timer), method)!;
+    expect({ type: typeof value, ...attributes }).toEqual({
+      type: "function",
+      writable: true,
+      enumerable,
+      configurable: true,
+    });
+  });
+
+  it("for-in over a timer finds no method but close", () => {
+    const names = (timer: object) => {
+      const found: string[] = [];
+      for (const name in timer) found.push(name);
+      return found;
+    };
+    // Node.js keeps the state of a timer in own properties. Here it is behind accessors of the prototype.
+    expect(names(timeout)).toEqual(["_destroyed", "_idleStart", "_idleTimeout", "_onTimeout", "_repeat", "close"]);
+    expect(names(immediate)).toEqual(["_destroyed"]);
+  });
+
+  it.each([
+    ["Timeout", timeout],
+    ["Immediate", immediate],
+  ] as const)(
+    "%s.prototype.hasRef is wrapped with a configurable definition and put back, as shimmer does",
+    (name, timer) => {
+      const prototype = Object.getPrototypeOf(timer);
+      const original = Object.getOwnPropertyDescriptor(prototype, "hasRef")!;
+      try {
+        Object.defineProperty(prototype, "hasRef", {
+          configurable: true,
+          enumerable: original.enumerable,
+          writable: true,
+          value: () => "wrapped",
+        });
+        expect(timer.hasRef()).toBe("wrapped" as any);
+      } finally {
+        Object.defineProperty(prototype, "hasRef", original);
+      }
+      expect(timer.hasRef()).toBe(false);
+    },
+  );
+
+  it("a spy that copies the attributes of unref onto a timer is deleted again, as tinyspy does", () => {
+    const inherited = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(timeout), "unref")!;
+    Object.defineProperty(timeout, "unref", { ...inherited, value: () => "spied" });
+    expect(timeout.unref()).toBe("spied" as any);
+    expect(Reflect.deleteProperty(timeout, "unref")).toBe(true);
+    expect(timeout.unref()).toBe(timeout);
+  });
+});
+
 describe.each(["with", "without"])("setImmediate %s timers running", mode => {
   // TODO(@190n) #17901 did not fix this for Windows
   it.todoIf(isWindows && mode == "with")(

@@ -456,6 +456,34 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", construct: {}, static: { "@@x": {} } })).toThrow(
     "@@x: an @@ key is a property of the prototype",
   );
+  for (const key of ["configurable", "enumerable"]) {
+    for (const notAStringKey of [
+      { proto: { x: { privateSymbol: "x", [key]: true } } },
+      { proto: { "@@x": { [key]: true } } },
+      { calledFromCpp: { x: { [key]: true } } },
+    ]) {
+      expect(() => b.class({ rustPath: "T", ...notAStringKey })).toThrow(
+        "x: configurable and enumerable are for a property with a string key",
+      );
+    }
+    expect(() => b.class({ rustPath: "T", construct: {}, call: { [key]: true } })).toThrow(
+      "call is no property: it has no configurable and no enumerable",
+    );
+    expect(() => b.class({ rustPath: "T", callInstance: { [key]: true } })).toThrow(
+      "callInstance is no property: it has no configurable and no enumerable",
+    );
+    expect(() =>
+      b.class({
+        rustPath: "T",
+        proto: {
+          x: [
+            { rustName: "x_string", args: { value: b.string }, [key]: true },
+            { rustName: "x_number", args: { value: b.f64 } },
+          ],
+        },
+      }),
+    ).toThrow(`x: every overload gives ${key} the same value`);
+  }
   expect(() => b.class({ rustPath: "T", proto: { x: { constant: 1.5 } } })).toThrow("x: a constant is an integer");
   // @ts-expect-error
   expect(() => b.class({ rustPath: "T", construct: {}, static: { x: { constant: 1 } } })).toThrow(
@@ -2611,13 +2639,23 @@ describe("classes", () => {
       return { enumerable, configurable };
     };
 
-    it("enumerable and configurable are the class's, unless a getter has its own", () => {
+    it("enumerable and configurable are the class's, unless a getter or a function has its own", () => {
       const { prototype } = TestError;
       expect(attributes(prototype, "message")).toEqual({ enumerable: false, configurable: true });
       expect(attributes(prototype, "describe")).toEqual({ enumerable: false, configurable: true });
       expect(attributes(prototype, "nonConfigurableCode")).toEqual({ enumerable: false, configurable: false });
       expect(attributes(prototype, "enumerableCode")).toEqual({ enumerable: true, configurable: true });
-      expect(Object.keys(prototype)).toEqual(["enumerableCode", "name"]);
+      expect(attributes(prototype, "nonConfigurableDescribe")).toEqual({ enumerable: false, configurable: false });
+      expect(attributes(prototype, "enumerableDescribe")).toEqual({ enumerable: true, configurable: true });
+      expect(attributes(TestError, "enumerableLevel")).toEqual({ enumerable: true, configurable: true });
+      expect(Object.keys(prototype)).toEqual(["enumerableCode", "enumerableDescribe", "name"]);
+      expect(Object.keys(TestError)).toEqual(["enumerableLevel"]);
+      const error = new TestError(4);
+      expect([error.nonConfigurableDescribe(), error.enumerableDescribe(), TestError.enumerableLevel()]).toEqual([
+        "error 4",
+        "error 4",
+        0,
+      ]);
       expect(attributes(TestCounter.prototype, "count")).toEqual({ enumerable: true, configurable: false });
       expect(attributes(TestCounter.prototype, "increment")).toEqual({ enumerable: true, configurable: false });
     });

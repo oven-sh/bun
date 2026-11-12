@@ -320,6 +320,8 @@ export const TestError = b.class({
     nonConfigurableCode: { getter: b.i32, configurable: false },
     enumerableCode: { getter: b.i32, enumerable: true },
     describe: { returns: b.string.utf8 },
+    nonConfigurableDescribe: { returns: b.string.utf8, rustName: "describe", configurable: false },
+    enumerableDescribe: { returns: b.string.utf8, rustName: "describe", enumerable: true },
     countArguments: { args: { args: b.any.variadic }, returns: b.usize },
     /** Computed once. Assigning replaces it without calling Rust. */
     message: { getter: b.string.utf8, cache: true, writable: true },
@@ -329,6 +331,7 @@ export const TestError = b.class({
   static: {
     /** Process-wide. */
     level: { getter: b.i32, setter: true },
+    enumerableLevel: { returns: b.i32, rustName: "get_level", enumerable: true },
   },
 });
 

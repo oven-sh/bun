@@ -4269,20 +4269,23 @@ pub enum ResolveMode {
     Require,
     /// `require.resolve()`: returns the bare specifier for Node builtins.
     RequireResolve,
-    /// `import.meta.resolve()`, `Bun.resolveSync()`: ESM resolution that loads nothing.
+    /// `import.meta.resolveSync()`, `Bun.resolveSync()`: ESM resolution that loads nothing.
     EsmResolve,
+    /// `import.meta.resolve()`: `EsmResolve`, except that a file a package names is the answer even when it isn't
+    /// there, as in Node.js.
+    ImportMetaResolve,
 }
 
 impl ResolveMode {
     #[inline]
     pub fn is_esm(self) -> bool {
-        matches!(self, Self::Esm | Self::EsmResolve)
+        matches!(self, Self::Esm | Self::EsmResolve | Self::ImportMetaResolve)
     }
 
     #[inline]
     pub fn import_kind(self) -> bun_ast::ImportKind {
         match self {
-            Self::Esm | Self::EsmResolve => bun_ast::ImportKind::Stmt,
+            Self::Esm | Self::EsmResolve | Self::ImportMetaResolve => bun_ast::ImportKind::Stmt,
             Self::Require => bun_ast::ImportKind::Require,
             Self::RequireResolve => bun_ast::ImportKind::RequireResolve,
         }
@@ -4291,7 +4294,10 @@ impl ResolveMode {
     /// The caller only wants the path; nothing is loaded.
     #[inline]
     pub fn only_resolves(self) -> bool {
-        matches!(self, Self::RequireResolve | Self::EsmResolve)
+        matches!(
+            self,
+            Self::RequireResolve | Self::EsmResolve | Self::ImportMetaResolve
+        )
     }
 
     /// For functions that load nothing when they resolve as ESM (`import.meta.resolveSync()`).
@@ -5990,6 +5996,7 @@ impl VirtualMachine {
             jsc_vm.transpiler.resolver.resolves_for_code_from_disk =
                 jsc_vm.is_code_from_disk(source_utf8.slice());
         }
+        jsc_vm.transpiler.resolver.missing_target = None;
         let resolve_result = jsc_vm._resolve(
             &mut result,
             specifier_utf8.slice(),
@@ -6000,6 +6007,12 @@ impl VirtualMachine {
         );
         if mode == ResolveMode::Esm {
             jsc_vm.transpiler.resolver.resolves_for_code_from_disk = false;
+        }
+        if resolve_result.is_err()
+            && mode == ResolveMode::ImportMetaResolve
+            && let Some(path) = jsc_vm.transpiler.resolver.missing_target.take()
+        {
+            return Ok(Ok(bun_core::String::clone_utf8(&path)));
         }
         if let Err(err) = resolve_result {
             let import_kind = mode.import_kind();

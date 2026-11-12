@@ -83,6 +83,76 @@ it("import.meta.main follows a Bun.main override but not an own path property, i
   expect(exitCode).toBe(0);
 });
 
+// https://github.com/oven-sh/bun/issues/21617
+it("import.meta.resolve returns the file a package names when the file is missing, as Node.js does", async () => {
+  using dir = tempDir("import-meta-resolve-missing", {
+    "package.json": JSON.stringify({ type: "module", imports: { "#assets/*": "./assets/*" } }),
+    "assets/there.txt": "",
+    "assets/folder/there.txt": "",
+    "node_modules/with-exports/package.json": JSON.stringify({
+      name: "with-exports",
+      exports: { ".": "./lib/main.js", "./*": "./lib/*" },
+    }),
+    "node_modules/no-exports/package.json": JSON.stringify({ name: "no-exports" }),
+    "node_modules/no-exports/index.js": "",
+    "entry.mjs": `
+      const answers = {};
+      // Bun.resolveSync() still throws, and import.meta.resolve() below does not answer with the file it missed.
+      try {
+        Bun.resolveSync("#assets/missing/missing.txt", import.meta.dirname);
+        answers.resolveSync = "resolved";
+      } catch (error) {
+        answers.resolveSync = error.code;
+      }
+      for (const specifier of [
+        "#not-mapped",
+        "no-such-package/missing.js",
+        "#assets/there.txt",
+        "#assets/missing/missing.txt",
+        "#assets/folder",
+        "with-exports",
+        "with-exports/missing.js",
+        "no-exports/missing.js",
+        "no-exports",
+      ]) {
+        let answer;
+        try {
+          const path = Bun.fileURLToPath(import.meta.resolve(specifier));
+          answer = path.slice(import.meta.dirname.length).replaceAll("\\\\", "/");
+        } catch {
+          answer = "throws";
+        }
+        answers[specifier] = answer;
+      }
+      console.log(JSON.stringify(answers));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ answers: JSON.parse(stdout || "null"), stderr }).toEqual({
+    answers: {
+      "#assets/there.txt": "/assets/there.txt",
+      "#assets/missing/missing.txt": "/assets/missing/missing.txt",
+      "#assets/folder": "/assets/folder",
+      "with-exports": "/node_modules/with-exports/lib/main.js",
+      "with-exports/missing.js": "/node_modules/with-exports/lib/missing.js",
+      "no-exports/missing.js": "/node_modules/no-exports/missing.js",
+      "#not-mapped": "throws",
+      "no-such-package/missing.js": "throws",
+      "no-exports": "/node_modules/no-exports/index.js",
+      resolveSync: "ERR_MODULE_NOT_FOUND",
+    },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("import.meta.resolveSync", () => {
   expect(import.meta.resolveSync("./" + import.meta.file, import.meta.path)).toBe(path);
 });

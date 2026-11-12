@@ -1388,7 +1388,7 @@ extern "C" fn Bun__importMetaResolve(
         specifier,
         source,
         Some(query),
-        crate::virtual_machine::ResolveMode::EsmResolve,
+        crate::virtual_machine::ResolveMode::ImportMetaResolve,
     ) {
         Ok(Ok(path)) => *res = ErrorableString::ok(path),
         Ok(Err(value)) => *res = ErrorableString::err(value),
@@ -1422,7 +1422,7 @@ extern "C" fn Bun__resolveWithOnResolve(
         specifier_path.as_ref().unwrap_or(specifier),
         source_path.as_ref().unwrap_or(source),
         Some(query),
-        crate::virtual_machine::ResolveMode::EsmResolve,
+        crate::virtual_machine::ResolveMode::ImportMetaResolve,
         true,
     ) {
         Ok(None) => return false,

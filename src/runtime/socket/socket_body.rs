@@ -1067,12 +1067,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                     handlers.call_error_handler(this_value, &[this_value, global.take_error(err)]);
             }
         }
-        if this.waits_to_send_tail() {
-            // `end(data)` in the handler is how a program drops a peer that stopped reading, so its tail doesn't wait another timeout.
-            if tail_timed_out {
-                this.buffered_data_for_node_net
-                    .with_mut(|b| b.fail(sys::SystemErrno::ETIMEDOUT));
-            }
+        if tail_timed_out && this.waits_to_send_tail() {
+            this.buffered_data_for_node_net
+                .with_mut(|b| b.fail(sys::SystemErrno::ETIMEDOUT));
             this.mark_inactive();
         }
         handled
@@ -1393,17 +1390,33 @@ impl<const SSL: bool> NewSocket<SSL> {
         Some(errno)
     }
 
+    /// Settles the queue ahead of a close that asks for `code`. Returns the code to close with.
+    fn settle_queue_for_close(&self, code: uws::CloseCode) -> uws::CloseCode {
+        if self.tls_half_waits_to_send_tail() {
+            return uws::CloseCode::Failure;
+        }
+        let flags = self.flags.get();
+        let queue = self.buffered_data_for_node_net.get();
+        if queue.len() == 0 && !queue.is_lost() {
+            self.discard_queued_writes();
+            return code;
+        }
+        if !flags.contains(Flags::END_AFTER_FLUSH) {
+            self.discard_queued_writes();
+        } else if !flags.contains(Flags::REJECTED) {
+            // `on_close` reports the tail of `end(data)`, and the peer must not take the stream for whole.
+            return uws::CloseCode::Failure;
+        }
+        match code {
+            // A graceful TLS close ends with a close_notify, which says that the stream is whole.
+            uws::CloseCode::Normal => uws::CloseCode::FastShutdown,
+            code => code,
+        }
+    }
+
     pub(crate) fn close_and_detach(&self, code: uws::CloseCode) {
         let socket = self.socket.get();
-        // A graceful TLS close ends with a close_notify, which says that the stream is whole.
-        let queue = self.buffered_data_for_node_net.get();
-        let code = match code {
-            uws::CloseCode::Normal if queue.len() > 0 || queue.is_lost() => {
-                uws::CloseCode::FastShutdown
-            }
-            code => code,
-        };
-        self.discard_queued_writes();
+        let code = self.settle_queue_for_close(code);
 
         self.socket.set(SocketHandler::<SSL>::DETACHED);
         self.detach_native_callback();
@@ -3054,7 +3067,6 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     pub(crate) fn close(&self, _: &mut JsScope<'_>) {
         let socket = self.socket.get();
-        self.discard_queued_writes();
         // `_handle.close()` is the net.Socket `_destroy()` path. Node closes the fd
         // with no close_notify (crypto_tls.cc sends the alert only from DoShutdown,
         // the end() path), so `.fast_shutdown` raw-closes synchronously: a bare FIN.
@@ -3063,7 +3075,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SO_LINGER{1,0} → RST and drops data still in the kernel send buffer,
         // which `destroy()` after `write()` must not do. The SSL layer may still
         // defer behind its ciphertext write spill (`ssl_close_after_spill`).
-        socket.close(uws::CloseCode::FastShutdown);
+        socket.close(self.settle_queue_for_close(uws::CloseCode::FastShutdown));
         self.socket.set(SocketHandler::<SSL>::DETACHED);
         self.keep_if_still_closing(socket);
         self.poll_ref.with_mut(|p| {

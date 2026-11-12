@@ -4841,9 +4841,15 @@ describe("a TLS connection with queued data gets no close_notify", () => {
     // Nothing is queued here: the rest of the body doesn't exist yet.
     { server: "Bun.serve()", call: "Response(unfinished)", ...timedOut },
     { server: "Bun.serve()", call: "Response(unfinished)", ...stopped },
-    { server: "Bun.listen()", call: "end(data)", ...timedOut },
-    // Few enough sweeps that the close which follows isn't cut short by its own timeout.
-    { server: "Bun.listen()", call: "write(data)", ...timedOut, leaves: "endInTimeout(socket); sweepSocketTimers(3)" },
+    { server: "Bun.listen()", call: "end(data)", ...stopped, leaves: timedOut.leaves },
+    // The timeout, and the one that the tail gets.
+    {
+      server: "Bun.listen()",
+      call: "write(data)",
+      leaves: "endInTimeout(socket); sweepSocketTimers(6)",
+      events: stopped.events,
+      lastRecord: 23,
+    },
     { server: "Bun.listen()", call: "write(data)", ...ended },
   ])("$server, $call, then $leaves in its Worker", async row => {
     const { server: kind, call, leaves, events, lastRecord } = row;

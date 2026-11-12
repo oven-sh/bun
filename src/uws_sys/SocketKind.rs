@@ -121,3 +121,6 @@ static BUN_SOCKET_KIND_UWS_WS_TLS: u8 = SocketKind::UwsWsTls as u8;
 /// only set for the sockets that actually surface the `'session'` event.
 #[unsafe(no_mangle)]
 static BUN_SOCKET_KIND_BUN_SOCKET_TLS: u8 = SocketKind::BunSocketTls as u8;
+/// Referenced from `context.c`.
+#[unsafe(no_mangle)]
+static BUN_SOCKET_KIND_BUN_SOCKET_TCP: u8 = SocketKind::BunSocketTcp as u8;

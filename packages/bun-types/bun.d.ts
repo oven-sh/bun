@@ -7160,7 +7160,7 @@ declare module "bun" {
      * This sends a TCP FIN packet after writing the data.
      *
      * Unlike `write()`, `end(data)` accepts the whole chunk. Bytes the socket can't take right away are queued and sent
-     * before the FIN.
+     * before the FIN. If they can't be, the {@link SocketHandler.close `close`} handler gets the error.
      *
      * @param data Optional final data to write before closing. Same types as `write()`.
      * @param byteOffset Optional offset for buffer data.
@@ -7193,7 +7193,7 @@ declare module "bun" {
      * Call the {@link SocketHandler.timeout `timeout`} handler once, `seconds` seconds from now.
      *
      * The socket stays open. Call {@link end `end()`} or {@link terminate `terminate()`} in the handler to close it.
-     * Both drop the data an earlier `end(data)` queued and the peer hasn't taken yet.
+     * If the peer took none of the data an earlier `end(data)` queued in that time, Bun resets the connection after the handler.
      *
      * Reads and writes don't restart the timer. To reset the timeout, call this function again. `0` cancels it.
      *
@@ -7588,6 +7588,7 @@ declare module "bun" {
      * Closes the socket.
      *
      * This is a wrapper around `end()` and `shutdown()`.
+     * It resets the connection if data queued by `end(data)` isn't sent yet.
      *
      * @see {@link end}
      * @see {@link shutdown}
@@ -7655,7 +7656,7 @@ declare module "bun" {
     open?(socket: Socket<Data>): void | Promise<void>;
     /**
      * Called once the socket has closed. `error` is set when the connection
-     * failed: a read reported a reset (`syscall: "read"`), or the peer was gone
+     * failed: a read reported a reset (`syscall: "read"`), or the socket closed
      * before the data queued by `end(data)` was sent (`syscall: "write"`).
      */
     close?(socket: Socket<Data>, error?: Error): void | Promise<void>;

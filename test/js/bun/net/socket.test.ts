@@ -8017,6 +8017,16 @@ describe.concurrent("end(data) larger than the send buffer", () => {
     socket.destroy();
   }
 
+  // macOS can lose a reset that is sent while data is on its way. One that arrived shows within a few turns of the loop.
+  // Otherwise a byte to the port, which is closed by now, draws another.
+  async function closeOfResetPeer<T>(peer: Socket<unknown>, closed: Promise<T>) {
+    let arrived = false;
+    closed.then(() => (arrived = true));
+    for (let turns = 0; turns < 1000 && !arrived; turns++) await new Promise(resolve => setImmediate(resolve));
+    if (!arrived) peer.write("?");
+    return closed;
+  }
+
   describe.each(["tcp", "unix", "tls"] as const)("%s", transport => {
     // The peer sends its request and its FIN at once, and reads nothing until the socket under test has seen that FIN.
     it.skipIf(isWindows && transport === "unix").each([
@@ -8221,7 +8231,7 @@ describe.concurrent("end(data) larger than the send buffer", () => {
             },
           });
           const [socket, peer] = await Promise.all([opened.promise, peerOpened.promise]);
-          socket.end(Buffer.alloc(4 << 20, "a"));
+          socket.write(Buffer.alloc(4 << 20, "a"));
           socketFaultInjection.set({ syscall: "send", action: "errno", errno: "EAGAIN", repeat: -1, fd: socket.fd });
           socket.close();
           peer.write("x");
@@ -8345,7 +8355,7 @@ describe.concurrent("end(data) larger than the send buffer", () => {
         Object.keys(timeoutHandlers).map(handler => [transport, handler as keyof typeof timeoutHandlers] as const),
       ),
     )(
-    "%s with %s: the timeout closes an ended socket whose peer stopped reading the tail",
+    "%s with %s: the timeout resets an ended socket whose peer stopped reading the tail",
     async (transport, handler) => {
       await using proc = Bun.spawn({
         cmd: [
@@ -8355,6 +8365,7 @@ describe.concurrent("end(data) larger than the send buffer", () => {
           import { sweepSocketTimers } from "bun:internal-for-testing";
           const { key, cert } = JSON.parse(process.env.TEST_TLS);
           const queued = Promise.withResolvers();
+          const peerClosed = Promise.withResolvers();
           using server = Bun.listen({
             hostname: "127.0.0.1",
             port: 0,
@@ -8374,13 +8385,18 @@ describe.concurrent("end(data) larger than the send buffer", () => {
             port: server.port,
             tls: key ? { ca: cert } : undefined,
             // A TLS socket can't be paused before it has read the handshake.
-            socket: { ...(key ? { handshake: sendRequest } : { open: sendRequest }), data() {} },
+            socket: {
+              ...(key ? { handshake: sendRequest } : { open: sendRequest }),
+              data() {},
+              close: (socket, error) => peerClosed.resolve(error?.code),
+            },
           });
           await queued.promise;
-          // An accepted socket starts with a 120 second timeout, and a TLS close waits 10 more for unsent records.
-          // One sweep is 4 seconds, and a timeout is due at the first sweep that isn't early: 31 and 4 at most.
-          sweepSocketTimers(31 + 4);
+          // An accepted socket starts with a 120 second timeout. One sweep is 4 seconds, and the 30th may come a moment too early.
+          sweepSocketTimers(31);
           console.log("done");
+          peer.resume();
+          console.log("peer", await (${closeOfResetPeer})(peer, peerClosed.promise));
           `,
         ],
         env: { ...bunEnv, TEST_TLS: JSON.stringify(transport === "tls" ? { key: tls.key, cert: tls.cert } : {}) },
@@ -8390,7 +8406,7 @@ describe.concurrent("end(data) larger than the send buffer", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const timeout = handler === "no timeout()" ? "" : "timeout\n";
       expect({ stdout, stderr }).toEqual({
-        stdout: `end ${16 << 20}\n${timeout}close ETIMEDOUT write\ndone\n`,
+        stdout: `end ${16 << 20}\n${timeout}close ETIMEDOUT write\ndone\npeer ECONNRESET\n`,
         stderr: "",
       });
       expect(exitCode).toBe(0);
@@ -8398,9 +8414,14 @@ describe.concurrent("end(data) larger than the send buffer", () => {
   );
 
   // In its own process, and not on Windows, for the same reasons.
-  it.skipIf(isWindows).each(["tcp", "tls"] as const)(
-    "%s: end(data) made in timeout() with nothing queued before closes at once, without an error",
-    async transport => {
+  it.skipIf(isWindows).each([
+    ["tcp", "reads again"],
+    ["tcp", "still doesn't read"],
+    ["tls", "reads again"],
+    ["tls", "still doesn't read"],
+  ] as const)(
+    "%s: the tail of an end(data) made in timeout() has a timeout of its own, and the peer %s",
+    async (transport, peer) => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -8409,18 +8430,21 @@ describe.concurrent("end(data) larger than the send buffer", () => {
           import { sweepSocketTimers } from "bun:internal-for-testing";
           const { key, cert } = JSON.parse(process.env.TEST_TLS);
           const full = Promise.withResolvers();
+          const closed = Promise.withResolvers();
+          const peerClosed = Promise.withResolvers();
           const chunk = Buffer.alloc(1 << 20);
+          let missing = 16 << 20;
           using server = Bun.listen({
             hostname: "127.0.0.1",
             port: 0,
             tls: key ? { key, cert } : undefined,
             socket: {
               data(socket) {
-                while (socket.write(chunk) === chunk.length) {}
+                for (let took = chunk.length; took === chunk.length; missing += took) took = socket.write(chunk);
                 full.resolve();
               },
               timeout: socket => console.log("timeout", socket.end(Buffer.alloc(16 << 20))),
-              close: (socket, error) => console.log("close", error?.code),
+              close: (socket, error) => closed.resolve(error?.code),
             },
           });
           function sendRequest(socket) {
@@ -8431,12 +8455,18 @@ describe.concurrent("end(data) larger than the send buffer", () => {
             hostname: "127.0.0.1",
             port: server.port,
             tls: key ? { ca: cert } : undefined,
-            socket: { ...(key ? { handshake: sendRequest } : { open: sendRequest }), data() {} },
+            socket: {
+              ...(key ? { handshake: sendRequest } : { open: sendRequest }),
+              data: (socket, chunk) => void (missing -= chunk.length),
+              close: (socket, error) => peerClosed.resolve(error?.code),
+            },
           });
           await full.promise;
-          // The accepted socket's 120 seconds, and the 10 a TLS close waits for unsent records. Less than a second timeout.
-          sweepSocketTimers(31 + 4);
-          console.log("done");
+          // The accepted socket's 120 seconds, once or twice.
+          sweepSocketTimers(${peer === "reads again" ? 31 : 62});
+          peer.resume();
+          const code = await closed.promise;
+          console.log("close", code, "peer", await (${closeOfResetPeer})(peer, peerClosed.promise), "whole", missing === 0);
           `,
         ],
         env: { ...bunEnv, TEST_TLS: JSON.stringify(transport === "tls" ? { key: tls.key, cert: tls.cert } : {}) },
@@ -8444,7 +8474,13 @@ describe.concurrent("end(data) larger than the send buffer", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr }).toEqual({ stdout: `timeout ${16 << 20}\nclose undefined\ndone\n`, stderr: "" });
+      expect({ stdout: stdout.trim().split("\n"), stderr }).toEqual({
+        stdout:
+          peer === "reads again"
+            ? [`timeout ${16 << 20}`, "close undefined peer undefined whole true"]
+            : [`timeout ${16 << 20}`, "timeout -1", "close ETIMEDOUT peer ECONNRESET whole false"],
+        stderr: "",
+      });
       expect(exitCode).toBe(0);
     },
   );
@@ -8545,35 +8581,80 @@ describe.concurrent("end(data) larger than the send buffer", () => {
   });
 
   // Windows takes a first send of any size whole, so nothing is queued there.
-  it.skipIf(isWindows).each(["tcp", "tls"] as const)(
-    "%s: close() gets an error for the tail that stop(true) drops",
-    async transport => {
-      const size = 12 << 20;
-      let taken = -1;
-      const closed = Promise.withResolvers<Error | undefined>();
-      using server = Bun.listen({
-        hostname: "127.0.0.1",
-        port: 0,
-        tls: transport === "tls" ? tls : undefined,
-        socket: {
-          data(socket) {
-            taken = socket.end(Buffer.alloc(size));
-            server.stop(true);
-          },
-          close: (_socket, error) => closed.resolve(error),
+  it
+    .skipIf(isWindows)
+    .each(
+      (["tcp", "tls"] as const).flatMap(transport =>
+        (["stop(true)", "close()", "terminate()"] as const).map(call => [transport, call] as const),
+      ),
+    )("%s: close() gets an error and the peer a reset for the tail that %s drops", async (transport, call) => {
+    const size = 12 << 20;
+    let taken = -1;
+    const closed = Promise.withResolvers<Error | undefined>();
+    const peerClosed = Promise.withResolvers<Error | undefined>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: transport === "tls" ? tls : undefined,
+      socket: {
+        data(socket) {
+          taken = socket.end(Buffer.alloc(size));
+          if (call === "stop(true)") server.stop(true);
+          else if (call === "close()") socket.close();
+          else socket.terminate();
         },
-      });
-      const sendRequest = (socket: Socket) => void socket.write("request");
-      using client = await Bun.connect({
-        hostname: "127.0.0.1",
-        port: server.port,
-        tls: transport === "tls" ? { ca: tls.cert } : undefined,
-        socket: { ...(transport === "tls" ? { handshake: sendRequest } : { open: sendRequest }), data() {} },
-      });
-      expect(await closed.promise).toMatchObject({ code: "ECANCELED", syscall: "write" });
-      expect(taken).toBe(size);
-    },
-  );
+        close: (_socket, error) => closed.resolve(error),
+      },
+    });
+    const sendRequest = (socket: Socket) => void socket.write("request");
+    using client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      tls: transport === "tls" ? { ca: tls.cert } : undefined,
+      socket: {
+        ...(transport === "tls" ? { handshake: sendRequest } : { open: sendRequest }),
+        data() {},
+        close: (_socket, error) => peerClosed.resolve(error),
+      },
+    });
+    expect(await closed.promise).toMatchObject({ code: "ECANCELED", syscall: "write" });
+    expect(await closeOfResetPeer(client, peerClosed.promise)).toMatchObject({ code: "ECONNRESET", syscall: "read" });
+    expect(taken).toBe(size);
+  });
+
+  it.skipIf(isWindows)("close() on the raw half of an upgradeTLS() pair resets the TLS half's tail", async () => {
+    const closed = Promise.withResolvers<Error | undefined>();
+    const peerOpened = Promise.withResolvers<Socket<unknown>>();
+    const peerClosed = Promise.withResolvers<Error | undefined>();
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: {
+        open: socket => peerOpened.resolve(socket),
+        handshake() {},
+        data() {},
+        close: (_socket, error) => peerClosed.resolve(error),
+      },
+    });
+    const plain = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data() {} } });
+    const [raw] = plain.upgradeTLS({
+      tls: { ca: tls.cert },
+      socket: {
+        data() {},
+        close: (_socket, error) => closed.resolve(error),
+        handshake(socket) {
+          socket.end(Buffer.alloc(12 << 20));
+          raw.close();
+        },
+      },
+    });
+    expect(await closed.promise).toMatchObject({ code: "ECANCELED", syscall: "write" });
+    expect(await closeOfResetPeer(await peerOpened.promise, peerClosed.promise)).toMatchObject({
+      code: "ECONNRESET",
+      syscall: "read",
+    });
+  });
 
   it.skipIf(isWindows)(
     "upgradeTLS() throws while the tail of end(data) is being sent, and the tail arrives",
@@ -8643,8 +8724,8 @@ describe.concurrent("end(data) larger than the send buffer", () => {
           },
         });
         await queued.promise;
-        // 20 seconds, then the 10 a TLS close waits for unsent records. One sweep is 4 seconds, and a timeout is due at the first sweep that isn't early: 6 and 4 at most.
-        sweepSocketTimers(6 + 4);
+        // 20 seconds. One sweep is 4, and a timeout is due at the first sweep that isn't early.
+        sweepSocketTimers(6);
         console.log("done");
         `,
       ],

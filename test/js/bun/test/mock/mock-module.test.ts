@@ -5,7 +5,7 @@
 // - Write test for export {foo} from "./foo"
 // - Write test for import {foo} from "./foo"; export {foo}
 
-import { describe, expect, jest, mock, spyOn, test, vi } from "bun:test";
+import { describe, expect, jest, mock, setDefaultTimeout, spyOn, test, vi } from "bun:test";
 import { bunEnv, bunExe, Heap, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -13,6 +13,9 @@ import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable 
 import * as spyFixture from "./spymodule-fixture";
 
 const isolationFlags: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]]];
+
+// In a debug build, a case that starts `bun test --isolate=modules` takes 2.6 s alone, and over 5 s beside the other cases of this file on 12 processors.
+if (isASAN || isDebug) setDefaultTimeout(20_000);
 
 test("mock.module async", async () => {
   mock.module("i-am-async-and-mocked", async () => {
@@ -6461,8 +6464,610 @@ describe.concurrent(
         2,
       );
     });
+
+    const files = {
+      "variable.js": `export function x() { return "real"; }`,
+      "inner.js": `export * from "./variable.js"; export function y() { return "real-y"; }`,
+      "outer.js": `export * from "./inner.js";`,
+      "next.test.js": `
+        import { expect, test } from "bun:test";
+        import * as inner from "./inner.js";
+        import * as outer from "./outer.js";
+        test("the variables have their values back", () => {
+          expect([outer.x(), inner.x(), outer.y()]).toEqual(["real", "real", "real-y"]);
+        });
+      `,
+    };
+
+    test("the end of the older mock leaves the newer one in place, and the end of both gives the value back", async () => {
+      await expectFixturesToPass(
+        {
+          ...files,
+          "a.test.js": `
+            import { expect, jest, mock, test } from "bun:test";
+            import * as inner from "./inner.js";
+            import * as outer from "./outer.js";
+            test("the older mock ends first", () => {
+              mock.module("./outer.js", () => ({ x: () => "outer" }));
+              mock.module("./inner.js", () => ({ x: () => "inner" }));
+              expect([outer.x(), inner.x()]).toEqual(["inner", "inner"]);
+              jest.dontMock("./outer.js");
+              expect([outer.x(), inner.x()]).toEqual(["inner", "inner"]);
+              jest.dontMock("./inner.js");
+              expect([outer.x(), inner.x()]).toEqual(["real", "real"]);
+            });
+          `,
+        },
+        2,
+      );
+    });
+
+    test("a mock that patches again is the newest, and a mock that ends under it changes nothing", async () => {
+      await expectFixturesToPass(
+        {
+          ...files,
+          "a.test.js": `
+            import { expect, jest, mock, test } from "bun:test";
+            import * as inner from "./inner.js";
+            import * as outer from "./outer.js";
+            test("outer, inner, outer again", () => {
+              mock.module("./outer.js", () => ({ x: () => "outer 1" }));
+              mock.module("./inner.js", () => ({ x: () => "inner" }));
+              mock.module("./outer.js", () => ({ x: () => "outer 2" }));
+              expect([outer.x(), inner.x()]).toEqual(["outer 2", "outer 2"]);
+              jest.dontMock("./inner.js");
+              expect([outer.x(), inner.x()]).toEqual(["outer 2", "outer 2"]);
+            });
+          `,
+        },
+        2,
+      );
+    });
+
+    test("the variable holds the namespace object of a module, which no import had asked for", async () => {
+      await expectFixturesToPass(
+        {
+          "variable.js": `export const a = "real";`,
+          "inner.js": `export * as all from "./variable.js";`,
+          "outer.js": `export * as all from "./variable.js";`,
+          "a.test.js": `
+            import { expect, jest, mock, test } from "bun:test";
+            import * as inner from "./inner.js";
+            import * as outer from "./outer.js";
+            test("the older mock ends first", () => {
+              mock.module("./inner.js", () => ({ all: { a: "inner" } }));
+              mock.module("./outer.js", () => ({ all: { a: "outer" } }));
+              expect([inner.all.a, outer.all.a]).toEqual(["outer", "outer"]);
+              jest.dontMock("./inner.js");
+              expect([inner.all.a, outer.all.a]).toEqual(["outer", "outer"]);
+            });
+          `,
+          "next.test.js": `
+            import { expect, test } from "bun:test";
+            import * as inner from "./inner.js";
+            import * as outer from "./outer.js";
+            import * as variable from "./variable.js";
+            test("the variable holds the namespace object again", () => {
+              expect([inner.all === variable, outer.all === variable, inner.all.a]).toEqual([true, true, "real"]);
+            });
+          `,
+        },
+        2,
+      );
+    });
+
+    test("a mock that patched another variable first and this one last is undone too, with no unmock call", async () => {
+      await expectFixturesToPass(
+        {
+          ...files,
+          "a.test.js": `
+            import { expect, mock, test } from "bun:test";
+            import * as inner from "./inner.js";
+            import * as outer from "./outer.js";
+            test("inner for y, variable for x, inner for x", () => {
+              mock.module("./inner.js", () => ({ y: () => "inner y" }));
+              mock.module("./variable.js", () => ({ x: () => "variable" }));
+              mock.module("./inner.js", () => ({ x: () => "inner x" }));
+              expect([outer.x(), inner.x(), outer.y()]).toEqual(["inner x", "inner x", "inner y"]);
+            });
+          `,
+        },
+        2,
+      );
+    });
   },
 );
+
+describe.concurrent("mocks that patch one variable, which a module exports under several names", () => {
+  // socket.io-client ends with `export { lookup as io, lookup as connect, lookup as default }`.
+  const lookup = `
+    function lookup() { return "real"; }
+    export { lookup as io, lookup as connect, lookup as "0", lookup as default };
+  `;
+  const read = `const read = ns => [ns.io(), ns.connect(), ns[0](), ns.default()];`;
+  const all = (value: string) => JSON.stringify(Array(4).fill(value));
+
+  test.each([
+    ["io", "connect"],
+    ["connect", "io"],
+    ["default", "io"],
+    // An index-like name is listed before the others, whenever it was mocked.
+    ["0", "io"],
+    ["io", "0"],
+  ])("a mock of %j, then one of %j", async (first, second) => {
+    const mocks = `
+      mock.module("./lookup.js", () => ({ ${JSON.stringify(first)}: () => "first" }));
+      mock.module("./lookup.js", () => ({ ${JSON.stringify(second)}: () => "second" }));
+      expect(read(lookup)).toEqual(${all("second")});
+    `;
+    await expectFixturesToPass(
+      {
+        "lookup.js": lookup,
+        "1.test.js": `
+          import { expect, jest, mock, test } from "bun:test";
+          import * as lookup from "./lookup.js";
+          ${read}
+          test("jest.dontMock() undoes both", () => {
+            ${mocks}
+            expect(read(jest.requireActual("./lookup.js"))).toEqual(${all("real")});
+            jest.dontMock("./lookup.js");
+            expect(read(lookup)).toEqual(${all("real")});
+          });
+        `,
+        "2.test.js": `
+          import { expect, mock, test } from "bun:test";
+          import * as lookup from "./lookup.js";
+          ${read}
+          test("the end of the file undoes both", () => {
+            ${mocks}
+          });
+        `,
+        "3.test.js": `
+          import { expect, test } from "bun:test";
+          import * as lookup from "./lookup.js";
+          ${read}
+          test("the variable has its value back", () => {
+            expect(read(lookup)).toEqual(${all("real")});
+          });
+        `,
+      },
+      3,
+    );
+  });
+
+  test("the variable holds a number that is no integer", async () => {
+    await expectFixturesToPass(
+      {
+        "rate.js": `
+          const rate = 0.2;
+          export { rate, rate as vat };
+          export const count = 3;
+        `,
+        "a.test.js": `
+          import { expect, jest, mock, test } from "bun:test";
+          import * as rates from "./rate.js";
+          test("two mocks of two names, and of a second variable", () => {
+            mock.module("./rate.js", () => ({ rate: 0.5 }));
+            mock.module("./rate.js", () => ({ vat: 1.5, count: 4.5 }));
+            expect([rates.rate, rates.vat, rates.count]).toEqual([1.5, 1.5, 4.5]);
+            expect(jest.requireActual("./rate.js")).toEqual({ rate: 0.2, vat: 0.2, count: 3 });
+            jest.dontMock("./rate.js");
+            expect([rates.rate, rates.vat, rates.count]).toEqual([0.2, 0.2, 3]);
+          });
+          test("the end of the file undoes both", () => {
+            mock.module("./rate.js", () => ({ rate: 0.5, count: 4.5 }));
+            mock.module("./rate.js", () => ({ vat: 1.5 }));
+          });
+        `,
+        "next.test.js": `
+          import { expect, test } from "bun:test";
+          import * as rates from "./rate.js";
+          test("the variables have their values back", () => {
+            expect([rates.rate, rates.vat, rates.count]).toEqual([0.2, 0.2, 3]);
+          });
+        `,
+      },
+      3,
+    );
+  });
+
+  test("the original has the real value under every name, for a name that no mock lists too", async () => {
+    await expectFixturesToPass(
+      {
+        "lookup.js": lookup,
+        "original.test.js": `
+          import { expect, jest, mock, test, vi } from "bun:test";
+          import * as lookup from "./lookup.js";
+          ${read}
+          test("after one mock", async () => {
+            mock.module("./lookup.js", () => ({ io: () => "first" }));
+            expect(read(jest.requireActual("./lookup.js"))).toEqual(${all("real")});
+            expect(read(await vi.importActual("./lookup.js"))).toEqual(${all("real")});
+            let original;
+            await mock.module("./lookup.js", async importOriginal => {
+              original = await importOriginal();
+              return { connect: () => "second" };
+            });
+            expect(read(original)).toEqual(${all("real")});
+            expect(read(lookup)).toEqual(${all("second")});
+          });
+        `,
+        "spies.test.js": `
+          import { expect, mock, test, vi } from "bun:test";
+          import * as lookup from "./lookup.js";
+          ${read}
+          test("a mock that spies, laid over the mock of one name, calls the real function", () => {
+            mock.module("./lookup.js", () => ({ connect: () => "first" }));
+            vi.mock("./lookup.js", { spy: true });
+            expect(vi.isMockFunction(lookup.io)).toBe(true);
+            expect(read(lookup)).toEqual(${all("real")});
+            vi.doUnmock("./lookup.js");
+            expect(vi.isMockFunction(lookup.io)).toBe(false);
+            expect(read(lookup)).toEqual(${all("real")});
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("a test file's mock over a preload's mock of another name leaves the preload's mock for the next file", async () => {
+    await expectFixturesToPass(
+      {
+        "lookup.js": lookup,
+        "preload.js": `
+          import { mock } from "bun:test";
+          import "./lookup.js";
+          mock.module("./lookup.js", () => ({ io: () => "preload" }));
+        `,
+        "1.test.js": `
+          import { expect, mock, test } from "bun:test";
+          import * as lookup from "./lookup.js";
+          ${read}
+          test("the file mocks another name", () => {
+            expect(read(lookup)).toEqual(${all("preload")});
+            mock.module("./lookup.js", () => ({ connect: () => "file" }));
+            expect(read(lookup)).toEqual(${all("file")});
+          });
+        `,
+        "2.test.js": `
+          import { expect, test, vi } from "bun:test";
+          import * as lookup from "./lookup.js";
+          ${read}
+          test("the preload's mock is back, and the file removes it", () => {
+            expect(read(lookup)).toEqual(${all("preload")});
+            vi.doUnmock("./lookup.js");
+            expect(read(lookup)).toEqual(${all("real")});
+          });
+        `,
+      },
+      2,
+      ["--preload", "./preload.js"],
+    );
+  });
+
+  test("a mock made while the variable has no value yet, and a later one, are both undone", async () => {
+    const late = `
+      globalThis.reachedTheAwait();
+      await globalThis.gate;
+      const lookup = () => "real";
+      export { lookup as io, lookup as connect };
+    `;
+    const mockedAgain = (name: string) => `
+      test("mocked at the await of the module, and after its body by ${name}", async () => {
+        const reached = Promise.withResolvers();
+        const gate = Promise.withResolvers();
+        globalThis.reachedTheAwait = reached.resolve;
+        globalThis.gate = gate.promise;
+        const loading = import("./late-${name}.js");
+        await reached.promise;
+        mock.module("./late-${name}.js", () => ({ io: () => "first" }));
+        gate.resolve();
+        const late = await loading;
+        // The body of the module assigned over the first mock.
+        expect([late.io(), late.connect()]).toEqual(["real", "real"]);
+        const actual = jest.requireActual("./late-${name}.js");
+        expect([actual.io(), actual.connect()]).toEqual(["real", "real"]);
+        mock.module("./late-${name}.js", () => ({ ${name}: () => "second" }));
+        expect([late.io(), late.connect()]).toEqual(["second", "second"]);
+        jest.dontMock("./late-${name}.js");
+        expect([late.io(), late.connect()]).toEqual(["real", "real"]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        "late-io.js": late,
+        "late-connect.js": late,
+        "late.test.js": `
+          import { expect, jest, mock, test } from "bun:test";
+          ${mockedAgain("io")}
+          ${mockedAgain("connect")}
+        `,
+      },
+      2,
+    );
+  });
+
+  test("what a mock replaced outlives collections, and the end of the mock leaves nothing of it behind", async () => {
+    // A round takes some 20 times as long in a debug build or with a sanitizer.
+    const rounds = isASAN || isDebug ? 20 : 200;
+    await expectFixturesToPass(
+      {
+        "lookup.js": lookup,
+        "collected.test.js": `
+          import { heapStats } from "bun:jsc";
+          import { expect, jest, mock, test } from "bun:test";
+          import * as lookup from "./lookup.js";
+          ${read}
+          const cells = () => {
+            Bun.gc(true);
+            const { Array, Object } = heapStats().objectTypeCounts;
+            return Array + Object;
+          };
+          test("${rounds} rounds of two mocks and their end", () => {
+            let early;
+            for (let round = 0; round < ${rounds}; round++) {
+              mock.module("./lookup.js", () => ({ io: () => "first" }));
+              mock.module("./lookup.js", () => ({ connect: () => "second" }));
+              Bun.gc(true);
+              expect(lookup.io()).toBe("second");
+              jest.dontMock("./lookup.js");
+              expect(read(lookup)).toEqual(${all("real")});
+              if (round === 9) early = cells();
+            }
+            expect(cells() - early).toBeLessThan(${rounds / 2});
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("a factory that spreads the original stores only what it replaces, so a spy on another export is restored", async () => {
+    const files = {
+      "exports.js": `
+        export function x() { return "real-x"; }
+        export function y() { return "real-y"; }
+      `,
+      "next.test.js": `
+        import { expect, test, vi } from "bun:test";
+        import * as exports from "./exports.js";
+        test("the variables have their values back", () => {
+          expect([exports.x(), exports.y(), vi.isMockFunction(exports.y)]).toEqual(["real-x", "real-y", false]);
+        });
+      `,
+    };
+    await Promise.all([
+      expectFixturesToPass(
+        {
+          ...files,
+          "a.test.js": `
+            import { afterEach, expect, jest, mock, spyOn, test, vi } from "bun:test";
+            import * as exports from "./exports.js";
+            afterEach(() => mock.restore());
+            test("the factory hands the spy back", () => {
+              spyOn(exports, "y").mockReturnValue("spied");
+              mock.module("./exports.js", () => ({ ...jest.requireActual("./exports.js"), x: () => "mocked" }));
+              expect([exports.x(), exports.y()]).toEqual(["mocked", "spied"]);
+            });
+            test("mock.restore() has restored the spy, and the mock stays", () => {
+              expect([exports.x(), exports.y(), vi.isMockFunction(exports.y)]).toEqual(["mocked", "real-y", false]);
+              jest.dontMock("./exports.js");
+              expect([exports.x(), exports.y(), vi.isMockFunction(exports.y)]).toEqual(["real-x", "real-y", false]);
+            });
+          `,
+        },
+        3,
+      ),
+      // The spy and the mock of a preload: each test begins with the spy restored and the mock in place.
+      expectFixturesToPass(
+        {
+          "exports.js": files["exports.js"],
+          "bunfig.toml": `[test]\nrestoreMocks = true\n`,
+          "preload.js": `
+            import { mock, spyOn } from "bun:test";
+            import * as exports from "./exports.js";
+            spyOn(exports, "y");
+            mock.module("./exports.js", () => ({ ...require("./exports.js"), x: () => "preload" }));
+          `,
+          "a.test.js": `
+            import { expect, test, vi } from "bun:test";
+            import * as exports from "./exports.js";
+            test.each([1, 2])("test %d of the first file", () => {
+              expect([exports.x(), exports.y(), vi.isMockFunction(exports.y)]).toEqual(["preload", "real-y", false]);
+            });
+          `,
+          "b.test.js": `
+            import { expect, test, vi } from "bun:test";
+            import * as exports from "./exports.js";
+            test("the second file", () => {
+              expect([exports.x(), exports.y(), vi.isMockFunction(exports.y)]).toEqual(["preload", "real-y", false]);
+            });
+          `,
+        },
+        3,
+        ["--preload", "./preload.js"],
+      ),
+    ]);
+  });
+});
+
+test.concurrent(
+  "a mock whose factory evicts the module and loads it again ends its stores to the new instance",
+  async () => {
+    // The new instance of the module that re-exports comes with a new instance of the module that declares the variable.
+    const mocked = `
+    import { expect, jest, mock, test } from "bun:test";
+    import "./reexports.js";
+    const mockAndImport = () => {
+      mock.module("./reexports.js", () => (jest.resetModules(), { ...require("./reexports.js"), x: () => "mocked" }));
+      return import("./variable.js");
+    };
+  `;
+    await expectFixturesToPass(
+      {
+        "variable.js": `export function x() { return "real"; }`,
+        "reexports.js": `export * from "./variable.js";`,
+        "a.test.js": `
+        ${mocked}
+        test("the mock ends", async () => {
+          const variable = await mockAndImport();
+          expect(variable.x()).toBe("mocked");
+          jest.dontMock("./reexports.js");
+          expect(variable.x()).toBe("real");
+        });
+      `,
+        "b.test.js": `
+        ${mocked}
+        test("the modules are reset again before the mock ends", async () => {
+          const variable = await mockAndImport();
+          jest.resetModules();
+          expect(variable.x()).toBe("mocked");
+          jest.dontMock("./reexports.js");
+          expect(variable.x()).toBe("real");
+        });
+      `,
+        "c.test.js": `
+        ${mocked}
+        test("the mock is left to the end of the file", async () => {
+          globalThis.leftMocked = await mockAndImport();
+          expect(globalThis.leftMocked.x()).toBe("mocked");
+        });
+      `,
+        "d.test.js": `
+        import { expect, test } from "bun:test";
+        import { x } from "./variable.js";
+        test("the variable has its value back", () => {
+          expect([x(), globalThis.leftMocked.x()]).toEqual(["real", "real"]);
+        });
+      `,
+      },
+      4,
+    );
+  },
+);
+
+describe.concurrent("a spy and a module mock on one export are each undone without the other", () => {
+  const files = {
+    "lookup.js": `
+      function lookup() { return "real"; }
+      export { lookup as io, lookup as connect };
+    `,
+    "next.test.js": `
+      import { expect, test, vi } from "bun:test";
+      import * as lookup from "./lookup.js";
+      test("the variable has its value back", () => {
+        expect([lookup.io(), lookup.connect(), vi.isMockFunction(lookup.io)]).toEqual(["real", "real", false]);
+      });
+    `,
+  };
+
+  test("the spy is restored under the mock", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "a.test.js": `
+          import { expect, jest, mock, spyOn, test } from "bun:test";
+          import * as lookup from "./lookup.js";
+          test("spy, mock, restore, unmock", () => {
+            spyOn(lookup, "io");
+            mock.module("./lookup.js", () => ({ connect: () => "mocked" }));
+            expect([lookup.io(), lookup.connect()]).toEqual(["mocked", "mocked"]);
+            mock.restore();
+            expect([lookup.io(), lookup.connect()]).toEqual(["mocked", "mocked"]);
+            jest.dontMock("./lookup.js");
+            expect([lookup.io(), lookup.connect()]).toEqual(["real", "real"]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("the mock is removed under the spy", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "a.test.js": `
+          import { expect, jest, mock, spyOn, test } from "bun:test";
+          import * as lookup from "./lookup.js";
+          test("mock, spy, unmock, restore", () => {
+            mock.module("./lookup.js", () => ({ io: () => "mocked" }));
+            const spy = spyOn(lookup, "connect");
+            expect([lookup.io(), lookup.connect()]).toEqual(["mocked", "mocked"]);
+            jest.dontMock("./lookup.js");
+            expect([lookup.io, lookup.connect]).toEqual([spy, spy]);
+            // The spy calls what it stands over, and that is the module's own function now.
+            expect([lookup.io(), lookup.connect(), spy.mock.calls.length]).toEqual(["real", "real", 4]);
+            spy.mockRestore();
+            expect([lookup.io(), lookup.connect()]).toEqual(["real", "real"]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("a mock that spies calls the module's own function once the mock under it is removed", async () => {
+    await expectFixturesToPass(
+      {
+        "lookup.js": files["lookup.js"],
+        "reexports.js": `export * from "./lookup.js";`,
+        "next.test.js": files["next.test.js"],
+        "a.test.js": `
+          import { expect, jest, mock, test, vi } from "bun:test";
+          import * as lookup from "./lookup.js";
+          import * as reexports from "./reexports.js";
+          test("mock of one module, spying mock of the other, unmock, unmock", () => {
+            mock.module("./reexports.js", () => ({ io: () => "mocked" }));
+            vi.mock("./lookup.js", { spy: true });
+            expect([lookup.io(), reexports.connect(), vi.isMockFunction(lookup.io)]).toEqual(["mocked", "mocked", true]);
+            jest.dontMock("./reexports.js");
+            expect([lookup.io(), reexports.connect(), vi.isMockFunction(lookup.io)]).toEqual(["real", "real", true]);
+            vi.doUnmock("./lookup.js");
+            expect([lookup.io(), reexports.connect(), vi.isMockFunction(lookup.io)]).toEqual(["real", "real", false]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("an export that a builtin module makes when it is first read comes back after a mock and a spy", async () => {
+    await expectFixturesToPass(
+      {
+        "a.test.js": `
+          import { expect, jest, mock, spyOn, test, vi } from "bun:test";
+          import * as fs from "node:fs";
+          test("mock, spy, unmock, restore", () => {
+            mock.module("node:fs", () => ({ FileReadStream: () => "mocked" }));
+            const spy = spyOn(fs, "FileReadStream");
+            expect(fs.FileReadStream()).toBe("mocked");
+            jest.dontMock("node:fs");
+            expect(fs.FileReadStream).toBe(spy);
+            spy.mockRestore();
+            expect(fs.FileReadStream).toBe(require("node:fs").FileReadStream);
+            expect(vi.isMockFunction(fs.FileReadStream)).toBe(false);
+          });
+          test("mock, spy, unmock, and the spy is left to the end of the file", () => {
+            mock.module("node:fs", () => ({ FileWriteStream: () => "mocked" }));
+            spyOn(fs, "FileWriteStream");
+            jest.dontMock("node:fs");
+          });
+        `,
+        "next.test.js": `
+          import { expect, test, vi } from "bun:test";
+          import * as fs from "node:fs";
+          test("the exports are the builtin's", () => {
+            expect([fs.FileReadStream, fs.FileWriteStream]).toEqual([require("node:fs").FileReadStream, require("node:fs").FileWriteStream]);
+            expect([vi.isMockFunction(fs.FileReadStream), vi.isMockFunction(fs.FileWriteStream)]).toEqual([false, false]);
+          });
+        `,
+      },
+      3,
+    );
+  });
+});
 
 describe.concurrent("vi.mock() with an async factory, of a module that is loaded already", () => {
   const files = {

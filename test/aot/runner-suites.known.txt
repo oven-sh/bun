@@ -108,6 +108,11 @@ test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while i
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > with import() and require()
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > and fails to load
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a Vitest test file with no mock call of its own still runs its imports one at a time > the transpiler cache doesn't mix up a file run as a test with the same file imported
+# These: a spy and a module mock stand on one export, and one of them ends under the other. A compiled module gives the variable what the one that ends found there: the other is undone with it, or comes back behind its own end.
+test/js/bun/test/mock/mock-module.test.ts: a spy and a module mock on one export are each undone without the other > a mock that spies calls the module's own function once the mock under it is removed
+test/js/bun/test/mock/mock-module.test.ts: a spy and a module mock on one export are each undone without the other > an export that a builtin module makes when it is first read comes back after a mock and a spy
+test/js/bun/test/mock/mock-module.test.ts: a spy and a module mock on one export are each undone without the other > the mock is removed under the spy
+test/js/bun/test/mock/mock-module.test.ts: a spy and a module mock on one export are each undone without the other > the spy is restored under the mock
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > isn't evaluated again when a later file imports it, and keeps its exports
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > a preload's mocks are kept
@@ -121,7 +126,15 @@ test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, even with loads in flight > a load that never settles doesn't stop the next file's loads from being evicted
 # The next one: vi.doMock() of a module evicts the CommonJS file that has required it, and the next require() runs the body of that file again. The body of a compiled file runs once.
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > the next file gets the originals after a file mocks a loaded module and then one of its imports: vi.doMock
+# The next one: the factory of a mock hands back a spy that stands on another export. A compiled module takes the spy for a value of the mock, and gives it back once the spy is restored.
+test/js/bun/test/mock/mock-module.test.ts: mocks that patch one variable, which a module exports under several names > a factory that spreads the original stores only what it replaces, so a spy on another export is restored
+# The next one: a module is mocked at an await of its body, and again after the body has given the export its value. The end of the mock leaves the second mock in the variable of a compiled module.
+test/js/bun/test/mock/mock-module.test.ts: mocks that patch one variable, which a module exports under several names > a mock made while the variable has no value yet, and a later one, are both undone
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
+# These: two modules export one variable, and the mock that was laid first ends first, or patches again. A compiled module gives the variable what each mock found there: a mock that still stands is lost, or one that has ended comes back for the next test file.
+test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > a mock that patched another variable first and this one last is undone too, with no unmock call
+test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > a mock that patches again is the newest, and a mock that ends under it changes nothing
+test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the end of the older mock leaves the newer one in place, and the end of both gives the value back
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: unmock > the modules that imported the mock are loaded again []

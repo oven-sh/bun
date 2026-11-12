@@ -56,6 +56,13 @@ test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, wh
 test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the second without a factory
 test/js/bun/test/mock/mock-module.test.ts: vi.mock() with an async factory, of a module that is loaded already > by a preload, as its mock: the imports of the file get the mock
 test/js/bun/test/mock/mock-module.test.ts: vi.mock() with an async factory, of a module that is loaded already > by an earlier test file: the imports of the file get the mock
+# These: two modules export one variable, and the mock that was laid first ends first, or patches again. Plain runs outer.js or inner.js again when a mock of what it imports ends. Compiled has the one instance,
+# and a test of the fixture fails: see runner-suites.known.txt.
+test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > a mock that patched another variable first and this one last is undone too, with no unmock call
+test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > a mock that patches again is the newest, and a mock that ends under it changes nothing
+test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the end of the older mock leaves the newer one in place, and the end of both gives the value back
+# The next one: jest.requireActual() of a module that was mocked at an await of its body. Plain answers with what the mock replaced. Compiled runs the file a second time, and a test of the fixture fails: see runner-suites.known.txt.
+test/js/bun/test/mock/mock-module.test.ts: mocks that patch one variable, which a module exports under several names > a mock made while the variable has no value yet, and a later one, are both undone
 # The next one: a require() gives up on a mock whose factory has not settled, an import() of the same file is in flight, and the modules are reset. Every test of the fixture passes. Compiled, one body runs
 # behind the last line of the test and races the end of the process: some lists hold it and some do not. With a wait as the last line of the test every list holds it. The list of plain is the same in every run.
 ~ test/js/bun/test/mock/mock-module.test.ts: an automock is built from the copy of its original module that a running factory was given

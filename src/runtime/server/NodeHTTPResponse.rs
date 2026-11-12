@@ -844,7 +844,7 @@ impl NodeHTTPResponse {
         } else {
             JSValue::UNDEFINED
         };
-        // The status line is Latin-1, like Node's. ServerResponse has refused control characters and code units above 0xFF.
+        // The status line is Latin-1, like Node's.
         let status_message = status_message.unwrap_or_default();
         let status_message = latin1_of(&status_message);
         let status_message_bytes: &[u8] = &status_message;
@@ -877,6 +877,18 @@ impl NodeHTTPResponse {
                 global_object,
                 ErrorCode::ERR_HTTP_HEADERS_SENT,
                 "Stream already started",
+            );
+        }
+
+        // ServerResponse checks earlier, and user code can run in between. Node's checkInvalidHeaderChar.
+        if status_message_bytes
+            .iter()
+            .any(|&c| c != b'\t' && (c < 0x20 || c == 0x7f))
+        {
+            return err_throw(
+                global_object,
+                ErrorCode::ERR_INVALID_CHAR,
+                "Invalid character in statusMessage",
             );
         }
 

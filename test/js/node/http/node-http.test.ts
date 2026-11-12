@@ -2969,6 +2969,75 @@ describe("HTTP Server Security Tests - Advanced", () => {
       expect(response).not.toInclude("X-Injected: evil");
     });
 
+    const injected = "OK\r\nX-Injected: evil";
+    const injectInSetHeader = (res: ServerResponse) => {
+      const { setHeader } = res;
+      res.setHeader = function (name, value) {
+        this.statusMessage = injected;
+        return setHeader.call(this, name, value);
+      };
+      res.writeHead(200, { a: "b" }).end("chunk");
+    };
+    test.each<[string, string, (res: ServerResponse) => void]>([
+      ["a replaced setHeader()", get, injectInSetHeader],
+      [
+        "a replaced setHeader() of a pipelined response",
+        "GET /held HTTP/1.1\r\nHost: localhost\r\n\r\n" + get,
+        injectInSetHeader,
+      ],
+      [
+        "a replaced _implicitHeader()",
+        get,
+        res => {
+          (res as any)._implicitHeader = () => void (res.statusMessage = injected);
+          res.flushHeaders();
+          res.writeHead(200);
+        },
+      ],
+      ...(["end", "flushHeaders"] as const).map<[string, string, (res: ServerResponse) => void]>(method => [
+        `a replaced writeHead() that only takes note, under ${method}()`,
+        get,
+        res => {
+          res.writeHead = function () {
+            this.statusMessage = injected;
+            return this;
+          };
+          (res as any)[method]("chunk");
+          delete (res as any).writeHead;
+          res.writeHead(200);
+        },
+      ]),
+    ])("rejects CRLF in a statusMessage that is set by %s", async (_, request, send) => {
+      let code: string | undefined;
+      let held: ServerResponse | undefined;
+      server.on("request", (req, res) => {
+        if (req.url === "/held") return void (held = res);
+        try {
+          send(res);
+        } catch (e: any) {
+          code = e.code;
+        }
+        if (held) held.end(() => req.socket.destroySoon());
+        else req.socket.destroySoon();
+      });
+
+      expect(await sendRequest(request)).not.toInclude("X-Injected");
+      expect(code).toBe("ERR_INVALID_CHAR");
+    });
+
+    test("sends the head that follows a flushHeaders() that threw", async () => {
+      server.on("request", (req, res) => {
+        (res as any)._implicitHeader = () => void (res.statusMessage = injected);
+        try {
+          res.flushHeaders();
+        } catch {}
+        delete (res as any)._implicitHeader;
+        res.writeHead(500, "Sorry").end("safe");
+      });
+
+      expect(await sendRequest(get)).toStartWith("HTTP/1.1 500 Sorry\r\n");
+    });
+
     test("rejects CRLF in statusMessage passed to writeHead()", async () => {
       server.on("request", (req, res) => {
         expect(() => {

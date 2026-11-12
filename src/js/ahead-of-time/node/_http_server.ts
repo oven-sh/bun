@@ -5681,13 +5681,20 @@ function writeHead(
   return self;
 }
 
+// Checks again, where Node checks: a replaced setHeader() has run since _writeHead() did.
+function statusLine(statusCode: number, statusMessage: string | undefined): string {
+  const reason = `${statusMessage}`;
+  if (checkInvalidHeaderChar(reason)) throw $ERR_INVALID_CHAR("statusMessage");
+  return `HTTP/1.1 ${statusCode | 0} ${reason}\r\n`;
+}
+
 function storeHeadWithoutHandle(res: $Node.ServerResponse, exchange: Exchange | undefined): void {
   if (exchange !== undefined) spillHeaders(exchange);
   if (res._expect_continue && !res._sent100) res.shouldKeepAlive = false;
   // Node says keep-alive here, and after a Transfer-Encoding without "chunked" it keeps the connection too.
   const endsAtClose = bodyEndsAtClose(res);
   if (endsAtClose) res.shouldKeepAlive = false;
-  res._storeHeader(`HTTP/1.1 ${res.statusCode} ${res.statusMessage}\r\n`, res[kOutHeaders], true);
+  res._storeHeader(statusLine(res.statusCode, res.statusMessage), res[kOutHeaders], true);
   if (endsAtClose) res._last = true;
 }
 
@@ -5791,7 +5798,12 @@ ServerResponse.prototype.flushHeaders = function (this: $Node.ServerResponse) {
   if (this[kImplicitHeaderFromEnd]) return;
 
   this._headerSent = true;
-  writeHeadToHandle(this, exchange, handle);
+  try {
+    writeHeadToHandle(this, exchange, handle);
+  } catch (err) {
+    this._headerSent = false;
+    throw err;
+  }
   handle.flushHeaders();
   afterHeadWrite(this, handle, undefined);
 };

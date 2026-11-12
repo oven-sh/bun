@@ -3666,6 +3666,13 @@ ServerResponse.prototype.writeHead = function (statusCode, statusMessage, header
   return writeHead(this, statusCode, statusMessage, headers, true);
 };
 
+// Checks again, where Node checks: a replaced setHeader() has run since _writeHead() did.
+function statusLine(statusCode, statusMessage) {
+  const reason = `${statusMessage}`;
+  if (checkInvalidHeaderChar(reason)) throw $ERR_INVALID_CHAR("statusMessage");
+  return `HTTP/1.1 ${statusCode | 0} ${reason}\r\n`;
+}
+
 function writeHead(self, statusCode, statusMessage, headers, explicit) {
   if (self._header) {
     throw $ERR_HTTP_HEADERS_SENT("writeHead");
@@ -3693,7 +3700,7 @@ function writeHead(self, statusCode, statusMessage, headers, explicit) {
     // Node says keep-alive here, and after a Transfer-Encoding without "chunked" it keeps the connection too.
     const endsAtClose = bodyEndsAtClose(self);
     if (endsAtClose) self.shouldKeepAlive = false;
-    self._storeHeader(`HTTP/1.1 ${self.statusCode} ${self.statusMessage}\r\n`, self[kOutHeaders], true);
+    self._storeHeader(statusLine(self.statusCode, self.statusMessage), self[kOutHeaders], true);
     if (endsAtClose) self._last = true;
   }
 
@@ -3785,8 +3792,9 @@ ServerResponse.prototype.flushHeaders = function () {
   if (this[kImplicitHeaderFromEnd]) return;
 
   this._headerSent = true;
-  const renderedHeaders = renderNativeHeaders(this);
+  let renderedHeaders;
   try {
+    renderedHeaders = renderNativeHeaders(this);
     handle.writeHead(
       this[kSnapshotStatusCode] ?? this.statusCode,
       this[kSnapshotStatusMessage] ?? this.statusMessage,
@@ -3794,6 +3802,9 @@ ServerResponse.prototype.flushHeaders = function () {
       renderedAutoHeaders,
       renderedKeepAliveSecs,
     );
+  } catch (err) {
+    this._headerSent = false;
+    throw err;
   } finally {
     releaseRenderedHeaders(renderedHeaders);
   }

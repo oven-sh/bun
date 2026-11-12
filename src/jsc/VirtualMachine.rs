@@ -2338,8 +2338,10 @@ impl VirtualMachine {
         if handled {
             return false;
         }
-        !self.is_main_thread()
-            || !(self.is_watcher_enabled() || self.keeps_running_after_unhandled_error)
+        if !self.is_main_thread() {
+            return true;
+        }
+        !self.is_watcher_enabled() && !self.keeps_running_after_unhandled_error
     }
 
     pub fn hot_map(&mut self) -> Option<&mut crate::rare_data::HotMap> {

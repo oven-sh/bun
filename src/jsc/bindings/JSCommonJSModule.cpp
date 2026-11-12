@@ -1284,11 +1284,11 @@ JSCommonJSModule::~JSCommonJSModule()
     recordsBesideModuleObjects().remove(this);
 }
 
-// For a Proxy and the global of a node:vm context, the Get-kind lookup is the read. A read that throws exports
-// `undefined`, as in Node. An object that cannot look the key up either (a revoked Proxy) fails the import.
+// The Get-kind lookup of a Proxy or of a node:vm global is the read.
 static bool exportUndefinedAfterThrowingRead(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSObject* exports, const Identifier& property, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues)
 {
     TRY_CLEAR_EXCEPTION(scope, false);
+    // A revoked Proxy throws here too, and the import fails.
     PropertySlot own(exports, PropertySlot::InternalMethodType::GetOwnProperty);
     exports->methodTable()->getOwnPropertySlot(exports, globalObject, property, own);
     RETURN_IF_EXCEPTION(scope, false);

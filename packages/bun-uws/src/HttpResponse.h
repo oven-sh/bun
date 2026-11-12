@@ -408,12 +408,21 @@ public:
         if (isChunked()) {
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
 
-            /* We do not have tryWrite-like functionalities, so ignore optional in this path */
-
             /* Write the chunked data if there is any (this will not send zero chunks) */
             const bool terminated = !data.empty() && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_HAS_RESPONSE_TRAILERS);
-            this->write(data, nullptr, terminated);
-
+            if (optional && terminated && totalSize <= UINT_MAX) {
+                /* One last chunk of totalSize bytes. Like below, the caller keeps what the socket doesn't take and calls again from onWritable. */
+                char head[CHUNK_HEAD_MAX];
+                const size_t headLength = (httpResponseData->state & HttpResponseData<SSL>::HTTP_END_CALLED) ? 0 : chunkHead(head, (unsigned int) totalSize);
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
+                httpResponseData->offset += Super::writeFramed({head, headLength}, data.data(), data.length(), "\r\n0\r\n\r\n", true).first;
+                if (httpResponseData->offset != totalSize) {
+                    this->resetTimeout();
+                    return false;
+                }
+            } else {
+                this->write(data, nullptr, terminated);
+            }
 
             /* Terminating 0 chunk; node:http response trailers (RFC 9112 7.1.2) sit
              * between it and the final CRLF. */
@@ -447,7 +456,6 @@ public:
                 }
             }
 
-            /* tryEnd can never fail when in chunked mode, since we do not have tryWrite (yet), only write */
             this->resetTimeout();
             return true;
         } else {

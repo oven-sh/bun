@@ -1352,7 +1352,10 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // `res` is `Copy` (raw uWS handle); see the note in
         // `send_without_auto_flusher` re: holding it across `on_first_write`.
 
-        if self.requested_end && !res.state().is_http_write_called() {
+        // Over HTTP/1 the head can be out before the first byte of the body, and `try_end` continues either framing.
+        let can_try_end = matches!(res, uws::AnyResponse::SSL(_) | uws::AnyResponse::TCP(_))
+            || !res.state().is_http_write_called();
+        if self.requested_end && can_try_end {
             self.handle_first_write_if_necessary();
             let end_len = self.end_len;
             let success = res.try_end(&self.buffer[base..], end_len, false);

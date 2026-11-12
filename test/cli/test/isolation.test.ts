@@ -1668,11 +1668,12 @@ describe.concurrent("bun test --isolate=modules", () => {
       "c.test.js": read("c"),
     });
     const names = ["./a.test.js", "./b.test.js", "./c.test.js"];
-    const { stdout, stderr } = await runTests(String(dir), ["--isolate=modules"], names);
+    const { stdout, stderr, exitCode } = await runTests(String(dir), ["--isolate=modules"], names);
     const lines = stdout.split("\n").filter(line => line.startsWith("["));
     expect(lines).toEqual(Array(2).fill(JSON.stringify([null, 0, false, false])));
-    // How a run with such a global object is judged is not asserted here, only that it gets to its end.
+    // How a run with such a global object is judged is not asserted here, only that it gets to its end and exits as a test run does.
     expect(stderr).toContain("Ran 3 tests across 3 files.");
+    expect([0, 1]).toContain(exitCode);
   });
 
   test("keeps what node:perf_hooks and node:worker_threads add to the builtins when they load", async () => {

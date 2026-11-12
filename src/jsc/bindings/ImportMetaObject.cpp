@@ -653,8 +653,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
     return JSValue::encode(jsBoolean(isMain));
 }
 
-// A read through an object below an import.meta, or through a Proxy of one, finds that import.meta, as a read of a
-// function of the prototype did. No trap runs here.
+// The import.meta that a receiver inherits from or is a Proxy of: a read through it still finds the function. No trap runs.
 static NEVER_INLINE ImportMetaObject* importMetaBehind(JSObject* receiver)
 {
     // A Proxy can be the prototype of its own target, which closes the chain into a ring. Prototypes alone cannot.
@@ -682,8 +681,7 @@ static ALWAYS_INLINE ImportMetaObject* importMetaOfResolver(JSValue receiver)
     return receiver.isObject() ? importMetaBehind(asObject(receiver)) : nullptr;
 }
 
-// `resolve` and `resolveSync` are of one module. Each import.meta makes its own pair over the path of its module, when
-// the property is first read. Neither function looks at `this`.
+// Each import.meta makes its own `resolve` and `resolveSync` over the path of its module. Neither reads `this`.
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_resolve, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     ImportMetaObject* meta = importMetaOfResolver(JSValue::decode(thisValue));
@@ -693,8 +691,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_resolve, (JSGlobalObject * glo
     return JSValue::encode(meta->resolveProperty.getInitializedOnMainThread(meta));
 }
 
-// `resolveSync` has no field of its own: one more would take every import.meta from a cell of 96 bytes to one of 112.
-// The import.meta keeps it under a private name.
+// A second field would take every import.meta from a 96-byte cell to a 112-byte one, so a private name holds this one.
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_resolveSync, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     ImportMetaObject* meta = importMetaOfResolver(JSValue::decode(thisValue));

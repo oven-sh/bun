@@ -8146,8 +8146,7 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
     if (running.waitingModules.contains(start))
         return true;
 
-    // No import statement makes `start` wait. What a body awaits an import() of: the promise of the call leads to the body.
-    // A module behind such a call is read, and is not added to `unfinished`: the chain of the factory is what import statements lead to.
+    // What a body awaits an import() of: the promise of the call leads to the body. A module behind such a call is read and stays out of `unfinished`, which becomes the factory's import chain.
     std::optional<Vector<std::pair<JSC::JSPromise*, String>, 4>> importCalls;
     Vector<String> behindImportCalls;
     auto follow = [&](const String& importer, const String& key) {

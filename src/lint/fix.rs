@@ -432,8 +432,7 @@ impl<'a> Fixer<'a> {
         Fix::owned(Span::empty(at.span().end), text.into_text())
     }
 
-    /// Removes the named import `specifier`: the whole statement with its line if it's the only import, the `, { .. }`
-    /// after a default import, otherwise the specifier and the `,` next to it.
+    /// Removes the named import `specifier` with the `,` or `{ .. }` around it, or the whole statement if it's the only one.
     pub fn remove_import_specifier(self, specifier: ImportSpec<'a>) -> Option<Fix> {
         let (import, span) = (specifier.import(), specifier.span());
         let statement = import.stmt();

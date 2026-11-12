@@ -60,8 +60,7 @@ fn is_react_api(callee: Expr<'_>, names: &[&str]) -> bool {
         || ast_utils::is_member_access_of_any(callee, names)
 }
 
-/// The name the compiler gives `func`: its own for a declaration, the variable's for a function that is the whole
-/// initializer of a `const`. A function expression's own name doesn't count.
+/// The name the compiler gives `func`: a declaration's own, otherwise that of the variable it is the initializer of.
 fn compiler_name(func: Func<'_>) -> Option<Name<'_>> {
     if func.kind() == FnKind::Decl {
         return func.name().map(Ident::name);
@@ -75,9 +74,8 @@ fn compiler_name(func: Func<'_>) -> Option<Name<'_>> {
     }
 }
 
-/// True if the compiler would consider compiling `func` on its own: it's named like a component or a hook, it's the
-/// argument of `memo()` or `forwardRef()`, or it opts in. A function inside one of these is compiled as part of it, so a
-/// directive in it means nothing.
+/// True if the compiler would compile `func` on its own: named like a component or a hook, passed to `memo()` or
+/// `forwardRef()`, or opted in.
 fn is_compile_candidate(func: Func<'_>) -> bool {
     if compiler_name(func).is_some_and(|it| is_component_or_hook_name(it.bytes())) {
         return true;
@@ -94,8 +92,7 @@ fn is_compile_candidate(func: Func<'_>) -> bool {
     is_react_api_callback || has_body_directive(func, &OPT_IN_DIRECTIVES)
 }
 
-/// True if the function the compiler would compile `e` as part of opts out, which leaves its memoization to the code.
-/// That's the outermost candidate around `e`: the compiler doesn't look inside a function it compiles.
+/// True if the outermost compile candidate around `e` opts out. The compiler doesn't look inside a function it compiles.
 fn is_in_opted_out_function(e: Expr<'_>) -> bool {
     let functions = Node::Expr(e).ancestors().filter_map(Node::as_func);
     let candidate = functions.filter(|it| is_compile_candidate(*it)).last();
@@ -132,8 +129,7 @@ fn component_of(e: Expr<'_>, depth: u8) -> Option<Component<'_>> {
     }
 }
 
-/// True if the compiler leaves the component `e` alone, so `memo()` is what memoizes it: a class, or a function that
-/// opts out.
+/// True if the compiler leaves the component `e` alone: a class, or a function that opts out.
 fn compiler_skips(e: Expr<'_>) -> bool {
     match component_of(e, 4) {
         Some(Component::Class) => true,
@@ -158,8 +154,8 @@ fn first_argument(call: Call<'_>, count: usize) -> Option<Expr<'_>> {
     (fits && call.type_args().is_empty() && !call.is_optional()).then(|| args.first()).flatten()
 }
 
-/// True if the function `kept` still has a name for the compiler to find once the `memo()` around it is gone: that of
-/// the variable the call is assigned to, or its own once it's a declaration.
+/// True if the function `kept` has a name the compiler looks at once `memo()` is gone: the variable's, or its own as a
+/// declaration.
 fn keeps_name<'a>(e: Expr<'a>, kept: Expr<'a>) -> bool {
     let Some(func) = kept.as_fn() else {
         return true;
@@ -172,8 +168,7 @@ fn keeps_name<'a>(e: Expr<'a>, kept: Expr<'a>) -> bool {
     name.is_some_and(|it| is_component_or_hook_name(it.bytes()))
 }
 
-/// Returns what the call leaves behind, and the message that says so: `expr` for `useMemo(() => expr, deps)`, `fn` for
-/// `useCallback(fn, deps)`, `C` for `memo(C)`.
+/// What the call leaves behind: `expr` of `useMemo(() => expr, deps)`, `fn` of `useCallback(fn, deps)`, `C` of `memo(C)`.
 fn replacement<'a>(name: Name<'a>, e: Expr<'a>, call: Call<'a>) -> Option<(Expr<'a>, &'static Message)> {
     match name.bytes() {
         b"useMemo" => {
@@ -201,9 +196,8 @@ fn is_export_default(e: Expr<'_>) -> bool {
     matches!(e.parent(), Node::Stmt(statement) if matches!(statement.kind(), StmtKind::ExportDefault(_)))
 }
 
-/// True if `kept` needs parentheses in the place of `e`: an operator around it would take part of it, an `as` or a `!`
-/// after it would apply to part of it, a `{`, `function` or `class` would start a statement, an arrow function's block
-/// or a declaration after `export default`, or it's a comma expression.
+/// True if `kept` needs parentheses in the place of `e`: for precedence, after `export default` or at the start of a
+/// statement or an arrow body, or as a comma expression.
 fn needs_parentheses(e: Expr<'_>, kept: Expr<'_>) -> bool {
     let has_postfix_parent = match e.parent() {
         Node::Expr(parent) => matches!(
@@ -251,8 +245,7 @@ fn replaced_span(e: Expr<'_>, kept: Expr<'_>) -> Span {
     }
 }
 
-/// True if `kept` as a declaration would take the name of something else that the module uses: a declaration of its own
-/// or a global.
+/// True if `kept` as a declaration would take a name the module already uses: a declaration of its own or a global.
 fn name_is_taken<'a>(e: Expr<'a>, kept: Expr<'a>) -> bool {
     let file = e.file();
     becomes_declaration(e, kept)
@@ -262,8 +255,7 @@ fn name_is_taken<'a>(e: Expr<'a>, kept: Expr<'a>) -> bool {
         })
 }
 
-/// Every use of a memoizer in `file`, in source order: the references of the named imports, the members of the default
-/// and namespace imports, and the named imports that nothing refers to.
+/// Every use of a memoizer in `file`, in source order, and every named import of one that nothing refers to.
 fn uses<'a>(file: &'a File<'a>) -> Vec<Use<'a>> {
     let mut all = Vec::new();
     for import in react_imports(file) {

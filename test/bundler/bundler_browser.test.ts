@@ -624,7 +624,6 @@ describe("bundler", () => {
         import { setTimeout as sleep } from "node:timers/promises";
         import promises from "node:timers/promises";
         import * as namespace from "node:timers/promises";
-        import { setTimeout as bare } from "timers/promises";
         import * as timers from "node:timers";
         import required from "./required.cjs";
 
@@ -633,7 +632,6 @@ describe("bundler", () => {
           "named import": sleep,
           "default import": promises.setTimeout,
           "namespace import": namespace.setTimeout,
-          "bare specifier": bare,
           "import()": imported.setTimeout,
           "require()": required.promises.setTimeout,
           "node:timers": timers.promises.setTimeout,
@@ -655,7 +653,6 @@ describe("bundler", () => {
         named import: true resolved
         default import: true resolved
         namespace import: true resolved
-        bare specifier: true resolved
         import(): true resolved
         require(): true resolved
         node:timers: true resolved
@@ -668,11 +665,10 @@ describe("bundler", () => {
       expect(new Bun.Transpiler().scanImports(api.readFile("out.js"))).toEqual([]);
     },
   });
-  // Node.js v26.3.0 prints the same lines for these two files, except the last one: it does not use the global timers.
-  itBundled("browser/NodeTimersPromisesBehavior", {
+  // Node.js v26.3.0 prints the same lines for this file.
+  itBundled("browser/NodeTimersPromisesMatchesNode", {
     files: {
       "/entry.js": /* js */ `
-        import { hostIntervals } from "./host-intervals.js";
         import { setTimeout as sleep, setImmediate as immediate, setInterval as every, scheduler } from "node:timers/promises";
 
         const outcome = promise =>
@@ -688,19 +684,38 @@ describe("bundler", () => {
         };
 
         console.log("value:", await outcome(sleep(1, "value")));
-        console.log("unref:", (await Promise.all([sleep(1, "unref", { ref: false }), sleep(5)]))[0]);
         console.log("aborted before:", await outcome(sleep(1, "v", { signal: AbortSignal.abort("before") })));
         console.log("aborted later:", await abortLater(signal => sleep(60_000, "v", { signal }), "later"));
+        console.log("immediate:", await outcome(immediate("value")));
         console.log("immediate aborted later:", await abortLater(signal => immediate("v", { signal }), "later"));
         console.log("delay:", await outcome(sleep("1", "v")));
         console.log("options:", await outcome(sleep(1, "v", 5)));
         console.log("options.signal:", await outcome(sleep(1, "v", { signal: "s" })));
         console.log("options.ref:", await outcome(sleep(1, "v", { ref: "r" })));
 
-        every(1, "never iterated");
+        const invalid = await sleep("1").catch(error => error);
+        invalid.message = "edited";
+        console.log("String(error):", String(invalid));
+
+        // The abort also settles a promise of the caller. That one wins the race.
+        const racing = new AbortController();
+        const woke = new Promise(resolve => racing.signal.addEventListener("abort", () => resolve("the caller's promise")));
+        const race = Promise.race([sleep(60_000, "v", { signal: racing.signal }), woke]);
+        racing.abort();
+        console.log("race:", await race);
+
+        try {
+          sleep(1, "v", { signal: { aborted: false } });
+        } catch (error) {
+          console.log("signal without addEventListener:", error.name);
+        }
+        console.log(
+          "signal without removeEventListener:",
+          await sleep(1, "v", { signal: { aborted: false, addEventListener() {} } }).catch(error => error.name),
+        );
+
         console.log("return() before next():", JSON.stringify(await every(1, "v").return()));
         console.log("interval options:", await outcome(every(1, "v", 5).next()));
-        console.log("host intervals started:", hostIntervals.started);
 
         const ticks = [];
         for await (const tick of every(1, "tick")) {
@@ -714,44 +729,164 @@ describe("bundler", () => {
         controller.abort("between ticks");
         console.log("aborted between ticks:", await outcome(interval.next()));
         console.log("after the abort:", JSON.stringify(await interval.next()));
-        console.log("host intervals live:", hostIntervals.live.size);
+
+        const waiting = new AbortController();
+        const pending = every(60_000, "tick", { signal: waiting.signal }).next();
+        waiting.abort("while waiting");
+        console.log("aborted while waiting:", await outcome(pending));
 
         console.log("scheduler:", await scheduler.wait(1), await scheduler.yield());
+        console.log("scheduler.wait aborted:", await abortLater(signal => scheduler.wait(60_000, { signal }), "later"));
         try {
           const { wait } = scheduler;
           wait(1);
         } catch (error) {
           console.log("detached scheduler.wait:", error.name);
         }
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: `
+        value: resolved value
+        aborted before: rejected AbortError ABORT_ERR cause=before
+        aborted later: rejected AbortError ABORT_ERR cause=later
+        immediate: resolved value
+        immediate aborted later: rejected AbortError ABORT_ERR cause=later
+        delay: rejected TypeError ERR_INVALID_ARG_TYPE cause=undefined
+        options: rejected TypeError ERR_INVALID_ARG_TYPE cause=undefined
+        options.signal: rejected TypeError ERR_INVALID_ARG_TYPE cause=undefined
+        options.ref: rejected TypeError ERR_INVALID_ARG_TYPE cause=undefined
+        String(error): TypeError [ERR_INVALID_ARG_TYPE]: edited
+        race: the caller's promise
+        signal without addEventListener: TypeError
+        signal without removeEventListener: TypeError
+        return() before next(): {"done":true}
+        interval options: rejected TypeError ERR_INVALID_ARG_TYPE cause=undefined
+        for await: tick,tick,tick
+        first tick: {"value":"tick","done":false}
+        aborted between ticks: rejected AbortError ABORT_ERR cause=between ticks
+        after the abort: {"done":true}
+        aborted while waiting: rejected AbortError ABORT_ERR cause=while waiting
+        scheduler: undefined undefined
+        scheduler.wait aborted: rejected AbortError ABORT_ERR cause=later
+        detached scheduler.wait: TypeError
+      `,
+    },
+  });
+  itBundled("browser/NodeTimersPromisesHostTimers", {
+    files: {
+      "/entry.js": /* js */ `
+        import { host } from "./host.js";
+        import { setTimeout as sleep, setImmediate as immediate, setInterval as every, scheduler } from "node:timers/promises";
 
-        const hostSetTimeout = globalThis.setTimeout;
+        const outcome = promise => promise.then(value => "resolved " + value, error => "rejected " + error.name);
+        const abortLater = start => {
+          const controller = new AbortController();
+          const promise = start(controller.signal);
+          controller.abort();
+          return outcome(promise);
+        };
+        const delays = () => host.delays.splice(0).join() || "none";
+
+        await sleep(7, "v");
+        await scheduler.wait(3);
+        console.log("delays:", delays());
+
+        every(1, "never iterated");
+        console.log("interval that nobody iterates:", delays());
+        for await (const tick of every(9, "tick")) break;
+        console.log("interval:", delays(), "live:", host.intervals.size);
+
+        await Promise.all([sleep(1, "v", { ref: false }), sleep(5)]);
+        for await (const tick of every(1, "tick", { ref: false })) break;
+        console.log("unref() calls:", host.unrefs);
+
+        const controller = new AbortController();
+        const signal = controller.signal;
+        const listeners = { added: 0, live: 0 };
+        const { addEventListener, removeEventListener } = signal;
+        signal.addEventListener = function (...args) {
+          listeners.added++;
+          listeners.live++;
+          return addEventListener.apply(this, args);
+        };
+        signal.removeEventListener = function (...args) {
+          listeners.live--;
+          return removeEventListener.apply(this, args);
+        };
+        await sleep(1, "v", { signal });
+        await immediate("v", { signal });
+        for await (const tick of every(1, "tick", { signal })) break;
+        const aborted = sleep(60_000, "v", { signal });
+        controller.abort();
+        console.log("abort listeners:", JSON.stringify(listeners), await outcome(aborted), JSON.stringify(listeners));
+
+        delays();
+        const replaced = globalThis.setTimeout;
         globalThis.setTimeout = () => {
           throw new Error("the replaced setTimeout was called");
         };
-        console.log("setTimeout replaced after load:", await outcome(sleep(1, "not used")));
-        globalThis.setTimeout = hostSetTimeout;
+        console.log("setTimeout replaced after load:", await outcome(sleep(1, "not used")), delays());
+        globalThis.setTimeout = replaced;
 
-        // A browser has no setImmediate.
-        delete globalThis.setImmediate;
+        const channels = [];
+        const HostMessageChannel = globalThis.MessageChannel;
+        globalThis.MessageChannel = class extends HostMessageChannel {
+          constructor() {
+            super();
+            channels.push(this);
+          }
+        };
+        const immediates = async () =>
+          [
+            await outcome(immediate("value")),
+            String(await scheduler.yield()),
+            await abortLater(signal => immediate("v", { signal })),
+            "channels: " + channels.splice(0).length,
+            "delays: " + delays(),
+          ].join(", ");
+        console.log("host setImmediate:", await immediates());
+
+        // A page with setImmediate = setTimeout and no clearImmediate.
+        globalThis.setImmediate = globalThis.setTimeout;
         delete globalThis.clearImmediate;
-        console.log("no setImmediate:", await outcome(immediate("value")), await scheduler.yield());
-        console.log("no setImmediate, aborted later:", await abortLater(signal => immediate("v", { signal }), "later"));
+        console.log("setImmediate without clearImmediate:", await immediates());
 
-        console.log("host intervals started in total:", hostIntervals.started);
+        // A browser has neither.
+        delete globalThis.setImmediate;
+        console.log("message task:", await immediates());
+
+        delete globalThis.MessageChannel;
+        console.log("zero-delay timeout:", await immediates());
+        console.log("live intervals:", host.intervals.size);
       `,
       // Imported before the polyfill, which reads the host's timers once when it loads.
-      "/host-intervals.js": /* js */ `
+      "/host.js": /* js */ `
+        const hostSetTimeout = globalThis.setTimeout;
         const hostSetInterval = globalThis.setInterval;
         const hostClearInterval = globalThis.clearInterval;
-        export const hostIntervals = { started: 0, live: new Set() };
-        globalThis.setInterval = (...args) => {
-          const interval = hostSetInterval(...args);
-          hostIntervals.started++;
-          hostIntervals.live.add(interval);
+        export const host = { delays: [], unrefs: 0, intervals: new Set() };
+        const countUnref = timer => {
+          const unref = timer.unref;
+          timer.unref = function () {
+            host.unrefs++;
+            return unref.call(this);
+          };
+          return timer;
+        };
+        globalThis.setTimeout = (callback, delay, ...args) => {
+          host.delays.push("setTimeout " + delay);
+          return countUnref(hostSetTimeout(callback, delay, ...args));
+        };
+        globalThis.setInterval = (callback, delay, ...args) => {
+          host.delays.push("setInterval " + delay);
+          const interval = countUnref(hostSetInterval(callback, delay, ...args));
+          host.intervals.add(interval);
           return interval;
         };
         globalThis.clearInterval = interval => {
-          hostIntervals.live.delete(interval);
+          host.intervals.delete(interval);
           hostClearInterval(interval);
         };
       `,
@@ -759,61 +894,95 @@ describe("bundler", () => {
     target: "browser",
     run: {
       stdout: `
-        value: resolved value
-        unref: unref
-        aborted before: rejected AbortError ABORT_ERR cause=before
-        aborted later: rejected AbortError ABORT_ERR cause=later
-        immediate aborted later: rejected AbortError ABORT_ERR cause=later
-        delay: rejected TypeError ERR_INVALID_ARG_TYPE cause=undefined
-        options: rejected TypeError ERR_INVALID_ARG_TYPE cause=undefined
-        options.signal: rejected TypeError ERR_INVALID_ARG_TYPE cause=undefined
-        options.ref: rejected TypeError ERR_INVALID_ARG_TYPE cause=undefined
-        return() before next(): {"done":true}
-        interval options: rejected TypeError ERR_INVALID_ARG_TYPE cause=undefined
-        host intervals started: 0
-        for await: tick,tick,tick
-        first tick: {"value":"tick","done":false}
-        aborted between ticks: rejected AbortError ABORT_ERR cause=between ticks
-        after the abort: {"done":true}
-        host intervals live: 0
-        scheduler: undefined undefined
-        detached scheduler.wait: TypeError
-        setTimeout replaced after load: resolved not used
-        no setImmediate: resolved value undefined
-        no setImmediate, aborted later: rejected AbortError ABORT_ERR cause=later
-        host intervals started in total: 2
+        delays: setTimeout 7,setTimeout 3
+        interval that nobody iterates: none
+        interval: setInterval 9 live: 0
+        unref() calls: 2
+        abort listeners: {"added":4,"live":1} rejected AbortError {"added":4,"live":0}
+        setTimeout replaced after load: resolved not used setTimeout 1
+        host setImmediate: resolved value, undefined, rejected AbortError, channels: 0, delays: none
+        setImmediate without clearImmediate: resolved value, undefined, rejected AbortError, channels: 3, delays: none
+        message task: resolved value, undefined, rejected AbortError, channels: 3, delays: none
+        zero-delay timeout: resolved value, undefined, rejected AbortError, channels: 0, delays: setTimeout 0,setTimeout 0,setTimeout 0
+        live intervals: 0
       `,
     },
   });
-  // `external` names decide a bare "timers/promises", by that name or by "timers". The polyfill of node:timers keeps its own.
-  for (const [id, external, backend] of [
-    ["browser/NodeTimersPromisesExternal", "timers/promises", "cli"],
-    ["browser/NodeTimersPromisesExternalParent", "timers", "api"],
-  ] as const) {
-    itBundled(id, {
-      files: {
-        "/entry.js": /* js */ `
-          import { setTimeout as external } from "timers/promises";
-          import { promises } from "node:timers";
-          console.log(await external(1, "external"), await promises.setTimeout(1, "polyfill"));
-        `,
-      },
-      target: "browser",
-      backend,
-      external: [external],
-      run: {
-        stdout: "external polyfill",
-      },
-      onAfterBundle(api) {
-        expect(new Bun.Transpiler().scanImports(api.readFile("out.js"))).toContainEqual({
-          kind: "import-statement",
-          path: "timers/promises",
-        });
-      },
-    });
-  }
+  // The namespace of node:timers escapes, so the bundle keeps the promises module. It has to load on a host without intervals.
+  itBundled("browser/NodeTimersPromisesWithoutHostIntervals", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./no-intervals.js";
+        import timers from "./required.cjs";
+        console.log(await timers.promises.setTimeout(1, "resolved"), typeof timers.setInterval);
+      `,
+      "/no-intervals.js": /* js */ `
+        delete globalThis.setInterval;
+        delete globalThis.clearInterval;
+      `,
+      "/required.cjs": /* js */ `
+        var timers = require("node:timers");
+        module.exports = timers;
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "resolved undefined",
+    },
+  });
+  // A bare "timers/promises" is not the builtin: it resolves as before. @sinonjs/fake-timers requires it this way.
+  itBundled("browser/NodeTimersPromisesBareRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        import { setTimeout } from "node:timers/promises";
+        import { install } from "fake-timers";
+        console.log(await setTimeout(1, "polyfill") + ",", install());
+      `,
+      "/node_modules/fake-timers/package.json": /* json */ `
+        {
+          "name": "fake-timers",
+          "main": "./index.js"
+        }
+      `,
+      "/node_modules/fake-timers/index.js": /* js */ `
+        "use strict";
+        let timersPromisesModule;
+        try {
+          timersPromisesModule = require("timers/promises");
+        } catch {}
+        exports.install = () => {
+          if (!timersPromisesModule) return "no timers/promises module";
+          timersPromisesModule.setTimeout = () => {};
+          return "replaced setTimeout";
+        };
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "polyfill, no timers/promises module",
+    },
+  });
+  itBundled("browser/NodeTimersPromisesBareExternal", {
+    files: {
+      "/entry.js": /* js */ `
+        import { setTimeout as external } from "timers/promises";
+        import { promises } from "node:timers";
+        console.log(await external(1, "external"), await promises.setTimeout(1, "polyfill"));
+      `,
+    },
+    target: "browser",
+    external: ["timers/promises"],
+    run: {
+      stdout: "external polyfill",
+    },
+    onAfterBundle(api) {
+      expect(new Bun.Transpiler().scanImports(api.readFile("out.js"))).toEqual([
+        { kind: "import-statement", path: "timers/promises" },
+      ]);
+    },
+  });
   itBundled("browser/NodeTimersPromisesBrowserField", {
-    // A "browser" key is normalized to the platform's separators. On Windows `timers\\promises` does not match this import.
+    // Windows stores a "browser" key with "\\", so a key with "/" never matches there (#41183): the package gets the polyfill.
     todo: process.platform === "win32",
     files: {
       "/entry.js": /* js */ `
@@ -855,7 +1024,7 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       api.expectFile("out.js").not.toContain("(() => ({}))");
-      api.expectFile("out.js").not.toContain("ABORT_ERR");
+      api.expectFile("out.js").not.toContain("node:timers/promises");
     },
   });
 

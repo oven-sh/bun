@@ -2324,11 +2324,10 @@ impl<'a> Resolver<'a> {
                 } else {
                     result.jsx = self.opts.jsx.clone();
 
-                    // `--external timers` and `--external timers/promises` both keep a bare
-                    // `timers/promises` external: the external check below returns it.
+                    // A bare `timers/promises` can be a file of a package: only the `node:` name is the builtin.
                     if let Some(fallback_module) =
                         NodeFallbackModules::map().get(import_path_without_node_prefix)
-                        && (had_node_prefix || !self.is_external_package_subpath(import_path, kind))
+                        && (had_node_prefix || !strings::contains_char(import_path, b'/'))
                     {
                         result.path_pair.primary = fallback_module.path;
                         result.module_type = options::ModuleType::Cjs;
@@ -2447,27 +2446,6 @@ impl<'a> Resolver<'a> {
         }
 
         ResultUnion::NotFound
-    }
-
-    /// Whether `import_path` is a package subpath (`a/b`) that the `external` option names,
-    /// itself or through a parent (`a`).
-    fn is_external_package_subpath(&self, import_path: &[u8], kind: ast::ImportKind) -> bool {
-        if kind.is_entry_point()
-            || self.opts.external.node_modules.count() == 0
-            || !strings::contains_char(import_path, b'/')
-        {
-            return false;
-        }
-        let mut query = import_path;
-        loop {
-            if self.opts.external.node_modules.contains(query) {
-                return true;
-            }
-            let Some(slash) = strings::last_index_of_char(query, b'/') else {
-                return false;
-            };
-            query = &query[0..slash];
-        }
     }
 
     /// Whether an import specifier explicitly names a directory: a trailing

@@ -1053,13 +1053,30 @@ devTest("importing node:timers on the client", {
     }),
     "index.ts": `
       import { setTimeout, promises } from "node:timers";
-      import { setTimeout as sleep } from "node:timers/promises";
-      setTimeout(async () => console.log((await sleep(1, "sleep")) + " " + (await promises.setTimeout(1, "promises"))), 1);
+      import { setTimeout as sleep, setImmediate as immediate, setInterval as every, scheduler } from "node:timers/promises";
+      setTimeout(async () => {
+        console.log((await sleep(1, "sleep")) + " " + (await promises.setTimeout(1, "promises")));
+        const controller = new AbortController();
+        const aborted = immediate("v", { signal: controller.signal }).catch(error => error.code);
+        controller.abort();
+        const ticks = [];
+        for await (const tick of every(1, "tick")) {
+          if (ticks.push(tick) === 2) break;
+        }
+        const results = [
+          await immediate("immediate", { ref: false }),
+          await scheduler.yield(),
+          await scheduler.wait(1),
+          await aborted,
+          ticks,
+        ];
+        console.log(results.map(String).join(" "));
+      }, 1);
     `,
   },
   async test(dev) {
     await using c = await dev.client("/");
-    await c.expectMessage("sleep promises");
+    await c.expectMessage("sleep promises", "immediate undefined undefined ABORT_ERR tick,tick");
   },
 });
 devTest("import.meta.main", {

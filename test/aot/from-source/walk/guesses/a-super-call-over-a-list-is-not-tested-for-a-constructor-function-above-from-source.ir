@@ -1,0 +1,14 @@
+# `class Meter extends Above { }` above a constructor function: the language's `super(...args)` has no direct form there, so no test for the function stands in front of it: one closed SuperConstruct in the copy.
+# OPTIONS: check=Validate
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: frame 1 callee=f3
+# CHECK-NOT: TypeTest {{*}} testedType=f1
+# CHECK: = SuperConstruct
+# CHECK-NOT: = SuperConstruct
+# -- source: a-super-call-over-a-list-is-not-tested-for-a-constructor-function-above-from-source.js
+# function Above(a) { this.a = a; }
+# class Meter extends Above { }
+# function many(n) { let x; for (let i = 0; i < n; i++) x = new Meter(7); return x; }
+# globalThis.all = [Above, Meter, many];
+# -- end of source

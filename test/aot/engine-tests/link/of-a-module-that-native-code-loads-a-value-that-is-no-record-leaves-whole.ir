@@ -1,0 +1,60 @@
+# As in of-a-module-that-native-code-loads-what-the-row-lists-leaves.ir, but what the body returns is a function, as `export default function` gives it. Native code that takes the export `default` of such a module
+# takes the function itself, and a name that it reads off a function is followed by nobody: the value leaves whole, so the function may be called with anything.
+# LIBRARY: own
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link functions variables modules mechanisms=all
+# CHECK-NOT: function f4 {{*}}callers-known
+# CHECK-NOT: function f4 unreached
+# CHECK-NOT: module m2 value-stays-with-compiled-code
+
+layout L0 module=m2 fields=[{key="nextTick" declared={type=anything} flags=[IsRequired]}, {key="queueTick1" declared={type=anything} flags=[IsRequired]}, {key="ring" declared={type=anything} flags=[IsRequired]}, {key="whileHooked" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m2 fields=[{key="made" declared={type=number} flags=[IsRequired]}]
+layout L2 module=m2 fields=[{key="push" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="queueTick1" module=m1 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+variable g1 name="ring" module=m1 declared={type=anything} initialization=Undefined flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="node:http" displayPath="node:http" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeHttp body=f1
+module m2 path="internal:process/next_tick_queue" displayPath="internal:process/next_tick_queue" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalProcessNext_tick_queue body=f2
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="nextTick"
+    v2 = NewClosure function=f5
+    v3 = Call v1, v0, v2 calleeKey="nextTick" calleeName="process.nextTick"
+    v4 = RequireModule module=m1 referrer=m0 specifier="node:http"
+    v5 = Undefined
+    Return v5
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m2 referrer=m1 specifier="internal/process/next_tick_queue"
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f2 module=m2 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewClosure function=f4
+    v2 = Integer
+    v3 = NewObject -, v2 layout=L1 fields=[0]
+    v4 = FinishObject v3
+    v5 = Undefined
+    v6 = NewObject -, v5 layout=L2 fields=[0]
+    v7 = FinishObject v6
+    Return v1
+}
+function f3 name="nextTick" module=m2 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f4 name="queueTick1" module=m2 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

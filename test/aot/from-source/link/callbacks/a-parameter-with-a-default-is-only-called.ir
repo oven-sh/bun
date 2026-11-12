@@ -1,0 +1,17 @@
+# `each` calls what arrives or, where nothing arrives, `plain`: the parameter meets `plain` at a join, and what comes out of the join is only called. `pick` lays what comes out of the join in a variable.
+# f1 = plain, f2 = each, f3 = pick, f4 = maker
+# -- source: a-parameter-with-a-default-is-only-called.ts
+# declare function sink(...values: unknown[]): void;
+# let kept: ((x: number) => number) | undefined;
+# function plain(x: number): number { return x; }
+# function each(list: number[], visit: (x: number) => number = plain): number { let t = 0; for (const x of list) t += visit(x); return t; }
+# function pick(list: number[], visit: (x: number) => number = plain): number { kept = visit; return visit(list.length); }
+# function maker(list: number[], k: number) { const a = each(list, x => x * k); const b = pick(list, x => x + k); return a + b + each(list) + pick(list); }
+# sink(maker([1, 2], 3), maker([4], 5), () => kept);
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK-LABEL: function f2
+# CHECK: parameter 1 {{*}}only-called
+# CHECK-LABEL: function f3
+# CHECK-NOT: only-called
+# CHECK-LABEL: function f4

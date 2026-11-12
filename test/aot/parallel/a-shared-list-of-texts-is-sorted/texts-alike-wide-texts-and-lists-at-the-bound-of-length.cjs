@@ -1,0 +1,10 @@
+"use strict";
+const said = [], more = process.argv.length > 99 ? 1 : 0;
+const bags = [{}, {}, {}, {}];
+for (let i = 63; i >= 0; i--) bags[0]["k" + String(i).padStart(2, "0")] = i;
+for (let i = 64; i >= 0; i--) bags[1]["k" + String(i).padStart(2, "0")] = i;
+for (const name of ["\u00e9", "e", "\u2603", "z", "Z", "\ud83d\ude00", "\uffff", "", "10", "9x", "a b"]) bags[2][name] = more;
+bags[3].solo = 1;
+for (let turn = 0; turn < 3; turn++) for (const bag of bags) said.push(JSON.stringify(Object.keys(bag).sort()));
+for (let turn = 0; turn < 3; turn++) said.push(JSON.stringify("b,a,b,a,c".split(",").sort()));
+console.log(said.join("\n"));

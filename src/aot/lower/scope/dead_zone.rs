@@ -29,6 +29,7 @@ pub(super) fn has_dead_zone(file: &FileLowering<'_, '_, '_, '_>, binding: Bindin
             | ScopeSlot::WithObject
             | ScopeSlot::EvalVariables
             | ScopeSlot::ParameterEvalVariables
+            | ScopeSlot::ModuleInstance
             | ScopeSlot::Class(
                 ClassSlot::ClassObject
                 | ClassSlot::ClassToken
@@ -48,7 +49,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 return self.builder.boolean(true);
             }
             let value = self.get_stored(binding);
-            if !has_dead_zone(self.file, binding) {
+            if !has_dead_zone(self.file, binding) && !self.file.is_export_that_code_fills(symbol) {
                 return value;
             }
             return self.emit_initialization_check(value, symbol, name);
@@ -88,7 +89,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         has_dead_zone(self.file, binding) && placement.is_some_and(|placement| placement.is_shared)
     }
 
-    fn emit_initialization_check(
+    pub(super) fn emit_initialization_check(
         &mut self,
         value: ValueId,
         symbol: SymbolId,

@@ -1,21 +1,20 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}kind=CommonJsModule
-// CHECK: [[environment]] = NewObject {{*}}layout=[[layout]]
-// CHECK: = NewClosure [[environment]] function=
-// CHECK-LABEL: function {{*}}name="inc"
-// CHECK: captures=[{type=env [[layout]] flags=[IsFromCompiler]}] thisType
-// CHECK: = GetEnvironmentField {{*}}layout=[[layout]]
-// CHECK: PutEnvironmentField {{*}}layout=[[layout]]
+// CHECK-NOT: = NewObject
+// CHECK: PutModuleVariable {{*}}variable=[[n]]
+// CHECK: [[inc]] = NewClosure function=
+// CHECK-NEXT: PutModuleVariable [[inc]] variable=
+// CHECK-LABEL: function {{*}}name="inc"{{*}}flags=[IsSloppy, HasExplicitName] thisType
+// CHECK: = GetModuleVariable variable=[[n]]
+// CHECK: PutModuleVariable {{*}}variable=[[n]]
 
-// RUN(VARIABLES): lower
-// VARIABLES-NOT: ModuleVariable
-// VARIABLES: PutModuleVariable [[inc]] variable=
-// VARIABLES-NOT: ModuleVariable
+// RUN(ENVIRONMENTS): lower
+// ENVIRONMENTS-NOT: EnvironmentField
 
 // RUN(RECORDS): link
-// RECORDS-NOT: variable {{*}}name="n"
+// RECORDS: variable {{*}}name="n"
 
-// The one variable of the module holds what it exports.
+// The body of the file runs once, so what it declares at its top is a variable of the module, as in an ES module: the function captures nothing.
 let n = 0;
 
 module.exports = function inc() {

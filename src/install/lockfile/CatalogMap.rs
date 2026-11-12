@@ -45,6 +45,13 @@ impl CatalogMap {
         self.default.count() > 0 || self.groups.count() > 0
     }
 
+    /// The entries of every catalog.
+    pub(crate) fn values(&self) -> impl Iterator<Item = &Dependency> {
+        core::iter::once(&self.default)
+            .chain(self.groups.values())
+            .flat_map(|catalog| catalog.values())
+    }
+
     /// `catalog:` and `catalog:default` name the same catalog.
     pub(crate) fn same_name(a: &[u8], b: &[u8]) -> bool {
         let is_default = |name: &[u8]| name.is_empty() || name == b"default";

@@ -1,0 +1,7 @@
+# the getter answers its receiver
+# -- source: the-class-that-its-accessor-of-species-answers-and-that-is-constructed-uses-the-class.ts
+# const Kind = (Buffer as any)[Symbol.species];
+# console.log(new Kind(2).length);
+# -- end of source
+# RUN: features
+# CHECK: by Buffer named

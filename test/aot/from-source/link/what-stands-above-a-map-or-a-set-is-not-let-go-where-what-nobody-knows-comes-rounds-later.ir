@@ -1,0 +1,10 @@
+# the set of classes is told first and the unknown value two functions later: the reach is the one of the program that writes JSON.parse at the call
+# -- source: main.mjs
+# function above(x) { return Object.getPrototypeOf(x) === null; }
+# function farther(t) { return JSON.parse(t); }
+# function far(t) { return farther(t); }
+# console.log(above(new Map), above(new Set), above(far(process.argv[2] ?? "{}")));
+# -- end of source
+# RUN: link lookups mechanisms=all
+# CHECK: lookup called ObjectGetPrototypeOf
+# CHECK-NOT: lookup let-go

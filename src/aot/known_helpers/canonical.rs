@@ -6,7 +6,7 @@ use bun_sema::hir::{
     self, BinOp, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, PatId, PatKind, PropKey, PropKind,
     StmtId, StmtKind, UnOp, VarDeclId, VarKind,
 };
-use bun_sema::util::FxHashMap;
+use smallvec::SmallVec;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum OuterName {
@@ -98,9 +98,11 @@ enum Tag {
     Case,
 }
 
+const USUAL_BYTES: usize = 256;
+
 struct Writer<'a, 's> {
     input: &'a CanonicalInput<'a, 's>,
-    locals: FxHashMap<SymbolId, u32>,
+    locals: SmallVec<[SymbolId; 8]>,
     labels: Vec<Atom>,
     found: CanonicalFunction,
     root: FnId,
@@ -113,9 +115,12 @@ pub(super) fn canonical_function(
 ) -> Option<CanonicalFunction> {
     let mut writer = Writer {
         input,
-        locals: FxHashMap::default(),
+        locals: SmallVec::new(),
         labels: Vec::new(),
-        found: CanonicalFunction::default(),
+        found: CanonicalFunction {
+            bytes: Vec::with_capacity(USUAL_BYTES),
+            ..CanonicalFunction::default()
+        },
         root: function,
         is_unsupported: false,
     };
@@ -138,7 +143,9 @@ impl Writer<'_, '_> {
     }
 
     fn number(&mut self, number: u32) {
-        self.found.bytes.extend_from_slice(&number.to_le_bytes());
+        for byte in number.to_le_bytes() {
+            self.found.bytes.push(byte);
+        }
     }
 
     fn text(&mut self, text: Atom) {
@@ -167,10 +174,13 @@ impl Writer<'_, '_> {
             CodeUnit::File | CodeUnit::FieldInitializer(_) => false,
         };
         if is_declared_inside || symbol == bound.declared_symbol(Decl::Fn(self.root)) {
-            let next = self.locals.len() as u32;
-            let index = *self.locals.entry(symbol).or_insert(next);
+            let known = self.locals.iter().position(|&local| local == symbol);
+            let index = known.unwrap_or_else(|| {
+                self.locals.push(symbol);
+                self.locals.len() - 1
+            });
             self.tag(Tag::Local);
-            self.number(index);
+            self.number(index as u32);
             return;
         }
         self.outer(OuterName::Symbol(symbol));
@@ -348,7 +358,9 @@ impl Writer<'_, '_> {
     }
 
     fn node(&mut self, head: &[u8], expressions: &[ExprId], statements: &[StmtId]) {
-        self.found.bytes.extend_from_slice(head);
+        for &byte in head {
+            self.found.bytes.push(byte);
+        }
         for &expression in expressions {
             self.expression(expression);
         }

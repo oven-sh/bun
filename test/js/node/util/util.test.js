@@ -384,6 +384,29 @@ describe("util", () => {
   it("format", () => {
     expect(util.format("%s:%s", "foo")).toBe("foo:%s");
   });
+  it("the first inspect does not call a replaced Function.prototype.bind", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const util = require("node:util");
+         const original = Function.prototype.bind;
+         let calls = 0;
+         Function.prototype.bind = function (...args) {
+           calls++;
+           return original.apply(this, args);
+         };
+         util.inspect({ count: 1, list: [new Map([[1, 2]])], set: new Set([1]), error: new Error("made up") });
+         Function.prototype.bind = original;
+         console.log(calls);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
+  });
   // Messages verified against the node v26.3.0 binary.
   const invalidArgType = message =>
     expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError", message });

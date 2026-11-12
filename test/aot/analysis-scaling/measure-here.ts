@@ -101,9 +101,15 @@ export async function measureHere(
   env: Record<string, string | undefined>,
 ): Promise<Measured> {
   const isDarwin = process.platform === "darwin";
+  // Windows has no shell that waits in front of an exec and no counter to open on one: the command is started as it is, and its instructions stay uncounted.
+  const isWindows = process.platform === "win32";
   if (isDarwin) await runOnceUnmeasured(cwd, command, killAfter, env);
   await using child = Bun.spawn({
-    cmd: isDarwin ? ["/usr/bin/time", "-l", ...command] : ["/bin/sh", "-c", 'read line; exec "$0" "$@"', ...command],
+    cmd: isDarwin
+      ? ["/usr/bin/time", "-l", ...command]
+      : isWindows
+        ? command
+        : ["/bin/sh", "-c", 'read line; exec "$0" "$@"', ...command],
     cwd,
     env,
     stdin: "pipe",
@@ -114,7 +120,7 @@ export async function measureHere(
   });
   // Several commands are measured at once. On Linux the shell becomes the command, so the child is what holds the memory.
   using held = endAtMemoryLimit(child);
-  const readInstructions = isDarwin ? undefined : openInstructionCounter(child.pid);
+  const readInstructions = isDarwin || isWindows ? undefined : openInstructionCounter(child.pid);
   child.stdin.write("\n");
   child.stdin.end();
   const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);

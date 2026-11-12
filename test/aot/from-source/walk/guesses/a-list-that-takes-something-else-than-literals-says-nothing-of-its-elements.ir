@@ -1,0 +1,16 @@
+# The edge of the-elements-of-a-list-made-here-are-expected-to-be-what-the-text-puts-into-it.ir: the text also pushes a value of which it says nothing: nothing is expected of the elements.
+# f0 = the module
+# -- source: main.js
+# const items = [];
+# for (let i = 0; i < 8; i++) items.push({ price: i, count: i & 3 });
+# items.push(JSON.parse('{"price":8,"count":1}'));
+# globalThis.items = items;
+# (0, eval)("1");
+# let total = 0;
+# for (let round = 0; round < 10; round++) for (let i = 0; i < items.length; i++) total += items[i].price * items[i].count;
+# print(total);
+# -- end of source
+# Where the text says nothing, what the program is seen to put into the list is expected, behind its test: so the form of the read no longer shows that the text was silent; the answers stay.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 600
+# ANSWERS-NEXT: exited with 0

@@ -17,7 +17,7 @@ fn evaluated_text_form(id: BuiltinId) -> Option<EvaluatedTextForm> {
 }
 
 impl Resolver<'_, '_> {
-    fn constant_text(&self, argument: ExprId) -> Option<Atom> {
+    pub(super) fn constant_text(&self, argument: ExprId) -> Option<Atom> {
         let input = self.input;
         let constant = match input.decisions.constant(input.hir, argument) {
             FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
@@ -33,7 +33,7 @@ impl Resolver<'_, '_> {
 
     fn constant_texts(&self, form: EvaluatedTextForm, call: CallId) -> Option<SmallVec<[Atom; 2]>> {
         let hir = self.input.hir;
-        let mut arguments = hir.ids(hir[call].args);
+        let mut arguments = hir.ids(hir.written_args(call));
         match form {
             EvaluatedTextForm::FunctionBody => arguments
                 .map(|argument| self.constant_text(argument))

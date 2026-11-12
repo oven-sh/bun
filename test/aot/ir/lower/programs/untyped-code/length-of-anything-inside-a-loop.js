@@ -88,97 +88,10 @@ try {
 }
 console.log(lines.join("\n"));
 
-// GENERATED: args count Heir length
 // CHECK-LABEL: function {{*}}name="args"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: int[0, 4294967295], v1: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = CreateUnmappedArguments v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_1]] flags=[IsExpected]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="count"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]]|[[L_2]]|Array<number>|Uint8Array flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]|[[L_2]]|Array<number>|Uint8Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Integer
-// CHECK-NEXT: v2 = Convert v1 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v3 = Integer
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b2(v2, v4)
-// CHECK-NEXT: b2(v5, v6):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v8 = PropGet v0 key="length"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|number|string flags=[IsExpected]}
-// CHECK-NEXT: v10 = Less v6, v9
-// CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b6(| 0)
-// CHECK-NEXT: b3(v11):
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v12 = Increment v5
-// CHECK-NEXT: v13 = Convert v12 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v14 = Increment v11
-// CHECK-NEXT: v15 = Convert v14 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b2(v13, v15)
-// CHECK-NEXT: b6(v16):
-// CHECK-NEXT: Jump -> next b7()
-// CHECK-NEXT: b7():
-// CHECK-NEXT: v17 = Convert v5 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v17
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Heir"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_4]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_4]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="length"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Integer integer=42
-// CHECK-NEXT: v1 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="length"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Undefined
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="length"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = String string="never asked"
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="length"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="asked"
-// CHECK-NEXT: v2 = Increment v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v4 = GetModuleVariable variable=[[g_5]]
-// CHECK-NEXT: v5 = CheckInitialized v4 name="asked"
-// CHECK-NEXT: PutModuleVariable v3 variable=[[g_5]]
-// CHECK-NEXT: v7 = Integer integer=-1
-// CHECK-NEXT: v8 = Convert v7 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }

@@ -1,0 +1,13 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function nameOfText() { return ["te", "xt"].join(""); }
+# function makeRunner(seed: number) { let text = "k" + seed; return () => { text += "!"; return eval(nameOfText()) + seed; }; }
+# const runner = makeRunner(1);
+# function all() { return runner() + " " + runner(); }
+# print(all());
+# -- end of source
+# The text handed to eval is made at run time, so a name may be looked for in the scope of makeRunner: the scope is made, though its closure is kept for good. The twin: ..-of-a-written-name-reads-is-never-made.ir
+# RUN(COUNT): compile EnvironmentsPromotedToVariables mechanisms=all
+# COUNT: statistic EnvironmentsPromotedToVariables 0
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: k1!1 k1!!1

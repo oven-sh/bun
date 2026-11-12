@@ -1,0 +1,20 @@
+# f1 = count, f2 = once, f3 = Vector, f4 = minus, f5 = dot, f6 = Sphere, f7 = near, f8 = far
+# -- source: copies-in-a-method-that-a-loop-of-its-file-calls.ts
+# declare function sink(...values: unknown[]): void;
+# class Vector { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } minus(other: Vector): Vector { return new Vector(this.x - other.x, this.y - other.y); } dot(other: Vector): number { return this.x * other.x + this.y * other.y; } }
+# class Sphere { center: Vector; radius: number; constructor(center: Vector, radius: number) { this.center = center; this.radius = radius; } near(point: Vector): boolean { const d = point.minus(this.center); return d.dot(d) < this.radius * this.radius; } far(point: Vector): boolean { const d = point.minus(this.center); return d.dot(d) > this.radius * this.radius; } }
+# function count(spheres: Sphere[], point: Vector): number { let n = 0; for (const sphere of spheres) if (sphere.near(point)) n++; return n; }
+# function once(sphere: Sphere, point: Vector): boolean { return sphere.far(point); }
+# const spheres = [new Sphere(new Vector(0, 0.5), 1), new Sphere(new Vector(3, 4), 2)];
+# sink(count(spheres, new Vector(0.5, 0.5)), once(spheres[0], new Vector(2, 2)));
+# -- end of source
+# A loop of the file calls `near`: what it calls is copied into it, and the vector that it makes is never made. No loop calls `far`.
+# RUN: walk f7 mechanisms=all
+# CHECK-LABEL: code f7:Body
+# CHECK-NOT: = NewObject
+# CHECK-NOT: = CallDirect
+# CHECK: Return
+# RUN(ONCE): walk f8 mechanisms=all
+# ONCE-LABEL: code f8:Body
+# ONCE: = CallDirect
+# ONCE: Return

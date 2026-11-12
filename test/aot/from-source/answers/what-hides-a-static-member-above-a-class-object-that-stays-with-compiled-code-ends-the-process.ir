@@ -1,0 +1,62 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function poke(...values: unknown[]): void;
+# class Base {
+#     static kept = 1;
+#     static make() { return "base make"; }
+#     static get label() { return "base label"; }
+# }
+# class Closed extends Base {
+#     tag = 1;
+#     static held = 3;
+#     static weigh() { return "weigh"; }
+# }
+# const kept = new Closed();
+# const other: any = {};
+# const tell = () => Closed.weigh() + " " + Closed.make() + " " + Closed.label + " " + (kept instanceof Closed) + " " + (other instanceof Closed);
+# print(tell());
+# poke();
+# print(tell());
+# -- end of source
+# Neither class object leaves compiled code, so compiled code goes from `Closed` to the static members of `Base`, and to the ordinary Symbol.hasInstance, without a look.
+# Both classes have a static field. A static field takes a proof away from its own name alone, so the other names of the row are held as they are in a row without fields.
+# `poke` is a free name that each run defines, and it is handed nothing. It climbs to the class objects from an object that it takes out of the heap: a name of their own that hides a member of the class above, another function under a member of their own, or Symbol.hasInstance on either, is ruled out and ends the process.
+# A name that nobody above declares is not ruled out: compiled code may lay such names in sight, and reads them by name.
+# The run time looks at the class objects behind the deed. What leaves every lookup as it was goes through: the method, the getter and Symbol.hasInstance laid on `Closed` with the very functions that stand above it.
+# Stores in sight under the name of a static field of the row: stores-on-class-objects-of-a-row-with-a-static-field-go-through.ir. The green twin: deeds-on-a-class-object-that-unseen-code-was-handed-go-through.ir.
+# OPTIONS: mechanisms=all
+# RUN: run-in-shell globalThis.poke = () => { const given = aotFindObjectOfLayout(1).constructor; given.late = "late"; given.make = given.make; Object.defineProperty(given, "label", Object.getOwnPropertyDescriptor(Object.getPrototypeOf(given), "label")); Object.defineProperty(given, Symbol.hasInstance, { value: Function.prototype[Symbol.hasInstance] }); print(given.late); };
+# CHECK: weigh base make base label true false
+# CHECK-NEXT: late
+# CHECK-NEXT: weigh base make base label true false
+# CHECK-NEXT: exited with 0
+# RUN(REPLACES): run-in-shell globalThis.poke = () => { aotFindObjectOfLayout(1).constructor.weigh = function () { return "other weigh"; }; print("went on"); };
+# REPLACES: bun: internal AOT error: object mutation check failed
+# REPLACES-NEXT: ReplaceMember on the constructor of class 'Closed'
+# REPLACES-NOT: went on
+# REPLACES: crashed with
+# RUN(SHADOWS): run-in-shell globalThis.poke = () => { aotFindObjectOfLayout(1).constructor.make = function () { return "own make"; }; print("went on"); };
+# SHADOWS: bun: internal AOT error: object mutation check failed
+# SHADOWS-NEXT: AddProperty on the constructor of class 'Closed'
+# SHADOWS-NOT: went on
+# SHADOWS: crashed with
+# RUN(HIDES): run-in-shell globalThis.poke = () => { Object.defineProperty(aotFindObjectOfLayout(1).constructor, "label", { value: "own label" }); print("went on"); };
+# HIDES: bun: internal AOT error: object mutation check failed
+# HIDES-NEXT: AddProperty on the constructor of class 'Closed'
+# HIDES-NOT: went on
+# HIDES: crashed with
+# RUN(ANSWERS): run-in-shell globalThis.poke = () => { Object.defineProperty(aotFindObjectOfLayout(1).constructor, Symbol.hasInstance, { value: () => true }); print("went on"); };
+# ANSWERS: bun: internal AOT error: object mutation check failed
+# ANSWERS-NEXT: AddProperty on the constructor of class 'Closed'
+# ANSWERS-NOT: went on
+# ANSWERS: crashed with
+# RUN(ABOVE): run-in-shell globalThis.poke = () => { Object.defineProperty(Object.getPrototypeOf(aotFindObjectOfLayout(1).constructor), Symbol.hasInstance, { value: () => true }); print("went on"); };
+# ABOVE: bun: internal AOT error: object mutation check failed
+# ABOVE-NEXT: AddProperty on the constructor of class 'Base'
+# ABOVE-NOT: went on
+# ABOVE: crashed with
+# RUN(REPARENTS): run-in-shell globalThis.poke = () => { Object.setPrototypeOf(aotFindObjectOfLayout(1).constructor, function () { }); print("went on"); };
+# REPARENTS: bun: internal AOT error: object mutation check failed
+# REPARENTS-NEXT: ChangePrototype on the constructor of class 'Closed'
+# REPARENTS-NOT: went on
+# REPARENTS: crashed with

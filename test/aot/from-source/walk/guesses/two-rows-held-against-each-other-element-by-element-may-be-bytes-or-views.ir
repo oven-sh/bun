@@ -1,0 +1,25 @@
+# -- source: main.js
+# var key = JSON.parse('"go"');
+# var same = { go(a, b) { if (a.length !== b.length) return false; for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; } };
+# var byNames = { go(a, b) { var n = Math.min(a.length, b.length); for (var i = 0; i < n; i++) { var x = a[i], y = b[i]; if (x !== y) return x < y ? -1 : 1; } return a.length - b.length; } };
+# var nothing = {}, rows = [[new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 3])], [new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 4])], [new Float64Array([NaN]), new Float64Array([NaN])], [new Float64Array([0]), new Float64Array([-0])], [[1, 2], [1, 2]], [["a", "b"], ["a", "b"]], [[nothing, null], [nothing, null]], [[{}], [{}]], [[1, "2"], [1, 2]], ["abc", "abc"], [new Int8Array([-1]), new Uint8Array([255])], [new Uint8Array([7]), [7]], [[, 1], [undefined, 1]]];
+# print(rows.map(function (row) { return same[key](row[0], row[1]) + ":" + byNames[key](row[0], row[1]); }).join());
+# -- end of source
+# Two rows are held against each other element by element. That says nothing of numbers; but each member of a front is tested at the run, so what the text must say is only that a copy is worth building: and bytes compared
+# by hand ran closed: 199 instructions a turn. The first form of this rule heard one spelling (an equality in the turn whose elements have no other user, and a relation in the block that the loop leaves into); five others
+# stood at nine times its price. Now the loop's text is asked by the holder: an equality or a relation both of whose operands are elements under indexes speaks for both holders, however many users the elements have.
+# f1 = same.go, f2 = byNames.go
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=Buffer|Uint8Array
+# CHECK: = TypeTest {{*}} testedType=Buffer|Uint8Array
+# CHECK: = StrictEq {{*}} form=Integers
+# RUN(NAMES): walk f2:Body mechanisms=all
+# NAMES: = TypeTest {{*}} testedType=Buffer|Uint8Array
+# NAMES: = TypeTest {{*}} testedType=Buffer|Uint8Array
+# NAMES: = StrictEq {{*}} form=Integers
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: true:0,false:-1,false:1,true:0,true:0,true:0,true:0,false:1,false:1,true:0,false:-1,true:0,true:0
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: true:0,false:-1,false:1,true:0,true:0,true:0,true:0,false:1,false:1,true:0,false:-1,true:0,true:0
+# NONE-NEXT: exited with 0

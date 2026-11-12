@@ -1,0 +1,10 @@
+A hoisted mock below an import with an attribute that chooses no loader.
+#### a.test.ts
+import { test, vi } from "bun:test";
+import { seen } from "./uses-dep" with { mine: "yes" };
+vi.mock("./dep", () => ({ name: "mocked" }));
+test("t", () => { console.log("| CASE", seen); });
+#### dep.ts
+export const name = "real";
+#### uses-dep.ts
+import { name } from "./dep"; export const seen = name;

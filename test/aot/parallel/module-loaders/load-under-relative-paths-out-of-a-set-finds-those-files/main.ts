@@ -1,8 +1,8 @@
 // The names reach import() and require() through a Set and a table. The build knows what each may be, and every one finds a module of the executable:
 // a relative path finds the file that it names from the folder of this file, with or without its extension, or the index file of a folder.
 // So neither load can be refused at run time, and the build warns about neither.
-// Build prints: 0 x warn: TS100064: this import path isn't a constant. If it resolves to code that isn't in the executable, the import throws at run time (data files still load). Add the file as an entry point, or build with --aot-allow-code-from-disk
-// STATISTIC: FlowEdgesLogged <= 42000
+// Build prints: 0 x warn: TS100064: this import path isn't a constant, so it throws at run time if the file isn't in the executable. Add the file as an entry point, or build with --aot-allow-code-from-disk
+// STATISTIC: FactEdges <= 42000
 import { createRequire } from "node:module";
 import { count } from "./app/registry.ts";
 

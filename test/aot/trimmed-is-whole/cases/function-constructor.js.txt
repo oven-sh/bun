@@ -74,7 +74,6 @@ console.log(constructorOf(constructorOf({}))(text)());
 //// descriptor
 console.log(Object.getOwnPropertyDescriptor(Object.getPrototypeOf(() => {}), "constructor").value(text)());
 //// descriptors
-//@ not-seen
 console.log(Object.getOwnPropertyDescriptors(Object.getPrototypeOf(() => {})).constructor.value(text)());
 //// spread-of-prototype-names
 //@ not-seen
@@ -93,7 +92,7 @@ console.log(holder.make(text)());
 console.log((() => {}).constructor`return Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter`());
 //// proxy-get
 //@ not-seen
-//@ todo the compiler sees no use of Function where a proxy of a function hands out its constructor, so --trim removes it, and the refusal has other words
+//@ fails-today the compiler sees no use of Function where a proxy of a function hands out its constructor, so --trim removes it, and the refusal has other words
 const proxy = new Proxy(() => {}, {});
 console.log(proxy.constructor(text)());
 //// proxy-handler-hands-out

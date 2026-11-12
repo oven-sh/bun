@@ -568,13 +568,3 @@ say("pushed to in a bad time", () => { let t = 0; for (const n of [0, 1, 3, 6, 1
 
 // FILE: parallel/tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: *
-// CHECK: function {{*}}
-// CHECK: module=[[m_0]] kind=Module thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Undefined
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

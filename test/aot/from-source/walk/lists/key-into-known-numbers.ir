@@ -1,0 +1,28 @@
+# A key that may be a fraction, into an array that holds numbers alone by what the program stores there: in the specialized loop the key is asked for an int32, and the read is typed.
+# -- source: main.ts
+# const VALUES: readonly number[] = [0, 100, 320, 330, 500, 900, 20000];
+# class Board {
+#   readonly cells: number[] = new Array<number>(64).fill(0);
+#   score(): number {
+#     let total = 0;
+#     for (let square = 0; square < 64; square++) {
+#       const piece = this.cells[square]!;
+#       if (piece === 0) continue;
+#       const type = Math.abs(piece);
+#       total += piece > 0 ? VALUES[type]! : -VALUES[type]!;
+#     }
+#     return total;
+#   }
+# }
+# const board = new Board();
+# for (let i = 0; i < 64; i += 3) board.cells[i] = (i % 13) - 6;
+# export const total = board.score();
+# -- end of source
+# f2 = score
+# RUN(EVENT): compile NumberKeysGuardedInIterations mechanisms=all
+# EVENT-NOT: statistic NumberKeysGuardedInIterations 0
+# RUN(SCORE): walk f2 mechanisms=all
+# SCORE-LABEL: code f2:Body
+# SCORE: = TypeTest {{*}}testedType=i32
+# SCORE: = NumberToInteger
+# SCORE: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral

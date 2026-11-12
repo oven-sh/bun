@@ -201,6 +201,9 @@ pub struct RuntimeTranspilerStore {
     pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
     pub(crate) queue: Queue,
+    /// JS thread only.
+    pub jobs_scheduled: u64,
+    pub jobs_completed: u64,
 }
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
@@ -212,6 +215,8 @@ impl Default for RuntimeTranspilerStore {
             store: TranspilerJobStore::init(),
             enabled: true,
             queue: Queue::new(),
+            jobs_scheduled: 0,
+            jobs_completed: 0,
         }
     }
 }
@@ -291,6 +296,7 @@ impl RuntimeTranspilerStore {
             first = false;
             // SAFETY: `job` is a live job popped from the intrusive queue.
             let fulfilled = unsafe { (*job).run_from_js_thread() };
+            self.jobs_completed += 1;
             job = iter.next();
             if let Err(err) = fulfilled {
                 if crate::task::report_error_or_terminate(global, err).is_err() {
@@ -389,6 +395,7 @@ impl RuntimeTranspilerStore {
                 <&'static str>::from(loader)
             );
         }
+        self.jobs_scheduled += 1;
         // SAFETY: job fully initialized above
         unsafe { (*job).schedule() };
         promise.cast::<c_void>()
@@ -1042,12 +1049,6 @@ impl TranspilerJob {
         if let Some(mi) = module_info.as_deref_mut() {
             mi.flags.has_tla = !parse_result.ast.top_level_await_keyword.is_empty();
         }
-        // Note: derive `*mut` from a `&mut` borrow (not `&x as *const _ as
-        // *mut _`, which is Stacked-Borrows UB). The `&mut` borrow ends when the
-        // closure returns; the raw pointer stays valid until `module_info` is
-        // moved/touched again (after `print_with_source_map`).
-        let module_info_ptr: Option<*mut analyze_transpiled_module::ModuleInfo> =
-            module_info.as_deref_mut().map(std::ptr::from_mut);
 
         let print_result = {
             // SAFETY: see `vm` note above — `from_raw` stores `vm` as a raw
@@ -1063,7 +1064,7 @@ impl TranspilerJob {
                 source_code_printer,
                 js_printer::Format::EsmAscii,
                 mapper.get(),
-                module_info_ptr,
+                module_info.as_deref_mut(),
             )
         };
         if let Err(err) = print_result {

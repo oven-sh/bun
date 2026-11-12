@@ -1,1 +1,1 @@
-{ "features": ["TlsSockets", "Tls"], "keptToday": true }
+{ "features": ["TlsSockets", "Tls"], "keptToday": ["TlsSockets", "Tls"] }

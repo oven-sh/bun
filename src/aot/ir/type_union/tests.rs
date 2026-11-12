@@ -18,6 +18,28 @@ fn normalize(table: &mut TypeTable, mut ty: Type) -> Type {
     ty
 }
 
+#[test]
+fn find_union_answers_as_union_all_where_the_table_has_the_type() {
+    let mut table = TypeTable::new();
+    let types = intern_sample_types(&mut table);
+    for &left in &types {
+        for &right in &types {
+            let found_before = table.find_union([left, right]);
+            let count = table.len();
+            let union = table.union(left, right);
+            if let Some(found) = found_before {
+                assert_eq!((found, table.len()), (union, count));
+            }
+            let mut parts = Type::never();
+            add_parts(&mut parts, &table.get(left));
+            add_parts(&mut parts, &table.get(right));
+            let names_class_twice = left != right && !normalize_without_table(&mut parts);
+            let expected = (!names_class_twice).then_some(union);
+            assert_eq!(table.find_union([left, right]), expected);
+        }
+    }
+}
+
 fn intern_sample_types(table: &mut TypeTable) -> Vec<TypeId> {
     let interned = [
         Type::integers(5, 6),
@@ -99,7 +121,7 @@ fn only_repeated_classes_intern_merged_contents() {
         panic!("{} class parts", merged.classes.len());
     };
     let number_or_string = Type::primitives(Primitives::NUMBER | Primitives::STRING);
-    assert_eq!(*table.get(part.contents[0]), number_or_string);
+    assert_eq!(table.get(part.contents[0]), number_or_string);
 }
 
 #[test]
@@ -132,7 +154,7 @@ fn contents_merge_slot_by_slot() {
     let key = table.union(TypeTable::STRING, TypeTable::BOOLEAN);
     let value = table.union(TypeTable::NUMBER, TypeTable::NULL);
     assert_ne!(key, value);
-    assert_eq!(*table.get(union), map_of(key, value));
+    assert_eq!(table.get(union), map_of(key, value));
 }
 
 #[test]
@@ -144,9 +166,9 @@ fn nested_contents_merge() {
         [numbers, strings].map(|contents| table.intern(array_of(contents)));
     let union = table.union(number_lists, string_lists);
     let inner = table.union(numbers, strings);
-    assert_eq!(*table.get(union), array_of(inner));
+    assert_eq!(table.get(union), array_of(inner));
     let number_or_string = table.union(TypeTable::NUMBER, TypeTable::STRING);
-    assert_eq!(*table.get(inner), array_of(number_or_string));
+    assert_eq!(table.get(inner), array_of(number_or_string));
 }
 
 #[test]
@@ -165,9 +187,9 @@ fn hull_covers_only_members_with_a_range() {
         .map(|(minimum, maximum)| table.intern(Type::integers(minimum, maximum)));
 
     let positive = table.union(low, high);
-    assert_eq!(*table.get(positive), Type::integers(5, 9));
+    assert_eq!(table.get(positive), Type::integers(5, 9));
     let negative = table.union(negative_high, negative_low);
-    assert_eq!(*table.get(negative), Type::integers(-9, -5));
+    assert_eq!(table.get(negative), Type::integers(-9, -5));
     for members in [
         [TypeTable::STRING, low, high],
         [low, TypeTable::STRING, high],
@@ -275,9 +297,9 @@ fn removing_one_kind_keeps_parts_of_other_kinds() {
     });
     let remove = |table: &mut TypeTable, removed: Primitives| {
         let remaining = table.without_primitives(ty, removed);
-        table.get(remaining).clone()
+        table.get(remaining).to_type()
     };
-    let whole = table.get(ty).clone();
+    let whole = table.get(ty).to_type();
 
     let without_true = Type {
         primitives: Primitives::FALSE | Primitives::ABSENT,

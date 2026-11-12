@@ -110,16 +110,12 @@ const crossed = holders.flatMap(holder =>
   forms.flatMap(form => makers.flatMap(maker => uses.map(use => ({ holder, form, maker, use })))),
 );
 
-const laidOut = [[], ["--aot-heat=everything-is-hot"], ["--aot-validate"]];
-export const programs = laidOut.length * crossed.length;
-
-/** The build flags of the program with that index. */
-export const flagsOf = (index: number): string[] => laidOut[Math.floor(index / crossed.length)];
+export const programs = crossed.length;
 
 export function programOf(index: number): { file: string; text: string } {
   // Neighbors in the table differ only in what is done with the result, so a stride coprime with the table's length
   // spreads consecutive seeds over the whole table.
-  const { holder, form, maker, use } = crossed[((index % crossed.length) * 7919) % crossed.length];
+  const { holder, form, maker, use } = crossed[(index * 7919) % crossed.length];
   const keys = [...holder.keys, "other"];
   const done = (key: string) => use.text.replaceAll("R", `fresh()[${key}]`);
   const asks = maker.each

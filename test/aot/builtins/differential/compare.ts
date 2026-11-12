@@ -1,5 +1,6 @@
 import { types } from "node:util";
 import { describeError, describeEvent, describeKey, describeOrigin } from "./behaviors";
+import { fieldNobodyReads, valueNobodyReads } from "./instances";
 import type { LogEvent, Origin } from "./log";
 import type { Realm } from "./members";
 import { selectOverload, type Call } from "./operands";
@@ -52,6 +53,8 @@ const toPrimitiveKeys = ["@@toPrimitive", "valueOf", "toString"];
 const iterationKeys = ["@@iterator", "@@asyncIterator", "next", "return", "throw", "done", "value"];
 const membersMaking = { Iterator: [Symbol.iterator, Symbol.asyncIterator], IteratorResult: ["next", "return", "throw"] };
 const readingActions: readonly PropertyActionKind[] = ["ReadsByKey", "ReadsGetter", "ReadsSetter"];
+// Native code throws these too, and in the table they do not stand below Error. No feature and no function of the library hangs on them, so nothing is lost where the compiler does not count them.
+const classesThrownBesideErrors = ["DOMException", "BuildMessage", "ResolveMessage"];
 const storingActions: readonly PropertyActionKind[] = ["StoresByKey", "AssignsFrom"];
 const definingActions: readonly PropertyActionKind[] = [
   "StoresByKey",
@@ -195,20 +198,21 @@ class Comparison {
     return protocols.includes("CallsNamed") && (calledMembers.length === 0 || calledMembers.includes(spelling));
   }
 
-  readsKey(parameter: DumpedParameter, operand: OperandName, key: PropertyKey, isOwnKey: boolean, depth: number): boolean {
+  readsKey(parameter: DumpedParameter, operand: OperandName, key: PropertyKey, isOwnKey: boolean, isKeyOnChain: boolean, depth: number): boolean {
     if (this.isNamed(parameter, key) || this.isOnMemberPath(operand, key, depth)) return true;
     const { protocols } = parameter;
-    if (protocols.includes("OwnValues") && (isOwnKey || isIndexKey(key) || protocols.includes("PrototypeChain"))) return true;
+    // A key that native code spells by itself is named by the entry: flow reaches the own values, the links of the chain and the named members.
+    if (protocols.includes("OwnValues") && (isOwnKey || isIndexKey(key) || (isKeyOnChain && protocols.includes("PrototypeChain")))) return true;
     // The iterator of the engine's arrays reads these from what it iterates.
     if (protocols.includes("Iterate") && (isIndexKey(key) || key === "length")) return true;
     if (depth > 0 && !this.hasAnyUse(parameter, "AppliesTransitively")) return false;
     return this.hasActionFor(operand, depth === 0 ? [...readingActions, ...definingActions, "DeletesByKey"] : readingActions, key);
   }
 
-  // b.handedOver: native code reads, calls, keeps and passes on such an operand, and does not change it. Flow takes what goes into
+  // b.retainedByNativeCode: native code reads, calls, keeps and passes on such an operand, and does not change it. Flow takes what goes into
   // native memory for escaped, a call that runs other code lets whatever has escaped be read and called, and no pass takes a
   // summary of an operand from such an entry.
-  isHandedOver(parameter: DumpedParameter): boolean {
+  isRetainedByNativeCode(parameter: DumpedParameter): boolean {
     const { capability, runsOnlyOperandCode } = this.overload;
     return capability === "js" && !runsOnlyOperandCode && this.goesIntoNativeMemory(parameter);
   }
@@ -249,14 +253,14 @@ class Comparison {
 
   coversTrap(parameter: DumpedParameter, event: LogEvent, depth: number): boolean {
     const { operand } = event.origin;
-    const { trap, key, isOwnKey } = event;
+    const { trap, key, isOwnKey, isKeyOnChain } = event;
     switch (trap) {
       case "get":
-        return this.readsKey(parameter, operand, key!, isOwnKey, depth);
+        return this.readsKey(parameter, operand, key!, isOwnKey, isKeyOnChain, depth);
       case "has":
-        return this.hasAnyProtocol(parameter, "PrototypeChain") || this.readsKey(parameter, operand, key!, isOwnKey, depth);
+        return this.hasAnyProtocol(parameter, "PrototypeChain") || this.readsKey(parameter, operand, key!, isOwnKey, isKeyOnChain, depth);
       case "getOwnPropertyDescriptor":
-        return this.hasAnyProtocol(parameter, "OwnKeys", "OwnValues") || this.readsKey(parameter, operand, key!, isOwnKey, depth);
+        return this.hasAnyProtocol(parameter, "OwnKeys", "OwnValues") || this.readsKey(parameter, operand, key!, isOwnKey, isKeyOnChain, depth);
       case "ownKeys":
         return this.hasAnyProtocol(parameter, "OwnKeys", "OwnValues");
       case "getPrototypeOf":
@@ -404,6 +408,7 @@ class Comparison {
     const takesRest = last?.place === "Operand" && typeof last.operand === "object" && "argumentsFrom" in last.operand;
     event.passedValues.forEach((value, index) => {
       const place = declared[index] ?? (takesRest ? last : spread);
+      if (place.place === "NewValue" && place.holdsWhatIsThrown) this.checkThrownValue(`${column}.arguments`, value);
       if (this.placeAdmits(place, value)) return;
       this.report(`${column}.arguments`, `argument ${index} is ${this.describeValue(value)} (${describeEvent(event)})`);
     });
@@ -471,7 +476,7 @@ class Comparison {
     const column = columnOf(this.overload, origin.operand);
     const { key, content, operand, depth } = origin;
     if (content === "Getter") {
-      if (!this.readsKey(parameter, operand, key!, true, depth - 1)) {
+      if (!this.readsKey(parameter, operand, key!, true, true, depth - 1)) {
         this.report(`${column}.protocols`, `a getter ran: ${describeEvent(event)}`);
       }
       return;
@@ -513,6 +518,7 @@ class Comparison {
     const { protocols, roles } = parameter;
     if ((content === "Iterator" || content === "IteratorResult") && this.hasAnyProtocol(parameter, "Iterate", "CallsNamed")) return;
     if ((content === "Iterator" || content === "IteratorResult") && membersMaking[content].some(maker => this.escapesFromMember(origin.operand, maker, depth))) return;
+    if ((content === "Iterator" || content === "IteratorResult") && event.trap === "has" && event.key === Symbol.iterator && membersMaking[content].some(maker => this.isAskedWhetherIterable(origin.operand, maker, depth))) return;
     if (key === "constructor" && protocols.includes("Species")) return;
     const eventKey = event.key === undefined ? undefined : spellingOf(event.key);
     const convertsMembers = protocols.includes("ToPrimitive") && !roles.includes("MembersAreOnlyInspected");
@@ -541,8 +547,17 @@ class Comparison {
 
   // What a handler returns is in the hands of native code.
   escapesFromMember(operand: OperandName, key: PropertyKey | undefined, depth: number): boolean {
+    return this.isReturnedByMemberFor("Escapes", operand, key, depth);
+  }
+
+  // Of what a handler returns native code asks whether it has @@iterator, and nothing else.
+  isAskedWhetherIterable(operand: OperandName, key: PropertyKey | undefined, depth: number): boolean {
+    return this.isReturnedByMemberFor("AskedWhetherIterable", operand, key, depth);
+  }
+
+  isReturnedByMemberFor(use: string, operand: OperandName, key: PropertyKey | undefined, depth: number): boolean {
     return this.overload.handlerCalls.some(({ callee, resultUse }) => {
-      if (resultUse !== "Escapes" || callee.place !== "Member" || !covers(callee.operand, operand)) return false;
+      if (resultUse !== use || callee.place !== "Member" || !covers(callee.operand, operand)) return false;
       const last = callee.path[callee.path.length - 1];
       return callee.path.length === depth && (last === null || (key !== undefined && last === spellingOf(key)));
     });
@@ -558,7 +573,7 @@ class Comparison {
       return;
     }
     if (claimsEveryUse(parameter)) return;
-    const isInOtherHands = this.isHandedOver(parameter) || this.isHandedToMethodsOfEngine(parameter);
+    const isInOtherHands = this.isRetainedByNativeCode(parameter) || this.isHandedToMethodsOfEngine(parameter);
     if (isInOtherHands && !changingTraps.includes(event.trap)) return;
     if (origin.kind !== "Operand" && this.mayRunMethodsOfEngine(parameter, operand)) return;
     if (event.isDuringStep) {
@@ -694,7 +709,7 @@ class Comparison {
     if (transfers.some(({ from, to }) => reachesResult(to) && this.isSourceOf(from, origin, value))) return true;
     if (origin.kind === "CallbackResult") {
       return callbacks.some(
-        ({ callee, resultUse }) => covers(callee, origin.operand) && ["Returned", "Stored", "Escapes"].includes(resultUse),
+        ({ callee, resultUse }) => covers(callee, origin.operand) && ["Returned", "Stored", "Flattened", "Escapes"].includes(resultUse),
       ) || origin.callee.kind !== "Operand";
     }
     return propertyActions.some(
@@ -739,7 +754,7 @@ class Comparison {
 
   isUnchecked(origin: Origin): boolean {
     const parameter = parameterOf(this.overload, origin.operand);
-    return parameter !== null && (claimsEveryUse(parameter) || this.isHandedOver(parameter));
+    return parameter !== null && (claimsEveryUse(parameter) || this.isRetainedByNativeCode(parameter));
   }
 
   forEachHeldValue(root: object, visit: (value: object, origin: Origin) => void): void {
@@ -797,7 +812,10 @@ class Comparison {
   checkResult(result: unknown): void {
     const { overload } = this;
     const mismatch = findMismatch(this.types, overload.result.type, result);
-    if (mismatch !== undefined) this.report("result.type", `the result is ${mismatch}`);
+    // A type that is declared only says what native code lays there. What an operand brought along is held by the uses of that operand, below.
+    const cameWithOperand = overload.resultIsDeclaredOnly === true && isObject(result) && this.originOf(result) !== undefined;
+    if (mismatch !== undefined && !cameWithOperand) this.report("result.type", `the result is ${mismatch}`);
+    if (types.isPromise(result) && Bun.peek.status(result) === "rejected") this.checkThrownValue("result.type", Bun.peek(result));
     this.checkSubstring(result);
     this.checkRepeated(result);
     if (!isObject(result)) return;
@@ -896,7 +914,15 @@ class Comparison {
     });
   }
 
+  // The compiler takes what is thrown, and the reason of a promise, to let no object of an unknown class exist: errors exist in every program, and what an operand brought is the program's.
+  checkThrownValue(column: string, value: unknown): void {
+    if (!isObject(value) || types.isNativeError(value) || this.originOf(value) !== undefined) return;
+    if (this.realm.classesOf(value).some(token => classesThrownBesideErrors.includes(token))) return;
+    this.report(column, `native code throws ${this.describeValue(value)}, which is no error and which no operand brought`);
+  }
+
   checkThrow(error: unknown): void {
+    this.checkThrownValue("throws", error);
     const origin = this.originOf(error);
     if (origin || (this.overload.throws && !this.overload.onlyPropagatesErrors)) return;
     if (this.hasOperandOutsideAcceptedType() || this.mayThrowInTrap()) return;
@@ -906,6 +932,21 @@ class Comparison {
   }
 
   // Flow takes a call with such an operand to throw: nothing is stored, called or returned.
+  // A message, or a text that is returned, names a field of an operand or what the field holds: the own keys and values were read.
+  checkPrintedFields(): void {
+    const { completion, set } = this.run;
+    const said = completion.kind === "Returned" ? completion.value : types.isNativeError(completion.error) ? completion.error.message : "";
+    if (typeof said !== "string" || !(said.includes(fieldNobodyReads) || said.includes(valueNobodyReads))) return;
+    for (const operand of this.operandNames()) {
+      if (!/^object:(instanceWithF|f)ieldNobodyReads$/.test(candidateOf(set, operand)?.name ?? "")) continue;
+      const parameter = parameterOf(this.overload, operand);
+      // What native code keeps it may read whenever it likes.
+      if (parameter === null || this.hasAnyUse(parameter, "Retains") || this.hasAnyProtocol(parameter, "OwnValues")) continue;
+      const how = completion.kind === "Returned" ? "the text that is returned" : "the message of the error";
+      this.report(`${columnOf(this.overload, operand)}.uses`, `${how} prints a field of ${describeOperand(operand)}: ${said.slice(0, 160)}`);
+    }
+  }
+
   findRefusedOperand(): OperandName | undefined {
     return this.operandNames().find(operand => {
       const parameter = parameterOf(this.overload, operand);
@@ -1113,6 +1154,7 @@ class Comparison {
     }
     if (!isReentrant(run.set)) for (const change of changesIn(run)) this.checkChange(change);
     this.checkRegExpState();
+    this.checkPrintedFields();
     return [...this.differences.values()];
   }
 }

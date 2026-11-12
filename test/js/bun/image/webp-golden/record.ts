@@ -21,7 +21,8 @@
 //   not say so.
 //
 // No case is a damaged lossy file whose coefficients overflow 16 bits: libwebp's SSE2 code and its C code decode
-// those to different pixels. `bun_webp` does what the C code does, and webp-golden.test.ts has cases of its own for that.
+// those to different pixels. `bun_webp` does what the C code does since 85755959, after 1.6.0, where its products no
+// longer overflow 32 bits. webp-golden.test.ts has cases of its own for both.
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";

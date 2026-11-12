@@ -202,6 +202,8 @@ describe("libwebp's history", () => {
       3,
       lossyRgba.map((byte, i) => (i % 4 === 3 ? alpha[i >> 2] : byte)),
     );
+  const blockSize = { ...size, width: 4, height: 4 };
+  const grayBlock = (...levels: number[]) => pixels(4, 4, Uint8Array.from(levels.flatMap(v => [v, v, v, 255])));
   const losslessSize = { ...size, width: 12 };
   const losslessPixels = pixels(
     12,
@@ -433,6 +435,33 @@ describe("libwebp's history", () => {
       withAlpha("01ff9711119000b66dd8c841504e77ff1111787f7f00"),
       lossySize,
       lossyPixelsWithAlpha(1, 1, 1, 5, 8, 8, 1, 1, 1, 1, 1, 1, 1, 1, 4),
+    ],
+
+    // 85755959, after 1.6.0: the C code's inverse transform multiplied in 32 bits. Coefficients of 32660, or of -32660, add up
+    // to 65320 and to 107992 in its first pass, which its second pass multiplies. The SSE2 code gives other pixels for these.
+    [
+      "coefficients that overflow 32 bits when multiplied by 35468",
+      riff([chunk("VP8 ", hex("1001009d012a040004000000fe00000dc000c4ffff8fbf8fff1f000000"))]),
+      blockSize,
+      grayBlock(255, 255, 0, 0, 130, 130, 130, 130, 130, 130, 130, 130, 255, 255, 0, 0),
+    ],
+    [
+      "negative coefficients that overflow 32 bits when multiplied by 35468",
+      riff([chunk("VP8 ", hex("1001009d012a040004000000fe00000dc000c4ffff907d8fff207c0000"))]),
+      blockSize,
+      grayBlock(0, 0, 255, 255, 130, 130, 130, 130, 130, 130, 130, 130, 0, 0, 255, 255),
+    ],
+    [
+      "coefficients that overflow 32 bits when multiplied by 20091",
+      riff([chunk("VP8 ", hex("1001009d012a040004000000fe00000dc000c4ffff8febfff903dffc85bfffc87dff8fe2fff903e000"))]),
+      blockSize,
+      grayBlock(255, 255, 255, 0, 255, 255, 255, 0, 0, 0, 0, 255, 255, 255, 255, 0),
+    ],
+    [
+      "negative coefficients that overflow 32 bits when multiplied by 20091",
+      riff([chunk("VP8 ", hex("1001009d012a040004000000fe00000dc000c4ffff90a9fff90fbffc7fcfffc81eff90a0fff8f80000"))]),
+      blockSize,
+      grayBlock(0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 255),
     ],
 
     ["an animation", riff([vp8x(ICCP | ANIMATION), iccp, anim, anmf(lossy)]), size, refused],

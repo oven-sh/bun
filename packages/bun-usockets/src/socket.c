@@ -98,6 +98,7 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) {
 }
 
 __attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
+    if (UNLIKELY(s->lingering)) return;
     s->timeout = us_internal_timeout_tick(s->group->loop, seconds);
     s->low_prio_ticks = 0;
 }
@@ -356,17 +357,21 @@ struct us_socket_t *us_socket_close_now(struct us_socket_t *s) {
 }
 
 struct us_socket_t *us_socket_close_lingering(struct us_socket_t *s) {
-    /* The graceful TLS close waits for the peer's close_notify in the same way. After the peer's FIN there is nothing to wait for. */
-    if (s->ssl || s->read_eof || us_socket_is_closed(s) || !us_socket_is_established(s)) {
+    /* After the peer's FIN there is nothing to wait for. */
+    if ((s->read_eof && !s->ssl) || us_socket_is_closed(s) || !us_socket_is_established(s)) {
+        return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+    }
+    us_socket_timeout(s, LIBUS_LINGER_SECONDS);
+    s->lingering = 1;
+    /* The process doesn't stay alive for it. */
+    us_socket_unref(s);
+    /* The graceful TLS close waits for the peer's close_notify in the same way. */
+    if (s->ssl) {
         return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
     }
     us_internal_socket_raw_shutdown(s);
     /* Only a read sees the peer's FIN. */
     us_socket_resume(s);
-    us_socket_timeout(s, LIBUS_LINGER_SECONDS);
-    /* The process doesn't stay alive for it. */
-    us_socket_unref(s);
-    s->lingering = 1;
     return s;
 }
 

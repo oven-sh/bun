@@ -435,7 +435,7 @@ struct us_socket_t {
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */
   unsigned char ssl_pending_close_code : 2;
-  /* us_socket_close_lingering: the owner let go. loop.c drops what the peer still sends, and closes at its FIN or at the timeout. */
+  /* us_socket_close_lingering: the owner let go, and `timeout` is the deadline of the close. */
   unsigned char lingering : 1;
   /* us_socket_set_first_flight_before_fin: the first handshake step is still due, and a shutdown waits for it. */
   unsigned char ssl_first_flight_before_fin : 1;

@@ -3979,6 +3979,65 @@ describe("idle timeout with a forced sweep", () => {
     }
   });
 
+  function halfOpenClient(port: number, secure: boolean) {
+    const options = { port, host: "127.0.0.1", allowHalfOpen: true };
+    const client = secure ? nodeTls.connect({ ...options, ca: tls.cert }) : net.connect(options);
+    client.on("error", () => {});
+    return client;
+  }
+
+  /** Returns true if the server stopped reading before it had `limit` bytes. */
+  async function writeUntilBlocked(client: net.Socket, limit: number) {
+    const chunk = Buffer.alloc(256 * 1024, "u");
+    for (let sent = 0; sent < limit; sent += chunk.length) {
+      if (client.write(chunk)) continue;
+      let drained = false;
+      client.once("drain", () => (drained = true));
+      // The server shares this event loop, so a turn is all it needs to read.
+      for (let turn = 0; turn < 200 && !drained; turn++) await new Promise(setImmediate);
+      if (!drained) return true;
+    }
+    return false;
+  }
+
+  async function sweepUntilClosed(client: net.Socket) {
+    for (let i = 0; i < 50 && !client.destroyed; i++) {
+      await sweep();
+      // A server that has closed resets the connection for this byte.
+      client.write("x");
+    }
+    return client.destroyed;
+  }
+
+  describe.each([
+    ["http", false],
+    ["https", true],
+  ] as const)("behind a closing response over %s", (_protocol, secure) => {
+    const upload = "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 100000000\r\n\r\n";
+
+    it("closes a connection whose upload was paused and whose client never answers the FIN", async () => {
+      const respond = Promise.withResolvers<void>();
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        tls: secure ? tls : undefined,
+        idleTimeout: 0,
+        fetch: () => respond.promise.then(() => new Response("bye", { headers: { Connection: "close" } })),
+      });
+      const client = halfOpenClient(server.port!, secure);
+      try {
+        client.resume();
+        client.write(upload);
+        const paused = await writeUntilBlocked(client, 64 * 1024 * 1024);
+        respond.resolve();
+        await once(client, "end");
+        expect({ paused, closed: await sweepUntilClosed(client) }).toEqual({ paused: true, closed: true });
+      } finally {
+        client.destroy();
+      }
+    });
+  });
+
   it.each([
     ["http", false],
     ["https", true],

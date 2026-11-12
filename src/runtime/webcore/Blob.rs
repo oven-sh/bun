@@ -4497,12 +4497,7 @@ pub(crate) fn write_file_internal(
         PathOrBlob::Path(path) => {
             // What is written lies on the disk from then on, which is asked first.
             let new_blob = match is_held_at_source_path(path) {
-                true => {
-                    let empty = PathOrFileDescriptor::Path(PathLike::default());
-                    let path = core::mem::replace(path, empty).thread_isolated_copy();
-                    let store = bun_core::handle_oom(Store::init_file(path, None));
-                    Blob::init_with_store(store, cx.global())
-                }
+                true => file_blob_on_disk(path, cx.global()),
                 false => try_find_or_create_file_from_path(path, cx.global())?,
             };
             if new_blob.store.get().is_none() {
@@ -4915,8 +4910,8 @@ fn write_file_after_would_block(
     options: &WriteFileOptions,
 ) -> JsResult<JSValue> {
     let destination_blob = match path_or_blob {
-        // A local file: the synchronous attempt opened it.
-        PathOrBlob::Path(path) => Blob::find_or_create_file_from_path(path, cx.global(), false),
+        // The synchronous attempt opened it on the disk, so the executable is not asked for it.
+        PathOrBlob::Path(path) => file_blob_on_disk(path, cx.global()),
         PathOrBlob::Blob(blob) => blob.dupe(),
     };
     let mut job = write_file::WriteFile::create(
@@ -5311,6 +5306,17 @@ fn is_held_at_source_path(path: &PathOrFileDescriptor<'static>) -> bool {
     !bun_standalone_graph::is_bun_standalone_file_path(path.slice())
         && bun_standalone_graph::Graph::get_ref()
             .is_some_and(|graph| graph.find_data(path.slice()).is_some())
+}
+
+/// A blob of the file at `path` on the disk, whatever the executable holds for that path.
+fn file_blob_on_disk(
+    path: &mut PathOrFileDescriptor<'static>,
+    global_this: &JSGlobalObject,
+) -> Blob {
+    let empty = PathOrFileDescriptor::Path(PathLike::default());
+    let path = core::mem::replace(path, empty).thread_isolated_copy();
+    let store = bun_core::handle_oom(Store::init_file(path, None));
+    Blob::init_with_store(store, global_this)
 }
 
 /// `find_or_create_file_from_path` with `check_s3`.

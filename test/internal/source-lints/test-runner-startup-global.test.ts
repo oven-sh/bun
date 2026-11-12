@@ -34,10 +34,16 @@ function body(text: string, signature: string): string {
   throw new Error(`"${signature}" is not closed`);
 }
 
-function before(text: string, call: string): string {
-  const end = text.indexOf(call);
-  if (end < 0) throw new Error(`no "${call}"`);
-  return text.slice(0, end);
+/** The text up to `call` and through its arguments, which run before the call does. */
+function through(text: string, call: string): string {
+  const start = text.indexOf(call);
+  if (start < 0) throw new Error(`no "${call}"`);
+  let depth = 0;
+  for (let i = start + call.length - 1; i < text.length; i++) {
+    if (text[i] === "(") depth++;
+    else if (text[i] === ")" && --depth === 0) return text.slice(0, i + 1);
+  }
+  throw new Error(`"${call}" is not closed`);
 }
 
 const reads = (text: string) => text.match(/^.*\.global(?:_ref)?\b(?!_).*$/gm)?.map(line => line.trim()) ?? [];
@@ -45,7 +51,7 @@ const reads = (text: string) => text.match(/^.*\.global(?:_ref)?\b(?!_).*$/gm)?.
 test("bun test reads no global before the first test file in a frame that outlives it", () => {
   const testCommand = source("src/runtime/cli/test_command.rs");
   const runner = source("src/runtime/cli/test/parallel/runner.rs");
-  const exec = before(body(testCommand, "pub(crate) fn exec("), "Self::run_all_tests(");
+  const exec = through(body(testCommand, "pub(crate) fn exec("), "Self::run_all_tests(");
   // The worker is handed over from `exec` too: a body cut short would pass for nothing.
   expect(exec).toContain("ParallelRunner::run_as_worker(");
   // `Context::begin` runs the files. It is written inside `run_all_tests`, above the statements that call it.
@@ -53,11 +59,11 @@ test("bun test reads no global before the first test file in a frame that outliv
   const contextBegin = body(runAllTests, "fn begin(&mut self)");
   expect({
     exec: reads(exec),
-    run_all_tests: reads(before(runAllTests.replace(contextBegin, ""), ".begin()")),
-    "Context::begin": reads(before(contextBegin, "TestCommand::run(")),
-    run_as_worker: reads(before(body(runner, "pub(crate) fn run_as_worker("), "wloop.begin(")),
+    run_all_tests: reads(through(runAllTests.replace(contextBegin, ""), ".begin(")),
+    "Context::begin": reads(through(contextBegin, "TestCommand::run(")),
+    run_as_worker: reads(through(body(runner, "pub(crate) fn run_as_worker("), "wloop.begin(")),
     "WorkerLoop::begin": reads(
-      before(body(runner, "fn begin(&mut self, vm: &mut VirtualMachine)"), "TestCommand::run("),
+      through(body(runner, "fn begin(&mut self, vm: &mut VirtualMachine)"), "TestCommand::run("),
     ),
     note_first_loads_of_earlier_process: reads(body(runner, "fn note_first_loads_of_earlier_process(")),
   }).toEqual({

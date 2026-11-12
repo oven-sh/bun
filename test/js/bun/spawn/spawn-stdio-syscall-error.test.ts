@@ -373,6 +373,26 @@ try {
 console.log(JSON.stringify(out));
 `;
 
+// process.stdin of the process under the shim: its stdin is the socket whose recv() fails. The 'error' and 'close'
+// listeners are added a few nextTicks behind the first chunk, as a consumer that takes one event at a time does.
+const PROCESS_STDIN_FIXTURE = /* js */ `
+const { once } = require("node:events");
+const seen = [];
+process.on("exit", () => console.log(JSON.stringify(seen)));
+process.on("uncaughtException", err => seen.push("uncaughtException:" + err.code));
+(async () => {
+  const first = once(process.stdin, "data");
+  // By now the first read has found the socket empty, and waits.
+  setImmediate(() => console.log("READY"));
+  const [chunk] = await first;
+  seen.push("data:" + chunk);
+  for (let i = 0; i < 3; i++) await new Promise(resolve => process.nextTick(resolve));
+  process.stdin.on("error", err => seen.push("error:" + err.code));
+  process.stdin.on("close", () => seen.push("close"));
+  console.log("LISTENING");
+})();
+`;
+
 let shimPath: string;
 let dir: ReturnType<typeof tempDir> | undefined;
 
@@ -390,6 +410,7 @@ beforeAll(async () => {
     "child-process-readable.mjs": CHILD_PROCESS_READABLE_FIXTURE,
     "stdout-stream-mid-fill.mjs": STDOUT_STREAM_MID_FILL_FIXTURE,
     "spawn-sync.mjs": SPAWN_SYNC_FIXTURE,
+    "process-stdin.cjs": PROCESS_STDIN_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
   await using ccProc = Bun.spawn({
@@ -593,6 +614,48 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
         stderr: "",
         exitCode: 0,
       });
+    });
+  });
+
+  // Node's stdin reports a read error from a callback of its own, as it reports a chunk. The first recv() finds the
+  // socket empty, the second returns the first write, and the third finds it empty again.
+  describe.each([
+    ["behind the first bytes, in the same pass of the reader", { SPAWN_FAULT_RECV_MID_FILL: "1" }, false],
+    ["on the read that waits for the second write", { SPAWN_FAULT_RECV_AT: "4" }, true],
+  ] as const)("process.stdin read error %s", (_label, fault, writesTwice) => {
+    test.concurrent("'error' and 'close' reach listeners that are added behind the first chunk", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "process-stdin.cjs"],
+        cwd: String(dir),
+        env: { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shimPath}:${bunEnv.LD_PRELOAD}` : shimPath, ...fault },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const reader = proc.stdout.getReader();
+      const decoder = new TextDecoder();
+      let stdout = "";
+      const until = async (line: string) => {
+        for (let read; !stdout.includes(line) && !(read = await reader.read()).done;) {
+          stdout += decoder.decode(read.value, { stream: true });
+        }
+      };
+      await until("READY\n");
+      proc.stdin.write("one");
+      await proc.stdin.flush();
+      await until("LISTENING\n");
+      if (writesTwice) proc.stdin.write("two");
+      await proc.stdin.end();
+      await until("]\n");
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect({
+        seen: stdout.trim().split("\n").pop(),
+        stderr: stderr
+          .split("\n")
+          .filter(line => line.length > 0 && !line.startsWith("WARNING: ASAN interferes"))
+          .join("\n"),
+        exitCode,
+      }).toEqual({ seen: JSON.stringify(["data:one", "error:EIO", "close"]), stderr: "", exitCode: 0 });
     });
   });
 });

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 34b28730976f3729b1f08385ac19a7f622a31d5c76459e81ae77e00f2e40eba8.
+// Written against that file with the SHA-256 d3338a611361594c102a55d6e86034f79e51d4e118114d18636acd0997be44b8.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -143,8 +143,33 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   $assert(fd === 0);
   const native: ReadableStream<Uint8Array> = Bun.stdin.stream();
   const source: $Bindgen.FileInternalReadableStreamSource = native.$bunNativePtr;
+  // (stream, true) locks a native stream that nothing started, without a reader, and says whether it did.
+  // (stream, false) unlocks it.
+  const lockNative: (stream: ReadableStream, lock: boolean) => boolean = $newCppFunction(
+    "streams/BunStreamConsumers.cpp",
+    "jsFunctionLockNativeReadableStream",
+    2,
+  );
 
+  // Node's stdin gets each read, its EOF and its error from a callback of its own (a libuv handle, or fs.read for a
+  // file), after the nextTicks and the promise jobs of the one before. So this stream pulls `source` itself and passes
+  // `deliver`: the source then reports each result on a later turn of the event loop, and a consumer that takes one
+  // 'data' event at a time has its listener back before the next one. Meanwhile it holds `native` without a reader.
+  //
+  // A stream that a web reader started first has bytes in its controller. This stream then reads through a `reader`
+  // of its own, and pushes from the promise job of each read.
+  var locked = false;
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let started = false;
+  // The result of a pull is on its way to deliver().
+  let pulling = false;
+  // What a pull reads into. A pull that does not fill it leaves it to the next one.
+  let slab: Buffer | undefined;
+  // A web reader of a native stream sizes its slabs like this (nativeAdjustChunkSize in BunStreamSource.cpp), so the
+  // chunks have the sizes they had through one: doubled once when a pull fills the slab (a file), cut to what a read
+  // gives when it does not (a pipe, a socket).
+  let slabSize = 256 * 1024;
+  let slabSizeChanged = false;
 
   let needsInternalReadRefresh = false;
   // if true, while the stream is own()ed it will not
@@ -154,14 +179,30 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     // After EOF there is nothing left to read: no acquisition path ('readable'
     // listeners, resume(), ref(), an explicit read()) may take the reader back.
     if (stream_reachedEof) return;
-    $debug("ref();", reader ? "already has reader" : "getting reader");
-    reader ??= native.getReader();
+    $debug("ref();", locked || reader ? "already owns the stream" : "taking the stream");
+    if (!locked && reader === undefined) {
+      if (lockNative(native, true)) {
+        if (!started) {
+          try {
+            // `true`: the bytes that the source had before its start are on their way.
+            pulling = source.start(slabSize, deliver) === true;
+          } catch (err) {
+            lockNative(native, false);
+            throw err;
+          }
+          started = true;
+        }
+        locked = true;
+      } else {
+        reader = native.getReader();
+      }
+    }
     source.updateRef(forceUnref ? false : true);
     source?.setFlowing?.(true);
 
     if (needsInternalReadRefresh) {
       needsInternalReadRefresh = false;
-      internalRead(stream);
+      triggerRead.$call(stream, undefined);
     }
   }
 
@@ -169,7 +210,17 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     $debug("unref();");
     source?.setFlowing?.(false);
 
-    if (reader) {
+    if (locked) {
+      // A read that still waits in the source would take the bytes of whoever reads `native` next. Nothing was
+      // read into it, so the next own() asks again. A result that is queued still comes.
+      if (pulling && source.cancelPull()) {
+        pulling = false;
+        needsInternalReadRefresh = true;
+      }
+      lockNative(native, false);
+      locked = false;
+      $debug("unlocked the stream");
+    } else if (reader) {
       // releaseLock() rejects any in-flight internalRead() with a TypeError; that
       // rejection is handled there by observing that `reader` was cleared here.
       reader.releaseLock();
@@ -244,7 +295,7 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
     // An explicit read() must acquire the native reader: _read() without one only
     // records needsInternalReadRefresh, which own() replays. Owning afterwards so a
     // throwing size never refs stdin; read(0) kicks never own (pause() relies on it).
-    if (size !== 0 && reader === undefined && !stream_destroyed) {
+    if (size !== 0 && !locked && reader === undefined && !stream_destroyed) {
       own();
     }
     return ret;
@@ -252,6 +303,76 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
 
   function rethrowUncaught(err: unknown) {
     throw err;
+  }
+
+  function pull() {
+    if (pulling) return;
+    if (slab === undefined || slab.length !== slabSize) slab = Buffer.allocUnsafeSlow(slabSize);
+    // The result never comes inside the call.
+    source.pull(slab, undefined, deliver);
+    pulling = true;
+  }
+
+  function adjustSlabSize(bytes: number, slabBytes: number) {
+    if (bytes >= slabBytes) {
+      if (!slabSizeChanged) {
+        slabSizeChanged = true;
+        slabSize = $min(slabSize * 2, 2 * 1024 * 1024);
+      }
+    } else if (bytes > 0 && bytes < slabSize) {
+      slabSizeChanged = true;
+      slabSize = 64 * 1024;
+      while (slabSize < bytes) slabSize *= 2;
+    }
+  }
+
+  // The source calls this with the result of start() or of a pull(): a number of bytes in `slab`, a chunk of its own,
+  // a boolean at the end, or the error of the read (`failed`). `isClosed`: the source has nothing after this result,
+  // and the pull that comes next reports its end.
+  function deliver(result: number | boolean | Uint8Array | Error, isClosed: boolean, failed: boolean) {
+    $debug("deliver();", failed ? "error" : $isTypedArrayView(result) ? result.byteLength : result, isClosed);
+    pulling = false;
+    if (failed) {
+      stream.destroy(result as Error);
+      return;
+    }
+
+    let chunk: Uint8Array | undefined;
+    if (typeof result === "number") {
+      const view = slab!;
+      if (!isClosed) adjustSlabSize(result, view.length);
+      if (result < view.length) {
+        // Copied out at its size, so that the slab serves the next pull.
+        const copy = Buffer.allocUnsafeSlow(result);
+        view.copy(copy, 0, 0, result);
+        chunk = copy;
+      } else {
+        chunk = view;
+        slab = undefined;
+      }
+    } else if (typeof result !== "boolean") {
+      chunk = result as Uint8Array;
+      if (!isClosed && chunk.byteLength >= slabSize) adjustSlabSize(chunk.byteLength, chunk.byteLength);
+    }
+
+    try {
+      if (chunk) {
+        stream.push(chunk);
+      } else {
+        // EOF. Nothing is left to read, so let go of the source before
+        // push(null) runs user 'readable' listeners; the process must be able
+        // to exit even if one of them throws or never drains the buffer.
+        stream_reachedEof = true;
+        disown();
+        // push(null) instead of emitting 'end' by hand so read(n) can still
+        // return the buffered < n byte remainder and 'end'/'readableEnded'
+        // come from the stream machinery once the buffer drains.
+        stream.push(null);
+      }
+    } catch (err) {
+      if (chunk) triggerRead.$call(stream, undefined);
+      process.nextTick(rethrowUncaught, err);
+    }
   }
 
   async function internalRead(stream: StdinStream) {
@@ -297,13 +418,15 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
   }
 
   function triggerRead(this: StdinStream, _size?: number) {
-    $debug("_read();", reader);
+    $debug("_read();", locked, reader);
 
-    if (reader) {
+    if (locked) {
+      pull();
+    } else if (reader) {
       internalRead(this);
     } else {
       // The stream has not been ref()ed yet. If it is ever ref()ed,
-      // run internalRead()
+      // read then.
       needsInternalReadRefresh = true;
     }
   }

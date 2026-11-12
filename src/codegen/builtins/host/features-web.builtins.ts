@@ -148,7 +148,12 @@ export default b.declarations(
     "TransformStream",
     "TransformStreamDefaultController",
     "WritableStreamDefaultWriter",
-    ...nativeBindings("NewCppFunction", "streams/BunStreamConsumers.cpp", "jsFunctionTransferToNativeReadableStream"),
+    ...nativeBindings(
+      "NewCppFunction",
+      "streams/BunStreamConsumers.cpp",
+      "jsFunctionLockNativeReadableStream",
+      "jsFunctionTransferToNativeReadableStream",
+    ),
   ),
 
   extendAll(["Bodies"], "Blob", "Bun.embeddedFiles", "File"),

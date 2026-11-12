@@ -349,6 +349,16 @@ export default b.declarations(
     writes: externalState,
     implementation: b.hostCall,
   }),
+  // With `true` it locks a native stream that nothing has started, without a reader, and answers whether it did. With anything else it unlocks the stream.
+  // It reads no member of the stream, and refuses nothing: what is no stream is left alone.
+  b.static(cpp("streams/BunStreamConsumers.cpp", "jsFunctionLockNativeReadableStream"), {
+    args: { stream: b.any.optional, lock: b.any.optional },
+    returns: b.bool,
+    capability: "none",
+    uses: { stream: b.inspected, lock: b.inspected },
+    writes: externalState,
+    implementation: b.hostCall,
+  }),
 
   b.static(cpp("ModuleGraph.cpp", "jsFunctionIsFrameOfStoppedModuleGraph"), looksForModuleGraph(b.bool, b.inspected)),
   // The graph need not be one that this program has made: where the programs of a test run share a realm, the library is in one and

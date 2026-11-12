@@ -752,4 +752,208 @@ describe("process.stdin read one 'data' event at a time", () => {
     );
     expect(await promise).toEqual({ err: null, stdout: expected.stdout, stderr: "" });
   });
+
+  // The lines fit the input queue of the terminal. ^D at the start of a line is the end of the input.
+  test.concurrent.skipIf(isWindows).each(forms)("a terminal: %s", async (_, form) => {
+    const input = Buffer.alloc(40 * 64, "x");
+    for (let i = 63; i < input.length; i += 64) input[i] = 10;
+    let output = "";
+    const decoder = new TextDecoder();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture, form],
+      env: bunEnv,
+      terminal: {
+        cols: 200,
+        rows: 24,
+        data(_terminal, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+        },
+      },
+    });
+    proc.terminal!.write(input);
+    proc.terminal!.write("\x04");
+    const exitCode = await proc.exited;
+    proc.terminal!.close();
+    const result = Bun.stripANSI(output)
+      .replace(/[\r\n]/g, "")
+      .match(/\{"bytes":\d+,"doneAtEnd":-?\d+\}/);
+    expect({ result: result?.[0] ?? output, exitCode }).toEqual({
+      result: JSON.stringify({ bytes: input.length, doneAtEnd: input.length }),
+      exitCode: 0,
+    });
+  });
+});
+
+// Node reports the EOF from a callback of its own, behind the nextTicks and the promise jobs of the last chunk. So an
+// 'end' listener that the consumer adds a few nextTicks after that chunk still runs. process.stdin pushed the EOF from
+// the promise job of the next read, which is answered at once when the input has ended: 'end' came before the listener.
+describe("process.stdin 'end' for a listener that is added behind the last chunk", () => {
+  const reader = `
+    const { once } = require("node:events");
+    const seen = [];
+    process.on("exit", () => console.log(JSON.stringify(seen)));
+    (async () => {
+      const [chunk] = await once(process.stdin, "data");
+      seen.push("data:" + chunk);
+      for (let i = 0; i < 3; i++) await new Promise(resolve => process.nextTick(resolve));
+      process.stdin.on("end", () => seen.push("end"));
+    })();
+  `;
+  const expected = { stdout: JSON.stringify(["data:hello", "end"]) + "\n", stderr: "", exitCode: 0 };
+
+  test.concurrent("a file", async () => {
+    using dir = tempDir("stdin-late-end-file", { "input.txt": "hello" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", reader],
+      stdin: Bun.file(path.join(String(dir), "input.txt")),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual(expected);
+  });
+
+  test.concurrent("a socket", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", reader],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    proc.stdin.write("hello");
+    await proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual(expected);
+  });
+
+  test.concurrent("an anonymous pipe", async () => {
+    using dir = tempDir("stdin-late-end-pipe", {
+      "writer.js": `process.stdout.write("hello");`,
+      "reader.js": reader,
+    });
+    const { promise, resolve } = Promise.withResolvers<{ err: Error | null; stdout: string; stderr: string }>();
+    exec(
+      `"${bunExe()}" writer.js | "${bunExe()}" reader.js`,
+      { cwd: String(dir), env: bunEnv },
+      (err, stdout, stderr) => resolve({ err, stdout, stderr }),
+    );
+    expect(await promise).toEqual({ err: null, stdout: expected.stdout, stderr: "" });
+  });
+});
+
+// pause() lets go of the source of stdin one tick later, and resume() takes it back. A read that still waits in the
+// source is dropped and asked again. A result that is already on its way arrives while stdin is paused.
+describe("process.stdin paused for a nextTick, an immediate and a timer in turn", () => {
+  const size = 1_000_000;
+  const pattern = Buffer.alloc(size);
+  for (let i = 0; i < size; i++) pattern[i] = (i ^ (i >>> 8) ^ (i >>> 16)) & 255;
+  const reader = `
+    let offset = 0, firstWrongByte = -1, pauses = 0;
+    const stdin = process.stdin;
+    const resume = () => stdin.resume();
+    stdin.on("data", chunk => {
+      for (let i = 0; i < chunk.length; i++, offset++) {
+        if (chunk[i] !== ((offset ^ (offset >>> 8) ^ (offset >>> 16)) & 255) && firstWrongByte < 0) firstWrongByte = offset;
+      }
+      stdin.pause();
+      switch (pauses++ % 3) {
+        case 0: process.nextTick(resume); break;
+        case 1: setImmediate(resume); break;
+        default: setTimeout(resume, 1);
+      }
+    });
+    stdin.on("end", () => console.log(JSON.stringify({ bytes: offset, firstWrongByte })));
+  `;
+  const expected = { stdout: JSON.stringify({ bytes: size, firstWrongByte: -1 }) + "\n", stderr: "", exitCode: 0 };
+
+  test.concurrent("a file", async () => {
+    using dir = tempDir("stdin-mixed-pauses-file", { "input.bin": pattern });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", reader],
+      stdin: Bun.file(path.join(String(dir), "input.bin")),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual(expected);
+  });
+
+  test.concurrent("a socket", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", reader],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    proc.stdin.write(pattern);
+    await proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual(expected);
+  });
+
+  test.concurrent("an anonymous pipe", async () => {
+    using dir = tempDir("stdin-mixed-pauses-pipe", {
+      "input.bin": pattern,
+      "writer.js": `const input = require("fs").readFileSync("input.bin"); let at = 0; (function pump() { while (at < input.length) { const chunk = input.subarray(at, at + 65536); at += chunk.length; if (!process.stdout.write(chunk)) return process.stdout.once("drain", pump); } })();`,
+      "reader.js": reader,
+    });
+    const { promise, resolve } = Promise.withResolvers<{ err: Error | null; stdout: string; stderr: string }>();
+    exec(
+      `"${bunExe()}" writer.js | "${bunExe()}" reader.js`,
+      { cwd: String(dir), env: bunEnv },
+      (err, stdout, stderr) => resolve({ err, stdout, stderr }),
+    );
+    expect(await promise).toEqual({ err: null, stdout: expected.stdout, stderr: "" });
+  });
+});
+
+// The source keeps its wrapper alive while a read of process.stdin waits in it. pause() drops that read.
+test("process.stdin paused and resumed on an open pipe keeps no read alive", async () => {
+  const rounds = 300;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { getProtectedObjects } = require("bun:jsc");
+      const stdin = process.stdin;
+      const counts = {};
+      stdin.once("data", async () => {
+        counts.inListener = getProtectedObjects().length;
+        // Nothing is in the pipe: every resume() leaves a read waiting in the source, and every pause() drops it.
+        for (let round = 0; round < ${rounds}; round++) {
+          stdin.pause();
+          await new Promise(resolve => setImmediate(resolve));
+          stdin.resume();
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        counts.afterRounds = getProtectedObjects().length;
+        console.log(JSON.stringify(counts));
+        stdin.on("data", () => {});
+      });
+      `,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  proc.stdin.write("first");
+  await proc.stdin.flush();
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let stdout = "";
+  for (let read; !stdout.includes("\n") && !(read = await reader.read()).done;) {
+    stdout += decoder.decode(read.value, { stream: true });
+  }
+  await proc.stdin.end();
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  const { inListener, afterRounds } = JSON.parse(stdout);
+  // One read waits at the end of the last round.
+  expect(afterRounds - inListener).toBeLessThanOrEqual(1);
 });

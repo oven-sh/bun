@@ -308,9 +308,9 @@ export function getStdinStream(
   }
 
   // The source calls this with the result of start() or of a pull(): a number of bytes in `slab`, a chunk of its own,
-  // `false` at the end, or the error of the read (`failed`). `isClosed`: the source has nothing after this result, and
-  // the pull that comes next reports its end.
-  function deliver(result: number | false | Uint8Array | Error, isClosed: boolean, failed: boolean) {
+  // a boolean at the end, or the error of the read (`failed`). `isClosed`: the source has nothing after this result,
+  // and the pull that comes next reports its end.
+  function deliver(result: number | boolean | Uint8Array | Error, isClosed: boolean, failed: boolean) {
     $debug("deliver();", failed ? "error" : $isTypedArrayView(result) ? result.byteLength : result, isClosed);
     pulling = false;
     if (failed) {
@@ -324,13 +324,14 @@ export function getStdinStream(
       if (!isClosed) adjustSlabSize(result, view.length);
       if (result < view.length) {
         // Copied out at its size, so that the slab serves the next pull.
-        chunk = Buffer.allocUnsafeSlow(result);
-        view.copy(chunk, 0, 0, result);
+        const copy = Buffer.allocUnsafeSlow(result);
+        view.copy(copy, 0, 0, result);
+        chunk = copy;
       } else {
         chunk = view;
         slab = undefined;
       }
-    } else if (result !== false) {
+    } else if (typeof result !== "boolean") {
       chunk = result as Uint8Array;
       if (!isClosed && chunk.byteLength >= slabSize) adjustSlabSize(chunk.byteLength, chunk.byteLength);
     }

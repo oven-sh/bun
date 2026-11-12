@@ -2392,6 +2392,36 @@ describe("child stdio 'data' comes from the read callback", () => {
       },
     );
 
+    // The same last chance taken with read(), which cannot wait for a later turn. POSIX only: on Windows Bun gets the
+    // first bytes of a pipe from the event loop, after read() has returned null.
+    it.concurrent.skipIf(!isPosix).each([
+      [["ignore", "pipe", "pipe"], "stdout"],
+      [["ignore", "pipe", "pipe"], "stderr"],
+      [["ignore", "pipe"], "stdout"],
+      [["ignore", "pipe"], "stderr"],
+    ] as const)(
+      "read() in 'exit' returns what the child wrote before it exited (stdio: %j, %s)",
+      async (stdio, name) => {
+        const script = `
+          const { spawn } = require("node:child_process");
+          const c = spawn(process.execPath, ["-e", 'process.${name}.write(Buffer.alloc(3000, "o"));'], {
+            stdio: ${JSON.stringify(stdio)},
+          });
+          let read;
+          c.on("exit", () => {
+            const chunk = c.${name}.read();
+            read = chunk === null ? null : chunk.length;
+          });
+          c.on("close", code => console.log(JSON.stringify({ read, code })));
+        `;
+        expect(await run(script)).toEqual({
+          stdout: JSON.stringify({ read: 3000, code: 0 }),
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
     // The child's output and its EOF are both in the pipe by then. With no 'uncaughtException' handler the throw is
     // fatal, and neither 'end' nor the child's 'close' may follow it.
     it.concurrent.each([
@@ -2685,6 +2715,43 @@ describe("child stdio 'data' comes from the read callback", () => {
         exitCode: 0,
       });
     });
+
+    // Here the child is still running, and the process's own 'exit' is the last code to run: read() returns the bytes
+    // there, or the program never has them. The child writes to stderr once its stdout bytes are in the pipe, and
+    // stays until its stdin closes, which the parent's exit does. POSIX only, as read() in the child's 'exit' is.
+    it.concurrent.skipIf(!isPosix)(
+      "read() in the process's 'exit' returns what a running child has written",
+      async () => {
+        const writer = `const fs = require("fs"); fs.writeSync(1, "out"); fs.writeSync(2, "written"); process.stdin.resume();`;
+        const script = `
+          const { spawn } = require("node:child_process");
+          const child = spawn(process.execPath, ["-e", ${JSON.stringify(writer)}], { stdio: ["pipe", "pipe", "pipe"] });
+          let said = "", childExit = false;
+          child.stderr.on("data", d => {
+            if (!(said += d).endsWith("written")) return;
+            // Two more turns of the event loop, for a reader that takes the bytes out of the pipe as they come.
+            setImmediate(() => setImmediate(() => {
+              child.unref();
+              child.stdout.unref();
+              child.stderr.unref();
+              child.stdin.unref?.();
+            }));
+          });
+          child.on("exit", () => (childExit = true));
+          // Ends a pair that stalls.
+          setTimeout(() => process.exit(2), 20_000).unref();
+          process.on("exit", exit => {
+            const chunk = child.stdout.read();
+            console.log(JSON.stringify({ read: chunk && String(chunk), childExit, exit }));
+          });
+        `;
+        expect(await run(script)).toEqual({
+          stdout: JSON.stringify({ read: "out", childExit: false, exit: 0 }),
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
   });
 
   // The child writes "a" and the first two bytes of "€", and the third byte and "b" once the parent has seen the "a".

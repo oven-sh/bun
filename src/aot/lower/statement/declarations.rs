@@ -99,6 +99,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let initializer = self.skip_type_syntax(hir[first].init);
         if matches!(hir[initializer].kind, ExprKind::Ident(_))
             || self.is_class_named_by_its_declaration(initializer)
+            || self.stands_as_written(hir[initializer].pos)
         {
             return None;
         }

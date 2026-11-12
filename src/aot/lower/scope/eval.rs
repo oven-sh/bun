@@ -63,7 +63,7 @@ pub(crate) fn lower_direct_eval(
         None => {
             lowering.lower_known_evaluations(call_id, &arguments, join);
             match hir.is_settled_eval(call_id) {
-                true => lowering.emit_settled_eval_end(call_id, &arguments),
+                true => lowering.emit_settled_eval_end(call_id, &arguments, join),
                 false => lowering.emit_direct_eval(call, &arguments),
             }
         }
@@ -189,17 +189,15 @@ impl FileLowering<'_, '_, '_, '_> {
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     /// Where the string is one that the build has compiled, jumps to `join` with its function.
     fn lower_known_evaluations(&mut self, call: CallId, arguments: &Arguments, join: BlockId) {
-        let Arguments::Values(arguments) = arguments else {
-            return;
-        };
-        let (hir, Some(&text)) = (self.file.hir, arguments.first()) else {
-            return;
-        };
+        let hir = self.file.hir;
         let all = hir.known_evaluations_of(call).iter();
         let known: Vec<_> = all.filter(|it| hir.is_valid_evaluation(it)).collect();
         if known.is_empty() {
             return;
         }
+        let Some(text) = self.emit_evaluated_string(arguments) else {
+            return;
+        };
         let texts = known.iter().filter_map(|it| hir.ids(it.arguments).next());
         let strings: Vec<StringId> = texts.map(|text| self.file.intern_atom(text)).collect();
         let blocks: Vec<BlockId> = known.iter().map(|_| self.create_block()).collect();
@@ -215,15 +213,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.continue_in(other);
     }
 
-    /// No string arrives here but one that isn't JavaScript. What strict code refuses may be JavaScript in sloppy code.
-    fn emit_settled_eval_end(&mut self, call: CallId, arguments: &Arguments) -> ValueId {
+    fn emit_settled_eval_end(
+        &mut self,
+        call: CallId,
+        arguments: &Arguments,
+        join: BlockId,
+    ) -> ValueId {
         let hir = self.file.hir;
-        let mut known = hir.known_evaluations_of(call).iter();
+        let known = hir.known_evaluations_of(call).iter();
         let name = self.file.intern_atom(known::eval);
-        if known.any(|it| !hir.is_valid_evaluation(it)) {
-            let Some(text) = self.emit_evaluated_string(arguments) else {
-                return self.builder.undefined();
-            };
+        let refused: Vec<_> = known.filter(|it| !hir.is_valid_evaluation(it)).collect();
+        let text = match refused.is_empty() {
+            true => None,
+            false => self.emit_evaluated_string(arguments),
+        };
+        if let Some(text) = text {
+            let texts = refused.iter().filter_map(|it| hir.ids(it.arguments).next());
+            let strings: Vec<StringId> = texts.map(|text| self.file.intern_atom(text)).collect();
+            let blocks: Vec<BlockId> = refused.iter().map(|_| self.create_block()).collect();
+            let edges: Vec<Edge<'static>> = blocks.iter().map(|&block| Edge::to(block)).collect();
+            let other = self.create_block();
+            self.builder
+                .switch_string(text, &strings, &edges, Edge::to(other));
             let flags = match self.builder.function().kind {
                 FunctionKind::Arrow => EvalScopeFlags::IS_IN_ARROW_FUNCTION,
                 _ => EvalScopeFlags::default(),
@@ -233,8 +244,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 flags,
                 ..EvalScope::default()
             });
-            let this_value = self.builder.undefined();
-            return (self.builder).direct_eval(scope, text, this_value, None, &[]);
+            for (evaluation, block) in refused.into_iter().zip(blocks) {
+                self.continue_in(block);
+                let this_value = self.builder.undefined();
+                let value = (self.builder).direct_eval(scope, text, this_value, None, &[]);
+                match self.file.needs_no_scope(evaluation) {
+                    true => self.jump_with(join, &[value]),
+                    false => self.builder.jump(Edge::to(other)),
+                }
+            }
+            self.continue_in(other);
         }
         self.emit_throw_runtime_error(RuntimeErrorKind::OmittedFromExecutable, Some(name));
         self.builder.undefined()

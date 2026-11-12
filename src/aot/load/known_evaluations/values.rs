@@ -303,12 +303,18 @@ impl Object {
             let keys = 0..self.elements.len();
             return Some(keys.map(|it| it.to_string().into_bytes().into()).collect());
         }
-        let has_index = |it: &(Rc<[u8]>, Value)| Object::index_of_key(&it.0).is_some();
-        if self.properties.iter().any(has_index) {
+        if self.properties.iter().any(|it| is_array_index(&it.0)) {
             return None;
         }
         Some(self.properties.iter().map(|it| Rc::clone(&it.0)).collect())
     }
+}
+
+fn is_array_index(key: &[u8]) -> bool {
+    let is_canonical = key == b"0" || key.first().is_some_and(|&first| first != b'0');
+    is_canonical
+        && key.iter().all(u8::is_ascii_digit)
+        && (key.len() < 10 || key.len() == 10 && key <= &b"4294967294"[..])
 }
 
 fn is_object_prototype_name(key: &[u8]) -> bool {

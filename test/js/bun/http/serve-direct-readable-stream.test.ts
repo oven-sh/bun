@@ -2391,17 +2391,16 @@ describe("direct stream edge cases over Bun.serve", () => {
     const finished = Promise.withResolvers<void>();
     using server = Bun.serve({
       port: 0,
-      fetch: req =>
+      fetch: () =>
         new Response(
           (async function* () {
             try {
               yield "first";
-              // No turn count is enough. macOS delivers loopback packets from another kernel thread.
-              while (!req.signal.aborted) {
+              // No number of turns is enough for the server to see that the client is gone: only the abort ends this.
+              for (;;) {
                 await later();
                 yield "more";
               }
-              events.push("completed");
             } catch (e: any) {
               events.push("catch:" + (e?.message ?? e));
             } finally {

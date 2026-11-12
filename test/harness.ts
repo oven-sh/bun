@@ -2123,18 +2123,6 @@ export function forceGuardMalloc(env) {
   }
 }
 
-export function fileDescriptorLeakChecker() {
-  const initial = getMaxFD();
-  return {
-    [Symbol.dispose]() {
-      const current = getMaxFD();
-      if (current > initial) {
-        throw new Error(`File descriptor leak detected: ${current} (current) > ${initial} (initial)`);
-      }
-    },
-  };
-}
-
 /**
  * Gets a secret from the environment.
  *

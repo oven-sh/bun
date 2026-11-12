@@ -1315,7 +1315,7 @@ impl Source {
         let global = cx.global();
         self.global_this.set(Some(bun_ptr::BackRef::new(global)));
         self.reader_context.set(Some(cx.context().id()));
-        // `node:child_process` registers at spawn: listeners see the `AsyncLocalStorage` store of the spawn, as in Node.
+        // `node:child_process` registers at spawn: listeners see the `AsyncLocalStorage` store of the spawn, as in Node. Except for what Node has already read when the first listener is attached: it emits that in the store of the attach. Here nothing is read until then.
         js::read_callback_set_cached(
             this_value.to_js(),
             global,

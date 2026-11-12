@@ -2246,6 +2246,14 @@ describe("bundler", () => {
       { file: "/out/b.js", stdout: "b localhost:8080" },
     ],
   });
+  itBundled("cjs2esm/StarImportDotDefaultCallIsModuleExportsCompile", {
+    files: {
+      "/entry.mjs": `import * as mod from "./config.cjs";\n${dotDefaultSpellings.call}\nconsole.log(config.host + ":" + config.port);`,
+      ...liftedConfig,
+    },
+    compile: true,
+    run: { stdout: "localhost:8080" },
+  });
   itBundled("cjs2esm/StarImportDotDefaultCallThrowsTypeError", {
     files: {
       "/entry.mjs": /* js */ `
@@ -2405,6 +2413,46 @@ describe("bundler", () => {
       stdout: "this:a none:b",
     },
   });
+  // `ns.name` and `ns.name()` are two import items of one name. A name with no
+  // export is reported once, at its first use.
+  const missingMemberCalledAndRead: [name: string, files: Record<string, string>, warning: string][] = [
+    [
+      "NoMatchingExport",
+      { "/lib.mjs": /* js */ `export const a = 1;` },
+      `Import "missing" will always be undefined because there is no matching export in "lib.mjs"`,
+    ],
+    [
+      "AmbiguousExport",
+      {
+        "/lib.mjs": /* js */ `export * from "./one.mjs"; export * from "./two.mjs";`,
+        "/one.mjs": /* js */ `export const missing = 1;`,
+        "/two.mjs": /* js */ `export const missing = 2;`,
+      },
+      `Import "missing" will always be undefined because there are multiple matching exports`,
+    ],
+  ];
+  for (const [name, files, warning] of missingMemberCalledAndRead) {
+    itBundled(`cjs2esm/StarImportMemberCalledAndReadWarnsOnce${name}`, {
+      files: {
+        "/entry.mjs": /* js */ `
+          import * as ns from "./lib.mjs";
+          let error;
+          try {
+            ns.missing();
+          } catch (e) {
+            error = e;
+          }
+          console.log(error instanceof TypeError, typeof ns.missing);
+        `,
+        ...files,
+      },
+      backend: "cli",
+      bundleWarnings: { "/entry.mjs": [warning] },
+      run: {
+        stdout: "true undefined",
+      },
+    });
+  }
   // `X.default` on a default import, on a converted `require()` and on
   // `ns.default` is the same value whether or not the file calls it.
   itBundled("cjs2esm/DotDefaultOfModuleExportsDoesNotDependOnACall", {

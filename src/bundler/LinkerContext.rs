@@ -3971,6 +3971,7 @@ impl<'a> LinkerContext<'a> {
                         // A name read off `import()` / `require()` is `undefined`
                         // at run time too, so there is nothing to say.
                         if self.is_call_record(prev_source_index, named_import.import_record_index)
+                            || self.is_later_item_of_name(prev_source_index, named_import)
                         {
                         } else if self.resolver().opts.target == Target::Browser
                             && bun_resolve_builtins::Alias::has(
@@ -4263,6 +4264,25 @@ impl<'a> LinkerContext<'a> {
             && self.method_call_needs_this(result.source_index, result.r#ref)
     }
 
+    /// `ns.name` and `ns.name(...)` are two items of one name. Only the first of them in the file
+    /// reports that the name has no export.
+    fn is_later_item_of_name(
+        &self,
+        source_index: crate::IndexInt,
+        named_import: &NamedImport,
+    ) -> bool {
+        named_import.namespace_ref.is_valid()
+            && self.graph.ast.items_named_imports()[source_index as usize]
+                .values()
+                .iter()
+                .any(|other| {
+                    other.namespace_ref == named_import.namespace_ref
+                        && other.alias_loc.start < named_import.alias_loc.start
+                        && other.alias.map(|alias| alias.slice())
+                            == named_import.alias.map(|alias| alias.slice())
+                })
+    }
+
     fn is_esm_namespace_ref(&self, source_index: crate::IndexInt, ref_: Ref) -> bool {
         let id = source_index as usize;
         id < self.graph.ast.len()
@@ -4527,13 +4547,15 @@ impl<'a> LinkerContext<'a> {
                         .slice();
                     if symbol.import_item_status == ImportItemStatus::Generated {
                         symbol.import_item_status = ImportItemStatus::Missing;
-                        self.log_disjoint().add_range_warning_fmt(
-                            Some(source), r,
-                            format_args!(
-                                "Import \"{}\" will always be undefined because there are multiple matching exports",
-                                bstr::BStr::new(alias),
-                            ),
-                        );
+                        if !self.is_later_item_of_name(source_index, named_import) {
+                            self.log_disjoint().add_range_warning_fmt(
+                                Some(source), r,
+                                format_args!(
+                                    "Import \"{}\" will always be undefined because there are multiple matching exports",
+                                    bstr::BStr::new(alias),
+                                ),
+                            );
+                        }
                     } else {
                         self.log_disjoint().add_range_error_fmt(
                             Some(source),

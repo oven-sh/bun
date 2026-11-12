@@ -3432,7 +3432,8 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
           test("a", () => {
             const spy = spyOn(context, "parseInt");
             expect([context.parseInt("7"), spy.mock.calls.length]).toEqual([7, 1]);
-            sandbox.parseInt = () => "of the sandbox";
+            spyOn(context, "parseFloat", "get");
+            sandbox.parseInt = sandbox.parseFloat = () => "of the sandbox";
             expect(context.parseInt("7")).toBe("of the sandbox");
           });
         `,
@@ -3441,7 +3442,11 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
           test("b", () => {
             expect(context.parseInt("7")).toBe("of the sandbox");
             delete sandbox.parseInt;
-            expect([jest.isMockFunction(context.parseInt), context.parseInt("7")]).toEqual([false, 7]);
+            delete sandbox.parseFloat;
+            expect({
+              parseInt: [jest.isMockFunction(context.parseInt), context.parseInt("7")],
+              parseFloat: [Object.hasOwn(Object.getOwnPropertyDescriptor(context, "parseFloat"), "value"), context.parseFloat("1.5")],
+            }).toEqual({ parseInt: [false, 7], parseFloat: [true, 1.5] });
           });
         `,
       });
@@ -3529,7 +3534,7 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     });
 
     // These keep what is stored on them outside their target, so the read behind the traps finds no spy and the trap is asked.
-    test("a Proxy that shows a spy only when it is read, whose trap throws for the read, or makes a spy in it", async () => {
+    test("a Proxy that shows a spy only when it is read, has a getter of the test, throws for the read, or makes a spy in it", async () => {
       using dir = tempDir("spies-of-a-file", {
         "a.test.ts": `
           import { expect, spyOn, test } from "bun:test";
@@ -3557,15 +3562,25 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
             spyOn(object, "method");
           }));
           const quiet = (globalThis.quiet = keptElsewhere(() => {}));
+          const plain = (globalThis.plain = new Proxy({ method: () => "original" }, {}));
+          globalThis.readsOfGetter = 0;
           test("a", () => {
             // Left on its property, which only a read of the object shows.
             spyOn(quiet.proxy, "method").mockReturnValue("spied");
             // Left on its property: restored without an answer, and without an error.
             spyOn(throwing.proxy, "method").mockReturnValue("spied");
-            // Replaced by the test: asked when the file ends, and again after its undos.
-            spyOn(spying.proxy, "method");
+            // Replaced by the test: asked when the file ends, and again after its undos. Held, so that no collection ends the asking.
+            globalThis.replaced = [spyOn(spying.proxy, "method"), spyOn(plain, "method")];
             spying.proxy.method = globalThis.assigned = () => "assigned";
             expect([quiet.proxy.method(), throwing.proxy.method(), spying.proxy.method()]).toEqual(["spied", "spied", "assigned"]);
+            // By a getter, which the end of the file does not call.
+            Object.defineProperty(plain, "method", {
+              configurable: true,
+              get() {
+                readsOfGetter++;
+                throw new Error("read");
+              },
+            });
             throwing.state.armed = spying.state.armed = true;
           });
         `,
@@ -3575,10 +3590,17 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
             throwing.state.armed = spying.state.armed = false;
             expect({
               quiet: [jest.isMockFunction(quiet.proxy.method), quiet.proxy.method()],
+              plain: [typeof Object.getOwnPropertyDescriptor(plain, "method").get, readsOfGetter],
               throwing: [jest.isMockFunction(throwing.proxy.method), throwing.proxy.method()],
               spying: spying.proxy.method === assigned,
               madeByTrap: [madeByTrap.length, madeByTrap.filter(object => jest.isMockFunction(object.method)).length],
-            }).toEqual({ quiet: [false, "original"], throwing: [false, "original"], spying: true, madeByTrap: [2, 0] });
+            }).toEqual({
+              quiet: [false, "original"],
+              plain: ["function", 0],
+              throwing: [false, "original"],
+              spying: true,
+              madeByTrap: [2, 0],
+            });
           });
         `,
       });
@@ -3590,25 +3612,27 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     });
 
     // `unstubGlobals` takes the stub of the preload off before each test, and the end of a file puts it back for the next file.
-    test("a stub of a preload saves what the end of the file left, not a spy or a fake that the end takes off", async () => {
-      using dir = tempDir("spies-of-a-file", {
-        "preload.ts": `
+    test.each(["a spy under fake timers", "fake timers"])(
+      "a stub of a preload saves what the end of the file left, and not %s, which the end takes off",
+      async left => {
+        using dir = tempDir("spies-of-a-file", {
+          "preload.ts": `
           import { vi } from "bun:test";
           globalThis.builtin = setTimeout;
           vi.stubGlobal("setTimeout", function ofPreload(...args) { return builtin(...args); });
           vi.setConfig({ unstubGlobals: true });
         `,
-        "a.test.ts": `
+          "a.test.ts": `
           import { expect, jest, spyOn, test } from "bun:test";
           test("a", () => {
             expect(setTimeout).toBe(builtin);
-            const spy = spyOn(globalThis, "setTimeout");
+            const spy = ${left === "fake timers" ? "jest.fn()" : `spyOn(globalThis, "setTimeout")`};
             jest.useFakeTimers();
             setTimeout(() => {}, 1000);
             expect(spy).not.toHaveBeenCalled();
           });
         `,
-        "b.test.ts": `
+          "b.test.ts": `
           import { expect, jest, test, vi } from "bun:test";
           const whileItLoads = setTimeout.name;
           test("b", async () => {
@@ -3616,17 +3640,18 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
             await new Promise(resolve => setTimeout(resolve, 1));
           });
         `,
-      });
-      const { stderr, exitCode } = await runTests(
-        String(dir),
-        ["--preload", "./preload.ts"],
-        ["./a.test.ts", "./b.test.ts"],
-      );
-      expect({ results: results(stderr), exitCode }, stderr).toEqual({
-        results: ["(pass) a", "(pass) b"],
-        exitCode: 0,
-      });
-    });
+        });
+        const { stderr, exitCode } = await runTests(
+          String(dir),
+          ["--preload", "./preload.ts"],
+          ["./a.test.ts", "./b.test.ts"],
+        );
+        expect({ results: results(stderr), exitCode }, stderr).toEqual({
+          results: ["(pass) a", "(pass) b"],
+          exitCode: 0,
+        });
+      },
+    );
   });
 
   test("spies made by a preload or its beforeAll() are kept across files", async () => {

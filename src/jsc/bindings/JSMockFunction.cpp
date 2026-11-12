@@ -880,7 +880,7 @@ public:
 
     bool isRestoredSpy() const { return isSpy && !m_spyTarget; }
 
-    // `storage` is getOwnPropertyStorage() of a property: the spy, or the accessor that spyOn() made for it.
+    // `storage` is getOwnPropertyStorage() of a property. Fake timers put the spy itself back where spyOn() made an accessor for it.
     bool isIn(JSValue storage)
     {
         if (storage == JSValue(this))
@@ -911,8 +911,11 @@ public:
         RETURN_IF_EXCEPTION(scope, false);
         if (this->isIn(current))
             return true;
-        // Traps may keep a value where neither read shows it. A read of an accessor would call the spy, so only a value is read.
-        if ((m_spyAttributes & (SpyAttributeOpaque | SpyAttributeAccessor)) != SpyAttributeOpaque)
+        // Traps may keep a value where neither read shows it. A read calls an accessor, so it is only for a function that was replaced by the spy.
+        JSValue original = m_spyOriginal.get();
+        if ((m_spyAttributes & (SpyAttributeOpaque | SpyAttributeAccessor)) != SpyAttributeOpaque || !original || !original.isCallable())
+            return false;
+        if (tryJSDynamicCast<GetterSetter*>(current))
             return false;
         JSValue visible = target->get(globalObject, m_spyIdentifier);
         RETURN_IF_EXCEPTION(scope, false);
@@ -1067,11 +1070,9 @@ private:
 
         if (attributes & SpyAttributeAccessor) {
             // Restoring the spy on the accessor's other half already put both halves back.
-            // Fake timers put back the spy itself: they saved what the getter returned.
-            unsigned currentAttributes = 0;
-            JSValue current = getOwnPropertyStorage(globalObject, target, identifier, currentAttributes);
+            bool isInstalled = this->isStillInstalled(globalObject, target);
             RETURN_IF_EXCEPTION(scope, );
-            if (!this->isIn(current))
+            if (!isInstalled)
                 return;
         }
 

@@ -83,6 +83,7 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global:
     run(global, JSMock__didFinishTestFile);
     run(global, ViUtils__unstubAllEnvs);
     run(global, ViUtils__unstubAllGlobals);
+    super::timers::fake_timers::on_test_file_end(global);
     // With a displaced spy, `on_test_file_undone` does this, once the spy is off the global that a stub would save.
     if !JSMock__hasDisplacedSpies(global) {
         run(global, ViUtils__stubWhatPreloadStubbed);

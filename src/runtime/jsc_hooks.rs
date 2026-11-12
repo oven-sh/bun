@@ -3280,7 +3280,10 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 // `None`.
                 debug_assert!(cache.output_code.is_none());
                 let written_len = written.len();
-                if written_len > bun_core::String::max_length() {
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                if written_len > bun_core::String::max_length()
+                    && unsafe { &*jsc_vm }.is_watcher_enabled()
+                {
                     return Err(global_object.throw_string_too_long().into());
                 }
                 let source_code = bun_core::String::clone_latin1(written);

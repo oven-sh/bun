@@ -1019,7 +1019,7 @@ describe("https.Server has the methods of tls.Server", () => {
         },
         (req, res) => res.end((req.socket as tls.TLSSocket).servername),
       );
-      // Only the default SNICallback reads these.
+      // Bun only, like tls.Server: in Node a user SNICallback replaces the addContext() entries.
       server.addContext("b.example.com", agent3);
       const port = await listen(server);
 
@@ -1027,9 +1027,10 @@ describe("https.Server has the methods of tls.Server", () => {
         a: await servedCN(port, "a.example.com"),
         raw: await servedCN(port, "raw.example.com"),
         b: await servedCN(port, "b.example.com"),
+        c: await servedCN(port, "c.example.com"),
         none: await servedCN(port),
-      }).toEqual({ a: "agent1", raw: "agent3", b: "agent2", none: "agent2" });
-      expect(calls).toEqual(["a.example.com true true", "raw.example.com true true", "b.example.com true true"]);
+      }).toEqual({ a: "agent1", raw: "agent3", b: "agent3", c: "agent2", none: "agent2" });
+      expect(calls).toEqual(["a", "raw", "b", "c"].map(name => `${name}.example.com true true`));
 
       const { promise, resolve, reject } = Promise.withResolvers<string>();
       const options = {

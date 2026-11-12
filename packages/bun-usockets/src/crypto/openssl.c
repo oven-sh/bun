@@ -3401,6 +3401,17 @@ static enum ssl_select_cert_result_t ssl_refuse_server_name(struct us_socket_t *
 /* The SNI stage of us_select_cert_cb: asks the JS resolver (a user SNICallback) for a context. A resolver that
  * can't answer synchronously suspends the handshake (ssl_select_cert_retry -> SSL_ERROR_PENDING_CERTIFICATE)
  * until us_socket_sni_resolve() resumes it. */
+/* Takes the reference `ctx` carries. With no answer, sni_cb serves the listener's entry for the name. */
+static enum ssl_select_cert_result_t ssl_apply_resolved_ctx(SSL *ssl, struct us_ssl_rare_t *rare, SSL_CTX *ctx) {
+  if (ctx) {
+    us_ssl_apply_selected_ctx(ssl, ctx);
+    SSL_CTX_free(ctx);
+  } else if (!rare->has_key_cert) {
+    rare->sni_resolver = 0;
+  }
+  return ssl_select_cert_success;
+}
+
 static enum ssl_select_cert_result_t us_select_cert_sni(const SSL_CLIENT_HELLO *hello, struct us_ssl_rare_t *rare) {
   SSL *ssl = hello->ssl;
   struct us_socket_t *s = us_ssl_socket(ssl);
@@ -3410,11 +3421,7 @@ static enum ssl_select_cert_result_t us_select_cert_sni(const SSL_CLIENT_HELLO *
     rare->sni_pending = US_SNI_NONE;
     SSL_CTX *resolved_ctx = rare->sni_resolved_ctx;
     rare->sni_resolved_ctx = NULL;
-    if (resolved_ctx) {
-      us_ssl_apply_selected_ctx(ssl, resolved_ctx);
-      SSL_CTX_free(resolved_ctx);
-    }
-    return ssl_select_cert_success;
+    return ssl_apply_resolved_ctx(ssl, rare, resolved_ctx);
   }
   if (rare->sni_pending == US_SNI_REFUSED) {
     return ssl_refuse_server_name(s, rare);
@@ -3433,8 +3440,6 @@ static enum ssl_select_cert_result_t us_select_cert_sni(const SSL_CLIENT_HELLO *
     return ssl_select_cert_success;
   }
 
-  /* Only the resolver picks the context. In Node a user SNICallback replaces the default one, which is the only code
-   * that reads the addContext() entries: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1270 */
   void *saved_loop_state[US_SSL_LOOP_STATE_SLOTS];
   us_internal_ssl_loop_state_save(ssl, saved_loop_state);
   int abort_handshake = 0;
@@ -3449,11 +3454,7 @@ static enum ssl_select_cert_result_t us_select_cert_sni(const SSL_CLIENT_HELLO *
     rare->sni_pending = US_SNI_WAITING;
     return ssl_select_cert_retry;
   }
-  if (dyn) {
-    us_ssl_apply_selected_ctx(ssl, dyn);
-    SSL_CTX_free(dyn);
-  }
-  return ssl_select_cert_success;
+  return ssl_apply_resolved_ctx(ssl, rare, dyn);
 }
 
 static int sni_cb(SSL *ssl, int *al, void *arg);
@@ -3527,13 +3528,11 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
   struct us_server_names_t *names = rare ? rare->server_names : NULL;
   if (!names) return SSL_TLSEXT_ERR_OK;
   if (rare->sni_resolver) {
-    /* us_select_cert_cb already ran the resolver, and a socket that has one doesn't consult the tree. */
+    /* The resolver made its choice in us_select_cert_cb. */
     return SSL_TLSEXT_ERR_OK;
   }
   const char *hostname = SSL_get_servername(ssl, TLSEXT_NAMETYPE_host_name);
   if (hostname && hostname[0]) {
-    /* Static SNI tree only (no dynamic resolver registered for this
-     * listener). */
     struct sni_node_t *node = us_server_names_find(names, hostname);
     if (node) {
       us_ssl_apply_selected_ctx(ssl, node->ctx);
@@ -3589,7 +3588,7 @@ void us_ssl_on_server_name(SSL *ssl) {
   SSL_CTX_set_select_certificate_cb(SSL_get_SSL_CTX(ssl), us_select_cert_cb);
 }
 
-/* Takes the reference `ctx` carries (NULL: the default context). Returns 1 if the handshake waited for this answer: the caller then drives it again. */
+/* Takes the reference `ctx` carries (NULL: nothing selected). Returns 1 if the handshake waited for this answer: the caller then drives it again. */
 int us_ssl_sni_resolve(SSL *ssl, SSL_CTX *ctx, int error) {
   struct us_ssl_rare_t *rare = us_ssl_rare(ssl);
   if (!rare || rare->sni_pending != US_SNI_WAITING || error) SSL_CTX_free(ctx);

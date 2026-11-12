@@ -772,6 +772,23 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("ALPN after SNI selected a Secure
     ["a synchronous SNICallback", accepted({ SNICallback: sync })],
     ["an asynchronous SNICallback", accepted({ SNICallback: deferred })],
     ["addContext()", accepted({}, addContext)],
+    // Bun only: in Node a user SNICallback replaces the addContext() entries.
+    [
+      "addContext() behind an SNICallback that selects nothing",
+      accepted({ SNICallback: (_: string, cb: SNICb) => void setImmediate(cb, null, null) }, addContext),
+    ],
+    [
+      "setKeyCert() in an SNICallback, with an addContext() entry for the name",
+      accepted(
+        {
+          SNICallback(this: tls.TLSSocket, _: string, cb: SNICb) {
+            this.setKeyCert(tls.createSecureContext(selected));
+            cb(null);
+          },
+        },
+        server => server.addContext("alpn.sni.test", defaults),
+      ),
+    ],
     [
       "addContext() on an injected socket",
       (alpn, onSecure, stack) => {
@@ -1067,21 +1084,13 @@ describe("SNI matching is case-insensitive", () => {
   describe.each(["TLSv1.2", "TLSv1.3"] as const)("%s", version => {
     const inAnyCase = ["strict.example.com", "STRICT.EXAMPLE.COM", "sTrIcT.eXaMpLe.CoM"];
     const selectsNothing = (_: string, cb: Function) => cb(null, null);
-    // The verdicts on a client certificate from ca1 (agent1) and on one from ca5 (ec10).
-    const underTheEntry = ["refused", "accepted"];
-    const underTheDefault = ["accepted", "refused"];
     it.each([
-      ["a context's client CA applies to its name in any case", inAnyCase, undefined, underTheEntry],
+      ["in any case", inAnyCase, undefined],
       // Bun only: Node serves the default context for a name with the root dot.
-      [
-        "a context's client CA applies to its name with the root dot",
-        ["strict.example.com.", "STRICT.EXAMPLE.COM."],
-        undefined,
-        underTheEntry,
-      ],
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1270
-      ["the default client CA applies when an SNICallback selects nothing", inAnyCase, selectsNothing, underTheDefault],
-    ] as const)("%s", async (_, spellings, SNICallback, verdictsPerName) => {
+      ["with the root dot", ["strict.example.com.", "STRICT.EXAMPLE.COM."], undefined],
+      // Bun only: in Node a user SNICallback replaces the addContext() entries.
+      ["behind an SNICallback that selects nothing", inAnyCase, selectsNothing],
+    ])("a context's client CA applies to its name %s", async (_, spellings, SNICallback) => {
       const server = tls.createServer({
         key: agent2Key,
         cert: agent2Cert,
@@ -1091,7 +1100,7 @@ describe("SNI matching is case-insensitive", () => {
         SNICallback,
       } as any);
       server.addContext("Strict.Example.com", { key: agent1Key, cert: agent1Cert, ca: [loadPEM("ca5-cert.pem")] });
-      // agent1 chains to ca1, which only the default context trusts; ec10 chains to ca5, which only the entry trusts.
+      // agent1 chains to ca1, which only the default context trusts; ec10 chains to ca5.
       const ec10 = [loadPEM("ec10-key.pem"), loadPEM("ec10-cert.pem")] as const;
       async function verdict(servername: string, key: string, cert: string) {
         const judged = Promise.race([
@@ -1122,7 +1131,7 @@ describe("SNI matching is case-insensitive", () => {
         for (const name of spellings) {
           verdicts.push([name, await verdict(name, agent1Key, agent1Cert), await verdict(name, ...ec10)]);
         }
-        expect(verdicts).toEqual(spellings.map(name => [name, ...verdictsPerName]));
+        expect(verdicts).toEqual(spellings.map(name => [name, "refused", "accepted"]));
         expect(await verdict("other.example.com", agent1Key, agent1Cert)).toBe("accepted");
       } finally {
         server.close();

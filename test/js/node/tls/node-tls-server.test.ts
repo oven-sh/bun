@@ -1869,7 +1869,7 @@ describe("setSecureContext() on a listening server", () => {
     }
   });
 
-  it("leaves the SNICallback and ALPN negotiation in place", async () => {
+  it("leaves addContext() entries, SNICallback and ALPN negotiation in place", async () => {
     let sniCalls = 0;
     const viaCallback = tls.createSecureContext({ ...agent2 });
     const server: Server = createServer({
@@ -1883,10 +1883,13 @@ describe("setSecureContext() on a listening server", () => {
     try {
       const { port, address } = await listen(server, "localhost");
       const base = { port, host: address, ALPNProtocols: ["h2"] };
+      // An entry under the bind hostname is the caller's like any other: the
+      // swap replaces the default context only.
+      server.addContext("localhost", { ...agent2 });
 
       server.setSecureContext({ ...agent3 });
       expect(await handshake(base)).toEqual({ cn: "agent3", alpn: "h2" });
-      expect(await handshake({ ...base, servername: "localhost" })).toMatchObject({ cn: "agent3" });
+      expect(await handshake({ ...base, servername: "localhost" })).toMatchObject({ cn: "agent2" });
       expect(await handshake({ ...base, servername: "callback.example" })).toMatchObject({ cn: "agent2" });
       expect(sniCalls).toBe(2);
     } finally {
@@ -2252,11 +2255,11 @@ it("an asynchronous SNICallback resolving cb(null, null) falls back like the syn
   await once(server, "close");
 });
 
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1270
+// Bun only: in Node a user SNICallback replaces the addContext() entries.
 it.each([
   ["a synchronous", (cb: Function) => cb(null, null)],
   ["an asynchronous", (cb: Function) => void setImmediate(cb, null, null)],
-])("%s SNICallback that selects nothing serves the default context, not an addContext() entry", async (_, answer) => {
+])("%s SNICallback that selects nothing still honors addContext() entries", async (_, answer) => {
   const altCert = { key: rawKey, cert: cert };
   const server: Server = createServer({ ...COMMON_CERT, SNICallback: (_name, cb) => answer(cb) });
   server.addContext("alt.example.com", altCert);
@@ -2269,7 +2272,7 @@ it.each([
   const port = (server.address() as AddressInfo).port;
   const client = connect({ port, host: "127.0.0.1", servername: "alt.example.com", rejectUnauthorized: false });
   await once(client, "secureConnect");
-  const expectedCert = new crypto.X509Certificate(COMMON_CERT.cert);
+  const expectedCert = new crypto.X509Certificate(cert);
   expect(client.getPeerCertificate().fingerprint256).toBe(expectedCert.fingerprint256);
   client.end();
   await once(client, "close");
@@ -4331,7 +4334,8 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("server names after close() (%s)"
     return promise;
   }
 
-  it("an SNICallback that is pending at close() and then selects nothing serves the default context", async () => {
+  // Bun only: in Node a user SNICallback replaces the addContext() entries, so this is agent2 there.
+  it("an SNICallback that is pending at close() and then selects nothing falls back to addContext()", async () => {
     const pending = Promise.withResolvers<Function>();
     const server: Server = createServer({ ...agent(2), SNICallback: (_, cb) => pending.resolve(cb) });
     server.addContext("a.example", agent(3));
@@ -4340,7 +4344,7 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("server names after close() (%s)"
     const cb = await pending.promise;
     server.close();
     cb(null, null);
-    expect(await served).toBe("agent2");
+    expect(await served).toBe("agent3");
   });
 
   it("close() from inside the SNICallback does not end it for the other connections", async () => {

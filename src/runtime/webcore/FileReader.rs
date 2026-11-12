@@ -844,6 +844,7 @@ impl FileReader {
                 unsafe { IOReader::read(self.reader.get()) };
             }
         }
+        // Windows reads nothing here: libuv delivers with its next completions, in their order, so a child's exit that is already queued comes first.
         #[cfg(windows)]
         if let Err(err) = self.reader().try_unpause() {
             // SAFETY: the reader cell is live for `self`'s lifetime; `on_error` is the raw entry (it reaches `on_reader_error`).

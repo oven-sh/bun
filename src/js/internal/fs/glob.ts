@@ -61,12 +61,10 @@ function statForFileTypes(cache: Cache, root: string, path: string) {
   return cache.statSync(isAbsolute(path) ? path : join(root, path));
 }
 // Without `cwd`, Node's root is "." and it names a result of globSync() from join(".", path). `root` is absolute here.
-//   https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/fs/glob.js#L394-L401
 function statForFileTypesWithoutCwd(cache: Cache, root: string, path: string) {
   return isAbsolute(path) ? cache.statSync(path) : direntNamedFrom(cache.statSync(join(root, path)), path);
 }
 // The parent that `**/..` adds is the one result of glob() that Node names from its root.
-//   https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/fs/glob.js#L878
 function statParentForFileTypes(cache: Cache, root: string, cwdOmitted: boolean, parent: string) {
   const entry = cache.statSync(join(root, parent));
   return cwdOmitted && !isAbsolute(parent) ? direntNamedFrom(entry, parent) : entry;
@@ -426,7 +424,6 @@ class Glob {
     const { exclude, cwd, followSymlinks, withFileTypes } = options;
     const given = toPathIfFileURL(cwd);
     // Node keeps "." here. Bun's path.resolve() does not see a replaced process.cwd (#42601), so the walk reads it now.
-    //   https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/fs/glob.js#L343
     this.#root = given ?? process.cwd();
     this.#cwdOmitted = given == null;
     if (followSymlinks != null) {
@@ -571,8 +568,7 @@ class Glob {
         // differs).
         const stat = this.#cache.statSync(fullpath);
         if (stat !== null) {
-          // Without `cwd`, upstream's lookup of `path` finds the entry, and its Dirent has that name:
-          //   https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/fs/glob.js#L478
+          // Without `cwd`, upstream's lookup of `path` finds the entry, and its Dirent has that name.
           if (this.#exclude(this.#cwdOmitted && !isAbsolute(path) ? direntNamedFrom(stat, path)! : stat)) {
             return;
           }

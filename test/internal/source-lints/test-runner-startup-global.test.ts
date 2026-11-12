@@ -11,14 +11,17 @@ import path from "node:path";
 //
 //   vm.global().vm().enable_control_flow_profiler()   → vm.jsc_vm().enable_control_flow_profiler()
 //
-// This reads the text of five functions. It does not see a read in a function they call, whose copies stay in stack
-// that these frames are then built over.
+// This reads the text of the functions it names. It does not see a read in a function they call, whose copies stay
+// in stack that these frames are then built over.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
-const source = (file: string) =>
-  readFileSync(path.join(root, file), "utf8").replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, comment =>
-    comment.replace(/[^\n]/g, " "),
-  );
+
+/** The file, with blanks for its comments and for what is in its string and character literals. */
+function source(file: string): string {
+  const literal =
+    /\/\/[^\n]*|\/\*[\s\S]*?\*\/|\bb?r(#*)"[\s\S]*?"\1|"(?:[^"\\]|\\[\s\S])*"|'(?:[^'\\\n]|\\(?:x[0-9A-Fa-f]{2}|u\{[^}]*\}|.))'/g;
+  return readFileSync(path.join(root, file), "utf8").replace(literal, found => found.replace(/[^\n]/g, " "));
+}
 
 function body(text: string, signature: string): string {
   const start = text.indexOf(signature);
@@ -45,9 +48,13 @@ test("bun test reads no global before the first test file in a frame that outliv
   const exec = before(body(testCommand, "pub(crate) fn exec("), "Self::run_all_tests(");
   // The worker is handed over from `exec` too: a body cut short would pass for nothing.
   expect(exec).toContain("ParallelRunner::run_as_worker(");
+  // `Context::begin` runs the files. It is written inside `run_all_tests`, above the statements that call it.
+  const runAllTests = body(testCommand, "pub(crate) fn run_all_tests(");
+  const contextBegin = body(runAllTests, "fn begin(&mut self)");
   expect({
     exec: reads(exec),
-    run_all_tests: reads(before(body(testCommand, "pub(crate) fn run_all_tests("), "TestCommand::run(")),
+    run_all_tests: reads(before(runAllTests.replace(contextBegin, ""), ".begin()")),
+    "Context::begin": reads(before(contextBegin, "TestCommand::run(")),
     run_as_worker: reads(before(body(runner, "pub(crate) fn run_as_worker("), "wloop.begin(")),
     "WorkerLoop::begin": reads(
       before(body(runner, "fn begin(&mut self, vm: &mut VirtualMachine)"), "TestCommand::run("),
@@ -56,6 +63,7 @@ test("bun test reads no global before the first test file in a frame that outliv
   }).toEqual({
     exec: [],
     run_all_tests: [],
+    "Context::begin": [],
     run_as_worker: [],
     "WorkerLoop::begin": [],
     note_first_loads_of_earlier_process: [],

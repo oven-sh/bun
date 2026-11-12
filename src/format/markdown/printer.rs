@@ -42,8 +42,8 @@ pub(crate) struct Printer<'a, 'e> {
     pub(crate) is_in_label: bool,
     /// For oxfmt: `first_list_of_run`'s cache, indexed by list.
     pub(crate) first_of_run: Vec<NodeId>,
-    /// `kept_line_breaks` of the block whose sentences are being printed.
-    pub(crate) kept_line_breaks: std::cell::Cell<(NodeId, KeptLineBreaks)>,
+    /// `kept_line_breaks` of the block whose sentences are being printed, and `item_line_breaks` for its lines.
+    pub(crate) kept_line_breaks: std::cell::RefCell<(NodeId, KeptLineBreaks, Vec<Option<bool>>)>,
     pub(crate) stack: Stack,
     /// Why a table cell couldn't be printed.
     pub(crate) failure: Option<FormatError>,
@@ -829,61 +829,77 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
-    /// Whether the line break before `word`, at `start` in the text, stays in a block whose lines are items:
-    /// `Some(true)`, or is a space, `Some(false)`, or is printed as Prettier prints it, `None`. `before` is the first
-    /// word of the line before the break, where it starts, and whether it is that whole line. The break stays where
-    /// `word` is an item: it is a marker, on a line that is not indented into the item of the line before it, or
-    /// like code under the block's container. Where the line before is a marker alone, `word` is in that item either
-    /// way: on a line of its own if its line is not indented into the item, else behind the marker. Text that is a
-    /// copy, in a block quote, has no `start`: then the line is printed as Prettier prints it.
-    fn line_break_before_item(
-        &self,
-        sentence: NodeId,
-        word: &[u8],
-        start: Option<u32>,
-        before: Option<(&[u8], Option<u32>, bool)>,
-    ) -> Option<bool> {
-        let marker_before =
-            before.filter(|(line, ..)| Self::list_marker_at_start(line) == Some(line));
-        let is_alone_before = marker_before.is_some_and(|(_, _, is_alone)| is_alone);
-        if !is_alone_before && Self::list_marker_at_start(word).is_none() {
-            return None;
-        }
-        let (Some(start), Some((_, block))) = (start, self.block_of(sentence)) else {
-            return None;
+    /// For each line of `block`, a block whose lines are items, whether the line break before it stays,
+    /// `Some(true)`, is a space, `Some(false)`, or is printed as Prettier prints it, `None`. A line that starts with a
+    /// marker and is not indented into the item before it is an item: the break stays. A line indented into a
+    /// marker alone is that item's text: it goes behind the marker. Any other line indented into the item is its
+    /// text, and Prettier joins or keeps it. The content of an item starts after its marker and one to four
+    /// blanks, or one if there are more, or none. A line indented like code under the block's container is no
+    /// item either.
+    fn item_line_breaks(&self, block: &Node) -> Vec<Option<bool>> {
+        let source = self.source(block);
+        let code_column = 4 + match self.node(block.parent) {
+            Some(parent) if parent.kind == Kind::ListItem => self
+                .node(parent.first_child)
+                .map_or(0, |first| self.visual_column(first.start)),
+            Some(parent) if parent.kind == Kind::Root => 0,
+            _ => self.visual_column(block.start),
         };
-        let bound = match marker_before {
-            Some((marker, Some(marker_start), _)) => {
-                // The content of the item starts after one to four blanks. Five or more are code, after one.
-                let after = marker_start + marker.len() as u32;
-                let blanks = self
-                    .original
-                    .get(after as usize..)
-                    .unwrap_or_default()
-                    .iter()
-                    .take_while(|&&byte| matches!(byte, b' ' | b'\t'))
-                    .count() as u32;
-                let content = self.visual_column(after + blanks) - self.visual_column(after);
-                self.visual_column(after)
-                    + if (1..=4).contains(&content) {
-                        content
+        let mut decisions = vec![None];
+        let mut content_column = 0;
+        let mut is_alone = false;
+        let mut offset = 0;
+        while offset <= source.len() {
+            let rest = &source[offset..];
+            let line_len =
+                bun_core::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len());
+            let line = &rest[..line_len];
+            let indent = line.len() - line.trim_ascii_start().len();
+            let start = block.start + (offset + indent) as u32;
+            let column = self.visual_column(start);
+            let word = Self::list_marker_at_start(&line[indent..]);
+            let is_first = offset == 0;
+            let decision = match word {
+                _ if !is_first && is_alone && column >= content_column => Some(false),
+                Some(_) if is_first || column < content_column.min(code_column) => Some(true),
+                _ if !is_first && is_alone => Some(true),
+                _ => None,
+            };
+            if !is_first {
+                decisions.push(decision);
+            }
+            is_alone = false;
+            if let (Some(marker), Some(true)) = (word, decision) {
+                let after = start + marker.len() as u32;
+                let text = &line[indent + marker.len()..];
+                let blanks = text.len() - text.trim_ascii_start().len();
+                let width = self.visual_column(after + blanks as u32) - self.visual_column(after);
+                is_alone = blanks == text.len();
+                content_column = self.visual_column(after)
+                    + if (1..=4).contains(&width) && !is_alone {
+                        width
                     } else {
                         1
-                    }
+                    };
             }
-            _ => {
-                let content_column = match self.node(block.parent) {
-                    Some(parent) if parent.kind == Kind::ListItem => self
-                        .node(parent.first_child)
-                        .map_or(0, |first| self.visual_column(first.start)),
-                    Some(parent) if parent.kind == Kind::Root => 0,
-                    _ => self.visual_column(block.start),
-                };
-                content_column + 4
-            }
+            offset += line_len + 1;
+        }
+        decisions
+    }
+
+    /// `item_line_breaks` for the break before the line that starts at `start` in the text, in the block that
+    /// `sentence` is in. Text that is a copy, in a block quote, has no `start`: then the break is printed as
+    /// Prettier prints it.
+    fn line_break_before_item(&self, sentence: NodeId, start: Option<u32>) -> Option<bool> {
+        let (Some(start), Some((id, block))) = (start, self.block_of(sentence)) else {
+            return None;
         };
-        let is_item = self.visual_column(start) < bound;
-        (is_item || is_alone_before).then_some(is_item)
+        let cache = self.kept_line_breaks.borrow();
+        if cache.0 != id {
+            return None;
+        }
+        let line = (self.tree.line(start) - self.start_line(block)) as usize;
+        cache.2.get(line).copied().flatten()
     }
 
     /// The column of `offset` as CommonMark counts it: a tab advances to the next multiple of four.
@@ -905,15 +921,17 @@ impl<'a> Printer<'a, '_> {
         let Some((id, block)) = self.block_of(sentence) else {
             return (KeptLineBreaks::None, false);
         };
-        // A block has many sentences, and the answer parses a line of the text.
-        let kept = match self.kept_line_breaks.get() {
-            (cached, kept) if cached == id => kept,
-            _ => {
-                let kept = self.kept_line_breaks(block);
-                self.kept_line_breaks.set((id, kept));
-                kept
-            }
-        };
+        // A block has many sentences, and the answer parses a line of the text, or reads every line.
+        let cached = self.kept_line_breaks.borrow().0;
+        if cached != id {
+            let kept = self.kept_line_breaks(block);
+            let lines = match kept {
+                KeptLineBreaks::Items => self.item_line_breaks(block),
+                _ => Vec::new(),
+            };
+            *self.kept_line_breaks.borrow_mut() = (id, kept, lines);
+        }
+        let kept = self.kept_line_breaks.borrow().1;
         let is_first = node.previous == NONE && self.kind(node.parent) == Some(block.kind);
         (kept, is_first)
     }
@@ -1244,19 +1262,8 @@ impl<'a> Printer<'a, '_> {
             let is_kept = has_newline
                 && match kept {
                     KeptLineBreaks::Items => {
-                        let source_start = node.value.source_start();
-                        let at = |index: usize| source_start.map(|start| start + index as u32);
-                        let line_start =
-                            bun_core::strings::last_index_of_char(&text[..white_start], b'\n')
-                                .map_or(0, |at| at + 1);
-                        let line = &text[line_start..white_start];
-                        let indent = line.len() - line.trim_ascii_start().len();
-                        let first = &line[indent..];
-                        let first =
-                            &first[..first.iter().take_while(|&&byte| !is_white(byte)).count()];
-                        let is_alone = first.len() == line.len() - indent;
-                        let before = Some((first, at(line_start + indent), is_alone));
-                        match self.line_break_before_item(id, word, at(white_end), before) {
+                        let start = node.value.source_start().map(|at| at + white_end as u32);
+                        match self.line_break_before_item(id, start) {
                             Some(true) => true,
                             Some(false) => {
                                 parts.content(Doc::from(" "));
@@ -1372,29 +1379,9 @@ impl<'a> Printer<'a, '_> {
             let next = tokens.get(index + 1);
             let after_next = tokens.get(index + 2);
             let break_before_item = match (token.kind, kept) {
-                (TokenKind::Newline, KeptLineBreaks::Items) => next.and_then(|next| {
-                    // The first word of the line before, and whether it is that whole line.
-                    let line_start = (0..index)
-                        .rev()
-                        .find(|&at| tokens[at].kind == TokenKind::Newline)
-                        .map_or(0, |at| at + 1);
-                    let before = tokens[line_start..index]
-                        .iter()
-                        .position(Token::is_word)
-                        .map(|at| {
-                            let first = &tokens[line_start + at];
-                            let is_alone = tokens[line_start + at + 1..index]
-                                .iter()
-                                .all(|it| !it.is_word());
-                            (self.str(first.value), first.value.source_start(), is_alone)
-                        });
-                    self.line_break_before_item(
-                        id,
-                        self.str(next.value),
-                        next.value.source_start(),
-                        before,
-                    )
-                }),
+                (TokenKind::Newline, KeptLineBreaks::Items) => {
+                    next.and_then(|next| self.line_break_before_item(id, next.value.source_start()))
+                }
                 _ => None,
             };
             let is_kept = token.kind == TokenKind::Newline

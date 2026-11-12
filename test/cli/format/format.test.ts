@@ -2060,32 +2060,22 @@ describe.concurrent("bun fmt", () => {
         ["[a]: /url\n<x-y> \n", "[a]: /url\n<x-y>\n", "[a]: /url\n\n<x-y>\n"],
       ] as const;
 
-      test.each(rows)(
-        "%j",
-        async (before, after, byPrettier) => {
-          const html = Bun.markdown.html(before);
-          expect(Bun.markdown.html(after)).toBe(html);
-          expect(Bun.markdown.html(byPrettier)).not.toBe(html);
-          const files = { "a.md": before, "b.md": after, "a.mdx": before, "b.mdx": after };
-          const names = Object.keys(files);
-          const [result, asOxfmt] = await Promise.all([
-            format(files, [], { reads: names }),
-            format({ "a.md": before, "b.md": after }, ["--flavor=oxfmt"], { reads: ["a.md", "b.md"] }),
-          ]);
-          expect(result.files).toEqual({ "a.md": after, "b.md": after, "a.mdx": after, "b.mdx": after });
-          expect(result.exitCode).toBe(0);
-          expect(asOxfmt.files).toEqual({ "a.md": after, "b.md": after });
-          expect(asOxfmt.exitCode).toBe(0);
-        },
-        20_000,
-      );
+      test.each(rows)("%j", async (before, after, byPrettier) => {
+        const html = Bun.markdown.html(before);
+        expect(Bun.markdown.html(after)).toBe(html);
+        expect(Bun.markdown.html(byPrettier)).not.toBe(html);
+        const files = { "a.md": before, "b.md": after, "a.mdx": before, "b.mdx": after };
+        const result = await format(files, [], { reads: Object.keys(files) });
+        expect(result.files).toEqual({ "a.md": after, "b.md": after, "a.mdx": after, "b.mdx": after });
+        expect(result.exitCode).toBe(0);
+      });
 
       // A line that continues a list item without its indentation, `c`, and a setext heading of such lines. As MDX
       // these print what Prettier prints: remark-parse 8 reads `<b>` as part of the item, and a setext heading as
       // `## -`. In a block quote the tag is printed with the marker, so `c` keeps Prettier's empty line before it:
       // without it, `c` would move into the quote on the second run. Each row has the text, Bun's output as Markdown,
       // and Prettier's.
-      test.each([
+      const markdownRows = [
         ["- a\n<b>\nc\n", "- a\n<b>\nc\n", "- a\n<b>\n\nc\n"],
         ["- a\n<b>\nc\n- d\n", "- a\n<b>\nc\n- d\n", "- a\n<b>\n\nc\n\n- d\n"],
         ["- a\n<b>\nc\n---\n", "- a\n<b>\nc\n---\n", "- a\n<b>\n\nc\n---\n"],
@@ -2098,25 +2088,36 @@ describe.concurrent("bun fmt", () => {
           "- x\n\n      a\n\n  -\n  -\n\n  - b\n",
           "- x\n\n      a\n\n  -\n  -\n  - b\n",
         ],
-      ])(
-        "as Markdown: %j",
-        async (before, after, byPrettier) => {
+      ] as const;
+
+      test.each(markdownRows)("as Markdown: %j", async (before, after, byPrettier) => {
+        const html = Bun.markdown.html(before);
+        expect(Bun.markdown.html(after)).toBe(html);
+        expect(Bun.markdown.html(byPrettier)).not.toBe(html);
+        const files = { "a.md": before, "b.md": after };
+        const result = await format(files, [], { reads: Object.keys(files) });
+        expect(result.files).toEqual({ "a.md": after, "b.md": after });
+        expect(result.exitCode).toBe(0);
+      });
+
+      test("in the oxfmt flavor", async () => {
+        const files = Object.fromEntries(
+          [...rows, ...markdownRows].flatMap(([before, after], i) => [
+            [`${i}.md`, before],
+            [`${i}.formatted.md`, after],
+          ]),
+        );
+        const result = await format(files, ["--flavor=oxfmt"], { reads: Object.keys(files) });
+        const outputs = (i: number) => [result.files[`${i}.md`]!, result.files[`${i}.formatted.md`]!];
+        rows.forEach(([, after], i) => expect(outputs(i)).toEqual([after, after]));
+        // That flavor puts an empty line after indented code, and before a setext heading, so the Markdown-only rows
+        // are compared by what they mean.
+        markdownRows.forEach(([before], i) => {
           const html = Bun.markdown.html(before);
-          expect(Bun.markdown.html(after)).toBe(html);
-          expect(Bun.markdown.html(byPrettier)).not.toBe(html);
-          const files = { "a.md": before, "b.md": after };
-          const [result, asOxfmt] = await Promise.all([
-            format(files, [], { reads: Object.keys(files) }),
-            format(files, ["--flavor=oxfmt"], { reads: Object.keys(files) }),
-          ]);
-          expect(result.files).toEqual({ "a.md": after, "b.md": after });
-          expect(result.exitCode).toBe(0);
-          // That flavor puts an empty line after indented code, and before a setext heading.
-          expect(Object.values(asOxfmt.files).map(text => Bun.markdown.html(text!))).toEqual([html, html]);
-          expect(asOxfmt.exitCode).toBe(0);
-        },
-        20_000,
-      );
+          expect(outputs(rows.length + i).map(text => Bun.markdown.html(text))).toEqual([html, html]);
+        });
+        expect(result.exitCode).toBe(0);
+      });
 
       // A line that starts with a marker is joined to the line before it, so that it doesn't start a list. After
       // indented code, the lines of a paragraph that starts with one are items, so they stay. After a definition, a
@@ -2181,12 +2182,16 @@ describe.concurrent("bun fmt", () => {
           "spaces.md": "    a\n2. b\n   3. c\n",
           "tab.md": "    a\n2. b\n\t3. c\n",
           "after-marker.md": "    a\n-\n    b\n",
+          "emphasis.md": "    a\n2. *b*\n   3. c\n",
+          "second-line.md": "    a\n2. b\n   c\n   3. d\n",
         };
         const result = await format(files, ["--prose-wrap=always"], { reads: Object.keys(files) });
         expect(result.files).toEqual({
           "spaces.md": "    a\n\n2. b 3. c\n",
           "tab.md": "    a\n\n2. b 3. c\n",
           "after-marker.md": "    a\n\n- b\n",
+          "emphasis.md": "    a\n\n2. _b_ 3. c\n",
+          "second-line.md": "    a\n\n2. b c 3. d\n",
         });
         expect(result.exitCode).toBe(0);
       });

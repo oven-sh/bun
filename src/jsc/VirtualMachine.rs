@@ -1840,6 +1840,7 @@ impl VirtualMachine {
         self.active_tasks > 0
             || el.has_pending_tasks()
             || !el.yield_tasks.is_empty()
+            || el.has_closing_tasks()
             || el.has_pending_refs()
     }
 

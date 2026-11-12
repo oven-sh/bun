@@ -90,3 +90,38 @@ test.concurrent.each(["stdout", "stderr"] as const)(
     }
   },
 );
+
+// Over a pipe node's process.stdout is a net.Socket: 'finish' comes from the event loop, after the promise jobs of the
+// turn that called end(). Over a file it is a SyncWriteStream, which finishes on the next tick, ahead of them.
+test.each(["stdout", "stderr"] as const)(
+  "process.%s - a 'finish' listener added one promise job after end() (piped, file)",
+  async which => {
+    const other = which === "stdout" ? "stderr" : "stdout";
+    const script = `
+      const stream = process.${which};
+      let heard = "not heard";
+      stream.end("end\\n");
+      Promise.resolve().then(() => stream.on("finish", () => (heard = "heard")));
+      setImmediate(() => setImmediate(() => process.${other}.write("\\n" + heard)));
+    `;
+    using dir = tempDir("stdio-finish-after-end", {});
+    async function run(target: "pipe" | Bun.BunFile) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        stdout: which === "stdout" ? target : "pipe",
+        stderr: which === "stderr" ? target : "pipe",
+        stdin: "ignore",
+        env: bunEnv,
+      });
+      const reportStream = proc[other] as ReadableStream<Uint8Array>;
+      const [reportText, exitCode] = await Promise.all([reportStream.text(), proc.exited]);
+      // The report stream may carry benign ASAN/debug noise: the report is its last line.
+      return { heard: reportText.trim().split("\n").at(-1), exitCode };
+    }
+    const [piped, file] = await Promise.all([run("pipe"), run(Bun.file(path.join(String(dir), "out.txt")))]);
+    expect({ piped, file }).toEqual({
+      piped: { heard: "heard", exitCode: 0 },
+      file: { heard: "not heard", exitCode: 0 },
+    });
+  },
+);

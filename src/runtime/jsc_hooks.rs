@@ -1040,11 +1040,21 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // After this call `immediate_tasks` reflects next-tick immediates, so
     // the `has_pending_immediate` read below is correct.
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
+    let completes_before_poll = unsafe { (*el).begin_immediates() };
+    // SAFETY: as above.
     unsafe { (*el).tick_immediate_tasks(vm) };
+    // SAFETY: as above; each is the one live `&mut` for this call.
+    let _ =
+        unsafe { crate::dispatch::run_closing_tasks(&mut *el, &mut *vm, completes_before_poll) };
     // SAFETY: as above.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
+    // A closing task, or a task that one of them queued, waits for the next turn: wake the poll for it as for an immediate.
     #[cfg(windows)]
-    if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
+    if has_yielded_tasks
+        || !unsafe { &*el }.immediate_tasks.is_empty()
+        || unsafe { &*el }.has_closing_tasks()
+        || unsafe { &*el }.has_pending_tasks()
+    {
         // SAFETY: `el` is the live per-thread event loop.
         unsafe { (*el).wakeup() };
     }
@@ -1118,6 +1128,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         let has_pending_immediate = has_yielded_tasks
             || uv_idle_started
             || !unsafe { &*el }.immediate_tasks.is_empty()
+            || unsafe { &*el }.has_closing_tasks()
             || unsafe { &*el }.has_pending_tasks();
         // Fold the QUIC deadline into the poll timeout.
         let quic_next_tick_us = loop_.internal_loop_data.quic_next_tick_us();
@@ -1206,11 +1217,21 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     let loop_ = unsafe { &*(*el).usockets_loop() };
 
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
+    let completes_before_poll = unsafe { (*el).begin_immediates() };
+    // SAFETY: as above.
     unsafe { (*el).tick_immediate_tasks(vm) };
+    // SAFETY: as above; each is the one live `&mut` for this call.
+    let _ =
+        unsafe { crate::dispatch::run_closing_tasks(&mut *el, &mut *vm, completes_before_poll) };
     // SAFETY: as above.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
+    // See the matching arm in `auto_tick`.
     #[cfg(windows)]
-    if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
+    if has_yielded_tasks
+        || !unsafe { &*el }.immediate_tasks.is_empty()
+        || unsafe { &*el }.has_closing_tasks()
+        || unsafe { &*el }.has_pending_tasks()
+    {
         // SAFETY: `el` is the live per-thread event loop.
         unsafe { (*el).wakeup() };
     }
@@ -1257,6 +1278,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         let has_pending_immediate = has_yielded_tasks
             || uv_idle_started
             || !unsafe { &*el }.immediate_tasks.is_empty()
+            || unsafe { &*el }.has_closing_tasks()
             || unsafe { &*el }.has_pending_tasks();
         let quic_next_tick_us = loop_.internal_loop_data.quic_next_tick_us();
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };

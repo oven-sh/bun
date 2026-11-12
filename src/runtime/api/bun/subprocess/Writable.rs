@@ -258,6 +258,7 @@ impl<'a> Writable<'a> {
                         poll.set_flag(bun_io::FilePollFlag::Socket);
                     }
                 });
+                pipe_ref.half_closes.set(true);
 
                 subprocess
                     .weak_file_sink_stdin_ptr

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isPosix } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExeAtLeast } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { join } from "node:path";
@@ -218,5 +218,145 @@ describe.skipIf(!isPosix)("stdio handed to the child", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe("spawnSync: ok 0\nspawn: 0\n");
     expect(exitCode).toBe(0);
+  });
+});
+
+// Node completes the end and the close of child.stdin from libuv: 'finish' after every tick and promise job of
+// the turn that called end(), and 'close' after that turn's immediates as well.
+describe("stdin 'finish' and 'close' come from the event loop", () => {
+  const fixture = join(import.meta.dir, "fixtures", "stdin-late-listener-fixture.js");
+  const calls = ['end("abc")', "end()", "destroy()", 'end("abc"); destroy()'];
+  const origins = [
+    "the main script",
+    "a nextTick callback",
+    "the child's 'spawn' listener",
+    "a promise job",
+    "a timer",
+    "a setImmediate callback",
+    "an fs callback",
+    "a 'data' listener of the child's stdout",
+  ];
+  const sameTurn = [
+    "one tick",
+    "one promise job",
+    "two promise jobs",
+    "a tick, then a promise job",
+    "a promise job, then a tick",
+  ];
+  // What a listener hears that is added that much later than the call, by node v26.3.0.
+  const expected = Object.fromEntries(
+    calls.map(call => {
+      const ends = !call.includes("destroy()");
+      return [
+        call,
+        Object.fromEntries(
+          origins.map(origin => [
+            origin,
+            {
+              ...Object.fromEntries(sameTurn.map(later => [later, ends ? "finish, close" : "close"])),
+              // 'finish' precedes the immediates. So does the 'close' of a destroy() that an immediate called.
+              "one setImmediate": ends || origin !== "a setImmediate callback" ? "close" : "nothing",
+            },
+          ]),
+        ),
+      ];
+    }),
+  );
+
+  const order = join(import.meta.dir, "fixtures", "stdin-end-order-fixture.js");
+  const expectedOrder = {
+    'end("abc", cb)': { log: ["prefinish", "end callback null", "finish", "immediate", "close"], read: "abc" },
+    'end("abc", cb); destroy()': ["end callback ERR_STREAM_DESTROYED", "immediate", "close"],
+    "destroy(err)": ["error BOOM", "immediate", "close"],
+    "destroy() of two children in one turn": ["immediate", "stdin 1", "stdin 0"],
+    "an ended stdin as the stdout of another child": { second: 0, first: 0 },
+    ...(!isWindows && {
+      "a 'finish' listener that throws": { read: "abc", code: 0, uncaught: ["from 'finish'"] },
+      "a large chunk behind a small one, to a reader that starts late": {
+        before: [],
+        log: ["prefinish", "finish", "close"],
+        bytes: 1024 * 1024 + 5,
+      },
+      "a chunk that the pipe did not take, when the child exits and a grandchild keeps the pipe": ["close"],
+    }),
+    ...(isLinux && {
+      "end(cb) from an immediate, with the exit of the child due in the next poll": [
+        "prefinish",
+        "end callback null",
+        "finish",
+        "exit",
+        "immediate",
+        "close",
+      ],
+    }),
+  };
+
+  async function report(exe, file) {
+    await using proc = Bun.spawn({ cmd: [exe, file], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stderr, report: stdout && JSON.parse(stdout), exitCode };
+  }
+
+  it("a listener added later in the turn hears them", async () => {
+    expect(await report(bunExe(), fixture)).toEqual({ stderr: "", report: expected, exitCode: 0 });
+  });
+
+  it("end() and destroy() keep node's order", async () => {
+    expect(await report(bunExe(), order)).toEqual({ stderr: "", report: expectedOrder, exitCode: 0 });
+  });
+
+  // The reports above are those of node v26.3.0.
+  const node = nodeExeAtLeast("22.0.0");
+  it.skipIf(!node)("node prints the same reports", async () => {
+    expect(await Promise.all([report(node, fixture), report(node, order)])).toEqual([
+      { stderr: "", report: expected, exitCode: 0 },
+      { stderr: "", report: expectedOrder, exitCode: 0 },
+    ]);
+  });
+
+  it("an unref'd child still gets 'finish' and 'close' of its stdin", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { spawn } = require("node:child_process");
+         const child = spawn(${JSON.stringify(isWindows ? bunExe() : "cat")}, ${JSON.stringify(isWindows ? ["-e", "process.stdin.resume()"] : [])}, { stdio: ["pipe", "ignore", "inherit"] });
+         child.unref();
+         child.stdin.on("finish", () => console.log("finish"));
+         child.stdin.on("close", () => console.log("close"));
+         child.stdin.end("abc");`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "finish\nclose\n", stderr: "", exitCode: 0 });
+  });
+
+  it("an await of 'finish' behind another await goes on", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { spawn } = require("node:child_process"), { once } = require("node:events");
+         (async () => {
+           const child = spawn(${JSON.stringify(isWindows ? bunExe() : "cat")}, ${JSON.stringify(isWindows ? ["-e", "process.stdin.pipe(process.stdout)"] : [])});
+           let answer = "";
+           child.stdout.setEncoding("utf8").on("data", chunk => (answer += chunk));
+           const closed = once(child, "close");
+           child.stdin.end("3 jobs");
+           await once(child, "spawn");
+           await once(child.stdin, "finish");
+           await closed;
+           console.log("answer [" + answer + "]");
+         })();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "answer [3 jobs]\n", stderr: "", exitCode: 0 });
   });
 });

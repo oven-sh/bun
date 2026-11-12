@@ -165,6 +165,8 @@ function WriteStream(this: Self, fd: number): void {
   if (!(this instanceof WriteStream)) return new WriteStream(fd) as any;
 
   require("internal/fs/streams").WriteStream.$call(this as any, null, { fd, $fastPath: true, autoClose: false });
+  // Over a sink, 'close' comes from the event loop once the sink has closed, as from the handle of node's tty.WriteStream.
+  if (this[require("internal/fs/streams").kWriteStreamFastPath]) this._writableState.emitClose = false;
   this.columns = undefined;
   this.rows = undefined;
   this.isTTY = isatty(this.fd);

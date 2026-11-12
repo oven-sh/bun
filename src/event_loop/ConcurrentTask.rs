@@ -108,6 +108,8 @@ pub mod task_tag {
         Read,
         Readv,
         FlushPendingFileSinkTask,
+        FileSinkShutdownTask,     // FileSink (a node stream's end(): the 'finish' hop)
+        FileSinkCloseTask,        // FileSink (a node stream's destroy(): the 'close' hop)
         RunTestsTask,
         RuntimeTranspilerStore,
         S3HttpDownloadStreamingTask,

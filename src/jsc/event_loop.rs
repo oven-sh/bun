@@ -75,6 +75,16 @@ pub struct EventLoop {
     /// until the queue is empty (a task that re-posts itself there never lets
     /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
     pub yield_tasks: Vec<Task>,
+    /// Tasks that complete the close of a handle. `auto_tick` runs them after this turn's
+    /// immediates and before the poll, where libuv runs close callbacks: Node emits a socket's
+    /// 'close' there.
+    pub closing_tasks: Vec<Task>,
+    /// [`EventLoop::enqueue_completion_task`] while `completes_before_poll`: run behind the
+    /// closing tasks, not behind the poll in `tasks`.
+    pub completion_tasks: Vec<Task>,
+    /// `auto_tick` is between the start of its immediates and the end of its closing tasks. What
+    /// libuv completes from its pending queue comes, for a request made here, before the next poll.
+    completes_before_poll: bool,
 
     pub concurrent_tasks: ConcurrentQueue,
     /// See `TaskTag::is_plugin_request`: as other threads post them, and as this thread has taken them.
@@ -132,6 +142,9 @@ impl Default for EventLoop {
             immediate_tasks: Vec::new(),
             next_immediate_tasks: Vec::new(),
             yield_tasks: Vec::new(),
+            closing_tasks: Vec::new(),
+            completion_tasks: Vec::new(),
+            completes_before_poll: false,
             concurrent_tasks: ConcurrentQueue::default(),
             concurrent_plugin_requests: ConcurrentQueue::default(),
             plugin_requests: Queue::init(),
@@ -1049,6 +1062,12 @@ impl EventLoop {
         let batch = self.concurrent_plugin_requests.pop_batch();
         Self::take_concurrent_tasks(&mut self.plugin_requests, batch);
         let _ = self.promote_yield_tasks();
+        for task in core::mem::take(&mut self.closing_tasks)
+            .into_iter()
+            .chain(core::mem::take(&mut self.completion_tasks))
+        {
+            let _ = self.tasks.write_item(task);
+        }
         while let Some(task) = self.next_task() {
             // SAFETY: JS thread, heap alive; `task` just left the queue.
             unsafe { self.release_task_unrun(task) };
@@ -1109,6 +1128,40 @@ impl EventLoop {
             return self.enqueue_task(task);
         }
         self.yield_tasks.push(task);
+    }
+
+    /// See [`EventLoop::closing_tasks`].
+    pub fn enqueue_closing_task(&mut self, task: Task) {
+        if self.closed_for_tasks {
+            return self.enqueue_task(task);
+        }
+        self.closing_tasks.push(task);
+    }
+
+    /// For what libuv completes from its pending queue (a shutdown request): after the turn
+    /// that asked for it, and before the next poll.
+    pub fn enqueue_completion_task(&mut self, task: Task) {
+        if self.completes_before_poll && !self.closed_for_tasks {
+            self.completion_tasks.push(task);
+        } else {
+            self.enqueue_task(task);
+        }
+    }
+
+    /// `auto_tick`, before its immediates. Returns what [`EventLoop::set_completes_before_poll`]
+    /// takes back behind the closing tasks: an `auto_tick` nested in an immediate leaves the
+    /// outer one's state as it found it.
+    pub fn begin_immediates(&mut self) -> bool {
+        core::mem::replace(&mut self.completes_before_poll, true)
+    }
+
+    pub fn set_completes_before_poll(&mut self, value: bool) {
+        self.completes_before_poll = value;
+    }
+
+    /// Closing or completion tasks wait for the next `auto_tick`: its poll must not block.
+    pub fn has_closing_tasks(&self) -> bool {
+        !self.closing_tasks.is_empty() || !self.completion_tasks.is_empty()
     }
 
     /// `auto_tick`, before it polls: last iteration's yielded tasks become
@@ -1674,6 +1727,8 @@ bun_event_loop::link_impl_JsEventLoop! {
         exit() => (*this).exit(),
         enqueue_task(task) => (*this).enqueue_task(task),
         enqueue_task_after_yield(task) => (*this).enqueue_task_after_yield(task),
+        enqueue_closing_task(task) => (*this).enqueue_closing_task(task),
+        enqueue_completion_task(task) => (*this).enqueue_completion_task(task),
         js_poster() => (*this).js_poster(),
         env() => (*this).vm_ref().transpiler.env,
         top_level_dir() => core::ptr::from_ref::<[u8]>((*this).vm_ref().top_level_dir()),

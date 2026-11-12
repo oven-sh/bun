@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/fs/streams.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 4c73ad1978cefd870065b89eaf36d4c329a29a24f0008fcb06e721058f973a51.
+// Written against that file with the SHA-256 a1e553c897696bc6800ebffff1eb0ba233e6f799b0b6dcb0c40a96745289073b.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
@@ -500,16 +500,6 @@ Object.defineProperty(readStreamPrototype, "pending", {
 });
 
 function close(stream: FileStream, err: Error | null | undefined, cb: ErrorCallback) {
-  const fastPath = stream[kWriteStreamFastPath];
-  if (fastPath && fastPath !== true) {
-    stream.fd = null;
-    const maybePromise = fastPath.end(err!);
-    thenIfPromise(maybePromise, () => {
-      cb(err);
-    });
-    return;
-  }
-
   if (stream.fd == null) {
     cb(err);
   } else if (stream.flush) {
@@ -841,6 +831,12 @@ function underscoreWriteFast(this: $Node.WriteStream, data: Buffer, encoding: st
   }
 }
 
+let shutdownSink: ((sink: FileSink, cb: ErrorCallback) => boolean) | undefined;
+let closeSink: ((sink: FileSink, cb: () => void) => boolean) | undefined;
+
+// A sink over a pipe, a socket or a terminal calls back from the event loop, once it has written everything: where the shutdown request of node's net.Socket completes.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L536-L558
+// A sink over a regular file has written everything when it returns false, as node's SyncWriteStream has.
 function finalFast(this: $Node.WriteStream, cb: ErrorCallback) {
   const fileSink = this[kWriteStreamFastPath];
   if (!fileSink || fileSink === true) {
@@ -848,11 +844,8 @@ function finalFast(this: $Node.WriteStream, cb: ErrorCallback) {
     return;
   }
   try {
-    const maybePromise = fileSink.flush();
-    if ($isPromise(maybePromise)) {
-      maybePromise.then(() => cb(null), cb);
-      return;
-    }
+    shutdownSink ??= $bindgen("FileSink.bind.ts", "shutdown");
+    if (shutdownSink!(fileSink, cb)) return;
   } catch (err) {
     cb(err as Error);
     return;
@@ -972,11 +965,14 @@ writeStreamPrototype._writev = function (this: $Node.WriteStream, data: $Node.Ch
 writeStreamPrototype._destroy = function (this: $Node.WriteStream, err: Error | null, cb: ErrorCallback) {
   const sink = this[kWriteStreamFastPath];
   if (sink && sink !== true) {
-    const end = sink.end(err!);
-    if ($isPromise(end)) {
-      end.then(() => cb(err), cb);
-      return;
-    }
+    // As node's net.Socket: the sink closes, and 'close' comes from the event loop once it has, not from destroy().
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L346-L358
+    this.fd = null;
+    const emitClose = emitCloseOfSink.bind(undefined, this, err ? true : false);
+    closeSink ??= $bindgen("FileSink.bind.ts", "close");
+    if (!closeSink!(sink, emitClose)) process.nextTick(emitClose);
+    cb(err);
+    return;
   }
   // Usually for async IO it is safe to close a file descriptor
   // even when there are pending operations. However, due to platform
@@ -1030,20 +1026,16 @@ Object.defineProperty(writeStreamPrototype, "pending", {
   configurable: true,
 });
 
-function thenIfPromise<T>(maybePromise: Promise<T> | T, cb: ErrorCallback) {
-  $assert(typeof cb === "function", "cb is not a function");
-  if ($isPromise(maybePromise)) {
-    maybePromise.then(() => cb(null), cb);
-  } else {
-    process.nextTick(cb, null);
-  }
+// A stream that emits 'close' by itself (emitClose) has done so from destroy().
+function emitCloseOfSink(stream: $Node.WriteStream, hadError: boolean) {
+  if (!stream._writableState.emitClose) stream.emit("close", hadError);
 }
 
 function writableFromFileSink(fileSink: FileSink) {
   $assert(typeof fileSink === "object", "fileSink is not an object");
   $assert(typeof fileSink.write === "function", "fileSink.write is not a function");
   $assert(typeof fileSink.end === "function", "fileSink.end is not a function");
-  const w: $Node.WriteStream = new WriteStream("", { $fastPath: true });
+  const w: $Node.WriteStream = new WriteStream("", { $fastPath: true, emitClose: false });
   $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
   w[kWriteStreamFastPath] = fileSink;
   w.path = undefined;

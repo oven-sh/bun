@@ -18,7 +18,7 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
   path: string | null | undefined;
   _write: import("node:fs").WriteStream["_write"] | null;
   _writev: import("node:fs").WriteStream["_writev"] | null;
-  _writableState?: { ending: boolean; destroyed: boolean };
+  _writableState?: { ending: boolean; destroyed: boolean; emitClose: boolean };
   flags: string;
   mode: number;
   start: number;
@@ -376,16 +376,6 @@ Object.defineProperty(readStreamPrototype, "pending", {
 });
 
 function close(stream, err, cb) {
-  const fastPath: FileSink | true = stream[kWriteStreamFastPath];
-  if (fastPath && fastPath !== true) {
-    stream.fd = null;
-    const maybePromise = fastPath.end(err);
-    thenIfPromise(maybePromise, () => {
-      cb(err);
-    });
-    return;
-  }
-
   if (stream.fd == null) {
     cb(err);
   } else if (stream.flush) {
@@ -682,6 +672,12 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
   }
 }
 
+let shutdownSink: ((sink: FileSink, cb: (err?: any) => void) => boolean) | undefined;
+let closeSink: ((sink: FileSink, cb: () => void) => boolean) | undefined;
+
+// A sink over a pipe, a socket or a terminal calls back from the event loop, once it has written everything: where the shutdown request of node's net.Socket completes.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L536-L558
+// A sink over a regular file has written everything when it returns false, as node's SyncWriteStream has.
 function finalFast(this: FSStream, cb: (err?: any) => void) {
   const fileSink = this[kWriteStreamFastPath];
   if (!fileSink || fileSink === true) {
@@ -689,11 +685,8 @@ function finalFast(this: FSStream, cb: (err?: any) => void) {
     return;
   }
   try {
-    const maybePromise = fileSink.flush();
-    if ($isPromise(maybePromise)) {
-      maybePromise.then(() => cb(null), cb);
-      return;
-    }
+    shutdownSink ??= $bindgen("FileSink.bind.ts", "shutdown");
+    if (shutdownSink!(fileSink, cb)) return;
   } catch (err) {
     cb(err);
     return;
@@ -802,11 +795,14 @@ writeStreamPrototype._writev = function (data, cb) {
 writeStreamPrototype._destroy = function (err, cb) {
   const sink = this[kWriteStreamFastPath];
   if (sink && sink !== true) {
-    const end = sink.end(err);
-    if ($isPromise(end)) {
-      end.then(() => cb(err), cb);
-      return;
-    }
+    // As node's net.Socket: the sink closes, and 'close' comes from the event loop once it has, not from destroy().
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L346-L358
+    this.fd = null;
+    const emitClose = emitCloseOfSink.bind(undefined, this, err ? true : false);
+    closeSink ??= $bindgen("FileSink.bind.ts", "close");
+    if (!closeSink!(sink, emitClose)) process.nextTick(emitClose);
+    cb(err);
+    return;
   }
   // Usually for async IO it is safe to close a file descriptor
   // even when there are pending operations. However, due to platform
@@ -860,20 +856,16 @@ Object.defineProperty(writeStreamPrototype, "pending", {
   configurable: true,
 });
 
-function thenIfPromise<T>(maybePromise: Promise<T> | T, cb: any) {
-  $assert(typeof cb === "function", "cb is not a function");
-  if ($isPromise(maybePromise)) {
-    maybePromise.then(() => cb(null), cb);
-  } else {
-    process.nextTick(cb, null);
-  }
+// A stream that emits 'close' by itself (emitClose) has done so from destroy().
+function emitCloseOfSink(stream: FSStream, hadError: boolean) {
+  if (!stream._writableState!.emitClose) stream.emit("close", hadError);
 }
 
 function writableFromFileSink(fileSink: any) {
   $assert(typeof fileSink === "object", "fileSink is not an object");
   $assert(typeof fileSink.write === "function", "fileSink.write is not a function");
   $assert(typeof fileSink.end === "function", "fileSink.end is not a function");
-  const w = new WriteStream("", { $fastPath: true });
+  const w = new WriteStream("", { $fastPath: true, emitClose: false });
   $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
   w[kWriteStreamFastPath] = fileSink;
   w.path = undefined;

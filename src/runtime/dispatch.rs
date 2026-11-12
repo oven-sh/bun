@@ -91,9 +91,11 @@ use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
 use crate::shell::states::r#async::Async as ShellAsync;
 
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
+use crate::webcore::file_sink::CloseTask as FileSinkCloseTask;
 use crate::webcore::file_sink::FlushPendingTask as FlushPendingFileSinkTask;
 #[cfg(not(windows))]
 use crate::webcore::file_sink::Poll as FileSinkPoll;
+use crate::webcore::file_sink::ShutdownTask as FileSinkShutdownTask;
 use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 use crate::webcore::s3::multipart::WriterCollected as S3UploadWriterCollected;
 use crate::webcore::s3::simple_request::S3HttpSimpleTask;
@@ -784,6 +786,21 @@ pub(crate) fn run_task(
                 }
             )
         }
+        task_tag::FileSinkShutdownTask => {
+            feature_arm!(
+                [FileSink, Spawn, Shell],
+                |shutdown: FileSinkShutdownTask| {
+                    // SAFETY: the payload is the task embedded in a sink that holds a ref for it.
+                    unsafe { FileSinkShutdownTask::run_from_js_thread(shutdown) };
+                }
+            )
+        }
+        task_tag::FileSinkCloseTask => {
+            feature_arm!([FileSink, Spawn, Shell], |close: FileSinkCloseTask| {
+                // SAFETY: the payload is the task embedded in a sink that holds a ref for it.
+                unsafe { FileSinkCloseTask::run_from_js_thread(close) };
+            })
+        }
         // `cast_ptr!` yields the heap-allocated task; sole owner.
         task_tag::StreamPending => feature_arm!([WebStreams], |pending: StreamPending| {
             StreamPending::run_from_js_thread(pending);
@@ -883,7 +900,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 86,
+    task_tag::COUNT == 88,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -905,43 +922,132 @@ pub(crate) fn tick_queue_with_count(
         // Incremented before dispatch so the count includes every task,
         // including the one that takes the HotReloadTask early return.
         *counter += 1;
-        // A task continues what the script of some context started: it runs inside that context
-        // (what it opens next, and the script it calls, are that context's), and once that context
-        // has stopped it is released unrun. Not live either: the context of a file
-        // `bun test --isolate` has since retired (the swap was that file's exit), and any context
-        // once the VM was asked to stop (a parent's terminate() while the worker still ticks).
-        let _context = match task.context() {
-            bun_event_loop::ContextId::NONE => None,
-            context => {
-                let vm = global.bun_vm();
-                let entered = vm.enter_context(context);
-                if !(vm.script_allowed() && vm.is_context_live(context)) {
-                    __bun_release_task_unrun(task);
-                    if global.has_exception() {
-                        report_error_or_terminate(global, bun_jsc::JsError::Thrown)?;
-                    }
-                    continue;
-                }
-                Some(entered)
-            }
-        };
-        match run_task(task, el, vm, global) {
-            Ok(RunTaskResult::Continue) => {}
-            Ok(RunTaskResult::EarlyReturn) => {
-                // Caller is `while tickWithCount(ctx) > 0` — must keep
-                // draining after a hot-reload task, so report exactly one
-                // task processed. Do NOT set 0 here.
-                *counter = 1;
-                return Ok(());
-            }
-            // The one fold for every queued task: report what it left as
-            // uncaught, or stand the loop down if it is the VM's termination.
-            Err(err) => report_error_or_terminate(global, err)?,
+        if let RunTaskResult::EarlyReturn = run_queued_task(task, el, vm, global, global_vm)? {
+            // Caller is `while tickWithCount(ctx) > 0` — must keep
+            // draining after a hot-reload task, so report exactly one
+            // task processed. Do NOT set 0 here.
+            *counter = 1;
+            return Ok(());
         }
-        el.drain_microtasks_with_global(global, global_vm)?;
     }
     el.tasks.reset_head_if_empty();
     Ok(())
+}
+
+/// One task that left a queue of `el`, and the microtask checkpoint behind it.
+#[inline(always)]
+fn run_queued_task(
+    task: Task,
+    el: &mut EventLoop,
+    vm: &mut VirtualMachine,
+    global: &JSGlobalObject,
+    global_vm: &bun_jsc::VM,
+) -> Result<RunTaskResult, Stopped> {
+    // A task continues what the script of some context started: it runs inside that context
+    // (what it opens next, and the script it calls, are that context's), and once that context
+    // has stopped it is released unrun. Not live either: the context of a file
+    // `bun test --isolate` has since retired (the swap was that file's exit), and any context
+    // once the VM was asked to stop (a parent's terminate() while the worker still ticks).
+    let _context = match task.context() {
+        bun_event_loop::ContextId::NONE => None,
+        context => {
+            let vm = global.bun_vm();
+            let entered = vm.enter_context(context);
+            if !(vm.script_allowed() && vm.is_context_live(context)) {
+                __bun_release_task_unrun(task);
+                if global.has_exception() {
+                    report_error_or_terminate(global, bun_jsc::JsError::Thrown)?;
+                }
+                return Ok(RunTaskResult::Continue);
+            }
+            Some(entered)
+        }
+    };
+    match run_task(task, el, vm, global) {
+        Ok(RunTaskResult::Continue) => {}
+        Ok(RunTaskResult::EarlyReturn) => return Ok(RunTaskResult::EarlyReturn),
+        // The one fold for every queued task: report what it left as
+        // uncaught, or stand the loop down if it is the VM's termination.
+        Err(err) => report_error_or_terminate(global, err)?,
+    }
+    el.drain_microtasks_with_global(global, global_vm)?;
+    Ok(RunTaskResult::Continue)
+}
+
+/// `auto_tick`, between its immediates and its poll: what libuv runs there. First the close
+/// callbacks of this loop turn, then what its pending queue holds by then (see
+/// `EventLoop::enqueue_completion_task`). `completes_before_poll` is what
+/// `EventLoop::begin_immediates` returned.
+#[inline]
+pub(crate) fn run_closing_tasks(
+    el: &mut EventLoop,
+    vm: &mut VirtualMachine,
+    completes_before_poll: bool,
+) -> Result<(), Stopped> {
+    // Out of line: a loop turn with nothing to close pays two length checks here.
+    #[inline(never)]
+    fn run(
+        el: &mut EventLoop,
+        vm: &mut VirtualMachine,
+        completes_before_poll: bool,
+    ) -> Result<(), Stopped> {
+        // SAFETY: `el.global` is set by VM init before the first tick; live for the drain.
+        let global: &JSGlobalObject =
+            unsafe { el.global.expect("EventLoop.global unset").as_ref() };
+        let global_vm = global.vm();
+        // Taken once, as libuv takes its list: a close that a callback here asks for completes in
+        // the next loop turn. That list is a stack: the handle that closed last reports first.
+        let mut closing = core::mem::take(&mut el.closing_tasks);
+        closing.reverse();
+        let mut result = run_task_list(&mut closing, el, vm, global, global_vm);
+        el.set_completes_before_poll(completes_before_poll);
+        let mut completions = core::mem::take(&mut el.completion_tasks);
+        if result.is_ok() {
+            result = run_task_list(&mut completions, el, vm, global, global_vm);
+        } else {
+            release_task_list(completions.drain(..));
+        }
+        keep_buffer(&mut el.closing_tasks, closing);
+        keep_buffer(&mut el.completion_tasks, completions);
+        result
+    }
+    if !el.has_closing_tasks() {
+        el.set_completes_before_poll(completes_before_poll);
+        return Ok(());
+    }
+    run(el, vm, completes_before_poll)
+}
+
+/// Runs `tasks` in order and leaves the list empty. Once the VM stops, the rest are released unrun.
+fn run_task_list(
+    tasks: &mut Vec<Task>,
+    el: &mut EventLoop,
+    vm: &mut VirtualMachine,
+    global: &JSGlobalObject,
+    global_vm: &bun_jsc::VM,
+) -> Result<(), Stopped> {
+    let mut tasks = tasks.drain(..);
+    while let Some(task) = tasks.next() {
+        if let Err(stopped) = run_queued_task(task, el, vm, global, global_vm) {
+            release_task_list(tasks);
+            return Err(stopped);
+        }
+    }
+    Ok(())
+}
+
+/// `list` gets its emptied buffer back for the next loop turn, unless a callback has queued into a
+/// new one, or one busy turn made the buffer large.
+fn keep_buffer(list: &mut Vec<Task>, buffer: Vec<Task>) {
+    if list.capacity() == 0 && buffer.capacity() <= 1024 {
+        *list = buffer;
+    }
+}
+
+fn release_task_list(tasks: impl IntoIterator<Item = Task>) {
+    for task in tasks {
+        __bun_release_task_unrun(task);
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1785,6 +1891,10 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::FlushPendingFileSinkTask => {
             release_in!([FileSink, Spawn, Shell], FlushPendingFileSinkTask)
         }
+        task_tag::FileSinkShutdownTask => {
+            release_in!([FileSink, Spawn, Shell], FileSinkShutdownTask)
+        }
+        task_tag::FileSinkCloseTask => release_in!([FileSink, Spawn, Shell], FileSinkCloseTask),
         task_tag::RuntimeTranspilerStore => {
             release_in!([RuntimeTranspiler], RuntimeTranspilerStore)
         }

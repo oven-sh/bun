@@ -423,6 +423,46 @@ describe("WriteStream end()", () => {
     expect(received).toBe(4 * 256 * 1024);
     expect(await exited).toBe(0);
   });
+
+  // node's tty.WriteStream is a net.Socket: 'finish' comes from the event loop behind the promise jobs of the turn
+  // that called end(), and 'close' behind the immediates of the turn that called destroy(). node v26.3.0 prints the
+  // same for a terminal.
+  it("'finish' and 'close' reach a listener that is added later in the turn", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { WriteStream } = require("node:tty");
+         function late(event, call) {
+           return new Promise(resolve => {
+             const stream = new WriteStream(1);
+             const heard = [];
+             stream.on(event, () => setImmediate(() => setImmediate(() => resolve(heard))));
+             // From a timer: in a promise job, the queued promise jobs run ahead of the nextTick queue.
+             setTimeout(() => {
+               call(stream);
+               Promise.resolve().then(() => stream.on(event, () => heard.push("one promise job later")));
+               setImmediate(() => stream.on(event, () => heard.push("one setImmediate later")));
+             }, 1);
+           });
+         }
+         (async () => {
+           const finish = await late("finish", stream => stream.end("ended\\n"));
+           const close = await late("close", stream => stream.destroy());
+           process.stderr.write(JSON.stringify({ finish, close }));
+         })();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, report: stderr && JSON.parse(stderr), exitCode }).toEqual({
+      stdout: "ended\n",
+      report: { finish: ["one promise job later"], close: ["one promise job later", "one setImmediate later"] },
+      exitCode: 0,
+    });
+  });
 });
 
 describe("WriteStream.prototype", () => {

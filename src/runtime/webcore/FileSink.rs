@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicI32, Ordering};
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{self, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
@@ -80,6 +80,18 @@ pub struct FileSink {
     abort_handle: bun_jsc::AbortHandle,
     /// It is a test file's: closed once the file's realm is retired, unless something is still unwritten.
     closes_with_test_file: Cell<bool>,
+
+    /// What a node stream over this sink waits for: see [`shutdown`] and [`close`].
+    request: Cell<StreamRequest>,
+    /// The write error that a `Shutdown` hands to its callback, or 0.
+    request_errno: Cell<u16>,
+    /// The context of the script that made the request.
+    request_context: Cell<bun_jsc::ContextId>,
+    request_callback: JsCell<bun_jsc::strong::Optional>,
+    pub(crate) shutdown_task: ShutdownTask,
+    pub(crate) close_task: CloseTask,
+    /// The stdin pipe of a child, which this side alone holds: a `Shutdown` half-closes it, as Node's does.
+    pub(crate) half_closes: Cell<bool>,
 }
 
 // `bun.ptr.RefCount(FileSink, "ref_count", deinit, .{})` — intrusive single-thread
@@ -345,6 +357,8 @@ impl FileSink {
 
             (*this).run_pending_later.has.set(false);
 
+            let shutdown_errno = (*this).errno_for_parked_shutdown();
+
             let _entered = (*this).event_loop().entered();
             // SAFETY(JsCell): `WritablePending::run` resolves a JSPromise which may
             // re-enter JS, but no other path holds a borrow of `self.pending` for
@@ -355,6 +369,10 @@ impl FileSink {
             // This was held to prevent GC from collecting the wrapper while the async
             // operation was in progress.
             (*this).js_sink_ref.with_mut(|r| r.deinit());
+
+            if let Some(errno) = shutdown_errno {
+                (*this).complete_shutdown_once_written(errno);
+            }
         }
     }
 
@@ -598,6 +616,10 @@ impl FileSink {
             (*this).settle_stream_done();
             (*this).release_pipe();
 
+            if (*this).request.get() == StreamRequest::Close {
+                (*this).queue_close_completion();
+            }
+
             // The writer is fully closed; no further callbacks will arrive. Release
             // the ref taken when a write returned `.pending`.
             FileSink::clear_keep_alive_ref(this);
@@ -605,12 +627,15 @@ impl FileSink {
     }
 
     /// `writer.end()`; `on_close` follows and may free `self`, except (Windows) for an fd the writer
-    /// does not own, which is never closed: settle a piped stream here then.
+    /// does not own, which is never closed: settle a piped stream here then, and a `Close` request.
     fn end_writer(&self) {
         #[cfg(windows)]
         if !self.writer.get().owns_fd {
             self.settle_stream_done();
             self.release_pipe();
+            if self.request.get() == StreamRequest::Close {
+                self.queue_close_completion();
+            }
         }
         self.writer.with_mut(|w| w.end());
     }
@@ -955,6 +980,7 @@ impl FileSink {
 
         self.done.set(false);
         self.started.set(true);
+        self.release_request();
         self.source.with_mut(|s| s.start());
         sys::Result::Ok(())
     }
@@ -1074,6 +1100,14 @@ impl FileSink {
             return sys::Result::Ok(JSValue::UNDEFINED);
         }
 
+        self.flush_buffered(|result| result.to_js(cx))
+    }
+
+    /// `flush()`, up to the value that it returns: `report` takes it. A `Pending` result has credited the pending
+    /// slot and not opened it.
+    // PERF: inlined with `report`, so that `flush()` from JS pays no call and no copy of the result for the split.
+    #[inline(always)]
+    fn flush_buffered<R>(&self, report: impl FnOnce(streams::Writable) -> R) -> sys::Result<R> {
         let had_buffered_data = self.writer.get().has_pending_data();
         // SAFETY(JsCell): `IOWriter::flush` is pure I/O; no JS re-entry while
         // the `&mut IOWriter` is held.
@@ -1101,7 +1135,7 @@ impl FileSink {
         // bytes it pushed out. It only reaches here when no write is pending.
         match self.to_result(rc, flushed) {
             streams::Writable::Err(_) => unreachable!(),
-            result => sys::Result::Ok(result.to_js(cx)),
+            result => sys::Result::Ok(report(result)),
         }
     }
 
@@ -1126,6 +1160,7 @@ impl FileSink {
         // SAFETY: as above; the `deref` is the last use of `this`.
         unsafe {
             (*this).js_sink_ref.with_mut(|r| r.deinit());
+            (*this).request_callback.with_mut(|r| r.deinit());
             FileSink::deref(this);
         }
     }
@@ -1173,6 +1208,13 @@ impl FileSink {
                 if (*this).run_pending_later.has.replace(false) {
                     // Balances the `ref_()` taken in `run_pending_later()` for
                     // a task that will never run.
+                    FileSink::deref(this);
+                }
+                // As above, for the hops of `shutdown` and `close`.
+                if (*this).shutdown_task.queued.replace(false) {
+                    FileSink::deref(this);
+                }
+                if (*this).close_task.queued.replace(false) {
                     FileSink::deref(this);
                 }
             }
@@ -1662,6 +1704,13 @@ impl FileSink {
             js_sink_ref: JsCell::new(bun_jsc::strong::Optional::empty()),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FileSink>(),
             closes_with_test_file: Cell::new(false),
+            request: Cell::new(StreamRequest::None),
+            request_errno: Cell::new(0),
+            request_context: Cell::new(bun_jsc::ContextId::NONE),
+            request_callback: JsCell::new(bun_jsc::strong::Optional::empty()),
+            shutdown_task: ShutdownTask::default(),
+            close_task: CloseTask::default(),
+            half_closes: Cell::new(false),
         }
     }
 }
@@ -1735,6 +1784,355 @@ impl FlushPendingTask {
             // `from_field_ptr!` from the embedded `run_pending_later` task;
             // `_guard` keeps it live for the call.
             unsafe { FileSink::run_pending(this) };
+        }
+    }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Requests of a node stream over a sink: `child.stdin`, `process.stdout`, a `tty.WriteStream`
+// ───────────────────────────────────────────────────────────────────────────
+//
+// Node completes the end and the close of such a stream from libuv, never in the turn of the
+// loop that asked: the shutdown request from the pending queue, the close from the close
+// callbacks that follow that turn's immediates. `EventLoop::enqueue_completion_task` and
+// `EventLoop::enqueue_closing_task` are those two places.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L536-L558
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L346-L358
+// https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/core.c#L445-L483
+
+/// What a node stream waits for. A `Close` takes the place of a `Shutdown`: libuv cancels the shutdown request
+/// of a stream that is closed first, and a destroyed Writable ignores the callback.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StreamRequest {
+    None,
+    Shutdown,
+    Close,
+}
+
+/// The hop of [`shutdown`] to the event loop, embedded in the sink like [`FlushPendingTask`].
+#[derive(Default)]
+pub(crate) struct ShutdownTask {
+    queued: Cell<bool>,
+}
+
+/// The hop of [`close`] to the event loop.
+#[derive(Default)]
+pub(crate) struct CloseTask {
+    queued: Cell<bool>,
+}
+
+impl bun_event_loop::Taskable for ShutdownTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FileSinkShutdownTask;
+    /// The request will never complete: drops its callback and the ref of the hop.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract; `this` is `FileSink.shutdown_task`.
+        unsafe {
+            let sink: *mut FileSink = bun_core::from_field_ptr!(FileSink, shutdown_task, this);
+            if (*this).queued.replace(false) {
+                let _guard = RefPtr::from_raw(sink);
+                if (*sink).request.get() == StreamRequest::Shutdown {
+                    (*sink).release_request();
+                }
+            }
+        }
+    }
+    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
+        // SAFETY: fn contract; `this` is `FileSink.shutdown_task`.
+        unsafe {
+            let sink: *const FileSink = bun_core::from_field_ptr!(FileSink, shutdown_task, this);
+            (*sink).request_context.get()
+        }
+    }
+}
+
+impl bun_event_loop::Taskable for CloseTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FileSinkCloseTask;
+    /// As [`ShutdownTask::release_unrun`].
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract; `this` is `FileSink.close_task`.
+        unsafe {
+            let sink: *mut FileSink = bun_core::from_field_ptr!(FileSink, close_task, this);
+            if (*this).queued.replace(false) {
+                let _guard = RefPtr::from_raw(sink);
+                (*sink).release_request();
+            }
+        }
+    }
+    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
+        // SAFETY: fn contract; `this` is `FileSink.close_task`.
+        unsafe {
+            let sink: *const FileSink = bun_core::from_field_ptr!(FileSink, close_task, this);
+            (*sink).request_context.get()
+        }
+    }
+}
+
+impl ShutdownTask {
+    /// # Safety
+    /// `task` is the `shutdown_task` of a live `FileSink`, which holds a ref for the task while `queued` is set.
+    pub(crate) unsafe fn run_from_js_thread(task: *mut ShutdownTask) {
+        // SAFETY: fn contract. `_guard` takes over that ref and keeps the sink across the callback.
+        unsafe {
+            let this: *mut FileSink = bun_core::from_field_ptr!(FileSink, shutdown_task, task);
+            if !(*task).queued.replace(false) {
+                return;
+            }
+            let _guard = RefPtr::from_raw(this);
+            if (*this).request.get() != StreamRequest::Shutdown {
+                return;
+            }
+            let errno = (*this).request_errno.get();
+            if errno == 0 && (*this).half_closes.get() {
+                (*this).half_close();
+            }
+            let Some(global) = (*this).js_global() else {
+                return (*this).release_request();
+            };
+            let error = match errno {
+                0 => None,
+                errno => {
+                    use bun_sys_jsc::ErrorJsc as _;
+                    let error = sys::Error::from_code_int(errno.into(), sys::Tag::write);
+                    match error.to_js(global) {
+                        Ok(error) => Some(error),
+                        Err(_) => return (*this).release_request(),
+                    }
+                }
+            };
+            let Some(callback) = (*this).take_request() else {
+                return;
+            };
+            global.bun_vm().event_loop_mut().run_callback(
+                bun_jsc::ContextId::NONE,
+                callback,
+                global,
+                JSValue::UNDEFINED,
+                error.as_slice(),
+            );
+        }
+    }
+}
+
+impl CloseTask {
+    /// # Safety
+    /// `task` is the `close_task` of a live `FileSink`, which holds a ref for the task while `queued` is set.
+    pub(crate) unsafe fn run_from_js_thread(task: *mut CloseTask) {
+        // SAFETY: fn contract. `_guard` takes over that ref and keeps the sink across the callback.
+        unsafe {
+            let this: *mut FileSink = bun_core::from_field_ptr!(FileSink, close_task, task);
+            if !(*task).queued.replace(false) {
+                return;
+            }
+            let _guard = RefPtr::from_raw(this);
+            if (*this).request.get() != StreamRequest::Close {
+                return;
+            }
+            let (Some(global), Some(callback)) = ((*this).js_global(), (*this).take_request())
+            else {
+                return;
+            };
+            global.bun_vm().event_loop_mut().run_callback(
+                bun_jsc::ContextId::NONE,
+                callback,
+                global,
+                JSValue::UNDEFINED,
+                &[],
+            );
+        }
+    }
+}
+
+/// `_final` of a node stream over `sink`, a `FileSink`: flushes as `flush()` does. `true`: `callback` is called
+/// from the event loop once everything is written, with the error of the write if it failed, and never before
+/// this returns. That is where libuv completes the shutdown request of Node's `net.Socket`. `false`: the sink
+/// writes in its caller's turn, as the `SyncWriteStream` that Node has over a regular file does. It is flushed,
+/// and the caller calls back.
+pub(crate) fn shutdown(
+    cx: &mut JsScope<'_>,
+    sink: JsLocal<'_>,
+    callback: JsLocal<'_, Callable>,
+) -> JsResult<bool> {
+    let Some(this) = JSSink::sink_from_js(sink.to_js()) else {
+        return Ok(false);
+    };
+    let this = this.as_ptr();
+    let global = cx.global();
+    // SAFETY: `sink_from_js` returned the object's live sink, the allocation that `to_js` handed to it. The
+    // guard keeps it live across the flush, which re-enters `on_write`.
+    unsafe {
+        let _guard = RefPtr::init_ref(this);
+        let completes_from_loop = (*this).completes_from_loop();
+        let mut errno = 0;
+        // A write that is parked flushes everything.
+        if (*this).pending.get().state != streams::PendingState::Pending && !(*this).done.get() {
+            match (*this).flush_buffered(drop) {
+                sys::Result::Ok(()) => {}
+                sys::Result::Err(err) if completes_from_loop => errno = err.errno,
+                sys::Result::Err(err) => {
+                    use bun_jsc::SysErrorJsc as _;
+                    return Err(err.throw(global));
+                }
+            }
+        }
+        if !completes_from_loop {
+            return Ok(false);
+        }
+        (*this).set_request(StreamRequest::Shutdown, &cx.js_thread(), callback.to_js());
+        // Behind a write that is parked, `run_pending` completes the request.
+        if (*this).pending.get().state != streams::PendingState::Pending {
+            (*this).complete_shutdown_once_written(errno);
+        }
+    }
+    Ok(true)
+}
+
+/// `_destroy` of a node stream over `sink`, a `FileSink`: ends the sink as `end()` does, with no promise.
+/// `true`: `callback` is called from the event loop once the descriptor is closed, behind the immediates of
+/// that loop turn. That is where libuv runs the close callback of Node's handle. `false`: `sink` holds no sink.
+pub(crate) fn close(
+    cx: &mut JsScope<'_>,
+    sink: JsLocal<'_>,
+    callback: JsLocal<'_, Callable>,
+) -> JsResult<bool> {
+    let Some(this) = JSSink::sink_from_js(sink.to_js()) else {
+        return Ok(false);
+    };
+    let this = this.as_ptr();
+    // SAFETY: as in `shutdown`. The guard keeps the sink live across `on_close`, which releases the keep-alive ref.
+    unsafe {
+        let _guard = RefPtr::init_ref(this);
+        (*this).set_request(StreamRequest::Close, &cx.js_thread(), callback.to_js());
+        // Node drops the error of a write that its destroy() cuts off.
+        let _ = (*this).end(None);
+        // `on_close` queues the completion, now or once the writer has pushed out what it holds. A writer that
+        // closed before this request reports nothing more, whatever its buffer still holds.
+        if !(*this).close_task.queued.get()
+            && !((*this).writer_is_open() && (*this).writer.get().has_pending_data())
+        {
+            (*this).queue_close_completion();
+        }
+    }
+    Ok(true)
+}
+
+impl FileSink {
+    /// Whether writes reach the descriptor through the event loop: a pipe, a socket, a terminal. Not a regular
+    /// file, and not a writer that has closed.
+    fn completes_from_loop(&self) -> bool {
+        #[cfg(unix)]
+        {
+            self.writer.get().get_poll().is_some()
+        }
+        #[cfg(windows)]
+        {
+            matches!(
+                self.writer.get().source,
+                Some(bun_io::Source::Pipe(_) | bun_io::Source::Tty(_))
+            )
+        }
+    }
+
+    /// Whether the writer still holds its descriptor: `on_close` has not come.
+    fn writer_is_open(&self) -> bool {
+        #[cfg(unix)]
+        {
+            !matches!(self.writer.get().handle, bun_io::pipes::PollOrFd::Closed)
+        }
+        #[cfg(windows)]
+        {
+            self.writer.get().source.is_some()
+        }
+    }
+
+    fn set_request(&self, request: StreamRequest, cx: &bun_jsc::JsThread<'_>, callback: JSValue) {
+        let global = cx.global();
+        let callback = callback.with_async_context_if_needed(global);
+        self.request_callback
+            .with_mut(|slot| slot.set(global, callback));
+        self.request_context.set(cx.context().id());
+        self.request_errno.set(0);
+        self.request.set(request);
+    }
+
+    /// The request is over: its callback, for the one caller that runs it.
+    fn take_request(&self) -> Option<JSValue> {
+        self.request.set(StreamRequest::None);
+        self.request_callback.with_mut(|slot| slot.try_swap())
+    }
+
+    /// The request will never complete.
+    fn release_request(&self) {
+        self.request.set(StreamRequest::None);
+        self.request_callback
+            .with_mut(|slot| slot.clear_without_deallocation());
+    }
+
+    /// For `run_pending`, before it settles the slot: the error of the write that a `Shutdown` waits behind, or 0.
+    fn errno_for_parked_shutdown(&self) -> Option<u16> {
+        if self.request.get() != StreamRequest::Shutdown || self.shutdown_task.queued.get() {
+            return None;
+        }
+        let pending = self.pending.get();
+        if pending.state != streams::PendingState::Pending {
+            return None;
+        }
+        Some(match &pending.result {
+            streams::Writable::Err(err) => err.errno,
+            _ => 0,
+        })
+    }
+
+    /// A `Shutdown` that waits behind nothing in the pending slot completes, unless the writer still holds bytes.
+    /// The slot settles ahead of them in two cases: the `run_pending_later` task of an earlier flush settles a
+    /// later write, and on POSIX a drain reports before the tail that its callback buffered. A flush on Windows
+    /// does not report a uv_write in flight either. The request then arms the slot, with no promise, and
+    /// `run_pending` comes back here when the bytes are out or have failed.
+    fn complete_shutdown_once_written(&self, errno: u16) {
+        if errno == 0 && self.writer_is_open() && self.writer.get().has_pending_data() {
+            self.pending
+                .with_mut(|p| p.state = streams::PendingState::Pending);
+            return;
+        }
+        self.request_errno.set(errno);
+        self.queue_shutdown_completion();
+    }
+
+    fn queue_shutdown_completion(&self) {
+        let EventLoopHandle::Js { owner } = self.event_loop() else {
+            return;
+        };
+        if self.shutdown_task.queued.replace(true) {
+            return;
+        }
+        self.ref_();
+        owner.enqueue_completion_task(bun_event_loop::Task::init(
+            core::ptr::from_ref(&self.shutdown_task).cast_mut(),
+        ));
+    }
+
+    fn queue_close_completion(&self) {
+        let EventLoopHandle::Js { owner } = self.event_loop() else {
+            return;
+        };
+        if self.close_task.queued.replace(true) {
+            return;
+        }
+        self.ref_();
+        owner.enqueue_closing_task(bun_event_loop::Task::init(
+            core::ptr::from_ref(&self.close_task).cast_mut(),
+        ));
+    }
+
+    /// The reader gets end-of-file and the descriptor stays open until `close`, as libuv does right before it
+    /// completes the shutdown request: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L641-L657
+    fn half_close(&self) {
+        #[cfg(unix)]
+        if !self.done.get()
+            && !self.writer.get().has_pending_data()
+            && self.writer.get().get_poll().is_some()
+        {
+            // SAFETY: the writer has not closed, so `fd` is still this sink's descriptor.
+            let _ = unsafe { libc::shutdown(self.fd.get().native(), libc::SHUT_WR) };
         }
     }
 }

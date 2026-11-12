@@ -526,17 +526,20 @@ impl Finder<'_, '_> {
             }
         );
         let outermost = find_outermost_type_assertion(hir, bound, member);
-        let is_deleted = match bound.parent_of_expr(outermost) {
-            Parent::Expr(user) => matches!(
-                hir[user].kind,
+        let is_deleted_or_called = match bound.parent_of_expr(outermost) {
+            Parent::Expr(user) => match hir[user].kind {
                 ExprKind::Unary {
-                    op: UnOp::Delete,
-                    ..
+                    op: UnOp::Delete, ..
+                } => true,
+                // `module` is the receiver of the call.
+                ExprKind::Call(call) | ExprKind::TaggedTemplate(call) => {
+                    hir[call].callee == outermost
                 }
-            ),
+                _ => false,
+            },
             _ => false,
         };
-        names_exports && is_plain && !is_deleted
+        names_exports && is_plain && !is_deleted_or_called
     }
 
     fn refuse_owner_of(&mut self, expression: ExprId) {

@@ -2007,6 +2007,7 @@ impl<'a, 's> Evaluator<'a, 's> {
                     let value = self.call_function(*function, *around, &args, Value::Unknown);
                     self.text_of(&value)
                 }
+                Some(Value::Function(..)) => None,
                 Some(value) => {
                     let value = self.text_of(value);
                     let expanded = value.and_then(|it| strings::expand_replacement(&it, &literal));

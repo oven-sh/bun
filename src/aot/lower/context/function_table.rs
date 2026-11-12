@@ -88,6 +88,16 @@ impl FileLowering<'_, '_, '_, '_> {
             .expect("the function was declared by declare_function")
     }
 
+    pub(in crate::lower) fn add_header_of_missing_function(
+        &mut self,
+        key: FunctionKey,
+        header: Function,
+    ) -> FunctionId {
+        let function = self.fragment.declare_function(key);
+        self.functions.add_header(function, header);
+        function
+    }
+
     pub(in crate::lower) fn forget_header(&mut self, key: FunctionKey) {
         let function = self.fragment.declare_function(key);
         if let Some(place) = self.functions.places.find(function.index())

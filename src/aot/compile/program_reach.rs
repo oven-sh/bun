@@ -3850,6 +3850,7 @@ fn count_root_folders_spelled(files: &Files<'_>, file: FileId, folders_of_root: 
         _ => None,
     });
     let read = files.analysis(file).module_relative_reads.iter();
+    let read = read.chain(files.analysis(file).reads_ruled_out);
     let mut most = 0;
     for text in strings.chain(read.map(|it| it.1)) {
         let text = files.atoms.bytes(text);

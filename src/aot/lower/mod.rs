@@ -144,6 +144,7 @@ pub(in crate::lower) fn lower_with_queries<'a, 'c, 'p, 's>(
         unsafe { ReadingTask::repin() };
         lower_function(&mut lowering, function);
     }
+    lowering.define_missing_factories();
     lowering.define_remaining_layouts();
     let module = lowering.finish_module(roots);
     lowering.define_signatures();
@@ -187,6 +188,7 @@ fn lower_in_parts<'s>(
         lowering.abandon();
         return Some(Err(NotInParts::Discarded));
     }
+    lowering.define_missing_factories();
     let module = lowering.finish_module(roots);
     lowering.define_signatures();
     Some(Ok(lowering.finish(module)))

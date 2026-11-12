@@ -4,9 +4,11 @@
 // started it fails. A byte in the file AOT_CHILDREN_STARTED counts each compiled run. A child that the `$` shell starts is not asked yet.
 // A run that was cut off, by a limit of time or by its death, ran fewer files than it would have: it is no list, plain or compiled. The test fails by what cut the run off, and a line
 // in the file AOT_CHILDREN_STOPPED says so.
+import { isASAN } from "harness";
 import {
   appendFileSync,
   cpSync,
+  existsSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -22,6 +24,8 @@ type Options = { cmd: string[]; cwd?: string; env?: Record<string, string | unde
 const { spawn, spawnSync } = Bun;
 // As in ./children-under-aot.ts.
 process.env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
+// With a sanitizer a test of a fixture may take longer than the 5 s that a test has by default. The last limit in a command counts, so one that the child's own command names stays.
+const moreTime = isASAN ? ["--timeout=60000"] : [];
 const isSource = (name: string) => /\.(?:[cm]?[jt]s|[jt]sx)$/.test(name) && !/\.d\.[cm]?ts$/.test(name);
 
 function letFilesSayWhenTheyRun(folder: string, root = folder) {
@@ -46,7 +50,7 @@ function copyOf({ cmd, cwd, env }: Options, bun: number, flags: string[]) {
   letFilesSayWhenTheyRun(folder);
   const inCopy = (text: string) => text.replaceAll(from, folder);
   return {
-    cmd: [...cmd.slice(0, bun + 2), ...flags, ...cmd.slice(bun + 2).map(inCopy)],
+    cmd: [...cmd.slice(0, bun + 2), ...moreTime, ...flags, ...cmd.slice(bun + 2).map(inCopy)],
     cwd: folder,
     env: Object.fromEntries(Object.entries(env ?? process.env).map(([name, value]) => [name, value && inCopy(value)])),
     stdio: ["ignore", "ignore", "pipe"] as ["ignore", "ignore", "pipe"],
@@ -65,20 +69,36 @@ function listRuns(flags: string[], stderr: string, { exitCode, signalCode }: End
   if (cutOffBy) {
     const says = `the ${flags.length ? "compiled" : "plain"} copy ${cutOffBy}: what it ran is no list of runs`;
     appendFileSync(process.env.AOT_CHILDREN_STOPPED!, says + "\n");
-    throw new Error(says + "\n" + stderr.slice(-2000));
+    // What stopped it and the stack stand in front. Behind them a sanitizer prints the memory around the fault.
+    const stop = stderr.search(/ERROR: AddressSanitizer|ASSERTION FAILED|^panic/m);
+    throw new Error(says + "\n" + (stop < 0 ? stderr.slice(-2000) : stderr.slice(stop, stop + 8000)));
   }
   const realms = new Map<string, number>();
   const numberOf = (realm: string) => realms.get(realm) ?? realms.set(realm, realms.size + 1).size;
-  return [...stderr.matchAll(/^RUNS (.*) (\w+)$/gm)]
-    .map(([, file, realm]) => `${file} in realm ${numberOf(realm)}`)
-    .join("\n  ");
+  const runs = [...stderr.matchAll(/^RUNS (.*) (\w+)$/gm)].map(([, file, realm]) => `${file} in realm ${numberOf(realm)}`);
+  // A list may differ because a test went wrong: how the copy's tests ended, and the first of what it said of that.
+  const results = stderr.match(/^\((?:pass|fail|skip|todo)\) .*$/gm) ?? [];
+  const errors = stderr.match(/^(?:error|[A-Za-z]*Error): .*$/gm) ?? [];
+  const ended = [`the code ${exitCode}`, ...results.map(line => line.replace(/ \[[\d.]+ms\]$/, "")), ...errors.slice(0, 3)];
+  return { runs: runs.join("\n  "), ended: ended.join("\n  ") };
 }
 
-function hold(plain: string, compiled: string) {
-  if (plain !== compiled)
-    throw new Error(
-      `the list of runs under --aot is not the list of a plain run\nplain:\n  ${plain}\ncompiled:\n  ${compiled}`,
-    );
+function hold(plain: ReturnType<typeof listRuns>, compiled: ReturnType<typeof listRuns>) {
+  if (plain.runs === compiled.runs) return;
+  const [ofPlain, ofCompiled] = [plain.runs.split("\n  "), compiled.runs.split("\n  ")];
+  const differs = ofPlain.findIndex((run, index) => run !== ofCompiled[index]);
+  const at = differs < 0 ? ofPlain.length : differs;
+  // Whoever shows this may show its first lines alone, and a list may be hundreds of lines long: where the lists part and how the copies ended stand first.
+  throw new Error(
+    `the list of runs under --aot is not the list of a plain run\nplain has ${ofPlain.length} runs, compiled ${ofCompiled.length}. They part at run ${at + 1}:\n  plain: ${ofPlain[at] ?? "no more"}\n  compiled: ${ofCompiled[at] ?? "no more"}\nthe plain copy ended with:\n  ${plain.ended}\nthe compiled copy ended with:\n  ${compiled.ended}\nplain:\n  ${plain.runs}\ncompiled:\n  ${compiled.runs}`,
+  );
+}
+
+// Plain Bun reads the files of two tests on one thread ("evicting modules stays fast while many loads are pending", "files that mock it between files that don't"): with threads it completes loads in the order in which the threads finish.
+const filesOfTestsOnOneThread = ["uses39.ts", "5.test.js"];
+function asPlainRuns(options: Options) {
+  if (!filesOfTestsOnOneThread.some(file => existsSync(join(options.cwd ?? process.cwd(), file)))) return options;
+  return { ...options, env: { ...(options.env ?? process.env), BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" } };
 }
 
 const madeForTheRun = realpathSync(tmpdir()) + sep;
@@ -98,13 +118,13 @@ Bun.spawn = function (this: unknown, first: string[] | Options, second?: Omit<Op
   appendFileSync(process.env.AOT_CHILDREN_STARTED!, ".");
   // Both copies are made before the child can write into its project.
   const lists = [[], ["--aot"]].map(async flags => {
-    const copy = copyOf(options, bun, flags);
+    const copy = copyOf(flags.length ? options : asPlainRuns(options), bun, flags);
     const child = spawn(copy);
     const [stderr] = await Promise.all([child.stderr.text(), child.exited]);
     rmSync(copy.cwd, { recursive: true, force: true });
     return listRuns(flags, stderr, child);
   });
-  const child = spawn.call(this, first as never, second as never);
+  const child = spawn.call(this, asPlainRuns(options) as never);
   const exited = Promise.all([child.exited, ...lists]).then(([code, plain, compiled]) => (hold(plain, compiled), code));
   return Object.defineProperty(child, "exited", { value: exited });
 } as typeof Bun.spawn;
@@ -115,11 +135,11 @@ Bun.spawnSync = function (this: unknown, first: string[] | Options, second?: Omi
   if (bun < 0) return spawnSync.call(this, first as never, second as never);
   appendFileSync(process.env.AOT_CHILDREN_STARTED!, ".");
   const [plain, compiled] = [[], ["--aot"]].map(flags => {
-    const copy = copyOf(options, bun, flags);
+    const copy = copyOf(flags.length ? options : asPlainRuns(options), bun, flags);
     const ended = spawnSync(copy);
     rmSync(copy.cwd, { recursive: true, force: true });
     return listRuns(flags, ended.stderr.toString(), ended);
   });
   hold(plain, compiled);
-  return spawnSync.call(this, first as never, second as never);
+  return spawnSync.call(this, asPlainRuns(options) as never);
 } as typeof Bun.spawnSync;

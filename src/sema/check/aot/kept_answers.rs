@@ -5,7 +5,7 @@ use super::answers::{
 use super::class_stores::StoreIndex;
 use super::queries::AliasScan;
 use super::type_identity::TypeIdentity;
-use super::type_shape::{BuiltinShape, PrimitiveKinds, ShapeKind, TypeShape};
+use super::type_shape::{BuiltinShape, FunctionSignatures, PrimitiveKinds, ShapeKind, TypeShape};
 use crate::atom::Atom;
 use crate::check::links::ByType;
 use crate::hir::TypeNodeId;
@@ -105,7 +105,10 @@ fn copy_shape<'n>(shape: TypeShape<'_>, arena: &'n Arena) -> TypeShape<'n> {
             texts: copy_list(texts, arena),
             types: copy_list(types, arena),
         },
-        ShapeKind::Function(signatures) => ShapeKind::Function(copy_list(signatures, arena)),
+        ShapeKind::Function(signatures) => ShapeKind::Function(FunctionSignatures {
+            declared: copy_list(signatures.declared, arena),
+            ..signatures
+        }),
         ShapeKind::Tuple {
             elements,
             is_readonly,
@@ -149,6 +152,9 @@ fn copy_shape<'n>(shape: TypeShape<'_>, arena: &'n Arena) -> TypeShape<'n> {
             is_readonly,
         },
         ShapeKind::Class(class) => ShapeKind::Class(class),
+        ShapeKind::ConstructorFunctionInstance(function) => {
+            ShapeKind::ConstructorFunctionInstance(function)
+        }
         ShapeKind::Object => ShapeKind::Object,
         ShapeKind::Int32 { base } => ShapeKind::Int32 { base },
     };

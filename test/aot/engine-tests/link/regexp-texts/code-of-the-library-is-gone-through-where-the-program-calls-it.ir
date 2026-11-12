@@ -1,0 +1,51 @@
+#   node:util:  function escaped(text) { return new RegExp("\\" + text) }
+#   main.js:    function dot() { return new RegExp(escaped(".").source + "+") }
+# The function of the program is a start, and what it calls is gone through with what it hands over, whoever wrote it.
+# LIBRARY: own
+# RUN: regexp-texts realms mechanisms=all
+# CHECK: realms 1
+# CHECK-COUNT-2: text /
+# CHECK-NOT: text /
+# RUN(INNER): regexp-texts mechanisms=all
+# INNER: text /\./
+# RUN(OUTER): regexp-texts mechanisms=all
+# OUTER: text /\.+/
+
+variable g0 name="escaped" module=m0 declared={type=anything} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="dot" module=m1 declared={type=f3} initialization=Function function=f3 flags=[IsImmutable]
+module m0 path="node:util" displayPath="node:util" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeUtil body=f0
+module m1 path="main.js" displayPath="main.js" body=f2 requests=[{target=m0 completes=true}]
+entry module=m1
+function f0 module=m0 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 name="escaped" module=m0 position=10 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=RegExp
+    v2 = String string="\\"
+    v3 = Add v2, v0
+    v4 = Construct v1, -, v3
+    Return v4
+}
+function f2 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = GetModuleVariable variable=g1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f3 name="dot" module=m1 position=20 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=RegExp
+    v1 = GetModuleVariable variable=g0
+    v2 = String string="."
+    v3 = Call v1, -, v2
+    v4 = PropGet v3 key="source"
+    v5 = String string="+"
+    v6 = Add v4, v5
+    v7 = Construct v0, -, v6
+    Return v7
+}

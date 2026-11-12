@@ -3,6 +3,7 @@ use super::evaluate::{Evaluator, Value};
 use super::feature_flags::find_feature_import;
 use super::folder_commonjs::LoaderNames;
 use super::folder_enums::EnumMembers;
+use super::folder_fields::OwnObjects;
 use super::folder_imports::ImportedNames;
 use super::inputs::{FoldInputs, PathState};
 use super::known_sets::ListHolders;
@@ -27,6 +28,7 @@ use std::cell::{Cell, OnceCell, RefCell};
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Effects {
     Unknown,
+    LeftOutUnderMinifySyntax,
     LeftOutByBunRun,
     TypeTest,
     DeadZoneCheck,
@@ -94,11 +96,13 @@ pub(super) struct Folder<'a, 's> {
     pub(super) this_of_file: OnceCell<PositionSet>,
     pub(super) run_order: OnceCell<RunOrder>,
     pub(super) constant_prefixes: RefCell<ConstLocalPrefixes>,
+    pub(super) unused_values_asked_of_build: RefCell<FxHashMap<(ExprId, bool), bool>>,
     pub(super) written_in_place: FxHashMap<ExprId, ExprId>,
     pub(super) process_imports: OnceCell<Vec<SymbolId>>,
     pub(super) exported_variables: OnceCell<Vec<SymbolId>>,
     pub(super) initializers_of_stable_bindings: Vec<Cell<Option<Option<ExprId>>>>,
     pub(super) list_holders: ListHolders,
+    pub(super) own_objects: OwnObjects,
     pub(super) imported_names: ImportedNames,
     pub(super) enum_members: EnumMembers,
     asks_for_main_module: bool,
@@ -124,6 +128,8 @@ pub(super) struct Folder<'a, 's> {
     pub(super) nullish_logical_results: FxHashMap<ExprId, bool>,
     pub(super) conditions: Conditions,
     pub(super) short_circuited_links: PositionSet,
+    pub(super) constant_reads: Vec<(ExprId, Constant)>,
+    pub(super) constants_of_lets: Vec<(ExprId, Constant)>,
     pub(super) goes_on_to_the_right: Vec<ExprId>,
     pub(super) stands_alone_in_bun_run: PositionSet,
     pub(super) is_main_of_import_meta_written: OnceCell<bool>,
@@ -155,11 +161,13 @@ pub(super) fn run<'s>(
         this_of_file: OnceCell::new(),
         run_order: OnceCell::new(),
         constant_prefixes: RefCell::default(),
+        unused_values_asked_of_build: RefCell::default(),
         written_in_place: FxHashMap::default(),
         process_imports: OnceCell::new(),
         exported_variables: OnceCell::new(),
         initializers_of_stable_bindings: vec![Cell::new(None); bound.symbols.len()],
         list_holders: ListHolders::default(),
+        own_objects: OwnObjects::default(),
         imported_names: ImportedNames::default(),
         enum_members: EnumMembers::none(),
         asks_for_main_module: false,
@@ -185,6 +193,8 @@ pub(super) fn run<'s>(
         nullish_logical_results: FxHashMap::default(),
         conditions: Conditions::new(hir.exprs.len()),
         short_circuited_links: PositionSet::new(hir.exprs.len()),
+        constant_reads: Vec::new(),
+        constants_of_lets: Vec::new(),
         goes_on_to_the_right: Vec::new(),
         stands_alone_in_bun_run: PositionSet::new(hir.exprs.len()),
         is_main_of_import_meta_written: OnceCell::new(),
@@ -208,7 +218,7 @@ impl<'s> Folder<'_, 's> {
     pub(super) fn fold_at(&mut self, e: ExprId) {
         let index = e.idx();
         self.asks_for_main_module |= match self.hir[e].kind {
-            ExprKind::ImportMeta => true,
+            ExprKind::ImportMeta => self.may_read_main_of_import_meta(e),
             ExprKind::Binary { .. } => main_module_operand(self.hir, self.bound, e).is_some(),
             _ => false,
         };
@@ -309,7 +319,10 @@ impl<'s> Folder<'_, 's> {
                 Value::Known(value),
                 Effects::TypeTest | Effects::DeadZoneCheck | Effects::MemberRead,
             ) => FoldedValue::ConstantOutsideDeadZone(self.evaluator.to_constant(value)),
-            (Value::Known(_), Effects::Unknown | Effects::LeftOutByBunRun)
+            (
+                Value::Known(_),
+                Effects::Unknown | Effects::LeftOutUnderMinifySyntax | Effects::LeftOutByBunRun,
+            )
             | (Value::Unknown, _) => FoldedValue::Unknown,
         }
     }
@@ -347,10 +360,21 @@ impl<'s> Folder<'_, 's> {
         constants
     }
 
-    fn collect_strings_and_numbers_of_bun_run_alone(&self, dead: &MarkedNodes) -> PositionSet {
+    fn collect_reads(reads: &[(ExprId, Constant)]) -> Vec<(ExprId, Constant)> {
+        let mut reads = reads.to_vec();
+        reads.shared_sort_unstable_by_key(|read| read.0);
+        reads.dedup_by_key(|read| read.0);
+        reads
+    }
+
+    fn collect_strings_and_numbers_behind_what_is_left_out(
+        &self,
+        dead: &MarkedNodes,
+        least: Effects,
+    ) -> PositionSet {
         let mut found = PositionSet::new(self.hir.exprs.len());
         for (index, &effects) in self.effects.iter().enumerate() {
-            if effects != Effects::LeftOutByBunRun || dead.exprs.contains(index) {
+            if effects < least || effects > Effects::LeftOutByBunRun || dead.exprs.contains(index) {
                 continue;
             }
             if self.is_enum_member_written_in_place(ExprId(index as u32)) {
@@ -436,7 +460,19 @@ impl<'s> Folder<'_, 's> {
                 arena,
             ),
             strings_and_numbers_of_bun_run_alone: NodeBits::freeze(
-                &self.collect_strings_and_numbers_of_bun_run_alone(&dead),
+                &self.collect_strings_and_numbers_behind_what_is_left_out(
+                    &dead,
+                    Effects::LeftOutByBunRun,
+                ),
+                arena,
+            ),
+            strings_and_numbers_under_minify_syntax: NodeBits::freeze(
+                &self.holds_under_minify_syntax(|folder| {
+                    folder.collect_strings_and_numbers_behind_what_is_left_out(
+                        &dead,
+                        Effects::LeftOutUnderMinifySyntax,
+                    )
+                }),
                 arena,
             ),
             specifiers: slice_in(&self.specifiers, arena),
@@ -456,6 +492,8 @@ impl<'s> Folder<'_, 's> {
             dead_stmts_under_minify_syntax,
             dead_functions: NodeBits::freeze(&dead.functions, arena),
             short_circuited_links: NodeBits::freeze(&self.short_circuited_links, arena),
+            constant_reads: slice_in(&Self::collect_reads(&self.constant_reads), arena),
+            constants_of_lets: slice_in(&Self::collect_reads(&self.constants_of_lets), arena),
             truthy_without_effects: NodeBits::freeze(&self.collect_truthy_without_effects(), arena),
             member_reads: NodeBits::freeze(&self.collect_member_reads(), arena),
             folded_under_minify_syntax: NodeBits::freeze(

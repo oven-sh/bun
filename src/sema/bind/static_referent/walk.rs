@@ -7,7 +7,7 @@ use crate::atom::{Atom, known};
 use crate::bind::decorator_metadata::has_decorators;
 use crate::bind::{
     Binding, BindingInitializer, BindingKind, BindingStability, Bound, CommonJsVariable, Decl,
-    InitialState, Parent, PatParent, SymbolId,
+    FnOwner, InitialState, Parent, PatParent, SymbolId,
 };
 use crate::check::aot::{ClassRef, FunctionRef};
 use crate::hir::*;
@@ -67,6 +67,13 @@ pub(super) fn find_only_returned_value(
             Some(value)
         }
         _ => None,
+    }
+}
+
+fn find_value_of_call(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option<ExprId> {
+    match hir[function].body {
+        FnBody::Expr(value) if !hir[function].flags.contains(Flags::ASYNC) => Some(value),
+        _ => find_only_returned_value(hir, bound, function),
     }
 }
 
@@ -291,20 +298,20 @@ fn find_value_unless_this_of_file_has_one(
     else {
         return None;
     };
-    let ExprKind::Binary {
-        op: BinOp::And,
-        left,
-        right,
-    } = hir[hir.skip_type_assertions(left)].kind
-    else {
-        return None;
-    };
     let is_this = |it: ExprId| matches!(hir[hir.skip_type_assertions(it)].kind, ExprKind::This);
+    let read = match hir[hir.skip_type_assertions(left)].kind {
+        ExprKind::Binary {
+            op: BinOp::And,
+            left,
+            right,
+        } if is_this(left) => right,
+        _ => left,
+    };
     let reads_this = matches!(
-        hir.member_key(hir.skip_type_assertions(right)),
+        hir.member_key(hir.skip_type_assertions(read)),
         Some((object, MemberKey::Name(_))) if is_this(object)
     );
-    (is_this(left) && reads_this && is_evaluated_by_file_body(hir, bound, expr)).then_some(value)
+    (reads_this && is_evaluated_by_file_body(hir, bound, expr)).then_some(value)
 }
 
 fn find_symbol_named_by(hir: &File<'_>, bound: &Bound<'_>, expr: ExprId) -> Option<SymbolId> {
@@ -324,8 +331,24 @@ pub(super) fn index_member_stores<'s, C: ReferentContext<'s>>(
     if !bound.runtime.is_computed() {
         return stores;
     }
+    stores.holds_long_literals = true;
     for node in (0..hir.exprs.len() as u32).map(ExprId) {
         match hir[node].kind {
+            ExprKind::Object(properties) if properties.len() > LONG_LITERAL => {
+                let first = stores.values_in_long_literals.len();
+                for property in properties.iter() {
+                    match hir.runtime_property_key(property) {
+                        PropKey::Private(_) => {}
+                        PropKey::Name(name) => stores.values_in_long_literals.push((
+                            number_of_pair(properties.start, name.0),
+                            holds_value(hir, property).then(|| hir[property].value),
+                        )),
+                        PropKey::None | PropKey::Computed(_) => {
+                            stores.values_in_long_literals.truncate(first);
+                        }
+                    }
+                }
+            }
             ExprKind::Assign {
                 op: None,
                 target,
@@ -360,7 +383,32 @@ pub(super) fn index_member_stores<'s, C: ReferentContext<'s>>(
     }
     (stores.assignments).sort_by_u64(|it| number_of_pair(it.holder.0, it.name.0));
     stores.copies.sort_by_u32(|it| it.0.0);
+    stores.values_in_long_literals.sort_by_u64(|it| it.0);
     stores
+}
+
+const LONG_LITERAL: usize = 16;
+
+fn holds_value(hir: &File<'_>, property: PropId) -> bool {
+    match hir[property].kind {
+        PropKind::Init | PropKind::Shorthand | PropKind::Method => true,
+        PropKind::Getter | PropKind::Setter | PropKind::Spread => false,
+    }
+}
+
+fn find_value_in_long_literal(
+    stores: &MemberStores,
+    properties: Span<PropId>,
+    name: Atom,
+) -> Option<ExprId> {
+    let key = number_of_pair(properties.start, name.0);
+    let end = stores
+        .values_in_long_literals
+        .partition_point(|it| it.0 <= key);
+    match stores.values_in_long_literals[..end].last() {
+        Some(&(found, value)) if found == key => value,
+        _ => None,
+    }
 }
 
 fn is_in_catch_clause(hir: &File<'_>, bound: &Bound<'_>, expr: ExprId) -> bool {
@@ -711,7 +759,14 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             return self.end_walk_that_came_round();
         }
         let (hir, bound) = (context.hir(callee.file), context.bound(callee.file));
-        match find_only_returned_value(hir, bound, callee.function) {
+        let is_copy = file == callee.file
+            && matches!(bound.fns[callee.function.idx()].owner, FnOwner::Expr(copy)
+                if matches!(bound.parent_of_expr(copy), Parent::Expr(sequence) if hir.copied_factory_of(sequence).is_some()));
+        let value = match is_copy {
+            true => find_value_of_call(hir, bound, callee.function),
+            false => find_only_returned_value(hir, bound, callee.function),
+        };
+        match value {
             Some(value) => {
                 self.certainty = ReferentCertainty::Expected;
                 self.entered_callees.push(callee);
@@ -770,9 +825,14 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             ExprKind::Ident(_) => self.step_identifier(file, bound, expr),
             ExprKind::Binary {
                 op: BinOp::Comma,
+                left,
                 right,
-                ..
-            } => Step::Expression(file, right),
+            } => match (hir.copied_factory_of(expr), hir[left].kind) {
+                (Some(copied), ExprKind::Fn(function)) => {
+                    self.step_into_call(FunctionRef { file, function }, file, copied.call)
+                }
+                _ => Step::Expression(file, right),
+            },
             ExprKind::Cond { branches, .. } => {
                 let branches = hir.branches(branches);
                 let yes = self.resolve_from_here(file, branches.yes).referent;
@@ -837,12 +897,10 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             ExprKind::Call(site) => match context.loaded_value(file, expr) {
                 Some(loaded) => self.step_loaded_value(loaded),
                 None => match hir[hir.skip_type_assertions(hir[site].callee)].kind {
-                    ExprKind::Fn(function) => {
-                        match find_only_returned_value(hir, bound, function) {
-                            Some(value) => Step::Expression(file, value),
-                            None => unknown(UnknownReferent::NotAReference),
-                        }
-                    }
+                    ExprKind::Fn(function) => match find_value_of_call(hir, bound, function) {
+                        Some(value) => Step::Expression(file, value),
+                        None => unknown(UnknownReferent::NotAReference),
+                    },
                     _ => self.step_call_that_returns_its_argument(file, site),
                 },
             },
@@ -924,16 +982,21 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         let context = self.context;
         let hir = context.hir(file);
         let mut value = None;
-        for property in properties.iter() {
-            let holds_value = || match hir[property].kind {
-                PropKind::Init | PropKind::Shorthand | PropKind::Method => true,
-                PropKind::Getter | PropKind::Setter | PropKind::Spread => false,
-            };
-            match hir.runtime_property_key(property) {
-                PropKey::Name(key) if key != name => {}
-                PropKey::Private(_) => {}
-                PropKey::Name(_) if holds_value() => value = Some(hir[property].value),
-                PropKey::Name(_) | PropKey::None | PropKey::Computed(_) => value = None,
+        if properties.len() > LONG_LITERAL
+            && let Some(stores) = context.member_stores(file)
+            && stores.holds_long_literals
+        {
+            value = find_value_in_long_literal(stores, properties, name);
+        } else {
+            for property in properties.iter() {
+                match hir.runtime_property_key(property) {
+                    PropKey::Name(key) if key != name => {}
+                    PropKey::Private(_) => {}
+                    PropKey::Name(_) if holds_value(hir, property) => {
+                        value = Some(hir[property].value);
+                    }
+                    PropKey::Name(_) | PropKey::None | PropKey::Computed(_) => value = None,
+                }
             }
         }
         self.certainty = ReferentCertainty::Expected;
@@ -950,7 +1013,10 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         self.certainty = ReferentCertainty::Expected;
         match loaded {
             LoadedValue::Namespace(module) => Step::Linked(LinkedBinding::Namespace(module)),
-            LoadedValue::DefaultExport(file) => self.step_default_export(file),
+            LoadedValue::DefaultExport(file) => {
+                self.follows_stored_members = true;
+                self.step_default_export(file)
+            }
             LoadedValue::ModuleExports(file) => self.step_module_exports(file),
         }
     }
@@ -1100,7 +1166,7 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                 Step::Found(StaticReferent::Function(FunctionRef { file, function }))
             }
             BindingInitializer::Namespace(_) | BindingInitializer::Enum(_) => {
-                let id = bound.export_symbol_of_value_symbol_if_exported(id);
+                let id = bound.exported_value(id);
                 let container = NamespaceReferent::Declared(Sym { file, id });
                 Step::Found(StaticReferent::Namespace(container))
             }

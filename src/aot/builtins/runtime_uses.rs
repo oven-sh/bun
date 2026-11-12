@@ -135,6 +135,17 @@ const WRITTEN_IN_PLACE_OF: &[(BuiltinId, &[BuiltinId])] = &[
             BuiltinId::CompilerHelpersArrayFromList,
         ],
     ),
+    (
+        BuiltinId::NodeModuleCreateRequire,
+        &[BuiltinId::PrivateGlobalsCreateCommonJSModule],
+    ),
+    (
+        BuiltinId::StringPrototypeMatchAll,
+        &[
+            BuiltinId::CompilerHelpersWayToStepMatches,
+            BuiltinId::CompilerHelpersStepMatchesInWay,
+        ],
+    ),
 ];
 
 const DECORATOR_HELPERS: &[BuiltinId] = &[
@@ -153,6 +164,7 @@ const DECORATOR_HELPERS: &[BuiltinId] = &[
     BuiltinId::CompilerHelpersDecorateParameter,
     BuiltinId::CompilerHelpersDecorateProperty,
     BuiltinId::CompilerHelpersDefineMetadata,
+    BuiltinId::CompilerHelpersKeepInitializerLists,
     BuiltinId::CompilerHelpersRunInitializers,
     BuiltinId::CompilerHelpersRunValueInitializers,
     BuiltinId::CompilerHelpersSetDecoratorMetadata,
@@ -408,6 +420,7 @@ pub fn is_name_of_language_member_with_code(name: BuiltinName) -> bool {
         for &(name, _) in language_members_with_code() {
             names[name.0 as usize] = true;
         }
+        names[table::entry(BuiltinId::StringPrototypeMatchAll).name.0 as usize] = true;
         names.into_boxed_slice()
     });
     names[name.0 as usize]
@@ -507,6 +520,9 @@ impl Collector {
     fn add_language_members_named(&mut self, name: BuiltinName) {
         if names_of_what_promises_can_do()[name.0 as usize] {
             (self.work_stack).extend_from_slice(holders_that_come_with_first_promise());
+        }
+        if name == table::entry(BuiltinId::StringPrototypeMatchAll).name {
+            self.add_what_is_written_in_place_of(BuiltinId::StringPrototypeMatchAll);
         }
         let members = language_members_with_code();
         let first = members.partition_point(|member| member.0 < name);
@@ -723,8 +739,16 @@ pub fn reaches_unknown_module_loader(
             ends.any(reaches_loader)
         })
     };
+    let holds_module_objects = |&id: &BuiltinId| {
+        let id = table::canonical_id(id);
+        matches!(
+            id,
+            BuiltinId::ModuleObjectParent | BuiltinId::ModuleObjectChildren
+        )
+    };
     loaded.iter().chain(called).any(is_loader)
         || called.iter().any(class_reaches_loader)
+        || called.iter().any(holds_module_objects)
         || exposed.iter().any(|&id| reaches_loader(id))
 }
 

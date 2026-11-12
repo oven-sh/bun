@@ -12,7 +12,8 @@
 # RUN(TWICE): walk f3 mechanisms=all
 # TWICE-LABEL: code f3:Body
 # TWICE: BeginMemberGuards layout=L0
-# TWICE-NEXT: = AreMembersUnchanged conditions=[{layout=L0 key="total"}]
+# With it the front may ask what the births and the stores of the turns lean on.
+# TWICE-NEXT: = AreMembersUnchanged conditions=[{layout=L0 key="total"}
 # TWICE: ) isInLoop=true isLoopHead=true:
 # TWICE-NOT: BeginMemberGuards
 # TWICE: = PropGet {{*}} key="call"

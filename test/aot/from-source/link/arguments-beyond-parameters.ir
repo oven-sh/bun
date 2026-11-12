@@ -1,0 +1,18 @@
+# -- source: main.mjs
+# function extend(target) {
+#   for (let i = 1; i < arguments.length; i++) { const source = arguments[i]; for (const name in source) target[name] = source[name]; }
+#   return target;
+# }
+# function Model(v) { this.v = v; this.n = 0; }
+# const Events = { on(x) { this.n += x; return this; }, count() { return this.n; } };
+# extend(Model.prototype, Events, { get(x) { return this.v + x; } });
+# function run(turns) { const model = new Model(1); let sum = 0; for (let i = 0; i < turns; i++) { model.on(i); sum += model.count() + model.get(i); } return sum; }
+# print(run(4), run(0));
+# -- end of source
+# A counter that begins behind the parameters reads what was gathered beyond them.
+# RUN: link mechanisms=all
+# CHECK: on-prototype L0 "{{*}}" expected=f
+# CHECK: on-prototype L0 "{{*}}" expected=f
+# CHECK: on-prototype L0 "{{*}}" expected=f
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 20 0

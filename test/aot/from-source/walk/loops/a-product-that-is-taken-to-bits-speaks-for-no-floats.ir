@@ -1,0 +1,18 @@
+# -- source: main.js
+# var key = JSON.parse('"go"');
+# var T = { go(d) { var n = 0, h = 0; for (var i = 0; i < d.length; i++) { var c = d[i]; n += c; h = (h ^ c * n) | 0; } return n + h; } };
+# print(T[key](new Uint8Array(3).fill(7)), T[key](new Float64Array(3).fill(1.5)), T[key](new Float32Array(2).fill(2.5)), T[key](new Int16Array(2).fill(-3)), T[key]([1, 2, 3]));
+# -- end of source
+# Floats have their copies behind the front of a loop where the loop's own text multiplies or divides an element of the holder.
+# A product whose only user is an operator on bits (`h ^ c * n`) reckons in whole numbers: its fraction is thrown away at once: it speaks for no floats.
+# f1 = go
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=Float32Array|Float64Array|Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8ClampedArray
+# CHECK-NOT: builtinClass=Float64Array
+# CHECK-NOT: builtinClass=Float32Array
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 213 4.5 15 21 27
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 213 4.5 15 21 27
+# NONE-NEXT: exited with 0

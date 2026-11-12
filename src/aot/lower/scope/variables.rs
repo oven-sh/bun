@@ -5,7 +5,7 @@ use bun_sema::program::Sym;
 
 use super::{BindingRef, ScopeSlot, Storage, environments};
 use crate::ir::generated::{Variable, VariableFlags, VariableInitialization};
-use crate::ir::{ClassSlot, DeclaredType, Type, TypeTable, VariableId, VariableKey};
+use crate::ir::{ClassSlot, DeclaredType, FunctionKey, Type, TypeTable, VariableId, VariableKey};
 use crate::lower::{FileLowering, class, function, module};
 use crate::modules::ModuleRef;
 
@@ -15,7 +15,7 @@ impl FileLowering<'_, '_, '_, '_> {
         if key.home_file() != Some(self.file) || self.fragment.is_variable_defined(id) {
             return id;
         }
-        let variable = match key {
+        let mut variable = match key {
             VariableKey::Symbol(symbol)
                 if self.bound.binding_kind(symbol.id) == BindingKind::Import =>
             {
@@ -30,6 +30,14 @@ impl FileLowering<'_, '_, '_, '_> {
                 self.create_untyped_variable(variable.name())
             }
             VariableKey::PrivateState { part, .. } => self.create_private_state_variable(part),
+            VariableKey::AddedStatic(property) => {
+                let class = self.class_with_added_static(property.id);
+                Variable {
+                    initialization: VariableInitialization::Uninitialized,
+                    owner: Some(self.class_layout(class)),
+                    ..self.create_untyped_variable(self.bound.symbol(property.id).name)
+                }
+            }
             VariableKey::ModuleExports(_) => self.create_untyped_variable(known::exports),
             VariableKey::MockOf(_) => {
                 let mut declared = DeclaredType::untyped();
@@ -48,6 +56,15 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             VariableKey::InstantiationState(_) => Variable {
                 name: None,
+                flags: match self.inputs.modules.has_instances(self.file) {
+                    true => VariableFlags::IS_REPLACEABLE | VariableFlags::GUARDS_INSTANCE,
+                    false => VariableFlags::default(),
+                },
+                ..self.create_untyped_variable(known::default)
+            },
+            VariableKey::EvaluationMark(_) => Variable {
+                name: None,
+                flags: VariableFlags::MARKS_EVALUATION,
                 ..self.create_untyped_variable(known::default)
             },
             VariableKey::EnvironmentMadeAhead(_) => {
@@ -61,9 +78,36 @@ impl FileLowering<'_, '_, '_, '_> {
                     ..self.create_untyped_variable(known::default)
                 }
             }
+            VariableKey::InstanceOf(_) => {
+                let layout = environments::instance_layout(self);
+                let ty = self.fragment.types.intern(Type::environment(layout));
+                Variable {
+                    name: None,
+                    declared: DeclaredType::from_compiler(ty),
+                    initialization: VariableInitialization::Uninitialized,
+                    flags: VariableFlags::HOLDS_INSTANCE,
+                    ..self.create_untyped_variable(known::default)
+                }
+            }
+            VariableKey::InstanceAllocator(file) => {
+                let allocation = self.reference_function(FunctionKey::Instantiation(file));
+                Variable {
+                    name: None,
+                    initialization: VariableInitialization::Function,
+                    function: Some(allocation),
+                    flags: VariableFlags::IS_REPLACEABLE | VariableFlags::ALLOCATES_INSTANCE,
+                    ..self.create_untyped_variable(known::default)
+                }
+            }
+            VariableKey::HasSeveralInstances(_) => Variable {
+                name: None,
+                flags: VariableFlags::IS_REPLACEABLE | VariableFlags::HAS_SEVERAL_INSTANCES,
+                ..self.create_untyped_variable(known::default)
+            },
             VariableKey::RequiredAnswer(_)
             | VariableKey::RequiresMadeForOwnFile(_)
-            | VariableKey::RequiresMadeForOtherFolders(_) => {
+            | VariableKey::RequiresMadeForOtherFolders(_)
+            | VariableKey::RequiresMadeForPaths(_) => {
                 let mut declared = DeclaredType::untyped();
                 declared.ty = self.fragment.types.union(declared.ty, TypeTable::ABSENT);
                 Variable {
@@ -88,11 +132,52 @@ impl FileLowering<'_, '_, '_, '_> {
                 unreachable!("link defines the variable of an export")
             }
         };
+        variable.place = Some(self.place_in_source_of(key));
         let is_defined_reentrantly = self.fragment.is_variable_defined(id);
         if !is_defined_reentrantly {
             self.fragment.define_variable(id, variable);
         }
         id
+    }
+
+    fn place_in_source_of(&self, key: VariableKey) -> u32 {
+        let one_a_file = self.scopes.number_of_symbols_at_module_level();
+        let by_number = |number: usize, part: u32| one_a_file + 16 + 8 * number as u32 + part;
+        match key {
+            VariableKey::InnerModuleExports(_) => 0,
+            VariableKey::ModuleExports(_) => one_a_file,
+            VariableKey::MockOf(_) => one_a_file + 1,
+            VariableKey::InstantiationState(_) => one_a_file + 2,
+            VariableKey::EnvironmentMadeAhead(_) => one_a_file + 3,
+            VariableKey::RequiresMadeForOwnFile(_) => one_a_file + 4,
+            VariableKey::RequiresMadeForOtherFolders(_) => one_a_file + 5,
+            VariableKey::InstanceOf(_) => one_a_file + 14,
+            VariableKey::HasSeveralInstances(_) => one_a_file + 13,
+            VariableKey::InstanceAllocator(_) => one_a_file + 15,
+            VariableKey::ModulePath { variable, .. } => one_a_file + 6 + variable as u32,
+            VariableKey::RequiresMadeForPaths(_) => one_a_file + 12,
+            VariableKey::EvaluationMark(_) => one_a_file + 11,
+            VariableKey::Symbol(symbol) => match self.scopes.place_at_module_level(symbol.id) {
+                Some(place) => place,
+                None => by_number(symbol.id.idx(), 0),
+            },
+            VariableKey::RequiredAnswer(holder) => by_number(holder.id.idx(), 1),
+            VariableKey::AddedStatic(property) => by_number(property.id.idx(), 0),
+            VariableKey::PrivateState { state, part } => by_number(state.id.idx(), 2 + part as u32),
+            VariableKey::ClassSlot { class, slot } => match slot {
+                ClassSlot::ClassObject => by_number(class.class.idx(), 4),
+                ClassSlot::ClassToken => by_number(class.class.idx(), 5),
+                ClassSlot::DecoratorState => by_number(class.class.idx(), 6),
+                ClassSlot::ComputedKey(member)
+                | ClassSlot::StaticField(member)
+                | ClassSlot::PrivateMethod(member) => by_number(member.idx(), 7),
+            },
+            VariableKey::SyntheticExport(_)
+            | VariableKey::Copy(_)
+            | VariableKey::MockOfRuntimeModule(_) => {
+                unreachable!("link defines the variable of an export")
+            }
+        }
     }
 
     fn create_untyped_variable(&mut self, name: Atom) -> Variable {
@@ -108,7 +193,13 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(super) fn is_export_that_code_fills(&self, symbol: SymbolId) -> bool {
         let placement = self.scopes.placement(BindingRef::Symbol(symbol));
         let (file, id) = (self.file, symbol);
-        placement.is_some_and(|placement| matches!(placement.storage, Storage::Variable(_)))
+        let is_visible_to_importers = |placement: super::Placement| {
+            matches!(
+                placement.storage,
+                Storage::Variable(_) | Storage::Instance { .. }
+            )
+        };
+        placement.is_some_and(is_visible_to_importers)
             && matches!(self.bound.initial_state(symbol), InitialState::Initialized)
             && self.scopes.initial_function(symbol).is_none()
             && self.is_exported_variable(VariableKey::Symbol(Sym { file, id }))
@@ -142,6 +233,7 @@ impl FileLowering<'_, '_, '_, '_> {
             function,
             owner: None,
             flags: self.compute_flags(binding),
+            place: None,
         }
     }
 

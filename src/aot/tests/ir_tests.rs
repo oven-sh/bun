@@ -625,7 +625,7 @@ fn generated_lines_match(text: &str, file: &TestFile, outcomes: &[Option<Command
             return true;
         };
         let lines = file.check_lines_for(&run.prefix);
-        match_check_lines(lines, &hide_function_texts(&result.output)).is_ok()
+        match_check_lines(lines, &hide_function_sources(&result.output)).is_ok()
     })
 }
 
@@ -679,8 +679,8 @@ fn pattern_of(line: &str, ids: &mut Vec<String>) -> String {
                 pattern.push_str("{{*}}");
             }
             continue;
-        } else if rest.starts_with(b"text={start=") {
-            pattern.push_str("text={{*}}");
+        } else if rest.starts_with(b"sourceRange={start=") {
+            pattern.push_str("sourceRange={{*}}");
             at += bun_core::strings::index_of_char_usize(rest, b'}')
                 .map_or(rest.len(), |end| end + 1);
             continue;
@@ -783,7 +783,7 @@ fn write_generated_lines(
     }
     for (run, outcome) in file.runs.iter().zip(outcomes) {
         if let Some(Ok(result)) = outcome {
-            let output = replace_root_paths(&hide_function_texts(&result.output), roots);
+            let output = replace_root_paths(&hide_function_sources(&result.output), roots);
             generate_check_lines(&run.prefix, &output, &generated.functions, &mut updated);
         }
     }
@@ -930,13 +930,13 @@ fn check_expectations(
     }
 
     let lines = file.check_lines_for(&run.prefix);
-    if let Err(failure) = match_check_lines(lines, &hide_function_texts(&result.output)) {
+    if let Err(failure) = match_check_lines(lines, &hide_function_sources(&result.output)) {
         report(failure.line, failure.message);
     }
 }
 
-fn hide_function_texts(output: &str) -> String {
-    const FIELD: &str = " functionText=\"";
+fn hide_function_sources(output: &str) -> String {
+    const FIELD: &str = " functionSource=\"";
     let mut hidden = String::with_capacity(output.len());
     let mut rest = output;
     while let Some(start) = rest.find(FIELD) {
@@ -962,11 +962,11 @@ mod tests {
 
     #[test]
     fn text_of_a_module_is_hidden_from_the_check_lines() {
-        let output = "module m0 path=\"a\" functionText=\"// CHECK-NOT: Call\\x0af(\\x22x\\x22);\"\n  v0 = Call\nmodule m1 functionText=\"\" kind=Data\n";
-        let hidden = "module m0 path=\"a\" functionText=\"\"\n  v0 = Call\nmodule m1 functionText=\"\" kind=Data\n";
-        assert_eq!(hide_function_texts(output), hidden);
+        let output = "module m0 path=\"a\" functionSource=\"// CHECK-NOT: Call\\x0af(\\x22x\\x22);\"\n  v0 = Call\nmodule m1 functionSource=\"\" kind=Data\n";
+        let hidden = "module m0 path=\"a\" functionSource=\"\"\n  v0 = Call\nmodule m1 functionSource=\"\" kind=Data\n";
+        assert_eq!(hide_function_sources(output), hidden);
         let without_module = "function f0 {\n}\n";
-        assert_eq!(hide_function_texts(without_module), without_module);
+        assert_eq!(hide_function_sources(without_module), without_module);
     }
 
     fn failure_lines(failures: &[TestFailure]) -> Vec<u32> {
@@ -1324,12 +1324,12 @@ mod tests {
         let pattern = pattern_of("functionTypes=[f12, w3] {", &mut ids);
         assert_eq!(pattern, "functionTypes={{*}}[[f_0]], [[w_1]]] {");
         let pattern = pattern_of(
-            "x=f12 position=17 text={start=1 end=2} casts=[[{{a}}]] L2.b",
+            "x=f12 position=17 sourceRange={start=1 end=2} casts=[[{{a}}]] L2.b",
             &mut ids,
         );
         assert_eq!(
             pattern,
-            "x=[[f_0]] position={{*}} text={{*}} casts={{*}}[{{*}}{a}}]] L2.b"
+            "x=[[f_0]] position={{*}} sourceRange={{*}} casts={{*}}[{{*}}{a}}]] L2.b"
         );
         assert!(support::check_lines::parse_check_pattern(&pattern).is_ok());
     }

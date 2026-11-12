@@ -1,0 +1,1 @@
+import { test, vi } from 'bun:test'; test('a', async () => { require('./leaf.mjs'); vi.doMock('./leaf.mjs', () => ({ leaf: 'D' })); const u = await import('./user.mjs'); console.log('R', u.whole === await import('./leaf.mjs'), u.whole === require('./leaf.mjs'), u.whole.leaf); });

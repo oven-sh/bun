@@ -305,7 +305,7 @@ fn intermediate_function_passes_on() {
 
 #[test]
 fn environments_precede_values_outermost_first() {
-    let source = "export function f() { let m = 1; const c = 2; \
+    let source = "export function f() { let m = 1; const c = {}; \
         { let n = 3; const g = () => [n, c, m]; m = 4; n = 5; return g; } }";
     analyze_source("main.mjs", source, |probe| {
         let top = probe.top_of("f");
@@ -475,12 +475,12 @@ fn jsx_factory_use_counts_as_capture() {
 
 #[test]
 fn dead_closure_shares_nothing() {
-    let dead = "export function f(g) { let x = 1; if (false) { g(() => x); } return x; }";
+    let dead = "export function f(g) { let x = {}; if (false) { g(() => x); } return x; }";
     analyze_source("main.mjs", dead, |probe| {
         assert!(!probe.placement_of("x").is_shared);
         assert!(probe.captures(probe.arrow()).is_empty());
     });
-    let live = "export function f(g) { let x = 1; if (true) { g(() => x); } return x; }";
+    let live = "export function f(g) { let x = {}; if (true) { g(() => x); } return x; }";
     analyze_source("main.mjs", live, |probe| {
         assert!(probe.placement_of("x").is_shared)
     });

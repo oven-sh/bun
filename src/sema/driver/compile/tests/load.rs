@@ -786,6 +786,100 @@ fn libraries_match_bun_check() {
 }
 
 #[test]
+fn installed_types_that_the_program_leads_to_are_its_own() {
+    const LISTS_MAIN: &str = r#""files": ["main.ts"]"#;
+    const LEAVES_MAIN_OUT: &str = r#""include": ["*.ts"], "exclude": ["main.ts"]"#;
+    const IMPORTS: &str = "import \"bun\";\n";
+    const REFERS: &str = "/// <reference types=\"bun\" />\nexport {};\n";
+    const NOTHING: &str = "export {};\n";
+    let package_that_runs_typescript = [
+        (
+            "node_modules/made-up/package.json",
+            r#"{ "name": "made-up", "types": "types.d.ts", "main": "code.ts" }"#,
+        ),
+        ("node_modules/made-up/types.d.ts", NOTHING),
+        ("node_modules/made-up/code.ts", IMPORTS),
+    ];
+    let package_that_refers = [("node_modules/made-up/index.d.ts", REFERS)];
+    type Row<'a> = (&'a str, &'a str, &'a str, &'a [(&'a str, &'a str)], bool);
+    let rows: [Row<'_>; 12] = [
+        ("", LISTS_MAIN, NOTHING, &[], false),
+        ("", LISTS_MAIN, IMPORTS, &[], true),
+        (
+            "",
+            LISTS_MAIN,
+            "export type { Held } from \"bun\";\n",
+            &[],
+            true,
+        ),
+        ("", LISTS_MAIN, REFERS, &[], true),
+        (
+            "",
+            LISTS_MAIN,
+            "import \"./other\";\n",
+            &[("other.ts", IMPORTS)],
+            true,
+        ),
+        ("", LISTS_MAIN, NOTHING, &[("other.ts", IMPORTS)], false),
+        (
+            "",
+            LISTS_MAIN,
+            "import \"./other.js\";\n",
+            &[("other.js", IMPORTS)],
+            false,
+        ),
+        (
+            r#", "allowJs": true"#,
+            LISTS_MAIN,
+            "import \"./other.js\";\n",
+            &[("other.js", IMPORTS)],
+            true,
+        ),
+        (
+            "",
+            LISTS_MAIN,
+            "import \"made-up\";\n",
+            &package_that_refers,
+            true,
+        ),
+        (
+            "",
+            LISTS_MAIN,
+            "import \"made-up\";\n",
+            &package_that_runs_typescript,
+            false,
+        ),
+        (
+            "",
+            LEAVES_MAIN_OUT,
+            IMPORTS,
+            &[("other.ts", NOTHING)],
+            false,
+        ),
+        ("", LEAVES_MAIN_OUT, NOTHING, &[("other.ts", IMPORTS)], true),
+    ];
+    for (options, roots, main, others, leads_there) in rows {
+        let shared = r#""noLib": true, "module": "preserve", "moduleResolution": "bundler""#;
+        let tsconfig = format!(r#"{{ "compilerOptions": {{ {shared}{options} }}, {roots} }}"#);
+        let shared = [
+            ("tsconfig.json", &tsconfig[..]),
+            ("lib.esnext.d.ts", GLOBAL_TYPES),
+            ("main.ts", main),
+        ];
+        let files = [&shared[..], &BUN_TYPES, others].concat();
+        with_program(&files, &["./main.ts"], 1, |program| {
+            let is_own = matches!(program.loaded.bun_types, BunTypes::Installed);
+            assert_eq!(is_own, leads_there, "{roots} {main}{others:?}");
+            let declarations = program.file("node_modules/@types/bun/index.d.ts");
+            let is_brought = program.files().is_brought(declarations);
+            assert_eq!(is_brought, !leads_there, "{roots} {main}");
+            let brings_declarations = program.files().brings_declarations();
+            assert_eq!(brings_declarations, !leads_there, "{roots} {main}");
+        });
+    }
+}
+
+#[test]
 fn locator_names_file() {
     let files = [("main.ts", "const value = 1;\n")];
     with_program(&files, &["./main.ts"], 1, |program| {

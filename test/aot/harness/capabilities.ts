@@ -27,6 +27,7 @@ export const capabilities = [
   "python3",
   "a canary",
   "test files of a folder below run by name",
+  "an unprivileged user",
 ] as const;
 export type Capability = (typeof capabilities)[number];
 
@@ -76,6 +77,7 @@ declare("the table of built-ins", () =>
 export const cCompiler = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 declare("a C compiler", () => (cCompiler ? undefined : "no cc, gcc or clang is on the path, and $CC names none"));
 declare("python3", () => (Bun.which("python3") ? undefined : "no python3 is on the path"));
+declare("an unprivileged user", () => (process.getuid?.() === 0 ? "root may open every file" : undefined));
 declare("a canary", () =>
   Bun.spawnSync([bunExe(), "--revision"]).stdout.toString().includes("-canary") ? undefined : "this Bun is a release",
 );

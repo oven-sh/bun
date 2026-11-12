@@ -11,6 +11,7 @@ use super::ScopeSlot;
 use crate::ir::generated::FunctionFlags;
 use crate::ir::{FunctionKey, VariableKey};
 use crate::lower::captures::Capture;
+use crate::lower::commonjs::WrapperSlots;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(in crate::lower) enum BindingRef {
@@ -74,6 +75,7 @@ pub(in crate::lower) enum Storage {
     Local,
     Field { scope: ScopeId, field: u32 },
     Variable(VariableKey),
+    Instance { field: u32 },
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -192,9 +194,12 @@ pub(crate) struct ScopeAnalysis {
     pub(super) is_made_at_first_read: Vec<bool>,
     pub(super) created_at_each_read: Vec<SymbolId>,
     pub(super) functions_created_before_loops: Vec<(StmtId, SymbolId)>,
+    pub(super) functions_calling_themselves: Vec<FnId>,
     pub(super) names_called: Vec<SymbolId>,
     pub(super) symbol_placements: Vec<Placement>,
     pub(super) slot_placements: Vec<(SlotKey, Placement)>,
+    pub(super) symbols_declared_at_module_level: Vec<SymbolId>,
+    pub(super) bindings_declared_in_front_of_scopes: Vec<u32>,
     pub(super) lexical_owners: Vec<ScopeId>,
     pub(super) bindings: GroupedList<BindingRef>,
     pub(super) environment_fields: GroupedList<BindingRef>,
@@ -211,6 +216,7 @@ pub(crate) struct ScopeAnalysis {
     pub(super) initialized_holders: Vec<(FunctionKey, SymbolId)>,
     pub(super) registries: Vec<(ScopeId, BindingRef)>,
     pub(super) has_wrapper_parameters: bool,
+    pub(super) wrapper_slots: WrapperSlots,
 }
 
 pub(super) fn find_by_key<K: Copy + Ord, V: Copy>(list: &[(K, V)], key: K) -> Option<V> {
@@ -253,6 +259,7 @@ impl ScopeAnalysis {
         self.use_counts.get(symbol.idx()) == Some(&0)
     }
 
+    /// The function that the name is declared as, where its function object is made by whoever reads the name first.
     pub(in crate::lower) fn is_created_at_each_read(&self, symbol: SymbolId) -> bool {
         self.created_at_each_read.binary_search(&symbol).is_ok()
     }
@@ -273,6 +280,12 @@ impl ScopeAnalysis {
         let first = functions.partition_point(|entry| entry.0 < statement);
         let end = functions.partition_point(|entry| entry.0 <= statement);
         &functions[first..end]
+    }
+
+    pub(in crate::lower) fn calls_itself(&self, function: FnId) -> bool {
+        self.functions_calling_themselves
+            .binary_search(&function)
+            .is_ok()
     }
 
     pub(in crate::lower) fn function_called_by_name(&self, call: ExprId) -> Option<FnId> {
@@ -300,6 +313,19 @@ impl ScopeAnalysis {
     #[inline]
     pub(in crate::lower) fn environment_fields(&self, scope: ScopeId) -> &[BindingRef] {
         self.environment_fields.get(scope.idx())
+    }
+
+    pub(in crate::lower) fn bindings_declared_in_front_of(&self, scope: ScopeId) -> u32 {
+        self.bindings_declared_in_front_of_scopes[scope.idx()]
+    }
+
+    pub(in crate::lower) fn place_at_module_level(&self, symbol: SymbolId) -> Option<u32> {
+        let place = self.symbols_declared_at_module_level.binary_search(&symbol);
+        place.ok().map(|place| place as u32)
+    }
+
+    pub(in crate::lower) fn number_of_symbols_at_module_level(&self) -> u32 {
+        self.symbols_declared_at_module_level.len() as u32
     }
 
     #[inline]
@@ -361,6 +387,11 @@ impl ScopeAnalysis {
     #[inline]
     pub(in crate::lower) fn has_wrapper_parameters(&self) -> bool {
         self.has_wrapper_parameters
+    }
+
+    #[inline]
+    pub(in crate::lower) fn wrapper_slots(&self) -> WrapperSlots {
+        self.wrapper_slots
     }
 
     pub(in crate::lower) fn arguments_object(&self, unit: CodeUnit) -> ArgumentsObject {

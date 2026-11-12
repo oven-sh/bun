@@ -1,0 +1,89 @@
+# -- source: main.mjs
+# import * as nodes from "./nodes.mjs";
+# function read(options) { const node = options.adapter.make(3); return options.adapter.get(node) + node.value; }
+# print(read({ adapter: nodes }));
+# -- source: nodes.mjs
+# class Node { constructor(value) { this.value = value; } }
+# export function make(value) { return new Node(value); }
+# export const get = node => node.value;
+# -- end of source
+# The program reads functions off a namespace that a record holds: nobody else is handed them, and the class stays closed.
+# RUN(GONE): link why-gone L0
+# GONE: why-gone L0: it has not gone
+
+module m0 path="nodes.mjs" displayPath="nodes.mjs" flags=[CachesEvaluationError, IsImportedAsNamespace] body=f0 exports=[{name="get" variable=g0}, {name="make" variable=g1}] namespaceLayout=L(m0)
+module m1 path="main.mjs" displayPath="main.mjs" body=f4 requests=[{target=m0 completes=true}] namespaceLayout=L(m1)
+entry module=m1
+layout L0 kind=Instance name="Node" module=m0 position=6 constructor=f2 fields=[{key="value" declared={type=anything} flags=[IsRequired]}] place=6 ownFieldCount=1
+layout L1 module=m1 position=161 fields=[{key="adapter" declared={type=anything} flags=[IsRequired]}] place=161 ownFieldCount=1
+variable g0 name="get" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=8
+variable g1 name="make" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=2
+variable g2 name="Node" module=m0 declared={type=absent|f2 flags=[IsFromCompiler]} flags=[IsImmutable] place=3
+variable g3 module=m0 declared={type=f2 flags=[IsFromCompiler]} flags=[IsImmutable] place=30
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = NewClass v0 layout=L0 @0
+    PutModuleVariable v1 variable=g3 @0
+    v3 = FinishClass v1 layout=L0 @0
+    v4 = Convert v3 declared={type=f2 flags=[IsFromCompiler]} @0
+    v5 = Convert v3 declared={type=f2 flags=[IsFromCompiler]} @0
+    PutModuleVariable v5 variable=g2 @0
+    v7 = NewClosure function=f3 @133
+    PutModuleVariable v7 variable=g0 @127
+    v9 = Undefined @127
+    Return v9 @127
+}
+function f1 name="make" module=m0 position=58 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g2 @99
+    v2 = CheckInitialized v1 name="Node" @99
+    v3 = Construct v2, -, v0 calleeName="Node" @99 @95
+    Return v3 @95
+}
+function f2 name="Node" module=m0 position=24 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0 @24
+    v3 = NewObject v2 layout=L0 @24
+    v4 = Convert v3 declared={type=L0} @24
+    PropSet v4, v1 key="value" @34
+    v6 = Undefined @34
+    v7 = TypeTest v6 testedType=object @34
+    Branch v7 -> taken b1(| 0), notTaken b2(v4) @34
+  b1(v8):
+    Jump -> next b2(v8) @34
+  b2(v9):
+    Return v9 @34
+}
+function f3 name="get" module=m0 position=133 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="value" @141
+    Return v1 @141
+}
+function f4 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f5 @0
+    v1 = Convert v0 declared={type=f5 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @150
+    v3 = PropGet v2 key="print" [isFreeName] @150
+    v4 = ModuleNamespace module=m0 @172
+    v5 = NewObject -, v4 layout=L1 fields=[0] @161
+    v6 = FinishObject v5 @161
+    v7 = Call v1, -, v6 calleeName="read" @156
+    v8 = Call v3, -, v7 calleeName="print" @150
+    v9 = Undefined @150
+    Return v9 @150
+}
+function f5 name="read" module=m1 position=38 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    v1 = PropGet v0 key="adapter" @76
+    v2 = PropGet v1 key="make" @84
+    v3 = Integer integer=3 @97
+    v4 = Call v2, v1, v3 calleeKey="make" calleeName="options.adapter.make" @92
+    v5 = PropGet v0 key="adapter" @108
+    v6 = PropGet v5 key="get" @116
+    v7 = Call v6, v5, v4 calleeKey="get" calleeName="options.adapter.get" @124
+    v8 = PropGet v4 key="value" @136
+    v9 = Add v7, v8 @108
+    Return v9 @108
+}

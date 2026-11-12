@@ -1,5 +1,5 @@
 // Sockets, requests, responses, servers and streams are frozen, sealed or closed to new properties, themselves or through Proxies with and without traps, are asked what they hold, and are then used to the end. Closing an object through a Proxy must do what closing the object does.
-// Collections: not forced: it runs for over a minute so, longer than the 60 s after which its sockets time out
+// Collections: not forced: it runs for over a minute so
 import { once } from "node:events";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -179,7 +179,8 @@ for (const target of ["socket", "request", "response"] as const) {
         try {
           if (moment === "before") closeChosen();
           request.resume();
-          socket.setTimeout(60_000);
+          // No run lasts that long: a socket of one case that times out would speak into the cases behind it.
+          socket.setTimeout(3_600_000);
           response.setHeader("x-a", "1");
           response.end("answer");
           if (moment === "after") closeChosen();
@@ -214,6 +215,7 @@ for (const target of ["request", "response", "socket"] as const) {
     await once(server.listen(0, "127.0.0.1"), "listening");
     const { port } = server.address() as AddressInfo;
     const ended = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
     let request = http.request({ port, host: "127.0.0.1", method: "POST", agent: false }, givenResponse => {
       let response = givenResponse;
       watch("response", response, ["error", "end"]);
@@ -222,13 +224,16 @@ for (const target of ["request", "response", "socket"] as const) {
       if (target === "socket") close(response.socket);
       attempt("reading", () => response.resume());
     });
-    watch("request", request, ["close", "error", "finish"]);
+    request.on("close", () => (say("request", "close", ""), closed.resolve()));
+    watch("request", request, ["error", "finish"]);
     request.end("body");
     if (target === "request") request = close(request);
     await withinReason("the response's close", ended.promise);
     await turns();
     server.closeAllConnections();
     await withinReason("the server's close", new Promise<void>(resolve => void server.close(() => resolve())));
+    // Where the response is frozen, the request closes once the server has closed the connection.
+    await withinReason("the request's close", closed.promise);
   };
 }
 

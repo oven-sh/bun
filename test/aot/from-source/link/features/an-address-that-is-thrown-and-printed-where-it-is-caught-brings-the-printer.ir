@@ -1,0 +1,7 @@
+# the control of an-address-that-never-escapes-..: the address is thrown, and what is caught is known to nobody
+# -- source: an-address-that-is-thrown-and-printed-where-it-is-caught-brings-the-printer.ts
+# try { throw new URL("http://made.up/a"); } catch (error) { console.log(error); }
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by NativeNewCppFunctionStringWidthCppJsFunctionBunStringWidth

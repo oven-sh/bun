@@ -1,6 +1,6 @@
 // The native functions that Bun's own modules make with $newCppFunction, each from the code of the function.
 import * as b from "bun-builtins-table";
-import { framesOfModuleGraphsCell, moduleGraphsCell } from "./native-cells.ts";
+import { framesOfModuleGraphsCell, linkAboveNativeEmitterCell, moduleGraphsCell } from "./native-cells.ts";
 import { answering, comparedDeeply, comparedDeeplyCalling, deepComparison } from "./native-code.ts";
 
 const cpp = (file: string, symbol: string): b.BuiltinPath => `native:NewCppFunction:${file}:${symbol}`;
@@ -38,7 +38,7 @@ const looksForModuleGraph = (returns: b.TableType, uses: readonly b.UseSpec[]) =
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-// Functions on which the host puts members that have no entry yet: process.hrtime.bigint, Bun.peek.status .. Bun.$ and Bun.sql are callable objects of classes of the library, and require.resolve inherits `paths` from an object of its own.
+// Functions on which the host puts members that have no entry yet: Bun.peek.status, Bun.cron.parse .. Bun.$ and Bun.sql are callable objects of classes of the library, and require.resolve inherits `paths` from an object of its own.
 const functionsWithUndeclaredMembers = [
   "%ModuleRequire%.resolve",
   "%ModuleRequirePrototype%.resolve",
@@ -46,8 +46,6 @@ const functionsWithUndeclaredMembers = [
   "Bun.cron",
   "Bun.peek",
   "Bun.sql",
-  "process.hrtime",
-  "process.memoryUsage",
 ];
 
 const functionsBelowOtherObjects = ["%ModuleRequire%.resolve", "%ModuleRequirePrototype%.resolve", "Bun.$", "Bun.sql"];
@@ -260,7 +258,7 @@ export default b.declarations(
     implementation: b.hostCall,
   }),
   // It lists the own keys of the source and asks first the target, then the source and then `replacements` for the property under each: no getter of any runs. What the target lacks is defined on it as it stands on the source, a value with the value that `replacements` has under the key.
-  b.static(cpp("BunCompiledModules.cpp", "jsFunctionDefineOwnPropertiesLeftOut"), {
+  b.static(cpp("BunCompiledModules.cpp", "jsFunctionDefineMissingProperties"), {
     ...operandCodeOnly,
     args: { target: b.object, source: b.object, replacements: b.union(b.object, b.undefined) },
     returns: b.undefined,
@@ -324,7 +322,12 @@ export default b.declarations(
     args: { prototype: b.any.optional, processIfReachable: b.any.optional },
     returns: b.undefined,
     capability: "js",
-    uses: { prototype: [b.retained], processIfReachable: [b.retained] },
+    // It compares the first operand with what stands above `process` and makes it a link: it reads no member of it, calls nothing of it and hands it to nobody.
+    // Whoever walks up from `process` later, this function at its next call among them, walks on from the operand.
+    uses: {
+      prototype: [b.storedIn(b.nativeCell(linkAboveNativeEmitterCell)), b.runs("PrototypeChain")],
+      processIfReachable: [b.retained],
+    },
     marks: ["LaysOperandAbovePrototype"],
     implementation: b.hostCall,
   }),

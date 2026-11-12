@@ -1,0 +1,1 @@
+{"name":"my-jsx","type":"module","exports":{"./jsx-runtime":"./jsx-runtime.mjs","./jsx-dev-runtime":"./jsx-runtime.mjs","./config":"./config.mjs",".":"./jsx-runtime.mjs"}}

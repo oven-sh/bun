@@ -15,7 +15,7 @@ const files = {
 console.log(await (await fetch(new URL("/path", server.url))).text());
 server.stop(true);`,
   "bundles.ts": `console.log(typeof Bun.build);
-if (process.argv.length > 5) await Bun.build({ entrypoints: [process.argv[5]] });`,
+if (process.argv.length > 5) await Bun.build({ entrypoints: [process.argv[5]], check: true });`,
 };
 const sizeOf = (executable: string) => statSync(isWindows ? executable + ".exe" : executable).size;
 
@@ -102,42 +102,28 @@ describe.skipIf(!canTrim || !!unsupported)("a template made with --trim-template
     await buildOnBothAndRun(more, "trimmed", [["--trim"]]);
   }, 900_000);
 
-  // Evaluated text and Bun.serve count as uses of Bun.build today. A build that is not asked to trim then keeps what Bun.build enters, which is what a template leaves out.
-  test.failing(
-    "a program that evaluates text and a server built on it without --trim are what the same builds on Bun give: 0 of 2 build, the goal is 2",
-    async () => {
-      expect(await buildTemplate()).toMatchObject({ exitCode: 0 });
-      await buildOnBothAndRun(more, "whole", [[]]);
-    },
-    900_000,
-  );
+  test("a program that evaluates text and a server built on it without --trim are what the same builds on Bun give", async () => {
+    expect(await buildTemplate()).toMatchObject({ exitCode: 0 });
+    await buildOnBothAndRun(more, "whole", [[]]);
+  }, 900_000);
 
-  test("a build without --trim that stops says what the template doesn't have", () => {
-    const refusal =
-      "error: the Bun executable that this build starts from doesn't have the JIT compilers, which this executable needs";
-    expect(refusals).toEqual({ "text.ts ": refusal, "server.ts ": refusal });
-  });
-
-  test("what is built on it is as small as what the same build on Bun gives: at least 4 of the 6 are built", () => {
-    expect(Object.keys(larger)).toHaveLength(4);
+  test("what is built on it is as small as what the same build on Bun gives", () => {
+    expect(refusals).toEqual({});
+    expect(Object.keys(larger)).toHaveLength(6);
     // Where the two cuts meet inside a block of the cut's alignment, the block stays. A block is 4 KB here, and 16 KB or 64 KB elsewhere.
     if (isLinux && !isArm64) expect(Object.entries(larger).filter(([, bytes]) => bytes >= 256 * 1024)).toEqual([]);
   });
 
-  test.failing(
-    "what is built on it is as small as what the same build on Bun gives: 4 of 6 are built, the goal is 6",
-    () => {
-      expect(Object.keys(larger)).toHaveLength(6);
-      expect(Object.entries(larger).filter(([, bytes]) => bytes >= 256 * 1024)).toEqual([]);
-    },
-  );
-
   test("refuses a program that needs what it no longer has, by name", async () => {
     expect(await buildTemplate()).toMatchObject({ exitCode: 0 });
     const refused = await build("bundles.ts", "bundles", "--compile-executable-path", template);
-    expect(refused.stderr).toContain("the Bun executable that this build starts from doesn't have ");
+    expect(refused.stderr).toContain(
+      "error: the Bun executable that this build starts from doesn't have the JIT compilers, which this executable needs",
+    );
     expect(refused.exitCode).toBe(1);
+    // Without --trim there is no such executable, so the build has no figure for what --trim removed.
     expect(await build("bundles.ts", "bundles", "--trim", "--compile-executable-path", template)).toMatchObject({
+      stdout: expect.stringMatching(/ compile +bundles(?:\.exe)?  \d+\.\d MB\n/),
       exitCode: 0,
     });
     expect(await spawned([join(folder, "bundles")], folder, bunEnv)).toMatchObject({

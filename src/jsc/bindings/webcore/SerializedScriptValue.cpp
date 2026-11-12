@@ -1315,7 +1315,7 @@ private:
 
                 if (arrayBuffer->isShared() && m_context == SerializationContext::WorkerPostMessage) {
                     // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
-                    if (!JSC::Options::useSharedArrayBuffer()) {
+                    if (!JSC::Options::alwaysUseSharedArrayBuffer()) {
                         code = SerializationReturnCode::DataCloneError;
                         return true;
                     }
@@ -1402,7 +1402,7 @@ private:
                 return true;
             }
             if (JSWebAssemblyMemory* memory = dynamicDowncast<JSWebAssemblyMemory>(obj)) {
-                if (!JSC::Options::useSharedArrayBuffer() || memory->memory().sharingMode() != JSC::MemorySharingMode::Shared) {
+                if (!JSC::Options::alwaysUseSharedArrayBuffer() || memory->memory().sharingMode() != JSC::MemorySharingMode::Shared) {
                     code = SerializationReturnCode::DataCloneError;
                     return true;
                 }
@@ -3899,7 +3899,7 @@ private:
             }
             uint32_t index;
             bool indexSuccessfullyRead = read(index);
-            if (!indexSuccessfullyRead || !m_wasmMemoryHandles || index >= m_wasmMemoryHandles->size() || !JSC::Options::useSharedArrayBuffer()) {
+            if (!indexSuccessfullyRead || !m_wasmMemoryHandles || index >= m_wasmMemoryHandles->size() || !JSC::Options::alwaysUseSharedArrayBuffer()) {
                 fail();
                 return JSValue();
             }
@@ -3986,7 +3986,7 @@ private:
             // https://html.spec.whatwg.org/multipage/structured-data.html#structureddeserialize
             uint32_t index = UINT_MAX;
             bool indexSuccessfullyRead = read(index);
-            if (!indexSuccessfullyRead || !m_sharedBuffers || index >= m_sharedBuffers->size() || !JSC::Options::useSharedArrayBuffer()) {
+            if (!indexSuccessfullyRead || !m_sharedBuffers || index >= m_sharedBuffers->size() || !JSC::Options::alwaysUseSharedArrayBuffer()) {
                 fail();
                 return JSValue();
             }

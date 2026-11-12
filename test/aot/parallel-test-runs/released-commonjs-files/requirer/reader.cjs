@@ -1,0 +1,1 @@
+const gauge = require("./gauge.cjs"); exports.read = () => [gauge.word, gauge.bump()].join(); exports.space = gauge;

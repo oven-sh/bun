@@ -5,14 +5,15 @@ use super::{
 use crate::atom::Interner;
 use crate::bind::Bound;
 use crate::file_analysis::FileAnalysis;
-use crate::hir::{ExprId, File};
+use crate::fold::Decisions;
+use crate::hir::{CallId, ExprId, File};
 use crate::hir_from_data::HostValue;
 use crate::json::Json;
 use crate::module_format::{DeclaredModuleType, ModuleFormat};
 use crate::program::{HostLoader, HostModuleId};
 use crate::session::Arena;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::dirname;
+use bun_paths::resolve_path::{dirname, join_spill};
 use std::any::Any;
 use std::borrow::Cow;
 
@@ -47,8 +48,20 @@ pub trait CodeHost: Host {
         false
     }
 
+    /// True if `entry`, from the "sideEffects" list of the manifest in `directory`, names `path`.
+    fn names_file_with_side_effects(&self, directory: &[u8], entry: &[u8], path: &[u8]) -> bool {
+        join_spill::<Posix>(&mut Vec::new(), &[directory, entry]) == path
+    }
+
     fn leaves_packages_outside(&self) -> bool {
         false
+    }
+
+    fn note_guesses_left_out(&self, _file_whose_loader_decides_its_kind: Option<&[u8]>) {}
+
+    /// True if the file, which has no known extension, parses as code.
+    fn is_code(&self, _path: &[u8]) -> bool {
+        true
     }
 
     fn is_data_file(
@@ -68,11 +81,15 @@ pub trait CodeHost: Host {
     ) {
     }
 
+    fn stands_for_text_that_cannot_be_read(&self, _payload: &HostPayload) -> bool {
+        false
+    }
+
     fn kind_of_file_missing_at_build(&self) -> Option<ExternalKind> {
         None
     }
 
-    fn create_file_from_data_url(&self, _url: &[u8], _type_attribute: &[u8]) -> Option<Vec<u8>> {
+    fn create_module_from_data_url(&self, _url: &[u8]) -> Option<Vec<u8>> {
         None
     }
 
@@ -86,6 +103,10 @@ pub trait CodeHost: Host {
 
     fn has_loader_at_run_time(&self) -> bool {
         false
+    }
+
+    fn types_asked_where_options_are_unread(&self, _path: &[u8]) -> &'static [&'static [u8]] {
+        &[]
     }
 
     fn add_module_with_query(
@@ -179,11 +200,25 @@ pub trait CodeHost: Host {
         None
     }
 
+    /// A file that has run may be read from disk and run again. The host knows once every file is finished.
+    fn may_load_files_again(&self) -> bool {
+        false
+    }
+
+    /// The loader under which the file is an ES module beside the CommonJS file at its path.
+    fn loader_of_module_form(&self, _path: &[u8]) -> Option<HostLoader> {
+        None
+    }
+
     fn is_library_file(&self, _path: &[u8]) -> bool {
         false
     }
 
     fn may_any_file_become_main_module(&self) -> bool {
+        false
+    }
+
+    fn may_start_workers(&self) -> bool {
         false
     }
 
@@ -242,6 +277,28 @@ pub trait CodeHost: Host {
         _arena: &'s Arena,
         _atoms: &Interner<'s>,
         _request: &mut TransformRequest<'_, 's>,
+        _payload: &mut Option<HostPayload>,
+    ) -> TreeChange {
+        TreeChange::Unchanged
+    }
+
+    fn find_settled_evals<'s>(
+        &self,
+        _hir: &File<'s>,
+        _bound: &Bound<'s>,
+        _atoms: &Interner<'s>,
+    ) -> Vec<CallId> {
+        Vec::new()
+    }
+
+    /// Writes the copies of factories into a tree. See `hir::CopiedFactory`.
+    fn copy_factories<'s>(
+        &self,
+        _arena: &'s Arena,
+        _atoms: &Interner<'s>,
+        _hir: &mut File<'s>,
+        _bound: &Bound<'s>,
+        _decisions: &Decisions<'s>,
         _payload: &mut Option<HostPayload>,
     ) -> TreeChange {
         TreeChange::Unchanged
@@ -311,6 +368,7 @@ pub enum FoundCode {
         path: Vec<u8>,
         required: Option<Vec<u8>>,
         links_followed: bool,
+        has_side_effects: bool,
     },
     External(Vec<u8>),
     NotFound(CodeFailure),
@@ -351,7 +409,6 @@ pub struct LoaderRequest<'a> {
 
 #[derive(Copy, Clone)]
 pub struct CodeParseRequest<'a> {
-    pub package_module_type: DeclaredModuleType,
     pub path: &'a [u8],
     pub loader: HostLoader,
     pub options: ParseOptions,

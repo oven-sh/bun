@@ -289,6 +289,12 @@ extension ProgramBuilder {
         }
     }
 
+    /// The drivers read there that an executable refused something. What is printed to stderr is not compared.
+    fileprivate func printMessageToStderr(of error: Variable) {
+        let message = getProperty("message", of: error, isReceiverOptional: true)
+        callMethod("error", on: createNamedVariable(forBuiltin: "console"), withArgs: [message])
+    }
+
     /// Prints what `use` results in or the name of what it throws, and then how many hooks have run.
     fileprivate func printOutcome(of label: String, _ counter: Variable, _ use: () -> Variable?) {
         let print = createNamedVariable(forBuiltin: "printValue")
@@ -299,6 +305,7 @@ extension ProgramBuilder {
             catchBody: { error in
                 let name = self.getProperty("name", of: error, isReceiverOptional: true)
                 self.callFunction(print, withArgs: [self.loadString(label + " threw"), name])
+                self.printMessageToStderr(of: error)
             })
         callFunction(print, withArgs: [loadString("hooks ran"), counter])
     }
@@ -971,6 +978,7 @@ extension ProgramBuilder {
             catchBody: { error in
                 let name = self.getProperty("name", of: error, isReceiverOptional: true)
                 self.callFunction(self.global("printValue"), withArgs: [self.loadString("threw"), name])
+                self.printMessageToStderr(of: error)
             })
     }
 

@@ -2,7 +2,8 @@
 
 export const compiler = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
-// A function that may call itself stays a function of its own. A reader that is copied into the `try` of its caller would find null by a comparison.
+// A reader that is copied into the `try` of its caller would find null by a comparison. A function that may call itself is copied all the same where the call knows it, so the callers
+// call the readers off a list that holds five functions: of so many the build keeps no account, and the call stays a call of a value.
 export const callsItself = `const callsItself = process.argv.length > 100;
 `;
 
@@ -25,7 +26,7 @@ function inAVariable(): number {
   if (isFilled) point = new Point(3);
   return point!.x;
 }
-const readers = [inAField, atTheEndOfAChain, lackedByAMap, inAVariable];
+const readers = [inAField, atTheEndOfAChain, lackedByAMap, inAVariable, fill];
 `;
 
 // Runs a program until it stands at the instruction of its first null check again, after all of them, and sends it SIGSEGV there

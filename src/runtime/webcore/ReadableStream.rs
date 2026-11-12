@@ -672,11 +672,6 @@ impl ReadableStream {
     }
 }
 
-pub(crate) fn is_decoded_body(stream: JsLocal<'_>) -> bool {
-    BodyFacts::from_bits_truncate(ReadableStream__bodyFacts(stream.to_js()))
-        .contains(BodyFacts::DECODED)
-}
-
 pub(crate) fn is_locked_value(value: JSValue, global_object: &JSGlobalObject) -> bool {
     ReadableStream__isLocked(value, global_object)
 }

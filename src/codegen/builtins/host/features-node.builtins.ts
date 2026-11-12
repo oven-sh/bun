@@ -237,7 +237,6 @@ export default b.declarations(
   extendAll(
     ["Undici", "TlsSockets", "X509", "Tls", "Buffer"],
     ...nativeBindings("Cpp", "Undici.cpp", "createUndiciInternalBinding"),
-    ...nativeBindings("Bindgen", "ReadableStream.bind.ts", "isDecodedBody"),
   ),
 
   extendAll(["NodeEvents"], "node:events"),

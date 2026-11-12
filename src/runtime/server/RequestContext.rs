@@ -185,6 +185,9 @@ pub(crate) struct RequestContext<const SSL_ENABLED: bool, const DEBUG_MODE: bool
 
     pub(crate) additional_on_abort: JsCell<Option<AdditionalOnAbortCallback>>,
 
+    /// The error and default status that `error()` returned a pending promise for.
+    deferred_error: JsCell<Option<(bun_jsc::strong::Optional, u16)>>,
+
     /// The `NativePromiseContext` cell whose claim (one ref on this context)
     /// is still outstanding, or `ZERO`. Not visited by GC: the promise
     /// reaction keeps the cell alive, and the cell's destructor clears this
@@ -773,10 +776,6 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             self.run_error_handler(error);
             return;
         }
-        // `value` came from a deferred `error()`, so respond like a sync `error()` without a Response.
-        if self.flags.is_error_promise_pending() {
-            return self.render_production_error(500);
-        }
         self.render_missing();
     }
 
@@ -784,6 +783,18 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         if self.is_aborted_or_ended() || self.did_upgrade_web_socket() {
             Self::discard_response_body(global_this, value);
             return;
+        }
+
+        if let Some((error, status)) = self.deferred_error.replace(None) {
+            let sendable = as_response(value).is_some_and(|response| {
+                // SAFETY: `response` is the live cell pointer; `value` is rooted by the caller's frame.
+                HTTPStatusText::is_sendable(unsafe { (*response).status_code() })
+            });
+            if !sendable {
+                let error_js = error.get().unwrap_or(JSValue::UNDEFINED);
+                self.finish_running_error_handler(error_js, status);
+                return;
+            }
         }
 
         if value.is_empty_or_undefined_or_null() || !value.is_cell() {
@@ -1123,7 +1134,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
         // SAFETY: FFI handle
         if !resp.has_responded()
             && !self.flags.has_marked_pending()
-            && !self.flags.is_error_promise_pending()
+            && self.deferred_error.get().is_none()
         {
             self.render_missing();
             return;
@@ -1457,6 +1468,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
                 pathname: JsCell::new(BunString::EMPTY),
                 response_buf_owned: JsCell::new(Vec::new()),
                 additional_on_abort: JsCell::new(None),
+                deferred_error: JsCell::new(None),
                 promise_cell: Cell::new(JSValue::ZERO),
             });
         }
@@ -1617,6 +1629,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
 
         self.response_root.clear();
         self.response_weakref.set(response::WeakRef::EMPTY);
+        self.deferred_error.set(None);
 
         // The stream ref itself is errored and released by `end_request_streaming()` below.
         self.detach_request_body_producer();
@@ -3765,7 +3778,8 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
 
         match promise.unwrap(vm.global().vm(), jsc::PromiseUnwrapMode::MarkHandled) {
             jsc::PromiseResult::Pending => {
-                ctx.flags.set_is_error_promise_pending(true);
+                let error = bun_jsc::strong::Optional::create(value, server.global_this());
+                ctx.deferred_error.set(Some((error, status)));
                 let cell = ctx.create_promise_cell(server.global_this());
                 promise_js.then_with_value(
                     server.global_this(),
@@ -4532,7 +4546,6 @@ bitflags::bitflags! {
         const HAS_WRITTEN_STATUS          = 1 << 11;
         const ABORTED                     = 1 << 13;
         const HAS_FINALIZED               = 1 << 14;
-        const IS_ERROR_PROMISE_PENDING    = 1 << 15;
         /// Socket reads are paused because the request-body buffer is over its high-water mark.
         const REQUEST_BODY_PAUSED         = 1 << 16;
         /// `on_start_buffering` fired (`.text()` etc.); skip pre-stream backpressure.
@@ -4605,11 +4618,6 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         HAS_WRITTEN_STATUS
     );
     flag_accessor!(aborted, set_aborted, ABORTED);
-    flag_accessor!(
-        is_error_promise_pending,
-        set_is_error_promise_pending,
-        IS_ERROR_PROMISE_PENDING
-    );
     flag_accessor!(
         request_body_paused,
         set_request_body_paused,

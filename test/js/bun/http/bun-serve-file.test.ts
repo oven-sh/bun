@@ -2269,6 +2269,7 @@ test.concurrent.each([true, false])(
         const servers = {
           none: Bun.serve({ port: 0, development: ${development}, fetch: fetchFile }),
           undefined: Bun.serve({ port: 0, development: ${development}, fetch: fetchFile, error: e => void codes.push(e.code) }),
+          deferred: Bun.serve({ port: 0, development: ${development}, fetch: fetchFile, error: () => new Promise(r => setImmediate(r)) }),
           response: Bun.serve({ port: 0, development: ${development}, fetch: fetchFile, error: e => new Response(e.code, { status: 410 }) }),
         };
         for (const [name, server] of Object.entries(servers)) {
@@ -2300,6 +2301,7 @@ test.concurrent.each([true, false])(
       stdout: [
         ...defaults("none"),
         ...defaults("undefined"),
+        ...defaults("deferred"),
         "response /ok.txt 200 OK 2 ok",
         ...codes.map((code, i) => `response ${paths[i + 1]} 410 Gone ${code.length} ${code}`),
         codes.join(),

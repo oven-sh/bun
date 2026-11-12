@@ -3371,19 +3371,35 @@ it("should support promise returned from error", async () => {
   subprocess.kill();
 });
 
-it("responds 500 when a deferred error() resolves without a Response", async () => {
-  using server = Bun.serve({
-    port: 0,
-    development: false,
-    fetch() {
-      throw new Error("boom");
-    },
-    async error() {
-      await new Promise(resolve => setImmediate(resolve));
-    },
+describe.each([false, true])("error() without a Response (development: %p)", development => {
+  it.concurrent.each([
+    ["returns nothing", `() => {}`],
+    ["resolves to nothing", `async () => {}`],
+    ["resolves to nothing later", `() => new Promise(resolve => setImmediate(resolve))`],
+    ["resolves to Response.error() later", `() => new Promise(resolve => setImmediate(resolve, Response.error()))`],
+  ])("responds 500 and reports the error when it %s", async (_, error) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        using server = Bun.serve({ port: 0, development: ${development}, fetch() { throw new Error("bo" + "om"); }, error: ${error} });
+        const res = await fetch(server.url);
+        const body = await res.text();
+        console.log(res.status, ${development} ? res.headers.get("content-type") : body);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, reported: stderr.match(/^error: .*$/gm), exitCode }).toEqual({
+      stdout: development ? "500 text/html;charset=utf-8\n" : "500 Something went wrong!\n",
+      reported: ["error: boom"],
+      exitCode: 1,
+    });
   });
-  const res = await fetch(`http://127.0.0.1:${server.port}/`);
-  expect({ status: res.status, body: await res.text() }).toEqual({ status: 500, body: "Something went wrong!" });
 });
 
 if (process.platform === "linux")

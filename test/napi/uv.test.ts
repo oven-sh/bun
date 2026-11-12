@@ -85,10 +85,13 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(result).toEqual({
       initRc: 0,
       timedOutRc: result.UV_ETIMEDOUT,
+      timedOutElapsedUs: expect.any(Number),
       signaledRc: 0,
       broadcastWoken: 2,
       UV_ETIMEDOUT: -constants.errno.ETIMEDOUT,
     });
+    // The 1ms relative timeout was honored, not returned early.
+    expect(result.timedOutElapsedUs).toBeGreaterThanOrEqual(1000);
   });
 
   test("uv_rwlock: readers share, a writer excludes", () => {
@@ -116,13 +119,16 @@ describe.if(!isWindows)("uv stubs", () => {
     });
   });
 
-  test("uv_barrier: one thread is serial, every thread passes", () => {
+  test("uv_barrier: one serial thread per round, reusable, destroyable by the serial thread", () => {
     const result = nativeModule.testBarrier();
     expect(result).toEqual({
       initRc: 0,
       zeroCountRc: result.UV_EINVAL,
       serial: 1,
       passed: 3,
+      reusedSerial: 100,
+      reusedPassed: 200,
+      destroyedBySerial: 100,
       UV_EINVAL: -constants.errno.EINVAL,
     });
   });
@@ -133,6 +139,22 @@ describe.if(!isWindows)("uv stubs", () => {
       beforeSetIsNull: 1,
       afterSet: 42,
       otherThreadIsNull: 1,
+    });
+  });
+
+  test("uv_thread: create, join, self, equal, detach and create_ex", () => {
+    expect(nativeModule.testThread()).toEqual({
+      createRc: 0,
+      joinRc: 0,
+      selfEqualsMain: 0,
+      selfEqualsSelf: 1,
+      mainEqualsMain: 1,
+      joinedEqualsCreated: 1,
+      detachRc: 0,
+      detachedRan: 1,
+      exCreateRc: 0,
+      exJoinRc: 0,
+      exRan: 1,
     });
   });
 

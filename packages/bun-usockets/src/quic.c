@@ -996,6 +996,13 @@ lsquic_engine_t *us_quic_driver_add_engine(us_quic_driver_t *d, unsigned flags,
     return engine;
 }
 
+void us_quic_driver_remove_engine(us_quic_driver_t *d, lsquic_engine_t *engine) {
+    unsigned int i = 0;
+    while (d->engines[i] != engine) i++;
+    d->engines[i] = d->engines[--d->engine_count];
+    lsquic_engine_destroy(engine);
+}
+
 static void us_quic_after_engine_call(us_quic_driver_t *d);
 
 static int us_quic_context_pass(us_quic_driver_t *d, enum us_quic_pass_point point) {

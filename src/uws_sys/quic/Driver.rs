@@ -32,6 +32,7 @@ unsafe extern "C" {
     safe fn us_quic_driver_close(driver: &Driver);
     fn us_quic_driver_free(driver: *mut Driver);
     safe fn us_quic_driver_owner(driver: &Driver) -> *mut c_void;
+    fn us_quic_driver_remove_engine(driver: *mut Driver, engine: *mut c_void);
     safe fn us_quic_driver_process(driver: &Driver);
     safe fn us_quic_driver_next_tick_us(driver: &Driver) -> c_int;
     safe fn us_quic_driver_set_pending(driver: &Driver);
@@ -82,6 +83,12 @@ impl Driver {
 
     pub fn owner(&self) -> *mut c_void {
         us_quic_driver_owner(self)
+    }
+
+    /// Destroys `engine`, one of this driver's. No engine may be on the stack.
+    pub unsafe fn remove_engine(&self, engine: *mut c_void) {
+        // SAFETY: caller contract.
+        unsafe { us_quic_driver_remove_engine(self.as_mut_ptr(), engine) }
     }
 
     /// `lsquic_engine_process_conns` on every engine. Does nothing while an engine is on the stack.

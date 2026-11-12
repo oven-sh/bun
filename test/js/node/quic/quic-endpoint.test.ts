@@ -2,7 +2,17 @@
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { socketFaultInjection } from "bun:internal-for-testing";
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isWindows, libcPathForDlopen, normalizeBunSnapshot, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectRssDeltaBelow,
+  isASAN,
+  isLinux,
+  isWindows,
+  libcPathForDlopen,
+  normalizeBunSnapshot,
+  tempDir,
+} from "harness";
 import { createPrivateKey } from "node:crypto";
 import { createSocket } from "node:dgram";
 import { once } from "node:events";
@@ -152,6 +162,29 @@ describe("sessions that share an endpoint", () => {
     for (const session of sessions) session.close();
     expect({ advertised, shared: [a === b, b === c] }).toEqual({ advertised: [10n, 50n, 50n], shared: [true, true] });
   });
+
+  test("don't leave an engine behind for each set of options", async () => {
+    const fixture = /* js */ `
+      ${prelude}
+      const server = await serve(session => session.closed.catch(() => {}));
+      const endpoint = new QuicEndpoint();
+      let handshakeTimeout = 5000;
+      async function rssAfter(sessions) {
+        for (let i = 0; i < sessions; i++) {
+          const session = await dial(server.address, { endpoint, handshakeTimeout: handshakeTimeout++ });
+          await session.opened;
+          await session.close();
+        }
+        Bun.gc(true);
+        return process.memoryUsage.rss();
+      }
+      const before = await rssAfter(20);
+      console.log(JSON.stringify({ deltaMiB: ((await rssAfter(150)) - before) / 1024 / 1024 }));
+      process.exit(0);
+    `;
+    // 150 kept engines are over 40 MiB.
+    await expectRssDeltaBelow(["--no-warnings", "-e", fixture], { release: 15, debug: 25 });
+  }, 20_000);
 });
 
 describe("inspecting an endpoint with live sessions", () => {

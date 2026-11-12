@@ -203,7 +203,7 @@ pub(crate) struct QuicEndpoint {
     poll_ref: JsCell<KeepAlive>,
     this_value: JsCell<JsRef>,
 
-    /// At most one server engine, and one client engine for each distinct settings struct.
+    /// At most one server engine, and one client engine for each distinct settings struct in use.
     engines: JsCell<Vec<Rc<Engine>>>,
     server_tls: JsCell<Option<TlsContext>>,
     sni_contexts: JsCell<Vec<(Vec<u8>, TlsContext)>>,
@@ -583,7 +583,7 @@ pub(super) fn read_u64_option(
 
 /// lsquic's settings belong to an engine and Node's options to a session, so sessions share an engine only if their settings are equal.
 pub(super) struct Engine {
-    /// Owned by the endpoint's driver.
+    /// Owned by the endpoint's driver. Live while the endpoint's `engines` has this.
     raw: *mut lsquic::lsquic_engine,
     pub(super) is_server: bool,
     /// lsquic frames this engine's streams as HTTP/3.
@@ -1144,6 +1144,7 @@ impl QuicEndpoint {
             session.maybe_finish_deferred_close();
         }
         self.sweep_verneg_probes();
+        self.free_idle_engines();
         self.update_keepalive();
         if self.closing.get()
             && self.sessions.get().is_empty()
@@ -1165,9 +1166,36 @@ impl QuicEndpoint {
         self.engines
             .get()
             .iter()
-            // SAFETY: engines live until finish_close.
+            // SAFETY: an engine in `engines` is live.
             .map(|engine| unsafe { lsquic::lsquic_engine_conn_count(engine.raw) })
             .sum()
+    }
+
+    /// Frees the oldest client engines that have no connection.
+    fn free_idle_engines(&self) {
+        /// An idle engine still answers the peers of its closed connections with a stateless reset.
+        const IDLE_ENGINES_KEPT: usize = 8;
+        if self.engines.get().len() <= IDLE_ENGINES_KEPT {
+            return;
+        }
+        let idle = |engine: &Rc<Engine>| {
+            // SAFETY: an engine in `engines` is live.
+            !engine.is_server && unsafe { lsquic::lsquic_engine_conn_count(engine.raw) } == 0
+        };
+        let idle_count = self.engines.get().iter().filter(|e| idle(e)).count();
+        let mut excess = idle_count.saturating_sub(IDLE_ENGINES_KEPT);
+        let driver = self.driver();
+        self.engines.with_mut(|engines| {
+            engines.retain(|engine| {
+                if excess == 0 || !idle(engine) {
+                    return true;
+                }
+                excess -= 1;
+                // SAFETY: `process` never runs under lsquic, and only `engines` hands out `raw`.
+                unsafe { driver.remove_engine(engine.raw.cast()) };
+                false
+            });
+        });
     }
 
     fn server_engine(&self) -> Option<Rc<Engine>> {
@@ -1177,7 +1205,7 @@ impl QuicEndpoint {
     /// Returns the engine that has a connection with this ID.
     fn engine_with_cid(&self, cid: &[u8]) -> Option<*mut lsquic::lsquic_engine> {
         self.engines.get().iter().map(|e| e.raw).find(|&engine| {
-            // SAFETY: engines live until finish_close.
+            // SAFETY: an engine in `engines` is live.
             unsafe { lsquic::lsquic_engine_cid_in_use(engine, cid.as_ptr(), cid.len()) != 0 }
         })
     }
@@ -1191,7 +1219,7 @@ impl QuicEndpoint {
         peer: *const c_void,
     ) {
         let packet_in = |raw: *mut lsquic::lsquic_engine| {
-            // SAFETY: `raw` lives until finish_close, and payload/local/peer are valid for this call.
+            // SAFETY: no `process` ran since `raw` was in `engines`, and payload/local/peer are valid for this call.
             unsafe {
                 lsquic::lsquic_engine_packet_in(
                     raw,

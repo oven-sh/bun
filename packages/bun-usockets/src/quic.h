@@ -59,6 +59,8 @@ struct lsquic_engine *us_quic_driver_add_engine(us_quic_driver_t *d, unsigned fl
     const struct lsquic_stream_if *stream_if, void *stream_if_ctx,
     const struct lsquic_hset_if *hset_if, void *hset_ctx,
     struct ssl_ctx_st *(*lookup_cert)(void *, const struct sockaddr *, const char *), void *lookup_cert_ctx);
+/* Destroys one of the driver's engines. No engine may be on the stack. */
+void us_quic_driver_remove_engine(us_quic_driver_t *d, struct lsquic_engine *engine);
 /* lsquic_engine_process_conns on every engine. Does nothing while an engine is on the stack. */
 void us_quic_driver_process(us_quic_driver_t *d);
 /* The soonest lsquic_engine_earliest_adv_tick in µs from now, or -1. */

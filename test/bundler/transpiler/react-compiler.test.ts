@@ -5204,3 +5204,106 @@ describe("react-compiler does not overflow the stack on a component that is nest
     expect(exitCode).toBe(0);
   });
 });
+
+// The React Compiler considers every JavaScript-like module outside
+// `node_modules`, whatever its extension. A custom hook usually lives in a
+// `.ts` file because it has no JSX (#48676).
+describe("react-compiler compiles every JavaScript-like loader", () => {
+  const hook = /* ts */ `
+    import { useMemo, useState } from "react";
+    export function useTotal(items) {
+      const [discount] = useState(0);
+      const total = useMemo(() => items.reduce((sum, item) => sum + item.price, 0), [items]);
+      return { total, discounted: total - discount };
+    }
+  `;
+  const extensions = ["ts", "mts", "cts", "tsx", "js", "mjs", "cjs", "jsx"] as const;
+
+  test.concurrent.each(extensions)("Bun.build compiles a hook in a .%s file", async ext => {
+    using dir = tempDir("react-compiler-loader", { [`useTotal.${ext}`]: hook });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), `useTotal.${ext}`)],
+      reactCompiler: true,
+      external: ["react", "react/compiler-runtime"],
+    });
+    const code = await result.outputs[0].text();
+    expect({
+      ext,
+      compiled: code.includes("react/compiler-runtime"),
+      slots: code.match(/\b_c\(\d+\)/) !== null,
+    }).toEqual({
+      ext,
+      compiled: true,
+      slots: true,
+    });
+  });
+
+  // Mapping `.ts` to the `tsx` loader is not a workaround: a generic arrow and
+  // an angle-bracket cast parse as JSX there. The `ts` loader keeps them.
+  test("a .ts file keeps TypeScript-only syntax while it is compiled", async () => {
+    using dir = tempDir("react-compiler-ts-syntax", {
+      "useIds.ts": /* ts */ `
+        import { useMemo } from "react";
+        const first = <T>(xs: T[]): T | undefined => xs[0];
+        export function useIds(items: { id: number }[]) {
+          const ids = useMemo(() => items.map(item => <number>item.id), [items]);
+          return { ids, first: first(ids) };
+        }
+      `,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "useIds.ts")],
+      reactCompiler: true,
+      external: ["react", "react/compiler-runtime"],
+    });
+    expect(result.logs).toEqual([]);
+    const code = await result.outputs[0].text();
+    expect(code).toContain("react/compiler-runtime");
+    expect(code).toMatch(/\b_c\(\d+\)/);
+  });
+
+  test("a server target runs the ssr mode on a .ts hook", async () => {
+    using dir = tempDir("react-compiler-ts-ssr", { "useTotal.ts": hook });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "useTotal.ts")],
+      reactCompiler: true,
+      target: "bun",
+      external: ["react"],
+    });
+    const code = await result.outputs[0].text();
+    // The ssr mode memoizes nothing and inlines `useState`, so the hook no
+    // longer calls it and imports no memo cache.
+    expect(code).not.toContain("react/compiler-runtime");
+    expect(code).not.toContain("useState(");
+  });
+
+  test("a .ts file inside node_modules is left alone", async () => {
+    using dir = tempDir("react-compiler-ts-node-modules", {
+      "entry.ts": `export { useTotal } from "dep";`,
+      "node_modules/dep/package.json": `{ "name": "dep", "main": "useTotal.ts" }`,
+      "node_modules/dep/useTotal.ts": hook,
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      reactCompiler: true,
+      external: ["react", "react/compiler-runtime"],
+    });
+    const code = await result.outputs[0].text();
+    expect(code).not.toContain("react/compiler-runtime");
+  });
+
+  test("bun build --no-bundle --react-compiler compiles a .ts hook", async () => {
+    using dir = tempDir("react-compiler-no-bundle", { "useTotal.ts": hook });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--react-compiler", "--target=browser", "./useTotal.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("react/compiler-runtime");
+    expect(stdout).toMatch(/\b_c\(\d+\)/);
+    expect(exitCode).toBe(0);
+  });
+});

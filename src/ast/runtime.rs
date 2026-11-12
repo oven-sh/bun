@@ -121,8 +121,7 @@ impl ReactCompilerMode {
         is_node_module: impl FnOnce() -> bool,
         is_compiled: impl FnOnce() -> bool,
     ) -> Self {
-        if self.is_enabled() && loader.is_javascript_like() && !is_node_module() && is_compiled()
-        {
+        if self.is_enabled() && loader.is_javascript_like() && !is_node_module() && is_compiled() {
             self
         } else {
             Self::Disabled

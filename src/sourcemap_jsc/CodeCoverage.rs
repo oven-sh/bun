@@ -406,7 +406,7 @@ pub mod text {
     ) -> bun_io::Result<()> {
         let mut filename: &[u8] = &report.source_url;
         if !base_path.is_empty() {
-            filename = bun_paths::resolve_path::relative(base_path, filename);
+            filename = bun_paths::resolve_path::relative_to_base(base_path, filename);
         }
 
         write_format_with_values::<ENABLE_COLORS>(
@@ -479,7 +479,7 @@ pub mod lcov {
     ) -> bun_io::Result<()> {
         let mut filename: &[u8] = &report.source_url;
         if !base_path.is_empty() {
-            filename = bun_paths::resolve_path::relative(base_path, filename);
+            filename = bun_paths::resolve_path::relative_to_base(base_path, filename);
         }
 
         // TN: test name

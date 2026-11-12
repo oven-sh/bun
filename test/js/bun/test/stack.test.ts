@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, bunRun, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 
 test("name property is used for function calls in Error.stack", () => {
@@ -130,6 +130,49 @@ test("uncaught error thrown from a data: URL module longer than a path buffer is
   expect(annotation).toContain(`%0A      at fromDataUrl (data:text/javascript;base64,${base64}:1:`);
   expect(exitCode).toBe(1);
 });
+
+test.each([[[]], [["--parallel=2"]]])(
+  "bun test names a file in its GitHub Actions annotation as in its group after process.chdir() %j",
+  async args => {
+    using dir = tempDir("stack-annotation-chdir", {
+      "elsewhere/keep.txt": "",
+      "a.test.ts": `
+        import { test } from "bun:test";
+        test("changes the working directory", () => {
+          process.chdir("elsewhere");
+        });
+        test("fails after the change", () => {
+          throw new Error("first");
+        });
+      `,
+      "b.test.ts": `
+        import { test } from "bun:test";
+        test("fails in a later file", () => {
+          throw new Error("second");
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args, "./a.test.ts", "./b.test.ts"],
+      env: { ...bunEnv, GITHUB_ACTIONS: "true", GITHUB_WORKSPACE: undefined },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect({
+      // --parallel opens a file's group again after another file's output.
+      groups: [...new Set([...stderr.matchAll(/^::group::(.*)$/gm)].map(match => match[1]))].sort(),
+      annotated: [...stderr.matchAll(/^::error file=([^,]*),/gm)].map(match => match[1]).sort(),
+      exitCode,
+    }).toEqual({
+      groups: ["a.test.ts:", "b.test.ts:"],
+      annotated: ["a.test.ts", "b.test.ts"],
+      exitCode: 1,
+    });
+  },
+);
 
 test("throwing inside an error suppresses the error and continues printing properties on the object", async () => {
   $.throws(false);

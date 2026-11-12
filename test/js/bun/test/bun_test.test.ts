@@ -458,3 +458,66 @@ test("no --only flag with multiple files", async () => {
   `);
   expect(exitCode).toBe(0);
 });
+
+test.each([[[]], [["--parallel=2"]]])(
+  'a file that changed the working directory and then threw is listed under "tests failed:" by its name in the run %j',
+  async args => {
+    using dir = tempDir("bun-test-recap-chdir", {
+      "elsewhere/keep.txt": "",
+      "moves.test.ts": `
+        process.chdir("elsewhere");
+        throw new Error("thrown by the file");
+      `,
+      // The list is only printed after more than 20 passes.
+      "many.test.ts": `
+        import { test } from "bun:test";
+        for (let i = 0; i < 21; i++) test("passes " + i, () => {});
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr.slice(stderr.indexOf("tests failed:")).split(/\r?\n/).slice(0, 2)).toEqual([
+      "tests failed:",
+      "(fail) moves.test.ts",
+    ]);
+    expect(exitCode).toBe(1);
+  },
+);
+
+test("a Vitest task names its file from the folder the run started in, after process.chdir()", async () => {
+  using dir = tempDir("bun-test-task-chdir", {
+    "elsewhere/keep.txt": "",
+    "dir/a.test.js": `
+      import { test } from "vitest";
+      test("changes the working directory", () => { process.chdir("elsewhere"); });
+      test("after the change", ({ task }) => { console.log(task.fullName); console.log(task.file.name); });
+    `,
+    "dir/b.test.js": `
+      import { test } from "vitest";
+      test("in another file", ({ task }) => { console.log(task.fullName); });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({
+    log: stdout.split(/\r?\n/).filter(line => line && !line.startsWith("bun test ")),
+    exitCode,
+  }).toEqual({
+    log: ["dir/a.test.js > after the change", "dir/a.test.js", "dir/b.test.js > in another file"],
+    exitCode: 0,
+  });
+});

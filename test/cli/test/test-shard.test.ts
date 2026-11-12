@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 
 // `bun test --shard=M/N` splits discovered test files across N shards.
 // Files are sorted by path first for determinism, then distributed
@@ -248,6 +250,82 @@ describe.concurrent("--timings", () => {
     expect(r.ran).toEqual(["f00"]);
     expect(Object.keys((await Bun.file(`${dir}/nested/dir/t.json`).json()).files)).toEqual(["f00.test.ts"]);
     expect(r.exitCode).toBe(0);
+  });
+
+  describe("--update-timings writes the --timings file it read, with the same names, after a test calls process.chdir()", () => {
+    const anHour = 3_600_000;
+    const table = JSON.stringify({
+      version: 1,
+      files: { "a.test.ts": anHour, "b.test.ts": anHour, "gone.test.ts": 7 },
+    });
+    const b = `import { test } from "bun:test"; test("t", () => {});`;
+
+    async function run(dir: string, args: string[], from: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--timings=t.json", "--update-timings", ...args],
+        env: bunEnv,
+        cwd: join(dir, from),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const { files } = await Bun.file(join(dir, "t.json")).json();
+      return {
+        stderr,
+        written: {
+          names: Object.keys(files).sort(),
+          // Both files ran, so this run's times replace the ones read.
+          measured: [files["a.test.ts"] < anHour, files["b.test.ts"] < anHour],
+          kept: files["gone.test.ts"],
+          exitCode,
+        },
+      };
+    }
+    const expected = {
+      names: ["a.test.ts", "b.test.ts", "gone.test.ts"],
+      measured: [true, true],
+      kept: 7,
+      exitCode: 0,
+    };
+
+    test.each([
+      ["into a folder that stays", [], "."],
+      ["in a run that --cwd starts in the folder above", ["--cwd", ".."], "elsewhere"],
+    ])("%s", async (_, args, from) => {
+      using dir = tempDir("timings-chdir", {
+        "elsewhere/keep.txt": "",
+        "a.test.ts": `import { test } from "bun:test"; test("t", () => { process.chdir(import.meta.dir + "/elsewhere"); });`,
+        "b.test.ts": b,
+        "t.json": table,
+      });
+      const { stderr, written } = await run(String(dir), args, from);
+      expect(stderr).toContain(" 2 pass");
+      expect({ ...written, elsewhere: readdirSync(join(String(dir), "elsewhere")) }).toEqual({
+        ...expected,
+        elsewhere: ["keep.txt"],
+      });
+    });
+
+    // Windows refuses to remove the working directory of a process.
+    test.skipIf(isWindows)("into a folder that the test removes before the run ends", async () => {
+      using dir = tempDir("timings-chdir-removed", {
+        "a.test.ts": `
+          import { afterAll, test } from "bun:test";
+          import { mkdirSync, rmSync } from "node:fs";
+          const scratch = import.meta.dir + "/scratch";
+          test("t", () => { mkdirSync(scratch); process.chdir(scratch); });
+          afterAll(() => rmSync(scratch, { recursive: true }));
+        `,
+        "b.test.ts": b,
+        "t.json": table,
+      });
+      const { stderr, written } = await run(String(dir), ["./b.test.ts", "./a.test.ts"], ".");
+      expect(stderr).not.toContain("Failed to write --timings file");
+      expect({ ...written, here: readdirSync(String(dir)).sort() }).toEqual({
+        ...expected,
+        here: ["a.test.ts", "b.test.ts", "t.json"],
+      });
+    });
   });
 
   test("--update-timings under --shard writes only the files that shard ran, to the first --timings path", async () => {

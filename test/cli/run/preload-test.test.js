@@ -240,6 +240,66 @@ plugin({
     });
   });
 
+  describe("of bun test, after the working directory changed", () => {
+    async function runTests(dir, args, files) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args, ...files],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    test.each(["--isolate", "--isolate=modules"])("is found for the second run of a file with %s", async isolate => {
+      using dir = tempDir("preload-test-chdir", {
+        "elsewhere/keep.txt": "",
+        // A preload of the same name in the other folder is not the one that the run names.
+        "elsewhere/preload.ts": `console.log("LOG the other preload");`,
+        "preload.ts": `console.log("LOG preload");`,
+        "a.test.ts": `
+          import { test } from "bun:test";
+          import { basename, join } from "node:path";
+          test("changes the working directory", () => {
+            console.log("LOG test in", process.cwd() === import.meta.dir ? "the folder of the run" : basename(process.cwd()));
+            process.chdir(join(import.meta.dir, "elsewhere"));
+          });
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runTests(
+        dir,
+        [isolate, "--rerun-each=2", "--preload", "./preload.ts"],
+        ["./a.test.ts"],
+      );
+      expect(stderr).toContain(" 2 pass");
+      // The second run starts where the first one left the process.
+      expect({ log: stdout.split(/\r?\n/).filter(line => line.startsWith("LOG ")), exitCode }).toEqual({
+        log: ["LOG preload", "LOG test in the folder of the run", "LOG test in elsewhere"],
+        exitCode: 0,
+      });
+    });
+
+    test("is found for the next file after it threw", async () => {
+      using dir = tempDir("preload-test-chdir-throws", {
+        "elsewhere/keep.txt": "",
+        // After a preload fails, the next file loads the preloads again.
+        "preload.ts": `
+          process.chdir(import.meta.dir + "/elsewhere");
+          throw new Error("thrown by the preload");
+        `,
+        "a.test.ts": `import { test } from "bun:test"; test("a", () => {});`,
+        "b.test.ts": `import { test } from "bun:test"; test("b", () => {});`,
+      });
+      const { stderr, exitCode } = await runTests(dir, ["--preload", "./preload.ts"], ["./a.test.ts", "./b.test.ts"]);
+      expect({ errors: stderr.match(/^error: .*$/gm), exitCode }).toEqual({
+        errors: ["error: thrown by the preload", "error: thrown by the preload"],
+        exitCode: 1,
+      });
+    });
+  });
+
   describe("with --hot", () => {
     function spawnHot(dir) {
       const proc = Bun.spawn({
@@ -282,6 +342,25 @@ plugin({
       const { proc, stdout } = spawnHot(dir);
       await using _ = proc;
       expect(await stdout("main ran\nmain ran\n")).toStartWith("first ran\nsecond ran\nmain ran\nmain ran\n");
+    });
+
+    test("finds the preloads on a reload after one changed the working directory and threw", async () => {
+      using dir = tempDir("preload-hot", {
+        "elsewhere/keep.txt": "",
+        // After a preload fails, every reload loads the preloads again.
+        "first.js": `process.chdir("elsewhere");\nthrow new Error("from first.js");`,
+        "second.js": `console.log("second ran");`,
+        "main.js": `console.log("main ran");`,
+      });
+      const { proc, stdout, stderr } = spawnHot(dir);
+      await using _ = proc;
+      expect(await stderr("error: from first.js")).toContain("error: from first.js");
+      writeFileSync(join(String(dir), "first.js.new"), `console.log("first ran");`);
+      renameSync(join(String(dir), "first.js.new"), join(String(dir), "first.js"));
+      writeFileSync(join(String(dir), "main.js"), `console.log("main ran");`);
+      expect(await Promise.race([stdout("main ran\n"), stderr("preload not found")])).toContain(
+        "first ran\nsecond ran\nmain ran\n",
+      );
     });
 
     test("reports a preload that was deleted before a reload, and the next reload still runs", async () => {

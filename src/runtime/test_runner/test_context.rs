@@ -10,7 +10,6 @@ use bun_jsc::{
     JSPromise, JSValue, JsCell, JsClass as _, JsResult, Strong, StringJsc as _, bun_string_jsc,
 };
 use bun_paths::resolve_path;
-use bun_resolver::fs::FileSystem;
 
 use super::bun_test::js_fns::Signature;
 use super::bun_test::{
@@ -560,7 +559,7 @@ fn file_path(buntest: &BunTest) -> &'static [u8] {
 }
 
 fn file_name(buntest: &BunTest) -> Vec<u8> {
-    let mut name = resolve_path::relative(FileSystem::instance().top_level_dir(), file_path(buntest)).to_vec();
+    let mut name = crate::cli::test_command::run_relative(file_path(buntest)).to_vec();
     resolve_path::platform_to_posix_in_place::<u8>(&mut name);
     name
 }

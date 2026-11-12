@@ -49,7 +49,7 @@ mod coverage {
         if ignore_patterns.is_empty() {
             return false;
         }
-        let relative_path = bun_paths::resolve_path::relative(relative_dir, source_url);
+        let relative_path = bun_paths::resolve_path::relative_to_base(relative_dir, source_url);
         ignore_patterns
             .iter()
             .any(|pattern| pattern.r#match(relative_path).matches())
@@ -860,10 +860,48 @@ pub(crate) struct TestFailure {
     pub(crate) uncaught: bool,
 }
 
+/// The folder the run started in, after `--cwd`. `process.chdir()` in a test moves `top_level_dir()` and not this. Set once the VM exists.
+pub(crate) fn run_root() -> &'static [u8] {
+    bun_paths::fs::FileSystem::instance().initial_top_level_dir()
+}
+
+/// `path` as the run names it: relative to `run_root()`. A name that is no absolute path, like a plugin's "virtual:module",
+/// is below `run_root()` too, and not below the working directory.
+pub(crate) fn run_relative(path: &[u8]) -> &'static [u8] {
+    resolve_path::relative_to_base(run_root(), path)
+}
+
+/// The path to open for a report that an option names. A relative name is below `run_root()` and is appended as written,
+/// so the system still resolves its `..` and symlinks.
+pub(crate) fn report_path<'a>(
+    written: &'a [u8],
+    buf: &'a mut bun_paths::PathBuffer,
+) -> bun_sys::Result<&'a [u8]> {
+    if bun_paths::is_absolute(written)
+        || (cfg!(windows) && resolve_path::windows_volume_name_len(written).0 > 0)
+    {
+        return Ok(written);
+    }
+    let root = run_root();
+    let separator: &[u8] = match root.last() {
+        Some(&last) if bun_paths::is_sep_native(last) => b"",
+        _ => &[bun_paths::SEP],
+    };
+    // The open adds a NUL.
+    let room = buf.len() - 1;
+    match strings::concat_buf_t(&mut buf[..room], &[root, separator, written]) {
+        Ok(joined) => Ok(joined),
+        Err(_) => Err(
+            bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+                .with_path(written),
+        ),
+    }
+}
+
 /// How a test file is named in the JUnit document: relative to the project
 /// root when inside it, else as given.
 pub(crate) fn junit_file_name(path: &[u8]) -> &[u8] {
-    let top = FileSystem::get().top_level_dir();
+    let top = run_root();
     if strings::has_prefix(path, top) {
         without_leading_path_separator(&path[top.len()..])
     } else {
@@ -1109,7 +1147,7 @@ impl TestFailure {
             }
         }
         body.push(b'\n');
-        let dir = FileSystem::get().top_level_dir();
+        let dir = run_root();
         for frame in exception.stack.frames() {
             let source_url = frame.source_url.to_utf8();
             let file = jsc::ZigStackFrame::relative_source_url(dir, source_url.slice());
@@ -1681,11 +1719,14 @@ impl JunitReporter {
             self.contents.extend_from_slice(b"</testsuites>\n");
         }
 
-        match File::make_open(
-            path,
-            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-            0o664,
-        ) {
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        match report_path(path, &mut path_buf).and_then(|resolved| {
+            File::make_open(
+                resolved,
+                bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
+                0o664,
+            )
+        }) {
             bun_sys::Result::Err(err) => {
                 Output::err(
                     crate::Error::JUnitReportFailed,
@@ -2398,7 +2439,7 @@ impl CommandLineReporter {
         // SAFETY: thread-local Box pinned for the thread; sole `&mut` for the
         // collection loop below (single-threaded CLI report path).
         let map = unsafe { &mut *map.as_ptr() };
-        let relative_dir = FileSystem::get().top_level_dir();
+        let relative_dir = run_root();
         let ignore_patterns: Vec<bun_glob::Prepared<&[u8]>> = (opts
             .ignore_patterns
             .iter()
@@ -2465,7 +2506,7 @@ fn print_coverage_reports_<const COLORS: bool>(
     opts: &mut CodeCoverageOptions,
     reports: &[CodeCoverageReport<'_>],
 ) -> bun_sys::Result<()> {
-    let relative_dir = FileSystem::get().top_level_dir();
+    let relative_dir = run_root();
     let thresholds = opts.fractions;
 
     let fractions: Vec<Fraction> = reports.iter().map(|r| r.fraction(&thresholds)).collect();
@@ -2492,7 +2533,7 @@ fn print_coverage_table<const COLORS: bool>(
     let thresholds = *thresholds;
     let max_filepath_length = reports
         .iter()
-        .map(|r| resolve_path::relative(relative_dir, &r.source_url).len())
+        .map(|r| resolve_path::relative_to_base(relative_dir, &r.source_url).len())
         .fold(b"All files".len(), usize::max);
 
     let zero = Fraction {
@@ -4053,7 +4094,7 @@ impl TestCommand {
             };
 
             // Recompute on every repeat because the reporters overwrite `relative`'s buffer while the file runs.
-            let file_title = resolve_path::relative(FileSystem::get().top_level_dir(), file_path);
+            let file_title = run_relative(file_path);
             reporter.jest.current_file.set(
                 file_title,
                 file_prefix,
@@ -4215,8 +4256,7 @@ impl TestCommand {
                         bun_test::Execution::Result::Fail,
                         Output::enable_ansi_colors_stderr(),
                     ));
-                    let top_level_dir = FileSystem::instance().top_level_dir();
-                    let title = resolve_path::relative(top_level_dir, file_path);
+                    let title = run_relative(file_path);
                     let _ = writeln!(failures, " {}", bstr::BStr::new(title));
                 }
 

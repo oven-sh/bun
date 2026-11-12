@@ -61,15 +61,49 @@ void NapiRef::callFinalizerFromGC()
 
 }
 
-void NapiEnv::drainOneRefFinalizer(napi_env env, void*, void*)
+// One task runs the finalizer of every ref that was pending when it began: a task per ref is a chain, and a drain of
+// the task queue runs 9 links of a chain (`EventLoop::next_task_within`). Refs that arrive meanwhile get a new task.
+// Each finalizer is a JS entry of its own: a handle scope, what it left pending reported, then a checkpoint.
+void NapiEnv::drainRefFinalizers(napi_env env, void*, void*)
 {
-    if (env->m_pendingRefFinalizers.isEmpty()) {
-        return;
+    env->m_isRefFinalizerDrainQueued = false;
+    auto* globalObject = env->globalObject();
+    auto& vm = env->vm();
+    size_t left = env->m_pendingRefFinalizers.size();
+    while (left-- && !env->m_pendingRefFinalizers.isEmpty()) {
+        Zig::NapiRef* ref = env->m_pendingRefFinalizers.takeFirst();
+        // The last one's exception and checkpoint are the task's own (Finalizer::run, the drain of the task queue).
+        if (!left || env->m_pendingRefFinalizers.isEmpty()) {
+            // May delete `ref` and enqueue or delete other refs.
+            ref->callFinalizer();
+            return;
+        }
+        {
+            Bun::NapiHandleScope handleScope(globalObject);
+            ref->callFinalizer();
+        }
+        // Released at teardown: no script runs, so nothing is reported and there is no checkpoint (runFinalizers).
+        if (!env->canCallIntoJS()) {
+            env->clearExceptionsBetweenFinalizers();
+            continue;
+        }
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        // NapiEnv::surface_exception: the VM's own exception wins over the one latched on the env.
+        if (!scope.exception())
+            env->throwPendingException();
+        env->clearPendingException();
+        if (auto* exception = scope.exception()) {
+            // The termination ends the drain. The task queued here is released at teardown, which runs the rest.
+            if (vm.isTerminationException(exception)) {
+                env->queueRefFinalizerDrain();
+                return;
+            }
+            (void)scope.tryClearException();
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        }
+        if (globalObject->drainMicrotasks()) {
+            env->queueRefFinalizerDrain();
+            return;
+        }
     }
-    Zig::NapiRef* ref = env->m_pendingRefFinalizers.takeFirst();
-    if (!env->m_pendingRefFinalizers.isEmpty()) {
-        Bun__napi_enqueue_finalizer(env, drainOneRefFinalizer, env, nullptr);
-    }
-    // May delete `ref` and enqueue or delete other refs.
-    ref->callFinalizer();
 }

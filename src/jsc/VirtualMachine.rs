@@ -3667,6 +3667,21 @@ impl VirtualMachine {
         self.event_loop_mut().wait_for_promise(promise)
     }
 
+    /// [`Self::wait_for_promise`] for a macro. Nothing runs the loop of a macro once its promise
+    /// has settled, so the tasks that the last `tick()` of the wait left queued
+    /// ([`crate::event_loop::EventLoop::next_task_within`]) run here, in one more `tick()`.
+    pub fn wait_for_macro_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
+        if promise.status() != crate::js_promise::Status::Pending {
+            return Ok(());
+        }
+        self.wait_for_promise(promise)?;
+        let event_loop = self.event_loop_mut();
+        if event_loop.has_pending_tasks() && self.script_allowed() {
+            event_loop.tick();
+        }
+        Ok(())
+    }
+
     /// `eventLoop().autoTick()` — dispatched through the runtime hook
     /// (needs `Timer::All` for the poll timeout).
     #[inline]
@@ -6647,7 +6662,7 @@ impl VirtualMachine {
         let path_str = bun_core::StringView::from_bytes(entry_path);
         let promise =
             jsc::JSModuleLoader::load_and_evaluate_module_ptr(self.global, &path_str)?.as_ptr();
-        let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+        let _ = self.wait_for_macro_promise(jsc::AnyPromise::Internal(promise));
         Some(promise)
     }
 

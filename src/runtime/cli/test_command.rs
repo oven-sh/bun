@@ -3953,6 +3953,14 @@ impl TestCommand {
         }
     }
 
+    /// `tick()` runs a bounded number of generations of tasks (`EventLoop::next_task_within`). When the one before this
+    /// ended the file, what the last step queued behind them runs here, before the file is left.
+    fn run_tasks_queued_at_file_end(vm: &VirtualMachine, buntest: &bun_test::BunTest) {
+        if buntest.phase == bun_test::Phase::Done && vm.event_loop_ref().has_pending_tasks() {
+            vm.event_loop_ref().tick();
+        }
+    }
+
     #[optimize(size)]
     pub(crate) fn run(
         reporter: &mut CommandLineReporter,
@@ -4110,6 +4118,7 @@ impl TestCommand {
 
                 // Process event loop while bun_test tests are running
                 vm.event_loop_ref().tick();
+                Self::run_tasks_queued_at_file_end(vm, buntest);
 
                 let mut prev_unhandled_count = vm.unhandled_error_counter;
                 while buntest.phase != bun_test::Phase::Done {
@@ -4147,6 +4156,7 @@ impl TestCommand {
                         break;
                     }
                     vm.event_loop_ref().tick();
+                    Self::run_tasks_queued_at_file_end(vm, buntest);
 
                     while prev_unhandled_count < vm.unhandled_error_counter {
                         let _ = vm.global().handle_rejected_promises();

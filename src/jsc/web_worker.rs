@@ -1560,6 +1560,10 @@ fn on_unhandled_rejection(
     // they may change process.exitCode). Run them before arming termination — a pending
     // termination exception makes dispatchExitInternal skip 'exit' (as terminate() should),
     // and its processIsExiting guard stops shutdown() from running them twice.
+    // Code 1 whether the report comes from the wait for the entry module or from the loop after it.
+    if !worker.exit_called.load(Ordering::Relaxed) {
+        vm.as_mut().exit_handler.exit_code = 1;
+    }
     virtual_machine::ExitHandler::dispatch_on_exit(vm);
     let _ = worker.set_requested_terminate();
     // Do NOT call `worker.shutdown()` here —

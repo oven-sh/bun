@@ -31,7 +31,7 @@ use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, Tag as EventLoopTimerTag, Timespec as ElTimespec,
 };
 
-use bun_jsc::event_loop::{EventLoop, Stopped};
+use bun_jsc::event_loop::{Drained, EventLoop, Stopped};
 use bun_jsc::task::report_error_or_terminate;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JsResult};
@@ -894,17 +894,14 @@ const _: () = assert!(
 pub(crate) fn tick_queue_with_count(
     el: &mut EventLoop,
     vm: &mut VirtualMachine,
-    counter: &mut u32,
-) -> Result<(), Stopped> {
+) -> Result<Drained, Stopped> {
     // SAFETY: `el.global` is set by VM init before the first tick; live for
     // the duration of the drain loop.
     let global: &JSGlobalObject = unsafe { el.global.expect("EventLoop.global unset").as_ref() };
     let global_vm = global.vm();
 
-    while let Some(task) = el.next_task() {
-        // Incremented before dispatch so the count includes every task,
-        // including the one that takes the HotReloadTask early return.
-        *counter += 1;
+    let mut drain = el.begin_drain();
+    while let Some(task) = el.next_task_within(&mut drain) {
         // A task continues what the script of some context started: it runs inside that context
         // (what it opens next, and the script it calls, are that context's), and once that context
         // has stopped it is released unrun. Not live either: the context of a file
@@ -928,11 +925,9 @@ pub(crate) fn tick_queue_with_count(
         match run_task(task, el, vm, global) {
             Ok(RunTaskResult::Continue) => {}
             Ok(RunTaskResult::EarlyReturn) => {
-                // Caller is `while tickWithCount(ctx) > 0` — must keep
-                // draining after a hot-reload task, so report exactly one
-                // task processed. Do NOT set 0 here.
-                *counter = 1;
-                return Ok(());
+                // The caller keeps draining while a drain ran tasks, and must after a
+                // hot-reload task. Do NOT return `Nothing` here.
+                return Ok(Drained::Tasks);
             }
             // The one fold for every queued task: report what it left as
             // uncaught, or stand the loop down if it is the VM's termination.
@@ -941,7 +936,7 @@ pub(crate) fn tick_queue_with_count(
         el.drain_microtasks_with_global(global, global_vm)?;
     }
     el.tasks.reset_head_if_empty();
-    Ok(())
+    Ok(drain.drained)
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1626,11 +1621,10 @@ pub(crate) unsafe fn __bun_js_timer_epoch(
 unsafe fn __bun_tick_queue_with_count(
     el: *mut EventLoop,
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
-    counter: &mut u32,
-) -> Result<(), Stopped> {
+) -> Result<Drained, Stopped> {
     // SAFETY: per fn contract.
     let (el, vm_ref) = unsafe { (&mut *el, &mut *vm) };
-    tick_queue_with_count(el, vm_ref, counter)
+    tick_queue_with_count(el, vm_ref)
 }
 
 // (former duplicate `__bun_run_tasks` removed r6 — `bun_jsc::task::run_tasks`

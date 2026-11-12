@@ -1,6 +1,6 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
@@ -497,4 +497,665 @@ it("timers/promises clears its timers with the globals that were there when it s
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1,0,1,0,1,0\n", stderr: "", exitCode: 0 });
+});
+
+describe.concurrent("a task that queues its successor each time it runs", () => {
+  async function run(args: string[], options: { cwd?: string; env?: Record<string, string> } = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: options.cwd,
+      env: { ...bunEnv, ...options.env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+  const prints = (stdout: string, exitCode = 0) => ({ stdout, stderr: "", exitCode, signalCode: null });
+
+  // Every link of an endless chain calls link(). No timer can end a chain that starves the timers, so link() counts
+  // and reads the clock: a starved fixture fails after 1000 links and 3 s, and does not hang.
+  const link = `
+    const giveUpAt = Date.now() + 3000;
+    let linksRun = 0;
+    function link() {
+      if (++linksRun < 1000 || Date.now() < giveUpAt) return;
+      console.log("starved");
+      process.exit(1);
+    }
+  `;
+  const chains: [name: string, chain: string, unixSocket?: true][] = [
+    [
+      "a PerformanceObserver calls performance.mark()",
+      `new PerformanceObserver(() => { link(); performance.mark("again"); }).observe({ entryTypes: ["mark"] });
+       performance.mark("first");`,
+    ],
+    [
+      "a PerformanceObserver calls performance.measure()",
+      `new PerformanceObserver(() => { link(); performance.measure("again"); }).observe({ entryTypes: ["measure"] });
+       performance.measure("first");`,
+    ],
+    [
+      "dns.promises.resolve4() is called again each time it rejects",
+      `import dns from "node:dns";
+       const retry = () => dns.promises.resolve4("a..b").catch(() => { link(); retry(); });
+       retry();`,
+    ],
+    [
+      "dns.resolve4() is called again from its callback",
+      `import dns from "node:dns";
+       const retry = () => dns.resolve4("a..b", () => { link(); retry(); });
+       retry();`,
+    ],
+    [
+      "a WebSocket connects again from its close event",
+      `const connect = () => {
+         const ws = new WebSocket("ws+unix://" + process.env.MISSING_SOCKET);
+         ws.onerror = () => {};
+         ws.onclose = () => { link(); connect(); };
+       };
+       connect();`,
+      true,
+    ],
+    [
+      "a WebSocket that is closed while it connects dials again from its close event",
+      `const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+       const dial = () => {
+         const ws = new WebSocket("ws://127.0.0.1:" + server.port);
+         ws.onerror = () => {};
+         ws.onclose = () => { link(); dial(); };
+         ws.close();
+       };
+       dial();`,
+    ],
+    [
+      "a RedisClient connects again each time connect() rejects",
+      `const connect = () =>
+         new Bun.RedisClient("redis+unix://" + process.env.MISSING_SOCKET, { autoReconnect: false })
+           .connect()
+           .catch(() => { link(); connect(); });
+       connect();`,
+      true,
+    ],
+    [
+      "Bun.serve() starts again each time stop() resolves",
+      `const restart = () =>
+         Bun.serve({ port: 0, fetch: () => new Response() }).stop().then(() => { link(); restart(); });
+       restart();`,
+    ],
+    [
+      "a MessagePort opens a channel from its close event",
+      `const open = () => {
+         const { port1 } = new MessageChannel();
+         port1.addEventListener("close", () => { link(); open(); });
+         port1.start();
+         port1.close();
+       };
+       open();`,
+    ],
+  ];
+  const observerChain = chains[0][1];
+
+  for (const [name, chain, unixSocket] of chains) {
+    test.skipIf(isWindows && !!unixSocket)(`a timer fires while ${name}`, async () => {
+      using dir = tempDir("task-chain", {});
+      const fixture = `${link}${chain}
+        setTimeout(() => { console.log("timer"); process.exit(0); }, 1);`;
+      const env = { MISSING_SOCKET: path.join(String(dir), "missing.sock") };
+      expect(await run(["-e", fixture], { env })).toEqual(prints("timer\n"));
+    });
+  }
+
+  test.each([
+    [
+      "an immediate, a timer and an fs callback run while the chain runs",
+      `import { stat } from "node:fs";
+       ${observerChain}
+       const seen = new Set();
+       function done(what) {
+         seen.add(what);
+         if (seen.size < 3) return;
+         console.log([...seen].sort().join());
+         process.exit(0);
+       }
+       setImmediate(() => done("immediate"));
+       setTimeout(() => done("timer"), 1);
+       stat(".", () => done("fs"));`,
+      "fs,immediate,timer\n",
+    ],
+    [
+      "an unref'd timer fires while the chain runs",
+      `let stop = false;
+       new PerformanceObserver(() => { link(); if (!stop) performance.mark("again"); }).observe({ entryTypes: ["mark"] });
+       performance.mark("first");
+       setTimeout(() => { stop = true; console.log("timer"); }, 1).unref();`,
+      "timer\n",
+    ],
+    [
+      "a timer fires while a chain that a timer started runs",
+      `setTimeout(() => {
+         ${observerChain}
+         setTimeout(() => { console.log("timer"); process.exit(0); }, 1);
+       }, 1);`,
+      "timer\n",
+    ],
+    [
+      "a top-level await on a timer resumes while the chain runs",
+      `${observerChain}
+       await new Promise(resolve => setTimeout(resolve, 1));
+       console.log("resumed");
+       process.exit(0);`,
+      "resumed\n",
+    ],
+    [
+      "a socket receives data while the chain runs",
+      `${observerChain}
+       const server = Bun.listen({
+         hostname: "127.0.0.1",
+         port: 0,
+         socket: { data(socket, data) { socket.write(data); } },
+       });
+       await Bun.connect({
+         hostname: "127.0.0.1",
+         port: server.port,
+         socket: {
+           open(socket) { socket.write("echo"); },
+           data(socket, data) {
+             console.log(data.toString());
+             process.exit(0);
+           },
+         },
+       });`,
+      "echo\n",
+    ],
+    [
+      "a rejection that nothing handles is reported while the chain runs",
+      `let links = 0;
+       process.on("unhandledRejection", error => {
+         console.log(error.message);
+         process.exit(0);
+       });
+       new PerformanceObserver(() => {
+         link();
+         if (++links === 5) Promise.reject(new Error("rejected by link 5"));
+         performance.mark("again");
+       }).observe({ entryTypes: ["mark"] });
+       performance.mark("first");`,
+      "rejected by link 5\n",
+    ],
+  ])("%s", async (_, fixture, stdout) => {
+    expect(await run(["-e", link + fixture])).toEqual(prints(stdout));
+  });
+
+  test.skipIf(isWindows)("a SIGTERM listener runs while the chain runs", async () => {
+    const fixture = `${link}
+      process.on("SIGTERM", () => {
+        console.log("SIGTERM");
+        process.exit(0);
+      });
+      let links = 0;
+      new PerformanceObserver(() => {
+        link();
+        // The signal arrives while the chain runs.
+        if (++links === 1) process.kill(process.pid, "SIGTERM");
+        performance.mark("again");
+      }).observe({ entryTypes: ["mark"] });
+      performance.mark("first");`;
+    expect(await run(["-e", fixture])).toEqual(prints("SIGTERM\n"));
+  });
+
+  // A Worker and a macro each drive a loop of their own. Serial: a debug build is slow to start them.
+  test.serial("a Worker that runs the chain receives a message and runs its timer", async () => {
+    const worker = `
+      const { parentPort } = require("node:worker_threads");
+      ${link}
+      let links = 0;
+      new PerformanceObserver(() => {
+        link();
+        if (++links === 1) parentPort.postMessage("started");
+        performance.mark("again");
+      }).observe({ entryTypes: ["mark"] });
+      performance.mark("first");
+      setTimeout(() => parentPort.postMessage("timer"), 1);
+      parentPort.on("message", message => parentPort.postMessage("got " + message));
+    `;
+    const fixture = `
+      import { Worker } from "node:worker_threads";
+      const worker = new Worker(${JSON.stringify(worker)}, { eval: true });
+      const seen = new Set();
+      worker.on("message", async message => {
+        if (message === "started") return worker.postMessage("ping");
+        seen.add(message);
+        if (seen.size < 2) return;
+        await worker.terminate();
+        console.log([...seen].sort().join());
+      });
+    `;
+    expect(await run(["-e", fixture])).toEqual(prints("got ping,timer\n"));
+  });
+
+  // The worker reports a rejection from the wait for its entry module, or from its loop after that.
+  test.serial.each([
+    [
+      "a link of the chain's first drain",
+      `let links = 0;
+       new PerformanceObserver(() => {
+         if (++links === 3) Promise.reject(new Error("rejected in the worker"));
+         if (links < 30) performance.mark("again");
+       }).observe({ entryTypes: ["mark"] });
+       performance.mark("first");`,
+    ],
+    [
+      "a link after the chain's first drain",
+      `let links = 0;
+       new PerformanceObserver(() => {
+         if (++links === 12) Promise.reject(new Error("rejected in the worker"));
+         if (links < 30) performance.mark("again");
+       }).observe({ entryTypes: ["mark"] });
+       performance.mark("first");`,
+    ],
+    [
+      "an immediate",
+      `new PerformanceObserver(() => {}).observe({ entryTypes: ["mark"] });
+       setImmediate(() => {
+         Promise.reject(new Error("rejected in the worker"));
+         // A task keeps the worker's loop running for the turn that reports the rejection.
+         performance.mark("one more task");
+       });`,
+    ],
+  ])("a Worker exits with code 1 when %s rejects a promise that nothing handles", async (_, worker) => {
+    const fixture = `
+      import { Worker } from "node:worker_threads";
+      const worker = new Worker(${JSON.stringify(worker)}, { eval: true });
+      const errors = [];
+      worker.on("error", error => errors.push(error.message));
+      worker.on("exit", code => console.log(JSON.stringify({ errors, code })));
+    `;
+    expect(await run(["-e", fixture])).toEqual(prints('{"errors":["rejected in the worker"],"code":1}\n'));
+  });
+
+  test.serial.each([
+    ["after a timer while the chain runs", "afterTimer", "resumed after a timer\n"],
+    ["after 30 tasks in a row", "afterTasks", "resumed after 30 tasks\n"],
+  ])("a macro resumes %s", async (_, macro, expected) => {
+    using dir = tempDir("task-chain-macro", {
+      "macro.ts": `
+        import dns from "node:dns";
+        export async function afterTimer() {
+          ${link}${observerChain}
+          await new Promise(resolve => setTimeout(resolve, 1));
+          return "resumed after a timer";
+        }
+        export async function afterTasks() {
+          for (let i = 0; i < 30; i++) await dns.promises.resolve4("a..b").catch(() => {});
+          return "resumed after 30 tasks";
+        }
+      `,
+      "main.ts": `
+        import { ${macro} } from "./macro.ts" with { type: "macro" };
+        console.log(${macro}());
+        // The resolver keeps the process alive for a second after a query.
+        process.exit(0);
+      `,
+    });
+    const { stdout, ...rest } = await run(["main.ts"], { cwd: String(dir) });
+    // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+    expect({ stdout: stdout.replace(/^\[macro\] .*\n/gm, ""), ...rest }).toEqual(prints(expected));
+  });
+
+  // Nothing runs the loop of a macro once the macro has settled, until the next call.
+  test.serial("the task that a macro queues as its last step runs before the macro is over", async () => {
+    const calls = Array.from({ length: 12 }, (_, awaited) => `lastStep(${awaited + 1})`);
+    using dir = tempDir("task-chain-macro-last-step", {
+      "ran.txt": "",
+      "macro.ts": `
+        import dns from "node:dns";
+        import { appendFileSync, readFileSync } from "node:fs";
+        import path from "node:path";
+        const ran = path.join(import.meta.dir, "ran.txt");
+        // Returns how many of the calls before it had run their last task when this call began.
+        export async function lastStep(awaited: number) {
+          const ranBefore = readFileSync(ran, "utf8").length;
+          // Each query fails in a task of its own.
+          for (let i = 0; i < awaited; i++) await dns.promises.resolve4("a..b").catch(() => {});
+          dns.resolve4("a..b", () => appendFileSync(ran, "."));
+          return ranBefore;
+        }
+      `,
+      "main.ts": `
+        import { lastStep } from "./macro.ts" with { type: "macro" };
+        console.log([${calls.join(", ")}].join());
+        // The resolver keeps the process alive for a second after a query.
+        process.exit(0);
+      `,
+    });
+    const { stdout, ...rest } = await run(["main.ts"], { cwd: String(dir) });
+    expect({ stdout: stdout.replace(/^\[macro\] .*\n/gm, ""), ...rest }).toEqual(prints("0,1,2,3,4,5,6,7,8,9,10,11\n"));
+  });
+
+  test.serial("a chain of 12 tasks that the module of a macro starts is over before the macro is called", async () => {
+    using dir = tempDir("task-chain-macro-module", {
+      "macro.ts": `
+        let links = 0;
+        new PerformanceObserver(() => {
+          if (++links < 12) performance.mark("again");
+        }).observe({ entryTypes: ["mark"] });
+        performance.mark("first");
+        export function linksRun() {
+          return links;
+        }
+      `,
+      "main.ts": `
+        import { linksRun } from "./macro.ts" with { type: "macro" };
+        console.log(linksRun());
+      `,
+    });
+    const { stdout, ...rest } = await run(["main.ts"], { cwd: String(dir) });
+    expect({ stdout: stdout.replace(/^\[macro\] .*\n/gm, ""), ...rest }).toEqual(prints("12\n"));
+  });
+
+  test.serial("a rejection in a chain that a macro leaves behind fails the build", async () => {
+    using dir = tempDir("task-chain-macro-left-behind", {
+      "macro.ts": `
+        export async function leavesAChain() {
+          let links = 0;
+          new PerformanceObserver(() => {
+            // After the chain's first drain, so in the tick that runs once the macro has settled.
+            if (++links === 12) Promise.reject(new Error("rejected by the chain of the macro"));
+            if (links < 40) performance.mark("again");
+          }).observe({ entryTypes: ["mark"] });
+          performance.mark("first");
+          await Promise.resolve();
+          return "settled";
+        }
+      `,
+      "main.ts": `
+        import { leavesAChain } from "./macro.ts" with { type: "macro" };
+        console.log(leavesAChain());
+      `,
+    });
+    const { stdout, stderr, exitCode, signalCode } = await run(["main.ts"], { cwd: String(dir) });
+    expect({
+      stdout: stdout.replace(/^\[macro\] .*\n/gm, ""),
+      reported: stderr.match(/error: rejected by the chain of the macro/g),
+      exitCode,
+      signalCode,
+    }).toEqual({
+      stdout: "settled\n",
+      reported: ["error: rejected by the chain of the macro"],
+      exitCode: 1,
+      signalCode: null,
+    });
+  });
+
+  // `bun test` drives the loop itself.
+  test("a test times out while the chain runs", async () => {
+    using dir = tempDir("task-chain-test-timeout", {
+      "a.test.ts": `
+        import { test } from "bun:test";
+        test("never settles", async () => {
+          ${link}${observerChain}
+          await new Promise(() => {});
+        }, 20);
+        test("runs next", () => {});
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(["test", "a.test.ts"], { cwd: String(dir) });
+    expect({
+      stdout,
+      results: stderr.match(/^\((pass|fail)\) [\w ]+|this test timed out after \d+ms/gm)?.map(line => line.trimEnd()),
+      exitCode,
+    }).toEqual({
+      stdout: expect.stringMatching(/^(bun test .*\n)?$/),
+      results: ["(fail) never settles", "this test timed out after 20ms", "(pass) runs next"],
+      exitCode: 1,
+    });
+  });
+
+  // One drain of the task queue runs 9 generations. When the 9th ends the file, `bun test` runs the 10th before it
+  // leaves the file.
+  test.each([8, 9, 10, 18])(
+    "`bun test` runs the task that the last test queues behind %d generations in its file",
+    async generations => {
+      using dir = tempDir("task-chain-test-file-end", {
+        "a.test.ts": `
+          import { test } from "bun:test";
+          import dns from "node:dns";
+          test("queues a task as its last step", async () => {
+            // Each query fails in a task of its own.
+            for (let i = 0; i < ${generations}; i++) await dns.promises.resolve4("a..b").catch(() => {});
+            dns.resolve4("a..b", () => console.log("ran"));
+          });
+        `,
+      });
+      const { stdout, stderr, exitCode } = await run(["test", "a.test.ts"], { cwd: String(dir) });
+      expect({ stdout, passed: stderr.includes("(pass) queues a task as its last step"), exitCode }).toEqual({
+        stdout: expect.stringMatching(/^(bun test .*\n)?ran\n$/),
+        passed: true,
+        exitCode: 0,
+      });
+    },
+  );
+
+  // The chain's first drain ends before the rejection. `bun test` runs the next drain before it leaves the file.
+  // Serial: `--parallel` starts a process per core.
+  test.serial.each([
+    ["in one process", []],
+    ["--isolate", ["--isolate"]],
+    ["--parallel", ["--parallel"]],
+  ])(
+    "`bun test` (%s) reports a rejection of a chain that a test leaves behind under that test's file",
+    async (_, mode) => {
+      using dir = tempDir("task-chain-test-left-behind", {
+        "a.test.ts": `
+          import { test } from "bun:test";
+          test("leaves a chain behind", () => {
+            let links = 0;
+            new PerformanceObserver(() => {
+              if (++links === 12) Promise.reject(new Error("rejected by the chain of file a"));
+              if (links < 60) performance.mark("again");
+            }).observe({ entryTypes: ["mark"] });
+            performance.mark("first");
+          });
+        `,
+        "b.test.ts": `
+          import { test } from "bun:test";
+          test("passes", () => {});
+        `,
+      });
+      const { stderr, exitCode, signalCode } = await run(["test", ...mode, "a.test.ts", "b.test.ts"], {
+        cwd: String(dir),
+      });
+      // What `bun test` prints for each file follows a line with the file's name.
+      const reportedUnder = Object.fromEntries(
+        stderr
+          .split(/^(?=[ab]\.test\.ts:$)/m)
+          .filter(section => /^[ab]\.test\.ts:/.test(section))
+          .map(section => [
+            section.slice(0, "a.test.ts".length),
+            section.includes("error: rejected by the chain of file a"),
+          ]),
+      );
+      expect({ reportedUnder, exitCode, signalCode }).toEqual({
+        reportedUnder: { "a.test.ts": true, "b.test.ts": false },
+        exitCode: 1,
+        signalCode: null,
+      });
+    },
+  );
+
+  // A chain that ends runs as it did when one turn of the loop ran the whole queue.
+  test.each([
+    [
+      "a chain of three runs before the immediates, each link with its ticks and microtasks",
+      `const order = [];
+       let links = 0;
+       new PerformanceObserver(() => {
+         const link = ++links;
+         order.push("task " + link);
+         process.nextTick(() => order.push("tick " + link));
+         queueMicrotask(() => order.push("microtask " + link));
+         if (link < 3) performance.mark("again");
+       }).observe({ entryTypes: ["mark"] });
+       performance.mark("first");
+       setImmediate(() => order.push("immediate 1"));
+       setImmediate(() => {
+         order.push("immediate 2");
+         console.log(order.join());
+       });`,
+      "task 1,tick 1,microtask 1,task 2,tick 2,microtask 2,task 3,tick 3,microtask 3,immediate 1,immediate 2\n",
+    ],
+    [
+      "a dns.resolve4() that fails calls back before the immediates and the timers",
+      `import dns from "node:dns";
+       const order = [];
+       setTimeout(() => {
+         order.push("timer");
+         console.log(order.join());
+       }, 1);
+       setImmediate(() => order.push("immediate"));
+       dns.resolve4("a..b", () => order.push("dns"));
+       process.nextTick(() => order.push("tick"));`,
+      "tick,dns,immediate,timer\n",
+    ],
+    [
+      // One drain runs 9 generations: the 8 pairs of a chain of 9 links are inside the first drain.
+      "a rejection that the next link handles is not reported, in a chain of 8 such pairs",
+      `let links = 0, rejected;
+       new PerformanceObserver(() => {
+         rejected?.catch(() => {});
+         if (++links === 9) return console.log(links);
+         rejected = Promise.reject(new Error("rejected by link " + links));
+         performance.mark("again");
+       }).observe({ entryTypes: ["mark"] });
+       performance.mark("first");`,
+      "9\n",
+    ],
+    [
+      "a rejection that the next task handles is not reported while the thread pool posts tasks",
+      `import { stat } from "node:fs";
+       let unhandled = 0, started = 0, finished = 0, rejected = [];
+       process.on("unhandledRejection", () => unhandled++);
+       // The task that handles what the callbacks before it rejected.
+       new PerformanceObserver(() => {
+         for (const promise of rejected) promise.catch(() => {});
+         rejected = [];
+         if (finished === 300) console.log(unhandled);
+       }).observe({ entryTypes: ["mark"] });
+       function next() {
+         if (started === 300) return;
+         started++;
+         stat(".", () => {
+           finished++;
+           rejected.push(Promise.reject(new Error("rejected by a callback")));
+           performance.mark("handle");
+           // This thread stays slower than the thread pool, so tick() takes in more results between the two tasks.
+           const until = performance.now() + 0.05;
+           while (performance.now() < until);
+           next();
+         });
+       }
+       for (let i = 0; i < 32; i++) next();`,
+      "0\n",
+    ],
+    [
+      "a chain of 1000 ends, and 'beforeExit' runs once after each chain",
+      `let links = 0, beforeExits = 0;
+       new PerformanceObserver(() => {
+         if (++links % 1000 !== 0) performance.mark("again");
+       }).observe({ entryTypes: ["mark"] });
+       performance.mark("first");
+       process.on("beforeExit", () => {
+         // The first one starts the chain again.
+         if (++beforeExits === 1) performance.mark("first again");
+       });
+       process.on("exit", code => console.log(links, beforeExits, code));`,
+      "2000 2 0\n",
+    ],
+    [
+      "a chain of 30 ends while a server is idle and no timer is set",
+      `const server = Bun.serve({ port: 0, fetch: () => new Response() });
+       let links = 0;
+       new PerformanceObserver(() => {
+         if (++links < 30) return performance.mark("again");
+         console.log(links);
+         server.stop();
+       }).observe({ entryTypes: ["mark"] });
+       performance.mark("first");`,
+      "30\n",
+    ],
+  ])("%s", async (_, fixture, stdout) => {
+    expect(await run(["-e", fixture])).toEqual(prints(stdout));
+  });
+
+  test("a chain of 100 ends after an uncaught error under --hot", async () => {
+    using dir = tempDir("task-chain-hot", {
+      "chain.js": `
+        let links = 0;
+        new PerformanceObserver(() => {
+          if (++links < 100) return performance.mark("again");
+          console.log(links);
+          process.exit(0);
+        }).observe({ entryTypes: ["mark"] });
+        performance.mark("first");
+        throw new Error("uncaught");
+      `,
+    });
+    const { stdout, exitCode, signalCode } = await run(["--hot", "chain.js"], { cwd: String(dir) });
+    expect({ stdout, exitCode, signalCode }).toEqual({ stdout: "100\n", exitCode: 0, signalCode: null });
+  });
+
+  test("in a longer chain a rejection that waits for the next link is reported, then 'rejectionHandled' follows", async () => {
+    const fixture = `
+      // Each link handles the promise that the link before it rejected, and rejects one of its own.
+      let links = 0, rejected;
+      const reported = new Set(), handledLater = new Set();
+      process.on("unhandledRejection", (error, promise) => reported.add(promise));
+      process.on("rejectionHandled", promise => handledLater.add(promise));
+      new PerformanceObserver(() => {
+        rejected?.catch(() => {});
+        if (++links === 30) {
+          return setImmediate(() => {
+            const allHandledLater = reported.size === handledLater.size && [...reported].every(promise => handledLater.has(promise));
+            console.log(JSON.stringify({ links, reported: reported.size > 0, allHandledLater }));
+          });
+        }
+        rejected = Promise.reject(new Error("rejected by link " + links));
+        performance.mark("again");
+      }).observe({ entryTypes: ["mark"] });
+      performance.mark("first");`;
+    expect(await run(["-e", fixture])).toEqual(prints('{"links":30,"reported":true,"allHandledLater":true}\n'));
+  });
+
+  test("without a listener a chain ends at the first rejection that is reported", async () => {
+    const fixture = `
+      let links = 0, rejected;
+      new PerformanceObserver(() => {
+        rejected?.catch(() => {});
+        if (++links === 30) return;
+        rejected = Promise.reject(new Error("rejected by link " + links));
+        performance.mark("again");
+      }).observe({ entryTypes: ["mark"] });
+      performance.mark("first");
+      process.on("exit", () => console.log(links < 30 ? "ended before link 30" : "ran all 30 links"));`;
+    const { stdout, stderr, exitCode, signalCode } = await run(["-e", fixture]);
+    expect({ stdout, reported: stderr.match(/error: rejected by link \d+/g)?.length, exitCode, signalCode }).toEqual({
+      stdout: "ended before link 30\n",
+      reported: 1,
+      exitCode: 1,
+      signalCode: null,
+    });
+  });
+
+  test("process.exit() in a link exits there", async () => {
+    const fixture = `
+      let links = 0;
+      new PerformanceObserver(() => {
+        if (++links === 5) process.exit(3);
+        performance.mark("again");
+      }).observe({ entryTypes: ["mark"] });
+      performance.mark("first");
+      process.on("exit", code => console.log(links, code));`;
+    expect(await run(["-e", fixture])).toEqual(prints("5 3\n", 3));
+  });
 });

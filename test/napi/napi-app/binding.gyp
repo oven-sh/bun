@@ -308,6 +308,17 @@
             ],
         },
         {
+            "target_name": "test_ref_finalizer_drain",
+            "sources": ["test_ref_finalizer_drain.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
+            ],
+        },
+        {
             "target_name": "test_finalizer_create_error",
             "sources": ["test_finalizer_create_error.c"],
             "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],

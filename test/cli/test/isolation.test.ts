@@ -3528,6 +3528,7 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
       });
     });
 
+    // `unstubGlobals` takes the stub of the preload off before each test, and the end of a file puts it back for the next file.
     test("a stub of a preload saves what the end of the file left, not a spy or a fake that the end takes off", async () => {
       using dir = tempDir("spies-of-a-file", {
         "preload.ts": `

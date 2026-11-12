@@ -253,7 +253,7 @@ it("console.log with SharedArrayBuffer", () => {
 // https://github.com/oven-sh/bun/issues/31714
 // Like Node: a string first arg becomes "Assertion failed: <str>" and stays the
 // format string; any other first value gets a bare "Assertion failed" before it.
-it("console.assert prepends the Assertion failed marker", async () => {
+it.concurrent("console.assert prepends the Assertion failed marker", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -267,6 +267,7 @@ it("console.assert prepends the Assertion failed marker", async () => {
         console.assert(false, { code: "E42", user: "u1" }, "ctx"); // object stays data too
         console.assert(false, "");                         // empty string is still a string -> colon prefix
         console.assert(false);                             // no args -> bare marker
+        console.group(); console.assert(false); console.groupEnd(); // no args keeps group indent
         console.assert(true, "should not print");          // truthy condition prints nothing
         assert(false, "from node:console %s", "works");    // node:console export is the same function
       `,
@@ -290,6 +291,7 @@ it("console.assert prepends the Assertion failed marker", async () => {
       "} ctx",
       "Assertion failed: ",
       "Assertion failed",
+      "  Assertion failed",
       "Assertion failed: from node:console works",
       "",
     ].join("\n"),
@@ -300,7 +302,7 @@ it("console.assert prepends the Assertion failed marker", async () => {
 
 // A custom `new Console(...)` uses the JS builtin assert and must follow the
 // same rules: a non-string first arg survives as data, not "[object Object]".
-it("custom Console.assert prepends the Assertion failed marker like Node", async () => {
+it.concurrent("custom Console.assert prepends the Assertion failed marker like Node", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

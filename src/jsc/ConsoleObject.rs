@@ -466,21 +466,6 @@ fn message_with_type_and_level_(
         return Ok(());
     }
 
-    if message_type == MessageType::Assert && vals.is_empty() {
-        let text: &str = if Output::enable_ansi_colors_stderr() {
-            pfmt!("<r><red>Assertion failed<r>\n", true)
-        } else {
-            "Assertion failed\n"
-        };
-        // SAFETY: no other borrow of the console is live in this
-        // early-return arm (the deferred `_indent_guard` only holds the raw
-        // pointer, not a reference).
-        let ew = unsafe { vm_console_mut(global) }.error_writer();
-        let _ = ew.write_all(text.as_bytes());
-        let _ = ew.flush();
-        return Ok(());
-    }
-
     let enable_colors = if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
         Output::enable_ansi_colors_stderr()
     } else {
@@ -590,12 +575,11 @@ fn message_with_type_and_level_(
     let mut assert_args: Vec<JSValue> = Vec::new();
     // A heap `Vec<JSValue>` is invisible to the GC's stack scan; root the prefix.
     let mut _prefix_guard: Option<jsc::ProtectedJSValue> = None;
-    if message_type == MessageType::Assert && print_length > 0 {
+    if message_type == MessageType::Assert {
         use crate::StringJsc as _;
-        let first = vals[0];
-        if first.is_string_literal() {
+        if print_length > 0 && vals[0].is_string_literal() {
             let mut prefixed = b"Assertion failed: ".to_vec();
-            prefixed.extend_from_slice(&first.to_js_string_view(global)?.to_utf8());
+            prefixed.extend_from_slice(&vals[0].to_js_string_view(global)?.to_utf8());
             let prefixed = crate::bun_string_jsc::owned_utf8_into_js(global, prefixed)?;
             _prefix_guard = Some(prefixed.protected());
             assert_args.push(prefixed);
@@ -607,13 +591,13 @@ fn message_with_type_and_level_(
             assert_args.extend_from_slice(&vals[..print_length]);
         }
     }
-    let format_args: &[JSValue] = if assert_args.is_empty() {
-        &vals[..print_length]
-    } else {
+    let format_args: &[JSValue] = if message_type == MessageType::Assert {
         &assert_args
+    } else {
+        &vals[..print_length]
     };
 
-    if print_length > 0 {
+    if !format_args.is_empty() {
         format2(level, global, format_args, writer, print_options)?;
     } else if message_type == MessageType::Log {
         // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —

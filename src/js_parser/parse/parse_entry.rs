@@ -745,10 +745,21 @@ impl<'a> Parser<'a> {
         if !runtime_api_call.is_empty() {
             let module_dir = if pass_module_dir {
                 Some(if p.options.output_format == options::Format::Cjs {
+                    // `module.path` of the CommonJS wrapper. A bundled module's own
+                    // `__dirname` is inlined and would shadow the wrapper's.
                     let ref_ =
-                        p.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"__dirname")?;
+                        p.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"module")?;
                     p.record_usage(ref_);
-                    p.new_expr(E::Identifier::init(ref_), expr.loc)
+                    let module = p.new_expr(E::Identifier::init(ref_), expr.loc);
+                    p.new_expr(
+                        E::Dot {
+                            target: module,
+                            name: b"path".into(),
+                            name_loc: expr.loc,
+                            ..Default::default()
+                        },
+                        expr.loc,
+                    )
                 } else {
                     let import_meta = p.new_expr(E::ImportMeta {}, expr.loc);
                     p.new_expr(
@@ -1337,20 +1348,6 @@ impl<'a> Parser<'a> {
         //
         if p.options.bundle || !p.options.features.commonjs_at_runtime {
             if uses_dirname || uses_filename {
-                // In a bundle these become ordinary variables: modules in other
-                // folders each get their own, and none overwrites the `__dirname`
-                // of the CommonJS wrapper.
-                if p.options.bundle {
-                    for (used, ref_) in [
-                        (uses_dirname, p.dirname_ref),
-                        (uses_filename, p.filename_ref),
-                    ] {
-                        if used {
-                            p.symbols.as_mut_slice()[ref_.inner_index() as usize].kind =
-                                js_ast::symbol::Kind::Hoisted;
-                        }
-                    }
-                }
                 let count = (uses_dirname as usize) + (uses_filename as usize);
                 let mut declared_symbols =
                     bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");

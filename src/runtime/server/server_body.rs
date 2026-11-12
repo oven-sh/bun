@@ -706,7 +706,9 @@ impl AnyRoute {
         let dir = argument
             .get_optional_slice(init_ctx.global, b"dir")?
             .filter(|dir| {
-                paths::is_absolute(dir) && !StandaloneModuleGraph::is_bun_standalone_file_path(dir)
+                paths::is_absolute(dir)
+                    && !strings::contains_char(dir, 0)
+                    && !StandaloneModuleGraph::is_bun_standalone_file_path(dir)
             });
         if dir
             .as_ref()
@@ -716,15 +718,24 @@ impl AnyRoute {
                 .global
                 .throw_invalid_arguments(format_args!("Bundled file path is too long")));
         }
-        // A CommonJS re-bundle inlines the directory it was built in, which need not exist where
-        // the bundle is deployed. The paths then resolve against the cwd.
+        // `dir` holds the page only where the bundle was built next to its other outputs. A
+        // re-bundle, a copy of the server file, or a CommonJS bundle moved to another machine
+        // has no page there. The paths then resolve against the cwd, as without `dir`.
         let bundle_dir = dir
+            .filter(|dir| {
+                !strings::contains_char(index.slice(), 0)
+                    && sys::exists(
+                        paths::resolve_path::join_abs_string::<paths::platform::Loose>(
+                            dir,
+                            &[index.slice()],
+                        ),
+                    )
+            })
             .map(|dir| {
                 Box::<[u8]>::from(
                     paths::resolve_path::join_abs_string::<paths::platform::Loose>(&dir, &[b"."]),
                 )
-            })
-            .filter(|dir| sys::exists(dir));
+            });
         let mut iter = files.array_iterator(init_ctx.global)?;
         let mut html_route: Option<AnyRoute> = None;
         while let Some(file_entry) = iter.next()? {

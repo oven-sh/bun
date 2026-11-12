@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
-import { renameSync } from "node:fs";
+import { bunEnv, bunExe, isCI, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { copyFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -22,20 +22,54 @@ describe.concurrent("bundler", () => {
       server.stop();
     })();
   `;
+  const served = "200 true 200 true 200";
 
-  async function buildAndRun(
-    dir: string,
-    options: { entrypoints: readonly string[]; output: string; cwd?: string } & Partial<Bun.BuildConfig>,
-  ) {
-    const { entrypoints, output, cwd = ".", ...config } = options;
-    const build = await Bun.build({
-      entrypoints: entrypoints.map(entry => join(dir, entry)),
-      outdir: join(dir, "dist"),
-      target: "bun",
-      ...config,
-    } as Bun.BuildConfig);
-    expect(build.success).toBe(true);
+  type BuildOptions = {
+    entrypoints: readonly string[];
+    output: string;
+    cwd?: string;
+    backend?: "api" | "cli";
+    format?: "esm" | "cjs" | "iife";
+    target?: "bun" | "node";
+    publicPath?: string;
+    naming?: { entry?: string; chunk?: string; asset?: string };
+  };
 
+  async function build(dir: string, options: BuildOptions) {
+    const { entrypoints, backend = "api", format = "esm", target = "bun", publicPath, naming } = options;
+    if (backend === "api") {
+      const build = await Bun.build({
+        entrypoints: entrypoints.map(entry => join(dir, entry)),
+        outdir: join(dir, "dist"),
+        target,
+        format,
+        publicPath,
+        naming,
+      });
+      expect(build.success).toBe(true);
+      return;
+    }
+    // The documented production command.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        `--target=${target}`,
+        `--format=${format}`,
+        "--production",
+        "--outdir=dist",
+        ...entrypoints,
+      ],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(exitCode, stderr).toBe(0);
+  }
+
+  async function run(dir: string, output: string, cwd = ".") {
     await using proc = Bun.spawn({
       cmd: [bunExe(), output],
       env: bunEnv,
@@ -46,6 +80,11 @@ describe.concurrent("bundler", () => {
     return { stdout: stdout.trim(), stderr, exitCode };
   }
 
+  async function buildAndRun(dir: string, options: BuildOptions) {
+    await build(dir, options);
+    return run(dir, options.output, options.cwd);
+  }
+
   // The server entry lands in dist/src/ when a second entry point widens the root.
   const inSubfolder = { entrypoints: ["src/server.ts", "other.ts"], output: "dist/src/server.js" };
   const aboveOutdir = { entrypoints: ["src/server.ts"], output: "server.js" };
@@ -54,11 +93,21 @@ describe.concurrent("bundler", () => {
   test.each([
     { name: "esm", format: "esm", entrypoints: ["src/server.ts"], output: "dist/server.js" },
     { name: "cjs", format: "cjs", entrypoints: ["src/server.ts"], output: "dist/server.js" },
+    { name: "cli", backend: "cli", format: "esm", entrypoints: ["src/server.ts"], output: "dist/server.js" },
+    { name: "cli-cjs", backend: "cli", format: "cjs", entrypoints: ["src/server.ts"], output: "dist/server.js" },
     { name: "subdirectory", format: "esm", ...inSubfolder },
     { name: "subdirectory-cjs", format: "cjs", ...inSubfolder },
+    { name: "subdirectory-cli", backend: "cli", format: "esm", ...inSubfolder },
     { name: "publicPath", format: "esm", publicPath: "/", ...inSubfolder },
     { name: "publicPath-cjs", format: "cjs", publicPath: "/", ...inSubfolder },
     { name: "naming-starts-with-dot", format: "esm", naming: { entry: "./[dir]/[name].[ext]" }, ...inSubfolder },
+    {
+      name: "naming-two-levels-down",
+      format: "esm",
+      naming: { entry: "a/b/[name].[ext]" },
+      entrypoints: ["src/server.ts"],
+      output: "dist/a/b/server.js",
+    },
     // A segment that goes up and comes back is no way out of the outdir.
     {
       name: "naming-down-and-up",
@@ -75,20 +124,8 @@ describe.concurrent("bundler", () => {
       naming: { chunk: "[dir]/[name]-[hash].[ext]", asset: "[dir]/[name]-[hash].[ext]" },
       ...inSubfolder,
     },
-  ] as const)("HTMLServerRunFromAnotherDirectory/$name", async ({ name, ...options }) => {
-    using dir = tempDir("html-server-cwd", {
-      ...htmlServerFiles,
-      "src/server.ts": `import about from "./pages/about.html";${serveAbout}`,
-    });
-    const { stdout, stderr, exitCode } = await buildAndRun(String(dir), options);
-    expect(stdout, stderr).toBe("200 true 200 true 200");
-    expect(exitCode).toBe(0);
-  });
-
-  // The server entry lands above the outdir, or beside it: `root` leads back through the outdir's name.
-  // The entry naming moves the page there too, and a public path is what finds its files from there.
-  // `bun build` cannot create a `../` output folder on Windows.
-  test.skipIf(isWindows).each([
+    // The server entry lands above the outdir, or beside it: `root` leads back through the outdir's name.
+    // The entry naming moves the page there too, and a public path is what finds its files from there.
     {
       name: "naming-above-outdir",
       format: "esm",
@@ -124,22 +161,86 @@ describe.concurrent("bundler", () => {
       "src/server.ts": `import about from "./pages/about.html";${serveAbout}`,
     });
     const { stdout, stderr, exitCode } = await buildAndRun(String(dir), options);
-    expect(stdout, stderr).toBe("200 true 200 true 200");
+    expect(stdout, stderr).toBe(served);
     expect(exitCode).toBe(0);
   });
 
-  test("HTMLServerCopiedManifest", async () => {
-    using dir = tempDir("html-server-copy", {
+  // The manifest finds the outdir wherever the output folder is moved to.
+  test.each(["esm", "cjs"] as const)("HTMLServerMovedOutdir/%s", async format => {
+    using dir = tempDir("html-server-moved", {
       ...htmlServerFiles,
-      "src/server.ts": `import original from "./pages/about.html"; const about = { ...original };${serveAbout}`,
+      "src/server.ts": `import about from "./pages/about.html";${serveAbout}`,
     });
-    // A copy loses `dir`, so its paths are relative to the working directory, as without it.
-    const { stdout, stderr, exitCode } = await buildAndRun(String(dir), {
-      ...inSubfolder,
-      output: "src/server.js",
+    await build(String(dir), { ...inSubfolder, format });
+    renameSync(join(String(dir), "dist"), join(String(dir), "deployed"));
+    const { stdout, stderr, exitCode } = await run(String(dir), join(String(dir), "deployed/src/server.js"), "src");
+    expect(stdout, stderr).toBe(served);
+    expect(exitCode).toBe(0);
+  });
+
+  // `dir` is the outdir, `root` is gone, and the paths stay relative to the outdir.
+  test.each(["esm", "cjs"] as const)("HTMLServerManifestShape/%s", async format => {
+    using dir = tempDir("html-server-shape", {
+      ...htmlServerFiles,
+      "src/server.ts": `
+        import about from "./pages/about.html";
+        console.log(JSON.stringify([Object.keys(about), "root" in about, about.dir, about.index, about.files.map(file => file.path)]));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await buildAndRun(String(dir), { ...inSubfolder, format });
+    const [keys, hasRoot, outdir, index, paths] = JSON.parse(stdout);
+    expect([keys, hasRoot, outdir, index], stderr).toEqual([
+      ["index", "files"],
+      false,
+      join(String(dir), "dist"),
+      "src/pages/about.html",
+    ]);
+    expect(paths).toContain(index);
+    expect(paths.every((path: string) => !path.startsWith("/") && !path.startsWith(".."))).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  // A server file that is not next to its page runs from the outdir, as before: `dir` does not hold the page.
+  test.each([
+    // A copy of the manifest has no `dir`.
+    { name: "copied-manifest", setup: (dir: string) => {}, output: "src/server.js", cwd: "dist" },
+    {
+      name: "copied-server-file",
+      setup: (dir: string) => copyFileSync(join(dir, "dist/src/server.js"), join(dir, "server.js")),
+      output: "../server.js",
       cwd: "dist",
+    },
+  ])("HTMLServerRunFromOutdir/$name", async ({ name, setup, output, cwd }) => {
+    using dir = tempDir("html-server-outdir", {
+      ...htmlServerFiles,
+      "src/server.ts":
+        name === "copied-manifest"
+          ? `import original from "./pages/about.html"; const about = { ...original };${serveAbout}`
+          : `import about from "./pages/about.html";${serveAbout}`,
     });
-    expect(stdout, stderr).toBe("200 true 200 true 200");
+    await build(String(dir), inSubfolder);
+    setup(String(dir));
+    const { stdout, stderr, exitCode } = await run(String(dir), output, cwd);
+    expect(stdout, stderr).toBe(served);
+    expect(exitCode).toBe(0);
+  });
+
+  // A second bundle of the server file keeps the manifest, with its own `import.meta.dir`, which holds no page.
+  test.each(["esm", "cjs"] as const)("HTMLServerRebundled/%s", async format => {
+    using dir = tempDir("html-server-rebundled", {
+      ...htmlServerFiles,
+      "src/server.ts": `import about from "./pages/about.html";${serveAbout}`,
+    });
+    await build(String(dir), { entrypoints: ["src/server.ts"], output: "dist/server.js" });
+    const second = await Bun.build({
+      entrypoints: [join(String(dir), "dist/server.js")],
+      outdir: join(String(dir), "rebundled"),
+      target: "bun",
+      format,
+    });
+    expect(second.success).toBe(true);
+    const { stdout, stderr, exitCode } = await run(String(dir), "../rebundled/server.js", "dist");
+    expect(stdout, stderr).toBe(served);
     expect(exitCode).toBe(0);
   });
 
@@ -159,10 +260,11 @@ describe.concurrent("bundler", () => {
       output: "src/server.js",
       cwd: "dist",
     });
-    expect(stdout, stderr).toBe("200 true 200 true 200");
+    expect(stdout, stderr).toBe(served);
     expect(exitCode).toBe(0);
   });
 
+  // A bundled module's `__dirname` is inlined. It must not reach the manifest's `module.path`.
   test("HTMLServerCommonJSUserDirname", async () => {
     using dir = tempDir("html-server-dirname", {
       ...htmlServerFiles,
@@ -174,26 +276,11 @@ describe.concurrent("bundler", () => {
       entrypoints: ["src/server.ts"],
       output: "dist/server.js",
     });
-    expect(stdout, stderr).toBe("true\n200 true 200 true 200");
+    expect(stdout, stderr).toBe(`true\n${served}`);
     expect(exitCode).toBe(0);
   });
 
-  test.each(["esm", "cjs"] as const)("each module keeps its own __dirname and __filename/%s", async format => {
-    using dir = tempDir("bundle-dirname", {
-      "entry.ts": `import { a } from "./a/a.ts"; import { b } from "./b/b.ts"; console.log(a(), b());`,
-      "a/a.ts": `export const a = () => [__dirname.endsWith("a"), __filename.endsWith("a.ts")].join();`,
-      "b/b.ts": `export const b = () => [__dirname.endsWith("b"), __filename.endsWith("b.ts")].join();`,
-    });
-    const { stdout, stderr, exitCode } = await buildAndRun(String(dir), {
-      format,
-      entrypoints: ["entry.ts"],
-      output: "dist/entry.js",
-    });
-    expect(stdout, stderr).toBe("true,true true,true");
-    expect(exitCode).toBe(0);
-  });
-
-  test.each(["", "relative/dir"])("HTMLServerManifestDirNotAbsolute/%j", async manifestDir => {
+  test.each(["", "relative/dir", "nul"])("HTMLServerManifestDirIgnored/%s", async manifestDir => {
     using dir = tempDir("html-server-dir", {
       "index.html": `<!doctype html><h1>hand built</h1>`,
       "server.js": `
@@ -203,7 +290,7 @@ describe.concurrent("bundler", () => {
           routes: {
             "/": {
               index: "./index.html",
-              dir: ${JSON.stringify(manifestDir)},
+              dir: ${manifestDir === "nul" ? 'process.cwd() + "\\0"' : JSON.stringify(manifestDir)},
               files: [{ path: "./index.html", loader: "html", isEntry: true, headers: { "content-type": "text/html" } }],
             },
           },
@@ -255,74 +342,40 @@ describe.concurrent("bundler", () => {
     expect(exitCode).toBe(0);
   });
 
-  // A CommonJS re-bundle inlines `import.meta.dir`, so the manifest names the build machine's directory.
-  test("HTMLServerRebundledToCommonJSAndMoved", async () => {
-    using dir = tempDir("html-server-rebundled", {
-      ...htmlServerFiles,
-      "src/server.ts": `import about from "./pages/about.html";${serveAbout}`,
-    });
-    const first = await Bun.build({
-      entrypoints: [join(String(dir), "src/server.ts")],
-      outdir: join(String(dir), "dist"),
-      target: "bun",
-      format: "esm",
-    });
-    expect(first.success).toBe(true);
-    const second = await Bun.build({
-      entrypoints: [join(String(dir), "dist/server.js")],
-      outdir: join(String(dir), "rebundled"),
-      target: "bun",
-      format: "cjs",
-    });
-    expect(second.success).toBe(true);
-
-    renameSync(join(String(dir), "dist"), join(String(dir), "deployed"));
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(String(dir), "rebundled/server.js")],
-      env: bunEnv,
-      cwd: join(String(dir), "deployed"),
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim(), stderr).toBe("200 true 200 true 200");
-    expect(exitCode).toBe(0);
-  });
-
   // The executable embeds only the server bundle, so the other outputs stay on disk.
-  test("HTMLServerCompiledBundleRunFromOutdir", async () => {
-    using dir = tempDir("html-server-compiled", {
-      ...htmlServerFiles,
-      "src/server.ts": `import about from "./pages/about.html";${serveAbout}`,
-    });
-    const build = await Bun.build({
-      entrypoints: [join(String(dir), "src/server.ts")],
-      outdir: join(String(dir), "dist"),
-      target: "bun",
-      format: "esm",
-    });
-    expect(build.success).toBe(true);
+  test(
+    "HTMLServerCompiledBundleRunFromOutdir",
+    async () => {
+      using dir = tempDir("html-server-compiled", {
+        ...htmlServerFiles,
+        "src/server.ts": `import about from "./pages/about.html";${serveAbout}`,
+      });
+      await build(String(dir), { entrypoints: ["src/server.ts"], output: "dist/server.js" });
 
-    const dist = join(String(dir), "dist");
-    await using compile = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "server.js", "--outfile=app"],
-      env: bunEnv,
-      cwd: dist,
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    const [compileStderr, compileExitCode] = await Promise.all([compile.stderr.text(), compile.exited]);
-    expect(compileExitCode, compileStderr).toBe(0);
+      const dist = join(String(dir), "dist");
+      await using compile = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "server.js", "--outfile=app"],
+        env: bunEnv,
+        cwd: dist,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [compileStderr, compileExitCode] = await Promise.all([compile.stderr.text(), compile.exited]);
+      expect(compileExitCode, compileStderr).toBe(0);
 
-    await using proc = Bun.spawn({
-      cmd: [join(dist, isWindows ? "app.exe" : "app")],
-      env: bunEnv,
-      cwd: dist,
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim(), stderr).toBe("200 true 200 true 200");
-    expect(exitCode).toBe(0);
-  });
+      await using proc = Bun.spawn({
+        cmd: [join(dist, isWindows ? "app.exe" : "app")],
+        env: bunEnv,
+        cwd: dist,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim(), stderr).toBe(served);
+      expect(exitCode).toBe(0);
+    },
+    // A compile copies the executable, which `itBundled` allows its `compile` tests too.
+    isCI ? undefined : isDebug ? Infinity : 30_000,
+  );
 
   for (const backend of ["api", "cli"] as const) {
     itBundled(`compile/${backend}/HTMLServerBasic`, {

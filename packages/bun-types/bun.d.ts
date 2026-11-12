@@ -7063,7 +7063,7 @@ declare module "bun" {
     index: string;
 
     /**
-     * The output directory of the build, which can end in `../`. `index` and each `files[].path` are relative to it.
+     * The absolute path of the build's output directory. `index` and each `files[].path` are relative to it.
      * This only exists when built ahead of time with `Bun.build` or `bun build`, `target: "bun"` and `format: "esm"` or `"cjs"`. It is not enumerable.
      */
     readonly dir?: string;

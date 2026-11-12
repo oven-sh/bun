@@ -346,8 +346,13 @@ export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");
 export var __jsonParse = /* @__PURE__ */ (a, dir) => {
   a = JSON.parse(a);
   if (dir !== undefined) {
-    __defProp(a, "dir", { value: a.root ? dir + "/" + a.root : dir });
+    var sep = dir.indexOf("\\") < 0 ? "/" : "\\";
+    for (var parts = a.root ? a.root.split("/") : [], i = 0; i < parts.length; i++) {
+      if (parts[i] === "..") dir = dir.slice(0, Math.max(dir.lastIndexOf("/"), dir.lastIndexOf("\\")));
+      else if (parts[i]) dir += sep + parts[i];
+    }
     delete a.root;
+    __defProp(a, "dir", { value: dir });
   }
   return a;
 };

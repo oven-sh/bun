@@ -16,6 +16,8 @@ interface ManifestFile {
 interface Manifest {
   index: string;
   files: ManifestFile[];
+  /** From the output file's folder to the outdir, when the file is not in the outdir itself. */
+  root?: string;
 }
 
 /** The manifests embedded in a bundled server entry point, in import order. */
@@ -524,6 +526,62 @@ console.log("About manifest:", aboutHtml);
       expect(about.files.filter(file => file.loader === "css").map(file => file.path)).toEqual([aboutHref]);
     },
   });
+
+  // A server bundle passes its own folder to the manifest helper. The paths stay relative to the
+  // outdir, and `root` leads there from a server file in a subfolder of the outdir.
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`html-import/manifest-has-the-bundle-dir-${format}`, {
+      outdir: "out/",
+      target: "bun",
+      format,
+      entryPoints: ["/src/server.js", "/other.js"],
+      outputPaths: ["/out/src/server.js", "/out/other.js"],
+      files: {
+        "/src/server.js": `
+          import page from "./page.html";
+          console.log(page.index);
+        `,
+        "/src/page.html": `<!DOCTYPE html><html><body>page</body></html>`,
+        "/other.js": `
+          import page from "./src/page.html";
+          console.log(page.index);
+        `,
+      },
+
+      onAfterBundle(api) {
+        const [inSubfolder] = readManifests(api, "out/src/server.js");
+        const [inOutdir] = readManifests(api, "out/other.js");
+        expect(inSubfolder).toEqual({ ...inOutdir, root: ".." });
+        expect(inOutdir.root).toBeUndefined();
+        expect(inOutdir.index).toBe("./src/page.html");
+        const dirArgument = format === "esm" ? ", import.meta.dir)" : ", module.path)";
+        api.expectFile("out/src/server.js").toContain(dirArgument);
+        api.expectFile("out/other.js").toContain(dirArgument);
+      },
+    });
+  }
+
+  // Other targets and formats keep the one-argument helper.
+  for (const [name, options] of [
+    ["node", { target: "node" }],
+    ["iife", { target: "bun", format: "iife" }],
+  ] as const) {
+    itBundled(`html-import/manifest-without-a-bundle-dir-${name}`, {
+      outdir: "out/",
+      ...options,
+      files: {
+        "/server.js": `
+          import page from "./page.html";
+          console.log(page.index);
+        `,
+        "/page.html": `<!DOCTYPE html><html><body>page</body></html>`,
+      },
+
+      onAfterBundle(api) {
+        expect(api.readFile("out/server.js")).toMatch(/__jsonParse\("(?:[^"\\]|\\.)*"\)/);
+      },
+    });
+  }
 
   // Past 127 entry points the entry bits switch to a heap-allocated bitset.
   // The manifest has to size its own bitset from the same entry point list as

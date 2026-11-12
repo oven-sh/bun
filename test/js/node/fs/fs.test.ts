@@ -172,6 +172,99 @@ describe("a Buffer path is read when its argument is parsed", () => {
     return { stdout: stdout.trim(), stderr, exitCode };
   }
 
+  it("a Dir reads the directory that its buffer named when it was opened", async () => {
+    using dir = tempDir("fs-buffer-path-dir", { "one/in-one": "", "two/in-two": "" });
+    const one = join(String(dir), "one");
+    const two = join(String(dir), "two");
+    const read: string[] = [];
+    {
+      const path = Buffer.from(one);
+      const opened = fs.opendirSync(path);
+      path.write(two);
+      read.push(opened.readSync()!.name);
+      expect(opened.path).toBe(path as any); // the caller's own buffer, as in node
+      opened.closeSync();
+    }
+    {
+      const path = new Uint8Array(Buffer.from(one));
+      const opened = await fs.promises.opendir(path as any);
+      path.set(Buffer.from(two));
+      for await (const entry of opened) read.push(entry.name);
+    }
+    {
+      const path = Buffer.from(one);
+      const { promise, resolve, reject } = Promise.withResolvers<Dir>();
+      fs.opendir(path, (err, opened) => (err ? reject(err) : resolve(opened)));
+      path.write(two);
+      const opened = await promise;
+      read.push((await opened.read())!.name);
+      await opened.close();
+    }
+    expect(read).toEqual(["in-one", "in-one", "in-one"]);
+  });
+
+  // A pool thread can win the race with the writes above. Here both pool threads wait in an open of a FIFO, so no call starts before its buffer changes.
+  it.skipIf(isWindows)("async calls that start after their buffers changed", async () => {
+    using dir = tempDir("fs-buffer-path-parked", {
+      "a.txt": "AAAA",
+      "b.txt": "BBBB",
+      "a.txt.png": "PNG",
+      "gone": "",
+      "keep": "",
+    });
+    mkfifo(join(String(dir), "fifo"), 0o600);
+    const script = `
+      import fs from "node:fs";
+      import path from "node:path";
+      const dir = process.cwd();
+      const at = name => Buffer.from(path.join(dir, name));
+      const parked = Array.from({ length: 4 }, () => fs.promises.open("fifo", "r"));
+
+      const promise = at("a.txt");
+      const promiseRead = fs.promises.readFile(promise, "utf8");
+      promise.write(path.join(dir, "b.txt"));
+
+      const callback = at("a.txt");
+      const callbackRead = new Promise(resolve => fs.readFile(callback, "utf8", (err, data) => resolve(err ? err.code : data)));
+      callback.write(path.join(dir, "b.txt"));
+
+      const unlinked = at("gone");
+      const unlink = fs.promises.unlink(unlinked).then(() => "ok", err => err.code);
+      unlinked.write(path.join(dir, "keep"));
+
+      const missing = at("missing-a");
+      const errorPath = fs.promises.stat(missing).then(() => "found", err => path.basename(err.path));
+      missing.write(path.join(dir, "missing-b"));
+
+      const cut = at("a.txt.png");
+      const cutRead = fs.promises.readFile(cut, "utf8").catch(err => err.code);
+      cut[cut.length - 4] = 0;
+
+      const writer = fs.openSync("fifo", "w"); // the pool threads run again
+      for (const handle of await Promise.all(parked)) await handle.close();
+      fs.closeSync(writer);
+      console.log(JSON.stringify({
+        promise: await promiseRead,
+        callback: await callbackRead,
+        unlink: await unlink,
+        errorPath: await errorPath,
+        cut: await cutRead,
+        left: fs.readdirSync(dir).filter(name => name === "gone" || name === "keep"),
+      }));
+    `;
+    const { stdout, stderr, exitCode } = await runInChild(String(dir), script, { UV_THREADPOOL_SIZE: "2" });
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      promise: "AAAA",
+      callback: "AAAA",
+      unlink: "ok",
+      errorPath: "missing-a",
+      cut: "PNG",
+      left: ["keep"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   it("a NUL written after an async call does not cut the name", async () => {
     using dir = tempDir("fs-buffer-path-async-nul", { "a.txt": "AAAA", "a.txt.png": "PNG" });
     const script = `

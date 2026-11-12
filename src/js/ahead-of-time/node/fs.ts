@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/fs.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 391a2c740c17c25977978983b86383138f13e17050b6604e60e5d49a7aad8ea1.
+// Written against that file with the SHA-256 e8c6eb8af18aced8a40f327efadf93619fcb38001a72242efa36f4f6d69e0fdb.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:fs"
@@ -1148,6 +1148,17 @@ function opendirNotDirError(path: PathLike) {
 // which run the eager path check with an async stat instead.
 const kAlreadyValidated = Symbol("kAlreadyValidated");
 
+/** A copy of a path that is bytes. A string, a URL, or a view that cannot be read (the stat that follows rejects it) is returned as it is. */
+function ownPathBytes(path) {
+  try {
+    if (types.isArrayBufferView(path)) {
+      return new Uint8Array(new Uint8Array(path.buffer, path.byteOffset, path.byteLength));
+    }
+    if (types.isAnyArrayBuffer(path)) return new Uint8Array(new Uint8Array(path));
+  } catch {}
+  return path;
+}
+
 class Dir {
   /**
    * `-1` when closed. stdio handles (0, 1, 2) don't actually get closed by
@@ -1155,6 +1166,8 @@ class Dir {
    */
   #handle: number;
   #path: PathLike;
+  /** What the reads open. node holds a directory handle from here on, so the caller can rewrite a buffer path before the first read. */
+  #opened: PathLike;
   #options;
   #entries: DirentType[] | null = null;
   #entriesIdx = 0;
@@ -1189,6 +1202,7 @@ class Dir {
     }
     this.#handle = $toLength(handle);
     this.#path = path;
+    this.#opened = ownPathBytes(path);
     this.#options = options;
   }
 
@@ -1227,7 +1241,7 @@ class Dir {
     if (this.#handle < 0) throw $ERR_DIR_CLOSED();
     if (this.#pendingCount > 0) throw this.#dirConcurrentError();
 
-    let entries = (this.#entries ??= fs.readdirSync(this.#path, {
+    let entries = (this.#entries ??= fs.readdirSync(this.#opened, {
       withFileTypes: true,
       encoding: this.#options?.encoding,
       recursive: this.#options?.recursive,
@@ -1256,7 +1270,7 @@ class Dir {
     const entries = this.#entries;
     if (entries) return this.#entriesIdx < entries.length ? entries[this.#entriesIdx++] : null;
     return fs
-      .readdir(this.#path, {
+      .readdir(this.#opened, {
         withFileTypes: true,
         encoding: this.#options?.encoding,
         recursive: this.#options?.recursive,

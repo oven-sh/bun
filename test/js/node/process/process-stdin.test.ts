@@ -911,6 +911,39 @@ describe("process.stdin paused for a nextTick, an immediate and a timer in turn"
   });
 });
 
+// /dev/zero answers every read at once. The reads of process.stdin never left the nextTick and promise job drain, so
+// the event loop did not turn: no signal listener and no timer ran.
+test.skipIf(isWindows)("a signal listener runs while process.stdin reads a device that always has bytes", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      process.on("SIGUSR1", () => {
+        console.log("SIGUSR1");
+        process.exit(0);
+      });
+      process.stdin.on("data", () => {});
+      require("fs").writeSync(1, "READY\\n");
+      `,
+    ],
+    stdin: Bun.file("/dev/zero"),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let stdout = "";
+  for (let read; !stdout.includes("READY\n") && !(read = await reader.read()).done;) {
+    stdout += decoder.decode(read.value, { stream: true });
+  }
+  proc.kill("SIGUSR1");
+  for (let read; !(read = await reader.read()).done;) stdout += decoder.decode(read.value, { stream: true });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "READY\nSIGUSR1\n", stderr: "", exitCode: 0 });
+});
+
 // The source keeps its wrapper alive while a read of process.stdin waits in it. pause() drops that read.
 test("process.stdin paused and resumed on an open pipe keeps no read alive", async () => {
   const rounds = 300;

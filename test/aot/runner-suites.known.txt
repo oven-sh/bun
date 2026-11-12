@@ -112,9 +112,6 @@ test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules >
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
 test/js/bun/test/vitest-flavor.test.ts: [test] globals = "vitest" > is part of the transpiler cache key
-# A module that is being imported calls import(): a compiled run runs the inner module ahead of the `.then()` of the outer call, as the executable and Node.js do. `bun test` reads the inner file on another thread first.
-test/js/bun/test/vi-utils.test.ts: vi.dynamicImportSettled > waits for the imports in flight and the ones they start
-#
 test/js/bun/test/import-meta-env.test.ts: import.meta.env > in other realms
 # These ask about the transpiler cache, which a compiled run doesn't use: they say nothing about compiled code.
 test/js/bun/test/test-auto-import-jest-globals.test.js: the transpiler cache > caches a test file: 

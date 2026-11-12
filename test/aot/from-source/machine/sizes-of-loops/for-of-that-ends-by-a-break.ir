@@ -15,12 +15,13 @@
 # The compiler before this one: 4 instructions, 0 of them patches, a turn of the written loop steps by 1.
 # When the bound was taken: loop: operations 52, patches 0, moves 1, unlikely 8 ; loop: operations 60, patches 0, moves 1, unlikely 8 ; loop: operations 17, patches 1, moves 1, unlikely 0 ; loop: operations 18, patches 2, moves 0, unlikely 11.
 # The int32s of the fourth loop are compared as integers: 35 for 27 operations, 3.6 for 5.6 instructions an element.
-# RUN(X64): loops most:19,5,13,35,7,18 f1 mechanisms=all-Inlining
+# The list has no holes: the elements of the version for doubles are numbers, 35 and 7 operations are 19 and 5.
+# RUN(X64): loops most:19,5,19,5,13,18 f1 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f1:Body
 # X64-NEXT: loop: at most 19
 # X64-NEXT: loop: at most 5
+# X64-NEXT: loop: at most 19
+# X64-NEXT: loop: at most 5
 # X64-NEXT: loop: at most 13
-# X64-NEXT: loop: at most 35
-# X64-NEXT: loop: at most 7
 # X64-NEXT: loop: at most 18

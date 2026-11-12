@@ -176,6 +176,8 @@ impl ModuleSet {
         self.wrapped = WrappedModules::compute(
             input.files,
             input.known_helpers,
+            &|name| input.every_object_has(name),
+            input.replaced_builtins,
             &|file: FileId| keeps_holders[file.idx()] || sources.kind(file) != SourceKind::Program,
             input.in_parallel,
         );

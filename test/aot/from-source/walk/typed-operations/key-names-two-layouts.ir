@@ -11,4 +11,5 @@
 # -- end of source
 # The names of a holder of a few layouts tell a key apart, also where the value read is an argument of a call.
 # RUN: walk f1:Body mechanisms=all
-# CHECK: SwitchString
+# CHECK: = GetSlot {{*}}key="id" receivers=[L0, L1] level=Proven
+# CHECK: = GetSlot {{*}}key="age" receivers=[L0, L1] level=Proven

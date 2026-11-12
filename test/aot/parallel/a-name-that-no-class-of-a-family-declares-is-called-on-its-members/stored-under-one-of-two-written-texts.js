@@ -1,5 +1,5 @@
 // STATISTIC: SharedCallsWithDormantMembers >= 1
-// STATISTIC: SharedCallsWithActivatedMembers = 0
+// STATISTIC: SharedCallsWithActivatedMembers >= 1
 class Base { constructor(n) { this.n = n; } }
 class A extends Base { a() { return "a" + this.n; } }
 class B extends Base { b() { return "b" + this.n; } }

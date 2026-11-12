@@ -94,7 +94,8 @@ const mostMappedBytes: Record<string, number> = { "": 70_150_000, "--trim": 27_3
 // And once with oven-sh/bun#47605, from what CI measured there and 1%: 23,755,040.
 // And with oven-sh/bun#48478, from 24,324,717 and 1%.
 // And with oven-sh/WebKit#1036, from 26,919,547 and 1%.
-const mostBytesOfCompiler = 27_190_000;
+// And with oven-sh/WebKit#1040, from 29,515,694, with the room it had.
+const mostBytesOfCompiler = 29_790_000;
 
 const importsItsArguments = `
   import { join } from "node:path";

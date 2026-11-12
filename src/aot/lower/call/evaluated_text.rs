@@ -33,12 +33,10 @@ impl FileLowering<'_, '_, '_, '_> {
             std::iter::successors(scope.some(), parent_of).any(|it| it == own_scope)
         };
         let mut expressions = (evaluation.first_expression.0..root.0).map(ExprId);
-        // `Function` doesn't take over that the code around the call is strict.
-        let scope_around = bound.scopes[own_scope.idx()].parent;
-        let is_strict_around = hir.is_strict || bound.is_strict_scope(scope_around);
+        // `Function` doesn't take over that the code around the call is strict. All functions of a module are.
         let is_strict = hir[function].is_strict;
         is_strict == hir[function].is_strict_by_syntax
-            && (is_strict || !is_strict_around)
+            && is_strict == bound.is_strict_scope(own_scope)
             && expressions.all(|e| match hir[e].kind {
                 ExprKind::Ident(_) => {
                     bound.dynamic_lookup_scope(NodeData::Expr(e)).is_none()

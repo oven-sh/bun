@@ -11,7 +11,6 @@
 #include "NodeAsyncHooks.h"
 
 #include <JavaScriptCore/ErrorInstance.h>
-#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSBoundFunction.h>
@@ -3137,6 +3136,7 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
         // The end of the mock restores what the require() has loaded.
         if (mock->replacesRequiredDataFile && !JSC::AOT::hasActiveMock(globalObject, *loaded.compiledModule)) {
             JSC::AOT::releaseEarlierImporters(globalObject, *loaded.compiledModule);
+            RETURN_IF_EXCEPTION(scope, );
             JSC::AOT::willReplaceRequiredDataFile(globalObject, *loaded.compiledModule);
             RETURN_IF_EXCEPTION(scope, );
         }
@@ -3988,9 +3988,10 @@ static void forEachPreloadMock(Zig::GlobalObject* globalObject, const Functor& f
 void noteOriginalUnderPreloadMock(Zig::GlobalObject* globalObject, const String& originalKey)
 {
     String path = withoutOriginalModuleQuery(originalKey);
-    bool isMockedByPreload = false;
-    forEachPreloadMock(globalObject, [&](JSModuleMock* mock) { isMockedByPreload |= mock->specifier->tryGetValue().data == path; });
-    if (isMockedByPreload)
+    bool displacesPreloadMock = false;
+    auto* registered = registeredModuleMock(globalObject, path);
+    forEachPreloadMock(globalObject, [&](JSModuleMock* mock) { displacesPreloadMock |= mock != registered && mock->specifier->tryGetValue().data == path; });
+    if (displacesPreloadMock)
         Bun::recordRepeatedFileRun(globalObject, path, "a preload file mocks it too"_s);
 }
 
@@ -5510,6 +5511,12 @@ JSC::JSPromise* nextPendingCompiledFactory(Zig::GlobalObject* globalObject, cons
             factory.isInCurrentWalk = false;
     }
     if (requester == JSC::AOT::PendingFactoryRequester::RejectedRequire) {
+        for (const auto& factory : factories.span().subspan(setAside)) {
+            auto* mock = uncheckedDowncast<JSModuleMock>(factory.mock.get());
+            String mocked = mock->specifier->tryGetValue().data;
+            if (mock->state == JSModuleMock::State::Settled && factory.patched->status() == JSC::JSPromise::Status::Pending && registeredModuleMock(globalObject, mocked) == mock && isInGraph(JSC::AOT::ModuleID(factory.module)))
+                Bun::recordRepeatedFileRun(globalObject, mocked, "a require() of it was rejected"_s);
+        }
         // The factory rejected, but the detached load that waits for it has not failed yet. `bun test` has already dropped the entry, so this require() calls the factory again.
         JSC::MarkedArgumentBuffer mocksToRetry;
         auto hasRejectedUnheard = [&](JSModuleMock* mock, uint32_t module) {
@@ -6085,6 +6092,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     // So does a compiled module that a failed load had linked: its importers have yet to be evaluated.
     if (keepsLoadedModule && loaded.compiledModule && JSC::AOT::hasImporterLinkedBeforeFailure(globalObject, *loaded.compiledModule)) {
         JSC::AOT::releaseEarlierImporters(globalObject, *loaded.compiledModule);
+        RETURN_IF_EXCEPTION(scope, {});
         mock->keepsActiveMockForImporters = false;
         keepsLoadedModule = false;
     }
@@ -6663,8 +6671,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             clearCompiledProgramFailures(globalObject, patchedFile);
             RETURN_IF_EXCEPTION(scope, {});
             // The eviction of importers does not wait for the factory.
-            if (patchedFile)
+            if (patchedFile) {
                 JSC::AOT::releaseEarlierImporters(globalObject, *patchedFile);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
             // The loader has no compiled files, but may have importers that run from source.
             // The pass also evicts whatever failed, so it is made only if `bun test` makes one: if an earlier test file or a preload has run the module.
             if (!previous && (wasEvaluatedBeforeTestFile || hasFailedPlainEntry || wasInEarlierFailedGraph || wasLinkedByEarlierFailedLoad)) {
@@ -8797,6 +8807,11 @@ bool hasSynchronousMockFactory(Zig::GlobalObject* globalObject, const String& pa
         return false;
     JSValue factory = mock->factory.get();
     return factory ? factory.isCallable() && !hasUncalledAsyncFactory(mock) : isOriginalSynchronous;
+}
+
+bool hasRegisteredModuleMock(Zig::GlobalObject* globalObject, const String& path)
+{
+    return Zig::registeredModuleMock(globalObject, path);
 }
 
 bool canRequireMockOriginalAt(Zig::GlobalObject* globalObject, const String& path)

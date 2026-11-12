@@ -139,6 +139,13 @@ const WRITTEN_IN_PLACE_OF: &[(BuiltinId, &[BuiltinId])] = &[
         BuiltinId::NodeModuleCreateRequire,
         &[BuiltinId::PrivateGlobalsCreateCommonJSModule],
     ),
+    (
+        BuiltinId::StringPrototypeMatchAll,
+        &[
+            BuiltinId::CompilerHelpersWayToStepMatches,
+            BuiltinId::CompilerHelpersStepMatchesInWay,
+        ],
+    ),
 ];
 
 const DECORATOR_HELPERS: &[BuiltinId] = &[
@@ -413,6 +420,7 @@ pub fn is_name_of_language_member_with_code(name: BuiltinName) -> bool {
         for &(name, _) in language_members_with_code() {
             names[name.0 as usize] = true;
         }
+        names[table::entry(BuiltinId::StringPrototypeMatchAll).name.0 as usize] = true;
         names.into_boxed_slice()
     });
     names[name.0 as usize]
@@ -512,6 +520,9 @@ impl Collector {
     fn add_language_members_named(&mut self, name: BuiltinName) {
         if names_of_what_promises_can_do()[name.0 as usize] {
             (self.work_stack).extend_from_slice(holders_that_come_with_first_promise());
+        }
+        if name == table::entry(BuiltinId::StringPrototypeMatchAll).name {
+            self.add_what_is_written_in_place_of(BuiltinId::StringPrototypeMatchAll);
         }
         let members = language_members_with_code();
         let first = members.partition_point(|member| member.0 < name);

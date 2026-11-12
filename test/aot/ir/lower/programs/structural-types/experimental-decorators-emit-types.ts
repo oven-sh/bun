@@ -209,12 +209,7 @@ console.log("keys " + Object.keys(new Everything<number>(1, new Dog())).join("")
 // CHECK-NEXT: v80 = Convert v79 declared={type=5}
 // CHECK-NEXT: PropSet v6, v80 key="w"
 // CHECK-NEXT: v82 = Undefined
-// CHECK-NEXT: v83 = TypeTest v82 testedType=object
-// CHECK-NEXT: Branch v83 -> taken b1(| 0), notTaken b2(v6)
-// CHECK-NEXT: b1(v84):
-// CHECK-NEXT: Jump -> next b2(v84)
-// CHECK-NEXT: b2(v85):
-// CHECK-NEXT: Return v85
+// CHECK-NEXT: Return v6
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="method"
 // CHECK: module=[[m_0]] position={{*}} sourceRange={{*}} kind=Method flags=[HasRestParameter, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[L_6]] flags=[OmitsNull, OmitsUndefined]}, {type=Array<number> flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {

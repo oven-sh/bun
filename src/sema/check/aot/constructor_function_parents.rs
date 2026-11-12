@@ -511,6 +511,24 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
+    /// The functions of the file that pass their receiver to `function`, which may be stored under `name`.
+    pub fn functions_passing_receiver(
+        &mut self,
+        function: FunctionRef,
+        name: Option<Atom>,
+    ) -> Vec<FnId> {
+        let of_file = self.prototype_links(function.file);
+        let passed = of_file.receivers_passed_to(function.function).iter();
+        let passed_by_name = of_file.receivers_passed_by_name().iter();
+        let mut callers: Vec<FnId> = passed.map(|&(_, caller)| caller).collect();
+        callers.extend(
+            passed_by_name
+                .filter(|&&(passed, _)| Some(passed) == name)
+                .map(|&(_, caller)| caller),
+        );
+        callers
+    }
+
     pub(super) fn passes_this_on_in_front_of(
         &mut self,
         function: FunctionRef,

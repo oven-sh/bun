@@ -19,8 +19,8 @@
 # f1 = declared, f2 = callsAnother, f4 = throughAnArrow, f6 = once, f8 = run, f10 = filter, f11 = own, f18 = local
 # A function that calls itself gets what loops get: what stands in its body runs again and again. That it calls itself is read off its own text: a declaration called by its name, a local function
 # called by its binding, a function expression called by its own name, `this.run()` in run. There a method of lists that is handed a leaf made for the call is copied to the site, as inside a loop.
-# NOT TAKEN: a method that calls its own name on another receiver (Heap.filter calls the list's filter) . two functions that call each other . a call of itself that stands in an arrow handed on .
-# a function that does not call itself.
+# NOT TAKEN: a method that calls its own name on another receiver (Heap.filter calls the list's filter) . two functions that call each other.
+# The calls in throughAnArrow() and once(), which do not call themselves, are copied too.
 # RUN: walk f1 f2 f4 f6 f8 f10 f11 f18 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: frame 1 callee=
@@ -28,9 +28,9 @@
 # CHECK-LABEL: code f2:Body
 # CHECK-NOT: isLoopHead=true
 # CHECK-LABEL: code f4:Body
-# CHECK-NOT: isLoopHead=true
+# CHECK: isLoopHead=true
 # CHECK-LABEL: code f6:Body
-# CHECK-NOT: isLoopHead=true
+# CHECK: isLoopHead=true
 # CHECK-LABEL: code f8:Body
 # CHECK: frame 1 callee=
 # CHECK: isLoopHead=true

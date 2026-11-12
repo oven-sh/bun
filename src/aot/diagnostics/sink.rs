@@ -93,7 +93,8 @@ impl Diagnostics {
         // The program has no place for a warning about a string that it evaluates.
         if let (Some(locator), Some(span)) = (locator.as_deref(), diagnostic.span)
             && diagnostic.severity != Severity::Error
-            && (locator.view().files().hir(span.file)).is_in_known_evaluation(span.start)
+            && let hir = locator.view().files().hir(span.file)
+            && (hir.is_in_known_evaluation(span.start) || hir.is_in_copied_factory(span.start))
         {
             return;
         }

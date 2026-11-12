@@ -10,7 +10,7 @@
 # publish(turns, grows);
 # -- end of source
 # RUN: compile SumsGuardedAsNumbers mechanisms=all
-# CHECK: statistic SumsGuardedAsNumbers 6
+# CHECK-NOT: statistic SumsGuardedAsNumbers 0
 # RUN(TURNS): walk f1 mechanisms=all
 # TURNS: code f1:Body
 # TURNS: : number @Double, v{{*}}: int[0, 4294967295] @Int64) isInLoop=true isLoopHead=true

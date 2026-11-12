@@ -11,7 +11,7 @@ use crate::generated_bindgen::node_fs_binding::RmOptions;
 use crate::node::ThreadIsolated;
 use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
-    NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
+    NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, move_waiting_descriptors, ret,
 };
 
 // The (`args::*`, `ret::*`, `NodeFS::<method>`, `async_::*`) quadruples are
@@ -31,6 +31,7 @@ fn run_sync_with<R: FsReturn, A: FsArgument>(
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
     let args = <A as FsArgument>::from_js(global, &mut slice)?;
+    move_waiting_descriptors();
     match dispatch(&args) {
         Err(err) => Err(global.throw_value(err.to_js(global))),
         Ok(res) => res.fs_to_js(global),
@@ -143,6 +144,7 @@ fn run_async<A: FsArgument>(
         ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, callback, error),
     };
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
+    move_waiting_descriptors();
     Ok(create_task(&cx, this, args, vm, callback))
 }
 

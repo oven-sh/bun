@@ -1,4 +1,5 @@
 mod evaluator;
+mod settled;
 mod strings;
 mod values;
 
@@ -9,16 +10,25 @@ use bun_core::strings::{contains, index_of_any, split};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::hir::{
     CallId, Chain, ExprId, ExprKind, File, FileBuilder, FnBody, FnId, FnKind, Keyword,
-    KnownEvaluation, TypeNodeKind,
+    KnownEvaluation, PatKind, TypeNodeKind,
 };
 use bun_sema::resolve::TreeChange;
 use bun_sema::session::Arena;
 use bun_sema_parser::{AppendedExpression, parse_appended_expressions};
 use rustc_hash::FxHashSet;
 
-use self::evaluator::Evaluator;
+use self::evaluator::{Evaluator, TEXT_PER_SOURCE};
+pub(crate) use self::settled::find_settled_evals;
+use crate::engine::describe_regexp_syntax_error;
 use crate::load::import_functions::declares;
 use crate::load::react_compiler::module_items::finish_file;
+
+const MAX_NESTED_TEXTS: u32 = 8;
+
+pub(crate) struct CodeBeside<'a> {
+    pub path: &'a [u8],
+    pub read_file: &'a dyn Fn(&[u8]) -> Option<Vec<u8>>,
+}
 
 struct EvaluatingCall {
     call: CallId,
@@ -40,9 +50,7 @@ fn find_evaluating_calls(hir: &File<'_>) -> Vec<EvaluatingCall> {
         let callee = hir.skip_type_assertions(hir[call].callee);
         match hir[callee].kind {
             ExprKind::Ident(known::eval) if !is_new => found.push((expression.pos, call, false)),
-            ExprKind::Ident(known::Function) if hir[call].args.len() > 1 => {
-                found.push((expression.pos, call, true));
-            }
+            ExprKind::Ident(known::Function) => found.push((expression.pos, call, true)),
             _ => {}
         }
     }
@@ -115,6 +123,9 @@ fn names_parameters(text: &[u8]) -> bool {
 
 fn text_of_function(arguments: &[Rc<[u8]>]) -> Option<Vec<u8>> {
     let (body, parameters) = arguments.split_last()?;
+    if parameters.is_empty() && !contains(body, b"function") && !contains(body, b"=>") {
+        return None;
+    }
     if !parameters.iter().all(|it| names_parameters(it)) {
         return None;
     }
@@ -138,8 +149,22 @@ struct EvaluatedText {
     is_in_global_scope: bool,
 }
 
+fn may_name_source(text: &[u8]) -> bool {
+    contains(text, b"sourceURL=") && (contains(text, b"//#") || contains(text, b"//@"))
+}
+
+fn may_have_html_comment(text: &[u8]) -> bool {
+    let lines = text.split(|it| matches!(it, b'\n' | b'\r' | 0xA8 | 0xA9));
+    contains(text, b"-->")
+        && lines.into_iter().any(|line| {
+            let line = line.trim_ascii_start();
+            line.starts_with(b"-->") || contains(line, b"*/") && contains(line, b"-->")
+        })
+}
+
 fn is_function_to_compile(
     file: &FileBuilder,
+    atoms: &Interner<'_>,
     expressions_before: usize,
     root: ExprId,
     other_names: [Atom; 2],
@@ -148,11 +173,20 @@ fn is_function_to_compile(
         return false;
     };
     let is_arrow = file[function].kind == FnKind::Arrow;
+    let is_parameter = |name: Atom| {
+        let mut params = file[function].params.iter();
+        params.any(|it| matches!(file[file[it].pat].kind, PatKind::Ident(own) if own == name))
+    };
     let mut expressions = file.exprs[expressions_before..].iter();
     expressions.all(|it| match it.kind {
         ExprKind::Ident(known::eval) => false,
-        ExprKind::Ident(known::require | known::module | known::exports) => false,
+        ExprKind::Ident(name @ (known::require | known::module | known::exports)) => {
+            is_parameter(name)
+        }
         ExprKind::Ident(name) if other_names.contains(&name) => false,
+        ExprKind::Regex { pattern, flags } => {
+            describe_regexp_syntax_error(atoms.bytes(pattern), atoms.bytes(flags)).is_none()
+        }
         ExprKind::Ident(known::arguments) => !is_arrow,
         ExprKind::This | ExprKind::NewTarget(_) => !is_arrow,
         ExprKind::Super => false,
@@ -165,6 +199,7 @@ pub(crate) fn write_known_evaluations<'s>(
     atoms: &Interner<'s>,
     hir: &mut File<'s>,
     is_module: bool,
+    beside: &CodeBeside<'_>,
 ) -> TreeChange {
     if !hir.known_evaluations.is_empty()
         || hir.has_errors
@@ -173,10 +208,34 @@ pub(crate) fn write_known_evaluations<'s>(
     {
         return TreeChange::Unchanged;
     }
-    let calls = find_evaluating_calls(hir);
-    if calls.is_empty() {
-        return TreeChange::Unchanged;
+    let mut first_call = CallId(0);
+    let mut text_allowance = hir.text.len() * TEXT_PER_SOURCE;
+    let mut change = TreeChange::Unchanged;
+    for _ in 0..MAX_NESTED_TEXTS {
+        let calls = find_evaluating_calls(hir);
+        if calls.iter().all(|it| it.call.0 < first_call.0) {
+            return change;
+        }
+        let next_call = CallId(hir.calls.len() as u32);
+        let evaluator = Evaluator::new(hir, atoms, beside, &calls, first_call, text_allowance);
+        let (found, left) = evaluator.find_texts(&calls);
+        if append_texts(arena, atoms, hir, is_module, &calls, found) == TreeChange::Unchanged {
+            return change;
+        }
+        change = TreeChange::Changed;
+        (first_call, text_allowance) = (next_call, left);
     }
+    change
+}
+
+fn append_texts<'s>(
+    arena: &'s Arena,
+    atoms: &Interner<'s>,
+    hir: &mut File<'s>,
+    is_module: bool,
+    calls: &[EvaluatingCall],
+    found: Vec<(CallId, Vec<Rc<[u8]>>)>,
+) -> TreeChange {
     let is_strict_file = hir.is_strict || is_module;
     let strict_evals: FxHashSet<CallId> = calls
         .iter()
@@ -190,7 +249,7 @@ pub(crate) fn write_known_evaluations<'s>(
     let of_functions = calls.iter().filter(|it| it.is_of_function);
     let of_functions: FxHashSet<CallId> = of_functions.map(|it| it.call).collect();
     let mut texts: Vec<EvaluatedText> = Vec::new();
-    for (call, arguments) in Evaluator::new(hir, atoms, &calls).find_texts(&calls) {
+    for (call, arguments) in found {
         let is_in_global_scope = of_functions.contains(&call);
         let text = match is_in_global_scope {
             true => text_of_function(&arguments),
@@ -201,9 +260,10 @@ pub(crate) fn write_known_evaluations<'s>(
         };
         let is_break = |byte: &&u8| matches!(byte, b'\n' | b'\r' | 0xE2);
         let line_breaks = text.iter().filter(is_break).count();
-        let has_numbers = texts.len() < 1 << 14 && line_breaks + 1 < 1 << 16;
-        let has_html_comment = contains(&text, b"<!--") || contains(&text, b"-->");
-        if has_numbers && !has_html_comment && std::str::from_utf8(&text).is_ok() {
+        let number = hir.known_evaluations.len() + texts.len();
+        let has_numbers = number < 1 << 14 && line_breaks + 1 < 1 << 16;
+        let is_plain = !may_have_html_comment(&text) && !may_name_source(&text);
+        if has_numbers && is_plain && std::str::from_utf8(&text).is_ok() {
             texts.push(EvaluatedText {
                 call,
                 arguments,
@@ -217,7 +277,7 @@ pub(crate) fn write_known_evaluations<'s>(
     }
     texts.sort_by_key(|it| it.call);
     let mut file = FileBuilder::from_file(hir);
-    let written_end = file.text.len();
+    let written_end = hir.written_text_end();
     let source = file.text.to_mut();
     let expressions: Vec<AppendedExpression> = texts
         .iter()
@@ -234,8 +294,8 @@ pub(crate) fn write_known_evaluations<'s>(
         .collect();
     source.push(b'\n');
     let other_names = [atoms.intern(b"Worker"), atoms.intern(b"anonymous")];
-    let is_wanted = move |file: &FileBuilder, expressions_before: usize, root: ExprId| {
-        is_function_to_compile(file, expressions_before, root, other_names)
+    let is_wanted = |file: &FileBuilder, expressions_before: usize, root: ExprId| {
+        is_function_to_compile(file, atoms, expressions_before, root, other_names)
     };
     let (mut file, parsed) = parse_appended_expressions(file, &expressions, atoms, &is_wanted);
     let mut known: Vec<KnownEvaluation> = Vec::new();
@@ -273,8 +333,8 @@ pub(crate) fn write_known_evaluations<'s>(
         args.extend(group.iter().map(|it| it.function));
         file[call].args = file.list(&args);
     }
-    file.known_evaluations = known;
-    file.source_len = written_end as u32;
+    file.known_evaluations.extend(known);
+    file.source_len = written_end;
     *hir = finish_file(file, arena, atoms);
     TreeChange::Changed
 }

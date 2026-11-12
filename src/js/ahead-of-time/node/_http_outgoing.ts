@@ -176,8 +176,8 @@ declare global {
       useChunkedEncodingByDefault: boolean;
       sendDate: boolean;
       strictContentLength: boolean;
-      socket: HttpSocket | null;
-      connection: HttpSocket | null;
+      socket: HttpSocket | SubstituteSocket | null;
+      connection: HttpSocket | SubstituteSocket | null;
       headers: Dictionary<HttpHeaderValue>;
       readonly errored: Error | null | undefined;
       readonly closed: boolean;

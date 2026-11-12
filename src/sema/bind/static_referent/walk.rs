@@ -7,7 +7,7 @@ use crate::atom::{Atom, known};
 use crate::bind::decorator_metadata::has_decorators;
 use crate::bind::{
     Binding, BindingInitializer, BindingKind, BindingStability, Bound, CommonJsVariable, Decl,
-    InitialState, Parent, PatParent, SymbolId,
+    FnOwner, InitialState, Parent, PatParent, SymbolId,
 };
 use crate::check::aot::{ClassRef, FunctionRef};
 use crate::hir::*;
@@ -67,6 +67,13 @@ pub(super) fn find_only_returned_value(
             Some(value)
         }
         _ => None,
+    }
+}
+
+fn find_value_of_call(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option<ExprId> {
+    match hir[function].body {
+        FnBody::Expr(value) if !hir[function].flags.contains(Flags::ASYNC) => Some(value),
+        _ => find_only_returned_value(hir, bound, function),
     }
 }
 
@@ -752,7 +759,14 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             return self.end_walk_that_came_round();
         }
         let (hir, bound) = (context.hir(callee.file), context.bound(callee.file));
-        match find_only_returned_value(hir, bound, callee.function) {
+        let is_copy = file == callee.file
+            && matches!(bound.fns[callee.function.idx()].owner, FnOwner::Expr(copy)
+                if matches!(bound.parent_of_expr(copy), Parent::Expr(sequence) if hir.copied_factory_of(sequence).is_some()));
+        let value = match is_copy {
+            true => find_value_of_call(hir, bound, callee.function),
+            false => find_only_returned_value(hir, bound, callee.function),
+        };
+        match value {
             Some(value) => {
                 self.certainty = ReferentCertainty::Expected;
                 self.entered_callees.push(callee);
@@ -811,9 +825,14 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             ExprKind::Ident(_) => self.step_identifier(file, bound, expr),
             ExprKind::Binary {
                 op: BinOp::Comma,
+                left,
                 right,
-                ..
-            } => Step::Expression(file, right),
+            } => match (hir.copied_factory_of(expr), hir[left].kind) {
+                (Some(copied), ExprKind::Fn(function)) => {
+                    self.step_into_call(FunctionRef { file, function }, file, copied.call)
+                }
+                _ => Step::Expression(file, right),
+            },
             ExprKind::Cond { branches, .. } => {
                 let branches = hir.branches(branches);
                 let yes = self.resolve_from_here(file, branches.yes).referent;
@@ -878,12 +897,10 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             ExprKind::Call(site) => match context.loaded_value(file, expr) {
                 Some(loaded) => self.step_loaded_value(loaded),
                 None => match hir[hir.skip_type_assertions(hir[site].callee)].kind {
-                    ExprKind::Fn(function) => {
-                        match find_only_returned_value(hir, bound, function) {
-                            Some(value) => Step::Expression(file, value),
-                            None => unknown(UnknownReferent::NotAReference),
-                        }
-                    }
+                    ExprKind::Fn(function) => match find_value_of_call(hir, bound, function) {
+                        Some(value) => Step::Expression(file, value),
+                        None => unknown(UnknownReferent::NotAReference),
+                    },
                     _ => self.step_call_that_returns_its_argument(file, site),
                 },
             },

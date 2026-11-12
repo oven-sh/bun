@@ -10,8 +10,8 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingInitializer, CommonJsVariable, Decl, Parent, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue, ends_in_name_with_extension};
 use bun_sema::hir::{
-    BinOp, CallId, ExportSpecId, ExprId, ExprKind, File, MemberKey, NodeData, PatId, PatKind,
-    PropKey, PropKind, StmtId, StmtKind, UnOp,
+    BinOp, CallId, ClassId, ExportSpecId, ExprId, ExprKind, File, MemberKey, NodeData, PatId,
+    PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp,
 };
 use bun_sema::import_sites::{
     ENCODERS, Encoder, ImportSiteKind, ImportSpecifier, ResolvedForm, find_heritage_constructed,
@@ -22,7 +22,7 @@ use bun_sema::resolve::{
     CodeResolution, ComputedCandidate, ComputedResolution, ExternalKind, FinishedFile,
     SiteResolution,
 };
-use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::host::to_native;
 
 use super::NodeWorkerOutOfSight;
@@ -762,6 +762,7 @@ impl ContentsScan<'_, '_> {
     /// `class A extends Worker {}`: `new A(..)` hands its arguments to `Worker`.
     fn find_inherited_constructor(&self, mut callee: ExprId) -> ExprId {
         let &FinishedFile { hir, bound, .. } = self.request;
+        let mut met: FxHashSet<ClassId> = FxHashSet::default();
         loop {
             callee = hir.skip_type_assertions(callee);
             let class = match hir[callee].kind {
@@ -777,7 +778,11 @@ impl ContentsScan<'_, '_> {
                 },
                 _ => None,
             };
-            match class.and_then(|class| find_heritage_constructed(hir, bound, class)) {
+            // A ring of classes constructs nothing.
+            match class
+                .filter(|it| met.insert(*it))
+                .and_then(|class| find_heritage_constructed(hir, bound, class))
+            {
                 Some(heritage) => callee = heritage,
                 None => return callee,
             }

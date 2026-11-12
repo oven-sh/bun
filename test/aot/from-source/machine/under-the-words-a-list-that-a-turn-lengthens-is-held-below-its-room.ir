@@ -12,7 +12,7 @@
 # The object that is read at the counter is a typed array, not an array, so it provides no capacity.
 # The array literal has the capacity that its allocation gave it: 25, the most that the profile of an allocation site may request.
 # So the iteration's own capacity check, `key < room`, is all that separates the store of the 25th iteration from memory that does not belong to the array.
-# Where the check fails, the iteration restarts in the generic version.
+# Where the check fails, the array grows.
 # Fault injection, testing=SkipCapacityChecks: the iteration skips that check.
 # No run with the fault alone is stored, because it would write six words past the array's storage, into whatever is there.
 # With --aot-harden=ignore-told-ranges (testing=CheckBoundsAtRunTime), the operation that extends the length checks the index against the length and against the capacity.
@@ -20,8 +20,8 @@
 # AS-USERS-BUILD: under the checks of the runner the verifier of the code refuses the lie at the raise (walk/a-raise-of-a-list-without-a-ground-for-its-room-is-refused.ir): what the emitters hold under the words is asked without them
 # RUN(TAKEN): walk f1:Body mechanisms=all
 # TAKEN: NewArray {{*}} arrayStorage=Double
-# TAKEN: [[room]]: {{*}} = GetArrayCapacity
 # TAKEN: isLoopHead=true
+# TAKEN: [[room]]: {{*}} = GetArrayCapacity
 # TAKEN: Less {{*}}, [[room]] form=Integers
 # TAKEN: ExtendArrayLength
 # TAKEN-NEXT: PutDoubleIndex

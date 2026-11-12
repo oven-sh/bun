@@ -1,5 +1,5 @@
 // A constant reaches the call through a const binding, a folded concatenation, a template, an import, a helper function or a loop.
-// STATISTIC: ByteLiteralsEncoded = 33
+// STATISTIC: ByteLiteralsEncoded = 35
 import { Buffer as ImportedBuffer } from "node:buffer";
 import * as bufferModule from "node:buffer";
 import { TextEncoder as ImportedTextEncoder } from "node:util";

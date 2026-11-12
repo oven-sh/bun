@@ -321,8 +321,6 @@ fn where_no_expression_names_the_object() {
         "exports = module.exports;",
         "exports = other.exports = f;",
         "x = exports = module.exports = f;",
-        "if (x) exports = module.exports = f;",
-        "function g() { exports = module.exports = f; }",
         "exports = module.exports = f; exports = 1;",
         "exports += module.exports = f;",
         "__filename = 1;",
@@ -343,6 +341,8 @@ fn the_store_that_goes_along_with_module_exports_in_other_places() {
     assert!(goes_along("var app = exports = module.exports = {};"));
     assert!(goes_along("const app = exports = module.exports = {};"));
     assert!(goes_along("exports = module.exports = f;"));
+    assert!(goes_along("if (x) exports = module.exports = f;"));
+    assert!(goes_along("function g() { exports = module.exports = f; }"));
     assert!(!goes_along(
         "if (c) var app = exports = module.exports = {};"
     ));
@@ -373,7 +373,7 @@ fn the_store_that_stands_inside_the_store_to_module_exports() {
     assert!(!goes_along("other.exports = exports = f;"));
     assert!(!goes_along("module.exports = use(exports = f);"));
     assert!(!goes_along("module.exports.name = exports = f;"));
-    assert!(!goes_along("if (c) module.exports = exports = f;"));
+    assert!(goes_along("if (c) module.exports = exports = f;"));
 }
 
 #[test]

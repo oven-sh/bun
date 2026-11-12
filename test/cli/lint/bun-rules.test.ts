@@ -1044,7 +1044,10 @@ const rules: Record<string, Case[]> = {
         `import * as React from "react";\n${cell}const Row = «React.memo»(Cell);`,
         `import * as React from "react";\n${cell}const Row = Cell;`,
       ],
-      [`import R from "react";\n${cell}const Row = «R.memo»(Cell);`, `import R from "react";\n${cell}const Row = Cell;`],
+      [
+        `import R from "react";\n${cell}const Row = «R.memo»(Cell);`,
+        `import R from "react";\n${cell}const Row = Cell;`,
+      ],
       // Only `"use no memo"` and `"use no forget"` at the start of the file or of the component or hook around the call
       // opt out, as for the compiler.
       [

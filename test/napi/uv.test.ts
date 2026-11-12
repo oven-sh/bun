@@ -98,7 +98,9 @@ describe.if(!isWindows)("uv stubs", () => {
       tryrdWhileRead: 0,
       trywrWhileRead: result.UV_EBUSY,
       tryrdWhileWrite: result.UV_EBUSY,
-      trywrAfterUnlock: 0,
+      trywrWhileWrite: result.UV_EBUSY,
+      tryrdUnlocked: 0,
+      trywrUnlocked: 0,
       UV_EBUSY: -constants.errno.EBUSY,
     });
   });

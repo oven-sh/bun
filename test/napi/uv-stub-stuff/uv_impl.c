@@ -1264,33 +1264,59 @@ static napi_value test_cond(napi_env env, napi_callback_info info) {
   return result;
 }
 
+// The try-locks run on another thread: what a thread gets when it already
+// holds the lock differs between platforms (macOS reports EDEADLK).
+struct rwlock_try {
+  uv_rwlock_t *lock;
+  int tryrd;
+  int trywr;
+};
+
+static void *rwlock_try_both(void *arg) {
+  struct rwlock_try *t = arg;
+  t->tryrd = uv_rwlock_tryrdlock(t->lock);
+  if (t->tryrd == 0)
+    uv_rwlock_rdunlock(t->lock);
+  t->trywr = uv_rwlock_trywrlock(t->lock);
+  if (t->trywr == 0)
+    uv_rwlock_wrunlock(t->lock);
+  return NULL;
+}
+
+static void rwlock_try_from_thread(struct rwlock_try *t) {
+  pthread_t thread;
+  pthread_create(&thread, NULL, rwlock_try_both, t);
+  pthread_join(thread, NULL);
+}
+
 // testRwlock() returns { initRc, tryrdWhileRead, trywrWhileRead,
-// tryrdWhileWrite, trywrAfterUnlock, UV_EBUSY }.
+// tryrdWhileWrite, trywrWhileWrite, tryrdUnlocked, trywrUnlocked, UV_EBUSY }.
 static napi_value test_rwlock(napi_env env, napi_callback_info info) {
   uv_rwlock_t lock;
+  struct rwlock_try while_read, while_write, unlocked;
   int init_rc = uv_rwlock_init(&lock);
+  while_read.lock = while_write.lock = unlocked.lock = &lock;
 
   uv_rwlock_rdlock(&lock);
-  int tryrd_while_read = uv_rwlock_tryrdlock(&lock);
-  int trywr_while_read = uv_rwlock_trywrlock(&lock);
-  uv_rwlock_rdunlock(&lock);
+  rwlock_try_from_thread(&while_read);
   uv_rwlock_rdunlock(&lock);
 
   uv_rwlock_wrlock(&lock);
-  int tryrd_while_write = uv_rwlock_tryrdlock(&lock);
+  rwlock_try_from_thread(&while_write);
   uv_rwlock_wrunlock(&lock);
 
-  int trywr_after_unlock = uv_rwlock_trywrlock(&lock);
-  uv_rwlock_wrunlock(&lock);
+  rwlock_try_from_thread(&unlocked);
   uv_rwlock_destroy(&lock);
 
   napi_value result;
   napi_create_object(env, &result);
   set_int32(env, result, "initRc", init_rc);
-  set_int32(env, result, "tryrdWhileRead", tryrd_while_read);
-  set_int32(env, result, "trywrWhileRead", trywr_while_read);
-  set_int32(env, result, "tryrdWhileWrite", tryrd_while_write);
-  set_int32(env, result, "trywrAfterUnlock", trywr_after_unlock);
+  set_int32(env, result, "tryrdWhileRead", while_read.tryrd);
+  set_int32(env, result, "trywrWhileRead", while_read.trywr);
+  set_int32(env, result, "tryrdWhileWrite", while_write.tryrd);
+  set_int32(env, result, "trywrWhileWrite", while_write.trywr);
+  set_int32(env, result, "tryrdUnlocked", unlocked.tryrd);
+  set_int32(env, result, "trywrUnlocked", unlocked.trywr);
   set_int32(env, result, "UV_EBUSY", UV_EBUSY);
   return result;
 }

@@ -5861,7 +5861,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             export.assign_count = export.assign_count.saturating_add(1);
         }
-        if opts.is_call_target() || opts.is_template_tag() {
+        if opts.is_callee() {
             self.symbols[ref_.inner_index() as usize].set_called_as_method(true);
             if !self.is_revisit_for_substitution {
                 let call = self
@@ -6627,7 +6627,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .get_or_put_value(name, Default::default())
             .expect("unreachable");
         inner_use.count_estimate += 1;
-        inner_use.is_call_target |= opts.is_call_target() || opts.is_template_tag();
+        inner_use.is_call_target |= opts.is_callee();
         true
     }
 

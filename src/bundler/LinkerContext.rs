@@ -4264,6 +4264,30 @@ impl<'a> LinkerContext<'a> {
             && self.method_call_needs_this(result.source_index, result.r#ref)
     }
 
+    /// `X.default()` where `X` is `module.exports` of a lifted module with no `default` export: a default
+    /// import of that module, or its `ns.default`. Node gives `undefined` for `X.default` there, and so does
+    /// the property read that a call keeps. A namespace from `import *` or from a re-export is not this case.
+    fn is_default_of_module_exports(
+        &self,
+        source_index: crate::IndexInt,
+        base: Ref,
+        resolved: &ImportMemberResolution,
+    ) -> bool {
+        self.graph.ast.items_flags()[resolved.source_index as usize]
+            .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
+            && self.is_esm_namespace_ref(resolved.source_index, resolved.r#ref)
+            && self.graph.ast.items_named_imports()[source_index as usize]
+                .get(&base)
+                .is_some_and(|import| {
+                    !import.alias_is_star
+                        && import.alias.is_some_and(|alias| alias.slice() == b"default")
+                        && self.graph.ast.items_import_records()[source_index as usize]
+                            .as_slice()
+                            .get(import.import_record_index as usize)
+                            .is_some_and(|record| record.source_index.get() == resolved.source_index)
+                })
+    }
+
     /// `ns.name` and `ns.name(...)` are two items of one name. Only the first of them in the file
     /// reports that the name has no export.
     fn is_later_item_of_name(
@@ -4732,7 +4756,8 @@ impl<'a> LinkerContext<'a> {
                 && let Some(resolved) = member_resolutions
                     .get(&(access.target_source, access.name))
                     .unwrap()
-                && self.method_call_needs_this(resolved.source_index, resolved.r#ref)
+                && (self.method_call_needs_this(resolved.source_index, resolved.r#ref)
+                    || self.is_default_of_module_exports(source_index, access.base, resolved))
             {
                 keeps_this.push((access.base, access.name));
             }

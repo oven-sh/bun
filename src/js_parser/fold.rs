@@ -208,9 +208,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // A callee that keeps `ns` as `this` stays `ns.a(...)`. It takes an item of its own, so
                             // no call decides what a read of `ns.a` is. The linker never keeps `this` for a local
                             // that holds an `import()` / `require()` namespace.
-                            let is_callee = (identifier_opts.is_call_target()
-                                || identifier_opts.is_template_tag())
-                                && dynamic_record.is_none();
+                            let is_callee = identifier_opts.is_callee() && dynamic_record.is_none();
                             // Note: split into lookup → (maybe new_symbol) → re-borrow for borrowck.
                             let existing = if is_callee {
                                 p.import_call_items_for_namespace
@@ -293,8 +291,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             // Track how many times we've referenced this symbol
                             p.record_usage(ref_);
-                            if identifier_opts.is_call_target() || identifier_opts.is_template_tag()
-                            {
+                            if identifier_opts.is_callee() {
                                 p.symbols[ref_.inner_index() as usize].set_called_as_method(true);
                             }
 

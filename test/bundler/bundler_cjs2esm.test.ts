@@ -2453,56 +2453,49 @@ describe("bundler", () => {
       },
     });
   }
-  // `X.default` on a default import, on a converted `require()` and on
-  // `ns.default` is the same value whether or not the file calls it.
-  itBundled("cjs2esm/DotDefaultOfModuleExportsDoesNotDependOnACall", {
+  // A default import is `module.exports`, not the namespace: `X.default` is `undefined` in
+  // Node when the module has no `default` export. A guarded call of it takes the other
+  // branch, on the default import and on `ns.default`.
+  itBundled("cjs2esm/DefaultImportDotDefaultGuardedCallTakesTheOtherBranch", {
     files: {
-      "/entry.js": /* js */ `
-        import "./defaultImportCall.mjs";
-        import "./defaultImportNoCall.mjs";
-        import "./requireCall.js";
-        import "./requireNoCall.js";
-        import "./starDefaultCall.mjs";
-        import "./starDefaultNoCall.mjs";
-        const kinds = globalThis.kinds;
+      "/entry.mjs": /* js */ `
+        import lib from "./init.cjs";
+        import * as ns from "./init.cjs";
         console.log(
-          kinds.defaultImportCall === kinds.defaultImportNoCall,
-          kinds.requireCall === kinds.requireNoCall,
-          kinds.starDefaultCall === kinds.starDefaultNoCall,
+          lib.default ? lib.default() : lib.init(),
+          lib.default?.() ?? lib.init(),
+          ns.default.default ? ns.default.default() : ns.default.init(),
         );
       `,
-      "/defaultImportCall.mjs": /* js */ `
-        import lib from "react";
-        function never() { return lib.default(); }
-        (globalThis.kinds ??= {}).defaultImportCall = typeof lib.default;
+      "/init.cjs": /* js */ `
+        exports.init = function () { return "init"; };
       `,
-      "/defaultImportNoCall.mjs": /* js */ `
-        import lib from "react";
-        (globalThis.kinds ??= {}).defaultImportNoCall = typeof lib.default;
-      `,
-      "/requireCall.js": /* js */ `
-        const lib = require("react");
-        function never() { return lib.default(); }
-        (globalThis.kinds ??= {}).requireCall = typeof lib.default;
-      `,
-      "/requireNoCall.js": /* js */ `
-        const lib = require("react");
-        (globalThis.kinds ??= {}).requireNoCall = typeof lib.default;
-      `,
-      "/starDefaultCall.mjs": /* js */ `
-        import * as ns from "react";
-        function never() { return ns.default.default(); }
-        (globalThis.kinds ??= {}).starDefaultCall = typeof ns.default.default;
-      `,
-      "/starDefaultNoCall.mjs": /* js */ `
-        import * as ns from "react";
-        (globalThis.kinds ??= {}).starDefaultNoCall = typeof ns.default.default;
-      `,
-      ...liftedReact,
     },
     cjs2esm: true,
     run: {
-      stdout: "true true true",
+      stdout: "init init init",
+    },
+  });
+  // The classic JSX factory is a callee too. The parser does not mark it as one
+  // yet (#46318), so its calls bind to the export and pass no `this`.
+  itBundled("cjs2esm/StarImportJsxFactoryNextToAMethodCallKeepsThis", {
+    todo: true,
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import * as lib from "./lib.cjs";
+        console.log(lib.h("hand"), <div />);
+      `,
+      "/lib.cjs": /* js */ `
+        "use strict";
+        exports.h = function (tag) { return (this === undefined ? "none" : "this") + ":" + tag; };
+      `,
+    },
+    jsx: {
+      runtime: "classic",
+      factory: "lib.h",
+    },
+    run: {
+      stdout: "this:hand this:div",
     },
   });
 

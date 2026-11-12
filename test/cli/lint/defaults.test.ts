@@ -933,6 +933,7 @@ ${matchers.map(name => `    ${name}(...expected: unknown[]): any;`).join("\n")}
   };
   type Mock = { mockReturnValue(value: unknown): void };
   export const jest: { fn<T>(implementation: T): T & Mock; mocked<T>(item: T, options?: unknown): T & Mock };
+  export const vi: typeof jest;
 }
 declare module "vitest" {
   export { expect } from "bun:test";
@@ -956,7 +957,7 @@ export declare function use(value: unknown): void;
 `;
     /** A test file with one statement per line. */
     const testFile = (statements: string[]) =>
-      `import { expect, jest } from "bun:test";\nimport { Store, fallback, store, use } from "./store";\n${statements.join("\n")}\n`;
+      `import { expect, jest, vi } from "bun:test";\nimport { Store, fallback, store, use } from "./store";\n${statements.join("\n")}\n`;
     /** The line of code at each of `reports`, by file. */
     const linesOf = (files: Record<string, string>, reports: string[]) => {
       const lines: Record<string, string[]> = {};
@@ -988,6 +989,13 @@ export declare function use(value: unknown): void;
       `expect(fallback && store.get).toHaveBeenCalled();`,
       `expect(fallback || store.get).toHaveBeenCalled();`,
       `expect(jest.mocked(store).get).toHaveBeenCalledTimes(1);`,
+      // `mocked()` returns the method. Only a property of that is used, or the matcher looks at it.
+      `jest.mocked(store.get).mockReturnValue("x");`,
+      `vi.mocked(store.get).mockReturnValue("x");`,
+      `(jest.mocked(store.get)).mockReturnValue("x");`,
+      `jest.mocked(store.get)["mockReturnValue"]("x");`,
+      `jest.mocked(store.get!).mockReturnValue("x");`,
+      `expect(jest.mocked(store.get)).toHaveBeenCalled();`,
     ];
     // The matcher calls the method or hands it on, or nothing says what happens to it.
     const called = [
@@ -1019,7 +1027,14 @@ export declare function use(value: unknown): void;
       `const unbound = store.get;`,
       `const { get } = store;`,
       `jest.fn(store.get).mockReturnValue("x");`,
-      `jest.mocked(store.get).mockReturnValue("x");`,
+      `const mocked = jest.mocked(store.get);`,
+      `jest.mocked(store.get)(1);`,
+      `jest.mocked(store.get)!(1);`,
+      `jest.mocked(fallback, store.get).mockReturnValue("x");`,
+      `view.mocked(store.get).mockReturnValue("x");`,
+      `ensure[jest.mocked(store.get)];`,
+      `use(jest.mocked(store.get));`,
+      `expect(jest.mocked(store.get)).toThrow();`,
       `expect(fallback).toBe(store.get);`,
     ];
     // Every matcher named above.
@@ -1029,7 +1044,7 @@ export declare function use(value: unknown): void;
     const files = {
       "tsconfig.json": tsconfig,
       "runners.d.ts": runners(matchers),
-      "globals.d.ts": `declare var expect: typeof import("bun:test").expect;\ndeclare var ensure: any;\n`,
+      "globals.d.ts": `declare var expect: typeof import("bun:test").expect;\ndeclare var ensure: any;\ndeclare var view: any;\n`,
       "store.ts": store,
       "inspected.test.ts": testFile(inspected),
       "called.test.ts": testFile(called),

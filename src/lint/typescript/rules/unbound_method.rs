@@ -440,19 +440,44 @@ fn is_received_by_inspecting_matcher<'a>(argument: Expr<'a>, expect: Call<'a>, m
     }
 }
 
+/// `mocked(argument).mockX()` or `expect(mocked(argument))`. Anywhere else the result is the method, still unbound.
+fn is_mocked_for_inspection<'a>(argument: Expr<'a>, mocked: Call<'a>, result: Expr<'a>) -> bool {
+    if mocked.args().first() != Some(argument) {
+        return false;
+    }
+    let Node::Expr(parent) = result.parent() else {
+        return false;
+    };
+    match parent.kind() {
+        ExprKind::Dot { .. } => true,
+        ExprKind::Index { obj, .. } => obj == result,
+        ExprKind::Call(outer) => is_inspected_by_test_runner(result, outer, parent),
+        _ => false,
+    }
+}
+
 /// True if `call` is a test runner's and only inspects `argument`. Not inlined: [`is_safe_use`] runs for every member.
 #[inline(never)]
 fn is_inspected_by_test_runner<'a>(argument: Expr<'a>, call: Call<'a>, call_expr: Expr<'a>) -> bool {
     let callee = call.callee();
-    // `expect` starts with an `e`: a byte of the text rules most other calls out.
-    if !matches!(callee.text().first(), Some(b'e')) {
+    // Each call below starts with `expect`, `jest` or `vi`: a byte of the text rules most others out.
+    if !matches!(callee.text().first(), Some(b'e' | b'j' | b'v')) {
         return false;
     }
-    is_expect(call) && is_received_by_inspecting_matcher(argument, call, call_expr)
+    if is_expect(call) {
+        return is_received_by_inspecting_matcher(argument, call, call_expr);
+    }
+    let Some(object) = callee.object() else {
+        return false;
+    };
+    // `jest.mocked(argument)`
+    object.as_ident().is_some_and(|name| name.is_any(&["jest", "vi"]))
+        && callee.member_name().is_some_and(|it| it.name().is("mocked"))
+        && is_mocked_for_inspection(argument, call, call_expr)
 }
 
 /// A `ChainExpression` has the same answer as the expression inside it, so it doesn't matter that it isn't a node here.
-/// `inspects_tests`: there's no ESLint or oxlint config, so what `expect()` only inspects is used safely.
+/// `inspects_tests`: there's no ESLint or oxlint config, so what `expect()` or `mocked()` only inspects is used safely.
 fn is_safe_use<'a>(
     node: Expr<'a>,
     known: &mut AncestorMemo<'a, bool>,

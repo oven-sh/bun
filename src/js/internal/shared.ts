@@ -185,22 +185,6 @@ function guardCallback(callback: (...args: any[]) => unknown) {
   };
 }
 
-// guardCallback() without a closure, for a callback whose third operand the binding does not hand back:
-// `(err, count) => fromBinding(callback, err, count, subject)`.
-function fromBinding<Subject>(
-  callback: (err: Error | null, count: number, subject: Subject) => unknown,
-  err: Error | null,
-  count: number,
-  subject: Subject,
-) {
-  try {
-    if (err) callback(err, 0, subject);
-    else callback(null, count, subject);
-  } catch (e) {
-    reportUncaughtException(e);
-  }
-}
-
 const nodeModulesRE = /[\\/]node_modules[\\/]/;
 const ErrorCaptureStackTrace = Error.captureStackTrace;
 function returnStackFrames(_err: unknown, frames: unknown[]) {
@@ -493,7 +477,7 @@ export default {
   once,
   getLazy,
   guardCallback,
-  fromBinding,
+  reportUncaughtException,
   isInsideNodeModules,
   resistStopPropagation,
 

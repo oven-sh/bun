@@ -8160,25 +8160,44 @@ describe("a microtask queued by a callback of a FileHandle stream runs before a 
     expect(result.exitCode).toBe(0);
   });
 
+  // objectMode hands a DataView on as it is. The stream asks no function that a program can replace what it is.
+  it("a DataView chunk in objectMode is written where the program replaced ArrayBuffer.isView", async () => {
+    using dir = tempDir("fs-filehandle-stream-data-view", {});
+    const result = await runScript(`
+      const fs = require("node:fs");
+      (async () => {
+        const file = ${JSON.stringify(join(String(dir), "out.txt"))};
+        ArrayBuffer.isView = () => false;
+        const stream = (await fs.promises.open(file, "w")).createWriteStream({ objectMode: true });
+        const bytes = new Uint8Array([97, 98, 99]);
+        stream.end(new DataView(bytes.buffer));
+        stream.on("close", () => console.log(fs.readFileSync(file, "utf8")));
+      })();
+    `);
+    expect(result).toEqual({ stdout: "abc\n", stderr: "", exitCode: 0 });
+  });
+
   it("the callbacks run in the AsyncLocalStorage store of the code that made the stream", async () => {
     using dir = tempDir("fs-filehandle-stream-store", { "file.txt": "hello" });
     const storage = new AsyncLocalStorage<string>();
     const stores: Array<string | undefined> = [];
-    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    const closed: Promise<void>[] = [];
+    const untilClosed = (stream: { on(event: "close", listener: () => void): unknown }) =>
+      closed.push(new Promise<void>(resolve => stream.on("close", resolve)));
 
     const reader = await promises.open(join(String(dir), "file.txt"), "r");
     const writer = await promises.open(join(String(dir), "out.txt"), "w");
     storage.run("reader", () => {
-      reader.createReadStream().on("data", () => stores.push(storage.getStore()));
+      untilClosed(reader.createReadStream().on("data", () => stores.push(storage.getStore())));
     });
     storage.run("writer", () => {
       const stream = writer.createWriteStream();
       stream.write("a", () => stores.push(storage.getStore()));
       stream.write("b");
       stream.end("c", () => stores.push(storage.getStore()));
-      stream.on("close", resolve);
+      untilClosed(stream);
     });
-    await closed;
+    await Promise.all(closed);
 
     expect(stores.sort()).toEqual(["reader", "writer", "writer"]);
   });

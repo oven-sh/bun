@@ -2085,7 +2085,7 @@ mod _async_tasks {
             }
         }
 
-        // Every async fs operation ends in `settle` and here. With the third arm the optimizer took both out of line.
+        // Every async fs operation completes through `settle` and this function.
         #[inline]
         pub(crate) fn resolve(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
             match self {
@@ -2128,7 +2128,7 @@ mod _async_tasks {
                 }
             };
             if is_job {
-                global.queue_microtask(callback.get(), &[error]);
+                global.queue_microtask(callback.get(), &[error, JSValue::UNDEFINED]);
             } else {
                 Self::call(global, callback.get(), &[error]);
             }

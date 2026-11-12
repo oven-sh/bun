@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/fs/streams.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 1ddc94d535b5955be45b11782b2f163c8df12340682b2571bb72dbb9f781b40f.
+// Written against that file with the SHA-256 7107347959b1aaa7200e3d0a2a18dcfbdca8ff7e03a120be6f918d1ca7683f8a.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // fs.ReadStream and fs.WriteStream are lazily loaded to avoid importing 'node:stream' until required
@@ -9,7 +9,8 @@ const Writable = require("internal/streams/writable");
 const fs = require("node:fs");
 // Read a member at each call: internal/trace_events replaces them when tracing starts.
 const binding = require("internal/fs/binding");
-const { fromBinding } = require("internal/shared");
+const { reportUncaughtException } = require("internal/shared");
+const { isArrayBufferView } = require("node:util/types");
 // `bun run` loads node:fs/promises here. A test that has replaced a built-in function hears the calls of that load.
 if (CAN_REPLACE_BUILT_IN_FUNCTIONS) require("node:fs/promises");
 const fileHandles = require("internal/fs/file_handles");
@@ -141,8 +142,23 @@ else fileHandles.whenLoaded = takeFileHandleInternals;
 // Node calls a stream on a FileHandle back from the reaction of a promise:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/streams.js#L87-L116
 // The job arm of the binding calls back as a microtask too, without the promise. Node reports what the callback
-// throws as an unhandled rejection. fromBinding() reports an uncaughtException, as for a stream on a path: Bun's
-// default mode hands an unhandled rejection to no 'uncaughtException' listener.
+// throws as an unhandled rejection. This reports an uncaughtException, as for a stream on a path: Bun's default mode
+// hands an unhandled rejection to no 'uncaughtException' listener. The throw is caught here, because one that leaves
+// the job is reported outside the async context of the operation.
+function fromBinding<Subject>(
+  callback: (error: Error | null, count?: number, subject?: Subject) => void,
+  err: Error | null,
+  count: number,
+  subject: Subject,
+) {
+  try {
+    if (err) callback(err, 0, subject);
+    else callback(null, count, subject);
+  } catch (e) {
+    reportUncaughtException(e);
+  }
+}
+
 function fileHandleStreamRead(
   fd: number | null,
   buf: Buffer,
@@ -162,7 +178,8 @@ function fileHandleStreamWrite(
   position: number | undefined,
   cb: (error: Error | null, bytesWritten?: number, buffer?: Buffer) => void,
 ) {
-  if (!$isTypedArrayView(buffer) && !ArrayBuffer.isView(buffer)) {
+  // $isTypedArrayView() answers false for a DataView.
+  if (!$isTypedArrayView(buffer) && !isArrayBufferView(buffer)) {
     // objectMode lets any chunk through. Node gives it to handle.write(), which refuses what is no string with this
     // text and writes every string at position 0. So would the binding, which takes (fd, string, position, encoding).
     if (typeof buffer !== "string") {

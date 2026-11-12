@@ -199,7 +199,7 @@ fn reject_before_schedule(
             Ok(JSValue::UNDEFINED)
         }
         FsReceiver::Job(callback) => {
-            global.queue_microtask(callback, &[error]);
+            global.queue_microtask(callback, &[error, JSValue::UNDEFINED]);
             Ok(JSValue::UNDEFINED)
         }
     }

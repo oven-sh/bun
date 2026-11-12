@@ -4,7 +4,8 @@ const { Readable, Writable, finished } = require("node:stream");
 const fs = require("node:fs");
 // Read a member at each call: internal/trace_events replaces them when tracing starts.
 const binding = require("internal/fs/binding");
-const { fromBinding } = require("internal/shared");
+const { reportUncaughtException } = require("internal/shared");
+const { isArrayBufferView } = require("node:util/types");
 const {
   FileHandle,
   kRef,
@@ -64,14 +65,25 @@ const kFs = Symbol("kFs");
 // Node calls a stream on a FileHandle back from the reaction of a promise:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/streams.js#L87-L116
 // The job arm of the binding calls back as a microtask too, without the promise. Node reports what the callback
-// throws as an unhandled rejection. fromBinding() reports an uncaughtException, as for a stream on a path: Bun's
-// default mode hands an unhandled rejection to no 'uncaughtException' listener.
+// throws as an unhandled rejection. This reports an uncaughtException, as for a stream on a path: Bun's default mode
+// hands an unhandled rejection to no 'uncaughtException' listener. The throw is caught here, because one that leaves
+// the job is reported outside the async context of the operation.
+function fromBinding(callback, err, count, subject) {
+  try {
+    if (err) callback(err, 0, subject);
+    else callback(null, count, subject);
+  } catch (e) {
+    reportUncaughtException(e);
+  }
+}
+
 function fileHandleStreamRead(fd, buf, offset, length, pos, cb) {
   binding.readJob((err, bytesRead) => fromBinding(cb, err, bytesRead, buf), fd, buf, offset, length, pos);
 }
 
 function fileHandleStreamWrite(fd, buffer, offset, length, position, cb) {
-  if (!$isTypedArrayView(buffer) && !ArrayBuffer.isView(buffer)) {
+  // $isTypedArrayView() answers false for a DataView.
+  if (!$isTypedArrayView(buffer) && !isArrayBufferView(buffer)) {
     // objectMode lets any chunk through. Node gives it to handle.write(), which refuses what is no string with this
     // text and writes every string at position 0. So would the binding, which takes (fd, string, position, encoding).
     if (typeof buffer !== "string") {

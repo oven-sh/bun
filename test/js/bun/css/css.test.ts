@@ -8527,6 +8527,121 @@ describe("numeric tokens that print as written", () => {
   minify_test("a{--v:5.0 .10}", "a{--v:5 .1}");
 });
 
+describe("a number that touches the token before it", () => {
+  // A value kept as tokens prints a number from its f32: `.0` and `-0` as `0`. Where that text
+  // would read as part of the token before it, the source text prints.
+  describe.each([
+    // After a name, a number or one of `. + #`.
+    "a{--v:1.0.0-beta.0}",
+    "a{--x:1-0}",
+    "a{--v:1.0.0-0}",
+    "a{--v:1.2.3-beta.10}",
+    "a{--v:1.0.0-alpha.0+build.5}",
+    "a{--d:2024-01-05}",
+    "a{--x:3-0-0}",
+    "a{--x:beta.0}",
+    "a{--x:a.0px}",
+    "a{--x:a.0%}",
+    "a{--x:a.9999999}",
+    "a{--x:a.0000001}",
+    "a{--x:1-0s}",
+    "a{--x:1px.0}",
+    "a{--x:1deg.0}",
+    "a{--x:1s.0}",
+    "a{--x:1dppx.0}",
+    "a{--x:5foo.0}",
+    "a{--x:#abcde.0}",
+    "a{--x:@foo.0}",
+    "a{--x:--a.0}",
+    "a{--x:..0}",
+    "a{--x:+-0}",
+    "a{--x:#.0}",
+    // Every value that is kept as tokens.
+    "a{foo:1-0}",
+    "a{z-index:1-0}",
+    "a{grid-area:1-0}",
+    "a{margin:var(--a,1-0)}",
+    "a{width:calc(var(--a)*1-0)}",
+    "a{--x:env(a,1-0)}",
+    "a{--x:foo(1.0.0-beta.0)}",
+    "a{--x:[1-0]}",
+    "a{--x:{a:1-0}}",
+    "@unknown 1.0.0-beta.0{a: 1-0}",
+    '@property --x{syntax:"*";inherits:false;initial-value:1-0}',
+    "@container style(--x:1-0){a{color:red}}",
+    "@font-face{foo:1-0}",
+    // The arguments of a pseudo-class or pseudo-element that the parser does not know.
+    "a:unknown(beta.0){color:red}",
+    "a:unknown(1.0.0-beta.0){color:red}",
+    "a:unknown(a.5px){color:red}",
+    "a:unknown(#a.0){color:red}",
+    "a::unknown(beta.0){color:red}",
+  ])("%s", css => {
+    minify_test(css, css);
+  });
+
+  // After a colour, which prints in its short form.
+  minify_test("a{--x:rgb(0 0 0).0}", "a{--x:#000.0}");
+  minify_test("a{--x:#ffffff.0}", "a{--x:#fff.0}");
+  // After an ident that ends in an escape.
+  minify_test("a{--x:a\\31 .0}", "a{--x:a1.0}");
+  // Only the number that touches keeps its text.
+  minify_test("a{--x:1.0-0}", "a{--x:1-0}");
+  // A kept text that ends inside an escape is closed: the blank that stands for the comment stays
+  // a blank, and `}` stays the end of the rule.
+  minify_test("a{--x:1234567\\70/**/a}", "a{--x:1234567\\70  a}");
+  minify_test("a{--x:1-5\\70/**/b}", "a{--x:1-5\\70  b}");
+  minify_test("a{--x:1-5\\", "a{--x:1-5\\fffd }");
+  // `\123456` and `\\` are whole escapes.
+  minify_test("a{--x:1-5\\1234567/**/b}", "a{--x:1-5\\1234567 b}");
+  minify_test("a{--x:1-5\\\\70/**/b}", "a{--x:1-5\\\\70 b}");
+
+  describe("a number that touches nothing it can join prints as before", () => {
+    minify_test(
+      'a{--x:10-5;--y:2.0.0-rc.1;--z:beta-0;--w:1 - 0;--s:"1.0.0-beta.0"}',
+      'a{--x:10-5;--y:2.0.0-rc.1;--z:beta-0;--w:1 - 0;--s:"1.0.0-beta.0"}',
+    );
+    minify_test("a{--x:-0;--y:a -0.50;--z:(-0.50);--w:a,-0.50}", "a{--x:0;--y:a -.5;--z:(-.5);--w:a,-.5}");
+    minify_test("a{--x:var(--a)-0.50;--y:foo(1).50;--z:5%-0.50}", "a{--x:var(--a)-.5;--y:foo(1).5;--z:5%-.5}");
+    // The arguments of a pseudo-class lose their comments: a kept `-5e` would read on into `+1`.
+    minify_test("a:unknown(1-5e/**/+1){color:red}", "a:unknown(1-5\\65 +1){color:red}");
+  });
+
+  test("Bun.build and `bun build`, with and without --minify", async () => {
+    using dir = tempDir("css-touching-numbers", {
+      "a.css": ".a { --v: 1.0.0-beta.0; --x: 1-0; --y: 2.0.0-rc.1; --z: 10-5; }\n",
+    });
+    const cwd = String(dir);
+    // The leading `/* path */` banner holds the temporary directory.
+    const body = (output: string) => output.replace(/^\/\*.*\*\/\n/, "").trim();
+    const api = async (minify: boolean) => {
+      const result = await Bun.build({ entrypoints: [join(cwd, "a.css")], minify });
+      return body(await result.outputs[0].text());
+    };
+    const cli = async (outdir: string, ...flags: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./a.css", "--outdir", outdir, ...flags],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const file = Bun.file(join(cwd, outdir, "a.css"));
+      return { output: (await file.exists()) ? body(await file.text()) : stderr, exitCode };
+    };
+
+    const pretty = ".a {\n  --v: 1.0.0-beta.0;\n  --x: 1-0;\n  --y: 2.0.0-rc.1;\n  --z: 10-5;\n}";
+    const minified = ".a{--v:1.0.0-beta.0;--x:1-0;--y:2.0.0-rc.1;--z:10-5}";
+    expect(await Promise.all([api(false), api(true), cli("out"), cli("out-min", "--minify")])).toEqual([
+      pretty,
+      minified,
+      { output: pretty, exitCode: 0 },
+      { output: minified, exitCode: 0 },
+    ]);
+  });
+});
+
 describe("number serialization", () => {
   minify_test(".foo{opacity:0.000001}", ".foo{opacity:.000001}");
   minify_test(".foo{width:1e21px;height:1e22px}", ".foo{width:1e21px;height:1e22px}");
@@ -10090,6 +10205,9 @@ describe("blanks that --minify drops from values kept as tokens", () => {
     // A written `+` keeps two numbers apart.
     ["--x: 1+2", "--x: 1+2", "--x:1+2"],
     ["--nth: 2n+1", "--nth: 2n+1", "--nth:2n+1"],
+    // So does a written `-` or `.`.
+    ["--x: 1-0", "--x: 1-0", "--x:1-0"],
+    ["--v: 1.0.0-beta.0", "--v: 1.0.0-beta.0", "--v:1.0.0-beta.0"],
   ])("%s", (declaration, normal, minified) => {
     expect(cssInternals._test(`.c { ${declaration}; }`, "")).toBe(`.c {\n  ${normal};\n}\n`);
     expect(cssInternals.minifyTest(`.c { ${declaration}; }\n.k { top: 0 }`, "")).toBe(`.c{${minified}}.k{top:0}`);

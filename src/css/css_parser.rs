@@ -3627,10 +3627,15 @@ impl<'a> Parser<'a> {
     }
 
     /// The source text of the numeric token `next*` returned last, if an f32 may not hold it
-    /// (`1700000000.25`, `123456.78`) or it touches another number: `5.0.1` is `5.0` and `.1`,
-    /// whose values print as `5.1`.
+    /// (`1700000000.25`, `123456.78`) or its value can print as part of a neighbour: `5.0.1` is
+    /// `5.0` and `.1`, whose values print as `5.1`, and the `.0` of `beta.0` prints as `0`.
+    /// `before` is the list that takes the token, if its last item touches the token. It is the
+    /// `Vec` and not a slice, so that a caller loads nothing for a number that keeps no text.
     #[inline]
-    pub(crate) fn raw_number_text(&self) -> Option<&'static [u8]> {
+    pub(crate) fn raw_number_text(
+        &self,
+        before: Option<&Vec<css_properties::custom::TokenOrValue>>,
+    ) -> Option<&'static [u8]> {
         let cached = self.input.cached_token.as_ref()?;
         if !matches!(
             cached.token,
@@ -3639,10 +3644,15 @@ impl<'a> Parser<'a> {
             return None;
         }
         let text = self.slice_from(cached.start_position);
-        let before = &self.input.tokenizer.src[..cached.start_position];
         let touches_a_number = self.next_byte() == Some(b'.')
-            || text.starts_with(b"+")
-            || (text.starts_with(b".") && before.last().is_some_and(u8::is_ascii_digit));
+            || match text.first() {
+                Some(b'+') => true,
+                // `-0` and `.0` print as `0`, which reads on from a name or a number before it.
+                Some(b'-' | b'.') => before
+                    .and_then(|items| items.last())
+                    .is_some_and(|item| item.joins_a_number()),
+                _ => false,
+            };
         let digits = text.strip_prefix(b"-").unwrap_or(text);
         let digits = &digits[digits.iter().take_while(|b| **b == b'0').count()..];
         let integer_digits = digits.iter().take_while(|b| b.is_ascii_digit()).count();

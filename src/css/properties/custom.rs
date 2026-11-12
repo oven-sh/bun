@@ -384,7 +384,14 @@ impl TokenList {
                         });
                     }
                     let token = *token;
-                    tokens.push(match input.raw_number_text() {
+                    // A comment is dropped here, so the token after one prints right after this one.
+                    // Only the printed value is safe there: `-5e/**/+1` needs the unit as `\65 `.
+                    let before = if input.input.tokenizer.starts_with(b"/*") {
+                        None
+                    } else {
+                        Some(&*tokens)
+                    };
+                    tokens.push(match input.raw_number_text(before) {
                         Some(text) => TokenOrValue::RawNumber(RawNumber(text)),
                         None => TokenOrValue::Token(token),
                     });
@@ -537,13 +544,13 @@ impl TokenList {
                     continue;
                 }
                 Token::Number(_) | Token::Percentage { .. } => {
-                    if let Some(text) = input.raw_number_text() {
+                    if let Some(text) = input.raw_number_text(Some(tokens)) {
                         tokens.push(TokenOrValue::RawNumber(RawNumber(text)));
                         continue;
                     }
                 }
                 Token::Dimension(_) => {
-                    let value = if let Some(text) = input.raw_number_text() {
+                    let value = if let Some(text) = input.raw_number_text(Some(tokens)) {
                         TokenOrValue::RawNumber(RawNumber(text))
                     } else if let Ok(length) = LengthValue::try_from_token(&tok) {
                         TokenOrValue::Length(length)
@@ -1181,7 +1188,24 @@ pub struct RawNumber(&'static [u8]);
 
 impl RawNumber {
     fn to_css(self, dest: &mut Printer) -> PrintResult<()> {
-        dest.write_bytes(self.0)
+        dest.write_bytes(self.0)?;
+        // The text of a dimension can end inside an escape, which takes in what prints after it:
+        // `1\70` a blank or a hex digit, and `1\` at the end of the input any byte.
+        let hex_digits = self
+            .0
+            .iter()
+            .rev()
+            .take_while(|b| b.is_ascii_hexdigit())
+            .count();
+        let escape = &self.0[..self.0.len() - hex_digits];
+        if escape.iter().rev().take_while(|b| **b == b'\\').count() % 2 == 1 {
+            match hex_digits {
+                0 => dest.write_str("fffd ")?,
+                1..=6 => dest.write_char(b' ')?,
+                _ => {}
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1233,6 +1257,38 @@ impl TokenOrValue {
 
     fn is_whitespace(&self) -> bool {
         matches!(self, TokenOrValue::Token(Token::Whitespace(_)))
+    }
+
+    /// Whether the value of a number that is written with a leading `.` or `-` can print as part
+    /// of this item. These are the tokens that css-syntax-3 §9 keeps apart from a number with
+    /// `/**/`, and the values that print as one of them.
+    pub(crate) fn joins_a_number(&self) -> bool {
+        match self {
+            TokenOrValue::Token(token) => match token {
+                Token::Ident(_)
+                | Token::AtKeyword(_)
+                | Token::UnrestrictedHash(_)
+                | Token::IdHash(_)
+                | Token::Number(_)
+                | Token::Dimension(_) => true,
+                // No `-`: before such a number it is part of the number or of an ident.
+                Token::Delim(d) => matches!(char::from_u32(*d), Some('.' | '+' | '#')),
+                _ => false,
+            },
+            TokenOrValue::Color(_)
+            | TokenOrValue::Length(_)
+            | TokenOrValue::Angle(_)
+            | TokenOrValue::Time(_)
+            | TokenOrValue::Resolution(_)
+            | TokenOrValue::DashedIdent(_)
+            | TokenOrValue::AnimationName(_)
+            | TokenOrValue::RawNumber(_) => true,
+            TokenOrValue::UnresolvedColor(_)
+            | TokenOrValue::Url(_)
+            | TokenOrValue::Var(_)
+            | TokenOrValue::Env(_)
+            | TokenOrValue::Function(_) => false,
+        }
     }
 }
 

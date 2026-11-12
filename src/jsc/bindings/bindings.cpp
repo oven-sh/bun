@@ -5450,6 +5450,8 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
     vm->sourceProviderCacheMap.clear();
 
     if (sync) {
+        // A compilation that is under way, or done and not installed yet, holds the values it was started with.
+        vm->heap.completeAllJITPlans();
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
         // What the call above left on the stack must not be scanned by the collection below; see the helper's comment.
         clearStackBelowCaller();

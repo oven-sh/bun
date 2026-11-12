@@ -973,3 +973,25 @@ describe.concurrent("sampling profiler report at exit", () => {
     expect(await run(`${work} process.exit(0);`, env)).toEqual(expected);
   });
 });
+
+it("Bun.gc(true) collects the arguments of a call that started the optimizing compiler", async () => {
+  using dir = tempDir("gc-with-a-compilation", {
+    "index.cjs": `const { optimizeNextInvocation, noInline } = require("bun:jsc");
+      function read(object) { return object.x + 1; }
+      noInline(read);
+      function pass() { const object = { x: 1 }; read(object); return new WeakRef(object); }
+      for (let i = 0; i < 5; i++) read({ x: i });
+      optimizeNextInvocation(read);
+      const ref = pass();
+      setImmediate(() => { Bun.gc(true); console.log(ref.deref()); });`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.cjs"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_JSC_useLLInt: "0", BUN_JSC_maximumOptimizationDelay: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "undefined\n", stderr: "", exitCode: 0 });
+});

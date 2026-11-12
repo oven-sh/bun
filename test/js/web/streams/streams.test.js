@@ -398,7 +398,8 @@ describe("addAbortSignal() on a ReadableStream that Bun drives", () => {
     await (read ?? expect(body.getReader().read()).rejects.toMatchObject({ name: "AbortError" }));
   });
 
-  it.each(["an unstarted", "a started"])(
+  // Readable.fromWeb() of a stream with a read in flight never gets that read, aborted or not. On Windows a started one always has one.
+  it.each(isWindows ? ["an unstarted"] : ["an unstarted", "a started"])(
     "leaves %s native source alone that Readable.fromWeb() took over",
     async state => {
       using dir = tempDir("abort-transferred-source", { "file.txt": Buffer.alloc(2_000_000, "x").toString() + "end" });

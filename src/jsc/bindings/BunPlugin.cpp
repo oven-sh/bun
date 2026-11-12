@@ -522,6 +522,8 @@ public:
     WriteBarrier<JSObject> exports;
     WriteBarrier<JSString> specifier;
     WriteBarrier<JSString> writtenSpecifier;
+    // The module whose body made the mock call. Empty where a function that ran after a body made it.
+    WriteBarrier<JSC::AbstractModuleRecord> registrant;
     // Set when a loaded ES module is patched in place. Maps export name to the overwritten value, or to this object if there was none yet.
     WriteBarrier<JSObject> originalExports;
     WriteBarrier<Unknown> originalCommonJSExports;
@@ -953,6 +955,8 @@ static JSC::JSPromise* importModuleFrom(Zig::GlobalObject* globalObject, const S
     globalObject->onResolvePlugins.isResolvingImportCall = true;
     JSC::JSPromise* promise = Bun::testFileModuleLoader(globalObject)->requestImportModule(globalObject, JSC::Identifier::fromString(vm, specifier), JSC::Identifier::fromString(vm, Bun::uncompiledImportReferrer(from)), nullptr, nullptr);
     globalObject->onResolvePlugins.isResolvingImportCall = false;
+    // The resolution left the key for an import() call, and this is none: the next import() must not be taken for one of this module.
+    globalObject->onLoadPlugins.keyOfImportCall = String();
     if (scope.exception()) [[unlikely]]
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
 #if ENABLE(AOT)
@@ -5656,7 +5660,7 @@ JSC::JSPromise* nextPendingCompiledFactory(Zig::GlobalObject* globalObject, cons
 
 #if ENABLE(AOT)
 // As in keyOfImportWhileModuleMocksRun(): an import is recorded on the chain of every running factory that it does not wait for. Without an async context the importing file decides.
-static bool isWaitingForModule(Zig::GlobalObject*, BunPlugin::OnLoad::RunningModuleMock&, const String& start, const String& mocked, Vector<String>& unfinished);
+static bool isWaitingForModule(Zig::GlobalObject*, BunPlugin::OnLoad::RunningModuleMock&, const String& start, const String& mocked, Vector<String>& unfinished, bool* awaitsImport = nullptr);
 
 // As in redirectedModuleKey(): for an import, the modules that have yet to finish.
 static WTF::BitVector unfinishedModulesOfLoad(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID requested, JSC::AOT::LoadGraphMode graphMode)
@@ -5838,28 +5842,67 @@ static std::optional<size_t> recordBodyMock(Zig::GlobalObject* globalObject, JSC
 }
 #endif
 
-// Whether a frame of the stack runs the private copy (redirectedModuleKey()) of a module. callerPath() names a module and its copy alike, their source text does not.
-static bool isCalledByPrivateCopy(Zig::GlobalObject* globalObject, JSC::CallFrame* callframe)
+// The module that the code of a frame belongs to: the one that the scope of its callee leads to. Null for the code of a CommonJS module.
+static JSC::AbstractModuleRecord* moduleOfFrame(JSC::StackVisitor& visitor)
 {
-    auto& privateCopies = globalObject->onLoadPlugins.privateCopies;
-    if (privateCopies.isEmpty()) [[likely]]
-        return false;
-    auto& vm = JSC::getVM(globalObject);
-    Vector<JSC::SourceProvider*, 4> copies;
-    for (auto& key : privateCopies) {
-        auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, key));
-        if (auto* record = entry ? dynamicDowncast<JSC::JSModuleRecord>(entry->record()) : nullptr)
-            copies.append(record->sourceCode().provider());
+    auto callee = visitor->callee();
+    auto* code = callee.isCell() ? dynamicDowncast<JSC::JSCallee>(callee.asCell()) : nullptr;
+    for (JSC::JSScope* scope = code ? code->scope() : nullptr; scope; scope = scope->next()) {
+        if (auto* environment = dynamicDowncast<JSC::JSModuleEnvironment>(scope))
+            return environment->moduleRecord();
     }
-    bool isCalledByCopy = false;
+    return nullptr;
+}
+
+// The module whose body makes the call: the nearest frame of module code. Null where a function that ran after a body makes it.
+static JSC::AbstractModuleRecord* moduleWhoseBodyRuns(JSC::VM& vm, JSC::CallFrame* callframe)
+{
+    JSC::AbstractModuleRecord* record = nullptr;
     JSC::StackVisitor::visit(callframe, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+        // Compiled code is in no module that the loader holds.
+        if (visitor->isCompiledFrame())
+            return WTF::IterationStatus::Done;
         JSC::CodeBlock* codeBlock = visitor->codeBlock();
-        if (!codeBlock || !copies.contains(codeBlock->source().provider()))
+        if (!codeBlock || codeBlock->codeType() != JSC::ModuleCode)
             return WTF::IterationStatus::Continue;
-        isCalledByCopy = true;
+        record = moduleOfFrame(visitor);
         return WTF::IterationStatus::Done;
     });
-    return isCalledByCopy;
+    return record;
+}
+
+// The module whose code called import(), past a builtin function that called it for somebody. Null for the code of a CommonJS module, and for code that `new Function` or an indirect eval made.
+static JSC::AbstractModuleRecord* moduleThatCalledImport(JSC::VM& vm)
+{
+    JSC::AbstractModuleRecord* record = nullptr;
+    if (!vm.topCallFrame)
+        return nullptr;
+    JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+        if (visitor->isCompiledFrame())
+            return WTF::IterationStatus::Done;
+        JSC::CodeBlock* codeBlock = visitor->codeBlock();
+        auto* function = codeBlock ? dynamicDowncast<JSC::FunctionExecutable>(codeBlock->ownerExecutable()) : nullptr;
+        if (!codeBlock || (function && function->isBuiltinFunction()))
+            return WTF::IterationStatus::Continue;
+        record = moduleOfFrame(visitor);
+        return WTF::IterationStatus::Done;
+    });
+    return record;
+}
+
+// Whether `copy` is the private copy (redirectedModuleKey()) that a factory got of `module` because `module` awaits an import().
+static bool isPrivateCopyOf(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* copy, JSC::AbstractModuleRecord* module)
+{
+    if (!copy || !module)
+        return false;
+    const String& key = copy->moduleKey().string();
+    if (!globalObject->onLoadPlugins.privateCopies.contains(key))
+        return false;
+    auto& vm = JSC::getVM(globalObject);
+    auto* loader = Bun::testFileModuleLoader(globalObject);
+    auto* entryOfCopy = loader->registryEntry(copy->moduleKey());
+    auto* entryOfModule = loader->registryEntry(JSC::Identifier::fromString(vm, key.left(key.length() - "?actual"_s.length())));
+    return entryOfCopy && entryOfCopy->record() == copy && entryOfModule && entryOfModule->record() == module;
 }
 
 // Whether `factory` is the function that `mock` has, or one that another evaluation of the same module text made.
@@ -5946,11 +5989,23 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     }
 #endif
 
-    // A private copy repeats its module's mock calls: the mock that the module made stays. vi.doMock() returns what ends its mock, so that one is made.
-    if (function != ModuleMockFunction::ViDoMock && isCalledByPrivateCopy(globalObject, callframe)) [[unlikely]] {
-        if (auto* made = registeredModuleMock(globalObject, specifier); made && isSameFactory(made, factory)) {
-            bool returnsJest = function == ModuleMockFunction::JestMock || function == ModuleMockFunction::JestDoMock;
-            return JSValue::encode(returnsJest ? callframe->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict()) : jsUndefined());
+    // What vi.doMock() returns: `returned` with a [Symbol.dispose]() that ends the mock.
+    auto disposable = [&](JSObject* returned, JSModuleMock* ended) -> JSC::EncodedJSValue {
+        JSC::JSFunction* dispose = JSC::JSFunction::create(vm, globalObject, 0, "[Symbol.dispose]"_s, jsFunctionDisposeModuleMock, ImplementationVisibility::Public);
+        JSObject* bound = JSC::JSBoundFunction::create(vm, globalObject, dispose, ended, ArgList(), 0, nullptr, makeSource("[Symbol.dispose]"_s, JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted));
+        RETURN_IF_EXCEPTION(scope, {});
+        returned->putDirect(vm, vm.propertyNames->disposeSymbol, bound, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+        return JSValue::encode(returned);
+    };
+    JSC::AbstractModuleRecord* registrant = moduleWhoseBodyRuns(vm, callframe);
+    // The private copy of a module that awaits an import() repeats the mock calls that the module made ahead of its await: the mock that the module made stays.
+    if (!globalObject->onLoadPlugins.privateCopies.isEmpty()) [[unlikely]] {
+        if (auto* made = registeredModuleMock(globalObject, specifier); made && isSameFactory(made, factory) && isPrivateCopyOf(globalObject, registrant, made->registrant.get())) {
+            if (function == ModuleMockFunction::JestMock || function == ModuleMockFunction::JestDoMock)
+                return JSValue::encode(callframe->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict()));
+            if (function != ModuleMockFunction::ViDoMock)
+                return JSValue::encode(jsUndefined());
+            return disposable(JSC::constructEmptyObject(globalObject), made);
         }
     }
 
@@ -5961,6 +6016,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     }
 
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), factory, specifierString, writtenString, function);
+    mock->registrant.setMayBeNull(vm, mock, registrant);
     mock->spy = spy;
     mock->isFromPreload = JSMock__isInPreload(globalObject);
     if (!mock->isFromPreload)
@@ -6737,15 +6793,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     case ModuleMockFunction::JestMock:
     case ModuleMockFunction::JestDoMock:
         return JSValue::encode(callframe->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict()));
-    case ModuleMockFunction::ViDoMock: {
-        if (!returned)
-            returned = JSC::constructEmptyObject(globalObject);
-        JSC::JSFunction* dispose = JSC::JSFunction::create(vm, globalObject, 0, "[Symbol.dispose]"_s, jsFunctionDisposeModuleMock, ImplementationVisibility::Public);
-        JSObject* bound = JSC::JSBoundFunction::create(vm, globalObject, dispose, mock, ArgList(), 0, nullptr, makeSource("[Symbol.dispose]"_s, JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted));
-        RETURN_IF_EXCEPTION(scope, {});
-        returned->putDirect(vm, vm.propertyNames->disposeSymbol, bound, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
-        break;
-    }
+    case ModuleMockFunction::ViDoMock:
+        return disposable(returned ? returned : JSC::constructEmptyObject(globalObject), mock);
     case ModuleMockFunction::MockModule:
     case ModuleMockFunction::ViMock:
         break;
@@ -7193,6 +7242,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalOb
             if (!mock || mock->state != JSModuleMock::State::Settled)
                 continue;
             auto* again = JSModuleMock::create(vm, mock->structure(), mock->factory.get(), mock->specifier.get(), mock->writtenSpecifier.get(), mock->function);
+            again->registrant.setMayBeNull(vm, again, mock->registrant.get());
             again->spy = mock->spy;
             again->isFromPreload = mock->isFromPreload && JSMock__isInPreload(globalObject);
             if (mock->isFromPreload && !again->isFromPreload)
@@ -7996,26 +8046,6 @@ static bool isTestFile(Zig::GlobalObject* globalObject, const String& key)
     return Bun__VM__isMainModule(globalObject->bunVM(), &keyString);
 }
 
-// Whether the code that calls is this module's own text, and not that of a private copy of the module.
-static bool isCalledByModule(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* module)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto* record = module ? dynamicDowncast<JSC::JSModuleRecord>(module) : nullptr;
-    if (!record || globalObject->onLoadPlugins.privateCopies.isEmpty() || !vm.topCallFrame)
-        return false;
-    JSC::SourceProvider* caller = nullptr;
-    JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        JSC::CodeBlock* codeBlock = visitor->codeBlock();
-        if (!codeBlock)
-            return WTF::IterationStatus::Continue;
-        if (auto* function = dynamicDowncast<JSC::FunctionExecutable>(codeBlock->ownerExecutable()); function && function->isPrivateBuiltinFunction())
-            return WTF::IterationStatus::Continue;
-        caller = codeBlock->source().provider();
-        return WTF::IterationStatus::Done;
-    });
-    return caller == record->sourceCode().provider();
-}
-
 // The loader's promise and the key of each import() that has yet to settle. didStartDynamicImport() keeps them, with a key while there are module mocks.
 static Vector<std::pair<JSC::JSPromise*, String>, 4> pendingImportCalls(Zig::GlobalObject* globalObject)
 {
@@ -8038,11 +8068,16 @@ static Vector<std::pair<JSC::JSPromise*, String>, 4> pendingImportCalls(Zig::Glo
 
 // Whether `start` can't finish evaluating until `target`, the module `running` mocks, has. If it can, `unfinished` gets the modules that must
 // finish first and aren't in the import chain yet. A waiting module keeps waiting while the factory runs, so waitingModules caches the answer.
-// A module waits for what its import statements name, and for what it has called import() for and awaits.
-__attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globalObject, BunPlugin::OnLoad::RunningModuleMock& running, const String& start, const String& target, Vector<String>& unfinished)
+// A module waits for what its import statements name. It also waits for what it has called import() for and awaits: `awaitsImport` says that `start` waits only for that.
+__attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globalObject, BunPlugin::OnLoad::RunningModuleMock& running, const String& start, const String& target, Vector<String>& unfinished, bool* awaitsImport)
 {
     if (running.waitingModules.contains(start))
         return true;
+    if (running.modulesAwaitingImport.contains(start)) {
+        if (awaitsImport)
+            *awaitsImport = true;
+        return true;
+    }
 
     auto& vm = JSC::getVM(globalObject);
     auto* loader = Bun::testFileModuleLoader(globalObject);
@@ -8080,7 +8115,6 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
         unfinished.append(key);
     };
 
-    std::optional<Vector<std::pair<JSC::JSPromise*, String>, 4>> importCalls;
     add(start);
     for (size_t i = 0; i < unfinished.size(); ++i) {
         String importer = unfinished[i];
@@ -8098,19 +8132,6 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
             addImporter(importersOf, importer, key);
             add(key);
         }
-        // What the body awaits an import() of: the promise of the call leads to the body. Not of the factory's own file, which JSC's import() cycle check leaves out, or of the test file, whose copy would run its tests again.
-        auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
-        if (!cyclic || cyclic->status() < JSC::CyclicModuleRecord::Status::Evaluating || importer == running.file || isTestFile(globalObject, importer))
-            continue;
-        if (!importCalls)
-            importCalls = pendingImportCalls(globalObject);
-        for (auto& [promise, key] : *importCalls) {
-            // An import() of a module that has yet to be fetched is not followed: the statements that name that module say whether it waits.
-            if ((key != target && !recordOf(key) && !registeredModuleMock(globalObject, key)) || !JSC::AbstractModuleRecord::importPromiseGatesAsyncDependency(promise, cyclic))
-                continue;
-            addImporter(importersOf, importer, key);
-            add(key);
-        }
     }
 
     for (size_t i = 0; i < waiting.size(); ++i) {
@@ -8122,7 +8143,78 @@ __attribute__((minsize)) static bool isWaitingForModule(Zig::GlobalObject* globa
                 waiting.append(importer);
         }
     }
-    return running.waitingModules.contains(start);
+    if (running.waitingModules.contains(start))
+        return true;
+
+    // No import statement makes `start` wait. What a body awaits an import() of: the promise of the call leads to the body.
+    // A module behind such a call is read, and is not added to `unfinished`: the chain of the factory is what import statements lead to.
+    std::optional<Vector<std::pair<JSC::JSPromise*, String>, 4>> importCalls;
+    Vector<String> behindImportCalls;
+    auto follow = [&](const String& importer, const String& key) {
+        auto* record = key == target ? nullptr : recordOf(key);
+        // A module that is still being fetched is left out: nothing says yet what it imports.
+        if (key != target && !record)
+            return;
+        if (key == target || running.waitingModules.contains(key) || running.modulesAwaitingImport.contains(key)) {
+            addImporter(importersOf, importer, key);
+            if (seen.add(key).isNewEntry || !waiting.contains(key))
+                waiting.append(key);
+            return;
+        }
+        auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
+        if (!cyclic || cyclic->isSCCEvaluated() || running.importChain.contains(key) || isModuleMockEvaluatorKey(key))
+            return;
+        addImporter(importersOf, importer, key);
+        if (seen.add(key).isNewEntry)
+            behindImportCalls.append(key);
+    };
+    waiting.shrink(0);
+    size_t fromStatements = unfinished.size();
+    for (size_t i = 0; i < fromStatements + behindImportCalls.size(); ++i) {
+        bool isBehindImportCall = i >= fromStatements;
+        String importer = isBehindImportCall ? behindImportCalls[i - fromStatements] : unfinished[i];
+        // What an earlier walk found to wait so.
+        if (!isBehindImportCall && running.modulesAwaitingImport.contains(importer)) {
+            waiting.append(importer);
+            continue;
+        }
+        auto* record = recordOf(importer);
+        auto* cyclic = record ? dynamicDowncast<JSC::CyclicModuleRecord>(record) : nullptr;
+        if (!cyclic)
+            continue;
+        if (isBehindImportCall) {
+            for (auto& resolved : record->resolvedRequests().values()) {
+                String key { resolved.get() };
+                follow(importer, key);
+            }
+            for (auto& loaded : record->loadedModules().values())
+                follow(importer, loaded.m_module->moduleKey().string());
+        }
+        // Not of the factory's own file, which JSC's import() cycle check leaves out, or of the test file, whose copy would run its tests again.
+        if (cyclic->status() < JSC::CyclicModuleRecord::Status::Evaluating || importer == running.file || isTestFile(globalObject, importer))
+            continue;
+        if (!importCalls)
+            importCalls = pendingImportCalls(globalObject);
+        for (auto& [promise, key] : *importCalls) {
+            if (JSC::AbstractModuleRecord::importPromiseGatesAsyncDependency(promise, cyclic))
+                follow(importer, key);
+        }
+    }
+
+    for (size_t i = 0; i < waiting.size(); ++i) {
+        auto importers = importersOf.find(waiting[i]);
+        if (importers == importersOf.end())
+            continue;
+        for (auto& importer : importers->value) {
+            if (running.modulesAwaitingImport.add(importer).isNewEntry)
+                waiting.append(importer);
+        }
+    }
+    if (!running.modulesAwaitingImport.contains(start))
+        return false;
+    if (awaitsImport)
+        *awaitsImport = true;
+    return true;
 }
 
 // Returns `key`, or if that module waits for `mocked`, the key of a private copy for the factory (of a mock: unwaitedModuleMockKey()), since awaiting it would deadlock.
@@ -8131,11 +8223,14 @@ __attribute__((minsize)) static String redirectedModuleKey(Zig::GlobalObject* gl
 {
     String instead = key;
     Vector<String> unfinished;
-    while (isWaitingForModule(globalObject, running, instead, mocked, unfinished)) {
+    bool awaitsImport = false;
+    while (isWaitingForModule(globalObject, running, instead, mocked, unfinished, &awaitsImport)) {
         if (registeredModuleMock(globalObject, instead))
             return unwaitedModuleMockKey(instead);
         instead = originalModuleKey(instead);
-        globalObject->onLoadPlugins.privateCopies.add(instead);
+        // Such a module has begun its body, and its copy begins the body again. See mockModule() and keyOfImportWhileModuleMocksRun().
+        if (std::exchange(awaitsImport, false))
+            globalObject->onLoadPlugins.privateCopies.add(instead);
         unfinished.clear();
     }
     for (auto& module : unfinished)
@@ -8155,6 +8250,7 @@ void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(mock->exports);
     visitor.append(mock->specifier);
     visitor.append(mock->writtenSpecifier);
+    visitor.append(mock->registrant);
     visitor.append(mock->originalExports);
     visitor.append(mock->originalCommonJSExports);
     visitor.append(mock->commonJSExportsOfOriginal);
@@ -9108,8 +9204,7 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
     auto* importerEntry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), importer));
     auto* importerRecord = importerEntry ? dynamicDowncast<JSC::CyclicModuleRecord>(importerEntry->record()) : nullptr;
     bool isImporterBeingLoaded = importerRecord && importerRecord->status() == JSC::CyclicModuleRecord::Status::New;
-    // Nor is it the copy where the module's own text calls import(): a module that awaits an import() goes on beside its copy.
-    bool isImporterItself = isImporterBeingLoaded || Zig::isCalledByModule(globalObject, importerRecord);
+    std::optional<bool> isCalledByImporter;
 
     // The innermost one is asking. The ones that called it are waiting for it.
     Vector<JSObject*, 2> callers = Zig::factoriesInAsyncContext(globalObject);
@@ -9145,6 +9240,16 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
                 isFactory = isFactory && !haveUnfinishedImporterInCommon(globalObject, mocked, uncheckedDowncast<Zig::JSModuleMock>(callers[0])->specifier->tryGetValue().data);
             else if (!callers.isEmpty())
                 isFactory = true;
+            // Nor is it the copy where a factory has the private copy of a module that awaits an import(), and the code of the module itself calls: such a module goes on beside its copy.
+            bool isImporterItself = isImporterBeingLoaded;
+            if (!isImporterItself && !isInChain && !isFactory && importerRecord && !globalObject->onLoadPlugins.privateCopies.isEmpty()) [[unlikely]] {
+                String copy = Zig::originalModuleKey(importer);
+                if (globalObject->onLoadPlugins.privateCopies.contains(copy) && running.importChain.contains(copy)) {
+                    if (!isCalledByImporter)
+                        isCalledByImporter = Zig::moduleThatCalledImport(globalObject->vm()) == importerRecord;
+                    isImporterItself = *isCalledByImporter;
+                }
+            }
             if (!isInChain && !isFactory && (isImporterItself || !running.importChainWithoutQuery.contains(importer)))
                 continue;
             // A module that was linked as itself is patched in place: nothing waits for this factory, and the patch reaches whatever imports it meanwhile.

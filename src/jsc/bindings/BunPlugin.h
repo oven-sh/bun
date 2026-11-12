@@ -107,6 +107,8 @@ public:
             Vector<String> givenTheOriginal;
             // isWaitingForModule()'s cache.
             WTF::UncheckedKeyHashSet<String> waitingModules;
+            // The same for the modules that wait only because a module awaits an import().
+            WTF::UncheckedKeyHashSet<String> modulesAwaitingImport = {};
             // importChain for imports by compiled code, which the loader does not see.
             WTF::BitVector compiledImportChain = {};
             // givenTheOriginal for compiled files that required the mocked file.
@@ -145,7 +147,7 @@ public:
         WTF::ListHashSet<String> loadRoots = {};
         // Those of them that a factory's file, but not the factory, called import() for while the factory ran.
         WTF::UncheckedKeyHashSet<String> loadRootsDuringFactories = {};
-        // The keys of the private copies that factories got of modules in this test file. See redirectedModuleKey().
+        // The keys of the private copies that factories got of modules that await an import(), since the test file before this one ended. See redirectedModuleKey().
         WTF::UncheckedKeyHashSet<String> privateCopies = {};
         // Fetch promises for those modules, kept until JSC registers them.
         WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSObject>> loadRootFetches = {};

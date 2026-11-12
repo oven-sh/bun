@@ -89,8 +89,20 @@ describe.concurrent("bundler", () => {
   // The entry naming moves the page there too, and a public path is what finds its files from there.
   // `bun build` cannot create a `../` output folder on Windows.
   test.skipIf(isWindows).each([
-    { name: "naming-above-outdir", format: "esm", publicPath: "/", naming: { entry: "../[name].[ext]" }, ...aboveOutdir },
-    { name: "naming-above-outdir-cjs", format: "cjs", publicPath: "/", naming: { entry: "../[name].[ext]" }, ...aboveOutdir },
+    {
+      name: "naming-above-outdir",
+      format: "esm",
+      publicPath: "/",
+      naming: { entry: "../[name].[ext]" },
+      ...aboveOutdir,
+    },
+    {
+      name: "naming-above-outdir-cjs",
+      format: "cjs",
+      publicPath: "/",
+      naming: { entry: "../[name].[ext]" },
+      ...aboveOutdir,
+    },
     {
       name: "naming-beside-outdir",
       format: "esm",

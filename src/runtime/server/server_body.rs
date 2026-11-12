@@ -621,10 +621,13 @@ impl AnyRoute {
             base_dir
         };
 
-        let Some(abs_path) = paths::resolve_path::join_abs_string_checked::<
-            paths::platform::Loose,
-        >(base_dir, &[path_slice])
-        .filter(|abs_path| abs_path.len() < paths::MAX_PATH_BYTES) else {
+        let Some(abs_path) =
+            paths::resolve_path::join_abs_string_checked::<paths::platform::Loose>(
+                base_dir,
+                &[path_slice],
+            )
+            .filter(|abs_path| abs_path.len() < paths::MAX_PATH_BYTES)
+        else {
             return Err(init_ctx
                 .global
                 .throw_invalid_arguments(format_args!("Bundled file path is too long")));

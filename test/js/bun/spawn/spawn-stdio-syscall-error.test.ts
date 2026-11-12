@@ -383,6 +383,89 @@ process.on("exit", code => {
 });
 `;
 
+// One write of more than a stream's highWaterMark (64 KiB), once the parent says "go". One recv() returns all of it.
+const ONE_WRITE_CMD = ["sh", "-c", "read go; dd if=/dev/zero bs=66000 count=1 2>/dev/null; read done"];
+
+// node:child_process, the same wakeup for a stream that is paused: the chunk fills its buffer, so it has stopped the
+// reader when the read behind the chunk fails. resume() hands the chunk to 'data' a few turns later.
+const CHILD_PROCESS_STOPPED_FIXTURE = /* js */ `
+import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+const events = [];
+let got = 0;
+const child = spawn(${JSON.stringify(ONE_WRITE_CMD[0])}, ${JSON.stringify(ONE_WRITE_CMD.slice(1))}, { stdio: ["pipe", "pipe", "ignore"] });
+const out = child.stdout;
+out.on("data", chunk => {
+  got += chunk.length;
+  events.push("data");
+});
+out.pause();
+// 'resume' comes after the stream's first read request.
+out.once("resume", () => setImmediate(() => child.stdin.write("go\\n")));
+out.on("error", e => events.push("stdout.error:" + e.code));
+out.on("end", () => events.push("stdout.end"));
+out.on("close", () => {
+  events.push("stdout.close");
+  child.stdin.end();
+});
+const deadline = Date.now() + 15_000;
+setImmediate(function wait() {
+  if (out.readableLength < 65536 && !out.destroyed && Date.now() < deadline) return setImmediate(wait);
+  events.push("buffered " + out.readableLength);
+  out.resume();
+});
+child.on("close", () => {
+  events.push("close");
+  const received = Number(readFileSync(process.env.SPAWN_FAULT_REPORT, "utf8"));
+  console.log(JSON.stringify({ received, lost: received - got, events }));
+});
+`;
+
+// "x", then at the parent's marker one write of 136000 bytes, then the child closes its end and leaves its own marker.
+const HANGUP_WRITER_CMD = [
+  "sh",
+  "-c",
+  "printf x; while [ ! -e hangup-go ]; do sleep 0.01; done; dd if=/dev/zero bs=136000 count=1 2>/dev/null; exec 1>&-; : > hangup-written; read done",
+];
+
+// node:child_process, no failed read: a paused stream whose buffer the first chunk of a wakeup fills, with more bytes
+// and the child's hangup behind that chunk. The parent does not return to its event loop until the child has hung up.
+const CHILD_PROCESS_HANGUP_FIXTURE = /* js */ `
+import { spawn } from "node:child_process";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
+rmSync("hangup-go", { force: true });
+rmSync("hangup-written", { force: true });
+const child = spawn(${JSON.stringify(HANGUP_WRITER_CMD[0])}, ${JSON.stringify(HANGUP_WRITER_CMD.slice(1))}, { stdio: ["pipe", "pipe", "ignore"] });
+const out = child.stdout;
+const nap = new Int32Array(new SharedArrayBuffer(4));
+const deadline = Date.now() + 15_000;
+let got = 0, end = 0, stoppedAt = -1;
+out.on("data", chunk => {
+  got += chunk.length;
+  if (got !== 1) return;
+  // From here on nothing takes chunks off the stream. By the next immediate the reader is waiting for more.
+  out.pause();
+  setImmediate(() => {
+    writeFileSync("hangup-go", "");
+    while (!existsSync("hangup-written")) {
+      if (Date.now() > deadline) throw new Error("timed out waiting for the child");
+      Atomics.wait(nap, 0, 0, 1);
+    }
+    setImmediate(function wait() {
+      if (out.readableLength === 0 && Date.now() < deadline) return setImmediate(wait);
+      // A turn after the first chunk is in the stream, the stream holds what the reader read before it was stopped.
+      setImmediate(() => {
+        stoppedAt = out.readableLength;
+        out.resume();
+      });
+    });
+  });
+});
+out.on("end", () => end++);
+out.on("close", () => child.stdin.end());
+child.on("close", () => console.log(JSON.stringify({ stoppedAt, got, end })));
+`;
+
 // Bun.spawnSync / child_process.spawnSync / execFileSync: the lost output is an error, not a success.
 const SPAWN_SYNC_FIXTURE = /* js */ `
 import { spawnSync, execFileSync } from "node:child_process";
@@ -425,6 +508,8 @@ beforeAll(async () => {
     "child-process-readable.mjs": CHILD_PROCESS_READABLE_FIXTURE,
     "stdout-stream-mid-fill.mjs": STDOUT_STREAM_MID_FILL_FIXTURE,
     "child-process-mid-fill.mjs": CHILD_PROCESS_MID_FILL_FIXTURE,
+    "child-process-stopped.mjs": CHILD_PROCESS_STOPPED_FIXTURE,
+    "child-process-hangup.mjs": CHILD_PROCESS_HANGUP_FIXTURE,
     "spawn-sync.mjs": SPAWN_SYNC_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
@@ -672,6 +757,39 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
         });
       },
     );
+
+    // The chunk filled the buffer of a paused stream, which stopped the reader for that. The error waits for the
+    // stream's next read request, as it waits for the next pull of a stream that is pulled from: resume() has handed
+    // the chunk to 'data' by then. Destroyed at once, the stream would keep the chunk from 'data'.
+    test.concurrent("node:child_process: a paused stream gets that chunk from resume(), then 'error'", async () => {
+      expect(
+        await runWithFault("child-process-stopped.mjs", {
+          SPAWN_FAULT_RECV_MID_FILL: "1",
+          SPAWN_FAULT_REPORT: join(String(dir), "recv-report-mid-fill-stopped.txt"),
+        }),
+      ).toEqual({
+        parsed: {
+          received: 66000,
+          lost: 0,
+          events: ["buffered 66000", "data", "stdout.error:EIO", "stdout.close", "close"],
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // No read fails here. The shim caps each recv() at 4 KiB, so the reader makes two chunks of the one wakeup: 32
+  // reads, then the rest. The first fills the buffer of a paused stream, which stops the reader for that. A reader
+  // goes on reading a socket that hung up, but not one its stream stopped: the stream gets the rest when it asks.
+  test.concurrent("node:child_process: a reader its stream stopped reads no more after the child hung up", async () => {
+    expect(
+      await runWithFault("child-process-hangup.mjs", { SPAWN_FAULT_RECV_AT: "1000000", SPAWN_FAULT_RECV_CAP: "4096" }),
+    ).toEqual({
+      parsed: { stoppedAt: 32 * 4096, got: 136001, end: 1 },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   describe.each([

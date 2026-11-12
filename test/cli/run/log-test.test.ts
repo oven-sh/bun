@@ -92,14 +92,20 @@ describe.concurrent("bunfig.toml logLevel", () => {
       });
     }
 
-    for (const [name, cmd] of [early, late]) {
+    // A load that fails ends `bun <file>`. `bun run <file>` reports it and then runs the file.
+    for (const [[name, cmd], stdout, exitCode] of [
+      [early, "", 1],
+      [late, "ran\n", 0],
+    ] as const) {
       test(`${name}, a file that sets a level and then fails to load sets no level`, async () => {
         const config = `logLevel = "error"\n` + badMacro + `[loader]\n".x" = "not-a-loader"\n`;
-        const { stderr } = await run(cmd, { ...program, "bunfig.toml": config });
-        expect({ warn: count(stderr, "warn:"), error: count(stderr, "error: Invalid loader") }).toEqual({
-          warn: 1,
-          error: 1,
-        });
+        const result = await run([...cmd], { ...program, "bunfig.toml": config });
+        expect({
+          stdout: result.stdout,
+          warn: count(result.stderr, "warn:"),
+          error: count(result.stderr, "error: Invalid loader"),
+          exitCode: result.exitCode,
+        }).toEqual({ stdout, warn: 1, error: 1, exitCode });
       });
     }
   });

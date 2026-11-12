@@ -60,6 +60,10 @@ pub struct FileReader {
     /// path; `pull_into_sink` is the drain-ack resume.
     pub(crate) sink: JsCell<SinkHandle>,
     pub(crate) sink_paused: Cell<bool>,
+    /// Handle mode, for the stdio of `node:child_process`: each read completion calls the function in the wrapper's `readCallback` slot from the event loop. No pull is parked, nothing is read inline, and `flowing` says whether the reader is started.
+    pub(crate) read_callback: Cell<bool>,
+    /// The task that starts the reader in handle mode is in the queue.
+    pub(crate) read_start_queued: Cell<bool>,
 }
 
 impl Default for FileReader {
@@ -83,6 +87,8 @@ impl Default for FileReader {
             flowing: Cell::new(true),
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
+            read_callback: Cell::new(false),
+            read_start_queued: Cell::new(false),
         }
     }
 }
@@ -463,6 +469,11 @@ impl FileReader {
 
         self.started.set(true);
 
+        // Handle mode reads nothing here: `set_flowing(true)` starts the reader.
+        if self.read_callback.get() {
+            return streams::Start::Ready;
+        }
+
         if self.reader().is_done() {
             self.consume_reader_buffer();
             if !self.buffered.get().is_empty() {
@@ -753,6 +764,43 @@ impl FileReader {
         ret && !self.done.get() && !self.reader().is_done()
     }
 
+    /// Handle mode's read start. `set_flowing(true)` has JS on the stack, so a task starts the reader: what the pipe holds by then comes on the next turn of the event loop, ahead of what the loop polls for, the child's exit included.
+    fn queue_read_start(&self) {
+        if self.read_start_queued.replace(true) {
+            return;
+        }
+        // SAFETY: see `parent()`. The task owns the ref.
+        let source = unsafe { RefPtr::init_ref(self.parent()) }.into_raw();
+        self.parent_const()
+            .global_this()
+            .bun_vm()
+            .event_loop_mut()
+            .enqueue_task(bun_event_loop::Task::init(source));
+    }
+
+    /// The task of `queue_read_start`.
+    fn start_reader(&self) {
+        self.read_start_queued.set(false);
+        // Closed with the callback still registered: a tick of the event loop nested in the call for the last chunk ran this before the end was reported. There is no fd left to read.
+        if !self.read_callback.get() || !self.flowing.get() || self.reader().is_done() {
+            return;
+        }
+        #[cfg(unix)]
+        {
+            self.reader().unpause();
+            // A read loop that was running when `_read()` asked has armed the poll again.
+            if !self.reader().has_pending_read() {
+                // SAFETY: the reader cell is live for `self`'s lifetime; `read` is the raw re-entrancy-safe entry (its dispatch runs user JS).
+                unsafe { IOReader::read(self.reader.get()) };
+            }
+        }
+        #[cfg(windows)]
+        if let Err(err) = self.reader().try_unpause() {
+            // SAFETY: the reader cell is live for `self`'s lifetime; `on_error` is the raw entry (it reaches `on_reader_error`).
+            unsafe { IOReader::on_error(self.reader.get(), err) };
+        }
+    }
+
     /// `on_read_chunk` in handle mode. `false` ends this read loop: the callback stopped the reader or cancelled the source, or this was the last chunk.
     fn read_chunk_into_callback(&self, chunk: Chunk<'_>) -> bool {
         // Pipes may return 0-byte reads short of EOF.
@@ -981,6 +1029,12 @@ impl FileReader {
         self.flowing.set(flag);
 
         if flag {
+            if self.read_callback.get() {
+                // A read loop that is running goes on and arms the poll itself; the task starts a reader that is idle.
+                #[cfg(unix)]
+                self.reader().unpause();
+                return self.queue_read_start();
+            }
             self.reader().unpause();
             if !self.reader().is_done() && !self.reader().has_pending_read() {
                 // Kick off a new read if needed
@@ -1147,6 +1201,29 @@ impl Source {
         let flag = flag.to_js();
         debug_assert!(flag.is_boolean());
         self.context.set_flowing(flag == JSValue::TRUE);
+    }
+
+    /// # Safety
+    /// `this` is a source `FileReader::queue_read_start` queued, with the ref it took.
+    pub(crate) unsafe fn run_read_start(this: *mut Self) {
+        // SAFETY: the task's ref, released when this returns.
+        let source = unsafe { RefPtr::from_raw(this) };
+        source.context.start_reader();
+    }
+}
+
+// `FileReader::queue_read_start` queues the source itself, with a ref.
+impl bun_event_loop::Taskable for Source {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FileReaderReadStart;
+
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: the task's ref.
+        unsafe { Source::decrement_count(this) };
+    }
+
+    /// The read callback carries the context it was registered in (`with_async_context_if_needed`).
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 

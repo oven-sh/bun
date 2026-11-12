@@ -83,6 +83,7 @@ pub mod task_tag {
         FetchTaskletDeinit,
         FetchTaskletPromiseSettle,
         FetchTaskletRequestDrain,
+        FileReaderReadStart,      // webcore::file_reader::Source (starts its reader for the read callback)
         FSWatchTask,
         GetAddrInfoLibuvComplete,
         GraphContextStopAgain,

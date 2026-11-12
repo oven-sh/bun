@@ -91,6 +91,7 @@ use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
 use crate::shell::states::r#async::Async as ShellAsync;
 
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
+use crate::webcore::file_reader::Source as FileReaderSource;
 use crate::webcore::file_sink::FlushPendingTask as FlushPendingFileSinkTask;
 #[cfg(not(windows))]
 use crate::webcore::file_sink::Poll as FileSinkPoll;
@@ -784,6 +785,11 @@ pub(crate) fn run_task(
                 }
             )
         }
+        // Only the stdio of `node:child_process` has a read callback.
+        task_tag::FileReaderReadStart => feature_arm!([Spawn], |source: FileReaderSource| {
+            // SAFETY: the queued pointer is the source, with the ref the task owns.
+            unsafe { FileReaderSource::run_read_start(source) };
+        }),
         // `cast_ptr!` yields the heap-allocated task; sole owner.
         task_tag::StreamPending => feature_arm!([WebStreams], |pending: StreamPending| {
             StreamPending::run_from_js_thread(pending);
@@ -883,7 +889,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 86,
+    task_tag::COUNT == 87,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1819,6 +1825,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::AsyncCpTask => release_in!([NodeFs], crate::node::fs::AsyncCpTask),
         task_tag::ShellAsyncCpTask => release_in!([Shell], crate::node::fs::ShellAsyncCpTask),
+        task_tag::FileReaderReadStart => release_in!([Spawn], FileReaderSource),
         task_tag::StreamPending => release_in!([WebStreams], StreamPending),
         task_tag::ThreadSafeFunction => release_in!([NativeAddons], ThreadSafeFunction),
         task_tag::UvLoopDispatch => {

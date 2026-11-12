@@ -295,7 +295,6 @@ impl Listener {
                 && !previous.ssl
                 && previous.socket_flags == socket_flags
                 && previous.allow_half_open == allow_half_open
-                && previous.default_timeout == socket_config.default_timeout
                 && previous.context == cx.context().id();
             if let Some(this_value) = previous.this_value.get().try_get().filter(|_| unchanged) {
                 previous
@@ -1157,10 +1156,11 @@ pub(crate) fn set_secure_context(listener: TLSListener<'_>, context: &SecureCont
     }
 }
 
-/// The address's key in `VirtualMachine::hot_map()`. `None` without `--hot`, or if two listeners can hold the address at once.
+/// The address's key in `VirtualMachine::hot_map()`. `None` without `--hot`, for a `net.Server`, or if two listeners can hold the address at once.
 fn hot_reload_key(config: &SocketConfig) -> Option<Box<[u8]>> {
     VirtualMachine::get().as_mut().hot_map()?;
-    if config.reuse_port || config.fd.is_some() || config.port == Some(0) {
+    let is_net_server = !config.default_timeout;
+    if is_net_server || config.reuse_port || config.fd.is_some() || config.port == Some(0) {
         return None;
     }
     let mut key = b"[listen]-".to_vec();

@@ -340,7 +340,12 @@ test("pipeThrough(new TextDecoderStream()) pulls its source once before any read
 // Node.js sets the stream up the same way. So a write through a node:stream adapter completes
 // when the readable side is read, not before it (Node.js v26.3.0).
 describe("TextDecoderStream behind a node:stream adapter", () => {
-  const nextData = (readable: NodeJS.ReadableStream) => new Promise<Buffer>(resolve => readable.once("data", resolve));
+  const nextData = (readable: NodeJS.ReadableStream) =>
+    new Promise<Buffer>((resolve, reject) => {
+      readable.once("data", resolve);
+      readable.once("error", reject);
+      readable.once("close", () => reject(new Error("the stream closed before any data")));
+    });
   test.each([
     [
       "Writable.fromWeb(stream.writable)",

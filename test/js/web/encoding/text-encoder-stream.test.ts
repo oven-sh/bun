@@ -191,7 +191,11 @@ test("pipeThrough(new TextEncoderStream()) pulls its source once before any read
 // when the readable side is read, not before it (Node.js v26.3.0).
 describe("TextEncoderStream behind a node:stream adapter", () => {
   const nextData = (readable: NodeJS.ReadableStream) =>
-    new Promise<Uint8Array>(resolve => readable.once("data", resolve));
+    new Promise<Uint8Array>((resolve, reject) => {
+      readable.once("data", resolve);
+      readable.once("error", reject);
+      readable.once("close", () => reject(new Error("the stream closed before any data")));
+    });
   test.each([
     [
       "Writable.fromWeb(stream.writable)",

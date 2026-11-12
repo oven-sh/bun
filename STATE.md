@@ -1,5 +1,5 @@
 # State on 2026-11-12 ~18:40Z (PR oven-sh/bun#37171, branch farm/f00c9907/child-stdio-data-throw-uncaught)
-- Work branch (not yet pushed to the PR): origin/robobun/f00c9907/arm-wip. Head after this session's commits: 8ad649dafc8 (or later).
+- Work branch (not yet pushed to the PR): origin/robobun/f00c9907/arm-wip @ 9b4d6ad7497 (adds self-ending guards to the repl test scripts). PR body draft: measure/body-full.md (visible part 246 words). Self-review run fba84f8b169a launched 18:45Z, still running at 20:10Z.
 - Design: FileReader read callback (handle mode). This session changed two things on top of the implementation run:
   1. Lifetime as on main: the reader is unref'd until the stream's first _read(); what it reads before waits in kUnread (native-readable.ts).
   2. After a callback throw the source waits for the loop's next turn (yield task). VirtualMachine.rs / Task.rs / repl.rs changes removed.

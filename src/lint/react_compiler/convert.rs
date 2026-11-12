@@ -8,9 +8,7 @@
 //!   diagnostics carry the `Loc`s they were given, and [`Converted::span_of`] maps them back.
 //! - A `Ref` is an index into [`Converted::symbols`], which has only the symbols that the function
 //!   mentions.
-//! - A name is bound to what the tool of the [`Flavor`] binds it to, which Bun's parser doesn't
-//!   always do: `declare const` is a binding in Babel's scopes, and a function signature is one in
-//!   oxc's.
+//! - A name is bound to what the tool of the [`Flavor`] binds it to, not to what Bun's parser does.
 //! - JSX is a classic-runtime call, `createElement(tag, props, ...children)`, which keeps the
 //!   attributes in order. The lowering turns it back into a `JsxExpression`.
 
@@ -160,8 +158,7 @@ pub(crate) struct Converter<'a, 'x> {
     file: &'a File<'a>,
     arena: &'x Arena,
     flavor: Flavor,
-    /// The plugin parses the file with Babel. Its compiler reads the bindings of Babel's scopes there, which don't
-    /// bind every name that the linter's do.
+    /// The plugin's compiler reads Babel's scopes for this file, which don't bind every name that the linter's do.
     has_babel_scopes: bool,
     /// The range of the function being compiled.
     root: Span,
@@ -312,8 +309,7 @@ impl<'a> Converter<'a, '_> {
         }
     }
 
-    /// [`Converter::ref_of_symbol`] for a symbol that isn't known yet. It's a function of its own so that a known one
-    /// costs the caller only the lookup.
+    /// [`Converter::ref_of_symbol`] for a symbol that isn't known yet, out of line to keep a known one a lookup.
     fn ref_of_new_symbol(&mut self, symbol: Symbol<'a>) -> Option<Ref> {
         let declaration = match self.has_babel_scopes {
             true => Some((symbol.declarations()).find(|it| is_registered_by_babel(*it))?),
@@ -389,8 +385,7 @@ impl<'a> Converter<'a, '_> {
         Some(made)
     }
 
-    /// Babel's `Scope#getBinding` for a reference at `at` to a name that the scope of `symbol` doesn't bind: the
-    /// binding of the nearest enclosing scope that has one, or else the global.
+    /// Babel's `Scope#getBinding` for a name that its own scope doesn't bind: an enclosing binding, or the global.
     #[cold]
     #[inline(never)]
     fn ref_of_unbound(&mut self, symbol: Symbol<'a>, at: u32) -> Ref {
@@ -1644,8 +1639,7 @@ impl<'a> Converter<'a, '_> {
     }
 }
 
-/// True if `Scope#registerDeclaration` of @babel/traverse 7.29 makes a binding for it. It makes none for a node that
-/// `getBindingIdentifiers.keys` has no entry for, and none for a class with `declare`.
+/// True if `Scope#registerDeclaration` of @babel/traverse 7.29 makes a binding for it.
 fn is_registered_by_babel(declaration: Declaration<'_>) -> bool {
     match declaration {
         Declaration::Var(_)
@@ -1666,8 +1660,7 @@ fn is_registered_by_babel(declaration: Declaration<'_>) -> bool {
     }
 }
 
-/// True if `at` is in a parameter of the function whose scope `scope` is, and Babel has a scope for that parameter:
-/// its node is a pattern, which a rest parameter, a parameter property and a plain name aren't.
+/// True if `at` is in a parameter that is a scope for Babel: a pattern, not a rest parameter or a parameter property.
 fn is_in_parameter_scope(scope: Scope<'_>, at: u32) -> bool {
     if scope.kind() != ScopeKind::Function {
         return false;

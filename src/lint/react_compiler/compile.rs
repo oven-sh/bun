@@ -31,9 +31,7 @@ pub enum Flavor {
 pub(crate) struct Compiler<'a> {
     file: &'a File<'a>,
     flavor: Flavor,
-    /// The rules have to report what the plugin reports, and the plugin parses the file with Babel: a name is bound
-    /// to what Babel's scopes bind it to. It isn't set for a file that the plugin parses with hermes-parser, where
-    /// Babel's scopes bind what Flow declares.
+    /// The plugin parses the file with Babel, and the rules report what its compiler reads in Babel's scopes.
     has_babel_scopes: bool,
     wanted: Categories,
     config: EnvironmentConfig,

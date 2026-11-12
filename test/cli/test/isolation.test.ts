@@ -1760,17 +1760,19 @@ describe.concurrent("bun test --isolate=modules", () => {
     // A file gets its line once it has said that it listens.
     const feed = async () => {
       let stdout = "";
+      let fed = 0;
       const decoder = new TextDecoder();
       for await (const chunk of proc.stdout) {
-        const text = decoder.decode(chunk, { stream: true });
-        stdout += text;
-        for (const [, name] of text.matchAll(/^ready (\w)$/gm)) {
+        stdout += decoder.decode(chunk, { stream: true });
+        const ready = [...stdout.matchAll(/^ready (\w)\n/gm)];
+        for (const [, name] of ready.slice(fed)) {
           if (name === "e") proc.stdin.end();
           else {
             proc.stdin.write(`line for ${name}\n`);
             proc.stdin.flush();
           }
         }
+        fed = ready.length;
       }
       return stdout;
     };

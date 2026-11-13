@@ -645,7 +645,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_domain, (JSGlobalObject * lexic
     if (!thisObject) [[unlikely]]
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "domain"_s);
     auto& impl = thisObject->wrapped();
-    auto value = convert<IDLUSVString>(*lexicalGlobalObject, JSValue::decode(encodedValue));
+    auto value = convert<IDLNullable<IDLUSVString>>(*lexicalGlobalObject, JSValue::decode(encodedValue));
     RETURN_IF_EXCEPTION(throwScope, false);
     WebCore::propagateException(*lexicalGlobalObject, throwScope, impl.setDomain(value));
     return true;

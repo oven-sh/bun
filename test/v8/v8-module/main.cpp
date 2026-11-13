@@ -1,4 +1,5 @@
 #include <node.h>
+#include <node_object_wrap.h>
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -10,6 +11,8 @@
 #include <cstdarg>
 #include <iomanip>
 #include <iostream>
+#include <thread>
+#include <vector>
 
 using namespace v8;
 
@@ -2200,6 +2203,327 @@ void test_v8_cpu_profiler_title_api(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+// Node runs no JavaScript in a cleanup hook, so the hooks print.
+static void print_cleanup_hook(void *arg) {
+  printf("cleanup hook %s\n", static_cast<const char *>(arg));
+  fflush(stdout);
+}
+
+static char hook_added_first[] = "added first";
+static char hook_removed_by_a_hook[] = "removed by a hook";
+static char hook_removed_and_added_again[] = "removed and added again";
+static char hook_removed_at_once[] = "removed at once";
+static char hook_added_last[] = "added last";
+static char hook_added_by_a_hook[] = "added by a hook";
+static char hook_never_added[] = "never added";
+
+static void cleanup_hook_that_removes(void *arg) {
+  printf("cleanup hook that removes another one\n");
+  fflush(stdout);
+  node::RemoveEnvironmentCleanupHook(
+      static_cast<Isolate *>(arg), print_cleanup_hook, hook_removed_by_a_hook);
+}
+
+static void cleanup_hook_that_adds(void *arg) {
+  printf("cleanup hook that adds another one\n");
+  fflush(stdout);
+  node::AddEnvironmentCleanupHook(static_cast<Isolate *>(arg),
+                                  print_cleanup_hook, hook_added_by_a_hook);
+}
+
+// Node runs the hooks under a sealed handle scope, so this opens its own.
+static void cleanup_hook_that_creates_a_handle(void *arg) {
+  Isolate *isolate = static_cast<Isolate *>(arg);
+  HandleScope scope(isolate);
+  Local<String> string =
+      String::NewFromUtf8(isolate, "that created a string").ToLocalChecked();
+  char text[64] = {0};
+  string->WriteUtf8V2(isolate, text, sizeof(text) - 1);
+  print_cleanup_hook(text);
+}
+
+// One hook for each argument, which prints the argument.
+static void add_cleanup_hooks_through(Isolate *isolate,
+                                      const FunctionCallbackInfo<Value> &info) {
+  for (int i = 0; i < info.Length(); i++) {
+    char *name = new char[64]();
+    info[i].As<String>()->WriteUtf8V2(info.GetIsolate(), name, 63);
+    node::AddEnvironmentCleanupHook(isolate, print_cleanup_hook, name);
+  }
+}
+
+void add_cleanup_hooks(const FunctionCallbackInfo<Value> &info) {
+  add_cleanup_hooks_through(info.GetIsolate(), info);
+}
+
+static Isolate *saved_isolate = nullptr;
+
+void save_isolate(const FunctionCallbackInfo<Value> &info) {
+  saved_isolate = info.GetIsolate();
+}
+
+// In Bun the isolate of a file of bun test --isolate goes with the realm of
+// the file.
+void add_cleanup_hooks_through_saved_isolate(
+    const FunctionCallbackInfo<Value> &info) {
+  add_cleanup_hooks_through(saved_isolate, info);
+}
+
+void add_cleanup_hooks_that_add_and_remove(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  auto add = [isolate](char *name) {
+    node::AddEnvironmentCleanupHook(isolate, print_cleanup_hook, name);
+  };
+  auto remove = [isolate](char *name) {
+    node::RemoveEnvironmentCleanupHook(isolate, print_cleanup_hook, name);
+  };
+  add(hook_added_first);
+  add(hook_removed_by_a_hook);
+  node::AddEnvironmentCleanupHook(isolate, cleanup_hook_that_removes, isolate);
+  add(hook_removed_and_added_again);
+  add(hook_removed_at_once);
+  node::AddEnvironmentCleanupHook(isolate, cleanup_hook_that_adds, isolate);
+  node::AddEnvironmentCleanupHook(isolate, cleanup_hook_that_creates_a_handle,
+                                  isolate);
+  add(hook_added_last);
+  remove(hook_removed_at_once);
+  remove(hook_removed_and_added_again);
+  add(hook_removed_and_added_again);
+  // Neither pair is registered.
+  remove(hook_never_added);
+  node::RemoveEnvironmentCleanupHook(isolate, cleanup_hook_that_adds,
+                                     hook_added_first);
+}
+
+static char hook_added_twice[] = "added first, and again after the second";
+static char hook_added_second[] = "added second";
+
+// Node aborts at the second Add of a pair. Bun keeps the first one.
+void add_a_cleanup_hook_twice(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  node::AddEnvironmentCleanupHook(isolate, print_cleanup_hook,
+                                  hook_added_twice);
+  node::AddEnvironmentCleanupHook(isolate, print_cleanup_hook,
+                                  hook_added_second);
+  node::AddEnvironmentCleanupHook(isolate, print_cleanup_hook,
+                                  hook_added_twice);
+}
+
+static int runs_of_the_hook_that_adds_itself = 0;
+
+static void cleanup_hook_that_adds_itself_again(void *arg) {
+  printf("cleanup hook that adds itself again: run %d\n",
+         ++runs_of_the_hook_that_adds_itself);
+  fflush(stdout);
+  if (runs_of_the_hook_that_adds_itself < 3) {
+    node::AddEnvironmentCleanupHook(static_cast<Isolate *>(arg),
+                                    cleanup_hook_that_adds_itself_again, arg);
+  }
+}
+
+void add_a_cleanup_hook_that_adds_itself_again(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  node::AddEnvironmentCleanupHook(isolate, cleanup_hook_that_adds_itself_again,
+                                  isolate);
+}
+
+static Global<Object> object_for_the_hook_that_reads;
+
+static void cleanup_hook_that_throws(void *arg) {
+  Isolate *isolate = static_cast<Isolate *>(arg);
+  HandleScope scope(isolate);
+  printf("cleanup hook that throws\n");
+  fflush(stdout);
+  isolate->ThrowException(Exception::Error(
+      String::NewFromUtf8Literal(isolate, "thrown by a cleanup hook")));
+}
+
+// A property cannot be read while an exception is pending in Bun.
+static void cleanup_hook_that_reads_a_property(void *arg) {
+  Isolate *isolate = static_cast<Isolate *>(arg);
+  HandleScope scope(isolate);
+  Local<Object> object = object_for_the_hook_that_reads.Get(isolate);
+  Local<Value> name;
+  if (object
+          ->Get(isolate->GetCurrentContext(),
+                String::NewFromUtf8Literal(isolate, "name"))
+          .ToLocal(&name)) {
+    char text[64] = {0};
+    name.As<String>()->WriteUtf8V2(isolate, text, sizeof(text) - 1);
+    printf("cleanup hook that reads a property: %s\n", text);
+  } else {
+    printf("cleanup hook that reads a property: nothing came back\n");
+  }
+  fflush(stdout);
+  object_for_the_hook_that_reads.Reset();
+}
+
+void add_cleanup_hooks_that_throw_and_read(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  object_for_the_hook_that_reads.Reset(isolate, info[0].As<Object>());
+  node::AddEnvironmentCleanupHook(isolate, cleanup_hook_that_reads_a_property,
+                                  isolate);
+  node::AddEnvironmentCleanupHook(isolate, cleanup_hook_that_throws, isolate);
+}
+
+static char hook_added_without_an_isolate[] = "added without an isolate";
+static char hook_removed_without_an_isolate[] = "removed without an isolate";
+
+// Bun only: it does not read the isolate, which can be the one of a realm
+// that is collected. Node looks for the environment of the isolate.
+void add_and_remove_cleanup_hooks_without_an_isolate(
+    const FunctionCallbackInfo<Value> &info) {
+  node::AddEnvironmentCleanupHook(nullptr, print_cleanup_hook,
+                                  hook_added_without_an_isolate);
+  node::AddEnvironmentCleanupHook(info.GetIsolate(), print_cleanup_hook,
+                                  hook_removed_without_an_isolate);
+  node::RemoveEnvironmentCleanupHook(nullptr, print_cleanup_hook,
+                                     hook_removed_without_an_isolate);
+}
+
+static char hook_without_a_function[] = "that has no function";
+static char hook_of_another_thread[] = "added on a thread of the addon";
+
+// Bun only: it ignores a null function, and a thread that has no environment.
+void add_cleanup_hooks_that_are_ignored(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  void (*no_function)(void *) = nullptr;
+  node::AddEnvironmentCleanupHook(isolate, no_function,
+                                  hook_without_a_function);
+  node::RemoveEnvironmentCleanupHook(isolate, no_function,
+                                     hook_without_a_function);
+  node::AddEnvironmentCleanupHook(isolate, no_function,
+                                  hook_without_a_function);
+  std::thread([isolate] {
+    node::AddEnvironmentCleanupHook(isolate, print_cleanup_hook,
+                                    hook_of_another_thread);
+    node::RemoveEnvironmentCleanupHook(isolate, print_cleanup_hook,
+                                       hook_of_another_thread);
+    node::AddEnvironmentCleanupHook(isolate, print_cleanup_hook,
+                                    hook_of_another_thread);
+  }).join();
+}
+
+// The header of Node 26.4 and later adds a cleanup hook for each
+// node::ObjectWrap, which deletes the instance, and the destructor removes the
+// hook.
+class WrapWithCleanupHook : public node::ObjectWrap {
+public:
+  WrapWithCleanupHook() : id(states.size()) { states.push_back(alive); }
+  ~WrapWithCleanupHook() override;
+
+  static void construct(const FunctionCallbackInfo<Value> &info);
+  static void destroy(const FunctionCallbackInfo<Value> &info);
+  static void adopt(const FunctionCallbackInfo<Value> &info);
+  static void create_bare(const FunctionCallbackInfo<Value> &info);
+  static void report_at_cleanup(const FunctionCallbackInfo<Value> &info);
+
+private:
+  enum State : char { alive, destroyed };
+
+  static void report(void *unused);
+
+  size_t id;
+  // An older wrap, which the destructor of this one deletes.
+  WrapWithCleanupHook *owned = nullptr;
+
+  // One environment of a process makes wraps at a time.
+  static std::vector<State> states;
+  static size_t destroyed_before_the_end;
+  static size_t destroyed_by_their_hooks;
+  static size_t destroyed_by_their_owner;
+  static size_t destroyed_twice;
+  static size_t hooks_out_of_order;
+  static size_t last_hook;
+  static bool destroying_before_the_end;
+  static int destructors_running;
+};
+
+std::vector<WrapWithCleanupHook::State> WrapWithCleanupHook::states;
+size_t WrapWithCleanupHook::destroyed_before_the_end = 0;
+size_t WrapWithCleanupHook::destroyed_by_their_hooks = 0;
+size_t WrapWithCleanupHook::destroyed_by_their_owner = 0;
+size_t WrapWithCleanupHook::destroyed_twice = 0;
+size_t WrapWithCleanupHook::hooks_out_of_order = 0;
+size_t WrapWithCleanupHook::last_hook = SIZE_MAX;
+bool WrapWithCleanupHook::destroying_before_the_end = false;
+int WrapWithCleanupHook::destructors_running = 0;
+
+WrapWithCleanupHook::~WrapWithCleanupHook() {
+  if (states[id] == destroyed) {
+    destroyed_twice++;
+  }
+  states[id] = destroyed;
+  if (destroying_before_the_end) {
+    destroyed_before_the_end++;
+  } else if (destructors_running > 0) {
+    destroyed_by_their_owner++;
+  } else {
+    // The hook of this wrap is running.
+    destroyed_by_their_hooks++;
+    if (id > last_hook) {
+      hooks_out_of_order++;
+    }
+    last_hook = id;
+  }
+  destructors_running++;
+  delete owned;
+  destructors_running--;
+}
+
+void WrapWithCleanupHook::construct(const FunctionCallbackInfo<Value> &info) {
+  (new WrapWithCleanupHook())->Wrap(info.This());
+}
+
+// What a close() method of an addon does.
+void WrapWithCleanupHook::destroy(const FunctionCallbackInfo<Value> &info) {
+  destroying_before_the_end = true;
+  delete Unwrap<WrapWithCleanupHook>(info[0].As<Object>());
+  destroying_before_the_end = false;
+}
+
+// The first wrap owns the second one, which is older.
+void WrapWithCleanupHook::adopt(const FunctionCallbackInfo<Value> &info) {
+  Unwrap<WrapWithCleanupHook>(info[0].As<Object>())->owned =
+      Unwrap<WrapWithCleanupHook>(info[1].As<Object>());
+}
+
+// As many instances as the argument says, which wrap no object.
+void WrapWithCleanupHook::create_bare(const FunctionCallbackInfo<Value> &info) {
+  for (int32_t i = info[0].As<Int32>()->Value(); i > 0; i--) {
+    new WrapWithCleanupHook();
+  }
+}
+
+void WrapWithCleanupHook::report(void *unused) {
+  size_t left = 0;
+  for (State state : states) {
+    left += state == alive;
+  }
+  printf("wraps: %zu created, %zu destroyed before the end, %zu by their "
+         "hooks, %zu by the hook of their owner, %zu left\n",
+         states.size(), destroyed_before_the_end, destroyed_by_their_hooks,
+         destroyed_by_their_owner, left);
+  printf("hooks ran newest first: %s\n",
+         hooks_out_of_order == 0 ? "yes" : "no");
+  printf("each wrap was destroyed once: %s\n",
+         destroyed_twice == 0 ? "yes" : "no");
+  fflush(stdout);
+  // The next environment that makes wraps starts its own order.
+  last_hook = SIZE_MAX;
+}
+
+// The hook that reports is older than the wraps that are made after this
+// call, so it runs after their hooks.
+void WrapWithCleanupHook::report_at_cleanup(
+    const FunctionCallbackInfo<Value> &info) {
+  node::AddEnvironmentCleanupHook(info.GetIsolate(), report, nullptr);
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -2307,6 +2631,37 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_cpu_profiler_overlapping_sessions);
   NODE_SET_METHOD(exports, "test_v8_cpu_profiler_title_api",
                   test_v8_cpu_profiler_title_api);
+  NODE_SET_METHOD(exports, "add_cleanup_hooks", add_cleanup_hooks);
+  NODE_SET_METHOD(exports, "add_cleanup_hooks_that_add_and_remove",
+                  add_cleanup_hooks_that_add_and_remove);
+  NODE_SET_METHOD(exports, "save_isolate", save_isolate);
+  NODE_SET_METHOD(exports, "add_cleanup_hooks_through_saved_isolate",
+                  add_cleanup_hooks_through_saved_isolate);
+  NODE_SET_METHOD(exports, "add_a_cleanup_hook_twice",
+                  add_a_cleanup_hook_twice);
+  NODE_SET_METHOD(exports, "add_a_cleanup_hook_that_adds_itself_again",
+                  add_a_cleanup_hook_that_adds_itself_again);
+  NODE_SET_METHOD(exports, "add_cleanup_hooks_that_throw_and_read",
+                  add_cleanup_hooks_that_throw_and_read);
+  NODE_SET_METHOD(exports, "add_and_remove_cleanup_hooks_without_an_isolate",
+                  add_and_remove_cleanup_hooks_without_an_isolate);
+  NODE_SET_METHOD(exports, "add_cleanup_hooks_that_are_ignored",
+                  add_cleanup_hooks_that_are_ignored);
+  Local<FunctionTemplate> wrap_with_cleanup_hook = FunctionTemplate::New(
+      Isolate::GetCurrent(), WrapWithCleanupHook::construct);
+  wrap_with_cleanup_hook->InstanceTemplate()->SetInternalFieldCount(1);
+  exports
+      ->Set(context,
+            String::NewFromUtf8Literal(Isolate::GetCurrent(),
+                                       "WrapWithCleanupHook"),
+            wrap_with_cleanup_hook->GetFunction(context).ToLocalChecked())
+      .Check();
+  NODE_SET_METHOD(exports, "destroy_wrap", WrapWithCleanupHook::destroy);
+  NODE_SET_METHOD(exports, "adopt_wrap", WrapWithCleanupHook::adopt);
+  NODE_SET_METHOD(exports, "create_bare_wraps",
+                  WrapWithCleanupHook::create_bare);
+  NODE_SET_METHOD(exports, "report_wraps_at_cleanup",
+                  WrapWithCleanupHook::report_at_cleanup);
 
   // without this, node hits a UAF deleting the Global
   // (Context::GetIsolate was removed in V8 14.6; the module initializer runs

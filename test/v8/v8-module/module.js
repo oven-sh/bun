@@ -1,9 +1,109 @@
 const path = require("node:path");
+const { Worker, parentPort } = require("node:worker_threads");
 
 module.exports = debugMode => {
   const nativeModule = require(`./build/${debugMode ? "Debug" : "Release"}/v8tests`);
+
+  // The Worker runs a function of this module, which main.js starts like a test of the main thread.
+  function startWorker(testName, ...args) {
+    const argv = [testName, JSON.stringify(args), "null", debugMode ? "debug" : "release"];
+    // What the Worker writes about its uncaught error is not the output of a test.
+    const worker = new Worker(path.join(__dirname, "main.js"), { argv, stderr: true });
+    worker.stderr.resume();
+    worker.on("error", () => {});
+    return worker;
+  }
+
+  // Of all threads of the process.
+  const processorSeconds = () => process.resourceUsage().userCPUTime / 1e6;
+
+  // Every wrap stays reachable: the collector of Node destroys a wrap that nothing refers to, and that of Bun does not yet.
+  function makeWrapsWithCleanupHooks() {
+    nativeModule.report_wraps_at_cleanup();
+    const wraps = Array.from({ length: 1000 }, () => new nativeModule.WrapWithCleanupHook());
+    globalThis.wraps = wraps;
+    // What a close() method of an addon does to every 7th wrap before the end.
+    const isDestroyed = index => index % 7 === 0;
+    for (let i = 0; i < wraps.length; i += 7) nativeModule.destroy_wrap(wraps[i]);
+    // Every 10th wrap owns the one 5 before it, so its hook deletes both, and the hook of the older one must not run.
+    for (let i = 10; i < wraps.length; i += 10) {
+      if (!isDestroyed(i) && !isDestroyed(i - 5)) nativeModule.adopt_wrap(wraps[i], wraps[i - 5]);
+    }
+  }
+
   return {
     ...nativeModule,
+
+    test_v8_cleanup_hooks() {
+      nativeModule.add_cleanup_hooks_that_add_and_remove();
+      console.log("the script ends");
+    },
+
+    test_v8_cleanup_hooks_after_process_exit() {
+      nativeModule.add_cleanup_hooks("1", "2", "3");
+      console.log("process.exit() is next");
+      process.exit(0);
+    },
+
+    test_v8_cleanup_hooks_of_worker(end) {
+      const worker = startWorker("add_cleanup_hooks_and_end", end);
+      worker.on("message", () => worker.terminate());
+      worker.on("exit", () => console.log("the Worker has exited"));
+    },
+
+    add_cleanup_hooks_and_end(end) {
+      nativeModule.add_cleanup_hooks("1", "2", "3");
+      switch (end) {
+        case "process.exit()":
+          process.exit(0);
+        case "worker.terminate()":
+          parentPort.postMessage("ready");
+          setInterval(() => {}, 1000);
+          break;
+        case "an uncaught error":
+          throw new Error("the Worker ends with this error");
+      }
+    },
+
+    // The outer Worker ends while the inner one, which waits to be terminated, is alive.
+    test_v8_cleanup_hooks_of_nested_workers() {
+      startWorker("add_cleanup_hooks_and_leave_a_worker").on("exit", () => console.log("the outer Worker has exited"));
+    },
+
+    add_cleanup_hooks_and_leave_a_worker() {
+      nativeModule.add_cleanup_hooks("of the outer Worker");
+      startWorker("add_cleanup_hooks_and_end", "worker.terminate()").on("message", () => process.exit(0));
+    },
+
+    test_v8_object_wrap_cleanup_hooks() {
+      makeWrapsWithCleanupHooks();
+      console.log("the script ends");
+    },
+
+    test_v8_object_wrap_cleanup_hooks_of_worker() {
+      startWorker("make_wraps_with_cleanup_hooks").on("exit", () => console.log("the Worker has exited"));
+    },
+
+    make_wraps_with_cleanup_hooks: makeWrapsWithCleanupHooks,
+
+    // Prints the processor seconds from the moment before a Worker makes `few` wraps to its exit, which runs their hooks, and those for four times as many.
+    test_v8_object_wrap_cleanup_hooks_cost(few) {
+      function measure(count, done) {
+        let before;
+        startWorker("report_processor_seconds_and_create_bare_wraps", count)
+          .on("message", seconds => (before = seconds))
+          .on("exit", () => done(processorSeconds() - before));
+      }
+      measure(few, withFew => {
+        measure(4 * few, withMany => console.log(JSON.stringify({ withFew, withMany })));
+      });
+    },
+
+    report_processor_seconds_and_create_bare_wraps(count) {
+      nativeModule.report_wraps_at_cleanup();
+      parentPort.postMessage(processorSeconds());
+      nativeModule.create_bare_wraps(count);
+    },
 
     test_v8_function_script_origin() {
       function namedFunction(a, b) {

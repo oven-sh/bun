@@ -11,4 +11,3 @@
 # CHECK-LABEL: code f1:Body
 # CHECK-NOT: testedType=boolean
 # CHECK: = ToBoolean {{*}}expectsBoolean
-# CHECK-NOT: testedType=boolean

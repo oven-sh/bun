@@ -7,13 +7,13 @@
 # function inStep(n) { const m = n | 0, a = []; for (let i = 0; i < m; a[i] = i & 3, i++); return a; }
 # function behindTurn(n) { const m = n | 0, a = []; let i = 0; do { a[i] = i & 3; i++; } while (i < m); return a; }
 # function endsLate(n) { const m = n | 0, a = []; for (let i = 0; i < m || i < 5; i++) a[i] = i & 3; return a; }
-# print(written().join(""), reckoned(7).join(""), reckoned(0).length, reckoned(-3).length, upTo(3).join(""), upTo(0).join(""), upTo(-2).length, upTo(11).length, asks(3, { step: 2 }).join(), asks(0, { step: 2 }).length, asks(12, { step: 0.5 }).length);
+# print(written().join(""), reckoned(7).join(""), reckoned(0).length, reckoned(-3).length, upTo(3).join(""), upTo(0).join(""), upTo(-2).length, upTo(11).length, asks(JSON.parse("3"), { step: 2 }).join(), asks(0, { step: 2 }).length, asks(12, { step: 0.5 }).length);
 # print(inHead(7).join(""), inHead(8).join(""), inHead(-1).join(""), inStep(7).join(""), inStep(8).join(""), behindTurn(7).join(""), behindTurn(8).join(""), behindTurn(0).join(""), endsLate(2).join(""), endsLate(8).join(""));
 # -- end of source
 # f1 = written, f2 = reckoned, f3 = upTo, f4 = asks, f5 = inHead, f6 = inStep, f7 = behindTurn, f8 = endsLate. A loop that fills a literal from its own end asked in every turn of its typed copy whether the key lies below the room.
 # Where the count alone ends the loop every turn has passed the test at the head, so the key lies below the bound: that the bound (with `<=` one more) lies within the room is asked once, in front of the typed copy,
 # behind the reservation, which only asks for room and promises none. Where it does not, the closed copy runs. The answer rests on the storage of the list, as the pointer and the kind from in front do.
-# In asks() a read in the turn may end the loop: nothing is reserved and nothing of this is built.
+# In asks() a read in the turn may end the loop and nobody knows the count: nothing is reserved and nothing of this is built.
 # The bound holds only for a store that stands behind the test of the head. In inHead() the store stands in the head, in front of the test, and runs once more than the count says: the room is asked in every turn, as before.
 # In inStep() it stands in the step, behind the test: asked once. In behindTurn() the test stands behind the turn, in endsLate() a second side keeps the loop going: neither is a loop that the count alone ends.
 # RUN(WRITTEN): walk f1:Body mechanisms=all
@@ -41,7 +41,9 @@
 # UPTO: ExtendArrayLength
 # UPTO-NEXT: Put{{*}}Index
 # RUN(ASKS): walk f4:Body mechanisms=all
-# ASKS-NOT: GetArrayCapacity
+# ASKS-NOT: LessEq
+# ASKS: ExtendArrayLength
+# ASKS: ReserveArrayCapacity
 # RUN(INHEAD): walk f5:Body mechanisms=all
 # INHEAD: [[room]]: {{*}} = GetArrayCapacity
 # INHEAD-NOT: LessEq {{*}}, [[room]]
@@ -57,9 +59,13 @@
 # INSTEP: ExtendArrayLength
 # INSTEP-NEXT: Put{{*}}Index
 # RUN(BEHINDTURN): walk f7:Body mechanisms=all
-# BEHINDTURN-NOT: GetArrayCapacity
+# BEHINDTURN-NOT: LessEq
+# BEHINDTURN: ExtendArrayLength
+# BEHINDTURN: ReserveArrayCapacity
 # RUN(ENDSLATE): walk f8:Body mechanisms=all
-# ENDSLATE-NOT: GetArrayCapacity
+# ENDSLATE-NOT: LessEq
+# ENDSLATE: ExtendArrayLength
+# ENDSLATE: ReserveArrayCapacity
 # RUN(COUNT): compile LoopCapacityGuardsEmitted mechanisms=all
 # COUNT: statistic LoopCapacityGuardsEmitted 4
 # RUN(ANSWERS): run-in-shell

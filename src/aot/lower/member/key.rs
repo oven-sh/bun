@@ -221,17 +221,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let position = self.position();
         let value = self.lower_expression(computed);
-        if self.builder.is_constant(value) {
-            let constant = expression::find_constant_outside_dead_zone(self.file, computed);
-            if let Some(found) =
-                constant.and_then(|constant| self.file.find_key_of_constant(constant))
-            {
-                self.set_position(position);
-                return (PropertyName::Constant(found), Some(value));
-            }
+        if let Some(found) = self.find_lowered_key(computed, value) {
+            self.set_position(position);
+            return (PropertyName::Constant(found), Some(value));
         }
         let key = self.builder.to_property_key(value);
         (PropertyName::Computed(key), Some(value))
+    }
+
+    fn find_lowered_key(&mut self, key: ExprId, value: ValueId) -> Option<PropertyKeyId> {
+        let constant = expression::find_constant_outside_dead_zone(self.file, key);
+        let found = constant.and_then(|constant| self.file.find_key_of_constant(constant));
+        found.or_else(|| {
+            let text = self.builder.constant_string(value)?;
+            Some(self.file.text_key(text))
+        })
     }
 
     pub(crate) fn lower_computed_name_read_by_pattern(&mut self, computed: ExprId) -> PropertyName {
@@ -240,8 +244,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let position = self.position();
         let value = self.lower_expression(computed);
-        let constant = expression::find_constant_outside_dead_zone(self.file, computed);
-        match constant.and_then(|constant| self.file.find_key_of_constant(constant)) {
+        match self.find_lowered_key(computed, value) {
             Some(found) => {
                 self.set_position(position);
                 PropertyName::Constant(found)
@@ -293,8 +296,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let position = self.position();
         let value = self.lower_expression(key);
-        let constant = expression::find_constant_outside_dead_zone(self.file, key);
-        match constant.and_then(|constant| self.file.find_key_of_constant(constant)) {
+        match self.find_lowered_key(key, value) {
             Some(found) => {
                 self.set_position(position);
                 self.normalize_access_key(found)

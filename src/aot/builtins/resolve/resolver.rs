@@ -3,9 +3,10 @@ use super::mentions::expose_in;
 use super::unnamed_uses::SyntaxOutsideExpressions;
 use super::written_members::find_what_opens_where_handed_on;
 use super::{
-    BuiltinPath, CommonJsBuiltins, EvaluatedText, GLOBALS_LEFT_ALONE, KeyOfModuleCache,
-    LOADED_BELOW_VITEST, LOADED_BY_WORKER, ModuleObjectMention, ResolveInput, Resolved,
-    ResolvedBuiltins, SourceDialect, SpyCall, WhereMoreIsHandedOn, WhereTestsLayNamesAbove,
+    BuiltinPath, CommonJsBuiltins, EvaluatedText, ExposedReceivers, GLOBALS_LEFT_ALONE,
+    KeyOfModuleCache, LOADED_BELOW_VITEST, LOADED_BY_WORKER, ModuleObjectMention, ResolveInput,
+    Resolved, ResolvedBuiltins, SourceDialect, SpyCall, WhereMoreIsHandedOn,
+    WhereTestsLayNamesAbove,
 };
 use crate::builtins::runtime_uses::{
     ENTRIES_LEADING_TO_HOOK_OF_INSTANCEOF, Mentions, RuntimeUses, SyntaxWithHelpers, is_evaluator,
@@ -102,9 +103,11 @@ impl ExprState {
     }
 }
 
+/// The states of the expressions from `first` on.
 struct ExprStates {
     first: u32,
     codes: Vec<u32>,
+    /// The codes from `FIRST_FOUND` on are places in this list.
     found: Vec<ExprState>,
 }
 
@@ -180,6 +183,7 @@ pub struct FileFacts {
     syntax_outside_expressions: OnceLock<SyntaxOutsideExpressions>,
 }
 
+/// Each place of the file that names a variable, as (the variable, the expression), in ascending order.
 fn list_names_by_variable(input: &ResolveInput<'_, '_>) -> Vec<(u32, u32)> {
     let (hir, bound) = (input.hir, input.bound);
     let names = (0..hir.exprs.len() as u32).map(ExprId);
@@ -267,6 +271,7 @@ impl FileFacts {
 #[derive(Default)]
 pub(super) struct ResolverOutput {
     pub(super) mentioned: Vec<BuiltinId>,
+    pub(super) mentions_text_evaluator_indirectly: bool,
     pub(super) called_with_other_texts: Vec<BuiltinId>,
     pub(super) called_without_other_code: Vec<BuiltinId>,
     pub(super) called: Vec<BuiltinId>,
@@ -274,6 +279,7 @@ pub(super) struct ResolverOutput {
     pub(super) exposed: Vec<BuiltinId>,
     pub(super) handed_to_hooks_of_instanceof: Vec<BuiltinId>,
     pub(super) names_asked_for_that_are_not_listed: Vec<(BuiltinId, Atom)>,
+    pub(super) imported_replacements: Vec<(BuiltinId, ExprId)>,
     pub(super) reads_name_leading_to_hook_of_instanceof: bool,
     pub(super) linked_functions: Vec<RuntimeFunction>,
     pub(super) evaluated_texts: Vec<EvaluatedText>,
@@ -296,7 +302,7 @@ pub(super) struct ResolverOutput {
     pub(super) entries_deleted_from_module_cache: Vec<ExprId>,
     pub(super) entries_stored_in_module_cache: Vec<ExprId>,
     pub(super) places_that_hand_module_cache_on: Vec<ExprId>,
-    pub(super) module_caches_handed_on: Vec<ExprId>,
+    pub(super) passed_module_caches: Vec<ExprId>,
     pub(super) keys_of_entries_handed_on: Vec<KeyOfModuleCache>,
     pub(super) loses_sight_of_module_cache: bool,
     pub(super) hands_module_cache_on: bool,
@@ -336,7 +342,8 @@ pub(super) struct Resolver<'a, 's> {
     pub(super) may_hold_made_require: bool,
     pub(super) hooks_of_instanceof_supposed: Cell<HooksOfInstanceof>,
     pub(super) functions_reading_this: OnceCell<FunctionsReadingThis>,
-    pub(super) shows_receivers_of_spies: OnceCell<bool>,
+    pub(super) exposes_spy_receivers: OnceCell<bool>,
+    pub(super) imported_spy_implementations: OnceCell<Vec<ExprId>>,
     pub(super) output: ResolverOutput,
     within: Option<&'a [Range<u32>]>,
     named_outside: OnceCell<FxHashSet<SymbolId>>,
@@ -384,6 +391,11 @@ fn sorted_unique<T: Ord>(mut list: Vec<T>) -> Box<[T]> {
     list.shared_sort_unstable();
     list.dedup();
     list.into_boxed_slice()
+}
+
+pub(super) fn evaluates_text(id: BuiltinId) -> bool {
+    let evaluates_text = table::BuiltinFlags::EVALUATES_TEXT;
+    table::has_flag(id, evaluates_text) || table::has_flag(table::canonical_id(id), evaluates_text)
 }
 
 pub(super) fn is_of_loader(id: BuiltinId) -> bool {
@@ -499,7 +511,8 @@ impl<'a, 's> Resolver<'a, 's> {
                     .any(|it| it.1 == RuntimeModule::NodeModule),
             hooks_of_instanceof_supposed: Cell::new(HooksOfInstanceof::OnWhatIsNoBuiltin),
             functions_reading_this: OnceCell::new(),
-            shows_receivers_of_spies: OnceCell::new(),
+            exposes_spy_receivers: OnceCell::new(),
+            imported_spy_implementations: OnceCell::new(),
             output: ResolverOutput::default(),
             computed: Vec::new(),
             calls: Vec::new(),
@@ -566,6 +579,9 @@ impl<'a, 's> Resolver<'a, 's> {
         }
     }
 
+    /// `const steps = Symbol.iterator; list[steps]`: the value that a computed key is taken for, where it is a well-known symbol. The wire holds a read under a computed key there, and the engine
+    /// follows the one symbol to it through names that are filled once. A `var` holds `undefined` until it is filled, and a mock of a test run replaces what a module exports: the engine meets
+    /// more than one value in such a key and takes it for a key that nobody knows. So must the load.
     pub(super) fn symbol_that_key_is(
         &self,
         key: ExprId,
@@ -640,6 +656,8 @@ impl<'a, 's> Resolver<'a, 's> {
         }
     }
 
+    /// Every place of the file that names `variable`, in the order of the file's expressions. The list is made at the first question,
+    /// of what this resolver was handed and of nothing that is kept from one resolver to the next.
     pub(super) fn names_of(&self, variable: SymbolId) -> impl Iterator<Item = ExprId> + use<'_> {
         let names_by_variable = self
             .names_by_variable
@@ -750,6 +768,7 @@ impl<'a, 's> Resolver<'a, 's> {
         &self.calls
     }
 
+    /// A bit for each variable, set where it has an alias.
     fn mark_aliases(&self) -> Vec<u64> {
         let mut marked = vec![0u64; self.input.bound.symbols.len().div_ceil(64)];
         for symbol in self.aliases.keys() {
@@ -760,6 +779,7 @@ impl<'a, 's> Resolver<'a, 's> {
 
     fn resolve_exprs(&mut self) {
         let (hir, bound) = (self.input.hir, self.input.bound);
+        // A part of a file has few expressions, and may have many variables around it.
         let aliases = self.within.is_none().then(|| self.mark_aliases());
         let is_name_without_alias = |expr: ExprId| {
             let Some(aliases) = &aliases else {
@@ -934,22 +954,23 @@ impl<'a, 's> Resolver<'a, 's> {
     fn finish(self) -> ResolvedBuiltins {
         let symbols = self.collect_symbol_paths();
         let names_in_patterns = self.collect_paths_read_by_patterns();
+        let may_call_unnamed_evaluator = self.may_read_function_constructor();
         let (input, mut output) = (self.input, self.output);
         output
             .mentioned
             .extend(symbols.iter().map(|entry| entry.1.id));
-        let mut called_with_other_texts = output.called_with_other_texts;
-        called_with_other_texts.retain(|id| !output.mentioned.contains(id));
-        let mut called_without_other_code = output.called_without_other_code;
-        called_without_other_code
-            .retain(|id| !output.mentioned.contains(id) && !called_with_other_texts.contains(id));
-        output.mentioned.extend_from_slice(&called_with_other_texts);
-        output
-            .mentioned
-            .extend_from_slice(&called_without_other_code);
-        let called_with_other_texts = sorted_unique(called_with_other_texts);
-        let called_without_other_code = sorted_unique(called_without_other_code);
-        let mentioned = sorted_unique(output.mentioned);
+        let mut mentioned = sorted_unique(output.mentioned).into_vec();
+        let mut called_with_other_texts = sorted_unique(output.called_with_other_texts).into_vec();
+        called_with_other_texts.retain(|id| mentioned.binary_search(id).is_err());
+        let mut called_without_other_code =
+            sorted_unique(output.called_without_other_code).into_vec();
+        called_without_other_code.retain(|id| {
+            mentioned.binary_search(id).is_err()
+                && called_with_other_texts.binary_search(id).is_err()
+        });
+        mentioned.extend_from_slice(&called_with_other_texts);
+        mentioned.extend_from_slice(&called_without_other_code);
+        let mentioned = sorted_unique(mentioned);
         let exposed = sorted_unique(output.exposed);
         let mentions = Mentions {
             mentioned: &mentioned,
@@ -1022,6 +1043,22 @@ impl<'a, 's> Resolver<'a, 's> {
                 stores_loader_functions,
             })
         });
+        let imported_replacements = &output.imported_replacements;
+        let exposed_receivers = (!imported_replacements.is_empty()).then(|| {
+            let receivers = imported_replacements.iter().map(|replaced| replaced.0);
+            let receivers = sorted_unique(receivers.collect());
+            let (replaced_members, opened_holders, stores_loader_functions) =
+                find_what_opens_where_handed_on(&receivers);
+            let asked_for = names_asked_for.iter().map(|asked| asked.0);
+            let others = asked_for.chain(handed_to_hooks.iter().copied());
+            let handed_on: Vec<BuiltinId> = receivers.iter().copied().chain(others).collect();
+            Box::new(ExposedReceivers {
+                held: hold_where_handed_on(&sorted_unique(handed_on)),
+                replaced_members: sorted_unique(replaced_members),
+                opened_holders: sorted_unique(opened_holders),
+                stores_loader_functions,
+            })
+        });
         let can_list_symbols_of_objects = input.dialect == SourceDialect::Program
             && (input.runs_tests
                 || output.reads_name_leading_to_hook_of_instanceof
@@ -1033,6 +1070,10 @@ impl<'a, 's> Resolver<'a, 's> {
                     || mentioned
                         .iter()
                         .any(|&id| is_evaluator(table::canonical_id(id)))));
+        // A proxy that the program lays above what stands above `process` answers every name, and needs to spell none.
+        // Whatever is called, constructed or goes out of sight stands in this list, by whichever road; what is only asked about does not.
+        let source_evaluator_escapes = output.mentions_text_evaluator_indirectly
+            || (output.called.iter().chain(handed_to_hooks)).any(|&id| evaluates_text(id));
         let may_make_proxy = input.dialect == SourceDialect::Program
             && (output.called.iter().chain(handed_to_hooks))
                 .any(|&id| table::root_of(id) == BuiltinId::Proxy);
@@ -1101,6 +1142,8 @@ impl<'a, 's> Resolver<'a, 's> {
             tables_of_loaders_written: output.tables_of_loaders_written.into_boxed_slice(),
             unlocked: OnceLock::new(),
             mentioned,
+            source_evaluator_escapes,
+            may_call_unnamed_evaluator,
             #[cfg(test)]
             exposed,
             uses,
@@ -1110,6 +1153,9 @@ impl<'a, 's> Resolver<'a, 's> {
             hooks_of_instanceof_may_exist: OnceLock::new(),
             where_tests_lay_names_above,
             tests_lay_names_above: OnceLock::new(),
+            imported_replacements: output.imported_replacements.into_boxed_slice(),
+            exposed_receivers,
+            are_receivers_exposed: OnceLock::new(),
             can_come_by_hook_of_instanceof,
             keys_of_entries_handed_on: output.keys_of_entries_handed_on.into_boxed_slice(),
             entries_deleted_from_module_cache: output
@@ -1121,7 +1167,7 @@ impl<'a, 's> Resolver<'a, 's> {
             places_that_hand_module_cache_on: output
                 .places_that_hand_module_cache_on
                 .into_boxed_slice(),
-            module_caches_handed_on: output.module_caches_handed_on.into_boxed_slice(),
+            passed_module_caches: output.passed_module_caches.into_boxed_slice(),
             keys_taken_out_of_module_cache: output
                 .keys_taken_out_of_module_cache
                 .into_boxed_slice(),

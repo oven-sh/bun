@@ -153,3 +153,53 @@ if (isASAN)
     });
   },
 );
+
+// A Mach-O file for arm64 of 1.5 KB: a stub for posix_spawn, a section of code that calls it, and a section of constants
+// with the same four bytes. All three lie in __TEXT, the segment that is mapped for execution.
+function machOWithOneStub() {
+  const file = Buffer.alloc(0x600);
+  const base = 0x1_0000_0000;
+  const [text, stubs, constants, symbols, strings, indirect] = [0x200, 0x300, 0x400, 0x500, 0x520, 0x540];
+  const segment = 32;
+  const section = (index: number, offset: number, size: number, flags: number, stubSize = 0) => {
+    const at = segment + 72 + index * 80;
+    file.writeBigUInt64LE(BigInt(base + offset), at + 32);
+    file.writeBigUInt64LE(BigInt(size), at + 40);
+    file.writeUInt32LE(offset, at + 48);
+    file.writeUInt32LE(flags, at + 64);
+    file.writeUInt32LE(stubSize, at + 72);
+  };
+  file.writeUInt32LE(0xfeedfacf, 0);
+  file.writeUInt32LE(0x0100000c, 4);
+  file.writeUInt32LE(3, 16);
+  // LC_SEGMENT_64: __TEXT, read and execute.
+  file.writeUInt32LE(0x19, segment);
+  file.writeUInt32LE(72 + 3 * 80, segment + 4);
+  file.writeBigUInt64LE(BigInt(base), segment + 24);
+  file.writeBigUInt64LE(BigInt(file.length), segment + 48);
+  file.writeUInt32LE(5, segment + 60);
+  file.writeUInt32LE(3, segment + 64);
+  section(0, text, 16, 0x80000400); // __text: S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS
+  section(1, stubs, 12, 0x80000408, 12); // __stubs: the same, and S_SYMBOL_STUBS
+  section(2, constants, 16, 0); // __const
+  // LC_SYMTAB, LC_DYSYMTAB: the one stub is for symbol 0, whose name is at 1 in the strings.
+  const symtab = segment + 72 + 3 * 80;
+  file.writeUInt32LE(2, symtab);
+  file.writeUInt32LE(24, symtab + 4);
+  file.writeUInt32LE(symbols, symtab + 8);
+  file.writeUInt32LE(strings, symtab + 16);
+  file.writeUInt32LE(11, symtab + 24);
+  file.writeUInt32LE(80, symtab + 28);
+  file.writeUInt32LE(indirect, symtab + 24 + 56);
+  file.writeUInt32LE(1, symbols);
+  file.write("_posix_spawn", strings + 1, "latin1");
+  const callOfStub = (from: number) => (0x94000000 | (((stubs - from) / 4) & 0x03ffffff)) >>> 0; // bl
+  file.writeUInt32LE(callOfStub(text + 4), text + 4);
+  file.writeUInt32LE(callOfStub(constants + 4), constants + 4);
+  return { file, call: base + text + 4 };
+}
+
+test("in a Mach-O file a word of the constants that reads as a call of a stub is no place", () => {
+  const { file, call } = machOWithOneStub();
+  expect(placesThatCall(file, ["posix_spawn"]).map(place => place.address)).toEqual([call]);
+});

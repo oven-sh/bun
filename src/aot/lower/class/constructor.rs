@@ -11,11 +11,12 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 use super::{
-    Birth, ClassElement, ClassPlan, ClassText, ClassTransform, FieldSemantics, FieldValue,
-    FieldsAtBirth, InitializerCall, InjectionPoint, StoreAtBirth, fields, is_derived_class,
+    AllocatedFields, Birth, ClassElement, ClassPlan, ClassText, ClassTransform, FieldSemantics,
+    FieldValue, InitializerCall, InjectionPoint, ObjectAtBirth, StoreAtBirth, fields,
+    is_derived_class,
 };
 use crate::ir::generated::{
-    Function, FunctionFlags, FunctionKind, HomeObjectKind, RuntimeErrorKind, SourceRange,
+    Function, FunctionFlags, FunctionKind, HomeObjectKind, RuntimeErrorKind,
 };
 use crate::ir::{DeclaredType, Edge, FunctionId, FunctionKey, StringId, TypeTable, ValueId};
 use crate::lower::call::Arguments;
@@ -23,7 +24,7 @@ use crate::lower::layouts::class_position;
 use crate::lower::member::PropertyName;
 use crate::lower::parameters::parameter_symbols;
 use crate::lower::positions::has_int32_promise;
-use crate::lower::scope::ScopeSlot;
+use crate::lower::scope::{BindingRef, ScopeSlot, Storage};
 use crate::lower::{FileLowering, FunctionLowering, convert, dispose, function};
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -46,10 +47,7 @@ impl FileLowering<'_, '_, '_, '_> {
             ClassOwner::Expr(expression) => hir[expression].end,
             ClassOwner::Stmt(statement) => hir[statement].loc.end,
         };
-        header.source_range = SourceRange {
-            start: node.text_start,
-            end,
-        };
+        header.source_range = self.written_range(node.text_start, end);
         header.kind = match is_derived_class(hir, class) {
             true => FunctionKind::DerivedConstructor,
             false => FunctionKind::BaseConstructor,
@@ -72,15 +70,17 @@ impl FileLowering<'_, '_, '_, '_> {
                 lowering.emit_throw_runtime_error(RuntimeErrorKind::UninitializedThis, None);
             }
         } else {
-            let this = lowering.emit_allocation(class);
-            lowering.set_position(lowering.file.hir[source].anchor);
-            let text = lowering.file.class_text();
-            if let Some(fields) = find_fields_at_birth(text, &plan, source) {
+            let fields = find_initial_fields(lowering.file.class_text(), &plan, source);
+            if let Some(fields) = fields {
+                let object = lowering.prepare_birth(class, source, fields.holds_itself);
+                lowering.set_position(lowering.file.hir[source].anchor);
                 let first = lowering.list_values_evaluated_first(&plan, &fields.evaluated_first);
-                let first = lowering.lower_values_evaluated_first(class, &first, this);
+                let first = lowering.lower_values_evaluated_first(class, &first);
                 lowering.lower_parameters(source);
-                lowering.begin_birth(class, &plan, fields.stores, first, this);
+                lowering.begin_birth(class, &plan, fields.stores, first, object);
             } else {
+                let this = lowering.emit_allocation(class);
+                lowering.set_position(lowering.file.hir[source].anchor);
                 lowering.emit_this_binding_steps(class, &plan, this);
                 lowering.lower_parameters(source);
                 lowering.emit_injected_steps(class, &plan, this);
@@ -106,6 +106,16 @@ impl FileLowering<'_, '_, '_, '_> {
         lowering.builder.return_value(Some(this));
         lowering.finish();
     }
+}
+
+pub(in crate::lower) fn declare_constructor_of_class(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    class: ClassId,
+    name: Option<StringId>,
+    is_under_computed_key: bool,
+) -> FunctionId {
+    let plan = file.class_plan(class);
+    declare_constructor(file, class, &plan, name, is_under_computed_key)
 }
 
 pub(super) fn declare_constructor(
@@ -181,9 +191,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         let this = self.bind_constructed_object(class, this);
         if plan.injection_point == InjectionPoint::AfterSuperCall(call)
-            && let Some(stores) = find_stores_behind_super_call(self.file, class, &plan, call)
+            && let Some(stores) = find_stores_after_super(self.file, class, &plan, call)
         {
-            self.emit_fields_behind_super_call(class, &plan, stores, this);
+            self.emit_fields_after_super(class, &plan, stores, this);
             return this;
         }
         self.emit_this_binding_steps(class, &plan, this);
@@ -221,6 +231,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 return value;
             }
         };
+        if self.builder.is_undefined(value) {
+            return self.get_this();
+        }
         let join = self.create_block();
         let result = self.builder.add_parameter(join, None);
 
@@ -265,21 +278,54 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn emit_allocation(&mut self, class: ClassId) -> ValueId {
+        let prototype = self.emit_construct_prototype(class);
+        let this = self.emit_object_of_class(class, prototype);
+        self.bind_this(this);
+        this
+    }
+
+    fn emit_construct_prototype(&mut self, class: ClassId) -> ValueId {
         let layout = self.file.own_class_layout(class);
         let new_target = self.builder.new_target();
         let new_target = new_target.expect("a constructor takes new.target");
-        let prototype = self.builder.get_construct_prototype(new_target, layout);
+        self.builder.get_construct_prototype(new_target, layout)
+    }
+
+    fn emit_object_of_class(&mut self, class: ClassId, prototype: ValueId) -> ValueId {
+        let layout = self.file.own_class_layout(class);
         let this = self.builder.new_object(layout, &[], Some(prototype), &[]);
         self.file.fragment.note_allocation(layout);
-        self.bind_constructed_object(class, this)
+        self.convert_constructed_object(class, this)
+    }
+
+    fn convert_constructed_object(&mut self, class: ClassId, constructed: ValueId) -> ValueId {
+        let class = self.file.own_class(class);
+        let position = self.file.class_this_type(class, None);
+        convert::convert(self, constructed, position, None)
     }
 
     fn bind_constructed_object(&mut self, class: ClassId, constructed: ValueId) -> ValueId {
-        let class = self.file.own_class(class);
-        let position = self.file.class_this_type(class, None);
-        let this = convert::convert(self, constructed, position, None);
+        let this = self.convert_constructed_object(class, constructed);
         self.bind_this(this);
         this
+    }
+
+    fn prepare_birth(
+        &mut self,
+        class: ClassId,
+        constructor: FnId,
+        holds_itself: bool,
+    ) -> ObjectAtBirth {
+        let scope = self.file.bound.fns[constructor.idx()].scope;
+        let placement = self
+            .file
+            .scopes
+            .placement(BindingRef::Slot(scope, ScopeSlot::This));
+        if holds_itself || placement.is_some_and(|it| it.storage != Storage::Local) {
+            return ObjectAtBirth::Allocated(self.emit_allocation(class));
+        }
+        let prototype = self.emit_construct_prototype(class);
+        ObjectAtBirth::Pending { prototype, scope }
     }
 
     fn emit_implicit_super_call(&mut self, class: ClassId) -> ValueId {
@@ -302,13 +348,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         plan: &ClassPlan,
         stores: SmallVec<[StoreAtBirth; 8]>,
         evaluated_first: SmallVec<[(MemberId, ValueId); 4]>,
-        this: ValueId,
+        object: ObjectAtBirth,
     ) {
         let parameters = plan.parameter_properties.iter();
         let parameter_properties = parameters.map(|&it| self.get_parameter_property(it));
         let birth = Birth {
             class,
-            this,
+            object,
             parameter_properties: parameter_properties.collect(),
             stores,
             values: SmallVec::new(),
@@ -320,6 +366,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    /// A counted build lowers every initializer, also where the constructor stores over its value.
     fn list_values_evaluated_first(
         &self,
         plan: &ClassPlan,
@@ -343,12 +390,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         &mut self,
         class: ClassId,
         members: &[MemberId],
-        this: ValueId,
     ) -> SmallVec<[(MemberId, ValueId); 4]> {
         let constructor_position = self.position();
         self.builder.hold_position(true);
         let values = members.iter().map(|&member| {
-            let value = self.lower_value_of_defined_field(class, member, this);
+            let value = self.lower_value_of_defined_field(class, member);
             (member, value)
         });
         let values = values.collect();
@@ -362,12 +408,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return true;
         }
         let birth = self.birth.as_ref();
-        let next = birth.map(|birth| (birth.class, birth.this, birth.stores[birth.values.len()]));
-        let Some((class, this, store)) = next.filter(|next| next.2.statement == statement) else {
+        let next = birth.map(|birth| (birth.class, birth.object, birth.stores[birth.values.len()]));
+        let Some((class, object, store)) = next.filter(|next| next.2.statement == statement) else {
             return false;
         };
         self.count_statement(statement);
-        let value = self.lower_value_of_store(class, &store, this);
+        let value = self.lower_value_of_store(class, &store, object);
         let is_last = self.birth.as_mut().is_some_and(|birth| {
             birth.values.push(value);
             birth.values.len() == birth.stores.len()
@@ -382,11 +428,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         &mut self,
         class: ClassId,
         store: &StoreAtBirth,
-        this: ValueId,
+        object: ObjectAtBirth,
     ) -> ValueId {
         let hir = self.file.hir;
-        let value = match hir[hir.skip_type_assertions(store.value)].kind {
-            ExprKind::This => this,
+        let value = match (hir[hir.skip_type_assertions(store.value)].kind, object) {
+            (ExprKind::This, ObjectAtBirth::Allocated(this)) => this,
             _ => self.lower_expression(store.value),
         };
         match hir.runtime_member_key(store.member) {
@@ -398,7 +444,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    fn emit_fields_behind_super_call(
+    // A constructor above may have shown the object to other code, locked it, or return a proxy, whose traps see every definition and store.
+    fn emit_fields_after_super(
         &mut self,
         class: ClassId,
         plan: &ClassPlan,
@@ -419,19 +466,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
         self.builder.switch_to(unlocked);
         let first = self.list_values_evaluated_first(plan, &[]);
-        let evaluated_first = self.lower_values_evaluated_first(class, &first, this);
+        let evaluated_first = self.lower_values_evaluated_first(class, &first);
         let parameters = plan.parameter_properties.iter();
         let parameter_properties = parameters.map(|&it| self.get_parameter_property(it));
         let parameter_properties = parameter_properties.collect();
         let mut values = SmallVec::new();
         for store in &stores {
             self.count_statement(store.statement);
-            values.push(self.lower_value_of_store(class, store, this));
+            values.push(self.lower_value_of_store(class, store, ObjectAtBirth::Allocated(this)));
         }
         self.set_position(caller_position);
         let birth = Birth {
             class,
-            this,
+            object: ObjectAtBirth::Allocated(this),
             parameter_properties,
             stores,
             values,
@@ -459,7 +506,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn emit_fields_born_with_stores(&mut self, birth: &Birth) {
-        let (class, this) = (birth.class, birth.this);
+        let class = birth.class;
         let plan = self.file.class_plan(class);
         let caller_position = self.position();
         let mut parameter_properties = birth.parameter_properties.iter();
@@ -467,6 +514,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             birth.evaluated_first.iter().copied().collect();
         let stored = birth.stores.iter().map(|store| store.member);
         values.extend(stored.zip(birth.values.iter().copied()));
+        let this = match birth.object {
+            ObjectAtBirth::Allocated(this) => this,
+            ObjectAtBirth::Pending { prototype, scope } => {
+                self.lower_literal_fields(class, &plan, &mut values);
+                let this = self.emit_object_of_class(class, prototype);
+                self.set_slot(scope, ScopeSlot::This, this);
+                this
+            }
+        };
         for &element in &plan.instance_elements {
             let member = match element {
                 ClassElement::Field { member, .. } => Some(member),
@@ -487,6 +543,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
         }
         self.set_position(caller_position);
+    }
+
+    fn lower_literal_fields(
+        &mut self,
+        class: ClassId,
+        plan: &ClassPlan,
+        values: &mut FxHashMap<MemberId, ValueId>,
+    ) {
+        for &element in &plan.instance_elements {
+            let ClassElement::Field {
+                member,
+                value: FieldValue::Initializer,
+            } = element
+            else {
+                continue;
+            };
+            let hir = self.file.hir;
+            if !values.contains_key(&member) && names_nothing(hir, hir[member].init) {
+                let value = self.lower_value_of_defined_field(class, member);
+                values.insert(member, value);
+            }
+        }
     }
 
     fn get_parameter_property(&mut self, parameter: ParamId) -> (PropertyName, ValueId) {
@@ -593,13 +671,13 @@ fn names_nothing(hir: &hir::File<'_>, expression: ExprId) -> bool {
 }
 
 #[derive(Default)]
-struct FieldsToBeFilled {
+struct UnfilledFields {
     named: FxHashMap<Atom, MemberId>,
     private: FxHashMap<PrivateNameId, MemberId>,
     evaluated_first: SmallVec<[MemberId; 4]>,
 }
 
-impl FieldsToBeFilled {
+impl UnfilledFields {
     fn take(&mut self, hir: &hir::File<'_>, bound: &Bound<'_>, target: ExprId) -> Option<MemberId> {
         let ExprKind::Dot {
             obj,
@@ -621,7 +699,7 @@ impl FieldsToBeFilled {
     }
 }
 
-fn find_fields_to_be_filled(text: ClassText<'_, '_>, plan: &ClassPlan) -> Option<FieldsToBeFilled> {
+fn find_unfilled_fields(text: ClassText<'_, '_>, plan: &ClassPlan) -> Option<UnfilledFields> {
     let hir = text.hir;
     let lays_fields_alone = plan.transform == ClassTransform::None
         && plan.field_semantics == FieldSemantics::Define
@@ -632,7 +710,7 @@ fn find_fields_to_be_filled(text: ClassText<'_, '_>, plan: &ClassPlan) -> Option
         return None;
     }
     let mut names: FxHashSet<(bool, Atom)> = FxHashSet::default();
-    let mut fields = FieldsToBeFilled::default();
+    let mut fields = UnfilledFields::default();
     let mut has_empty = false;
     let mut parameter_properties = 0;
     for &element in &plan.instance_elements {
@@ -653,7 +731,7 @@ fn find_fields_to_be_filled(text: ClassText<'_, '_>, plan: &ClassPlan) -> Option
                 };
                 match value {
                     FieldValue::Undefined => {}
-                    FieldValue::Initializer if is_made_with_field(text, member) => {}
+                    FieldValue::Initializer if is_allocated_with_field(text, member) => {}
                     FieldValue::Initializer if !text.value_of_field_names_object(member) => {
                         fields.evaluated_first.push(member);
                     }
@@ -714,7 +792,7 @@ fn is_parameter_or_literal(
     }
 }
 
-fn find_stores_behind_super_call(
+fn find_stores_after_super(
     file: &mut FileLowering<'_, '_, '_, '_>,
     class: ClassId,
     plan: &ClassPlan,
@@ -741,7 +819,7 @@ fn find_stores_behind_super_call(
     if plan.instance_elements.iter().any(has_value) {
         return None;
     }
-    let mut fields = find_fields_to_be_filled(file.class_text(), plan)?;
+    let mut fields = find_unfilled_fields(file.class_text(), plan)?;
     let parameters = parameter_symbols(hir, bound, constructor);
     let mut stores = SmallVec::new();
     let is_other = |&it: &StmtId| !matches!(hir[it].kind, StmtKind::Expr(made) if made == call);
@@ -771,16 +849,16 @@ fn find_stores_behind_super_call(
     (!stores.is_empty() || !plan.parameter_properties.is_empty()).then_some(stores)
 }
 
-pub(super) fn find_fields_at_birth(
+pub(super) fn find_initial_fields(
     text: ClassText<'_, '_>,
     plan: &ClassPlan,
     constructor: FnId,
-) -> Option<FieldsAtBirth> {
+) -> Option<AllocatedFields> {
     let (hir, bound) = (text.hir, text.bound);
     let FnBody::Block(statements) = hir[constructor].body else {
         return None;
     };
-    let mut fields = find_fields_to_be_filled(text, plan)?;
+    let mut fields = find_unfilled_fields(text, plan)?;
     let mut stores = SmallVec::new();
     let owner = bound.fns[constructor.idx()].owner;
     let end_of_head = match (hir.ids(statements).next(), owner) {
@@ -833,13 +911,14 @@ pub(super) fn find_fields_at_birth(
             value,
         });
     }
-    (!stores.is_empty() || !plan.parameter_properties.is_empty()).then_some(FieldsAtBirth {
+    (!stores.is_empty() || !plan.parameter_properties.is_empty()).then_some(AllocatedFields {
         stores,
         evaluated_first: fields.evaluated_first,
+        holds_itself,
     })
 }
 
-fn is_made_with_field(text: ClassText<'_, '_>, member: MemberId) -> bool {
+fn is_allocated_with_field(text: ClassText<'_, '_>, member: MemberId) -> bool {
     let hir = text.hir;
     let initializer = hir[member].init;
     let written = hir.skip_type_assertions(initializer);

@@ -17,10 +17,10 @@
 // # REMEMBERED: = StrictEq [[found]], [[remembered]]
 // # REMEMBERED-COUNT-2: = CheckProof {{*}}checkedType=true {{*}}source=RememberedFact
 // # REMEMBERED: Return
-// # In the constructor, what the walk remembers of the cell that it has made: no flag in the order word, the layout's prototype, the keys listed so far. Each store that may list a key leans on all three, and they are tested again in front of it.
+// # In the constructor, what the walk remembers of the cell that it has made: no flag in the order word, so that it takes properties, the layout's prototype, the keys listed so far. Each store that may list a key leans on all three, and they are tested again in front of it.
 // # RUN(CELL): walk f5 mechanisms=all
 // # CELL: [[made]]: {{*}} = NewObject
-// # CELL: [[flags]]: boolean @Boolean = IsNotFrozen [[made]] [hasNoExtraProperties, hasNoFieldOutsideSlot]
+// # CELL: [[flags]]: boolean @Boolean = IsNotFrozen [[made]] [hasNoExtraProperties, hasNoFieldOutsideSlot, isExtensible]
 // # CELL-NEXT: = CheckProof [[flags]] checkedType=true {{*}}source=RememberedFact
 // # CELL: = HasLayoutPrototype [[made]]
 // # CELL: = HasKeyOrder [[made]] layout=L0

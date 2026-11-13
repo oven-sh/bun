@@ -170,7 +170,7 @@ function runConstruct(stream: $Node.Writable) {
 }
 
 function Writable(this: $Node.Writable, options?: $Node.WritableOptions): void {
-  if (!(this instanceof Writable)) return new Writable(options) as any;
+  if (!isWritable(this)) return new Writable(options) as any;
 
   this._events ??= preallocatedEvents();
 
@@ -200,6 +200,14 @@ $toClass(Writable, "Writable", Stream);
 Writable.WritableState = WritableState;
 
 internals.onwrite = onwrite;
+
+// `object instanceof Writable`, whose Symbol.hasInstance nobody can replace.
+const isWritable = function value(object): boolean {
+  return (
+    FunctionPrototypeSymbolHasInstance.$call(Writable, object) ||
+    (object && object._writableState instanceof WritableState)
+  );
+};
 
 ObjectDefineProperty(Writable, SymbolHasInstance, {
   __proto__: null,

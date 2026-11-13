@@ -73,7 +73,7 @@ const found = Bun.resolveSync("./plugin.js", import.meta.dir); // bun-ignore TS1
 | `... because built-in objects are read-only`    | [Don't replace built-ins](/compiler/compatibility#built-in-objects-are-read-only)                                              |
 | `Cannot find module`                            | The build didn't embed the file. [Pass it as another entry point](/compiler/compatibility#a-file-that-isnt-in-the-executable). |
 | `Cannot load ...: it isn't in this executable`  | Pass the file as another entry point. Import a `node:` or `bun:` module by name                                                |
-| `... was not compiled into this executable`     | Code from a string used an API that your own code never uses. Use it once in your own code                                     |
+| `... was not compiled into this executable`     | [Use that API once](/compiler/compatibility#unused-built-ins) in your own code                                                 |
 | `EvalError: ... the compiler couldn't tell ...` | Call `eval` or `new Function` directly                                                                                         |
 | `... can't be used with this executable`        | The option needs code that wasn't compiled in. The message names the flag to rebuild with                                      |
 | `Cannot compile C code ... (PR_SET_MDWE)`       | Compile the C file first, then `dlopen()`                                                                                      |

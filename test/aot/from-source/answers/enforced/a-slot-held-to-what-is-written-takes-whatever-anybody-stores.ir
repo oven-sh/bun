@@ -1,7 +1,7 @@
 # `count` is written as an enum, `label` as a text and `point` as a class, and the slots are held to that (FieldFacts::slotType, PlacedSlot::type, FieldData::type), in a class, in what a constructor function with a written `this` makes, and in a literal.
 # the objects reach code that the build has not seen. Whatever that code stores, by whatever road, a slot that is filled holds a value of its type: a value of another type takes the field out of its slot IN THAT OBJECT,
 # a later value that fits brings it back, and undefined and null lie in the slot. Every answer is that of the language.
-# the last run is the red control of what the others look at: a door left open on purpose leaves a number in the slot of `label`, and aotPlaceOfProperty() says "slot".
+# the last run is the red control of what the others look at: a door left open on purpose leaves a number in the slot of `on`, and aotPlaceOfProperty() says "slot".
 # f1 = Old, f2 = make, f3 = makeOld, f4 = makeRecord, f5 = read, f6 = between, f7 = betweenOld, f8 = betweenRecord, f9 = again
 # -- source: a-slot-held-to-what-is-written-takes-whatever-anybody-stores.ts
 # declare function register(...handed: unknown[]): void;
@@ -43,6 +43,6 @@
 # RUN(ROADS): run-in-shell globalThis.register = (make, makeOld, makeRecord, read, between, betweenOld, betweenRecord, again) => { const roads = [h => { h["co" + "unt"] = "t"; }, h => { Reflect.set(h, "count", "t"); }, h => { Reflect.set({ }, "count", "t", h); }, h => { Object.defineProperty(h, "count", { value: "t" }); }, h => { Object.assign(h, { count: "t" }); }, h => { new Proxy(h, { }).count = "t"; }, h => { delete h.count; h.count = "t"; }, h => { for (let i = 0; i < 40; i++) h.count = "t"; }]; const kinds = [[make, between], [makeOld, betweenOld], [makeRecord, betweenRecord]]; for (let k = 0; k < kinds.length; k++) { for (let i = 0; i < roads.length; i++) { const h = kinds[k][0](); print(kinds[k][1](h, roads[i]), aotPlaceOfProperty(h, "count"), typeof h.count, again(h), typeof h.count); } } };
 # ROADS-COUNT-24: 2t1 beside its slot string 8 number
 # ROADS-NEXT: exited with 0
-# RUN(UNTESTED): run-in-shell globalThis.register = make => { const h = make(); print(aotStoreIntoSlotUntested(h, "label", 5), aotPlaceOfProperty(h, "label"), typeof h.label); };
+# RUN(UNTESTED): run-in-shell globalThis.register = (make, makeOld) => { const h = makeOld(); print(aotStoreIntoSlotUntested(h, "on", 5), aotPlaceOfProperty(h, "on"), typeof h.on); };
 # UNTESTED: true slot number
 # UNTESTED-NEXT: exited with 0

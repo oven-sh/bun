@@ -184,7 +184,10 @@ impl<'s> Checker<'_, 's> {
             FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
                 Some(constant)
             }
-            FoldedValue::Unknown => decisions.constant_read(key),
+            FoldedValue::Unknown => {
+                let constant = decisions.constant_read(key);
+                constant.or_else(|| decisions.constant_of_let(key))
+            }
         };
         match constant {
             Some(Constant::String(text)) => Some(text),

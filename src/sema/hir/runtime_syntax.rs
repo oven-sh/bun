@@ -186,6 +186,8 @@ impl<S: Storage> FileIn<S> {
                 .any(|statement| self.is_erased_statement(statement))
     }
 
+    /// `IsExternalModule`, asked for a `declare module "m"` or a `declare global` at the top of the file. A script for its
+    /// project declares the modules that it names, though a build runs the file as a module.
     pub fn is_module_for(&self, name: ModuleName) -> bool {
         self.has_module_syntax && !self.declares_as_script(name)
     }

@@ -1,0 +1,11 @@
+# f1 = total
+# -- source: main.mjs
+# const rows = JSON.parse('[1,2,3]').map(v => v & 1 ? (a, b) => v : (a, b, c) => v);
+# function total(rows) { let sum = 0; for (let x = 0; x < rows.length; x++) sum += rows[x].length; return sum; }
+# print(total(rows), total([[1, 2], "abc", rows[0]]));
+# -- end of source
+# What is no array, string or view is asked for its length by a stub that runs no code, then by its site.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="length" {{*}} [mayHoldLength]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 7 7

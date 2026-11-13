@@ -48,7 +48,7 @@ fn count_unread_blocks() -> usize {
 }
 
 #[test]
-fn block_is_freed_behind_its_readers() {
+fn block_is_freed_after_readers() {
     let _alone = ONE_TEST_AT_A_TIME.lock();
     let session = Session::new();
     session.set_readers_are_tasks(true);
@@ -63,7 +63,7 @@ fn block_is_freed_behind_its_readers() {
 }
 
 #[test]
-fn ended_session_forgets_its_blocks() {
+fn ended_session_drops_blocks() {
     let _alone = ONE_TEST_AT_A_TIME.lock();
     let session = Session::new();
     session.set_readers_are_tasks(true);

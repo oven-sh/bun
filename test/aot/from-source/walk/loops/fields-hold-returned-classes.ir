@@ -1,0 +1,25 @@
+# f1 = make
+# f2 = Screen
+# f3 = start
+# f4 = paint
+# f5 = sum
+# -- source: main.mjs
+# function make(length, kind) {
+#   try { if (length < 0) throw new Error("length"); switch (kind) { case "int8": var made = new Int8Array(length); break; case "uint8": var made = new Uint8Array(length); break; case "float64": var made = new Float64Array(length); } } catch (error) { var made = []; }
+#   return made;
+# }
+# function Screen(length) { this.pixels = []; this.sound = null; this.copy = null; this.start(length); }
+# Screen.prototype.start = function (length) { this.pixels = make(length, "uint8"); this.sound = make(length, "float64"); this.copy = this.pixels; };
+# Screen.prototype.paint = function (length) { for (let i = 0; i < length; i++) this.pixels[i] = i * 3; };
+# Screen.prototype.sum = function (length) { let all = 0; for (let i = 0; i < length; i++) all += this.copy[i] + this.sound[i]; return all; };
+# const screen = new Screen(100), none = new Screen(-1);
+# screen.paint(100); none.paint(4); print(screen.sum(100), none.sum(4), none.pixels);
+# none.pixels = ["x", "y", "z"]; none.paint(3); print(none.sum(3), none.pixels);
+# -- end of source
+# Each call says with a string which of the classes it returns, so a field that such a call fills is expected to hold that class. An array made in a handler is not expected.
+# RUN: walk f4:Body mechanisms=all
+# CHECK: testedType=Uint8Array
+# CHECK-NOT: testedType=Float64Array
+# CHECK: PutTypedArrayElement
+# RUN(SUM): walk f5:Body mechanisms=all
+# SUM: testedType=Uint8Array

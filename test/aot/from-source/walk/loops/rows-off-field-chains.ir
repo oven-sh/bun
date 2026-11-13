@@ -1,0 +1,21 @@
+# f1 = total
+# -- source: main.mjs
+# const d = JSON.parse('{"deep":{"rows":[[1,2,3],[4,5,6],[7,8,9]]}}'), e = JSON.parse('{"deep":{"rows":[[1],null]}}'), f = JSON.parse('{"deep":"text"}');
+# function total(d) { let sum = 0; for (let y = 0; y < d.deep.rows.length; y++) for (let x = 0; x < d.deep.rows[y].length; x++) sum += d.deep.rows[y][x]; return sum; }
+# print(total(d));
+# try { total(e); } catch (error) { print(error instanceof TypeError); }
+# try { total(f); } catch (error) { print(error instanceof TypeError); }
+# class Box { constructor() { this.self = this; this.rows = [[1, 2], [3, 4], [5, 6]]; } fill(list, count, row) { for (let i = 0; i < count; i++) list[i] = this.self.rows[row][i]; return list; } }
+# print(new Box().fill([0, 0], 2, 1).join());
+# -- end of source
+# The row is read before the inner loop, through the sites of both fields, which run no code.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="deep"
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="rows"
+# CHECK: = IsElementPresent {{*}} arrayStorage=Contiguous
+# CHECK: = GetArrayElement {{*}} arrayStorage=Double
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 45
+# ANSWERS-NEXT: true
+# ANSWERS-NEXT: true
+# ANSWERS-NEXT: 3,4

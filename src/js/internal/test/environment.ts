@@ -408,8 +408,7 @@ function isNodeClassLeft() {
   return false;
 }
 
-// With none of Bun's windows left on globalThis: whether the `document` key there stands for a DOM that Bun did not open.
-// `undefined` or `null` that a test file left does not. No getter of globalThis runs.
+// Whether the `document` key on globalThis stands for a DOM that Bun did not open. No getter of a test file runs.
 function isDocumentOfAnotherDOM() {
   const descriptor = ownProperty("document");
   if (!descriptor || !("value" in descriptor) || descriptor.configurable === false) return true;

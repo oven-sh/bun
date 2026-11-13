@@ -1037,8 +1037,8 @@ it("should trigger error when aborted even if connection failed, and the signal 
 // socket's 'error': https://github.com/nodejs/node/blob/v26.12.1/lib/internal/streams/add-abort-signal.js#L55-L57
 describe("a socket made with a signal", () => {
   // The fixture runs unchanged under Node.js. These are the lines that Node.js v26.12.1 prints.
-  async function runFixture(group: string) {
-    const { stdout, stderr, exitCode } = await bunRun([join(import.meta.dir, "socket-signal-fixture.js"), group]);
+  async function runFixture(group: string, env?: Record<string, string>) {
+    const { stdout, stderr, exitCode } = await bunRun([join(import.meta.dir, "socket-signal-fixture.js"), group], env);
     return { stdout: stdout.split(/\r?\n/), stderr, exitCode };
   }
 
@@ -1077,6 +1077,27 @@ describe("a socket made with a signal", () => {
       ],
       stderr: "",
       exitCode: 0,
+    });
+  });
+
+  // The socket must not handle what the caller's own code throws on it.
+  it.concurrent("what a listener or a callback of the caller throws stays an uncaught exception", async () => {
+    expect(await runFixture("a listener that throws", { TLS_FIXTURE: JSON.stringify(tlsCert) })).toEqual({
+      stdout: [
+        "uncaught Error: the callback of net.connect()",
+        "uncaught Error: a 'connect' listener",
+        "uncaught Error: a 'ready' listener",
+        "uncaught Error: the callback of a write before the connection",
+        "uncaught Error: the callback of a write that waits for the peer",
+        "uncaught Error: a 'drain' listener",
+        "uncaught Error: tls: a 'connect' listener",
+        "uncaught Error: tls: a 'session' listener",
+        "uncaught Error: tls: a 'keylog' listener",
+        "uncaught Error: tls: the callback of a write that waits for the peer",
+        "exit code 1",
+      ],
+      stderr: "",
+      exitCode: 1,
     });
   });
 

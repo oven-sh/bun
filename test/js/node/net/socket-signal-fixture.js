@@ -1,5 +1,6 @@
 // Sockets made with a `signal`, whose 'error' event the caller does not listen to or cannot listen to.
 // Runs unchanged under Node.js. node-net.test.ts has the lines that Node.js v26.12.1 prints.
+// TLS_FIXTURE is the JSON of the { cert, key } that the TLS servers use.
 const net = require("node:net");
 const tls = require("node:tls");
 const http = require("node:http");
@@ -70,6 +71,25 @@ const sockets = {
     }),
 };
 
+// The caller's own code throws on a socket made with `signal`. Each entry arms `thrower` before the socket connects.
+const throwers = {
+  "the callback of net.connect()": undefined,
+  "a 'connect' listener": (socket, thrower) => socket.once("connect", thrower),
+  "a 'ready' listener": (socket, thrower) => socket.once("ready", thrower),
+  "the callback of a write before the connection": (socket, thrower) => socket.write("x", thrower),
+  "the callback of a write that waits for the peer": (socket, thrower) =>
+    socket.once("connect", () => socket.write(Buffer.alloc(8 * 1024 * 1024), thrower)),
+  "a 'drain' listener": (socket, thrower) =>
+    socket.once("drain", thrower).once("connect", () => {
+      while (socket.write(Buffer.alloc(65536)));
+    }),
+  "tls: a 'connect' listener": (socket, thrower) => socket.once("connect", thrower),
+  "tls: a 'session' listener": (socket, thrower) => socket.once("session", thrower),
+  "tls: a 'keylog' listener": (socket, thrower) => socket.once("keylog", thrower),
+  "tls: the callback of a write that waits for the peer": (socket, thrower) =>
+    socket.once("secureConnect", () => socket.write(Buffer.alloc(8 * 1024 * 1024), thrower)),
+};
+
 const groups = {
   "an abort after the call"() {
     for (const [name, call] of Object.entries(calls)) {
@@ -88,6 +108,34 @@ const groups = {
     for (const [name, open] of Object.entries(sockets)) {
       const controller = new AbortController();
       console.log(`${name}: close ${await open(controller.signal, () => controller.abort(name))}`);
+    }
+  },
+  async "a listener that throws"() {
+    const cert = JSON.parse(process.env.TLS_FIXTURE);
+    for (const [name, arm] of Object.entries(throwers)) {
+      const isTls = name.startsWith("tls: ");
+      const onConnection = connection => {
+        connection.on("error", () => {}).resume();
+        // A TLS server of Bun sends its session tickets with its first write.
+        connection.write("x");
+      };
+      const server = isTls ? tls.createServer(cert, onConnection) : net.createServer(onConnection);
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const options = { host: "127.0.0.1", port: server.address().port, signal: new AbortController().signal };
+      if (isTls) Object.assign(options, { ca: cert.cert, servername: "localhost" });
+      let socket;
+      await new Promise(resolve => {
+        const thrower = () => {
+          // Two turns of the event loop are past every tick that can report the throw.
+          setImmediate(() => setImmediate(resolve));
+          throw new Error(name);
+        };
+        socket = arm ? (isTls ? tls.connect(options) : net.connect(options)) : net.connect(options, thrower);
+        arm?.(socket, thrower);
+        socket.resume();
+      });
+      socket.destroy();
+      await new Promise(resolve => server.close(resolve));
     }
   },
   "a signal that is already aborted"() {

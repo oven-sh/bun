@@ -427,7 +427,7 @@ impl EventLoopHandle {
 // ─────────────────────────── JsPoster ──────────────────────────────────────
 //
 // How code below `bun_jsc` reaches a JS VM from another thread: an erased,
-// *uncounted* `bun_jsc::VmHandle` (`bun_jsc` fills the vtable) — what something
+// *uncounted* `bun_jsc::VmHandle` (`bun_jsc` implements the trait) — what something
 // that merely refers to a VM holds (spawn's process-wide waiter thread, a
 // bundle owned by a JS loop). Its `post` is deliver-or-refuse: once the VM has
 // closed, the task comes back and the caller releases it — its own payload —
@@ -443,54 +443,9 @@ pub enum Posted {
     Refused(NonNull<ConcurrentTask>),
 }
 
-pub struct JsPosterVTable {
-    pub post: unsafe fn(data: *const (), task: NonNull<ConcurrentTask>) -> Posted,
-    pub clone: unsafe fn(data: *const ()) -> *const (),
-    pub drop: unsafe fn(data: *const ()),
+pub trait PostToJs: Send + Sync {
+    /// Queue `task` on the VM this poster was created for and wake it, or hand it back if the VM has closed.
+    fn post(&self, task: NonNull<ConcurrentTask>) -> Posted;
 }
 
-pub struct JsPoster {
-    data: *const (),
-    vtable: &'static JsPosterVTable,
-}
-
-// SAFETY: `data` is an erased `Arc<VmHandle inner>`; the vtable fns are the
-// thread-safe VmHandle operations.
-unsafe impl Send for JsPoster {}
-// SAFETY: as above.
-unsafe impl Sync for JsPoster {}
-
-impl JsPoster {
-    /// # Safety
-    /// `data`/`vtable` come from one of `bun_jsc::vm_handle`'s `to_js_poster`
-    /// implementations (`VmHandle` / the isolated poster).
-    #[inline]
-    pub unsafe fn from_raw(data: *const (), vtable: &'static JsPosterVTable) -> Self {
-        Self { data, vtable }
-    }
-
-    /// Queue `task` on the VM this poster was created for and wake it, or hand
-    /// it back if the VM has closed.
-    #[inline]
-    pub fn post(&self, task: NonNull<ConcurrentTask>) -> Posted {
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.post)(self.data, task) }
-    }
-}
-
-impl Clone for JsPoster {
-    fn clone(&self) -> Self {
-        Self {
-            // SAFETY: vtable contract.
-            data: unsafe { (self.vtable.clone)(self.data) },
-            vtable: self.vtable,
-        }
-    }
-}
-
-impl Drop for JsPoster {
-    fn drop(&mut self) {
-        // SAFETY: vtable contract.
-        unsafe { (self.vtable.drop)(self.data) }
-    }
-}
+pub type JsPoster = std::sync::Arc<dyn PostToJs>;

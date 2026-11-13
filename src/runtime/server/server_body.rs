@@ -3067,7 +3067,7 @@ where
         // And then we use a hash of their project root directory:
         let second_hash_segment: [u8; 8] = 'brk: {
             let mut buffer = paths::path_buffer_pool::get();
-            let root = &self.dev_server.get().as_ref().unwrap().root;
+            let root = &self.dev_server.get().as_ref().unwrap().graphs.root;
             let len = root.len().min(buffer.len());
             break 'brk hash(strings::copy_lowercase(&root[..len], &mut buffer[..len]))
                 .to_ne_bytes();
@@ -3090,7 +3090,7 @@ where
             &mut json_string,
             "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}",
             bun_fmt::format_json_string_utf8(
-                &self.dev_server.get().as_ref().unwrap().root,
+                &self.dev_server.get().as_ref().unwrap().graphs.root,
                 Default::default()
             ),
             uuid,

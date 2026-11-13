@@ -5583,6 +5583,56 @@ describe.concurrent("a test file's module mocks are undone when it ends, even wi
     expect(exitCode).toBe(1);
   });
 
+  // The mock's module is there and takes the instance that was set aside, so the file is not read a second time.
+  test("a load whose mock of a loaded package waits for its turn while its module is evaluated gets the instance that was loaded", async () => {
+    await expectFixturesToPass(
+      {
+        "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", type: "module", main: "./index.js" }),
+        "node_modules/pkg/index.js": `globalThis.loads = (globalThis.loads ?? 0) + 1; export const token = {}; export const x = "real";`,
+        "before.js": `globalThis.evaluating.resolve();`,
+        "shared.js": `export {};`,
+        "slow.js": `export {};`,
+        "user.js": `import "./before.js"; import { token, x } from "pkg"; import "./shared.js"; export const seen = [x, token === globalThis.loaded];`,
+        "other.js": `import "./shared.js"; import "./slow.js";`,
+        "preload.js": `
+          import { token } from "pkg";
+          globalThis.loaded = token;
+          globalThis.events = [];
+          globalThis.asked = Promise.withResolvers();
+          globalThis.evaluating = Promise.withResolvers();
+          Bun.plugin({
+            name: "never answers",
+            setup(build) {
+              build.onLoad({ filter: /slow\\.js$/ }, () => {
+                globalThis.asked.resolve();
+                return new Promise(() => {});
+              });
+            },
+          });
+        `,
+        "a.test.js": `
+          import { test, vi } from "bun:test";
+          vi.mock("pkg", async original => (globalThis.events.push("factory"), { ...(await original()), x: "mock" }));
+          test("leaves an import whose modules are being evaluated", async () => {
+            globalThis.kept = import("./user.js");
+            void import("./other.js");
+            await Promise.all([globalThis.asked.promise, globalThis.evaluating.promise]);
+          });
+        `,
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          import { token } from "pkg";
+          test("what kept the import and the next file get the instance that was loaded", async () => {
+            expect((await globalThis.kept).seen).toEqual(["real", true]);
+            expect([globalThis.loads, token === globalThis.loaded, globalThis.events]).toEqual([1, true, []]);
+          });
+        `,
+      },
+      2,
+      heldArgs,
+    );
+  });
+
   // slow.js is never answered, so the load of user.js cannot finish.
   const neverAnswers = (more: string) => `
     globalThis.events = [];

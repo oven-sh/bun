@@ -1,6 +1,6 @@
 //! Implements the event loop part of libuv's API for N-API addons on POSIX:
 //! `uv_default_loop`, the `uv_async_t`, `uv_idle_t`, `uv_prepare_t`, `uv_check_t`
-//! and `uv_timer_t` handles, `uv_queue_work`, and the `uv_handle_t` functions.
+//! `uv_timer_t` and `uv_udp_t` handles, `uv_queue_work`, and the `uv_handle_t` functions.
 //! Every other `uv_*` symbol is a crash stub (uv-posix-stubs.c) or a header-only
 //! polyfill (uv-posix-polyfills.c). Bun doesn't run a libuv loop on POSIX, so
 //! these functions run on the VM's event loop. They follow libuv's ABI and
@@ -20,22 +20,27 @@
 //!   handle, so it's heap-allocated in a [`UvTimerNode`].
 //! - `uv_queue_work` schedules a [`Job`] that runs `work_cb` on the thread pool and
 //!   `after_work_cb` when it completes.
+//! - A UDP handle's socket is a [`FilePoll`] in the VM's event loop, readable while it
+//!   receives and writable while sends wait for their callbacks ([`UvUdpNode`]).
 //! - A handle keeps the process alive while it is started and ref'd ([`RefState`]).
 
 use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
+use std::collections::VecDeque;
 
 use bun_core::{Timespec, TimespecMockMode};
 use bun_event_loop::{ContextId, TaskTag, Taskable, task_tag};
 use bun_io::KeepAlive;
+use bun_io::posix_event_loop::{FilePoll, Flags, Owner, PollTag};
 use bun_jsc::event_loop::ConcurrentTaskItem as ConcurrentTask;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     Completion, JSGlobalObject, Job, JobContext, JsCell, JsError, JsPtr, JsResult, JsThread,
     LoopKind, Posted, VmHandle,
 };
+use bun_sys::Fd;
 
 use crate::jsc_hooks::{RuntimeState, timer_all};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
@@ -82,6 +87,14 @@ impl Drop for CallbackScope<'_> {
 const UV_EINVAL: c_int = -libc::EINVAL;
 const UV_EBUSY: c_int = -libc::EBUSY;
 const UV_ECANCELED: c_int = -libc::ECANCELED;
+const UV_EAGAIN: c_int = -libc::EAGAIN;
+const UV_EALREADY: c_int = -libc::EALREADY;
+const UV_EBADF: c_int = -libc::EBADF;
+const UV_EDESTADDRREQ: c_int = -libc::EDESTADDRREQ;
+const UV_EISCONN: c_int = -libc::EISCONN;
+const UV_ENOBUFS: c_int = -libc::ENOBUFS;
+const UV_ENOTCONN: c_int = -libc::ENOTCONN;
+const UV_ENOTSUP: c_int = -libc::ENOTSUP;
 
 // Indexes into uv.h's `UV_HANDLE_TYPE_MAP` and `UV_REQ_TYPE_MAP`.
 const UV_ASYNC: c_uint = 1;
@@ -89,7 +102,17 @@ const UV_CHECK: c_uint = 2;
 const UV_IDLE: c_uint = 6;
 const UV_PREPARE: c_uint = 9;
 const UV_TIMER: c_uint = 13;
+const UV_UDP: c_uint = 15;
+const UV_UDP_SEND: c_uint = 5;
 const UV_WORK: c_uint = 7;
+
+// `uv_udp_flags` (uv.h).
+const UV_UDP_IPV6ONLY: c_uint = 1;
+const UV_UDP_PARTIAL: c_uint = 2;
+const UV_UDP_REUSEADDR: c_uint = 4;
+const UV_UDP_LINUX_RECVERR: c_uint = 32;
+const UV_UDP_REUSEPORT: c_uint = 64;
+const UV_UDP_RECVMMSG: c_uint = 256;
 
 // Same `flags` values as libuv (src/uv-common.h).
 const UV_HANDLE_CLOSING: c_uint = 0x01;
@@ -100,6 +123,8 @@ const UV_ASYNC_T_SIZE: usize = 128;
 const UV_WATCHER_T_SIZE: usize = 120;
 const UV_TIMER_T_SIZE: usize = 152;
 const UV_WORK_T_SIZE: usize = 128;
+const UV_UDP_T_SIZE: usize = 216;
+const UV_UDP_SEND_T_SIZE: usize = 320;
 
 type UvAsyncCb = unsafe extern "C" fn(*mut UvAsync);
 /// `uv_idle_cb`, `uv_prepare_cb` and `uv_check_cb` all have this signature.
@@ -108,6 +133,10 @@ type UvTimerCb = unsafe extern "C" fn(*mut UvTimer);
 type UvCloseCb = unsafe extern "C" fn(*mut UvHandle);
 type UvWorkCb = unsafe extern "C" fn(*mut UvWork);
 type UvAfterWorkCb = unsafe extern "C" fn(*mut UvWork, c_int);
+type UvAllocCb = unsafe extern "C" fn(*mut UvHandle, usize, *mut UvBuf);
+type UvUdpRecvCb =
+    unsafe extern "C" fn(*mut UvUdp, isize, *const UvBuf, *const libc::sockaddr, c_uint);
+type UvUdpSendCb = unsafe extern "C" fn(*mut UvUdpSend, c_int);
 
 /// Tracks whether a handle keeps the loop alive. Like in libuv, it does while it's
 /// both started (`uv_is_active`) and ref'd (`uv_has_ref`, the default).
@@ -178,6 +207,10 @@ pub(crate) struct UvLoop {
     idles: WatcherList,
     prepares: WatcherList,
     checks: WatcherList,
+    /// UDP handles with send callbacks or a read error to deliver on the next turn,
+    /// because the poll watch that would have delivered them couldn't be registered.
+    /// libuv's pending queue (`uv__io_feed`). `uv_close` removes a handle. JS thread only.
+    udp_pending: JsCell<Vec<NonNull<UvUdp>>>,
 }
 
 const _: () = assert!(core::mem::offset_of!(UvLoop, data) == 0);
@@ -273,6 +306,7 @@ impl UvLoop {
             idles: WatcherList::new(),
             prepares: WatcherList::new(),
             checks: WatcherList::new(),
+            udp_pending: JsCell::new(Vec::new()),
         }
     }
 
@@ -378,6 +412,7 @@ impl UvLoop {
         // Don't run callbacks once the VM is stopping. Threadsafe functions do the same.
         if global.bun_vm().script_allowed() {
             this.run_pass(global);
+            this.run_udp_pending();
         }
         // A send during the pass sets `Pending` instead of posting a task, and this
         // then fails. The next pass is a new task, so a thread that keeps sending
@@ -393,6 +428,18 @@ impl UvLoop {
             .is_err()
         {
             this.post_dispatch();
+        }
+    }
+
+    /// Flushes the UDP handles that [`UvUdpNode::defer_flush`] queued. A handle queued
+    /// again by its own flush waits for the next pass.
+    fn run_udp_pending(&self) {
+        let pending = self.udp_pending.with_mut(core::mem::take);
+        for udp in pending {
+            // SAFETY: `uv_close` takes a handle out of `udp_pending`, and its node is
+            // freed only by the close task, which can't run during this pass. A handle
+            // closed by an earlier callback in this pass is skipped by `flush`.
+            unsafe { UvUdpNode::flush((*udp.as_ptr()).node) };
         }
     }
 
@@ -1071,6 +1118,1489 @@ pub(crate) extern "C" fn uv_now(_loop: *const UvLoop) -> u64 {
 pub(crate) extern "C" fn uv_update_time(_loop: *mut UvLoop) {}
 
 // ──────────────────────────────────────────────────────────────────────────
+// uv_udp_t / uv_udp_send_t
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Matches `uv_buf_t` on unix.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct UvBuf {
+    base: *mut c_char,
+    len: usize,
+}
+
+/// Matches `struct uv_udp_s`. Addons read `send_queue_size` and `send_queue_count`.
+/// Bun's fields replace `UV_UDP_PRIVATE_FIELDS`. The rest of the state is in a
+/// [`UvUdpNode`] because it has to outlive a callback that closes the handle.
+#[repr(C)]
+pub(crate) struct UvUdp {
+    handle: UvHandle,
+    send_queue_size: usize,
+    send_queue_count: usize,
+    alloc_cb: Option<UvAllocCb>,
+    recv_cb: Option<UvUdpRecvCb>,
+    node: *mut UvUdpNode,
+    /// Active while it's receiving or has sends whose callback hasn't run, like libuv.
+    ref_state: RefState,
+}
+
+const _: () = assert!(core::mem::offset_of!(UvUdp, handle) == 0);
+const _: () = assert!(core::mem::offset_of!(UvUdp, send_queue_size) == 96);
+const _: () = assert!(core::mem::offset_of!(UvUdp, send_queue_count) == 104);
+const _: () = assert!(core::mem::size_of::<UvUdp>() <= UV_UDP_T_SIZE);
+
+/// Matches `struct uv_udp_send_s`. Addons read `handle` and `cb`. Bun's fields
+/// replace `UV_UDP_SEND_PRIVATE_FIELDS`.
+#[repr(C)]
+pub(crate) struct UvUdpSend {
+    req: UvReq,
+    handle: *mut UvUdp,
+    cb: Option<UvUdpSendCb>,
+    addr: libc::sockaddr_storage,
+    /// 0 on a connected socket.
+    addr_len: libc::socklen_t,
+    nbufs: c_uint,
+    /// `bufsml`, or a heap copy for more than 4 buffers.
+    bufs: *mut UvBuf,
+    /// Bytes sent, or a negative `UV_E*` code.
+    status: isize,
+    bufsml: [UvBuf; 4],
+}
+
+const _: () = assert!(core::mem::offset_of!(UvUdpSend, req) == 0);
+const _: () = assert!(core::mem::offset_of!(UvUdpSend, handle) == 64);
+const _: () = assert!(core::mem::offset_of!(UvUdpSend, cb) == 72);
+const _: () = assert!(core::mem::size_of::<UvUdpSend>() <= UV_UDP_SEND_T_SIZE);
+
+/// A `uv_udp_t`'s socket and send queues. `uv_udp_init` allocates it and the close
+/// task frees it after the canceled sends' callbacks, so it's valid for the whole
+/// of any callback, even one that closes the handle. JS thread only.
+pub(crate) struct UvUdpNode {
+    udp: *mut UvUdp,
+    /// -1 until the socket exists. libuv creates it at bind, connect, the first
+    /// send or receive, or in `uv_udp_init_ex` when that names a family.
+    fd: c_int,
+    /// Watches `fd`, null while there is none. Readable while receiving, writable
+    /// while there are sends to finish.
+    poll: *mut FilePoll,
+    ipv6: bool,
+    connected: bool,
+    reading: bool,
+    /// True while send callbacks run. A send from one of them queues behind the
+    /// others instead of going out at once, like libuv's `UV_HANDLE_UDP_PROCESSING`.
+    processing: bool,
+    /// Sends the socket hasn't taken yet, oldest first.
+    queued: VecDeque<NonNull<UvUdpSend>>,
+    /// Sends whose callback hasn't run, oldest first.
+    completed: VecDeque<NonNull<UvUdpSend>>,
+    /// The handle is in its loop's `udp_pending`, and this is the error of the failed
+    /// `update` that put it there, for `recv_cb` if the read watch was lost.
+    flush_pending: bool,
+    flush_err: c_int,
+}
+
+/// `-errno` for the last failed call, like libuv's `UV__ERR(errno)`.
+fn uv_errno() -> c_int {
+    -std::io::Error::last_os_error()
+        .raw_os_error()
+        .unwrap_or(libc::EIO)
+}
+
+fn would_block(err: c_int) -> bool {
+    err == -libc::EAGAIN || err == -libc::EWOULDBLOCK || err == -libc::ENOBUFS
+}
+
+/// Returns the length of an `AF_INET` or `AF_INET6` address, or `None` for any other family.
+///
+/// # Safety
+/// `addr` points to a `sockaddr` at least as long as its family says.
+unsafe fn sockaddr_len(addr: *const libc::sockaddr) -> Option<libc::socklen_t> {
+    // SAFETY: fn contract.
+    let len = match c_int::from(unsafe { (*addr).sa_family }) {
+        libc::AF_INET => core::mem::size_of::<libc::sockaddr_in>(),
+        libc::AF_INET6 => core::mem::size_of::<libc::sockaddr_in6>(),
+        _ => return None,
+    };
+    Some(len as libc::socklen_t)
+}
+
+/// Opens a non-blocking, close-on-exec datagram socket.
+fn new_udp_socket(domain: c_int) -> Result<c_int, c_int> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        // SAFETY: plain syscall.
+        let fd = unsafe {
+            libc::socket(
+                domain,
+                libc::SOCK_DGRAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
+                0,
+            )
+        };
+        if fd < 0 { Err(uv_errno()) } else { Ok(fd) }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: plain syscall.
+        let fd = unsafe { libc::socket(domain, libc::SOCK_DGRAM, 0) };
+        if fd < 0 {
+            return Err(uv_errno());
+        }
+        if let Err(err) = set_nonblocking_cloexec(fd) {
+            // SAFETY: `fd` is the socket opened above.
+            unsafe { libc::close(fd) };
+            return Err(err);
+        }
+        Ok(fd)
+    }
+}
+
+fn set_nonblocking_cloexec(fd: c_int) -> Result<(), c_int> {
+    // SAFETY: plain syscalls on an fd the caller owns.
+    unsafe {
+        let fl = libc::fcntl(fd, libc::F_GETFL);
+        if fl < 0 || libc::fcntl(fd, libc::F_SETFL, fl | libc::O_NONBLOCK) < 0 {
+            return Err(uv_errno());
+        }
+        let fd_flags = libc::fcntl(fd, libc::F_GETFD);
+        if fd_flags < 0 || libc::fcntl(fd, libc::F_SETFD, fd_flags | libc::FD_CLOEXEC) < 0 {
+            return Err(uv_errno());
+        }
+    }
+    Ok(())
+}
+
+fn set_int_option(fd: c_int, level: c_int, name: c_int, value: c_int) -> c_int {
+    // SAFETY: `value` is a live c_int of the size passed.
+    let r = unsafe {
+        libc::setsockopt(
+            fd,
+            level,
+            name,
+            (&raw const value).cast::<c_void>(),
+            core::mem::size_of::<c_int>() as libc::socklen_t,
+        )
+    };
+    if r < 0 { uv_errno() } else { 0 }
+}
+
+/// `sendmsg` with `bufs` to `addr`, or to the connected peer when `addr_len` is 0.
+/// Returns the bytes sent or `-errno`.
+///
+/// # Safety
+/// `bufs` points to `nbufs` buffers, and `addr` to `addr_len` bytes.
+unsafe fn udp_sendmsg(
+    fd: c_int,
+    bufs: *const UvBuf,
+    nbufs: c_uint,
+    addr: *const libc::sockaddr_storage,
+    addr_len: libc::socklen_t,
+) -> isize {
+    // SAFETY: an all-zero msghdr is valid.
+    let mut msg: libc::msghdr = unsafe { core::mem::zeroed() };
+    if addr_len != 0 {
+        msg.msg_name = addr.cast_mut().cast::<c_void>();
+        msg.msg_namelen = addr_len;
+    }
+    // `uv_buf_t` has the same layout as `struct iovec` on unix.
+    msg.msg_iov = bufs.cast_mut().cast::<libc::iovec>();
+    msg.msg_iovlen = nbufs as _;
+    loop {
+        // SAFETY: fn contract.
+        let n = unsafe { libc::sendmsg(fd, &raw const msg, 0) };
+        if n >= 0 {
+            return n;
+        }
+        let err = uv_errno();
+        if err != -libc::EINTR {
+            return err as isize;
+        }
+    }
+}
+
+fn total_len(bufs: *const UvBuf, nbufs: c_uint) -> usize {
+    (0..nbufs as usize)
+        // SAFETY: the caller's `bufs` has `nbufs` entries.
+        .map(|i| unsafe { (*bufs.add(i)).len })
+        .sum()
+}
+
+impl UvUdpNode {
+    fn loop_ctx(&self) -> bun_io::EventLoopCtx {
+        // SAFETY: the handle and its loop outlive the node.
+        unsafe { (*(*(*self.udp).handle.loop_).vm.as_ptr()).loop_ctx() }
+    }
+
+    /// Takes `fd` and starts watching it, like libuv's `uv__udp_open`.
+    fn set_socket(&mut self, fd: c_int) {
+        debug_assert!(self.fd == -1);
+        let this: *mut UvUdpNode = self;
+        self.fd = fd;
+        self.poll = FilePoll::init(
+            self.loop_ctx(),
+            Fd::from_native(fd),
+            Default::default(),
+            Owner::new(PollTag::UvUdp, this.cast::<()>()),
+        );
+    }
+
+    /// libuv's `uv__udp_maybe_deferred_bind`: a handle that sends or receives before
+    /// it's bound gets a socket of that family, which the kernel binds to the any
+    /// address on first use.
+    fn ensure_socket(&mut self, domain: c_int) -> c_int {
+        if self.fd != -1 {
+            return 0;
+        }
+        match new_udp_socket(domain) {
+            Ok(fd) => {
+                self.set_socket(fd);
+                self.ipv6 = domain == libc::AF_INET6;
+                0
+            }
+            Err(err) => err,
+        }
+    }
+
+    /// Watches the directions the handle needs, and keeps the process alive while it
+    /// needs any, like libuv's `uv__io_start`/`uv__io_stop` and `uv__handle_start`.
+    /// Returns 0, or the error from registering with the event loop. Then the read
+    /// watch is kept if the handle is receiving and only the write watch failed, and
+    /// the queued sends complete with the error, since nothing would tell us when the
+    /// socket takes them. A caller outside `on_poll` passes the error to
+    /// [`Self::defer_flush`], so their callbacks run on the next turn.
+    /// The handle keeps the process alive only if it's still watching for reads.
+    ///
+    /// # Safety
+    /// The handle isn't closing.
+    unsafe fn update(&mut self) -> c_int {
+        let want_read = self.reading;
+        let want_write = !self.queued.is_empty() || !self.completed.is_empty();
+        let mut err = 0;
+        if !self.poll.is_null() {
+            let ctx = self.loop_ctx();
+            // SAFETY: this is the JS thread, whose loop lives as long as the VM.
+            let uws_loop = unsafe { ctx.platform_event_loop() };
+            // SAFETY: the node owns its poll until close, and this is the loop thread.
+            let poll = unsafe { &mut *self.poll };
+            let mut has_read = poll.flags.contains(Flags::PollReadable);
+            let mut has_write = poll.flags.contains(Flags::PollWritable);
+            // FilePoll can't drop one direction, so drop both and add back what's wanted.
+            if (has_read && !want_read) || (has_write && !want_write) {
+                let _ = poll.unregister(uws_loop, false);
+                has_read = false;
+                has_write = false;
+            }
+            if want_read && !has_read {
+                if let Err(e) = poll.register(uws_loop, Flags::Readable, false) {
+                    err = -(e.errno as c_int);
+                }
+            }
+            if err == 0 && want_write && !has_write {
+                if let Err(e) = poll.register(uws_loop, Flags::Writable, false) {
+                    err = -(e.errno as c_int);
+                }
+            }
+            if err != 0 {
+                // epoll and kqueue drop both directions here, so put the read watch back.
+                let _ = poll.unregister(uws_loop, false);
+                if want_read {
+                    let _ = poll.register(uws_loop, Flags::Readable, false);
+                }
+            }
+        }
+        if err != 0 {
+            while let Some(req) = self.queued.pop_front() {
+                // SAFETY: a queued request is alive until its callback has run.
+                unsafe { (*req.as_ptr()).status = err as isize };
+                self.completed.push_back(req);
+            }
+        }
+        let active = if err == 0 {
+            want_read || want_write
+        } else {
+            self.watching_reads()
+        };
+        // SAFETY: fn contract.
+        unsafe { (*self.udp).ref_state.set_active(active) };
+        err
+    }
+
+    fn watching_reads(&self) -> bool {
+        // SAFETY: the node owns its poll until close, and this is the loop thread.
+        !self.poll.is_null() && unsafe { (*self.poll).flags.contains(Flags::PollReadable) }
+    }
+
+    /// After `update` failed outside `on_poll`: no poll event may come to deliver what
+    /// it left (sends completed with the error, or a read watch it couldn't keep), so
+    /// queue the handle to [`Self::flush`] on the next turn, like libuv's `uv__io_feed`.
+    ///
+    /// # Safety
+    /// The handle isn't closing, and this is the loop thread.
+    unsafe fn defer_flush(&mut self, err: c_int) {
+        self.flush_err = err;
+        if self.flush_pending || (self.completed.is_empty() && !(self.reading && !self.watching_reads())) {
+            return;
+        }
+        self.flush_pending = true;
+        // SAFETY: fn contract. The loop outlives its handles.
+        let loop_ = unsafe { &*(*self.udp).handle.loop_ };
+        // SAFETY: `udp` is the node's live handle, so it isn't null.
+        let udp = unsafe { NonNull::new_unchecked(self.udp) };
+        loop_.udp_pending.with_mut(|pending| pending.push(udp));
+        loop_.schedule_dispatch();
+    }
+
+    /// Runs what [`Self::defer_flush`] queued: the callbacks of completed sends, then
+    /// `recv_cb` with the error if the handle is receiving without a read watch. Then
+    /// tries to watch again for what's left.
+    ///
+    /// # Safety
+    /// Same as [`Self::on_poll`].
+    unsafe fn flush(this: *mut UvUdpNode) {
+        // SAFETY: fn contract. The node outlives the callbacks.
+        unsafe {
+            (*this).flush_pending = false;
+            // A closing handle's sends run in `finish_close`.
+            if UvUdpNode::closing(this) {
+                return;
+            }
+            UvUdpNode::run_completed(this);
+            if !UvUdpNode::closing(this) && (*this).reading && !(*this).watching_reads() {
+                UvUdpNode::fail_reads(this, (*this).flush_err);
+            }
+            if !UvUdpNode::closing(this) {
+                // Sends queued since, or by a callback above.
+                let err = (*this).update();
+                if err != 0 {
+                    (*this).defer_flush(err);
+                }
+            }
+        }
+    }
+
+    /// Called by `__bun_run_file_poll` when the socket is readable or writable.
+    ///
+    /// # Safety
+    /// `this` is the owner of `poll`, a live handle's node, and this is the loop thread.
+    pub(crate) unsafe fn on_poll(this: *mut UvUdpNode, poll: *mut FilePoll) {
+        // SAFETY: fn contract. A callback can close the handle, which frees `poll`,
+        // so read the events before calling any.
+        let (readable, writable) = unsafe { ((*poll).is_readable(), (*poll).is_writable()) };
+        // SAFETY: fn contract. The node outlives the callbacks.
+        unsafe {
+            if readable && (*this).reading {
+                UvUdpNode::receive(this);
+            }
+            if !UvUdpNode::closing(this) {
+                if writable {
+                    (*this).send_queued();
+                }
+                // Also the sends that an earlier failed `update` completed with its error.
+                UvUdpNode::run_completed(this);
+            }
+            let err = if UvUdpNode::closing(this) {
+                0
+            } else {
+                (*this).update()
+            };
+            if err != 0 {
+                // The sends it couldn't watch for completed with the error: report them.
+                UvUdpNode::run_completed(this);
+                if !UvUdpNode::closing(this) && (*this).reading && !(*this).watching_reads() {
+                    UvUdpNode::fail_reads(this, err);
+                }
+            }
+        }
+    }
+
+    /// Receiving can't go on without a read watch: stop, and tell the addon through
+    /// `recv_cb` with the error, in a buffer from `alloc_cb` like any failed read.
+    ///
+    /// # Safety
+    /// Same as [`Self::on_poll`].
+    unsafe fn fail_reads(this: *mut UvUdpNode, err: c_int) {
+        // SAFETY: fn contract.
+        let (udp, vm) = unsafe {
+            let udp = (*this).udp;
+            (udp, &*(*(*udp).handle.loop_).vm.as_ptr())
+        };
+        // SAFETY: fn contract. The callbacks are set while `reading` is.
+        let (Some(alloc_cb), Some(recv_cb)) = (unsafe { ((*udp).alloc_cb, (*udp).recv_cb) }) else {
+            return;
+        };
+        // SAFETY: fn contract.
+        unsafe {
+            (*this).reading = false;
+            (*udp).alloc_cb = None;
+            (*udp).recv_cb = None;
+        }
+        let global = vm.global();
+        let mut buf = UvBuf {
+            base: core::ptr::null_mut(),
+            len: 0,
+        };
+        let _scope = vm.enter_event_loop_scope();
+        let _handles = CallbackScope::open(global);
+        // SAFETY: calls the addon's callbacks on the loop thread with its handle.
+        unsafe {
+            alloc_cb(udp.cast::<UvHandle>(), 64 * 1024, &raw mut buf);
+            if !UvUdpNode::closing(this) {
+                recv_cb(udp, err as isize, &raw const buf, core::ptr::null(), 0);
+            }
+        }
+        if global.has_exception() {
+            let _ = bun_jsc::task::report_error_or_terminate(global, JsError::Thrown);
+        }
+    }
+
+    /// # Safety
+    /// `this` is a live handle's node.
+    unsafe fn closing(this: *mut UvUdpNode) -> bool {
+        // SAFETY: fn contract.
+        unsafe { (*(*this).udp).handle.flags & UV_HANDLE_CLOSING != 0 }
+    }
+
+    /// Reads up to 32 datagrams, like libuv's `uv__udp_recvmsg`. Each one goes to
+    /// `recv_cb` in a buffer from `alloc_cb`. Stops at the first `EAGAIN` (reported
+    /// as `nread == 0` with no address so the addon can free the buffer), at an
+    /// error, or when a callback stops receiving or closes the handle.
+    ///
+    /// # Safety
+    /// Same as [`Self::on_poll`].
+    unsafe fn receive(this: *mut UvUdpNode) {
+        // SAFETY: fn contract.
+        let (udp, vm) = unsafe {
+            let udp = (*this).udp;
+            (udp, &*(*(*udp).handle.loop_).vm.as_ptr())
+        };
+        let global = vm.global();
+        for _ in 0..32 {
+            // SAFETY: fn contract. The callbacks are set while `reading` is.
+            let (Some(alloc_cb), Some(recv_cb)) = (unsafe { ((*udp).alloc_cb, (*udp).recv_cb) })
+            else {
+                return;
+            };
+            let mut buf = UvBuf {
+                base: core::ptr::null_mut(),
+                len: 0,
+            };
+            let _scope = vm.enter_event_loop_scope();
+            let _handles = CallbackScope::open(global);
+            // SAFETY: calls the addon's callback on the loop thread with its handle.
+            unsafe { alloc_cb(udp.cast::<UvHandle>(), 64 * 1024, &raw mut buf) };
+            // alloc_cb may have stopped receiving or closed the handle: read nothing,
+            // and give the buffer back through recv_cb ("nothing read") so it's freed.
+            // SAFETY: fn contract. The node outlives the callback.
+            if unsafe { UvUdpNode::closing(this) || !(*this).reading } {
+                if !buf.base.is_null() {
+                    // SAFETY: same as the `alloc_cb` call.
+                    unsafe { recv_cb(udp, 0, &raw const buf, core::ptr::null(), 0) };
+                }
+                return;
+            }
+            if buf.base.is_null() || buf.len == 0 {
+                // SAFETY: same as above.
+                unsafe {
+                    recv_cb(
+                        udp,
+                        UV_ENOBUFS as isize,
+                        &raw const buf,
+                        core::ptr::null(),
+                        0,
+                    )
+                };
+                return;
+            }
+            // SAFETY: all-zero sockaddr_storage and msghdr are valid.
+            let mut peer: libc::sockaddr_storage = unsafe { core::mem::zeroed() };
+            let mut msg: libc::msghdr = unsafe { core::mem::zeroed() };
+            msg.msg_name = (&raw mut peer).cast::<c_void>();
+            msg.msg_namelen = core::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+            msg.msg_iov = (&raw mut buf).cast::<libc::iovec>();
+            msg.msg_iovlen = 1;
+            let nread = loop {
+                // SAFETY: `msg` points at `peer` and the addon's buffer. `fd` is open
+                // because the handle is receiving.
+                let n = unsafe { libc::recvmsg((*this).fd, &raw mut msg, 0) };
+                if n >= 0 || uv_errno() != -libc::EINTR {
+                    break if n >= 0 { n } else { uv_errno() as isize };
+                }
+            };
+            let done = nread < 0;
+            // SAFETY: same as the `alloc_cb` call.
+            unsafe {
+                if nread == -(libc::EAGAIN as isize) || nread == -(libc::EWOULDBLOCK as isize) {
+                    recv_cb(udp, 0, &raw const buf, core::ptr::null(), 0);
+                } else if nread < 0 {
+                    recv_cb(udp, nread, &raw const buf, core::ptr::null(), 0);
+                } else {
+                    let flags = if msg.msg_flags & libc::MSG_TRUNC != 0 {
+                        UV_UDP_PARTIAL
+                    } else {
+                        0
+                    };
+                    recv_cb(udp, nread, &raw const buf, (&raw const peer).cast(), flags);
+                }
+            }
+            if global.has_exception()
+                && bun_jsc::task::report_error_or_terminate(global, JsError::Thrown).is_err()
+            {
+                return;
+            }
+            // SAFETY: fn contract. The node outlives the callback.
+            if done || unsafe { UvUdpNode::closing(this) || !(*this).reading } {
+                return;
+            }
+        }
+    }
+
+    /// Sends what the socket will take, like libuv's `uv__udp_sendmsg`. A send that
+    /// fails with anything but `EAGAIN` or `ENOBUFS` completes with that error.
+    fn send_queued(&mut self) {
+        while let Some(&req) = self.queued.front() {
+            let req = req.as_ptr();
+            // SAFETY: a queued request is alive until its callback has run.
+            let n = unsafe {
+                udp_sendmsg(
+                    self.fd,
+                    (*req).bufs,
+                    (*req).nbufs,
+                    &raw const (*req).addr,
+                    (*req).addr_len,
+                )
+            };
+            if n < 0 && would_block(n as c_int) {
+                return;
+            }
+            // SAFETY: same as above.
+            unsafe { (*req).status = n };
+            let req = self.queued.pop_front().unwrap();
+            self.completed.push_back(req);
+        }
+    }
+
+    /// Runs the callbacks of completed sends, like libuv's `uv__udp_run_completed`. If
+    /// a callback closes the handle, the canceled sends' callbacks run here too.
+    ///
+    /// # Safety
+    /// Same as [`Self::on_poll`].
+    unsafe fn run_completed(this: *mut UvUdpNode) {
+        // SAFETY: fn contract.
+        let (udp, vm) = unsafe {
+            let udp = (*this).udp;
+            (udp, &*(*(*udp).handle.loop_).vm.as_ptr())
+        };
+        let global = vm.global();
+        // SAFETY: fn contract.
+        unsafe { (*this).processing = true };
+        // SAFETY: fn contract. The node outlives the callbacks.
+        while let Some(req) = unsafe { (*this).completed.pop_front() } {
+            let req = req.as_ptr();
+            // SAFETY: the request is alive until its callback has run, and the
+            // handle until its close_cb has.
+            let (cb, status) = unsafe {
+                (*udp).send_queue_size -= total_len((*req).bufs, (*req).nbufs);
+                (*udp).send_queue_count -= 1;
+                if (*req).bufs != (&raw mut (*req).bufsml).cast::<UvBuf>() {
+                    drop(Box::from_raw(core::ptr::slice_from_raw_parts_mut(
+                        (*req).bufs,
+                        (*req).nbufs as usize,
+                    )));
+                }
+                (*req).bufs = core::ptr::null_mut();
+                let status = (*req).status;
+                ((*req).cb, if status < 0 { status as c_int } else { 0 })
+            };
+            if let Some(cb) = cb {
+                bun_output::scoped_log!(uv, "uv_udp_send_t {:?}: send_cb({})", req, status);
+                let _scope = vm.enter_event_loop_scope();
+                let _handles = CallbackScope::open(global);
+                // SAFETY: calls the addon's callback on the loop thread with its request.
+                unsafe { cb(req, status) };
+            }
+            if global.has_exception()
+                && bun_jsc::task::report_error_or_terminate(global, JsError::Thrown).is_err()
+            {
+                break;
+            }
+        }
+        // SAFETY: fn contract.
+        unsafe { (*this).processing = false };
+    }
+}
+
+impl UvUdp {
+    /// Returns true if `handle` is a UDP handle.
+    ///
+    /// # Safety
+    /// `handle` is null or points to an initialized handle.
+    unsafe fn check(handle: *mut UvUdp) -> bool {
+        // SAFETY: fn contract.
+        !handle.is_null() && unsafe { (*handle).handle.type_ == UV_UDP }
+    }
+
+    /// Returns the node of a UDP handle that isn't closing.
+    ///
+    /// # Safety
+    /// Same as [`Self::check`], and this is the loop thread.
+    unsafe fn open_node<'a>(handle: *mut UvUdp) -> Option<&'a mut UvUdpNode> {
+        // SAFETY: fn contract. A handle owns its node until its close task.
+        unsafe {
+            if !UvUdp::check(handle) || (*handle).handle.flags & UV_HANDLE_CLOSING != 0 {
+                return None;
+            }
+            Some(&mut *(*handle).node)
+        }
+    }
+
+    /// Called by `uv_close`. Stops receiving, closes the socket, and cancels the
+    /// queued sends. Their callbacks run in [`Self::finish_close`], before `close_cb`.
+    ///
+    /// # Safety
+    /// `handle` is a UDP handle being closed for the first time, on the loop thread.
+    unsafe fn close(handle: *mut UvUdp) {
+        // SAFETY: fn contract.
+        let node = unsafe { &mut *(*handle).node };
+        node.reading = false;
+        if node.flush_pending {
+            node.flush_pending = false;
+            // SAFETY: fn contract. The loop outlives its handles.
+            let loop_ = unsafe { &*(*handle).handle.loop_ };
+            loop_.udp_pending.with_mut(|pending| pending.retain(|h| h.as_ptr() != handle));
+        }
+        if !node.poll.is_null() {
+            // SAFETY: the node owns its poll. A poll freed during its own dispatch
+            // is recycled after the tick.
+            unsafe { (*node.poll).deinit() };
+            node.poll = core::ptr::null_mut();
+        }
+        if node.fd != -1 {
+            // SAFETY: the node owns the socket.
+            unsafe { libc::close(node.fd) };
+            node.fd = -1;
+        }
+        while let Some(req) = node.queued.pop_front() {
+            // SAFETY: a queued request is alive until its callback has run.
+            unsafe { (*req.as_ptr()).status = UV_ECANCELED as isize };
+            node.completed.push_back(req);
+        }
+        // SAFETY: fn contract.
+        unsafe {
+            (*handle).alloc_cb = None;
+            (*handle).recv_cb = None;
+            (*handle).ref_state.set_active(false);
+        }
+    }
+
+    /// Called by the close task before `close_cb`, like libuv's `uv__udp_finish_close`.
+    /// Runs the callbacks of the sends that completed or were canceled, then frees the node.
+    ///
+    /// # Safety
+    /// `handle` is a closed UDP handle whose close task is running, on the loop thread.
+    pub(crate) unsafe fn finish_close(handle: *mut UvUdp) {
+        // SAFETY: fn contract.
+        unsafe {
+            let node = (*handle).node;
+            UvUdpNode::run_completed(node);
+            debug_assert!((*node).completed.is_empty());
+            bun_core::heap::destroy(node);
+            (*handle).node = core::ptr::null_mut();
+        }
+    }
+}
+
+/// Implements `int uv_udp_init_ex(uv_loop_t*, uv_udp_t*, unsigned int flags)`. The low
+/// 8 bits of `flags` are `AF_INET`, `AF_INET6` (open the socket now) or `AF_UNSPEC`
+/// (open it on first use). `UV_UDP_RECVMMSG` is accepted and ignored.
+///
+/// # Safety
+/// `loop_` is null or one of this module's loops. `handle` points to
+/// `sizeof(uv_udp_t)` bytes that the addon keeps alive until its `close_cb` has run.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_udp_init_ex(
+    loop_: *mut UvLoop,
+    handle: *mut UvUdp,
+    flags: c_uint,
+) -> c_int {
+    if loop_.is_null() || handle.is_null() {
+        return UV_EINVAL;
+    }
+    let domain = (flags & 0xFF) as c_int;
+    if domain != libc::AF_INET && domain != libc::AF_INET6 && domain != libc::AF_UNSPEC {
+        return UV_EINVAL;
+    }
+    if flags & !0xFF & !UV_UDP_RECVMMSG != 0 {
+        return UV_EINVAL;
+    }
+    let fd = if domain == libc::AF_UNSPEC {
+        -1
+    } else {
+        match new_udp_socket(domain) {
+            Ok(fd) => fd,
+            Err(err) => return err,
+        }
+    };
+    bun_output::scoped_log!(uv, "uv_udp_t {:?}: uv_udp_init_ex", handle);
+    UvHandle::init(handle.cast::<UvHandle>(), loop_, UV_UDP);
+    let node = bun_core::heap::alloc(UvUdpNode {
+        udp: handle,
+        fd: -1,
+        poll: core::ptr::null_mut(),
+        ipv6: false,
+        connected: false,
+        reading: false,
+        processing: false,
+        queued: VecDeque::new(),
+        completed: VecDeque::new(),
+        flush_pending: false,
+        flush_err: 0,
+    });
+    // SAFETY: fn contract. Write field by field because the addon's memory is uninitialized.
+    unsafe {
+        (&raw mut (*handle).send_queue_size).write(0);
+        (&raw mut (*handle).send_queue_count).write(0);
+        (&raw mut (*handle).alloc_cb).write(None);
+        (&raw mut (*handle).recv_cb).write(None);
+        (&raw mut (*handle).node).write(node);
+        (&raw mut (*handle).ref_state).write(RefState::new());
+        if fd != -1 {
+            (*node).set_socket(fd);
+            (*node).ipv6 = domain == libc::AF_INET6;
+        }
+    }
+    0
+}
+
+/// Implements `int uv_udp_init(uv_loop_t*, uv_udp_t*)`.
+///
+/// # Safety
+/// Same as [`uv_udp_init_ex`].
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_udp_init(loop_: *mut UvLoop, handle: *mut UvUdp) -> c_int {
+    // SAFETY: fn contract.
+    unsafe { uv_udp_init_ex(loop_, handle, libc::AF_UNSPEC as c_uint) }
+}
+
+/// Implements `int uv_udp_open(uv_udp_t*, uv_os_sock_t)`. The handle takes the
+/// socket and makes it non-blocking. Returns `UV_EBUSY` if it already has one.
+///
+/// # Safety
+/// `handle` was initialized by `uv_udp_init` or `uv_udp_init_ex`.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_udp_open(handle: *mut UvUdp, sock: c_int) -> c_int {
+    // SAFETY: fn contract.
+    let Some(node) = (unsafe { UvUdp::open_node(handle) }) else {
+        return UV_EINVAL;
+    };
+    if node.fd != -1 {
+        return UV_EBUSY;
+    }
+    if let Err(err) = set_nonblocking_cloexec(sock) {
+        return err;
+    }
+    // SAFETY: all-zero sockaddr_storage is valid, and the lengths match the buffers.
+    unsafe {
+        let mut addr: libc::sockaddr_storage = core::mem::zeroed();
+        let mut len = core::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+        if libc::getsockname(sock, (&raw mut addr).cast(), &raw mut len) == 0 {
+            node.ipv6 = c_int::from(addr.ss_family) == libc::AF_INET6;
+        }
+        len = core::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+        node.connected = libc::getpeername(sock, (&raw mut addr).cast(), &raw mut len) == 0;
+    }
+    node.set_socket(sock);
+    0
+}
+
+/// Implements `int uv_udp_bind(uv_udp_t*, const struct sockaddr*, unsigned int flags)`.
+/// `UV_UDP_REUSEADDR` sets `SO_REUSEADDR` on Linux and `SO_REUSEPORT` on the BSDs,
+/// like libuv, so several sockets can receive the same multicast datagrams.
+///
+/// # Safety
+/// Same as [`uv_udp_open`], and `addr` is null or a `sockaddr` as long as its family says.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_udp_bind(
+    handle: *mut UvUdp,
+    addr: *const libc::sockaddr,
+    flags: c_uint,
+) -> c_int {
+    // SAFETY: fn contract.
+    let Some(node) = (unsafe { UvUdp::open_node(handle) }) else {
+        return UV_EINVAL;
+    };
+    if addr.is_null()
+        || flags & !(UV_UDP_IPV6ONLY | UV_UDP_REUSEADDR | UV_UDP_REUSEPORT | UV_UDP_LINUX_RECVERR)
+            != 0
+    {
+        return UV_EINVAL;
+    }
+    // SAFETY: fn contract.
+    let Some(addr_len) = (unsafe { sockaddr_len(addr) }) else {
+        return UV_EINVAL;
+    };
+    // SAFETY: fn contract.
+    let family = c_int::from(unsafe { (*addr).sa_family });
+    if flags & UV_UDP_IPV6ONLY != 0 && family != libc::AF_INET6 {
+        return UV_EINVAL;
+    }
+    let err = node.ensure_socket(family);
+    if err != 0 {
+        return err;
+    }
+    let fd = node.fd;
+    if flags & UV_UDP_REUSEADDR != 0 {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let option = libc::SO_REUSEADDR;
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let option = libc::SO_REUSEPORT;
+        let err = set_int_option(fd, libc::SOL_SOCKET, option, 1);
+        if err != 0 {
+            return err;
+        }
+    }
+    if flags & UV_UDP_REUSEPORT != 0 {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let err = set_int_option(fd, libc::SOL_SOCKET, libc::SO_REUSEPORT, 1);
+        #[cfg(target_os = "freebsd")]
+        let err = set_int_option(fd, libc::SOL_SOCKET, libc::SO_REUSEPORT_LB, 1);
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+        let err = UV_ENOTSUP;
+        if err != 0 {
+            return err;
+        }
+    }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if flags & UV_UDP_LINUX_RECVERR != 0 {
+        let err = if family == libc::AF_INET6 {
+            set_int_option(fd, libc::IPPROTO_IPV6, libc::IPV6_RECVERR, 1)
+        } else {
+            set_int_option(fd, libc::IPPROTO_IP, libc::IP_RECVERR, 1)
+        };
+        if err != 0 {
+            return err;
+        }
+    }
+    if flags & UV_UDP_IPV6ONLY != 0 {
+        let err = set_int_option(fd, libc::IPPROTO_IPV6, libc::IPV6_V6ONLY, 1);
+        if err != 0 {
+            return err;
+        }
+    }
+    // SAFETY: fn contract.
+    if unsafe { libc::bind(fd, addr, addr_len) } < 0 {
+        let err = uv_errno();
+        // The BSDs fail this way binding an IPv4 socket to an IPv6 address or the reverse.
+        return if err == -libc::EAFNOSUPPORT {
+            UV_EINVAL
+        } else {
+            err
+        };
+    }
+    node.ipv6 = family == libc::AF_INET6;
+    0
+}
+
+/// Implements `int uv_udp_connect(uv_udp_t*, const struct sockaddr*)`. A null
+/// `addr` disconnects.
+///
+/// # Safety
+/// Same as [`uv_udp_bind`].
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_udp_connect(
+    handle: *mut UvUdp,
+    addr: *const libc::sockaddr,
+) -> c_int {
+    // SAFETY: fn contract.
+    let Some(node) = (unsafe { UvUdp::open_node(handle) }) else {
+        return UV_EINVAL;
+    };
+    if addr.is_null() {
+        if !node.connected {
+            return UV_ENOTCONN;
+        }
+        // SAFETY: an all-zero sockaddr with family AF_UNSPEC dissolves the association.
+        let r = unsafe {
+            let mut unspec: libc::sockaddr = core::mem::zeroed();
+            unspec.sa_family = libc::AF_UNSPEC as libc::sa_family_t;
+            libc::connect(
+                node.fd,
+                &raw const unspec,
+                core::mem::size_of::<libc::sockaddr>() as libc::socklen_t,
+            )
+        };
+        // Linux and the BSDs disconnect but report these.
+        if r < 0 {
+            let err = uv_errno();
+            if err != -libc::EAFNOSUPPORT && err != -libc::EINVAL {
+                return err;
+            }
+        }
+        node.connected = false;
+        return 0;
+    }
+    if node.connected {
+        return UV_EISCONN;
+    }
+    // SAFETY: fn contract.
+    let Some(addr_len) = (unsafe { sockaddr_len(addr) }) else {
+        return UV_EINVAL;
+    };
+    // SAFETY: fn contract.
+    let err = node.ensure_socket(c_int::from(unsafe { (*addr).sa_family }));
+    if err != 0 {
+        return err;
+    }
+    loop {
+        // SAFETY: fn contract.
+        if unsafe { libc::connect(node.fd, addr, addr_len) } == 0 {
+            break;
+        }
+        let err = uv_errno();
+        if err != -libc::EINTR {
+            return err;
+        }
+    }
+    node.connected = true;
+    0
+}
+
+/// `getsockname` or `getpeername` into the addon's buffer, like libuv's `uv__getsockpeername`.
+///
+/// # Safety
+/// Same as [`uv_udp_open`]. `name` and `namelen` point to the addon's buffer and its length.
+unsafe fn udp_name(
+    handle: *mut UvUdp,
+    name: *mut libc::sockaddr,
+    namelen: *mut c_int,
+    peer: bool,
+) -> c_int {
+    // SAFETY: fn contract.
+    let Some(node) = (unsafe { UvUdp::open_node(handle) }) else {
+        return UV_EINVAL;
+    };
+    if name.is_null() || namelen.is_null() {
+        return UV_EINVAL;
+    }
+    if node.fd == -1 {
+        return UV_EBADF;
+    }
+    // SAFETY: fn contract.
+    unsafe {
+        let mut len = *namelen as libc::socklen_t;
+        let r = if peer {
+            libc::getpeername(node.fd, name, &raw mut len)
+        } else {
+            libc::getsockname(node.fd, name, &raw mut len)
+        };
+        if r < 0 {
+            return uv_errno();
+        }
+        *namelen = len as c_int;
+    }
+    0
+}
+
+/// Implements `int uv_udp_getsockname(const uv_udp_t*, struct sockaddr*, int*)`.
+///
+/// # Safety
+/// Same as [`udp_name`].
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_udp_getsockname(
+    handle: *mut UvUdp,
+    name: *mut libc::sockaddr,
+    namelen: *mut c_int,
+) -> c_int {
+    // SAFETY: fn contract.
+    unsafe { udp_name(handle, name, namelen, false) }
+}
+
+/// Implements `int uv_udp_getpeername(const uv_udp_t*, struct sockaddr*, int*)`.
+///
+/// # Safety
+/// Same as [`udp_name`].
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_udp_getpeername(
+    handle: *mut UvUdp,
+    name: *mut libc::sockaddr,
+    namelen: *mut c_int,
+) -> c_int {
+    // SAFETY: fn contract.
+    unsafe { udp_name(handle, name, namelen, true) }
+}
+
+/// Checks a send's address against the handle's connection and opens the socket
+/// for its family if needed, like the start of libuv's `uv__udp_send`. Returns the
+/// address length (0 on a connected socket) or a `UV_E*` code.
+///
+/// # Safety
+/// `addr` is null or a `sockaddr` as long as its family says.
+unsafe fn send_target(
+    node: &mut UvUdpNode,
+    addr: *const libc::sockaddr,
+) -> Result<libc::socklen_t, c_int> {
+    if addr.is_null() {
+        return if node.connected {
+            Ok(0)
+        } else {
+            Err(UV_EDESTADDRREQ)
+        };
+    }
+    if node.connected {
+        return Err(UV_EISCONN);
+    }
+    // SAFETY: fn contract.
+    let len = unsafe { sockaddr_len(addr) }.ok_or(UV_EINVAL)?;
+    // SAFETY: fn contract.
+    match node.ensure_socket(c_int::from(unsafe { (*addr).sa_family })) {
+        0 => Ok(len),
+        err => Err(err),
+    }
+}
+
+/// Implements `int uv_udp_send(uv_udp_send_t*, uv_udp_t*, const uv_buf_t[], unsigned
+/// int nbufs, const struct sockaddr*, uv_udp_send_cb)`. Sends at once if nothing is
+/// queued. `send_cb` runs on a later iteration either way, like in libuv. The
+/// buffers' contents must stay valid until then.
+///
+/// # Safety
+/// `req` points to `sizeof(uv_udp_send_t)` bytes the addon keeps alive until
+/// `send_cb` has run. `bufs` points to `nbufs` buffers. Otherwise same as [`uv_udp_bind`].
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_udp_send(
+    req: *mut UvUdpSend,
+    handle: *mut UvUdp,
+    bufs: *const UvBuf,
+    nbufs: c_uint,
+    addr: *const libc::sockaddr,
+    send_cb: Option<UvUdpSendCb>,
+) -> c_int {
+    // SAFETY: fn contract.
+    let Some(node) = (unsafe { UvUdp::open_node(handle) }) else {
+        return UV_EINVAL;
+    };
+    if req.is_null() || nbufs == 0 || bufs.is_null() {
+        return UV_EINVAL;
+    }
+    // SAFETY: fn contract.
+    let addr_len = match unsafe { send_target(node, addr) } {
+        Ok(len) => len,
+        Err(err) => return err,
+    };
+    bun_output::scoped_log!(uv, "uv_udp_send_t {:?}: uv_udp_send", req);
+    // SAFETY: fn contract. Write field by field because the addon's memory is
+    // uninitialized. Skip `data`, which belongs to the addon.
+    unsafe {
+        (&raw mut (*req).req.type_).write(UV_UDP_SEND);
+        (&raw mut (*req).req.reserved).write([core::ptr::null_mut(); 6]);
+        (&raw mut (*req).handle).write(handle);
+        (&raw mut (*req).cb).write(send_cb);
+        (&raw mut (*req).addr).write(core::mem::zeroed());
+        if addr_len != 0 {
+            core::ptr::copy_nonoverlapping(
+                addr.cast::<u8>(),
+                (&raw mut (*req).addr).cast::<u8>(),
+                addr_len as usize,
+            );
+        }
+        (&raw mut (*req).addr_len).write(addr_len);
+        (&raw mut (*req).nbufs).write(nbufs);
+        (&raw mut (*req).status).write(0);
+        let copy = if nbufs as usize <= 4 {
+            let small = (&raw mut (*req).bufsml).cast::<UvBuf>();
+            core::ptr::copy_nonoverlapping(bufs, small, nbufs as usize);
+            small
+        } else {
+            Box::<[UvBuf]>::into_raw(core::slice::from_raw_parts(bufs, nbufs as usize).into())
+                .cast::<UvBuf>()
+        };
+        (&raw mut (*req).bufs).write(copy);
+        (*handle).send_queue_size += total_len(bufs, nbufs);
+        (*handle).send_queue_count += 1;
+    }
+    let was_empty = node.queued.is_empty();
+    // SAFETY: checked non-null above.
+    node.queued
+        .push_back(unsafe { NonNull::new_unchecked(req) });
+    if was_empty && !node.processing {
+        node.send_queued();
+    }
+    // Still queued means the socket hasn't taken it: if watching fails now, it's
+    // failed, and goes back to the addon.
+    let unsent = node.queued.iter().any(|r| r.as_ptr() == req);
+    // SAFETY: the handle isn't closing (`open_node`).
+    let err = unsafe { node.update() };
+    if err == 0 {
+        return 0;
+    }
+    let mut failed = false;
+    // An unsent one goes back to the addon, as libuv's failed send does: its callback
+    // won't run. `update` completed it with the error.
+    if unsent {
+        if let Some(i) = node.completed.iter().position(|r| r.as_ptr() == req) {
+            node.completed.remove(i);
+            // SAFETY: the request was set up above and is ours until its callback.
+            unsafe {
+                (*handle).send_queue_size -= total_len((*req).bufs, (*req).nbufs);
+                (*handle).send_queue_count -= 1;
+                if (*req).bufs != (&raw mut (*req).bufsml).cast::<UvBuf>() {
+                    drop(Box::from_raw(core::ptr::slice_from_raw_parts_mut(
+                        (*req).bufs,
+                        (*req).nbufs as usize,
+                    )));
+                }
+                (*req).bufs = core::ptr::null_mut();
+            }
+            failed = true;
+        }
+    }
+    // The rest runs next turn: earlier sends that `update` completed with the error, a
+    // read watch it couldn't keep, and this send's callback if the socket already took
+    // it. That datagram is out, so for the addon this call succeeded.
+    // SAFETY: the handle isn't closing (`open_node`).
+    unsafe { node.defer_flush(err) };
+    if failed { err } else { 0 }
+}
+
+/// Implements `int uv_udp_try_send(uv_udp_t*, const uv_buf_t[], unsigned int nbufs,
+/// const struct sockaddr*)`. Returns the bytes sent, or `UV_EAGAIN` if sends are
+/// still queued or the socket can't take it now.
+///
+/// # Safety
+/// `bufs` points to `nbufs` buffers. Otherwise same as [`uv_udp_bind`].
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_udp_try_send(
+    handle: *mut UvUdp,
+    bufs: *const UvBuf,
+    nbufs: c_uint,
+    addr: *const libc::sockaddr,
+) -> c_int {
+    // SAFETY: fn contract.
+    let Some(node) = (unsafe { UvUdp::open_node(handle) }) else {
+        return UV_EINVAL;
+    };
+    if nbufs == 0 || bufs.is_null() {
+        return UV_EINVAL;
+    }
+    // SAFETY: fn contract.
+    if unsafe { (*handle).send_queue_count } != 0 {
+        return UV_EAGAIN;
+    }
+    // SAFETY: fn contract.
+    let addr_len = match unsafe { send_target(node, addr) } {
+        Ok(len) => len,
+        Err(err) => return err,
+    };
+    // SAFETY: an all-zero sockaddr_storage is valid. Copy the address so
+    // `udp_sendmsg` can read `addr_len` bytes from it.
+    let mut storage: libc::sockaddr_storage = unsafe { core::mem::zeroed() };
+    if addr_len != 0 {
+        // SAFETY: `send_target` checked that `addr` is `addr_len` bytes.
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                addr.cast::<u8>(),
+                (&raw mut storage).cast::<u8>(),
+                addr_len as usize,
+            );
+        }
+    }
+    // SAFETY: fn contract.
+    let n = unsafe { udp_sendmsg(node.fd, bufs, nbufs, &raw const storage, addr_len) };
+    if n < 0 && would_block(n as c_int) {
+        return UV_EAGAIN;
+    }
+    c_int::try_from(n).unwrap_or(c_int::MAX)
+}
+
+/// Implements `int uv_udp_recv_start(uv_udp_t*, uv_alloc_cb, uv_udp_recv_cb)`.
+/// Opens an IPv4 socket if the handle has none yet, like libuv.
+///
+/// # Safety
+/// Same as [`uv_udp_open`].
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_udp_recv_start(
+    handle: *mut UvUdp,
+    alloc_cb: Option<UvAllocCb>,
+    recv_cb: Option<UvUdpRecvCb>,
+) -> c_int {
+    // SAFETY: fn contract.
+    let Some(node) = (unsafe { UvUdp::open_node(handle) }) else {
+        return UV_EINVAL;
+    };
+    if alloc_cb.is_none() || recv_cb.is_none() {
+        return UV_EINVAL;
+    }
+    if node.reading {
+        return UV_EALREADY;
+    }
+    let err = node.ensure_socket(libc::AF_INET);
+    if err != 0 {
+        return err;
+    }
+    // SAFETY: fn contract.
+    unsafe {
+        (*handle).alloc_cb = alloc_cb;
+        (*handle).recv_cb = recv_cb;
+    }
+    node.reading = true;
+    // SAFETY: the handle isn't closing (`open_node`).
+    let err = unsafe { node.update() };
+    if err != 0 {
+        node.reading = false;
+        // SAFETY: fn contract.
+        unsafe {
+            (*handle).alloc_cb = None;
+            (*handle).recv_cb = None;
+            // Drop a read watch it kept. Sends that either `update` completed with
+            // its error run their callbacks next turn.
+            let again = node.update();
+            node.defer_flush(if again != 0 { again } else { err });
+        }
+        return err;
+    }
+    0
+}
+
+/// Implements `int uv_udp_recv_stop(uv_udp_t*)`.
+///
+/// # Safety
+/// Same as [`uv_udp_open`].
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_udp_recv_stop(handle: *mut UvUdp) -> c_int {
+    // SAFETY: fn contract.
+    let Some(node) = (unsafe { UvUdp::open_node(handle) }) else {
+        // Like libuv, stopping a closing handle is fine.
+        // SAFETY: fn contract.
+        return if unsafe { UvUdp::check(handle) } {
+            0
+        } else {
+            UV_EINVAL
+        };
+    };
+    node.reading = false;
+    // SAFETY: fn contract.
+    unsafe {
+        (*handle).alloc_cb = None;
+        (*handle).recv_cb = None;
+        // A failure here (putting back the write watch for queued sends) completes
+        // those sends with the error; their callbacks run next turn.
+        let err = node.update();
+        if err != 0 {
+            node.defer_flush(err);
+        }
+    }
+    0
+}
+
+/// Implements `int uv_udp_using_recvmmsg(const uv_udp_t*)`. Bun reads one datagram
+/// per `recvmsg`.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn uv_udp_using_recvmmsg(_handle: *const UvUdp) -> c_int {
+    0
+}
+
+/// Implements `size_t uv_udp_get_send_queue_size(const uv_udp_t*)`.
+///
+/// # Safety
+/// Same as [`uv_udp_open`].
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_udp_get_send_queue_size(handle: *mut UvUdp) -> usize {
+    // SAFETY: fn contract.
+    unsafe { (*handle).send_queue_size }
+}
+
+/// Implements `size_t uv_udp_get_send_queue_count(const uv_udp_t*)`.
+///
+/// # Safety
+/// Same as [`uv_udp_open`].
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_udp_get_send_queue_count(handle: *mut UvUdp) -> usize {
+    // SAFETY: fn contract.
+    unsafe { (*handle).send_queue_count }
+}
+
+/// Sets an IPv4 or IPv6 socket option, whichever matches the socket, like libuv's
+/// `uv__setsockopt`. `value` must be in `min..=255`.
+///
+/// # Safety
+/// Same as [`uv_udp_open`].
+unsafe fn set_ip_option(
+    handle: *mut UvUdp,
+    v4: c_int,
+    v6: c_int,
+    value: c_int,
+    min: c_int,
+) -> c_int {
+    // SAFETY: fn contract.
+    let Some(node) = (unsafe { UvUdp::open_node(handle) }) else {
+        return UV_EINVAL;
+    };
+    if value < min || value > 255 {
+        return UV_EINVAL;
+    }
+    if node.fd == -1 {
+        return UV_EBADF;
+    }
+    if node.ipv6 {
+        set_int_option(node.fd, libc::IPPROTO_IPV6, v6, value)
+    } else {
+        set_int_option(node.fd, libc::IPPROTO_IP, v4, value)
+    }
+}
+
+/// Implements `int uv_udp_set_ttl(uv_udp_t*, int ttl)`. `ttl` is 1 to 255.
+///
+/// # Safety
+/// Same as [`uv_udp_open`].
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_udp_set_ttl(handle: *mut UvUdp, ttl: c_int) -> c_int {
+    // SAFETY: fn contract.
+    unsafe { set_ip_option(handle, libc::IP_TTL, libc::IPV6_UNICAST_HOPS, ttl, 1) }
+}
+
+/// Implements `int uv_udp_set_multicast_ttl(uv_udp_t*, int ttl)`. `ttl` is 0 to 255.
+///
+/// # Safety
+/// Same as [`uv_udp_open`].
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_udp_set_multicast_ttl(handle: *mut UvUdp, ttl: c_int) -> c_int {
+    // SAFETY: fn contract.
+    unsafe {
+        set_ip_option(
+            handle,
+            libc::IP_MULTICAST_TTL,
+            libc::IPV6_MULTICAST_HOPS,
+            ttl,
+            0,
+        )
+    }
+}
+
+/// Implements `int uv_udp_set_multicast_loop(uv_udp_t*, int on)`.
+///
+/// # Safety
+/// Same as [`uv_udp_open`].
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_udp_set_multicast_loop(handle: *mut UvUdp, on: c_int) -> c_int {
+    // SAFETY: fn contract.
+    unsafe {
+        set_ip_option(
+            handle,
+            libc::IP_MULTICAST_LOOP,
+            libc::IPV6_MULTICAST_LOOP,
+            on,
+            0,
+        )
+    }
+}
+
+/// Implements `int uv_udp_set_broadcast(uv_udp_t*, int on)`.
+///
+/// # Safety
+/// Same as [`uv_udp_open`].
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_udp_set_broadcast(handle: *mut UvUdp, on: c_int) -> c_int {
+    // SAFETY: fn contract.
+    let Some(node) = (unsafe { UvUdp::open_node(handle) }) else {
+        return UV_EINVAL;
+    };
+    if node.fd == -1 {
+        return UV_EBADF;
+    }
+    set_int_option(node.fd, libc::SOL_SOCKET, libc::SO_BROADCAST, on)
+}
+
+/// Reads (`*value == 0`) or sets a socket's buffer size, like libuv's
+/// `uv__socket_sockopt`. Bun's only socket handle is `uv_udp_t`.
+///
+/// # Safety
+/// `handle` was initialized by one of this module's `uv_*_init`, and `value` is null
+/// or points to an int.
+unsafe fn buffer_size(
+    handle: *mut UvHandle,
+    value: *mut c_int,
+    option: c_int,
+    function: &'static CStr,
+) -> c_int {
+    if handle.is_null() || value.is_null() {
+        return UV_EINVAL;
+    }
+    // SAFETY: fn contract.
+    if unsafe { handle_type(handle, function) } != UV_UDP {
+        return UV_ENOTSUP;
+    }
+    // SAFETY: `handle` is a UDP handle. A closing one has no socket.
+    let fd = unsafe {
+        let udp = handle.cast::<UvUdp>();
+        if (*udp).handle.flags & UV_HANDLE_CLOSING != 0 {
+            return UV_EBADF;
+        }
+        (*(*udp).node).fd
+    };
+    // SAFETY: `value` points to an int (fn contract).
+    let r = unsafe {
+        let mut len = core::mem::size_of::<c_int>() as libc::socklen_t;
+        if *value == 0 {
+            libc::getsockopt(fd, libc::SOL_SOCKET, option, value.cast(), &raw mut len)
+        } else {
+            libc::setsockopt(fd, libc::SOL_SOCKET, option, value.cast_const().cast(), len)
+        }
+    };
+    if r < 0 { uv_errno() } else { 0 }
+}
+
+/// Implements `int uv_send_buffer_size(uv_handle_t*, int* value)`.
+///
+/// # Safety
+/// Same as [`buffer_size`].
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_send_buffer_size(
+    handle: *mut UvHandle,
+    value: *mut c_int,
+) -> c_int {
+    // SAFETY: fn contract.
+    unsafe { buffer_size(handle, value, libc::SO_SNDBUF, c"uv_send_buffer_size") }
+}
+
+/// Implements `int uv_recv_buffer_size(uv_handle_t*, int* value)`.
+///
+/// # Safety
+/// Same as [`buffer_size`].
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_recv_buffer_size(
+    handle: *mut UvHandle,
+    value: *mut c_int,
+) -> c_int {
+    // SAFETY: fn contract.
+    unsafe { buffer_size(handle, value, libc::SO_RCVBUF, c"uv_recv_buffer_size") }
+}
+
+/// Implements `int uv_fileno(const uv_handle_t*, uv_os_fd_t*)`. Only a UDP handle has
+/// a descriptor. `UV_EBADF` until its socket exists or once it's closing.
+///
+/// # Safety
+/// `handle` was initialized by one of this module's `uv_*_init`, and `fd` is null or
+/// points to an int.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn uv_fileno(handle: *mut UvHandle, fd: *mut c_int) -> c_int {
+    if handle.is_null() || fd.is_null() {
+        return UV_EINVAL;
+    }
+    // SAFETY: fn contract.
+    if unsafe { handle_type(handle, c"uv_fileno") } != UV_UDP {
+        return UV_EINVAL;
+    }
+    // SAFETY: `handle` is a UDP handle.
+    let Some(node) = (unsafe { UvUdp::open_node(handle.cast::<UvUdp>()) }) else {
+        return UV_EBADF;
+    };
+    if node.fd == -1 {
+        return UV_EBADF;
+    }
+    // SAFETY: fn contract.
+    unsafe { *fd = node.fd };
+    0
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // uv_handle_t (functions that accept any handle type)
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1082,7 +2612,7 @@ pub(crate) extern "C" fn uv_update_time(_loop: *mut UvLoop) {}
 unsafe fn handle_type(handle: *mut UvHandle, function: &'static [u8]) -> c_uint {
     // SAFETY: fn contract.
     match unsafe { (*handle).type_ } {
-        type_ @ (UV_ASYNC | UV_IDLE | UV_PREPARE | UV_CHECK | UV_TIMER) => type_,
+        type_ @ (UV_ASYNC | UV_IDLE | UV_PREPARE | UV_CHECK | UV_TIMER | UV_UDP) => type_,
         _ => unsupported(function),
     }
 }
@@ -1098,6 +2628,7 @@ unsafe fn ref_state(handle: *mut UvHandle, function: &'static [u8]) -> *mut RefS
         match handle_type(handle, function) {
             UV_ASYNC => &raw mut (*handle.cast::<UvAsync>()).ref_state,
             UV_TIMER => &raw mut (*handle.cast::<UvTimer>()).ref_state,
+            UV_UDP => &raw mut (*handle.cast::<UvUdp>()).ref_state,
             _ => &raw mut (*handle.cast::<UvWatcher>()).ref_state,
         }
     }
@@ -1130,6 +2661,9 @@ impl UvHandle {
         // SAFETY: fn contract.
         let (close_cb, loop_) = unsafe {
             (*handle).flags |= UV_HANDLE_CLOSED;
+            if (*handle).type_ == UV_UDP {
+                UvUdp::finish_close(handle.cast::<UvUdp>());
+            }
             ((*handle).close_cb, (*handle).loop_)
         };
         bun_output::scoped_log!(uv, "uv_handle_t {:?}: close_cb", handle);
@@ -1177,6 +2711,7 @@ pub(crate) unsafe extern "C" fn uv_close(handle: *mut UvHandle, close_cb: Option
                 (*async_.as_ptr()).ref_state.set_active(false);
             }
             UV_TIMER => UvTimer::close(handle.cast::<UvTimer>()),
+            UV_UDP => UvUdp::close(handle.cast::<UvUdp>()),
             _ => UvWatcher::stop(handle.cast::<UvWatcher>()),
         }
     }
@@ -1432,6 +2967,7 @@ pub(crate) fn fix_dead_code_elimination() {
         uv_check_stop,
         uv_close,
         uv_default_loop,
+        uv_fileno,
         uv_has_ref,
         uv_idle_init,
         uv_idle_start,
@@ -1443,7 +2979,9 @@ pub(crate) fn fix_dead_code_elimination() {
         uv_prepare_start,
         uv_prepare_stop,
         uv_queue_work,
+        uv_recv_buffer_size,
         uv_ref,
+        uv_send_buffer_size,
         uv_timer_again,
         uv_timer_get_due_in,
         uv_timer_get_repeat,
@@ -1451,6 +2989,24 @@ pub(crate) fn fix_dead_code_elimination() {
         uv_timer_set_repeat,
         uv_timer_start,
         uv_timer_stop,
+        uv_udp_bind,
+        uv_udp_connect,
+        uv_udp_get_send_queue_count,
+        uv_udp_get_send_queue_size,
+        uv_udp_getpeername,
+        uv_udp_getsockname,
+        uv_udp_init,
+        uv_udp_init_ex,
+        uv_udp_open,
+        uv_udp_recv_start,
+        uv_udp_recv_stop,
+        uv_udp_send,
+        uv_udp_set_broadcast,
+        uv_udp_set_multicast_loop,
+        uv_udp_set_multicast_ttl,
+        uv_udp_set_ttl,
+        uv_udp_try_send,
+        uv_udp_using_recvmmsg,
         uv_unref,
         uv_update_time,
     );

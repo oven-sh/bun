@@ -31,6 +31,7 @@
 #include <JavaScriptCore/ObjectPrototypeInlines.h>
 #include <JavaScriptCore/RegExpPrototype.h>
 #include <JavaScriptCore/PropertyNameArray.h>
+#include <JavaScriptCore/ProxyObject.h>
 #include <JavaScriptCore/ButterflyInlines.h>
 #include <JavaScriptCore/CustomGetterSetter.h>
 #include "JavaScriptCore/AOTHost.h"
@@ -306,6 +307,20 @@ static bool isOpaqueProperty(JSGlobalObject* globalObject, JSObject* object, Pro
         return contextified && contextified->hasOwnProperty(globalObject, key);
     }
     return object->type() == ProxyObjectType;
+}
+
+// What stores an opaque property unless a trap sends it elsewhere. Null for a revoked Proxy.
+static JSObject* objectBehindTraps(JSObject* object)
+{
+    if (auto* contextGlobal = dynamicDowncast<NodeVMGlobalObject>(object))
+        object = contextGlobal->contextifiedObject();
+    while (object && object->type() == ProxyObjectType) {
+        auto* proxy = uncheckedDowncast<ProxyObject>(object);
+        if (proxy->isRevoked())
+            return nullptr;
+        object = proxy->target();
+    }
+    return object;
 }
 
 // Lets a spy replace a property of a locked built-in. No JavaScript may run meanwhile, and the traps of an opaque object are JavaScript.
@@ -865,6 +880,48 @@ public:
 
     bool isRestoredSpy() const { return isSpy && !m_spyTarget; }
 
+    // `storage` is getOwnPropertyStorage() of a property. Fake timers put the spy itself back where spyOn() made an accessor for it.
+    bool isIn(JSValue storage)
+    {
+        if (storage == JSValue(this))
+            return true;
+        auto* accessor = tryJSDynamicCast<GetterSetter*>(storage);
+        return accessor && this->isAccessorOf(accessor);
+    }
+
+    // True if the property still has the spy. The read can throw: the traps of a Proxy run for it.
+    bool isStillInstalled(JSGlobalObject* globalObject, JSObject* target)
+    {
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        unsigned attributes = 0;
+        if (m_spyAttributes & SpyAttributeOpaque) {
+            // A Proxy may hide from getOwnPropertyDescriptor() what its other traps stored on the target.
+            if (JSObject* behind = objectBehindTraps(target)) {
+                JSValue stored = getOwnPropertyStorage(globalObject, behind, m_spyIdentifier, attributes);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (this->isIn(stored))
+                    return true;
+            }
+        } else if (!parseIndex(m_spyIdentifier) && target->inherits<NodeVMGlobalObject>()) {
+            // The global of a node:vm context answers for its sandbox first, and the spy is in the global's own storage.
+            return this->isIn(target->getDirect(vm, m_spyIdentifier));
+        }
+        JSValue current = getOwnPropertyStorage(globalObject, target, m_spyIdentifier, attributes);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (this->isIn(current))
+            return true;
+        // Traps may keep a value where neither read shows it. A read calls an accessor, so it is only for a function that was replaced by the spy.
+        JSValue original = m_spyOriginal.get();
+        if ((m_spyAttributes & (SpyAttributeOpaque | SpyAttributeAccessor)) != SpyAttributeOpaque || !original || !original.isCallable())
+            return false;
+        if (tryJSDynamicCast<GetterSetter*>(current))
+            return false;
+        JSValue visible = target->get(globalObject, m_spyIdentifier);
+        RETURN_IF_EXCEPTION(scope, false);
+        return visible == JSValue(this);
+    }
+
     // Puts the spied-on property back as it was; that can throw (a module namespace export, an indexed slot).
     void clearSpy(JSGlobalObject* globalObject, bool shouldReset = true)
     {
@@ -889,6 +946,8 @@ public:
     static void resetAll(Zig::GlobalObject*);
     static void restoreAll(Zig::GlobalObject*);
     static void didFinishTestFile(Zig::GlobalObject*);
+    static bool restoreDisplacedSpies(Zig::GlobalObject*);
+    static void forgetDisplacedSpies(Zig::GlobalObject*);
 
     template<typename, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -908,6 +967,7 @@ private:
         Called = 1 << 0,
         Configured = 1 << 1,
         Spies = 1 << 2,
+        Displaced = 1 << 3,
     };
 
     static JSC::WriteBarrier<JSC::Unknown>& setOf(JSMockModule& mockModule, List list)
@@ -919,11 +979,15 @@ private:
             return mockModule.configuredMocks;
         case List::Spies:
             return mockModule.activeSpies;
+        case List::Displaced:
+            return mockModule.displacedSpies;
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
 
     template<typename Functor> static void forEachIn(Zig::GlobalObject*, List, const Functor&);
+    static bool restoreInstalledSpies(Zig::GlobalObject*, List, MarkedArgumentBuffer& spiesOfPreload);
+    static bool restoreSpiesOfTestFile(Zig::GlobalObject*, List first);
 
     ALWAYS_INLINE void enter(List list)
     {
@@ -954,6 +1018,7 @@ private:
         m_spyIdentifier = JSC::Identifier();
         m_spyAttributes = 0;
         leave(List::Spies);
+        leave(List::Displaced);
     }
 
     void setFallbackImplementation(JSMockImplementation::Kind kind, JSValue value)
@@ -1005,11 +1070,9 @@ private:
 
         if (attributes & SpyAttributeAccessor) {
             // Restoring the spy on the accessor's other half already put both halves back.
-            unsigned currentAttributes = 0;
-            JSValue current = getOwnPropertyStorage(globalObject, target, identifier, currentAttributes);
+            bool isInstalled = this->isStillInstalled(globalObject, target);
             RETURN_IF_EXCEPTION(scope, );
-            auto* accessor = tryJSDynamicCast<GetterSetter*>(current);
-            if (!accessor || !this->isAccessorOf(accessor))
+            if (!isInstalled)
                 return;
         }
 
@@ -1213,30 +1276,74 @@ void JSMockFunction::resetAll(Zig::GlobalObject* globalObject)
     forEachIn(globalObject, List::Configured, [globalObject](JSMockFunction* mock) { mock->resetConfiguration(globalObject); });
 }
 
+// Asks every spy in `list` before the first restore, because a restore of one writes the property of another.
+__attribute__((minsize)) bool JSMockFunction::restoreInstalledSpies(Zig::GlobalObject* globalObject, List list, MarkedArgumentBuffer& spiesOfPreload)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    MarkedArgumentBuffer installed;
+    forEachIn(globalObject, list, [&](JSMockFunction* spy) {
+        if (spy->isMadeByPreload) {
+            spiesOfPreload.append(spy);
+            return;
+        }
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto* target = spy->m_spyTarget.get();
+        bool isDisplaced = target && !spy->isStillInstalled(globalObject, target);
+        // A trap that throws for the read says nothing about the spy, so the spy is restored without an answer.
+        if (scope.exception()) [[unlikely]] {
+            if (!scope.tryClearException()) {
+                spy->didUninstall();
+                return;
+            }
+            isDisplaced = false;
+        }
+        if (isDisplaced)
+            spy->enter(List::Displaced);
+        else
+            installed.append(spy);
+    });
+    JSC::Exception* firstException = scope.exception();
+    if (firstException && !scope.tryClearException()) [[unlikely]]
+        return false;
+    if (installed.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return false;
+    }
+    for (size_t i = 0; i < installed.size(); ++i) {
+        auto* spy = uncheckedDowncast<JSMockFunction>(installed.at(i));
+        spy->clearSpy(globalObject, !spy->isVitest);
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            // Only this file gets the error. Forget the spy, so later files don't retry it.
+            spy->didUninstall();
+            if (!scope.tryClearException())
+                return true;
+            if (!firstException)
+                firstException = exception;
+        }
+    }
+    if (firstException)
+        throwException(globalObject, scope, firstException);
+    return !installed.isEmpty();
+}
+
 // The next test file shares the global object, so this file's spies and recorded calls have to go.
 // Configured mocks stay registered, because a module shared with the next file may own them.
-__attribute__((minsize)) void JSMockFunction::didFinishTestFile(Zig::GlobalObject* globalObject)
+__attribute__((minsize)) bool JSMockFunction::restoreSpiesOfTestFile(Zig::GlobalObject* globalObject, List first)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBuffer spiesOfPreload;
     JSC::Exception* firstException = nullptr;
+    bool hasRestoredDisplaced = false;
     // Loop, because a Proxy trap hit while restoring one spy may install another.
-    while (globalObject->mockModule.activeSpies) {
-        forEachIn(globalObject, List::Spies, [&](JSMockFunction* spy) {
-            if (spy->isMadeByPreload) {
-                spiesOfPreload.append(spy);
-                return;
-            }
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            spy->clearSpy(globalObject, !spy->isVitest);
-            // Only this file gets the error. Forget the spy, so later files don't retry it.
-            if (scope.exception()) [[unlikely]]
-                spy->didUninstall();
-        });
+    for (List list = first; list == List::Displaced || globalObject->mockModule.activeSpies; list = List::Spies) {
+        bool hasRestored = restoreInstalledSpies(globalObject, list, spiesOfPreload);
+        if (list == List::Displaced)
+            hasRestoredDisplaced = hasRestored;
         if (auto* exception = scope.exception()) [[unlikely]] {
             if (!scope.tryClearException())
-                return;
+                return hasRestoredDisplaced;
             if (!firstException)
                 firstException = exception;
         }
@@ -1254,9 +1361,27 @@ __attribute__((minsize)) void JSMockFunction::didFinishTestFile(Zig::GlobalObjec
         else
             mock->clear();
     });
-    RETURN_IF_EXCEPTION(scope, );
+    RETURN_IF_EXCEPTION(scope, hasRestoredDisplaced);
     if (firstException)
         throwException(globalObject, scope, firstException);
+    return hasRestoredDisplaced;
+}
+
+void JSMockFunction::didFinishTestFile(Zig::GlobalObject* globalObject)
+{
+    restoreSpiesOfTestFile(globalObject, List::Spies);
+}
+
+// The pass after the undos of a file, which have put back the spies that they lay over.
+bool JSMockFunction::restoreDisplacedSpies(Zig::GlobalObject* globalObject)
+{
+    return restoreSpiesOfTestFile(globalObject, List::Displaced);
+}
+
+// Not reset: what the test left on the property may call the spy.
+void JSMockFunction::forgetDisplacedSpies(Zig::GlobalObject* globalObject)
+{
+    forEachIn(globalObject, List::Displaced, [](JSMockFunction* spy) { spy->didUninstall(); });
 }
 
 extern "C" void JSMock__restoreAllMocks(Zig::GlobalObject* globalObject)
@@ -1277,6 +1402,21 @@ extern "C" void JSMock__resetAllMocks(Zig::GlobalObject* globalObject)
 extern "C" void JSMock__didFinishTestFile(Zig::GlobalObject* globalObject)
 {
     JSMockFunction::didFinishTestFile(globalObject);
+}
+
+extern "C" bool JSMock__hasDisplacedSpies(Zig::GlobalObject* globalObject)
+{
+    return !!globalObject->mockModule.displacedSpies;
+}
+
+extern "C" bool JSMock__restoreDisplacedSpies(Zig::GlobalObject* globalObject)
+{
+    return JSMockFunction::restoreDisplacedSpies(globalObject);
+}
+
+extern "C" void JSMock__forgetDisplacedSpies(Zig::GlobalObject* globalObject)
+{
+    JSMockFunction::forgetDisplacedSpies(globalObject);
 }
 
 JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
@@ -1426,6 +1566,7 @@ template<typename Visitor> void JSMockModule::visit(Visitor& visitor)
     FOR_EACH_JSMOCKMODULE_GC_MEMBER(VISIT_JSMOCKMODULE_GC_MEMBER)
 #undef VISIT_JSMOCKMODULE_GC_MEMBER
     visitor.append(activeSpies);
+    visitor.append(displacedSpies);
     visitor.append(calledMocks);
     visitor.append(configuredMocks);
     visitor.append(stubbedEnvs);

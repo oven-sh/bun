@@ -4227,9 +4227,6 @@ impl TestCommand {
             }
 
             crate::test_runner::vi_utils::on_test_file_end(vm.global(), next_load_shares_global);
-            if next_load_shares_global {
-                crate::test_runner::timers::fake_timers::on_test_file_end(vm.global());
-            }
             Self::undo_module_mocks(
                 vm,
                 global,
@@ -4237,6 +4234,9 @@ impl TestCommand {
                 next_load_shares_global,
                 !failed_to_load && repeat_index + 1 < repeat_count,
             );
+            if next_load_shares_global {
+                crate::test_runner::vi_utils::on_test_file_undone(vm.global());
+            }
             // Must run after the cleanup above, so rejections from JS it runs are reported in this file.
             let _ = vm.global().handle_rejected_promises();
 

@@ -987,12 +987,13 @@ impl FakeTimers {
         Ok(fakes)
     }
 
-    /// Swaps any stale fake that was put back on a global for its original. Runs no JS.
-    fn take_off_stale_fakes(global: &JSGlobalObject) {
+    /// Swaps any stale fake that was put back on a global for its original, and returns whether there was one. Runs no JS.
+    pub(crate) fn take_off_stale_fakes(global: &JSGlobalObject) -> bool {
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         let Some(originals) = (unsafe { (*timer_all()).fake_timers.originals.get() }) else {
-            return;
+            return false;
         };
+        let mut has_swapped = false;
         for api in Api::FUNCTIONS {
             let owner = api.owner(global);
             if !owner.is_object() {
@@ -1005,8 +1006,10 @@ impl FakeTimers {
                 && let Some(original) = original_of(originals, installed)
             {
                 api.put(global, original);
+                has_swapped = true;
             }
         }
+        has_swapped
     }
 
     // Below, a returned `JSValue` is the exception a timer callback threw, or empty. A `JsError` means the VM is terminating.

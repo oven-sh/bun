@@ -3104,6 +3104,556 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
   });
 
+  describe("a property that no longer has its spy", () => {
+    // What a spy replaced can be a stub of the test's own, so the end of the file must not write it over what the test put back.
+    // A spy that nothing holds may be collected before the file ends. `keepSpies` is what tells the two apart.
+    const writtenByTest = (keepSpies: boolean) => ({
+      "a.test.ts": `
+        import { expect, jest, spyOn, test, vi } from "bun:test";
+        class Shared {
+          inherited() {
+            return "original";
+          }
+        }
+        const names = Array.from({ length: 20 }, (_, i) => "method" + i);
+        const shared = (globalThis.shared = Object.assign(new Shared(), {
+          method: () => "original",
+          left: () => "original",
+          count: 1,
+          list: [() => "original"],
+          many: Object.fromEntries(names.map(name => [name, () => "original"])),
+          proxy: new Proxy({ method: () => "original" }, {}),
+          // As a DOMTokenList of happy-dom: what the other traps store is not an own property to this one.
+          hiding: new Proxy(new Shared(), { getOwnPropertyDescriptor: () => undefined }),
+        }));
+        const makers = [spyOn, jest.spyOn, vi.spyOn];
+        const spies = (globalThis.spies = []);
+        const spyOnStub = (object, key) => {
+          object[key] = () => "stub";
+          const spy = makers[spies.length % 3](object, key);
+          expect([object[key](), spy.mock.calls.length]).toEqual(["stub", 1]);
+          spies.push(${keepSpies} && spy);
+        };
+        test("a", () => {
+          const original = {
+            method: shared.method,
+            info: console.info,
+            item: shared.list[0],
+            ofProxy: shared.proxy.method,
+            many: { ...shared.many },
+          };
+          spyOnStub(shared, "method");
+          shared.method = original.method;
+          spyOnStub(console, "info");
+          console.info = original.info;
+          spyOnStub(globalThis, "missing");
+          delete globalThis.missing;
+          spyOnStub(shared.list, 0);
+          shared.list[0] = original.item;
+          spyOnStub(shared.proxy, "method");
+          shared.proxy.method = original.ofProxy;
+          for (const name of names) {
+            spyOnStub(shared.many, name);
+            shared.many[name] = original.many[name];
+          }
+
+          const onInherited = vi.spyOn(shared, "inherited");
+          shared.inherited = () => "assigned";
+          const onValue = spyOn(shared, "count");
+          Object.defineProperty(shared, "count", { value: 2, writable: true, enumerable: true, configurable: true });
+          spies.push(${keepSpies} && [onInherited, onValue]);
+
+          // These two stay on their property.
+          spyOn(shared, "left").mockReturnValue("spied");
+          jest.spyOn(shared.hiding, "inherited").mockReturnValue("spied");
+          expect([shared.left(), shared.hiding.inherited()]).toEqual(["spied", "spied"]);
+        });
+        ${keepSpies ? "" : `test("a collects", () => Bun.gc(true));`}
+      `,
+      "b.test.ts": `
+        import { expect, jest, mock, test } from "bun:test";
+        test("b", () => {
+          // The file of a spy that was no longer on its property is over, so no restore writes for that spy.
+          mock.restore();
+          for (const spy of spies.flat()) if (spy) spy.mockRestore();
+          expect({
+            method: shared.method(),
+            info: console.info.name,
+            missing: "missing" in globalThis,
+            item: shared.list[0](),
+            ofProxy: shared.proxy.method(),
+            many: Object.values(shared.many).filter(method => method() === "original").length,
+            inherited: [shared.inherited(), Object.hasOwn(shared, "inherited")],
+            count: shared.count,
+            left: [jest.isMockFunction(shared.left), shared.left()],
+            leftOnHiding: [jest.isMockFunction(shared.hiding.inherited), shared.hiding.inherited()],
+          }).toEqual({
+            method: "original",
+            info: "info",
+            missing: false,
+            item: "original",
+            ofProxy: "original",
+            many: 20,
+            inherited: ["assigned", true],
+            count: 2,
+            left: [false, "original"],
+            leftOnHiding: [false, "original"],
+          });
+        });
+      `,
+    });
+
+    test.each(["--no-isolate", "--rerun-each=2", "--parallel=1 --no-isolate"])(
+      "stays as the test wrote it: bun test %s",
+      async flags => {
+        using dir = tempDir("spies-of-a-file", writtenByTest(true));
+        const { stderr, exitCode } = await runTests(String(dir), flags.split(" "), ["./a.test.ts", "./b.test.ts"]);
+        expect({ results: results(stderr), exitCode }, stderr).toEqual({
+          results: ["(pass) a", "(pass) b"],
+          exitCode: 0,
+        });
+      },
+    );
+
+    test("stays as the test wrote it when the spy was collected", async () => {
+      using dir = tempDir("spies-of-a-file", writtenByTest(false));
+      const { stderr, exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts"]);
+      expect({ results: results(stderr), exitCode }, stderr).toEqual({
+        results: ["(pass) a", "(pass) a collects", "(pass) b"],
+        exitCode: 0,
+      });
+    });
+
+    // What lies over a spy holds that spy as what it replaced, and puts it back when the end of the file undoes it.
+    test("is restored once what the file left over the spy is undone", async () => {
+      using dir = tempDir("spies-of-a-file", {
+        "mocked.ts": `export function exported() { return "original"; }`,
+        "spied.ts": `export function exported() { return "original"; }`,
+        "a.test.ts": `
+          import { expect, jest, mock, spyOn, test, vi } from "bun:test";
+          import * as mocked from "./mocked.ts";
+          import * as spied from "./spied.ts";
+          globalThis.builtins = { setTimeout, clearTimeout, setInterval, now: Date.now, fetch, structuredClone };
+          const target = (globalThis.target = {
+            underGetter: () => "original",
+            spiedTwice: () => "original",
+            wrapped: () => "original",
+          });
+          globalThis.assigned = () => "assigned";
+          globalThis.nested = Array.from({ length: 20 }, (_, i) => "nested" + i);
+          for (const name of nested) globalThis[name] = () => "original";
+          test("a", () => {
+            // The fake clock over a spy, and a spy over the fake clock, alone and under a stub.
+            spyOn(globalThis, "setTimeout");
+            jest.spyOn(Date, "now");
+            vi.useFakeTimers();
+            vi.spyOn(globalThis, "setInterval");
+            spyOn(globalThis, "clearTimeout");
+            vi.stubGlobal("clearTimeout", () => "stub");
+            // A stub over a spy, and a spy over a stub.
+            spyOn(globalThis, "fetch");
+            vi.stubGlobal("fetch", () => "stub");
+            vi.stubGlobal("structuredClone", () => "stub");
+            jest.spyOn(globalThis, "structuredClone");
+            // A spy on the getter over a spy on the value, alone and under a stub.
+            spyOn(target, "underGetter");
+            spyOn(target, "underGetter", "get");
+            for (const name of nested) {
+              spyOn(globalThis, name);
+              spyOn(globalThis, name, "get");
+              vi.stubGlobal(name, () => "stub");
+            }
+            // A module mock over a spy on an export, and a spy on an export with nothing over it.
+            spyOn(mocked, "exported");
+            mock.module("./mocked.ts", () => ({ exported: () => "mocked" }));
+            jest.spyOn(spied, "exported");
+            // A second spy over what the test assigned over the first one.
+            spyOn(target, "spiedTwice");
+            target.spiedTwice = assigned;
+            spyOn(target, "spiedTwice");
+            // What the test assigned over the spy calls the spy.
+            const spy = jest.spyOn(target, "wrapped");
+            globalThis.wrapper = target.wrapped = () => spy();
+            expect([target.underGetter(), mocked.exported(), target.spiedTwice(), target.wrapped()]).toEqual([
+              "original",
+              "mocked",
+              "assigned",
+              "original",
+            ]);
+          });
+        `,
+        "b.test.ts": `
+          import { expect, jest, test } from "bun:test";
+          import * as mocked from "./mocked.ts";
+          import * as spied from "./spied.ts";
+          test("b", () => {
+            const now = { setTimeout, clearTimeout, setInterval, now: Date.now, fetch, structuredClone };
+            const isOriginal = name => {
+              const { value } = Object.getOwnPropertyDescriptor(globalThis, name);
+              return typeof value === "function" && !jest.isMockFunction(value) && value() === "original";
+            };
+            expect({
+              replaced: Object.keys(builtins).filter(name => now[name] !== builtins[name]),
+              timer: typeof setTimeout(() => {}, 0),
+              underGetter: [
+                Object.hasOwn(Object.getOwnPropertyDescriptor(target, "underGetter"), "value"),
+                jest.isMockFunction(target.underGetter),
+                target.underGetter(),
+              ],
+              nested: nested.filter(isOriginal).length,
+              exported: [mocked, spied].map(module => [jest.isMockFunction(module.exported), module.exported()]),
+              spiedTwice: target.spiedTwice === assigned,
+              wrapped: [target.wrapped === wrapper, target.wrapped()],
+            }).toEqual({
+              replaced: [],
+              timer: "object",
+              underGetter: [true, false, "original"],
+              nested: 20,
+              exported: [
+                [false, "original"],
+                [false, "original"],
+              ],
+              spiedTwice: true,
+              wrapped: [true, "original"],
+            });
+          });
+        `,
+      });
+      const { stderr, exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts"]);
+      expect({ results: results(stderr), exitCode }, stderr).toEqual({
+        results: ["(pass) a", "(pass) b"],
+        exitCode: 0,
+      });
+    });
+
+    // Each run of the file plays one order of calls on setTimeout, and the next run says what the end of the file left.
+    // S: spyOn(), F: useFakeTimers(), T: vi.stubGlobal(), H: a stub by assignment, B: the builtin by assignment.
+    test("ends on what the test wrote last, whatever the order of spies, fake timers and stubs over it", async () => {
+      const ordersOf = (calls: string, length: number): string[] =>
+        length === 0 ? [""] : ordersOf(calls, length - 1).flatMap(order => [...calls].map(call => order + call));
+      const upTo = (calls: string, length: number) => Array.from({ length }, (_, i) => ordersOf(calls, i + 1)).flat();
+      const length = isDebug || isASAN ? 4 : 5;
+      // vi.stubGlobal() puts back what it replaced whatever the property has, so only orders with no assignment have one end under it.
+      // A second useFakeTimers() is a useRealTimers() first, which writes over an assignment too.
+      const orders = [
+        ...upTo("SFT", length),
+        ...upTo("SFHB", length).filter(order => /[HB]/.test(order) && order.split("F").length <= 2),
+      ];
+      const lastWritten = (order: string) => {
+        const at = Math.max(order.lastIndexOf("H"), order.lastIndexOf("B"));
+        return order[at] === "H" ? "H" + (at + 1) : "builtin";
+      };
+      using dir = tempDir("spies-of-a-file", {
+        "orders.json": JSON.stringify(orders),
+        "order.test.ts": `
+          import { jest, spyOn, test, vi } from "bun:test";
+          import orders from "./orders.json";
+          const builtin = (globalThis.builtin ??= setTimeout);
+          const ends = (globalThis.ends ??= {});
+          const run = (globalThis.run = (globalThis.run ?? -1) + 1);
+          if (run > 0) ends[orders[run - 1]] = setTimeout === builtin ? "builtin" : (globalThis.written.get(setTimeout) ?? typeof setTimeout);
+          globalThis.setTimeout = builtin;
+          if (run === orders.length) console.log(JSON.stringify(ends));
+          const written = (globalThis.written = new Map());
+          // Held, so that no end depends on a collection.
+          const spies = (globalThis.spies = []);
+          test("plays an order", () => {
+            [...(orders[run] ?? "")].forEach((call, at) => {
+              const name = call + (at + 1);
+              if (call === "S") spies.push(spyOn(globalThis, "setTimeout"));
+              else if (call === "F") jest.useFakeTimers();
+              else if (call === "B") globalThis.setTimeout = builtin;
+              else {
+                const stub = () => name;
+                written.set(stub, name);
+                if (call === "T") vi.stubGlobal("setTimeout", stub);
+                else globalThis.setTimeout = stub;
+              }
+            });
+          });
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runTests(
+        String(dir),
+        [`--rerun-each=${orders.length + 1}`],
+        ["./order.test.ts"],
+      );
+      expect(stderr).toContain(" 0 fail\n");
+      expect(JSON.parse(stdout.slice(stdout.indexOf("{")))).toEqual(
+        Object.fromEntries(orders.map(order => [order, /[HB]/.test(order) ? lastWritten(order) : "builtin"])),
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    test("a getter spy and a setter spy of one property end the file in the same state", async () => {
+      using dir = tempDir("spies-of-a-file", {
+        "a.test.ts": `
+          import { expect, jest, spyOn, test } from "bun:test";
+          globalThis.pairs = [];
+          test("a", () => {
+            for (let i = 0; i < 16; i++) {
+              let value = "original";
+              const object = { get x() { return value; }, set x(to) { value = to; } };
+              const original = Object.getOwnPropertyDescriptor(object, "x");
+              const make = i % 4 < 2 ? spyOn : jest.spyOn;
+              const spies = i % 2 ? [make(object, "x", "get"), make(object, "x", "set")] : [make(object, "x", "set"), make(object, "x", "get")];
+              for (const spy of spies) spy.mockImplementation(() => "spied");
+              expect(object.x).toBe("spied");
+              pairs.push({ object, original, spies });
+            }
+          });
+        `,
+        "b.test.ts": `
+          import { expect, test } from "bun:test";
+          test("b", () => {
+            for (const { object, original, spies } of pairs) {
+              expect(Object.getOwnPropertyDescriptor(object, "x")).toEqual(original);
+              expect(object.x).toBe("original");
+              const [first, second] = spies.map(spy => spy.getMockImplementation() === undefined);
+              expect(first).toBe(second);
+            }
+          });
+        `,
+      });
+      const { stderr, exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts"]);
+      expect({ results: results(stderr), exitCode }, stderr).toEqual({
+        results: ["(pass) a", "(pass) b"],
+        exitCode: 0,
+      });
+    });
+
+    test("the global of a node:vm context gets its own back under a name that the sandbox has by then", async () => {
+      using dir = tempDir("spies-of-a-file", {
+        "a.test.ts": `
+          import { expect, spyOn, test } from "bun:test";
+          import vm from "node:vm";
+          const sandbox = (globalThis.sandbox = {});
+          const context = (globalThis.context = vm.runInContext("this", vm.createContext(sandbox)));
+          test("a", () => {
+            const spy = spyOn(context, "parseInt");
+            expect([context.parseInt("7"), spy.mock.calls.length]).toEqual([7, 1]);
+            spyOn(context, "parseFloat", "get");
+            sandbox.parseInt = sandbox.parseFloat = () => "of the sandbox";
+            expect(context.parseInt("7")).toBe("of the sandbox");
+          });
+        `,
+        "b.test.ts": `
+          import { expect, jest, test } from "bun:test";
+          test("b", () => {
+            expect(context.parseInt("7")).toBe("of the sandbox");
+            delete sandbox.parseInt;
+            delete sandbox.parseFloat;
+            expect({
+              parseInt: [jest.isMockFunction(context.parseInt), context.parseInt("7")],
+              parseFloat: [Object.hasOwn(Object.getOwnPropertyDescriptor(context, "parseFloat"), "value"), context.parseFloat("1.5")],
+            }).toEqual({ parseInt: [false, 7], parseFloat: [true, 1.5] });
+          });
+        `,
+      });
+      const { stderr, exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts"]);
+      expect({ results: results(stderr), exitCode }, stderr).toEqual({
+        results: ["(pass) a", "(pass) b"],
+        exitCode: 0,
+      });
+    });
+
+    // A name of the window is an accessor on globalThis there, and the fake clock puts back what it read from it: the spy as a value.
+    test("under --environment, a name of the window", async () => {
+      using dir = tempDir("spies-of-a-file", {
+        "node_modules/happy-dom/package.json": JSON.stringify({ name: "happy-dom", main: "index.js" }),
+        "node_modules/happy-dom/index.js": `
+          exports.Window = class Window {
+            document = {};
+            happyDOM = { async abort() {} };
+            close() {}
+            matchMedia() { return "original"; }
+            scrollTo() { return "original"; }
+            getComputedStyle() { return "original"; }
+            alert() { return "original"; }
+            requestAnimationFrame() { return "original"; }
+            cancelAnimationFrame() {}
+          };
+        `,
+        "a.test.ts": `
+          import { afterEach, expect, jest, spyOn, test, vi } from "bun:test";
+          const names = ["matchMedia", "scrollTo", "getComputedStyle", "alert", "requestAnimationFrame"];
+          globalThis.originals = Object.fromEntries(names.map(name => [name, globalThis[name]]));
+          globalThis.assigned = () => "assigned";
+          afterEach(() => {
+            window.scrollTo = originals.scrollTo;
+          });
+          test("a", () => {
+            expect(names.map(name => typeof Object.getOwnPropertyDescriptor(window, name).get)).toEqual(Array(5).fill("function"));
+            // Left on its property.
+            spyOn(window, "matchMedia").mockReturnValue("spied");
+            // On a stub of the test's own, which the test takes back.
+            window.scrollTo = () => "stub";
+            jest.spyOn(window, "scrollTo");
+            expect(scrollTo()).toBe("stub");
+            // Replaced by the test.
+            vi.spyOn(window, "getComputedStyle");
+            Object.defineProperty(window, "getComputedStyle", { value: assigned, writable: true, configurable: true });
+            // Under a stub.
+            spyOn(window, "alert").mockReturnValue("spied");
+            vi.stubGlobal("alert", () => "stub");
+            // Under the fake clock.
+            spyOn(window, "requestAnimationFrame").mockReturnValue("spied");
+            jest.useFakeTimers();
+            expect([matchMedia(), getComputedStyle(), alert()]).toEqual(["spied", "assigned", "stub"]);
+          });
+        `,
+        "b.test.ts": `
+          import { expect, jest, test } from "bun:test";
+          test("b", () => {
+            const isOriginal = name => globalThis[name] === originals[name];
+            expect({
+              matchMedia: [isOriginal("matchMedia"), matchMedia()],
+              scrollTo: [isOriginal("scrollTo"), scrollTo()],
+              getComputedStyle: [getComputedStyle === assigned, getComputedStyle()],
+              alert: [isOriginal("alert"), alert()],
+              requestAnimationFrame: [isOriginal("requestAnimationFrame"), jest.isMockFunction(requestAnimationFrame), requestAnimationFrame()],
+            }).toEqual({
+              matchMedia: [true, "original"],
+              scrollTo: [true, "original"],
+              getComputedStyle: [true, "assigned"],
+              alert: [true, "original"],
+              requestAnimationFrame: [true, false, "original"],
+            });
+          });
+        `,
+      });
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        ["--environment=happy-dom"],
+        ["./a.test.ts", "./b.test.ts"],
+      );
+      expect({ results: results(stderr), exitCode }, stderr).toEqual({
+        results: ["(pass) a", "(pass) b"],
+        exitCode: 0,
+      });
+    });
+
+    // These keep what is stored on them outside their target, so the read behind the traps finds no spy and the trap is asked.
+    test("a Proxy that shows a spy only when it is read, has a getter of the test, throws for the read, or makes a spy in it", async () => {
+      using dir = tempDir("spies-of-a-file", {
+        "a.test.ts": `
+          import { expect, spyOn, test } from "bun:test";
+          globalThis.madeByTrap = [];
+          const keptElsewhere = whenArmed => {
+            const kept = {};
+            const state = { armed: false };
+            const proxy = new Proxy({ method: () => "original" }, {
+              get: (target, key) => (key in kept ? kept[key] : target[key]),
+              set: (_, key, value) => ((kept[key] = value), true),
+              defineProperty: (_, key, descriptor) => ((kept[key] = descriptor.value), true),
+              getOwnPropertyDescriptor(target, key) {
+                if (state.armed) whenArmed();
+                return Reflect.getOwnPropertyDescriptor(target, key);
+              },
+            });
+            return { proxy, state };
+          };
+          const throwing = (globalThis.throwing = keptElsewhere(() => {
+            throw new Error("no descriptor");
+          }));
+          const spying = (globalThis.spying = keptElsewhere(() => {
+            const object = { method: () => "original" };
+            madeByTrap.push(object);
+            spyOn(object, "method");
+          }));
+          const quiet = (globalThis.quiet = keptElsewhere(() => {}));
+          const plain = (globalThis.plain = new Proxy({ method: () => "original" }, {}));
+          globalThis.readsOfGetter = 0;
+          test("a", () => {
+            // Left on its property, which only a read of the object shows.
+            spyOn(quiet.proxy, "method").mockReturnValue("spied");
+            // Left on its property: restored without an answer, and without an error.
+            spyOn(throwing.proxy, "method").mockReturnValue("spied");
+            // Replaced by the test: asked when the file ends, and again after its undos. Held, so that no collection ends the asking.
+            globalThis.replaced = [spyOn(spying.proxy, "method"), spyOn(plain, "method")];
+            spying.proxy.method = globalThis.assigned = () => "assigned";
+            expect([quiet.proxy.method(), throwing.proxy.method(), spying.proxy.method()]).toEqual(["spied", "spied", "assigned"]);
+            // By a getter, which the end of the file does not call.
+            Object.defineProperty(plain, "method", {
+              configurable: true,
+              get() {
+                readsOfGetter++;
+                throw new Error("read");
+              },
+            });
+            throwing.state.armed = spying.state.armed = true;
+          });
+        `,
+        "b.test.ts": `
+          import { expect, jest, test } from "bun:test";
+          test("b", () => {
+            throwing.state.armed = spying.state.armed = false;
+            expect({
+              quiet: [jest.isMockFunction(quiet.proxy.method), quiet.proxy.method()],
+              plain: [typeof Object.getOwnPropertyDescriptor(plain, "method").get, readsOfGetter],
+              throwing: [jest.isMockFunction(throwing.proxy.method), throwing.proxy.method()],
+              spying: spying.proxy.method === assigned,
+              madeByTrap: [madeByTrap.length, madeByTrap.filter(object => jest.isMockFunction(object.method)).length],
+            }).toEqual({
+              quiet: [false, "original"],
+              plain: ["function", 0],
+              throwing: [false, "original"],
+              spying: true,
+              madeByTrap: [2, 0],
+            });
+          });
+        `,
+      });
+      const { stderr, exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts"]);
+      expect({ results: results(stderr), exitCode }, stderr).toEqual({
+        results: ["(pass) a", "(pass) b"],
+        exitCode: 0,
+      });
+    });
+
+    // `unstubGlobals` takes the stub of the preload off before each test, and the end of a file puts it back for the next file.
+    test.each(["a spy under fake timers", "fake timers"])(
+      "a stub of a preload saves what the end of the file left, and not %s, which the end takes off",
+      async left => {
+        using dir = tempDir("spies-of-a-file", {
+          "preload.ts": `
+          import { vi } from "bun:test";
+          globalThis.builtin = setTimeout;
+          vi.stubGlobal("setTimeout", function ofPreload(...args) { return builtin(...args); });
+          vi.setConfig({ unstubGlobals: true });
+        `,
+          "a.test.ts": `
+          import { expect, jest, spyOn, test } from "bun:test";
+          test("a", () => {
+            expect(setTimeout).toBe(builtin);
+            const spy = ${left === "fake timers" ? "jest.fn()" : `spyOn(globalThis, "setTimeout")`};
+            jest.useFakeTimers();
+            setTimeout(() => {}, 1000);
+            expect(spy).not.toHaveBeenCalled();
+          });
+        `,
+          "b.test.ts": `
+          import { expect, jest, test, vi } from "bun:test";
+          const whileItLoads = setTimeout.name;
+          test("b", async () => {
+            expect([whileItLoads, setTimeout === builtin, jest.isMockFunction(setTimeout), vi.isFakeTimers()]).toEqual(["ofPreload", true, false, false]);
+            await new Promise(resolve => setTimeout(resolve, 1));
+          });
+        `,
+        });
+        const { stderr, exitCode } = await runTests(
+          String(dir),
+          ["--preload", "./preload.ts"],
+          ["./a.test.ts", "./b.test.ts"],
+        );
+        expect({ results: results(stderr), exitCode }, stderr).toEqual({
+          results: ["(pass) a", "(pass) b"],
+          exitCode: 0,
+        });
+      },
+    );
+  });
+
   test("spies made by a preload or its beforeAll() are kept across files", async () => {
     using dir = tempDir("spies-of-a-preload", {
       "preload.ts": `

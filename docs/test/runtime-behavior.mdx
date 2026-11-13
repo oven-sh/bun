@@ -388,11 +388,11 @@ Since tests run in the same process, ensure proper cleanup:
 import { afterEach, jest } from "bun:test";
 
 afterEach(() => {
+  // Restore mocked functions first: a restore writes back what a spy replaced
+  jest.restoreAllMocks();
+
   // Clean up global state
   global.myGlobalVar = undefined;
   delete process.env.TEST_VAR;
-
-  // Restore mocked functions if needed
-  jest.restoreAllMocks();
 });
 ```

@@ -1591,7 +1591,13 @@ describe.concurrent("bun fmt", () => {
     });
 
     test("at another width, with another quote", async () => {
-      const rows: Row[] = [["ts", `abc.b().c({ ${props} });\n`, `abc.b().c(${broken()});\n`]];
+      const rows: Row[] = [
+        [
+          "ts",
+          `abc.b().c({ ${props}, seventhProperty: "idle", eighthProperty: "busy" });\n`,
+          `abc.b().c(${broken().replace("}", "  seventhProperty: 'idle',\n  eighthProperty: 'busy',\n}")});\n`,
+        ],
+      ];
       const args = ["--print-width=100", "--single-quote"];
       const { first, second, expected } = await printedTwice("Prettier", {}, args, rows);
       expect(first).toEqual(expected);
@@ -1629,10 +1635,11 @@ describe.concurrent("bun fmt", () => {
     });
 
     // An object that breaks beside the argument that's grouped puts every argument on its own line the next time, a
-    // broken return type of the grouped function does the same, and a chain inside the last group whose earlier group
-    // breaks puts every group of that chain on its own line. Those are other layouts of the call or of the inner
-    // chain, not of the chain's head, so they still take two passes, as with the tools. The `{` in `() => {}` counts
-    // as an object that can stay broken.
+    // broken return type of the grouped function does the same, a chain inside the last group whose earlier group
+    // breaks puts every group of that chain on its own line, and an element whose opening breaks puts its children
+    // on their own lines. Those are other layouts of the call, of the inner chain or of the element, not of the
+    // chain's head, so they still take two passes, as with the tools. The `{` in `() => {}` counts as an object that
+    // can stay broken.
     test("still takes two passes when the object is beside a grouped argument", async () => {
       const rows: [string, string, string][] = [
         [
@@ -1661,12 +1668,17 @@ describe.concurrent("bun fmt", () => {
           `abc.b().c(\n  x\n    .y()\n    .z(${broken("    ")})\n    .w(),\n);\n`,
         ],
         [
+          `wrapper.setProps({}).contains(<Foo bar={{ aaaaaaaa: 1, bbbbbbbbb: 2, ccccccccc: 3, ddddddddd: 4, eeeeeeeee: 5, fffffffff: 6, ggggggggg: 7 }}>Hello world</Foo>);\n`,
+          `wrapper\n  .setProps({})\n  .contains(\n    <Foo\n      bar={{\n        aaaaaaaa: 1,\n        bbbbbbbbb: 2,\n        ccccccccc: 3,\n        ddddddddd: 4,\n        eeeeeeeee: 5,\n        fffffffff: 6,\n        ggggggggg: 7,\n      }}\n    >\n      Hello world\n    </Foo>,\n  );\n`,
+          `wrapper.setProps({}).contains(\n  <Foo\n    bar={{\n      aaaaaaaa: 1,\n      bbbbbbbbb: 2,\n      ccccccccc: 3,\n      ddddddddd: 4,\n      eeeeeeeee: 5,\n      fffffffff: 6,\n      ggggggggg: 7,\n    }}\n  >\n    Hello world\n  </Foo>,\n);\n`,
+        ],
+        [
           `abc.b().c(x.y(() => 1).z({ ${props} }));\n`,
           `abc\n  .b()\n  .c(\n    x\n      .y(() => 1)\n      .z(${broken("      ")}),\n  );\n`,
           `abc.b().c(\n  x\n    .y(() => 1)\n    .z(${broken("    ")}),\n);\n`,
         ],
       ];
-      const names = rows.map((_, index) => `${index}.ts`);
+      const names = rows.map((_, index) => `${index}.tsx`);
       const texts = Object.fromEntries(rows.map(([text], index) => [names[index], text]));
       const first = await format(texts, ["--log-level=warn"], { reads: names });
       expect(first.files).toEqual(Object.fromEntries(rows.map(([, printed], index) => [names[index], printed])));

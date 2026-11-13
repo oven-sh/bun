@@ -298,10 +298,11 @@ impl<'a, 'b> MemberChain<'a, 'b> {
     }
 
     /// True if the last group is printed the same way the next time, once a group in it breaks because it doesn't fit.
-    /// Two layouts aren't, at any depth. The arguments of a call: if one that isn't the grouped one breaks, every
+    /// Three layouts aren't, at any depth. The arguments of a call: if one that isn't the grouped one breaks, every
     /// argument goes on its own line the next time (`write_grouped_arguments`). A chain: if a group before its last
     /// one breaks, or its last one does after a function argument, every group goes on its own line the next time
-    /// (`groups_should_break`). A `{` in such a place is a reason to say no.
+    /// (`groups_should_break`). An element: if its opening breaks, so do its children (`jsx/element.rs`). A `{` in
+    /// such a place is a reason to say no.
     fn last_group_prints_the_same_once_broken(&self, f: &Formatter<'a>) -> bool {
         let Some(last) = self.groups().last() else {
             return false;
@@ -312,6 +313,14 @@ impl<'a, 'b> MemberChain<'a, 'b> {
             return false;
         }
         while let Some(node) = rest.pop() {
+            // The children of an element go on their own lines the next time if its opening breaks.
+            if let Node::Expr(e) = node
+                && let ExprKind::Jsx(jsx) = e.kind()
+                && !jsx.children().is_empty()
+                && strings::contains_char(f.source_text().text_for(&e.span()), b'{')
+            {
+                return false;
+            }
             if let Node::Expr(e) = node
                 && let Some(call) = e.as_call_like()
             {

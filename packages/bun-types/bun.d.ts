@@ -9961,6 +9961,10 @@ declare module "bun" {
      * `dest` may be a path string, {@link BunFile}, {@link S3File}, or fd.
      * Resolves to the number of bytes written.
      *
+     * `write()` reads the `dest` argument during the call. A `Buffer` or `URL`
+     * that changes later does not change where the image goes. An invalid
+     * `dest` rejects before the source image is read.
+     *
      * If no format method was chained and `dest` is a path string, the format
      * is inferred from its extension when it's one Bun can encode
      * (`.jpg`/`.png`/`.webp`/`.heic`/`.avif`); otherwise the source format is

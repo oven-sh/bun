@@ -120,6 +120,7 @@ struct Extraction {
     /// Temp directory files are written into before being renamed into the
     /// cache. Lazily opened on the first drain so the HTTP thread never
     /// touches the filesystem.
+    // Not a `Dir`, which closes 0-2: auto-install can run after script has closed one of them.
     dest: Option<File>,
     /// Owned copy of the temp-directory name.
     // `ZBox` is the owned NUL-terminated counterpart of `&ZStr`.

@@ -56,6 +56,7 @@ pub fn open_memory(bytes: &[u8], dialect: Dialect) -> bun_tar::Result<MemoryDeco
 }
 
 /// Writes the contents of the current entry to `file`, then closes it.
+// Closing asynchronously gains nothing on Windows and can make NtSetInformationFile fail.
 pub fn read_data_into_file(
     reader: &mut MemoryDecoder<'_>,
     file: File,

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
@@ -487,6 +487,140 @@ export default function () {
     expect(script).toBeTruthy();
     expect(existsSync(path.join(String(dir), "dist", script![1]))).toBe(true);
     expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.each([
+    ["registers in the order of the plugins", "", 0],
+    ["fails the build when it rejects", `throw new Error("setup failed");`, 1],
+  ])("a plugin setup() that returns a pending promise %s", async (_, afterWaiting, expectedExitCode) => {
+    using dir = tempDir("bake-production-async-plugin", {
+      "server.ts": `
+        export function render(req, meta) {
+          return new Response(String(meta.pageModule.default()));
+        }
+        export async function prerender(meta) {
+          return { files: { "index.html": "<body>" + meta.pageModule.default() + "</body>" } };
+        }
+      `,
+      "routes/index.ts": `
+        import { who } from "virtual:who";
+        export default () => "resolved by " + who;
+      `,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+        const virtual = (name, wait) => ({
+          name,
+          async setup(build) {
+            console.log(name + " starts");
+            await wait?.();
+            build.onResolve({ filter: /^virtual:who$/ }, () => ({ path: "who", namespace: name }));
+            build.onLoad({ filter: /./, namespace: name }, () => ({
+              contents: "export const who = " + JSON.stringify(name),
+              loader: "js",
+            }));
+            console.log(name + " ends");
+          },
+        });
+        const wait = async () => {
+          await new Promise(resolve => setImmediate(resolve));
+          ${afterWaiting}
+        };
+        export default {
+          app: { framework: { fileSystemRouterTypes: [fsr] }, plugins: [virtual("first", wait), virtual("second")] },
+        };
+      `,
+    });
+
+    const { exitCode, stdout, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+      .cwd(String(dir))
+      .env({ ...bunEnv, BUN_JSC_validateExceptionChecks: "1" })
+      .quiet()
+      .throws(false);
+    const setups = stdout
+      .toString()
+      .split(/\r?\n/)
+      .filter(line => /^(first|second) /.test(line));
+    if (expectedExitCode === 0) {
+      expect(setups).toEqual(["first starts", "first ends", "second starts", "second ends"]);
+      expect(await Bun.file(path.join(String(dir), "dist", "index.html")).text()).toContain("resolved by first");
+    } else {
+      expect(setups).toEqual(["first starts"]);
+      expect(stderr.toString()).toContain("setup failed");
+    }
+    expect(exitCode).toBe(expectedExitCode);
+  });
+
+  describe("a plugin setup() that can never finish fails the build", () => {
+    // A build that waits for the setup() in a loop never exits, and a test that times out does not dispose it.
+    const stuckBuilds = new Set<Bun.Subprocess>();
+    afterAll(() => {
+      for (const build of stuckBuilds) build.kill("SIGKILL");
+    });
+
+    test.concurrent.each([
+      ["the first of app.plugins", `[]`, `[stuck("first"), virtual("second")]`, ["first starts"]],
+      [
+        "one behind a pending setup()",
+        `[]`,
+        `[virtual("first", wait), stuck("second")]`,
+        ["first starts", "first ends", "second starts"],
+      ],
+      ["one of framework.plugins", `[stuck("first")]`, `[virtual("second")]`, ["first starts"]],
+    ])("%s", async (_, frameworkPlugins, appPlugins, setups) => {
+      using dir = tempDir("bake-production-stuck-plugin", {
+        "server.ts": `
+          export function render(req, meta) {
+            return new Response(String(meta.pageModule.default()));
+          }
+          export async function prerender(meta) {
+            return { files: { "index.html": "<body>" + meta.pageModule.default() + "</body>" } };
+          }
+        `,
+        "routes/index.ts": `export default () => "page";`,
+        "app.ts": `
+          const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+          const virtual = (name, wait) => ({
+            name,
+            async setup() {
+              console.log(name + " starts");
+              await wait?.();
+              console.log(name + " ends");
+            },
+          });
+          const stuck = name => virtual(name, () => new Promise(() => {}));
+          const wait = () => new Promise(resolve => setImmediate(resolve));
+          export default {
+            app: { framework: { fileSystemRouterTypes: [fsr], plugins: ${frameworkPlugins} }, plugins: ${appPlugins} },
+          };
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--app", "./app.ts"],
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      stuckBuilds.add(proc);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      stuckBuilds.delete(proc);
+
+      expect({
+        setups: stdout.split(/\r?\n/).filter(line => /^(first|second) /.test(line)),
+        errors: stderr.split(/\r?\n/).filter(line => /^(error|note): /.test(line)),
+        exitCode,
+        signalCode: proc.signalCode,
+      }).toEqual({
+        setups,
+        errors: [
+          "error: A plugin setup() never finished",
+          "note: the event loop is empty, so nothing can settle it anymore",
+        ],
+        exitCode: 1,
+        signalCode: null,
+      });
+    });
   });
 
   test("fails the build for a route file with an invalid name", async () => {

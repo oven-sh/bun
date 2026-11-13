@@ -95,49 +95,42 @@ pub(super) fn ensure_route_is_bundled(
                 'plugin: loop {
                     match plugin {
                         PluginState::Unknown => {
-                            if dev.bundler_options.plugin.is_some() {
-                                // Framework-provided plugin is likely going to be phased out later
-                                dev.plugin_state = PluginState::Loaded;
-                            } else {
-                                // TODO: implement a proper solution here
-                                // `vm()` is the centralized JSC_BORROW accessor (one
-                                // `unsafe` site for the field); the borrow is dropped
-                                // before the assignment so no overlap with `&mut dev`.
-                                let vm = dev.vm();
-                                let has_tailwind = vm
-                                    .transpiler
-                                    .options
-                                    .serve_plugins
-                                    .iter()
-                                    .flatten()
-                                    .chain(vm.bake_config_plugin_names.iter())
-                                    .find(|p| strings::includes(p, b"tailwind"))
-                                    .map(|_| Default::default());
-                                dev.has_tailwind_plugin_hack = has_tailwind;
+                            // This name check is the special case for `bun-plugin-tailwind`. The borrow of `vm()` ends before the assignment, so it does not overlap `&mut dev`.
+                            let vm = dev.vm();
+                            let has_tailwind = vm
+                                .transpiler
+                                .options
+                                .serve_plugins
+                                .iter()
+                                .flatten()
+                                .chain(vm.bake_config_plugin_names.iter())
+                                .find(|p| strings::includes(p, b"tailwind"))
+                                .map(|_| Default::default());
+                            dev.has_tailwind_plugin_hack = has_tailwind;
 
-                                let load_result: crate::server::GetOrStartLoadResult = dev
-                                    .server
-                                    .as_ref()
-                                    .expect("infallible: server bound")
-                                    .get_or_load_plugins(
-                                        crate::server::ServePluginsCallback::DevServer,
-                                    );
-                                match load_result {
-                                    crate::server::GetOrStartLoadResult::Pending => {
-                                        dev.plugin_state = PluginState::Pending;
-                                        plugin = PluginState::Pending;
-                                        continue 'plugin;
-                                    }
-                                    crate::server::GetOrStartLoadResult::Err => {
-                                        dev.plugin_state = PluginState::Err;
-                                        plugin = PluginState::Err;
-                                        continue 'plugin;
-                                    }
-                                    crate::server::GetOrStartLoadResult::Ready(ready) => {
-                                        dev.plugin_state = PluginState::Loaded;
-                                        dev.bundler_options.plugin =
-                                            ready.map(::core::ptr::NonNull::from);
-                                    }
+                            let load_result: crate::server::GetOrStartLoadResult = dev
+                                .server
+                                .as_ref()
+                                .expect("infallible: server bound")
+                                .get_or_load_plugins(
+                                    crate::server::ServePluginsCallback::DevServer,
+                                );
+                            match load_result {
+                                crate::server::GetOrStartLoadResult::Pending => {
+                                    dev.plugin_state = PluginState::Pending;
+                                    plugin = PluginState::Pending;
+                                    continue 'plugin;
+                                }
+                                crate::server::GetOrStartLoadResult::Err => {
+                                    dev.plugin_state = PluginState::Err;
+                                    plugin = PluginState::Err;
+                                    continue 'plugin;
+                                }
+                                crate::server::GetOrStartLoadResult::Ready(ready) => {
+                                    dev.plugin_state = PluginState::Loaded;
+                                    dev.bundler_options.plugin = ready
+                                        .map(::core::ptr::NonNull::from)
+                                        .map(bake::PluginCell::Borrowed);
                                 }
                             }
                             break 'plugin;

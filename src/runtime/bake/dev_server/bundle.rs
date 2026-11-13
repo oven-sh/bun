@@ -264,14 +264,24 @@ impl DevServer {
         Ok(())
     }
 
+    /// `plugins` is the cell of the server's `[serve.static]` plugins. It is `None` for `app.plugins`: `bundler_options` owns their cell.
     pub(crate) fn on_plugins_resolved(
         &mut self,
         plugins: Option<*mut crate::api::js_bundler::Plugin>,
     ) -> crate::Result<()> {
-        self.bundler_options.plugin = plugins.and_then(::core::ptr::NonNull::new);
+        if let Some(plugin) = plugins.and_then(::core::ptr::NonNull::new) {
+            self.bundler_options.plugin = Some(bake::PluginCell::Borrowed(plugin));
+        }
         self.plugin_state = PluginState::Loaded;
         self.start_next_bundle_if_present();
         Ok(())
+    }
+
+    /// The server has no plugin to load, so no request has to ask for one.
+    pub(crate) fn on_no_server_plugins(&mut self) {
+        if self.plugin_state == PluginState::Unknown {
+            self.plugin_state = PluginState::Loaded;
+        }
     }
 
     pub(crate) fn on_plugins_rejected(&mut self) -> crate::Result<()> {
@@ -341,6 +351,8 @@ impl DevServer {
         bun_removable_features::removable_definition!(Bundler, Self::start_async_bundle);
         debug_assert!(self.current_bundle.is_none());
         debug_assert!(!entry_points.set.is_empty());
+        // A plugin `setup()` that has not finished can still register a filter, and a bundle freezes the filters.
+        debug_assert!(self.plugin_state == PluginState::Loaded);
         self.log.clear_and_free();
 
         // Notify inspector about bundle start
@@ -393,7 +405,11 @@ impl DevServer {
                 framework: self.framework.as_bundler_view(),
                 client_transpiler: ::core::ptr::NonNull::from(&mut *self.client_transpiler),
                 ssr_transpiler: ::core::ptr::NonNull::from(&mut self.ssr_transpiler).cast(),
-                plugins: self.bundler_options.plugin,
+                plugins: self
+                    .bundler_options
+                    .plugin
+                    .as_ref()
+                    .map(bake::PluginCell::ptr),
             }),
             heap_ref,
             event_loop,
@@ -455,7 +471,8 @@ impl DevServer {
     /// Bundle the files a testing batch collected, or report an empty batch.
     pub(crate) fn release_testing_batch(&mut self, batch: TestingBatch) {
         debug_assert!(self.current_bundle.is_none());
-        if batch.entry_points.set.count() == 0 {
+        // Before the plugins are loaded nothing is bundled, so the first request bundles these files.
+        if batch.entry_points.set.count() == 0 || self.plugin_state != PluginState::Loaded {
             self.publish(
                 HmrTopic::TestingWatchSynchronization,
                 &[MessageId::TestingWatchSynchronization.char(), 2],

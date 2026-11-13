@@ -170,7 +170,7 @@ impl AnyRoute {
 
 // ─── ServePlugins ────────────────────────────────────────────────────────────
 // Full state machine + intrusive refcount lives in `server_body.rs` (the
-// `*mut ServePlugins` is smuggled through `JSValue::then` as a promise context,
+// `*mut ServePlugins` is the claim that a `NativePromiseContext` cell holds for a promise reaction,
 // so `Rc` is unsuitable). Re-exported here for `AnyServer` callers.
 pub(crate) use server_body::ServePlugins;
 
@@ -2179,6 +2179,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             };
             // SAFETY: `server` is uniquely owned here.
             unsafe { (*server).dev_server.set(Some(dev)) };
+            let app_setup =
+                ServePlugins::adopt_pending_app_setup(global, AnyServer::from(server.cast_const()));
+            if app_setup.is_some() {
+                // SAFETY: `server` is uniquely owned here.
+                unsafe { (*server).plugins.set(app_setup) };
+            }
         }
 
         if SSL {
@@ -2528,6 +2534,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             if !names.is_empty() || vm.bake_config_plugins.has() {
                 self.plugins.set(Some(ServePlugins::init(names)));
             }
+        }
+        if let Some(dev) = dev_server
+            && self.plugins.get().is_none()
+        {
+            // SAFETY: `dev` is the live `*mut DevServer` snapshotted from `self.dev_server` above.
+            unsafe { &mut *dev }.on_no_server_plugins();
         }
 
         // --- 7. Debug-mode specific routes ---

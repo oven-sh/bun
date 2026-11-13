@@ -16,7 +16,9 @@ pub(crate) mod source_provider_exports;
 
 pub(crate) mod config;
 pub(crate) mod hmr_runtime;
-pub(crate) use config::{FileSystemRouterType, Framework, SplitBundlerOptions, UserOptions};
+pub(crate) use config::{
+    FileSystemRouterType, Framework, PluginCell, SplitBundlerOptions, UserOptions,
+};
 pub(crate) use hmr_runtime::{HmrRuntime, get_hmr_runtime};
 
 /// All bake JSC references go through this re-export of `bun_jsc`.

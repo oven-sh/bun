@@ -10,7 +10,7 @@ mod framework;
 pub(crate) mod plugins;
 mod transpiler;
 
-pub(crate) use bundler::{BuildConfigSubset, SplitBundlerOptions};
+pub(crate) use bundler::{BuildConfigSubset, PluginCell, SplitBundlerOptions};
 pub(crate) use framework::{FileSystemRouterType, Framework, ReactFastRefresh, ServerComponents};
 
 /// export default { app: ... };
@@ -26,14 +26,7 @@ pub(crate) struct UserOptions {
     pub(crate) bundler_options: SplitBundlerOptions,
 }
 
-impl Drop for UserOptions {
-    fn drop(&mut self) {
-        self.bundler_options.destroy_plugin();
-    }
-}
-
 impl UserOptions {
-    /// Currently, this function must run at the top of the event loop.
     pub(crate) fn from_js(config: JSValue, global: &JSGlobalObject) -> JsResult<UserOptions> {
         let arena = Arena::new();
         let mut bundler_options = SplitBundlerOptions::default();
@@ -80,19 +73,14 @@ impl UserOptions {
             }
         }
 
-        match Self::parse_framework_root_and_plugins(config, global, &mut bundler_options) {
-            Ok((framework, root)) => Ok(UserOptions {
-                root,
-                framework,
-                bundler_options,
-                arena,
-            }),
-            Err(err) => {
-                // `UserOptions` was never built, so its `Drop` will not free the plugin.
-                bundler_options.destroy_plugin();
-                Err(err)
-            }
-        }
+        let (framework, root) =
+            Self::parse_framework_root_and_plugins(config, global, &mut bundler_options)?;
+        Ok(UserOptions {
+            root,
+            framework,
+            bundler_options,
+            arena,
+        })
     }
 
     fn parse_framework_root_and_plugins(

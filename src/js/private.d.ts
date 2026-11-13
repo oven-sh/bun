@@ -842,6 +842,10 @@ declare namespace $Node {
     onLoad: Map<string, [RegExp, BundlerPlugin.OnLoadCallback][]> | undefined;
     onResolve: Map<string, [RegExp, BundlerPlugin.OnResolveCallback][]> | undefined;
     promises: Promise<unknown>[] | undefined;
+    /** `Bun.serve({ app })`: the last `setup()` that is pending. The next `setup()` waits for it. */
+    pendingSetup: Promise<unknown> | undefined;
+    /** Native code destroyed the plugin: nothing is left to set up. */
+    readonly tombstoned: boolean;
     $onEndCallbacks: BundlerPlugin.OnEndCallback[] | undefined;
     /** `internalID`: the address of the native request, as a double. */
     onLoadAsync(

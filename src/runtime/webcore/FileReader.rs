@@ -55,6 +55,14 @@ pub struct FileReader {
     /// Read-only after construction.
     pub(crate) highwater_mark: usize,
     pub(crate) flowing: Cell<bool>,
+    /// Set by `process.stdin`, which pushes what a pull answers into a Node stream. Node's stdin gets each read of a
+    /// pipe, a socket or a terminal from a callback of its own, after the nextTicks and the promise jobs of the read
+    /// before. So `on_pull` and `set_flowing(true)` do not read a pollable descriptor: they arm the poll, and its
+    /// callback reads.
+    pub(crate) read_on_poll: Cell<bool>,
+    /// The poll does not report the EOF of this descriptor, so only a read finds it (`OpenedFileBlob::poll_misses_eof`).
+    #[cfg(unix)]
+    pub(crate) poll_misses_eof: Cell<bool>,
     /// Native sink attached by a hookup site (e.g. fetch request body). When
     /// set, `on_read_chunk` writes directly to it instead of the JS `pending`
     /// path; `pull_into_sink` is the drain-ack resume.
@@ -81,6 +89,9 @@ impl Default for FileReader {
             read_error: JsCell::new(None),
             highwater_mark: 16384,
             flowing: Cell::new(true),
+            read_on_poll: Cell::new(false),
+            #[cfg(unix)]
+            poll_misses_eof: Cell::new(false),
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
         }
@@ -100,6 +111,9 @@ pub(crate) struct OpenedFileBlob {
     pub(crate) nonblocking: bool,
     #[cfg(not(windows))]
     pub(crate) file_type: FileType,
+    /// A named FIFO on macOS: XNU's kqueue filter for it does not report the last writer's close. A `pipe(2)` pipe has no device, and its filter does.
+    #[cfg(not(windows))]
+    pub(crate) poll_misses_eof: bool,
 }
 
 impl Default for OpenedFileBlob {
@@ -110,6 +124,8 @@ impl Default for OpenedFileBlob {
             nonblocking: true,
             #[cfg(not(windows))]
             file_type: FileType::File,
+            #[cfg(not(windows))]
+            poll_misses_eof: false,
         }
     }
 }
@@ -227,6 +243,8 @@ impl Lazy {
             } else {
                 FileType::File
             };
+            this.poll_misses_eof =
+                cfg!(target_os = "macos") && sys::S::ISFIFO(mode) && stat.st_dev != 0;
 
             // pretend it's a non-blocking pipe if it's a TTY
             if is_nonblocking && this.file_type != FileType::Socket {
@@ -333,6 +351,7 @@ impl FileReader {
                             #[cfg(unix)]
                             {
                                 file_type = opened.file_type;
+                                self.poll_misses_eof.set(opened.poll_misses_eof);
                             }
                             #[cfg(unix)]
                             {
@@ -869,6 +888,21 @@ impl FileReader {
         self.reader().is_done() && self.read_error.get().is_none()
     }
 
+    /// See `read_on_poll`. A Windows read completes through libuv, never inside the call.
+    fn waits_for_poll(&self) -> bool {
+        #[cfg(unix)]
+        {
+            use bun_io::pipe_reader::PosixFlags;
+            self.read_on_poll.get()
+                && !self.poll_misses_eof.get()
+                && self.reader().flags.contains(PosixFlags::POLLABLE)
+        }
+        #[cfg(not(unix))]
+        {
+            false
+        }
+    }
+
     /// The stored read error, or a clean end.
     fn end_of_reader(&self) -> streams::Result {
         match self.read_error.replace(None) {
@@ -908,10 +942,14 @@ impl FileReader {
         if flag {
             self.reader().unpause();
             if !self.reader().is_done() && !self.reader().has_pending_read() {
-                // Kick off a new read if needed
-                // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
-                // the raw re-entrancy-safe entry (its dispatch runs user JS).
-                unsafe { IOReader::read(self.reader.get()) };
+                if self.waits_for_poll() {
+                    self.reader().watch();
+                } else {
+                    // Kick off a new read if needed
+                    // SAFETY: the reader cell is live for `self`'s lifetime; `read` is
+                    // the raw re-entrancy-safe entry (its dispatch runs user JS).
+                    unsafe { IOReader::read(self.reader.get()) };
+                }
             }
         } else {
             self.reader().pause();
@@ -980,8 +1018,13 @@ impl readable_stream::SourceContext for FileReader {
         if !self.reader().has_pending_read() && self.flowing.get() {
             // A consumer is pulling again: undo the highwater pause from `on_read_chunk`.
             self.reader().unpause();
-            // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
-            let (amount_read, state) = unsafe { IOReader::read_into(self.reader.get(), buffer) };
+            let (amount_read, state) = if self.waits_for_poll() {
+                self.reader().watch();
+                (0, ReadState::Progress)
+            } else {
+                // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
+                unsafe { IOReader::read_into(self.reader.get(), buffer) }
+            };
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);
             let done = state == ReadState::Eof || self.reader_finished();
             if amount_read > 0 {
@@ -1072,6 +1115,10 @@ impl Source {
         let flag = flag.to_js();
         debug_assert!(flag.is_boolean());
         self.context.set_flowing(flag == JSValue::TRUE);
+    }
+
+    pub fn set_read_on_poll(&self, enable: bool) {
+        self.context.read_on_poll.set(enable);
     }
 }
 

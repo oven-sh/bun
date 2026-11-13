@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { exec } from "node:child_process";
+import path from "node:path";
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -694,4 +695,130 @@ test("process.stdin over an anonymous pipe delivers each byte exactly once", asy
   const expected = new Bun.CryptoHasher("sha1").update(Buffer.alloc(total)).digest("hex");
   expect(stdout).toBe(`${total} ${expected}`);
   expect(err).toBeNull();
+});
+
+// Node's stdin over a pipe, a socket or a terminal is a libuv handle: each read comes in a callback of its own, after
+// the nextTicks and the promise jobs of the read before. process.stdin reads the source of `Bun.stdin.stream()`, and
+// since 1.4.0 that source read the descriptor inside pull() whenever its poll was not armed. So process.stdin pushed
+// the next chunk, or the EOF, inside the nextTick and promise job drain of the chunk before.
+describe("process.stdin on a pipe or a socket gets each chunk in a turn of the event loop of its own", () => {
+  // fd 0 of the child is the socketpair of Bun.spawn's "pipe", or a pipe that `cat` fills from that socketpair.
+  async function run(kind: "socket" | "pipe", args: string[], input: Uint8Array) {
+    await using proc = Bun.spawn({
+      cmd: kind === "socket" ? [bunExe(), ...args] : ["sh", "-c", 'cat | "$0" "$@"', bunExe(), ...args],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    proc.stdin.write(input);
+    await proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // A loop of `await once(process.stdin, "data")` has no 'data' listener between two chunks. A chunk that comes before
+  // the nextTick of the loop is buffered, and flow() emits it to no listener. The writer keeps the descriptor full, so
+  // without the fix the loop loses chunks in most runs, and not in all.
+  describe("a loop of once('data') gets every byte", () => {
+    const input = Buffer.alloc(2_000_000, "x");
+    const fixture = path.join(import.meta.dir, "stdin", "once-data.fixture.js");
+    const forms = [
+      ["the next once('data') comes after a nextTick", "tick"],
+      ["the next once('data') comes after pause(), a nextTick and resume()", "pause"],
+    ] as const;
+
+    // The EOF of a socket can still come in the turn of its last chunk, so this compares the bytes and not
+    // `doneAtEnd`.
+    test.concurrent.each(forms)("a socket: %s", async (_, form) => {
+      const { stdout, stderr, exitCode } = await run("socket", [fixture, form], input);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout).bytes).toBe(input.length);
+      expect(exitCode).toBe(0);
+    });
+
+    // `cat` and the shell pipe are POSIX.
+    test.concurrent.skipIf(isWindows).each(forms)("a pipe: %s", async (_, form) => {
+      expect(await run("pipe", [fixture, form], input)).toEqual({
+        stdout: JSON.stringify({ bytes: input.length, doneAtEnd: input.length }) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // The writer is gone before the first read: the only chunk and the EOF are both behind fd 0. The consumer adds its
+  // 'end' listener three nextTicks behind the chunk. The left side of the shell pipe closes its end and then makes the
+  // file that the reader waits for, which needs a POSIX shell.
+  test.concurrent.skipIf(isWindows)(
+    "a pipe: 'end' reaches a listener that is added behind the last chunk",
+    async () => {
+      using dir = tempDir("stdin-late-end-pipe", {
+        "reader.js": `
+          const { once } = require("node:events");
+          const fs = require("node:fs");
+          const nap = new Int32Array(new SharedArrayBuffer(4));
+          const deadline = Date.now() + 30_000;
+          while (!fs.existsSync("writer-closed")) {
+            if (Date.now() > deadline) throw new Error("the writer did not close in time");
+            Atomics.wait(nap, 0, 0, 1);
+          }
+          const seen = [];
+          process.on("exit", () => console.log(JSON.stringify(seen)));
+          (async () => {
+            const [chunk] = await once(process.stdin, "data");
+            seen.push("data:" + chunk);
+            for (let i = 0; i < 3; i++) await new Promise(resolve => process.nextTick(resolve));
+            process.stdin.on("end", () => seen.push("end"));
+          })();
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", '( printf hello; exec >&-; touch writer-closed ) | "$0" reader.js', bunExe()],
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: JSON.stringify(["data:hello", "end"]) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // A permanent 'data' listener that pauses for a nextTick, an immediate and a timer in turn. Without the fix the EOF
+  // of a socket came while stdin was paused with bytes in its buffer in about one run of eight, and then 'end' never
+  // came.
+  test.concurrent("a socket: pauses of mixed lengths lose nothing and end", async () => {
+    const pattern = Buffer.alloc(1_000_000);
+    for (let i = 0; i < pattern.length; i++) pattern[i] = (i ^ (i >>> 8) ^ (i >>> 16)) & 255;
+    const reader = `
+      let offset = 0, firstWrongByte = -1, pauses = 0;
+      const stdin = process.stdin;
+      const resume = () => stdin.resume();
+      stdin.on("data", chunk => {
+        for (let i = 0; i < chunk.length; i++, offset++) {
+          if (chunk[i] !== ((offset ^ (offset >>> 8) ^ (offset >>> 16)) & 255) && firstWrongByte < 0) firstWrongByte = offset;
+        }
+        stdin.pause();
+        switch (pauses++ % 3) {
+          case 0: process.nextTick(resume); break;
+          case 1: setImmediate(resume); break;
+          default: setTimeout(resume, 1);
+        }
+      });
+      let ended = false;
+      stdin.on("end", () => { ended = true; });
+      process.on("exit", () => console.log(JSON.stringify({ bytes: offset, firstWrongByte, ended })));
+    `;
+    expect(await run("socket", ["-e", reader], pattern)).toEqual({
+      stdout: JSON.stringify({ bytes: pattern.length, firstWrongByte: -1, ended: true }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

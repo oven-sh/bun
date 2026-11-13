@@ -138,6 +138,10 @@ export function getStdinStream(
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
     source.updateRef(forceUnref ? false : true);
+    // Node's stdin gets each read of a pipe, a socket or a terminal from a callback of its own, after the nextTicks
+    // and the promise jobs of the read before. A read that the source makes inside pull() or setFlowing(true) is
+    // pushed before them.
+    source?.setReadOnPoll?.(true);
     source?.setFlowing?.(true);
 
     if (needsInternalReadRefresh) {
@@ -149,6 +153,7 @@ export function getStdinStream(
   function disown() {
     $debug("unref();");
     source?.setFlowing?.(false);
+    source?.setReadOnPoll?.(false);
 
     if (reader) {
       // releaseLock() rejects any in-flight internalRead() with a TypeError; that

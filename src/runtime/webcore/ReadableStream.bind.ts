@@ -66,6 +66,8 @@ export const FileInternalReadableStreamSource = b.class({
     pull: members.pull,
     setFlowing: { args: { flag: b.any }, capability: "js" },
     setRawMode: { args: { flag: b.any }, returns: b.any.returning("object", "undefined"), capability: "js" },
+    /** With `true`, `pull()` and `setFlowing(true)` do not read a pipe, a socket or a terminal: they arm the poll, and its callback reads. */
+    setReadOnPoll: { args: { enable: b.bool.loose } },
     start: members.start,
     updateRef: members.updateRef,
   },

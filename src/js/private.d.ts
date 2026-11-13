@@ -1068,6 +1068,8 @@ declare namespace $Bindgen {
   interface FileInternalReadableStreamSource {
     updateRef(ref: boolean): void;
     setFlowing(flowing: boolean): void;
+    /** With `true`, the poll callback makes every read of a pipe, a socket or a terminal: `pull()` and `setFlowing(true)` only arm the poll. */
+    setReadOnPoll(enable: boolean): void;
     /** `undefined`, or the system error. */
     setRawMode(enabled: boolean): Error | undefined;
   }

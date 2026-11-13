@@ -224,6 +224,7 @@ pub(crate) mod js_fns {
                         Flavor::Vitest => ScopeFunctions::FunctionKind::VitestHook,
                     },
                     inherited: Default::default(),
+                    retry_policies: None,
                 },
             )?;
 
@@ -1936,7 +1937,7 @@ enum Advance {
     Exit,
 }
 
-pub(crate) use super::collection::Collection;
+pub(crate) use super::collection::{Collection, RetryPolicyId};
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub(crate) enum ConcurrentMode {
@@ -2342,6 +2343,7 @@ pub(crate) struct ExecutionEntryCfg {
     pub(crate) fixtures: Option<JSValue>,
     /// Number of times to retry a failed test (0 = no retries)
     pub(crate) retry_count: u32,
+    pub(crate) retry_policy: Option<RetryPolicyId>,
     /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
     pub(crate) repeat_count: u32,
 }
@@ -2368,6 +2370,8 @@ pub(crate) struct ExecutionEntry {
     pub(crate) added_in_phase: AddedInPhase,
     /// Number of times to retry a failed test (0 = no retries)
     pub(crate) retry_count: u32,
+    /// Says whether and when each retry runs. `None` retries at once.
+    pub(crate) retry_policy: Option<RetryPolicyId>,
     /// Number of times to repeat a test (0 = run once, 1 = run twice, etc.)
     pub(crate) repeat_count: u32,
 
@@ -2396,6 +2400,7 @@ impl ExecutionEntry {
             parameter: (cfg.calling.is_vitest() && phase != AddedInPhase::Execution).then(Default::default),
             added_in_phase: phase,
             retry_count: cfg.retry_count,
+            retry_policy: cfg.retry_policy,
             repeat_count: cfg.repeat_count,
             timespec: Timespec::EPOCH,
             next: None,
@@ -2431,7 +2436,7 @@ impl ExecutionEntry {
                 .is_some_and(|p| core::ptr::eq(p.as_ptr().cast_const(), self));
             let has_done_parameter = self.calling == Calling::Jest { done: true };
             sequence.result = if self.around.is_some() {
-                // `Execution::report_around_timeout` fails the sequence with an error.
+                // `Execution::report_timeout` fails the sequence with an error.
                 sequence.result
             } else if is_test_entry {
                 if has_done_parameter {

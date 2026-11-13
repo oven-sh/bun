@@ -6,7 +6,7 @@ use std::rc::Rc;
 use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
-    self as jsc, AbortSignal, CommonAbortReason, JSFunction, JSGlobalObject, JSHostFn,
+    self as jsc, AbortSignal, JSFunction, JSGlobalObject, JSHostFn,
     JSPromise, JSValue, JsCell, JsClass as _, JsResult, Strong, StringJsc as _, bun_string_jsc,
 };
 use bun_paths::resolve_path;
@@ -212,32 +212,30 @@ impl TestContext {
         global: &JSGlobalObject,
         thrown: JSValue,
     ) -> JsResult<()> {
-        let errors = match js::errors_get_cached(this_value) {
-            Some(errors) => errors,
-            None => {
-                let errors = JSValue::create_empty_array(global, 0)?;
-                js::errors_set_cached(this_value, global, errors);
-                Self::result(this_value, global).put(global, b"errors", errors);
-                errors
-            }
-        };
         let thrown = match thrown.to_error() {
             Some(thrown) => thrown,
             None if thrown.is_exception(global.vm_ptr()) => return Ok(()),
             None => thrown,
         };
-        if thrown.is_object() || thrown.is_symbol() {
-            return errors.push(global, thrown);
-        }
-        let error = JSValue::create_empty_object(global, 1);
-        error.put(global, b"message", thrown.to_bun_string(global)?.into_js(global)?);
-        errors.push(global, error)
+        jsc::cpp::Bun__TestContext__recordError(global, Self::result(this_value, global), thrown)
     }
 
-    pub(crate) fn abort_signal(this_value: JSValue, global: &JSGlobalObject) {
-        if let Some(signal) = js::signal_get_cached(this_value).and_then(AbortSignal::from_js) {
+    /// `task.result.errors` as the hooks of the test left it, if it is an array.
+    pub(crate) fn errors(this_value: JSValue, global: &JSGlobalObject) -> Option<JSValue> {
+        let errors = jsc::cpp::Bun__TestContext__errorsOfResult(global, js::result_get_cached(this_value)?);
+        (!errors.is_empty()).then_some(errors)
+    }
+
+    /// What Vitest's `AbortController` of the context does at a timeout. A test that has not read `signal` finds it aborted later.
+    pub(crate) fn abort_signal(this_value: JSValue, global: &JSGlobalObject, reason: JSValue) {
+        let signal = js::signal_get_cached(this_value).unwrap_or_else(|| {
+            let signal = AbortSignal::create(global);
+            js::signal_set_cached(this_value, global, signal);
+            signal
+        });
+        if let Some(signal) = AbortSignal::from_js(signal) {
             // SAFETY: the wrapper in the cached slot keeps the signal alive.
-            unsafe { &*signal }.signal(global, CommonAbortReason::Timeout);
+            unsafe { &*signal }.signal_with_reason(reason);
         }
     }
 
@@ -294,17 +292,8 @@ impl TestContext {
         Ok(annotations)
     }
 
-    pub(crate) fn get_signal(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let (this_value, global) = (this_value.to_js(), cx.global());
-        let signal = AbortSignal::create(global);
-        if let Some((_buntest, sequence)) = self.running(this_value)
-            // SAFETY: as in `running`.
-            && unsafe { sequence.as_ref() }.result.is_timeout()
-        {
-            js::signal_set_cached(this_value, global, signal);
-            Self::abort_signal(this_value, global);
-        }
-        Ok(signal)
+    pub(crate) fn get_signal(&self, _this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        Ok(AbortSignal::create(cx.global()))
     }
 
     pub(crate) fn get_expect(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
@@ -371,6 +360,7 @@ impl TestContext {
                 callback: CallbackMode::Require,
                 kind: FunctionKind::VitestHook,
                 inherited: Default::default(),
+                retry_policies: None,
             },
         )?;
         let this = Self::of_call(global, this_value)?;

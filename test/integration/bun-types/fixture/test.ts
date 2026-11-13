@@ -16,6 +16,7 @@ import {
   spyOn,
   test,
   type TestOptions,
+  type TestWithContextOptions,
   vi,
   xdescribe,
   xit,
@@ -506,9 +507,21 @@ test.for([
 test.for([1, 2])("test.for", { timeout: 100 }, (n, { expect }) => {
   expect(n).toBe(n);
 });
+test.for([1])("test.for", { retry: { count: 2, delay: 50, condition: /ECONNRESET/ } }, () => {});
+// @ts-expect-error Only a `test` that is called as in Vitest takes the object.
+test("test", { retry: { count: 2 } }, () => {});
 describe.for([[1, 2]])("describe.for", row => {
   expectType<readonly [1, 2]>(row);
 });
+// Bun runs a `describe.for()` block as Vitest does, so it takes options, and the object too.
+describe.for([1])("describe.for", { retry: { count: 2, delay: 50, condition: /ECONNRESET/ } }, row =>
+  expectType<1>(row),
+);
+describe.skip.for([1])("describe.for", row => expectType<1>(row), 100);
+// @ts-expect-error A `describe` of "bun:test" takes no options.
+describe("describe", { retry: 2 }, () => {});
+// @ts-expect-error
+describe.each([1])("describe.each", { retry: { count: 2 } }, () => {});
 test.each`
   a    | b
   ${1} | ${2}
@@ -539,6 +552,11 @@ extended("test.extend", ({ port, url, label, task, expect }) => {
   expect(port).toBe(3000);
 });
 extended.skip("test.extend", { retry: 1 }, async ({ url }) => expectType<string>(url));
+extended("test.extend", { retry: { count: 1, delay: 50 } }, async ({ url }) => expectType<string>(url));
+extended.each([[1, "a"]])("test.extend", { retry: { count: 1, delay: 50 } }, (n, s) => void expectType<string>(n + s));
+extended.describe("test.extend", { retry: { count: 1, condition: /ECONNRESET/ } }, () => {});
+extended.describe.each([1])("test.extend", row => expectType<1>(row), { retry: { count: 1 } });
+extended.suite.skip("test.extend", { timeout: 100 }, () => {});
 extended.concurrent.for([1])("test.extend", (row, { port }) => {
   expectType<number>(row + port);
 });
@@ -563,9 +581,11 @@ extended.each`
   ${1} | ${2}
 `("$a $b", async ({ a, b }) => expectType<any>(a + b));
 // `Parameters<>` must see the (label, fn, options?) overload, same as for `test`.
-expectType<Parameters<typeof extended>[2]>().is<number | TestOptions | undefined>();
-expectType<Parameters<typeof extended.skip>[2]>().is<number | TestOptions | undefined>();
-expectType<Parameters<ReturnType<typeof extended.each>>[2]>().is<number | TestOptions | undefined>();
+expectType<Parameters<typeof extended>[2]>().is<number | TestWithContextOptions | undefined>();
+expectType<Parameters<typeof extended.skip>[2]>().is<number | TestWithContextOptions | undefined>();
+expectType<Parameters<ReturnType<typeof extended.each>>[2]>().is<number | TestWithContextOptions | undefined>();
+// A `test` that is called as in Jest keeps `retry` as a number.
+expectType<Parameters<typeof test>[2]>().is<number | TestOptions | undefined>();
 // `any` options must not break contextual typing of the callback's parameters.
 extended("options that are any", async ({ port }) => expectType<number>(port), {} as any);
 extended.skip("options that are any", async ({ port }) => expectType<number>(port), {} as any);

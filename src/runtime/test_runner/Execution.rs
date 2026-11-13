@@ -46,8 +46,9 @@ use bun_core::scoped_log;
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
     group_begin, AddedInPhase, Around, AroundPhase, BunTest, BunTestPtr, Calling, EntryData, ExecutionEntry,
-    HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
+    HandleUncaughtExceptionResult, Order, RefDataValue, RetryPolicyId, ScopeMode, StepResult,
 };
+use super::collection::RetryCondition;
 use super::expect::expect_deferred::ExpectDeferred;
 use super::test_context::{self, TestContext};
 use super::test_context_around::{self, AroundHook};
@@ -97,6 +98,8 @@ pub(crate) struct Execution {
     /// The entry whose callback is on the stack, which `get_current_state_data()` can't name in a concurrent group.
     /// Cleared before the call's microtasks drain, because those can resume other tests in the group.
     pub(crate) on_stack: core::cell::Cell<Option<EntryData>>,
+    /// When each `Stage::RetryWaiting` sequence starts its next attempt, by its index in `sequences`.
+    retry_wakes: Vec<(usize, Timespec)>,
 }
 
 pub(crate) struct ConcurrentGroup {
@@ -152,6 +155,19 @@ pub(crate) enum ExpectAssertions {
     Exact(u32),
 }
 
+/// What a sequence does between two calls of `step_sequence_one`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Stage {
+    /// It has not started, it is between two entries, or it is complete.
+    Idle,
+    /// The callback of the active entry has not ended.
+    Executing,
+    /// An attempt failed with retries left, and the test's `RetryPolicy` has yet to say whether the next one runs.
+    RetryPending,
+    /// The next attempt starts at the time in `Execution::retry_wakes`. Until then its first entry is active and has not started.
+    RetryWaiting,
+}
+
 pub(crate) struct ExecutionSequence {
     pub(crate) first_entry: Option<NonNull<ExecutionEntry>>,
     /// Index into ExecutionSequence.entries() for the entry that is not started or currently running
@@ -161,7 +177,7 @@ pub(crate) struct ExecutionSequence {
     pub(crate) remaining_retry_count: u32,
     pub(crate) attempt: u32,
     pub(crate) result: Result,
-    pub(crate) executing: bool,
+    pub(crate) stage: Stage,
     pub(crate) started_at: Timespec,
     /// Number of expect() calls observed in this sequence.
     pub(crate) expect_call_count: u32,
@@ -197,7 +213,7 @@ impl ExecutionSequence {
             // defaults:
             attempt: 0,
             result: Result::Pending,
-            executing: false,
+            stage: Stage::Idle,
             started_at: Timespec::EPOCH,
             expect_call_count: 0,
             expect_assertions: ExpectAssertions::NotSet,
@@ -257,6 +273,25 @@ impl ExecutionSequence {
         false
     }
 
+    fn retry_policy(&self) -> Option<RetryPolicyId> {
+        // SAFETY: arena-owned entry
+        self.test_entry.and_then(|test| unsafe { test.as_ref() }.retry_policy)
+    }
+
+    fn record_runner_error(&self, global: &JSGlobalObject, message: core::fmt::Arguments<'_>) {
+        if let Some(context) = &self.context {
+            record_runner_error(context.get(), global, global.create_error_instance(message));
+        }
+    }
+
+    /// Vitest sets up the fixtures of a test inside the test's own timeout, so their timeout is the test's.
+    fn times_out_as_test(&self, entry: NonNull<ExecutionEntry>) -> bool {
+        // SAFETY: arena-owned entry
+        let (added_in_phase, next) = unsafe { (entry.as_ref().added_in_phase, entry.as_ref().next) };
+        let sets_up_its_fixture = added_in_phase == AddedInPhase::Execution && nn(next) == self.test_entry;
+        self.test_entry.is_some() && (Some(entry) == self.test_entry || sets_up_its_fixture)
+    }
+
     pub(crate) fn test_follows(&self, entry: NonNull<ExecutionEntry>) -> bool {
         // SAFETY: arena-owned entries
         let mut next = nn(unsafe { entry.as_ref() }.next);
@@ -311,17 +346,23 @@ impl ExecutionSequence {
         unsafe { &*context }.take_deferred(self.attempt_failed())
     }
 
-    /// Vitest's `test.fails` passes if anything in the attempt failed, hooks, fixtures and timeouts included.
-    fn flip_fails(&mut self) {
+    /// Vitest's `test.fails` passes if anything in the attempt failed, hooks, fixtures and timeouts included. Since Vitest 5.0.3 each attempt flips before the retry decision.
+    fn flip_fails(&mut self, global: &JSGlobalObject) {
         if self.entry_mode() != ScopeMode::Fails || self.result == Result::Skip {
             return;
         }
-        self.check_expect_assertions();
+        self.check_expect_assertions(global, false);
         self.expect_assertions = ExpectAssertions::NotSet;
-        self.result = if self.result.is_fail() { Result::Pass } else { Result::FailBecauseFailsTestPassed };
+        self.result = if self.result.is_fail() {
+            Result::Pass
+        } else {
+            self.record_runner_error(global, format_args!("Expect test to fail"));
+            Result::FailBecauseFailsTestPassed
+        };
     }
 
-    fn check_expect_assertions(&mut self) {
+    /// Vitest checks the count when the callback of the test returns, also if `expect.soft` failed in it.
+    fn check_expect_assertions(&mut self, global: &JSGlobalObject, callback_returned: bool) {
         let failure = match self.expect_assertions {
             ExpectAssertions::NotSet => return,
             ExpectAssertions::AtLeastOne if self.expect_call_count == 0 => Result::FailBecauseExpectedHasAssertions,
@@ -333,8 +374,21 @@ impl ExecutionSequence {
                 return;
             }
         };
-        if self.result.is_pass(PendingIs::PendingIsPass) && self.result != Result::Skip {
+        if self.result == Result::Skip {
+            return;
+        }
+        let passes = self.result.is_pass(PendingIs::PendingIsPass);
+        if passes {
             self.result = failure;
+        }
+        if passes || callback_returned {
+            match self.expect_assertions {
+                ExpectAssertions::Exact(expected) => self.record_runner_error(
+                    global,
+                    format_args!("expected number of assertions to be {expected}, but got {}", self.expect_call_count),
+                ),
+                _ => self.record_runner_error(global, format_args!("expected any number of assertion, but got none")),
+            }
         }
     }
 }
@@ -425,6 +479,7 @@ impl Execution {
             sequences: Box::default(),
             group_index: 0,
             on_stack: core::cell::Cell::new(None),
+            retry_wakes: Vec::new(),
         }
     }
 
@@ -453,7 +508,8 @@ impl Execution {
                     // SAFETY: arena-owned entry, alive for lifetime of BunTest
                     let entry = unsafe { entry.as_ref() };
                     let now = Timespec::now_force_real_time();
-                    if entry.timespec.order(&now) == core::cmp::Ordering::Less {
+                    // `EPOCH` is no deadline: the entry has none, or it has not started.
+                    if !entry.timespec.eql(&Timespec::EPOCH) && entry.timespec.order(&now) == core::cmp::Ordering::Less {
                         // SAFETY: bun_vm() returns the live per-thread VM.
                         let kill_count = global_this.bun_vm().as_mut().auto_killer.kill();
                         if kill_count.processes > 0 {
@@ -509,7 +565,7 @@ impl Execution {
                     return Ok(StepResult::Waiting { timeout: Timespec::EPOCH });
                 }
                 let group_ptr = NonNull::from(group);
-                Execution::advance_sequence(buntest_ptr, sequence, group_ptr);
+                Execution::advance_sequence(buntest_ptr, global_this, sequence, group_ptr);
 
                 let sequence_result =
                     step_sequence(buntest_strong, global_this, group_ptr, sequence_index, &mut now)?;
@@ -531,7 +587,8 @@ impl Execution {
                     }
                     let next_idx = group.next_sequence_index;
                     let abs_idx = group.sequence_start + next_idx;
-                    if this.sequences[abs_idx].executing {
+                    // A sequence that waits for its next attempt keeps its place. `step_group_one` starts the attempt when the test timer fires.
+                    if matches!(this.sequences[abs_idx].stage, Stage::Executing | Stage::RetryWaiting) {
                         group.next_sequence_index += 1;
                         continue;
                     }
@@ -635,12 +692,13 @@ impl Execution {
     #[optimize(size)]
     fn advance_sequence(
         buntest: NonNull<BunTest>,
+        global: &JSGlobalObject,
         sequence: &mut ExecutionSequence,
         group_ptr: NonNull<ConcurrentGroup>,
     ) {
         let _g = group_begin!();
 
-        debug_assert!(sequence.executing);
+        debug_assert!(sequence.stage == Stage::Executing);
         if core::mem::take(&mut sequence.pending_matchers) > 0 {
             // SAFETY: a field that neither `sequence` nor `group_ptr` points into.
             unsafe { (*buntest.as_ptr()).unclaimed.some_ended = true };
@@ -653,9 +711,9 @@ impl Execution {
                 bun_jsc::compiled_program::did_run_preloads(VirtualMachine::get().global());
             }
 
-            sequence.executing = false;
-            if sequence.maybe_skip {
-                sequence.maybe_skip = false;
+            sequence.stage = Stage::Idle;
+            let errored = core::mem::take(&mut sequence.maybe_skip);
+            if errored {
                 sequence.active_entry = match entry.failure_skip_past {
                     // SAFETY: arena-owned entry
                     Some(failure_skip_past) => nn(unsafe { (*failure_skip_past).next }),
@@ -666,7 +724,7 @@ impl Execution {
             }
             if entry.calling.is_vitest() {
                 if Some(entry_ptr) == sequence.test_entry {
-                    sequence.check_expect_assertions();
+                    sequence.check_expect_assertions(global, !errored);
                 }
                 let left_around_all = entry.around == Some((Around::All, AroundPhase::TearDown));
                 if let (true, Some(scope)) = (left_around_all, entry.base.parent) {
@@ -688,15 +746,18 @@ impl Execution {
 
         if sequence.active_entry.is_none() {
             // just completed the sequence
-            sequence.flip_fails();
+            sequence.flip_fails(global);
             let test_failed = sequence.result.is_fail();
             let test_passed = sequence.result.is_pass(PendingIs::PendingIsPass);
 
             // Handle retry logic: if test failed and we have retries remaining, retry it
             if test_failed && sequence.remaining_retry_count > 0 {
-                sequence.remaining_retry_count -= 1;
-                Execution::save_attempt_failure(buntest, sequence);
-                Execution::reset_sequence(sequence);
+                if sequence.retry_policy().is_some() {
+                    // The policy reads what the test threw, which can run the test's code. `step_retry` is where that is safe.
+                    sequence.stage = Stage::RetryPending;
+                    return;
+                }
+                Execution::retry(buntest, sequence);
                 return;
             }
 
@@ -710,19 +771,27 @@ impl Execution {
                 return;
             }
 
-            // Only report the final result after all retries/repeats are done
-            Execution::on_sequence_completed(buntest, sequence);
-            sequence.context = None;
-
-            // No more retries or repeats; mark sequence as complete
-            // SAFETY: group_ptr points into `buntest.execution.groups`, disjoint from `sequence`.
-            let group = unsafe { &mut *group_ptr.as_ptr() };
-            if group.remaining_incomplete_entries == 0 {
-                debug_assert!(false); // remaining_incomplete_entries should never go below 0
-                return;
-            }
-            group.remaining_incomplete_entries -= 1;
+            Execution::finish_sequence(buntest, global, sequence, group_ptr);
         }
+    }
+
+    /// No more retries or repeats: the sequence has its final result.
+    fn finish_sequence(
+        buntest: NonNull<BunTest>,
+        global: &JSGlobalObject,
+        sequence: &mut ExecutionSequence,
+        group_ptr: NonNull<ConcurrentGroup>,
+    ) {
+        Execution::on_sequence_completed(buntest, global, sequence);
+        sequence.context = None;
+
+        // SAFETY: group_ptr points into `buntest.execution.groups`, disjoint from `sequence`.
+        let group = unsafe { &mut *group_ptr.as_ptr() };
+        if group.remaining_incomplete_entries == 0 {
+            debug_assert!(false); // remaining_incomplete_entries should never go below 0
+            return;
+        }
+        group.remaining_incomplete_entries -= 1;
     }
 
     fn on_group_started(global_this: &JSGlobalObject) {
@@ -788,13 +857,13 @@ impl Execution {
         }
     }
 
-    fn on_sequence_completed(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
+    fn on_sequence_completed(buntest: NonNull<BunTest>, global: &JSGlobalObject, sequence: &mut ExecutionSequence) {
         let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
             0
         } else {
             sequence.started_at.since_now_force_real_time()
         };
-        sequence.check_expect_assertions();
+        sequence.check_expect_assertions(global, false);
         if sequence.result == Result::Pending {
             sequence.result = match sequence.entry_mode() {
                 ScopeMode::Failing => Result::FailBecauseFailingTestPassed,
@@ -852,6 +921,13 @@ impl Execution {
         }
     }
 
+    /// Makes the sequence ready for its next attempt.
+    fn retry(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
+        sequence.remaining_retry_count -= 1;
+        Execution::save_attempt_failure(buntest, sequence);
+        Execution::reset_sequence(sequence);
+    }
+
     /// Saves a failed attempt's failure before a retry, so it's reported with the test's final result.
     fn save_attempt_failure(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
         // SAFETY: `buntest` points at the live per-file BunTest; single-threaded
@@ -877,7 +953,7 @@ impl Execution {
     }
 
     pub(crate) fn reset_sequence(sequence: &mut ExecutionSequence) {
-        debug_assert!(!sequence.executing);
+        debug_assert!(sequence.stage != Stage::Executing);
         {
             // reset the entries
             let mut current_entry = sequence.first_entry;
@@ -1096,6 +1172,15 @@ fn step_group_one(
         g.sequence_end - g.sequence_start
     };
     for sequence_index in 0..len {
+        if concurrent_limit != 0 && active_count >= concurrent_limit {
+            // SAFETY: group points into buntest.execution.groups; read-only.
+            let seq_abs = unsafe { group.as_ref() }.sequence_start + sequence_index;
+            let sequence = &buntest_strong.get().execution.sequences[seq_abs];
+            // The limit keeps a sequence from starting, and sequences start in order. One that started goes on, also if the limit was lowered since.
+            if sequence.stage == Stage::Idle && sequence.active_entry.is_some() {
+                break;
+            }
+        }
         let sequence_status =
             step_sequence(buntest_strong, global_this, group, sequence_index, now)?;
         match sequence_status {
@@ -1110,26 +1195,45 @@ fn step_group_one(
                     timeout: Timespec::min_ignore_epoch(prev_timeout, this_timeout),
                 };
                 active_count += 1;
-                if concurrent_limit != 0 && active_count >= concurrent_limit {
-                    break;
-                }
             }
         }
     }
     Ok(final_status)
 }
 
-/// `evaluate_timeout` leaves the failure of an around hook that timed out to this error, which says what the reporter can't.
-fn report_around_timeout(
+/// Adds the error that Vitest throws for a failure that the runner finds itself to `task.result.errors`. The reporter prints its own words.
+fn record_runner_error(context: JSValue, global: &JSGlobalObject, error: JSValue) {
+    if let Err(err) = TestContext::record_error(context, global, error) {
+        global.bun_vm().as_mut().run_error_handler(global.take_exception(err), None);
+    }
+}
+
+/// A timeout has one error, as in Vitest: `signal` is aborted with it, and it is recorded, or thrown for an around hook that `evaluate_timeout` left to fail here.
+fn report_timeout(
     buntest_strong: &BunTestPtr,
     global_this: &JSGlobalObject,
+    context: Option<JSValue>,
     entry: &ExecutionEntry,
+    is_test: bool,
     data: &RefDataValue,
 ) -> JsResult<()> {
     let Some((around, phase)) = entry.around else {
+        let Some(context) = context else {
+            return Ok(());
+        };
+        let (kind, lowercase) = if is_test { ("Test", "test") } else { ("Hook", "hook") };
+        let error = global_this.create_error_instance(format_args!(
+            "{kind} timed out in {}ms.\nIf this is a long-running {lowercase}, pass a timeout value as the last argument or configure it globally with \"{lowercase}Timeout\".",
+            entry.timeout,
+        ));
+        TestContext::abort_signal(context, global_this, error);
+        record_runner_error(context, global_this, error);
         return Ok(());
     };
     let error = around.timeout_error(global_this, phase, entry.timeout)?;
+    if let Some(context) = context {
+        TestContext::abort_signal(context, global_this, error);
+    }
     buntest_strong.get().on_uncaught_exception(global_this, Some(error), false, data);
     Ok(())
 }
@@ -1178,7 +1282,7 @@ fn step_sequence_one(
     // SAFETY: group points into this.groups; read-only.
     let seq_abs = unsafe { group.as_ref() }.sequence_start + sequence_index;
     let sequence = &mut this.sequences[seq_abs];
-    if sequence.executing {
+    if sequence.stage == Stage::Executing {
         let Some(active_entry_ptr) = sequence.active_entry else {
             debug_assert!(false); // sequence is executing with no active entry
             return Ok(Some(AdvanceSequenceStatus::Execute {
@@ -1188,9 +1292,7 @@ fn step_sequence_one(
         // SAFETY: arena-owned entry
         let active_entry = unsafe { &mut *active_entry_ptr.as_ptr() };
         if active_entry.evaluate_timeout(sequence, now) {
-            if let Some(context) = sequence.context.as_ref().map(Strong::get) {
-                TestContext::abort_signal(context, global_this);
-            }
+            let context = sequence.context.as_ref().map(Strong::get);
             let entry_data = EntryData {
                 sequence_index,
                 entry: active_entry_ptr.as_ptr() as *const (),
@@ -1200,19 +1302,25 @@ fn step_sequence_one(
                 .bun_test_root
                 .get()
                 .mark_timed_out(this.group_index, entry_data);
-            report_around_timeout(
+            report_timeout(
                 buntest_strong,
                 global_this,
+                context,
                 active_entry,
+                sequence.times_out_as_test(active_entry_ptr),
                 &RefDataValue::Execution { group_index: this.group_index, entry_data: Some(entry_data) },
             )?;
-            Execution::advance_sequence(buntest_ptr, sequence, group);
+            Execution::advance_sequence(buntest_ptr, global_this, sequence, group);
             return Ok(None); // run again
         }
         group_log::log(format_args!("runOne: can't advance; already executing"));
         return Ok(Some(AdvanceSequenceStatus::Execute {
             timeout: active_entry.timespec,
         }));
+    }
+
+    if sequence.stage != Stage::Idle {
+        return step_retry(buntest_strong, global_this, group, sequence_index, now);
     }
 
     let Some(next_item_ptr) = sequence.active_entry else {
@@ -1224,7 +1332,7 @@ fn step_sequence_one(
     };
     // SAFETY: arena-owned entry
     let next_item = unsafe { &mut *next_item_ptr.as_ptr() };
-    sequence.executing = true;
+    sequence.stage = Stage::Executing;
     // The first entry becomes active again after its fixture setup entries, so `started_at` guards against a second start.
     if Some(next_item_ptr) == sequence.first_entry && sequence.started_at.eql(&Timespec::EPOCH) {
         Execution::on_sequence_started(global_this, sequence);
@@ -1248,9 +1356,11 @@ fn step_sequence_one(
         };
         group_log::log(format_args!("runSequence queued callback: {}", callback_data));
 
+        // A retry policy reads the errors that the context records.
         if sequence.test_entry.is_some()
             && (next_item.calling.is_vitest()
-                || (Some(next_item_ptr) == sequence.first_entry && sequence.has_vitest_entry()))
+                || (Some(next_item_ptr) == sequence.first_entry
+                    && (sequence.has_vitest_entry() || sequence.retry_policy().is_some())))
         {
             sequence.context(global_this, buntest_strong, this.group_index, sequence_index);
         }
@@ -1296,13 +1406,13 @@ fn step_sequence_one(
                         (*set_up.as_ptr()).failure_skip_past = next_item.failure_skip_past;
                     }
                     sequence.active_entry = Some(set_up);
-                    sequence.executing = false;
+                    sequence.stage = Stage::Idle;
                     return Ok(None); // run again
                 }
                 Err(err) => {
                     let thrown = global_this.take_exception(err);
                     buntest_strong.get().on_uncaught_exception(global_this, Some(thrown), false, &callback_data);
-                    Execution::advance_sequence(buntest_ptr, sequence, group);
+                    Execution::advance_sequence(buntest_ptr, global_this, sequence, group);
                     return Ok(None); // run again
                 }
             }
@@ -1351,11 +1461,13 @@ fn step_sequence_one(
             // SAFETY: re-deref after run_test_callback; sequence_ptr still valid (sequences is a
             // Box<[ExecutionSequence]>, never reallocated during execution).
             let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+            let threw = sequence.maybe_skip;
             if next_item.evaluate_timeout(sequence, now) {
-                if let Some(context) = context {
-                    TestContext::abort_signal(context, global_this);
+                // Vitest keeps the error of a callback that threw after its deadline. One that returned late gets the timeout error.
+                if next_item.around.is_some() || !threw {
+                    let is_test = sequence.times_out_as_test(next_item_ptr);
+                    report_timeout(buntest_strong, global_this, context, next_item, is_test, &callback_data)?;
                 }
-                report_around_timeout(buntest_strong, global_this, next_item, &callback_data)?;
             } else if sequence.waits_for_matchers() {
                 return Ok(Some(AdvanceSequenceStatus::Execute {
                     timeout: next_item.timespec,
@@ -1363,7 +1475,7 @@ fn step_sequence_one(
             }
 
             // the result is available immediately; advance the sequence and run again.
-            Execution::advance_sequence(buntest_ptr, sequence, group);
+            Execution::advance_sequence(buntest_ptr, global_this, sequence, group);
             return Ok(None); // run again
         }
         return Ok(Some(AdvanceSequenceStatus::Execute {
@@ -1398,7 +1510,101 @@ fn step_sequence_one(
                 debug_assert!(sequence.test_entry.is_none());
             }
         }
-        Execution::advance_sequence(buntest_ptr, sequence, group);
+        Execution::advance_sequence(buntest_ptr, global_this, sequence, group);
         return Ok(None); // run again
     }
+}
+
+/// Steps a sequence that `advance_sequence` left to its retry policy: asks the policy once, then waits out its delay. `None` means that the next attempt starts now.
+#[optimize(size)]
+fn step_retry(
+    buntest_strong: &BunTestPtr,
+    global_this: &JSGlobalObject,
+    group: NonNull<ConcurrentGroup>,
+    sequence_index: usize,
+    now: &Timespec,
+) -> JsResult<Option<AdvanceSequenceStatus>> {
+    let buntest = buntest_strong.get();
+    // SAFETY: group points into buntest.execution.groups; read-only.
+    let seq_abs = unsafe { group.as_ref() }.sequence_start + sequence_index;
+    let sequence = &mut buntest.execution.sequences[seq_abs];
+
+    if sequence.stage == Stage::RetryWaiting {
+        let wakes = &mut buntest.execution.retry_wakes;
+        if let Some(&(_, at)) = wakes.iter().find(|&&(waiting, at)| waiting == seq_abs && at.order(now).is_gt()) {
+            return Ok(Some(AdvanceSequenceStatus::Execute { timeout: at }));
+        }
+        wakes.retain(|&(waiting, _)| waiting != seq_abs);
+        sequence.stage = Stage::Idle;
+        return Ok(None);
+    }
+
+    let (delay_ms, condition) = sequence
+        .retry_policy()
+        .and_then(|id| buntest.collection.retry_policy(id))
+        .map_or((0, RetryCondition::Always), |policy| (policy.delay_ms, policy.condition.get()));
+    let context = sequence.context.as_ref().map(Strong::get);
+    let data = RefDataValue::Execution {
+        group_index: buntest.execution.group_index,
+        entry_data: Some(EntryData { sequence_index, entry: core::ptr::null(), attempt: sequence.attempt }),
+    };
+    // Reading the error and matching it can run the test's code, which reaches this sequence. No borrow of it is held here.
+    let retries = match passes_retry_condition(global_this, context, condition) {
+        Ok(retries) => retries,
+        Err(err) => {
+            let thrown = global_this.take_exception(err);
+            buntest_strong.get().on_uncaught_exception(global_this, Some(thrown), false, &data);
+            false
+        }
+    };
+
+    let buntest = buntest_strong.get();
+    let buntest_ptr = NonNull::from(&mut *buntest);
+    let sequence = &mut buntest.execution.sequences[seq_abs];
+    sequence.stage = Stage::Idle;
+    if !retries {
+        Execution::finish_sequence(buntest_ptr, global_this, sequence, group);
+        return Ok(Some(AdvanceSequenceStatus::Done));
+    }
+    Execution::retry(buntest_ptr, sequence);
+    if let Some(context) = context {
+        TestContext::sync_result(context, global_this, sequence)?;
+    }
+    if delay_ms == 0 {
+        return Ok(None);
+    }
+    // The sequence is as before its first entry, so what the earlier attempt does during the wait counts for the next one.
+    let wake = Timespec::ms_from_now_force_real_time(i64::from(delay_ms));
+    sequence.stage = Stage::RetryWaiting;
+    buntest.execution.retry_wakes.push((seq_abs, wake));
+    Ok(Some(AdvanceSequenceStatus::Execute { timeout: wake }))
+}
+
+/// Vitest's `passesRetryCondition`: the test's last error decides, as its hooks left it in `task.result.errors`.
+fn passes_retry_condition(
+    global: &JSGlobalObject,
+    context: Option<JSValue>,
+    condition: RetryCondition<JSValue>,
+) -> JsResult<bool> {
+    let Some(errors) = context.and_then(|context| TestContext::errors(context, global)) else {
+        return Ok(false);
+    };
+    let Some(last) = errors.get_length(global)?.checked_sub(1) else {
+        return Ok(false);
+    };
+    let error = errors.get_index(global, last as u32)?;
+    if error.is_undefined_or_null() {
+        return Ok(false);
+    }
+    let regexp = match condition {
+        RetryCondition::Always => return Ok(true),
+        RetryCondition::Never => return Ok(false),
+        RetryCondition::RegExp(regexp) => regexp,
+    };
+    let message = match error.get(global, "message")? {
+        Some(message) if message.to_boolean() => message.to_js_string(global)?.to_js(),
+        _ => JSValue::js_empty_string(global),
+    };
+    // Bun's matchers colour their messages on a terminal, and the condition is written for the text.
+    regexp.to_match(global, bun_jsc::cpp::Bun__stripANSI(global, message)?)
 }

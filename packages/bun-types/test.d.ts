@@ -701,42 +701,49 @@ declare module "bun:test" {
    *
    * @category Testing
    */
-  export interface Describe<T extends Readonly<any[]>> {
+  export interface Describe<T extends Readonly<any[]>, Options = never> {
     (fn: () => void): void;
 
+    /**
+     * Only a `describe` that Bun runs as Vitest does takes options: the one that `describe.for()` returns, and the
+     * `describe` of a `test.extend()` test. The tests inside inherit the options.
+     */
+    (label: DescribeLabel, options: Options, fn: (...args: T) => void): void;
+    (label: DescribeLabel, fn: (...args: T) => void, options: Options): void;
+    // Last, because `Parameters<typeof describe>` uses the last overload.
     (label: DescribeLabel, fn: (...args: T) => void): void;
     /**
      * Skips all other tests, except this group of tests.
      */
-    only: Describe<T>;
+    only: Describe<T, Options>;
     /**
      * Skips this group of tests.
      */
-    skip: ((label: string | number) => void) & Describe<T>;
+    skip: ((label: string | number) => void) & Describe<T, Options>;
     /**
      * Marks this group of tests as to be written or to be fixed.
      */
-    todo: ((label: string | number) => void) & Describe<T>;
+    todo: ((label: string | number) => void) & Describe<T, Options>;
     /**
      * Marks this group of tests to be executed concurrently.
      */
-    concurrent: Describe<T>;
+    concurrent: Describe<T, Options>;
     /**
      * Marks this group of tests to be executed serially (one after another),
      * even when the --concurrent flag is used.
      */
-    serial: Describe<T>;
+    serial: Describe<T, Options>;
     /**
      * Marks this group of tests to be executed serially (one after another).
      * @alias serial
      */
-    sequential: Describe<T>;
+    sequential: Describe<T, Options>;
     /**
      * Runs the tests in this group and its nested groups in random order.
      *
      * The run summary prints the seed. Use `bun test --seed=<seed>` to get the same order again.
      */
-    shuffle: Describe<T>;
+    shuffle: Describe<T, Options>;
     /**
      * Runs this group of tests, only if `condition` is true.
      *
@@ -744,43 +751,44 @@ declare module "bun:test" {
      *
      * @param condition if these tests should run
      */
-    if(condition: boolean): Describe<T>;
+    if(condition: boolean): Describe<T, Options>;
     /**
      * Runs this group of tests, only if `condition` is true.
      * @alias if
      */
-    runIf(condition: boolean): Describe<T>;
+    runIf(condition: boolean): Describe<T, Options>;
     /**
      * Skips this group of tests, if `condition` is true.
      *
      * @param condition if these tests should be skipped
      */
-    skipIf(condition: boolean): Describe<T>;
+    skipIf(condition: boolean): Describe<T, Options>;
     /**
      * Marks this group of tests as to be written or to be fixed, if `condition` is true.
      *
      * @param condition if these tests should be marked TODO
      */
-    todoIf(condition: boolean): Describe<T>;
+    todoIf(condition: boolean): Describe<T, Options>;
     /**
      * Returns a function that runs for each item in `table`.
      *
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
      */
-    each<T extends Readonly<[any, ...any[]]>>(table: readonly T[]): Describe<[...T]>;
-    each<T extends readonly any[]>(table: readonly T[]): Describe<[...T]>;
-    each<const T>(table: readonly T[]): Describe<[T]>;
+    each<T extends Readonly<[any, ...any[]]>>(table: readonly T[]): Describe<[...T], Options>;
+    each<T extends readonly any[]>(table: readonly T[]): Describe<[...T], Options>;
+    each<const T>(table: readonly T[]): Describe<[T], Options>;
     /**
      * Takes the table as a tagged template. The first line names the columns, and each row is passed as an object.
      */
-    each(headings: TemplateStringsArray, ...values: any[]): Describe<[row: any]>;
+    each(headings: TemplateStringsArray, ...values: any[]): Describe<[row: any], Options>;
     // Repeated because `Parameters<typeof describe.each>` and `ReturnType<typeof describe.each>` use the last overload.
-    each<const T>(table: readonly T[]): Describe<[T]>;
+    each<const T>(table: readonly T[]): Describe<[T], Options>;
     /**
-     * Like `each()`, but an array row is passed as one argument instead of being spread.
+     * Like `each()`, but an array row is passed as one argument instead of being spread. Bun runs the `describe` it
+     * returns as Vitest does, so that one takes options.
      */
-    for<const T>(table: readonly T[]): Describe<[row: T]>;
-    for(headings: TemplateStringsArray, ...values: any[]): Describe<[row: any]>;
+    for<const T>(table: readonly T[]): Describe<[row: T], number | TestWithContextOptions>;
+    for(headings: TemplateStringsArray, ...values: any[]): Describe<[row: any], number | TestWithContextOptions>;
   }
   /**
    * Describes a group of related tests.
@@ -1247,7 +1255,10 @@ declare module "bun:test" {
      * belong to this test even when other tests run concurrently.
      */
     readonly expect: Expect;
-    /** Aborted when the test times out. */
+    /**
+     * Aborted when the test times out. Its `reason` is the timeout error in `task.result.errors`. It stays aborted
+     * in the retries of the test, because they get the same context.
+     */
     readonly signal: AbortSignal;
     /** Stops the test and reports it as skipped. */
     skip(note?: string): never;
@@ -1296,7 +1307,11 @@ declare module "bun:test" {
     annotations: TestAnnotation[];
     result: {
       state: "run" | "pass" | "fail" | "skip";
-      /** Errors thrown by the test, its hooks and its fixtures. */
+      /**
+       * Errors thrown by the test, its hooks and its fixtures. A thrown `AggregateError` adds each member of its
+       * `errors`, and a thrown array adds each of its elements. A timeout, an `expect.assertions()` or
+       * `expect.hasAssertions()` that isn't met and a `test.fails` that passes each add the error Vitest throws for it.
+       */
       errors?: unknown[];
       retryCount: number;
       repeatCount: number;
@@ -1384,10 +1399,44 @@ declare module "bun:test" {
   ) => void;
   type TestOfRows<Row extends ReadonlyArray<unknown>> = {
     // Must be first, or `options` typed as `any` matches the next overload's `fn`. `Parameters<>` uses the last one.
-    (label: string, fn: (...args: Row) => void | Promise<unknown>, options: number | TestOptions): void;
-    (label: string, options: number | TestOptions, fn: (...args: Row) => void | Promise<unknown>): void;
-    (label: string, fn: (...args: Row) => void | Promise<unknown>, options?: number | TestOptions): void;
+    (label: string, fn: (...args: Row) => void | Promise<unknown>, options: number | TestWithContextOptions): void;
+    (label: string, options: number | TestWithContextOptions, fn: (...args: Row) => void | Promise<unknown>): void;
+    (label: string, fn: (...args: Row) => void | Promise<unknown>, options?: number | TestWithContextOptions): void;
   };
+
+  /**
+   * The options of a {@link TestWithContext} test. Bun runs such a test as Vitest does, so `retry` also takes
+   * Vitest's object.
+   */
+  export interface TestWithContextOptions extends Omit<TestOptions, "retry"> {
+    /**
+     * The number of times to retry the test if it fails, or an object that also says when a retry runs.
+     *
+     * @default 0
+     */
+    retry?:
+      | number
+      | {
+          /**
+           * The number of times to retry the test if it fails.
+           *
+           * @default 0
+           */
+          count?: number | undefined;
+          /**
+           * Milliseconds to wait before each retry. The wait is on the real clock, also while timers are fake.
+           *
+           * @default 0
+           */
+          delay?: number | undefined;
+          /**
+           * Retry the test only if this matches the message of its last error, which `task.result.errors` ends with.
+           * The message of a test that timed out starts with `Test timed out in`. The colors that a terminal gets
+           * are removed from the message first.
+           */
+          condition?: RegExp | undefined;
+        };
+  }
 
   /**
    * A `test` whose callbacks receive the {@link TestContext} instead of a `done` callback.
@@ -1397,17 +1446,17 @@ declare module "bun:test" {
     (
       label: string,
       fn: (...args: [...Row, context: Context & TestContext]) => void | Promise<unknown>,
-      options: number | TestOptions,
+      options: number | TestWithContextOptions,
     ): void;
     (
       label: string,
-      options: number | TestOptions,
+      options: number | TestWithContextOptions,
       fn: (...args: [...Row, context: Context & TestContext]) => void | Promise<unknown>,
     ): void;
     (
       label: string,
       fn: (...args: [...Row, context: Context & TestContext]) => void | Promise<unknown>,
-      options?: number | TestOptions,
+      options?: number | TestWithContextOptions,
     ): void;
     only: TestWithContext<Context, Row>;
     skip: ((label: string) => void) & TestWithContext<Context, Row>;
@@ -1448,8 +1497,8 @@ declare module "bun:test" {
     aroundEach: AroundHook<Context & TestContext>;
     /** Like {@link aroundAll}. The callback receives the `scope: "file"` or `"worker"` fixtures that it destructures. */
     aroundAll: AroundHook<Context>;
-    describe: Describe<[]>;
-    suite: Describe<[]>;
+    describe: Describe<[], number | TestWithContextOptions>;
+    suite: Describe<[], number | TestWithContextOptions>;
   }
   /**
    * Runs a test.

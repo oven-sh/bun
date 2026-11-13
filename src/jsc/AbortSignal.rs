@@ -56,6 +56,7 @@ unsafe extern "C" {
         arg1: &JSGlobalObject,
         arg2: CommonAbortReason,
     );
+    safe fn WebCore__AbortSignal__signalWithReason(arg0: &AbortSignal, reason: JSValue);
     safe fn WebCore__AbortSignal__incrementPendingActivity(arg0: &AbortSignal);
     safe fn WebCore__AbortSignal__decrementPendingActivity(arg0: &AbortSignal);
     safe fn WebCore__AbortSignal__reasonIfAborted(
@@ -89,6 +90,12 @@ impl AbortSignal {
     pub fn signal(&self, global_object: &JSGlobalObject, reason: CommonAbortReason) {
         bun_analytics::features::abort_signal.fetch_add(1, Ordering::Relaxed);
         WebCore__AbortSignal__signal(self, global_object, reason)
+    }
+
+    /// What `AbortController.prototype.abort(reason)` does: `reason` becomes `signal.reason`.
+    pub fn signal_with_reason(&self, reason: JSValue) {
+        bun_analytics::features::abort_signal.fetch_add(1, Ordering::Relaxed);
+        WebCore__AbortSignal__signalWithReason(self, reason)
     }
 
     pub fn pending_activity_ref(&self) {

@@ -6603,12 +6603,15 @@ impl NodeFS {
     }
 
     fn mkdir_found_existing(&mut self, path: &OSPathSliceZ, err: &sys::Error) -> Maybe<ret::Mkdir> {
-        // if is a directory, OK. otherwise failure
-        if matches!(directory_exists_at_os_path(FD::INVALID, path), Ok(true)) {
-            return Ok(StringOrUndefined::None);
-        }
+        let errno = match directory_exists_at_os_path(FD::INVALID, path) {
+            // if is a directory, OK. otherwise failure
+            Ok(true) => return Ok(StringOrUndefined::None),
+            Ok(false) => err.errno,
+            // Like node: a failed stat of the existing path reports the stat error.
+            Err(probe_err) => probe_err.errno,
+        };
         Err(sys::Error {
-            errno: err.errno,
+            errno,
             syscall: sys::Tag::mkdir,
             path: self
                 .os_path_into_sync_error_buf(without_nt_prefix(&path[..]))
@@ -6684,22 +6687,24 @@ impl NodeFS {
                                 // On Windows, this may happen if trying to mkdir replacing a file
                                 #[cfg(windows)]
                                 {
-                                    if let Ok(res) =
-                                        directory_exists_at_os_path(FD::INVALID, parent)
-                                    {
-                                        // is a directory. break.
-                                        if !res {
-                                            return Err(sys::Error {
-                                                errno: E::ENOTDIR as _,
-                                                syscall: sys::Tag::mkdir,
-                                                path: Self::os_path_into_buf(
-                                                    sync_error_buf,
-                                                    without_nt_prefix(&(&path[..])[..len as usize]),
-                                                )
-                                                .into(),
-                                                ..Default::default()
-                                            });
-                                        }
+                                    let errno =
+                                        match directory_exists_at_os_path(FD::INVALID, parent) {
+                                            // is a directory. break.
+                                            Ok(true) => None,
+                                            Ok(false) => Some(E::ENOTDIR as _),
+                                            Err(probe_err) => Some(probe_err.errno),
+                                        };
+                                    if let Some(errno) = errno {
+                                        return Err(sys::Error {
+                                            errno,
+                                            syscall: sys::Tag::mkdir,
+                                            path: Self::os_path_into_buf(
+                                                sync_error_buf,
+                                                without_nt_prefix(&(&path[..])[..len as usize]),
+                                            )
+                                            .into(),
+                                            ..Default::default()
+                                        });
                                     }
                                 }
                                 working_mem[i as usize] = paths::SEP as OSPathChar;

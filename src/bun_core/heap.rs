@@ -13,7 +13,7 @@
 //! that own BOTH halves of the round-trip:
 //!
 //!   - `bun_threading::WorkPool::schedule_owned` / `OwnedTask`
-//!   - `bun_event_loop::Task::from_boxed` / `ConcurrentTask::create_boxed`
+//!   - `bun_event_loop::Task::from_boxed`
 //!   - `bun_libuv_sys::Owned`
 //!
 //! New code should reach for one of those. Direct `heap::into_raw`/`heap::take`

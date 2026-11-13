@@ -147,7 +147,7 @@ impl HotReloadEvent {
                             new_first_dep;
                     } else {
                         // without any files to depend on this watcher is freed
-                        dev.directory_watchers.free_entry(watcher_index);
+                        dev.free_directory_watch(watcher_index);
                     }
                 }
             }
@@ -164,11 +164,13 @@ impl HotReloadEvent {
 
         let changed_file_paths = self.files.keys();
         bun_core::handle_oom(
-            dev.server_graph
+            dev.graphs
+                .server
                 .invalidate(changed_file_paths, entry_points),
         );
         bun_core::handle_oom(
-            dev.client_graph
+            dev.graphs
+                .client
                 .invalidate(changed_file_paths, entry_points),
         );
 
@@ -197,7 +199,7 @@ impl HotReloadEvent {
 
         if let Some(map) = &dev.has_tailwind_plugin_hack {
             for abs_path in map.keys() {
-                let Some(file) = dev.client_graph.bundled_files.get(abs_path) else {
+                let Some(file) = dev.graphs.client.bundled_files.get(abs_path) else {
                     continue;
                 };
                 if file.file_kind() == FileKind::Css {

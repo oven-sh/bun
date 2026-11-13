@@ -182,6 +182,8 @@ public:
     }
 
     bool hasEvaluated = false;
+    // On the require map entry of an ES module while functionEsmLoadSync loads it: the key of that load. Null at every other time.
+    const JSC::Identifier* esmLoadInFlight = nullptr;
 
     JSCommonJSModule(JSC::VM& vm, JSC::Structure* structure, JSC::JSString* id, JSC::JSValue filename, JSC::JSString* dirname)
         : Base(vm, structure)
@@ -194,6 +196,9 @@ public:
 
 JSC::Structure* createCommonJSModuleStructure(
     Zig::GlobalObject* globalObject);
+
+// JSCommonJSModule::load() of the require map entry of the ES module `key` during its load: `exports` becomes the live namespace, once the module is linked.
+bool requireESModuleInFlight(Zig::GlobalObject*, JSCommonJSModule* standIn, const JSC::Identifier& key);
 
 // A `require.cache` object over `requireMap`: the global one, or a Bun.ModuleGraph's
 // together with one of the graph's modules (whose loader's ES modules it also lists).

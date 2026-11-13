@@ -304,6 +304,7 @@ const requireCacheFunctions = [
 ];
 
 // JSCommonJSExtensions.cpp builtinLoader(): the functions under ".js", ".ts" and ".json" call it for a file that turns out to be an ES module. Nobody has one of them but from the table of loaders.
+// JSCommonJSModule::load() calls it too, for a require() that finds the module object of an ES module that another require() is still loading.
 const functionsOfDefaultLoaders = functionsIn("builtins/CommonJS", "requireESMFromHijackedExtension");
 
 const streamedModuleFunctions = functionsIn("builtins/WasmStreaming", "consumeStream");
@@ -320,6 +321,7 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   // In an executable the getter is native code.
   "%ModuleRequirePrototype%.main": moduleChildrenFunctions,
   "%ModuleRequirePrototype%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
+  "%PrivateGlobals%.evaluateCommonJSModule": functionsOfDefaultLoaders,
   "Math.max": functionsIn("prelude/written-lists", "maxOfList"),
   "Math.min": functionsIn("prelude/written-lists", "minOfList"),
   "Array.prototype.sort": functionsIn(

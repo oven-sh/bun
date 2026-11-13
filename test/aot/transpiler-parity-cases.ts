@@ -48,6 +48,9 @@ const decorators = "ES Decorators";
 const decoratorExpressions = "ES Decorators > decorator expressions";
 const checkerSpeaksFirst = "the program is refused, in the words of the type checker and not of the parser";
 const untypedParameters = "TS7006: the parameters of the decorator have no types";
+const requireBegan = "require(esm) inside a require cycle that a require() began";
+const standInOfCompiledFile =
+  "a wrong answer today: compiled, the inner require() gets the empty object that stands in for the ES module while it loads";
 
 // path -> test name as `bun test` prints it -> why it fails.
 // A type error stops the build.
@@ -96,6 +99,27 @@ const expectedFailures: Record<string, Record<string, string>> = {
     "bundler > ts/EnumTreeShaking/namespace-before.ts": "TS2304: nothing declares y",
     "bundler > ts/EnumTreeShaking/namespace-after.ts": "TS2304: nothing declares y",
     "bundler > ts/EnumRulesFrom_TypeScript_5_0/not-supported.ts": "TS2304: nothing declares capture",
+  },
+  "test/js/bun/resolve/require-esm-evaluating-cycle.test.ts": {
+    [`${requireBegan} > require() in a CommonJS file`]: standInOfCompiledFile,
+    [`${requireBegan} > module.require()`]: standInOfCompiledFile,
+    [`${requireBegan} > createRequire() in an ES module`]: standInOfCompiledFile,
+    [`${requireBegan} > import.meta.require()`]: standInOfCompiledFile,
+    [`${requireBegan} > require() in ES modules`]: standInOfCompiledFile,
+    [`${requireBegan} > TypeScript \`import a = require()\``]: standInOfCompiledFile,
+    [`${requireBegan} > a module that requires itself`]: standInOfCompiledFile,
+    [`${requireBegan} > chunks of \`bun build --splitting --target=bun\``]: standInOfCompiledFile,
+    [`${requireBegan} > an ES module that a.mjs imports requires a.mjs before the body of a.mjs starts`]:
+      standInOfCompiledFile,
+    [`${requireBegan} > an export named "module.exports"`]: standInOfCompiledFile,
+    [`${requireBegan} > a module that stores to \`id\` of its require.cache entry: the inner require() answers for that module`]:
+      standInOfCompiledFile,
+    [`${requireBegan} > a module with top-level await: the inner require() throws what the outer one throws`]:
+      standInOfCompiledFile,
+    [`${requireBegan} > a module that throws after the inner require(): every require() of it throws, and none is cached`]:
+      standInOfCompiledFile,
+    [`${requireBegan} > inside a Bun.ModuleGraph`]:
+      "the graph loads in-graph.mjs from disk, and compiled code loads no code that was not compiled with it",
   },
 };
 

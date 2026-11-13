@@ -1,13 +1,15 @@
 use super::find_by_key;
-use super::quiet::{has_fixed_binding, is_global_name, is_in_statement_of_file, plain_member};
+use super::quiet::{has_fixed_binding, is_global_name, plain_member};
 use super::resolve::{
-    PrivateStateKind, PrivateStateRole, PrivateStateSite, ResolveInput, resolve_private_field_call,
+    PrivateFieldAccess, PrivateStateKind, PrivateStateRole, PrivateStateSite, ResolveInput,
+    resolve_private_field_call,
 };
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self, Mutability};
 use crate::modules::ExportBinding;
 use bun_sema::bind::{
-    Binding, BindingInitializer, BindingKind, BindingStability, Bound, Parent, StoreKind, SymbolId,
+    Binding, BindingInitializer, BindingKind, BindingStability, Bound, CodeUnit, FnOwner, Parent,
+    StoreKind, SymbolId,
 };
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Decision, Decisions};
@@ -19,7 +21,8 @@ use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
-const METHODS_OF_COLLECTIONS: [BuiltinId; 5] = [
+const METHODS_OF_COLLECTIONS: [BuiltinId; 6] = [
+    BuiltinId::WeakSet,
     BuiltinId::WeakMapPrototypeGet,
     BuiltinId::WeakMapPrototypeHas,
     BuiltinId::WeakMapPrototypeSet,
@@ -33,11 +36,17 @@ pub(super) fn replaces_method_of_collections(replaced: &[u32]) -> bool {
     methods.any(|&method| is_listed(table::canonical_id(method)) || is_listed(method))
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum StateOwner {
+    Class(ClassId),
+    Function(FnId),
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct PrivateState {
     pub symbol: SymbolId,
     pub kind: PrivateStateKind,
-    pub owner: ClassId,
+    pub owner: StateOwner,
     pub creation: ExprId,
 }
 
@@ -66,9 +75,9 @@ impl FilePrivateStates {
         Some(self.states[*find_by_key(&self.by_creation, creation)? as usize])
     }
 
-    pub fn states_of_class(&self, class: ClassId) -> &[PrivateState] {
-        let start = self.states.partition_point(|state| state.owner < class);
-        let count = self.states[start..].partition_point(|state| state.owner == class);
+    pub fn states_of_owner(&self, owner: StateOwner) -> &[PrivateState] {
+        let start = self.states.partition_point(|state| state.owner < owner);
+        let count = self.states[start..].partition_point(|state| state.owner == owner);
         &self.states[start..start + count]
     }
 }
@@ -76,8 +85,8 @@ impl FilePrivateStates {
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Owner {
     Unknown,
-    Class(ClassId),
-    SeveralClasses,
+    One(StateOwner),
+    Several,
 }
 
 struct Candidate {
@@ -201,9 +210,53 @@ impl Finder<'_, '_, '_> {
         }
     }
 
+    /// In a statement of the file, or of a function that is called in place there or handed to one.
+    fn runs_once(&self, expression: ExprId) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let mut expression = expression;
+        loop {
+            let Some(statement) = bound.statement_of_expr(expression) else {
+                return false;
+            };
+            let function = match bound.parent_of_stmt(statement) {
+                Parent::File => return true,
+                Parent::FnBody(function) => function,
+                _ => return false,
+            };
+            if self.is_body_of_module(function) {
+                return true;
+            }
+            let FnOwner::Expr(written) = bound.fns[function.idx()].owner else {
+                return false;
+            };
+            let mut callee = written;
+            while let Parent::Expr(parent) = bound.parent_of_expr(callee)
+                && hir.type_assertion_operand(parent) == Some(callee)
+            {
+                callee = parent;
+            }
+            let Parent::Expr(call) = bound.parent_of_expr(callee) else {
+                return false;
+            };
+            let ExprKind::Call(site) = hir[call].kind else {
+                return false;
+            };
+            let called = hir.skip_type_assertions(hir[site].callee);
+            if called != written && !matches!(hir[called].kind, ExprKind::Fn(_)) {
+                return false;
+            }
+            expression = call;
+        }
+    }
+
+    fn is_body_of_module(&self, function: FnId) -> bool {
+        let wrapped = self.input.modules.wrapped();
+        wrapped.of_callback(self.file, function).is_some()
+    }
+
     fn find_holder(&self, creation: ExprId) -> Option<(SymbolId, Option<ExprId>)> {
         let (hir, bound) = (self.hir, self.bound);
-        if !is_in_statement_of_file(bound, creation) {
+        if !self.runs_once(creation) {
             return None;
         }
         match bound.parent_of_expr(creation) {
@@ -316,31 +369,48 @@ impl Finder<'_, '_, '_> {
             return;
         }
         let is_looked_up = !has_fixed_binding(self.bound, mention);
-        let definition = self.find_definition(mention, kind);
-        let site = match definition {
-            Some(call) => Some((call, PrivateStateRole::Definition)),
-            None => {
-                let call = self.find_helper_call(mention, kind);
-                call.map(|call| (call, PrivateStateRole::HelperArgument))
-            }
-        };
-        let constructed = definition.and_then(|call| self.find_constructed_class(call));
+        let found = self.find_site(mention, kind);
+        let site = found.map(|(call, role, _)| (call, role));
+        let defined = found.and_then(|(_, _, defined)| defined);
+        let constructed = defined.and_then(|object| self.find_constructed_owner(object));
         let candidate = &mut self.candidates[candidate];
         let Some(site) = site.filter(|_| !is_looked_up) else {
             candidate.has_other_mention = true;
             return;
         };
         candidate.sites.push(site);
-        if let Some(class) = constructed {
+        if let Some(found) = constructed {
             candidate.owner = match candidate.owner {
-                Owner::Unknown => Owner::Class(class),
-                Owner::Class(owner) if owner == class => Owner::Class(class),
-                Owner::Class(_) | Owner::SeveralClasses => Owner::SeveralClasses,
+                Owner::Unknown => Owner::One(found),
+                Owner::One(owner) if owner == found => Owner::One(found),
+                Owner::One(_) | Owner::Several => Owner::Several,
             };
         }
     }
 
-    fn find_definition(&self, mention: ExprId, kind: PrivateStateKind) -> Option<ExprId> {
+    /// The call that names the state, and the object to which it adds the state.
+    fn find_site(
+        &self,
+        mention: ExprId,
+        kind: PrivateStateKind,
+    ) -> Option<(ExprId, PrivateStateRole, Option<ExprId>)> {
+        let hir = self.hir;
+        if let Some((call, role)) = self.find_method_call(mention, kind) {
+            let ExprKind::Call(site) = hir[call].kind else {
+                return None;
+            };
+            let object = hir.ids(hir[site].args).next();
+            let defined = object.filter(|_| role == PrivateStateRole::Definition);
+            return Some((call, role, defined));
+        }
+        self.find_helper_call(mention, kind)
+    }
+
+    fn find_method_call(
+        &self,
+        mention: ExprId,
+        kind: PrivateStateKind,
+    ) -> Option<(ExprId, PrivateStateRole)> {
         let (hir, bound) = (self.hir, self.bound);
         let Parent::Expr(method) = bound.parent_of_expr(mention) else {
             return None;
@@ -357,19 +427,29 @@ impl Finder<'_, '_, '_> {
             PrivateStateKind::Field => (BuiltinId::WeakMapPrototypeSet, 2),
             PrivateStateKind::Brand => (BuiltinId::WeakSetPrototypeAdd, 1),
         };
-        let name = table::find_name(self.input.files.atoms.bytes(name));
+        let name = table::find_name(self.input.files.atoms.bytes(name))?;
         let mut arguments = hir.ids(site.args);
-        let is_definition = object == mention
-            && name == Some(table::entry(defining_method).name)
+        let is_plain_call = object == mention
             && site.callee == method
             && matches!(site.chain, Chain::No)
+            && !arguments.any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_)));
+        if !is_plain_call {
+            return None;
+        }
+        if name == table::entry(BuiltinId::WeakMapPrototypeHas).name {
+            return (site.args.len() == 1).then_some((call, PrivateStateRole::Test));
+        }
+        let is_definition = name == table::entry(defining_method).name
             && site.args.len() == argument_count
-            && !arguments.any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_)))
             && self.is_value_unused(call);
-        is_definition.then_some(call)
+        is_definition.then_some((call, PrivateStateRole::Definition))
     }
 
-    fn find_helper_call(&self, mention: ExprId, kind: PrivateStateKind) -> Option<ExprId> {
+    fn find_helper_call(
+        &self,
+        mention: ExprId,
+        kind: PrivateStateKind,
+    ) -> Option<(ExprId, PrivateStateRole, Option<ExprId>)> {
         let hir = self.hir;
         let Parent::Expr(call) = self.bound.parent_of_expr(mention) else {
             return None;
@@ -378,8 +458,45 @@ impl Finder<'_, '_, '_> {
             return None;
         };
         let helper_call = resolve_private_field_call(self.input, self.file, call)?;
-        let state = hir.ids(hir[site].args).nth(helper_call.state);
-        (helper_call.supports_private_state(kind) && state == Some(mention)).then_some(call)
+        let argument = |index: usize| hir.ids(hir[site].args).nth(index);
+        if !helper_call.supports_private_state(kind) || argument(helper_call.state) != Some(mention)
+        {
+            return None;
+        }
+        match helper_call.access(kind)? {
+            PrivateFieldAccess::Add { .. } => {
+                let defined = argument(helper_call.receiver);
+                Some((call, PrivateStateRole::HelperArgument, defined))
+            }
+            PrivateFieldAccess::Update => {
+                let is_stepped = self.is_stepped_member(call);
+                is_stepped.then_some((call, PrivateStateRole::Update, None))
+            }
+            _ => Some((call, PrivateStateRole::HelperArgument, None)),
+        }
+    }
+
+    /// `call._++`
+    fn is_stepped_member(&self, call: ExprId) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let Parent::Expr(member) = bound.parent_of_expr(call) else {
+            return false;
+        };
+        let Some((object, name)) = plain_member(hir, member) else {
+            return false;
+        };
+        let Parent::Expr(update) = bound.parent_of_expr(member) else {
+            return false;
+        };
+        object == call
+            && self.input.files.atoms.bytes(name) == b"_"
+            && matches!(
+                hir[update].kind,
+                ExprKind::Unary {
+                    op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+                    ..
+                }
+            )
     }
 
     fn enclosing_function(&self, expression: ExprId) -> Option<FnId> {
@@ -396,34 +513,47 @@ impl Finder<'_, '_, '_> {
         }
     }
 
-    fn can_own_states(&self, class: ClassId) -> bool {
+    fn can_own_states(&self, owner: StateOwner) -> bool {
         let (hir, bound) = (self.hir, self.bound);
+        let StateOwner::Class(class) = owner else {
+            return true;
+        };
         let mut members = hir[class].members.iter();
         !hir[class].flags.contains(Flags::AMBIENT)
             && bound.private_names_of_class(class).len() == 0
             && !members.any(|member| hir[member].flags.contains(Flags::ACCESSOR))
     }
 
-    fn find_constructed_class(&self, definition: ExprId) -> Option<ClassId> {
-        let hir = self.hir;
-        let ExprKind::Call(site) = hir[definition].kind else {
-            return None;
+    /// The class or the function that adds state to `this`, or to the variable that holds its result of `super`.
+    fn find_constructed_owner(&self, object: ExprId) -> Option<StateOwner> {
+        let (hir, bound) = (self.hir, self.bound);
+        let function = self.enclosing_function(object)?;
+        let is_this = match hir[object].kind {
+            ExprKind::This => true,
+            ExprKind::Ident(_) => match bound.binding(object) {
+                Binding::Symbol(symbol) => {
+                    let scope = bound.symbol_scope(symbol);
+                    let is_variable = bound.binding_kind(symbol) == BindingKind::Var;
+                    if !is_variable || bound.code_unit(scope) != CodeUnit::Function(function) {
+                        return None;
+                    }
+                    false
+                }
+                _ => return None,
+            },
+            _ => return None,
         };
-        let object = hir.ids(hir[site].args).next()?;
-        if !matches!(hir[object].kind, ExprKind::This) {
-            return None;
+        match hir.runtime_function_kind(function) {
+            FnKind::Constructor if is_this => bound.function_class(function).map(StateOwner::Class),
+            FnKind::Decl | FnKind::Expr => Some(StateOwner::Function(function)),
+            _ => None,
         }
-        let function = self.enclosing_function(definition)?;
-        if hir.runtime_function_kind(function) != FnKind::Constructor {
-            return None;
-        }
-        self.bound.function_class(function)
     }
 
     fn finish(self) -> FilePrivateStates {
-        let mut accepted: Vec<(ClassId, &Candidate)> = Vec::new();
+        let mut accepted: Vec<(StateOwner, &Candidate)> = Vec::new();
         for candidate in &self.candidates {
-            if let Owner::Class(owner) = candidate.owner
+            if let Owner::One(owner) = candidate.owner
                 && !candidate.has_other_mention
                 && self.can_own_states(owner)
             {
@@ -531,6 +661,78 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
         })
     }
 
+    const BABEL_HELPERS: &str = r#"function _checkPrivateRedeclaration(e, t) { if (t.has(e)) throw new TypeError("Cannot initialize the same private elements twice on an object"); }
+function _classPrivateFieldInitSpec(e, t, a) { _checkPrivateRedeclaration(e, t), t.set(e, a); }
+function _classPrivateMethodInitSpec(e, a) { _checkPrivateRedeclaration(e, a), a.add(e); }
+function _assertClassBrand(e, t, n) { if ("function" == typeof e ? e === t : e.has(t)) return arguments.length < 3 ? t : n; throw new TypeError("Private element is not present on this object"); }
+function _classPrivateFieldGet2(s, a) { return s.get(_assertClassBrand(s, a)); }
+function _classPrivateFieldSet2(s, a, r) { return s.set(_assertClassBrand(s, a), r), r; }
+function _classPrivateGetter(s, r, a) { return a(_assertClassBrand(s, r)); }
+function _classPrivateSetter(s, r, a, t) { return r(_assertClassBrand(s, a), t), t; }
+"#;
+
+    const ESBUILD_HELPERS: &str = r#"var __typeError = (msg) => { throw TypeError(msg); };
+var __accessCheck = (obj, member, msg) => member.has(obj) || __typeError("Cannot " + msg);
+var __privateIn = (member, obj) => Object(obj) !== obj ? __typeError('Cannot use the "in" operator on this value') : member.has(obj);
+var __privateGet = (obj, member, getter) => (__accessCheck(obj, member, "read from private field"), getter ? getter.call(obj) : member.get(obj));
+var __privateAdd = (obj, member, value) => member.has(obj) ? __typeError("Cannot add the same private member more than once") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value);
+var __privateSet = (obj, member, value, setter) => (__accessCheck(obj, member, "write to private field"), setter ? setter.call(obj, value) : member.set(obj, value), value);
+var __privateMethod = (obj, member, method) => (__accessCheck(obj, member, "access private method"), method);
+var __privateWrapper = (obj, member, setter, getter) => ({ set _(value) { __privateSet(obj, member, value, setter); }, get _() { return __privateGet(obj, member, getter); } });
+"#;
+
+    #[test]
+    fn the_collections_that_babel_writes_are_private_state() {
+        let class = r#"var _x = new WeakMap();
+var _brand = new WeakSet();
+class C {
+    constructor() { _classPrivateMethodInitSpec(this, _brand); _classPrivateFieldInitSpec(this, _x, 0); }
+    read() { return _classPrivateFieldGet2(_x, this); }
+    write(v) { _classPrivateFieldSet2(_x, this, v); }
+    run() { return _assertClassBrand(_brand, this, step).call(this); }
+    get y() { return _classPrivateGetter(_brand, this, read); }
+    set y(v) { _classPrivateSetter(_brand, write, this, v); }
+    static is(o) { return _x.has(o); }
+}
+function step() {}
+function read(o) { return o; }
+function write(o, v) { return o === v; }
+"#;
+        let main = format!("{BABEL_HELPERS}{class}");
+        let expected = ["_x Field 4", "_brand Brand 4"];
+        assert_eq!(describe_states("main.mjs", &main), expected);
+        let replaced = format!("{main}_assertClassBrand = null;");
+        assert!(describe_states("main.mjs", &replaced).is_empty());
+    }
+
+    #[test]
+    fn the_collections_that_esbuild_writes_are_private_state() {
+        let class = r#"var _x, _brand, step, read, write;
+class C {
+    constructor() { __privateAdd(this, _brand); __privateAdd(this, _x, 0); }
+    read() { return __privateGet(this, _x); }
+    write(v) { __privateSet(this, _x, v); }
+    run() { return __privateMethod(this, _brand, step).call(this); }
+    get y() { return __privateGet(this, _brand, read); }
+    set y(v) { __privateSet(this, _brand, v, write); }
+    static is(o) { return __privateIn(_x, o); }
+    step() { __privateWrapper(this, _x)._++; return --__privateWrapper(this, _x)._; }
+}
+_x = new WeakMap();
+_brand = new WeakSet();
+step = function() {};
+read = function() { return this; };
+write = function(v) { return v; };
+"#;
+        let main = format!("{ESBUILD_HELPERS}{class}");
+        let expected = ["_x Field 6", "_brand Brand 4"];
+        let passed = format!("{main}function pass(o) {{ return __privateWrapper(o, _x); }}");
+        assert_eq!(describe_states("main.mjs", &passed), ["_brand Brand 4"]);
+        assert_eq!(describe_states("main.mjs", &main), expected);
+        let replaced = format!("{main}__accessCheck = null;");
+        assert!(describe_states("main.mjs", &replaced).is_empty());
+    }
+
     fn describe_counter_with(more: &str) -> Vec<String> {
         describe_states("main.mjs", &format!("{COUNTER}{more}"))
     }
@@ -558,9 +760,10 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
             let states = helpers
                 .private_states(files, graph, file)
                 .expect("analyzed");
-            let of_class = states.states_of_class(ClassId(0));
+            let of_class = states.states_of_owner(StateOwner::Class(ClassId(0)));
             assert_eq!(of_class.len(), 2);
-            assert!(states.states_of_class(ClassId(1)).is_empty());
+            let other = StateOwner::Class(ClassId(1));
+            assert!(states.states_of_owner(other).is_empty());
             for state in of_class {
                 assert_eq!(states.state(state.symbol), Some(*state));
                 assert_eq!(states.created_by(state.creation), Some(*state));
@@ -574,7 +777,9 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
         for more in [
             "console.log(_Counter_x);",
             "_Counter_x.get({});",
-            "_Counter_x.has({});",
+            "_Counter_x.has();",
+            "_Counter_x.has({}, 1);",
+            "_Counter_x?.has({});",
             "_Counter_x.delete({});",
             "const same = _Counter_x.set({}, 1);",
             "_Counter_x?.set({}, 1);",
@@ -642,6 +847,7 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
             "_Counter_x[\"set\"]({}, 1);",
             "void _Counter_x.set({}, 1);",
             "_Counter_x.set({}, 1), Math.max();",
+            "_Counter_x.has({});",
             "function outside(o) { return __classPrivateFieldGet(o, _Counter_x, \"f\"); }",
         ] {
             assert_eq!(describe_counter_with(more), expected, "{more}");
@@ -652,7 +858,8 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
     fn a_collection_without_a_class_of_its_own_stays_a_collection() {
         for main in [
             "var _x = new WeakMap();\n_x.set({}, 1);",
-            "var _x = new WeakMap();\nfunction C() { _x.set(this, 1); }",
+            "var _x = new WeakMap();\nfunction C() { (() => _x.set({}, 1))(); }",
+            "var _x = new WeakMap();\nfunction C() { _x.set(this, 1); }\nfunction D() { _x.set(this, 1); }",
             "var _x = new WeakMap();\nclass C { touch() { _x.set(this, 1); } }",
             "var _x = new WeakMap();\nclass C { constructor() { (() => _x.set({}, 1))(); } }",
             "var _x = new WeakMap();\nclass C { constructor() { _x.set(this, 1); } }\nclass D { constructor() { _x.set(this, 1); } }",

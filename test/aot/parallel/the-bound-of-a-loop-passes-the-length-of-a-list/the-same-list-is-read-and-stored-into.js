@@ -1,4 +1,3 @@
-// STATISTIC: UnrolledLoopLengthChecksHoisted >= 1
 // Under: --aot-harden=proof-checks: every position of the turns laid out is held against the length of its list
 "use strict";
 const rounds = +process.argv[2] || 3; const said = [];

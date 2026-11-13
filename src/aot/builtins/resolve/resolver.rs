@@ -311,6 +311,7 @@ pub(super) struct ResolverOutput {
     pub(super) reads_by_unknown_key: bool,
     pub(super) may_call_evaluator: bool,
     pub(super) global_object_may_be_looked_through: bool,
+    pub(super) aliases_global_object: bool,
     pub(super) syntax: SyntaxWithHelpers,
     pub(super) may_hand_values_to_natives: bool,
 }
@@ -354,6 +355,8 @@ pub(super) struct Resolver<'a, 's> {
     known_sets: RefCell<KnownSets<'a, 's>>,
     evaluated: Range<u32>,
     pub(super) computed: Vec<ExprId>,
+    /// The reads of a member named `constructor` in `computed`.
+    pub(super) constructor_reads: Vec<ExprId>,
     calls: Vec<ExprId>,
     pub(super) written_patterns: Vec<ExprId>,
     pub(super) found_or_this: Vec<ExprId>,
@@ -515,6 +518,7 @@ impl<'a, 's> Resolver<'a, 's> {
             imported_spy_implementations: OnceCell::new(),
             output: ResolverOutput::default(),
             computed: Vec::new(),
+            constructor_reads: Vec::new(),
             calls: Vec::new(),
             written_patterns: Vec::new(),
             found_or_this: Vec::new(),
@@ -736,6 +740,17 @@ impl<'a, 's> Resolver<'a, 's> {
                         || (input.runs_tests && matches!(kind, ExprKind::Cond { .. })) =>
                 {
                     self.computed.push(expr);
+                    let reads_constructor = match kind {
+                        ExprKind::Dot { name, .. } => name == known::constructor,
+                        ExprKind::Index { .. } => matches!(
+                            input.hir.member_key(expr),
+                            Some((_, MemberKey::Name(known::constructor)))
+                        ),
+                        _ => false,
+                    };
+                    if reads_constructor {
+                        self.constructor_reads.push(expr);
+                    }
                 }
                 Decision::Unknown
                 | Decision::Constant(_)
@@ -982,6 +997,7 @@ impl<'a, 's> Resolver<'a, 's> {
             reads_by_unknown_key: output.reads_by_unknown_key,
             may_call_evaluator: output.may_call_evaluator,
             global_object_may_be_looked_through: output.global_object_may_be_looked_through,
+            aliases_global_object: output.aliases_global_object,
             syntax: output.syntax,
             may_hand_values_to_natives: output.may_hand_values_to_natives,
             called: &output.called,

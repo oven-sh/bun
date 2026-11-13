@@ -176,6 +176,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let this = self.lower_namespace_receiver(object);
             return Callee::without_key(function, Some(this), name);
         }
+        if let Some((function, this)) = self.lower_member_behind_getters(access) {
+            return Callee::without_key(function, Some(this), name);
+        }
         if let Some(function) = self.lower_export_member(access) {
             let this = self.lower_export_receiver(access);
             return Callee::without_key(function, Some(this), name);
@@ -197,7 +200,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn lower_callee_of_answer(&mut self, access: ExprId, base: Option<ValueId>) -> ValueId {
         let (function, on_answer) = self.lower_member_of_answer_below(access, base);
-        self.callees_read_on_answers.insert(function, on_answer);
+        let (modules, file) = (self.file.inputs.modules, self.file.file);
+        let member = modules.answer_member(file, access);
+        let holder = member.and_then(|member| modules.holder_of_answer(file, member.holder));
+        if !holder.is_some_and(|(_, copy)| copy.wraps_unmarked_answer) {
+            self.callees_read_on_answers.insert(function, on_answer);
+        }
         function
     }
 
@@ -298,7 +306,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(builtin) = find_locked_builtin(self.file, inner) {
             return Callee::without_key(self.emit_locked_builtin(builtin), None, name);
         }
-        self.set_position(hir[inner].pos);
+        // Where the engine parses the string itself, it reports a name that is called behind it.
+        self.set_position(match self.file.is_in_known_evaluation(inner) {
+            true => hir[inner].end,
+            false => hir[inner].pos,
+        });
         let (function, this) = self.lower_identifier_callee(inner);
         Callee::without_key(function, this, name)
     }

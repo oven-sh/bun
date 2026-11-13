@@ -219,6 +219,7 @@ fn tree_of(function: &str) -> Vec<u8> {
             file: input,
             max_bytes: usize::MAX,
             is_outer_name: &|_| false,
+            known: None,
         };
         let canonical = canonical_function(&canonical_input, written);
         canonical.expect("every part of the function is read").bytes

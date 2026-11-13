@@ -1,6 +1,6 @@
 use super::{EntryPointPaths, FolderPaths, FollowedName, LoadedProject};
 use crate::diagnostics::ProgramView;
-use crate::ir::{InParallel, for_each_mut};
+use crate::ir::{InParallel, collect_from_each, for_each_mut};
 use crate::link::ProgramModule;
 use crate::load::module_paths::with_separators_of_host;
 use crate::load::sources::SourceKind;
@@ -38,7 +38,7 @@ pub(super) fn collect_entry_point_paths(
             ) && left_out.binary_search(&it.file).is_err()
         })
         .map(|it| {
-            let public_path = sources.module_paths(it.file).public_path.to_vec();
+            let public_path = sources.public_path(it.file).to_vec();
             let file_name = files.module(it.file).file_name();
             EntryPointPaths {
                 source_path: match is_host_path(file_name) {
@@ -68,7 +68,7 @@ pub(super) fn collect_program_file_paths(
         .filter(|&&file| !is_host_path(files.module(file).file_name()))
         .map(|&file| {
             let paths = EntryPointPaths {
-                public_path: sources.module_paths(file).public_path.to_vec(),
+                public_path: sources.public_path(file).to_vec(),
                 source_path: with_separators_of_host(
                     to_native(files.module(file).file_name()),
                     cfg!(windows),
@@ -148,9 +148,9 @@ pub(super) fn collect_names_followed(
     sources: &Sources,
     graph: &ModuleGraph,
     left_out: &[FileId],
+    in_parallel: InParallel<'_>,
 ) -> Vec<FollowedName> {
-    let mut names = Vec::new();
-    for &file in files.compiled_files() {
+    let collect = |file: FileId, names: &mut Vec<FollowedName>| {
         let mut write_down = |site: ImportSiteKind, name: &[u8], target: FileId| {
             let is_required = !matches!(
                 site,
@@ -197,7 +197,8 @@ pub(super) fn collect_names_followed(
                 write_down(site.kind, files.atoms.bytes(written), target);
             }
         }
-    }
+    };
+    let mut names = collect_from_each(files.compiled_files(), in_parallel, &collect);
     names.shared_sort_unstable();
     names.dedup_by(|later, earlier| {
         let is_same = later.folder_and_name_as_written == earlier.folder_and_name_as_written;
@@ -224,7 +225,7 @@ pub(super) fn collect_folder_paths(
         .filter(|file| left_out.binary_search(file).is_err())
         .map(|&file| {
             (
-                folder_of(sources.module_paths(file).public_path),
+                folder_of(sources.public_path(file)),
                 folder_of(to_native(files.module(file).file_name())),
             )
         })

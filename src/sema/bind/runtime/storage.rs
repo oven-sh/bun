@@ -118,6 +118,7 @@ define_tables! {
     pub struct RuntimeTablesIn<S> {
         values {
             is_module: bool,
+            are_all_scopes_strict: bool,
             depends_on_sloppy_mode: bool,
             file_uses_arguments: bool,
             import_meta_may_be_modified: bool,

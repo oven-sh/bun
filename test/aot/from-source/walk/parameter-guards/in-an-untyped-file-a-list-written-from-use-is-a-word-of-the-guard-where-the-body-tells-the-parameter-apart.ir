@@ -15,11 +15,18 @@
 # print(ends([1, 2, 3, 4]), ends("abcd"));
 # -- end of source
 # Nobody has written a type in this file. A list that the front end wrote from use is no word for a guard: what is read under an index may be a list, a view or a text. Where the body itself tells the
-# parameter apart it has said that a list is one of several things that come, and has its own way for each: there the guard asks once at the entry for what the turns of the loop would ask again and again.
+# parameter apart it has said that a list is one of several things that come, and has its own way for each: the body asks once at its entry, and each kind has a loop of its own: no guard is needed (349 > 141 instructions).
 # Without it every turn asked whether `value` is a list and what `rounds` is, and the sum was kept as a value of any kind: two and a half times the instructions.
 # f1 = count, f2 = ends
-# RUN: plan units mechanisms=all
-# CHECK: unit f1:ParameterGuard {{*}}Array
+# RUN: walk f1 mechanisms=all
+# CHECK: b0([[value]]: anything?ParameterOfEscapedFunction
+# CHECK-NOT: isLoopHead=true
+# CHECK: = TypeTest [[value]] testedType=Array
+# CHECK-NOT: isLoopHead=true
+# CHECK: = TypeTest [[value]] testedType=string
+# CHECK: isLoopHead=true
+# RUN(BODY): plan units mechanisms=all
+# BODY-NOT: unit f1:ParameterGuard
 # RUN(READS): plan units mechanisms=all
 # READS-NOT: unit f2:ParameterGuard
 # RUN(ANSWERS): run-in-shell globalThis.sink = () => {};

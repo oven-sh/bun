@@ -993,15 +993,17 @@ describe("@types/bun integration test", () => {
 
     // With skipLibCheck off, tsc reports the declarations too. Beside lib.webworker, bun-types and
     // @types/node have errors there for other globals (Request, Response, Worker and more), so
-    // this run cannot be clean. None of its errors may be in the program or about the reader.
+    // this run cannot be clean. Those errors show that tsc checked the declarations. None of
+    // the errors may be in the program, and none may name the reader.
     test("no declaration error is about the reader", async () => {
-      const { stdout, stderr } = await checkReader("reader-lib-webworker-declarations", false);
+      const { stdout, stderr, exitCode } = await checkReader("reader-lib-webworker-declarations", false);
       const errors = stdout.split("\n").filter(line => line.includes(": error TS"));
       expect({
         inTheProgram: errors.filter(line => line.startsWith("reader-check.ts")),
-        aboutTheReader: errors.filter(line => /(Interface|Variable) 'ReadableStreamDefaultReader[<']/.test(line)),
+        aboutTheReader: errors.filter(line => /\bReadableStreamDefaultReader\b/.test(line)),
+        reportedOtherErrors: errors.length > 0 && exitCode !== 0,
         stderr,
-      }).toEqual({ inTheProgram: [], aboutTheReader: [], stderr: "" });
+      }).toEqual({ inTheProgram: [], aboutTheReader: [], reportedOtherErrors: true, stderr: "" });
     });
   });
 

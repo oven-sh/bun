@@ -333,18 +333,17 @@ describe("assert.partialDeepStrictEqual", () => {
     });
 
     test("the end of the stack is an error only when the second run reaches it too", () => {
-      // A new object for each read: no pair of objects comes twice, and the comparison cannot end.
+      // A new object for each read: no pair of objects comes twice, and the comparison cannot end. The getter takes
+      // some stack of its own: the run gives up while there is stack for it.
+      const recurse = depth => (depth ? recurse(depth - 1) + 1 : 0);
       const fresh = () => ({
         v: 1,
         get next() {
+          recurse(256);
           return fresh();
         },
       });
-      // The run gives up above the place where a getter has no stack left, wherever the caller is.
-      const from = (depth, compare) => (depth ? from(depth - 1, compare) : compare());
-      for (let depth = 0; depth < 96; depth += 12) {
-        expect(from(depth, () => answerOf(fresh(), ring(1)))).toBe("fail");
-      }
+      expect(answerOf(fresh(), ring(1))).toBe("fail");
       // The same pair comes again after 10,100 levels.
       expect(answerOf(ring(100), ring(101))).toBe("fail");
       // The second run compares many pairs before the one that ends it, and is inside of few at a time.

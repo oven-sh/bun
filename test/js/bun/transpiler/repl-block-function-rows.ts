@@ -256,6 +256,12 @@ export const knownDifferences: Row[] = [
     ["switch (0) { case 0: function f() { return 1 } break; case 1: function f() { return 2 } }", "typeof f"],
     "function",
   ],
+  // The first declaration does not know the case of the last one, so it stores nothing here either.
+  [
+    "declared twice in one case of a switch is stored by its first declaration",
+    ["switch (0) { case 0: function f() { return 1 } break; function f() { return 2 } }", "typeof f"],
+    "function",
+  ],
 ];
 
 /** Gives the session names of an input (`f`, `g`, `h`) the suffix of their row. */

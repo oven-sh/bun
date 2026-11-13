@@ -556,7 +556,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         stmts: &mut BumpVec<'a, Stmt>,
     ) {
         let symbol = &self.symbols[name.ref_.inner_index() as usize];
-        // A later declaration of the name holds the `let`. In another case of a switch, that `let` can be uninitialized here.
+        // A later declaration of the name holds the `let`. Its case is not known here, and in another case of the switch that `let` can be uninitialized.
         if kind == StmtsKind::SwitchStmt && symbol.remove_overwritten_function_declaration() {
             return;
         }

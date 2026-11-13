@@ -5,6 +5,7 @@ import {
   bunEnv,
   bunExe,
   bunRun,
+  expectRssDeltaBelow,
   isASAN,
   isDebug,
   isWindows,
@@ -2260,6 +2261,27 @@ test.skipIf(!isDebug && !isASAN)(
   },
   120_000,
 );
+
+test("Bun.build frees its options when they fail to configure", async () => {
+  using dir = tempDir("bun-build-configure-leak", {
+    "entry.js": "console.log(1);",
+    "run.js": `
+      const banner = Buffer.alloc(8 * 1024 * 1024, "/").toString();
+      const options = { entrypoints: [import.meta.dir + "/entry.js"], banner, define: { a: "{{{" }, throw: false };
+      async function build(count) {
+        for (let i = 0; i < count; i++) {
+          if ((await Bun.build(options)).success) throw new Error("the define is not valid");
+        }
+        Bun.gc(true);
+        return process.memoryUsage.rss();
+      }
+      const before = await build(5);
+      console.log(JSON.stringify({ deltaMiB: ((await build(25)) - before) / 1024 / 1024 }));
+    `,
+  });
+  // One banner per build is 200 MiB.
+  await expectRssDeltaBelow([join(String(dir), "run.js")], { release: 80, debug: 100 });
+});
 
 // Regression: src/js_printer/renamer.zig:592 `assignNamesRecursiveWithNumberScope`
 // walks a linear single-child scope chain in a `while(true)` loop, allocating a

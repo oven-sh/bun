@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isLinux, isPosix, isWindows, tempDir } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
+import { readdirSync, readlinkSync } from "node:fs";
 import { join } from "node:path";
 
 const CHILD_PROCESS_FILE = import.meta.dir + "/spawned-child.js";
@@ -230,91 +231,113 @@ describe.skipIf(!isPosix)("stdio handed to the child", () => {
 // in the same turn delivered them early: a 'data' listener detached until the next
 // setImmediate missed them, and a read(n) of exactly what was buffered left the
 // next chunk behind it.
-describe.concurrent("bytes written while a stdio listener runs arrive in a later turn of the event loop", () => {
-  const reader = join(import.meta.dir, "fixtures", "stdio-handshake-reader-fixture.js");
-  const writer = join(import.meta.dir, "fixtures", "stdio-handshake-writer-fixture.js");
-  const items = Array.from({ length: 10 }, (_, i) => `item${i}`);
-  const count = String(items.length);
-  const mkfifo = Bun.which("mkfifo");
-
-  async function run(source, consumer) {
-    using dir = tempDir("stdio-handshake", {});
-    let cmd = [bunExe(), reader, source, consumer, String(dir), count];
-    if (source === "Bun.file(fifo)") {
-      const fifo = join(String(dir), "fifo");
-      expect(Bun.spawnSync({ cmd: [mkfifo, fifo] }).exitCode).toBe(0);
-      cmd.push(fifo);
-    } else if (source === "Bun.stdin") {
-      // Through a shell pipe, fd 0 of the reader is a blocking pipe.
-      const pipeline = `"$0" "$1" "$3" ${count} 1 | "$0" "$2" Bun.stdin ${consumer} "$3" ${count}`;
-      cmd = ["sh", "-c", pipeline, bunExe(), writer, reader, String(dir)];
-    }
-    await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    let result = stdout;
+//
+// On Linux without a pidfd a thread of Bun waits for the child. Its report of the
+// exit is not ordered against the poll, so a pull keeps its read there.
+const watchesChildrenWithPoll =
+  !isLinux ||
+  (() => {
+    const probe = Bun.spawn({ cmd: ["sleep", "60"], stdin: "ignore", stdout: "ignore", stderr: "ignore" });
     try {
-      result = JSON.parse(stdout);
-    } catch {}
-    return { result, stderr, exitCode };
-  }
+      return readdirSync("/proc/self/fd").some(fd => {
+        try {
+          return readlinkSync(`/proc/self/fd/${fd}`) === "anon_inode:[pidfd]";
+        } catch {
+          return false;
+        }
+      });
+    } finally {
+      probe.kill();
+    }
+  })();
 
-  const everyItem = { result: { all: items, seen: items }, stderr: "", exitCode: 0 };
+(watchesChildrenWithPoll ? describe.concurrent : describe.skip)(
+  "bytes written while a stdio listener runs arrive in a later turn of the event loop",
+  () => {
+    const reader = join(import.meta.dir, "fixtures", "stdio-handshake-reader-fixture.js");
+    const writer = join(import.meta.dir, "fixtures", "stdio-handshake-writer-fixture.js");
+    const items = Array.from({ length: 10 }, (_, i) => `item${i}`);
+    const count = String(items.length);
+    const mkfifo = Bun.which("mkfifo");
 
-  it.each([
-    ["child.stdout", "child.stdout"],
-    ["child.stderr", "child.stderr"],
-    ["Readable.fromWeb(Bun.spawn().stdout)", "Bun.spawn"],
-  ])("%s: a 'data' listener detached until the next setImmediate misses nothing", async (_, source) => {
-    expect(await run(source, "data")).toEqual(everyItem);
-  });
+    async function run(source, consumer) {
+      using dir = tempDir("stdio-handshake", {});
+      let cmd = [bunExe(), reader, source, consumer, String(dir), count];
+      if (source === "Bun.file(fifo)") {
+        const fifo = join(String(dir), "fifo");
+        expect(Bun.spawnSync({ cmd: [mkfifo, fifo] }).exitCode).toBe(0);
+        cmd.push(fifo);
+      } else if (source === "Bun.stdin") {
+        // Through a shell pipe, fd 0 of the reader is a blocking pipe.
+        const pipeline = `"$0" "$1" "$3" ${count} 1 | "$0" "$2" Bun.stdin ${consumer} "$3" ${count}`;
+        cmd = ["sh", "-c", pipeline, bunExe(), writer, reader, String(dir)];
+      }
+      await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      let result = stdout;
+      try {
+        result = JSON.parse(stdout);
+      } catch {}
+      return { result, stderr, exitCode };
+    }
 
-  // Linux only: elsewhere a pull still reads a pipe that is not a socket, because
-  // kqueue does not report the end of a named pipe and only a read finds it.
-  it.skipIf(!isLinux || !mkfifo)(
-    "Readable.fromWeb(Bun.file(fifo).stream()): a 'data' listener detached until the next setImmediate misses nothing",
-    async () => {
-      expect(await run("Bun.file(fifo)", "data")).toEqual(everyItem);
-    },
-  );
+    const everyItem = { result: { all: items, seen: items }, stderr: "", exitCode: 0 };
 
-  it.skipIf(!isLinux)(
-    "Readable.fromWeb(Bun.stdin.stream()) on a shell pipe: a 'data' listener detached until the next setImmediate misses nothing",
-    async () => {
-      expect(await run("Bun.stdin", "data")).toEqual(everyItem);
-    },
-  );
-
-  it("child.stdout: resume() from a setImmediate after pause() emits nothing before the next setImmediate", async () => {
-    expect(await run("child.stdout", "pause")).toEqual(everyItem);
-  });
-
-  it("child.stdout: read(n) of exactly what is buffered leaves nothing buffered", async () => {
-    expect(await run("child.stdout", "readable")).toEqual({
-      result: { chunks: items.map(item => item + "\n"), bufferedAfterRead: items.map(() => 0) },
-      stderr: "",
-      exitCode: 0,
+    it.each([
+      ["child.stdout", "child.stdout"],
+      ["child.stderr", "child.stderr"],
+      ["Readable.fromWeb(Bun.spawn().stdout)", "Bun.spawn"],
+    ])("%s: a 'data' listener detached until the next setImmediate misses nothing", async (_, source) => {
+      expect(await run(source, "data")).toEqual(everyItem);
     });
-  });
 
-  // The child writes its last item, then a tail on its other stream, then exits,
-  // all while the listener for the item before runs. The three events come in
-  // the order they happened. The fixture finds the exit in /proc.
-  it.skipIf(!isLinux).each(["child.stdout", "child.stderr"])(
-    "%s: bytes written before the child's other stream wrote and before the child exited arrive first",
-    async source => {
-      expect(await run(source, "exit")).toEqual({
-        result: { events: [...items, "other stream: tail", "exit"] },
+    // Linux only: elsewhere a pull still reads a pipe that is not a socket, because
+    // kqueue does not report the end of a named pipe and only a read finds it.
+    it.skipIf(!isLinux || !mkfifo)(
+      "Readable.fromWeb(Bun.file(fifo).stream()): a 'data' listener detached until the next setImmediate misses nothing",
+      async () => {
+        expect(await run("Bun.file(fifo)", "data")).toEqual(everyItem);
+      },
+    );
+
+    it.skipIf(!isLinux)(
+      "Readable.fromWeb(Bun.stdin.stream()) on a shell pipe: a 'data' listener detached until the next setImmediate misses nothing",
+      async () => {
+        expect(await run("Bun.stdin", "data")).toEqual(everyItem);
+      },
+    );
+
+    it("child.stdout: resume() from a setImmediate after pause() emits nothing before the next setImmediate", async () => {
+      expect(await run("child.stdout", "pause")).toEqual(everyItem);
+    });
+
+    it("child.stdout: read(n) of exactly what is buffered leaves nothing buffered", async () => {
+      expect(await run("child.stdout", "readable")).toEqual({
+        result: { chunks: items.map(item => item + "\n"), bufferedAfterRead: items.map(() => 0) },
         stderr: "",
         exitCode: 0,
       });
-    },
-  );
+    });
 
-  // The decoder holds the stray byte back, so its push adds no text. Pushed from
-  // inside _read(), such a chunk stopped the stream: no 'end', and no callback.
-  it("execFile(): the callback comes when the child wrote part of a character while a 'data' listener ran", async () => {
-    using dir = tempDir("stdio-held-chunk", {
-      "child.js": `
+    // The child writes its last item, then a tail on its other stream, then exits,
+    // all while the listener for the item before runs. The three events come in
+    // the order they happened. The fixture finds the exit in /proc.
+    it.skipIf(!isLinux).each(["child.stdout", "child.stderr"])(
+      "%s: bytes written before the child's other stream wrote and before the child exited arrive first",
+      async source => {
+        expect(await run(source, "exit")).toEqual({
+          result: { events: [...items, "other stream: tail", "exit"] },
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    // The decoder holds the stray byte back, so its push adds no text. Pushed from
+    // inside _read(), such a chunk stopped the stream: no 'end', and no callback.
+    it("execFile(): the callback comes when the child wrote part of a character while a 'data' listener ran", async () => {
+      using dir = tempDir("stdio-held-chunk", {
+        "child.js": `
         const fs = require("node:fs");
         const nap = new Int32Array(new SharedArrayBuffer(4));
         const deadline = Date.now() + 30_000;
@@ -330,7 +353,7 @@ describe.concurrent("bytes written while a stdio listener runs arrive in a later
         fs.writeFileSync(__dirname + "/wrote", "");
         waitFor("release");
       `,
-      "parent.js": `
+        "parent.js": `
         const { execFile } = require("node:child_process");
         const fs = require("node:fs");
         const nap = new Int32Array(new SharedArrayBuffer(4));
@@ -349,30 +372,32 @@ describe.concurrent("bytes written while a stdio listener runs arrive in a later
           setImmediate(() => fs.writeFileSync(__dirname + "/release", ""));
         });
       `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ err: null, stdout: "hello\n\ufffd" }) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
     });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "parent.js"],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: JSON.stringify({ err: null, stdout: "hello\n\ufffd" }) + "\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  });
 
-  // The wait for the next chunk can start before the delivery of this chunk has
-  // returned: Bun.build runs the event loop until an async plugin setup settles.
-  // Only the poll can deliver to that wait, so the poll has to be armed while the
-  // delivery runs. On Windows the next read starts only after the delivery
-  // returned (#45473, #40023).
-  it.skipIf(isWindows)("child.stdout: an event loop wait nested in a 'data' delivery gets the next chunk", async () => {
-    using dir = tempDir("stdio-nested-wait", {});
-    const script = `
+    // The wait for the next chunk can start before the delivery of this chunk has
+    // returned: Bun.build runs the event loop until an async plugin setup settles.
+    // Only the poll can deliver to that wait, so the poll has to be armed while the
+    // delivery runs. On Windows the next read starts only after the delivery
+    // returned (#45473, #40023).
+    it.skipIf(isWindows)(
+      "child.stdout: an event loop wait nested in a 'data' delivery gets the next chunk",
+      async () => {
+        using dir = tempDir("stdio-nested-wait", {});
+        const script = `
       const { spawn } = require("node:child_process");
       const echo = "process.stdin.on('data', d => require('node:fs').writeSync(1, d))";
       const child = spawn(process.execPath, ["-e", echo], { stdio: ["pipe", "pipe", "inherit"] });
@@ -397,18 +422,20 @@ describe.concurrent("bytes written while a stdio listener runs arrive in a later
         child.kill();
       })();
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: JSON.stringify({ first: "one", nestedWhenBuildReturned: "two" }) + "\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  });
-});
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: JSON.stringify({ first: "one", nestedWhenBuildReturned: "two" }) + "\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+  },
+);

@@ -32,11 +32,17 @@ function acknowledge(i) {
   waitFor(() => fs.existsSync(`${dir}/wrote${i + 1}`), `the writer never sent item${i + 1}`);
 }
 
-// Blocks until the process is a zombie: it has exited, and this process has not seen that yet. Linux only.
+// Blocks until the process has exited and this thread has not seen that yet: it is
+// a zombie, or it is gone because a thread of Bun waited for it. Linux only.
 function waitUntilExited(pid) {
   waitFor(() => {
-    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
-    return stat[stat.lastIndexOf(")") + 2] === "Z";
+    try {
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+      return stat[stat.lastIndexOf(")") + 2] === "Z";
+    } catch (err) {
+      if (err.code === "ENOENT" || err.code === "ESRCH") return true;
+      throw err;
+    }
   }, "the writer never exited");
 }
 

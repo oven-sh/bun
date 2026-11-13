@@ -828,7 +828,7 @@ impl PosixBufferedReader {
                     // SAFETY: caller contract; borrows end at each `;`.
                     let short = unsafe {
                         (*this).close_if_final(stop.as_ref());
-                        (*this).note_read(file_type, filled, stop.as_ref())
+                        (*this).note_read(file_type, filled, scratch.len(), stop.as_ref())
                     };
                     let keep_going = if filled == 0 {
                         true
@@ -853,7 +853,8 @@ impl PosixBufferedReader {
                     // SAFETY: caller contract; borrows end at each `;`.
                     let short = unsafe {
                         (*this).close_if_final(stop.as_ref());
-                        (*this).note_read(file_type, (*this)._buffer.len(), stop.as_ref())
+                        let (len, room) = ((*this)._buffer.len(), (*this)._buffer.capacity());
+                        (*this).note_read(file_type, len, room, stop.as_ref())
                     };
                     // SAFETY: caller contract; borrow ends at `;`.
                     let keep_going = if !streaming || unsafe { (*this)._buffer.is_empty() } {
@@ -961,11 +962,17 @@ impl PosixBufferedReader {
         }
     }
 
-    /// Records whether a read of `len` bytes that ended with `stop` came up short (`SHORT_READ`). A read that stopped at `EAGAIN` did. A blocking pipe is read once per wakeup and never reports `EAGAIN`, so there a read of less than a full pipe counts. Returns whether it did.
-    fn note_read(&mut self, file_type: FileType, len: usize, stop: Option<&Stop>) -> bool {
+    /// Records whether a read of `len` bytes into `room` bytes that ended with `stop` came up short (`SHORT_READ`). A read that stopped at `EAGAIN` did. A blocking pipe is read once per wakeup and never reports `EAGAIN`: there a read counts that took less than a full pipe and did not fill its buffer. Returns whether it did.
+    fn note_read(
+        &mut self,
+        file_type: FileType,
+        len: usize,
+        room: usize,
+        stop: Option<&Stop>,
+    ) -> bool {
         let short = match stop {
             Some(Stop::WouldBlock) => true,
-            None => file_type == FileType::Pipe && len < FULL_PIPE_READ,
+            None => file_type == FileType::Pipe && len < FULL_PIPE_READ.min(room),
             Some(Stop::Eof | Stop::OverBudget | Stop::Error(_)) => return false,
         };
         self.flags.set(PosixFlags::SHORT_READ, short);
@@ -1003,12 +1010,13 @@ impl PosixBufferedReader {
         }
     }
 
-    /// Whether the poll callback alone reads this fd after a short read. Not so for a source that is never polled (a regular file, a used-up limit: see `start`). Outside Linux only a socket qualifies: kqueue does not report the last writer's close on an empty named pipe, so there only a read finds that EOF.
+    /// Whether the poll callback alone reads this fd after a short read. Not so for a source that is never polled (a regular file, a used-up limit: see `start`). Outside Linux only a socket qualifies: kqueue does not report the last writer's close on an empty named pipe, so there only a read finds that EOF. Not so either while a thread waits for child processes (Linux without pidfd): that thread reports an exit as a task, tasks run before the poll, and the bytes a child wrote before it exited would arrive after its exit.
     fn is_poll_driven(&self) -> bool {
         self.flags.contains(PosixFlags::POLLABLE)
             && !self.limit.reached()
             && (cfg!(any(target_os = "linux", target_os = "android"))
                 || self.flags.contains(PosixFlags::SOCKET))
+            && !bun_spawn_sys::waiter_thread_flag::get()
     }
 
     /// A consumer wants bytes in `dst`: one non-blocking read straight into it, and the poll is armed when nothing is available. EOF and errors are reported through `on_reader_done` / `on_reader_error` like any other read.

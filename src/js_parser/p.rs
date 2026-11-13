@@ -289,6 +289,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     /// A module-scope `var` has the name of a top-level function, which module code rejects.
     pub(crate) has_top_level_function_merged_with_var: bool,
+    /// This file prints such a `var` as an assignment: `var f = 1` becomes `f = 1`.
+    pub(crate) lowers_var_merged_with_function: bool,
 
     pub(crate) is_file_considered_to_have_esm_exports: bool,
 
@@ -3368,6 +3370,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.hoist_symbols(self.module_scope_ref());
 
+        let pair_is_an_early_error_in_the_source = self.has_es_module_syntax;
+        let output_is_a_function_body = self.options.features.hot_module_reloading;
+        self.lowers_var_merged_with_function = self.options.bundle
+            && self.has_top_level_function_merged_with_var
+            && !pair_is_an_early_error_in_the_source
+            && !output_is_a_function_body;
+        if self.lowers_var_merged_with_function {
+            self.mark_functions_overwritten_after_var();
+        }
+
         let mut generated_symbols_count: u32 = 3;
 
         if self.options.features.react_fast_refresh {
@@ -3624,6 +3636,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     && Symbol::is_kind_function(existing_kind)
                                 {
                                     self.has_top_level_function_merged_with_var = true;
+                                    self.symbols[existing_idx].set_function_merged_with_var(true);
                                 }
                                 continue 'next_member;
                             }
@@ -5111,6 +5124,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.symbols[symbol_idx].link.set(ref_);
 
                     let existing_kind = self.symbols[symbol_idx].kind;
+                    let mut merges_function_with_var =
+                        self.symbols[symbol_idx].function_merged_with_var();
                     // If these are both functions, remove the overwritten declaration
                     if kind.is_function() && existing_kind.is_function() {
                         self.symbols[symbol_idx].set_remove_overwritten_function_declaration(true);
@@ -5121,6 +5136,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         // "var foo; function foo() {}" or "function foo() {} var foo;"
                         self.has_top_level_function_merged_with_var = true;
+                        self.symbols[symbol_idx].set_function_merged_with_var(true);
+                        merges_function_with_var = true;
+                    }
+                    if merges_function_with_var {
+                        self.symbols[ref_.inner_index() as usize]
+                            .set_function_merged_with_var(true);
                     }
                 }
                 MR::BecomePrivateGetSetPair => {
@@ -5518,6 +5539,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 let declaration_entry = already_declared.get_or_put(ref_)?;
                 if !declaration_entry.found_existing {
+                    if self.lowers_var_merged_with_function
+                        && self.keeps_function_merged_with_var(ref_)
+                    {
+                        continue;
+                    }
                     let mut decls = bun_alloc::AstAlloc::vec();
                     VecExt::append(
                         &mut decls,
@@ -5603,6 +5629,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.import_records_for_current_part.clear();
         }
         Ok(appended)
+    }
+
+    /// The test that `stmts_can_be_removed_if_unused` applies to a `var` statement.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn decls_can_be_removed_if_unused(&mut self, decls: &[Decl]) -> bool {
+        for decl in decls {
+            if !self.decl_binding_can_be_removed_if_unused_without_dce_check(decl) {
+                return false;
+            }
+            if let Some(value) = &decl.value {
+                if !self.expr_can_be_removed_if_unused_without_dce_check(value) {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// A pattern runs getters or the iterator on its value, so only a literal value is side-effect free.
@@ -8050,6 +8093,216 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Expr::init_identifier(r#ref, loc)
     }
 
+    /// Tree shaking looks up a use by its own ref, so a live use of a linked symbol needs a use of `root` to keep the function.
+    #[cold]
+    #[inline(never)]
+    fn keeps_function_merged_with_var(&mut self, root: Ref) -> bool {
+        if !self.symbols[root.inner_index() as usize].function_merged_with_var() {
+            return false;
+        }
+        let generation = u64::from(self.part_generation) << 32;
+        let mut uses_linked_symbol = false;
+        for (at, &(used, _)) in self.part_uses.iter().enumerate() {
+            if self.part_use_slot[used.inner_index() as usize] != generation | at as u64 {
+                continue;
+            }
+            if used == root {
+                return true;
+            }
+            uses_linked_symbol |= js_ast::symbol::follow_symbols(&self.symbols, used) == root;
+        }
+        if uses_linked_symbol {
+            self.record_usage(root);
+        }
+        true
+    }
+
+    /// True if one of `decls` declares a name that a top-level function declaration has too.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn decls_bind_function_merged_with_var(&self, decls: &[Decl]) -> bool {
+        decls
+            .iter()
+            .any(|decl| self.binds_function_merged_with_var(&decl.binding))
+    }
+
+    fn binds_function_merged_with_var(&self, binding: &Binding) -> bool {
+        match binding.data {
+            js_ast::b::B::BIdentifier(id) => self.is_function_merged_with_var(id.r#ref),
+            js_ast::b::B::BArray(array) => array
+                .items()
+                .iter()
+                .any(|item| self.binds_function_merged_with_var(&item.binding)),
+            js_ast::b::B::BObject(object) => object
+                .properties()
+                .iter()
+                .any(|property| self.binds_function_merged_with_var(&property.value)),
+            js_ast::b::B::BMissing(_) => false,
+        }
+    }
+
+    fn is_function_merged_with_var(&self, r#ref: Ref) -> bool {
+        let root = js_ast::symbol::follow_symbols(&self.symbols, r#ref);
+        self.symbols[root.inner_index() as usize].function_merged_with_var()
+    }
+
+    /// At module scope, a declarator that binds a name of a pair becomes an assignment. Every other name keeps its `var` where it is written.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn lower_vars_merged_with_function(
+        &mut self,
+        stmts: &mut BumpVec<'a, Stmt>,
+        loc: bun_ast::Loc,
+        local: &S::Local,
+    ) {
+        let decls = local.decls.slice();
+        let mut kept_from = 0;
+        for (at, decl) in decls.iter().enumerate() {
+            if !self.binds_function_merged_with_var(&decl.binding) {
+                continue;
+            }
+            let mut kept = G::DeclList::from_slice(&decls[kept_from..at]);
+            self.append_names_not_merged_with_function(&decl.binding, &mut kept);
+            self.push_var(stmts, loc, local, kept);
+            kept_from = at + 1;
+
+            // A bare `var f;` leaves nothing in the output.
+            let Some(value) = decl.value else {
+                continue;
+            };
+            let relocated_from = self.relocated_top_level_vars.len();
+            let target = Binding::to_expr(
+                &decl.binding,
+                self.arena,
+                self,
+                Self::wrap_identifier_hoisting,
+            );
+            self.relocate_only_names_merged_with_function(relocated_from);
+            // An unused top-level "var" is removable, and so is the assignment that stands for it.
+            let does_not_affect_tree_shaking =
+                self.decls_can_be_removed_if_unused(core::slice::from_ref(decl));
+            let value = Expr::assign(target, value);
+            stmts.push(self.s(
+                S::SExpr {
+                    value,
+                    does_not_affect_tree_shaking,
+                },
+                value.loc,
+            ));
+        }
+        self.push_var(
+            stmts,
+            loc,
+            local,
+            G::DeclList::from_slice(&decls[kept_from..]),
+        );
+    }
+
+    fn push_var(
+        &mut self,
+        stmts: &mut BumpVec<'a, Stmt>,
+        loc: bun_ast::Loc,
+        local: &S::Local,
+        decls: G::DeclList,
+    ) {
+        if decls.is_empty() {
+            return;
+        }
+        stmts.push(self.s(
+            S::Local {
+                kind: S::Kind::KVar,
+                decls,
+                is_export: false,
+                origin: local.origin,
+            },
+            loc,
+        ));
+    }
+
+    /// A pattern can bind a name of a pair beside other names: `var { f, g } = o`.
+    fn append_names_not_merged_with_function(&self, binding: &Binding, names: &mut G::DeclList) {
+        match binding.data {
+            js_ast::b::B::BIdentifier(id) => {
+                if !self.is_function_merged_with_var(id.r#ref) {
+                    names.push(Decl {
+                        binding: *binding,
+                        value: None,
+                    });
+                }
+            }
+            js_ast::b::B::BArray(array) => {
+                for item in array.items() {
+                    self.append_names_not_merged_with_function(&item.binding, names);
+                }
+            }
+            js_ast::b::B::BObject(object) => {
+                for property in object.properties() {
+                    self.append_names_not_merged_with_function(&property.value, names);
+                }
+            }
+            js_ast::b::B::BMissing(_) => {}
+        }
+    }
+
+    /// The other names of a pattern keep their own `var`, so only a name of a pair stays relocated.
+    fn relocate_only_names_merged_with_function(&mut self, from: usize) {
+        let mut kept = from;
+        for at in from..self.relocated_top_level_vars.len() {
+            let local = self.relocated_top_level_vars[at];
+            if self.is_function_merged_with_var(local.ref_) {
+                self.relocated_top_level_vars[kept] = local;
+                kept += 1;
+            }
+        }
+        self.relocated_top_level_vars.truncate(kept);
+    }
+
+    /// A bare `for (var i, j; ...)` head declares each name again. That is an error for a name of a pair.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn drop_decls_of_function_merged_with_var(&mut self, decls: &mut G::DeclList) {
+        self.ignore_uses_of_bare_vars_merged_with_function(decls.slice());
+        decls.retain(|decl| !self.is_bare_var_merged_with_function(decl));
+    }
+
+    /// A relocated `var f;` leaves no `f` in the output, so its relocation is not a use that keeps `function f`.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn ignore_uses_of_bare_vars_merged_with_function(&mut self, decls: &[Decl]) {
+        for decl in decls {
+            if self.is_bare_var_merged_with_function(decl)
+                && let js_ast::b::B::BIdentifier(id) = decl.binding.data
+            {
+                self.ignore_usage(id.r#ref);
+            }
+        }
+    }
+
+    fn is_bare_var_merged_with_function(&self, decl: &Decl) -> bool {
+        decl.value.is_none()
+            && matches!(decl.binding.data, js_ast::b::B::BIdentifier(id) if self.is_function_merged_with_var(id.r#ref))
+    }
+
+    /// Of `function f() {} var f; function f() {}` only the last function prints: `declare_symbol` sees no pair of functions.
+    #[cold]
+    #[inline(never)]
+    fn mark_functions_overwritten_after_var(&mut self) {
+        for index in 0..self.symbols.len() {
+            let symbol = &self.symbols[index];
+            if !symbol.kind.is_function() || !symbol.function_merged_with_var() {
+                continue;
+            }
+            let mut later = symbol;
+            while later.has_link() {
+                later = &self.symbols[later.link.get().inner_index() as usize];
+                if later.kind.is_function() {
+                    self.symbols[index].set_remove_overwritten_function_declaration(true);
+                    break;
+                }
+            }
+        }
+    }
+
     // One statement could potentially expand to several statements
     pub(crate) fn stmts_to_single_stmt(
         &mut self,
@@ -9757,6 +10010,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
             has_with_scope: false,
             has_top_level_function_merged_with_var: false,
+            lowers_var_merged_with_function: false,
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
             symbol_uses,

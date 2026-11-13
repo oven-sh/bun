@@ -4226,6 +4226,522 @@ describe("bundler", () => {
     },
   });
 
+  // In a script, a top-level function and a `var` of one name share one binding.
+  // Module code rejects that pair, so the bundler prints such a `var` as an
+  // assignment to the function's binding. Each line of `stdout` is what node
+  // prints for that file. The ESM bundles have the extension `.mjs`, so that
+  // they always load as a module.
+  const functionAndVarOfOneName = {
+    files: {
+      "/block-function.js": /* js */ `
+        function f() { return 1; }
+        var seen = [f()];
+        { function f() { return 2; } }
+        console.log("block-function", ...seen, f());
+      `,
+      "/if-function.js": /* js */ `
+        function f() { return 1; }
+        var seen = [f()];
+        if (seen.length) function f() { return 2; }
+        console.log("if-function", ...seen, f());
+      `,
+      "/var-then-function.js": /* js */ `
+        var f = () => "var";
+        function f() { return "declaration"; }
+        console.log("var-then-function", f());
+      `,
+      "/function-then-var.js": /* js */ `
+        function f() { return "declaration"; }
+        var seen = [f()];
+        var f = () => "var";
+        console.log("function-then-var", ...seen, f());
+      `,
+      "/bare-var.js": /* js */ `
+        function f() { return 1; }
+        var f;
+        console.log("bare-var", f());
+      `,
+      "/var-in-block.js": /* js */ `
+        function f() { return 1; }
+        var seen = [typeof f];
+        if (seen.length) { var f = 5; }
+        console.log("var-in-block", ...seen, f);
+      `,
+      "/var-without-block.js": /* js */ `
+        function f() { return 1; }
+        function g() { return 1; }
+        var seen = [typeof f, typeof g];
+        if (seen.length) var f = 5;
+        do var g = 7; while (0);
+        console.log("var-without-block", ...seen, f, g);
+      `,
+      "/for-heads.js": /* js */ `
+        function f() { return 1; }
+        function g() { return 1; }
+        function h() { return 1; }
+        function i() { return 1; }
+        var seen = [typeof f, typeof g, typeof h, typeof i];
+        for (var f of [1, 2]) {}
+        for (var g in { a: 1 }) {}
+        for (var h = 0; h < 3; h++) {}
+        for (var i; false; ) {}
+        console.log("for-heads", ...seen, f, g, h, typeof i);
+      `,
+      "/catch.js": /* js */ `
+        function f() { return 1; }
+        var seen = [];
+        try { throw 2; } catch (f) { var f = 3; seen.push(f); }
+        console.log("catch", ...seen, typeof f);
+      `,
+      "/switch-and-label.js": /* js */ `
+        function f() { return 1; }
+        function g() { return 1; }
+        var seen = [typeof f, typeof g];
+        switch (seen.length) { case 2: var f = 4; }
+        l: { var g = 6; break l; }
+        console.log("switch-and-label", ...seen, f, g);
+      `,
+      "/destructuring.js": /* js */ `
+        function f() { return 1; }
+        function g() { return 1; }
+        function h() { return 1; }
+        var seen = [typeof f, typeof g, typeof h];
+        var { f } = { f: 7 };
+        var [g] = [8];
+        var { h = 9, ...rest } = { z: 1 };
+        console.log("destructuring", ...seen, f, g, h, JSON.stringify(rest));
+      `,
+      "/declaration-list.js": /* js */ `
+        function f() { return 1; }
+        var seen = [typeof f];
+        var x = 1, f = 2, y = 3;
+        console.log("declaration-list", ...seen, x, f, y);
+      `,
+      "/array-pattern.js": /* js */ `
+        function f() { return 1; }
+        var seen = [typeof f, typeof x];
+        var [f, x] = [2, 3];
+        console.log("array-pattern", ...seen, f, x);
+      `,
+      "/generator-and-async.js": /* js */ `
+        function* f() {}
+        async function g() {}
+        var seen = [typeof f, typeof g];
+        var f = 2;
+        var g = 3;
+        console.log("generator-and-async", ...seen, f, g);
+      `,
+      "/function-var-function.js": /* js */ `
+        var f = 0;
+        function f() { return 1; }
+        var f;
+        function f() { return 2; }
+        var f;
+        function g() { return 1; }
+        var g;
+        function g() { return 2; }
+        console.log("function-var-function", f, g());
+      `,
+      "/function-var-var.js": /* js */ `
+        function f() { return 1; }
+        var f;
+        var f;
+        console.log("function-var-var", f());
+      `,
+      "/var-function-function.js": /* js */ `
+        var f = 0;
+        function f() { return 1; }
+        function f() { return 2; }
+        console.log("var-function-function", f);
+      `,
+      // Only the nested `var` reads the name, so only the assignment keeps the function.
+      "/read-in-nested-scope.js": /* js */ `
+        function f() { return 1; }
+        { var f; console.log("read-in-nested-scope", typeof f); }
+      `,
+      "/read-in-closure.js": /* js */ `
+        function f() { return 1; }
+        { var f = 5; (() => console.log("read-in-closure", typeof f, f))(); }
+      `,
+      // The value of the top-level `var` has no side effect, and only the nested `var` reads it.
+      "/read-of-value-in-nested-scope.js": /* js */ `
+        function f() { return 1; }
+        var f = 5;
+        { var f; console.log("read-of-value-in-nested-scope", f); }
+      `,
+      "/no-other-use.js": /* js */ `
+        var f = 1;
+        function f() { return 1; }
+        function g() { return 1; }
+        if (typeof console === "object") { var g = 2; }
+        function h() { return 1; }
+        { function h() { return 2; } }
+        function i() { return 1; }
+        for (var i of []) {}
+        console.log("no-other-use");
+      `,
+      "/use-strict.js": /* js */ `
+        "use strict";
+        function f() { return 1; }
+        var seen = [f()];
+        var f = 2;
+        { function f() { return 3; } }
+        console.log("use-strict", ...seen, f);
+      `,
+      // A function scope accepts the pair, so the bundler keeps it as written.
+      "/nested-function.js": /* js */ `
+        function outer() {
+          function f() { return 1; }
+          var f = 2;
+          { function f() { return 3; } }
+          return typeof f;
+        }
+        function f() { return 1; }
+        var f = outer();
+        console.log("nested-function", f);
+      `,
+    },
+    stdout: `
+      block-function 1 2
+      if-function 1 2
+      var-then-function var
+      function-then-var declaration var
+      bare-var 1
+      var-in-block function 5
+      var-without-block function function 5 7
+      for-heads function function function function 2 a 3 function
+      catch 3 function
+      switch-and-label function function 4 6
+      destructuring function function function 7 8 9 {"z":1}
+      declaration-list function 1 2 3
+      array-pattern function undefined 2 3
+      generator-and-async function function 2 3
+      function-var-function 0 2
+      function-var-var 1
+      var-function-function 0
+      read-in-nested-scope function
+      read-in-closure number 5
+      read-of-value-in-nested-scope 5
+      no-other-use
+      use-strict 1 2
+      nested-function function
+    `,
+  };
+  const functionAndVarOfOneNamePaths = Object.keys(functionAndVarOfOneName.files).map(file => "." + file);
+  const importEach = (paths: string[]) => paths.map(path => `import ${JSON.stringify(path)};`).join("\n");
+  const requireEach = (paths: string[]) => paths.map(path => `require(${JSON.stringify(path)});`).join("\n");
+  const dynamicImportEach = (paths: string[]) => paths.map(path => `await import(${JSON.stringify(path)});`).join("\n");
+
+  for (const [name, options] of [
+    ["", {}],
+    ["TargetBun", { target: "bun" }],
+    ["Minify", { minifyIdentifiers: true, minifySyntax: true, minifyWhitespace: true }],
+  ] as const) {
+    itBundled(`edgecase/FunctionAndVarOfOneNameImport${name}`, {
+      files: { "/entry.mjs": importEach(functionAndVarOfOneNamePaths), ...functionAndVarOfOneName.files },
+      outfile: "/out.mjs",
+      ...options,
+      run: { stdout: functionAndVarOfOneName.stdout },
+    });
+  }
+  // A file that is CommonJS by its package type is printed in a function. The
+  // function of `read-in-nested-scope.js` has to stay there too.
+  itBundled("edgecase/FunctionAndVarOfOneNameImportPackageTypeCommonJS", {
+    files: {
+      "/entry.mjs": importEach(functionAndVarOfOneNamePaths),
+      "/package.json": JSON.stringify({ type: "commonjs" }),
+      ...functionAndVarOfOneName.files,
+    },
+    outfile: "/out.mjs",
+    run: { stdout: functionAndVarOfOneName.stdout },
+  });
+  // The bundler puts each of these files in an `__esm` wrapper, and lifts the
+  // declarations of the file out of it.
+  itBundled("edgecase/FunctionAndVarOfOneNameRequire", {
+    files: { "/entry.cjs": requireEach(functionAndVarOfOneNamePaths), ...functionAndVarOfOneName.files },
+    outfile: "/out.mjs",
+    run: { stdout: functionAndVarOfOneName.stdout },
+  });
+  for (const format of ["cjs", "iife"] as const) {
+    itBundled(`edgecase/FunctionAndVarOfOneNameRequire${format.toUpperCase()}Output`, {
+      files: { "/entry.mjs": requireEach(functionAndVarOfOneNamePaths), ...functionAndVarOfOneName.files },
+      format,
+      outfile: format === "cjs" ? "/out.cjs" : "/out.js",
+      run: { stdout: functionAndVarOfOneName.stdout },
+    });
+  }
+  itBundled("edgecase/FunctionAndVarOfOneNameDynamicImport", {
+    files: { "/entry.mjs": dynamicImportEach(functionAndVarOfOneNamePaths), ...functionAndVarOfOneName.files },
+    outfile: "/out.mjs",
+    run: { stdout: functionAndVarOfOneName.stdout },
+  });
+  itBundled("edgecase/FunctionAndVarOfOneNameDynamicImportSplitting", {
+    files: { "/entry.mjs": dynamicImportEach(functionAndVarOfOneNamePaths), ...functionAndVarOfOneName.files },
+    outdir: "/out",
+    splitting: true,
+    entryNaming: "[name].mjs",
+    chunkNaming: "[name]-[hash].mjs",
+    run: { file: "/out/entry.mjs", stdout: functionAndVarOfOneName.stdout },
+  });
+  itBundled("edgecase/FunctionAndVarOfOneNameEntryPoint", {
+    files: {
+      "/entry.js": /* js */ `
+        function f() { return 1; }
+        console.log(f());
+        { function f() { return 2; } }
+        console.log(f());
+        var a = () => "var a";
+        function a() { return "function a"; }
+        console.log(a());
+      `,
+    },
+    outfile: "/out.mjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.mjs").not.toMatch(/^\s*var\b/m);
+    },
+    run: { stdout: "1\n2\nvar a" },
+  });
+  // Tree shaking removes a pair that nothing uses, as it removes an unused `var`.
+  // An initializer with a side effect stays, and so does its function.
+  itBundled("edgecase/FunctionAndVarOfOneNameUnused", {
+    files: {
+      "/entry.js": /* js */ `
+        function dropped() { return 1; }
+        var dropped = 5;
+        var alsoDropped = () => 2;
+        function alsoDropped() {}
+        function droppedWithDeadCode() { return 1; }
+        if (false) { var droppedWithDeadCode = 2; }
+        function droppedWithBareVarInBlock() { return 1; }
+        { var droppedWithBareVarInBlock; }
+        function droppedWithBareVarInIf() { return 1; }
+        if (globalThis) var droppedWithBareVarInIf;
+        function droppedWithBareVarInHead() { return 1; }
+        for (var droppedWithBareVarInHead; false; ) {}
+        function kept() { return 1; }
+        var kept = (console.log("side effect"), 5);
+        function used() { return "declaration"; }
+        var used = () => "var";
+        console.log(used());
+      `,
+    },
+    outfile: "/out.mjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.mjs").not.toMatch(/dropped/i);
+      api.expectFile("/out.mjs").toContain("function kept()");
+    },
+    run: { stdout: "side effect\nvar" },
+  });
+  // A classic script of an HTML file is printed as a module script.
+  for (const type of [undefined, "module"] as const) {
+    itBundled(`edgecase/FunctionAndVarOfOneNameHTMLScript${type ? "PackageTypeModule" : ""}`, {
+      files: {
+        "/index.html": `<!doctype html><html><head><script src="./script.js"></script></head></html>`,
+        "/script.js": /* js */ `
+          function f() { return 1; }
+          var seen = [f()];
+          { function f() { return 2; } }
+          var a = () => "var";
+          function a() { return "declaration"; }
+          console.log(...seen, f(), a());
+        `,
+        ...(type ? { "/package.json": JSON.stringify({ type }) } : {}),
+      },
+      entryPoints: ["/index.html"],
+      outdir: "/out",
+      onAfterBundle(api) {
+        const [, src] = api.readFile("out/index.html").match(/<script [^>]*src="\.\/([^"]+)"/)!;
+        api.writeFile("out/script.mjs", api.readFile("out/" + src));
+      },
+      run: { file: "/out/script.mjs", stdout: "1 2 var" },
+    });
+  }
+  itBundled("edgecase/FunctionAndVarOfOneNameCompile", {
+    files: {
+      "/entry.js": /* js */ `
+        function f() { return 1; }
+        var seen = [f()];
+        { function f() { return 2; } }
+        var a = () => "var";
+        function a() { return "declaration"; }
+        console.log(...seen, f(), a());
+      `,
+    },
+    compile: true,
+    backend: "cli",
+    run: { stdout: "1 2 var" },
+  });
+  // React Fast Refresh registers the function and the value of the `var`.
+  test("edgecase/FunctionAndVarOfOneNameReactFastRefresh", async () => {
+    using dir = tempDir("function-and-var-of-one-name", {
+      "app.jsx": `function App() { return "declaration"; }\nvar App = () => "var";\nconsole.log(App());`,
+    });
+    const build = await Bun.build({
+      entrypoints: [join(String(dir), "app.jsx")],
+      reactFastRefresh: true,
+      external: ["react-refresh/runtime"],
+    });
+    const output = (await build.outputs[0].text()).replace(/\s+/g, " ").replace(/"[^"]*app\.jsx:/g, '"app.jsx:');
+    expect(output).toContain(
+      `function App() { return "declaration"; } $RefreshReg$(App, "app.jsx:App"); App = () => "var"; $RefreshReg$(App, "app.jsx:App");`,
+    );
+  });
+  // The source of a file with `export` is strict code, and there the pair is an
+  // early error. The dev server prints each file in a function. The transpiler
+  // does not know how its output is loaded. None of them changes a `var`, a
+  // `for` head or a function of a pair.
+  const pairKeptAsWritten = /* js */ `
+    function f() {}
+    var f = 5;
+    function g() {}
+    { var g; }
+    function h() {}
+    for (var h; false; ) {}
+    function i() { return 1; }
+    var i;
+    function i() { return 2; }
+    console.log(f, g, h, i);
+  `;
+  for (const [name, options] of [
+    ["ESMSyntax", { files: { "/entry.js": pairKeptAsWritten + "export {};" } }],
+    ["DevServer", { format: "internal_bake_dev" }],
+    ["NoBundle", { bundling: false }],
+  ] as const) {
+    itBundled(`edgecase/FunctionAndVarOfOneNameIsKept${name}`, {
+      files: { "/entry.js": pairKeptAsWritten },
+      ...options,
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain("var f = 5");
+        expect(out).toContain("var g;");
+        expect(out).toContain("for (var h;");
+        expect(out).toContain("return 1");
+      },
+    });
+  }
+  // These formats accept the pair, but the function of `read-in-nested-scope.js`
+  // has to stay in the bundle.
+  for (const format of ["cjs", "iife"] as const) {
+    itBundled(`edgecase/FunctionAndVarOfOneName${format.toUpperCase()}Output`, {
+      files: { "/entry.mjs": importEach(functionAndVarOfOneNamePaths), ...functionAndVarOfOneName.files },
+      format,
+      outfile: format === "cjs" ? "/out.cjs" : "/out.js",
+      run: { stdout: functionAndVarOfOneName.stdout },
+    });
+  }
+  // Only a declarator of a pair name changes. Each file reads `g`, `j` or `x`
+  // before `var g = 1`, and a second `var` of that name is in a `for` head or in
+  // a body with no braces. That second `var` has to stay where it is written.
+  const otherVarBesideThePair = {
+    files: {
+      "/no-pair.js": /* js */ `
+        console.log("no-pair", typeof x);
+        var x = 1;
+        for (var x; ; ) { break; }
+      `,
+      "/for-head.js": /* js */ `
+        function i() { return 1; }
+        console.log("for-head", typeof i, typeof j);
+        var j = 1;
+        for (var i, j; false; ) {}
+      `,
+      "/declaration-list.js": /* js */ `
+        function f() { return 1; }
+        console.log("declaration-list", typeof f, typeof g);
+        var g = 1;
+        if (globalThis) var f = 2, g = 3;
+        console.log("declaration-list", f, g);
+      `,
+      "/pattern.js": /* js */ `
+        function f() { return 1; }
+        console.log("pattern", typeof f, typeof g);
+        var g = 1;
+        if (globalThis) var { f, g } = { f: 2, g: 3 };
+        console.log("pattern", f, g);
+      `,
+      "/do-while.js": /* js */ `
+        function f() { return 1; }
+        console.log("do-while", typeof f, typeof g);
+        var g = 1;
+        do var g = 2, f = 3; while (false);
+        console.log("do-while", f, g);
+      `,
+      "/two-pairs.js": /* js */ `
+        function f() { return 1; }
+        function g() { return 1; }
+        console.log("two-pairs", typeof f, typeof g, typeof a, typeof b, typeof c);
+        var b = 0;
+        if (globalThis) var a = 1, f = 2, b = 3, g = 4, c = 5;
+        console.log("two-pairs", a, f, b, g, c);
+      `,
+      // A list in a nested scope is relocated as a whole, so `read` sees `g`.
+      "/braced-list.js": /* js */ `
+        function f() { return 1; }
+        function read() { return g; }
+        console.log("braced-list", typeof f, typeof g);
+        { var f = 2, g = 3; }
+        console.log("braced-list", f, read());
+      `,
+      "/var-in-try.js": /* js */ `
+        function f() { return 1; }
+        function read() { return g; }
+        try { var f = 2, g = 3; } catch {}
+        console.log("var-in-try", f, read());
+      `,
+      "/dead-branch.js": /* js */ `
+        function f() { return 1; }
+        if (false) { var f = 2, g = 3; }
+        console.log("dead-branch", typeof f, g);
+      `,
+    },
+    stdout: `
+      no-pair undefined
+      for-head function undefined
+      declaration-list function undefined
+      declaration-list 2 3
+      pattern function undefined
+      pattern 2 3
+      do-while function undefined
+      do-while 3 2
+      two-pairs function function undefined undefined undefined
+      two-pairs 1 2 3 4 5
+      braced-list function undefined
+      braced-list 2 3
+      var-in-try 2 3
+      dead-branch function undefined
+    `,
+  };
+  const otherVarBesideThePairPaths = Object.keys(otherVarBesideThePair.files).map(file => "." + file);
+  for (const [name, entry] of [
+    ["", { "/entry.mjs": importEach(otherVarBesideThePairPaths) }],
+    // The linker prints `var g = 1` above the `__esm` wrapper of a required file.
+    ["Require", { "/entry.cjs": requireEach(otherVarBesideThePairPaths) }],
+  ] as const) {
+    itBundled(`edgecase/FunctionAndVarOfOneNameOtherVarIsKept${name}`, {
+      files: { ...entry, ...otherVarBesideThePair.files },
+      outfile: "/out.mjs",
+      run: { stdout: otherVarBesideThePair.stdout },
+    });
+  }
+  // Without tree shaking, the parser visits a top-level list as one statement.
+  itBundled("edgecase/FunctionAndVarOfOneNameDeclarationListNoTreeShaking", {
+    files: {
+      "/entry.js": /* js */ `
+        function f() { return 1; }
+        var seen = [typeof f, typeof x, typeof y];
+        var x = 1, f = 2, y = 3;
+        console.log(...seen, x, f, y);
+      `,
+    },
+    outfile: "/out.mjs",
+    treeShaking: false,
+    onAfterBundle(api) {
+      api.expectFile("/out.mjs").toContain("var x = 1;");
+      api.expectFile("/out.mjs").toContain("var y = 3;");
+    },
+    run: { stdout: "function undefined undefined 1 2 3" },
+  });
+
   // Without code splitting, each entry point gets its own output file, even when
   // entry points import each other. Each file runs its modules in the order that
   // its own entry point imports them, so it prints what the unbundled entry prints.

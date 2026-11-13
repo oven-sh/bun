@@ -87,7 +87,7 @@ pub(super) fn bake_get_on_module_namespace(
 unsafe extern "C" {
     pub(super) safe fn BakeRenderRoutesForProdStatic(
         global: &JSGlobalObject,
-        // Output directory path (e.g., "./dist")
+        // Absolute path of the output directory
         out_base: &BunString,
         // Server module paths (e.g., ["bake://page.js", "bake://layout.js"])
         all_server_files: JSValue,

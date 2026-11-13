@@ -186,31 +186,11 @@ fn finalize_bundle_inner(
         };
     }
 
-    let _lock = dev.graph_safety_lock.guard();
+    let lock = dev.graph_safety_lock.guard();
 
-    // Note: `js_pseudo_chunk()`/`css_chunks()`/`html_chunks()` each take
-    // `&mut DevServerOutput`, so calling more than one wedges borrowck. Split
-    // `result.chunks` once up front (the three regions are disjoint:
-    // `[0] | [1..1+n_css] | [1+n_css..1+n_css+n_html]`).
+    // `[js] | [css; n_css] | [html; ..]`. Dropped before `finalize_bundle_cleanup` frees what they borrow.
+    let mut chunks = ::core::mem::take(&mut result.chunks);
     let n_css = result.css_file_list.count();
-    let n_html = result.html_files.count();
-    // Note: snapshot `result.chunks` ptr/len before `split_at_mut` so the
-    // CSS-chunk loop can re-form the full slice for `intermediate_output.code()`
-    // without re-borrowing `result.chunks` (already split).
-    let chunks_ptr: *mut bundler::chunk::Chunk = result.chunks.as_mut_ptr();
-    let chunks_len = result.chunks.len();
-    scopeguard::defer! {
-        // SAFETY: `chunks_ptr/len` snapshot the arena slice before any `split_at_mut`.
-        unsafe {
-            ::core::ptr::drop_in_place(::core::ptr::slice_from_raw_parts_mut(
-                chunks_ptr, chunks_len,
-            ));
-        }
-    };
-    let (js_chunk_slice, rest_chunks) = result.chunks.split_at_mut(1);
-    let js_chunk = &mut js_chunk_slice[0];
-    let (css_chunks_mut, html_rest) = rest_chunks.split_at_mut(n_css);
-    let html_chunks_mut = &mut html_rest[..n_html];
     let input_file_sources = bv2.graph.input_files.items_source();
     let input_file_loaders = bv2.graph.input_files.items_loader();
     let import_records = bv2.graph.ast.items_import_records();
@@ -255,6 +235,7 @@ fn finalize_bundle_inner(
     let quoted_source_contents = bv2.linker.graph.files.items_quoted_source_contents();
     // Pass 1, update the graph's nodes, resolving every bundler source
     // index into its `IncrementalGraph(...).FileIndex`
+    let js_chunk = &chunks[0];
     debug_assert_eq!(
         js_chunk.content.javascript().parts_in_chunk_in_order.len(),
         js_chunk.compile_results_for_chunk.len()
@@ -338,7 +319,9 @@ fn finalize_bundle_inner(
         }
     }
 
-    for (chunk, metadata) in css_chunks_mut.iter_mut().zip(result.css_file_list.values()) {
+    for (chunk_index, metadata) in (1..).zip(result.css_file_list.values()) {
+        let mut output = ::core::mem::take(&mut chunks[chunk_index].intermediate_output);
+        let chunk = &chunks[chunk_index];
         debug_assert!(matches!(chunk.content, bundler::chunk::Content::Css(_)));
 
         let index = bun_ast::Index::init(chunk.entry_point.source_index());
@@ -394,34 +377,17 @@ fn finalize_bundle_inner(
             continue;
         }
 
-        // Note: `IntermediateOutput::code` takes `&mut self` (a field of
-        // `*chunk`) plus `chunk: &Chunk` and `chunks: &[Chunk]`; borrowck still
-        // rejects the overlap (`&mut chunk.intermediate_output` aliases the
-        // shared `&chunk` / `&chunks[..]`). Split via raw
-        // pointers — the callee never reborrows `chunk.intermediate_output`
-        // through the `chunk`/`chunks` params (it reads metadata only).
-        let code = {
-            let chunk_ptr: *mut bundler::chunk::Chunk = chunk;
-            // SAFETY: `intermediate_output` is a disjoint field of `*chunk`;
-            // `code()` does not access it via the `chunk`/`chunks` arguments.
-            let io = unsafe { &mut (*chunk_ptr).intermediate_output };
-            io.code(
-                None,
-                &bv2.graph,
-                &bv2.linker.graph,
-                b"THIS_SHOULD_NEVER_BE_EMITTED_IN_DEV_MODE",
-                // SAFETY: see above; shared reborrow of the same allocation,
-                // disjoint from the `&mut intermediate_output` receiver.
-                unsafe { &*chunk_ptr },
-                // SAFETY: `result.chunks` outlives this loop body;
-                // `chunks_ptr/len` were snapshotted before `split_at_mut`,
-                // and `code()` only reads.
-                unsafe { ::core::slice::from_raw_parts(chunks_ptr, chunks_len) },
-                None,
-                bundler::chunk::ReferencePathStyle::ImporterRelative,
-                bundler::chunk::SourceMapShiftTracking::Disabled,
-            )?
-        };
+        let code = output.code(
+            None,
+            &bv2.graph,
+            &bv2.linker.graph,
+            b"THIS_SHOULD_NEVER_BE_EMITTED_IN_DEV_MODE",
+            chunk,
+            &chunks,
+            None,
+            bundler::chunk::ReferencePathStyle::ImporterRelative,
+            bundler::chunk::SourceMapShiftTracking::Disabled,
+        )?;
 
         // Create an entry for this file.
         let key = ctx.sources[index.get() as usize]
@@ -468,7 +434,9 @@ fn finalize_bundle_inner(
         }
     }
 
-    for chunk in html_chunks_mut.iter_mut() {
+    let (js_and_css_chunks, html_chunks) = chunks.split_at_mut(1 + n_css);
+    let (js_chunk, css_chunks) = (&js_and_css_chunks[0], &js_and_css_chunks[1..]);
+    for chunk in html_chunks.iter_mut() {
         let index = bun_ast::Index::init(chunk.entry_point.source_index());
         let bundler::CompileResult::Html {
             code: compile_result_code,
@@ -579,7 +547,7 @@ fn finalize_bundle_inner(
             )?,
         }
     }
-    for chunk in html_chunks_mut.iter() {
+    for chunk in html_chunks.iter() {
         let index = bun_ast::Index::init(chunk.entry_point.source_index());
         dev.graphs.process_chunk_dependencies::<{ Side::Client }>(
             &mut ctx,
@@ -587,7 +555,7 @@ fn finalize_bundle_inner(
             index,
         )?;
     }
-    for chunk in css_chunks_mut.iter() {
+    for chunk in css_chunks {
         let entry_index = bun_ast::Index::init(chunk.entry_point.source_index());
         dev.graphs.process_chunk_dependencies::<{ Side::Client }>(
             &mut ctx,
@@ -934,7 +902,6 @@ fn finalize_bundle_inner(
     }
     w_int!(i32, -1);
 
-    let css_chunks = &*css_chunks_mut;
     // If a chunk failed to print, the page keeps its last good stylesheet.
     let css_chunk_printed = |chunk: &bundler::chunk::Chunk| {
         !chunk
@@ -1169,11 +1136,7 @@ fn finalize_bundle_inner(
     }
 
     // Release the lock because the underlying handler may acquire one.
-    dev.graph_safety_lock.unlock();
-    let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
-    // SAFETY: `*dev_ptr` outlives this guard, which runs before `_lock` (LIFO),
-    // so the outer unlock guard sees a locked state again.
-    scopeguard::defer! { unsafe { (*dev_ptr).graph_safety_lock.lock() } };
+    drop(lock);
 
     // Set the state of all the deferred routes up front
     for req in current_bundle!().requests.iter() {

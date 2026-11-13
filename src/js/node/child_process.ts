@@ -1336,6 +1336,12 @@ class ChildProcess extends EventEmitter {
             // net.connect({fd}) -> usockets will close it on socket close.
             const fd = handle && handle.stdio[i];
             if (fd == null) return null;
+            // On POSIX the parent end is always a socketpair, so skip the fstat
+            // classification in Listener::connect_inner. On Windows the value is a
+            // raw HANDLE that must still go through Fd::from_uv / uv_guess_handle.
+            if (process.platform !== "win32") {
+              return require("node:net").connect({ fd, fdIsRawSocket: true });
+            }
             return require("node:net").connect({ fd });
         }
         return null;

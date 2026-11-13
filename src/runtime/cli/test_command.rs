@@ -4062,8 +4062,6 @@ impl TestCommand {
                 bun_test_root: bun_test_root_ptr,
                 global,
                 next_load_shares_global,
-                later_load_shares_registry: next_file_shares_registry
-                    || repeat_index + 1 < repeat_count,
             };
 
             // Recompute on every repeat because the reporters overwrite `relative`'s buffer while the file runs.
@@ -4324,7 +4322,6 @@ struct EnteredFile<'a> {
     bun_test_root: *mut bun_test::BunTestRoot,
     global: &'a jsc::JSGlobalObject,
     next_load_shares_global: bool,
-    later_load_shares_registry: bool,
 }
 
 impl Drop for EnteredFile<'_> {
@@ -4333,10 +4330,11 @@ impl Drop for EnteredFile<'_> {
         unsafe { (*self.bun_test_root).exit_file() };
         // A mock.module() patch still pending must not hold up the next file.
         bun_jsc::cpp::JSMock__forgetPendingModulePatches(self.global);
+        // Nothing runs the event loop for this file after this, so what still waits for the turn of a mock stays as it is.
         bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(
             self.global,
             self.next_load_shares_global,
-            self.later_load_shares_registry,
+            false,
         );
     }
 }

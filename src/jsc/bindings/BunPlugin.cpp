@@ -41,6 +41,7 @@
 #include <wtf/SetForScope.h>
 #include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/WTFString.h>
+#include <wtf/FileSystem.h>
 
 #include "BunClientData.h"
 #include "BuiltinModuleKeys.h"
@@ -7356,10 +7357,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__didBeginTestFile(Zig::GlobalObje
 }
 
 // A fetch of `specifier` that went on would read the file and make a second instance beside the one that stashLoadedModule() set aside.
-static bool hasOriginalSetAside(Zig::GlobalObject* globalObject, const ModulesToEvict& evict, const String& specifier)
+static bool hasOriginalSetAside(Zig::GlobalObject* globalObject, const String& specifier)
 {
-    if (!evict.packagesToRestore.contains(specifier))
-        return false;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* loader = Bun::testFileModuleLoader(globalObject);
@@ -7372,6 +7371,12 @@ static bool hasOriginalSetAside(Zig::GlobalObject* globalObject, const ModulesTo
     JSValue required = Bun::testFileRequireMap(globalObject)->get(globalObject, jsString(vm, original));
     RETURN_IF_EXCEPTION(scope, false);
     return required.isCell();
+}
+
+// A load that goes on gets the mock that was made, or else the module itself. A module that has no file would give it only an error.
+static bool hasSomethingForLoad(JSModuleMock* mock, const String& specifier)
+{
+    return mock->state != JSModuleMock::State::NotCalled || isBuiltinModuleKey(specifier) || FileSystem::fileTypeFollowingSymlinks(specifier) == FileSystem::FileType::Regular;
 }
 
 // Returns whether it let loads go on that waited for the turn of a mock: they run as soon as the event loop does.
@@ -7619,8 +7624,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) bool JSMock__undoMod
     // With its turn, a load whose mock is gone with the file finds no mock, calls no factory and takes the module itself. The others never settle.
     Vector<JSC::Strong<JSC::JSObject>> turnsOfLoadsThatGoOn;
     for (auto& waiting : waitingMocks) {
-        String specifier = uncheckedDowncast<JSModuleMock>(waiting.mock.get())->specifier->tryGetValue().data;
-        bool goesOn = letsWaitingLoadsGoOn && !registeredModuleMock(globalObject, specifier) && !hasOriginalSetAside(globalObject, evict, specifier);
+        auto* mock = uncheckedDowncast<JSModuleMock>(waiting.mock.get());
+        String specifier = mock->specifier->tryGetValue().data;
+        bool goesOn = letsWaitingLoadsGoOn && !registeredModuleMock(globalObject, specifier) && hasSomethingForLoad(mock, specifier) && !hasOriginalSetAside(globalObject, specifier);
         if (scope.exception()) [[unlikely]]
             (void)scope.tryClearException();
         if (goesOn)

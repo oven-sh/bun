@@ -5522,76 +5522,89 @@ describe.concurrent("a test file's module mocks are undone when it ends, even wi
     expect(exitCode).toBe(1);
   });
 
-  // Without its mock the module has no file. The fetch that waited asks for the same key again, and the file is not there.
-  const heldWithoutFile = (left: string) => ({
-    "slow.js": modules["slow.js"],
-    "user.js": `import { x } from "./only-mocked.js"; import { s } from "./slow.js"; export const seen = x + "/" + s;`,
-    "preload.js": `
-      globalThis.events = [];
-      globalThis.asked = Promise.withResolvers();
-      Bun.plugin({
-        name: "never answers",
-        setup(build) {
-          build.onLoad({ filter: /slow\\.js$/ }, () => {
-            globalThis.asked.resolve();
-            return new Promise(() => {});
-          });
-        },
-      });
-    `,
-    "a.test.js": `
-      import { mock, test } from "bun:test";
-      mock.module("./only-mocked.js", () => (globalThis.events.push("factory"), { x: "mock" }));
-      test("leaves an import that has asked for the mock", async () => {
-        globalThis.kept = import("./user.js");
-        ${left}
-        await globalThis.asked.promise;
-      });
-    `,
-  });
-  const nextCatches = `
-    import { expect, test } from "bun:test";
-    import { sep } from "node:path";
-    test("what kept the import gets the error of the file that is not there", async () => {
-      const error = await globalThis.kept.then(() => null, error => error);
-      expect([error.name, error.message.replace(import.meta.dir + sep, "")]).toEqual(["BuildMessage", 'ENOENT reading "only-mocked.js"']);
-      expect(globalThis.events).toEqual([]);
+  // slow.js is never answered, so the load of user.js cannot finish.
+  const neverAnswers = (more: string) => `
+    globalThis.events = [];
+    globalThis.asked = Promise.withResolvers();
+    Bun.plugin({
+      name: "never answers",
+      setup(build) {
+        build.onLoad({ filter: /slow\\.js$/ }, () => {
+          globalThis.asked.resolve();
+          return new Promise(() => {});
+        });
+        ${more}
+      },
     });
   `;
 
-  test("a load that waits for the turn of the factory of a module that has no file is rejected", async () => {
+  // Without its mock the module has no file, so a fetch that went on could only fail.
+  const mockedWithoutFile = (inTest: string) => ({
+    "slow.js": modules["slow.js"],
+    "user.js": `import { x } from "./only-mocked.js"; import { s } from "./slow.js"; export const seen = x + "/" + s;`,
+    "a.test.js": `
+      import { expect, mock, test } from "bun:test";
+      mock.module("./only-mocked.js", () => (globalThis.events.push("factory"), { x: "mock" }));
+      test("leaves an import that has asked for the mock", async () => {
+        ${leavesImport}
+        ${inTest}
+      });
+    `,
+  });
+
+  test("a load that waits for the turn of the factory of a module that has no file stays as it is", async () => {
     await expectFixturesToPass(
-      { ...heldWithoutFile(`globalThis.kept.catch(() => {});`), "b.test.js": nextCatches },
+      {
+        ...mockedWithoutFile(""),
+        "preload.js": neverAnswers(
+          `build.onLoad({ filter: /only-mocked\\.js$/ }, () => void globalThis.events.push("the file is asked for"));`,
+        ),
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          test("nothing has asked for the file", () => expect(globalThis.events).toEqual([]));
+        `,
+      },
       2,
       heldArgs,
     );
   });
 
-  // The import is rejected when its file ends. A handler that the next file attaches comes too late.
-  test("a load that waits for the turn of the factory of a module that has no file is reported unless its file handles it", async () => {
-    using dir = tempDir("mock-module", { ...heldWithoutFile(""), "b.test.js": nextCatches });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", ...heldArgs],
-      cwd: String(dir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 60_000,
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr.indexOf("only-mocked.js")).toBeWithin(0, stderr.indexOf("b.test.js:"));
-    expect(stderr).toContain(" 2 pass\n 0 fail\n 1 error\n");
-    expect(exitCode).toBe(1);
+  test("a load that waits for the turn of the factory of a module that has no file gets the mock that a require() has made", async () => {
+    await expectFixturesToPass(
+      {
+        ...mockedWithoutFile(`expect(require("./only-mocked.js").x).toBe("mock");`),
+        "preload.js": holdsSlow(""),
+        "b.test.js": `
+          import { expect, test } from "bun:test";
+          test("what kept the import gets the mock that was made", async () => {
+            globalThis.gate.resolve();
+            expect((await globalThis.kept).seen).toBe("mock/slow");
+            expect(globalThis.events).toEqual(["factory"]);
+          });
+        `,
+      },
+      2,
+      heldArgs,
+    );
   });
 
-  // No later load takes what these leave: the last file of a run, and a file whose modules are its own.
+  // No later load takes what these leave: the last file of a run, and a file whose modules are its own. A load that went on would ask for k.js.
   test.each([
     ["the last file", ["--preload", "./preload.js", "./a.test.js"], 1],
     ["a file under --isolate", ["--isolate", ...heldArgs], 2],
     ["a file under --isolate=modules", ["--isolate=modules", ...heldArgs], 2],
   ])("a load that waits for the turn of a factory stays as it is for %s", async (_, args, pass) => {
     using dir = tempDir("mock-module", {
-      ...heldWithoutFile(""),
+      ...modules,
+      "preload.js": neverAnswers(`build.onLoad({ filter: /k\\.js$/ }, () => void console.log("k.js is asked for"));`),
+      "a.test.js": `
+        import { mock, test } from "bun:test";
+        mock.module("./k.js", () => ({ x: "mock" }));
+        test("leaves an import that has asked for the mock", async () => {
+          ${leavesImport}
+          console.log("slow.js is asked for");
+        });
+      `,
       "b.test.js": `
         import { test } from "bun:test";
         test("does not use the import", () => {});
@@ -5605,8 +5618,8 @@ describe.concurrent("a test file's module mocks are undone when it ends, even wi
       stderr: "pipe",
       timeout: 60_000,
     });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("only-mocked.js");
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.split(/\r?\n/).filter(line => line.endsWith("is asked for"))).toEqual(["slow.js is asked for"]);
     expect(stderr).toContain(` ${pass} pass\n 0 fail\n`);
     expect(exitCode).toBe(0);
   });
@@ -5617,11 +5630,18 @@ describe.concurrent("a test file's module mocks are undone when it ends, even wi
       {
         "k1.js": `export const x = "real1";`,
         "k2.js": `export const y = "real2";`,
-        "user.js": `import { x } from "./k1.js"; import { y } from "./k2.js"; import { z } from "./only-mocked.js"; export const seen = [x, y, z].join("/");`,
+        "k3.js": `export const z = "real3";`,
+        "user.js": `import { x } from "./k1.js"; import { y } from "./k2.js"; import { z } from "./k3.js"; export const seen = [x, y, z].join("/");`,
         "preload.js": `
           import { mock } from "bun:test";
           globalThis.events = [];
           globalThis.called = Promise.withResolvers();
+          Bun.plugin({
+            name: "says when k3.js is read",
+            setup(build) {
+              build.onLoad({ filter: /k3\\.js$/ }, () => void globalThis.events.push("k3.js is read"));
+            },
+          });
           let calls = 0, hasFirstFinished = false;
           mock.module("./k1.js", async () => {
             globalThis.events.push("first");
@@ -5637,7 +5657,7 @@ describe.concurrent("a test file's module mocks are undone when it ends, even wi
         `,
         "a.test.js": `
           import { mock, test } from "bun:test";
-          mock.module("./only-mocked.js", () => ({ z: "mock" }));
+          mock.module("./k3.js", () => ({ z: "mock" }));
           test("leaves an import whose first factory is running", async () => {
             globalThis.kept = import("./user.js");
             await globalThis.called.promise;
@@ -5645,7 +5665,7 @@ describe.concurrent("a test file's module mocks are undone when it ends, even wi
         `,
         "b.test.js": `
           import { expect, mock, test } from "bun:test";
-          mock.module("./only-mocked.js", () => ({ z: "mock of the next file" }));
+          mock.module("./k3.js", () => ({ z: "mock of the next file" }));
           test("the next file calls the factories in their order", async () => {
             expect((await import("./user.js")).seen).toBe("preload1/preload2/mock of the next file");
             expect(globalThis.events).toEqual(["first", "first", "second after first: true"]);
@@ -5709,6 +5729,41 @@ describe.concurrent("a test file's module mocks are undone when it ends, even wi
       heldArgs,
     );
   });
+
+  // The test has ended the mock that set the module aside. The instance stays set aside while the load waits.
+  test.each([
+    ["removed", `vi.doUnmock("./local.js");`],
+    ["replaced", `vi.doMock("./local.js", () => ({ token: "second mock" }));`],
+  ])(
+    "a load that waits for the turn of a mock over a loaded module that the test has %s stays as it is",
+    async (_, later) => {
+      await expectFixturesToPass(
+        {
+          "local.js": `export const token = {};`,
+          "slow.js": modules["slow.js"],
+          "user.js": `import { token } from "./local.js"; import "./slow.js"; export const seen = token;`,
+          "preload.js": neverAnswers(
+            `build.onLoad({ filter: /local\\.js$/ }, () => void globalThis.events.push("local.js is read"));`,
+          ),
+          "a.test.js": `
+            import { test, vi } from "bun:test";
+            import "./local.js";
+            test("leaves an import that has asked for the mock", async () => {
+              vi.doMock("./local.js", () => ({ token: "mock" }));
+              ${leavesImport}
+              ${later}
+            });
+          `,
+          "b.test.js": `
+            import { expect, test } from "bun:test";
+            test("the file is not read a second time", () => expect(globalThis.events).toEqual(["local.js is read"]));
+          `,
+        },
+        2,
+        heldArgs,
+      );
+    },
+  );
 
   const neverAnswersTheFirstTime = `
     globalThis.asked = Promise.withResolvers();

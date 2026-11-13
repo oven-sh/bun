@@ -141,11 +141,20 @@ function restoreEnv() {
   const current = process.env;
   const keys = getOwnPropertyNames(current);
   for (let i = 0; i < keys.length; i++) if (!env.$has(keys[i])) delete current[keys[i]];
+  let hasError = false;
+  let firstError: unknown;
   env.$forEach((value, key) => {
-    if (current[key] === value) return;
-    if (value === undefined) delete current[key];
-    else current[key] = value;
+    // A variable that can't be put back must not keep the ones after it as the file left them.
+    try {
+      if (current[key] === value) return;
+      if (value === undefined) delete current[key];
+      else current[key] = value;
+    } catch (error) {
+      if (!hasError) firstError = error;
+      hasError = true;
+    }
   });
+  if (hasError) throw firstError;
 }
 
 function restoreListeners() {
@@ -188,6 +197,9 @@ export default function restoreGlobals() {
   }
   // A property that was deleted and put back is in another slot.
   if (changed.length !== alwaysComparedCount) saveShapes();
-  restoreEnv();
-  restoreListeners();
+  try {
+    restoreEnv();
+  } finally {
+    restoreListeners();
+  }
 }

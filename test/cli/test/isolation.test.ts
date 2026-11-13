@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, Heap, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { bunEnv, bunExe, Heap, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -1560,6 +1560,108 @@ describe.concurrent("bun test --isolate=modules", () => {
       },
       2,
     );
+  });
+
+  // The restore can't put `process.env` back on the frozen `process`, and throws before every file that follows.
+  test.each([
+    "--isolate=modules",
+    "--isolate=modules --rerun-each=2",
+    // With this delay the first worker takes every file, so it also makes every restore.
+    "--isolate=modules --parallel=2 --parallel-delay=600000",
+  ])(
+    "an error that the restore of the globals throws is reported, and the next files run: bun test %s",
+    async flags => {
+      using dir = tempDir("isolate-modules-restore-throws", {
+        // With --rerun-each, the second run finds `process` as the first run left it.
+        "a.test.js": `test("a", () => {
+          if (!Object.isExtensible(process)) return;
+          Object.defineProperty(process, "env", { get() { throw new Error("the getter that a left ran"); } });
+          Object.freeze(process);
+        });`,
+        "b.test.js": `test("b", () => {});`,
+        "c.test.js": `test("c", () => {});`,
+      });
+      const junit = join(String(dir), "junit.xml");
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        ["--reporter=junit", "--reporter-outfile=" + junit, ...flags.split(" ")],
+        ["./a.test.js", "./b.test.js", "./c.test.js"],
+      );
+      const xml = await Bun.file(junit).text();
+      const runs = flags.includes("--rerun-each=2") ? 2 : 1;
+      // One report before b and one before c. Which statement of the restore throws is not held, only that the error is the restore's.
+      expect(
+        {
+          passed: stderr.match(/^\(pass\) [abc]/gm)?.sort(),
+          reports: stderr.match(/Unhandled error between tests/g)?.length,
+          fromTheRestore: stderr.match(/at restoreGlobals \(internal:test\/globals/g)?.length,
+          counts: stderr.match(/^ \d+ (?:fail|errors?)$/gm),
+          workerCrashed: stderr.includes("worker crashed"),
+          junitCases: xml.match(/<testcase name="\(unhandled error\)"/g)?.length,
+          junitFailures: xml.match(/<testsuites [^>]*failures="(\d+)"/)?.[1],
+          exitCode,
+        },
+        stderr,
+      ).toEqual({
+        passed: ["a", "b", "c"].flatMap(name => Array(runs).fill("(pass) " + name)),
+        reports: 2,
+        fromTheRestore: 2,
+        counts: [" 0 fail", " 2 errors"],
+        workerCrashed: false,
+        junitCases: 2,
+        junitFailures: "2",
+        exitCode: 1,
+      });
+    },
+  );
+
+  test("the restore puts back what it can when one variable of process.env can't be put back, and reports that one", async () => {
+    using dir = tempDir("isolate-modules-restore-goes-on", {
+      // The prototype answers the read of the deleted variable with a throw, so the restore can't put that one back.
+      "a.test.js": `test("a", () => {
+        process.env.ISOLATION_A = process.env.ISOLATION_Z = "changed";
+        process.on("exit", () => {});
+        delete process.env.ISOLATION_M;
+        Object.setPrototypeOf(process.env, { get ISOLATION_M() { throw new Error("the getter that a left ran"); } });
+      });`,
+      "b.test.js": `test("b", () => {
+        expect([process.env.ISOLATION_A, process.env.ISOLATION_Z, process.listenerCount("exit")]).toEqual(["start", "start", 0]);
+      });`,
+    });
+    // One of the two changed variables comes after the deleted one, in whichever order the variables are restored.
+    const env = { ...bunEnv, ISOLATION_A: "start", ISOLATION_M: "start", ISOLATION_Z: "start" };
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate=modules"],
+      ["./a.test.js", "./b.test.js"],
+      env,
+    );
+    expect(
+      {
+        results: stderr.match(/^\((?:pass|fail)\) [ab]/gm),
+        errors: stderr.match(/^error: .*$/gm),
+        // The error is the file's own, so its stack names the file.
+        framesInTheFile: stderr.match(/^\s+at .*a\.test\.js:\d+:\d+\)?$/gm)?.length,
+        exitCode,
+      },
+      stderr,
+    ).toEqual({
+      results: ["(pass) a", "(pass) b"],
+      errors: ["error: the getter that a left ran"],
+      framesInTheFile: 1,
+      exitCode: 1,
+    });
+  });
+
+  // The stack is too small for the walk over the globals. Linux only: the size that the walk needs was measured there.
+  test.skipIf(!isLinux)("an error while the snapshot of the globals is taken is printed", async () => {
+    using dir = tempDir("isolate-modules-snapshot-throws", { "a.test.js": `test("a", () => {});` });
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate=modules"], ["./a.test.js"], {
+      ...bunEnv,
+      BUN_JSC_maxPerThreadStackUsage: "60000",
+    });
+    expect(stderr).toContain("Maximum call stack size exceeded");
+    expect(exitCode).toBe(1);
   });
 
   test("every file finds the builtins as the first one did, whatever the files before it did to them", async () => {

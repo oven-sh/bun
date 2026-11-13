@@ -7,7 +7,7 @@ use bun_core::Output;
 use bun_core::strings;
 #[cfg(not(windows))]
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
-use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
+use bun_event_loop::{BoxedTask, Task, TaskTag, task_tag};
 use bun_io::KeepAlive;
 use bun_jsc::bindgen::JsScope;
 use bun_jsc::bun_string_jsc;
@@ -95,8 +95,8 @@ impl FSWatcher {
     pub(crate) fn post(
         &self,
         task: core::ptr::NonNull<ConcurrentTask>,
-    ) -> bun_jsc::vm_handle::Posted {
-        self.handle.post(self.loop_kind, task)
+    ) -> bun_jsc::vm_handle::Posted<()> {
+        self.handle.post_intrusive(self.loop_kind, task)
     }
 
     /// `self`'s address as `*mut Self` for path-watcher / abort-signal /
@@ -137,17 +137,16 @@ pub(crate) struct FSWatchTaskPosix {
 }
 
 #[cfg(not(windows))]
-impl Taskable for FSWatchTaskPosix {
+impl BoxedTask for FSWatchTaskPosix {
     const TAG: TaskTag = task_tag::FSWatchTask;
     /// A batch of events the watcher thread posted that nobody will emit:
     /// same as the refused-post path in `enqueue`.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe { bun_core::heap::take(this) }.deinit();
+    fn release_unrun(self: Box<Self>) {
+        self.deinit();
     }
     /// The watcher closes with the context that started it (`abort_handle`); a batch that arrives
     /// afterwards finds it closed.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -226,7 +225,7 @@ impl FSWatchTaskPosix {
         // if false is closed or detached (can still contain valid refs but will not create a new one)
         if self.ctx().ref_task() {
             // Reshaped for borrowck — clone self into a heap task, then reset.
-            let that = bun_core::heap::into_raw(Box::new(FSWatchTaskPosix {
+            let task = Task::from_boxed(Box::new(FSWatchTaskPosix {
                 ctx: self.ctx,
                 count: self.count,
                 entries: core::mem::replace(
@@ -236,15 +235,15 @@ impl FSWatchTaskPosix {
                 concurrent_task: ConcurrentTask::default(),
             }));
             self.count = 0;
-            // SAFETY: `that` is a freshly-boxed task; the concurrent queue takes
-            // ownership of the `ConcurrentTask` node (and transitively the box)
-            // until the JS thread drains and `heap::take`s it in `dispatch`.
+            let that = task.ptr().cast::<FSWatchTaskPosix>();
+            // SAFETY: `that` is the box that `task` owns. Its node carries `task` until the JS
+            // thread takes it out, or until the post is refused.
             unsafe {
-                (*that).concurrent_task.task = Task::init(that);
+                (*that).concurrent_task.task = task;
                 let node = core::ptr::NonNull::new_unchecked(core::ptr::addr_of_mut!(
                     (*that).concurrent_task
                 ));
-                if let bun_jsc::vm_handle::Posted::Refused(_) = self.ctx().post(node) {
+                if let bun_jsc::vm_handle::Posted::Refused(()) = self.ctx().post(node) {
                     // VM torn down: nobody will emit these events.
                     bun_core::heap::take(that).deinit();
                 }
@@ -351,15 +350,14 @@ pub(crate) struct FSWatchTaskWindows {
 }
 
 #[cfg(windows)]
-impl Taskable for FSWatchTaskWindows {
+impl BoxedTask for FSWatchTaskWindows {
     const TAG: TaskTag = task_tag::FSWatchTask;
     /// As the POSIX task.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract.
-        unsafe { bun_core::heap::take(this) }.deinit();
+    fn release_unrun(self: Box<Self>) {
+        self.deinit();
     }
     /// As `FSWatchTaskPosix`.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -421,17 +419,16 @@ impl FSWatchTaskWindows {
         if !ctx.expect("FSWatchTask.ctx unset").ref_task() {
             return;
         }
-        let task = bun_core::heap::into_raw(Box::new(FSWatchTaskWindows {
+        let task = Task::from_boxed(Box::new(FSWatchTaskWindows {
             ctx,
             event: Event::Abort,
         }));
 
         // `ctx` is the live owning `ParentRef<FSWatcher>` (BACKREF).
-        // Ownership of `task` transfers to the queue (drained on the same thread).
         ctx.expect("FSWatchTask.ctx unset")
             .ctx
             .event_loop()
-            .enqueue_task(Task::init(task));
+            .enqueue_task(task);
     }
 
     /// this runs on JS Context Thread
@@ -558,12 +555,11 @@ impl FSWatcher {
             return;
         }
 
-        let task = bun_core::heap::into_raw(Box::new(FSWatchTaskWindows {
+        let task = Task::from_boxed(Box::new(FSWatchTaskWindows {
             ctx: this.current_task.get().ctx,
             event,
         }));
-        // Ownership of `task` transfers to the queue.
-        this.ctx.event_loop().enqueue_task(Task::init(task));
+        this.ctx.event_loop().enqueue_task(task);
     }
 
     #[cfg(windows)]

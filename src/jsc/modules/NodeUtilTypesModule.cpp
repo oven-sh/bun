@@ -902,7 +902,9 @@ static NEVER_INLINE bool ownCauseIsOnBoth(JSC::JSGlobalObject* globalObject, JSC
     RETURN_IF_EXCEPTION(scope, false);
     if (!expectedHasCause)
         return true;
-    RELEASE_AND_RETURN(scope, actualObject->hasOwnProperty(globalObject, vm.propertyNames->cause));
+    bool actualHasCause = actualObject->hasOwnProperty(globalObject, vm.propertyNames->cause);
+    RETURN_IF_EXCEPTION(scope, false);
+    return actualHasCause;
 }
 
 // node's Error arm for kPartial: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L391-L404
@@ -930,7 +932,7 @@ static bool errorFieldsEqual(JSC::JSGlobalObject* globalObject, JSC::MarkedArgum
             cycles.memos.emplace(gcBuffer);
     }
 
-    RELEASE_AND_RETURN(scope, ownCauseIsOnBoth(globalObject, scope, actualObject, expectedObject));
+    return ownCauseIsOnBoth(globalObject, scope, actualObject, expectedObject);
 }
 
 static JSC::JSWrapperObject* asBoxedPrimitive(JSValue value)

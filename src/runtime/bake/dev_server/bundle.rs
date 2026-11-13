@@ -381,14 +381,23 @@ impl DevServer {
         // `CurrentBundle` (which also owns `bv2`); the boxed arena's address
         // is stable for the lifetime of `bv2.graph.heap`'s borrow.
         let heap_ref: &'static bun_alloc::Arena = unsafe { &*heap_ptr };
-        let server_transpiler: *mut Transpiler<'static> = &raw mut *self.server_transpiler;
+        // SAFETY: `self` holds the transpilers at a fixed address and outlives every use of `bv2`.
+        // Until `bv2` is dropped, nothing else uses the client and SSR ones. `self` still uses the
+        // server one on this thread (`watch_directory`, `finalize_bundle`).
+        let (ssr_transpiler, server_transpiler, client_transpiler) = unsafe {
+            use bun_ptr::detach_lifetime_mut as detach;
+            (
+                self.ssr_transpiler_mut().map(|ssr| detach(ssr)),
+                detach(&mut *self.server_transpiler),
+                detach(&mut *self.client_transpiler),
+            )
+        };
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
-            // SAFETY: `server_transpiler` outlives `bv2` (held by `self`).
-            unsafe { &mut *server_transpiler },
+            server_transpiler,
             Some(bundler::bundle_v2::BakeOptions {
                 framework: self.framework.as_bundler_view(),
-                client_transpiler: ::core::ptr::NonNull::from(&mut *self.client_transpiler),
-                ssr_transpiler: ::core::ptr::NonNull::from(&mut self.ssr_transpiler).cast(),
+                client_transpiler,
+                ssr_transpiler,
                 plugins: self.plugins,
             }),
             heap_ref,

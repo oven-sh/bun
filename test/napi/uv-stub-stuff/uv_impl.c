@@ -200,7 +200,8 @@ static int tty_reset_unexpected;
 static void *tty_reset_hammer(void *arg) {
   for (int i = 0; i < TTY_RESET_ITERATIONS; i++) {
     int result = uv_tty_reset_mode();
-    if (result == 0) continue;
+    if (result == 0)
+      continue;
     pthread_mutex_lock(&tty_reset_counts);
     if (result == UV_EBUSY)
       tty_reset_busy++;
@@ -1175,6 +1176,419 @@ static napi_value test_now(napi_env env, napi_callback_info info) {
   return result;
 }
 
+// The helper threads below are uv_thread_t's, so every test here also
+// exercises uv_thread_create and uv_thread_join. A create that fails throws
+// instead of leaving the main thread parked in a wait.
+#define SPAWN(env, tid, entry, arg)                                            \
+  do {                                                                         \
+    if (uv_thread_create((tid), (entry), (arg)) != 0) {                        \
+      napi_throw_error((env), NULL, "uv_thread_create failed");                \
+      return NULL;                                                             \
+    }                                                                          \
+  } while (0)
+
+// uv_cond_*: a helper thread signals a condition the main thread waits on.
+struct cond_state {
+  uv_mutex_t mutex;
+  uv_cond_t cond;
+  int ready;
+  int woken;
+};
+
+static void cond_signal_after(void *arg) {
+  struct cond_state *st = arg;
+  usleep(2000);
+  uv_mutex_lock(&st->mutex);
+  st->ready = 1;
+  uv_cond_signal(&st->cond);
+  uv_mutex_unlock(&st->mutex);
+}
+
+static void cond_wait_for_broadcast(void *arg) {
+  struct cond_state *st = arg;
+  uv_mutex_lock(&st->mutex);
+  while (!st->ready)
+    uv_cond_wait(&st->cond, &st->mutex);
+  st->woken++;
+  uv_mutex_unlock(&st->mutex);
+}
+
+// testCond() returns { initRc, timedOutRc, timedOutElapsedUs, signaledRc,
+// broadcastWoken, UV_ETIMEDOUT }.
+static napi_value test_cond(napi_env env, napi_callback_info info) {
+  struct cond_state st;
+  uv_thread_t thread, waiters[2];
+  int init_rc, timed_out_rc, signaled_rc;
+  uint64_t before, after;
+
+  uv_mutex_init(&st.mutex);
+  init_rc = uv_cond_init(&st.cond);
+  st.ready = 0;
+  st.woken = 0;
+
+  // wait: blocks until the helper thread signals.
+  SPAWN(env, &thread, cond_signal_after, &st);
+  uv_mutex_lock(&st.mutex);
+  while (!st.ready)
+    uv_cond_wait(&st.cond, &st.mutex);
+  uv_mutex_unlock(&st.mutex);
+  uv_thread_join(&thread);
+
+  // timedwait with nobody signaling: times out after the relative timeout
+  // (1ms, in nanoseconds).
+  uv_mutex_lock(&st.mutex);
+  before = uv_hrtime();
+  timed_out_rc = uv_cond_timedwait(&st.cond, &st.mutex, 1000000);
+  after = uv_hrtime();
+  uv_mutex_unlock(&st.mutex);
+
+  // timedwait that is signaled before the (long) timeout: returns 0.
+  st.ready = 0;
+  SPAWN(env, &thread, cond_signal_after, &st);
+  uv_mutex_lock(&st.mutex);
+  signaled_rc = 0;
+  while (!st.ready && signaled_rc == 0)
+    signaled_rc = uv_cond_timedwait(&st.cond, &st.mutex, 30ull * 1000000000ull);
+  uv_mutex_unlock(&st.mutex);
+  uv_thread_join(&thread);
+
+  // broadcast wakes every waiter.
+  st.ready = 0;
+  for (int i = 0; i < 2; i++)
+    SPAWN(env, &waiters[i], cond_wait_for_broadcast, &st);
+  usleep(2000);
+  uv_mutex_lock(&st.mutex);
+  st.ready = 1;
+  uv_cond_broadcast(&st.cond);
+  uv_mutex_unlock(&st.mutex);
+  for (int i = 0; i < 2; i++)
+    uv_thread_join(&waiters[i]);
+
+  uv_cond_destroy(&st.cond);
+  uv_mutex_destroy(&st.mutex);
+
+  napi_value result;
+  napi_create_object(env, &result);
+  set_int32(env, result, "initRc", init_rc);
+  set_int32(env, result, "timedOutRc", timed_out_rc);
+  set_int32(env, result, "timedOutElapsedUs",
+            (int32_t)((after - before) / 1000));
+  set_int32(env, result, "signaledRc", signaled_rc);
+  set_int32(env, result, "broadcastWoken", st.woken);
+  set_int32(env, result, "UV_ETIMEDOUT", UV_ETIMEDOUT);
+  return result;
+}
+
+// The try-locks run on another thread: what a thread gets when it already
+// holds the lock differs between platforms (macOS reports EDEADLK).
+struct rwlock_try {
+  uv_rwlock_t *lock;
+  int tryrd;
+  int trywr;
+};
+
+static void rwlock_try_both(void *arg) {
+  struct rwlock_try *t = arg;
+  t->tryrd = uv_rwlock_tryrdlock(t->lock);
+  if (t->tryrd == 0)
+    uv_rwlock_rdunlock(t->lock);
+  t->trywr = uv_rwlock_trywrlock(t->lock);
+  if (t->trywr == 0)
+    uv_rwlock_wrunlock(t->lock);
+}
+
+// testRwlock() returns { initRc, tryrdWhileRead, trywrWhileRead,
+// tryrdWhileWrite, trywrWhileWrite, tryrdUnlocked, trywrUnlocked, UV_EBUSY }.
+static napi_value test_rwlock(napi_env env, napi_callback_info info) {
+  uv_rwlock_t lock;
+  uv_thread_t thread;
+  struct rwlock_try while_read, while_write, unlocked;
+  int init_rc = uv_rwlock_init(&lock);
+  while_read.lock = while_write.lock = unlocked.lock = &lock;
+
+  uv_rwlock_rdlock(&lock);
+  SPAWN(env, &thread, rwlock_try_both, &while_read);
+  uv_thread_join(&thread);
+  uv_rwlock_rdunlock(&lock);
+
+  uv_rwlock_wrlock(&lock);
+  SPAWN(env, &thread, rwlock_try_both, &while_write);
+  uv_thread_join(&thread);
+  uv_rwlock_wrunlock(&lock);
+
+  SPAWN(env, &thread, rwlock_try_both, &unlocked);
+  uv_thread_join(&thread);
+  uv_rwlock_destroy(&lock);
+
+  napi_value result;
+  napi_create_object(env, &result);
+  set_int32(env, result, "initRc", init_rc);
+  set_int32(env, result, "tryrdWhileRead", while_read.tryrd);
+  set_int32(env, result, "trywrWhileRead", while_read.trywr);
+  set_int32(env, result, "tryrdWhileWrite", while_write.tryrd);
+  set_int32(env, result, "trywrWhileWrite", while_write.trywr);
+  set_int32(env, result, "tryrdUnlocked", unlocked.tryrd);
+  set_int32(env, result, "trywrUnlocked", unlocked.trywr);
+  set_int32(env, result, "UV_EBUSY", UV_EBUSY);
+  return result;
+}
+
+struct sem_state {
+  uv_sem_t sem;
+  _Atomic int posted;
+};
+
+static void sem_post_after(void *arg) {
+  struct sem_state *st = arg;
+  usleep(2000);
+  st->posted = 1;
+  uv_sem_post(&st->sem);
+}
+
+// testSem() returns { initRc, trywaitEmpty, trywaitAfterPost, waited,
+// UV_EAGAIN }. `waited` is what the poster had set when uv_sem_wait returned.
+static napi_value test_sem(napi_env env, napi_callback_info info) {
+  struct sem_state st;
+  uv_thread_t thread;
+  int init_rc = uv_sem_init(&st.sem, 0);
+  st.posted = 0;
+  int trywait_empty = uv_sem_trywait(&st.sem);
+  uv_sem_post(&st.sem);
+  int trywait_after_post = uv_sem_trywait(&st.sem);
+
+  // wait: blocks until the helper thread posts.
+  SPAWN(env, &thread, sem_post_after, &st);
+  uv_sem_wait(&st.sem);
+  int waited = st.posted;
+  uv_thread_join(&thread);
+  uv_sem_destroy(&st.sem);
+
+  napi_value result;
+  napi_create_object(env, &result);
+  set_int32(env, result, "initRc", init_rc);
+  set_int32(env, result, "trywaitEmpty", trywait_empty);
+  set_int32(env, result, "trywaitAfterPost", trywait_after_post);
+  set_int32(env, result, "waited", waited);
+  set_int32(env, result, "UV_EAGAIN", UV_EAGAIN);
+  return result;
+}
+
+#define BARRIER_ROUNDS 100
+
+struct barrier_state {
+  uv_barrier_t barrier;
+  _Atomic int serial;
+  _Atomic int passed;
+};
+
+static void barrier_wait_thread(void *arg) {
+  struct barrier_state *st = arg;
+  if (uv_barrier_wait(&st->barrier))
+    st->serial++;
+  st->passed++;
+}
+
+// Every round, whichever thread is serial destroys the barrier at once; the
+// other thread may still be on its way out of uv_barrier_wait.
+static void barrier_round(void *arg) {
+  struct barrier_state *st = arg;
+  if (uv_barrier_wait(&st->barrier)) {
+    st->serial++;
+    uv_barrier_destroy(&st->barrier);
+  }
+  st->passed++;
+}
+
+// The same barrier, many rounds, no join between the rounds.
+static void barrier_many_rounds(void *arg) {
+  struct barrier_state *st = arg;
+  for (int i = 0; i < BARRIER_ROUNDS; i++) {
+    if (uv_barrier_wait(&st->barrier))
+      st->serial++;
+    st->passed++;
+  }
+}
+
+// testBarrier() returns { initRc, zeroCountRc, serial, passed, reusedSerial,
+// reusedPassed, destroyedBySerial, UV_EINVAL }.
+static napi_value test_barrier(napi_env env, napi_callback_info info) {
+  struct barrier_state st;
+  uv_barrier_t unused;
+  uv_thread_t threads[2];
+  int zero_count_rc = uv_barrier_init(&unused, 0);
+  int init_rc = uv_barrier_init(&st.barrier, 3);
+  st.serial = 0;
+  st.passed = 0;
+
+  // Three parties, one round.
+  for (int i = 0; i < 2; i++)
+    SPAWN(env, &threads[i], barrier_wait_thread, &st);
+  barrier_wait_thread(&st);
+  for (int i = 0; i < 2; i++)
+    uv_thread_join(&threads[i]);
+  uv_barrier_destroy(&st.barrier);
+  int serial = st.serial, passed = st.passed;
+
+  // Two parties reuse one barrier for many rounds.
+  uv_barrier_init(&st.barrier, 2);
+  st.serial = 0;
+  st.passed = 0;
+  SPAWN(env, &threads[0], barrier_many_rounds, &st);
+  barrier_many_rounds(&st);
+  uv_thread_join(&threads[0]);
+  uv_barrier_destroy(&st.barrier);
+  int reused_serial = st.serial, reused_passed = st.passed;
+
+  // The serial thread destroys the barrier right after its wait returns.
+  int destroyed_by_serial = 0;
+  for (int i = 0; i < BARRIER_ROUNDS; i++) {
+    uv_barrier_init(&st.barrier, 2);
+    st.serial = 0;
+    st.passed = 0;
+    SPAWN(env, &threads[0], barrier_round, &st);
+    barrier_round(&st);
+    uv_thread_join(&threads[0]);
+    if (st.serial == 1 && st.passed == 2)
+      destroyed_by_serial++;
+  }
+
+  napi_value result;
+  napi_create_object(env, &result);
+  set_int32(env, result, "initRc", init_rc);
+  set_int32(env, result, "zeroCountRc", zero_count_rc);
+  set_int32(env, result, "serial", serial);
+  set_int32(env, result, "passed", passed);
+  set_int32(env, result, "reusedSerial", reused_serial);
+  set_int32(env, result, "reusedPassed", reused_passed);
+  set_int32(env, result, "destroyedBySerial", destroyed_by_serial);
+  set_int32(env, result, "UV_EINVAL", UV_EINVAL);
+  return result;
+}
+
+struct key_state {
+  uv_key_t key;
+  void *other;
+};
+
+static void key_get_in_thread(void *arg) {
+  struct key_state *st = arg;
+  st->other = uv_key_get(&st->key);
+}
+
+// testKey() returns { createRc, beforeSetIsNull, afterSet, otherThreadIsNull }.
+static napi_value test_key(napi_env env, napi_callback_info info) {
+  struct key_state st;
+  uv_thread_t thread;
+  int value = 42;
+  st.other = (void *)1;
+  int create_rc = uv_key_create(&st.key);
+  int before_set_is_null = uv_key_get(&st.key) == NULL;
+  uv_key_set(&st.key, &value);
+  int *after = uv_key_get(&st.key);
+  SPAWN(env, &thread, key_get_in_thread, &st);
+  uv_thread_join(&thread);
+  uv_key_delete(&st.key);
+
+  napi_value result;
+  napi_create_object(env, &result);
+  set_int32(env, result, "createRc", create_rc);
+  set_int32(env, result, "beforeSetIsNull", before_set_is_null);
+  set_int32(env, result, "afterSet", after ? *after : -1);
+  set_int32(env, result, "otherThreadIsNull", st.other == NULL);
+  return result;
+}
+
+struct thread_state {
+  uv_thread_t main;
+  uv_thread_t self_in_thread;
+  int equal_to_main;
+  int equal_to_self;
+  _Atomic int ran;
+  uv_sem_t detached_done;
+};
+
+static void thread_report_self(void *arg) {
+  struct thread_state *st = arg;
+  st->self_in_thread = uv_thread_self();
+  st->equal_to_main = uv_thread_equal(&st->self_in_thread, &st->main) != 0;
+  st->equal_to_self =
+      uv_thread_equal(&st->self_in_thread, &st->self_in_thread) != 0;
+  st->ran = 1;
+}
+
+static void thread_post_and_exit(void *arg) {
+  struct thread_state *st = arg;
+  st->ran = 1;
+  uv_sem_post(&st->detached_done);
+}
+
+// Recursion that needs about 1 MB of stack; a 64 KB thread would overflow.
+static void use_stack(volatile char *mark, int depth) {
+  volatile char pad[4096];
+  pad[0] = (char)depth;
+  if (depth > 0)
+    use_stack(pad, depth - 1);
+  *mark = pad[0];
+}
+
+static void thread_big_stack(void *arg) {
+  struct thread_state *st = arg;
+  volatile char mark = 0;
+  use_stack(&mark, 256);
+  st->ran = 1;
+}
+
+// testThread() returns { createRc, joinRc, selfEqualsMain, selfEqualsSelf,
+// mainEqualsMain, joinedEqualsCreated, detachRc, detachedRan, exCreateRc,
+// exJoinRc, exRan }.
+static napi_value test_thread(napi_env env, napi_callback_info info) {
+  struct thread_state st;
+  uv_thread_t thread, detached, big;
+  uv_thread_options_t options;
+  memset(&st, 0, sizeof(st));
+  st.main = uv_thread_self();
+
+  int create_rc = uv_thread_create(&thread, thread_report_self, &st);
+  if (create_rc != 0) {
+    napi_throw_error(env, NULL, "uv_thread_create failed");
+    return NULL;
+  }
+  int join_rc = uv_thread_join(&thread);
+  int joined_equals_created = uv_thread_equal(&thread, &st.self_in_thread) != 0;
+  int main_equals_main = uv_thread_equal(&st.main, &st.main) != 0;
+
+  // A detached thread is not joined; a semaphore reports that it ran.
+  st.ran = 0;
+  uv_sem_init(&st.detached_done, 0);
+  SPAWN(env, &detached, thread_post_and_exit, &st);
+  int detach_rc = uv_thread_detach(&detached);
+  uv_sem_wait(&st.detached_done);
+  int detached_ran = st.ran;
+  uv_sem_destroy(&st.detached_done);
+
+  // uv_thread_create_ex with an explicit 2 MB stack.
+  st.ran = 0;
+  options.flags = UV_THREAD_HAS_STACK_SIZE;
+  options.stack_size = 2 << 20;
+  int ex_create_rc = uv_thread_create_ex(&big, &options, thread_big_stack, &st);
+  int ex_join_rc = ex_create_rc == 0 ? uv_thread_join(&big) : -1;
+
+  napi_value result;
+  napi_create_object(env, &result);
+  set_int32(env, result, "createRc", create_rc);
+  set_int32(env, result, "joinRc", join_rc);
+  set_int32(env, result, "selfEqualsMain", st.equal_to_main);
+  set_int32(env, result, "selfEqualsSelf", st.equal_to_self);
+  set_int32(env, result, "mainEqualsMain", main_equals_main);
+  set_int32(env, result, "joinedEqualsCreated", joined_equals_created);
+  set_int32(env, result, "detachRc", detach_rc);
+  set_int32(env, result, "detachedRan", detached_ran);
+  set_int32(env, result, "exCreateRc", ex_create_rc);
+  set_int32(env, result, "exJoinRc", ex_join_rc);
+  set_int32(env, result, "exRan", st.ran);
+  return result;
+}
+
 napi_value Init(napi_env env, napi_value exports) {
   // Register all test functions
   napi_value fn;
@@ -1278,9 +1692,26 @@ napi_value Init(napi_env env, napi_value exports) {
   napi_create_function(env, NULL, 0, test_tty_reset_mode, NULL, &fn);
   napi_set_named_property(env, exports, "testTtyResetMode", fn);
 
-  napi_create_function(env, NULL, 0, test_tty_reset_mode_concurrent, NULL,
-                       &fn);
+  napi_create_function(env, NULL, 0, test_tty_reset_mode_concurrent, NULL, &fn);
   napi_set_named_property(env, exports, "testTtyResetModeConcurrent", fn);
+
+  napi_create_function(env, NULL, 0, test_cond, NULL, &fn);
+  napi_set_named_property(env, exports, "testCond", fn);
+
+  napi_create_function(env, NULL, 0, test_rwlock, NULL, &fn);
+  napi_set_named_property(env, exports, "testRwlock", fn);
+
+  napi_create_function(env, NULL, 0, test_sem, NULL, &fn);
+  napi_set_named_property(env, exports, "testSem", fn);
+
+  napi_create_function(env, NULL, 0, test_barrier, NULL, &fn);
+  napi_set_named_property(env, exports, "testBarrier", fn);
+
+  napi_create_function(env, NULL, 0, test_key, NULL, &fn);
+  napi_set_named_property(env, exports, "testKey", fn);
+
+  napi_create_function(env, NULL, 0, test_thread, NULL, &fn);
+  napi_set_named_property(env, exports, "testThread", fn);
 
   return exports;
 }

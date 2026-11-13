@@ -24,7 +24,7 @@ bun_core::declare_scope!(AsyncHTTP, visible);
 
 // Lifetime `'a` covers every borrowed input the caller hands in: `url`,
 // `http_proxy`, `request_header_buf`, the borrowed `HTTPRequestBody::Bytes`
-// payload, and `client.{header_buf,unix_socket_path,if_modified_since}`.
+// payload, and `client.{header_buf,unix_socket_path,if_modified_since,progress}`.
 // Intrusive fields (`real`, `next`) are raw pointers and thus lifetime-erased;
 // the HTTP-thread copy uses the same `'a` as the JS-thread original it mirrors.
 pub struct AsyncHTTP<'a> {
@@ -176,7 +176,7 @@ fn make_client<'a>(
         redirect_type,
         redirect: Vec::new(),
         prev_redirect: Vec::new(),
-        progress_node: None,
+        progress: None,
         flags: Flags::default(),
         idle_timeout_seconds: None,
         state: InternalState::default(),

@@ -1,4 +1,3 @@
-use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bun_alloc::Arena as Bump;
@@ -524,17 +523,15 @@ impl TrustCommand {
             }
         };
 
-        let mut scripts_node: Progress::Node;
+        let scripts_node = Progress::NodeId::Scripts;
         let show_progress = log_level.show_progress();
 
         if show_progress {
             pm.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-            // `Node::start` returns an owned `Node` with raw backrefs into `pm.progress`.
-            scripts_node = pm
-                .progress
-                .start(b"", 0)
-                .start(ProgressStrings::script(), scripts_count);
-            pm.scripts_node = Some(NonNull::from(&mut scripts_node));
+            pm.progress.start(b"", 0);
+            pm.progress
+                .start_child(scripts_node, ProgressStrings::script(), scripts_count);
+            pm.scripts_node = Some(scripts_node);
         }
 
         for same_depth in blocked.chunk_by(|a, b| a.depth == b.depth) {
@@ -569,10 +566,7 @@ impl TrustCommand {
                 )?;
 
                 if show_progress {
-                    if let Some(sn) = pm.scripts_node {
-                        // SAFETY: points at our stack-local `scripts_node`.
-                        unsafe { sn.as_ptr().as_mut().unwrap().activate() };
-                    }
+                    pm.progress.activate(scripts_node);
                     pm.progress.refresh();
                 }
             }
@@ -583,7 +577,7 @@ impl TrustCommand {
         }
 
         if show_progress {
-            pm.progress.root.end();
+            pm.progress.end();
             pm.progress = Progress::Progress::default();
             pm.scripts_node = None;
         }

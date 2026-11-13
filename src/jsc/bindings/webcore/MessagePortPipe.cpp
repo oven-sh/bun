@@ -127,9 +127,11 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         return;
     }
 
-    // Not receiving (no 'message' listener, or registered for 'close' only): the inbox stays, and the close behind it.
+    // Not receiving (never started, stopped, or registered for 'close' only): the inbox stays, and the close behind it.
+    // A receiving side takes every message, listener or not, as Node's ReceiveMessage():
+    // https://github.com/nodejs/node/blob/v26.3.0/src/node_messaging.cc#L787-L798
     auto* context = port->scriptExecutionContext();
-    if (!attached || !port->hasMessageEventListener() || !context || !context->globalObject()) {
+    if (!attached || !context || !context->globalObject()) {
         bool closeHeld;
         {
             Locker locker { s.lock };
@@ -196,9 +198,8 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         if (globalObject->drainMicrotasks())
             break; // termination pending
 
-        // Listeners may have been removed mid-drain (port.off()); pause like the
-        // pre-loop check instead of dispatching the rest to zero listeners.
-        if (!port->hasMessageEventListener()) {
+        // The handler may have stopped the port (it removed the last 'message' listener): pause like the pre-loop check.
+        if (!(s.state.load(std::memory_order_relaxed) & Attached)) {
             Locker locker { s.lock };
             // Closed or transferred by the handler: the side is no longer this port's.
             if (s.ctxId != expectedCtx || s.port.get() != port)
@@ -255,6 +256,7 @@ std::optional<MessageWithMessagePorts> MessagePortPipe::takeOne(uint8_t side)
 void MessagePortPipe::attach(uint8_t side, ScriptExecutionContext& context, ThreadSafeWeakPtr<MessagePort> port)
 {
     ASSERT(side < 2);
+    ASSERT(port.get());
     auto& s = m_sides[side];
     ScriptExecutionContextIdentifier ctxId = context.identifier();
     BunLoopKind ctxLoopKind = context.currentLoopKind();
@@ -291,7 +293,7 @@ void MessagePortPipe::registerCloseContext(uint8_t side, ScriptExecutionContext&
     {
         Locker locker { s.lock };
         uint64_t st = s.state.load(std::memory_order_relaxed);
-        // Already closed, or context already known (started or previously registered).
+        // Already closed, or context already known (attached or previously registered).
         if ((st & Closed) || (st & (Attached | ContextKnown)))
             return;
         s.ctxId = ctxId;
@@ -327,6 +329,19 @@ void MessagePortPipe::detach(uint8_t side)
     // Messages remain queued for the next owner.
     // So does the peer's close: PeerCloseDelivered is per owner.
     s.state.fetch_and(~uint64_t(Attached | ContextKnown | DrainScheduled | PeerCloseDelivered), std::memory_order_acq_rel);
+}
+
+void MessagePortPipe::stopReceiving(uint8_t side, const MessagePort& owner)
+{
+    ASSERT(side < 2);
+    auto& s = m_sides[side];
+    // Only the owner's thread sets the bit, so this unlocked read of it is exact.
+    if (!(s.state.load(std::memory_order_relaxed) & Attached))
+        return;
+    // The other writers store the whole word under the lock. A drain in flight parks at its next check.
+    Locker locker { s.lock };
+    ASSERT_UNUSED(owner, s.port.get() == &owner);
+    s.state.fetch_and(~uint64_t(Attached), std::memory_order_acq_rel);
 }
 
 void MessagePortPipe::close(uint8_t side, CloseKind kind)

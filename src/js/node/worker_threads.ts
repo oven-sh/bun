@@ -254,9 +254,11 @@ function injectFakeEmitter(Class) {
   function removeAllListeners(type) {
     const map = registryFor(this, false);
     if (!map) return this;
+    let removedMessageListener = false;
     const removeType = t => {
       const byListener = map.get(t);
       if (byListener) {
+        if (t === "message" && byListener.size > 0) removedMessageListener = true;
         for (const w of byListener.values()) this.removeEventListener(t, w);
         map.delete(t);
       }
@@ -268,6 +270,10 @@ function injectFakeEmitter(Class) {
     } else {
       removeType(type);
     }
+    // node's removeAllListeners() skips [kRemoveListener], so its port stays receiving. The removals above stopped
+    // this one: start it again, unless the target is no port of its own (the parentPort of a web Worker).
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/event_target.js#L1029-L1039
+    if (removedMessageListener && _isMessagePortActive(this)) nativeMessagePortStart.$call(this);
     return this;
   }
 
@@ -303,6 +309,7 @@ const MessagePort = _MessagePort;
 // closedMessagePorts lets moveMessagePortToContext report ERR_CLOSED_MESSAGE_PORT.
 const closedMessagePorts = new WeakSet();
 const nativeMessagePortClose = MessagePort.prototype.close;
+const nativeMessagePortStart = MessagePort.prototype.start;
 Object.defineProperty(MessagePort.prototype, "close", {
   value: function close(cb) {
     closedMessagePorts.add(this);
@@ -629,14 +636,14 @@ if (
   // removing the listeners let the thread exit — node's parentPort lifecycle.
   if (transferredParentPort) {
     parentPort = transferredParentPort;
-    // node auto-starts parentPort, but delivery waits until the entry module has
+    // As in node, nothing starts parentPort here: what the parent posts waits for the
+    // worker's first 'message' listener. Delivery also waits until the entry module has
     // evaluated (registering it natively is how start() knows to defer). Only
     // parentPort receives what the parent posts: `self.onmessage` on the global
     // scope is not a channel in a node worker, as in node. The port arrives
     // without a loop ref, so an unlistened parentPort does not by itself keep
     // the thread alive (a 'message' listener refs it, as in node).
     _setParentPort(parentPort);
-    parentPort.start();
   }
 }
 if (!isMainThread && parentPort === null) parentPort = fakeParentPort();

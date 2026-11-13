@@ -195,16 +195,20 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     UNUSED_PARAM(vm);
-    setEventHandlerAttribute<JSEventListener>(thisObject.wrapped(), eventNames().messageEvent, value, thisObject);
+    auto& port = thisObject.wrapped();
+    bool isCallable = value.isCallable();
+    setEventHandlerAttribute<JSEventListener>(port, eventNames().messageEvent, value, thisObject);
+    // node and HTML: the first assignment starts the port, whatever the value is.
+    // https://html.spec.whatwg.org/multipage/web-messaging.html#dom-messageport-start
+    port.didAssignOnMessage(isCallable);
     vm.writeBarrier(&thisObject, value);
     ensureStillAliveHere(value);
 
-    // node: a callable handler starts the port and keeps the loop alive; assigning anything else
-    // clears the handler and lets the loop exit again.
-    if (value.isCallable())
-        thisObject.wrapped().jsRef(&lexicalGlobalObject);
+    // node: a callable handler keeps the loop alive; assigning anything else lets the loop exit again.
+    if (isCallable)
+        port.jsRef(&lexicalGlobalObject);
     else
-        thisObject.wrapped().jsUnref(&lexicalGlobalObject);
+        port.jsUnref(&lexicalGlobalObject);
 
     return true;
 }

@@ -18,6 +18,9 @@
 // front of the inbox, in order.
 // A side's close is recorded in the other side's state word (PeerClosed), so it sits behind what that side sent.
 //
+// A side is receiving while Attached is set (Node's receiving_messages_): a send wakes only such a side,
+// and its drain hands every message to the port, listener or not. Any other side keeps what arrives.
+//
 // The Web API semantics (start(), close(), transfer, event dispatch) live in
 // MessagePort; this class knows nothing about EventTarget or JS.
 
@@ -45,7 +48,7 @@ public:
     enum State : uint64_t {
         Closed = 1ull << 0, // close() was called on this side; drops further deliveries.
         DrainScheduled = 1ull << 1, // a drain task for this side is in flight.
-        Attached = 1ull << 2, // ctxId/port are valid; ok to schedule drains.
+        Attached = 1ull << 2, // this side is receiving: ctxId/port are valid; ok to schedule drains.
         ContextKnown = 1ull << 3, // ctxId/port are valid for handing over the peer's close only (no messages).
         PeerClosedByRequest = 1ull << 4, // the PeerClosed below came from close(), not from the port being collected.
         PeerClosed = 1ull << 5, // the other side closed; nothing more is queued here.
@@ -67,13 +70,16 @@ public:
     // Receiver-thread synchronous pop, for node:worker_threads receiveMessageOnPort.
     std::optional<MessageWithMessagePorts> takeOne(uint8_t side);
 
-    // Attach this side to a context + port. Schedules a drain if messages are
-    // already queued (e.g. after transfer). Passing a null port is allowed and
-    // means "just buffer, don't dispatch" (used before start()).
-    // Also schedules one when the peer's close is pending.
+    // Attach this side to a context + port: the side is receiving from now on. Schedules a
+    // drain if messages are already queued (e.g. after transfer, or after a stop), or when
+    // the peer's close is pending.
     void attach(uint8_t side, ScriptExecutionContext&, ThreadSafeWeakPtr<MessagePort>);
+    // Node's MessagePort::Stop(): clears Attached alone, so the peer's close is still handed over.
+    // For the side's owner, on its own thread.
+    // https://github.com/nodejs/node/blob/v26.3.0/src/node_messaging.cc#L1124-L1127
+    void stopReceiving(uint8_t side, const MessagePort& owner);
     // Like attach() but only records ctxId/port so the peer's close() can deliver
-    // a 'close' event to a port that never started (no 'message' listener). Does
+    // a 'close' event to a port that is not receiving. Does
     // NOT enable drains. No-op if already attached/registered/closed.
     void registerCloseContext(uint8_t side, ScriptExecutionContext&, ThreadSafeWeakPtr<MessagePort>);
     void detach(uint8_t side);

@@ -152,8 +152,14 @@ void MessagePort::entrySettled()
 
 void MessagePort::start()
 {
-    if (m_started || !isEntangled())
+    // Already receiving: attach() would only take the side's lock.
+    if (!isEntangled() || (m_pipe->state(m_side) & MessagePortPipe::Attached))
         return;
+    startReceiving();
+}
+
+NEVER_INLINE void MessagePort::startReceiving()
+{
     // A node worker's parentPort delivers nothing until the entry module has evaluated; keep the
     // request and let entrySettled() perform it. Messages stay buffered in the pipe meanwhile.
     if (auto* context = scriptExecutionContext()) {
@@ -165,13 +171,39 @@ void MessagePort::start()
             }
         }
     }
-    m_started = true;
 
     auto* context = scriptExecutionContext();
     ASSERT(context);
-    // From the pipe's point of view "attached" means "ready to have drains
-    // scheduled on my behalf" — that is exactly what start() promises.
+    // The side's Attached bit is the receiving state. attach() schedules a drain for what is queued.
     m_pipe->attach(m_side, *context, ThreadSafeWeakPtr<MessagePort> { *this });
+}
+
+void MessagePort::stopReceiving()
+{
+    m_startDeferredUntilEntrySettled = false;
+    // After a transfer or a close the side is not this port's.
+    if (isEntangled())
+        m_pipe->stopReceiving(m_side, *this);
+}
+
+void MessagePort::didAssignOnMessage(bool isCallable)
+{
+    // Only the first assignment counts with no listener change behind it. The listener hook counted a function already.
+    if (m_onmessageWasAssigned)
+        return;
+    m_onmessageWasAssigned = true;
+    if (isCallable)
+        return;
+    m_onmessageCountsForever = true;
+    start();
+}
+
+void MessagePort::updateReceivingForListeners()
+{
+    if (m_onmessageCountsForever || m_messageEventCount.load(std::memory_order_relaxed))
+        start();
+    else
+        stopReceiving();
 }
 
 void MessagePort::flushQueuedMessagesBeforeClose()
@@ -298,7 +330,6 @@ TransferredMessagePort MessagePort::disentangle()
     // this port is still attached to its context; after observeContext(null)
     // there would be nothing to unref.
     removeAllEventListeners();
-    m_hasMessageEventListener = false;
 
     // Release the self-reference taken by jsRef() on the sending side. After
     // transfer this object is inert (the receiving side gets a fresh
@@ -319,14 +350,12 @@ TransferredMessagePort MessagePort::disentangle()
         updateListenerEventLoopRef();
     }
 
-    // Hand the pipe endpoint to its next owner. Messages that arrive while
-    // in transit buffer in the pipe; the receiving context's entangle()
-    // re-attaches and flushes them. We keep our own ref to the pipe so the
-    // GC thread can always dereference it — our side is detached, so all
-    // further operations on it are no-ops.
+    // Hand the pipe endpoint to its next owner, which is not receiving until it starts:
+    // what arrives meanwhile stays buffered in the pipe. We keep our own ref to the pipe
+    // so the GC thread can always dereference it — our side is detached, so all further
+    // operations on it are no-ops.
     m_pipe->detach(m_side);
     m_isDetached = true;
-    m_started = false;
 
     // We can't receive any messages or generate any events after this, so remove ourselves from the list of active ports.
     if (auto* context = scriptExecutionContext()) {
@@ -425,17 +454,19 @@ bool MessagePort::virtualHasPendingActivity() const
     if (!scriptExecutionContext() || m_isDetached)
         return false;
     uint64_t s = m_pipe->state(m_side);
+    bool receiving = s & MessagePortPipe::Attached;
     // A 'close' listener must outlive a GC until the event lands: the pipe's drain
     // holds only a weak ref back here. This does pin both ends of an idle channel until
     // the context dies; node retains more — it never collects an entangled port at all.
-    // Not while the close waits behind unread messages: only script that holds this wrapper can read them.
+    // Not while the close waits behind messages that nothing receives: only script that holds this wrapper can read them.
     if (m_hasCloseEventListener.load(std::memory_order_acquire) && !m_closeEventDispatched
-        && (m_hasMessageEventListener || !(s & MessagePortPipe::PeerClosed) || (s & MessagePortPipe::DrainScheduled)))
+        && (receiving || !(s & MessagePortPipe::PeerClosed) || (s & MessagePortPipe::DrainScheduled)))
         return true;
-    // The port's own listeners only: a parentPort delivering to `self.onmessage` (the global-scope
-    // count hasMessageEventListener() adds) is rooted by the worker global for the worker's life, and
-    // this GC-thread path stays a single plain-bool read.
-    if (!m_hasMessageEventListener)
+
+    // The listeners a drain can call: 'message' ones, and for a receiving port 'messageerror' ones too.
+    // A receiving port with neither stays collectable: nothing observes what it drops.
+    if (!m_messageEventCount.load(std::memory_order_relaxed)
+        && !(receiving && m_hasMessageErrorEventListener.load(std::memory_order_relaxed)))
         return false;
 
     // Keep alive while a drain task is pending or mid-dispatch. drainAndDispatch
@@ -483,7 +514,7 @@ Vector<RefPtr<MessagePort>> MessagePort::entanglePorts(ScriptExecutionContext& c
 // so .unref() releases the listener ref and .ref() re-acquires it.
 void MessagePort::updateListenerEventLoopRef()
 {
-    bool shouldHold = m_isRefd && m_messageEventCount > 0;
+    bool shouldHold = m_isRefd && m_messageEventCount.load(std::memory_order_relaxed) > 0;
     if (shouldHold == m_listenerLoopRefActive)
         return;
     auto* context = scriptExecutionContext();
@@ -496,58 +527,59 @@ void MessagePort::updateListenerEventLoopRef()
     m_listenerLoopRefActive = shouldHold;
 }
 
+// Runs once the listener map changed: not for an add that did not land (an aborted signal, a duplicate).
 void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
 {
-    if (eventType != eventNames().messageEvent)
+    auto& port = static_cast<MessagePort&>(self);
+    auto& names = eventNames();
+
+    if (eventType == names.closeEvent) {
+        switch (kind) {
+        case Add:
+            port.m_hasCloseEventListener.store(true, std::memory_order_release);
+            if (port.isEntangled()) {
+                // Record our context with the pipe so the peer's close() can deliver a
+                // 'close' event also when this port is not receiving.
+                if (auto* context = port.scriptExecutionContext())
+                    port.m_pipe->registerCloseContext(port.m_side, *context, ThreadSafeWeakPtr<MessagePort> { port });
+            }
+            break;
+        case Remove:
+            port.m_hasCloseEventListener.store(port.hasEventListeners(names.closeEvent), std::memory_order_release);
+            break;
+        case Clear:
+            port.m_hasCloseEventListener.store(false, std::memory_order_release);
+            break;
+        }
+        return;
+    }
+
+    if (eventType == names.messageerrorEvent) {
+        port.m_hasMessageErrorEventListener.store(kind == Add || (kind == Remove && port.hasEventListeners(names.messageerrorEvent)), std::memory_order_relaxed);
+        return;
+    }
+
+    if (eventType != names.messageEvent)
         return;
 
-    auto& port = static_cast<MessagePort&>(self);
+    uint32_t count = port.m_messageEventCount.load(std::memory_order_relaxed);
     switch (kind) {
     case Add:
-        port.m_messageEventCount++;
+        count++;
         break;
     case Remove:
-        if (port.m_messageEventCount > 0)
-            port.m_messageEventCount--;
+        if (count > 0)
+            count--;
         break;
     case Clear:
-        port.m_messageEventCount = 0;
+        count = 0;
         break;
     }
+    port.m_messageEventCount.store(count, std::memory_order_relaxed);
     port.updateListenerEventLoopRef();
-}
-
-bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)
-{
-    if (eventType == eventNames().messageEvent) {
-        start();
-        m_hasMessageEventListener = true;
-        // start() no-ops after the first call; re-attach so a listener re-added after a
-        // pause re-schedules the drain for messages buffered meanwhile.
-        if (m_started && isEntangled()) {
-            if (auto* context = scriptExecutionContext())
-                m_pipe->attach(m_side, *context, ThreadSafeWeakPtr<MessagePort> { *this });
-        }
-    } else if (eventType == eventNames().closeEvent) {
-        m_hasCloseEventListener.store(true, std::memory_order_release);
-        if (isEntangled()) {
-            // Record our context with the pipe so the peer's close() can deliver a
-            // 'close' event even if we never started (no 'message' listener).
-            if (auto* context = scriptExecutionContext())
-                m_pipe->registerCloseContext(m_side, *context, ThreadSafeWeakPtr<MessagePort> { *this });
-        }
-    }
-    return EventTarget::addEventListener(eventType, WTF::move(listener), options);
-}
-
-bool MessagePort::removeEventListener(const AtomString& eventType, EventListener& listener, const EventListenerOptions& options)
-{
-    auto result = EventTarget::removeEventListener(eventType, listener, options);
-    if (!hasEventListeners(eventNames().messageEvent))
-        m_hasMessageEventListener = false;
-    if (!hasEventListeners(eventNames().closeEvent))
-        m_hasCloseEventListener.store(false, std::memory_order_release);
-    return result;
+    // Clear is close() or disentangle(), which close or detach the side themselves.
+    if (kind != Clear)
+        port.updateReceivingForListeners();
 }
 
 WebCoreOpaqueRoot root(MessagePort* port)
@@ -571,8 +603,8 @@ void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
         updateListenerEventLoopRef();
     }
 
-    // See peerCloseHeld(): no keepalive for a port that does not read what precedes the close.
-    if (peerClosedByRequest && !hasMessageEventListener())
+    // See peerCloseHeld(): no keepalive for a port that is not receiving what precedes the close.
+    if (peerClosedByRequest && !(s & MessagePortPipe::Attached))
         return;
 
     if (!m_hasRef) {

@@ -26,8 +26,8 @@
 
 // MessagePort is a thin EventTarget wrapper over MessagePortPipe.
 //
-// The pipe owns the cross-thread queue and wakeup coalescing; this class
-// owns the JS-facing state (started/closed/detached, listener bookkeeping,
+// The pipe owns the cross-thread queue, wakeup coalescing and the receiving state;
+// this class owns the JS-facing state (closed/detached, listener bookkeeping,
 // event-loop ref) and translates between pipe callbacks and DOM events.
 
 #pragma once
@@ -68,10 +68,13 @@ public:
 
     ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message, StructuredSerializeOptions&&);
 
+    // Node's MessagePort::Start(): from now on the port hands each message to its 'message' listeners, also when it has none.
+    // https://github.com/nodejs/node/blob/v26.3.0/src/node_messaging.cc#L1116-L1122
     void start();
-    bool hasMessageEventListener() const { return m_hasMessageEventListener; }
     // The worker's entry module finished evaluating: a start() requested before that takes effect now.
     void entrySettled();
+    // Called by the `onmessage` setter once it stored the handler.
+    void didAssignOnMessage(bool isCallable);
     void close();
     // Called by the pipe's drain once the peer closed and its messages were consumed: dispatches a
     // 'close' event and releases the event-loop ref so the loop can idle.
@@ -86,7 +89,6 @@ public:
     static Ref<MessagePort> entangle(ScriptExecutionContext&, TransferredMessagePort&&);
     TransferredMessagePort disentangle();
 
-    bool started() const { return m_started; }
     bool isDetached() const { return m_isDetached; }
 
     // Called by the pipe on this port's context thread with one dequeued message.
@@ -117,9 +119,6 @@ public:
 private:
     MessagePort(ScriptExecutionContext&, Ref<MessagePortPipe>&&, uint8_t side);
 
-    bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions&) final;
-    bool removeEventListener(const AtomString& eventType, EventListener&, const EventListenerOptions&) final;
-
     // ActiveDOMObject.
     void contextDestroyed() final;
     void stop() final { close(); }
@@ -142,7 +141,11 @@ private:
     const Ref<MessagePortPipe> m_pipe;
     const uint8_t m_side { 0 };
 
-    bool m_started { false };
+    // node's `onmessage` is a wrapper listener that the first assignment adds, whatever the value. When that value is
+    // no function the wrapper counts as a 'message' listener from then on (node's removeAllListeners() forgets it; this does not).
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/event_target.js#L1146-L1166
+    bool m_onmessageWasAssigned : 1 { false };
+    bool m_onmessageCountsForever : 1 { false };
     bool m_isDetached { false };
     bool m_isClosing { false };
     // True while a 'message' handler is on the stack. close() called from inside one
@@ -150,12 +153,13 @@ private:
     // else drops whatever is still queued.
     bool m_isDispatching { false };
     bool m_closeEventDispatched { false };
-    bool m_hasMessageEventListener { false };
     bool m_startDeferredUntilEntrySettled { false };
     // Read from the GC thread: a port whose only listener is 'close' must survive
     // until that event is delivered, or the peer's close is lost to a collection.
     // Not while that close waits behind messages the port does not read (virtualHasPendingActivity()).
     std::atomic<bool> m_hasCloseEventListener { false };
+    // Read from the GC thread: a receiving port hands a message that fails to deserialize to these listeners.
+    std::atomic<bool> m_hasMessageErrorEventListener { false };
     bool m_hasRef { false };
 
     // Whether .ref()/.unref() want this port to keep the loop alive (default refd);
@@ -165,10 +169,18 @@ private:
     // (held iff m_isRefd && m_messageEventCount > 0).
     bool m_listenerLoopRefActive { false };
 
-    uint32_t m_messageEventCount { 0 };
+    // Written on the port's thread only; the GC thread reads whether it is zero.
+    std::atomic<uint32_t> m_messageEventCount { 0 };
     static void onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind);
     // Reconciles the listener event-loop ref with (m_isRefd && m_messageEventCount > 0).
     void updateListenerEventLoopRef();
+    // node's setupPortReferencing(): start() while a 'message' listener is counted, stopReceiving() once none is.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker/io.js#L211-L247
+    void updateReceivingForListeners();
+    // start() for a port that is not receiving yet. Out of line: start() on a receiving port stays a load and a branch.
+    void startReceiving();
+    // Node's MessagePort::Stop(). Also withdraws a start() that waits for entrySettled().
+    void stopReceiving();
 };
 
 WebCoreOpaqueRoot root(MessagePort*);

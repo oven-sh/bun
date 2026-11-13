@@ -1,3 +1,5 @@
+import { bunEnv, bunExe } from "harness";
+
 test("simple usage", done => {
   const channel = new MessageChannel();
   const port1 = channel.port1;
@@ -582,4 +584,247 @@ test("a close-listener port with unread messages and a closed peer is collected"
   Bun.gc(true);
   // Allow small slack for GC nondeterminism.
   expect({ closes, pinned: count() - base <= 4 ? "none" : count() - base }).toEqual({ closes: 0, pinned: "none" });
+});
+
+// start() and the first assignment of `onmessage` start a port (HTML: they enable its
+// message queue). From then on it hands each message to its 'message' listeners, also when
+// it has none, and the peer's 'close' follows. Spawned: the process must not have loaded
+// node:worker_threads, which other tests of this file do.
+test("a port that start() or a first onmessage = null started drops a message it has no listener for", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const turns = async () => { for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve)); };
+       const listener = () => {};
+       const out = {};
+       for (const [name, prepare] of Object.entries({
+         "start()": port => port.start(),
+         "a first onmessage = null": port => { port.onmessage = null; },
+         "onmessage = a function, then an object": port => { port.onmessage = listener; port.onmessage = {}; },
+         "a listener added and removed": port => { port.addEventListener("message", listener); port.removeEventListener("message", listener); },
+         "nothing": () => {},
+       })) {
+         const { port1, port2 } = new MessageChannel();
+         const seen = [];
+         port2.addEventListener("close", () => seen.push("close"));
+         prepare(port2);
+         port1.postMessage("unread");
+         port1.close();
+         await turns();
+         const withNoListener = seen.slice();
+         port2.addEventListener("message", event => seen.push(event.data));
+         await turns();
+         out[name] = { withNoListener, withOne: seen };
+       }
+       console.log(JSON.stringify(out));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual({
+    "start()": { withNoListener: ["close"], withOne: ["close"] },
+    "a first onmessage = null": { withNoListener: ["close"], withOne: ["close"] },
+    // HTML: a handler that is an object stays the port's listener, also when nothing can call it.
+    "onmessage = a function, then an object": { withNoListener: ["close"], withOne: ["close"] },
+    "a listener added and removed": { withNoListener: [], withOne: ["unread", "close"] },
+    "nothing": { withNoListener: [], withOne: ["unread", "close"] },
+  });
+  expect(exitCode).toBe(0);
+});
+
+// Nothing observes what such a port drops, so it does not outlive its last reference.
+test("ports that are receiving with no listener are collected", async () => {
+  const { heapStats } = require("bun:jsc");
+  const count = () => heapStats().objectTypeCounts.MessagePort ?? 0;
+  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+  Bun.gc(true);
+  const base = count();
+  (() => {
+    for (let i = 0; i < 20; i++) {
+      const { port1, port2 } = new MessageChannel();
+      port1.start();
+      port2.start();
+    }
+  })();
+  Bun.gc(true);
+  Bun.gc(true);
+  // Allow small slack for GC nondeterminism.
+  expect(count() - base).toBeLessThanOrEqual(4);
+});
+
+// A listener that was not added (its signal was aborted before) must not count as one: the
+// port is neither started nor kept alive for it.
+test.each(["message", "close"])(
+  "a '%s' listener whose signal was already aborted does not pin its port",
+  async type => {
+    const { heapStats } = require("bun:jsc");
+    const count = () => heapStats().objectTypeCounts.MessagePort ?? 0;
+    for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+    Bun.gc(true);
+    const base = count();
+    const peers: MessagePort[] = [];
+    (() => {
+      const signal = AbortSignal.abort();
+      for (let i = 0; i < 20; i++) {
+        const { port1, port2 } = new MessageChannel();
+        port2.addEventListener(type, () => {}, { signal });
+        peers.push(port1);
+      }
+    })();
+    Bun.gc(true);
+    Bun.gc(true);
+    // Only the 20 peers that `peers` holds are left. Allow small slack for GC nondeterminism.
+    expect(count() - base).toBeLessThanOrEqual(24);
+    for (const peer of peers) peer.close();
+  },
+);
+
+// What keeps an unreachable port alive is the listeners it still has, not the ones it had.
+// `peers` holds the other ends, so each port here is alive only while the GC rule says so.
+describe("an unreachable port after one of its listeners was removed", () => {
+  const undeserializable = () => {
+    // Serializes, then fails to deserialize: the DataView is in bounds only once the
+    // getter before it has grown the buffer.
+    const buffer = new ArrayBuffer(8, { maxByteLength: 65536 });
+    return {
+      buffer,
+      get grow() {
+        buffer.resize(65536);
+        return 1;
+      },
+      get view() {
+        return new DataView(buffer, 4096, 16);
+      },
+    };
+  };
+  // [the listeners' event, whether the port is started, what makes the peer fire that event]
+  const kinds = [
+    ["close", false, (peer: MessagePort) => peer.close()],
+    ["messageerror", true, (peer: MessagePort) => peer.postMessage(undeserializable())],
+  ] as const;
+
+  test.each(kinds)("the other '%s' listener still hears the event", async (type, start, fire) => {
+    let heard = 0;
+    const peers: MessagePort[] = [];
+    (() => {
+      for (let i = 0; i < 20; i++) {
+        const { port1, port2 } = new MessageChannel();
+        const removed = () => {};
+        port2.addEventListener(type, removed);
+        port2.addEventListener(type, () => heard++);
+        port2.removeEventListener(type, removed);
+        if (start) port2.start();
+        peers.push(port1);
+      }
+    })();
+    Bun.gc(true);
+    Bun.gc(true);
+    for (const peer of peers) fire(peer);
+    for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+    expect(heard).toBe(20);
+    for (const peer of peers) peer.close();
+  });
+
+  test.each(kinds)("a port whose only '%s' listener was removed is collected", async (type, start) => {
+    const { heapStats } = require("bun:jsc");
+    const count = () => heapStats().objectTypeCounts.MessagePort ?? 0;
+    for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+    Bun.gc(true);
+    const base = count();
+    const peers: MessagePort[] = [];
+    (() => {
+      for (let i = 0; i < 20; i++) {
+        const { port1, port2 } = new MessageChannel();
+        const removed = () => {};
+        port2.addEventListener(type, removed);
+        port2.removeEventListener(type, removed);
+        if (start) port2.start();
+        peers.push(port1);
+      }
+    })();
+    Bun.gc(true);
+    Bun.gc(true);
+    // Only the 20 peers that `peers` holds are left. Allow small slack for GC nondeterminism.
+    expect(count() - base).toBeLessThanOrEqual(24);
+    for (const peer of peers) peer.close();
+  });
+
+  // Nothing hands a message to a port that is not receiving, so its 'messageerror' listener does not keep it.
+  test("a port that is not receiving is collected with its 'messageerror' listener", async () => {
+    const { heapStats } = require("bun:jsc");
+    const count = () => heapStats().objectTypeCounts.MessagePort ?? 0;
+    for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+    Bun.gc(true);
+    const base = count();
+    const peers: MessagePort[] = [];
+    (() => {
+      for (let i = 0; i < 20; i++) {
+        const { port1, port2 } = new MessageChannel();
+        port2.addEventListener("messageerror", () => {});
+        peers.push(port1);
+      }
+    })();
+    Bun.gc(true);
+    Bun.gc(true);
+    expect(count() - base).toBeLessThanOrEqual(24);
+    for (const peer of peers) peer.close();
+  });
+
+  // The peer's close is already on its way when the port stops receiving: the port lives until it lands.
+  test("the 'close' that was on its way when the last 'message' listener was removed still arrives", async () => {
+    let heard = 0;
+    (() => {
+      for (let i = 0; i < 20; i++) {
+        const { port1, port2 } = new MessageChannel();
+        const removed = () => {};
+        port2.addEventListener("message", removed);
+        port2.addEventListener("close", () => heard++);
+        port1.close();
+        port2.removeEventListener("message", removed);
+      }
+    })();
+    Bun.gc(true);
+    Bun.gc(true);
+    for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+    expect(heard).toBe(20);
+  });
+});
+
+// A port that is receiving hands a message that fails to deserialize to its 'messageerror'
+// listeners, also when it has no 'message' listener. Such a port must outlive a GC like a
+// listening one, or the event reaches a listener whose wrapper is gone.
+test("an unreachable port that is receiving with only a 'messageerror' listener survives a GC and hears it", async () => {
+  let errors = 0;
+  const peers: MessagePort[] = [];
+  (() => {
+    for (let i = 0; i < 20; i++) {
+      const { port1, port2 } = new MessageChannel();
+      port2.addEventListener("messageerror", () => errors++);
+      port2.start();
+      peers.push(port1);
+    }
+  })();
+  Bun.gc(true);
+  Bun.gc(true);
+  for (const peer of peers) {
+    // Serializes, then fails to deserialize: the DataView is in bounds only once the
+    // getter before it has grown the buffer.
+    const buffer = new ArrayBuffer(8, { maxByteLength: 65536 });
+    peer.postMessage({
+      buffer,
+      get grow() {
+        buffer.resize(65536);
+        return 1;
+      },
+      get view() {
+        return new DataView(buffer, 4096, 16);
+      },
+    });
+  }
+  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+  expect(errors).toBe(20);
+  for (const peer of peers) peer.close();
 });

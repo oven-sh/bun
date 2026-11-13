@@ -25,8 +25,14 @@ const fakePackages = {
             await Promise.resolve();
             console.log("abort", id);
           },
+          close: () => {
+            this.closed = true;
+            console.log("close", id);
+            return Promise.resolve();
+          },
         };
-        this.close = () => console.log("close", id);
+        // Like happy-dom 18 and later: window.close() only closes a window that another window opened.
+        this.close = () => {};
       }
     };
   `,
@@ -953,6 +959,106 @@ describe.concurrent("test environment", () => {
     ]);
     expect(stdout.filter(line => line.startsWith("open "))).toHaveLength(3);
     expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--isolate: a file's global can be collected once its window is closed", async () => {
+    const files = 4;
+    using dir = tempDir("test-environment", {
+      ...fakePackages,
+      // Like happy-dom, the package keeps a window reachable until happyDOM.close().
+      "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
+        const open = new Set();
+        const { Window } = exports;
+        exports.Window = class extends Window {
+          constructor(...args) {
+            super(...args);
+            open.add(this);
+            // In a file, \`window\` is the file's global. This is the way to the window itself.
+            this.document.ownerWindow = this;
+            const { close } = this.happyDOM;
+            this.happyDOM.close = async () => {
+              await close();
+              open.delete(this);
+            };
+          }
+        };`,
+      ...Object.fromEntries(
+        Array.from({ length: files }, (_, i) => [
+          `${i}.test.js`,
+          `// ${VITEST} happy-dom
+          import { afterAll, test } from "bun:test";
+          import { heapStats } from "bun:jsc";
+          test("the window reaches the file's global", () => {
+            document.ownerWindow.file = globalThis;
+          });
+          afterAll(() => {
+            Bun.gc(true);
+            console.log("globals", heapStats().objectTypeCounts.GlobalObject);
+          });`,
+        ]),
+      ),
+    });
+    const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate");
+    const globals = stdout.filter(line => line.startsWith("globals ")).map(line => Number(line.split(" ")[1]));
+    expect(globals).toHaveLength(files);
+    // The count is measured before the file's own window closes, so only the earlier files' globals can be gone.
+    expect(Math.max(...globals)).toBeLessThanOrEqual(globals[0] + 1);
+    expect(summary(stderr)).toEqual([`${files} pass`, "0 fail"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // happy-dom before 13.6 has no happyDOM.close(), and before 13 no happyDOM.abort() either.
+  test.each([
+    [
+      "13.0",
+      `this.happyDOM = { abort: this.happyDOM.abort }; this.close = () => console.log("close", this.environment);`,
+      ["abort", "close"],
+    ],
+    ["12", `this.happyDOM = { cancelAsync: () => console.log("cancelAsync", this.environment) };`, ["cancelAsync"]],
+  ])("--isolate: a window of happy-dom %s is closed as that version allows", async (_, patch, steps) => {
+    using dir = tempDir("test-environment", {
+      ...fakePackages,
+      "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
+        const { Window } = exports;
+        exports.Window = class extends Window {
+          constructor(...args) {
+            super(...args);
+            ${patch}
+          }
+        };`,
+      "1.test.js": `// ${VITEST} happy-dom\n${logEnvironment}`,
+      "2.test.js": logEnvironment,
+    });
+    const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate");
+    expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
+      "1.test.js happy-dom#1 http://localhost:3000",
+      ...steps.map(step => `${step} happy-dom#1`),
+      "2.test.js node ",
+    ]);
+    expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--isolate: a file that sets `document` to undefined still has its window closed", async () => {
+    using dir = tempDir("test-environment", {
+      ...fakePackages,
+      "1.test.js": `// ${VITEST} happy-dom
+        import { test } from "bun:test";
+        test("server-side", () => {
+          globalThis.document = undefined;
+          console.log(typeof document, typeof window.document);
+        });`,
+      "2.test.js": logEnvironment,
+    });
+    const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate");
+    expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
+      "undefined undefined",
+      "abort happy-dom#1",
+      "close happy-dom#1",
+      "2.test.js node ",
+    ]);
+    expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
     expect(exitCode).toBe(0);
   });
 
@@ -1982,7 +2088,7 @@ describe.concurrent("test environment with the real", () => {
   describe("a window closed by a file", () => {
     const file = (name: string, code: string) => `// ${VITEST} ${name}
       import { test, expect } from "bun:test";
-      test("${name}", () => {
+      test("${name}", async () => {
         document.body.innerHTML = "<b>1</b>";
         expect(document.querySelector("b").textContent).toBe("1");
         ${code}
@@ -2011,6 +2117,21 @@ describe.concurrent("test environment with the real", () => {
       expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
       expect(exitCode).toBe(0);
     });
+
+    // Until happy-dom 18, closing the window again once its close has finished throws.
+    test.each(["window.close(); await window.happyDOM.waitUntilComplete();", "await window.happyDOM.close();"])(
+      "--isolate: closing it again after `%s` is not an error",
+      async close => {
+        using dir = project({
+          "1.test.js": file("happy-dom", close),
+          "2.test.js": file("happy-dom", ""),
+        });
+        const { stderr, exitCode } = await bunTest(String(dir), "--isolate");
+        expect(stderr).not.toContain("error:");
+        expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+        expect(exitCode).toBe(0);
+      },
+    );
   });
 
   // Builtin modules must keep using Bun's own classes and accept typed arrays from jsdom's realm.

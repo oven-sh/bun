@@ -291,7 +291,8 @@ impl TSConfigJSON {
             // "jsxImportSource" is one setting stored in three fields, as `Pragma::from_api` writes it.
             out.import_source = self.jsx.import_source.clone();
             out.package_name.clone_from(&self.jsx.package_name);
-            out.classic_import_source.clone_from(&self.jsx.classic_import_source);
+            out.classic_import_source
+                .clone_from(&self.jsx.classic_import_source);
         }
 
         if self.jsx_flags.contains(JsxField::Runtime) {

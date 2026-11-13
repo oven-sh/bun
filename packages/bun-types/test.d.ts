@@ -610,6 +610,9 @@ declare module "bun:test" {
     /**
      * Change the configuration for the rest of the test file. If a preload script calls it, the change applies to
      * every test file. Vitest's other options are accepted but ignored.
+     *
+     * `testTimeout` and `hookTimeout` are the default timeout that `setDefaultTimeout()` and `jest.setTimeout()` set.
+     * In a test file, the later call wins.
      */
     setConfig(config: {
       /** Default timeout in milliseconds for tests registered after this call. `0` and `Infinity` mean no timeout. */
@@ -631,7 +634,7 @@ declare module "bun:test" {
       [option: string]: unknown;
     }): void;
     /**
-     * Undo every `vi.setConfig()` call.
+     * Undo every `vi.setConfig()` call. The default timeout goes back to what `setDefaultTimeout()` last set.
      */
     resetConfig(): void;
     /**
@@ -956,6 +959,8 @@ declare module "bun:test" {
   /**
    * Sets the default timeout for all tests in the current file. A timeout set on an
    * individual test overrides this value. The default timeout is 5000ms (5 seconds).
+   *
+   * `vi.setConfig({ testTimeout, hookTimeout })` sets the same default. In a test file, the later call wins.
    *
    * @param milliseconds the default timeout in milliseconds
    */

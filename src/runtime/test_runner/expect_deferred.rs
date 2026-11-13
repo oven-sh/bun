@@ -21,6 +21,7 @@ use crate::test_runner::bun_test::{
 };
 use crate::test_runner::execution::ExecutionSequence;
 use crate::test_runner::expect::js as expect_js;
+use crate::test_runner::scope_functions::FunctionKind;
 use crate::test_runner::vi_wait::ViWait;
 
 type Matcher<'m, 'a> = &'m dyn Fn(&mut JsScope<'a>) -> JsResult<JSValue>;
@@ -847,11 +848,7 @@ impl ExpectDeferred {
         }
         let timeout_ms = this.reporter.map_or(0, |reporter| {
             // SAFETY: the reporter outlives every BunTest.
-            let runner = &unsafe { reporter.as_ref() }.jest;
-            match runner.default_timeout_override {
-                u32::MAX => runner.default_timeout_ms,
-                timeout_ms => timeout_ms,
-            }
+            unsafe { reporter.as_ref() }.jest.default_timeout(FunctionKind::TestOrDescribe)
         });
         let deadline = *this.unclaimed.deadline.get_or_insert_with(|| match timeout_ms {
             0 => Timespec::EPOCH,

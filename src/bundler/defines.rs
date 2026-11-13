@@ -70,7 +70,8 @@ pub(crate) fn copy_env_for_define(
     bump: &bun_alloc::Arena,
 ) -> Result<(), crate::Error> {
     use bun_dotenv::DotEnvBehavior;
-    const NAMESPACES: [&[u8]; 2] = [b"process.env.", b"import.meta.env."];
+    const IMPORT_META_ENV: &[u8] = b"import.meta.env.";
+    const NAMESPACES: [&[u8]; 2] = [b"process.env.", IMPORT_META_ENV];
 
     if behavior == DotEnvBehavior::Disable || behavior == DotEnvBehavior::LoadAllWithoutInlining {
         return Ok(());
@@ -94,6 +95,12 @@ pub(crate) fn copy_env_for_define(
         // Both keys share one arena string: the define table only reads it.
         let data = env_string_define(bump, &v.value);
         for namespace in NAMESPACES {
+            // The mode keys belong to the bundle, not to the environment, as
+            // they do on the Bun runtime (`ImportMetaEnv.cpp`). `process.env.DEV`
+            // still folds to the variable.
+            if namespace == IMPORT_META_ENV && ImportMetaEnvMode::is_mode_key(k) {
+                continue;
+            }
             key_buf.clear();
             key_buf.extend_from_slice(namespace);
             key_buf.extend_from_slice(k);
@@ -128,6 +135,11 @@ impl ImportMetaEnvMode {
         (b"import.meta.env.SSR", b"SSR"),
         (b"import.meta.env.STATIC", b"STATIC"),
     ];
+
+    /// Whether `name` is one of the mode keys (`DEV`, `MODE`, ...).
+    pub fn is_mode_key(name: &[u8]) -> bool {
+        Self::KEYS.iter().any(|(_, mode_key)| *mode_key == name)
+    }
 
     fn values(self) -> [&'static [u8]; 5] {
         const fn boolean(value: bool) -> &'static [u8] {

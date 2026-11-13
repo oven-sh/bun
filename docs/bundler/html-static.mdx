@@ -280,7 +280,8 @@ env = "PUBLIC_*"  # only inline env vars starting with PUBLIC_ (recommended)
   `const env = process.env; env.FOO`.
 
 If an environment variable is not set, `process.env.FOO` stays in the code and you may see runtime errors like
-`ReferenceError: process is not defined` in the browser. `import.meta.env.FOO` reads `undefined` instead.
+`ReferenceError: process is not defined` in the browser. In a page the dev server or `Bun.serve` bundles,
+`import.meta.env.FOO` reads `undefined` instead. `bun build` leaves it in the code.
 
 </Note>
 

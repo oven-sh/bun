@@ -2015,7 +2015,7 @@ describe("production headers and import.meta.env", () => {
 // `import.meta.env.<KEY>` read: an inlined env var to its value, a mode key to
 // its constant, and any other key to `undefined` (not a TypeError).
 describe("import.meta.env in a browser bundle", () => {
-  async function collect(development: string) {
+  async function collect(development: string, env = "BUN_PUBLIC_*") {
     using dir = tempDir("html-import-meta-env", {
       "index.html": /*html*/ `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
       "app.ts": /*js*/ `
@@ -2023,12 +2023,13 @@ describe("import.meta.env in a browser bundle", () => {
           inlined: import.meta.env.BUN_PUBLIC_FOO,
           notInlined: typeof import.meta.env.BUN_PRIVATE_FOO,
           unknown: typeof import.meta.env.NOT_SET_ANYWHERE,
+          nodeEnv: import.meta.env.NODE_ENV,
           dev: import.meta.env.DEV,
           mode: import.meta.env.MODE,
           indirect: (() => { const env = import.meta.env; return [env.DEV, env.MODE]; })(),
         };
       `,
-      "bunfig.toml": /*toml*/ `[serve.static]\nenv = "BUN_PUBLIC_*"\n`,
+      "bunfig.toml": /*toml*/ `[serve.static]\nenv = ${JSON.stringify(env)}\n`,
       "serve.ts": /*js*/ `
         import index from "./index.html";
         const server = Bun.serve({ port: 0, development: ${development}, routes: { "/": index } });
@@ -2057,7 +2058,15 @@ describe("import.meta.env in a browser bundle", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "serve.ts"],
-      env: { ...bunEnv, NODE_ENV: undefined, BUN_PUBLIC_FOO: "public-value", BUN_PRIVATE_FOO: "private-value" },
+      env: {
+        ...bunEnv,
+        NODE_ENV: undefined,
+        BUN_PUBLIC_FOO: "public-value",
+        BUN_PRIVATE_FOO: "private-value",
+        // Variables named like the mode keys never replace them.
+        DEV: "1",
+        MODE: "staging",
+      },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -2084,6 +2093,22 @@ describe("import.meta.env in a browser bundle", () => {
       inlined: "public-value",
       notInlined: "undefined",
       unknown: "undefined",
+      nodeEnv: "production",
+      dev: false,
+      mode: "production",
+      indirect: [false, "production"],
+    });
+  });
+
+  test("development: false, env = \"inline\"", async () => {
+    const out = await collect("false", "inline");
+    expect(out.jsContainsImportMetaEnv).toBe(false);
+    expect(out.evalError).toBeNull();
+    expect(out.result).toEqual({
+      inlined: "public-value",
+      notInlined: "string",
+      unknown: "undefined",
+      nodeEnv: "production",
       dev: false,
       mode: "production",
       indirect: [false, "production"],
@@ -2099,6 +2124,7 @@ describe("import.meta.env in a browser bundle", () => {
       inlined: "public-value",
       notInlined: "undefined",
       unknown: "undefined",
+      nodeEnv: "development",
       dev: true,
       mode: "development",
       indirect: [true, "development"],

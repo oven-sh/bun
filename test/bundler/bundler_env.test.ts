@@ -44,13 +44,14 @@ for (let backend of ["api", "cli"] as const) {
       files: {
         "/a.js": `
         console.log(process.env.${systemKey});
+        console.log(import.meta.env.${systemKey});
       `,
       },
       run: {
         env: {
           [systemKey]: "the run-time value, which inlining should have replaced",
         },
-        stdout: systemValue + "\n",
+        stdout: systemValue + "\n" + systemValue + "\n",
       },
     });
 

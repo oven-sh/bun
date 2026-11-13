@@ -3445,7 +3445,10 @@ impl<'a> Transfer<'_, 'a, '_> {
                         (UnOp::Not, ExprKind::True | ExprKind::False) => true,
                         _ => false,
                     };
-                    is_the_constant
+                    // The build folds `true === 1` to `!1` at the place of `true`, so no expression can be around the cast.
+                    let is_alone = places[chain.outermost.idx()].is_none();
+                    is_alone
+                        && is_the_constant
                         && matches!(output_file[operand].kind, ExprKind::Number(_))
                         && !chain.casts.iter().any(has_name)
                 };

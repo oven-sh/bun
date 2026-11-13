@@ -1024,7 +1024,7 @@ export function checked(on = true satisfies true, none = undefined satisfies und
     expect(code(erased)).toBe(code(new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(javascript)));
   });
 
-  // The cast of a comparison is not the cast of the constant that it starts with, and a name can be missing in index.aot.ts.
+  // A comparison is printed at the place of its left side, also when the build folds it. A name can be missing in index.aot.ts.
   test("--minify-syntax does not put a cast of another expression, or one with a name in its type, on a constant", async () => {
     using dir = tempDir(
       "library-typed-file-respelled-not",
@@ -1046,16 +1046,24 @@ export function turned(x: unknown, p = (true === x) as unknown as number): unkno
 export function named(p: unknown = undefined as unknown as Shape, q: unknown = undefined as unknown as keyof typeof ns): unknown {
   return [p, q, ns.value];
 }
+export function folded(p = (false as const) === false, q: boolean = (true as unknown as number) === 1): boolean {
+  return p && q;
+}
+export class Fields {
+  kept: boolean = (false satisfies false) == false;
+}
 `,
       }),
     );
     const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--minify-syntax");
     expect(built).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(typedFile(dir).match(/^function .*$/gm)).toEqual([
+    expect(typedFile(dir).match(/^(function .*|  kept: .*)$/gm)).toEqual([
       "function compared(x: unknown, p: boolean = x === void 0): boolean {",
       "function twice(x: unknown, p = x === void 0): unknown {",
       "function turned(x: unknown, p = x === !0): unknown {",
       "function named(p: unknown = void 0, q: unknown = void 0): unknown {",
+      "function folded(p = !0, q: boolean = !1): boolean {",
+      "  kept: boolean = !0;",
     ]);
   });
 

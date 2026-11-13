@@ -1,10 +1,10 @@
 use bstr::BStr;
 use bun_ast::op::Level;
-use bun_sema::atom::Interner;
+use bun_sema::atom::{Atom, Interner};
 use bun_sema::check::Checker;
 use bun_sema::check::services::{
-    Child, NodeRef, Relation, Services, SignatureKind, SymbolFlags, SymbolOp, SymbolRef,
-    SymbolTable, TypeFlags, TypeFormatFlags, TypeTest,
+    Child, NodeRef, Services, SymbolFlags, SymbolOp, SymbolRef, SymbolTable, TypeFlags,
+    TypeFormatFlags,
 };
 use bun_sema::check::spans::{compute_ecma_line_starts, skip_trivia, skip_trivia_back, token_end};
 use bun_sema::config::find_config_of_package;
@@ -194,35 +194,72 @@ fn parse<'s>(
     }
 }
 
+fn names_used_as_values(modules: &[Option<Written<'_, '_>>]) -> FxHashSet<Atom> {
+    let mut names = FxHashSet::default();
+    for file in modules.iter().flatten().map(|module| module.syntax.file) {
+        let mut not_values: FxHashSet<ExprId> = file.calls.iter().map(|call| call.callee).collect();
+        not_values.extend(
+            file.stmts
+                .iter()
+                .filter_map(|statement| match statement.kind {
+                    StmtKind::ExportDefault(exported) | StmtKind::ExportAssign(exported) => {
+                        Some(exported)
+                    }
+                    _ => None,
+                }),
+        );
+        for (expression, id) in file.exprs.iter().zip(0u32..) {
+            if let ExprKind::Ident(name) | ExprKind::Dot { name, .. } = expression.kind
+                && !not_values.contains(&ExprId(id))
+            {
+                names.insert(name);
+            }
+        }
+        let imports = file.import_specs.iter().map(|it| (it.imported, it.local));
+        let exports = file.export_specs.iter().map(|it| (it.local, it.exported));
+        names.extend(
+            imports
+                .chain(exports)
+                .filter(|(name, other)| name != other)
+                .map(|it| it.0),
+        );
+    }
+    names
+}
+
 fn defaulted_parameters(
     syntax: &Syntax<'_, '_>,
     types: &ModuleTypes,
+    used_as_values: &FxHashSet<Atom>,
 ) -> FxHashMap<u32, DefaultedParameter> {
     let file = syntax.file;
     let start = |parameter: ParamId| file[file[parameter].pat].pos;
     let has_default = |parameter: &ParamId| file[*parameter].default.is_some();
-    let is_given = |parameter: &ParamId| {
-        types
-            .parameters_given_by_context
-            .contains(&start(*parameter))
-    };
     let queried: FxHashSet<u32> = types.locals.iter().map(|local| local.1).collect();
+    let declared = (file.fns.iter())
+        .filter(|function| function.kind == FnKind::Decl)
+        .map(|function| (function, function.name, function.name_pos));
+    let bound = file.var_decls.iter().filter_map(|declaration| {
+        let value = file.exprs.get(declaration.init.idx())?;
+        match (value.kind, file[declaration.pat].kind) {
+            (ExprKind::Fn(function), PatKind::Ident(name)) if declaration.ty.is_none() => {
+                Some((&file[function], name, file[declaration.pat].pos))
+            }
+            _ => None,
+        }
+    });
     let mut found = FxHashMap::default();
-    for function in file.fns.iter() {
-        let defaulted = || function.params.iter().filter(has_default);
-        // `typeof a` is the type of `a` with its default value, which has no `undefined`.
-        if !Syntax::has_javascript(function) || defaulted().any(|id| queried.contains(&start(id))) {
+    for (function, name, name_pos) in declared.chain(bound) {
+        // A call by its name takes a `?` as it takes a default value. A use as a value or under `typeof` reads a type, where they differ.
+        let is_observed = used_as_values.contains(&name)
+            || queried.contains(&name_pos)
+            || (function.params.iter()).any(|id| has_default(&id) && queried.contains(&start(id)));
+        if is_observed || !Syntax::has_javascript(function) {
             continue;
         }
-        let last_given = function
-            .params
-            .iter()
-            .rposition(|id| has_default(&id) && is_given(&id));
-        let last_required = file
-            .last_required_parameter(function.params)
-            .max(last_given);
+        let last_required = file.last_required_parameter(function.params);
         for (place, id) in function.params.iter().enumerate() {
-            if has_default(&id) && !is_given(&id) {
+            if has_default(&id) && !file[id].flags.contains(Flags::OPTIONAL) {
                 found.insert(
                     start(id),
                     DefaultedParameter {
@@ -3132,6 +3169,7 @@ impl<'a> Transfer<'_, 'a, '_> {
         let (output_file, insertions) = (output.file, &mut self.insertions);
         let mut defaults_of: FxHashMap<u32, FxHashMap<u32, DefaultedParameter>> =
             FxHashMap::default();
+        let mut used_as_values = None;
         let parameter_count_of: FxHashMap<u32, usize> = output_file
             .fns
             .iter()
@@ -3169,11 +3207,13 @@ impl<'a> Transfer<'_, 'a, '_> {
                 };
                 let parameters = has_default.then(|| {
                     defaults_of.entry(source).or_insert_with(|| {
-                        // Without the types of this text, nothing says where a `?` is not what a default value is.
+                        // Without the types of this text, nothing says where a `typeof` is.
                         let types =
                             (module.types).filter(|types| types.text[..] == *module.syntax.text);
                         types.map_or_else(FxHashMap::default, |types| {
-                            defaulted_parameters(&module.syntax, types)
+                            let used =
+                                used_as_values.get_or_insert_with(|| names_used_as_values(written));
+                            defaulted_parameters(&module.syntax, types, used)
                         })
                     })
                 });
@@ -4246,7 +4286,6 @@ pub struct ModuleTypes {
     pub globals: Vec<u32>,
     pub augmented_modules: Vec<(u32, Box<[u8]>)>,
     pub locals: Vec<(u32, u32)>,
-    pub parameters_given_by_context: Vec<u32>,
     pub emitted_declarations: Box<[u8]>,
 }
 
@@ -4356,44 +4395,6 @@ fn target_of_declaration(
         path,
         name: name.into(),
     })
-}
-
-fn is_given_by_context(
-    services: &mut Services<'_, '_, '_>,
-    function: NodeRef,
-    context: TypeId,
-    index: usize,
-) -> bool {
-    let strict_null_checks = services.compiler_options().strict_null_checks;
-    let parts = match services.type_flags(context).contains(TypeFlags::UNION) {
-        true => services.constituents(context),
-        false => &[context][..],
-    };
-    for &part in parts {
-        for &signature in services.signatures_of_type(part, SignatureKind::Call) {
-            let signature = services.signature_info(signature);
-            // A call can infer a type argument as the type of the function itself.
-            if signature.declaration == Some(function) {
-                continue;
-            }
-            let is_given = match (signature.parameters.get(index), signature.parameters.last()) {
-                (Some(&at), _) => {
-                    let ty = services.type_of_symbol(at);
-                    !strict_null_checks
-                        || !services.is_related(Relation::Assignable, TypeId::UNDEFINED, ty)
-                }
-                (None, Some(&rest)) => {
-                    let ty = services.type_of_symbol(rest);
-                    services.type_test(TypeTest::ArrayLike, ty)
-                }
-                (None, None) => false,
-            };
-            if is_given {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<ModuleTypes> {
@@ -4591,35 +4592,6 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
                 functions_returning_undefined.push(Syntax::function_key(function));
             }
         }
-        // TypeScript infers from the annotation of a callback's parameter, where a default value adds no `undefined` and a `?` does.
-        let mut parameters_given_by_context = Vec::new();
-        for (function, id) in hir.fns.iter().zip(0u32..) {
-            let parameters = function.params.iter().map(|parameter| &hir[parameter]);
-            let mut defaulted = (parameters.enumerate())
-                .filter(|(_, parameter)| parameter.default.is_some())
-                .peekable();
-            let node = NodeRef {
-                file,
-                node: hir.node(FnId(id)),
-            };
-            let context = match function.kind {
-                FnKind::Expr | FnKind::Arrow if defaulted.peek().is_some() => {
-                    services.apparent_type_of_contextual_type(node)
-                }
-                FnKind::Method => None,
-                _ => continue,
-            };
-            for (index, parameter) in defaulted {
-                let is_given = match (function.kind, context) {
-                    (FnKind::Method, _) => true,
-                    (_, Some(context)) => is_given_by_context(services, node, context, index),
-                    (_, None) => false,
-                };
-                if is_given {
-                    parameters_given_by_context.push(hir[parameter.pat].pos);
-                }
-            }
-        }
         let syntax = Syntax {
             file: hir,
             text: &hir.text[..],
@@ -4647,7 +4619,6 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
             globals,
             augmented_modules,
             locals,
-            parameters_given_by_context,
             emitted_declarations: Box::default(),
         }
     }))

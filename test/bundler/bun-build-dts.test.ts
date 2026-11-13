@@ -181,10 +181,7 @@ export function useTotal(items: string[]) {
   const [n] = useState(items.length);
   return items.reduce((total: number = 0, item) => total + item.length + n, 0);
 }
-export function useAdder(base: number) {
-  const [n] = useState(base);
-  return (a: number, b: number = 2) => a + b + n;
-}
+export const useArrow = (first: number = 1, second: number = 2): number => useState(first)[0] + second;
 `,
   };
   const withCompiler = ["build", "./src/index.tsx", "--outdir", "out", "--dts", "--react-compiler", "--target=bun"];
@@ -211,7 +208,7 @@ export const useBoth: Same<typeof typed.useBoth, typeof declared.useBoth> = true
 export const useRange: Same<typeof typed.useRange, typeof declared.useRange> = true;
 export const useFormat: Same<typeof typed.useFormat, typeof declared.useFormat> = true;
 export const useTotal: Same<typeof typed.useTotal, typeof declared.useTotal> = true;
-export const useAdder: Same<typeof typed.useAdder, typeof declared.useAdder> = true;
+export const useArrow: Same<typeof typed.useArrow, typeof declared.useArrow> = true;
 `,
     });
     const built = await bun(String(dir), ...withCompiler);

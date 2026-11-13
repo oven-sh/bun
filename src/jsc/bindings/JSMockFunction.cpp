@@ -249,7 +249,7 @@ DEFINE_VISIT_CHILDREN(JSMockImplementation);
 const ClassInfo JSMockImplementation::s_info = { "MockImpl"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockImplementation) };
 
 // Returns a data property's value, an accessor's raw GetterSetter / CustomGetterSetter cell, or empty if there's no own property.
-static JSValue getOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object, PropertyName key, unsigned& attributes)
+JSValue getOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object, PropertyName key, unsigned& attributes)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -321,7 +321,7 @@ private:
     std::optional<JSC::AllowLazyMaterializationOfImmutableProperties> m_allow;
 };
 
-static void putOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object, PropertyName key, JSValue storage, unsigned attributes, bool isOpaque)
+void putOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object, PropertyName key, JSValue storage, unsigned attributes, bool isOpaque)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

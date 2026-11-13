@@ -21,6 +21,11 @@ class JSMockFunction;
 // Automocks a module's exports. With `spy` the mocks call through, and nested objects are mutated in place unless `leaveOriginalAlone`.
 JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool leaveOriginalAlone = false);
 
+// What an object holds for an own property, as spyOn() reads and stores it: a data property's value, or an accessor's cell. The store
+// also takes a named property that script could not write, as on a frozen object. `isOpaque`: a Proxy, which takes it by its traps.
+JSC::JSValue getOwnPropertyStorage(JSC::JSGlobalObject*, JSC::JSObject*, JSC::PropertyName, unsigned& attributes);
+void putOwnPropertyStorage(JSC::JSGlobalObject*, JSC::JSObject*, JSC::PropertyName, JSC::JSValue storage, unsigned attributes, bool isOpaque);
+
 // For `vi.dynamicImportSettled()`. `import` is the module loader's own promise for an `import()`, not the one script gets.
 // `key` is null unless there are module mocks.
 void didStartDynamicImport(Zig::GlobalObject*, JSC::JSPromise* import, const String& key);

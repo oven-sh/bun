@@ -3382,6 +3382,1080 @@ describe.concurrent("a mock behind a barrel", () => {
   });
 });
 
+describe.concurrent("a mock of a loaded module that re-exports a module mocked before its first load", () => {
+  // The file, the export of dep.ts that it hands on, and the name that it hands it on by.
+  const shapes = [
+    ["star", "viaStar", "viaStar"],
+    ["named", "viaNamed", "viaNamed"],
+    ["renamed", "viaRenamed", "renamed"],
+    ["default", "default", "default"],
+    ["local", "viaLocal", "viaLocal"],
+    ["star-of-star", "viaStarOfStar", "viaStarOfStar"],
+  ];
+  const origin = `({ ${shapes.map(([, name]) => `${name}: () => "origin"`).join(", ")} })`;
+  const everyShape = {
+    "dep.ts": shapes
+      .map(([, name]) => (name === "default" ? `export default () => "real";` : `export const ${name} = () => "real";`))
+      .join("\n"),
+    "star.ts": `export * from "./dep";`,
+    "named.ts": `export { viaNamed } from "./dep";`,
+    "renamed.ts": `export { viaRenamed as renamed } from "./dep";`,
+    "default.ts": `export { default } from "./dep";`,
+    "local.ts": `import { viaLocal } from "./dep"; export { viaLocal };`,
+    "star-of-star.ts": `export * from "./star";`,
+    "importer.ts": `
+      import { viaStar } from "./star";
+      import { viaNamed } from "./named";
+      import { renamed } from "./renamed";
+      import viaDefault from "./default";
+      import { viaLocal } from "./local";
+      import { viaStarOfStar } from "./star-of-star";
+      export const through = {
+        star: () => viaStar(),
+        named: () => viaNamed(),
+        renamed: () => renamed(),
+        default: () => viaDefault(),
+        local: () => viaLocal(),
+        "star-of-star": () => viaStarOfStar(),
+      };
+      export const namespaces = {
+        star: () => import("./star"),
+        named: () => import("./named"),
+        renamed: () => import("./renamed"),
+        default: () => import("./default"),
+        local: () => import("./local"),
+        "star-of-star": () => import("./star-of-star"),
+      };
+    `,
+    "preload.ts": `import { mock } from "bun:test"; mock.module("./dep", () => (${origin}));`,
+  };
+  const mocksOfOrigin: [string, string, string, string[]][] = [
+    ["mock.module() at the top of the test file", `mock.module("./dep", () => (${origin}));`, "", []],
+    ["a hoisted vi.mock() above a static import", `vi.mock("./dep", () => (${origin}));`, `import "./importer";`, []],
+    [
+      "a hoisted jest.mock() above a static import",
+      `jest.mock("./dep", () => (${origin}));`,
+      `import "./importer";`,
+      [],
+    ],
+    ["mock.module() in a preload", "", "", ["--preload", "./preload.ts"]],
+  ];
+  test.each(mocksOfOrigin)(
+    "which %s mocks, reaches every kind of re-export",
+    async (_, mockOfOrigin, imports, args) => {
+      const testFile = (mockBarrel: string, factory = `() => ({ [name]: () => "barrel" })`) => `
+      import { expect, jest, mock, test, vi } from "bun:test";
+      ${imports}
+      ${mockOfOrigin}
+      test.each(${JSON.stringify(shapes)})("%s", async (file, _, name) => {
+        const { through, namespaces } = await import("./importer");
+        const namespace = await namespaces[file]();
+        const read = () => [namespace[name](), through[file]()];
+        expect(read()).toEqual(["origin", "origin"]);
+        await ${mockBarrel}("./" + file, ${factory});
+        expect(read()).toEqual(["barrel", "barrel"]);
+      });
+    `;
+      // For a factory whose promise is pending, mock.module() and vi.mock() return a promise for the update.
+      const pending = `async () => (await 0, { [name]: () => "barrel" })`;
+      await expectFixturesToPass(
+        {
+          ...everyShape,
+          "mock-module.test.ts": testFile("mock.module"),
+          "jest-mock.test.ts": testFile("jest.mock"),
+          "jest-do-mock.test.ts": testFile("jest.doMock"),
+          "vi-mock.test.ts": testFile("vi.mock"),
+          "mock-module-pending.test.ts": testFile("mock.module", pending),
+          "vi-mock-pending.test.ts": testFile("vi.mock", pending),
+        },
+        6 * shapes.length,
+        args,
+      );
+    },
+  );
+
+  const barrels = {
+    "dep.ts": `export const greet = () => "real"; export const other = () => "real";`,
+    "star.ts": `export * from "./dep";`,
+    "second.ts": `export * from "./dep";`,
+    "named.ts": `export { greet, other } from "./dep";`,
+    "importer.ts": `
+      import { greet as viaStar, other } from "./star";
+      import { greet as viaSecond } from "./second";
+      import { greet as direct, other as otherDirect } from "./dep";
+      export const read = () => [viaStar(), viaSecond(), direct()];
+      export const readOther = () => [other?.(), otherDirect?.()];
+    `,
+    "user.cjs": `const dep = require("./dep"); exports.readCommonJS = () => dep.greet();`,
+  };
+  // Each test file gets modules of its own, so that none of them finds a module that another one has loaded.
+  const inFolders = (testFiles: Record<string, string>, modules: Record<string, string> = barrels) =>
+    Object.fromEntries(
+      Object.entries(testFiles).flatMap(([folder, testFile]) => [
+        ...Object.entries(modules).map(([file, text]) => [`${folder}/${file}`, text]),
+        [`${folder}/${folder}.test.ts`, testFile],
+      ]),
+    );
+  // `bun test` runs the test files of a folder in the order that the file system lists them in. Named, they run in this order.
+  const inOrder = (files: Record<string, string>) =>
+    Object.keys(files)
+      .filter(file => file.endsWith(".test.ts"))
+      .map(file => "./" + file);
+  const thrice = (value: string) => JSON.stringify(Array(3).fill(value));
+  const twice = (value: string) => JSON.stringify(Array(2).fill(value));
+
+  // Compiled code makes the record of a mocked module when it is asked for one, and nothing here has `export *` to ask.
+  test("reaches a name that the module re-exports by name, in a run without `export *`", async () => {
+    await expectFixturesToPass(
+      {
+        "db.ts": `export const save = () => "real"; export default () => "real";`,
+        "services.ts": `export { save, default } from "./db";`,
+        "local.ts": `import { save } from "./db"; export { save as stored };`,
+        "a.test.ts": `
+          import { expect, mock, test, vi } from "bun:test";
+          import create, { save } from "./services";
+          import { stored } from "./local";
+          vi.mock("./db", () => ({ save: () => "db mock", default: () => "db mock" }));
+          test("the mock of the module that re-exports", () => {
+            expect([save(), stored(), create()]).toEqual(["db mock", "db mock", "db mock"]);
+            mock.module("./services", () => ({ save: () => "services mock", default: () => "services mock" }));
+            expect([save(), stored(), create()]).toEqual(["services mock", "services mock", "services mock"]);
+            vi.doUnmock("./services");
+            expect([save(), stored(), create()]).toEqual(["db mock", "db mock", "db mock"]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("every reader of the mocked module gets the value, and the object that its factory returned gets back what it had", async () => {
+    await expectFixturesToPass(
+      inFolders({
+        "readers": `
+          import { expect, mock, test, vi } from "bun:test";
+          let state = "first";
+          const made = { greet: () => "origin", get other() { const value = state; return () => value; } };
+          const descriptors = Object.getOwnPropertyDescriptors(made);
+          mock.module("./dep", () => made);
+          test("import, import(), require(), a CommonJS module, and the object itself", async () => {
+            const { read, readOther } = await import("./importer");
+            const { readCommonJS } = require("./user.cjs");
+            const readers = async () => [read(), (await import("./dep")).greet(), require("./dep").greet(), readCommonJS(), made.greet()];
+            expect(await readers()).toEqual([${thrice("origin")}, "origin", "origin", "origin", "origin"]);
+            mock.module("./star", () => ({ greet: () => "barrel" }));
+            expect(await readers()).toEqual([${thrice("barrel")}, "barrel", "barrel", "barrel", "barrel"]);
+            // A name that the mock did not return is as it was: the getter is called at every read.
+            state = "second";
+            expect(readOther()).toEqual(${twice("second")});
+            vi.doUnmock("./star");
+            expect(await readers()).toEqual([${thrice("origin")}, "origin", "origin", "origin", "origin"]);
+            expect(Object.getOwnPropertyDescriptors(made)).toEqual(descriptors);
+          });
+        `,
+        "default-import": `
+          import { expect, jest, mock, test, vi } from "bun:test";
+          import made from "./dep";
+          import * as star from "./star";
+          jest.mock("./dep", () => ({ greet: () => "origin" }));
+          test("the default import of a jest.mock() is that object", () => {
+            mock.module("./star", () => ({ greet: () => "barrel" }));
+            expect([star.greet(), made.greet(), require("./dep") === made]).toEqual(["barrel", "barrel", true]);
+            vi.doUnmock("./star");
+            expect([star.greet(), made.greet()]).toEqual(["origin", "origin"]);
+          });
+        `,
+      }),
+      2,
+    );
+  });
+
+  test("require() of a mock that is marked __esModule answers with its `default` again when the other mock has ended", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": `export default () => "real";`,
+        "barrel.ts": `export { default } from "./dep";`,
+        "a.test.ts": `
+          import { expect, jest, mock, test, vi } from "bun:test";
+          import viaBarrel from "./barrel";
+          jest.mock("./dep", () => ({ __esModule: true, default: () => "origin" }));
+          test("a require() that is first called under the mock of the module that re-exports", () => {
+            mock.module("./barrel", () => ({ default: () => "barrel" }));
+            expect(viaBarrel()).toBe("barrel");
+            require("./dep");
+            vi.doUnmock("./barrel");
+            expect([viaBarrel(), require("./dep")()]).toEqual(["origin", "origin"]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("whatever the factory of the mocked module returned", async () => {
+    // What the factory returns, and what greet() gives under the mock of the module that re-exports.
+    const kinds = {
+      "frozen": [`Object.freeze({ greet: () => "origin" })`, "barrel"],
+      // The object holds no value for a getter.
+      "getter": [`{ get greet() { return () => "origin"; } }`, "origin"],
+      // The namespace object of another module is that module's to write, not the mock's.
+      "namespace": [`import("./other")`, "origin"],
+      // The traps of a Proxy are calls, and a mock of a loaded module makes no call between its stores.
+      "proxy": [`new Proxy({ greet: () => "origin" }, {})`, "origin"],
+    };
+    const modules = { ...barrels, "other.ts": `export const greet = () => "origin";` };
+    const testFile = ([made, mocked]: string[]) => `
+      import { expect, mock, test, vi } from "bun:test";
+      const made = ${made};
+      mock.module("./dep", () => made);
+      test("its readers get the value, or none of them does", async () => {
+        const star = await import("./star");
+        const { read } = await import("./importer");
+        const object = await made;
+        const readers = () => [star.greet(), read(), require("./dep").greet(), object.greet()];
+        const descriptors = JSON.stringify([Object.getOwnPropertyDescriptors(object), Object.isFrozen(object)]);
+        expect(readers()).toEqual(["origin", ${thrice("origin")}, "origin", "origin"]);
+        mock.module("./star", () => ({ greet: () => "barrel" }));
+        expect(readers()).toEqual(["${mocked}", ${thrice(mocked)}, "${mocked}", "${mocked}"]);
+        expect(JSON.stringify([Object.getOwnPropertyDescriptors(object), Object.isFrozen(object)])).toBe(descriptors);
+        vi.doUnmock("./star");
+        expect(readers()).toEqual(["origin", ${thrice("origin")}, "origin", "origin"]);
+      });
+    `;
+    await expectFixturesToPass(
+      inFolders(Object.fromEntries(Object.entries(kinds).map(([kind, made]) => [kind, testFile(made)])), modules),
+      4,
+    );
+  });
+
+  test("a name that the factory of the mocked module left out stays left out", async () => {
+    await expectFixturesToPass(
+      inFolders({
+        "vitest": `
+          import { expect, mock, test, vi } from "bun:test";
+          import * as dep from "./dep";
+          import { read, readOther } from "./importer";
+          vi.mock("./dep", () => ({ greet: () => "origin" }));
+          const missing = 'No "other" export is defined on the mock of "./dep"';
+          test.each(["./star", "./named"])("the mock of %s does not add it to the object that the factory returned", async barrel => {
+            await import(barrel);
+            mock.module(barrel, () => ({ greet: () => "barrel", other: () => "barrel" }));
+            expect([read(), "other" in dep, Object.keys(dep)]).toEqual([${thrice("barrel")}, false, ["greet"]]);
+            expect(() => dep.other).toThrow(missing);
+            expect(readOther).toThrow(missing);
+            vi.doUnmock(barrel);
+            expect([read(), Object.keys(dep)]).toEqual([${thrice("origin")}, ["greet"]]);
+          });
+        `,
+        "jest": `
+          import { expect, jest, mock, test, vi } from "bun:test";
+          import * as dep from "./dep";
+          import { read, readOther } from "./importer";
+          jest.mock("./dep", () => ({ greet: () => "origin" }));
+          test("the name stays undefined", () => {
+            mock.module("./star", () => ({ greet: () => "barrel", other: () => "barrel" }));
+            expect([read(), readOther(), "other" in dep]).toEqual([${thrice("barrel")}, [undefined, undefined], false]);
+            vi.doUnmock("./star");
+            expect([read(), readOther(), "other" in dep]).toEqual([${thrice("origin")}, [undefined, undefined], false]);
+          });
+        `,
+        "handed-on": `
+          import { expect, mock, test, vi } from "bun:test";
+          import * as dep from "./dep";
+          import { read, readOther } from "./importer";
+          import "./named";
+          vi.mock("./dep", () => ({ greet: () => "origin" }));
+          test("a factory that spreads importOriginal() hands the name on as it is: undefined there, and missing from the mock", async () => {
+            let original;
+            await mock.module("./named", async importOriginal => ({ ...(original = await importOriginal()) }));
+            expect([Object.keys(original), original.other, "other" in dep]).toEqual([["greet", "other"], undefined, false]);
+            expect(() => dep.other).toThrow('No "other" export is defined on the mock of "./dep"');
+            expect(readOther).toThrow('No "other" export is defined on the mock of "./dep"');
+            expect(read()).toEqual(${thrice("origin")});
+          });
+        `,
+      }),
+      4,
+    );
+  });
+
+  test("a factory that hands on the names that it does not mock", async () => {
+    const flags = {
+      "flags.ts": `export const enabled = false; export const count = 0; export const label = "real";`,
+      "star.ts": `export * from "./flags";`,
+      "second.ts": `export * from "./flags";`,
+      "importer.ts": `
+        import { enabled, count, label } from "./star";
+        import { enabled as viaSecond, label as labelViaSecond } from "./second";
+        import { enabled as direct, count as countDirect, label as labelDirect } from "./flags";
+        export const read = () => [enabled, viaSecond, direct];
+        export const readCount = () => [count, countDirect];
+        export const readLabel = () => [label, labelViaSecond, labelDirect];
+      `,
+    };
+    const mockOfFlags = `
+      import { expect, mock, test, vi } from "bun:test";
+      const state = { enabled: false };
+      const made = { get enabled() { return state.enabled; }, count: 0, label: "origin" };
+      mock.module("./flags", () => made);
+    `;
+    // The spread reads the getter once. The mock stores the value over neither name: a getter stays, and `count` has that value already.
+    const staysLive = `
+      expect([read(), readCount(), readLabel()]).toEqual([[false, false, false], [0, 0], ${thrice("barrel")}]);
+      made.count = 1;
+      state.enabled = true;
+      expect([read(), readCount()]).toEqual([[true, true, true], [1, 1]]);
+      vi.doUnmock("./star");
+      expect([read(), readCount(), readLabel()]).toEqual([[true, true, true], [1, 1], ${thrice("origin")}]);
+    `;
+    await expectFixturesToPass(
+      inFolders(
+        {
+          "original": `${mockOfFlags}
+            test("with importOriginal(), a value that it hands on stays the other mock's to change", async () => {
+              const { read, readCount, readLabel } = await import("./importer");
+              await mock.module("./star", async importOriginal => ({ ...(await importOriginal()), label: "barrel" }));
+              ${staysLive}
+            });
+          `,
+          "namespace": `${mockOfFlags}
+            test("with a spread of the namespace object, too", async () => {
+              const star = await import("./star");
+              const { read, readCount, readLabel } = await import("./importer");
+              mock.module("./star", () => ({ ...star, label: "barrel" }));
+              ${staysLive}
+            });
+          `,
+          "no-call": `
+            import { expect, mock, test, vi } from "bun:test";
+            let calls = 0;
+            const made = { get enabled() { calls++; return false; }, get count() { throw new Error("not read"); }, label: "origin" };
+            mock.module("./flags", () => made);
+            test("the mock calls no getter of the other mock, and the getters stay", async () => {
+              const { read, readCount, readLabel } = await import("./importer");
+              mock.module("./star", () => ({ enabled: true, count: 1, label: "barrel" }));
+              expect(calls).toBe(0);
+              expect([read(), readLabel(), calls]).toEqual([[false, false, false], ${thrice("barrel")}, 3]);
+              expect(readCount).toThrow("not read");
+              vi.doUnmock("./star");
+              expect([read(), readLabel(), calls]).toEqual([[false, false, false], ${thrice("origin")}, 6]);
+            });
+          `,
+          "two": `${mockOfFlags}
+            test("two such mocks, and the end of the first", async () => {
+              const star = await import("./star");
+              const second = await import("./second");
+              const { read, readCount, readLabel } = await import("./importer");
+              mock.module("./star", () => ({ ...star, label: "star" }));
+              mock.module("./second", () => ({ ...second, count: 2 }));
+              expect([read(), readCount(), readLabel()]).toEqual([[false, false, false], [2, 2], ${thrice("star")}]);
+              vi.doUnmock("./star");
+              expect([read(), readCount(), readLabel()]).toEqual([[false, false, false], [2, 2], ${thrice("origin")}]);
+              state.enabled = true;
+              expect(read()).toEqual([true, true, true]);
+              vi.doUnmock("./second");
+              expect([readCount(), readLabel()]).toEqual([[0, 0], ${thrice("origin")}]);
+            });
+          `,
+        },
+        flags,
+      ),
+      4,
+    );
+  });
+
+  test("a later write or spy on the mocked module is read, and stays when the mock of the module that re-exports ends", async () => {
+    const start = `
+      import { expect, mock, test, vi } from "bun:test";
+      const made = { greet: () => "origin", other: () => "origin" };
+      mock.module("./dep", () => made);
+    `;
+    await expectFixturesToPass(
+      inFolders({
+        "assign": `${start}
+          test("an assignment is read in place of the mock of the module that re-exports, and stays when that mock ends", async () => {
+            const dep = await import("./dep");
+            const { read, readOther } = await import("./importer");
+            mock.module("./star", () => ({ greet: () => "barrel", other: () => "barrel" }));
+            expect([read(), readOther()]).toEqual([${thrice("barrel")}, ${twice("barrel")}]);
+            const written = () => "written";
+            dep.greet = written;
+            made.other = written;
+            expect([read(), readOther(), made.greet]).toEqual([${thrice("written")}, ${twice("written")}, written]);
+            vi.doUnmock("./star");
+            expect([read(), readOther()]).toEqual([${thrice("written")}, ${twice("written")}]);
+          });
+        `,
+        "delete": `${start}
+          test("a name that is deleted stays deleted", async () => {
+            const dep = await import("./dep");
+            const { read, readOther } = await import("./importer");
+            mock.module("./star", () => ({ greet: () => "barrel" }));
+            expect([delete dep.greet, "greet" in dep]).toEqual([true, false]);
+            expect(read).toThrow(TypeError);
+            // The object has no such name any more, and a mock of a module that re-exports adds none.
+            mock.module("./star", () => ({ greet: () => "barrel again" }));
+            vi.doUnmock("./star");
+            expect(read).toThrow(TypeError);
+            expect([Object.keys(made), readOther()]).toEqual([["other"], ${twice("origin")}]);
+          });
+        `,
+        "spy-on-the-object": `
+          import { expect, jest, mock, spyOn, test, vi } from "bun:test";
+          import made from "./dep";
+          import { read } from "./importer";
+          jest.mock("./dep", () => ({ greet: () => "origin" }));
+          test("a spy on the object itself is called, and its end leaves the mock of the module that re-exports", () => {
+            mock.module("./star", () => ({ greet: () => "barrel" }));
+            const viaDefault = jest.spyOn(made, "greet").mockReturnValue("spied");
+            expect([read(), viaDefault.mock.calls.length]).toEqual([${thrice("spied")}, 3]);
+            viaDefault.mockRestore();
+            expect(read()).toEqual(${thrice("barrel")});
+            const viaRequire = spyOn(require("./dep"), "greet");
+            expect([read(), viaRequire.mock.calls.length]).toEqual([${thrice("barrel")}, 3]);
+            jest.restoreAllMocks();
+            expect(read()).toEqual(${thrice("barrel")});
+            vi.doUnmock("./star");
+            expect(read()).toEqual(${thrice("origin")});
+          });
+        `,
+      }),
+      3,
+    );
+  });
+
+  test("the end of either mock leaves the other one as it was", async () => {
+    const files = {
+      ...inFolders({
+        "barrel-first": `
+            import { expect, mock, test, vi } from "bun:test";
+            mock.module("./dep", () => ({ greet: () => "origin" }));
+            test("the mock of the module that re-exports ends first", async () => {
+              const star = await import("./star");
+              const { read } = await import("./importer");
+              mock.module("./star", () => ({ greet: () => "barrel" }));
+              expect([star.greet(), read()]).toEqual(["barrel", ${thrice("barrel")}]);
+              vi.doUnmock("./star");
+              expect([star.greet(), read()]).toEqual(["origin", ${thrice("origin")}]);
+              vi.doUnmock("./dep");
+              expect((await import("./importer")).read()).toEqual(${thrice("real")});
+            });
+          `,
+        "origin-first": `
+            import { expect, mock, test, vi } from "bun:test";
+            mock.module("./dep", () => ({ greet: () => "origin" }));
+            test("the mock of the re-exported module ends first", async () => {
+              await import("./importer");
+              mock.module("./star", () => ({ greet: () => "barrel" }));
+              vi.doUnmock("./dep");
+              expect([(await import("./dep")).greet(), (await import("./star")).greet()]).toEqual(["real", "barrel"]);
+              vi.doUnmock("./star");
+              expect((await import("./importer")).read()).toEqual(${thrice("real")});
+            });
+          `,
+        "other-names": `
+            import { expect, mock, test, vi } from "bun:test";
+            mock.module("./dep", () => ({ greet: () => "origin", other: () => "origin" }));
+            test("a second mock of one module that leaves a name out gives that name back", async () => {
+              const { read, readOther } = await import("./importer");
+              mock.module("./star", () => ({ greet: () => "star" }));
+              mock.module("./star", () => ({ other: () => "star" }));
+              expect([read(), readOther()]).toEqual([${thrice("origin")}, ${twice("star")}]);
+              vi.doUnmock("./star");
+              expect([read(), readOther()]).toEqual([${thrice("origin")}, ${twice("origin")}]);
+            });
+          `,
+        "mocked-again": `
+            import { expect, mock, test, vi } from "bun:test";
+            mock.module("./dep", () => ({ greet: () => "origin", other: () => "origin" }));
+            test("a second mock of the re-exported module takes the place of the first, with all that was stored over it", async () => {
+              const { read, readOther } = await import("./importer");
+              mock.module("./star", () => ({ greet: () => "barrel", other: () => "barrel" }));
+              mock.module("./dep", () => ({ greet: () => "origin again" }));
+              expect([read(), readOther()]).toEqual([${thrice("origin again")}, [undefined, undefined]]);
+              mock.module("./star", () => ({ greet: () => "barrel again" }));
+              expect([read(), readOther()]).toEqual([${thrice("barrel again")}, [undefined, undefined]]);
+              vi.doUnmock("./star");
+              expect([read(), readOther()]).toEqual([${thrice("origin again")}, [undefined, undefined]]);
+            });
+          `,
+      }),
+      "mocked-again/next.test.ts": `
+          import { expect, test } from "bun:test";
+          test("the next test file gets the modules themselves", async () => {
+            expect((await import("./importer")).read()).toEqual(${thrice("real")});
+          });
+        `,
+    };
+    await expectFixturesToPass(files, 5, inOrder(files));
+  });
+
+  test("two modules that re-export one name are mocked, and the object has what its factory returned when both mocks have ended", async () => {
+    const testFile = (ends: string) => `
+      import { expect, mock, test, vi } from "bun:test";
+      const greet = () => "origin";
+      const made = { greet };
+      mock.module("./dep", () => made);
+      test("the mock that stored last is read", async () => {
+        const { read } = await import("./importer");
+        mock.module("./star", () => ({ greet: () => "star" }));
+        mock.module("./second", () => ({ greet: () => "second" }));
+        expect(read()).toEqual(${thrice("second")});
+        ${ends}
+        expect([read(), made.greet === greet]).toEqual([${thrice("origin")}, true]);
+      });
+    `;
+    await expectFixturesToPass(
+      inFolders({
+        "newer-first": testFile(`vi.doUnmock("./second"); vi.doUnmock("./star");`),
+        "older-first": testFile(`vi.doUnmock("./star"); vi.doUnmock("./second");`),
+        "mocked-again": testFile(
+          `mock.module("./star", () => ({ greet: () => "star again" })); vi.doUnmock("./second"); vi.doUnmock("./star");`,
+        ),
+      }),
+      3,
+    );
+  });
+
+  // The first of two such mocks to end puts back what the factory returned, so the other mock does not reach the name from then on.
+  test.todo(
+    "two modules that re-export one name are mocked, and the end of one mock leaves the value of the other",
+    async () => {
+      await expectFixturesToPass(
+        inFolders({
+          "a": `
+          import { expect, mock, test, vi } from "bun:test";
+          mock.module("./dep", () => ({ greet: () => "origin" }));
+          test("the mock that still stands is read", async () => {
+            const { read } = await import("./importer");
+            mock.module("./star", () => ({ greet: () => "star" }));
+            mock.module("./second", () => ({ greet: () => "second" }));
+            vi.doUnmock("./second");
+            expect(read()).toEqual(${thrice("star")});
+          });
+        `,
+        }),
+        1,
+      );
+    },
+  );
+
+  test("a module that re-exports two mocked modules, a module that is not mocked, and has an export of its own", async () => {
+    const signup = (save: string, send: string, log: string, own: string) => JSON.stringify([save, send, log, own]);
+    await expectFixturesToPass(
+      {
+        "db.ts": `export const save = () => "real";`,
+        "mail.ts": `export const send = () => "real";`,
+        "log.ts": `export const log = () => "real";`,
+        "services.ts": `export * from "./db"; export * from "./mail"; export * from "./log"; export const own = () => "real";`,
+        "signup.ts": `
+          import { save, send, log, own } from "./services";
+          import { save as saveDirect } from "./db";
+          import { send as sendDirect } from "./mail";
+          export const signup = () => [save(), send(), log(), own()];
+          export const direct = () => [saveDirect(), sendDirect()];
+        `,
+        "a.test.ts": `
+          import { expect, mock, test, vi } from "bun:test";
+          mock.module("./db", () => ({ save: () => "db" }));
+          mock.module("./mail", () => ({ send: () => "mail" }));
+          test("the mock reaches each of them, and its end leaves each mock as it was", async () => {
+            const { signup, direct } = await import("./signup");
+            expect([signup(), direct()]).toEqual([${signup("db", "mail", "real", "real")}, ["db", "mail"]]);
+            mock.module("./services", () => ({ save: () => "stub", send: () => "stub", log: () => "stub", own: () => "stub" }));
+            expect([signup(), direct()]).toEqual([${signup("stub", "stub", "stub", "stub")}, ["stub", "stub"]]);
+            await mock.module("./services", async importOriginal => ({ ...(await importOriginal()), send: () => "stub again" }));
+            expect([signup(), direct()]).toEqual([${signup("db", "stub again", "real", "real")}, ["db", "stub again"]]);
+            await mock.module("./services", async importOriginal => ({ ...(await importOriginal()), save: () => "stub again" }));
+            expect([signup(), direct()]).toEqual([${signup("stub again", "mail", "real", "real")}, ["stub again", "mail"]]);
+            vi.doUnmock("./services");
+            expect([signup(), direct()]).toEqual([${signup("db", "mail", "real", "real")}, ["db", "mail"]]);
+            mock.module("./services", () => ({ save: () => "stub", send: () => "stub", log: () => "stub", own: () => "stub" }));
+          });
+        `,
+        "b.test.ts": `
+          import { expect, test } from "bun:test";
+          test("the next test file gets the modules themselves", async () => {
+            const { signup, direct } = await import("./signup");
+            expect([signup(), direct()]).toEqual([${signup("real", "real", "real", "real")}, ["real", "real"]]);
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  describe.each([[[] as string[]], [["--isolate"]], [["--rerun-each=2"]]])("with %j", flags => {
+    const runs = flags.includes("--rerun-each=2") ? 2 : 1;
+    test("over the mock of a preload, and the preload's mock is back as it was for the next test file", async () => {
+      const nextFile = `
+        import { expect, test } from "bun:test";
+        test("the preload's mock", async () => {
+          expect([(await import("./importer")).read(), made.greet(), Object.keys(made)]).toEqual([${thrice("preload")}, "preload", ["greet", "404"].sort()]);
+        });
+      `;
+      await expectFixturesToPass(
+        {
+          ...barrels,
+          "codes.ts": `export { "404" } from "./dep";`,
+          "preload.ts": `
+            import { mock } from "bun:test";
+            globalThis.made = { greet: () => "preload", 404: () => "preload" };
+            mock.module("./dep", () => made);
+          `,
+          "a.test.ts": `
+            import { expect, mock, test } from "bun:test";
+            test("a test file mocks the modules that re-export", async () => {
+              const { read } = await import("./importer");
+              const codes = await import("./codes");
+              expect([read(), codes[404]()]).toEqual([${thrice("preload")}, "preload"]);
+              mock.module("./star", () => ({ greet: () => "barrel" }));
+              mock.module("./codes", () => ({ 404: () => "barrel" }));
+              expect([read(), codes[404](), made.greet(), made[404]()]).toEqual([${thrice("barrel")}, "barrel", "barrel", "barrel"]);
+            });
+          `,
+          "b.test.ts": nextFile,
+          "c.test.ts": `
+            import { expect, mock, test } from "bun:test";
+            test("a test file mocks the module that re-exports, and then the module that the preload mocked", async () => {
+              const { read } = await import("./importer");
+              mock.module("./star", () => ({ greet: () => "barrel" }));
+              mock.module("./dep", () => ({ greet: () => "origin" }));
+              // The object of the preload's mock keeps the value until the mock that stored it ends, with the test file.
+              expect([read(), made.greet()]).toEqual([${thrice("origin")}, "barrel"]);
+            });
+          `,
+          "d.test.ts": nextFile,
+          "e.test.ts": `
+            import { expect, mock, test } from "bun:test";
+            import { read } from "./importer";
+            mock.module("./star", () => ({ greet: () => "barrel" }));
+            test("a test file mocks the module that re-exports at its top, under a static import", () => {
+              expect([read(), made.greet()]).toEqual([${thrice("barrel")}, "barrel"]);
+            });
+          `,
+          "f.test.ts": nextFile,
+        },
+        6 * runs,
+        ["--preload", "./preload.ts", ...flags],
+      );
+    });
+  });
+
+  test("a preload makes both mocks, and every test file starts with them", async () => {
+    const reads = (value: string) => `
+      import { expect, test } from "bun:test";
+      test("the preload's mocks", async () => {
+        expect((await import("./importer")).read()).toEqual(${thrice(value)});
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...barrels,
+        "preload.ts": `
+          import { mock } from "bun:test";
+          mock.module("./dep", () => ({ greet: () => "origin" }));
+          await import("./star");
+          mock.module("./star", () => ({ greet: () => "barrel" }));
+        `,
+        "a.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          test("a test file mocks the module that re-exports once more", async () => {
+            const { read } = await import("./importer");
+            expect(read()).toEqual(${thrice("barrel")});
+            mock.module("./star", () => ({ greet: () => "barrel of the file" }));
+            expect(read()).toEqual(${thrice("barrel of the file")});
+          });
+        `,
+        "b.test.ts": reads("barrel"),
+        "c.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("a test file ends the preload's mock of the module that re-exports", async () => {
+            const { read } = await import("./importer");
+            vi.doUnmock("./star");
+            expect(read()).toEqual(${thrice("origin")});
+          });
+        `,
+        "d.test.ts": reads("barrel"),
+        "e.test.ts": `
+          import { expect, mock, test, vi } from "bun:test";
+          test("a test file resets the modules, loads the re-exported module again, and mocks it", async () => {
+            expect((await import("./importer")).read()).toEqual(${thrice("barrel")});
+            vi.resetModules();
+            await import("./dep");
+            mock.module("./dep", () => ({ greet: () => "file" }));
+            expect((await import("./dep")).greet()).toBe("file");
+          });
+        `,
+        "f.test.ts": reads("barrel"),
+        "g.test.ts": `
+          import { beforeEach, expect, mock, test, vi } from "bun:test";
+          beforeEach(() => {
+            vi.resetModules();
+          });
+          test("a test file resets the modules before each test, loads an importer again, and mocks the re-exported module", async () => {
+            await import("./importer");
+            mock.module("./dep", () => ({ greet: () => "file" }));
+            expect((await import("./dep")).greet()).toBe("file");
+          });
+          test("and loads it once more", async () => {
+            expect((await import("./importer")).read()).toEqual(["barrel", "file", "file"]);
+          });
+        `,
+        "h.test.ts": reads("barrel"),
+      },
+      9,
+      ["--preload", "./preload.ts"],
+    );
+  });
+
+  test("a spy and the mock store in the same place", async () => {
+    await expectFixturesToPass(
+      inFolders({
+        "spy-last": `
+          import { expect, mock, spyOn, test, vi } from "bun:test";
+          const made = { greet: () => "origin" };
+          mock.module("./dep", () => made);
+          test("a spy over the mock wraps the mock, and its end leaves the mock", async () => {
+            const star = await import("./star");
+            const { read } = await import("./importer");
+            mock.module("./star", () => ({ greet: () => "barrel" }));
+            const spy = spyOn(star, "greet");
+            expect([read(), made.greet === spy]).toEqual([${thrice("barrel")}, true]);
+            expect(spy).toHaveBeenCalledTimes(3);
+            spy.mockReturnValue("spied");
+            expect(read()).toEqual(${thrice("spied")});
+            spy.mockRestore();
+            expect(read()).toEqual(${thrice("barrel")});
+            vi.doUnmock("./star");
+            expect(read()).toEqual(${thrice("origin")});
+          });
+        `,
+        "spy-first": `
+          import { expect, mock, spyOn, test, vi } from "bun:test";
+          const made = { greet: () => "origin" };
+          mock.module("./dep", () => made);
+          test("the mock over a spy hides the spy, and the end of the spy is a write over the mock", async () => {
+            const star = await import("./star");
+            const { read } = await import("./importer");
+            const spy = spyOn(star, "greet").mockReturnValue("spied");
+            expect(made.greet).toBe(spy);
+            mock.module("./star", () => ({ greet: () => "barrel" }));
+            expect(read()).toEqual(${thrice("barrel")});
+            // As with a module that is not mocked: the end of the spy stores the function that it wrapped.
+            spy.mockRestore();
+            expect([read(), made.greet()]).toEqual([${thrice("origin")}, "origin"]);
+            vi.doUnmock("./star");
+            expect(read()).toEqual(${thrice("origin")});
+          });
+        `,
+        "spy-getter": `
+          import { expect, mock, spyOn, test, vi } from "bun:test";
+          const made = { greet: "origin" };
+          mock.module("./dep", () => made);
+          test("a spy on the getter of a value that the mock stored", async () => {
+            const star = await import("./star");
+            const dep = await import("./dep");
+            mock.module("./star", () => ({ greet: "barrel" }));
+            const get = spyOn(star, "greet", "get");
+            expect([star.greet, dep.greet, made.greet]).toEqual(["barrel", "barrel", "barrel"]);
+            expect(get.mock.contexts.every(context => context === made)).toBe(true);
+            expect(get).toHaveBeenCalledTimes(3);
+            get.mockRestore();
+            expect([star.greet, dep.greet]).toEqual(["barrel", "barrel"]);
+            vi.doUnmock("./star");
+            expect([star.greet, dep.greet, made.greet]).toEqual(["origin", "origin", "origin"]);
+          });
+        `,
+        "spy-between": `
+          import { expect, mock, spyOn, test, vi } from "bun:test";
+          const greet = () => "origin";
+          const made = { greet };
+          mock.module("./dep", () => made);
+          test("a spy between two mocks of the module that re-exports", async () => {
+            const star = await import("./star");
+            const { read } = await import("./importer");
+            mock.module("./star", () => ({ greet: () => "first" }));
+            const spy = spyOn(star, "greet");
+            mock.module("./star", () => ({ greet: () => "second" }));
+            expect(read()).toEqual(${thrice("second")});
+            // As with a module that is not mocked: the end of the spy stores the function that it wrapped.
+            spy.mockRestore();
+            expect(read()).toEqual(${thrice("first")});
+            vi.doUnmock("./star");
+            expect([read(), made.greet === greet]).toEqual([${thrice("origin")}, true]);
+          });
+        `,
+      }),
+      4,
+    );
+  });
+
+  test("the original of the module that re-exports, and both kinds of resetModules()", async () => {
+    const files = {
+      ...inFolders({
+        "original": `
+            import { expect, jest, mock, test, vi } from "bun:test";
+            mock.module("./dep", () => ({ greet: () => "origin" }));
+            test("importOriginal(), vi.importActual() and jest.requireActual() give what the module re-exports without its own mock", async () => {
+              const { read } = await import("./importer");
+              mock.module("./star", () => ({ greet: () => "star" }));
+              expect([(await vi.importActual("./star")).greet(), jest.requireActual("./star").greet()]).toEqual(["origin", "origin"]);
+              await mock.module("./star", async importOriginal => {
+                const original = await importOriginal();
+                return { greet: () => "over " + original.greet() };
+              });
+              expect(read()).toEqual(${thrice("over origin")});
+            });
+          `,
+        "vi-reset": `
+            import { expect, mock, test, vi } from "bun:test";
+            mock.module("./dep", () => ({ greet: () => "origin" }));
+            test("vi.resetModules() calls no factory again, so a module that is loaded after it reads the same object", async () => {
+              const star = await import("./star");
+              const { read } = await import("./importer");
+              mock.module("./star", () => ({ greet: () => "barrel" }));
+              vi.resetModules();
+              const fresh = await import("./importer");
+              expect([star.greet(), read(), fresh.read()]).toEqual(["barrel", ${thrice("barrel")}, ${thrice("barrel")}]);
+              vi.doUnmock("./star");
+              expect([star.greet(), read(), (await import("./importer")).read()]).toEqual(["origin", ${thrice("origin")}, ${thrice("origin")}]);
+            });
+          `,
+        "vi-reset-before-each": `
+            import { beforeEach, expect, mock, test, vi } from "bun:test";
+            import { read } from "./importer";
+            vi.mock("./dep", () => ({ greet: () => "origin" }));
+            beforeEach(() => {
+              vi.resetModules();
+            });
+            test("a mock of a copy that was loaded after a reset", async () => {
+              const fresh = await import("./importer");
+              mock.module("./star", () => ({ greet: () => "barrel" }));
+              expect([read(), fresh.read()]).toEqual([${thrice("barrel")}, ${thrice("barrel")}]);
+            });
+            test("a load after the next reset changes nothing for the modules that were loaded", async () => {
+              expect(read()).toEqual(${thrice("barrel")});
+              const fresh = await import("./importer");
+              await import("./dep");
+              expect([read(), fresh.read()]).toEqual([${thrice("barrel")}, ${thrice("barrel")}]);
+              vi.doUnmock("./star");
+              expect([read(), (await import("./importer")).read()]).toEqual([${thrice("origin")}, ${thrice("origin")}]);
+            });
+          `,
+        "vi-reset-mocked-again": `
+            import { beforeEach, expect, mock, test, vi } from "bun:test";
+            vi.mock("./dep", () => ({ greet: () => "origin" }));
+            beforeEach(() => {
+              vi.resetModules();
+            });
+            test("a mock of the module as it was first loaded reaches the re-exported module", async () => {
+              const { read } = await import("./importer");
+              mock.module("./star", () => ({ greet: () => "one" }));
+              expect(read()).toEqual(${thrice("one")});
+            });
+            // After the reset the module is loaded as its mock, which re-exports nothing. The next mock takes the place of that one.
+            test("the next mock, after a reset, ends what the first one stored", async () => {
+              const { read } = await import("./importer");
+              mock.module("./star", () => ({ greet: () => "two" }));
+              expect(read()).toEqual(["two", "origin", "origin"]);
+            });
+          `,
+        "jest-reset": `
+            import { expect, jest, mock, test, vi } from "bun:test";
+            mock.module("./dep", () => ({ greet: () => "origin" }));
+            test("after jest.resetModules(), too", async () => {
+              const star = await import("./star");
+              const { read } = await import("./importer");
+              mock.module("./star", () => ({ greet: () => "barrel" }));
+              jest.resetModules();
+              expect([star.greet(), read()]).toEqual(["barrel", ${thrice("barrel")}]);
+              expect([(await import("./star")).greet(), (await import("./dep")).greet(), (await import("./second")).greet()]).toEqual(["barrel", "origin", "origin"]);
+              expect([star.greet(), read()]).toEqual(["barrel", ${thrice("barrel")}]);
+              vi.doUnmock("./star");
+              expect([star.greet(), read()]).toEqual(["origin", ${thrice("origin")}]);
+            });
+          `,
+      }),
+      "jest-reset/next.test.ts": `
+          import { expect, test } from "bun:test";
+          test("the next test file gets the modules themselves", async () => {
+            expect((await import("./importer")).read()).toEqual(${thrice("real")});
+          });
+        `,
+    };
+    await expectFixturesToPass(files, 8, inOrder(files));
+  });
+
+  test("however the re-exported module is mocked", async () => {
+    // `before`: what greet() gives under the mock of the re-exported module alone.
+    const reaches = (mockOfOrigin: string, before: string) => `
+      import { expect, mock, test, vi } from "bun:test";
+      ${mockOfOrigin}
+      test("the mock of the module that re-exports reaches it, and ends", async () => {
+        const { read } = await import("./importer");
+        expect(read()).toEqual(Array(3).fill(${before}));
+        mock.module("./star", () => ({ greet: () => "barrel" }));
+        expect(read()).toEqual(${thrice("barrel")});
+        vi.doUnmock("./star");
+        expect(read()).toEqual(Array(3).fill(${before}));
+      });
+    `;
+    const commonJS = {
+      "dep.cjs": `exports.greet = () => "real"; exports.other = () => "real";`,
+      "star.ts": `export * from "./dep.cjs";`,
+      "second.ts": `export * from "./dep.cjs";`,
+      "importer.ts": barrels["importer.ts"].replaceAll(`"./dep"`, `"./dep.cjs"`),
+    };
+    await expectFixturesToPass(
+      {
+        ...inFolders({
+          "automock": reaches(`vi.mock("./dep");`, "undefined"),
+          "spy": reaches(`vi.mock("./dep", { spy: true });`, `"real"`),
+          "do-mock": reaches(`import "./dep"; vi.doMock("./dep", () => ({ greet: () => "origin" }));`, `"origin"`),
+        }),
+        ...inFolders({ "common-js": reaches(`vi.mock("./dep.cjs");`, "undefined") }, commonJS),
+        ...inFolders({ "common-js-manual": reaches(`vi.mock("./dep.cjs");`, `"manual"`) }, commonJS),
+        "common-js-manual/__mocks__/dep.cjs": `exports.greet = () => "manual";`,
+      },
+      5,
+    );
+  });
+
+  test("however the module that re-exports is mocked", async () => {
+    // `after`: what greet() gives under both mocks.
+    const reaches = (mockOfBarrel: string, after: string) => `
+      import { expect, jest, mock, test, vi } from "bun:test";
+      mock.module("./dep", () => ({ greet: () => "origin" }));
+      test("its mock reaches the mock of the re-exported module, and ends", async () => {
+        const star = await import("./star");
+        const { read } = await import("./importer");
+        ${mockOfBarrel}
+        expect([read(), vi.isMockFunction(star.greet)]).toEqual(${after});
+        vi.doUnmock("./star");
+        expect(read()).toEqual(${thrice("origin")});
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...inFolders({
+          "automock": reaches(`jest.doMock("./star");`, `[[undefined, undefined, undefined], true]`),
+          "spy": reaches(`vi.mock("./star", { spy: true });`, `[${thrice("origin")}, true]`),
+          "manual": reaches(`await vi.mock("./star");`, `[${thrice("manual")}, false]`),
+          "es-module": reaches(
+            `mock.module("./star", () => ({ __esModule: true, greet: () => "barrel" }));`,
+            `[${thrice("barrel")}, false]`,
+          ),
+          "common-js": reaches(`mock.module("./star", () => require("./stub.cjs"));`, `[${thrice("stub")}, false]`),
+          // Each of these is made from what the module re-exports without the mock that it replaces.
+          "spy-over-mock": reaches(
+            `mock.module("./star", () => ({ greet: () => "barrel" })); await vi.mock("./star", { spy: true });`,
+            `[${thrice("origin")}, true]`,
+          ),
+          "automock-over-mock": reaches(
+            `mock.module("./star", () => ({ greet: "not a function" })); jest.mock("./star");`,
+            `[[undefined, undefined, undefined], true]`,
+          ),
+        }),
+        "manual/__mocks__/star.ts": `export const greet = () => "manual";`,
+        "common-js/stub.cjs": `exports.greet = () => "stub";`,
+      },
+      7,
+    );
+  });
+
+  // The namespace object of the re-exported module is what the module exports there, and it takes no store.
+  test.todo("reaches a name of `export * as` the mocked module", async () => {
+    await expectFixturesToPass(
+      {
+        "dep.ts": `export const greet = () => "real";`,
+        "star.ts": `export * as dep from "./dep";`,
+        "importer.ts": `import { dep } from "./star"; export const read = () => dep.greet();`,
+        "a.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          mock.module("./dep", () => ({ greet: () => "origin" }));
+          test("the mock of the module that re-exports is read", async () => {
+            const { read } = await import("./importer");
+            mock.module("./star", () => ({ dep: { greet: () => "barrel" } }));
+            expect(read()).toBe("barrel");
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("Bun.plugin.clearAll() leaves the value where the mock stored it, as for a module that is not mocked", async () => {
+    const testFile = (mockOfOrigin: string) => `
+      import { expect, mock, test } from "bun:test";
+      ${mockOfOrigin}
+      test("what a mock of a loaded module stored stays", async () => {
+        const { read } = await import("./importer");
+        mock.module("./star", () => ({ greet: () => "barrel" }));
+        Bun.plugin.clearAll();
+        expect(read()).toEqual(${thrice("barrel")});
+      });
+    `;
+    await expectFixturesToPass(
+      inFolders({
+        "mocked": testFile(`mock.module("./dep", () => ({ greet: () => "origin" }));`),
+        "not-mocked": testFile(""),
+      }),
+      2,
+    );
+  });
+
+  test("mocked again and ended many times, with a full collection after each", async () => {
+    const rounds = isDebug || isASAN ? 30 : 150;
+    await expectFixturesToPass(
+      inFolders({
+        "a": `
+          import { expect, mock, test, vi } from "bun:test";
+          const greet = () => "origin";
+          const made = { greet };
+          mock.module("./dep", () => made);
+          test("each mock is read, and the object has what its factory returned at the end", async () => {
+            for (let round = 0; round < ${rounds}; round++) {
+              const { read } = await import("./importer");
+              mock.module("./star", () => ({ greet: () => "star " + round }));
+              expect(read()).toEqual(Array(3).fill("star " + round));
+              if (round % 2) {
+                mock.module("./second", () => ({ greet: () => "second " + round }));
+                expect(read()).toEqual(Array(3).fill("second " + round));
+              }
+              if (round % 3 === 0) vi.doUnmock("./star");
+              Bun.gc(true);
+            }
+            vi.doUnmock("./star");
+            vi.doUnmock("./second");
+            Bun.gc(true);
+            expect([(await import("./importer")).read(), made.greet === greet]).toEqual([${thrice("origin")}, true]);
+          });
+        `,
+      }),
+      1,
+    );
+  });
+
+  test("in a script that bun runs", async () => {
+    using dir = tempDir("mock-barrel-in-script", {
+      ...barrels,
+      "index.ts": `
+        import { mock, vi } from "bun:test";
+        mock.module("./dep", () => ({ greet: () => "origin" }));
+        const { read } = await import("./importer");
+        mock.module("./star", () => ({ greet: () => "barrel" }));
+        console.log(read().join());
+        vi.doUnmock("./star");
+        console.log(read().join());
+      `,
+    });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "index.ts"], env: bunEnv, cwd: String(dir), stderr: "inherit" });
+    expect(await proc.stdout.text()).toBe("barrel,barrel,barrel\norigin,origin,origin\n");
+    expect(await proc.exited).toBe(0);
+  });
+});
+
 describe.concurrent("an export the factory did not return", () => {
   const files = {
     "dep.ts": `export const a = "real-a"; export const b = "real-b"; export default "real-default";`,

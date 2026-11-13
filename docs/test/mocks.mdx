@@ -391,6 +391,10 @@ test("async factory", () => {
 { "foo": "baz" }
 ```
 
+The update also reaches a name that the module re-exports from a module that is itself mocked, with `export * from` or `export { name } from`. Such a name has no variable of its own: importers read it off the object that the factory of the other mock returned. Bun stores the new value in that object, so the modules that import the other mock read it too. When the mock ends, the object gets back what it had.
+
+The object only takes a name that it has as a plain value. A name that its factory left out stays left out, and a getter stays. A module namespace is not changed: a factory that returns `import("./fake")`, or an ES module in `__mocks__`. `export * as ns from` a mocked module keeps the first mock.
+
 ### Keeping Part of the Original Module
 
 The factory is passed a function that loads the original module. Spread its result to replace only some exports.

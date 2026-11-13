@@ -10,7 +10,9 @@
 #include "ZigGlobalObject.h"
 #include "NodeAsyncHooks.h"
 
+#include <JavaScriptCore/CodeCache.h>
 #include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSBoundFunction.h>
@@ -38,6 +40,7 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/SymbolTableInlines.h>
 #include <JavaScriptCore/SyntheticModuleRecord.h>
+#include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
 #include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/WTFString.h>
@@ -544,6 +547,12 @@ public:
     // These outlive the patched module's eviction, so unmocking still restores it for whatever stays linked to it (a preload, say).
     WriteBarrier<JSC::JSModuleNamespaceObject> patchedNamespace;
     WriteBarrier<JSObject> originalExportsOfEvictedModule;
+    // A module that is loaded as a mock keeps no variable for an export: importers read `exports` at every use. So a patch of a loaded
+    // module stores a name that the module re-exports from such a module in the `exports` of that mock (storeExportOfModuleMock()).
+    // For each such name, an array: what `exports` had, and then each value that a mock has stored since.
+    WriteBarrier<JSObject> exportsUnderPatches;
+    // Pairs of a mock that this one stored in, and an object that has those names.
+    WriteBarrier<JSC::JSArray> patchedModuleMocks;
     // Patches are undone newest first: two modules can export one variable (`export *`), and each patch saved what it found there.
     unsigned patchOrder { 0 };
     State state { State::NotCalled };
@@ -940,7 +949,8 @@ static ExportVariable findExportVariable(JSC::JSGlobalObject* globalObject, JSC:
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto resolution = moduleNamespace->moduleRecord()->resolveExport(globalObject, name);
     RETURN_IF_EXCEPTION(scope, {});
-    if (resolution.type != JSC::AbstractModuleRecord::Resolution::Type::Resolved)
+    // A record with live exports declares a variable by the name, which nothing reads: it asks its source at every use.
+    if (resolution.type != JSC::AbstractModuleRecord::Resolution::Type::Resolved || resolution.isLiveExport(vm))
         return {};
     auto* environment = resolution.moduleRecord->moduleEnvironmentMayBeNull();
     if (!environment)
@@ -949,6 +959,59 @@ static ExportVariable findExportVariable(JSC::JSGlobalObject* globalObject, JSC:
     if (entry.isNull())
         return {};
     return { resolution.moduleRecord, resolution.localName, entry.scopeOffset() };
+}
+
+static constexpr unsigned accessorAttributes = JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::CustomAccessorOrValue;
+
+// An array may keep a number in another encoding than the property that it came from.
+static bool isSameExportValue(JSValue one, JSValue other)
+{
+    return one == other || (one.isNumber() && other.isNumber() && one.asNumber() == other.asNumber());
+}
+
+// Where the module of a record reads an export that it hands on from a module that is loaded as a mock: the object that the factory of
+// that mock returned, and the name that the export has there.
+struct ExportOfModuleMock {
+    JSModuleMock* mock { nullptr };
+    JSObject* object { nullptr };
+    JSC::Identifier name;
+};
+
+__attribute__((minsize)) static ExportOfModuleMock findExportOfModuleMock(JSC::JSGlobalObject* globalObject, JSC::AbstractModuleRecord* record, const JSC::Identifier& name)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto resolution = record->resolveExport(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!resolution.isLiveExport(vm))
+        return {};
+    JSObject* source = resolution.moduleRecord->liveExportsSource();
+    auto* mock = source ? dynamicDowncast<JSModuleMock>(source) : nullptr;
+    JSObject* object = mock ? mock->exports.get() : nullptr;
+    // A store must make no call, so the object has to answer for its own properties, as an object literal does. A Proxy does not, and the
+    // namespace object of another module, which a `__mocks__` file or `() => import("./fake")` gives, is not this mock's to write.
+    bool takesStore = object && object->type() == JSC::FinalObjectType;
+#if ENABLE(AOT)
+    takesStore |= object && object->type() == JSC::CompiledObjectType;
+#endif
+    if (!takesStore)
+        return {};
+    return { mock, object, resolution.localName };
+}
+
+// What `name` of the module of `record` read before a mock of a loaded module stored over it. Empty if none did.
+__attribute__((minsize)) static JSValue exportOfModuleMockBeforePatches(JSC::JSGlobalObject* globalObject, JSC::AbstractModuleRecord* record, const JSC::Identifier& name)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    ExportOfModuleMock found = findExportOfModuleMock(globalObject, record, name);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* patches = found.mock ? found.mock->exportsUnderPatches.get() : nullptr;
+    if (!patches)
+        return {};
+    unsigned ignored = 0;
+    JSValue values = Bun::getOwnPropertyStorage(globalObject, patches, found.name, ignored);
+    RETURN_IF_EXCEPTION(scope, {});
+    return values ? uncheckedDowncast<JSC::JSArray>(values)->getIndexQuickly(0) : JSValue();
 }
 
 static JSC::JSPromise* importModuleKey(Zig::GlobalObject* globalObject, const String& key)
@@ -1158,6 +1221,11 @@ __attribute__((minsize)) static JSObject* esmExportsBeforePatches(Zig::GlobalObj
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (value == overwritten)
             continue;
+        // A name that is read off another module's mock: that mock has what its object had before this one stored over it.
+        if (!value && mock->patchedModuleMocks) [[unlikely]] {
+            value = exportOfModuleMockBeforePatches(globalObject, loaded.esmNamespace->moduleRecord(), name);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
         if (!value) {
             value = loaded.esmNamespace->get(globalObject, name);
             RETURN_IF_EXCEPTION(scope, nullptr);
@@ -1184,7 +1252,35 @@ static JSValue compiledExportsBeforeMock(Zig::GlobalObject* globalObject, JSModu
         return kept;
     }
     isCommonJS = !JSC::AOT::isESModule(*loaded.compiledModule) && !JSC::AOT::isDataFile(*loaded.compiledModule);
-    RELEASE_AND_RETURN(scope, JSC::AOT::exportsBeforeMock(globalObject, *loaded.compiledModule, !mock->isOfVitest() && !mock->wasInstalledOverFailedLoad, &didExportReadThrow));
+    JSValue before = JSC::AOT::exportsBeforeMock(globalObject, *loaded.compiledModule, !mock->isOfVitest() && !mock->wasInstalledOverFailedLoad, &didExportReadThrow);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::AbstractModuleRecord* record = !isCommonJS && before && before.isObject() && mock->patchedModuleMocks ? JSC::AOT::originalModuleRecord(globalObject, *loaded.compiledModule) : nullptr;
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!record) [[likely]]
+        return before;
+    // As esmExportsBeforePatches(): for a name that is read off another module's mock, what the object of that mock had.
+    auto& vm = JSC::getVM(globalObject);
+    JSObject* exports = asObject(before);
+    JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, {});
+    Vector<JSC::Identifier, 4> names;
+    MarkedArgumentBuffer values;
+    bool hasOriginal = false;
+    for (auto& name : properties) {
+        JSValue value = exportOfModuleMockBeforePatches(globalObject, record, name);
+        RETURN_IF_EXCEPTION(scope, {});
+        hasOriginal |= !!value;
+        if (!value) {
+            value = exports->get(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        names.append(name);
+        values.append(value);
+    }
+    if (!hasOriginal)
+        return before;
+    RELEASE_AND_RETURN(scope, objectWithExports(globalObject, names, values));
 }
 
 static JSObject* evaluatedOriginalNamespace(Zig::GlobalObject* globalObject, JSModuleMock* mock)
@@ -3120,6 +3216,139 @@ bool JSModuleMock::defineOwnProperty(JSObject* object, JSC::JSGlobalObject* glob
     return exports && exports->methodTable()->defineOwnProperty(exports, globalObject, propertyName, descriptor, shouldThrow);
 }
 
+// require() of a mock whose object is marked __esModule answers with the value of `default`, and the module object keeps that answer.
+__attribute__((minsize)) static void updateRequiredDefaultOfModuleMock(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSValue from, JSValue to)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue cached = JSValue::decode(JSC__JSMap__get(Bun::testFileRequireMap(globalObject), globalObject, JSValue::encode(mock->specifier.get())));
+    RETURN_IF_EXCEPTION(scope, );
+    auto* moduleObject = cached && !cached.isUndefined() ? dynamicDowncast<Bun::JSCommonJSModule>(cached) : nullptr;
+    if (moduleObject && moduleObject->getDirect(vm, Bun::builtinNames(vm).exportsPublicName()) == from)
+        moduleObject->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), to, 0);
+}
+
+// `mock` patches the module of `record`, which hands `name` on from a module that is loaded as a mock. Such a name has no variable to
+// store in, so the value goes where every reader of that other mock finds it: in the object that its factory returned, as with spyOn().
+// A name that the factory did not return stays left out, and a getter stays: the object holds no value for either.
+__attribute__((minsize)) static void storeExportOfModuleMock(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::AbstractModuleRecord* record, const JSC::Identifier& name, JSValue value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ExportOfModuleMock found = findExportOfModuleMock(globalObject, record, name);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!found.object)
+        return;
+    unsigned attributes = 0;
+    JSValue held = Bun::getOwnPropertyStorage(globalObject, found.object, found.name, attributes);
+    RETURN_IF_EXCEPTION(scope, );
+    // The same value: this factory handed the name on, as `{ ...(await importOriginal()), other }` does.
+    if (!held || (attributes & accessorAttributes) || isSameExportValue(held, value))
+        return;
+
+    JSObject* names = nullptr;
+    JSC::JSArray* patched = mock->patchedModuleMocks.get();
+    for (unsigned index = 0, length = patched ? patched->length() : 0; index < length && !names; index += 2) {
+        if (patched->getIndexQuickly(index) == found.mock)
+            names = asObject(patched->getIndexQuickly(index + 1));
+    }
+    if (!names) {
+        names = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+        MarkedArgumentBuffer pairs;
+        for (unsigned index = 0, length = patched ? patched->length() : 0; index < length; ++index)
+            pairs.append(patched->getIndexQuickly(index));
+        pairs.append(found.mock);
+        pairs.append(names);
+        if (pairs.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return;
+        }
+        patched = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), pairs);
+        RETURN_IF_EXCEPTION(scope, );
+        mock->patchedModuleMocks.set(vm, mock, patched);
+    }
+    Bun::putOwnPropertyStorage(globalObject, names, found.name, jsBoolean(true), 0, false);
+    RETURN_IF_EXCEPTION(scope, );
+
+    JSObject* patches = found.mock->exportsUnderPatches.get();
+    if (!patches) {
+        patches = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+        found.mock->exportsUnderPatches.set(vm, found.mock, patches);
+    }
+    unsigned ignored = 0;
+    JSValue values = Bun::getOwnPropertyStorage(globalObject, patches, found.name, ignored);
+    RETURN_IF_EXCEPTION(scope, );
+    if (values) {
+        uncheckedDowncast<JSC::JSArray>(values)->push(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, );
+    } else {
+        MarkedArgumentBuffer first;
+        first.append(held);
+        first.append(value);
+        values = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), first);
+        RETURN_IF_EXCEPTION(scope, );
+        Bun::putOwnPropertyStorage(globalObject, patches, found.name, values, 0, false);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+    Bun::putOwnPropertyStorage(globalObject, found.object, found.name, value, attributes, false);
+    RETURN_IF_EXCEPTION(scope, );
+    if (found.name == vm.propertyNames->defaultKeyword)
+        RELEASE_AND_RETURN(scope, updateRequiredDefaultOfModuleMock(globalObject, found.mock, held, value));
+}
+
+// `mock` ends, or `laterMock` takes its place. Under each name that `mock` stored, an object gets back what it had if it holds a value
+// that a mock stored: the end of a spy puts such a value back, too. Another value stays. Then `laterMock` is the one that stores over
+// it, and whose end puts back what the object had.
+__attribute__((minsize)) static void restoreExportsOfModuleMocks(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSModuleMock* laterMock = nullptr)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSArray* patched = mock->patchedModuleMocks.get();
+    mock->patchedModuleMocks.clear();
+    if (laterMock && !laterMock->patchedModuleMocks)
+        laterMock->patchedModuleMocks.setMayBeNull(vm, laterMock, patched);
+    else
+        laterMock = nullptr;
+    for (unsigned index = 0, length = patched ? patched->length() : 0; index < length; index += 2) {
+        auto* other = uncheckedDowncast<JSModuleMock>(patched->getIndexQuickly(index));
+        JSObject* object = other->exports.get();
+        JSObject* patches = other->exportsUnderPatches.get();
+        if (!object || !patches)
+            continue;
+        JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        JSObject::getOwnPropertyNames(asObject(patched->getIndexQuickly(index + 1)), globalObject, names, DontEnumPropertiesMode::Include);
+        RETURN_IF_EXCEPTION(scope, );
+        for (auto& name : names) {
+            unsigned ignored = 0;
+            JSValue entry = Bun::getOwnPropertyStorage(globalObject, patches, name, ignored);
+            RETURN_IF_EXCEPTION(scope, );
+            // The end of another mock that stored the name has put back what the object had.
+            if (!entry)
+                continue;
+            auto* values = uncheckedDowncast<JSC::JSArray>(entry);
+            unsigned attributes = 0;
+            JSValue held = Bun::getOwnPropertyStorage(globalObject, object, name, attributes);
+            RETURN_IF_EXCEPTION(scope, );
+            bool holdsValueOfMock = false;
+            if (held && !(attributes & accessorAttributes)) {
+                for (unsigned stored = 1, count = values->length(); stored < count && !holdsValueOfMock; ++stored)
+                    holdsValueOfMock = isSameExportValue(held, values->getIndexQuickly(stored));
+            }
+            if (holdsValueOfMock) {
+                Bun::putOwnPropertyStorage(globalObject, object, name, values->getIndexQuickly(0), attributes, false);
+                RETURN_IF_EXCEPTION(scope, );
+                if (name == vm.propertyNames->defaultKeyword) {
+                    updateRequiredDefaultOfModuleMock(globalObject, other, held, values->getIndexQuickly(0));
+                    RETURN_IF_EXCEPTION(scope, );
+                }
+            } else if (laterMock)
+                continue;
+            JSCell::deleteProperty(patches, globalObject, name);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+    }
+}
+
 __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, JSModuleMock* mock, const LoadedModule& loaded)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3254,10 +3483,23 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
             RETURN_IF_EXCEPTION(scope, );
         }
 #endif
+        // The record that resolves the names of a compiled module, if another module is mocked: only the object of a mock takes a store.
+        // It exists once willMockModule() has run, for a module that has run.
+        JSC::AbstractModuleRecord* compiledRecord = nullptr;
+#if ENABLE(AOT)
+        if (auto* virtualModules = mocksCompiledModule ? globalObject->onLoadPlugins.virtualModules : nullptr; virtualModules && virtualModules->size() > (virtualModules->contains(specifier) ? 1u : 0u)) {
+            compiledRecord = JSC::AOT::originalModuleRecord(globalObject, *loaded.compiledModule);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+#endif
         for (size_t i = 0; i < names.size(); ++i) {
             if (moduleNamespaceObject) {
-                moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
+                bool isStored = moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
                 RETURN_IF_EXCEPTION(scope, );
+                if (!isStored && vm.codeCache()->hasModuleRecordWithLiveExports()) [[unlikely]] {
+                    storeExportOfModuleMock(globalObject, mock, moduleNamespaceObject->moduleRecord(), names[i], values.at(i));
+                    RETURN_IF_EXCEPTION(scope, );
+                }
             }
 #if ENABLE(AOT)
             // Code outside the image has imported the loader's module, compiled code imports the image's: a module of native code may be loaded as both.
@@ -3266,6 +3508,10 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
                 RETURN_IF_EXCEPTION(scope, );
             }
 #endif
+            if (compiledRecord) [[unlikely]] {
+                storeExportOfModuleMock(globalObject, mock, compiledRecord, names[i], values.at(i));
+                RETURN_IF_EXCEPTION(scope, );
+            }
         }
 #if ENABLE(AOT)
         if (mocksCompiledModule) {
@@ -4086,6 +4332,10 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
 #endif
     if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules)
         virtualModules->remove(specifier);
+    if (mock->patchedModuleMocks) [[unlikely]] {
+        restoreExportsOfModuleMocks(globalObject, mock, laterMock);
+        RETURN_IF_EXCEPTION(scope, );
+    }
 #if ENABLE(AOT)
     Vector<JSC::AOT::ModuleID, 1> pendingMockModules;
     globalObject->onLoadPlugins.pendingCompiledMocks.removeAllMatching([&](const auto& waiting) {
@@ -6227,6 +6477,12 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         mock->patchOrder = previous->patchOrder;
         if (JSValue exports = previous->originalCommonJSExports.get())
             mock->originalCommonJSExports.set(vm, mock, exports);
+        // What the earlier mock stored in the objects of other mocks is not inherited: those get back what they had, before the factory
+        // of this mock reads them.
+        if (previous->patchedModuleMocks) [[unlikely]] {
+            restoreExportsOfModuleMocks(globalObject, previous, mock);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
 #if ENABLE(AOT)
         mock->unevaluatedCompiledModule = previous->unevaluatedCompiledModule;
         mock->lostCommonJSExportsToReset = previous->lostCommonJSExportsToReset;
@@ -7184,6 +7440,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalOb
             again->importsOriginal = mock->importsOriginal;
             again->patchedNamespace.setMayBeNull(vm, again, mock->patchedNamespace.get());
             again->originalExportsOfEvictedModule.setMayBeNull(vm, again, mock->originalExportsOfEvictedModule.get());
+            again->patchedModuleMocks.setMayBeNull(vm, again, mock->patchedModuleMocks.get());
+            mock->patchedModuleMocks.clear();
             again->patchOrder = mock->patchOrder;
 #if ENABLE(AOT)
             again->lostCommonJSExportsToReset = true;
@@ -8083,6 +8341,8 @@ void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(mock->originalNamespace);
     visitor.append(mock->patchedNamespace);
     visitor.append(mock->originalExportsOfEvictedModule);
+    visitor.append(mock->exportsUnderPatches);
+    visitor.append(mock->patchedModuleMocks);
 #if ENABLE(AOT)
     visitor.append(mock->lateFactoryError);
     visitor.append(mock->errorOwedToImports);

@@ -494,6 +494,16 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         prints: ["mock"],
         dangerously: ["runs dep.js", "real"],
       },
+      // A `vi` beside the name is another thing too, unless one declaration has both.
+      "a call in a function that has the name and another vi": {
+        text:
+          'const { vitest, test } = require("vitest");\n' +
+          'function register(vitest, vi) {\n  vitest.doMock("./dep.js", () => ({ greet: () => "mock" }));\n}\n' +
+          "register(vitest, { doMock() {} });\n" +
+          'test("greets", () => {\n  console.log(TAG, require("./dep.js").greet());\n});\n',
+        prints: ["mock"],
+        dangerously: ["runs dep.js", "real"],
+      },
       "a spy on an import that has another vi": {
         text:
           'import { test as vi, vitest } from "vitest";\n' +

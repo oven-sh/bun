@@ -136,11 +136,15 @@ impl ConsistentVitestVi {
         }
     }
 
-    /// True if a scope between a use in `at` and `home`, where the name is declared, declares `function`, like a parameter of that name: the use is then on that one. A name that nothing declares is at the top of the file.
-    fn is_captured<'a>(&self, at: Scope<'a>, home: Option<Scope<'a>>) -> bool {
-        let function = self.function.as_bytes();
-        let mut between = at.chain().take_while(|it| Some(*it) != home && !matches!(it.node(), Node::File(_)));
-        between.any(|it| it.get_bytes(function).is_some())
+    /// True if `target`, which is what `function` is at a use of the name that `declared` is, is another thing than the name: not the global, not a mock API that `bun test` knows, and not declared together with the name, as in `const { vi, vitest } = require("vitest")`.
+    fn is_other(&self, target: Option<Symbol<'_>>, declared: Option<Symbol<'_>>) -> bool {
+        // The declarator of a variable, and the statement of an import.
+        let origin = |it: Symbol<'_>| match it.declarations().next()? {
+            declaration @ Declaration::Var(_) => declaration.node().map(|it| it.span()),
+            declaration => declaration.parent().map(|it| it.span()),
+        };
+        let is_together = |it: Symbol<'_>| origin(it).is_some_and(|it| Some(it) == declared.and_then(origin));
+        target.is_some_and(|it| !bun_test::is_known(self.function.as_bytes(), Some(it)) && !is_together(it))
     }
 
     /// True if the new name changes what runs: a use of the name is then on another `function`, or on one that `bun test` doesn't treat as it treats the name: see [`bun_test`].
@@ -155,14 +159,15 @@ impl ConsistentVitestVi {
         let Some(declared) = self.declared(import) else {
             return false;
         };
-        let (home, before) = (declared.scope(), bun_test::is_known(opposite, Some(declared)));
+        let before = bun_test::is_known(opposite, Some(declared));
         declared.references().any(|it| {
+            let target = it.scope().resolve_bytes(function);
             // Where nothing declares `function`, the use is then on what the import declares. Another `function` of the import, like `test as vi`, is another thing.
-            let after = match it.scope().resolve_bytes(function) {
+            let after = match target {
                 None => declares_known,
-                declared => bun_test::is_known(function, declared),
+                target => bun_test::is_known(function, target),
             };
-            before != after || self.is_captured(it.scope(), Some(home))
+            before != after || self.is_other(target, Some(declared))
         })
     }
 
@@ -175,8 +180,8 @@ impl ConsistentVitestVi {
         if !is_mock && file.find_name(self.function).is_none() {
             return false;
         }
-        let (scope, declared) = (Node::Expr(name).scope(), name.symbol());
-        let changes_kind = || bun_test::is_known(self.opposite.as_bytes(), declared) != bun_test::is_known(function, scope.resolve_bytes(function));
-        self.is_captured(scope, declared.map(Symbol::scope)) || is_mock && changes_kind()
+        let (declared, target) = (name.symbol(), Node::Expr(name).scope().resolve_bytes(function));
+        let changes_kind = || bun_test::is_known(self.opposite.as_bytes(), declared) != bun_test::is_known(function, target);
+        self.is_other(target, declared) || is_mock && changes_kind()
     }
 }

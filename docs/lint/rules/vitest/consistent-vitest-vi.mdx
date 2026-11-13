@@ -23,7 +23,7 @@ By default the name is `vi`. Both the import and the calls are reported.
 - A call on a name that the file doesn't import isn't renamed if the file gets the two names in different ways, as with `vitest` from `require()` and the global `vi`.
 - An import and the uses of its name aren't renamed if the new name would take such a call from the global `vi` and the import isn't a named import from `vitest`.
 
-`--fix` also renames nothing that would then be on another `vi`: a call or another use in a function that has a parameter of that name, or a use of an import that has another thing under that name, like `test as vi`.
+`--fix` also renames nothing that would then be on another `vi`: one that the file declares apart from the name, like a parameter, or another thing that an import has under that name, like `test as vi`. A `vi` that one declaration has together with the name, as in `const { vi, vitest } = require("vitest")`, counts as the same object.
 
 `--fix-dangerously` renames them.
 

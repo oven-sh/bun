@@ -114,21 +114,20 @@ interface Rejection {
 
 /**
  * Find the bun executable for codegen (`bun install`, `bun build`, scripts
- * using Bun APIs). Must be the actual bun binary — NOT process.execPath,
- * since configure may run under node.
+ * using Bun APIs).
  *
- * Search order: ~/.bun/bin (curl-install location), then PATH, then
- * process.execPath only if it's actually bun. CI agents pin an old system
- * bun but codegen scripts need newer CLI flags, so the user install goes
- * first.
+ * When bun runs configure, the bun is the running binary: the same one
+ * configure.ts propagates as `cfg.jsRuntime`, so one build runs every
+ * subprocess under the bun the developer chose. Only when configure runs
+ * under node does this search: ~/.bun/bin (curl-install location), then
+ * PATH. CI pins its bun version in `checkImageTools()`.
  */
 export function findBun(os: OS): string {
+  if (process.versions.bun !== undefined) return process.execPath;
+
   const exe = os === "windows" ? "bun.exe" : "bun";
   const userBun = join(homedir(), ".bun", "bin", exe);
   if (isExecutable(userBun)) return userBun;
-
-  // Running under bun at a non-standard path — use that.
-  if (process.versions.bun !== undefined) return process.execPath;
 
   return findTool({
     names: ["bun"],

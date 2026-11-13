@@ -163,3 +163,36 @@ test.skipIf(isWindows).concurrent.each([
   expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: says, stderr: "" });
   expect(exitCode).toBe(0);
 });
+
+// Under bun, the bun the build runs its subprocesses with (cfg.bun) is the one that runs configure, the same
+// binary configure.ts propagates as cfg.jsRuntime. An older install at ~/.bun/bin must not replace it (#48857).
+// Under node the install at ~/.bun/bin comes first. Each case is a process of its own: the runtime is read from
+// process.versions.bun, and bun's os.homedir() reads HOME (USERPROFILE on Windows) from the environment.
+test.concurrent.each([
+  { runtime: "bun", bun: "process.execPath" },
+  { runtime: "node", bun: "~/.bun/bin" },
+])("findBun under $runtime returns $bun", async ({ runtime, bun }) => {
+  const exe = isWindows ? "bun.exe" : "bun";
+  using dir = tempDir("find-bun-home", { [`.bun/bin/${exe}`]: tool("1.4.2") });
+  const userBun = join(String(dir), ".bun", "bin", exe);
+  chmodSync(userBun, 0o755);
+  const os = isWindows ? "windows" : process.platform;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { findBun } = require(${JSON.stringify(join(import.meta.dir, "../../scripts/build/tools.ts"))});
+       if (${JSON.stringify(runtime)} === "node") Object.defineProperty(process.versions, "bun", { value: undefined });
+       const found = findBun(${JSON.stringify(os)});
+       console.log(JSON.stringify({
+         homedir: require("node:os").homedir(),
+         bun: found === process.execPath ? "process.execPath" : found === ${JSON.stringify(userBun)} ? "~/.bun/bin" : found,
+       }));`,
+    ],
+    env: { ...bunEnv, HOME: String(dir), USERPROFILE: String(dir) },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ result: JSON.parse(stdout), stderr }).toEqual({ result: { homedir: String(dir), bun }, stderr: "" });
+  expect(exitCode).toBe(0);
+});

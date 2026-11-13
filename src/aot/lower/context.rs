@@ -14,8 +14,8 @@ use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Bound, SymbolId};
 use bun_sema::check::aot::{AliasMentions, BuiltinTypeSymbols, NamedValues, Queries, QueryInputs};
 use bun_sema::erasure::{ReplacedText, TypeRanges};
-use bun_sema::fold::{Constant, Decisions};
-use bun_sema::hir::{self, ExprId, ExprKind, MemberId, NodeData};
+use bun_sema::fold::{Constant, Decisions, NeverRun};
+use bun_sema::hir::{self, ExprId, ExprKind, MemberId, NodeData, StmtId};
 use bun_sema::hir_from_data::DataValue;
 use bun_sema::import_sites::ResolvedForm;
 use bun_sema::program::{CompiledModule, FileId, FileRole, Files};
@@ -350,14 +350,14 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         if self.inputs.sources.kind(self.file) != load::SourceKind::Program {
             return;
         }
-        let decisions = self.decisions();
+        let (decisions, never_run) = (self.decisions(), self.never_run());
         let mut invalid: Vec<(ExprId, Vec<u8>)> = Vec::new();
         for (index, expression) in self.hir.exprs.iter().enumerate() {
             let ExprKind::Regex { pattern, flags } = expression.kind else {
                 continue;
             };
             let literal = ExprId(index as u32);
-            if decisions.is_dead_expr(literal) {
+            if decisions.is_dead_expr(literal) && !never_run.is_printed(decisions, literal) {
                 continue;
             }
             let pattern = regexp_pattern_as_printed(self.queries.atom_bytes(pattern));
@@ -455,6 +455,16 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     pub(crate) fn decisions(&self) -> &'p Decisions<'s> {
         let compiled = self.compiled;
         &compiled.analysis.decisions
+    }
+
+    #[inline]
+    pub(in crate::lower) fn never_run(&self) -> NeverRun<'p, 's> {
+        NeverRun::new(self.hir, self.bound, self.compiled.analysis.has_esm_syntax)
+    }
+
+    /// Whether `bun run` prints no `if` around this never-run branch, and of the test only what has an effect.
+    pub(in crate::lower) fn leaves_out_if_around(&self, branch: StmtId) -> bool {
+        self.decisions().is_dead_stmt_in_bun_run(branch) && !self.never_run().keeps_its_if(branch)
     }
 
     pub(crate) fn is_in_dependency(&self) -> bool {

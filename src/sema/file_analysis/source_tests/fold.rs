@@ -7,6 +7,16 @@ const TABLE: &str = include_str!(concat!(
 ));
 const MIN_TABLE_ROWS: usize = 300;
 const DEEP_TREE_SIZE: usize = 100_000;
+const NEVER_RUN_BRANCHES: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../test/aot/fold/never-run-branches.txt"
+));
+const MIN_NEVER_RUN_BRANCHES: usize = 80;
+const NEVER_RUN_LITERALS: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../../test/aot/fold/never-run-literals.txt"
+));
+const MIN_NEVER_RUN_LITERALS: usize = 50;
 
 const MACRO: &str = "import { m } from \"./m\" with { type: \"macro\" };\n";
 const FEATURE_IMPORT: &str = "import { feature } from \"bun:bundle\";\n";
@@ -2086,4 +2096,449 @@ fn deep_trees() {
     });
     let blocks = ["{".repeat(DEEP_TREE_SIZE), "}".repeat(DEEP_TREE_SIZE)].concat();
     analyzed("a.mjs", &blocks, |_| {});
+}
+
+/// The branch that never runs of the one `if (typeof late) ..` of a program.
+#[track_caller]
+fn branch_behind_late(s: &Analyzed<'_>) -> StmtId {
+    let late = s.workspace.atom("late");
+    let branches = s
+        .hir
+        .stmts
+        .iter()
+        .filter_map(|statement| match statement.kind {
+            StmtKind::If { test, no, .. } => match s.hir[test].kind {
+                ExprKind::Unary {
+                    op: UnOp::Typeof,
+                    operand,
+                } if matches!(s.hir[operand].kind, ExprKind::Ident(name) if name == late) => {
+                    Some(no)
+                }
+                _ => None,
+            },
+            _ => None,
+        });
+    let branches: Vec<StmtId> = branches.collect();
+    let [branch] = branches[..] else {
+        panic!("{} statements test `typeof late`", branches.len());
+    };
+    branch
+}
+
+fn never_run<'a, 's>(s: &'a Analyzed<'s>) -> NeverRun<'a, 's> {
+    NeverRun::new(&s.hir, &s.bound, s.analysis.has_esm_syntax)
+}
+
+#[test]
+fn branches_that_never_run_are_kept_as_the_table_says() {
+    let mut rows = 0;
+    for (index, line) in bun_core::strings::split(NEVER_RUN_BRANCHES.as_bytes(), b"\n").enumerate()
+    {
+        if line.is_empty() || line.starts_with(b"#") {
+            continue;
+        }
+        let mut columns = bun_core::strings::split(line, b"\t").map(table_text);
+        let (Some(answer), Some(extension), Some(program), None) = (
+            columns.next(),
+            columns.next(),
+            columns.next(),
+            columns.next(),
+        ) else {
+            panic!("line {} does not have three columns", index + 1);
+        };
+        assert!(matches!(answer, "kept" | "dropped"), "line {}", index + 1);
+        analyzed(&format!("row.{extension}"), program, |s| {
+            let is_kept = never_run(s).keeps_its_if(branch_behind_late(s));
+            assert_eq!(is_kept, answer == "kept", "line {}: {program}", index + 1);
+        });
+        rows += 1;
+    }
+    assert!(rows >= MIN_NEVER_RUN_BRANCHES, "{rows} rows");
+}
+
+const LEFT_WHERE_NEVER_RUN: &[(&str, &str, Left)] = &[
+    (
+        "a.cjs",
+        "if (typeof late) {} else { let v = 1; } let late = 1;",
+        Left::Nothing,
+    ),
+    (
+        "a.cjs",
+        "if (typeof late) {} else { var v = 1; } let late = 1;",
+        Left::VarsAtEndOfFile,
+    ),
+    (
+        "a.cjs",
+        "if (typeof late) {} else for (var i = 0; i < 1; i++) {} let late = 1;",
+        Left::VarsAtEndOfFile,
+    ),
+    (
+        "a.cjs",
+        "if (typeof late) {} else var v = 1; let late = 1;",
+        Left::InPlace,
+    ),
+    (
+        "a.cjs",
+        "if (typeof late) {} else { var v = 1; function f() {} } let late = 1;",
+        Left::InPlace,
+    ),
+    (
+        "a.cjs",
+        "function g() { if (typeof late) {} else { var v = 1; } let late = 1; }",
+        Left::InPlace,
+    ),
+    (
+        "a.ts",
+        "namespace N { if (typeof late) {} else { var v = 1; } let late = 1; }",
+        Left::InPlace,
+    ),
+    (
+        "a.ts",
+        "if (typeof late) {} else { declare var v: number; } let late = 1;",
+        Left::Nothing,
+    ),
+];
+
+#[test]
+fn var_of_the_file_is_left_at_its_end() {
+    for &(path, text, left) in LEFT_WHERE_NEVER_RUN {
+        analyzed(path, text, |s| {
+            let never_run = never_run(s);
+            let branch = branch_behind_late(s);
+            assert_eq!(never_run.left(branch), left, "{text}");
+            assert_eq!(never_run.prints_nothing(branch), left == Left::Nothing);
+        });
+    }
+}
+
+/// The last function named `f` of each text, and whether `bun run` writes it as `let f = function() {}`.
+const FUNCTIONS_THAT_BECOME_LETS: &[(&str, &str, bool)] = &[
+    ("a.cjs", "{ function f() {} }", false),
+    ("a.cjs", "\"use strict\"; { function f() {} }", true),
+    ("a.cjs", "function f() {}", false),
+    ("a.cjs", "\"use strict\"; function f() {}", false),
+    ("a.cjs", "\"use strict\"; { async function f() {} }", false),
+    ("a.cjs", "\"use strict\"; { function* f() {} }", false),
+    ("a.mjs", "{ function f() {} }", false),
+    ("a.mjs", "{ function f() {} } export {};", true),
+    ("a.mjs", "{ function f() {} } import.meta;", true),
+    ("a.mjs", "{ function f() {} } await 0;", true),
+    (
+        "a.ts",
+        "import type { A } from \"./a\"; { function f() {} }",
+        true,
+    ),
+    (
+        "a.ts",
+        "import a = require(\"./a\"); { function f() {} }",
+        false,
+    ),
+    ("a.ts", "{ function f() {} } export = 1;", false),
+    ("a.ts", "{ function f(): void; }", false),
+    ("a.ts", "{ declare function f(): void; }", false),
+    (
+        "a.ts",
+        "function g() { type A = 1; \"use strict\"; { function f() {} } }",
+        true,
+    ),
+    (
+        "a.cjs",
+        "function g() { \"a\"; \"use strict\"; { function f() {} } }",
+        true,
+    ),
+    (
+        "a.cjs",
+        "function g() { ; \"use strict\"; { function f() {} } }",
+        false,
+    ),
+    (
+        "a.cjs",
+        "function g() { `use strict`; { function f() {} } }",
+        false,
+    ),
+    (
+        "a.cjs",
+        "function g() { \"use\\x20strict\"; { function f() {} } }",
+        true,
+    ),
+    (
+        "a.cjs",
+        "function g() { (\"use strict\"); { function f() {} } }",
+        true,
+    ),
+    (
+        "a.cjs",
+        "class C { [(() => { { function f() {} } })()]() {} }",
+        true,
+    ),
+    (
+        "a.cjs",
+        "class C extends (() => { { function f() {} } })() {}",
+        true,
+    ),
+    ("a.cjs", "({ m() { { function f() {} } } });", false),
+    ("a.cjs", "if (a) function f() {}", false),
+    ("a.cjs", "let f; if (a) function f() {}", true),
+    ("a.cjs", "l: function f() {}", false),
+    ("a.cjs", "{ l: function f() {} }", false),
+    ("a.cjs", "{ let f; l: function f() {} }", true),
+    (
+        "a.cjs",
+        "{ function arguments() {} function f() {} }",
+        false,
+    ),
+    (
+        "a.cjs",
+        "function g() { try {} catch (f) { { function f() {} function f() {} } } }",
+        false,
+    ),
+    (
+        "a.cjs",
+        "function g() { let f; l: function f() {} eval(\"\"); }",
+        true,
+    ),
+    (
+        "a.cjs",
+        "function g() { let f; if (eval(\"1\")) function f() {} }",
+        true,
+    ),
+    (
+        "a.cjs",
+        "function g() { \"use strict\"; switch (0) { case 0: function f() {} case 1: eval(\"\"); } }",
+        true,
+    ),
+    (
+        "a.cjs",
+        "function g() { \"use strict\"; switch (0) { case 0: eval(\"\"); case 1: function f() {} } }",
+        false,
+    ),
+    (
+        "a.cjs",
+        "function g() { \"use strict\"; switch (eval(\"0\")) { case 0: function f() {} } }",
+        true,
+    ),
+    (
+        "a.cjs",
+        "function g() { \"use strict\"; switch (0) { case eval(\"0\"): function f() {} } }",
+        false,
+    ),
+    (
+        "a.cjs",
+        "function g() { \"use strict\"; switch (0) { case 0: function f() {} case eval(\"1\"): } }",
+        true,
+    ),
+    (
+        "a.cjs",
+        "function g() { \"use strict\"; switch (0) { case 0: function f() {} eval(\"\"); } }",
+        false,
+    ),
+    (
+        "a.cjs",
+        "function g() { switch (0) { case 0: function f() {} case 1: { function f() {} } } }",
+        true,
+    ),
+];
+
+#[test]
+fn functions_of_blocks_that_bun_run_writes_as_lets() {
+    for &(path, text, becomes_let) in FUNCTIONS_THAT_BECOME_LETS {
+        analyzed(path, text, |s| {
+            let name = s.workspace.atom("f");
+            let is_asked =
+                |kind: &StmtKind| matches!(*kind, StmtKind::Fn(it) if s.hir[it].name == name);
+            let asked = *find_stmts(&s.hir, is_asked).last().expect(text);
+            assert_eq!(
+                never_run(s).becomes_let(asked),
+                becomes_let,
+                "{path}: {text}"
+            );
+        });
+    }
+}
+
+/// The first `!` of each text, and what `bun run` writes in its place where it leaves the operand out.
+const NOTS_THAT_BUN_RUN_WRITES_AS_BOOLEANS: &[(&str, Option<bool>)] = &[
+    ("function g() { return ![late]; let late; }", Some(false)),
+    (
+        "function g() { return !typeof late; let late; }",
+        Some(false),
+    ),
+    (
+        "function g() { return !{ a: late }; let late; }",
+        Some(false),
+    ),
+    ("function g() { return !void late; let late; }", Some(true)),
+    ("function g() { return !![late]; let late; }", Some(true)),
+    (
+        "function g() { return ![/* @__PURE__ */ h()]; }",
+        Some(false),
+    ),
+    (
+        "function g(o) { return !([late] || o); let late; }",
+        Some(false),
+    ),
+    (
+        "function g() { return !(late, {}); let late; }",
+        Some(false),
+    ),
+    ("function g() { return !(h(), [late]); let late; }", None),
+    ("function g() { return !late; let late; }", None),
+    ("function g() { return ![someGlobal]; }", None),
+    ("function g(o) { return ![o.x]; }", None),
+    ("function g(o) { return !{ ...o }; }", None),
+    ("function g() { return !new Set(); }", None),
+    ("function g(o) { return !`a${o}`; }", None),
+    ("function g(o) { return !(\"a\" + o); }", None),
+    (
+        "function g(o) { return !(o ? [late] : {}); let late; }",
+        None,
+    ),
+    ("function g() { return !([late] && {}); let late; }", None),
+    ("function g() { return !0; }", None),
+    ("function g() { return !function () {}; }", Some(false)),
+];
+
+#[test]
+fn nots_of_which_bun_run_leaves_the_operand_out() {
+    for &(text, written) in NOTS_THAT_BUN_RUN_WRITES_AS_BOOLEANS {
+        for fold in [Fold::NONE, Fold::MINIFIED] {
+            folded("a.cjs", text, fold, |s| {
+                let is_not =
+                    |kind: &ExprKind| matches!(kind, ExprKind::Unary { op: UnOp::Not, .. });
+                let nots = find_exprs(&s.hir, is_not);
+                let first = *{ nots.iter() }
+                    .min_by_key(|&&it| s.hir[it].pos)
+                    .expect(text);
+                let found = s.analysis.decisions.boolean_of_bun_run_alone(first);
+                assert_eq!(found, written, "{text}");
+            });
+        }
+    }
+}
+
+/// `bun run` prints these literals as well. The model cannot tell without the arithmetic of the parser.
+const LITERALS_THAT_THE_MODEL_DOES_NOT_FIND: &[&str] = &[
+    "function g(x) { if (false) { function f(a = 1 && /a**/) {} } }",
+    "function g(x) { if (false) { function f(a = 1 ? /a**/ : 0) {} } }",
+    "function g(x) { if (false) { function f(a = /* @__PURE__ */ x(/a**/)) {} } }",
+    "function g(x) { const OFF = false; if (false) { if (OFF == /a**/) { var v; } } }",
+    "function g(x) { if (false) { function f() { while ([/a**/]) { var v; } } } }",
+];
+
+#[track_caller]
+fn is_only_literal_printed(s: &Analyzed<'_>, program: &str) -> Option<bool> {
+    let literals = find_exprs(&s.hir, |kind| matches!(kind, ExprKind::Regex { .. }));
+    let [literal] = literals[..] else {
+        panic!("{} literals: {program}", literals.len());
+    };
+    let decisions = &s.analysis.decisions;
+    (decisions.is_dead_expr(literal)).then(|| never_run(s).is_printed(decisions, literal))
+}
+
+#[test]
+fn literals_that_bun_run_prints_where_nothing_runs() {
+    let mut rows = 0;
+    for (index, line) in bun_core::strings::split(NEVER_RUN_LITERALS.as_bytes(), b"\n").enumerate()
+    {
+        if line.is_empty() || line.starts_with(b"#") {
+            continue;
+        }
+        let mut columns = bun_core::strings::split(line, b"\t").map(table_text);
+        let (Some(answer), Some(extension), Some(program), None) = (
+            columns.next(),
+            columns.next(),
+            columns.next(),
+            columns.next(),
+        ) else {
+            panic!("line {} does not have three columns", index + 1);
+        };
+        assert!(matches!(answer, "refused" | "loads"), "line {}", index + 1);
+        analyzed(&format!("row.{extension}"), program, |s| {
+            // A literal that runs is not asked of this model: `bun_aot` decides whether `bun run` leaves it out.
+            if let Some(is_printed) = is_only_literal_printed(s, program) {
+                assert_eq!(
+                    is_printed,
+                    answer == "refused",
+                    "line {}: {program}",
+                    index + 1
+                );
+                rows += 1;
+            }
+        });
+    }
+    assert!(rows >= MIN_NEVER_RUN_LITERALS, "{rows} rows");
+    for program in LITERALS_THAT_THE_MODEL_DOES_NOT_FIND {
+        analyzed("row.cjs", program, |s| {
+            assert_eq!(
+                is_only_literal_printed(s, program),
+                Some(false),
+                "{program}"
+            );
+        });
+    }
+}
+
+/// The function `asked` of each text, and whether the text that `bun run` prints for it holds an `await` of its own.
+const AWAITS_THAT_BUN_RUN_PRINTS: &[(&str, bool)] = &[
+    ("async function asked() { await 0; }", true),
+    ("async function asked() { return 1; }", false),
+    ("async function asked() { if (false) { await 0; } }", false),
+    (
+        "async function asked() { if (false) { if (await 0) { var v; } } }",
+        true,
+    ),
+    (
+        "async function asked() { if (false) { if (await 0) { function f() {} } } }",
+        true,
+    ),
+    (
+        "async function asked() { \"use strict\"; if (false) { if (await 0) { function f() {} } } }",
+        false,
+    ),
+    (
+        "async function asked() { if (false) { for await (const a of b) { function f() {} } } }",
+        true,
+    ),
+    (
+        "async function asked() { if (false) { for await (const a of b) { c(); } } }",
+        false,
+    ),
+    ("async function asked() { return 1; await 0; }", false),
+    (
+        "async function asked() { return 1; { function f() {} await 0; } }",
+        true,
+    ),
+    (
+        "async function asked() { return 1; { var v = await 0; } }",
+        false,
+    ),
+    (
+        "async function asked() { return async () => { await 0; }; }",
+        false,
+    ),
+    (
+        "async function asked() { if (false) { switch (await 0) {} } }",
+        true,
+    ),
+    (
+        "async function asked() { if (false) { for (var i = await 0; ; ) {} } }",
+        false,
+    ),
+    (
+        "async function asked() { if (false) { function f() { await 0; } } }",
+        false,
+    ),
+];
+
+#[test]
+fn awaits_that_bun_run_prints_where_nothing_runs() {
+    for &(text, has_await) in AWAITS_THAT_BUN_RUN_PRINTS {
+        analyzed("a.cjs", text, |s| {
+            let name = s.workspace.atom("asked");
+            let asked = (0..s.hir.fns.len() as u32).map(FnId);
+            let asked = { asked }.find(|&it| s.hir[it].name == name).expect(text);
+            let found = has_live_await(&s.hir, &s.analysis.decisions, &never_run(s), asked);
+            assert_eq!(found, has_await, "{text}");
+        });
+    }
 }

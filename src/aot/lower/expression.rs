@@ -450,6 +450,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => {
                     assignment::lower_update(self, expression, ResultUsage::Value)
                 }
+                UnOp::Not
+                    if let Some(written) =
+                        (self.file.decisions()).boolean_of_bun_run_alone(expression) =>
+                {
+                    self.emit_constant(Constant::Boolean(written))
+                }
                 _ => self.lower_unless_constant(expression, operator::lower_unary),
             },
             ExprKind::Binary { op, .. } => match op {
@@ -651,6 +657,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     self.lower_expression_for_effect(operand);
                 }
                 UnOp::Void => self.lower_operand_of_taken_void(operand),
+                UnOp::Not
+                    if (self.file.decisions())
+                        .boolean_of_bun_run_alone(expression)
+                        .is_some() => {}
                 UnOp::Not => self.lower_for_effect(operand, usage),
                 UnOp::Typeof
                     if usage == ResultUsage::Effect && !self.file.is_name_below_typeof(operand) =>

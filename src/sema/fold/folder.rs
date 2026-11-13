@@ -93,6 +93,7 @@ pub(super) struct Folder<'a, 's> {
     pub(super) feature_symbol: SymbolId,
     pub(super) loader_names: OnceCell<LoaderNames>,
     pub(super) this_of_file: OnceCell<PositionSet>,
+    pub(super) has_esm_syntax: OnceCell<bool>,
     pub(super) run_order: OnceCell<RunOrder>,
     pub(super) constant_prefixes: RefCell<ConstLocalPrefixes>,
     pub(super) unused_values_asked_of_build: RefCell<FxHashMap<(ExprId, bool), bool>>,
@@ -129,6 +130,7 @@ pub(super) struct Folder<'a, 's> {
     pub(super) constant_reads: Vec<(ExprId, Constant)>,
     pub(super) goes_on_to_the_right: Vec<ExprId>,
     pub(super) stands_alone_in_bun_run: PositionSet,
+    pub(super) booleans_of_bun_run_alone: Vec<(ExprId, bool)>,
     pub(super) is_main_of_import_meta_written: OnceCell<bool>,
     pub(super) call_errors: Vec<(ExprId, FoldError)>,
     pub(super) strings_over_limit: Vec<ExprId>,
@@ -156,6 +158,7 @@ pub(super) fn run<'s>(
         feature_symbol: find_feature_import(hir, bound, &mut errors),
         loader_names: OnceCell::new(),
         this_of_file: OnceCell::new(),
+        has_esm_syntax: OnceCell::new(),
         run_order: OnceCell::new(),
         constant_prefixes: RefCell::default(),
         unused_values_asked_of_build: RefCell::default(),
@@ -192,6 +195,7 @@ pub(super) fn run<'s>(
         constant_reads: Vec::new(),
         goes_on_to_the_right: Vec::new(),
         stands_alone_in_bun_run: PositionSet::new(hir.exprs.len()),
+        booleans_of_bun_run_alone: Vec::new(),
         is_main_of_import_meta_written: OnceCell::new(),
         call_errors: Vec::new(),
         strings_over_limit: Vec::new(),
@@ -415,6 +419,10 @@ impl<'s> Folder<'_, 's> {
         self.paths_from_own_directory.shared_sort_unstable();
         self.paths_made_by_calls.shared_sort_unstable();
         (self.names_made_by_calls).shared_sort_unstable_by_key(|entry| entry.0);
+        let by_build_alone = &self.folded_by_build_alone;
+        (self.booleans_of_bun_run_alone).retain(|entry| !by_build_alone.contains(entry.0.idx()));
+        (self.booleans_of_bun_run_alone).shared_sort_unstable_by_key(|entry| entry.0);
+        self.booleans_of_bun_run_alone.dedup_by_key(|entry| entry.0);
         let DeadRoots { all, in_bun_run } = self.find_dead_roots();
         let folds_more_under_minify_syntax =
             self.folded_under_minify_syntax.iter().next().is_some()
@@ -470,6 +478,7 @@ impl<'s> Folder<'_, 's> {
                 }),
                 arena,
             ),
+            booleans_of_bun_run_alone: slice_in(&self.booleans_of_bun_run_alone, arena),
             specifiers: slice_in(&self.specifiers, arena),
             paths_from_own_directory: slice_in(&self.paths_from_own_directory, arena),
             paths_made_by_calls: slice_in(&self.paths_made_by_calls, arena),

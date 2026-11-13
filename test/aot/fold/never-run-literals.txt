@@ -1,0 +1,81 @@
+# <refused | loads> TAB <the extension of the file> TAB <the program>
+# A program holds the regular expression literal /a**/, which the engine refuses, in code that never runs.
+# refused: `bun run` prints the literal all the same, so the engine throws a SyntaxError where the file is loaded. A build reports TS100307 for the file.
+# loads: `bun run` prints nothing of the literal, and the file loads. A build reports nothing for it.
+# never-run-code.test.ts holds plain Bun and `bun check --aot` to the answers, the source test `analysis_fold` holds the model of the compiler to them.
+# the test of an `if` whose branch never runs
+refused	cjs	if (/a**/) {} else { function f() {} }
+refused	cjs	if (/a**/) {} else function f() {}
+refused	mjs	if (/a**/) {} else { function f() {} }
+loads	mjs	if (/a**/) {} else { function f() {} } export {};
+loads	cjs	"use strict"; if (/a**/) {} else { function f() {} }
+loads	cjs	let f; if (/a**/) {} else { function f() {} }
+loads	cjs	if (/a**/) {} else { function arguments() {} }
+refused	cjs	if (/a**/) {} else { async function f() {} }
+loads	cjs	if (/a**/) {} else { let v = 1; }
+loads	cjs	if (/a**/) {} else { var v = 1; }
+refused	cjs	if (/a**/) {} else var v = 1;
+refused	cjs	(function () { if (/a**/) {} else { var v = 1; } })();
+# in a function that stays in a branch that never runs: its parameters stay, its body is filtered
+refused	cjs	if (false) { function f(a = /a**/) {} }
+refused	cjs	if (false) { async function f(a = /a**/) {} }
+refused	cjs	if (false) { label: function f(a = /a**/) {} }
+loads	cjs	(function () { "use strict"; if (false) { function f(a = /a**/) {} } })();
+refused	cjs	(function () { "use strict"; if (false) { var v; function f(a = /a**/) {} } })();
+loads	cjs	if (false) { function f() { return /a**/; } }
+loads	cjs	if (false) { function f() { var v = /a**/; } }
+refused	cjs	if (false) { function f() { function g(a = /a**/) {} } }
+loads	cjs	if (false) { function f(a = () => /a**/) {} }
+loads	cjs	if (false) { function f(a = typeof /a**/) {} }
+loads	cjs	if (false) { class C { static x = /a**/; } }
+loads	cjs	if (false) { function f(a = () => { return /a**/; }) {} }
+refused	cjs	if (false) { function f(a = function (b = /a**/) {}) {} }
+# in what a parameter is given: the parser computes what it knows there
+refused	cjs	function g(x) { if (false) { function f(a = typeof x(/a**/)) {} } }
+refused	cjs	function g(x) { if (false) { function f(a = x && /a**/) {} } }
+loads	cjs	function g(x) { if (false) { function f(a = 0 && /a**/) {} } }
+refused	cjs	function g(x) { if (false) { function f(a = x ? /a**/ : 0) {} } }
+loads	cjs	function g(x) { if (false) { function f(a = 0 ? /a**/ : 0) {} } }
+loads	cjs	function g(x) { if (false) { function f(a = (/a**/, 1)) {} } }
+refused	cjs	function g(x) { if (false) { function f(a = (1, /a**/)) {} } }
+loads	cjs	function g(x) { if (false) { function f(a = "" + /a**/) {} } }
+refused	cjs	function g(x) { if (false) { function f(a = x + /a**/) {} } }
+refused	cjs	function g(x) { if (false) { function f(a = [x(1), { c: -/a**/ }]) {} } }
+refused	cjs	function g(x) { if (false) { function f(a = [x(/a**/), { c: 1 }]) {} } }
+# in a statement that stays there for what it holds
+refused	cjs	var x = 0; if (false) { if (x.y == /a**/) { function f() {} } }
+loads	cjs	var x = 0; if (false) { if (x.y == /a**/) { let v; } }
+loads	cjs	function g(x) { if (false) { if ([/a**/]) { function f() {} } } }
+refused	cjs	function g(x) { if (false) { if ([/a**/]) { var v; } else { var w; } } }
+refused	cjs	function g(x) { if (false) { function f() { while (x(/a**/)) { var v; } } } }
+loads	cjs	if (false) { function f() { if (/a**/) { var v; } } }
+loads	cjs	if (false) { function f() { while (/a**/) { var v; } } }
+loads	cjs	if (false) { function f() { for (; /a**/; ) { var v; } } }
+refused	cjs	if (false) { function f() { do { var v; } while (/a**/); } }
+refused	cjs	if (false) { for (var i = 0; i < 1; sink(/a**/)) { function f() {} } }
+refused	cjs	if (false) { for (const k of [/a**/]) { function f() {} } }
+loads	cjs	if (false) { for (const k of [/a**/]) { k(); } }
+refused	cjs	function g(x) { if (false) { for (x(/a**/); ; ) { function f() {} } } }
+refused	cjs	function g(x) { if (false) { for (let i = x(/a**/); ; ) { function f() {} } } }
+loads	cjs	function g(x) { if (false) { for (var i = x(/a**/); ; ) { function f() {} } } }
+loads	cjs	function g(x) { if (false) { var { a = /a**/ } = {}; } }
+refused	cjs	if (false) { try {} catch ({ a = /a**/ }) { function f() {} } }
+refused	cjs	if (false) { switch (/a**/) { default: } }
+refused	cjs	var x = 1; if (false) { switch (x) { case /a**/: } }
+loads	cjs	var x = 1; if (false) { switch (x) { case 1: x(/a**/); } }
+refused	cjs	var x = 1; if (false) { switch (x) { case 1: function f(a = /a**/) {} } }
+loads	cjs	var o = {}; if (false) { with (o) { sink(/a**/); } }
+refused	cjs	function g(x) { if (false) { with (x(/a**/)) {} } }
+# behind a return: a statement stays as it is written, or goes
+refused	cjs	function g() { return 1; { function f() { return /a**/; } } }
+loads	cjs	function g() { "use strict"; return 1; { function f() { return /a**/; } } }
+refused	cjs	function g() { "use strict"; { return 1; function f() { return /a**/; } } }
+loads	cjs	function g() { return 1; sink(/a**/); }
+loads	cjs	function g() { return 1; var v = /a**/; }
+loads	cjs	function g() { return 1; { var v = /a**/; } }
+loads	cjs	function g() { return 1; { sink(); var v = /a**/; } }
+refused	cjs	function g() { return 1; { function f() {} var v = /a**/; } }
+refused	cjs	function g() { return 1; for (;;) { var v; sink(/a**/); } }
+refused	cjs	function g(x) { return 1; if (x) { var v; sink(/a**/); } }
+loads	cjs	function g(x) { return 1; if (false) { var v; x(/a**/); } }
+loads	cjs	function g(x) { return 1; { var v; return 2; x(/a**/); } }

@@ -24,6 +24,13 @@ impl<'s> Folder<'_, 's> {
                 if op == UnOp::Typeof && matches!(folded.value, Value::Unknown) {
                     self.conditions.insert(e, true);
                 }
+                if op == UnOp::Not
+                    && folded.effects != Effects::None
+                    && let Value::Known(value) = folded.value
+                {
+                    let written = self.evaluator.to_boolean(value);
+                    self.booleans_of_bun_run_alone.push((e, written));
+                }
                 folded
             }
             ExprKind::Binary { op, left, right } => {

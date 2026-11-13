@@ -301,8 +301,34 @@ const STATEMENTS: &[&str] = &[
     "const Set = unknown; new Set(), module;", "class Array {} new Array(1, 2), module;", "let Math = unknown; Math.PI, module;",
 ];
 
+/// What stands in front of an `if` whose test names a variable of CommonJS and whose branch never runs.
+#[rustfmt::skip]
+const IN_FRONT_OF_NEVER_RUN: &[&str] = &["", "\"use strict\"; ", "let f; ", "var f; ", "export {}; ", "eval(\"\"); "];
+
+#[rustfmt::skip]
+const NEVER_RUN: &[(&str, &str)] = &[
+    ("if (typeof require === \"undefined\") ", ""), ("if (typeof require === \"function\") {} else ", ""), ("if (void module) ", " else {}"),
+];
+
+/// `bun run` prints the `if` and its test for what stays of the branch.
+#[rustfmt::skip]
+const NEVER_RUN_BRANCHES: &[&str] = &[
+    "{ function f() {} }", "function f() {}", "{ function f() {} class A {} }", "{ async function f() {} }", "{ function* f() {} }", "{ label: function f() {} }",
+    "{ function f() { \"use strict\"; } }", "{ function f() {} eval(\"\"); }", "{ function f() { eval(\"\"); } }", "{ function arguments() {} }",
+    "{ { function f() {} } }", "{ if (unknown) { function f() {} } }", "{ function f() {} function f() {} }", "{ const f = 1; { function f() {} } }",
+    "{ function f(): void; }", "{ declare function f(): void; }", "{ var v = 1; }", "var v = 1;", "{ var [] = []; }", "{ for (var i = 0; i < 1; i++) {} }",
+    "{ try {} catch { var v; } }", "{ var v = 1; function f() {} }", "while (unknown) var v = 1;", "label: var v = 1;", "{ let v = 1; const w = 2; class C {} }",
+    "{ enum E { A } }", "{ switch (0) {} }", "{ with ({}) {} }", "{ unknown(); }", "{ for (const a of []) {} while (unknown) {} }", "{}", ";",
+];
+
 fn write_cells() -> Vec<String> {
     let mut cells: Vec<String> = STATEMENTS.iter().map(|&it| it.to_owned()).collect();
+    for in_front in IN_FRONT_OF_NEVER_RUN {
+        for (before, behind) in NEVER_RUN {
+            let cell = |branch: &&str| format!("{in_front}{before}{branch}{behind}");
+            cells.extend(NEVER_RUN_BRANCHES.iter().map(cell));
+        }
+    }
     for constructor in CONSTRUCTORS {
         let unused = |arguments: &&str| format!("new {constructor}({arguments}), module;");
         cells.extend(ARGUMENTS.iter().map(unused));

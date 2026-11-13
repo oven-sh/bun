@@ -43,7 +43,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         self.set_position(position);
         let counted = self.enter_counted_expression(expression);
-        if self.file.decisions().is_truthy_without_effects(expression) {
+        if let Some(written) = (self.file.decisions()).boolean_of_bun_run_alone(expression) {
+            let value = self.builder.boolean(written);
+            self.branch_on_truthiness(value, if_true, if_false);
+        } else if self.file.decisions().is_truthy_without_effects(expression) {
             self.lower_member_reads(expression);
             let value = self.builder.boolean(true);
             self.branch_on_truthiness(value, if_true, if_false);

@@ -241,16 +241,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let decisions = self.file.decisions();
         let has_live_else = no.is_some() && !decisions.is_dead_stmt(no);
         if decisions.is_dead_stmt(yes) {
-            let in_bun_run = decisions.as_folded_by_bun_run();
-            self.lower_test_with_known_answer(test, in_bun_run.is_dead_stmt(yes));
+            self.lower_test_with_known_answer(test, self.file.leaves_out_if_around(yes));
             if has_live_else {
                 self.lower_statement(no);
             }
             return;
         }
         if no.is_some() && !has_live_else {
-            let in_bun_run = decisions.as_folded_by_bun_run();
-            self.lower_test_with_known_answer(test, in_bun_run.is_dead_stmt(no));
+            self.lower_test_with_known_answer(test, self.file.leaves_out_if_around(no));
             self.lower_statement(yes);
             return;
         }

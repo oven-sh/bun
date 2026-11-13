@@ -237,7 +237,57 @@ const FORMATS: &[(&str, &str, ModuleFormat)] = &[
     (
         "a.js",
         r#"if (typeof require === "undefined") { function f() {} class A {} }"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (typeof require === "function") {} else function f() {}"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (typeof require === "undefined") { function f() { "use strict"; } }"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (typeof require === "undefined") { function f() {} } let f;"#,
         Esm,
+    ),
+    (
+        "a.js",
+        r#"if (typeof require === "undefined") { function f() {} } var f;"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (typeof require === "undefined") { function f() {} } export {};"#,
+        Esm,
+    ),
+    (
+        "a.ts",
+        r#"if (typeof require === "undefined") { function f(): void; }"#,
+        Esm,
+    ),
+    (
+        "a.js",
+        r#"if (typeof require === "undefined") { var v = 1; }"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (typeof require === "undefined") { let v = 1; }"#,
+        Esm,
+    ),
+    (
+        "a.js",
+        r#"if (typeof require === "undefined") var v = 1;"#,
+        CommonJs,
+    ),
+    (
+        "a.js",
+        r#"if (typeof require === "undefined") { var v = 1; function f() {} }"#,
+        CommonJs,
     ),
     (
         "a.js",

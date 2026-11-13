@@ -16,6 +16,7 @@ mod inputs;
 mod known_constructors;
 mod known_sets;
 mod known_to_bun_run;
+mod never_run;
 mod removed_by_bun_run;
 mod run_order;
 mod string_affixes;
@@ -31,7 +32,7 @@ pub use inputs::{
 };
 pub use known_sets::KnownSets;
 pub(crate) use known_sets::outermost_cast;
-pub use removed_by_bun_run::is_removed_where_never_run;
+pub use never_run::{Left, NeverRun};
 pub(crate) use string_affixes::{
     MembersBehindNames, PathBelowFolder, find_export_of_module, find_export_of_module_with,
     find_members_below_module, trim_lead_surrogate_at_end, trim_to_last_segment,
@@ -190,6 +191,7 @@ pub struct Decisions<'s> {
     is_constant: NodeBits<'s>,
     strings_and_numbers_of_bun_run_alone: NodeBits<'s>,
     strings_and_numbers_under_minify_syntax: NodeBits<'s>,
+    booleans_of_bun_run_alone: &'s [(ExprId, bool)],
     folded_with: FoldInputs<'s>,
     specifiers: &'s [(ExprId, ImportSpecifier)],
     paths_from_own_directory: &'s [ExprId],
@@ -324,6 +326,17 @@ impl<'s> Decisions<'s> {
         }
     }
 
+    /// What `bun run` writes for a `!` of which it knows the operand and leaves it out. Nothing of the operand runs there.
+    #[inline]
+    pub fn boolean_of_bun_run_alone(&self, expr: ExprId) -> Option<bool> {
+        let written = self.booleans_of_bun_run_alone;
+        if written.is_empty() {
+            return None;
+        }
+        let found = written.binary_search_by_key(&expr, |entry| entry.0);
+        found.ok().map(|index| written[index].1)
+    }
+
     pub fn is_string_or_number_under_minify_syntax(&self, hir: &File<'_>, expr: ExprId) -> bool {
         match self.constant(hir, expr) {
             FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
@@ -377,6 +390,11 @@ impl<'s> Decisions<'s> {
     #[inline]
     pub fn is_dead_stmt(&self, stmt: StmtId) -> bool {
         self.dead_stmts.has(stmt.idx())
+    }
+
+    #[inline]
+    pub fn is_dead_stmt_in_bun_run(&self, stmt: StmtId) -> bool {
+        self.dead_stmts_in_bun_run.has(stmt.idx())
     }
 
     pub fn decided(&self) -> &'s [(ExprId, Decision<'s>)] {

@@ -3712,7 +3712,8 @@ describe.concurrent("a name that import and require() resolve to two files", () 
   });
 
   describe("several mocks of one path", () => {
-    // both() is what require() and an import of the name get. withActual() adds jest.requireActual(), which loads what require() loads.
+    // both() is what require() and an import of the name get. withActual() adds jest.requireActual(). That is the file
+    // that require() loads, unless a mock has the path of an import and none has the path of require().
     const head = `
       import { expect, jest, mock, test, vi } from "bun:test";
       const both = async name => [require(name).which, (await import(name)).which];
@@ -4175,7 +4176,11 @@ describe.concurrent("a name that import and require() resolve to two files", () 
               },
               require: (has, [forRequire]) => has.get(forRequire) ?? "real cjs",
               import: (has, [, forImport]) => has.get(forImport) ?? "real esm",
-              "jest.requireActual": () => "real cjs",
+              // jest.requireActual() looks for a mock under the path of require(), then under the path of an import.
+              // The original of a mock that it finds under the path of an import is the file that an import loads.
+              // Otherwise the original is the file that require() loads.
+              "jest.requireActual": (has, [forRequire, forImport]) =>
+                !has.has(forRequire) && has.has(forImport) ? "real esm" : "real cjs",
             };
 
             // Makes the calls of \`steps\` on a package and expects of each what the model says.

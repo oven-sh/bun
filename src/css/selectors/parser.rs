@@ -31,24 +31,6 @@ type CResult<'bump, T> = css::Result<'bump, T>;
 // is `Vec<_, ArenaPtr>` and clones into the *source* allocator (intra-arena only).
 use css::generics::{CssEql, CssHash};
 
-/// Drain a `SmallList<T, N>` into a `Box<[T]>`. `SmallList` has no `into_vec`;
-/// this bitwise-moves each element out and `set_len(0)`s the source so its
-/// `Drop` doesn't double-free.
-fn small_list_into_box<T, const N: usize>(mut sl: SmallList<T, N>) -> Box<[T]> {
-    let len = sl.len() as usize;
-    let mut v: Vec<T> = Vec::with_capacity(len);
-    {
-        let src = sl.slice();
-        for i in 0..len {
-            // SAFETY: each index is read exactly once; `set_len(0)` below
-            // prevents `SmallList::drop` from re-dropping the moved elements.
-            unsafe { v.push(core::ptr::read(src.get_unchecked(i))) };
-        }
-    }
-    sl.set_len(0);
-    v.into_boxed_slice()
-}
-
 /// Allocate an ASCII-lowercased copy of `name` in the parse-session bump arena.
 #[inline]
 fn arena_lowercase<'bump>(bump: &'bump Bump, name: &[u8]) -> &'bump [u8] {
@@ -1571,10 +1553,13 @@ impl<'bump, Impl: SelectorImpl<'bump>> Default for GenericSelectorList<'bump, Im
 impl<'bump, Impl: SelectorImpl<'bump>> GenericSelectorList<'bump, Impl> {
     /// Consume `self.v` and return a heap slice — used by `:is()`/`:where()`/
     /// `:has()`/`:not()`/`:nth-*(.. of ..)` which store `Box<[Selector]>` to
-    /// keep `Component` small. See `small_list_into_box`.
+    /// keep `Component` small.
     #[inline]
     pub(crate) fn into_boxed_selectors(self) -> Box<[GenericSelector<'bump, Impl>]> {
-        small_list_into_box(self.v)
+        match self.v.0.into_inner() {
+            Ok(one) => Box::new(one),
+            Err(list) => list.into_boxed_slice(),
+        }
     }
 }
 

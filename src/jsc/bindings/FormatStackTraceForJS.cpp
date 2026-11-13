@@ -24,6 +24,7 @@
 #include "BunClientData.h"
 #include "CallSite.h"
 #include "ErrorStackTrace.h"
+#include "JSDOMException.h"
 #include "ObjectBindings.h"
 #include "headers-handwritten.h"
 
@@ -864,6 +865,18 @@ JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * g
 }
 
 bool isImportMetaEnvForTests(JSC::JSObject*);
+
+// WebIDL DOMException has [[ErrorData]] just like an Error object. JSC's
+// Error.isError only knows its ErrorInstance cells; Bun's DOMException is a
+// separate, branded WebCore wrapper. Keep the native Error test and include
+// that wrapper without walking prototypes or invoking user-controlled traps.
+JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncIsError, (JSC::JSGlobalObject*, JSC::CallFrame* callFrame))
+{
+    JSC::JSValue value = callFrame->argument(0);
+    bool isError = value.isObject()
+        && (value.getObject()->isErrorInstance() || value.getObject()->inherits<WebCore::JSDOMException>());
+    return JSC::JSValue::encode(JSC::jsBoolean(isError));
+}
 
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {

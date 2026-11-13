@@ -49,8 +49,8 @@ extern "C" void OnBeforeParseResult__reset(OnBeforeParseResult* result);
 
 /// These are native callbacks to be run after their associated JS version is run
 extern "C" void JSBundlerPlugin__addError(void*, void*, JSC::EncodedJSValue, uint8_t);
-extern "C" void JSBundlerPlugin__onLoadAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
-extern "C" void JSBundlerPlugin__onResolveAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
+extern "C" void JSBundlerPlugin__onLoadAsync(void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
+extern "C" void JSBundlerPlugin__onResolveAsync(void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__onDefer(void*, JSC::JSGlobalObject*);
 
 JSC_DECLARE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter);
@@ -124,13 +124,12 @@ public:
     static JSBundlerPlugin* create(JSC::VM& vm,
         JSC::JSGlobalObject* globalObject,
         JSC::Structure* structure,
-        void* config,
         BunPluginTarget target,
         JSBundlerPluginAddErrorCallback addError = JSBundlerPlugin__addError,
         JSBundlerPluginOnLoadAsyncCallback onLoadAsync = JSBundlerPlugin__onLoadAsync,
         JSBundlerPluginOnResolveAsyncCallback onResolveAsync = JSBundlerPlugin__onResolveAsync)
     {
-        JSBundlerPlugin* ptr = new (NotNull, JSC::allocateCell<JSBundlerPlugin>(vm)) JSBundlerPlugin(vm, globalObject, structure, config, target,
+        JSBundlerPlugin* ptr = new (NotNull, JSC::allocateCell<JSBundlerPlugin>(vm)) JSBundlerPlugin(vm, globalObject, structure, target,
             addError,
             onLoadAsync,
             onResolveAsync);
@@ -171,10 +170,10 @@ public:
     }
 
 private:
-    JSBundlerPlugin(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::Structure* structure, void* config, BunPluginTarget target,
+    JSBundlerPlugin(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::Structure* structure, BunPluginTarget target,
         JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
         : Base(vm, structure)
-        , plugin(BundlerPlugin(config, target, addError, onLoadAsync, onResolveAsync))
+        , plugin(BundlerPlugin(target, addError, onLoadAsync, onResolveAsync))
         , m_globalObject(global)
     {
     }
@@ -473,7 +472,6 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync, (JSC::JSGlobalObje
     if (thisObject->plugin.takeRequest(BundlerPlugin::RequestKind::Load, UNWRAP_BUNDLER_PLUGIN(callFrame))) {
         thisObject->plugin.onLoadAsync(
             UNWRAP_BUNDLER_PLUGIN(callFrame),
-            thisObject->plugin.config,
             JSValue::encode(callFrame->argument(1)),
             JSValue::encode(callFrame->argument(2)));
     }
@@ -489,7 +487,6 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onResolveAsync, (JSC::JSGlobalO
     if (thisObject->plugin.takeRequest(BundlerPlugin::RequestKind::Resolve, UNWRAP_BUNDLER_PLUGIN(callFrame))) {
         thisObject->plugin.onResolveAsync(
             UNWRAP_BUNDLER_PLUGIN(callFrame),
-            thisObject->plugin.config,
             JSValue::encode(callFrame->argument(1)),
             JSValue::encode(callFrame->argument(2)),
             JSValue::encode(callFrame->argument(3)));
@@ -646,7 +643,6 @@ extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* glob
             globalObject,
             // Null prototype, so an accessor on Object.prototype can't get this object as its receiver.
             jsNull()),
-        nullptr,
         target);
 }
 
@@ -704,11 +700,6 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     RETURN_IF_EXCEPTION(scope, {}); // should be able to use RELEASE_AND_RETURN, no? observed it returning undefined with exception active
 
     return JSValue::encode(result);
-}
-
-extern "C" void JSBundlerPlugin__setConfig(Bun::JSBundlerPlugin* plugin, void* config)
-{
-    plugin->plugin.config = config;
 }
 
 extern "C" void JSBundlerPlugin__drainDeferred(Bun::JSBundlerPlugin* pluginObject, bool rejected)

@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/fs.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d79e47f48e6cc75beafc45fb487f233dc4194905af0f9a9dc7bcf4f33801aedd.
+// Written against that file with the SHA-256 82d668ce74907d15696411a6389da5d3d9fbedab579afc58b691bac7353c21a5.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:fs"
@@ -1343,7 +1343,7 @@ function glob(pattern: string | string[], options, callback) {
 }
 
 function globSync(pattern: string | string[], options?) {
-  return Array.from(require("internal/fs/glob").globSync(pattern, options ?? kEmptyObject));
+  return require("internal/fs/glob").globSync(pattern, options ?? kEmptyObject);
 }
 
 // The stream classes are accessors on `exports` so that loading node:fs does not load node:stream. The first read, or

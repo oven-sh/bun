@@ -8103,6 +8103,23 @@ describe("a process.nextTick queued by an fs callback runs before a microtask it
         `,
         ["file.txt"],
       ],
+      // Node gathers the matches of fs.globSync from a SafeSet with its primordial ArrayFrom, and makes no copy of them.
+      [
+        "fs.globSync after the program replaced Array.from and the iterator of Set",
+        `
+          Array.from = () => {
+            throw new Error("the replaced Array.from ran");
+          };
+          const iterator = Set.prototype[Symbol.iterator];
+          Set.prototype[Symbol.iterator] = function () {
+            return this.constructor === Set ? iterator.call(this) : ["replaced"][Symbol.iterator]();
+          };
+          const fs = require("fs");
+          console.log(fs.globSync("*.txt", { cwd: __dirname }).join());
+          console.log(fs.globSync("*.txt", { cwd: __dirname, withFileTypes: true }).map(entry => entry.name).join());
+        `,
+        ["file.txt", "file.txt"],
+      ],
     ];
 
     async function run(executable: string, script: string) {

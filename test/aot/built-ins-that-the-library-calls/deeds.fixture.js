@@ -67,6 +67,9 @@ const deeds = {
   "a glob calls back": async () => {
     await new Promise(resolve => fs.glob([], resolve));
   },
+  "a glob matches at once": () => {
+    fs.globSync([]);
+  },
 };
 test("census", async () => {
   const told = [];

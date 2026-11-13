@@ -19,6 +19,7 @@ const deeds = [
   "a tick under a hook",
   "a file is written through a stream",
   "a glob calls back",
+  "a glob matches at once",
 ];
 // What is owed, by the name of what is counted. Whatever else parts in such a deed is red.
 const owed: Record<string, { names: string[]; why: string }> = {};

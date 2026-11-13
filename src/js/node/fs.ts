@@ -1256,7 +1256,7 @@ function glob(pattern: string | string[], options, callback) {
 }
 
 function globSync(pattern: string | string[], options): string[] {
-  return Array.from(lazyGlob().globSync(pattern, options ?? kEmptyObject));
+  return lazyGlob().globSync(pattern, options ?? kEmptyObject);
 }
 
 // The stream classes are accessors on `exports` so that loading node:fs does not load node:stream. The first read, or

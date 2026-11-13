@@ -58,6 +58,9 @@ function makeMatchersExclude(matchers: Minimatch[]) {
 function statForFileTypes(cache: Cache, root: string, path: string) {
   return cache.statSync(isAbsolute(path) ? path : join(root, path));
 }
+function pushMatch(this: Array<Dirent | string | null>, path: string) {
+  $arrayPush(this, path);
+}
 
 const kStats = Symbol("stats");
 let _DirentFromStats: (new (name: string, stats: Stats, path: string) => Dirent) | undefined;
@@ -451,10 +454,15 @@ class Glob {
       }
       this.#subpatterns.clear();
     }
-    return Array.from<string, Dirent | string | null>(
-      this.#results,
-      this.#withFileTypes ? statForFileTypes.bind(null, this.#cache, this.#root) : undefined!,
-    );
+    // $forEach and no bound mapper: user code can replace Array.from, Function.prototype.bind and the iterator of Set.
+    const matches: Array<Dirent | string | null> = [];
+    this.#results.$forEach(pushMatch, matches);
+    if (this.#withFileTypes) {
+      const cache = this.#cache;
+      const root = this.#root;
+      for (let i = 0; i < matches.length; i++) matches[i] = statForFileTypes(cache, root, matches[i] as string);
+    }
+    return matches;
   }
   #isDirectorySync(path: string, stat: Dirent | null, pattern: Pattern) {
     if (stat?.isDirectory()) {

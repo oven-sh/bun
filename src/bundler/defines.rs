@@ -39,12 +39,7 @@ fn defines_path() -> FsPath<'static> {
 // `process.env.*` → define entries
 // ══════════════════════════════════════════════════════════════════════════
 
-fn env_string_store_put(
-    store: &mut UserDefinesArray,
-    bump: &bun_alloc::Arena,
-    key: &[u8],
-    value: &[u8],
-) -> Result<(), crate::Error> {
+fn env_string_define(bump: &bun_alloc::Arena, value: &[u8]) -> DefineData {
     // The `E.String` slab must NOT live in the thread-local
     // `Expr.Data.Store` — `configureDefines` resets that store on return, so
     // the env-define payloads must outlive it. Allocate from `bump` (the
@@ -55,18 +50,18 @@ fn env_string_store_put(
     let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_bump(
         bump.alloc(bun_ast::E::EString::init(value)),
     ));
-    let data = DefineData::init(Options {
+    DefineData::init(Options {
         value,
         can_be_removed_if_unused: true,
         call_can_be_unwrapped_if_unused: bun_ast::E::CallUnwrap::IfUnused,
         ..Default::default()
-    });
-    store.get_or_put_value(key, data)?;
-    Ok(())
+    })
 }
 
-/// Copies `process.env.*` entries from the dotenv loader into `to_string`
-/// according to `behavior` (all of them, or only those starting with `prefix`).
+/// Copies the dotenv loader's entries into `to_string` as `process.env.*` and
+/// `import.meta.env.*` defines, according to `behavior` (all of them, or only
+/// those starting with `prefix`). `import.meta.env` is the documented alias of
+/// `process.env`, so both spellings fold to the same value.
 pub(crate) fn copy_env_for_define(
     env: &bun_dotenv::Loader,
     to_string: &mut UserDefinesArray,
@@ -75,7 +70,7 @@ pub(crate) fn copy_env_for_define(
     bump: &bun_alloc::Arena,
 ) -> Result<(), crate::Error> {
     use bun_dotenv::DotEnvBehavior;
-    const PROCESS_ENV: &[u8] = b"process.env.";
+    const NAMESPACES: [&[u8]; 2] = [b"process.env.", b"import.meta.env."];
 
     if behavior == DotEnvBehavior::Disable || behavior == DotEnvBehavior::LoadAllWithoutInlining {
         return Ok(());
@@ -96,13 +91,94 @@ pub(crate) fn copy_env_for_define(
         if behavior == DotEnvBehavior::Prefix && !bun_core::strings::starts_with(k, prefix) {
             continue;
         }
-        key_buf.clear();
-        key_buf.extend_from_slice(PROCESS_ENV);
-        key_buf.extend_from_slice(k);
-        env_string_store_put(to_string, bump, &key_buf, &v.value)?;
+        // Both keys share one arena string: the define table only reads it.
+        let data = env_string_define(bump, &v.value);
+        for namespace in NAMESPACES {
+            key_buf.clear();
+            key_buf.extend_from_slice(namespace);
+            key_buf.extend_from_slice(k);
+            to_string.get_or_put_value(&key_buf, data.clone())?;
+        }
     }
 
     Ok(())
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// `import.meta.env` mode keys
+// ══════════════════════════════════════════════════════════════════════════
+
+/// What one bundle folds the `import.meta.env` mode keys to. The keys are
+/// Vite's (https://vitejs.dev/guide/env-and-mode).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImportMetaEnvMode {
+    pub production: bool,
+    /// The bundle runs on the server, where `import.meta.env` is `process.env`.
+    pub ssr: bool,
+    /// A static production build (`bun build --app`).
+    pub static_build: bool,
+}
+
+impl ImportMetaEnvMode {
+    /// (define key, property name) of each mode key, in the order `values` uses.
+    const KEYS: [(&'static [u8], &'static [u8]); 5] = [
+        (b"import.meta.env.DEV", b"DEV"),
+        (b"import.meta.env.PROD", b"PROD"),
+        (b"import.meta.env.MODE", b"MODE"),
+        (b"import.meta.env.SSR", b"SSR"),
+        (b"import.meta.env.STATIC", b"STATIC"),
+    ];
+
+    fn values(self) -> [&'static [u8]; 5] {
+        const fn boolean(value: bool) -> &'static [u8] {
+            if value { b"true" } else { b"false" }
+        }
+        [
+            boolean(!self.production),
+            boolean(self.production),
+            if self.production {
+                b"\"production\""
+            } else {
+                b"\"development\""
+            },
+            boolean(self.ssr),
+            boolean(self.static_build),
+        ]
+    }
+
+    /// The define entries as (key, JSON value): `import.meta.env` itself, then
+    /// `import.meta.env.DEV` and the other mode keys.
+    ///
+    /// The whole-object entry exists for a client bundle only. A browser has no
+    /// `import.meta.env`, so without it a key that no per-key define covers
+    /// throws. With it the key reads `undefined`, as it does on the Bun runtime.
+    /// The object holds the mode keys only: the inlined environment stays in
+    /// the per-key defines, so an indirect read cannot dump it into the bundle.
+    ///
+    /// Insert these before the user's defines, so that the user's win.
+    pub fn defines(self) -> Vec<(&'static [u8], Vec<u8>)> {
+        let values = self.values();
+        let mut out: Vec<(&'static [u8], Vec<u8>)> = Vec::with_capacity(Self::KEYS.len() + 1);
+        if !self.ssr {
+            let mut object: Vec<u8> = Vec::with_capacity(96);
+            object.push(b'{');
+            for (i, ((_, name), value)) in Self::KEYS.iter().zip(values.iter()).enumerate() {
+                if i > 0 {
+                    object.push(b',');
+                }
+                object.push(b'"');
+                object.extend_from_slice(name);
+                object.extend_from_slice(b"\":");
+                object.extend_from_slice(value);
+            }
+            object.push(b'}');
+            out.push((b"import.meta.env", object));
+        }
+        for ((key, _), value) in Self::KEYS.iter().zip(values.iter()) {
+            out.push((key, value.to_vec()));
+        }
+        out
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -449,3 +525,63 @@ impl DefineDataExt for DefineData {
 
 // `dots: StringHashMap<Vec<DotDefine>>` and `identifiers` drop their
 // contents automatically; `Box<Define>` frees `self`. No explicit Drop needed.
+
+#[cfg(test)]
+mod tests {
+    use super::ImportMetaEnvMode;
+
+    fn as_strs(defines: &[(&'static [u8], Vec<u8>)]) -> Vec<(&'static str, String)> {
+        defines
+            .iter()
+            .map(|(k, v)| {
+                (
+                    core::str::from_utf8(k).unwrap(),
+                    String::from_utf8(v.clone()).unwrap(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn client_bundle_defines_the_whole_object_and_every_mode_key() {
+        let mode = ImportMetaEnvMode {
+            production: false,
+            ssr: false,
+            static_build: false,
+        };
+        assert_eq!(
+            as_strs(&mode.defines()),
+            [
+                (
+                    "import.meta.env",
+                    r#"{"DEV":true,"PROD":false,"MODE":"development","SSR":false,"STATIC":false}"#
+                        .into()
+                ),
+                ("import.meta.env.DEV", "true".into()),
+                ("import.meta.env.PROD", "false".into()),
+                ("import.meta.env.MODE", "\"development\"".into()),
+                ("import.meta.env.SSR", "false".into()),
+                ("import.meta.env.STATIC", "false".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn server_bundle_keeps_the_live_object() {
+        let mode = ImportMetaEnvMode {
+            production: true,
+            ssr: true,
+            static_build: true,
+        };
+        assert_eq!(
+            as_strs(&mode.defines()),
+            [
+                ("import.meta.env.DEV", "false".into()),
+                ("import.meta.env.PROD", "true".into()),
+                ("import.meta.env.MODE", "\"production\"".into()),
+                ("import.meta.env.SSR", "true".into()),
+                ("import.meta.env.STATIC", "true".into()),
+            ]
+        );
+    }
+}

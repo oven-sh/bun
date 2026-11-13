@@ -2010,3 +2010,105 @@ describe("production headers and import.meta.env", () => {
     expect(results).toEqual(cases.map(([, , expected]) => expected));
   });
 });
+
+// `import.meta.env` does not exist in a browser. The bundle must fold every
+// `import.meta.env.<KEY>` read: an inlined env var to its value, a mode key to
+// its constant, and any other key to `undefined` (not a TypeError).
+describe("import.meta.env in a browser bundle", () => {
+  async function collect(development: string) {
+    using dir = tempDir("html-import-meta-env", {
+      "index.html": /*html*/ `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
+      "app.ts": /*js*/ `
+        globalThis.result = {
+          inlined: import.meta.env.BUN_PUBLIC_FOO,
+          notInlined: typeof import.meta.env.BUN_PRIVATE_FOO,
+          unknown: typeof import.meta.env.NOT_SET_ANYWHERE,
+          dev: import.meta.env.DEV,
+          mode: import.meta.env.MODE,
+          indirect: (() => { const env = import.meta.env; return [env.DEV, env.MODE]; })(),
+        };
+      `,
+      "bunfig.toml": /*toml*/ `[serve.static]\nenv = "BUN_PUBLIC_*"\n`,
+      "serve.ts": /*js*/ `
+        import index from "./index.html";
+        const server = Bun.serve({ port: 0, development: ${development}, routes: { "/": index } });
+        const base = server.url.href;
+        const html = await (await fetch(base)).text();
+        const jsPath = html.match(/src="([^"]+\\.js)"/)[1];
+        const js = await (await fetch(new URL(jsPath, base))).text();
+        let evalError = null;
+        let result = null;
+        if (${development} !== true) {
+          // Evaluate the bundle as a browser module would (no import.meta.env in scope).
+          try { new Function(js.replace(/^\\/\\/# (sourceMappingURL|debugId)=.*$/gm, ""))(); }
+          catch (e) { evalError = String(e); }
+          result = globalThis.result ?? null;
+        }
+        console.log(JSON.stringify({
+          jsContainsImportMetaEnv: js.includes("import.meta.env") || js.includes("importMeta.env"),
+          jsContainsInlinedValue: js.includes('"public-value"'),
+          jsContainsPrivateValue: js.includes("private-value"),
+          evalError,
+          result,
+        }));
+        await server.stop(true);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "serve.ts"],
+      env: { ...bunEnv, NODE_ENV: undefined, BUN_PUBLIC_FOO: "public-value", BUN_PRIVATE_FOO: "private-value" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) {
+      throw new Error("child failed:\n" + stdout + "\n" + stderr);
+    }
+    return JSON.parse(stdout.trim().split("\n").at(-1)!) as {
+      jsContainsImportMetaEnv: boolean;
+      jsContainsInlinedValue: boolean;
+      jsContainsPrivateValue: boolean;
+      evalError: string | null;
+      result: Record<string, unknown> | null;
+    };
+  }
+
+  test("development: false", async () => {
+    const out = await collect("false");
+    expect(out.jsContainsImportMetaEnv).toBe(false);
+    expect(out.jsContainsPrivateValue).toBe(false);
+    expect(out.evalError).toBeNull();
+    expect(out.result).toEqual({
+      inlined: "public-value",
+      notInlined: "undefined",
+      unknown: "undefined",
+      dev: false,
+      mode: "production",
+      indirect: [false, "production"],
+    });
+  });
+
+  test("development: { hmr: false }", async () => {
+    const out = await collect("{ hmr: false }");
+    expect(out.jsContainsImportMetaEnv).toBe(false);
+    expect(out.jsContainsPrivateValue).toBe(false);
+    expect(out.evalError).toBeNull();
+    expect(out.result).toEqual({
+      inlined: "public-value",
+      notInlined: "undefined",
+      unknown: "undefined",
+      dev: true,
+      mode: "development",
+      indirect: [true, "development"],
+    });
+  });
+
+  test("development: true (HMR dev server)", async () => {
+    const out = await collect("true");
+    expect(out.jsContainsImportMetaEnv).toBe(false);
+    expect(out.jsContainsInlinedValue).toBe(true);
+    expect(out.jsContainsPrivateValue).toBe(false);
+  });
+});

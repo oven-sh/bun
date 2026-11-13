@@ -100,6 +100,30 @@ for (let backend of ["api", "cli"] as const) {
         },
       });
 
+    // `import.meta.env.FOO` is the documented alias of `process.env.FOO`, so the prefix inlines both spellings.
+    if (backend === "cli")
+      itBundled("env/import-meta-env-pattern-matching", {
+        env: {
+          PUBLIC_FOO: "public_value",
+          PRIVATE_SECRET: "secret_value",
+        },
+        dotenv: "PUBLIC_*",
+        backend: backend,
+        files: {
+          "/a.js": `
+        console.log(import.meta.env.PUBLIC_FOO);
+        console.log(process.env.PUBLIC_FOO);
+        console.log(import.meta.env.PRIVATE_SECRET);
+      `,
+        },
+        run: {
+          env: {
+            PUBLIC_FOO: "BAD_FOO",
+          },
+          stdout: "public_value\npublic_value\nundefined\n",
+        },
+      });
+
     if (backend === "cli")
       // Test nested environment variable references
       itBundled("nested-refs", {

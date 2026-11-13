@@ -1383,13 +1383,6 @@ pub trait TryOpTo: Sized {
     fn try_op_to<R, C>(&self, rhs: &Self, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> Option<R>;
 }
 
-impl TryOpTo for CSSNumber {
-    #[inline]
-    fn try_op_to<R, C>(&self, rhs: &Self, ctx: C, op_fn: impl Fn(C, f32, f32) -> R) -> Option<R> {
-        Some(op_fn(ctx, *self, *rhs))
-    }
-}
-
 impl IsCompatible for CSSNumber {
     #[inline]
     fn is_compatible(&self, _: &crate::targets::Browsers) -> bool {

@@ -4,7 +4,7 @@ use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, Decl, SymbolId};
 use bun_sema::hir::{
     BinOp, Chain, ExportSpecId, ExprFlags, ExprId, ExprKind, FAR_IN_BRACKETS, File, FileBuilder,
-    Flags, Import, ImportEqualsId, ImportId, PatKind, PropKind, ResolutionMode, Span,
+    Flags, Import, ImportEqualsId, ImportId, ImportPhase, PatKind, PropKind, ResolutionMode, Span,
     SpecifierKind, SpecifierUse, StmtId, StmtKind, TypeNodeId, UnOp, VarDecl, VarKind, rare,
 };
 use bun_sema::module_format::ModuleFormat;
@@ -301,7 +301,9 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
             keys.iter()
                 .any(|&key| self.hir.import_attribute(attributes, key).is_some())
         };
-        if node.is_deferred || node.attributes.some().is_some_and(chooses_loader) {
+        if node.phase != ImportPhase::Evaluation
+            || node.attributes.some().is_some_and(chooses_loader)
+        {
             return Place::InPlace;
         }
         let names = self.names_of(import);
@@ -376,7 +378,7 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
                 ExprKind::Await(value) => self.without_type_syntax(value),
                 _ => first,
             };
-            let ExprKind::ImportCall { args } = self.hir[written].kind else {
+            let ExprKind::ImportCall { args, .. } = self.hir[written].kind else {
                 return None;
             };
             let path = self.hir.ids(args).next()?;
@@ -542,7 +544,8 @@ fn write_load(file: &mut FileBuilder, statement: StmtId, import: ImportId, local
     });
     let path = file.expr(ExprKind::String(path), start, loc.end);
     let args = file.list(&[path]);
-    let load = file.expr(ExprKind::ImportCall { args }, start, loc.end);
+    let phase = ImportPhase::Evaluation;
+    let load = file.expr(ExprKind::ImportCall { args, phase }, start, loc.end);
     let loaded = file.expr(ExprKind::Await(load), start, loc.end);
     let kind = if local == Atom::NONE {
         StmtKind::Expr(loaded)
@@ -754,7 +757,7 @@ mod tests {
                 let ExprKind::Await(load) = hir[expression].kind else {
                     return None;
                 };
-                let ExprKind::ImportCall { args } = hir[load].kind else {
+                let ExprKind::ImportCall { args, .. } = hir[load].kind else {
                     return None;
                 };
                 text_of(hir.ids(args).next()?)
@@ -993,7 +996,7 @@ mod tests {
         let loads_what_it_mocks = |text: &str| {
             with_tree("a.test.ts", text, |hir, _, text_of| {
                 hir.exprs.iter().any(|it| match it.kind {
-                    ExprKind::ImportCall { args } => {
+                    ExprKind::ImportCall { args, .. } => {
                         let path = hir.ids(args).next().and_then(text_of);
                         path.as_deref() == Some("./mod")
                     }

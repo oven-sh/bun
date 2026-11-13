@@ -1,0 +1,521 @@
+# eslint accessor-pairs
+missingGetterInPropertyDescriptor Setter is defined without a getter
+missingGetterInObjectLiteral Setter is defined without a getter
+missingSetterInObjectLiteral Getter is defined without a setter
+missingGetterInClass Setter is defined without a getter
+missingSetterInClass Getter is defined without a setter
+missingGetterInType Setter is defined without a getter
+missingSetterInType Getter is defined without a setter
+# eslint array-callback-return
+expectedInside Callback for array method "{{arrayMethodName}}" does not return on all code paths
+expectedNoReturnValue Unexpected return value in callback for "{{arrayMethodName}}"
+# eslint arrow-body-style
+unexpectedEmptyBlock Unexpected empty block statement surrounding arrow body.
+unexpectedObjectBlock Unexpected block statement surrounding arrow body.
+unexpectedSingleBlock Unexpected block statement surrounding arrow body.
+# eslint block-scoped-var
+outOfScope '{{name}}' is used outside of binding context.
+# eslint capitalized-comments
+unexpectedLowercaseComment Comments should not begin with a lowercase letter
+unexpectedUppercaseComment Comments should not begin with an uppercase letter
+# eslint class-methods-use-this
+missingThis Expected method{{name}} to have this.
+# eslint constructor-super
+missingSome Lacked a call of `super()` in some code paths.
+missingAll Expected to call `super()`.
+duplicate Unexpected duplicate `super()`.
+badSuper Unexpected `super()` because `super` is not a constructor.
+# eslint curly
+unexpectedCurlyAfter Unexpected { after '{{name}}'.
+unexpectedCurlyAfterCondition Unexpected { after '{{name}}' condition.
+# eslint default-case
+missingDefaultCase Require `default` cases in `switch` statements.
+# eslint default-case-last
+notLast Enforce default clauses in switch statements to be last
+# eslint default-param-last
+shouldBeLast Default parameters should be last
+# eslint eqeqeq
+unexpected Expected {{expectedOperator}} and instead saw {{actualOperator}}
+# eslint for-direction
+incorrectDirection The update clause in this loop moves the variable in the wrong direction
+# eslint func-name-matching
+notMatchProperty Function name `{{funcName}}` should not match property name `{{funcName}}`.
+notMatchVariable Function name `{{funcName}}` should not match variable name `{{funcName}}`.
+# eslint getter-return
+expected Expected to always return a value in getter.
+# eslint guard-for-in
+wrap Require `for-in` loops to include an `if` statement
+# eslint id-length
+tooShort Identifier name is too short (< {{min}}).
+tooShortPrivate Identifier name is too short (< {{min}}).
+tooLong Identifier name is too long (> {{max}}).
+tooLongPrivate Identifier name is too long (> {{max}}).
+# eslint logical-assignment-operators
+if `if` statement can be replaced with a logical operator assignment with operator `{{operator}}`.
+# eslint max-classes-per-file
+maximumExceeded File has too many classes ({{classCount}}). Maximum allowed is {{max}}
+# eslint max-lines
+exceed File has too many lines ({{actual}}).
+# eslint no-alert
+unexpected `alert`, `confirm` and `prompt` functions are not allowed
+# eslint no-array-constructor
+preferLiteral Avoid calls to the `Array` constructor
+# eslint no-async-promise-executor
+async Promise executor functions should not be `async`.
+# eslint no-bitwise
+unexpected Unexpected use of `"{{operator}}"`.
+# eslint no-caller
+unexpected Do not use `arguments.{{prop}}`.
+# eslint no-class-assign
+class Unexpected re-assignment of class {{name}}
+# eslint no-compare-neg-zero
+unexpected Do not use the {{operator}} operator to compare against -0.
+# eslint no-cond-assign
+unexpected Expected a conditional expression and instead saw an assignment
+missing Expected a conditional expression and instead saw an assignment
+# eslint no-console
+limited Unexpected console statement.
+# eslint no-const-assign
+const Unexpected re-assignment of `const` variable {{name}}.
+# eslint no-constant-binary-expression
+constantBinaryOperand Unexpected constant binary expression
+constantShortCircuit Unexpected constant {{property}} on the left-hand side of a "{{operator}}" expression
+alwaysNew Unexpected comparison to newly constructed object
+bothAlwaysNew Unexpected comparison of two newly constructed objects
+constantRelationalComparison Unexpected constant relational comparison
+# eslint no-constant-condition
+unexpected Unexpected constant condition
+# eslint no-continue
+unexpected Unexpected use of `continue` statement.
+# eslint no-debugger
+unexpected `debugger` statement is not allowed
+# eslint no-delete-var
+unexpected Variables should not be deleted
+# eslint no-dupe-class-members
+unexpected Duplicate class member: "{{name}}"
+# eslint no-dupe-else-if
+unexpected Duplicate conditions in if-else-if chain
+# eslint no-dupe-keys
+unexpected Duplicate key '{{name}}'
+# eslint no-duplicate-case
+unexpected Duplicate case label
+# eslint no-duplicate-imports
+import '{{module}}' import is duplicated
+importAs '{{module}}' export is duplicated
+export '{{module}}' export is duplicated
+exportAs '{{module}}' export is duplicated
+# eslint no-else-return
+unexpected Unnecessary `else` after `return`.
+# eslint no-empty
+unexpected Unexpected empty block statements
+# eslint no-empty-character-class
+unexpected Empty character class will not match anything
+# eslint no-empty-function
+unexpected Unexpected empty {{name}}
+# eslint no-empty-pattern
+unexpected Empty {{type}} binding pattern
+# eslint no-empty-static-block
+unexpected Unexpected empty static blocks
+# eslint no-eq-null
+unexpected Do not use `null` comparisons without type-checking operators.
+# eslint no-eval
+unexpected eval can be harmful.
+# eslint no-extend-native
+unexpected {{builtin}} prototype is read-only, properties should not be added.
+# eslint no-extra-boolean-cast
+unexpectedCall Redundant Boolean call
+unexpectedNegation Redundant double negation
+# eslint no-extra-label
+unexpected This label '{{name}}' is unnecessary
+# eslint no-fallthrough
+case Expected a `break` statement before `case`.
+default Expected a `break` statement before `default`.
+# eslint no-implicit-coercion
+implicitCoercion Unexpected implicit coercion to {{type}}
+# eslint no-implicit-globals
+globalNonLexicalBinding Unexpected {{kind}} declaration in the global scope.
+globalLexicalBinding Unexpected {{kind}} declaration in the global scope.
+globalVariableLeak Global variable leak.
+# eslint no-import-assign
+readonly Do not assign to imported bindings
+readonlyMember Do not assign to imported bindings
+# eslint no-inline-comments
+unexpectedInlineComment Unexpected comment inline with code
+# eslint no-inner-declarations
+moveDeclToRoot Variable or `function` declarations are not allowed in nested blocks
+# eslint no-irregular-whitespace
+noIrregularWhitespace Unexpected irregular whitespace
+# eslint no-iterator
+noIterator Reserved name `__iterator__`
+# eslint no-label-var
+identifierClashWithLabel Found identifier '{{name}}' with the same name as a label.
+# eslint no-labels
+unexpectedLabel Labeled statement is not allowed
+unexpectedLabelInBreak Label in break statement is not allowed
+unexpectedLabelInContinue Label in continue statement is not allowed
+# eslint no-lone-blocks
+redundantBlock Block is unnecessary.
+# eslint no-lonely-if
+unexpectedLonelyIf Unexpected `if` as the only statement in an `else` block
+# eslint no-loop-func
+unsafeRefs Function declared in a loop contains unsafe references to variable(s)
+# eslint no-magic-numbers
+noMagic No magic number: {{raw}}
+# eslint no-misleading-character-class
+surrogatePairWithoutUFlag Unexpected surrogate pair in character class.
+combiningClass Unexpected combining class in character class.
+emojiModifier Unexpected emoji modifier in character class.
+regionalIndicatorSymbol Unexpected regional indicator in character class.
+# eslint no-multi-assign
+unexpectedChain Do not use chained assignment
+# eslint no-multi-str
+multilineString Unexpected multi string.
+# eslint no-new-func
+noFunctionConstructor Using `new Function` or `Function` is not allowed.
+# eslint no-new-wrappers
+noConstructor Do not use `{{fn}}` as a constructor
+# eslint no-obj-calls
+unexpectedCall `{{name}}` is not a function and cannot be called
+unexpectedRefCall `{{name}}` is not a function and cannot be called
+# eslint no-object-constructor
+preferLiteral Disallow calls to the `Object` constructor without an argument
+# eslint no-promise-executor-return
+returnsValue Return statement should not be used in Promise executor.
+# eslint no-proto
+unexpectedProto The '__proto__' property is deprecated
+# eslint no-prototype-builtins
+prototypeBuildIn do not access Object.prototype method "{{prop}}" from target object
+# eslint no-redeclare
+redeclared '{{id}}' is already defined.
+# eslint no-regex-spaces
+multipleSpaces Multiple consecutive spaces are hard to count.
+# eslint no-restricted-imports
+pathWithCustomMessage '{{importSource}}' import is restricted from being used.
+patternWithCustomMessage '{{importSource}}' import is restricted from being used by a pattern.
+patternAndImportNameWithCustomMessage '{{importName}}' import from '{{importSource}}' is restricted from being used by a pattern.
+importNameWithCustomMessage '{{importName}}' import from '{{importSource}}' is restricted.
+patternAndEverything * import is invalid because '{{importNames}}' from '{{importSource}}' is restricted from being used by a pattern.
+patternAndEverythingWithCustomMessage * import is invalid because '{{importNames}}' from '{{importSource}}' is restricted from being used by a pattern.
+patternAndEverythingWithRegexImportName * import is invalid because import name matching '{{importNames}}' pattern from '{{importSource}}' is restricted from being used.
+patternAndEverythingWithRegexImportNameAndCustomMessage * import is invalid because import name matching '{{importNames}}' pattern from '{{importSource}}' is restricted from being used.
+everything * import is invalid because '{{importNames}}' from '{{importSource}}' is restricted.
+everythingWithCustomMessage * import is invalid because '{{importNames}}' from '{{importSource}}' is restricted.
+allowedImportName '{{importName}}' import from '{{importSource}}' is restricted because only {{allowedImportNames}} import(s) is/are allowed.
+allowedImportNameWithCustomMessage '{{importName}}' import from '{{importSource}}' is restricted because only {{allowedImportNames}} import(s) is/are allowed.
+everythingWithAllowImportNames * import is invalid because only '{{allowedImportNames}}' from '{{importSource}}' is/are allowed.
+everythingWithAllowImportNamesAndCustomMessage * import is invalid because only '{{allowedImportNames}}' from '{{importSource}}' is/are allowed.
+allowedImportNamePattern '{{importName}}' import from '{{importSource}}' is restricted because only imports that match the pattern '{{allowedImportNamePattern}}' are allowed from '{{importSource}}'.
+allowedImportNamePatternWithCustomMessage '{{importName}}' import from '{{importSource}}' is restricted because only imports that match the pattern '{{allowedImportNamePattern}}' are allowed from '{{importSource}}'.
+everythingWithAllowedImportNamePattern * import is invalid because only imports that match the pattern '{{allowedImportNamePattern}}' from '{{importSource}}' are allowed.
+everythingWithAllowedImportNamePatternWithCustomMessage * import is invalid because only imports that match the pattern '{{allowedImportNamePattern}}' from '{{importSource}}' are allowed.
+# eslint no-restricted-properties
+restrictedObjectProperty '{{objectName}}' is restricted from being used.{{allowedPropertiesMessage}}
+restrictedProperty '{{propertyName}}' is restricted from being used.{{allowedObjectsMessage}}
+# eslint no-return-assign
+returnAssignment Returned expression contains an assignment.
+arrowAssignment Returned expression contains an assignment.
+# eslint no-script-url
+unexpectedScriptURL Unexpected `javascript:` url
+# eslint no-self-assign
+selfAssignment this expression is assigned to itself
+# eslint no-self-compare
+comparingToSelf Both sides of this comparison are exactly the same
+# eslint no-sequences
+unexpectedCommaExpression Unexpected use of comma operator
+# eslint no-setter-return
+returnsValue Setter cannot return a value
+# eslint no-shadow
+noEnumShadow '{{name}}' is already declared in the upper scope.
+noShadow '{{name}}' is already declared in the upper scope.
+# eslint no-shadow-restricted-names
+shadowingRestrictedName Shadowing of global properties such as `undefined` is not allowed.
+# eslint no-template-curly-in-string
+unexpectedTemplateExpression Template placeholders will not interpolate in regular strings
+# eslint no-ternary
+noTernaryOperator Unexpected use of ternary expression
+# eslint no-this-before-super
+noBeforeSuper Expected to always call `super()` before `this`/`super` property access.
+# eslint no-throw-literal
+object Expected an error object to be thrown
+undef Do not throw undefined
+# eslint no-undefined
+unexpectedUndefined Unexpected use of `undefined`
+# eslint no-underscore-dangle
+unexpectedUnderscore Unexpected dangling '_' in '`{{identifier}}`'.
+# eslint no-unexpected-multiline
+function Unexpected newline between function name and open parenthesis of function call
+property Unexpected newline between object and open bracket of property access
+taggedTemplate Unexpected newline between template tag and template literal
+division Unexpected newline between numerator and division operator
+# eslint no-unneeded-ternary
+unnecessaryConditionalExpression Unnecessary use of boolean literals in conditional expression
+unnecessaryConditionalAssignment Unnecessary use of conditional expression for default assignment
+# eslint no-unsafe-finally
+unsafeUsage Unsafe `finally` block.
+# eslint no-unsafe-negation
+unexpected Unexpected negation of the left operand of '{{operator}}' operator.
+# eslint no-unsafe-optional-chaining
+unsafeOptionalChain Unsafe usage of optional chaining
+unsafeArithmetic Unsafe arithmetic operation on optional chaining
+# eslint no-unused-expressions
+unusedExpression Expected expression to be used
+# eslint no-useless-assignment
+unnecessaryAssignment This assigned value is not used in subsequent statements.
+# eslint no-useless-backreference
+forward Backreference '{{bref}}' will be ignored. It references group '{{group}}' which appears before in the same lookbehind.
+backward Backreference '{{bref}}' will be ignored. It references group '{{group}}' which appears later in the pattern.
+disjunctive Backreference '{{bref}}' will be ignored. It references group '{{group}}' which is in another alternative.
+intoNegativeLookaround Backreference '{{bref}}' will be ignored. It references group '{{group}}' which is in a negative lookaround.
+# eslint no-useless-call
+unnecessaryCall Avoid unnecessary use of .{{name}}()
+# eslint no-useless-catch
+unnecessaryCatchClause Unnecessary catch clause
+unnecessaryCatch Unnecessary try/catch wrapper
+# eslint no-useless-computed-key
+unnecessarilyComputedProperty Unnecessarily computed property `{{property}}` found.
+# eslint no-useless-escape
+unnecessaryEscape Unnecessary escape character '{{character}}'
+# eslint no-useless-rename
+unnecessarilyRenamed Do not rename import, export, or destructured assignments to the same name
+# eslint no-void
+noVoid Unexpected `void` operator
+# eslint no-warning-comments
+unexpectedComment Unexpected '{{matchedTerm}}' comment: {{comment}}
+# eslint no-with
+unexpectedWith Unexpected use of `with` statement.
+# eslint prefer-const
+useConst `{{name}}` is never reassigned.
+# eslint prefer-exponentiation-operator
+useExponentiation Prefer `**` over `Math.pow`.
+# eslint prefer-named-capture-group
+required Capture group should be named.
+# eslint prefer-numeric-literals
+useLiteral Use {{system}} literals instead of parseInt().
+# eslint prefer-object-has-own
+useHasOwn Disallow use of `Object.prototype.hasOwnProperty.call()` and prefer use of `Object.hasOwn()`.
+# eslint prefer-object-spread
+useSpreadMessage Disallow using `Object.assign` with an object literal as the first argument and prefer the use of object spread instead
+useLiteralMessage Disallow using `Object.assign` with an object literal as the first argument and prefer the use of object spread instead
+# eslint prefer-promise-reject-errors
+rejectAnError Expected the Promise rejection reason to be an Error
+# eslint prefer-regex-literals
+unexpectedRegExp Use a regular expression literal instead of the `RegExp` constructor.
+unexpectedRedundantRegExp Regular expression literal is unnecessarily wrapped within a `RegExp` constructor.
+unexpectedRedundantRegExpWithFlags Use regular expression literal with flags instead of the `RegExp` constructor.
+# eslint prefer-rest-params
+preferRestParams Use the rest parameters instead of `arguments`.
+# eslint prefer-spread
+preferSpread Use spread operators instead of `.apply()`.
+# eslint preserve-caught-error
+missingCause There is no cause error attached to this new thrown error.
+incorrectCause There is no cause error attached to this new thrown error.
+missingCatchErrorParam The caught error is not accessible because the catch clause has no error parameter.
+partiallyLostError There is no cause error attached to this new thrown error.
+caughtErrorShadowed There is no cause error attached to this new thrown error.
+# eslint require-await
+missingAwait Async function has no `await` expression.
+# eslint require-yield
+missingYield This generator function does not have `yield`
+# eslint sort-keys
+sortKeys Object keys should be sorted
+# eslint sort-vars
+sortVars Variable declarations should be sorted
+# eslint unicode-bom
+expected Expected Unicode BOM (Byte Order Mark)
+unexpected Unexpected Unicode BOM (Byte Order Mark)
+# eslint use-isnan
+switchNaN Checking `switch` discriminant against NaN will never match
+caseNaN Checking for NaN in `case` clause will never match
+indexOfNaN NaN values will never be found by `Array.prototype.{{methodName}}`
+# eslint valid-typeof
+invalidValue Invalid `typeof` comparison value.
+notString `typeof` comparisons should be to string literals.
+# eslint yoda
+expected Require or disallow "Yoda" conditions
+# typescript adjacent-overload-signatures
+adjacentSignature All "{{name}}" signatures should be adjacent.
+# typescript ban-ts-comment
+tsDirectiveComment Do not use @ts-{{directive}} because it alters compilation errors.
+tsDirectiveCommentDescriptionNotMatchPattern The description for the @ts-{{directive}} directive must match the {{format}} format.
+tsDirectiveCommentRequiresDescription Include a description after the @ts-{{directive}} directive to explain why the @ts-{{directive}} is necessary. The description must be {{minimumDescriptionLength}} characters or longer.
+tsIgnoreInsteadOfExpectError Use "@ts-expect-error" instead of @ts-ignore, as "@ts-ignore" will do nothing if the following line is error-free.
+# typescript consistent-type-assertions
+angle-bracket Use `<{{cast}}>` instead of `as {{cast}}`.
+as Use `as {{cast}}` instead of `<{{cast}}>`.
+unexpectedArrayTypeAssertion Always prefer `const x: T[] = [ ... ]`.
+unexpectedObjectTypeAssertion Always prefer `const x: T = { ... }`.
+# typescript consistent-type-definitions
+interfaceOverType Use `interface` instead of `type`.
+typeOverInterface Use `type` instead of `interface`.
+# typescript consistent-type-exports
+typeOverValue All exports in the declaration are only used as types.
+# typescript explicit-module-boundary-types
+anyTypedArg Argument is explicitly typed as `any`
+anyTypedArgUnnamed Argument is explicitly typed as `any`
+missingArgType Missing argument type on function
+missingArgTypeUnnamed Missing argument type on function
+missingReturnType Missing return type on function
+# typescript method-signature-style
+errorMethod Use a property signature instead of a method signature.
+errorProperty Use a method signature instead of a property signature.
+# typescript no-array-constructor
+useLiteral Avoid calls to the `Array` constructor
+# typescript no-confusing-non-null-assertion
+confusingAssign Confusing combinations of non-null assertion and assignment like `a! = b`, which looks very similar to not equal `a != b`.
+confusingEqual Confusing combinations of non-null assertion and equal test like `a! {{operator}} b`, which looks very similar to not equal `a !{{operator}} b`.
+# typescript no-confusing-void-expression
+invalidVoidExpr Placing a void expression inside another expression is forbidden.
+invalidVoidExprArrow Returning a void expression from an arrow function shorthand is forbidden.
+invalidVoidExprReturn Returning a void expression from a function is forbidden.
+invalidVoidExprReturnLast Returning a void expression from a function is forbidden.
+# typescript no-duplicate-enum-values
+duplicateValue Duplicate enum value `{{value}}`
+# typescript no-duplicate-type-constituents
+duplicate {{type}} type constituent is duplicated with {{previous}}.
+# typescript no-empty-interface
+noEmpty an empty interface is equivalent to `{}`
+noEmptyWithSuper an interface declaring no members is equivalent to its supertype
+# typescript no-empty-object-type
+noEmptyInterface Do not use an empty interface declaration.
+noEmptyInterfaceWithSuper Do not use an empty interface declaration.
+noEmptyObject Do not use the empty object type literal.
+# typescript no-explicit-any
+unexpectedAny Unexpected `any`. Specify a different type.
+# typescript no-extra-non-null-assertion
+noExtraNonNullAssertion extra non-null assertion
+# typescript no-floating-promises
+floating Promises must be awaited, add await operator.
+floatingPromiseArray An array of Promises may be unintentional.
+floatingPromiseArrayVoid An array of Promises may be unintentional.
+floatingUselessRejectionHandler Promises must be awaited, add await operator.
+floatingUselessRejectionHandlerVoid Promises must be awaited, add void operator to ignore.
+floatingVoid Promises must be awaited, add void operator to ignore.
+# typescript no-for-in-array
+forInViolation For-in loops over arrays skips holes, returns indices as strings, and may visit the prototype chain or other enumerable properties.
+# typescript no-implied-eval
+noImpliedEvalError Implied eval.
+# typescript no-import-type-side-effects
+useTopLevelQualifier TypeScript will only remove the inline type specifiers which will leave behind a side effect import at runtime.
+# typescript no-inferrable-types
+noInferrableType Type can be trivially inferred from the initializer
+# typescript no-invalid-void-type
+invalidVoidForGeneric Do not use `void` as a type argument for `{{generic}}`.
+invalidVoidNotReturn Use `void` only as a return type.
+invalidVoidNotReturnOrGeneric Use `void` only as a return type or generic type argument.
+invalidVoidNotReturnOrThisParam Use `void` only as a return type or as the type of a `this` parameter.
+invalidVoidNotReturnOrThisParamOrGeneric Use `void` only as a return type, generic type argument, or the type of a `this` parameter.
+invalidVoidUnionConstituent Remove `void` from this union type constituent.
+# typescript no-misused-spread
+noFunctionSpreadInObject Using the spread operator on a function without additional properties can cause unexpected behavior.
+noMapSpreadInObject Using the spread operator on a Map in an object will result in an empty object.
+noPromiseSpreadInObject Using the spread operator on Promise in an object can cause unexpected behavior.
+noStringSpread Using the spread operator on a string can mishandle special characters, because it produces Unicode code points, which will break complex characters (like emojis) into multiple parts.
+# typescript no-non-null-asserted-nullish-coalescing
+noNonNullAssertedNullishCoalescing 'Disallow non-null assertions in the left operand of a nullish coalescing operator
+# typescript no-non-null-asserted-optional-chain
+noNonNullOptionalChain Optional chain expressions can return undefined by design: using a non-null assertion is unsafe and wrong.
+# typescript no-require-imports
+noRequireImports Expected "import" statement instead of "require" call
+# typescript no-restricted-types
+bannedTypeMessage Do not use `{{name}}` as a type
+# typescript no-unnecessary-condition
+alwaysNullish Unnecessary conditional, value is always nullish.
+comparisonBetweenLiteralTypes Unnecessary comparison between literal values.
+neverNullish Unnecessary conditional, expected left-hand side of `??` operator to be possibly null or undefined.
+noOverlapBooleanExpression This condition will always return the same value since the types have no overlap.
+typeGuardAlreadyIsType Type predicate is unnecessary as the parameter type already satisfies the predicate.
+# typescript no-unnecessary-parameter-property-assignment
+unnecessaryAssign Assignment of parameter property is unnecessary
+# typescript no-unnecessary-type-assertion
+contextuallyInferredTypeArguments This assertion is unnecessary since it does not change the type of the expression.
+unnecessaryAssertion This assertion is unnecessary since it does not change the type of the expression.
+# typescript no-unnecessary-type-constraint
+unnecessaryConstraint constraining the generic type "{{name}}" to "{{constraint}}" does nothing and is unnecessary
+# typescript no-unnecessary-type-conversion
+unnecessaryTypeConversion This type conversion does not change the type or value of the expression.
+# typescript no-unsafe-assignment
+unsafeAssignment Unsafe assignment between incompatible types.
+anyAssignmentThis Unsafe assignment of an any value. `this` is typed as `any`.
+
+unsafeObjectPattern Unsafe array destructuring of a tuple element with an {{sender}} value.
+# typescript no-unsafe-call
+errorCall Unsafe call of a(n) `error` type typed value.
+errorCallThis Unsafe call of a(n) `error` type typed value. `this` is typed as `error` type.
+
+errorNew Unsafe construction of a(n) `error` type typed value.
+errorTemplateTag Unsafe use of a(n) `error` type typed template tag.
+unsafeCallThis Unsafe call of a(n) `any` typed value. `this` is typed as `any`.
+
+# typescript no-unsafe-function-type
+bannedFunctionType The `Function` type accepts any function-like value.
+# typescript no-unsafe-member-access
+errorComputedMemberAccess Computed name {{property}} resolves to an `error` typed value.
+errorMemberExpression Unsafe member access {{property}} on an `error` typed value.
+unsafeThisMemberExpression Unsafe member access {{property}} on an `any` value. `this` is typed as `any`.
+# typescript no-unsafe-return
+unsafeReturnThis Unsafe return of a value of type `{{type}}`. `this` is typed as {{type}}.
+# typescript no-unsafe-type-assertion
+unsafeOfAnyTypeAssertion Unsafe assertion from {{type}} detected.
+unsafeToAnyTypeAssertion Unsafe assertion to {{type}} detected.
+unsafeToUnconstrainedTypeAssertion Unsafe type assertion: '{{type}}' could be instantiated with an arbitrary type which could be unrelated to the original type.
+# typescript no-useless-default-assignment
+uselessDefaultAssignment Default value is useless because the {{type}}{{why}}. This default assignment will never be used.
+uselessUndefined Default value is useless because it is undefined. Optional {{types}} are already undefined by default.
+# typescript no-useless-empty-export
+uselessExport Empty exports do nothing in module files
+# typescript no-wrapper-object-types
+bannedClassType Do not use wrapper object types.
+# typescript prefer-as-const
+preferConstAssertion Expected a `const` assertion instead of a literal type annotation.
+# typescript prefer-enum-initializers
+defineInitializer The value of the member "{{name}}" should be explicitly defined.
+# typescript prefer-for-of
+preferForOf Expected a `for...of` loop instead of a `for` loop with this simple iteration.
+# typescript prefer-function-type
+functionTypeOverCallableType Enforce using function types instead of interfaces with call signatures.
+unexpectedThisOnFunctionOnlyInterface Enforce using function types instead of interfaces with call signatures.
+# typescript prefer-literal-enum-member
+notLiteral Explicit enum values must only be literal values (string, number, boolean, etc.).
+notLiteralOrBitwiseExpression Explicit enum values must only be literal values (string, number, boolean, etc.).
+# typescript prefer-namespace-keyword
+useNamespace Use `namespace` instead of `module` to declare custom TypeScript modules.
+# typescript prefer-nullish-coalescing
+preferNullishOverTernary Prefer using nullish coalescing operator (`??`) instead of a ternary expression, as it is simpler to read.
+# typescript prefer-promise-reject-errors
+rejectAnError Expected the Promise rejection reason to be an Error.
+# typescript prefer-readonly
+preferReadonly Member '{{name}}' is never reassigned.
+# typescript prefer-readonly-parameter-types
+shouldBeReadonly Parameter should be a readonly type.
+# typescript prefer-string-starts-ends-with
+preferEndsWith Use 'String#endsWith' method instead.
+# typescript prefer-ts-expect-error
+preferExpectErrorComment Enforce using `@ts-expect-error` over `@ts-ignore`
+# typescript promise-function-async
+missingAsyncHybridReturn Functions that return promises must be async.
+# typescript require-await
+missingAwait Function has no 'await' expression.
+# typescript restrict-plus-operands
+bigintAndNumber Numeric '+' operations must either be both bigints or both numbers.
+invalid Invalid operand of type '{{type}}' for a '+' operation.
+mismatched Operands of '+' operations must be of the same type.
+# typescript restrict-template-expressions
+invalidType Invalid type used in template literal expression.
+# typescript strict-boolean-expressions
+conditionErrorAny Unexpected any value in conditional.
+conditionErrorNullableBoolean Unexpected nullable boolean value in conditional.
+conditionErrorNullableEnum Unexpected nullable enum value in conditional.
+conditionErrorNullableNumber Unexpected nullable number value in conditional.
+conditionErrorNullableObject Unexpected nullable object value in conditional.
+conditionErrorNullableString Unexpected nullable string value in conditional.
+conditionErrorNullish Unexpected nullish value in conditional. The expression is always falsy.
+conditionErrorNumber Unexpected number value in conditional. A number can be falsy (0, NaN) or truthy.
+conditionErrorObject Unexpected object value in conditional. An object is always truthy.
+conditionErrorOther Unexpected value in conditional. A union of different types has inconsistent truthiness.
+conditionErrorString Unexpected string value in conditional. A string can be falsy (empty string) or truthy.
+# typescript unbound-method
+unbound Avoid referencing unbound methods which may cause unintentional scoping of `this`.
+unboundWithoutThisAnnotation Avoid referencing unbound methods which may cause unintentional scoping of `this`.
+# typescript use-unknown-in-catch-callback-variable
+useUnknownArrayDestructuringPattern Prefer the safe `: unknown` for a `{{method}}` callback variable. The thrown error may not be iterable.
+useUnknownObjectDestructuringPattern Prefer the safe `: unknown` for a `{{method}}` callback variable. The thrown error may be nullable, or may not have the expected shape.

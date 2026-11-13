@@ -261,8 +261,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub(super) fn resolves_no_members(&self) -> bool {
-        self.unresolved_members.is_empty()
-            && self.inheriting.is_empty()
+        self.inheriting.is_empty()
             && self.late_binding.is_empty()
             && self.base_types_so_far.is_empty()
             && self.resolving_at_base_types.is_empty()

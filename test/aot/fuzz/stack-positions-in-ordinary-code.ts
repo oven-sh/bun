@@ -139,6 +139,8 @@ export interface Part {
   loads: string;
   // A class or function that is the default export may be anonymous. The file itself then cannot refer to it.
   mayOmitNames: boolean;
+  // Its extension is `.mts`, where TypeScript reserves `<T>value`.
+  isMts?: boolean;
 }
 
 // What the file `helpers` declares for a typed or an untyped file.
@@ -684,7 +686,7 @@ export function write(
         [1, () => parenthesized([number(next), " as number"])],
         [1, () => [step(number(next)), "!"]],
         [1, () => parenthesized([number(next), " satisfies number"])],
-        [1, () => ["<number>", step(number(next))]],
+        [1, () => (part?.isMts ? parenthesized([step(number(next)), " as number"]) : ["<number>", step(number(next))])],
         [1, () => "Level.High"],
         [1, () => ["Level[", '"Low"', "]"]],
         [1, () => ["Units.scale", list("(", [number(next)], ")")]],

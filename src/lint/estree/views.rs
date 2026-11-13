@@ -223,8 +223,8 @@ pub(super) fn source_type<'a>(file: &'a File<'a>) -> &'static str {
 }
 
 /// True if the nodes use typescript-estree's values where those differ from ECMAScript's. oxlint has
-/// typescript-estree's fields but ECMAScript's values.
-fn is_typescript_estree(file: &File) -> bool {
+/// typescript-estree's fields but ECMAScript's values. Only then is `parserServices` typescript-eslint's.
+pub(crate) fn is_typescript_estree(file: &File) -> bool {
     Dialect::of(file) == Dialect::TypeScript && !file.language().is_oxlint
 }
 

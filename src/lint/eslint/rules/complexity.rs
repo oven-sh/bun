@@ -130,6 +130,8 @@ impl Complexity {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
+        // ESLint 8 reports the whole node.
+        let is_8 = cx.language().eslint_major < 9;
         let (name, loc) = match owner {
             // oxlint's span includes the parentheses.
             Node::Member(member) if is_oxlint => (
@@ -147,6 +149,7 @@ impl Complexity {
                 // oxlint reports the whole block.
                 match is_oxlint {
                     true => (b"class static block".to_vec(), whole),
+                    false if is_8 => (b"Class static block".to_vec(), whole),
                     false => {
                         let keyword = Span::new(whole.start, whole.start + "static".len() as u32);
                         (b"Class static block".to_vec(), keyword)
@@ -160,7 +163,10 @@ impl Complexity {
             ),
             Node::Func(func) => (
                 upper_case_first(&ast_utils::get_function_name_with_kind(func)).into_owned(),
-                ast_utils::get_function_head_loc(func),
+                match is_8 {
+                    true => func.estree_span(),
+                    false => ast_utils::get_function_head_loc(func),
+                },
             ),
             _ => return,
         };
@@ -211,10 +217,9 @@ impl Rule for Complexity {
         }
     }
 
-    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new()
             .exprs(&[ExprTag::Cond, ExprTag::Assign])
-            .optional_chains()
             .binaries(&[BinOp::And, BinOp::Or, BinOp::Nullish])
             .stmts(&[
                 StmtTag::If,
@@ -225,9 +230,14 @@ impl Rule for Complexity {
                 StmtTag::DoWhile,
                 StmtTag::Try,
             ])
-            .params()
-            .pats(&[PatTag::Object, PatTag::Array])
             .finish();
+        // ESLint 8 doesn't count optional chaining and default values.
+        if file.language().eslint_major >= 9 {
+            on = on
+                .optional_chains()
+                .params()
+                .pats(&[PatTag::Object, PatTag::Array]);
+        }
         if self.threshold == Some(0) {
             on = on.funcs().members();
         }
@@ -249,6 +259,7 @@ impl Rule for Complexity {
             // oxlint doesn't count it.
             Some(None) => {
                 !cx.language().is_oxlint
+                    && cx.language().eslint_major >= 9
                     && matches!(e.parent(), Node::Expr(_) | Node::Prop(_))
                     && is_assignment_target(e)
             }

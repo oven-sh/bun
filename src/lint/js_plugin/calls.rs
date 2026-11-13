@@ -14,7 +14,7 @@ use super::layouts;
 use super::wire::{self, ask};
 use crate::ast::File;
 use crate::code_path::estree::{self, Tree};
-use crate::estree::{Dialect, NodeType};
+use crate::estree::{NodeType, is_typescript_estree};
 use crate::selector::Selector;
 use crate::utils::sort;
 use bun_core::strings::Utf16OffsetTable;
@@ -274,9 +274,7 @@ pub(super) fn listen<'a>(
     wire::words(out, &calls);
     if let Some(writer) = writer.as_ref().filter(|_| sends_tree) {
         let tree_start = out.len();
-        let is_typescript_estree =
-            Dialect::of(file) != Dialect::Espree && !file.language().is_oxlint;
-        let alternates = match is_typescript_estree {
+        let alternates = match is_typescript_estree(file) {
             true => layouts::alternates(writer.view()),
             false => Vec::new(),
         };

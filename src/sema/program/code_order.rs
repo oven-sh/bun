@@ -233,30 +233,28 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
 impl<'r> Prefetch<'_, 'r> {
     fn skip_code_files(&self, is_code_path: &dyn Fn(&[u8]) -> bool, code_paths: &[&'r [u8]]) {
         let mut state = self.state.lock();
+        let state = &mut *state;
         for &path in code_paths {
-            let next = state.seen.len() as u32;
-            state.seen.entry(path).or_insert(next);
+            let next = state.unread.len() as u32;
+            if *state.seen.entry(path).or_insert(next) == next {
+                state.unread.push(None);
+            }
         }
-        state.to_read.retain(|file| !is_code_path(file.path));
+        for unread in &mut state.unread {
+            if unread.is_some_and(|file| is_code_path(file.path)) {
+                *unread = None;
+                state.unread_count -= 1;
+            }
+        }
     }
 
     pub(super) fn add_seed(&self, path: &'r [u8], is_lib: bool) {
         let mut state = self.state.lock();
-        let next = state.seen.len() as u32;
-        if *state.seen.entry(path).or_insert(next) == next {
-            let seed = ToLoad {
-                path,
-                is_lib,
-                package: None,
-            };
-            match is_lib {
-                true => state.to_read.push_front(seed),
-                false => state.to_read.push_back(seed),
-            }
-            if state.expects_seeds {
-                self.has_to_read.notify_one();
-                self.has_work.notify_one();
-            }
+        let before = state.unread.len();
+        state.read_next(path, is_lib, None);
+        if state.unread.len() > before && state.expects_seeds {
+            self.has_to_read.notify_one();
+            self.has_work.notify_one();
         }
     }
 }

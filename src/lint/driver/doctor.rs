@@ -20,6 +20,7 @@ use bun_lint::options::Json;
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
 pub(crate) use packages::{Need, Packages, is_for_formatting};
+use std::borrow::Cow;
 use std::io::Write;
 use std::sync::Arc;
 
@@ -46,7 +47,7 @@ impl Modules {
     pub(crate) fn packages(&self) -> Vec<Vec<u8>> {
         let modules = self.0.lock();
         let packages = modules.iter().filter_map(|it| package_of_file(it));
-        sorted(packages.map(<[u8]>::to_vec).collect())
+        sorted(packages.map(Cow::into_owned).collect())
     }
 }
 
@@ -76,7 +77,7 @@ pub(crate) fn sorted(mut names: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
 }
 
 /// The package that contains the file at `path`, if any.
-fn package_of_file(path: &[u8]) -> Option<&[u8]> {
+fn package_of_file(path: &[u8]) -> Option<Cow<'_, [u8]>> {
     let package = paths::package_of(path);
     (package.len() < path.len()).then_some(package)
 }
@@ -289,7 +290,7 @@ impl Rules {
 fn source_of(location: &Json, cwd: &[u8]) -> Option<Vec<u8>> {
     let file = |path: &[u8]| {
         let path = paths::from_native(path);
-        package_of_file(&path).map_or_else(|| paths::relative(cwd, &path), <[u8]>::to_vec)
+        package_of_file(&path).map_or_else(|| paths::relative(cwd, &path), Cow::into_owned)
     };
     match location.as_array()? {
         [Json::String(directory), Json::String(specifier), ..] => {

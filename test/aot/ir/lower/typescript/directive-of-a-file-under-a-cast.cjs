@@ -55,7 +55,7 @@
 module.exports = [
   require("./as.cts"),
   require("./non-null.cts"),
-  require("./angle-brackets.cts"),
+  require("./angle-brackets.ts"),
   require("./satisfies.cts"),
   require("./as-const.cts"),
   require("./parentheses.cjs"),
@@ -77,7 +77,7 @@ export = function underNonNull(this: unknown) {
   return this;
 };
 
-// FILE: angle-brackets.cts
+// FILE: angle-brackets.ts
 <any>"use strict";
 export = function underAngleBrackets(this: unknown) {
   return this;

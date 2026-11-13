@@ -106,7 +106,7 @@ test("literals nested 100 deep are what they are nested 2 deep", async () => {
       "typed.ts: error TS2322: Type 'readonly [1, "x"]' is not assignable to type 'never'.",
       "typed.ts: error TS2322: Type 'readonly [1, "x"]' is not assignable to type 'never'.",
       "typed.ts: error TS2322: Type '(string | number)[]' is not assignable to type 'never'.",
-      "typed.ts: error TS2322: Type '[1, "x"]' is not assignable to type 'never'.",
+      "typed.ts: error TS2322: Type 'readonly [1, "x"]' is not assignable to type 'never'.",
       "typed.ts: error TS2322: Type 'readonly [1, "x"]' is not assignable to type 'never'.",
       "typed.ts: error TS2322: Type 'readonly [1, { b: string[]; }]' is not assignable to type 'never'.",
       "typed.ts: error TS2339: Property 'size' does not exist on type 'string'.",

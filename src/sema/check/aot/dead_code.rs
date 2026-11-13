@@ -1,8 +1,11 @@
-use crate::bind::Decl;
+use crate::bind::{Decl, PatParent};
 use crate::check::Checker;
 use crate::check::errors_aliases::Directives;
 use crate::check::sink::Reported;
-use crate::hir::{ExprId, Flags, FnId, StmtId, StmtKind};
+use crate::hir::{
+    ExprId, ExprKind, Flags, FnId, PatId, StmtId, StmtKind, TypeNodeId, TypeNodeKind,
+    is_parenthesized,
+};
 use crate::node::{Node, NodeData};
 use crate::program::FileId;
 use crate::util::SharedSort;
@@ -72,6 +75,59 @@ impl Checker<'_, '_> {
 
     pub(in crate::check) fn is_in_dead_code(&self, position: u32) -> bool {
         is_in_outermost(&self.dead_code.sorted_ranges, position)
+    }
+
+    /// `check_source_element` skips dead code, so nothing has resolved the types and the private members named there.
+    /// tsc checks that code, which marks them as used.
+    pub(in crate::check) fn resolve_names_in_dead_code(&mut self, file: FileId) {
+        let options = self.module_options(file);
+        if self.dead_code.sorted_ranges.is_empty()
+            || !(options.no_unused_locals || options.no_unused_parameters)
+        {
+            return;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        for id in (0..hir.types.len() as u32).map(TypeNodeId) {
+            if matches!(
+                hir[id].kind,
+                TypeNodeKind::Ref { .. } | TypeNodeKind::Typeof { .. }
+            ) && !bound.is_unchecked_type(id.idx())
+                && self.is_in_dead_code(hir[id].pos)
+            {
+                self.type_from_node(file, id);
+            }
+        }
+        for id in (0..hir.exprs.len() as u32).map(ExprId) {
+            if bound.is_unchecked(id.idx()) || !self.is_in_dead_code(hir[id].pos) {
+                continue;
+            }
+            match hir[id].kind {
+                ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::PrivateIdentifier(_) => {
+                    self.type_of_expr(file, id);
+                }
+                // `({ a } = this)`. A build only checks a pattern in the walk of the file.
+                ExprKind::Assign {
+                    op: None,
+                    target,
+                    value,
+                } if target.is_some()
+                    && matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_))
+                    && !is_parenthesized(hir, target)
+                    && !self.is_assignment_element_with_initializer(file, id) =>
+                {
+                    let source = self.type_of_expr(file, value);
+                    self.check_destructuring_assignment(file, target, source);
+                }
+                _ => {}
+            }
+        }
+        for id in (0..hir.pats.len() as u32).map(PatId) {
+            if let PatParent::Prop(pattern, _) = bound.pat_parent[id.idx()]
+                && self.is_in_dead_code(hir[id].pos)
+            {
+                self.check_binding_element_accessibility(file, pattern, id);
+            }
+        }
     }
 
     fn collect_dead_code_ranges(&self, file: FileId, dead_code: &mut Vec<(u32, u32)>) {

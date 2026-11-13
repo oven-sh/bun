@@ -32,24 +32,27 @@ describe("a file that its project has both among its own files and among those o
     "export function f(x: string | null) {\n  if (x == null) return 0;\n  return x.length;\n}\n" +
     "export const shown = (value: { a: string | null }) => `${value}`;\n";
   const names = ["no-unnecessary-condition", "restrict-template-expressions"];
-  const projects = (strict: boolean) => ({
+  const projects = (strict: { referencing: boolean; referenced: boolean }) => ({
     "tsconfig.json": JSON.stringify({
-      compilerOptions: { ...options, strict, noEmit: true },
+      compilerOptions: { ...options, strict: strict.referencing, noEmit: true },
       references: [{ path: "./tsconfig.lib.json" }],
     }),
     "tsconfig.lib.json": JSON.stringify({
-      compilerOptions: { ...options, strict: !strict, composite: true, outDir: "out" },
+      compilerOptions: { ...options, strict: strict.referenced, composite: true, outDir: "out" },
       include: ["lib"],
     }),
     "lib/a.ts": text,
   });
+  // The file gets its types from the referenced project, unless the config lists the project to take.
+  const inReferenced = (strict: boolean) => projects({ referencing: !strict, referenced: strict });
+  const inReferencing = (strict: boolean) => projects({ referencing: strict, referenced: !strict });
 
   test.concurrent.each([
     [false, [needsTheFlag, '5:58 Invalid type "{ a: string; }" of template literal expression.']],
     [true, ['5:58 Invalid type "{ a: string | null; }" of template literal expression.']],
   ])("--tsconfig: a rule is told strict: %p, with which the types were computed", async (strict, expected) => {
     const flags = [...rule(...names), "--tsconfig", "tsconfig.json", "lib/a.ts"];
-    const { errors, exitCode } = await lint(projects(strict), flags);
+    const { errors, exitCode } = await lint(inReferenced(strict), flags);
     expect(errors).toEqual(expected);
     expect(exitCode).toBe(1);
   });
@@ -58,11 +61,32 @@ describe("a file that its project has both among its own files and among those o
     [false, [needsTheFlag, "5:58 Invalid type used in template literal expression."]],
     [true, ["5:58 Invalid type used in template literal expression."]],
   ])("an oxlint config: a rule is told strict: %p, with which the types were computed", async (strict, expected) => {
-    const files = { ...projects(strict), ".oxlintrc.json": oxlintrc(...names) };
+    const files = { ...inReferenced(strict), ".oxlintrc.json": oxlintrc(...names) };
     const { errors, exitCode } = await lint(files, ["--type-aware", "lib/a.ts"]);
     expect(errors).toEqual(expected);
     expect(exitCode).toBe(1);
   });
+
+  test.concurrent.each([
+    [false, [needsTheFlag.replace("1:1", "0:1"), '5:58 Invalid type "{ a: string; }" of template literal expression.']],
+    [true, ['5:58 Invalid type "{ a: string | null; }" of template literal expression.']],
+  ])(
+    "parserOptions.project: a rule is told strict: %p, with which the types were computed",
+    async (strict, expected) => {
+      const files = {
+        ...inReferencing(strict),
+        "eslint.config.js": `export default [{
+        files: ["**/*.ts"],
+        plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
+        languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } }, parserOptions: { project: ["tsconfig.json"] } },
+        rules: { ${names.map(name => `"@typescript-eslint/${name}": "error"`).join(", ")} },
+      }];`,
+      };
+      const { errors, exitCode } = await lint(files, ["lib/a.ts"]);
+      expect(errors).toEqual(expected);
+      expect(exitCode).toBe(1);
+    },
+  );
 });
 
 test.concurrent("the inner part of a dotted namespace is a namespace whatever its name begins with", async () => {

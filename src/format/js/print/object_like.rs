@@ -73,15 +73,59 @@ impl<'a> ObjectLike<'a> {
                 f.join_nodes_with_soft_line()
                     .entries_with_trailing_separator(members, ",", trailing_separator);
             }
+            Self::TSTypeLiteral(_, members) if self.is_module_attributes() => {
+                super::ts_types::write_ts_module_attributes(members, f)
+            }
             Self::TSTypeLiteral(_, members) => super::ts_types::write_ts_signatures(members, f),
         }
+    }
+
+    /// True if it's the `{ type: "css" }` of `declare module "*.css" with { type: "css" } {}`. It's printed like the
+    /// attributes of an import.
+    fn is_module_attributes(&self) -> bool {
+        matches!(*self, Self::TSTypeLiteral(ty, _)
+            if matches!(ty.ast_parent(), AstNodes::TSModuleDeclaration(_)))
+    }
+
+    /// Prettier's `isSingleTypeImportAttributes`, for the attributes of a module: returns the member of
+    /// `{ type: "css" }`, which stays on one line.
+    fn single_type_attribute(&self, f: &Formatter<'a>) -> Option<Member<'a>> {
+        let Self::TSTypeLiteral(_, members) = *self else {
+            return None;
+        };
+        let (member, ty) = (members.first()?, members.first()?.ty()?);
+        let key = member.key()?;
+        let is_type = members.len() == 1
+            && key.is("type")
+            && ty.tag() == TypeTag::StringLit
+            && !(member.flags()).intersects(Flags::READONLY | Flags::OPTIONAL)
+            && self.is_module_attributes();
+        if !is_type || f.is_quiet() {
+            return is_type.then_some(member);
+        }
+        let key_comments = f.comments().of_name(key.span(f.file()).start);
+        let has_comments = !key_comments.leading.is_empty()
+            || !key_comments.trailing.is_empty()
+            || f.comments().has_comments(member.as_ast_nodes())
+            || f.comments().has_comments(ty.as_ast_nodes());
+        (!has_comments).then_some(member)
     }
 }
 
 impl<'a> Format<'a> for ObjectLike<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         write!(f, "{");
-        if let Some(first_member_start) = self.first_member_start() {
+        if let Some(attribute) = self.single_type_attribute(f) {
+            let needs_space = f.options().bracket_spacing.value();
+            write!(
+                f,
+                [
+                    maybe_space(needs_space),
+                    attribute,
+                    maybe_space(needs_space)
+                ]
+            );
+        } else if let Some(first_member_start) = self.first_member_start() {
             // An object with a line break after its `{` in the source stays broken.
             let before_first = Span::new(self.span().start, first_member_start);
             let should_expand = f.options().expand == Expand::Auto

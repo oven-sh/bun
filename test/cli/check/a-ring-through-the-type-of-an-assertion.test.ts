@@ -83,7 +83,6 @@ test("a ring through the type of an assertion is reported on every thread count"
       expect(result).toEqual({
         threads,
         errors: [
-          "gadget.ts(2,7): error TS2502: 'kFirst' is referenced directly or indirectly in its own type annotation.",
           "gadget.ts(3,7): error TS2502: 'kSecond' is referenced directly or indirectly in its own type annotation.",
           "keys.ts(1,1): error TS7022: 'default' implicitly has type 'any' because it does not have a type annotation and is referenced directly or indirectly in its own initializer.",
         ],

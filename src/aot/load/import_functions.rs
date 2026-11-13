@@ -4,9 +4,9 @@ mod tests;
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::hir::{
     Chain, ExprId, ExprKind, File, FileBuilder, Flags, FnBody, FnKind, Func,
-    FunctionWrittenByLoader, Keyword, ModuleName, Param, ParamId, PatKind, ResolutionMode, Span,
-    SpecifierKind, SpecifierUse, StmtKind, TextRange, TextWrittenByLoader, TypeNodeId,
-    TypeNodeKind,
+    FunctionWrittenByLoader, ImportPhase, Keyword, ModuleName, Param, ParamId, PatKind,
+    ResolutionMode, Span, SpecifierKind, SpecifierUse, StmtKind, TextRange, TextWrittenByLoader,
+    TypeNodeId, TypeNodeKind,
 };
 use bun_sema::resolve::TreeChange;
 use bun_sema::session::Arena;
@@ -202,7 +202,8 @@ impl Writer<'_, '_> {
             }
         };
         let args = self.file.list(&[argument]);
-        ExprKind::ImportCall { args }
+        let phase = ImportPhase::Evaluation;
+        ExprKind::ImportCall { args, phase }
     }
 
     fn parameter(&mut self, name: Atom) -> Span<ParamId> {

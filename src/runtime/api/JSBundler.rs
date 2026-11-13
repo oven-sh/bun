@@ -157,8 +157,10 @@ pub(crate) mod js_bundler {
         /// `foldChunksForTesting`, read only where `bun:internal-for-testing` resolves: see `BundleOptions::fold_chunks`.
         pub(crate) fold_chunks: bool,
         pub(crate) module_preload: bool,
-        /// `check`: see `BundleOptions::type_check`.
-        pub(crate) check: bool,
+        /// `check`: `BundleOptions::type_check`.
+        pub(crate) check: Option<options::TypeCheck>,
+        /// `check: { runExternalCode: true }`
+        pub(crate) runs_external_code: bool,
         pub(crate) dts: bool,
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
@@ -228,7 +230,8 @@ pub(crate) mod js_bundler {
                 min_chunk_size: None,
                 fold_chunks: true,
                 module_preload: true,
-                check: false,
+                check: None,
+                runs_external_code: false,
                 dts: false,
                 drop: StringSet::default(),
                 features: StringSet::default(),
@@ -1248,11 +1251,22 @@ pub(crate) mod js_bundler {
             if let Some(module_preload) = config.get_boolean_loose(global_this, "modulePreload")? {
                 this.module_preload = module_preload;
             }
-            if let Some(check) = config.get_boolean_loose(global_this, "check")? {
-                if check {
+            if let Some(check) = config.get(global_this, "check")? {
+                use crate::api::js_bundle_completion_task::{
+                    check_types, check_types_with_external_code,
+                };
+                let runs_external_code = check.is_object()
+                    && check.get_boolean_strict(global_this, "runExternalCode")? == Some(true);
+                this.runs_external_code = runs_external_code;
+                this.check = match runs_external_code {
+                    true => Some(check_types_with_external_code),
+                    false => check
+                        .to_boolean()
+                        .then_some(check_types as options::TypeCheck),
+                };
+                if this.check.is_some() {
                     ensure_type_checker(global_this, "check")?;
                 }
-                this.check = check;
             }
             if let Some(dts) = config.get_boolean_loose(global_this, "dts")? {
                 if dts {
@@ -1690,7 +1704,7 @@ pub(crate) mod js_bundler {
                 this.compile.as_ref().map(|c| c.compile_target),
             )? {
                 let compile = this.compile.insert(compile);
-                let flags = raw.compile_flags(compile, this.source_map, this.check);
+                let flags = raw.compile_flags(compile, this.source_map, this.check.is_some());
                 let settings = compile_options::resolve(&flags)
                     .map_err(|error| throw_option_error(global_this, error))?;
                 compile.aot = settings.aot;

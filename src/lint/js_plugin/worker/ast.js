@@ -10,20 +10,26 @@ let nodes = [];
 const madeFor = new WeakMap();
 
 // typescript-estree converts what is behind a deprecated property a second time. So these are other nodes, and they have no `parent`:
-// nothing goes through them.
-function convertedAgain(value) {
+// no traversal reaches them. Until version 7 they're in the tree. The rules of that time look for the scope of such a node, so with
+// an installed parser of that time each has its `parent`.
+function convertedAgain(value, parent) {
   if (value === null || typeof value !== "object" || value instanceof RegExp) return value;
-  if (Array.isArray(value)) return value.map(convertedAgain);
+  if (Array.isArray(value)) return value.map(it => convertedAgain(it, parent));
   const copy = {};
+  const isNode = parent !== undefined && typeof value.type === "string";
   for (const key of Reflect.ownKeys(value)) {
     if (key === "parent") continue;
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
-    if ("value" in descriptor) descriptor.value = convertedAgain(descriptor.value);
+    if ("value" in descriptor) descriptor.value = convertedAgain(descriptor.value, isNode ? copy : parent);
     Object.defineProperty(copy, key, descriptor);
   }
+  if (isNode) copy.parent = parent;
   return copy;
 }
 
+const orUndefined = node => ((installedMajor("@typescript-eslint/parser") ?? 8) < 8 ? node : undefined);
+
+// `fields` gets the `parent` for `convertedAgain`.
 function makeFor(node, type, range, fields) {
   if (madeFor.has(node)) return madeFor.get(node);
   const at = index => {
@@ -31,9 +37,11 @@ function makeFor(node, type, range, fields) {
     return { column, line };
   };
   const loc = { end: at(range[1]), start: at(range[0]) };
+  const made = { type };
   // As laid out as `node`, which can be from an earlier file.
-  const made =
-    "start" in node ? { type, ...fields, start: range[0], end: range[1], range, loc } : { type, ...fields, range, loc };
+  const position = "start" in node ? { start: range[0], end: range[1], range, loc } : { range, loc };
+  Object.assign(made, fields(orUndefined(made)), position);
+  if (orUndefined(made)) made.parent = node;
   madeFor.set(node, made);
   return made;
 }
@@ -47,25 +55,25 @@ const deprecated = {
   ImportExpression: { attributes: node => node.options },
   TSEnumDeclaration: {
     members(node) {
-      if (!madeFor.has(node)) madeFor.set(node, convertedAgain(node.body.members));
+      if (!madeFor.has(node)) madeFor.set(node, convertedAgain(node.body.members, orUndefined(node)));
       return madeFor.get(node);
     },
   },
   // A name in brackets is a parsing error.
   TSEnumMember: { computed: () => false },
   TSImportType: {
-    argument: node => makeFor(node, "TSLiteralType", [...node.source.range], { literal: node.source }),
+    argument: node => makeFor(node, "TSLiteralType", [...node.source.range], () => ({ literal: node.source })),
   },
   TSMappedType: {
     typeParameter: ({ key, constraint }, node) =>
-      makeFor(node, "TSTypeParameter", [key.range[0], constraint.range[1]], {
+      makeFor(node, "TSTypeParameter", [key.range[0], constraint.range[1]], parent => ({
         const: false,
-        constraint: convertedAgain(constraint),
+        constraint: convertedAgain(constraint, parent),
         default: undefined,
         in: false,
-        name: convertedAgain(key),
+        name: convertedAgain(key, parent),
         out: false,
-      }),
+      })),
   },
 };
 

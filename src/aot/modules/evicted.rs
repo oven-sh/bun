@@ -20,7 +20,9 @@ use crate::test_runs::runs_unseen_code;
 use bun_sema::bind::{Bound, CodeUnit, FnOwner, Parent};
 use bun_sema::components::strongly_connected_components;
 use bun_sema::fold::Decisions;
-use bun_sema::hir::{self, ExprId, ExprKind, FnId, PatId, PatKind, PropKey, StmtId, StmtKind};
+use bun_sema::hir::{
+    self, ExprId, ExprKind, FnId, ImportPhase, PatId, PatKind, PropKey, StmtId, StmtKind,
+};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::FileId;
 use core::ops::Range;
@@ -318,7 +320,7 @@ fn collect_loads(input: &BindInput<'_, '_>, scans: &Scans, modules: &ModuleSet) 
                     let position = text.place_of(hir[hir[import].stmt].start);
                     (LoadTiming::Unconditional, false, position)
                 }
-                ImportSiteKind::Import(import) if hir[import].is_deferred => {
+                ImportSiteKind::Import(import) if hir[import].phase == ImportPhase::Defer => {
                     (LoadTiming::Deferred, true, 0)
                 }
                 ImportSiteKind::JsxRuntime

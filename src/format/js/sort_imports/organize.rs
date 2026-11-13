@@ -264,6 +264,11 @@ impl<'a> NewImport<'a> {
         self.has_clause() && self.base.import().is_some_and(|it| it.is_type_only())
     }
 
+    /// `"defer"` or `"source"`
+    fn phase(&self) -> Option<&'static str> {
+        self.base.import().filter(|_| self.has_clause())?.phase()
+    }
+
     /// `getImportKindOrder`
     fn kind_order(&self) -> u8 {
         match self {
@@ -701,19 +706,30 @@ impl<'a> Organizer<'a, '_> {
         let mut coalesced = Vec::new();
         for (_, group) in by_attributes {
             coalesced.extend(group.iter().find(|it| !it.has_clause()).cloned());
+            // `getCategorizedImports`: an import in the source phase is combined with nothing.
+            let is_source = |it: &&NewImport<'a>| it.phase() == Some("source");
+            let mut sources: Vec<&NewImport> = group.iter().filter(is_source).collect();
+            let default_of = |it: &NewImport<'a>| it.name.map_or(&[][..], |name| name.bytes());
+            let comparer = self.named_comparer.unwrap_or(Comparer::IgnoringCase);
+            stable_sort_by(&mut sources, |a, b| {
+                comparer.compare(default_of(a), default_of(b))
+            });
+            coalesced.extend(sources.into_iter().cloned());
             for is_type_only in [false, true] {
                 let same_kind = || {
-                    group
-                        .iter()
-                        .filter(move |it| it.has_clause() && it.is_type_only() == is_type_only)
+                    group.iter().filter(move |it| {
+                        it.has_clause() && it.is_type_only() == is_type_only && !is_source(it)
+                    })
                 };
                 let defaults: Vec<&NewImport> =
                     same_kind().filter(|it| it.name.is_some()).collect();
                 let mut namespaces: Vec<&NewImport> =
                     same_kind().filter(|it| it.namespace.is_some()).collect();
                 let named: Vec<&NewImport> = same_kind().filter(|it| it.named.is_some()).collect();
+                // TypeScript combines `import a` and `import defer * as b` too, which drops the `defer`.
                 if let (false, [default], [namespace], []) =
                     (is_type_only, &defaults[..], &namespaces[..], &named[..])
+                    && namespace.phase().is_none()
                 {
                     coalesced.push(NewImport {
                         namespace: namespace.namespace,
@@ -1048,8 +1064,9 @@ impl<'a> Organizer<'a, '_> {
                 let mut out = b"import ".to_vec();
                 if import.is_type_only() {
                     out.extend_from_slice(b"type ");
-                } else if import.has_clause() && original.is_some_and(|it| it.is_deferred()) {
-                    out.extend_from_slice(b"defer ");
+                } else if let Some(phase) = import.phase() {
+                    out.extend_from_slice(phase.as_bytes());
+                    out.push(b' ');
                 }
                 if let Some(name) = import.name {
                     out.extend_from_slice(self.file.slice(name.span()));

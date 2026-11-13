@@ -930,15 +930,16 @@ impl<'a> Checks<'a, '_> {
             }
         }
         // In `import defer * as a from "a"`, acorn reads `defer` as the default import's name.
-        for raw in file.hir.imports.iter().filter(|it| it.is_deferred) {
+        let has_phase = |it: &&hir::Import| it.phase != hir::ImportPhase::Evaluation;
+        for raw in file.hir.imports.iter().filter(has_phase) {
             if !self.is_babel {
                 self.unexpected(self.after_token(raw.clause_start));
                 continue;
             }
             // `import defer * as a from "a"`, `import source a from "a"`
             let (has_default, has_namespace) = (!raw.default.is_none(), !raw.namespace.is_none());
-            let is_valid = match self.token_at(raw.clause_start) {
-                b"source" => has_default && !has_namespace,
+            let is_valid = match raw.phase {
+                hir::ImportPhase::Source => has_default && !has_namespace,
                 _ => has_namespace && !has_default,
             };
             if !is_valid || raw.has_named_imports {

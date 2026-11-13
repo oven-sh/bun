@@ -941,6 +941,7 @@ impl Rc<'_, '_> {
                     has_only_severity: true,
                     yields: false,
                     defaults: Vec::new(),
+                    written: None,
                 });
             }
         }

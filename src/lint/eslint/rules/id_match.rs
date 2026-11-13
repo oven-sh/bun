@@ -109,8 +109,8 @@ fn is_key_of_import_attribute<'a>(prop: Prop<'a>, name: Name<'a>, object: Expr<'
 fn resolves_to(reference: Reference<'_>, global: &GlobalVariable<'_>) -> bool {
     reference.symbol().is_none()
         && (!global.is_only_in_lib
-            || (reference.is_value() && global.is_value)
-            || (reference.is_type() && global.is_type))
+            || (reference.is_value() && global.accepts(false))
+            || (reference.is_type() && global.accepts(true)))
 }
 
 /// ESLint's `isReferenceToGlobalVariable`: the user has no control over the name.

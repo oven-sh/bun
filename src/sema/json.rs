@@ -2,7 +2,7 @@
 //! the shared parser.
 
 use crate::atom::Interner;
-use crate::check::spans::{Spans, skip_trivia};
+use crate::check::spans::Spans;
 use crate::config_options::Declaration;
 use crate::hir::{
     Diagnostic, DiagnosticKind, ExprId, ExprKind, File, PropId, PropKind, StmtKind, UnOp,
@@ -360,14 +360,16 @@ pub fn validate_json(hir: &mut File, text: &[u8]) {
                         continue;
                     }
                     if !is_double_quoted(prop.pos) {
-                        // `getErrorSpanForNode`: a missing name's position is before the trivia.
-                        let start = skip_trivia(spans.text, prop.pos as usize) as u32;
-                        json_errors.push((start, 1327, spans.prop_name(p) as u32));
+                        json_errors.push((prop.pos, 1327, spans.prop_name(p) as u32));
                     }
                     prop.value
                 }
             };
-            let start = start_of(hir, e);
+            // `getErrorSpanForNode`: the trivia after a missing node isn't skipped.
+            let start = match hir[e].kind {
+                ExprKind::Missing if !is_parenthesized(hir, e) => spans.expr(e) as u32,
+                _ => start_of(hir, e),
+            };
             let code = match hir[e].kind {
                 _ if is_parenthesized(hir, e) => 1328,
                 ExprKind::True | ExprKind::False | ExprKind::Null | ExprKind::Number(_) => continue,
@@ -565,6 +567,11 @@ impl<'s> TsConfigSourceFile<'s> {
             .filter(|&root| root_expression(&self.hir) == Some(root))
     }
 
+    /// The span of the first statement's expression.
+    pub(crate) fn root_expression_span(&self) -> Option<(u32, u32)> {
+        root_expression(&self.hir).map(|root| self.span(root))
+    }
+
     /// `ForEachPropertyAssignment`: returns the first property of `object` named `key` or `key2`. An empty `key2` is
     /// matched like any other name.
     pub fn property(&self, object: ExprId, key: &[u8], key2: Option<&[u8]>) -> Option<PropId> {
@@ -591,6 +598,11 @@ impl<'s> TsConfigSourceFile<'s> {
             let prop_name = self.try_get_text_of_property_name(p);
             prop_name.is_some_and(|prop_name| prop_name == key || key2 == Some(prop_name))
         })
+    }
+
+    /// `IsObjectLiteralExpression`
+    pub(crate) fn is_object_literal(&self, e: ExprId) -> bool {
+        matches!(self.hir[e].kind, ExprKind::Object(_)) && !is_parenthesized(&self.hir, e)
     }
 
     pub fn initializer(&self, p: PropId) -> ExprId {

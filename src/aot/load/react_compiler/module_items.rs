@@ -2,9 +2,9 @@ use bun_core::fmt::{ItoaBuf, itoa};
 use bun_react_compiler::{JsxImportKind, ObservedSymbol, SymbolOrigin};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::hir::{
-    Call, Chain, ExprId, ExprKind, File, FileBuilder, Flags, Import, ImportId, ImportSpec, Keyword,
-    ListAt, PatId, PatKind, ResolutionMode, StmtId, StmtKind, TextRange, TypeNodeId, TypeNodeKind,
-    VarDecl, VarKind,
+    Call, Chain, ExprId, ExprKind, File, FileBuilder, Flags, Import, ImportId, ImportPhase,
+    ImportSpec, Keyword, ListAt, PatId, PatKind, ResolutionMode, StmtId, StmtKind, TextRange,
+    TypeNodeId, TypeNodeKind, VarDecl, VarKind,
 };
 use bun_sema::import_sites::JsxImport;
 use bun_sema::module_format::ModuleFormat;
@@ -196,7 +196,7 @@ pub(crate) fn write_import(
         named,
         has_named_imports: true,
         type_only: false,
-        is_deferred: false,
+        phase: ImportPhase::Evaluation,
         mode: ResolutionMode::None,
         stmt: StmtId::NONE,
         attributes: ExprId::NONE,

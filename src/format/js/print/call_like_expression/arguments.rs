@@ -441,22 +441,19 @@ fn should_group_last_argument_impl<'a>(
     // Don't group if the previous argument is of the same kind.
     if let Some(penultimate) = penultimate
         && !is_cast_target(penultimate, f)
-        && matches!(
-            (penultimate.as_ast_nodes(), last.as_ast_nodes()),
+        && match (penultimate.as_ast_nodes(), last.as_ast_nodes()) {
             (AstNodes::ObjectExpression(_), AstNodes::ObjectExpression(_))
-                | (AstNodes::ArrayExpression(_), AstNodes::ArrayExpression(_))
-                | (AstNodes::TSAsExpression(_), AstNodes::TSAsExpression(_))
-                | (
-                    AstNodes::TSSatisfiesExpression(_),
-                    AstNodes::TSSatisfiesExpression(_)
-                )
-                | (AstNodes::TSTypeAssertion(_), AstNodes::TSTypeAssertion(_))
-                | (
-                    AstNodes::ArrowFunctionExpression(_),
-                    AstNodes::ArrowFunctionExpression(_)
-                )
-                | (AstNodes::Function(_), AstNodes::Function(_))
-        )
+            | (AstNodes::ArrayExpression(_), AstNodes::ArrayExpression(_))
+            | (AstNodes::TSAsExpression(_), AstNodes::TSAsExpression(_))
+            | (AstNodes::TSSatisfiesExpression(_), AstNodes::TSSatisfiesExpression(_))
+            | (AstNodes::ArrowFunctionExpression(_), AstNodes::ArrowFunctionExpression(_))
+            | (AstNodes::Function(_), AstNodes::Function(_)) => true,
+            // oxfmt groups `f(<A>{}, <B>{ b })`.
+            (AstNodes::TSTypeAssertion(_), AstNodes::TSTypeAssertion(_)) => {
+                !f.options().flavor.is_oxfmt()
+            }
+            _ => false,
+        }
     {
         return false;
     }

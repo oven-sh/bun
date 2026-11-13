@@ -89,6 +89,12 @@ impl Context<'_, '_> {
                     let it = Text { path, text, ..file };
                     self.verify_with_eslint(loaded, it, config).0
                 }
+                // Installing `eslint` wouldn't help.
+                None if loaded.flavor == Flavor::EslintRc => {
+                    let file = (path.to_vec(), loaded.flavor);
+                    self.needs_eslint.lock().push(file);
+                    LintResult::default()
+                }
                 None => {
                     self.unread.lock().push(path.to_vec());
                     LintResult::default()

@@ -259,9 +259,17 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
                 self.declarations_of_member(*file, Decl::Property(*property))
             }
             PropSource::Symbol(symbol) => self.declarations_of_symbol(*symbol),
-            PropSource::Intersected(_, parts)
-            | PropSource::Copy(_, parts, _)
-            | PropSource::ReverseMapped(_, parts) => {
+            PropSource::Intersected(_, parts) => {
+                let mut declarations = Vec::new();
+                for part in parts.iter() {
+                    append_if_unique(
+                        &mut declarations,
+                        self.declarations_of_property(part, depth),
+                    );
+                }
+                declarations
+            }
+            PropSource::Copy(_, parts, _) | PropSource::ReverseMapped(_, parts) => {
                 let mut declarations = Vec::new();
                 for part in parts.iter() {
                     declarations.extend(self.declarations_of_property(part, depth));
@@ -480,28 +488,16 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
         at: ScopeId,
     ) -> (String, Vec<(FileId, Declaration)>) {
         let mut declarations = Vec::new();
-        let mut first_value_declaration = None;
-        let mut has_non_uniform_value_declaration = false;
         for prop in props {
             let own = self.declarations_of_property(prop, 0);
-            match (first_value_declaration, own.first()) {
-                (None, Some(&first)) => first_value_declaration = Some(first),
-                (Some(known), Some(&first)) if known != first => {
-                    has_non_uniform_value_declaration = true;
-                }
-                _ => {}
-            }
-            declarations.extend(own);
+            append_if_unique(&mut declarations, own);
         }
         let Some(first) = props.first() else {
             return (String::new(), declarations);
         };
         let name = crate::messages::text(&self.c.prop_to_string(first));
-        let parent = if has_non_uniform_value_declaration {
-            None
-        } else {
-            self.parent_of_property(first)
-        };
+        let declared = Checker::prop_with_shared_value_declaration(props.iter().copied());
+        let parent = declared.and_then(|declared| self.parent_of_property(declared));
         (self.qualified_by_parent(parent, name, at), declarations)
     }
 
@@ -572,6 +568,18 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
             }
         }
         name
+    }
+}
+
+/// `core.AppendIfUnique` for each of `more`.
+fn append_if_unique(
+    declarations: &mut Vec<(FileId, Declaration)>,
+    more: Vec<(FileId, Declaration)>,
+) {
+    for declaration in more {
+        if !declarations.contains(&declaration) {
+            declarations.push(declaration);
+        }
     }
 }
 

@@ -52,7 +52,7 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
                     Some(name) => name.to_vec(),
                     None => RuleId::Known(rule.entry.meta).to_vec(),
                 };
-                (id, rule.severity, &rule.options[..])
+                (id, rule.severity, rule.written_options())
             }
             Entry::Js(rule) => {
                 let id = rule.configured.rule.id.to_vec();

@@ -316,7 +316,7 @@ fn has_sites_that_need_folding(hir: &File<'_>, atoms: &Interner<'_>) -> bool {
         ExprKind::Ident(name) => names_loader(name),
         ExprKind::String(text) => text.is_some() && is_test_module(atoms.bytes(text)),
         ExprKind::Dot { name, .. } => names_loader(name),
-        ExprKind::ImportCall { args } => !is_string(hir.ids(args).next()),
+        ExprKind::ImportCall { args, .. } => !is_string(hir.ids(args).next()),
         ExprKind::Call(call) => {
             let callee = hir.skip_type_assertions(hir[call].callee);
             let Some((object, MemberKey::Name(name))) = hir.member_key(callee) else {

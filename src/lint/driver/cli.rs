@@ -68,6 +68,7 @@ const OUTPUT: &[Param] = &[
     ),
     clap::param!("-o, --output-file <path>        Write the report to a file"),
     clap::param!("--quiet                         Report errors only"),
+    clap::param!("--verbose                       Print every note"),
     clap::param!(
         "--max-warnings <n>              Exit with 1 if there are more warnings than this"
     ),
@@ -512,6 +513,7 @@ pub struct Options {
     pub stdin: bool,
     pub stdin_filename: Option<Vec<u8>>,
     pub quiet: bool,
+    pub verbose: bool,
     /// `-1` means no limit.
     pub max_warnings: i64,
     pub output_file: Option<Vec<u8>>,
@@ -634,6 +636,7 @@ impl Default for Options {
             stdin: false,
             stdin_filename: None,
             quiet: false,
+            verbose: false,
             max_warnings: -1,
             output_file: None,
             format: None,
@@ -851,6 +854,7 @@ impl Options {
             b"stdin" => self.stdin = is_on,
             b"stdin-filename" => self.stdin_filename = owned(),
             b"quiet" => self.quiet = is_on,
+            b"verbose" => self.verbose = is_on,
             b"max-warnings" => match std::str::from_utf8(text)
                 .ok()
                 .and_then(|it| it.parse().ok())

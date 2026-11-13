@@ -26,6 +26,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             self.options,
             &self.atoms,
             key.path,
+            key.path,
             false,
             specifies_esm,
             Ok(parse),

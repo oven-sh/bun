@@ -16,6 +16,7 @@
 
 use std::alloc::{Allocator, Global, Layout};
 use std::cell::Cell;
+use std::hint::cold_path;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ops::Range;
@@ -109,6 +110,7 @@ impl<E, const FIRST: u32, A: Allocator + Clone> Chunks<E, FIRST, A> {
         let Located { chunk, offset } = Self::locate(index);
         let mut base = self.bases[chunk].load(Ordering::Acquire);
         if base.is_null() {
+            cold_path();
             assert!(is_in_range(), "the index is out of range");
             base = self.install(chunk, make);
         }

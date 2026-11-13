@@ -549,7 +549,14 @@ impl<'p, 's> Checker<'p, 's> {
             NodeData::Param(p) if self.is_this_parameter(file, p) => {
                 return Some(self.type_of_this_parameter(file, bound.param_fn[p.idx()]));
             }
-            NodeData::Param(p) => return Some(self.type_of_param(file, p)),
+            NodeData::Param(p) => {
+                // `bindParameter` declares the property last, so that's the symbol of a parameter property.
+                let property = bound.symbol_of_declaration(Decl::ParameterProperty(p));
+                return Some(match property.is_some() {
+                    true => self.type_of_symbol(self.files().sym(file, property)),
+                    false => self.type_of_param(file, p),
+                });
+            }
             NodeData::PatProp(p) => identifier_pattern(hir[p].value)?,
             NodeData::PatElem(p) => identifier_pattern(hir[p].pat)?,
             _ => return None,
@@ -646,27 +653,13 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return false;
         }
-        // `GetLeftmostExpression(left, stopAtCallExpressions)`
+        // `GetLeftmostAccessExpression`
         let mut at = left;
-        loop {
-            let next = match hir.checked_kind(at) {
-                ExprKind::Unary {
-                    op: UnOp::PostInc | UnOp::PostDec,
-                    operand,
-                } => operand,
-                ExprKind::Binary { left, .. } => left,
-                ExprKind::Assign { target, .. } => target,
-                ExprKind::Cond { test, .. } => test,
-                ExprKind::TaggedTemplate(call) => hir[call].callee,
-                ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } => expr,
-                ExprKind::AsConst(x) | ExprKind::NonNull(x) => x,
-                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-                _ => break,
-            };
-            if is_parenthesized(self.hir(file), next) {
+        while let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir.checked_kind(at) {
+            if is_parenthesized(self.hir(file), obj) {
                 return false;
             }
-            at = next;
+            at = obj;
         }
         let ExprKind::Ident(name) = hir[at].kind else {
             return false;

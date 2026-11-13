@@ -71,23 +71,7 @@ impl ExecCommand {
         // reborrow `&'static mut` for the duration of the interpreter run (no
         // other live `&mut` to the same `MiniEventLoop` on this thread).
         let mini_ref = unsafe { &mut *mini };
-        let code = match Interpreter::init_and_run_from_source(
-            ctx,
-            mini_ref,
-            script_path,
-            &script,
-            None,
-        ) {
-            Ok(c) => c,
-            Err(err) => {
-                Output::err(
-                    err,
-                    "failed to run script <b>{}<r>",
-                    (BStr::new(script_path),),
-                );
-                Global::exit(1);
-            }
-        };
+        let code = Interpreter::init_and_run_from_source(ctx, mini_ref, script_path, &script, None);
 
         Global::exit(u32::from(code));
     }

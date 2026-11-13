@@ -208,8 +208,6 @@ pub enum Error {
     #[error(transparent)]
     ShellLexer(#[from] bun_shell_parser::LexerError),
     #[error(transparent)]
-    ShellParse(#[from] bun_shell_parser::ParseError),
-    #[error(transparent)]
     Shell(#[from] bun_shell_parser::Error),
     #[error(transparent)]
     Jsc(#[from] bun_jsc::CrateError),
@@ -442,7 +440,6 @@ impl Error {
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::ShellLexer(e) => <&'static str>::from(e),
-            Self::ShellParse(e) => <&'static str>::from(e),
             Self::Shell(e) => e.name(),
             Self::Jsc(e) => e.name(),
             Self::Bundler(e) => e.name(),

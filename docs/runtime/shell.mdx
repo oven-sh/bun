@@ -122,6 +122,24 @@ $.throws(false);
 await $`something-that-may-fail`; // No exception thrown
 ```
 
+### Parse errors
+
+A script that Bun Shell cannot parse never runs. The `$` tag throws a `SyntaxError` with `code: "ERR_SHELL_PARSE"` as soon as it is called, before it returns a promise. `.nothrow()` and `.catch()` do not apply, because no command ran.
+
+```js
+import { $ } from "bun";
+
+try {
+  await $`echo (`;
+} catch (err) {
+  if (err.code === "ERR_SHELL_PARSE") {
+    console.log(`Script does not parse: ${err.message}`);
+  }
+}
+```
+
+When the script comes from the command line (`bun exec`, `bun run` with `--shell=bun`, or a `.sh` file), the process exits with status 2, the same status `sh` and `bash` report for a syntax error. A command that ran and failed keeps its own status.
+
 ---
 
 ## Redirection

@@ -404,37 +404,63 @@ impl ShellArgs {
 /// Only used by the construction path (`Interpreter::init`).
 pub(crate) type ShellResult<T> = Result<T, ShellErr>;
 
+/// A script that does not parse. `msg` is one line per lexer or parser error.
+#[derive(Clone, Copy)]
+pub(crate) struct ParseFailure<'a> {
+    pub(crate) msg: &'a [u8],
+}
+
+impl ParseFailure<'_> {
+    /// The CLI exit status for a script that does not parse, the same as `sh` and `bash`.
+    pub(crate) const EXIT_CODE: ExitCode = 2;
+
+    /// Throw a `SyntaxError` with `code: "ERR_SHELL_PARSE"`.
+    pub(crate) fn throw(&self, global: &bun_jsc::JSGlobalObject) -> bun_jsc::JsError {
+        global
+            .err(
+                bun_jsc::ErrorCode::SHELL_PARSE,
+                format_args!("{}", bstr::BStr::new(self.msg)),
+            )
+            .throw()
+    }
+}
+
 impl Interpreter {
     /// Lex `src` (ASCII or Unicode), build a `Parser`, and return the root
     /// `ast::Script`. Tokens and AST nodes are bump-allocated into `arena`.
-    ///
-    /// On lex error, `out_lex_err` is populated and `ParseError::Lex` returned
-    /// so the caller can `combineErrors()` for diagnostics; on parse error
-    /// `out_parse_err` is populated likewise.
     pub(crate) fn parse<'a>(
         arena: &'a bun_alloc::Arena,
         src: &'a [u8],
         jsobjs_len: u32,
         jsstrings_to_escape: &'a [bun_core::String],
-        out_parser: &mut Option<bun_shell_parser::Parser<'a>>,
-        out_lex_result: &mut Option<bun_shell_parser::LexResult<'a>>,
-    ) -> crate::Result<bun_shell_parser::ast::Script<'a>> {
-        use crate::shell::shell_body::{LexerAscii, LexerUnicode, ParseError, Parser};
-        let lex_result = if bun_core::is_all_ascii(src) {
+    ) -> Result<bun_shell_parser::ast::Script<'a>, ParseFailure<'a>> {
+        use crate::shell::shell_body::{LexerAscii, LexerUnicode, Parser};
+        let (lexed, lex_result) = if bun_core::is_all_ascii(src) {
             let mut lexer = LexerAscii::new(arena, src, jsstrings_to_escape, jsobjs_len);
-            lexer.lex().map_err(crate::Error::from)?;
-            lexer.get_result()
+            let lexed = lexer.lex();
+            (lexed, lexer.get_result())
         } else {
             let mut lexer = LexerUnicode::new(arena, src, jsstrings_to_escape, jsobjs_len);
-            lexer.lex().map_err(crate::Error::from)?;
-            lexer.get_result()
+            let lexed = lexer.lex();
+            (lexed, lexer.get_result())
         };
-        if !lex_result.errors.is_empty() {
-            *out_lex_result = Some(lex_result);
-            return Err(ParseError::Lex.into());
+        // A fatal lexer error is also recorded in `errors`.
+        debug_assert!(lexed.is_ok() || !lex_result.errors.is_empty());
+        if lexed.is_err() || !lex_result.errors.is_empty() {
+            return Err(ParseFailure {
+                msg: lex_result.combine_errors(arena),
+            });
         }
-        *out_parser = Some(Parser::new(arena, lex_result));
-        Ok(out_parser.as_mut().unwrap().parse()?)
+        let mut parser = Parser::new(arena, lex_result);
+        match parser.parse() {
+            Ok(script) => Ok(script),
+            Err(_) => {
+                debug_assert!(!parser.errors.is_empty());
+                Err(ParseFailure {
+                    msg: parser.combine_errors(),
+                })
+            }
+        }
     }
 
     /// Builds the root `ShellExecEnv` (export env from the event loop's
@@ -596,7 +622,7 @@ impl Interpreter {
         mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop,
         path: &[u8],
         src: &[u8],
-    ) -> crate::Result<ExitCode> {
+    ) -> ExitCode {
         Self::init_and_run_impl(ctx, mini, bun_paths::basename(path), src, None, false)
     }
 
@@ -605,16 +631,14 @@ impl Interpreter {
     /// `MiniEventLoop`, drive it to completion via `mini.tick()`, and return
     /// the script's exit code. `path_for_errors` is only used in diagnostics.
     ///
-    /// On any init/parse/run error this prints to stderr and `exit(1)`s
-    /// directly; the `Result` only carries lexer/parser errors that escaped
-    /// without a diagnostic.
+    /// A parse failure exits with [`ParseFailure::EXIT_CODE`], an init or run error with 1.
     pub(crate) fn init_and_run_from_source(
         ctx: &mut bun_options_types::context::ContextData,
         mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop,
         path_for_errors: &[u8],
         src: &[u8],
         cwd: Option<&[u8]>,
-    ) -> crate::Result<ExitCode> {
+    ) -> ExitCode {
         Self::init_and_run_impl(ctx, mini, path_for_errors, src, cwd, true)
     }
 
@@ -629,7 +653,7 @@ impl Interpreter {
         src: &[u8],
         cwd: Option<&[u8]>,
         from_source: bool,
-    ) -> crate::Result<ExitCode> {
+    ) -> ExitCode {
         if from_source {
             bun_analytics::features::standalone_shell.fetch_add(1, Ordering::Relaxed);
         }
@@ -639,34 +663,23 @@ impl Interpreter {
         let mut shargs = ShellArgs::init();
 
         // ── parse ──────────────────────────────────────────────────────────
-        // `out_parser`/`out_lex_result` borrow `shargs.__arena`, so they're
-        // scoped to a block that ends before `shargs.set_script_ast` below.
+        // The parse result borrows `shargs.__arena` until `set_script_ast` takes it.
         let arena_ptr: *const bun_alloc::Arena = shargs.arena();
         let script = {
             // SAFETY: `shargs` lives on this stack frame for the whole block;
-            // arena is not moved/dropped while `out_parser`/`out_lex_result`
-            // borrow it.
+            // arena is not moved/dropped while the parse result borrows it.
             let arena = unsafe { &*arena_ptr };
-            let mut out_parser: Option<bun_shell_parser::Parser<'_>> = None;
-            let mut out_lex_result: Option<bun_shell_parser::LexResult<'_>> = None;
-            match Self::parse(arena, src, 0, &[], &mut out_parser, &mut out_lex_result) {
+            match Self::parse(arena, src, 0, &[]) {
                 Ok(s) => s,
-                Err(err) => {
+                Err(failure) => {
                     let what = if from_source { "script " } else { "" };
-                    let errstr: &[u8] = if let Some(lex) = out_lex_result.as_ref() {
-                        lex.combine_errors(arena)
-                    } else if let Some(p) = out_parser.as_mut() {
-                        p.combine_errors()
-                    } else {
-                        return Err(err);
-                    };
                     bun_core::pretty_errorln!(
                         "<r><red>error<r>: Failed to run {}<b>{}<r> due to error <b>{}<r>",
                         what,
                         bstr::BStr::new(label),
-                        bstr::BStr::new(errstr),
+                        bstr::BStr::new(failure.msg),
                     );
-                    bun_core::Global::exit(1);
+                    bun_core::Global::exit(u32::from(ParseFailure::EXIT_CODE));
                 }
             }
         };
@@ -696,7 +709,7 @@ impl Interpreter {
         // ── tick until done ────────────────────────────────────────────────
         mini.tick(core::ptr::null_mut(), |_ctx| interp.flags.get().done());
 
-        Ok(interp.exit_code.get().expect("exit_code set by finish()"))
+        interp.exit_code.get().expect("exit_code set by finish()")
     }
 }
 

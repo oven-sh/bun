@@ -12,8 +12,6 @@ pub enum Error {
     Unexpected,
     #[error("Unknown")]
     Unknown,
-    #[error("Lex")]
-    Lex,
     #[error("NestingTooDeep")]
     NestingTooDeep,
     #[error(transparent)]
@@ -30,7 +28,6 @@ impl Error {
             Self::Expected => "Expected",
             Self::Unexpected => "Unexpected",
             Self::Unknown => "Unknown",
-            Self::Lex => "Lex",
             Self::NestingTooDeep => "NestingTooDeep",
             Self::Alloc(_) => "OutOfMemory",
         }

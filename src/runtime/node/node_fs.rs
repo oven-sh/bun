@@ -10496,10 +10496,7 @@ impl ReaddirEntry for Buffer {
     }
 }
 
-// There are two distinct error→errno tables: rmdir-recursive and
-// rm-recursive. An earlier draft collapsed them into one, which silently
-// mapped AccessDenied→EPERM for `rm` (Node returns EACCES there). Split back
-// out per call site. The non-recursive `rm` reports the unlink errno as is.
+// `rmdir` recursive (zig_delete_tree).
 fn map_anyerror_to_errno(err: &crate::Error) -> E {
     match err.name() {
         "AccessDenied" => E::EPERM,

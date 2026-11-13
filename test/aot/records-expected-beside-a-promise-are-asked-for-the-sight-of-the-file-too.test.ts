@@ -133,8 +133,13 @@ async function walkChecks(neighbor?: string) {
 // A debug build of Bun is 1.8 GB, and so is each executable that it writes: there one program follows another.
 const declared = without("testaot") ? test.skip : isDebug ? testOneByOne : test.concurrent;
 let walkOfAlone: Promise<string[]> | undefined;
+let aloneFailed = false;
 /** The program without a neighbor is built once. The first test starts it, and every other one holds its own program against it. */
-const walkedAlone = () => (walkOfAlone ??= walkChecks());
+const walkedAlone = () =>
+  (walkOfAlone ??= walkChecks().catch(error => {
+    aloneFailed = true;
+    throw error;
+  }));
 
 declared(
   "records expected beside a promise are asked for the sight of the file too: settle() reads both names off the record that it writes",
@@ -150,6 +155,10 @@ declared(
 
 declared.each(Object.keys(neighbors))(
   "no neighbor has a say: beside %s every unit of checks.js reads as it reads alone",
-  async neighbor => expect(await walkChecks(neighbor)).toEqual(await walkedAlone()),
+  async neighbor => {
+    // Where the program without a neighbor has failed, this one is not built: it would be held against nothing.
+    if (aloneFailed) await walkedAlone();
+    expect(await walkChecks(neighbor)).toEqual(await walkedAlone());
+  },
   600_000,
 );

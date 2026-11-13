@@ -360,13 +360,24 @@ impl<'a> LinkerContext<'a> {
     /// An `import()` — or a split `require()` — whose target is a
     /// chunk entry point: the record is resolved at runtime against the
     /// target's chunk instead of binding to a wrapper.
+    ///
+    /// An `import()` of the importing file binds to the wrapper of that file when
+    /// the file has one. A file without a wrapper has nothing to bind to: the call
+    /// loads the file's own chunk. Scan step 2 sets the last wrappers, so that answer
+    /// is final only after it.
     pub(crate) fn is_external_dynamic_import(
         &self,
         record: &ImportRecord,
         source_index: u32,
     ) -> bool {
         use crate::linker_graph::FileColumns as _;
-        if !self.graph.code_splitting || record.source_index.get() == source_index {
+        if !self.graph.code_splitting {
+            return false;
+        }
+        if record.source_index.get() == source_index
+            && (record.kind != ImportKind::Dynamic
+                || self.graph.meta.items_flags()[source_index as usize].wrap != WrapKind::None)
+        {
             return false;
         }
         let crosses_chunk = match record.kind {

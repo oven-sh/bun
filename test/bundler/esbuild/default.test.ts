@@ -3816,8 +3816,7 @@ describe.concurrent("bundler", () => {
         import('./a')
         import('./b')
         import('./c')
-        // Commented out because esbuild doesn't handle this https://github.com/evanw/esbuild/issues/3043
-        // import('./entry')
+        import('./entry')
         console.log(await 1)
       `,
       "/a.js": `import './b'`,

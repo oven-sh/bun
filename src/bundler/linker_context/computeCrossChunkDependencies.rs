@@ -38,7 +38,9 @@ pub(crate) fn compute_cross_chunk_dependencies<'a>(
         // Derive `ctx_ptr` from the `&mut` (not `from_ref`) so the raw carries `c`'s own
         // Unique provenance: under Stacked Borrows the subsequent `split_mut` reborrows
         // are children of that tag, so `&*ctx_ptr` in `walk()` (which reads
-        // `c.graph.files.{ptrs,len}` via `is_external_dynamic_import`) stays valid.
+        // `c.graph.files.{ptrs,len}` via `is_external_dynamic_import`, and the
+        // `flags` column of `c.graph.meta` for an `import()` of the importing file;
+        // `walk()` only reads that column, through `deps.flags`) stays valid.
         // `from_ref(c)` would push a SharedRO tag that the `&mut c.graph.X` reborrows
         // pop, leaving the raw dangling under SB.
         //

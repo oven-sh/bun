@@ -4964,26 +4964,100 @@ describe.concurrent("a test file's module mocks are undone when it ends, even wi
   };
   const next = `
     import { expect, test } from "bun:test";
-    import { seen } from "./user.js";
+    import * as user from "./user.js";
     test("the next file gets the original", async () => {
-      expect([seen, (await import("./k.js")).x]).toEqual(["real/slow", "real"]);
+      const k = await import("./k.js");
+      expect([user.seen, k.x]).toEqual(["real/slow", "real"]);
       await globalThis.settle?.();
-      expect([(await import("./user.js")).seen, (await import("./k.js")).x]).toEqual(["real/slow", "real"]);
+      const [userAgain, kAgain] = [await import("./user.js"), await import("./k.js")];
+      expect([userAgain === user, kAgain === k, userAgain.seen, kAgain.x]).toEqual([true, true, "real/slow", "real"]);
       expect(globalThis.events).toEqual(EVENTS);
     });
   `;
+  // Its test ends while the factory of k.js waits. The next file lets the factory go on with globalThis.settle().
+  const leaves = (factory: string, imported = "./user.js") => `
+    import { test, vi } from "bun:test";
+    test("leaves an import of a mock whose factory has not settled", async () => {
+      const events = (globalThis.events = []);
+      const called = Promise.withResolvers(), gate = Promise.withResolvers();
+      const settled = () => (called.resolve(), gate.promise.then(() => events.push("factory settled")));
+      vi.doMock("./k.js", ${factory});
+      void import("${imported}").then(it => events.push("import settled: " + (it.seen ?? it.x)), error => events.push("import rejected: " + error.message));
+      await called.promise;
+      globalThis.settle = async () => {
+        gate.resolve();
+        await new Promise(resolve => setImmediate(resolve));
+      };
+    });
+  `;
 
-  test.each(["", "--rerun-each=2"])("a factory that is still running is not waited for: bun test %s", async flags => {
+  test.each(["", "--rerun-each=2"])(
+    "an import behind a factory that is still running gets the mock when the factory returns it: bun test %s",
+    async flags => {
+      await expectFixturesToPass(
+        {
+          ...modules,
+          "a.test.js": leaves(`async () => (await settled(), { x: "mock" })`),
+          "b.test.js": next.replace("EVENTS", `["factory settled", "import settled: mock/slow"]`),
+        },
+        flags ? 4 : 2,
+        ["./a.test.js", "./b.test.js", ...flags.split(" ").filter(Boolean)],
+      );
+    },
+  );
+
+  test("an import behind a running factory that takes the original gets the mock too", async () => {
+    await expectFixturesToPass(
+      {
+        ...modules,
+        "a.test.js": leaves(`async original => (await original(), await settled(), { x: "mock" })`),
+        "b.test.js": next.replace("EVENTS", `["factory settled", "import settled: mock/slow"]`),
+      },
+      2,
+      ["./a.test.js", "./b.test.js"],
+    );
+  });
+
+  test.each([
+    ["its factory still runs", `async () => (called.resolve(), await gate.promise, { x: "mock of b" })`],
+    ["its factory has returned", `() => (called.resolve(), { x: "mock of b" })`],
+  ])("the late mock and the next file's mock of the same module stay apart: %s", async (_, factory) => {
+    await expectFixturesToPass(
+      {
+        ...modules,
+        "a.test.js": leaves(`async () => (await settled(), { x: "mock" })`),
+        "b.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test("the next file mocks the module too", async () => {
+            const called = Promise.withResolvers(), gate = Promise.withResolvers();
+            vi.doMock("./k.js", ${factory});
+            const loading = import("./user.js");
+            await called.promise;
+            await globalThis.settle();
+            expect(globalThis.events).toEqual(["factory settled", "import settled: mock/slow"]);
+            gate.resolve();
+            const user = await loading;
+            expect([user.seen, (await import("./user.js")) === user, (await import("./k.js")).x]).toEqual(["mock of b/slow", true, "mock of b"]);
+          });
+        `,
+      },
+      2,
+      ["./a.test.js", "./b.test.js"],
+    );
+  });
+
+  test("the promise of mock.module() over a loaded module settles when the factory returns after the file, and patches nothing", async () => {
     await expectFixturesToPass(
       {
         ...modules,
         "a.test.js": `
-          import { test, vi } from "bun:test";
-          test("leaves an import of a mock whose factory has not settled", async () => {
+          import { mock, test } from "bun:test";
+          import * as k from "./k.js";
+          test("leaves a mock whose factory has not settled", async () => {
             const events = (globalThis.events = []);
             const called = Promise.withResolvers(), gate = Promise.withResolvers();
-            vi.doMock("./k.js", async () => (called.resolve(), await gate.promise, events.push("factory settled"), { x: "mock" }));
-            void import("./user.js").then(() => events.push("import settled"), () => events.push("import rejected"));
+            void mock.module("./k.js", async () => (called.resolve(), await gate.promise, events.push("factory settled"), { x: "mock" }))
+              .then(() => events.push("mock.module() settled: " + k.x));
             await called.promise;
             globalThis.settle = async () => {
               gate.resolve();
@@ -4991,11 +5065,61 @@ describe.concurrent("a test file's module mocks are undone when it ends, even wi
             };
           });
         `,
+        "b.test.js": next.replace("EVENTS", `["factory settled", "mock.module() settled: real"]`),
+      },
+      2,
+      ["./a.test.js", "./b.test.js"],
+    );
+  });
+
+  // JSC stores the failure of a load under the key of its first module, and gives an import() of a module what the key of that module has once it is
+  // fetched. The next file may have loaded either key. So these imports stay pending, as before.
+  test.each([
+    ["the factory throws", `async () => { await settled(); throw new Error("late"); }`, "./user.js"],
+    ["the factory returns no object", `async () => (await settled(), 1)`, "./user.js"],
+    ["the import asked for the mocked module itself", `async () => (await settled(), { x: "mock" })`, "./k.js"],
+  ])("an import behind a factory that is still running stays pending: %s", async (_, factory, imported) => {
+    await expectFixturesToPass(
+      {
+        ...modules,
+        "a.test.js": leaves(factory, imported),
         "b.test.js": next.replace("EVENTS", `["factory settled"]`),
       },
-      flags ? 4 : 2,
-      ["./a.test.js", "./b.test.js", ...flags.split(" ").filter(Boolean)],
+      2,
+      ["./a.test.js", "./b.test.js"],
     );
+  });
+
+  test("a factory of a file that never finished loading stays abandoned", async () => {
+    using dir = tempDir("mock-module-undo", {
+      ...modules,
+      "a.test.js": `
+        import { test, vi } from "bun:test";
+        const events = (globalThis.events = []);
+        const gate = Promise.withResolvers();
+        globalThis.settle = async () => {
+          gate.resolve();
+          await new Promise(resolve => setImmediate(resolve));
+        };
+        vi.doMock("./k.js", async () => (await gate.promise, events.push("factory settled"), { x: "mock" }));
+        const user = await import("./user.js");
+        events.push("the file goes on: " + user.seen);
+        test("never runs", () => {});
+      `,
+      "b.test.js": next.replace("EVENTS", `["factory settled"]`),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./a.test.js", "./b.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('a.test.js" never finished loading');
+    expect(stderr).toContain(" 1 pass\n 1 fail\n 1 error\n");
+    expect(exitCode).toBe(1);
   });
 
   test("a load that has imported a mock has settled before the next file is loaded", async () => {

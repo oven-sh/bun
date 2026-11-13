@@ -372,6 +372,8 @@ bool moduleMockImportsByKey(Zig::GlobalObject*, const String& key);
 String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 String packageImportKey(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
+// import() starts a load at this key: it joins OnLoad::loadRoots, and a mock of the key learns that a load begins at its module.
+void didStartLoadAt(Zig::GlobalObject*, const String& key);
 JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);
 #if ENABLE(AOT)
 // The same for the namespace object of a compiled module. Null for any other object.

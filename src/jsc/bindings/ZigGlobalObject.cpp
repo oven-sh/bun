@@ -4274,8 +4274,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     // Only module mocks need these, and only the end of a test file is sure to clear them.
     if (isImportCall && globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
         globalObject->onLoadPlugins.keyOfImportCall = resolved;
-        if (globalObject->onLoadPlugins.loadRoots.add(resolved).isNewEntry)
-            globalObject->onLoadPlugins.hasNewLoad = true;
+        Bun::didStartLoadAt(globalObject, resolved);
     }
     if (Bun::hasCompiledModules()) [[unlikely]] {
         Bun::willResolveImport(globalObject, resolved, referrer);

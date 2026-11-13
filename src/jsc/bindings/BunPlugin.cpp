@@ -547,6 +547,11 @@ public:
     // Patches are undone newest first: two modules can export one variable (`export *`), and each patch saved what it found there.
     unsigned patchOrder { 0 };
     State state { State::NotCalled };
+    // An import() has asked for the mocked module itself. JSC registers the module of such a load under its key once it is fetched, whatever the key holds by then.
+    bool isLoadRoot { false };
+    // Its test file ended while the factory was running, and a later file shares the registry. The loads that wait for the factory have left the registry.
+    // If the factory returns a mock, they get it. Nothing else of that call reaches them.
+    bool outlivedTestFile { false };
     // Moments (OnLoad::moduleMockSequenceNumber) of the factory call and of the import() that led to it. Kept after the factory has settled.
     uint32_t calledAt { 0 };
     uint32_t requestedAt { 0 };
@@ -953,8 +958,7 @@ static ExportVariable findExportVariable(JSC::JSGlobalObject* globalObject, JSC:
 
 static JSC::JSPromise* importModuleKey(Zig::GlobalObject* globalObject, const String& key)
 {
-    if (globalObject->onLoadPlugins.loadRoots.add(key).isNewEntry)
-        globalObject->onLoadPlugins.hasNewLoad = true;
+    Bun::didStartLoadAt(globalObject, key);
     return Bun::testFileModuleLoader(globalObject)->loadModule(globalObject, JSC::Identifier::fromString(globalObject->vm(), key), nullptr, nullptr, { JSC::ModuleLoadFlag::Evaluate, JSC::ModuleLoadFlag::Dynamic });
 }
 
@@ -2213,6 +2217,7 @@ void JSModuleMock::didFail(Zig::GlobalObject* globalObject, JSValue error)
 #endif
     state = State::NotCalled;
     result.clear();
+    isLoadRoot = false;
     readUninitializedVariable = isHoisted() && addHoistingNote(globalObject->vm(), error);
 #if ENABLE(AOT)
     // In `bun test` a load of the mock itself leaves no entry if the factory fails.
@@ -2433,6 +2438,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockFactoryDidFulfill, (JSC::JSGlobalOb
             mock->abandon(globalObject);
             return {};
         }
+        // JSC would store the failure of that load under the key of its first module, which a later test file may have loaded.
+        if (mock->outlivedTestFile) {
+            mock->abandon(globalObject);
+            return JSValue::encode(jsUndefined());
+        }
         mock->didFail(globalObject, exception->value());
         RETURN_IF_EXCEPTION(scope, {});
         pending->reject(vm, exception->value());
@@ -2449,6 +2459,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockFactoryDidReject, (JSC::JSGlobalObj
     RETURN_IF_EXCEPTION(scope, {});
     if (mock->result.get() != pending)
         return JSValue::encode(jsUndefined());
+    // As in jsFunctionModuleMockFactoryDidFulfill().
+    if (mock->outlivedTestFile) {
+        mock->abandon(defaultGlobalObject(lexicalGlobalObject));
+        return JSValue::encode(jsUndefined());
+    }
     mock->didFail(defaultGlobalObject(lexicalGlobalObject), callframe->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     pending->reject(vm, callframe->argument(0));
@@ -3356,7 +3371,7 @@ struct ModulesToEvict {
     // Patched in place: these stay registered, but their exports changed, so their importers go.
     Vector<String> patchedESModules;
     Vector<String> patchedCommonJSModules;
-    // Mocked modules whose factory was abandoned, so their pending fetch never settles.
+    // Mocked modules whose factory the end of a test file left behind. Their pending fetch never settles, or it settles for a load that has left the registry.
     Vector<String> abandonedModules;
     bool all { false };
     // With `all`: not what Vitest externalizes.
@@ -3708,7 +3723,8 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         }
     }
 
-    // A load stuck behind an abandoned fetch never finishes, so the entries waiting on it don't have to stay.
+    // A load behind such a fetch never finishes, or finishes with the entries it holds itself (JSC keeps them in the contexts of its steps).
+    // So the entries waiting on it don't have to stay.
     Vector<String> neverLoads;
     for (auto& key : evict.abandonedModules) {
         auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key));
@@ -7393,7 +7409,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__didBeginTestFile(Zig::GlobalObje
 #endif
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoModuleMocksOfTestFile(Zig::GlobalObject* globalObject, bool nextLoadSharesModules)
+// laterLoadSharesRegistry: the test file was loaded, and another test file or another run of this one follows in the same module registry.
+extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoModuleMocksOfTestFile(Zig::GlobalObject* globalObject, bool nextLoadSharesModules, bool laterLoadSharesRegistry)
 {
     auto& plugins = globalObject->onLoadPlugins;
     plugins.testFile++;
@@ -7439,7 +7456,14 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
             ownBodyEvaluation->performPromiseThenWithContext(vm, globalObject, didEnd, didEnd, jsUndefined(), moduleMockWith(globalObject, mock, heldUp));
         }
 #endif
-        mock->abandon(globalObject);
+        // A later test file may hold the import() that waits for the factory, so that import gets the mock if the factory returns one. A compiled
+        // run and a mock of a preload keep the rule that the factory is abandoned. So does a mock whose module an import() asked for: see isLoadRoot.
+        bool isCallPending = mock->state == JSModuleMock::State::Running && mock->result && mock->result->inherits<JSC::JSPromise>();
+        if (laterLoadSharesRegistry && isCallPending && !mock->isFromPreload && !mock->isLoadRoot && !vm.hasCompiledCode()) {
+            mock->outlivedTestFile = true;
+            mock->detach(globalObject);
+        } else
+            mock->abandon(globalObject);
 #if ENABLE(AOT)
         bool wasCalledByLoad = plugins.compiledMockFactories.removeAllMatching([&](const auto& factory) { return factory.mock.get() == mock; });
         if (wasCalledByLoad && mock->unevaluatedCompiledModule && isRegisteredModuleMock(globalObject, mock, mock->specifier->tryGetValue().data))
@@ -7772,7 +7796,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__releaseHeldImports(Zig::GlobalOb
     auto& vm = JSC::getVM(globalObject);
     JSC::JSFunction* providesActualFile = nullptr;
     JSC::AOT::didFinishTests(globalObject);
-    // `bun test` abandons the factories that are still running, so loads that wait for them never finish. Except mocks that the program removed: a later load gets the file.
+    // A compiled run abandons the factories that are still running, so loads that wait for them never finish. Except mocks that the program removed: a later load gets the file.
+    // `bun test` did the same. It now lets such a load go on if the factory returns a mock and a later test file follows: see JSMock__undoModuleMocksOfTestFile().
     for (auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
         auto* mock = uncheckedDowncast<JSModuleMock>(running.mock.get());
         String mocked = mock->specifier->tryGetValue().data;
@@ -8846,7 +8871,8 @@ __attribute__((minsize)) static JSC::JSObject* generateSettledModuleMock(JSValue
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Re-mocked or unmocked since the fetch: use the new mock if it has settled, else evict so only the load in flight gets this one.
-    auto* registered = Zig::registeredModuleMock(defaultGlobalObject(globalObject), key);
+    // A load that outlived its test file is not in the registry: the mock and the module that the key has now belong to a later load.
+    auto* registered = mock->outlivedTestFile ? mock : Zig::registeredModuleMock(defaultGlobalObject(globalObject), key);
     if (registered && registered->state == Zig::JSModuleMock::State::Settled && !defaultGlobalObject(globalObject)->onLoadPlugins.moduleMocksBeingLoaded.contains(key))
         mock = registered;
     else if (registered != mock) {
@@ -8920,6 +8946,21 @@ bool moduleMockImportsByKey(Zig::GlobalObject* globalObject, const String& key)
     if (!mock)
         mock = dynamicDowncast<Zig::JSModuleMock>(globalObject->onLoadPlugins.moduleMocksBeingLoaded.get(key).get());
     return mock && mock->importsOriginal;
+}
+
+void didStartLoadAt(Zig::GlobalObject* globalObject, const String& key)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    if (plugins.loadRoots.add(key).isNewEntry)
+        plugins.hasNewLoad = true;
+    if (auto* mock = Zig::registeredModuleMock(globalObject, key))
+        mock->isLoadRoot = true;
+    // One that was replaced while its factory runs still answers the fetch that is in flight.
+    for (auto& running : plugins.runningModuleMocks) {
+        auto* mock = uncheckedDowncast<Zig::JSModuleMock>(running.mock.get());
+        if (mock->specifier->tryGetValue().data == key)
+            mock->isLoadRoot = true;
+    }
 }
 
 bool isModuleMockWaitingForFactory(Zig::GlobalObject* globalObject, const String& key)

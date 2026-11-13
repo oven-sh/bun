@@ -3919,6 +3919,7 @@ impl TestCommand {
         global: &jsc::JSGlobalObject,
         file_path: &[u8],
         next_load_shares_global: bool,
+        later_load_shares_registry: bool,
         runs_again: bool,
     ) {
         unsafe extern "C" {
@@ -3929,7 +3930,11 @@ impl TestCommand {
             safe fn JSMock__willRunTestFileAgain(global: &jsc::JSGlobalObject, path: &bun::String);
         }
         bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
-        bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(global, next_load_shares_global);
+        bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(
+            global,
+            next_load_shares_global,
+            later_load_shares_registry,
+        );
         if !next_load_shares_global {
             return;
         }
@@ -4046,6 +4051,9 @@ impl TestCommand {
             let next_load_shares_global = !vm.test_isolation_enabled
                 || vm.test_isolation_state.shares_global
                 || repeat_index + 1 < repeat_count;
+            // The next test file loads into the module registry of this one. A worker isn't told which file is its last.
+            let next_file_shares_registry = !vm.test_isolation_enabled
+                && (!first_last.last || reporter.worker_ipc_file_idx.is_some());
             let _entered_file = EnteredFile {
                 bun_test_root: bun_test_root_ptr,
                 global,
@@ -4230,12 +4238,15 @@ impl TestCommand {
             if next_load_shares_global {
                 crate::test_runner::timers::fake_timers::on_test_file_end(vm.global());
             }
+            let runs_again = !failed_to_load && repeat_index + 1 < repeat_count;
             Self::undo_module_mocks(
                 vm,
                 global,
                 file_path,
                 next_load_shares_global,
-                !failed_to_load && repeat_index + 1 < repeat_count,
+                // What a file that failed to load left behind stays as it is: the rest of its body would run in a later file.
+                runs_again || (next_file_shares_registry && !failed_to_load),
+                runs_again,
             );
             // Must run after the cleanup above, so rejections from JS it runs are reported in this file.
             let _ = vm.global().handle_rejected_promises();
@@ -4316,7 +4327,12 @@ impl Drop for EnteredFile<'_> {
         unsafe { (*self.bun_test_root).exit_file() };
         // A mock.module() patch still pending must not hold up the next file.
         bun_jsc::cpp::JSMock__forgetPendingModulePatches(self.global);
-        bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(self.global, self.next_load_shares_global);
+        // The first call, in `undo_module_mocks`, has decided what the file leaves behind.
+        bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(
+            self.global,
+            self.next_load_shares_global,
+            false,
+        );
     }
 }
 

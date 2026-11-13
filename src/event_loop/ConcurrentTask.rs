@@ -80,6 +80,7 @@ pub mod task_tag {
         CppTask,
         UpgradedDuplex,
         FdPipe,
+        PosixPipe,
         FetchTasklet,
         FetchTaskletDeinit,
         FetchTaskletDelivered,

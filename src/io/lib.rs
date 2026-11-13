@@ -459,6 +459,7 @@ bun_dispatch::link_interface! {
         LifecycleScript,
         InstallGit,
         SecurityScan,
+        PosixPipe,
     ] {
         fn has_on_read_chunk() -> bool;
         fn on_read_chunk(chunk: pipes::Chunk<'_>, has_more: pipes::ReadState) -> bool;

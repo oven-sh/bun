@@ -199,6 +199,7 @@ pub enum PollTag {
     LifecycleScriptSubprocessOutputReader,
     MemoryPressure,
     FdPipe,
+    PosixPipe,
 }
 
 /// Compatibility module — call sites in `bun_runtime`/`bun_install` still spell

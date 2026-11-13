@@ -32,6 +32,10 @@ pub(crate) mod windows_named_pipe;
 #[path = "WindowsNamedPipeContext.rs"]
 pub(crate) mod windows_named_pipe_context;
 
+#[cfg(unix)]
+#[path = "PosixPipe.rs"]
+pub(crate) mod posix_pipe;
+
 // Never-constructed ZST that registers `BufferedReaderParentLink[PosixPipe]`
 // so the Windows link resolves (link_interface! variants cannot be cfg'd).
 #[cfg(windows)]

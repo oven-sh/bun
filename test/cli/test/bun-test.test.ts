@@ -3377,6 +3377,918 @@ describe.concurrent("the next test doesn't start inside the call that ended the 
   });
 });
 
+// The runner's timer decides, by the clock of its fire, what has timed out. A step of the runner acts on that later,
+// behind other callbacks, so a step does not time out an entry that still runs by its own clock.
+describe.concurrent("a test or hook times out only if its limit has passed when the runner's timer fires", () => {
+  // Milliseconds. The files hold the thread with Bun.sleepSync(), as slow synchronous code does. An entry that has to
+  // end in time has `limit - body` to spare, and the empty `first` test has `short`.
+  const short = 250; // the limit that the runner's timer fires for: of an earlier entry, or of a test that never ends
+  const limit = 1000; // the limit of the test or hook in question
+  const [due1, due2, due3] = [300, 350, 400]; // timers that are due in this order, all after `short`
+  const body = 450; // a body holds the thread this long, so that `short` and the timers are all due in one timer pass
+  const over = limit + 100;
+
+  const file = (source: string, from = "bun:test") => `
+    import { afterEach, beforeAll, beforeEach, describe, test, vi } from "${from}";
+    const holdUntil = end => {
+      while (performance.now() < end) Bun.sleepSync(Math.max(1, end - performance.now()));
+    };
+    const hold = ms => holdUntil(performance.now() + ms);
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const never = () => new Promise(() => {});
+    // Turns the event loop inside the call, until the plugin's setup() settles.
+    const build = ms => Bun.build({ entrypoints: ["./entry.ts"], plugins: [{ name: "slow", setup: () => sleep(ms) }] });
+    // When the body of the test or hook in question began. Its limit has passed at \`start + ${over}\`.
+    let start;
+    ${source}
+  `;
+  const first = `test("first", () => {}, ${short});`;
+  // Ends in time from a timer whose callback then holds the thread until the limit has passed.
+  const ends = `done => {
+    start = performance.now();
+    setTimeout(() => {
+      done();
+      holdUntil(start + ${over});
+    }, ${due1});
+    hold(${body});
+  }`;
+  // Its promise settles in time from a timer. A promise job of the same turn then holds the thread.
+  const settles = `() => new Promise(settle => {
+    start = performance.now();
+    setTimeout(() => {
+      settle();
+      let job = Promise.resolve();
+      for (let i = 0; i < 20; i++) job = job.then(() => {});
+      job.then(() => holdUntil(start + ${over}));
+    }, ${due1});
+    hold(${body});
+  })`;
+  // Ends from a timer that does nothing else.
+  const endsAt = (due: number) => `done => {
+    start = performance.now();
+    setTimeout(done, ${due});
+    hold(${body});
+  }`;
+  // Another callback holds the thread until the limit has passed.
+  const holdsAt = (due: number) => `setTimeout(() => holdUntil(start + ${over}), ${due});`;
+  // `c` is slow in its own timer, inside its own limit.
+  const slowSibling = `test.concurrent("c", done => {
+    setTimeout(() => {
+      holdUntil(start + ${over});
+      done();
+    }, ${due1});
+  }, ${10 * limit});`;
+  // The hook of `y` holds the thread until the limit of `b` has passed, and then waits inside Bun.build().
+  const slowHook = (call: number) => `
+    let hooks = 0;
+    afterEach(async () => {
+      if (++hooks !== ${call}) return;
+      holdUntil(start + ${over});
+      await build(${short});
+    });`;
+  // Ends in time from a timer. `start` is for the hook above.
+  const endsByPromise = `() => {
+    start = performance.now();
+    return sleep(${3 * short});
+  }`;
+
+  type Row = {
+    source: string;
+    results: string[];
+    from?: string;
+    flags?: string[];
+    timedOut?: number;
+    errors?: string[];
+    // The tests end in an order that is not the point of the case.
+    inAnyOrder?: boolean;
+    files?: Record<string, string>;
+  };
+  const run = async ({ source, results, from, flags = [], timedOut, errors = [], inAnyOrder, files }: Row) => {
+    const { stdout, stderr, ...ran } = await runFiles(
+      { "a.test.js": file(source, from), "entry.ts": "", ...files },
+      ...flags,
+    );
+    const failed = results.filter(line => line.startsWith("(fail)")).length;
+    const lines = stderr.match(/^\((pass|fail)\) [\w >]+/gm)?.map(line => line.trimEnd());
+    expect({
+      results: inAnyOrder ? lines?.sort() : lines,
+      timedOut: stderr.match(/ timed out /g)?.length ?? 0,
+      errors: ran.errors,
+      exitCode: ran.exitCode,
+    }).toEqual({
+      results: inAnyOrder ? results.toSorted() : results,
+      timedOut: timedOut ?? failed,
+      errors,
+      exitCode: failed || errors.length ? 1 : 0,
+    });
+    return { stdout, stderr };
+  };
+
+  describe("it ends in time, and a callback then holds the thread until its limit has passed", () => {
+    test.each(
+      Object.entries<Row>({
+        // The timer fires for the limit that an earlier entry left behind.
+        "a test that ends with done()": {
+          source: `${first} test("t", ${ends}, ${limit});`,
+          results: ["(pass) first", "(pass) t"],
+        },
+        "a test whose promise settles": {
+          source: `${first} test("t", ${settles}, ${limit});`,
+          results: ["(pass) first", "(pass) t"],
+        },
+        "a test whose promise settles, from vitest": {
+          from: "vitest",
+          source: `${first} test("t", ${settles}, ${limit});`,
+          results: ["(pass) first", "(pass) t"],
+        },
+        "a test after a beforeAll with a shorter limit": {
+          source: `beforeAll(() => {}, ${short}); test("t", ${ends}, ${limit});`,
+          results: ["(pass) t"],
+        },
+        "a beforeEach": {
+          source: `
+            let calls = 0;
+            beforeEach(done => (++calls === 1 ? done() : (${ends})(done)), ${limit});
+            ${first}
+            test("t", () => {});`,
+          results: ["(pass) first", "(pass) t"],
+        },
+        "an afterEach": {
+          source: `afterEach(${ends}, ${limit}); ${first}`,
+          results: ["(pass) first"],
+        },
+        "a beforeAll of a describe block": {
+          source: `${first} describe("d", () => { beforeAll(${ends}, ${limit}); test("t", () => {}); });`,
+          results: ["(pass) first", "(pass) d > t"],
+        },
+        "a concurrent test beside one that has ended": {
+          source: `test.concurrent("a", () => {}, ${short}); test.concurrent("b", ${ends}, ${limit});`,
+          results: ["(pass) a", "(pass) b"],
+        },
+        // The timer fires for a limit that has really passed: `a` never ends.
+        "a concurrent test beside one that times out": {
+          source: `test.concurrent("a", never, ${short}); test.concurrent("b", ${ends}, ${limit});`,
+          results: ["(fail) a", "(pass) b"],
+        },
+        "a concurrent test beside one that times out and has an afterEach": {
+          source: `afterEach(() => {}); test.concurrent("a", never, ${short}); test.concurrent("b", ${ends}, ${limit});`,
+          results: ["(fail) a", "(pass) b"],
+        },
+        // A fire inside Bun.build() finds the result of `b` in the queue.
+        "a concurrent test, while another waits inside Bun.build()": {
+          source: `
+            test.concurrent("a", never, ${short});
+            test.concurrent("b", done => void setTimeout(done, ${3 * short}), ${4 * short});
+            test.concurrent("c", async () => {
+              await sleep(50);
+              await build(${5 * short});
+            }, 0);`,
+          results: ["(fail) a", "(pass) b", "(pass) c"],
+        },
+        "a hook that reports an error, ends, and then waits in Bun.spawnSync()": {
+          source: `
+            beforeEach(done => {
+              setTimeout(() => {
+                reportError(new Error("stray"));
+                done();
+                Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(${limit + 300})"] });
+              }, 50);
+            }, ${limit});
+            test("t", () => {});`,
+          results: ["(pass) t"],
+          errors: ["error: stray"],
+        },
+        // Controls: the same, and nothing holds the thread that long, or the timer has no other limit to fire for.
+        "control: the callback that ends it holds the thread for 20 ms": {
+          source: `
+            test.concurrent("a", never, ${short});
+            test.concurrent("b", done => {
+              setTimeout(() => {
+                done();
+                hold(20);
+              }, ${due1});
+              hold(${body});
+            }, ${limit});`,
+          results: ["(fail) a", "(pass) b"],
+        },
+        "control: a concurrent test alone": {
+          source: `test.concurrent("b", ${ends}, ${limit});`,
+          results: ["(pass) b"],
+        },
+        "control: a beforeEach after a test with the default limit": {
+          source: `
+            let calls = 0;
+            beforeEach(done => (++calls === 1 ? done() : (${ends})(done)), ${limit});
+            test("first", () => {});
+            test("t", () => {});`,
+          results: ["(pass) first", "(pass) t"],
+        },
+        "control: a test without a limit": {
+          source: `${first} test("t", ${ends}, 0);`,
+          results: ["(pass) first", "(pass) t"],
+        },
+        "control: the callback that ends it is an immediate": {
+          source: `${first}
+            test("t", done => {
+              start = performance.now();
+              setTimeout(() => {
+                setImmediate(() => {
+                  done();
+                  holdUntil(start + ${over});
+                });
+              }, ${due1});
+              hold(${body});
+            }, ${limit});`,
+          results: ["(pass) first", "(pass) t"],
+        },
+      }),
+    )("%s", (_, row) => run(row));
+  });
+
+  // These completions arrive after the limit. They pass when no fire of the timer finds the entry past its limit first.
+  describe("what ends it was due in time, and a callback holds the thread until its limit has passed", () => {
+    test.each(
+      Object.entries<Row>({
+        "the continuation of the test, after its await": {
+          source: `${first}
+            test("t", async () => {
+              start = performance.now();
+              await new Promise(end => {
+                setTimeout(end, ${due1});
+                hold(${body});
+              });
+              holdUntil(start + ${over});
+            }, ${limit});`,
+          results: ["(pass) first", "(pass) t"],
+        },
+        "the timer callback that settles the promise the test awaits": {
+          source: `${first}
+            test("t", async () => {
+              start = performance.now();
+              await new Promise(end => {
+                setTimeout(() => {
+                  end();
+                  holdUntil(start + ${over});
+                }, ${due1});
+                hold(${body});
+              });
+            }, ${limit});`,
+          results: ["(pass) first", "(pass) t"],
+        },
+        "an earlier timer of the test": {
+          source: `${first}
+            test("t", done => {
+              start = performance.now();
+              ${holdsAt(due1)}
+              setTimeout(done, ${due2});
+              hold(${body});
+            }, ${limit});`,
+          results: ["(pass) first", "(pass) t"],
+        },
+        "an earlier timer that the first test left behind": {
+          source: `test("first", () => { ${holdsAt(due1)} }, ${short}); test("t", ${endsAt(due2)}, ${limit});`,
+          results: ["(pass) first", "(pass) t"],
+        },
+        "an earlier timer of a concurrent test, beside one that has ended": {
+          source: `test.concurrent("a", () => {}, ${short}); ${slowSibling} test.concurrent("b", ${endsAt(due2)}, ${limit});`,
+          results: ["(pass) a", "(pass) c", "(pass) b"],
+        },
+        "an earlier timer of a concurrent test, beside one that times out": {
+          source: `test.concurrent("a", never, ${short}); ${slowSibling} test.concurrent("b", ${endsAt(due2)}, ${limit});`,
+          results: ["(fail) a", "(pass) c", "(pass) b"],
+        },
+        // A timer pass inside Bun.build() runs the promise jobs of its timers last, so the timer fires before the job that ends `b`.
+        "the hook of another concurrent test, which then waits inside Bun.build()": {
+          source: `${slowHook(1)}
+            test.concurrent("b", ${endsByPromise}, ${limit});
+            test.concurrent("y", () => sleep(${short}), 0);`,
+          results: ["(pass) b", "(pass) y"],
+        },
+        // Controls: the slow callback comes after the one that ends the test, or nothing is slow.
+        "control: nothing is slow": {
+          source: `${first} test("t", ${endsAt(due1)}, ${limit});`,
+          results: ["(pass) first", "(pass) t"],
+        },
+        "control: a later timer of the test": {
+          source: `${first}
+            test("t", done => {
+              start = performance.now();
+              setTimeout(done, ${due1});
+              ${holdsAt(due2)}
+              hold(${body});
+            }, ${limit});`,
+          results: ["(pass) first", "(pass) t"],
+        },
+        "control: a later timer that the first test left behind": {
+          source: `test("first", () => { ${holdsAt(due3)} }, ${short}); test("t", ${endsAt(due1)}, ${limit});`,
+          results: ["(pass) first", "(pass) t"],
+        },
+        "control: a later timer of a concurrent test, beside one that has ended": {
+          source: `test.concurrent("a", () => {}, ${short}); test.concurrent("b", ${endsAt(due1)}, ${limit}); ${slowSibling}`,
+          results: ["(pass) a", "(pass) b", "(pass) c"],
+        },
+        "control: a later timer of a concurrent test, beside one that times out": {
+          source: `test.concurrent("a", never, ${short}); test.concurrent("b", ${endsAt(due1)}, ${limit}); ${slowSibling}`,
+          results: ["(fail) a", "(pass) b", "(pass) c"],
+        },
+        "control: a later timer of a concurrent test": {
+          source: `test.concurrent("b", ${endsAt(due1)}, ${limit}); ${slowSibling}`,
+          results: ["(pass) b", "(pass) c"],
+        },
+        "control: the body of the test, and no other limit comes first": {
+          source: `
+            test("t", done => {
+              setTimeout(done, ${due1});
+              hold(${3 * short});
+            }, ${2 * short});`,
+          results: ["(pass) t"],
+        },
+        "control: the hook of another concurrent test, which then waits inside Bun.build(), and done() ends the test": {
+          source: `${slowHook(1)}
+            test.concurrent("b", done => {
+              start = performance.now();
+              setTimeout(done, ${3 * short});
+            }, ${limit});
+            test.concurrent("y", () => sleep(${short}), 0);`,
+          results: ["(pass) b", "(pass) y"],
+        },
+        // Before that, the timer fires inside the Bun.build() of `c`, for the limit that `z` left behind.
+        "control: the hook of another concurrent test, which then waits inside Bun.build(), after a fire in there": {
+          source: `${slowHook(3)}
+            test.concurrent("z", () => {}, ${short});
+            test.concurrent("b", ${endsByPromise}, ${limit});
+            test.concurrent("y", () => sleep(${short + 125}), 0);
+            test.concurrent("c", () => void build(${2 * short}), 0);`,
+          results: ["(pass) z", "(pass) c", "(pass) b", "(pass) y"],
+        },
+      }),
+    )("%s", (_, row) => run(row));
+  });
+
+  describe("its limit has passed when the timer fires", () => {
+    test.each(
+      Object.entries<Row>({
+        "for its own limit, and a later timer of the same pass ends it": {
+          source: `test("t", ${endsAt(due1)}, ${short});`,
+          results: ["(fail) t"],
+        },
+        "for the limit that an earlier test left behind": {
+          source: `
+            test("first", () => {}, ${due3});
+            test("t", done => {
+              start = performance.now();
+              ${holdsAt(100)}
+              setTimeout(done, ${body});
+              hold(${body + 50});
+            }, ${limit});`,
+          results: ["(pass) first", "(fail) t"],
+        },
+        "for the limit of a concurrent test that times out": {
+          source: `
+            test.concurrent("a", never, ${short});
+            test.concurrent("b", done => {
+              setTimeout(done, ${due1});
+              hold(${over});
+            }, ${limit});`,
+          results: ["(fail) a", "(fail) b"],
+        },
+        "and it never ends": {
+          source: `${first} test("t", never, ${limit}); test("next", () => {});`,
+          results: ["(pass) first", "(fail) t", "(pass) next"],
+        },
+        "and it waits for timers without a delay": {
+          source: `
+            test("t", async () => {
+              const end = performance.now() + ${3 * short};
+              while (performance.now() < end) await sleep(0);
+            }, ${short});`,
+          results: ["(fail) t"],
+        },
+        // The runner's walk of the group stops at the lowered limit, before `c`. The fire for `b` arms the timer for the limit of `c`.
+        "and more tests run than a lowered maxConcurrency allows": {
+          source: `
+            test.concurrent("a", async () => {
+              vi.setConfig({ maxConcurrency: 1 });
+              await sleep(${5 * short});
+            }, 0);
+            test.concurrent("b", never, ${short});
+            test.concurrent("d", done => void setTimeout(done, ${4 * short + 100}), ${10 * limit});
+            test.concurrent("c", done => void setTimeout(done, ${4 * short}), ${2 * short});
+            test.concurrent("e", done => void setTimeout(done, ${4 * short + 150}), ${9 * limit});`,
+          results: ["(fail) b", "(fail) c", "(pass) d", "(pass) e", "(pass) a"],
+        },
+        // The rejection comes after the fire, in the same timer pass. The test has timed out, so it is not an error of its own.
+        "and its promise rejects in the timer pass of the fire": {
+          source: `
+            test("t", () => new Promise((_, reject) => {
+              setTimeout(() => reject(new Error("late")), ${due1});
+              hold(${body});
+            }), ${short});
+            test("next", () => {});`,
+          results: ["(fail) t", "(pass) next"],
+        },
+        // The fire comes under the test's own callback, before the runner holds the promise that it returns.
+        "inside Bun.spawnSync() of a test that is retried, and throws later": {
+          source: `
+            let attempts = 0;
+            test("t", async () => {
+              if (++attempts > 1) return sleep(200);
+              Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(${limit + 500})"] });
+              await sleep(100);
+              throw new Error("thrown late by the first attempt");
+            }, { retry: 1, timeout: ${limit} });`,
+          results: ["(pass) t"],
+          timedOut: 0,
+        },
+        // No step of the runner runs under Bun.build(). The timer fires in there for the limit that `a` left behind, and then for the limit of `b`.
+        "inside Bun.build(), after a fire in there for another limit": {
+          source: `
+            test.concurrent("a", () => {}, ${short});
+            test.concurrent("d", done => void setTimeout(done, ${4 * short + 100}), ${10 * limit});
+            test.concurrent("b", done => void setTimeout(done, ${4 * short}), ${2 * short});
+            test.concurrent("e", done => void setTimeout(done, ${4 * short + 150}), ${9 * limit});
+            test.concurrent("c", async () => {
+              await sleep(50);
+              await build(${5 * short});
+            }, 0);`,
+          results: ["(pass) a", "(fail) b", "(pass) d", "(pass) e", "(pass) c"],
+        },
+        // The timer fires at the top level for the limit that `first` left behind. A later timer of that pass waits inside Bun.build() before a step runs.
+        "inside Bun.build(), which a later timer of an earlier fire's pass entered": {
+          source: `${first}
+            test.concurrent("w", done => {
+              setTimeout(async () => {
+                await build(${5 * short});
+                done();
+              }, ${due1});
+            }, 0);
+            test.concurrent("b", done => {
+              setTimeout(done, ${limit});
+              hold(${body});
+            }, ${3 * short});`,
+          results: ["(pass) first", "(fail) b", "(pass) w"],
+        },
+        // As at the top level, what ends the test after the fire loses.
+        "inside Bun.build(), and a later timer of the same pass ends it": {
+          source: `
+            test.concurrent("b", done => {
+              start = performance.now();
+              setTimeout(() => holdUntil(start + ${3 * short}), 100);
+              setTimeout(done, ${2 * short + 100});
+            }, ${2 * short});
+            test.concurrent("c", () => build(${5 * short}), 0);`,
+          results: ["(fail) b", "(pass) c"],
+        },
+        // The timer fires for the limit that `first` left behind. Its callback first runs the promise job of the earlier timer, as the event loop does at the top level.
+        "inside Bun.build(), after the promise job of an earlier timer of the pass held the thread": {
+          source: `${first}
+            test.concurrent("b", done => {
+              start = performance.now();
+              setTimeout(() => void Promise.resolve().then(() => holdUntil(start + ${over})), 20);
+              setTimeout(done, ${due1});
+              hold(${body});
+            }, ${limit});
+            test.concurrent("c", () => build(${5 * short}), 0);`,
+          results: ["(pass) first", "(fail) b", "(pass) c"],
+        },
+        // Two fires come inside Bun.build() before a step: for `a`, and for the limit that `b` left behind. `a` has one verdict, so `x`, which waits for a slot, starts when `a` has failed.
+        "inside Bun.build(), and the timer fires again in there before a step": {
+          flags: ["--max-concurrency=3"],
+          source: `
+            test.concurrent("a", never, ${short});
+            test.concurrent("b", done => void setTimeout(done, ${3 * short}), ${4 * short});
+            test.concurrent("c", async () => {
+              await sleep(50);
+              await build(${5 * short});
+            }, 0);
+            test.concurrent("x", () => {});`,
+          results: ["(fail) a", "(pass) x", "(pass) b", "(pass) c"],
+        },
+        "inside Bun.build() of a hook, after a fire inside Bun.build() of a test, for another limit": {
+          source: `
+            let hooks = 0;
+            afterEach(async () => {
+              if (++hooks === 3) await build(${6 * short});
+            });
+            test.concurrent("z", () => {}, ${short});
+            test.concurrent("b", () => sleep(${5 * short}), ${3 * short});
+            test.concurrent("y", () => sleep(${short + 125}), 0);
+            test.concurrent("c", () => void build(${2 * short}), 0);`,
+          results: ["(pass) z", "(pass) c", "(fail) b", "(pass) y"],
+        },
+      }),
+    )("%s", (_, row) => run(row));
+
+    // Bun.spawnSync() reports the limit when it returns. That is a fire with no timer pass: no promise job runs under it.
+    test("inside Bun.spawnSync(), and the test ends when that returns", async () => {
+      const { stdout } = await run({
+        source: `
+          test("t", done => {
+            setTimeout(() => {
+              Promise.resolve().then(() => console.log("a promise job"));
+              Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(${limit + 500})"] });
+              console.log("Bun.spawnSync() returned");
+              done();
+            }, 50);
+          }, ${limit});`,
+        results: ["(fail) t"],
+      });
+      expect(stdout.split(/\r?\n/).filter(line => /promise job|returned/.test(line))).toEqual([
+        "Bun.spawnSync() returned",
+        "a promise job",
+      ]);
+    });
+
+    // The runner reads the clock when the callback has returned and its promise jobs have run.
+    test.each([
+      ["when its callback returns", `() => hold(${over})`],
+      ["when the promise jobs of its callback have run", `async () => { await 0; hold(${over}); }`],
+    ])("%s", async (_, callback) => {
+      await run({
+        source: `${first} test("t", ${callback}, ${limit});`,
+        results: ["(pass) first", "(fail) t"],
+      });
+    });
+
+    // `c` waits for a free slot. Each overdue test fails, and its afterEach runs, before `c` starts.
+    test.each(
+      Object.entries({
+        "at the same fire as another test": `
+          afterEach(() => console.log("afterEach"));
+          test.concurrent("a", never, ${short});
+          test.concurrent("b", () => {
+            hold(${short + 50});
+            return never();
+          }, ${short});`,
+        "while the afterEach of another test runs": `
+          let hooks = 0;
+          afterEach(() => {
+            console.log("afterEach");
+            if (++hooks === 1) hold(${2 * short});
+          });
+          test.concurrent("a", never, ${short});
+          test.concurrent("b", never, ${2 * short});`,
+      }),
+    )("%s, before a third test starts", async (_, source) => {
+      const { stdout } = await run({
+        flags: ["--max-concurrency=2"],
+        source: `${source} test.concurrent("c", () => console.log("c starts"));`,
+        results: ["(fail) a", "(fail) b", "(pass) c"],
+      });
+      expect(stdout.split(/\r?\n/).filter(line => /^(afterEach|c starts)$/.test(line))).toEqual([
+        "afterEach",
+        "afterEach",
+        "c starts",
+        "afterEach",
+      ]);
+    });
+
+    // `x` ends while `b` is past its limit and the timer has not fired for it. `c`, which waits for a slot, needs 200 ms.
+    test("while the afterEach of another test runs, and a third test ends before the timer fires again", async () => {
+      await run({
+        flags: ["--max-concurrency=3"],
+        source: `
+          describe("A", () => {
+            afterEach(() => hold(${2 * short + 100}));
+            test.concurrent("a", never, ${short});
+          });
+          describe("B", () => {
+            afterEach(() => hold(${2 * short + 100}));
+            test.concurrent("b", never, ${2 * short});
+          });
+          test.concurrent("x", done => void setTimeout(done, ${due1}), ${10 * limit});
+          test.concurrent("c", async () => {
+            await sleep(100);
+            await sleep(100);
+          }, ${2 * short});`,
+        results: ["(fail) A > a", "(fail) B > b", "(pass) x", "(pass) c"],
+        inAnyOrder: true,
+      });
+    });
+
+    // The next attempt of `a` waits like a test that has not started: `b` fails, and its afterEach runs, first.
+    test("at the same fire as another test, before the next attempt of that test starts", async () => {
+      const { stdout } = await run({
+        source: `
+          let attempts = 0;
+          afterEach(() => console.log("afterEach"));
+          test.concurrent("a", () => (++attempts === 1 ? never() : console.log("a starts again")), { retry: 1, timeout: ${short} });
+          test.concurrent("b", () => {
+            hold(${short + 50});
+            return never();
+          }, ${short});`,
+        results: ["(fail) b", "(pass) a"],
+      });
+      expect(stdout.split(/\r?\n/).filter(line => /^(afterEach|a starts again)$/.test(line))).toEqual([
+        "afterEach",
+        "afterEach",
+        "a starts again",
+        "afterEach",
+      ]);
+    });
+  });
+
+  describe("what is not the timer does not time it out", () => {
+    test.each(
+      Object.entries<Row>({
+        "an error in its hook": {
+          source: `
+            beforeEach(done => {
+              start = performance.now();
+              setTimeout(() => {
+                reportError(new Error("stray"));
+                done();
+                holdUntil(start + ${over});
+              }, 50);
+            }, ${limit});
+            test("t", () => {});`,
+          results: ["(pass) t"],
+          errors: ["error: stray"],
+        },
+        "an error in its hook, after the limit has passed": {
+          source: `
+            beforeEach(done => {
+              start = performance.now();
+              setTimeout(() => {
+                holdUntil(start + ${over});
+                reportError(new Error("stray"));
+                done();
+              }, 50);
+            }, ${limit});
+            test("t", () => {});`,
+          results: ["(pass) t"],
+          errors: ["error: stray"],
+        },
+        "an error under its hook's own callback, which then holds the thread": {
+          source: `
+            beforeEach(done => {
+              start = performance.now();
+              setTimeout(done, ${due1});
+              reportError(new Error("stray"));
+              holdUntil(start + ${over});
+            }, ${limit});
+            test("t", () => {});`,
+          results: ["(pass) t"],
+          errors: ["error: stray"],
+        },
+        "a fire of the timer inside Bun.build()": {
+          source: `${first}
+            test("t", done => {
+              setTimeout(() => {
+                start = performance.now();
+                build(${short + 100});
+                done();
+                holdUntil(start + ${over});
+              });
+            }, ${limit});`,
+          results: ["(pass) first", "(pass) t"],
+        },
+        "a fire of the timer inside Bun.build(), under the test's own callback": {
+          source: `${first}
+            test("t", async () => {
+              start = performance.now();
+              build(${short + 100});
+              holdUntil(start + ${over});
+              await new Promise(resolve => setImmediate(resolve));
+            }, ${limit});`,
+          results: ["(pass) first", "(pass) t"],
+        },
+        "the afterEach of a concurrent test that timed out": {
+          source: `
+            let calls = 0;
+            afterEach(() => {
+              if (++calls === 1) holdUntil(start + ${over});
+            });
+            test.concurrent("a", never, ${short});
+            test.concurrent("b", done => {
+              start = performance.now();
+              setTimeout(done, ${due1});
+            }, ${limit});`,
+          results: ["(fail) a", "(pass) b"],
+        },
+        "the afterEach of a concurrent test that timed out, after the other test ended": {
+          source: `
+            let calls = 0;
+            afterEach(() => {
+              if (++calls === 1) holdUntil(start + ${over});
+            });
+            test.concurrent("a", never, ${short});
+            test.concurrent("b", done => {
+              start = performance.now();
+              setTimeout(done, ${due1});
+              hold(${body});
+            }, ${limit});`,
+          results: ["(fail) a", "(pass) b"],
+        },
+        // One fire times out `a` and `x`: `h` holds the thread until both limits have passed.
+        "the afterEach of a concurrent test that timed out, beside another that timed out": {
+          source: `
+            let calls = 0;
+            afterEach(() => {
+              if (++calls === 2) holdUntil(start + ${over});
+            });
+            test.concurrent("a", never, ${short});
+            test.concurrent("x", never, ${short});
+            test.concurrent("b", done => {
+              start = performance.now();
+              setTimeout(done, ${due3});
+            }, ${limit});
+            test.concurrent("h", () => hold(${due1}), 0);`,
+          results: ["(pass) h", "(fail) a", "(fail) x", "(pass) b"],
+        },
+        "control: the afterEach of a concurrent test that timed out, declared after the other test": {
+          source: `
+            let calls = 0;
+            afterEach(() => {
+              if (++calls === 1) holdUntil(start + ${over});
+            });
+            test.concurrent("b", done => {
+              start = performance.now();
+              setTimeout(done, ${due1});
+            }, ${limit});
+            test.concurrent("a", never, ${short});`,
+          results: ["(fail) a", "(pass) b"],
+        },
+        // The result of `b` is in the queue when `a` fails, so `c`, which waits for a slot, does not wait for the timer to fire again.
+        "control: the afterEach of a concurrent test that timed out, after the other ended, and a third waits": {
+          flags: ["--max-concurrency=2"],
+          source: `
+            let calls = 0;
+            afterEach(() => {
+              if (++calls === 1) holdUntil(start + ${over});
+            });
+            test.concurrent("b", done => {
+              start = performance.now();
+              setTimeout(() => holdUntil(start + ${body}), 100);
+              setTimeout(done, ${due1});
+            }, ${limit});
+            test.concurrent("a", never, ${short});
+            test.concurrent("c", () => {});`,
+          results: ["(fail) a", "(pass) c", "(pass) b"],
+        },
+      }),
+    )("%s", (_, row) => run(row));
+
+    test("and test.fails() does not pass by it", async () => {
+      await run({
+        from: "vitest",
+        source: `${first} test.fails("t", ${settles}, ${limit});`,
+        results: ["(pass) first", "(fail) t"],
+        timedOut: 0,
+      });
+    });
+  });
+
+  // A process that answers on its stdout is alive.
+  const echo = `Bun.spawn({
+    cmd: [process.execPath, "-e", "for await (const chunk of Bun.stdin.stream()) await Bun.write(Bun.stdout, chunk);"],
+    stdin: "pipe",
+    stdout: "pipe",
+  })`;
+  const answer = `async child => {
+    child.stdin.write("alive");
+    child.stdin.flush();
+    const { value } = await child.stdout.getReader().read();
+    child.stdin.end();
+    return new TextDecoder().decode(value);
+  }`;
+
+  test("a fire for another limit does not kill the processes of a test without a limit", async () => {
+    const { stdout } = await run({
+      source: `${first}
+        test("t", async () => {
+          const child = ${echo};
+          const afterTheFire = sleep(${due1});
+          hold(${body});
+          await afterTheFire;
+          console.log("the process answers:", await (${answer})(child));
+        }, 0);`,
+      results: ["(pass) first", "(pass) t"],
+    });
+    expect(stdout).toContain("the process answers: alive");
+  });
+
+  // The next test ends only when the process has exited, and nothing but the kill ends that process.
+  const afterTheKill = `test("next", async () => void (await child.exited), ${limit});`;
+
+  test("a test that times out has its processes killed", async () => {
+    const { stderr } = await run({
+      source: `
+        let child;
+        test("t", async () => {
+          child = ${echo};
+          await never();
+        }, ${short});
+        ${afterTheKill}`,
+      results: ["(fail) t", "(pass) next"],
+    });
+    expect(stderr).toContain("killed 1 dangling process");
+  });
+
+  test("a hook that times out after it reported an error has its processes killed", async () => {
+    const { stderr } = await run({
+      source: `
+        let child, hooks = 0;
+        beforeEach(async () => {
+          if (++hooks !== 1) return;
+          start = performance.now();
+          child = ${echo};
+          await sleep(1);
+          holdUntil(start + ${over});
+          reportError(new Error("stray"));
+          await never();
+        }, ${limit});
+        test("t", () => {});
+        ${afterTheKill}`,
+      results: ["(fail) t", "(pass) next"],
+      errors: ["error: stray"],
+    });
+    expect(stderr).toContain("killed 1 dangling process");
+  });
+
+  test("a test that waits inside Bun.build() for its own process has it killed at its limit", async () => {
+    const { stderr } = await run({
+      source: `${first}
+        test("t", async () => {
+          await sleep(0);
+          const child = Bun.spawn({ cmd: [process.execPath, "-e", "setTimeout(() => {}, ${3 * limit})"] });
+          // The timer of sleep() is for Windows: there a timer fires inside this wait only once a timer is set in it.
+          const exited = () => Promise.race([child.exited, sleep(${3 * limit})]);
+          await Bun.build({ entrypoints: ["./entry.ts"], plugins: [{ name: "slow", setup: exited }] });
+        }, ${limit});`,
+      results: ["(pass) first", "(fail) t"],
+    });
+    expect(stderr).toContain("killed 1 dangling process");
+  });
+
+  // A macro that waits turns the event loop under JS too, and no task of the runner runs in there. The timer fires
+  // at the top level for the limit of `first`, before the macro starts.
+  const macros = {
+    "macro.ts": `
+      export async function slow(ms) { await new Promise(resolve => setTimeout(resolve, ms)); return 1; }
+      export async function exited() { await globalThis.child.exited; return 1; }`,
+    "slow.ts": `import { slow } from "./macro.ts" with { type: "macro" }; export const value = slow(${limit + 300});`,
+    "exited.ts": `import { exited } from "./macro.ts" with { type: "macro" }; export const value = exited();`,
+  };
+  const inMacro = (file: string, before = "") => `${first}
+    test("t", async () => {
+      const start = performance.now();
+      await sleep(0);
+      setTimeout(() => holdUntil(start + ${due1}), 20);
+      await sleep(${due1 - 20});
+      ${before}
+      require("./${file}");
+    }, ${limit});
+    test("next", () => {});`;
+
+  test("a test that waits inside a macro times out at its limit", async () => {
+    await run({ files: macros, source: inMacro("slow.ts"), results: ["(pass) first", "(fail) t", "(pass) next"] });
+  });
+
+  test("a test that waits inside a macro for its own process has it killed at its limit", async () => {
+    const { stderr } = await run({
+      files: macros,
+      source: inMacro(
+        "exited.ts",
+        `globalThis.child = Bun.spawn({ cmd: [process.execPath, "-e", "setTimeout(() => {}, ${3 * limit})"] });`,
+      ),
+      results: ["(pass) first", "(fail) t", "(pass) next"],
+    });
+    expect(stderr).toContain("killed 1 dangling process");
+  });
+
+  test("a concurrent test that times out does not kill the processes of another", async () => {
+    const { stdout } = await run({
+      source: `
+        test.concurrent("a", never, ${short});
+        test.concurrent("b", async () => {
+          const child = ${echo};
+          await sleep(${due1});
+          console.log("the process answers:", await (${answer})(child));
+        }, 0);`,
+      results: ["(fail) a", "(pass) b"],
+    });
+    expect(stdout).toContain("the process answers: alive");
+  });
+
+  test("a fire for the limit of a test that has ended does not kill the processes of the file", async () => {
+    const { stdout } = await run({
+      source: `
+        let child;
+        beforeAll(() => void (child = ${echo}));
+        test("t", done => {
+          setTimeout(() => {
+            done();
+            build(${limit + 200});
+          }, ${due1});
+        }, ${limit});
+        test("next", async () => console.log("the process answers:", await (${answer})(child)));`,
+      results: ["(pass) t", "(pass) next"],
+    });
+    expect(stdout).toContain("the process answers: alive");
+  });
+});
+
 describe.concurrent("an error that arrives while a test file loads", () => {
   const results = (stderr: string) => stderr.match(/^\((pass|fail)\) [\w >]+/gm)?.map(line => line.trimEnd());
   // Loading resumes one event-loop turn after the error.

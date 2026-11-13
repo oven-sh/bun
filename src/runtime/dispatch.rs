@@ -1519,7 +1519,7 @@ pub(crate) unsafe fn __bun_fire_timer(
                     let _ = std::rc::Rc::into_raw(rc);
                     cloned
                 };
-                BunTest::bun_test_timeout_callback(&strong, now, VirtualMachine::get());
+                BunTest::bun_test_timeout_callback(&strong, now, VirtualMachine::get(), true);
                 Ok(())
             }
         ),

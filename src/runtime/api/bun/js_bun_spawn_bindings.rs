@@ -306,6 +306,7 @@ pub(crate) fn spawn_sync(
             &active_file,
             &deadline,
             vm,
+            false,
         );
         if cx.global().has_exception() {
             return Ok(JSValue::ZERO);

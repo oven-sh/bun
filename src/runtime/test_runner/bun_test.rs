@@ -765,6 +765,8 @@ pub(crate) struct BunTest {
     /// frame, which never returns; `exit_file()` nulls this before drop.
     pub(crate) reporter: Option<NonNull<CommandLineReporter>>,
     pub(crate) timer: EventLoopTimer,
+    /// The clock of the last fire of `timer`. A fire has found every deadline before it passed.
+    pub(crate) judged_at: Timespec,
     pub(crate) result_queue: ResultQueue,
     /// Whether tests in this file should default to concurrent execution
     pub(crate) default_concurrent: bool,
@@ -820,6 +822,7 @@ impl BunTest {
             // `EventLoopTimer` has no `Default`; `init_paused` sets
             // `next = EPOCH, state = PENDING`.
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
+            judged_at: Timespec::EPOCH,
             wants_wakeup: false,
             pending_phase: RefDataValue::Start,
             is_reporting_uncaught: false,
@@ -1057,16 +1060,27 @@ impl BunTest {
         Ok(())
     }
 
-    fn handle_timeout(&mut self, global_this: &JSGlobalObject) {
+    fn handle_timeout(&mut self, global_this: &JSGlobalObject, now: &Timespec, pass: &Timespec) {
         let _g = group_begin!();
-        self.execution.kill_dangling_processes_on_timeout(global_this);
-        self.add_result(RefDataValue::Start);
+        self.judged_at = *now;
+        let judged = Execution::Execution::judge(self, global_this, now);
+        // The last verdict steps the group. Without one, `Start` does.
+        if !judged.timed_out {
+            self.add_result(RefDataValue::Start);
+        }
+        if !judged.next.eql(&Timespec::EPOCH) {
+            // No step runs under JS, so the timer is armed here. A timer pass can fire this timer a moment early, and a deadline inside that pass would fire again at once.
+            let after_pass = pass.add_ms(1);
+            self.update_min_timeout(global_this, if judged.next.greater(&after_pass) { &judged.next } else { &after_pass });
+        }
     }
 
+    /// `pass` is the clock of the timer pass. `in_timer_pass` is false when `Bun.spawnSync()` reports a deadline that passed inside it, and `pass` is that deadline.
     pub(crate) fn bun_test_timeout_callback(
         this_strong: &BunTestPtr,
-        _ts: &Timespec,
+        pass: &Timespec,
         vm: &VirtualMachine,
+        in_timer_pass: bool,
     ) {
         let _g = group_begin!();
         let this: *mut BunTest = this_strong.as_ptr();
@@ -1076,10 +1090,17 @@ impl BunTest {
         unsafe {
             (*this).timer.next = ElTimespec::EPOCH;
             (*this).timer.state = EventLoopTimerState::PENDING;
-
+        }
+        if in_timer_pass && global.vm().is_entered() {
+            // A timer pass under JS runs the promise jobs of its timers last. Those of the timers before this one run now, so that a fire is the same cut as at the top level.
+            let _ = global.bun_vm().event_loop_mut().drain_microtasks();
+        }
+        let now = Timespec::now_force_real_time();
+        // SAFETY: as above.
+        unsafe {
             match (*this).phase {
                 Phase::Collection => {}
-                Phase::Execution => (*this).handle_timeout(global),
+                Phase::Execution => (*this).handle_timeout(global, &now, pass),
                 Phase::Done => {}
             }
         }
@@ -1776,8 +1797,16 @@ pub(crate) enum RefDataValue {
         group_index: usize,
         entry_data: Option<EntryData>,
     },
+    /// Only in the result queue: `Execution::judge` found this entry past its deadline.
+    TimedOut {
+        group_index: usize,
+        entry_data: EntryData,
+    },
     Done,
 }
+
+// One per slot of the result queue.
+const _: () = assert!(core::mem::size_of::<RefDataValue>() <= 40);
 
 impl RefDataValue {
     pub(crate) fn sequence<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ExecutionSequence> {
@@ -1828,6 +1857,11 @@ impl fmt::Display for RefDataValue {
                     write!(f, "execution: group_index={}", group_index)
                 }
             }
+            RefDataValue::TimedOut { group_index, entry_data } => write!(
+                f,
+                "timed out: group_index={},sequence_index={},entry_index={:x},attempt={}",
+                group_index, entry_data.sequence_index, entry_data.entry as usize, entry_data.attempt
+            ),
             RefDataValue::Done => write!(f, "done"),
         }
     }
@@ -2418,36 +2452,31 @@ impl ExecutionEntry {
         entry
     }
 
-    pub(crate) fn evaluate_timeout(
-        &self,
-        sequence: &mut Execution::ExecutionSequence,
-        now: &Timespec,
-    ) -> bool {
-        if !self.timespec.eql(&Timespec::EPOCH) && self.timespec.order(now) == core::cmp::Ordering::Less {
-            // timed out
-            // SAFETY: pointer-identity comparison only — no deref, no provenance laundering.
-            let is_test_entry = sequence
-                .test_entry
-                .is_some_and(|p| core::ptr::eq(p.as_ptr().cast_const(), self));
-            let has_done_parameter = self.calling == Calling::Jest { done: true };
-            sequence.result = if self.around.is_some() {
-                // `Execution::report_around_timeout` fails the sequence with an error.
-                sequence.result
-            } else if is_test_entry {
-                if has_done_parameter {
-                    Execution::Result::FailBecauseTimeoutWithDoneCallback
-                } else {
-                    Execution::Result::FailBecauseTimeout
-                }
-            } else if has_done_parameter {
-                Execution::Result::FailBecauseHookTimeoutWithDoneCallback
+    pub(crate) fn is_overdue(&self, now: &Timespec) -> bool {
+        !self.timespec.eql(&Timespec::EPOCH) && self.timespec.order(now) == core::cmp::Ordering::Less
+    }
+
+    pub(crate) fn fail_timed_out(&self, sequence: &mut Execution::ExecutionSequence) {
+        // SAFETY: pointer-identity comparison only — no deref, no provenance laundering.
+        let is_test_entry = sequence
+            .test_entry
+            .is_some_and(|p| core::ptr::eq(p.as_ptr().cast_const(), self));
+        let has_done_parameter = self.calling == Calling::Jest { done: true };
+        sequence.result = if self.around.is_some() {
+            // `Execution::report_around_timeout` fails the sequence with an error.
+            sequence.result
+        } else if is_test_entry {
+            if has_done_parameter {
+                Execution::Result::FailBecauseTimeoutWithDoneCallback
             } else {
-                Execution::Result::FailBecauseHookTimeout
-            };
-            sequence.maybe_skip = true;
-            return true;
-        }
-        false
+                Execution::Result::FailBecauseTimeout
+            }
+        } else if has_done_parameter {
+            Execution::Result::FailBecauseHookTimeoutWithDoneCallback
+        } else {
+            Execution::Result::FailBecauseHookTimeout
+        };
+        sequence.maybe_skip = true;
     }
 }
 // destroy → Drop: callback (Strong) and base.name (Box) drop automatically.

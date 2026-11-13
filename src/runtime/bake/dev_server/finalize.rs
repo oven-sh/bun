@@ -79,7 +79,7 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr
     dev.current_bundle = None;
     dev.log.clear_and_free();
 
-    let _ = dev.assets.reindex_if_needed(); // not fatal
+    let _ = dev.graphs.assets.reindex_if_needed(); // not fatal
 
     // Answer these before `start_next_bundle_if_present` below, or they'd wait for that bundle too.
     for deferred in script_requests {
@@ -238,7 +238,7 @@ fn finalize_bundle_inner(
     let mut resolved_index_cache = vec![CachedFileIndex::NONE; input_file_sources.len() * 2];
 
     // Note: ctx fields `server_seen_bit_set`/`gts` are seeded with
-    // placeholders and assigned AFTER Pass 1 (receive_chunk grows `bundled_files`, so the trace bitsets
+    // placeholders and assigned AFTER Pass 1 (receiving a chunk grows `bundled_files`, so the trace bitsets
     // must be sized post-Pass-1). Seed with empty placeholders; real init below.
     let mut gts_storage = GraphTraceState {
         server_bits: DynamicBitSet::default(),
@@ -296,9 +296,9 @@ fn finalize_bundle_inner(
                 graph,
             );
             match graph {
-                bake::Graph::Client => dev.client_graph.insert_failure(key, &log)?,
+                bake::Graph::Client => dev.graphs.insert_failure::<{ Side::Client }>(key, &log)?,
                 bake::Graph::Server | bake::Graph::Ssr => {
-                    dev.server_graph.insert_failure(key, &log)?
+                    dev.graphs.insert_failure::<{ Side::Server }>(key, &log)?
                 }
             }
             continue;
@@ -323,43 +323,21 @@ fn finalize_bundle_inner(
             }
         };
         let quoted_contents = &quoted_source_contents[part_range.source_index.get() as usize];
+        let content = incremental_graph::ReceiveChunkContent::Js {
+            code: compile_result.code().to_vec().into_boxed_slice(),
+            source_map: Some(incremental_graph::ReceiveChunkSourceMap {
+                chunk: source_map,
+                // Copied out of the per-bundle AST heap: stack traces are remapped after the bundle ends.
+                escaped_source: quoted_contents
+                    .as_ref()
+                    .map(|v| v.as_slice().to_vec().into_boxed_slice()),
+            }),
+        };
         match targets[part_range.source_index.get() as usize].bake_graph() {
-            bake::Graph::Client => dev.client_graph.receive_chunk(
-                &mut ctx,
-                index,
-                incremental_graph::ReceiveChunkContent::Js {
-                    code: compile_result.code().to_vec().into_boxed_slice(),
-                    source_map: Some(incremental_graph::ReceiveChunkSourceMap {
-                        chunk: source_map,
-                        // `quoted_contents` lives in the per-bundle AST heap,
-                        // which is destroyed at bundle end; copy onto the
-                        // global heap so the dev-server can hold it across
-                        // rebuilds for stack-trace remapping.
-                        escaped_source: quoted_contents
-                            .as_ref()
-                            .map(|v| v.as_slice().to_vec().into_boxed_slice()),
-                    }),
-                },
-                false,
-            )?,
-            graph @ (bake::Graph::Server | bake::Graph::Ssr) => dev.server_graph.receive_chunk(
-                &mut ctx,
-                index,
-                incremental_graph::ReceiveChunkContent::Js {
-                    code: compile_result.code().to_vec().into_boxed_slice(),
-                    source_map: Some(incremental_graph::ReceiveChunkSourceMap {
-                        chunk: source_map,
-                        // `quoted_contents` lives in the per-bundle AST heap,
-                        // which is destroyed at bundle end; copy onto the
-                        // global heap so the dev-server can hold it across
-                        // rebuilds for stack-trace remapping.
-                        escaped_source: quoted_contents
-                            .as_ref()
-                            .map(|v| v.as_slice().to_vec().into_boxed_slice()),
-                    }),
-                },
-                graph == bake::Graph::Ssr,
-            )?,
+            bake::Graph::Client => dev.receive_client_chunk(&mut ctx, index, content)?,
+            graph @ (bake::Graph::Server | bake::Graph::Ssr) => {
+                dev.receive_server_chunk(&mut ctx, index, content, graph == bake::Graph::Ssr)?
+            }
         }
     }
 
@@ -369,7 +347,7 @@ fn finalize_bundle_inner(
         let index = bun_ast::Index::init(chunk.entry_point.source_index());
 
         // Report a chunk that failed to print as its entry point's failure. The next
-        // good build's `receive_chunk` clears it.
+        // good build's `receive_client_chunk` clears it.
         let entry_source = &ctx.sources[index.get() as usize];
         let mut log = Log::init();
         for compile_result in chunk.compile_results_for_chunk.iter() {
@@ -394,23 +372,26 @@ fn finalize_bundle_inner(
         }
         if log.errors > 0 {
             let entry_key = entry_source.path.key_for_incremental_graph();
-            dev.client_graph.insert_failure(
+            dev.graphs.insert_failure::<{ Side::Client }>(
                 incremental_graph::InsertFailureKey::AbsPath(entry_key, bake::Graph::Client),
                 &log,
             )?;
             let file_index = dev
-                .client_graph
+                .graphs
+                .client
                 .get_file_index(entry_key)
                 .expect("insert_failure registered the entry");
             // Pass 2 needs the index to diff the `@import` edges. Editing an imported
             // file follows those edges to rebundle this chunk.
             *ctx.get_cached_index(bake::Side::Client, index) =
                 CachedFileIndex::from(Some(file_index));
-            dev.client_graph
+            dev.graphs
+                .client
                 .restore_failed_css_root(file_index, hash(entry_key));
             // This lets a server route's trace reach the failed client file.
             if metadata.imported_on_server {
-                dev.server_graph
+                dev.graphs
+                    .server
                     .insert_css_file_on_server(&mut ctx, index, entry_key)?;
             }
             continue;
@@ -475,17 +456,17 @@ fn finalize_bundle_inner(
             }
         }
 
-        dev.client_graph.receive_chunk(
+        dev.receive_client_chunk(
             &mut ctx,
             index,
             incremental_graph::ReceiveChunkContent::Css(h),
-            false,
         )?;
 
         // If imported on server, there needs to be a server-side file entry
         // so that edges can be attached.
         if metadata.imported_on_server {
-            dev.server_graph
+            dev.graphs
+                .server
                 .insert_css_file_on_server(&mut ctx, index, key)?;
         }
     }
@@ -507,21 +488,20 @@ fn finalize_bundle_inner(
             input_file_sources,
             bv2.graph.input_files.items_loader(),
         )?;
-        dev.client_graph.receive_chunk(
+        dev.receive_client_chunk(
             &mut ctx,
             index,
             incremental_graph::ReceiveChunkContent::Js {
                 code: generated_js,
                 source_map: None,
             },
-            false,
         )?;
         let client_index = ctx
             .get_cached_index(bake::Side::Client, index)
             .unwrap::<{ bake::Side::Client }>()
             .expect("unresolved index");
         // Not the file of a route: a plugin resolved a route's file to it, or loaded it as html.
-        let Some(route_bundle_index) = dev.client_graph.html_route_bundle_index(client_index)
+        let Some(route_bundle_index) = dev.graphs.client.html_route_bundle_index(client_index)
         else {
             continue;
         };
@@ -554,15 +534,15 @@ fn finalize_bundle_inner(
     }
 
     // Sized AFTER
-    // Pass 1 so server/client bitsets cover files just inserted by `receive_chunk`.
-    *ctx.gts = dev.init_graph_trace_state(if n_css > 0 {
+    // Pass 1 so server/client bitsets cover files just inserted.
+    *ctx.gts = dev.graphs.init_graph_trace_state(if n_css > 0 {
         input_file_sources.len()
     } else {
         0
     })?;
-    ctx.server_seen_bit_set = DynamicBitSet::init_empty(dev.server_graph.bundled_files.len())?;
+    ctx.server_seen_bit_set = DynamicBitSet::init_empty(dev.graphs.server.bundled_files.len())?;
 
-    dev.incremental_result.had_adjusted_edges = false;
+    dev.graphs.incremental_result.had_adjusted_edges = false;
 
     dev.prepare_and_log_resolution_failures()?;
     dev.report_html_routes_without_html()?;
@@ -588,12 +568,14 @@ fn finalize_bundle_inner(
             continue;
         }
         match targets[part_range.source_index.get() as usize].bake_graph() {
-            bake::Graph::Server | bake::Graph::Ssr => dev.server_graph.process_chunk_dependencies(
-                &mut ctx,
-                incremental_graph::ProcessMode::Normal,
-                part_range.source_index,
-            )?,
-            bake::Graph::Client => dev.client_graph.process_chunk_dependencies(
+            bake::Graph::Server | bake::Graph::Ssr => {
+                dev.graphs.process_chunk_dependencies::<{ Side::Server }>(
+                    &mut ctx,
+                    incremental_graph::ProcessMode::Normal,
+                    part_range.source_index,
+                )?
+            }
+            bake::Graph::Client => dev.graphs.process_chunk_dependencies::<{ Side::Client }>(
                 &mut ctx,
                 incremental_graph::ProcessMode::Normal,
                 part_range.source_index,
@@ -602,7 +584,7 @@ fn finalize_bundle_inner(
     }
     for chunk in html_chunks_mut.iter() {
         let index = bun_ast::Index::init(chunk.entry_point.source_index());
-        dev.client_graph.process_chunk_dependencies(
+        dev.graphs.process_chunk_dependencies::<{ Side::Client }>(
             &mut ctx,
             incremental_graph::ProcessMode::Normal,
             index,
@@ -610,7 +592,7 @@ fn finalize_bundle_inner(
     }
     for chunk in css_chunks_mut.iter() {
         let entry_index = bun_ast::Index::init(chunk.entry_point.source_index());
-        dev.client_graph.process_chunk_dependencies(
+        dev.graphs.process_chunk_dependencies::<{ Side::Client }>(
             &mut ctx,
             incremental_graph::ProcessMode::Css,
             entry_index,
@@ -618,45 +600,45 @@ fn finalize_bundle_inner(
     }
 
     // Index all failed files now that the incremental graph has been updated.
-    if !dev.incremental_result.failures_removed.is_empty()
-        || !dev.incremental_result.failures_added.is_empty()
+    if !dev.graphs.incremental_result.failures_removed.is_empty()
+        || !dev.graphs.incremental_result.failures_added.is_empty()
     {
         *had_sent_hmr_event = true;
     }
     dev.index_failures()?;
 
-    dev.client_graph.ensure_stale_bit_capacity(false)?;
-    dev.server_graph.ensure_stale_bit_capacity(false)?;
+    dev.graphs.client.ensure_stale_bit_capacity(false)?;
+    dev.graphs.server.ensure_stale_bit_capacity(false)?;
 
     dev.generation = dev.generation.wrapping_add(1);
     if Environment::ENABLE_LOGS {
         debug_log!(
             "Bundle Round {}: {} server, {} client, {} ms",
             dev.generation,
-            dev.server_graph.current_chunk_parts.len(),
-            dev.client_graph.current_chunk_parts.len(),
+            dev.graphs.server.current_chunk_parts.len(),
+            dev.graphs.client.current_chunk_parts.len(),
             current_bundle!().timer.elapsed().as_millis(),
         );
     }
 
     // Load all new chunks into the server runtime.
-    if !dev.frontend_only && dev.server_graph.current_chunk_len > 0 {
+    if !dev.frontend_only && dev.graphs.server.current_chunk_len > 0 {
         // Generate a script_id for server bundles
 
         // Get the source map if available and render to JSON
-        let source_map_json = if !dev.server_graph.current_chunk_source_maps.is_empty() {
+        let source_map_json = if !dev.graphs.server.current_chunk_source_maps.is_empty() {
             // Create a temporary source map entry to render
             let mut source_map_entry = source_map_store::Entry::default();
 
             // Fill the source map entry
-            dev.server_graph.take_source_map(&mut source_map_entry)?;
+            dev.graphs.server.take_source_map(&mut source_map_entry)?;
 
             Some(source_map_entry.render_json(ChunkKind::HmrChunk, bake::Side::Server)?)
         } else {
             None
         };
 
-        let server_bundle = dev.server_graph.take_js_bundle_server(
+        let server_bundle = dev.graphs.server.take_js_bundle_server(
             &incremental_graph::TakeJSBundleOptionsServer {
                 kind: ChunkKind::HmrChunk,
             },
@@ -708,11 +690,11 @@ fn finalize_bundle_inner(
                 server_modules,
                 dev.make_array_for_server_components_patch(
                     global,
-                    &dev.incremental_result.client_components_added,
+                    &dev.graphs.incremental_result.client_components_added,
                 )?,
                 dev.make_array_for_server_components_patch(
                     global,
-                    &dev.incremental_result.client_components_removed,
+                    &dev.graphs.incremental_result.client_components_removed,
                 )?,
             ],
         ) {
@@ -756,14 +738,22 @@ fn finalize_bundle_inner(
     // This list of routes affected excludes client code.
     if will_hear_hot_update
         && current_bundle!().had_reload_event
-        && (dev.incremental_result.framework_routes_affected.len()
-            + dev.incremental_result.html_routes_hard_affected.len())
+        && (dev
+            .graphs
+            .incremental_result
+            .framework_routes_affected
+            .len()
+            + dev
+                .graphs
+                .incremental_result
+                .html_routes_hard_affected
+                .len())
             > 0
-        && dev.bundling_failures.is_empty()
+        && dev.graphs.bundling_failures.is_empty()
     {
         has_route_bits_set = true;
 
-        for request in &dev.incremental_result.framework_routes_affected {
+        for request in &dev.graphs.incremental_result.framework_routes_affected {
             let route = dev.router.route_ptr(request.route_index());
             if let Some(id) = route.bundle {
                 route_bits.set(id.get() as usize);
@@ -772,7 +762,7 @@ fn finalize_bundle_inner(
                 mark_all_route_children(&dev.router, &mut [&mut route_bits], request.route_index());
             }
         }
-        for route_bundle_index in &dev.incremental_result.html_routes_hard_affected {
+        for route_bundle_index in &dev.graphs.incremental_result.html_routes_hard_affected {
             route_bits.set(route_bundle_index.get() as usize);
             route_bits_client.set(route_bundle_index.get() as usize);
         }
@@ -791,17 +781,33 @@ fn finalize_bundle_inner(
 
     // When client component roots get updated, the `client_components_affected`
     // list contains the server side versions of these roots.
-    if !dev.incremental_result.client_components_affected.is_empty() {
+    if !dev
+        .graphs
+        .incremental_result
+        .client_components_affected
+        .is_empty()
+    {
         has_route_bits_set = true;
 
-        dev.incremental_result.framework_routes_affected.clear();
-        dev.incremental_result.html_routes_hard_affected.clear();
-        dev.incremental_result.html_routes_soft_affected.clear();
+        dev.graphs
+            .incremental_result
+            .framework_routes_affected
+            .clear();
+        dev.graphs
+            .incremental_result
+            .html_routes_hard_affected
+            .clear();
+        dev.graphs
+            .incremental_result
+            .html_routes_soft_affected
+            .clear();
         ctx.gts.clear();
 
         // `trace_dependencies` appends to this list.
-        for index in ::core::mem::take(&mut dev.incremental_result.client_components_affected) {
-            dev.server_graph.trace_dependencies(
+        for index in
+            ::core::mem::take(&mut dev.graphs.incremental_result.client_components_affected)
+        {
+            dev.graphs.trace_dependencies(
                 index,
                 ctx.gts,
                 incremental_graph::TraceDependencyGoal::NoStop,
@@ -809,7 +815,7 @@ fn finalize_bundle_inner(
             )?;
         }
 
-        for request in &dev.incremental_result.framework_routes_affected {
+        for request in &dev.graphs.incremental_result.framework_routes_affected {
             let route = dev.router.route_ptr(request.route_index());
             if let Some(id) = route.bundle {
                 route_bits.set(id.get() as usize);
@@ -829,7 +835,12 @@ fn finalize_bundle_inner(
         while let Some(bundled_route_index) = it.next() {
             dev.route_bundles[bundled_route_index].invalidate_client_bundle(&mut dev.source_maps);
         }
-    } else if !dev.incremental_result.html_routes_hard_affected.is_empty() {
+    } else if !dev
+        .graphs
+        .incremental_result
+        .html_routes_hard_affected
+        .is_empty()
+    {
         // Free old bundles
         let mut it = route_bits_client.iterator::<true, true>();
         while let Some(bundled_route_index) = it.next() {
@@ -841,7 +852,7 @@ fn finalize_bundle_inner(
     // edit to them makes the cached bundle stale: the next page load must not hydrate with it.
     {
         let mut stale = DynamicBitSet::init_empty(dev.route_bundles.len())?;
-        for request in &dev.incremental_result.framework_routes_affected {
+        for request in &dev.graphs.incremental_result.framework_routes_affected {
             let route = dev.router.route_ptr(request.route_index());
             if !dev.router.type_ptr_const(route.r#type).client_pages {
                 continue;
@@ -860,8 +871,13 @@ fn finalize_bundle_inner(
     }
 
     // Softly affected HTML routes only need the bundle invalidated.
-    if !dev.incremental_result.html_routes_soft_affected.is_empty() {
-        for index in &dev.incremental_result.html_routes_soft_affected {
+    if !dev
+        .graphs
+        .incremental_result
+        .html_routes_soft_affected
+        .is_empty()
+    {
+        for index in &dev.graphs.incremental_result.html_routes_soft_affected {
             dev.route_bundles[index.get() as usize].invalidate_client_bundle(&mut dev.source_maps);
             route_bits.set(index.get() as usize);
         }
@@ -869,8 +885,10 @@ fn finalize_bundle_inner(
     }
 
     // `route_bits` will have all of the routes that were modified.
-    if has_route_bits_set && (will_hear_hot_update || dev.incremental_result.had_adjusted_edges) {
-        let had_adjusted_edges = dev.incremental_result.had_adjusted_edges;
+    if has_route_bits_set
+        && (will_hear_hot_update || dev.graphs.incremental_result.had_adjusted_edges)
+    {
+        let had_adjusted_edges = dev.graphs.incremental_result.had_adjusted_edges;
         let mut it = route_bits.iterator::<true, true>();
         // List 2
         while let Some(i) = it.next() {
@@ -892,19 +910,19 @@ fn finalize_bundle_inner(
             // change the list of CSS files.
             if had_adjusted_edges {
                 ctx.gts.clear();
-                dev.client_graph.current_css_files.clear();
+                dev.graphs.client.current_css_files.clear();
                 match &route_bundle.data {
                     route_bundle::Data::Framework(fw) => {
                         let route_index = fw.route_index;
                         dev.trace_all_route_imports(route_index, ctx.gts, TraceImportGoal::FindCss)?
                     }
-                    route_bundle::Data::Html(html) => dev.client_graph.trace_imports(
+                    route_bundle::Data::Html(html) => dev.graphs.trace_imports(
                         html.bundled_file,
                         ctx.gts,
                         TraceImportGoal::FindCss,
                     )?,
                 }
-                let css_ids = &dev.client_graph.current_css_files;
+                let css_ids = &dev.graphs.client.current_css_files;
 
                 w_int!(i32, i32::try_from(css_ids.len()).expect("int cast"));
                 for css_id in css_ids {
@@ -934,9 +952,9 @@ fn finalize_bundle_inner(
     };
     let printed_css_count = css_chunks.iter().filter(|c| css_chunk_printed(c)).count();
     if will_hear_hot_update {
-        if dev.client_graph.current_chunk_len > 0 || printed_css_count > 0 {
+        if dev.graphs.client.current_chunk_len > 0 || printed_css_count > 0 {
             // Send CSS mutations
-            dev.assets.reindex_if_needed()?;
+            dev.graphs.assets.reindex_if_needed()?;
             w_int!(u32, u32::try_from(printed_css_count).expect("int cast"));
             use bun_bundler::Graph::InputFileColumns as _;
             let sources = bv2.graph.input_files.items_source();
@@ -948,7 +966,7 @@ fn finalize_bundle_inner(
                 let mut hex = [0u8; 16];
                 let n = bun_core::fmt::bytes_to_hex_lower(&content_hash.to_ne_bytes(), &mut hex);
                 w_all!(&hex[..n]);
-                let css_data: &[u8] = match dev.assets.get(content_hash) {
+                let css_data: &[u8] = match dev.graphs.assets.get(content_hash) {
                     Some(route) => &route.blob.internal_blob().bytes,
                     None => b"",
                 };
@@ -957,13 +975,13 @@ fn finalize_bundle_inner(
             }
 
             // Send the JS chunk
-            if dev.client_graph.current_chunk_len > 0 {
+            if dev.graphs.client.current_chunk_len > 0 {
                 let script_id = 'h: {
                     // Matches the bundler's `ContentHasher` hash (XxHash64).
                     let mut source_map_hash = bun_hash::XxHash64Streaming::new(0x4b12);
-                    let keys = dev.client_graph.bundled_files.keys();
-                    let values = dev.client_graph.bundled_files.values();
-                    for part in &dev.client_graph.current_chunk_parts {
+                    let keys = dev.graphs.client.bundled_files.keys();
+                    let values = dev.graphs.client.bundled_files.values();
+                    for part in &dev.graphs.client.current_chunk_parts {
                         source_map_hash.update(&keys[part.get() as usize]);
                         if let Some(map) = values[part.get() as usize].source_map.get() {
                             source_map_hash.update(map.vlq());
@@ -994,7 +1012,7 @@ fn finalize_bundle_inner(
                     .put_or_increment_ref_count(script_id, sockets)?
                 {
                     source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => 'brk: {
-                        dev.client_graph.take_source_map(entry)?;
+                        dev.graphs.client.take_source_map(entry)?;
                         break 'brk entry;
                     }
                     source_map_store::PutOrIncrementRefCount::Shared(entry) => entry,
@@ -1002,7 +1020,7 @@ fn finalize_bundle_inner(
                 w_int!(u32, entry.overlapping_memory_cost);
 
                 // Build and send the source chunk
-                dev.client_graph.take_js_bundle_to_list(
+                dev.graphs.client.take_js_bundle_to_list(
                     &mut hot_update_payload,
                     &incremental_graph::TakeJSBundleOptionsClient {
                         kind: crate::bake::dev_server::ChunkKind::HmrChunk,
@@ -1020,7 +1038,7 @@ fn finalize_bundle_inner(
         *had_sent_hmr_event = true;
     }
 
-    if !dev.incremental_result.failures_added.is_empty() {
+    if !dev.graphs.incremental_result.failures_added.is_empty() {
         dev.bundles_since_last_error = 0;
 
         // Borrowed from the VM, where the agent lives, so that `dev` stays free below.
@@ -1044,19 +1062,23 @@ fn finalize_bundle_inner(
 
             dev.send_serialized_failures(
                 resp,
-                dev.bundling_failures.values(),
+                dev.graphs.bundling_failures.values(),
                 inspector_agent.take(),
             )?;
         }
         if let Some(agent) = inspector_agent {
             let mut buf: Vec<u8> = Vec::new();
-            dev.encode_serialized_failures(dev.bundling_failures.values(), &mut buf, Some(agent))?;
+            dev.encode_serialized_failures(
+                dev.graphs.bundling_failures.values(),
+                &mut buf,
+                Some(agent),
+            )?;
         }
 
         return Ok(());
     }
 
-    if dev.bundling_failures.is_empty() {
+    if dev.graphs.bundling_failures.is_empty() {
         if current_bundle!().had_reload_event {
             let clear_terminal = !bun_output::scope_is_visible!(DevServer)
                 && !dev
@@ -1123,7 +1145,7 @@ fn finalize_bundle_inner(
                     };
 
                     // Note: index `route_bundles` immutably so `dev.relative_path`
-                    // / `dev.router` / `dev.server_graph` reads below stay disjoint.
+                    // / `dev.router` / `dev.graphs` reads below stay disjoint.
                     break 'brk match &dev.route_bundles[route_bundle_index.get() as usize].data {
                         route_bundle::Data::Html(html) => {
                             Some(dev.relative_path(&mut *buf, &html.html_bundle.bundle.path))
@@ -1136,8 +1158,8 @@ fn finalize_bundle_inner(
                             };
                             let server_index =
                                 from_opaque_file_id::<{ bake::Side::Server }>(opaque_id);
-                            let abs_path =
-                                &dev.server_graph.bundled_files.keys()[server_index.get() as usize];
+                            let abs_path = &dev.graphs.server.bundled_files.keys()
+                                [server_index.get() as usize];
                             break 'file_name Some(dev.relative_path(&mut *buf, abs_path));
                         }
                     };
@@ -1253,7 +1275,7 @@ impl DevServer {
             return Ok(JSValue::NULL);
         }
         let arr = jsc::JSArray::create_empty(global, items.len())?;
-        let names = self.server_graph.bundled_files.keys();
+        let names = self.graphs.server.bundled_files.keys();
         for (i, item) in items.iter().enumerate() {
             let mut buf = paths::path_buffer_pool::get();
             let s = self.relative_path(&mut *buf, &names[item.get() as usize]);

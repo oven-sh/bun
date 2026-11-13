@@ -318,7 +318,7 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return not_found(resp);
     };
     debug_log!("onAssetRequest {} {}", hash, bstr::BStr::new(param));
-    let Some(asset) = dev.assets.get(hash) else {
+    let Some(asset) = dev.graphs.assets.get(hash) else {
         return not_found(resp);
     };
     req.set_yield(false);

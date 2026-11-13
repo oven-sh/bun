@@ -1419,6 +1419,7 @@ impl EventLoop {
     /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
     /// `context`: as for [`run_callback`](Self::run_callback).
     /// `after_call` runs after `callback` returns and before microtasks drain.
+    /// The loop stays entered until that drain is done: see [`Self::enter_scope_without_checkpoint`].
     pub fn run_callback_with_result_and_forcefully_drain_microtasks(
         &mut self,
         context: crate::ContextId,
@@ -1434,17 +1435,16 @@ impl EventLoop {
         };
         // R-2 noalias mitigation — see `run_callback` above.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        // SAFETY: `this` is the unique live `EventLoop`; short-lived `&mut`.
-        unsafe { (*this).enter() };
+        // SAFETY: `this` is the unique live `EventLoop`, which the VM owns for the process lifetime.
+        let _entered = unsafe { Self::enter_scope_without_checkpoint(this) };
         let result = callback.call(global_object, this_value, arguments);
-        let this: *mut Self = core::hint::black_box(this);
-        // SAFETY: as above.
-        unsafe { (*this).exit_without_checkpoint() };
         after_call();
         let result = result?;
         result.ensure_still_alive();
         let jsc_vm = global_object.bun_vm().jsc_vm();
-        self.drain_microtasks_with_global(global_object, jsc_vm)
+        let this: *mut Self = core::hint::black_box(this);
+        // SAFETY: as above. The `&mut` spans the drain, as in `exit()`: the JS it runs re-enters the loop through the VM (R-2).
+        unsafe { (*this).drain_microtasks_with_global(global_object, jsc_vm) }
             .map_err(|stopped| stopped.throw(global_object))?;
         Ok(result)
     }

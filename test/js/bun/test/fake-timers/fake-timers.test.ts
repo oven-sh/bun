@@ -524,50 +524,6 @@ describe("a zero-delay timer armed by a timer callback", () => {
     });
   });
 
-  // The runner calls the first tests of a file with no event loop task below them, so these get a test file of their own.
-  test("no promise job runs before a timer control returns", async () => {
-    using dir = tempDir("fake-timers-promise-jobs", {
-      "promise-jobs.test.ts": `
-        import { jest, test } from "bun:test";
-        test.each(["advanceTimersByTime", "advanceTimersToNextTimer", "runOnlyPendingTimers", "runAllTimers"])("%s", control => {
-          jest.useFakeTimers();
-          const order = [];
-          setTimeout(() => {
-            order.push("timer 1");
-            Promise.resolve().then(() => order.push("promise job"));
-          }, 1);
-          setTimeout(() => order.push("timer 2"), 2);
-          jest[control](2);
-          order.push("returned");
-          console.log(JSON.stringify({ control, order }));
-          jest.useRealTimers();
-        });
-      `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "promise-jobs.test.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const results = stdout
-      .split("\n")
-      .filter(line => line.startsWith("{"))
-      .map(line => JSON.parse(line));
-    const order = ["timer 1", "timer 2", "returned"];
-    expect({ results, exitCode }, stderr).toEqual({
-      results: [
-        { control: "advanceTimersByTime", order },
-        { control: "advanceTimersToNextTimer", order },
-        { control: "runOnlyPendingTimers", order },
-        { control: "runAllTimers", order },
-      ],
-      exitCode: 0,
-    });
-  });
-
   test("AbortSignal.timeout(0) fires 1ms after the callback that armed it", () => {
     bunVi.useFakeTimers();
     let signal!: AbortSignal;
@@ -628,6 +584,355 @@ describe("a zero-delay timer armed by a timer callback", () => {
     },
   );
 });
+
+// Each case is a test file or a script of its own: what matters is the callback that calls the control.
+describe.concurrent("no promise job runs before a timer control returns", () => {
+  async function printedBy(cmd: string[], files: Record<string, string>) {
+    using dir = tempDir("fake-timers-promise-jobs", files);
+    const { stdout, stderr, exitCode } = await run(cmd, String(dir));
+    const printed = stdout
+      .split("\n")
+      .filter(line => line.startsWith("{"))
+      .map(line => JSON.parse(line));
+    return { printed, stderr, exitCode };
+  }
+
+  test("in any callback of a test file", async () => {
+    const { printed, stderr, exitCode } = await printedBy(["test", "./callbacks.test.ts"], {
+      "callbacks.test.ts": `
+        import { beforeEach, describe, jest, test, vi } from "bun:test";
+
+        const controls = {
+          advanceTimersByTime: () => jest.advanceTimersByTime(2),
+          advanceTimersToNextTimer: () => jest.advanceTimersToNextTimer(2),
+          advanceTimersToNextFrame: () => jest.advanceTimersToNextFrame(),
+          runOnlyPendingTimers: () => jest.runOnlyPendingTimers(),
+          runAllTimers: () => jest.runAllTimers(),
+          runAllImmediates: () => jest.runAllImmediates(),
+          // Their first check advances the clock by the interval.
+          waitFor: () => void vi.waitFor(() => {}, { interval: 2 }),
+          waitUntil: () => void vi.waitUntil(() => true, { interval: 2 }),
+        };
+        function cell(callback, control) {
+          jest.useFakeTimers({ toFake: ["setTimeout", "setImmediate"] });
+          const order = [];
+          const arm = control === "runAllImmediates" ? setImmediate : setTimeout;
+          arm(async () => {
+            order.push("timer 1");
+            await 0;
+            order.push("after the await of timer 1");
+          }, 1);
+          arm(() => order.push("timer 2"), 2);
+          controls[control]();
+          order.push("returned");
+          jest.useRealTimers();
+          // Printed by a later promise job, to show that the one the control held back still runs.
+          Promise.resolve().then(() => console.log(JSON.stringify({ callback, control, order })));
+        }
+        const callbacks = {
+          "sync body": (name, run) => test(name, run),
+          "after an await": (name, run) =>
+            test(name, async () => {
+              await 0;
+              run();
+            }),
+          ".then()": (name, run) => test(name, () => Promise.resolve().then(run)),
+          "queueMicrotask()": (name, run) =>
+            test(name, () => new Promise(resolve => queueMicrotask(() => resolve(run())))),
+          "process.nextTick()": (name, run) =>
+            test(name, () => new Promise(resolve => process.nextTick(() => resolve(run())))),
+          "a promise job of a test that takes done": (name, run) =>
+            test(name, done => {
+              Promise.resolve().then(run).then(done);
+            }),
+          "beforeEach(), after an await": (name, run) =>
+            describe(name, () => {
+              beforeEach(async () => {
+                await 0;
+                run();
+              });
+              test("runs the hook", () => {});
+            }),
+          "async describe() body, after an await": (name, run) =>
+            describe(name, async () => {
+              await 0;
+              run();
+            }),
+          "test.concurrent(), after an await": (name, run) =>
+            test.concurrent(name, async () => {
+              await 0;
+              run();
+            }),
+          "after a real timer": (name, run) =>
+            test(name, async () => {
+              await new Promise(resolve => setTimeout(resolve, 1));
+              await 0;
+              run();
+            }),
+        };
+        for (const [callback, register] of Object.entries(callbacks)) {
+          for (const control of Object.keys(controls)) register(callback + ": " + control, () => cell(callback, control));
+        }
+      `,
+    });
+    const order = "timer 1,timer 2,returned,after the await of timer 1";
+    expect(printed.filter(cell => cell.order.join() !== order)).toEqual([]);
+    expect({ cells: printed.length, exitCode }, stderr).toEqual({ cells: 80, exitCode: 0 });
+  });
+
+  test("for any kind of timer", async () => {
+    const { printed, stderr, exitCode } = await printedBy(["test", "./kinds.test.ts"], {
+      "kinds.test.ts": `
+        import { jest, test } from "bun:test";
+
+        const kinds = {
+          setInterval(order) {
+            let fired = 0;
+            const interval = setInterval(async () => {
+              const timer = "timer " + ++fired;
+              order.push(timer);
+              if (fired === 2) clearInterval(interval);
+              await 0;
+              order.push("after the await of " + timer);
+            }, 1);
+            jest.advanceTimersByTime(2);
+          },
+          "AbortSignal.timeout()"(order) {
+            AbortSignal.timeout(1).addEventListener("abort", async () => {
+              order.push("timer 1");
+              await 0;
+              order.push("after the await of timer 1");
+            });
+            AbortSignal.timeout(2).addEventListener("abort", () => order.push("timer 2"));
+            jest.advanceTimersByTime(2);
+          },
+          "Bun.sleep()"(order) {
+            setTimeout(() => order.push("timer 1"), 1);
+            Bun.sleep(1).then(() => order.push("after Bun.sleep(1)"));
+            setTimeout(() => order.push("timer 2"), 2);
+            jest.advanceTimersByTime(2);
+          },
+          "Bun.cron()"(order) {
+            const jobs = [
+              Bun.cron("* * * * *", async () => {
+                order.push("timer 1");
+                await 0;
+                order.push("after the await of timer 1");
+              }),
+              Bun.cron("* * * * *", () => void order.push("timer 2")),
+            ];
+            jest.advanceTimersByTime(60_000);
+            for (const job of jobs) job.stop();
+          },
+          // The job is armed again once the promise of its callback settles.
+          "Bun.cron() with an async callback, under runAllTimers()"(order) {
+            const job = Bun.cron("* * * * *", async () => {
+              order.push("timer 1");
+              await 0;
+            });
+            setTimeout(() => order.push("timer 2"), 90_000);
+            try {
+              jest.runAllTimers();
+            } finally {
+              job.stop();
+            }
+          },
+          "a promise job queued before the control"(order) {
+            Promise.resolve().then(() => order.push("promise job"));
+            setTimeout(() => order.push("timer 1"), 1);
+            setTimeout(() => order.push("timer 2"), 2);
+            jest.advanceTimersByTime(2);
+          },
+          "a timer fired by a control that a timer calls"(order) {
+            setTimeout(() => {
+              setTimeout(async () => {
+                order.push("timer 1");
+                await 0;
+                order.push("after the await of timer 1");
+              }, 1);
+              jest.advanceTimersByTime(1);
+            }, 1);
+            setTimeout(() => order.push("timer 2"), 3);
+            jest.advanceTimersByTime(3);
+          },
+        };
+        function cell(callback, kind) {
+          jest.useFakeTimers({ now: 0, timerLimit: 50 });
+          const order = [];
+          try {
+            kinds[kind](order);
+            order.push("returned");
+          } catch (error) {
+            order.push("threw " + error.message);
+          }
+          jest.useRealTimers();
+          console.log(JSON.stringify({ callback, kind, order }));
+        }
+        for (const kind of Object.keys(kinds)) {
+          test("sync body: " + kind, () => cell("sync body", kind));
+          test("after an await: " + kind, async () => {
+            await 0;
+            cell("after an await", kind);
+          });
+        }
+
+        // As in Vitest. A timer armed while a fake timer's callback runs would be due 1 ms later.
+        test("after an await: a zero-delay timer that a promise job of a callback arms is due at once", async () => {
+          await 0;
+          jest.useFakeTimers({ now: 0 });
+          const order = [];
+          setTimeout(async () => {
+            order.push("timer 1");
+            await 0;
+            setTimeout(() => order.push("timer 2"), 0);
+          }, 1);
+          jest.advanceTimersByTime(1);
+          await 0;
+          jest.advanceTimersByTime(0);
+          order.push("returned");
+          jest.useRealTimers();
+          console.log(JSON.stringify({ callback: "after an await", kind: "a zero-delay timer that a promise job arms", order }));
+        });
+      `,
+    });
+    expect(printed.filter(cell => cell.order.join() !== "timer 1,timer 2,returned")).toEqual([]);
+    expect({ cells: printed.length, exitCode }, stderr).toEqual({ cells: 15, exitCode: 0 });
+  });
+
+  // Nothing has entered the event loop for these callbacks, so only the control holds the promise jobs back.
+  test("in a callback that runs with the event loop not entered", async () => {
+    const { printed, stderr, exitCode } = await printedBy(["test", "./not-entered.test.ts"], {
+      "not-entered.test.ts": `
+        import { afterAll, test, vi } from "vitest";
+
+        // ServerWebSocket.close() calls the close handler before it returns.
+        const clients = [];
+        const sockets = [];
+        const opened = Promise.withResolvers();
+        const server = Bun.serve({
+          port: 0,
+          fetch: (request, server) => (server.upgrade(request, { data: {} }) ? undefined : new Response(null, { status: 400 })),
+          websocket: {
+            open: socket => void (sockets.push(socket) === 4 && opened.resolve()),
+            message() {},
+            close: socket => void socket.data.order.push("close handler"),
+          },
+        });
+        for (let i = 0; i < 4; i++) clients.push(new WebSocket("ws://localhost:" + server.port));
+        await opened.promise;
+        afterAll(() => server.stop(true));
+        function closeSocket(order) {
+          const socket = sockets.pop();
+          socket.data.order = order;
+          socket.close();
+        }
+
+        const cells = {
+          "advanceTimersByTime()"(order) {
+            vi.useFakeTimers();
+            setTimeout(async () => {
+              order.push("timer 1");
+              await 0;
+              order.push("after the await of timer 1");
+            }, 1);
+            setTimeout(() => order.push("timer 2"), 2);
+            vi.advanceTimersByTime(2);
+          },
+          "runAllTicks(), a faked process.nextTick() callback closes a socket"(order) {
+            vi.useFakeTimers({ toFake: ["nextTick"] });
+            Promise.resolve().then(() => order.push("promise job"));
+            process.nextTick(() => closeSocket(order));
+            vi.runAllTicks();
+          },
+          "waitFor(), its first check closes a socket"(order) {
+            vi.useFakeTimers();
+            Promise.resolve().then(() => order.push("promise job"));
+            vi.waitFor(() => closeSocket(order));
+          },
+        };
+        function cell(control) {
+          const order = [];
+          cells[control](order);
+          order.push("returned");
+          vi.useRealTimers();
+          return order;
+        }
+        // Each test prints once the promise job that the control held back has run.
+        for (const control of Object.keys(cells)) {
+          test("an 'unhandledRejection' listener: " + control, async () => {
+            const called = Promise.withResolvers();
+            process.once("unhandledRejection", () => called.resolve(cell(control)));
+            Promise.reject(new Error("not handled"));
+            const order = await called.promise;
+            console.log(JSON.stringify({ callback: "an 'unhandledRejection' listener", control, order }));
+          });
+          test("after a real setImmediate() callback that throws: " + control, async () => {
+            const reported = Promise.withResolvers();
+            process.once("uncaughtException", reported.resolve);
+            await new Promise(resolve =>
+              setImmediate(() => {
+                resolve();
+                throw new Error("thrown by the immediate");
+              }),
+            );
+            const order = cell(control);
+            await reported.promise;
+            console.log(JSON.stringify({ callback: "after a real setImmediate() callback that throws", control, order }));
+          });
+        }
+      `,
+    });
+    const callbacks = ["an 'unhandledRejection' listener", "after a real setImmediate() callback that throws"];
+    expect({ printed, exitCode }, stderr).toEqual({
+      printed: [
+        ["advanceTimersByTime()", ["timer 1", "timer 2", "returned", "after the await of timer 1"]] as const,
+        [
+          "runAllTicks(), a faked process.nextTick() callback closes a socket",
+          ["close handler", "returned", "promise job"],
+        ] as const,
+        ["waitFor(), its first check closes a socket", ["close handler", "returned", "promise job"]] as const,
+      ].flatMap(([control, order]) => callbacks.map(callback => ({ callback, control, order }))),
+      exitCode: 0,
+    });
+  });
+
+  test("in the exit listeners of a script", async () => {
+    const { printed, stderr, exitCode } = await printedBy(["./exit.mjs"], {
+      "exit.mjs": `
+        const { jest } = Bun.jest();
+        function cell(callback, print) {
+          jest.useFakeTimers();
+          const order = [];
+          setTimeout(async () => {
+            order.push("timer 1");
+            await 0;
+            order.push("after the await of timer 1");
+          }, 1);
+          setTimeout(() => order.push("timer 2"), 2);
+          jest.advanceTimersByTime(2);
+          order.push("returned");
+          jest.useRealTimers();
+          print(() => console.log(JSON.stringify({ callback, order })));
+        }
+        // Printed by a later promise job, to show that the one the control held back still runs.
+        process.once("beforeExit", () => cell("a 'beforeExit' listener", print => void Promise.resolve().then(print)));
+        // The promise jobs of an 'exit' listener never run.
+        process.once("exit", () => cell("an 'exit' listener", print => print()));
+      `,
+    });
+    expect({ printed, exitCode }, stderr).toEqual({
+      printed: [
+        {
+          callback: "a 'beforeExit' listener",
+          order: ["timer 1", "timer 2", "returned", "after the await of timer 1"],
+        },
+        { callback: "an 'exit' listener", order: ["timer 1", "timer 2", "returned"] },
+      ],
+      exitCode: 0,
+    });
+  });
+});
+
 // Only the timers a test schedules itself are faked. Timeouts the runtime arms
 // for its own purposes keep running on the real clock: getTimerCount() does not
 // count them, they fire while fake timers are active, and useRealTimers(), which

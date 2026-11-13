@@ -3,8 +3,10 @@
 #include "TestEnvironment.h"
 
 #include "BunClientData.h"
+#include "BunProcess.h"
 #include "ConsoleObject.h"
 #include "InternalModuleRegistry.h"
+#include "Performance.h"
 #include "ScriptExecutionContext.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/AOTRealmStartup.h>
@@ -23,6 +25,27 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__TestGlobals__g
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(Bun::DeclaredModuleLoad::requireForCommandLine(globalObject, Bun::InternalModuleRegistry::InternalTestGlobals)));
+}
+
+// `bun test --isolate=modules`: removes the native state, which no property shows, that the last test file left on the global object.
+extern "C" void Bun__TestGlobals__resetNativeState(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* context = globalObject->scriptExecutionContext();
+    // Nothing of Bun's own listens on globalThis or performance in the main thread, observes performance or makes a mark.
+    if (auto* performance = globalObject->existingPerformance()) {
+        // As for the context of a test file. `performance` stays in use: an observer that a later file still holds can observe() again.
+        performance->disconnectObserversOf(*context);
+        performance->clearUserTiming();
+    }
+    context->removeAllEventListeners();
+
+    auto* process = globalObject->processObject();
+    process->clearUncaughtExceptionCaptureCallback();
+    // node:repl had its dispatcher in that callback. Without its list, the next REPL installs a new one.
+    auto& callbacksOfRepl = WebCore::builtinNames(vm).uncaughtExceptionCaptureCallbacksPrivateName();
+    if (JSC::JSValue callbacks = process->getDirect(vm, callbacksOfRepl); callbacks && !callbacks.isUndefined())
+        process->putDirect(vm, callbacksOfRepl, JSC::jsUndefined());
 }
 
 namespace Bun {

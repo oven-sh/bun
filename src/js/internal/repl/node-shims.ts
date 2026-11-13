@@ -328,11 +328,15 @@ const getOwnNonIndexProperties: (value: object, filter: number) => (string | sym
 // for the process lifetime once the first REPL starts — see repl.js
 // setupExceptionCapture() for the rationale.
 
-let captureCallbacks: ((err: unknown) => unknown)[] | null = null;
-
 function addUncaughtExceptionCaptureCallback(cb: (err: unknown) => unknown) {
+  // On `process`, not in a variable of this module: `bun test --isolate=modules` empties it with the slot for each file.
+  let captureCallbacks: ((err: unknown) => unknown)[] | undefined = $getByIdDirectPrivate(
+    process,
+    "uncaughtExceptionCaptureCallbacks",
+  );
   if (!captureCallbacks) {
     captureCallbacks = [];
+    $putByIdDirectPrivate(process, "uncaughtExceptionCaptureCallbacks", captureCallbacks);
     try {
       process.setUncaughtExceptionCaptureCallback((err: unknown) => {
         // Indexed, not for..of: user code can delete Array.prototype[Symbol.iterator]

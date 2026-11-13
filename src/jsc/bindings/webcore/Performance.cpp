@@ -238,6 +238,11 @@ void Performance::clearMeasures(const String& measureName)
     m_userTiming->clearMeasures(measureName);
 }
 
+void Performance::clearUserTiming()
+{
+    m_userTiming = nullptr;
+}
+
 void Performance::removeAllObservers()
 {
     for (auto& observer : m_observers)

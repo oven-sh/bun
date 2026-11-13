@@ -2275,6 +2275,35 @@ describe.concurrent("node:repl process-global side effects", () => {
     interactiveTimeout,
   );
 
+  // As in Node: a program that cleared the callback can set its own, whatever REPLs start in between.
+  test(
+    "a REPL that starts after the program cleared the capture callback does not take it again",
+    async () => {
+      const script = `
+      const repl = require("node:repl");
+      const { PassThrough } = require("node:stream");
+      const start = () => {
+        const output = new PassThrough();
+        output.resume();
+        return repl.start({ input: new PassThrough(), output, terminal: false, prompt: "" });
+      };
+      start().close();
+      process.setUncaughtExceptionCaptureCallback(null);
+      start().close();
+      console.log("has=" + process.hasUncaughtExceptionCaptureCallback());
+      process.setUncaughtExceptionCaptureCallback(() => {});
+      console.log("set");
+      process.exit(0);
+    `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("ALREADY_SET");
+      expect(stdout).toBe("has=false\nset\n");
+      expect(exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
+
   // Node filters slash-modules in addBuiltinLibsToObject (not
   // getBuiltinLibs), so `fs/promises` etc. never land on the REPL context
   // while repl.builtinModules and require-completion still list them.

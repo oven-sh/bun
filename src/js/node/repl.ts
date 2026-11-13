@@ -312,7 +312,6 @@ function loadImpl(): Loaded {
   // AsyncLocalStorage to track which REPL instance owns the current async context
   // This replaces the domain-based tracking for error handling
   const replContext = new AsyncLocalStorage<{ replServer: REPLServer }>();
-  let exceptionCaptureInstalled = false;
 
   function replExceptionCaptureCallback(err: unknown) {
     const store = replContext.getStore();
@@ -332,8 +331,8 @@ function loadImpl(): Loaded {
   // shim's fallthrough re-emits `uncaughtException` with the origin arg so user
   // listeners still see it.
   function setupExceptionCapture() {
-    if (exceptionCaptureInstalled) return;
-    exceptionCaptureInstalled = true;
+    // The list of addUncaughtExceptionCaptureCallback(), which says why it is on `process`.
+    if ($getByIdDirectPrivate(process, "uncaughtExceptionCaptureCallbacks")) return;
     require("internal/repl/node-shims").addUncaughtExceptionCaptureCallback(replExceptionCaptureCallback);
   }
 

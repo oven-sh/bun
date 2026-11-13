@@ -1,5 +1,6 @@
 // Called by VirtualMachine.rs. With `bun test --isolate=modules`, all test files share one global object,
 // so after each file we restore what it changed: globals, builtins, `process.env` and `process` listeners.
+// Bun__TestGlobals__resetNativeState() in TestEnvironment.cpp runs first, for native state that no property shows.
 
 const isEnvironmentGlobal: (key: PropertyKey) => boolean = require("internal/test/environment").isEnvironmentGlobal;
 const shapesOf: (objects: object[]) => unknown[] = $newCppFunction(

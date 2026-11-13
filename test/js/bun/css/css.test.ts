@@ -8458,6 +8458,103 @@ describe("whitespace in values kept as tokens", () => {
   });
 });
 
+describe("a folded color function next to the token it touches", () => {
+  // [declaration, default output, minified output]
+  const declaration = (source: string, normal: string, minified: string) => {
+    expect(cssInternals._test(`.c { ${source}; }`, "")).toBe(`.c {\n  ${normal};\n}\n`);
+    expect(cssInternals.minifyTest(`.c { ${source}; }`, "")).toBe(`.c{${minified}}`);
+  };
+
+  describe("gets a blank before a name, a number, a hash or `(`", () => {
+    test.each([
+      // hugo-theme-relearn, theme-neon.css
+      [
+        "--MENU-SECTIONS-BG-color: linear-gradient( 165deg, rgba( 243, 0, 178, .825 )0%, rgba( 28, 144, 243, .7 )65%, rgba( 0, 227, 211, .7 )100% )",
+        "--MENU-SECTIONS-BG-color: linear-gradient(165deg, #f300b2d2 0%, #1c90f3b3 65%, #00e3d3b3 100%)",
+        "--MENU-SECTIONS-BG-color:linear-gradient(165deg,#f300b2d2 0%,#1c90f3b3 65%,#00e3d3b3 100%)",
+      ],
+      // Output of tdewolff/minify (Hugo) and of @swc/css.
+      [
+        "scrollbar-color:rgba(255,255,255,.28)transparent",
+        "scrollbar-color: #ffffff47 transparent",
+        "scrollbar-color:#ffffff47 transparent",
+      ],
+      [
+        "box-shadow:var(--s),rgba(0,0,0,.2)0 5px",
+        "box-shadow: var(--s), #0003 0 5px",
+        "box-shadow:var(--s),#0003 0 5px",
+      ],
+      ["outline:rgba(0,0,0,.5)solid var(--w)", "outline: #00000080 solid var(--w)", "outline:#00000080 solid var(--w)"],
+      // Output of tdewolff/minify. The hash prints as a name.
+      ["scrollbar-color:rgba(0,0,0,.5)#808080", "scrollbar-color: #00000080 gray", "scrollbar-color:#00000080 gray"],
+      // Output of @swc/css.
+      [
+        "border-color:rgba(0,0,0,0)rgba(0,0,0,0)rgba(0,0,0,0)var(--c)",
+        "border-color: #0000 #0000 #0000 var(--c)",
+        "border-color:#0000 #0000 #0000 var(--c)",
+      ],
+      // Each kind of token that can join.
+      [
+        "background:linear-gradient(var(--x),hsl(0,0%,0%)71%)",
+        "background: linear-gradient(var(--x), #000 71%)",
+        "background:linear-gradient(var(--x),#000 71%)",
+      ],
+      ["--x:rgb(255 0 0)a", "--x: red a", "--x:red a"],
+      ["--x:rgb(0 0 0)5", "--x: #000 5", "--x:#000 5"],
+      ["--x:rgb(0 0 0)-5", "--x: #000 -5", "--x:#000 -5"],
+      ["--x:rgb(0 0 0)é", "--x: #000 é", "--x:#000 é"],
+      // The IE hack of antd 3 and rsuite 4.
+      ["--x:rgb(0 0 0)\\9", "--x: #000 \\9 ", "--x:#000 \\9 "],
+      // `red(` would be a function.
+      ["--x:rgb(255 0 0)(a)", "--x: red (a)", "--x:red (a)"],
+      ["--x:rgb(255 0 0)rgb(0 0 0)", "--x: red #000", "--x:red #000"],
+      ["--x:color-mix(in srgb,red,blue)a", "--x: purple a", "--x:purple a"],
+      ["--x:f(rgb(0 0 0)a)", "--x: f(#000 a)", "--x:f(#000 a)"],
+      ["--x:var(--y,rgb(0 0 0)a)", "--x: var(--y, #000 a)", "--x:var(--y,#000 a)"],
+    ])("%s", declaration);
+
+    // The tokenizer reads a NUL byte as U+FFFD, which starts a name.
+    test("--x:rgb(0 0 0)<NUL>", () => {
+      declaration("--x:rgb(0 0 0)\0", "--x: #000 \ufffd", "--x:#000 \ufffd");
+    });
+  });
+
+  describe("gets no blank before what cannot join", () => {
+    test.each([
+      ["--x:rgb(255 0 0)/a", "--x: red/a", "--x:red/a"],
+      ["--x:rgb(0 0 0)+5", "--x: #000+5", "--x:#000+5"],
+      ["--x:rgb(0 0 0).5", "--x: #000.5", "--x:#000.5"],
+      ['--x:rgb(0 0 0)"s"', '--x: #000"s"', '--x:#000"s"'],
+      ["--x:rgb(0 0 0)[a]", "--x: #000[a]", "--x:#000[a]"],
+      // Not folded: it prints as a function.
+      ["--x:hsl(var(--a))inset", "--x: hsl(var(--a))inset", "--x:hsl(var(--a))inset"],
+    ])("%s", declaration);
+
+    // Tailwind writes a blank as `_`: the class stays one class.
+    test("@apply shadow-[rgba(0,0,0,0.5)_0_0_10px]", () => {
+      expect(cssInternals.minifyTest("@apply shadow-[rgba(0,0,0,0.5)_0_0_10px];", "")).toBe(
+        "@apply shadow-[#00000080_0_0_10px];",
+      );
+    });
+  });
+
+  test("keeps its @supports copies", () => {
+    const targets = { chrome: 80 << 16, firefox: 78 << 16, safari: 14 << 16 };
+    const source = ".c{box-shadow:var(--s),oklch(63.7% .237 25.331)0 5px}";
+    expect(cssInternals.minifyTest(source, "", targets)).toBe(
+      ".c{box-shadow:var(--s),#fb2c36 0 5px}" +
+        "@supports (color:color(display-p3 0 0 0)){.c{box-shadow:var(--s),color(display-p3 .903738 .262579 .253307) 0 5px}}" +
+        "@supports (color:lab(0% 0 0)){.c{box-shadow:var(--s),lab(55.4814% 75.0732 48.8527) 0 5px}}",
+    );
+  });
+
+  test("light-dark() is still lowered", () => {
+    expect(cssInternals.minifyTest(".c{--x:light-dark(#fff,#000)solid}", "", { chrome: 100 << 16 })).toBe(
+      ".c{--x:var(--buncss-light,#fff)var(--buncss-dark,#000) solid}",
+    );
+  });
+});
+
 describe("url() values compare by their text", () => {
   minify_test('.a{background:url(a.png)}.b{background:url("a.png")}', ".a,.b{background:url(a.png)}");
   minify_test(".a{--i:url(a.png)}.b{--i:url(a.png)}", ".a,.b{--i:url(a.png)}");

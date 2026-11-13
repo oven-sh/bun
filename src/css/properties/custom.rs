@@ -428,6 +428,11 @@ impl<'bump> TokenList<'bump> {
                     // Attempt to parse embedded color values into hex tokens.
                     if let Some(color) = try_parse_color_token(f, &state, input) {
                         tokens.push(TokenOrValue::Color(color));
+                        // Its short form would run into a name or a number written right after it.
+                        let next = input.input.tokenizer.next_byte();
+                        if next.is_some_and(|b| JOINS_A_COLOR[usize::from(b)]) {
+                            push_blank(tokens);
+                        }
                         continue;
                     }
                     let failures_before = input.token_list_parse_failures();
@@ -1471,4 +1476,26 @@ fn try_parse_color_token(f: &[u8], state: &ParserState, input: &mut Parser) -> O
     }
 
     None
+}
+
+/// Whether a token that starts with this byte can read as part of a color printed right before it.
+/// A color can print as a hash or a name. A name or a number continues both, a name before `(` is
+/// a function, and a hash that follows can print as a name itself. Not `_`: Tailwind writes a
+/// blank as `_` inside one `@apply` class.
+const JOINS_A_COLOR: [bool; 256] = {
+    let mut table = [false; 256];
+    let mut b = 0;
+    while b < 256 {
+        table[b] = (b as u8).is_ascii_alphanumeric()
+            || matches!(b as u8, 0 | b'#' | b'-' | b'\\' | b'(' | 0x80..);
+        b += 1;
+    }
+    table
+};
+
+/// Out of line: few colors touch a token, and an inlined push changes the code of the loop for
+/// every other token.
+#[cold]
+fn push_blank(tokens: &mut Vec<TokenOrValue>) {
+    tokens.push(TokenOrValue::Token(Token::Whitespace(b" ")));
 }

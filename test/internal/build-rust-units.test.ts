@@ -396,6 +396,29 @@ describe("buildRustGraph + unitManifest", () => {
     binDestination: "/build/codegen/my-bin.exe",
   });
 
+  test.each([false, true])("incremental compilation respects the build option %j", enabled => {
+    const plan = planWith([]);
+    plan.unitGraph.units = plan.unitGraph.units.map(unit => ({
+      ...unit,
+      profile: { ...unit.profile, incremental: true },
+    }));
+    const graph = buildRustGraph(plan, "/build/rust-target");
+    const ctx = context(graph);
+    ctx.cfg.rustIncremental = enabled;
+    const args = (unitManifest(ctx, graph.root) as RustcUnitManifest).args;
+    expect(args.filter(arg => arg.startsWith("incremental="))).toEqual(
+      enabled ? [`incremental=${join(graph.dir, triple, "incremental")}`] : [],
+    );
+    const dependency = graph.units.find(unit => unit.pkg.id === registry.id)!;
+    expect((unitManifest(ctx, dependency) as RustcUnitManifest).args.some(arg => arg.startsWith("incremental="))).toBe(
+      false,
+    );
+    ctx.cfg.ci = true;
+    expect((unitManifest(ctx, graph.root) as RustcUnitManifest).args.some(arg => arg.startsWith("incremental="))).toBe(
+      false,
+    );
+  });
+
   // The whole command line, in order: cargo's position for each group of flags is part of what is reproduced
   // (the target rustflags come after everything cargo generates).
   const targetDir = join("/build/rust-target/shim", triple);

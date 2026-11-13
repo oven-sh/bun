@@ -105,7 +105,7 @@ The `import/resolver` setting changes how paths resolve. Two resolvers are suppo
 "import/resolver" = "node"
 ```
 
-The `typescript` resolver takes `conditionNames`: exactly the conditions that match in a package's `exports` and `imports`, besides `default`, which always matches. Without it, `types` comes first, so a package resolves to its types. Leave `types` out to resolve to the code instead:
+The `typescript` resolver takes `conditionNames`: exactly the conditions that match in a package's `exports` and `imports`, besides `default`, which always matches. The first key of the package's `exports` that is listed wins, so a list with both `import` and `require` can resolve an `import` to the CommonJS file. Without the setting, `types` matches, and packages put it first, so a package resolves to its types. Leave `types` out to resolve to the code instead:
 
 ```toml bunfig.toml
 [lint.settings]

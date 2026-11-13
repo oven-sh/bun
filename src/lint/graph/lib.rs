@@ -131,13 +131,16 @@ const EXTENSIONS: [&[u8]; 8] = [
     b".js", b".mjs", b".cjs", b".jsx", b".ts", b".mts", b".cts", b".tsx",
 ];
 
-/// What a file's imports are resolved with, and the key of [`Caches::resolvers`].
+/// What a file's imports are resolved with.
 #[derive(Copy, Clone)]
 struct ResolverKey<'a> {
     /// The `tsconfig.json` path. Empty if there's none.
     config: &'a [u8],
     /// The `conditionNames` of eslint-import-resolver-typescript, if configured.
     conditions: Option<&'a [&'a [u8]]>,
+    /// The key of [`Caches::resolvers`]: [`ResolverKey::cache_key`]. The config alone stands for the default
+    /// conditions.
+    cache_key: &'a [u8],
 }
 
 impl<'a> ResolverKey<'a> {
@@ -145,15 +148,20 @@ impl<'a> ResolverKey<'a> {
         ResolverKey {
             config,
             conditions: None,
+            cache_key: config,
         }
     }
 
-    /// The config alone stands for the default conditions.
-    fn bytes(&self) -> Cow<'a, [u8]> {
-        match self.conditions {
-            None => Cow::Borrowed(self.config),
+    fn cache_key(config: &'a [u8], conditions: Option<&[&[u8]]>) -> Cow<'a, [u8]> {
+        match conditions {
+            None => Cow::Borrowed(config),
             Some(conditions) => {
-                Cow::Owned([self.config, b"\0", &conditions.join(&b"\0"[..])].concat())
+                let mut key = config.to_vec();
+                for condition in conditions {
+                    key.push(b'\0');
+                    key.extend_from_slice(condition);
+                }
+                Cow::Owned(key)
             }
         }
     }
@@ -170,7 +178,7 @@ struct ProjectResolver<'h> {
 /// Caches for lookups that are repeated often.
 #[derive(Default)]
 struct Caches<'h> {
-    /// Keyed by [`ResolverKey::bytes`].
+    /// Keyed by [`ResolverKey::cache_key`].
     resolvers: ShardedMap<Vec<u8>, ProjectResolver<'h>>,
     /// Maps a directory to the `tsconfig.json` path for its files. With [`Store::tsconfig`], the key is a file.
     configs: ShardedMap<Vec<u8>, Vec<u8>>,
@@ -179,8 +187,8 @@ struct Caches<'h> {
     /// Caches [`Graph::configs_of_typescript_resolver`], keyed by the directory and the projects, and
     /// [`Graph::listed_projects`], keyed by the projects.
     typescript_configs: ShardedMap<Vec<u8>, Vec<Vec<u8>>>,
-    /// The resolution of a non-relative specifier, keyed by [`ResolverKey::bytes`], the directory, the kind of import
-    /// and the specifier.
+    /// The resolution of a non-relative specifier, keyed by [`ResolverKey::cache_key`], the directory, the kind of
+    /// import and the specifier.
     non_relative: ShardedMap<Vec<u8>, Option<(Vec<u8>, bool)>>,
     /// Maps a path to its real path, with symbolic links followed.
     real_paths: ShardedMap<Vec<u8>, Vec<u8>>,
@@ -629,13 +637,12 @@ impl<'h> Graph<'h> {
     /// Returns the resolver for the files that `key` applies to. `directory` is the directory of one of those files.
     fn resolver_of(&self, key: ResolverKey, directory: &[u8]) -> &ProjectResolver<'h> {
         let caches = self.caches();
-        let bytes = key.bytes();
-        if let Some(resolver) = caches.resolvers.get_ref(&bytes[..]) {
+        if let Some(resolver) = caches.resolvers.get_ref(key.cache_key) {
             return resolver;
         }
         // One thread reads a config while the others that need it wait.
         let _loading = self.loading.lock();
-        if let Some(resolver) = caches.resolvers.get_ref(&bytes[..]) {
+        if let Some(resolver) = caches.resolvers.get_ref(key.cache_key) {
             return resolver;
         }
         let store: &'h Store = self.store;
@@ -662,7 +669,9 @@ impl<'h> Graph<'h> {
             base_url,
             es_module_interop,
         };
-        caches.resolvers.insert_ref(bytes.into_owned(), resolver)
+        caches
+            .resolvers
+            .insert_ref(key.cache_key.to_vec(), resolver)
     }
 
     /// `configured_paths` is the `paths` option, whose entries are relative to the working directory.
@@ -807,7 +816,7 @@ impl<'h> Graph<'h> {
         // A non-relative specifier resolves the same way in every file of a directory with the same `tsconfig.json`,
         // and it's slow to resolve.
         let cache_key = [
-            &key.bytes()[..],
+            key.cache_key,
             b"\0",
             directory_of(from),
             if is_require { b"\0r\0" } else { b"\0i\0" },
@@ -1329,9 +1338,12 @@ impl Modules for Graph<'_> {
                 let is_exact_name =
                     |it: &Vec<u8>| it.strip_suffix(name).is_some_and(|it| it.ends_with(b"/"));
                 let found = configs.iter().find_map(|config| {
+                    let conditions = condition_names.as_deref();
+                    let cache_key = ResolverKey::cache_key(config, conditions);
                     let key = ResolverKey {
                         config,
-                        conditions: condition_names.as_deref(),
+                        conditions,
+                        cache_key: &cache_key,
                     };
                     let other = |extensions: &[&[u8]]| {
                         self.resolve_other_file(key, (specifier, &from), extensions)

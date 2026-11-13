@@ -1075,8 +1075,8 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
       });
     });
 
-    test("only the listed conditions match, and `default` always does", async () => {
-      const stdout = async (conditions: string) => {
+    test("the first key of `exports` that is listed wins, and `default` always matches", async () => {
+      const resolved = async (conditions: string) => {
         using dir = tempDir("bun-lint", files(setting(conditions)));
         await using proc = spawn({
           cmd: [bunExe(), "lint", "-f", "unix", "src/root.ts"],
@@ -1086,14 +1086,18 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
           stdout: "pipe",
           stderr: "pipe",
         });
-        return (await proc.stdout.text()).replaceAll("\\", "/");
+        const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(exitCode).toBe(1);
+        return stdout.replaceAll("\\", "/");
       };
-      expect(await stdout(`["node", "import"]`)).toContain("icons-pkg/dist/node.js");
-      expect(await stdout(`["import"]`)).toContain("icons-pkg/dist/import.js");
-      expect(await stdout(`[]`)).toContain("icons-pkg/dist/default.js");
+      expect(await resolved(`["import", "node"]`)).toContain("icons-pkg/dist/node.js");
+      expect(await resolved(`["import"]`)).toContain("icons-pkg/dist/import.js");
+      expect(await resolved(`[]`)).toContain("icons-pkg/dist/default.js");
     });
 
-    test("a value that isn't an array of strings makes the resolver fail, so nothing is reported", async () => {
+    // Real ESLint reports a resolve error for every import. Here, as with every resolver that throws, the rules that
+    // resolve report nothing.
+    test("a value that isn't an array of strings makes the resolver fail", async () => {
       for (const conditions of [`"import"`, `["import", 1]`, `true`]) {
         expect(await lintIn(".", files(setting(conditions)), ["src"])).toMatchObject({ found: [], exitCode: 0 });
       }

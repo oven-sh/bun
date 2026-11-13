@@ -2977,14 +2977,17 @@ impl<'h> Resolver<'h> {
         if look.tracer.is_some() {
             // `GetConditions`
             let by_mode: &[u8] = if look.import { b"import" } else { b"require" };
-            let mut conditions: Vec<&[u8]> = vec![by_mode, b"types"];
-            if self.options.resolves_like_node || look.all_features {
-                conditions.push(b"node");
-            }
-            conditions.extend(self.options.custom_conditions.iter().map(Vec::as_slice));
-            if let Some(names) = &self.options.condition_names {
-                conditions = names.iter().map(Vec::as_slice).collect();
-            }
+            let conditions: Vec<&[u8]> = match &self.options.condition_names {
+                Some(names) => names.iter().map(Vec::as_slice).collect(),
+                None => {
+                    let mut conditions = vec![by_mode, b"types"];
+                    if self.options.resolves_like_node || look.all_features {
+                        conditions.push(b"node");
+                    }
+                    conditions.extend(self.options.custom_conditions.iter().map(Vec::as_slice));
+                    conditions
+                }
+            };
             let quoted = conditions.iter().map(|it| [b"'", *it, b"'"].concat());
             let quoted: Vec<Vec<u8>> = quoted.collect();
             let mode: &[u8] = if look.esm { b"ESM" } else { b"CJS" };

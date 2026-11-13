@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/streams/readable.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 36e3e80e2464ebc21957035f10a21274023a61491866c2a5d7b4d3ea8f5472b8.
+// Written against that file with the SHA-256 9faa63793e4302a8922fe12016b93bf25babeb1552a2c919ca44401bb3531d6f.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 "use strict";
@@ -1154,9 +1154,6 @@ Readable.prototype._read = function (this: $Node.Readable, _n: number) {
   throw $ERR_METHOD_NOT_IMPLEMENTED("_read()");
 };
 
-// The info object of the "unpipe" event that unpipe() with no argument emits right now.
-let unpipeOfAllInfo: { hasUnpiped: boolean } | undefined;
-
 Readable.prototype.pipe = function (this: $Node.Readable, destination: $Node.Stream, pipeOpts?: $Node.PipeOptions) {
   const dest: $Node.AnyStream = destination;
   const src = this;
@@ -1191,7 +1188,7 @@ Readable.prototype.pipe = function (this: $Node.Readable, destination: $Node.Str
     if (readable === src) {
       if (unpipeInfo && unpipeInfo.hasUnpiped === false) {
         unpipeInfo.hasUnpiped = true;
-        cleanup(unpipeInfo === unpipeOfAllInfo);
+        cleanup();
       }
     }
   }
@@ -1204,7 +1201,7 @@ Readable.prototype.pipe = function (this: $Node.Readable, destination: $Node.Str
   let ondrain: (() => void) | undefined;
 
   let cleanedUp = false;
-  function cleanup(ofAll: boolean) {
+  function cleanup() {
     $debug("cleanup");
     // Cleanup event handlers once the pipe is broken.
     dest.removeListener("close", onclose);
@@ -1229,7 +1226,7 @@ Readable.prototype.pipe = function (this: $Node.Readable, destination: $Node.Str
     if (
       ondrain &&
       state.awaitDrainWriters &&
-      (((state[kState] & Flag.Destroyed) === 0 && !ofAll) || !dest._writableState || dest._writableState.needDrain)
+      ((state[kState] & Flag.Destroyed) === 0 || !dest._writableState || dest._writableState.needDrain)
     ) {
       ondrain();
     }
@@ -1385,16 +1382,7 @@ Readable.prototype.unpipe = function (this: $Node.Readable, dest?: $Node.AnyStre
     state.pipes = [];
     this.pause();
 
-    // Unlike Node since nodejs/node#64310, these teardowns keep the needDrain test: one would resume for the rest.
-    const outer = unpipeOfAllInfo;
-    try {
-      for (let i = 0; i < dests.length; i++) {
-        unpipeOfAllInfo = { hasUnpiped: false };
-        dests[i].emit("unpipe", this, unpipeOfAllInfo);
-      }
-    } finally {
-      unpipeOfAllInfo = outer;
-    }
+    for (let i = 0; i < dests.length; i++) dests[i].emit("unpipe", this, { hasUnpiped: false });
     return this;
   }
 

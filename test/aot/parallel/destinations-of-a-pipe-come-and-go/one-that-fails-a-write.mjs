@@ -126,60 +126,54 @@ console.log("a listener of unpipe that reads, so that nobody is on record as wai
   await turn();
   say(source);
 }
-console.log("every destination at once, and a listener of unpipe pipes a failing one beside a good one and removes it");
+console.log("every destination at once in the tick of the failed write, beside a listener of data");
 {
-  const source = pushed();
-  const first = sink("first");
-  source.pipe(first);
-  source.pipe(sink("second"));
-  first.on("unpipe", () => {
-    const bad = failing();
-    source.pipe(bad);
-    source.pipe(sink());
-    source.push("b");
-    source.unpipe(bad);
-  });
-  source.push("a");
-  await turn();
-  source.unpipe();
-  say(source);
-  source.push("c");
+  const source = reading();
+  source.pipe(failing());
+  source.once("data", () => source.unpipe());
+  source.on("data", chunk => console.log("  data", String(chunk)));
   await turn();
   say(source);
 }
-console.log("every destination at once, and a listener of unpipe pipes one more and removes them all again");
+console.log("every destination at once in the tick of the failed write, then two more of which the second is busy");
 {
   const source = pushed();
-  const first = sink("first");
-  source.pipe(first);
-  source.pipe(waitedOnce());
-  source.pipe(sink("third"));
-  first.on("unpipe", () => {
-    source.pipe(sink("fourth"));
+  source.pipe(failing());
+  let drained;
+  const busy = new Writable({
+    highWaterMark: 1,
+    write(chunk, encoding, done) {
+      if (String(chunk) !== "first") console.log("  busy got", String(chunk));
+      drained = done;
+    },
+  });
+  busy.write("first");
+  source.once("data", () => {
     source.unpipe();
+    source.pipe(sink());
+    source.pipe(busy);
   });
   source.push("a");
   await turn();
-  source.unpipe();
-  say(source);
+  drained();
+  await turn();
   source.push("b");
   await turn();
   say(source);
 }
-console.log("every destination at once, and a listener of unpipe throws");
+console.log("a source that the program paused, and the one pipe that is left of two goes");
 {
   const source = pushed();
-  const first = waitedOnce();
-  source.pipe(first);
-  source.pipe(sink());
-  first.on("unpipe", () => { throw new Error("boom"); });
+  const once = waitedOnce();
+  source.on("data", chunk => console.log("  data", String(chunk)));
+  source.pipe(once);
   source.push("a");
   await turn();
-  try {
-    source.unpipe();
-  } catch (error) {
-    console.log("  threw", error.message);
-  }
+  const second = sink("second");
+  source.pipe(second);
+  source.unpipe(second);
+  source.pause();
+  source.unpipe(once);
   say(source);
   source.push("b");
   await turn();

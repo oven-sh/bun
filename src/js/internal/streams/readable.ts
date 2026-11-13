@@ -840,9 +840,6 @@ Readable.prototype._read = function (_n) {
   throw $ERR_METHOD_NOT_IMPLEMENTED("_read()");
 };
 
-// The info object of the "unpipe" event that unpipe() with no argument emits right now.
-let unpipeOfAllInfo;
-
 Readable.prototype.pipe = function (dest, pipeOpts) {
   const src = this;
   const state = this._readableState;
@@ -875,7 +872,7 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
     if (readable === src) {
       if (unpipeInfo && unpipeInfo.hasUnpiped === false) {
         unpipeInfo.hasUnpiped = true;
-        cleanup(unpipeInfo === unpipeOfAllInfo);
+        cleanup();
       }
     }
   }
@@ -888,7 +885,7 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
   let ondrain;
 
   let cleanedUp = false;
-  function cleanup(ofAll) {
+  function cleanup() {
     $debug("cleanup");
     // Cleanup event handlers once the pipe is broken.
     dest.removeListener("close", onclose);
@@ -913,7 +910,7 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
     if (
       ondrain &&
       state.awaitDrainWriters &&
-      (((state[kState] & kDestroyed) === 0 && !ofAll) || !dest._writableState || dest._writableState.needDrain)
+      ((state[kState] & kDestroyed) === 0 || !dest._writableState || dest._writableState.needDrain)
     ) {
       ondrain();
     }
@@ -1046,16 +1043,7 @@ Readable.prototype.unpipe = function (dest) {
     state.pipes = [];
     this.pause();
 
-    // Unlike Node since nodejs/node#64310, these teardowns keep the needDrain test: one would resume for the rest.
-    const outer = unpipeOfAllInfo;
-    try {
-      for (let i = 0; i < dests.length; i++) {
-        unpipeOfAllInfo = { hasUnpiped: false };
-        dests[i].emit("unpipe", this, unpipeOfAllInfo);
-      }
-    } finally {
-      unpipeOfAllInfo = outer;
-    }
+    for (let i = 0; i < dests.length; i++) dests[i].emit("unpipe", this, { hasUnpiped: false });
     return this;
   }
 

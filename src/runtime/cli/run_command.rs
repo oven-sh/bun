@@ -3324,6 +3324,8 @@ type DoneChannel =
 struct RemoteImageDownload<'a> {
     async_http: bun_http::AsyncHTTP<'a>,
     response_buffer: bun_core::MutableString,
+    /// Status code of the response head, 0 until one arrives.
+    status_code: u32,
     url: &'a [u8],
     done: &'a DoneChannel,
 }
@@ -3350,6 +3352,9 @@ impl RemoteImageDownload<'_> {
                 // `*real.as_ptr() = …` would run Drop on the previous
                 // `this.async_http` (whose state the fresh copy still aliases).
                 real.as_ptr().write(::core::ptr::read(async_http));
+            }
+            if let Some(metadata) = &result.metadata {
+                this.status_code = metadata.status_code();
             }
             result.body_into(&mut this.response_buffer.list);
             // Channel payload is a placeholder tick — the main thread
@@ -3452,6 +3457,7 @@ impl RunCommand {
                         Default::default(),
                     ),
                     response_buffer,
+                    status_code: 0,
                     url: raw_url,
                     done: &done_channel,
                 },
@@ -3484,13 +3490,7 @@ impl RunCommand {
             if d.async_http.err.is_some() {
                 continue;
             }
-            let status = d
-                .async_http
-                .response
-                .as_ref()
-                .map(|r| r.status_code)
-                .unwrap_or(0);
-            if status != 200 {
+            if d.status_code != 200 {
                 continue;
             }
             let bytes = d.response_buffer.slice();

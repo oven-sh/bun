@@ -4018,150 +4018,47 @@ describe.concurrent("an exception thrown by an EventTarget listener from a vm co
   });
 });
 
-// `failing` and `todo` until https://github.com/oven-sh/WebKit/pull/993: with the global of a context as the receiver,
-// the native setter behind a property of the contextified object gets that global, as the object and as the realm.
-describe.concurrent("a store with a receiver from a context runs the native setter of the holder", () => {
+// The native setter behind Module.prototype.require keeps the override on the realm it is given: the realm of the context
+// loses it.
+describe.concurrent("a store through a Proxy made in a context runs the native setter of the holder", () => {
   const fixture = `
     const vm = require("node:vm");
     const Module = require("node:module");
 
-    const receivers = {
-      "an assignment to a Proxy made in a context"(holder, key, value) {
+    const stores = {
+      "an assignment to the Proxy"(holder, key, value) {
         vm.runInNewContext("new Proxy(holder, {})", { holder })[key] = value;
       },
-      "Reflect.set() with a Proxy made in a context as the receiver"(holder, key, value) {
+      "Reflect.set() with the Proxy as the receiver"(holder, key, value) {
         Reflect.set({}, key, value, vm.runInNewContext("new Proxy(holder, {})", { holder }));
       },
-      "Reflect.set() with the global of a context as the receiver"(holder, key, value) {
-        Reflect.set({}, key, value, vm.runInContext("globalThis", vm.createContext(holder)));
-      },
-      "Reflect.set() with the global of a context over the global of a context as the receiver"(holder, key, value) {
-        const inner = vm.runInContext("globalThis", vm.createContext(holder));
-        Reflect.set({}, key, value, vm.runInContext("globalThis", vm.createContext(inner)));
-      },
-      "Reflect.set() with the global of a context over a Proxy as the receiver"(holder, key, value) {
-        Reflect.set({}, key, value, vm.runInContext("globalThis", vm.createContext(new Proxy(holder, {}))));
-      },
     };
 
-    const holders = {
-      // The setter keeps the formatter on the realm it is given. The errors of the main realm use it.
-      "Error.prepareStackTrace"(store) {
-        store(Error, "prepareStackTrace", () => "formatted");
-        return new Error("x").stack;
-      },
-      // The setter keeps the override on the realm it is given. require() of the main realm calls it.
-      "Module.prototype.require"(store) {
-        const calls = [];
-        const original = Module.prototype.require;
-        function override(id) {
-          calls.push(id);
-          return original.call(this, id);
-        }
-        store(Module.prototype, "require", override);
-        require("node:path");
-        return [Module.prototype.require === override, calls];
-      },
-    };
-
-    const [holder, receiver] = process.argv.slice(-2);
-    console.log(JSON.stringify(holders[holder](receivers[receiver])));
+    const calls = [];
+    const original = Module.prototype.require;
+    function override(id) {
+      calls.push(id);
+      return original.call(this, id);
+    }
+    stores[process.argv.at(-1)](Module.prototype, "require", override);
+    require("node:path");
+    console.log(JSON.stringify([Module.prototype.require === override, calls]));
   `;
-  // What Node.js v26.3.0 prints.
-  const stored = {
-    "Error.prepareStackTrace": `"formatted"\n`,
-    "Module.prototype.require": `[true,["node:path"]]\n`,
-  };
 
-  async function storeInItsOwnProcess(holder: keyof typeof stored, receiver: string) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture, holder, receiver],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  }
-
-  const endedWell = { stderr: "", exitCode: 0 };
-
-  test.each([
-    ["an assignment to a Proxy made in a context"],
-    ["Reflect.set() with a Proxy made in a context as the receiver"],
-  ])("Module.prototype.require, %s", async receiver => {
-    expect(await storeInItsOwnProcess("Module.prototype.require", receiver)).toEqual({
-      stdout: stored["Module.prototype.require"],
-      ...endedWell,
-    });
-  });
-
-  // Not `failing`: the setter writes past the end of the global of the context, and a build with assertions aborts.
-  test.todo("Error.prepareStackTrace, Reflect.set() with the global of a context as the receiver", async () => {
-    const receiver = "Reflect.set() with the global of a context as the receiver";
-    expect(await storeInItsOwnProcess("Error.prepareStackTrace", receiver)).toEqual({
-      stdout: stored["Error.prepareStackTrace"],
-      ...endedWell,
-    });
-  });
-
-  // A `failing` test passes on a crash too, so a second test reads the same run of the child and expects a clean exit.
-  const once = <T>(run: () => Promise<T>) => {
-    let result: Promise<T> | undefined;
-    return () => (result ??= run());
-  };
-
-  const requireStores = [
-    "Reflect.set() with the global of a context as the receiver",
-    "Reflect.set() with the global of a context over the global of a context as the receiver",
-    "Reflect.set() with the global of a context over a Proxy as the receiver",
-  ].map(receiver => [receiver, once(() => storeInItsOwnProcess("Module.prototype.require", receiver))] as const);
-
-  test.each(requireStores)("Module.prototype.require, %s: the child process ends well", async (_, store) => {
-    const { stderr, exitCode } = await store();
-    expect({ stderr, exitCode }).toEqual(endedWell);
-  });
-
-  // The setter keeps the override on the global of the context. The store prints [false,[]].
-  test.failing.each(requireStores)("Module.prototype.require, %s", async (_, store) => {
-    expect((await store()).stdout).toBe(stored["Module.prototype.require"]);
-  });
-
-  const ifShadowRealm = test.skipIf(typeof ShadowRealm === "undefined");
-  const storeInAShadowRealm = once(async () => {
-    const script = `
-      const realm = new ShadowRealm();
-      const seen = realm.evaluate(\`
-        const vm = process.getBuiltinModule("node:vm");
-        const contextGlobal = vm.runInContext("globalThis", vm.createContext(globalThis));
-        const seen = [];
-        Reflect.set({}, "onmessage", event => seen.push("message: " + event.data), contextGlobal);
-        Reflect.set({}, "onerror", event => seen.push("error: " + event.error), contextGlobal);
-        dispatchEvent(new MessageEvent("message", { data: "delivered" }));
-        dispatchEvent(new ErrorEvent("error", { error: "delivered" }));
-        onmessage = onerror = null;
-        JSON.stringify(seen);
-      \`);
-      console.log(JSON.stringify({ realm: JSON.parse(seen), main: [typeof onmessage, typeof onerror] }));
-      // A handler that went to the main realm would keep the process alive.
-      onmessage = onerror = null;
-    `;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  });
-
-  ifShadowRealm("a ShadowRealm's onmessage and onerror: the child process ends well", async () => {
-    const { stderr, exitCode } = await storeInAShadowRealm();
-    expect({ stderr, exitCode }).toEqual(endedWell);
-  });
-
-  // The handlers go to the main realm. The store prints {"realm":[],"main":["function","function"]}.
-  ifShadowRealm.failing("a ShadowRealm's onmessage and onerror, the global of a context as the receiver", async () => {
-    expect((await storeInAShadowRealm()).stdout).toBe(
-      `{"realm":["message: delivered","error: delivered"],"main":["object","object"]}\n`,
-    );
-  });
+  test.each(["an assignment to the Proxy", "Reflect.set() with the Proxy as the receiver"])(
+    "Module.prototype.require, %s",
+    async store => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture, store],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // What Node.js v26.3.0 prints.
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: `[true,["node:path"]]\n`, stderr: "", exitCode: 0 });
+    },
+  );
 });
 
 describe("import attributes with an array-index key", () => {

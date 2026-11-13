@@ -356,6 +356,8 @@ import { readFileSync } from "node:fs";
 const listener = process.env.LISTENER;
 const events = [];
 if (listener === "throws") process.on("uncaughtException", (e, origin) => events.push(origin + ":" + e.message));
+// Ends a run whose stream never closes.
+setTimeout(() => process.exit(3), 20_000).unref();
 const child = spawn(${JSON.stringify(GO_WRITER_CMD[0])}, ${JSON.stringify(GO_WRITER_CMD.slice(1))}, { stdio: ["pipe", "pipe", "ignore"] });
 // 'resume' comes after the stream's first read request. By the next immediate the reader is waiting on the socket,
 // so the writer's bytes come in through the poll.
@@ -403,6 +405,8 @@ rmSync("stopped-go", { force: true });
 rmSync("stopped-written", { force: true });
 const events = [];
 let got = 0;
+// Ends a run whose stream never closes.
+setTimeout(() => process.exit(3), 20_000).unref();
 const child = spawn(${JSON.stringify(ONE_WRITE_CMD[0])}, ${JSON.stringify(ONE_WRITE_CMD.slice(1))}, { stdio: ["pipe", "pipe", "ignore"] });
 const out = child.stdout;
 const nap = new Int32Array(new SharedArrayBuffer(4));
@@ -455,6 +459,8 @@ import { spawn } from "node:child_process";
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 rmSync("hangup-go", { force: true });
 rmSync("hangup-written", { force: true });
+// Ends a run whose stream never closes.
+setTimeout(() => process.exit(3), 20_000).unref();
 const child = spawn(${JSON.stringify(HANGUP_WRITER_CMD[0])}, ${JSON.stringify(HANGUP_WRITER_CMD.slice(1))}, { stdio: ["pipe", "pipe", "ignore"] });
 const out = child.stdout;
 const nap = new Int32Array(new SharedArrayBuffer(4));

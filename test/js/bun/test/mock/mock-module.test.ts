@@ -4967,7 +4967,10 @@ describe.concurrent("a module that a factory loads while the module awaits impor
     ["an automock", `vi.mock("./other.js");`],
     ["a spy", `vi.doMock("./other.js", { spy: true });`],
     ["a vi.fn() factory", `vi.doMock("./other.js", vi.fn(() => ({ call: vi.fn(() => "mock") })));`],
-    ["a bound factory", `mock.module("./other.js", (function () { return { call: vi.fn(() => "mock") }; }).bind(null));`],
+    [
+      "a bound factory",
+      `mock.module("./other.js", (function () { return { call: vi.fn(() => "mock") }; }).bind(null));`,
+    ],
   ])("a mock that the module made stays the module's: %s", async (_, mockIt) => {
     await expectFixturesToPass(
       {
@@ -4998,24 +5001,30 @@ describe.concurrent("a module that a factory loads while the module awaits impor
 
   // JSC lets what an import() loads go on without the module whose code called that import(). That module is the one instance, whatever kind of function the factory is.
   test.each([
-    ["a bound function", `vi.mock("./dep.js", (async () => ({ name: "mock", built: typeof (await import("./builders.js")).build })).bind(null));`, ""],
+    [
+      "a bound function",
+      `vi.mock("./dep.js", (async () => ({ name: "mock", built: typeof (await import("./builders.js")).build })).bind(null));`,
+      "",
+    ],
     [
       "a function that another module wraps",
       `mock.module("./dep.js", wrapped(async () => ({ name: "mock", built: typeof (await import("./builders.js")).build })));`,
       `import { wrapped } from "./wraps.js";`,
     ],
-  ])("the file of a factory is not copied for what the factory loads, where the factory is %s", async (_, mockIt, imports) => {
-    await expectFixturesToPass(
-      {
-        "dep.js": `export const name = "real";`,
-        "wraps.js": `export const wrapped = factory => async importOriginal => ({ ...(await importOriginal()), ...(await factory()) });`,
-        "builders.js": `
+  ])(
+    "the file of a factory is not copied for what the factory loads, where the factory is %s",
+    async (_, mockIt, imports) => {
+      await expectFixturesToPass(
+        {
+          "dep.js": `export const name = "real";`,
+          "wraps.js": `export const wrapped = factory => async importOriginal => ({ ...(await importOriginal()), ...(await factory()) });`,
+          "builders.js": `
           import { label, registry } from "./mocks.js";
           globalThis.buildersRuns = (globalThis.buildersRuns ?? 0) + 1;
           export const build = () => label;
           export const register = what => registry.add(what);
         `,
-        "mocks.js": `
+          "mocks.js": `
           import { mock, vi } from "bun:test";
           ${imports}
           ${mockIt}
@@ -5024,7 +5033,7 @@ describe.concurrent("a module that a factory loads while the module awaits impor
           export const label = "saw " + name;
           export const registry = new Set();
         `,
-        "own.test.js": `
+          "own.test.js": `
           import { expect, test } from "bun:test";
           import { label, registry } from "./mocks.js";
           test("what the factory loaded writes to the file that the program has", async () => {
@@ -5035,10 +5044,11 @@ describe.concurrent("a module that a factory loads while the module awaits impor
             expect([...values, globalThis.runs, globalThis.buildersRuns]).toEqual(["saw mock", "mock", "function", "saw mock", ["by builders"], 1, 1]);
           });
         `,
-      },
-      1,
-    );
-  });
+        },
+        1,
+      );
+    },
+  );
 
   test("the file of a factory is not copied where it imports a module that awaits, and what the factory loads imports it", async () => {
     await expectFixturesToPass(

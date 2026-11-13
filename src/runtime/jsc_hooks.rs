@@ -711,9 +711,15 @@ unsafe fn configure_debugger(
 ///
 /// # Safety
 /// `state` must be the exact pointer returned by [`init_runtime_state`] for
-/// this thread (or null), and must not be used again after this call.
-unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeState) {
+/// this thread (or null), and must not be used again after this call. `vm` is
+/// the live VM of this thread.
+unsafe fn deinit_runtime_state(vm: *mut VirtualMachine, state: OpaqueRuntimeState) {
     RUNTIME_STATE.with(|c| c.set(ptr::null_mut()));
+    // SAFETY: per fn contract.
+    if let Some(node_fs) = unsafe { (*vm).node_fs.take() } {
+        // SAFETY: `create_node_fs` boxed it for this VM, and the field that held it was just cleared.
+        drop(unsafe { bun_core::heap::take(node_fs.cast::<crate::node::fs::NodeFS>()) });
+    }
     // Free the per-thread `TRANSPILE_PRINTER`. Workers lazy-init their own
     // copy in `Bun__transpileFile` / `Bun__transpileVirtualModule`; without this
     // each worker thread strands a `Box<BufferPrinter>` (mirrors the
@@ -1407,7 +1413,7 @@ fn timers_left() -> TimersLeft {
 
 /// `Node.fs.NodeFS{ .vm = … }` lazy creation.
 /// The low tier stores the result in `vm.node_fs: Option<*mut c_void>`.
-/// The returned box is reclaimed (if at all) only by VM teardown.
+/// A worker's [`deinit_runtime_state`] frees the returned box.
 fn create_node_fs(vm: &mut VirtualMachine) -> *mut c_void {
     use crate::node::fs::NodeFS;
     // `.vm` is set only when standalone-module-graph is active
@@ -4180,6 +4186,17 @@ unsafe fn get_loader_and_virtual_source<'a>(
         virtual_source = virtual_source_to_use.as_ref();
         path = Fs::Path::init(specifier);
     } else if virtual_source.is_none()
+        && let Some(written) = bun_standalone_graph::find_written_file(path.text)
+        && let Ok(contents) = bun_sys::File::read_from(bun_sys::Fd::cwd(), &*written)
+    {
+        // What the program has written is on the disk.
+        *virtual_source_to_use = Some(bun_ast::Source {
+            path: bun_paths::fs::Path::init(path.text),
+            contents: std::borrow::Cow::Owned(contents),
+            ..Default::default()
+        });
+        virtual_source = virtual_source_to_use.as_ref();
+    } else if virtual_source.is_none()
         && let Some(file) = bun_standalone_graph::Graph::get_ref().and_then(|graph| {
             graph
                 .find_at_source_path(path.text)
@@ -5132,7 +5149,11 @@ pub(crate) fn resolve_embedded_file_to_buf(
         return None;
     }
 
-    let file = bun_standalone_graph::Graph::get_ref()?.find_ref(input_path)?;
+    if let Some(path) = bun_standalone_graph::find_written_file(input_path) {
+        out_buf.get_mut(..path.len())?.copy_from_slice(&path);
+        return Some(path.len());
+    }
+    let file = bun_standalone_graph::Graph::get_ref()?.find_data(input_path)?;
     let file_contents: &[u8] = file.contents.as_bytes();
 
     // `.bun-{uid}-{wyhash(contents)}.{ext}`: the hash dedupes; the uid keeps
@@ -5244,7 +5265,7 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
     use bun_sys::O;
 
     let graph = bun_standalone_graph::Graph::get_ref()?;
-    let addon = graph.find_ref(addon_path)?;
+    let addon = graph.find_data(addon_path)?;
     let mut files: Vec<(&[u8], &[u8])> = graph.preserved_shared_libraries().collect();
     if files.is_empty() {
         return None;

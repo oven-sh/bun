@@ -8,7 +8,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_core::strings::{last_index_of, split};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
-    Binding, BindingInitializer, Bound, Decl, FunctionFlags, Parent, PrivateNameId, SymbolId,
+    Binding, BindingInitializer, Bound, Decl, FnOwner, FunctionFlags, Parent, PatParent,
+    PrivateNameId, SymbolId,
 };
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::fold::Decision;
@@ -67,6 +68,8 @@ pub(crate) struct ProgramReachInput<'a, 's> {
     pub isolates_code_from_disk: bool,
     pub mocks_any_module: bool,
     pub files_started_by_runner: &'a [FileId],
+    /// Sorted. What these files import runs, though its package declares no side effects.
+    pub files_with_kept_imports: &'a [FileId],
     pub starts_of_workers: &'a [(FileId, ExprId, FileId)],
     pub beside: Beside<'a>,
 }
@@ -259,6 +262,13 @@ impl FileUnits {
     }
 }
 
+fn find_stable_function(hir: &hir::File<'_>, bound: &Bound<'_>, symbol: SymbolId) -> Option<FnId> {
+    if !bound.is_stable_binding(symbol) {
+        return None;
+    }
+    bound.binding_initializer(hir, symbol).function(hir)
+}
+
 fn find_class_in_variable(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -368,6 +378,7 @@ struct FileScan<'a, 's> {
     units_placed_by_text: Vec<(u32, u32)>,
     units_of_private_names: FxHashMap<PrivateNameId, u32>,
     units_of_references: RefCell<Vec<u32>>,
+    has_compiled_components: bool,
 }
 
 const UNIT_NOT_ASKED: u32 = u32::MAX;
@@ -395,6 +406,8 @@ impl<'a, 's> FileScan<'a, 's> {
             units_placed_by_text: Vec::new(),
             units_of_private_names: FxHashMap::default(),
             units_of_references: RefCell::new(Vec::new()),
+            has_compiled_components: parsed_source(input.files, file)
+                .is_some_and(|source| source.has_compiled_components),
         }
     }
 
@@ -575,7 +588,9 @@ impl<'a, 's> FileScan<'a, 's> {
         let written_at = self.hir[statement].loc;
         let written_at = written_at.pos..written_at.end;
         let name = match self.hir[statement].kind {
-            StmtKind::Enum(declared) => self.bound.declared_symbol(Decl::Enum(declared)),
+            StmtKind::Enum(declared) if !self.hir[declared].flags.contains(Flags::AMBIENT) => {
+                self.bound.declared_symbol(Decl::Enum(declared))
+            }
             StmtKind::ExportDefault(_) => self.bound.declared_symbol(Decl::ExportExpr(statement)),
             _ => {
                 self.add_part(Part::Statement(statement), written_at, &[]);
@@ -916,8 +931,68 @@ impl<'a, 's> FileScan<'a, 's> {
         self.place_units();
     }
 
-    fn region_of(&self, position: u32) -> u32 {
-        self.region_outside(position, None)
+    fn region_of(&self, expression: ExprId) -> u32 {
+        let position = self.hir[expression].pos;
+        match self.has_compiled_components {
+            true => self.region_below(self.bound.parent_of_expr(expression), position, None),
+            false => self.region_outside(position, None),
+        }
+    }
+
+    /// The region of a child of `parent` that is written at `position`. The React Compiler gives generated nodes the
+    /// positions of other nodes, so the position only counts outside functions.
+    fn region_below(&self, mut parent: Parent, mut position: u32, unit: Option<u32>) -> u32 {
+        let (hir, bound) = (self.hir, self.bound);
+        loop {
+            parent = match parent {
+                Parent::Expr(above) => {
+                    position = hir[above].pos;
+                    bound.parent_of_expr(above)
+                }
+                Parent::Prop(it) | Parent::PropKey(it) | Parent::MethodKey(it) => {
+                    Parent::Expr(bound.prop_owner[it.idx()])
+                }
+                Parent::PatPropDefault(it) | Parent::PatKey(it) => {
+                    self.parent_of_pattern(hir[it].value)
+                }
+                Parent::PatElemDefault(it) => self.parent_of_pattern(hir[it].pat),
+                Parent::Stmt(statement) if !statement.is_none() => bound.parent_of_stmt(statement),
+                Parent::VarInit(it) => Parent::Stmt(bound.var_stmt[it.idx()]),
+                Parent::Case(it) => Parent::Stmt(bound.case_stmt[it.idx()]),
+                Parent::ParamDefault(it) => Parent::FnBody(bound.param_fn[it.idx()]),
+                Parent::FnBody(function) => {
+                    let own = self.units.unit_of_function.get(&function).copied();
+                    if let Some(own) = own.filter(|&own| Some(own) != unit) {
+                        return own + 1;
+                    }
+                    match bound.fns[function.idx()].owner {
+                        _ if self.units.inner_modules.contains_key(&function) => Parent::None,
+                        FnOwner::Expr(written) => Parent::Expr(written),
+                        FnOwner::Stmt(declared) => {
+                            position = hir[declared].loc.pos;
+                            bound.parent_of_stmt(declared)
+                        }
+                        FnOwner::Member(member) => {
+                            position = hir[member].loc.pos;
+                            Parent::None
+                        }
+                        FnOwner::Type(_) | FnOwner::None => Parent::None,
+                    }
+                }
+                _ => return self.region_outside(position, unit),
+            };
+        }
+    }
+
+    fn parent_of_pattern(&self, mut pattern: PatId) -> Parent {
+        loop {
+            match self.bound.pat_parent[pattern.idx()] {
+                PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => pattern = outer,
+                PatParent::Var(declaration) => return Parent::VarInit(declaration),
+                PatParent::Param(parameter) => return Parent::ParamDefault(parameter),
+                PatParent::None => return Parent::None,
+            }
+        }
     }
 
     fn region_outside(&self, position: u32, unit: Option<u32>) -> u32 {
@@ -947,8 +1022,8 @@ impl<'a, 's> FileScan<'a, 's> {
         ModuleRef::File(self.file)
     }
 
-    fn add_interest(&mut self, position: u32, interest: Interest) {
-        let mut region = self.region_of(position);
+    fn add_interest(&mut self, expression: ExprId, interest: Interest) {
+        let mut region = self.region_of(expression);
         if self.keeps_declaration_of_file(interest) {
             region = self.region_below_body(region);
         }
@@ -1313,7 +1388,7 @@ impl<'a, 's> FileScan<'a, 's> {
                 continue;
             }
             if imports_quiet_file && let Some(interest) = self.find_use_of_import(symbol) {
-                self.add_interest(hir[reference].pos, interest);
+                self.add_interest(reference, interest);
             }
             let binding = match (imports.first(), imports.last()) {
                 (Some(first), Some(last)) if first.0 <= symbol && symbol <= last.0 => {
@@ -1323,7 +1398,7 @@ impl<'a, 's> FileScan<'a, 's> {
             };
             let is_plain_name = !names_known_objects && matches!(binding, ImportBinding::Local);
             if !is_plain_name && let Some(variable) = self.find_data_variable(symbol) {
-                self.add_interest(hir[reference].pos, Interest::KnownVariable(variable));
+                self.add_interest(reference, Interest::KnownVariable(variable));
                 continue;
             }
             let known = match is_plain_name {
@@ -1332,7 +1407,7 @@ impl<'a, 's> FileScan<'a, 's> {
             };
             if let Some(interest) = known {
                 if let Some(interest) = interest {
-                    self.add_interest(hir[reference].pos, interest);
+                    self.add_interest(reference, interest);
                 }
                 continue;
             }
@@ -1341,7 +1416,7 @@ impl<'a, 's> FileScan<'a, 's> {
                     file: self.file,
                     id: symbol,
                 };
-                self.add_interest(hir[reference].pos, Interest::HandedOnObject(enumeration));
+                self.add_interest(reference, Interest::HandedOnObject(enumeration));
             }
             if let Some(interest) =
                 self.interest_in_symbol_bound_as(symbol, binding, Some(reference))
@@ -1350,10 +1425,10 @@ impl<'a, 's> FileScan<'a, 's> {
                     Some((extending, needed_by_definition)) => {
                         self.units.interests[extending as usize + 1].push(interest);
                         if let Some(needed) = needed_by_definition {
-                            self.add_interest(hir[reference].pos, needed);
+                            self.add_interest(reference, needed);
                         }
                     }
-                    None => self.add_interest(hir[reference].pos, interest),
+                    None => self.add_interest(reference, interest),
                 }
                 if let Interest::Export(module, _)
                 | Interest::CalledExport(module, _)
@@ -1362,12 +1437,12 @@ impl<'a, 's> FileScan<'a, 's> {
                     && module_with_code(imported_from) != module_with_code(module)
                 {
                     let item = Interest::HandedOnNamespace(module_with_code(module));
-                    self.add_interest(hir[reference].pos, item);
+                    self.add_interest(reference, item);
                 }
             }
             if let Some((holder, name)) = self.find_name_read_off_file_between(symbol, binding) {
                 let read = Interest::Export(ModuleRef::File(holder), name);
-                self.add_interest(hir[reference].pos, read);
+                self.add_interest(reference, read);
             }
         }
         for &(symbol, binding) in self.input.graph.import_bindings(self.file) {
@@ -1488,14 +1563,14 @@ impl<'a, 's> FileScan<'a, 's> {
                             && module_with_code(accessed) != module_with_code(module)
                         {
                             let item = Interest::HandedOnNamespace(module_with_code(module));
-                            self.add_interest(hir[access].pos, item);
+                            self.add_interest(access, item);
                         }
                         let written_on = graph.find_module_accessed(self.file, access);
                         if let Some(holder) = self.find_file_between(binding, written_on)
                             && let Some((_, MemberKey::Name(name))) = hir.member_key(access)
                         {
                             let read = Interest::Export(ModuleRef::File(holder), name);
-                            self.add_interest(hir[access].pos, read);
+                            self.add_interest(access, read);
                         }
                         match binding {
                             ImportBinding::Namespace { module, .. }
@@ -1512,7 +1587,7 @@ impl<'a, 's> FileScan<'a, 's> {
                     _ => continue,
                 },
             };
-            self.add_interest(hir[access].pos, interest);
+            self.add_interest(access, interest);
         }
     }
 
@@ -1526,9 +1601,9 @@ impl<'a, 's> FileScan<'a, 's> {
 
     fn add_requests(&mut self) {
         let graph = self.input.graph;
-        let started_by_runner = self.input.files_started_by_runner;
-        let is_started_by_runner = started_by_runner.binary_search(&self.file).is_ok();
-        let keeps_every_file = is_started_by_runner || graph.load_failure(self.file).is_some();
+        let with_kept_imports = self.input.files_with_kept_imports;
+        let keeps_every_file = with_kept_imports.binary_search(&self.file).is_ok()
+            || graph.load_failure(self.file).is_some();
         for request in graph.requests(self.file) {
             if request.kind == ModuleRequestKind::Require {
                 continue;
@@ -1598,7 +1673,7 @@ impl<'a, 's> FileScan<'a, 's> {
         for &(_, at, entry_point) in starts.iter().take_while(|start| start.0 == file) {
             if !decisions.is_dead_expr(at) {
                 let interest = Interest::EveryExport(ModuleRef::File(entry_point));
-                self.add_interest(self.hir[at].pos, interest);
+                self.add_interest(at, interest);
             }
         }
     }
@@ -1610,6 +1685,14 @@ impl<'a, 's> FileScan<'a, 's> {
                 continue;
             }
             if let Some(Site::Evaluate { target, .. }) = self.input.graph.site(self.file, call) {
+                self.sites.push((call, target));
+            }
+        }
+        for (call, _) in self.input.graph.wrapped().requests_in(self.file) {
+            if let Some(Site::Evaluate { target, .. }) =
+                self.input.graph.requested_module(self.file, call)
+                && !decisions.is_dead_expr(call)
+            {
                 self.sites.push((call, target));
             }
         }
@@ -1640,8 +1723,9 @@ impl<'a, 's> FileScan<'a, 's> {
     fn add_sites(&mut self) {
         let graph = self.input.graph;
         for (call, target) in take(&mut self.sites) {
-            let region = self.region_of(self.hir[call].pos);
-            let referrer = self.module_at(region);
+            let region = self.region_of(call);
+            let referrer = graph.find_referrer(self.file, call);
+            let referrer = referrer.unwrap_or_else(|| self.module_at(region));
             let gives_object = !matches!(target, ModuleRef::Inner { .. })
                 || graph.shape(target) != Shape::EsModule;
             let is_read_as_value = gives_object && graph.is_site_read_as_value(self.file, call);
@@ -1661,6 +1745,15 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
+    fn add_destructured_holders(&mut self) {
+        let graph = self.input.graph;
+        for (holder, module) in graph.destructured_holders(self.file) {
+            for name in self.find_names_read_by_pattern(holder) {
+                self.add_interest(holder, Interest::Export(module, name));
+            }
+        }
+    }
+
     fn add_holders(&mut self) {
         for holder in self.input.graph.holders(self.file) {
             if !holder.is_needed_as_value {
@@ -1669,7 +1762,7 @@ impl<'a, 's> FileScan<'a, 's> {
             let interest = Interest::EveryExport(module_of_view(holder.view));
             match holder.call.is_none() {
                 true => self.units.interests[TOP_LEVEL as usize].push(interest),
-                false => self.add_interest(self.hir[holder.call].pos, interest),
+                false => self.add_interest(holder.call, interest),
             }
         }
     }
@@ -1714,7 +1807,7 @@ impl<'a, 's> FileScan<'a, 's> {
         if call.is_some_and(|call| analysis.decisions.is_dead_expr(call)) {
             return None;
         }
-        let region = call.map_or(TOP_LEVEL, |call| self.region_of(self.hir[call].pos));
+        let region = call.map_or(TOP_LEVEL, |call| self.region_of(call));
         Some((call, region as usize))
     }
 
@@ -1777,7 +1870,7 @@ impl<'a, 's> FileScan<'a, 's> {
                     if analysis.decisions.is_dead_expr(call) {
                         continue;
                     }
-                    let interests = self.region_of(self.hir[call].pos) as usize;
+                    let interests = self.region_of(call) as usize;
                     let interests = &mut self.units.interests[interests];
                     match graph.find_site_answer(self.file, site.kind) {
                         Some(SiteAnswer::Module(target)) => {
@@ -1809,7 +1902,7 @@ impl<'a, 's> FileScan<'a, 's> {
             if call.is_some_and(|call| analysis.decisions.is_dead_expr(call)) {
                 continue;
             }
-            let region = call.map_or(TOP_LEVEL, |call| self.region_of(self.hir[call].pos)) as usize;
+            let region = call.map_or(TOP_LEVEL, |call| self.region_of(call)) as usize;
             match graph.find_site_answer(self.file, site.kind) {
                 Some(SiteAnswer::Module(target)) => {
                     self.add_file_loaded_by_call(target);
@@ -1837,7 +1930,16 @@ impl<'a, 's> FileScan<'a, 's> {
                         self.add_file_loaded_by_call(candidate.module);
                     }
                     if is_object_followed {
-                        let referrer = self.module_at(region as u32);
+                        let inner = call.and_then(|call| {
+                            graph.wrapped().enclosing(self.input.files, self.file, call)
+                        });
+                        let referrer = match inner {
+                            Some(inner) => ModuleRef::Inner {
+                                file: self.file,
+                                callback: inner.callback,
+                            },
+                            None => ModuleRef::File(self.file),
+                        };
                         let required = candidates.iter().map(|it| Interest::Require {
                             referrer,
                             target: it.module,
@@ -1897,20 +1999,20 @@ impl<'a, 's> FileScan<'a, 's> {
             if mention.expr.is_none() {
                 self.units.interests[TOP_LEVEL as usize].push(interest);
             } else if !self.is_folded_away(mention.expr) {
-                self.add_interest(self.hir[mention.expr].pos, interest);
+                self.add_interest(mention.expr, interest);
             }
         }
         for &entry in source.builtins.entries_deleted_from_module_cache() {
             let interest = Interest::DeletionFromModuleCache(entry);
-            self.add_interest(self.hir[entry].pos, interest);
+            self.add_interest(entry, interest);
         }
         for &entry in source.builtins.entries_stored_in_module_cache() {
             let interest = Interest::StoreIntoModuleCache(entry);
-            self.add_interest(self.hir[entry].pos, interest);
+            self.add_interest(entry, interest);
         }
         for &place in source.builtins.places_that_hand_module_cache_on() {
             let interest = Interest::ModuleCacheHandedOn(place);
-            self.add_interest(self.hir[place].pos, interest);
+            self.add_interest(place, interest);
         }
         let only_reads_entries = source.builtins.keys_taken_out_of_module_cache().is_empty()
             && !source.builtins.loses_sight_of_module_cache();
@@ -2011,7 +2113,7 @@ impl<'a, 's> FileScan<'a, 's> {
         let decisions = &files.analysis(self.file).decisions;
         for &table in source.builtins.tables_of_loaders_written() {
             if !decisions.is_dead_expr(table) && !self.is_folded_away(table) {
-                self.add_interest(hir[table].pos, Interest::StoreOfLoaderFunction(None));
+                self.add_interest(table, Interest::StoreOfLoaderFunction(None));
             }
         }
         let mut mentioned = source.builtins.mentioned().iter();
@@ -2031,14 +2133,14 @@ impl<'a, 's> FileScan<'a, 's> {
             {
                 let replaced = LoaderHook::find(stored).map(|hook| (expression, hook));
                 let interest = Interest::StoreOfLoaderFunction(replaced);
-                self.add_interest(hir[expression].pos, interest);
+                self.add_interest(expression, interest);
             }
         }
     }
 
     fn add_files_spelled(&mut self) {
         for text in self.input.graph.texts_that_spell_files_in(self.file) {
-            self.add_interest(self.hir[text.text].pos, Interest::FileSpelled(text.spelled));
+            self.add_interest(text.text, Interest::FileSpelled(text.spelled));
         }
     }
 
@@ -2058,6 +2160,7 @@ impl<'a, 's> FileScan<'a, 's> {
         self.add_requests();
         self.add_sites();
         self.add_holders();
+        self.add_destructured_holders();
         self.add_loads();
         self.add_loads_by_unknown_names();
         if asks_what_files_spell {
@@ -2194,6 +2297,7 @@ struct Found {
     files_left_to_loader: Vec<FileId>,
     loads_isolated_code: bool,
     files_naming_ways: Vec<FileId>,
+    files_exposing_global_object: Vec<FileId>,
     replaced_loader_hooks: Vec<ReplacedLoaderHook>,
     deletions_from_module_cache: Vec<(FileId, ExprId)>,
     stores_into_module_cache: Vec<(FileId, ExprId)>,
@@ -2215,6 +2319,8 @@ impl Found {
             .append(&mut other.files_left_to_loader);
         self.loads_isolated_code |= other.loads_isolated_code;
         self.files_naming_ways.append(&mut other.files_naming_ways);
+        self.files_exposing_global_object
+            .append(&mut other.files_exposing_global_object);
         self.replaced_loader_hooks
             .append(&mut other.replaced_loader_hooks);
         self.deletions_from_module_cache
@@ -2461,6 +2567,7 @@ impl<'a, 's> Walk<'a, 's> {
                 match hir[hir.skip_type_assertions(initializer)].kind {
                     ExprKind::Fn(function) => self.reads_this(file, function),
                     ExprKind::Class(_) => false,
+                    ExprKind::Call(call) => self.can_result_read_this(file, hir[call].callee),
                     _ => true,
                 }
             }
@@ -2468,6 +2575,60 @@ impl<'a, 's> Walk<'a, 's> {
             | BindingInitializer::Namespace(_)
             | BindingInitializer::Enum(_) => false,
             _ => true,
+        }
+    }
+
+    /// `export const load = make_load(..)`: whether a function that `callee` returns reads its own `this`.
+    fn can_result_read_this(&self, file: FileId, callee: ExprId) -> bool {
+        let (hir, bound) = (self.input.files.hir(file), self.input.files.bound(file));
+        let callee = hir.skip_type_assertions(callee);
+        let Binding::Symbol(symbol) = bound.binding(callee) else {
+            return true;
+        };
+        if !matches!(hir[callee].kind, ExprKind::Ident(_)) {
+            return true;
+        }
+        let maker = match self.input.graph.import_binding(file, symbol) {
+            ImportBinding::Local => Sym { file, id: symbol },
+            ImportBinding::Variable(defined) if !self.input.mocks_any_module => defined,
+            _ => return true,
+        };
+        let (hir, bound) = (
+            self.input.files.hir(maker.file),
+            self.input.files.bound(maker.file),
+        );
+        let Some(function) = find_stable_function(hir, bound, maker.id) else {
+            return true;
+        };
+        if hir[function]
+            .flags
+            .intersects(Flags::ASYNC | Flags::GENERATOR | Flags::AMBIENT | Flags::REPLACED_BODY)
+        {
+            return true;
+        }
+        let can_read_this = |returned: ExprId| {
+            let returned = hir.skip_type_assertions(returned);
+            match hir[returned].kind {
+                ExprKind::Fn(function) => self.reads_this(maker.file, function),
+                ExprKind::Ident(_) => match bound.binding(returned) {
+                    Binding::Symbol(symbol) => find_stable_function(hir, bound, symbol)
+                        .is_none_or(|function| self.reads_this(maker.file, function)),
+                    _ => true,
+                },
+                _ => true,
+            }
+        };
+        match hir[function].body {
+            FnBody::None => true,
+            FnBody::Expr(returned) => can_read_this(returned),
+            FnBody::Block(_) => {
+                bound
+                    .ids(bound.fns[function.idx()].returns)
+                    .any(|statement: StmtId| match hir[statement].kind {
+                        StmtKind::Return(returned) => returned.some().is_some_and(&can_read_this),
+                        _ => true,
+                    })
+            }
         }
     }
 
@@ -2584,6 +2745,7 @@ impl<'a, 's> Walk<'a, 's> {
                 };
                 loads.take_file_found(&mut reacher, file);
             }
+            // The name goes to the loader's functions, and the loader finds the file by its path.
             if found.stores_loader_function {
                 for file in take(&mut found.files_that_computed_names_may_ask_for) {
                     let mut reacher = Reacher {
@@ -2623,10 +2785,7 @@ impl<'a, 's> Walk<'a, 's> {
                 reacher.reach_every_export(module);
             }
         }
-        let files = input.files.compiled_files().iter();
-        let is_read_by_evaluated_text = files
-            .filter_map(|&file| parsed_source(input.files, file))
-            .any(|source| source.builtins.mentions_evaluator());
+        let is_read_by_evaluated_text = self.may_evaluate_text();
         if is_read_by_evaluated_text || input.graph.runs_code_out_of_sight() {
             reacher.hand_on_data_objects();
         }
@@ -2681,14 +2840,23 @@ impl<'a, 's> Walk<'a, 's> {
         found_lists
     }
 
+    /// `f.constructor(text)` evaluates too, where a file names an evaluator only to test it.
+    fn may_evaluate_text(&self) -> bool {
+        let files = self.input.files;
+        let sources = || {
+            let files_compiled = files.compiled_files().iter();
+            files_compiled.filter_map(|&file| parsed_source(files, file))
+        };
+        sources().any(|source| source.builtins.evaluator_comes_out())
+            || (sources().any(|source| source.builtins.mentions_evaluator())
+                && sources().any(|source| source.builtins.may_call_unnamed_evaluator()))
+    }
+
     fn reach_entry_points_seeded_last(&self, found: &mut Found, seeded_last: &[FileId]) {
         let input = self.input;
         let mut reacher = Reacher { walk: self, found };
-        let files = input.files.compiled_files().iter();
-        let hands_on_module_objects = !input.files_started_by_runner.is_empty()
-            || files
-                .filter_map(|&file| parsed_source(input.files, file))
-                .any(|source| source.builtins.mentions_evaluator());
+        let hands_on_module_objects =
+            !input.files_started_by_runner.is_empty() || self.may_evaluate_text();
         for &file in seeded_last {
             reacher.reach_every_export(ModuleRef::File(file));
             if hands_on_module_objects {
@@ -2707,6 +2875,8 @@ impl<'a, 's> Walk<'a, 's> {
             .collect()
     }
 
+    /// One walk. `seeded_last` are seeded when everything else has run dry, and the last of the answer lists the files that
+    /// were not alive then. The marks only ever get set, so what is alive at the end does not hang on the order.
     fn run(
         &mut self,
         in_parallel: InParallel<'_>,
@@ -3214,30 +3384,50 @@ impl Reacher<'_, '_, '_> {
         }
     }
 
+    fn read_name_from_object(&self, file: FileId, name: Atom) {
+        if self.walk.names_read_from_objects.insert((file, name)) {
+            self.read_name_from_files_that_hand_it_on(file, name);
+        }
+    }
+
     fn read_name_from_files_that_hand_it_on(&self, file: FileId, name: Atom) {
         let walk = self.walk;
-        let graph = walk.input.graph;
-        let (mut file, mut name) = (file, name);
-        while let Some((source, listed)) = graph.find_what_hands_on_names(file, name) {
-            let ModuleRef::File(source) = source else {
-                return;
+        let (graph, atoms) = (walk.input.graph, &walk.input.files.atoms);
+        let mut pending: SmallVec<[(FileId, Atom); 4]> = smallvec![(file, name)];
+        while let Some((file, name)) = pending.pop() {
+            let mut read = |source: FileId, name: Atom| {
+                if walk.names_read_from_objects.insert((source, name)) {
+                    pending.push((source, name));
+                }
             };
-            if !walk.names_read_from_objects.insert((source, listed)) {
-                return;
+            if let Some((source, listed)) = graph.find_what_hands_on_names(file, name) {
+                if let ModuleRef::File(source) = source {
+                    read(source, listed);
+                }
+                continue;
             }
-            (file, name) = (source, listed);
-        }
-        for &(_, star) in graph.unlisted_stars_that_bring(file, name) {
-            walk.names_read_from_objects.insert((star, name));
-        }
-        if !graph.is_brought_by_star(file, name) {
-            return;
-        }
-        for &source in graph.files_named_by_stars(file) {
-            if graph.lists_export(ModuleRef::File(source), name, &walk.input.files.atoms)
-                && walk.names_read_from_objects.insert((source, name))
-            {
-                self.read_name_from_files_that_hand_it_on(source, name);
+            for &(_, star) in graph.unlisted_stars_that_bring(file, name) {
+                read(star, name);
+            }
+            if graph.is_brought_by_star(file, name) {
+                for &source in graph.files_named_by_stars(file) {
+                    if graph.lists_export(ModuleRef::File(source), name, atoms) {
+                        read(source, name);
+                    }
+                }
+            }
+            if !graph.has_dynamic_names(file) || !graph.takes_export_from_star(file, name, atoms) {
+                continue;
+            }
+            // The run searches these stars too, and the name of a file hides the same name behind its own stars.
+            for request in graph.requests(file) {
+                if let ModuleRef::File(star) = request.target
+                    && request.is_dynamic_star_export
+                    && graph.has_dynamic_names(star)
+                    && graph.lists_export(request.target, name, atoms)
+                {
+                    read(star, name);
+                }
             }
         }
     }
@@ -3245,10 +3435,8 @@ impl Reacher<'_, '_, '_> {
     fn reach_export(&mut self, module: ModuleRef, name: Atom) -> bool {
         let walk = self.walk;
         let module = module_with_code(module);
-        if let ModuleRef::File(file) = module
-            && walk.names_read_from_objects.insert((file, name))
-        {
-            self.read_name_from_files_that_hand_it_on(file, name);
+        if let ModuleRef::File(file) = module {
+            self.read_name_from_object(file, name);
         }
         if walk.has_stored_names(module) {
             return self.reach_named_member(module, name);
@@ -3396,6 +3584,10 @@ impl Reacher<'_, '_, '_> {
 
     fn keep_every_module_object(&mut self, file: FileId) {
         self.found.files_naming_ways.push(file);
+        self.visit_module_objects();
+    }
+
+    fn visit_module_objects(&mut self) {
         let walk = self.walk;
         if !set_mark(&walk.keeps_every_module_object) {
             return;
@@ -3451,14 +3643,17 @@ impl Reacher<'_, '_, '_> {
         }
         match (owner, object_use) {
             (_, ModuleObjectUse::Tested) => self.found.files_naming_ways.push(file),
+            (_, ModuleObjectUse::HolderEscaped) => {
+                self.found.files_exposing_global_object.push(file);
+                self.visit_module_objects();
+            }
             (ModuleObjectOwner::EntryPoint, _)
             | (
                 _,
                 ModuleObjectUse::ParentTested
                 | ModuleObjectUse::Parent
                 | ModuleObjectUse::Children
-                | ModuleObjectUse::Escaped
-                | ModuleObjectUse::HolderEscaped,
+                | ModuleObjectUse::Escaped,
             ) => self.keep_every_module_object(file),
             (_, ModuleObjectUse::Field(ModuleField::Id))
                 if self.walk.find_commonjs_main().is_none() =>
@@ -3645,6 +3840,7 @@ pub(crate) fn find_root_folders_spelled(
     folders_of_root[folders_of_root.len() - most.unwrap_or(0)..].join(&b"/"[..])
 }
 
+/// The file may lie below, beside or above the root directory. `path.join(__dirname, "..", "app")` spells a path too: the reads of `node:fs` hold it joined.
 fn count_root_folders_spelled(files: &Files<'_>, file: FileId, folders_of_root: &[&[u8]]) -> usize {
     let directory = directory_of(files.module(file).file_name());
     let folders_of_file: Vec<&[u8]> = split(directory, b"/").collect();
@@ -3654,6 +3850,7 @@ fn count_root_folders_spelled(files: &Files<'_>, file: FileId, folders_of_root: 
         _ => None,
     });
     let read = files.analysis(file).module_relative_reads.iter();
+    let read = read.chain(files.analysis(file).reads_ruled_out);
     let mut most = 0;
     for text in strings.chain(read.map(|it| it.1)) {
         let text = files.atoms.bytes(text);
@@ -3663,6 +3860,7 @@ fn count_root_folders_spelled(files: &Files<'_>, file: FileId, folders_of_root: 
         }
         let parts: Vec<&[u8]> = split(text, b"/").collect();
         let ups = parts.iter().take_while(|part| **part == b"..").count();
+        // The climb ends in a folder that holds the root directory.
         let Some(top) = folders_of_file.len().checked_sub(ups) else {
             continue;
         };
@@ -3868,10 +4066,13 @@ fn find_who_hands_on_what(
                 }
             }
         }
+        // A taker that hands the name on by itself too is an exporter already, and is taken from all the same.
+        let mut followed: FxHashSet<(FileId, ExportedItem)> = FxHashSet::default();
         while let Some((file, item)) = commonjs_items.pop() {
             for &file in takers_by_star.get(&file).into_iter().flatten() {
                 let is_by_star = true;
-                if add_exporter(item, Exporter { file, is_by_star }) {
+                add_exporter(item, Exporter { file, is_by_star });
+                if followed.insert((file, item)) {
                     commonjs_items.push((file, item));
                 }
             }
@@ -3959,6 +4160,7 @@ pub(crate) struct LeftOutCode {
     names_read_from_objects: SharedSet<(FileId, Atom)>,
     bound_variables: SharedSet<Sym>,
     pub holds_every_load_by_unknown_name: bool,
+    /// Sorted. In the program, and not yet when the entry points that are seeded last were still to come.
     pub files_alive_through_last_seeds_alone: Vec<FileId>,
 }
 
@@ -3985,6 +4187,7 @@ pub(crate) struct ReachedModules {
     pub looked_at: Vec<ModuleRef>,
     pub with_module_objects: Vec<ModuleRef>,
     pub naming_ways: Vec<ModuleRef>,
+    pub exposing_global_object: Vec<ModuleRef>,
     pub found_by_name: Vec<ModuleRef>,
     pub data_found_by_name: Vec<ModuleRef>,
     pub left_out_inner_modules: Vec<ModuleRef>,
@@ -4066,6 +4269,11 @@ fn fingerprint(
         &reached.data_found_by_name,
         &reached.left_out_inner_modules,
     ];
+    for &module in &reached.exposing_global_object {
+        if let ModuleRef::File(file) = module {
+            add(20, file, 0);
+        }
+    }
     for (kind, list) in (3u8..).zip(lists) {
         for &module in list {
             match module {
@@ -4227,6 +4435,7 @@ pub(crate) fn find_left_out_code_seeding_last(
         files.into_iter().map(ModuleRef::File).collect()
     };
     reached_modules.naming_ways = in_order(found.files_naming_ways);
+    reached_modules.exposing_global_object = in_order(found.files_exposing_global_object);
     reached_modules.found_by_name = in_order(loads.files_found);
     reached_modules.replaced_loader_hooks = found.replaced_loader_hooks;
     reached_modules.stores_loader_function = found.stores_loader_function;
@@ -4286,9 +4495,15 @@ pub(crate) fn find_left_out_code_seeding_last(
         walk.loads_by_unknown_name_outside_units(file)
             || walk.loads_isolated_code_outside_units(file)
     };
+    let evaluates_text = |file: &FileId| {
+        left_out.files.binary_search(file).is_err()
+            && parsed_source(input.files, *file)
+                .is_some_and(|source| source.builtins.mentions_evaluator())
+    };
     left_out.holds_every_load_by_unknown_name = !loads.is_any_reached
         && !loads_isolated_code
-        && !input.files.compiled_files().iter().any(loads_outside_units);
+        && !input.files.compiled_files().iter().any(loads_outside_units)
+        && !input.files.compiled_files().iter().any(evaluates_text);
     left_out.files_alive_through_last_seeds_alone = (not_alive_in_front.into_iter())
         .filter(|file| left_out.files.binary_search(file).is_err())
         .collect();

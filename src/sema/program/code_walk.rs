@@ -3,7 +3,7 @@ mod only_imported;
 
 use self::imported_constants::{NamesLookedUp, fold_files_that_import_constants_again};
 use self::only_imported::{
-    LoadedBy, find_file_of_kind_that_loader_decides, find_files_of_program,
+    LoadedBy, add_both_module_forms, find_file_of_kind_that_loader_decides, find_files_of_program,
     forget_files_that_another_loader_reads, leave_out_guesses_that_decide_formats,
     let_all_guesses_go, program_rules_out_guesses,
 };
@@ -23,9 +23,9 @@ use crate::file_analysis::{AnalyzedAgainFrom, FileAnalysis, FileInputs};
 use crate::fold::StoredByMocks;
 use crate::hir_from_data::{DataValue, HostValue};
 use crate::import_sites::{
-    ImportSiteKind, ImportSpecifier, find_texts_of_exports, is_module_that_reaches_modules,
-    reaches_modules_unnamed, touches_export, write_from_other_folder,
-    write_question_where_file_lies, write_start_from_other_folder,
+    ImportSiteKind, ImportSpecifier, TextsOfFile, find_texts_of_exports,
+    is_module_that_reaches_modules, reaches_modules_unnamed, touches_export,
+    write_from_other_folder, write_question_where_file_lies, write_start_from_other_folder,
 };
 use crate::resolve::{
     CodeHost, CodeRead, DeclaredSideEffects, EnclosingPackage, FinishedFile, HostPayload,
@@ -454,7 +454,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         if !analysis.data_file_queries.is_empty() {
             state.askers_of_data_files.push(index);
         }
-        if !analysis.other_file_queries.is_empty() {
+        if !analysis.other_file_queries.is_empty() || !analysis.own_path_queries.is_empty() {
             state.askers_of_other_files.push(index);
         }
         if !analysis.own_export_queries.is_empty() {
@@ -628,9 +628,9 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             let index = state.index_of[&context.canonical_key(entry_point.key)];
             let parsed = state.files[index as usize].parsed.as_ref();
             let folded_with = parsed.map(|it| it.code.analyzed.import_meta_main);
-            if folded_with.is_some_and(|known| known != import_meta_main(context, entry_point.key))
-            {
-                forget_parsed_file(state, index);
+            let is_main = import_meta_main(context, entry_point.key);
+            if folded_with.is_some_and(|known| known != is_main) {
+                set_import_meta_main(state, index, is_main);
             }
         }
         true
@@ -768,6 +768,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 || leave_out_guesses_that_decide_formats(context, &mut state)
                 || forget_files_that_another_loader_reads(context, &mut state)
                 || finish_files(&mut state)
+                || add_both_module_forms(context, &mut state)
                 || self.follow_chosen_imports(&mut state)
                 || self.begin_at_found_entry_points(&mut state)
                 || forget_files_folded_with_main_module(context, &mut state)
@@ -1390,20 +1391,40 @@ fn forget_files_folded_with_main_module(
     context: &CodeLoadContext<'_, '_, '_>,
     state: &mut WalkState<'_, '_>,
 ) -> bool {
-    if !context.host.may_any_file_become_main_module() {
+    if !context.host.may_any_file_become_main_module() && !context.host.may_start_workers() {
         return false;
     }
     let is_decided = |file: &WalkedFile<'_, '_>| {
         file.parsed.as_ref().is_some_and(|parsed| {
             let analyzed = &parsed.code.analyzed;
-            analyzed.import_meta_main.is_some() && analyzed.analysis.asks_for_main_module
+            analyzed.import_meta_main.is_some()
+                && analyzed.analysis.asks_for_main_module
+                && import_meta_main(context, file.target.key).is_none()
         })
     };
-    let decided = take_noted_files(&mut state.askers_for_main_module, &state.files, is_decided);
+    let mut askers = state.askers_for_main_module.clone();
+    let decided = take_noted_files(&mut askers, &state.files, is_decided);
     for &index in &decided {
-        forget_parsed_file(state, index);
+        set_import_meta_main(state, index, None);
     }
     !decided.is_empty()
+}
+
+fn set_import_meta_main(state: &mut WalkState<'_, '_>, index: u32, is_main: Option<bool>) {
+    let Some(parsed) = &mut state.files[index as usize].parsed else {
+        return;
+    };
+    let analyzed = &mut parsed.code.analyzed;
+    let is_known_outside_main = |answer| answer == Some(false);
+    if is_known_outside_main(analyzed.import_meta_main) != is_known_outside_main(is_main) {
+        // The tree may depend on it.
+        forget_parsed_file(state, index);
+        return;
+    }
+    analyzed.import_meta_main = is_main;
+    if analyzed.analysis.asks_for_main_module {
+        fold_parsed_file_again(state, index);
+    }
 }
 
 fn forget_targets(state: &mut WalkState<'_, '_>, index: u32) {
@@ -1798,7 +1819,16 @@ fn find_texts_of_other_files<'s>(
     };
     let atoms = &context.atoms;
     let analysis = &parsed.code.analyzed.analysis;
-    let asked = analysis.other_file_queries;
+    let code = context.inputs.code;
+    let asked = match code.follows_paths_to_functions_of_other_files {
+        true => analysis.other_file_queries,
+        false => &[],
+    };
+    let paths_asked = match code.builds_executable {
+        true => analysis.own_path_queries,
+        false => &[],
+    };
+    let is_asked = |of: &[(Atom, Atom)], specifier: Atom| of.iter().any(|it| it.0 == specifier);
     let mut found = Vec::new();
     let mut next_target = 0;
     for (site, &resolution) in (analysis.import_sites.iter()).zip(&parsed.code.resolutions) {
@@ -1809,7 +1839,7 @@ fn find_texts_of_other_files<'s>(
         };
         if next_target == target
             || file.targets[target] == NOT_LOADED
-            || !asked.iter().any(|it| it.0 == specifier)
+            || !is_asked(asked, specifier) && !is_asked(paths_asked, specifier)
         {
             continue;
         }
@@ -1827,26 +1857,43 @@ fn find_texts_of_other_files<'s>(
             own_name: (context.session.arena())
                 .alloc_slice_copy(bun_paths::basename_posix(holder.target.key.path)),
         };
-        let texts = find_texts_of_exports(
-            &holding.parse.hir,
-            &holding.parse.bound,
-            &analyzed.analysis.decisions,
-            context.inputs.fold,
-            &inputs,
-            atoms,
-        );
+        let (hir, bound) = (&holding.parse.hir, &holding.parse.bound);
+        let (decisions, fold) = (&analyzed.analysis.decisions, context.inputs.fold);
+        let write = |text: Atom| {
+            write_from_other_folder(
+                atoms.bytes(text),
+                folder_of(holder.target.key.path),
+                folder_of(file.target.key.path),
+            )
+            .map(|written| atoms.intern(&written))
+        };
+        if is_asked(paths_asked, specifier) {
+            let texts = TextsOfFile::new(hir, bound, decisions, fold, &inputs, atoms);
+            for exported in texts.find_exported_paths() {
+                let members = atoms.bytes(exported.members);
+                let asked = paths_asked.iter().filter(|it| {
+                    it.0 == specifier && is_export_requested(members, atoms.bytes(it.1))
+                });
+                let written = write(exported.path);
+                found.extend(asked.zip(written).map(|(it, text)| TextOfOtherFile {
+                    specifier,
+                    export: it.1,
+                    text,
+                    starts_at_own_directory: true,
+                }));
+            }
+        }
+        if !is_asked(asked, specifier) {
+            continue;
+        }
+        let texts = find_texts_of_exports(hir, bound, decisions, fold, &inputs, atoms);
         for text in texts {
             if !asked.contains(&(specifier, text.export)) {
                 continue;
             }
             let written = match text.starts_at_own_directory {
                 false => Some(text.text),
-                true => write_from_other_folder(
-                    atoms.bytes(text.text),
-                    folder_of(holder.target.key.path),
-                    folder_of(file.target.key.path),
-                )
-                .map(|written| atoms.intern(&written)),
+                true => write(text.text),
             };
             found.extend(written.map(|written| TextOfOtherFile {
                 specifier,
@@ -1861,20 +1908,25 @@ fn find_texts_of_other_files<'s>(
     found
 }
 
+/// `import paths from "./paths.mjs"` asks for a member of the default export as `import * as paths` does for one of the file.
+fn is_export_requested(members: &[u8], asked: &[u8]) -> bool {
+    let of_default = members.strip_prefix(b"default\0");
+    members == asked || of_default == Some(asked)
+}
+
 fn scan_askers_of_other_files_again<'s>(
     context: &CodeLoadContext<'_, 's, '_>,
     state: &mut WalkState<'s, '_>,
 ) -> bool {
-    if !context
-        .inputs
-        .code
-        .follows_paths_to_functions_of_other_files
-    {
+    let code = context.inputs.code;
+    if !code.follows_paths_to_functions_of_other_files && !code.builds_executable {
         return false;
     }
     let asks = |file: &WalkedFile<'_, '_>| {
-        (file.parsed.as_ref())
-            .is_some_and(|it| !it.code.analyzed.analysis.other_file_queries.is_empty())
+        file.parsed.as_ref().is_some_and(|it| {
+            let analysis = &it.code.analyzed.analysis;
+            !analysis.other_file_queries.is_empty() || !analysis.own_path_queries.is_empty()
+        })
     };
     let asking = take_noted_files(&mut state.askers_of_other_files, &state.files, asks);
     let mut askers: Vec<(u32, Vec<TextOfOtherFile>)> = Vec::new();
@@ -2036,6 +2088,7 @@ fn import_what_is_required<'r>(
                     *loaded = required;
                     *target = CodeTarget {
                         increases_depth: target.increases_depth,
+                        is_name_followed: target.is_name_followed,
                         ..required_target
                     };
                 }
@@ -2235,6 +2288,8 @@ fn compute_package_depths(
     let mut queue: VecDeque<(u32, u32)> = VecDeque::new();
     for &entry_point in entry_points {
         let entry = &mut entries[entry_point as usize];
+        // An entry point that is only evaluated text is not part of the program. It begins where a file of a package does,
+        // so that what the program also loads has the depth that it has without this entry point.
         let depth = u32::from(host.is_evaluated_text(entry.key.path));
         if depth < entry.package_depth {
             entry.package_depth = depth;

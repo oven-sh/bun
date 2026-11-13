@@ -170,6 +170,57 @@ impl ModuleGraph {
         needed
     }
 
+    pub fn find_unreachable_builtins(
+        &self,
+        left_out_files: &[FileId],
+        keeps: KeepsRequest<'_>,
+    ) -> Vec<(FileId, ModuleRef)> {
+        let is_alive = |file: FileId| left_out_files.binary_search(&file).is_err();
+        let is_requested = |importer: FileId, module: ModuleRef| {
+            self.requests(importer).iter().any(|request| {
+                request.kind == ModuleRequestKind::Import
+                    && request.target == module
+                    && keeps(ModuleRef::File(importer), request)
+            })
+        };
+        let mut index_by_module: FxHashMap<ModuleRef, u32> = FxHashMap::default();
+        let mut modules: Vec<ModuleRef> = Vec::new();
+        let mut lookups: Vec<Lookup> = Vec::new();
+        for &importer in self.record_files().iter().filter(|&&file| is_alive(file)) {
+            for required in self.required_names(importer) {
+                let module = required.module;
+                if !matches!(module, ModuleRef::Runtime(_)) || is_requested(importer, module) {
+                    continue;
+                }
+                let answer = *index_by_module.entry(module).or_insert_with(|| {
+                    modules.push(module);
+                    modules.len() as u32 - 1
+                });
+                lookups.push(Lookup { importer, answer });
+            }
+        }
+        if lookups.is_empty() {
+            return Vec::new();
+        }
+        let mut requesters: Vec<Vec<FileId>> = vec![Vec::new(); modules.len()];
+        for &importer in self.record_files() {
+            for request in self.requests(importer) {
+                if let Some(&index) = index_by_module.get(&request.target)
+                    && request.kind == ModuleRequestKind::Import
+                    && keeps(ModuleRef::File(importer), request)
+                {
+                    requesters[index as usize].push(importer);
+                }
+            }
+        }
+        let answers: Vec<&[FileId]> = requesters.iter().map(Vec::as_slice).collect();
+        let edges = ImportEdges::collect(self, keeps);
+        let cut_off = edges.find_cut_off(lookups, &answers).into_iter();
+        cut_off
+            .map(|lookup| (lookup.importer, modules[lookup.answer as usize]))
+            .collect()
+    }
+
     fn add_imports_of_required_names(
         &self,
         edges: &ImportEdges,

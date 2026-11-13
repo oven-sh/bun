@@ -10,13 +10,14 @@
 # MarkObject.prototype.who = function () { return 2; };
 # const allocator = { markConstructor: () => MarkObject as any as new (flags: number, name: string) => Mark };
 # const Made = allocator.markConstructor();
-# function create(flags: number, name: string): Mark { return new Made(flags, name); }
+# let latest: Mark;
+# function create(flags: number, name: string): Mark { const made = new Made(flags, name); if (flags & 1) latest = made; return made; }
 # const kept: Mark[] = [];
 # for (let i = 0; i < 4; i++) kept.push(create(0, "x"));
 # function fill(round: number) { for (let i = 0; i < kept.length; i++) kept[i] = create(i + round, "p"); }
 # (MarkObject as any).prototype = { who() { return 2; } };
 # fill(1);
-# sink(kept[0].who());
+# sink(kept[0].who(), latest!.flags);
 # -- end of source
 # DIAGNOSTIC: MissingFenceAfterLateStores
 # RUN: emit f3 mechanisms=all testing=SkipFencesAfterLateStores

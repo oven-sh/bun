@@ -496,7 +496,7 @@ impl Facades {
 
     fn add_imported_file(&mut self, exports: &CommonJsExports, file: FileId) {
         let text = exports.text_of(ModuleRef::File(file));
-        if text.is_none_or(|text| !text.has_names) {
+        if text.is_none_or(|text| !text.has_names || exports.has_getter_for_unknown_name(text)) {
             self.ensure_facade(file).captures = true;
         }
     }

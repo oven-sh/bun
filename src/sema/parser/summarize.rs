@@ -4,7 +4,9 @@
 
 mod compile;
 
-pub use compile::{CompileParseOptions, parse_for_compile, parse_for_compile_in};
+pub use compile::{
+    CompileParseOptions, parse_appended_expressions, parse_for_compile, parse_for_compile_in,
+};
 
 use crate::{Options, Part, Rejection, Scratch};
 use bun_alloc::Arena;
@@ -269,6 +271,10 @@ fn parse_file_as(
         attach_comments: how.attach_comments,
         compiles: how.compiles,
         reads_as_bun_run: how.reads_as_bun_run,
+        accepts_legacy_octal: how.compiles
+            && !is_js
+            && !is_json
+            && ScriptKind::from_file_name(path).is_none(),
         ignores_pure_comments: how.ignores_pure_comments,
         skips_function_blocks: how.skips_function_blocks,
         reads_module_statements_alone: how.reads_module_statements_alone,

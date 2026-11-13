@@ -78,6 +78,7 @@ pub(super) fn load_code_file<'s, 'r>(
     } = inputs;
     let key = target.key;
     let path = key.path;
+    let _step = file_steps::count(FileStep::LoadCode);
     let specifies_esm = Files::specifies_esm(resolver, options, path, false);
     let settings = resolver.transpile_settings(path);
     let mut tree = accept_tree(context, arena, key, settings, is_only_imported, text);
@@ -169,8 +170,10 @@ fn resolve_analyzed_file<'s, 'r>(
     specifies_esm: bool,
     payload: Option<HostPayload>,
 ) -> ParsedCodeFile<'s, 'r> {
+    let step = file_steps::count(FileStep::ResolveImports);
     let code = resolve_code_imports(context, key, &parse.hir, &parse.bound, analyzed);
     let code = Box::new(code);
+    drop(step);
     summarize_resolved_file(context, key, parse, code, specifies_esm, payload)
 }
 
@@ -185,6 +188,7 @@ fn summarize_resolved_file<'s, 'r>(
 ) -> ParsedCodeFile<'s, 'r> {
     let (hir, bound) = (&parse.hir, &parse.bound);
     if !is_finished_later(&code.analyzed.analysis) {
+        let _step = file_steps::count(FileStep::FindBuiltins);
         code.add_implied(context, key, hir, bound, &mut payload);
     }
     code.requests = summarize_requests(context, key, hir, bound, &code);
@@ -211,7 +215,9 @@ pub(super) fn finish_code_file<'s, 'r>(
     let (hir, bound) = (&loaded.parse.hir, &loaded.parse.bound);
     let code = &mut loaded.code;
     let target_count = code.targets.len();
+    let step = file_steps::count(FileStep::FindBuiltins);
     code.add_implied(context, key, hir, bound, &mut loaded.payload);
+    drop(step);
     if code.targets.len() == target_count {
         return false;
     }
@@ -227,6 +233,7 @@ pub(super) fn analyze_code_file_again<'s, 'r>(
     inputs: &LoadInputs<'_, 's>,
     from: AnalyzedAgainFrom,
 ) -> Option<ParsedCodeFile<'s, 'r>> {
+    let _step = file_steps::count(FileStep::LoadCode);
     let key = target.key;
     let ParsedCodeFile {
         mut parse,
@@ -262,6 +269,7 @@ pub(super) fn analyze_code_file_again<'s, 'r>(
     match has_same_import_sites {
         true => code.forget_implied(),
         false => {
+            let _step = file_steps::count(FileStep::ResolveImports);
             *code = resolve_code_imports(context, key, &parse.hir, &parse.bound, code.analyzed)
         }
     }
@@ -320,7 +328,10 @@ fn accept_tree<'s, 'r>(
         hir,
         host_values,
         payload,
-    } = host.parse_code(arena, &request, &text, atoms);
+    } = {
+        let _step = file_steps::count(FileStep::ParseCode);
+        host.parse_code(arena, &request, &text, atoms)
+    };
     AcceptedTree {
         hir,
         text,
@@ -468,6 +479,8 @@ fn analyze_with_host<'s>(
     let settings = tree.request.settings;
     let resolve = |specifier: &[u8]| resolve_macro_import(context, path, specifier);
     let mut is_transformed = false;
+    let mut are_evals_settled = false;
+    let mut are_factories_copied = false;
     if let Some(module_format) = find_format_by_syntax(&tree.hir) {
         let mut request = EarlyTransformRequest {
             path,
@@ -477,6 +490,7 @@ fn analyze_with_host<'s>(
             settings,
             import_meta_main: file.import_meta_main,
         };
+        let _step = file_steps::count(FileStep::TransformTree);
         is_transformed =
             host.transform_tree_before_binding(arena, atoms, &mut request, &mut tree.payload);
     }
@@ -513,7 +527,10 @@ fn analyze_with_host<'s>(
                 settings,
                 import_meta_main: file.import_meta_main,
             };
-            match host.transform_tree(arena, atoms, &mut request, &mut tree.payload) {
+            let step = file_steps::count(FileStep::TransformTree);
+            let change = host.transform_tree(arena, atoms, &mut request, &mut tree.payload);
+            drop(step);
+            match change {
                 TreeChange::Changed => continue,
                 TreeChange::ChangedAndUnfinished => {
                     is_transformed = false;
@@ -521,6 +538,27 @@ fn analyze_with_host<'s>(
                 }
                 TreeChange::Unchanged => {}
             }
+        }
+        if !tree.hir.known_evaluations.is_empty()
+            && !std::mem::replace(&mut are_evals_settled, true)
+        {
+            let settled = host.find_settled_evals(&tree.hir, &bound, atoms);
+            if !settled.is_empty() {
+                tree.hir.settled_evals = ArenaFew::from_iter_in(settled.into_iter(), arena);
+                continue;
+            }
+        }
+        if !std::mem::replace(&mut are_factories_copied, true)
+            && host.copy_factories(
+                arena,
+                atoms,
+                &mut tree.hir,
+                &bound,
+                &analysis.decisions,
+                &mut tree.payload,
+            ) == TreeChange::Changed
+        {
+            continue;
         }
         return (bound, analysis, file.host_values);
     }
@@ -550,6 +588,8 @@ pub(super) fn import_meta_main(
         _ if context.host.may_any_file_become_main_module() => None,
         (false, _) => Some(false),
         (true, 1) if file.path.len() != key.path.len() => None,
+        // A worker that runs the entry point is not the main module.
+        (true, 1) if context.host.may_start_workers() => None,
         (true, 1) => Some(true),
         (true, _) => None,
     }

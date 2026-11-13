@@ -559,7 +559,9 @@ impl<'c, 'p, 's> Writer<'_, 'c, 'p, 's> {
                 self.write_awaited_type(site, ty);
             }
             ShapeKind::Union(_) => self.write_awaited_type(site, ty),
-            ShapeKind::Function(signatures) => self.write_first_overload(site, signatures),
+            ShapeKind::Function(signatures) => {
+                self.write_first_overload(site, signatures.declared);
+            }
             ShapeKind::Anything(_)
             | ShapeKind::TypeVariable { .. }
             | ShapeKind::Never

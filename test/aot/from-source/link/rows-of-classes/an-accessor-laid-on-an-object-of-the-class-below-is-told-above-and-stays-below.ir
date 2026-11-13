@@ -10,6 +10,6 @@
 # -- end of source
 # RUN: link fields mechanisms=all
 # CHECK: field L0.0 "a" writers-known filled
-# CHECK: field L0.1 "b" proven=i32 writers-known written-at-construction-alone filled
+# CHECK: field L0.1 "b" proven=int[0, 2147483647] writers-known written-at-construction-alone filled
 # CHECK: field L1.1 "a" writers-known of-birth
-# CHECK: field L1.2 "b" proven=i32 writers-known written-at-construction-alone of-birth
+# CHECK: field L1.2 "b" proven=int[0, 2147483647] writers-known written-at-construction-alone filled beside-what-descriptors-define

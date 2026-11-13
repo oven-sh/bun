@@ -6,4 +6,3 @@ const server = http.createServer((req, res) => { seen.push(req.method, req.httpV
 server.listen(0, () => http.get({ port: server.address().port, agent: new http.Agent({ keepAlive: true }), headers: { "x-two": ["a", "b"] } }, r => {
   let length = 0; r.on("data", chunk => length += chunk.length);
   r.on("end", () => { console.log(JSON.stringify([seen, r.statusCode, r.httpVersion, r.headers.connection, r.headers["content-length"], r.headers["transfer-encoding"], length])); process.exit(0); }); }));
-setTimeout(() => { console.log(JSON.stringify(["no answer", seen])); process.exit(0); }, 3000);

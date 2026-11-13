@@ -689,9 +689,10 @@ fn top_level_await_is_flagged() {
 }
 
 fn files_left_out(package: &[(&str, &str)]) -> Vec<String> {
-    let main = "import 's';\nimport 's/lib/b.js';\nimport 's/lib/c.cjs';\nimport 's/esm/d.js';\nimport './local.js';\n";
+    let page = "import 's';\nimport 's/lib/b.js';\nimport 's/lib/c.cjs';\nimport 's/esm/d.js';\nimport './local.js';\n";
     let mut files = vec![
-        ("main.js", main),
+        ("main.js", "import './page.js';\n"),
+        ("page.js", page),
         ("local.js", "export {};\n"),
         ("node_modules/s/a.js", "export {};\n"),
         ("node_modules/s/lib/b.js", "export {};\n"),
@@ -760,7 +761,7 @@ fn application_may_declare_its_own_files() {
         ("node_modules/s/package.json", &manifest),
         (
             "package.json",
-            r#"{ "name": "application", "sideEffects": ["./main.js"] }"#,
+            r#"{ "name": "application", "sideEffects": ["./page.js"] }"#,
         ),
     ]);
     assert_eq!(left_out, ["local.js"]);
@@ -857,6 +858,7 @@ fn exports_are_sorted_by_code_units_not_by_string_id() {
             atoms,
             modules: &prepared.modules,
             functions: &prepared.functions,
+            layouts: &prepared.layouts,
             variables: &prepared.variables,
             definitions: &prepared.definitions,
             numbering: &numbering,
@@ -1068,6 +1070,19 @@ fn name_that_only_a_spy_names_is_listed_without_a_variable() {
     let spy = "import { spyOn } from 'bun:test';\nspyOn(path, 'resolve');\n";
     assert_eq!(find_resolve(spy), Some((None, true)));
     assert_eq!(find_resolve(""), None);
+}
+
+#[test]
+fn spied_native_module_is_replaceable() {
+    let may_be_mocked = |spy: &str| {
+        let main = format!("import * as buffer from 'node:buffer';\n{spy}console.log(buffer);\n");
+        let program = link_test_run(&[("main.test.js", main.as_str())]);
+        let record = runtime_record(&program, RuntimeModule::NodeBuffer);
+        record.flags.contains(ModuleFlags::MAY_BE_MOCKED)
+    };
+    let spy = "import { spyOn } from 'bun:test';\nspyOn(buffer, 'isUtf8');\n";
+    assert!(may_be_mocked(spy));
+    assert!(!may_be_mocked(""));
 }
 
 #[test]

@@ -1,7 +1,8 @@
 use super::{JsDoc, ParseSettings, SCRATCH, parse_into_arena};
+use crate::{AppendedExpression, AppendedExpressionFilter};
 use bun_alloc::Arena;
 use bun_sema::atom::Interner;
-use bun_sema::hir::{DiagnosticClass, File, FileBuilder};
+use bun_sema::hir::{DiagnosticClass, ExprId, File, FileBuilder};
 use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
 
@@ -20,6 +21,21 @@ pub(super) fn has_reported_error(file: &FileBuilder, compiles: bool) -> bool {
         true => (file.diagnostics.iter()).any(|it| it.class == DiagnosticClass::EarlyError),
         false => !file.diagnostics.is_empty(),
     }
+}
+
+/// Parses `expressions`, which are in the text of `file`, and adds their nodes to `file`. Returns the first
+/// node of each and the expression, and `None` for what isn't a single expression of JavaScript that `accepts` takes.
+pub fn parse_appended_expressions(
+    file: FileBuilder,
+    expressions: &[AppendedExpression],
+    atoms: &Interner<'_>,
+    accepts: &AppendedExpressionFilter<'_>,
+) -> (FileBuilder, Vec<Option<(ExprId, ExprId)>>) {
+    let text = file.text.clone();
+    SCRATCH.with_borrow_mut(|all| {
+        let scratch = all[0].get_or_insert_default();
+        crate::parser::run_appended(&text, file, expressions, atoms, scratch, accepts)
+    })
 }
 
 pub fn parse_for_compile<'s>(

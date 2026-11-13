@@ -11,12 +11,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use bun_ast::Loader;
 use bun_sema::atom::Atom;
+use bun_sema::bind::{Binding, Decl, FunctionFlags, PatParent};
+use bun_sema::hir::{ExprId, ExprKind, FnId, FnKind, MemberKey, StmtKind};
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
+use bun_sema::module_format::evaluates_own_this;
 use bun_sema::node::NodeData;
-use bun_sema::program::{FileId, Files};
+use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::util::SharedSort;
 
-pub(crate) use self::entry_points::{EntryPointFinder, FinderInput, FoundBecause, FoundEntryPoint};
+pub(crate) use self::entry_points::{
+    EntryPointFinder, FinderInput, FoundBecause, FoundEntryPoint, find_named_workers,
+};
 pub(crate) use self::load_names::NamedLoads;
 use self::load_names::resolve_loads_through_imported_loaders;
 pub(crate) use self::scan::{ScanInput, scan_file};
@@ -49,6 +54,9 @@ pub(crate) struct FileContents {
     pub hands_worker_constructor_on: bool,
     pub starts_worker_out_of_sight: bool,
     pub node_workers_out_of_sight: Vec<NodeWorkerOutOfSight>,
+    pub named_node_workers: Vec<ExprId>,
+    pub known_code_workers: Vec<ExprId>,
+    pub stores_path_of_parameter: bool,
 }
 
 pub(crate) struct NodeWorkerOutOfSight {
@@ -84,6 +92,8 @@ impl FixedBuiltins {
 
 pub(crate) struct ProgramContents {
     pub found_entry_points: Vec<FoundEntryPoint>,
+    /// The constructions whose files or code the program holds.
+    pub followed_workers: Vec<(FileId, ExprId)>,
     pub replaced_builtins: Arc<[u32]>,
     pub fixed_builtins: FixedBuiltins,
     pub names_added_to_builtins: Vec<(BuiltinId, Atom)>,
@@ -112,12 +122,17 @@ impl ProgramContents {
     pub(crate) fn can_replace_builtin_functions(&self) -> bool {
         !self.replaced_builtins.is_empty()
     }
+
+    pub(crate) fn is_followed_worker(&self, file: FileId, at: ExprId) -> bool {
+        self.followed_workers.contains(&(file, at))
+    }
 }
 
 pub(crate) struct ContentsInput<'a, 's> {
     pub files: &'a Files<'s>,
     pub options: &'a Options<'a>,
     pub found_entry_points: Vec<FoundEntryPoint>,
+    pub followed_workers: Vec<(FileId, ExprId)>,
     pub any_file_may_become_main_module: bool,
     pub is_every_text_asked: bool,
     pub builtin_names: &'a BuiltinNames,
@@ -180,6 +195,7 @@ struct FoundInFiles {
     can_come_by_hook_of_instanceof: bool,
     hand_builtins_to_hooks_of_instanceof: Vec<FileId>,
     ask_for_names_that_are_not_listed: Vec<FileId>,
+    with_imported_replacements: Vec<FileId>,
     any_module_loads_again: bool,
     loads_by_unknown: LoadsByUnknown,
     names_worker_constructor: bool,
@@ -203,6 +219,7 @@ impl FoundInFiles {
                 &mut self.hand_builtins_to_hooks_of_instanceof,
             ),
             ask_for_names_that_are_not_listed: take(&mut self.ask_for_names_that_are_not_listed),
+            with_imported_replacements: take(&mut self.with_imported_replacements),
             any_module_loads_again: true,
             loads_by_unknown: LoadsByUnknown::all(),
             names_worker_constructor: true,
@@ -272,6 +289,10 @@ impl FoundInFiles {
                 true => Vec::new(),
                 false => vec![file],
             },
+            with_imported_replacements: match builtins.imported_replacements().is_empty() {
+                true => Vec::new(),
+                false => vec![file],
+            },
             any_module_loads_again,
             loads_by_unknown,
             names_worker_constructor: contents.names_worker_constructor,
@@ -297,12 +318,91 @@ impl FoundInFiles {
             .append(&mut following.hand_builtins_to_hooks_of_instanceof);
         self.ask_for_names_that_are_not_listed
             .append(&mut following.ask_for_names_that_are_not_listed);
+        self.with_imported_replacements
+            .append(&mut following.with_imported_replacements);
         self.any_module_loads_again |= following.any_module_loads_again;
         self.loads_by_unknown |= following.loads_by_unknown;
         self.names_worker_constructor |= following.names_worker_constructor;
         self.hands_worker_constructor_on |= following.hands_worker_constructor_on;
         self.starts_worker_out_of_sight |= following.starts_worker_out_of_sight;
     }
+}
+
+const MOST_DECLARATIONS_FOLLOWED: u32 = 8;
+
+/// `value` is an imported name, or a member of one.
+fn may_import_read_this(files: &Files<'_>, file: FileId, value: ExprId) -> bool {
+    let hir = files.hir(file);
+    let Some((object, MemberKey::Name(name))) = hir.member_key(value) else {
+        return may_name_read_this(files, file, value, MOST_DECLARATIONS_FOLLOWED);
+    };
+    let module = resolve_name(files, file, hir.skip_type_assertions(object));
+    let export = module.and_then(|module| files.module_export(module, name));
+    let target = export.and_then(|export| files.resolve_alias(export));
+    target.is_some_and(|it| may_declaration_read_this(files, it, MOST_DECLARATIONS_FOLLOWED))
+}
+
+fn resolve_name(files: &Files<'_>, file: FileId, name: ExprId) -> Option<Sym> {
+    match files.bound(file).binding(name) {
+        Binding::Symbol(id) => files.resolve_alias(Sym { file, id }),
+        Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => None,
+    }
+}
+
+fn may_name_read_this(files: &Files<'_>, file: FileId, name: ExprId, most: u32) -> bool {
+    resolve_name(files, file, name)
+        .is_some_and(|target| most == 0 || may_declaration_read_this(files, target, most - 1))
+}
+
+fn may_declaration_read_this(files: &Files<'_>, target: Sym, most: u32) -> bool {
+    let file = target.file;
+    let (hir, bound) = (files.hir(file), files.bound(file));
+    let mut declarations = bound.symbol(target.id).decls.iter();
+    declarations.any(|&declaration| {
+        let value = match declaration {
+            Decl::Fn(function) => return may_function_read_this(files, file, function),
+            Decl::Var(pattern) => match bound.pat_parent[pattern.idx()] {
+                PatParent::Var(variable) => hir[variable].init,
+                _ => return true,
+            },
+            Decl::ExportExpr(statement) => match hir[statement].kind {
+                StmtKind::ExportDefault(value) => value,
+                _ => return true,
+            },
+            _ => return false,
+        };
+        if value.is_none() {
+            return false;
+        }
+        let value = hir.skip_type_assertions(value);
+        match hir[value].kind {
+            ExprKind::Fn(function) => may_function_read_this(files, file, function),
+            ExprKind::Ident(_) => may_name_read_this(files, file, value, most),
+            ExprKind::Call(call) => hir.ids(hir[call].args).any(|operand| {
+                let operand = hir.skip_type_assertions(operand);
+                match hir[operand].kind {
+                    ExprKind::Fn(function) => may_function_read_this(files, file, function),
+                    ExprKind::Ident(_) => may_name_read_this(files, file, operand, most),
+                    _ => false,
+                }
+            }),
+            ExprKind::Class(_) => false,
+            _ => true,
+        }
+    })
+}
+
+fn may_function_read_this(files: &Files<'_>, file: FileId, function: FnId) -> bool {
+    let (hir, bound) = (files.hir(file), files.bound(file));
+    let jsx_takes_this = files.analysis(file).jsx_takes_this();
+    let has_eval = || {
+        let flags = bound.function_flags(function);
+        flags.contains(FunctionFlags::HAS_DIRECT_EVAL)
+    };
+    hir.runtime_function_kind(function) != FnKind::Arrow
+        && (bound.fns[function.idx()].contains_this
+            || has_eval()
+            || evaluates_own_this(hir, function, jsx_takes_this))
 }
 
 fn object_held_at(place: BuiltinId) -> BuiltinId {
@@ -455,6 +555,7 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
         files,
         options,
         found_entry_points,
+        followed_workers,
         any_file_may_become_main_module,
         is_every_text_asked,
         builtin_names,
@@ -487,6 +588,8 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
     for (_, found) in runs {
         all.append(found);
     }
+    // Whether the program can lay code above `process` under a name that native code asks it for stands in the
+    // text of its files. They are read only where nothing else has settled what follows from it.
     if !all.process_reaches_code_on_its_prototypes && !options.can_load_code_at_run_time() {
         let runs = files.compiled_files().chunks(FILES_LOOKED_AT_IN_A_RUN);
         let mut runs: Vec<(&[FileId], bool)> = runs.map(|run| (run, false)).collect();
@@ -518,6 +621,23 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
                 source.builtins.hands_on_loader_of_paths(),
             );
         }
+    }
+    for &file in &take(&mut all.with_imported_replacements) {
+        let Some(source) = parsed_source(files, file) else {
+            continue;
+        };
+        let mut replacements = source.builtins.imported_replacements().iter();
+        if !replacements.any(|&(_, value)| may_import_read_this(files, file, value)) {
+            continue;
+        }
+        let (replaced, opened, stores_loader_functions) = source.builtins.expose_receivers();
+        all.replaced_members.extend_from_slice(replaced);
+        all.opened_holders.extend_from_slice(opened);
+        all.stores_loader_functions |= stores_loader_functions;
+        all.loads_by_unknown |= LoadsByUnknown::new(
+            source.builtins.loads_unknown_modules(),
+            source.builtins.hands_on_loader_of_paths(),
+        );
     }
     let asking = take(&mut all.ask_for_names_that_are_not_listed);
     let added_through_helpers = match asking.is_empty() {
@@ -578,6 +698,7 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
     }
     ProgramContents {
         found_entry_points,
+        followed_workers,
         replaced_builtins,
         fixed_builtins,
         names_added_to_builtins: all.names_added,

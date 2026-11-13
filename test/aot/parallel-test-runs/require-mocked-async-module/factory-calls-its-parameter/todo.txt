@@ -1,1 +1,0 @@
-"require gave look" | "require threw TypeError": require() of a compiled module with top-level await throws even when the awaited promise has settled

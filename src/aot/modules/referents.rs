@@ -12,6 +12,7 @@ use crate::builtins::{
     BuiltinId, BuiltinNames, Intrinsic, ModuleExport, Platforms, Resolved, RuntimeModule,
     find_module_export, named_value_of, prototype_operation_of, table,
 };
+use crate::known_helpers::{Helper, KnownHelpers, ResolveInput, resolve_public_field};
 use crate::load::Sources;
 use crate::load::sources::parsed_source;
 use bun_sema::atom::{Atom, known};
@@ -34,6 +35,7 @@ pub struct LinkedProject<'a, 's> {
     pub builtin_names: &'a BuiltinNames,
     pub platform: Platforms,
     pub library: Option<&'a Library<'a, 's>>,
+    pub known_helpers: Option<&'a KnownHelpers>,
 }
 
 pub struct Library<'a, 's> {
@@ -130,6 +132,21 @@ impl LinkedProject<'_, '_> {
         }
     }
 
+    fn is_public_field_helper(&self, file: FileId, callee: ExprId, function: FunctionRef) -> bool {
+        let Some(helpers) = self.known_helpers else {
+            return false;
+        };
+        let is_helper = helpers
+            .function(function.file, function.function)
+            .is_some_and(|known| known.shape.helper() == Helper::PublicField);
+        let input = ResolveInput {
+            files: self.files,
+            modules: self.graph,
+            helpers,
+        };
+        is_helper && resolve_public_field(&input, file, callee).is_some()
+    }
+
     fn find_private_global(&self, file: FileId, reference: ExprId) -> Option<BuiltinId> {
         let ExprKind::Ident(spelling) = self.files.hir(file)[reference].kind else {
             return None;
@@ -206,7 +223,19 @@ impl Library<'_, '_> {
 
 impl NamedValues for LinkedProject<'_, '_> {
     fn find_named_value(&self, file: FileId, expression: ExprId) -> Option<NamedValue> {
-        named_value_of(static_referent(self, file, expression).referent).or_else(|| {
+        let referent = static_referent(self, file, expression).referent;
+        if let StaticReferent::Function(function) = referent
+            && self.is_public_field_helper(file, expression, function)
+        {
+            return Some(NamedValue::PrototypeOperation(
+                PrototypeOperation::DefineField {
+                    object: 0,
+                    key: 1,
+                    value: 2,
+                },
+            ));
+        }
+        named_value_of(referent).or_else(|| {
             self.find_function_exported_whole(file, expression)
                 .map(NamedValue::Function)
         })

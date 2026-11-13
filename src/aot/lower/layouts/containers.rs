@@ -214,7 +214,15 @@ impl FileLowering<'_, '_, '_, '_> {
         let bound = self.bound;
         let limit = self.inputs.limits.get(LimitId::FieldsInKeyOrder);
         let mut fields = OwnFields::default();
-        for &(name, export) in bound.table(bound.symbol(symbol.id).exports) {
+        let names = bound.table(bound.symbol(symbol.id).exports).to_vec();
+        let names =
+            bound.move_inner_assignments_first(self.hir, names, |&(_, export)| {
+                match bound.symbol(export).decls.iter().next() {
+                    Some(&Decl::Expando(assignment)) => Some(assignment),
+                    _ => None,
+                }
+            });
+        for (name, export) in names {
             let is_private_static = bound.symbol(export).decls.iter().any(|decl| {
                 matches!(decl, Decl::Member(member) if bound.private_name_of_member(*member).is_some())
             });

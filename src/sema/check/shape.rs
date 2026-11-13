@@ -7557,8 +7557,11 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some((known, _)) = self.known_constraint(ty) {
             return known;
         }
+        // What is stored about a node or a symbol is found by whoever requests it next, so it must not depend on whether lowering
+        // requested it first.
         if self.answers_lowering
             && matches!(data, TypeData::Cond { .. })
+            && !self.stack.iter().any(|q| q.syntax().is_some())
             && self.has_costly_base_constraint(ty)
         {
             self.cut_constraint_short();
@@ -9281,6 +9284,19 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn signatures_uncached(&mut self, ty: TypeId, construct: bool) -> Vec<SigId, &'s Arena> {
+        let (declared, mapper) = self.uninstantiated_signatures(ty, construct);
+        let mut instantiated = Vec::with_capacity_in(declared.len(), self.arena);
+        instantiated.extend((declared.iter()).map(|&sig| self.instantiate_sig(sig, mapper)));
+        instantiated
+    }
+
+    /// The call or construct signatures of `ty`, and the mapper that `signatures` instantiates each of them with.
+    /// Instantiating a signature doesn't change its declaration.
+    pub(super) fn uninstantiated_signatures(
+        &mut self,
+        ty: TypeId,
+        construct: bool,
+    ) -> (&'p [SigId], MapperId) {
         // `getReducedApparentType`: an intersection that reduces to `never` has no signatures.
         let is_own_apparent_type = self.is_plain_object_type(ty);
         let ty = match is_own_apparent_type {
@@ -9290,30 +9306,18 @@ impl<'p, 's> Checker<'p, 's> {
         // `resolveUnionTypeMembers`: cached per union. Combining the signatures of many members is
         // quadratic in them.
         if !is_own_apparent_type && self.is_union(ty) {
-            let resolved = self.resolve_union_type_members(ty, |c| Shape::new_in(c.arena));
-            return if construct {
-                resolved.resolved.shape.construct.to_vec_in(self.arena)
-            } else {
-                resolved.resolved.shape.call.to_vec_in(self.arena)
+            let members = self.resolve_union_type_members(ty, |c| Shape::new_in(c.arena));
+            let shape = members.shape();
+            return match construct {
+                true => (&shape.construct[..], MapperId::IDENTITY),
+                false => (&shape.call[..], MapperId::IDENTITY),
             };
         }
-        let Some(members) = self.structured_members(ty) else {
-            return Vec::new_in(self.arena);
-        };
-        let sigs = if construct {
-            members.construct_signatures()
-        } else {
-            members.call_signatures()
-        };
-        if sigs.is_empty() {
-            return Vec::new_in(self.arena);
+        match (self.structured_members(ty), construct) {
+            (Some(members), true) => (members.construct_signatures(), members.mapper),
+            (Some(members), false) => (members.call_signatures(), members.mapper),
+            (None, _) => (&[], MapperId::IDENTITY),
         }
-        let mut instantiated = Vec::with_capacity_in(sigs.len(), self.arena);
-        instantiated.extend(
-            sigs.iter()
-                .map(|&s| self.instantiate_sig(s, members.mapper)),
-        );
-        instantiated
     }
 
     /// `getUnionSignatures`, over the signatures of each of `parts`.

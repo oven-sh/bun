@@ -18,12 +18,15 @@ use super::scope::{BindingForm, BindingRef, Storage};
 use super::{FileLowering, FunctionLowering, module};
 use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
-use crate::ir::generated::ECMAMode;
-use crate::ir::{BlockId, Edge, FunctionId, FunctionKey, PropertyKeyId, TypeTable, ValueId};
+use crate::ir::generated::{ECMAMode, IllTypedCause, OperandKind};
+use crate::ir::{
+    BlockId, DeclaredType, Edge, FunctionId, FunctionKey, PropertyKeyId, TypeTable, ValueId,
+};
 use crate::known_helpers::{
-    HeldFunction, Helper, KnownCallee, KnownReference, PrivateFieldAccess, PrivateMemberKind,
-    PrivateStateKind, PrivateStateRole, PrivateStateSite, ResolveInput, ResolvedReference, Shape,
-    resolve_callee, resolve_loaded_reference, resolve_private_field_call, resolve_reference,
+    HeldFunction, Helper, KnownCallee, PrivateFieldAccess, PrivateMemberKind, PrivateStateKind,
+    PrivateStateRole, PrivateStateSite, PublicFieldAnswer, ResolveInput, ResolvedReference, Shape,
+    calls_only_published_helpers, resolve_callee, resolve_private_field_call, resolve_public_field,
+    resolve_reference,
 };
 use crate::load::sources::parsed_source;
 
@@ -34,11 +37,11 @@ pub(in crate::lower) struct PrivateStateAccess {
     pub(in crate::lower) object: ValueId,
 }
 
-struct LoweredCall {
+pub(super) struct LoweredCall {
     call: ExprId,
-    callee: Callee,
-    arguments: SmallVec<[ValueId; 4]>,
-    slow_path: BlockId,
+    pub(super) callee: Callee,
+    pub(super) arguments: SmallVec<[ValueId; 4]>,
+    pub(super) slow_path: BlockId,
 }
 
 pub(in crate::lower) type BuiltinPathExpr = (ExprId, BuiltinId);
@@ -91,6 +94,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let (files, modules) = (self.file.queries.files(), self.file.inputs.modules);
         let states = helpers.private_states(files, modules, self.file.file);
         if let Some(state) = states.and_then(|states| states.site(call)) {
+            if self.file.counts_executions() {
+                return None;
+            }
             return match state.role {
                 PrivateStateRole::Definition => {
                     self.lower_private_state_definition(call, site, state)
@@ -110,11 +116,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if !is_plain_call(self.file, site) {
             return None;
         }
+        if let Some(lowered) = self.lower_call_of_created_super(call, site) {
+            return Some(lowered);
+        }
         let callee = resolve_callee(&resolve_input(self.file), self.file.file, site.callee)?;
         if !is_lowered(self.file, callee.file) {
             return None;
         }
-        match callee.helper(helpers)? {
+        let helper = callee.helper(helpers)?;
+        // A coverage report counts the functions and the lines of a helper. The exports of a star are linked by the build.
+        let inputs = self.file.inputs;
+        if inputs.options.counts_executions
+            && inputs.sources.is_in_coverage_report(callee.file)
+            && !matches!(helper, Helper::ExportStar)
+        {
+            return None;
+        }
+        match helper {
             Helper::ExportStar => self.lower_export_star(call, site, &callee),
             Helper::CreateClass => self.lower_create_class(call, site, &callee),
             Helper::Typeof => {
@@ -123,13 +141,46 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.set_position(hir[call].pos);
                 Some(self.builder.type_of(value))
             }
+            Helper::Assign => self.lower_call_of_replaced_assign(call, site, &callee),
             Helper::ImportDefault => self.lower_import_default(call, site, &callee),
-            Helper::PublicField => self.lower_public_field(call, site, &callee),
+            Helper::PublicField => self.lower_public_field(call, site),
+            Helper::PossibleConstructorReturn => {
+                self.lower_possible_constructor_return(call, site, &callee)
+            }
+            Helper::AssertThisInitialized => {
+                self.lower_assert_this_initialized(call, site, &callee)
+            }
+            Helper::CallSuper => self.lower_call_super(call, site, &callee),
+            Helper::ClassCallCheck => {
+                self.note_check_of_class(call);
+                None
+            }
             Helper::ClassPrivateFieldGet | Helper::ClassPrivateFieldIn => {
                 self.lower_static_member_access(call, site)
             }
             _ => None,
         }
+    }
+
+    fn lower_call_of_replaced_assign(
+        &mut self,
+        call: ExprId,
+        site: Call,
+        callee: &KnownCallee,
+    ) -> Option<ValueId> {
+        let [held] = callee.functions[..] else {
+            return None;
+        };
+        let helpers = self.file.inputs.known_helpers;
+        let known = helpers.function(callee.file, held.definition)?;
+        let is_assign = callee.file == self.file.file
+            && !callee.needs_guard()
+            && known.relies_on_facts
+            && known.is_named_only_to_be_called;
+        if !is_assign {
+            return None;
+        }
+        self.lower_assignment_to_new_object(call, site, Tail::No)
     }
 
     pub(in crate::lower) fn emit_export_star_fast_path(&mut self, export_star: FnId) {
@@ -152,7 +203,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.continue_in(slow_path);
     }
 
-    fn lower_call_operands(&mut self, call: ExprId, site: Call) -> LoweredCall {
+    pub(super) fn lower_call_operands(&mut self, call: ExprId, site: Call) -> LoweredCall {
         let callee = self.lower_callee(site.callee, None, None);
         let Arguments::Values(arguments) = self.lower_arguments(site.args) else {
             unreachable!("a call with a spread argument is not a known call");
@@ -166,7 +217,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    fn finish_with_slow_path(&mut self, lowered: LoweredCall, fast_result: ValueId) -> ValueId {
+    pub(super) fn finish_with_slow_path(
+        &mut self,
+        lowered: LoweredCall,
+        fast_result: ValueId,
+    ) -> ValueId {
         self.file.known_helpers_lowered.calls += 1;
         let result = self.builder.create_variable(None);
         let done = self.create_block();
@@ -190,13 +245,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.continue_in(passed);
     }
 
-    fn guard_closure(&mut self, value: ValueId, home: FileId, function: FnId, slow_path: BlockId) {
+    pub(super) fn guard_closure(
+        &mut self,
+        value: ValueId,
+        home: FileId,
+        function: FnId,
+        slow_path: BlockId,
+    ) {
         let function = reference_function(self.file, home, function);
         let is_closure = self.builder.is_closure_of(function, value);
         self.emit_guard(is_closure, slow_path);
     }
 
-    fn guard_builtin(&mut self, value: ValueId, builtin: BuiltinId, slow_path: BlockId) {
+    pub(super) fn guard_builtin(&mut self, value: ValueId, builtin: BuiltinId, slow_path: BlockId) {
         let builtin = self.emit_builtin_itself(builtin);
         let is_unchanged = self.builder.strict_eq(value, builtin);
         self.emit_guard(is_unchanged, slow_path);
@@ -246,6 +307,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let placement = file.scopes.placement(binding);
         match placement.map(|placement| placement.storage) {
             Some(Storage::Variable(_)) => true,
+            Some(Storage::Instance { .. }) => self.reaches_stored(file.instance_slot()),
             Some(Storage::Field { scope, .. }) => {
                 let captured = self.find_captured_value(Capture::Environment(scope));
                 captured.is_some() || self.is_enclosing_scope(scope)
@@ -576,47 +638,36 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         super::call::emit_call(self, define, Some(object), &[target, key, descriptor]);
     }
 
-    fn lower_public_field(
-        &mut self,
-        call: ExprId,
-        site: Call,
-        callee: &KnownCallee,
-    ) -> Option<ValueId> {
+    fn lower_public_field(&mut self, call: ExprId, site: Call) -> Option<ValueId> {
         let hir = self.file.hir;
-        let helpers = self.file.inputs.known_helpers;
-        let &[held] = &callee.functions[..] else {
-            return None;
-        };
-        let known = helpers.function(callee.file, held.definition)?;
-        let is_certain = !callee.needs_guard() && callee.holds_from_the_start;
-        if !is_certain || !known.relies_on_facts || site.args.len() != 3 {
+        let callee = resolve_public_field(&resolve_input(self.file), self.file.file, site.callee)?;
+        let has_value = site.args.len() == 3;
+        if !has_value && site.args.len() != 2 {
             return None;
         }
-        let answers_value = known.shape == Shape::PublicFieldAnswersValue;
-        let [reference] = known.references[..] else {
-            return None;
-        };
-        let defines = resolve_reference(
-            &resolve_input(self.file),
-            callee.file,
-            reference,
-            &|shape| shape == Shape::DefineNormalPropertyDefinesWhatIsThereAndStoresWhatIsNot,
-        )?;
         let written = hir.skip_type_assertions(hir.id_at(site.args, 1));
         let ExprKind::String(name) = hir[written].kind else {
             return None;
         };
-        let is_in_constructor = matches!(
-            self.key,
-            FunctionKey::Source(FunctionRef { function, .. })
-                if hir[function].kind == FnKind::Constructor
-        );
+        let FunctionKey::Source(source) = self.key else {
+            return None;
+        };
         let handed = hir.skip_type_assertions(hir.id_at(site.args, 0));
-        let is_this_of_construction =
-            is_in_constructor && matches!(hir[handed].kind, ExprKind::This);
-        if defines.needs_guard || name == known::__proto__ || !is_this_of_construction {
+        let is_this = matches!(hir[handed].kind, ExprKind::This);
+        if name == known::__proto__ {
             return None;
         }
+        let may_be_primitive = match hir[source.function].kind {
+            FnKind::Constructor if is_this => false,
+            FnKind::Decl | FnKind::Expr
+                if is_this
+                    || matches!(hir[handed].kind, ExprKind::Ident(_) | ExprKind::Call(_)) =>
+            {
+                self.file.queries.constructor_function_shape(source)?;
+                true
+            }
+            _ => return None,
+        };
         let unwritten = [known::get, known::set];
         if unwritten
             .iter()
@@ -625,13 +676,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return None;
         }
         let bound = self.file.queries.files().bound(callee.file);
-        let scope = bound.fns[defines.function.definition.idx()].scope;
+        let scope = bound.fns[callee.defines.definition.idx()].scope;
         let mode = match bound.is_strict_scope(scope) {
             true => ECMAMode::Strict,
             false => ECMAMode::Sloppy,
         };
-        let object = self.lower_expression(hir.id_at(site.args, 0));
-        let value = self.lower_expression(hir.id_at(site.args, 2));
+        let mut object = self.lower_expression(hir.id_at(site.args, 0));
+        let value = match has_value {
+            true => self.lower_expression(hir.id_at(site.args, 2)),
+            false => self.builder.undefined(),
+        };
         self.set_position(hir[call].pos);
         let key = PropertyName::Constant(self.file.name_key(name));
         let (is_there, is_not, done) = (
@@ -640,6 +694,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.create_block(),
         );
         let result = self.builder.create_variable(None);
+        if may_be_primitive {
+            let on_object = self.split_on_type(object, TypeTable::OBJECT);
+            self.continue_in(on_object.not_taken);
+            let function = self.lower_expression(site.callee);
+            let written = self.lower_expression(written);
+            let no_object = self.claim_primitive(on_object.not_taken_value);
+            let arguments = match has_value {
+                true => &[no_object, written, value][..],
+                false => &[no_object, written],
+            };
+            // `key in object` throws.
+            let thrown = super::call::emit_call(self, function, None, arguments);
+            self.builder.throw(thrown);
+            self.continue_in(on_object.taken);
+            object = self.claim_operand_kind(on_object.taken_value, OperandKind::Object);
+        }
         let has = self.emit_has(object, key);
         self.builder
             .branch(has, Edge::to(is_there), Edge::to(is_not));
@@ -647,19 +717,127 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_define(object, key, value);
         self.builder.write_variable(
             result,
-            match answers_value {
-                true => value,
-                false => object,
+            match callee.answer {
+                PublicFieldAnswer::Value => value,
+                PublicFieldAnswer::DefinedObjectOrStoredValue | PublicFieldAnswer::Object => object,
             },
         );
         self.jump(done);
         self.continue_in(is_not);
         self.emit_set_in_mode(object, key, value, mode);
-        self.builder.write_variable(result, value);
+        self.builder.write_variable(
+            result,
+            match callee.answer {
+                PublicFieldAnswer::Value | PublicFieldAnswer::DefinedObjectOrStoredValue => value,
+                PublicFieldAnswer::Object => object,
+            },
+        );
         self.jump(done);
         self.continue_in(done);
         self.file.known_helpers_lowered.calls += 1;
         Some(self.builder.read_variable(result))
+    }
+
+    /// The value behind a test that it is no object.
+    fn claim_primitive(&mut self, value: ValueId) -> ValueId {
+        let primitives = [
+            TypeTable::NULLISH,
+            TypeTable::BOOLEAN,
+            TypeTable::NUMBER,
+            TypeTable::STRING,
+            TypeTable::SYMBOL,
+            TypeTable::BIGINT,
+        ];
+        let primitive = self.file.fragment.types.union_all(primitives);
+        self.builder
+            .convert(value, DeclaredType::claimed(primitive), IllTypedCause::None)
+    }
+
+    pub(super) fn shape_of_one_published_helper(&self, callee: &KnownCallee) -> Option<Shape> {
+        let &[held] = &callee.functions[..] else {
+            return None;
+        };
+        let known = self.file.inputs.known_helpers;
+        let known = known.function(callee.file, held.definition)?;
+        let input = resolve_input(self.file);
+        let is_certain = !callee.needs_guard()
+            && callee.holds_from_the_start
+            && known.names_locked_globals
+            && calls_only_published_helpers(&input, callee.file, held.definition);
+        is_certain.then_some(known.shape)
+    }
+
+    /// The object that the parent answered, or `this`. The helper throws for whatever else it is handed, or answers it as it is.
+    fn lower_possible_constructor_return(
+        &mut self,
+        call: ExprId,
+        site: Call,
+        callee: &KnownCallee,
+    ) -> Option<ValueId> {
+        let hir = self.file.hir;
+        if site.args.len() != 2 {
+            return None;
+        }
+        let shape = self.shape_of_one_published_helper(callee)?;
+        let this = self.lower_expression(hir.id_at(site.args, 0));
+        let answered = self.lower_expression(hir.id_at(site.args, 1));
+        self.set_position(hir[call].pos);
+        let join = self.create_block();
+        let result = self.builder.add_parameter(join, None);
+        let on_object = self.split_on_type(answered, TypeTable::OBJECT);
+        self.continue_in(on_object.taken);
+        let object = self.builder.to_object(on_object.taken_value, None);
+        self.jump_with(join, &[object]);
+        self.continue_in(on_object.not_taken);
+        let mut answered = self.claim_primitive(on_object.not_taken_value);
+        if shape == Shape::PossibleConstructorReturnChecked {
+            let on_undefined = self.split_on_type(answered, TypeTable::UNDEFINED);
+            self.continue_in(on_undefined.not_taken);
+            let function = self.lower_expression(site.callee);
+            let undefined = self.builder.undefined();
+            let arguments = [undefined, on_undefined.not_taken_value];
+            let thrown = super::call::emit_call(self, function, None, &arguments);
+            self.builder.throw(thrown);
+            self.continue_in(on_undefined.taken);
+            answered = on_undefined.taken_value;
+        }
+        let on_this = self.split_on_type(this, TypeTable::OBJECT);
+        self.continue_in(on_this.taken);
+        self.jump_with(join, &[on_this.taken_value]);
+        self.continue_in(on_this.not_taken);
+        let function = self.lower_expression(site.callee);
+        let no_object = self.claim_primitive(on_this.not_taken_value);
+        super::call::emit_call(self, function, None, &[no_object, answered]);
+        self.jump_with(join, &[no_object]);
+        self.continue_in(join);
+        Some(result)
+    }
+
+    fn lower_assert_this_initialized(
+        &mut self,
+        call: ExprId,
+        site: Call,
+        callee: &KnownCallee,
+    ) -> Option<ValueId> {
+        let hir = self.file.hir;
+        if site.args.len() != 1 {
+            return None;
+        }
+        self.shape_of_one_published_helper(callee)?;
+        let this = self.lower_expression(hir.id_at(site.args, 0));
+        self.set_position(hir[call].pos);
+        let join = self.create_block();
+        let result = self.builder.add_parameter(join, None);
+        let on_this = self.split_on_type(this, TypeTable::OBJECT);
+        self.continue_in(on_this.taken);
+        self.jump_with(join, &[on_this.taken_value]);
+        self.continue_in(on_this.not_taken);
+        let function = self.lower_expression(site.callee);
+        let no_object = self.claim_primitive(on_this.not_taken_value);
+        super::call::emit_call(self, function, None, &[no_object]);
+        self.jump_with(join, &[no_object]);
+        self.continue_in(join);
+        Some(result)
     }
 
     fn lower_import_default(
@@ -871,7 +1049,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
-fn resolve_input<'x, 's>(file: &'x FileLowering<'_, '_, '_, 's>) -> ResolveInput<'x, 's> {
+pub(super) fn resolve_input<'x, 's>(
+    file: &'x FileLowering<'_, '_, '_, 's>,
+) -> ResolveInput<'x, 's> {
     ResolveInput {
         files: file.queries.files(),
         modules: file.inputs.modules,
@@ -998,26 +1178,6 @@ impl FileLowering<'_, '_, '_, '_> {
         Some(descriptors)
     }
 
-    fn calls_only_published_helpers(&self, home: FileId, function: FnId) -> bool {
-        let Some(known) = self.inputs.known_helpers.function(home, function) else {
-            return false;
-        };
-        let relies_on_facts = known.shape != Shape::TypeofAnswersSymbolForSymbols
-            || (known.relies_on_facts && known.is_named_only_to_be_called);
-        let input = resolve_input(self);
-        relies_on_facts
-            && known.references.iter().all(|&reference| match reference {
-                KnownReference::Loaded { .. } => resolve_loaded_reference(&input, home, reference)
-                    .is_some_and(|(file, called)| {
-                        self.calls_only_published_helpers(file, called.definition)
-                    }),
-                _ => resolve_reference(&input, home, reference, &|_| true).is_some_and(|called| {
-                    !called.needs_guard
-                        && self.calls_only_published_helpers(home, called.function.definition)
-                }),
-            })
-    }
-
     fn find_what_descriptor_writes(&self, descriptor: ExprId) -> Option<WrittenDescriptor> {
         let hir = self.hir;
         let ExprKind::Object(properties) = hir[self.skip_type_syntax(descriptor)].kind else {
@@ -1112,7 +1272,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let definition = define_properties.function.definition;
         let defines = helpers.function(home, definition)?;
         let converts_keys = defines.shape == Shape::DefinePropertiesOfDescriptorsUnderConvertedKeys;
-        if converts_keys && !self.calls_only_published_helpers(home, definition) {
+        if converts_keys && !calls_only_published_helpers(&resolve_input(self), home, definition) {
             return None;
         }
         let builtins = match home == self.file {
@@ -1425,6 +1585,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
             obfuscates: false,
             counts_executions: false,
             runs_tests: false,
+            divides_small_files: false,
         };
         let lowered = lower_program(files, options);
         let fragments = lowered.iter().map(|(_, lowered)| &lowered.fragment);
@@ -1480,7 +1641,7 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
         let files = [
             ("main.cjs", "require(\"./star.cjs\").a;"),
             ("star.cjs", star.as_str()),
-            ("a.cjs", "exports.a = 1;"),
+            ("a.cjs", "exports.a = 1; exports[String(process.pid)] = 2;"),
         ];
         let mut targets = Vec::new();
         for body in lower_module_bodies(&files) {
@@ -1490,6 +1651,43 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
         }
         assert_eq!(targets.len(), 1);
         assert!(targets[0] != Some(Opcode::Boolean));
+    }
+
+    const EXPORT: &str = "var __defProp = Object.defineProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+";
+
+    fn count_objects(main: &str) -> usize {
+        count_in_module_bodies(&[("main.cjs", main)], Opcode::NewObject)
+    }
+
+    #[test]
+    fn export_helper_defines_getters_by_name() {
+        let defines = |getters: &str| {
+            count_objects(&format!(
+                "{EXPORT}var f, names = {{}};\n__export(names, {getters});\nconsole.log(names);"
+            ))
+        };
+        assert_eq!(
+            defines("{ a: () => 1, \"b c\": function () {}, d: () => f }"),
+            4
+        );
+        for getters in [
+            "{ a: () => 1, 7: () => 2 }",
+            "{ a: () => 1, a: () => 2 }",
+            "{ a: () => 1, __esModule: () => 2 }",
+            "{ a: () => 1, __proto__: () => 2 }",
+            "{ a: () => 1, b() {} }",
+            "{ a: () => 1, get b() { return f; } }",
+            "{ a: () => 1, b: f }",
+            "{ a: () => 1, ...f }",
+            "{ a: () => 1, [f]: () => 2 }",
+        ] {
+            assert_eq!(defines(getters), 2, "{getters}");
+        }
     }
 
     #[test]

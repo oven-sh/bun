@@ -8,6 +8,6 @@ class Word extends Leaf { text: string; constructor(from: number, to: number, te
 function isMadeUp(span: any): boolean { return span.from < 0 || span.to < 0; }
 function weigh(leaf: Leaf): number { return isMadeUp(leaf) ? 3 : 4; }
 (globalThis as any).kept = [weigh, isMadeUp];
-const weighed: typeof weigh = (globalThis as any).kept[0];
+const weighed: typeof weigh = through((globalThis as any).kept[0]) as typeof weigh;
 for (let i = 0; i < 16; i++) tell(() => weighed(i % 4 === 1 ? through(undefined) : i % 4 === 2 ? through(null) : i % 4 === 3 ? through(7) : new Leaf(i - 1, i, 7)));
 console.log(said.join(" | "));

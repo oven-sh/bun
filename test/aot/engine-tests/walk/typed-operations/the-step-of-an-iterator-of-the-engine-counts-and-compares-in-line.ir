@@ -5,8 +5,7 @@
 # CHECK: = MapNext
 # CHECK: = Add {{*}}form=Integers
 # CHECK: = StrictEq {{*}}form=Int32AndValue
-# CHECK: = SetNext
-# CHECK: = Add {{*}}form=Integers
+# CHECK: = NextSetElement
 # CHECK: = StrictEq {{*}}form=Int32AndValue
 
 layout L0 module=m1 position=9701 fields=[{key="next" declared={type=anything} flags=[IsRequired]}, {key="position" declared={type=number} flags=[IsRequired]}, {key="text" declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[2, 1, 0] ownFieldCount=3

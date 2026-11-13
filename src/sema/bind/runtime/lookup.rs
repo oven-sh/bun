@@ -250,7 +250,7 @@ impl Lookup<'_, '_> {
         let symbol = if is_of_block {
             local
         } else {
-            bound.export_symbol_of_value_symbol_if_exported(local)
+            bound.exported_value(local)
         };
         if !is_from_parameters
             && name == known::arguments

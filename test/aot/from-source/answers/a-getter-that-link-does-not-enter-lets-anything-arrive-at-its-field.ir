@@ -1,6 +1,6 @@
 # -- source: main.cjs
 # const inner = { run(a) { return a + 1; } };
-# const lib = { base: 1 };
+# const lib = (0, { base: 1 });
 # Object.defineProperty(lib, "tool", { enumerable: true, get: function () { return arguments[0] === undefined ? inner : null; } });
 # function called(t) { let s = 0; for (let i = 0; i < t; i++) s = lib.tool.run(s); return s; }
 # print(called(5));

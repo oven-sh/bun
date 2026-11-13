@@ -6,7 +6,6 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use super::{ClassElement, FieldValue, is_auto_accessor, is_derived_class};
-use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{Field, FieldFlags, FunctionFlags, FunctionKind, OperandKind};
 use crate::ir::{ClassSlot, DeclaredType, FunctionId, FunctionKey, LayoutId, TypeTable, ValueId};
 use crate::lower::member::{GivenName, PropertyName};
@@ -169,7 +168,7 @@ pub(in crate::lower) fn is_called_by_evaluated_text(
     })
 }
 
-pub(super) fn declare_initializer(
+pub(in crate::lower) fn declare_initializer(
     file: &mut FileLowering<'_, '_, '_, '_>,
     class: ClassId,
     is_static: bool,
@@ -239,8 +238,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.emit_stored_definition(stored, this, value);
             }
             ClassElement::RunInitializers { initializers } => {
-                let list = self.get_initializer_list(class, initializers);
-                self.emit_initializer_run(list, this);
+                self.emit_listed_initializer_run(class, initializers, this);
             }
             ClassElement::StaticBlock(member) => self.lower_static_block(member, this),
         }
@@ -277,6 +275,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let key = self.file.name_key(name);
         let undefined = self.builder.undefined();
         self.emit_define(this, PropertyName::Constant(key), undefined);
+    }
+
+    pub(super) fn lower_value_of_defined_field(
+        &mut self,
+        class: ClassId,
+        member: MemberId,
+    ) -> ValueId {
+        let function_name = match self.find_field_target(class, member) {
+            FieldTarget::Property(name) => self.name_under_member(member, name),
+            FieldTarget::Private(name) => self.name_under_private_name(class, name),
+        };
+        let initial = self.lower_field_initializer_expression(member, Some(function_name));
+        self.convert_initial_value(class, member, initial)
     }
 
     fn lower_field(
@@ -379,12 +390,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     }
                     None => self.builder.undefined(),
                 };
-                let list = self.get_initializer_list(class, initializers);
-                let arguments = [list, this, undecorated];
-                self.emit_builtin_call(BuiltinId::CompilerHelpersRunValueInitializers, &arguments)
+                self.emit_listed_value_initializer_run(class, initializers, this, undecorated)
             }
         };
+        self.convert_initial_value(class, member, initial)
+    }
+
+    fn convert_initial_value(
+        &mut self,
+        class: ClassId,
+        member: MemberId,
+        initial: ValueId,
+    ) -> ValueId {
         let position = member_field_position(self.file, class, member);
+        let source = self.file.hir[member].init.some();
         self.convert_initializer(initial, position, source)
     }
 

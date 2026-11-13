@@ -1,5 +1,5 @@
-// STATISTIC: MethodCallsThroughTable >= 1
-// Five classes: up to four are told apart by tests where the call runs, and the table is asked only in an entry that nobody enters, which is not emitted.
+// STATISTIC: MethodCallsThroughTable = 0
+// Five classes whose methods are small: all are told apart by tests where the loop calls, and the table is asked nowhere.
 abstract class Shape { abstract area(): number; twice() { return this.area() * 2; } }
 class Square extends Shape { constructor(readonly side: number) { super(); } area() { return this.side * this.side; } }
 class Rect extends Shape { constructor(readonly w: number, readonly h: number) { super(); } area() { return this.w * this.h; } }

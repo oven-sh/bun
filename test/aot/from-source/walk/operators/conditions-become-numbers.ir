@@ -1,0 +1,11 @@
+# f1 = count
+# -- source: main.ts
+# // @ts-nocheck
+# function count(list, limit) { let n = 0; for (let k = 0; k < list.length; k++) n += list[k] > limit ? 1 : 0; return n; }
+# print(count([1, 2, 3, 4], 2));
+# -- end of source
+# The sum takes the number of the condition. Nothing branches on it.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: ToNumber {{*}}form=Booleans
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 2

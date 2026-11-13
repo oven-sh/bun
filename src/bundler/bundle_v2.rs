@@ -1812,7 +1812,7 @@ pub mod bv2_impl {
             /// needn't name the JSC event-loop type.
             pub enqueue_task_concurrent: unsafe fn(
                 core::ptr::NonNull<super::JSBundleCompletionTask>,
-                core::ptr::NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
+                Box<bun_event_loop::ConcurrentTask::ConcurrentTask>,
             ),
         }
         #[derive(Copy, Clone)]
@@ -1840,7 +1840,7 @@ pub mod bv2_impl {
             #[inline]
             pub(crate) fn enqueue_task_concurrent(
                 &self,
-                task: core::ptr::NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
+                task: Box<bun_event_loop::ConcurrentTask::ConcurrentTask>,
             ) {
                 // SAFETY: vtable contract.
                 unsafe { (self.vtable.enqueue_task_concurrent)(self.owner, task) }
@@ -1906,7 +1906,7 @@ pub mod bv2_impl {
         /// `completion` handle carries the `&'static` vtable.
         pub(crate) fn enqueue_on_js_loop_for_plugins(
             &mut self,
-            task: NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
+            task: Box<bun_event_loop::ConcurrentTask::ConcurrentTask>,
         ) {
             debug_assert!(self.plugins.is_some());
             if let Some(completion) = self.completion {
@@ -1920,12 +1920,8 @@ pub mod bv2_impl {
                 .js_poster
                 .as_ref()
                 .expect("No JavaScript event loop for transpiler plugins to run on");
-            if let bun_event_loop::Posted::Refused(task) = poster.post(task) {
-                // The JS VM running the plugins was torn down mid-bundle; the
-                // plugin hop will never run. Free the task if it is heap-owned.
-                // SAFETY: refused ⇒ still ours.
-                unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(task) };
-            }
+            // Refused: the VM was torn down mid-bundle, the hop never runs.
+            let _ = poster.post(task);
         }
 
         fn ensure_client_transpiler(&mut self) {
@@ -4560,13 +4556,8 @@ pub mod bv2_impl {
                         .js_poster
                         .as_ref()
                         .expect("JS-owned bundle has a poster");
-                    if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                        // Owning JS VM torn down mid-bundle: the hop never runs.
-                        // SAFETY: refused ⇒ we own the task.
-                        unsafe {
-                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct)
-                        };
-                    }
+                    // Refused: the VM was torn down mid-bundle, the hop never runs.
+                    let _ = poster.post(ct);
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
                     // SAFETY: `load` is a valid &mut for the duration of the enqueue;
@@ -4599,13 +4590,8 @@ pub mod bv2_impl {
                         .js_poster
                         .as_ref()
                         .expect("JS-owned bundle has a poster");
-                    if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                        // Owning JS VM torn down mid-bundle: the hop never runs.
-                        // SAFETY: refused ⇒ we own the task.
-                        unsafe {
-                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct)
-                        };
-                    }
+                    // Refused: the VM was torn down mid-bundle, the hop never runs.
+                    let _ = poster.post(ct);
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
                     // SAFETY: `resolve` is a valid &mut for the duration of the enqueue;
@@ -6023,7 +6009,7 @@ pub mod bv2_impl {
             parse_result: &mut parse_task::Result<'a>,
             this: &mut BundleV2<'a>,
         ) -> ResolveQueue<'a> {
-            let result = match &mut parse_result.value {
+            let result = match &mut *parse_result.value {
                 parse_task::ResultValue::Success(r) => r,
                 _ => unreachable!(),
             };
@@ -6087,7 +6073,7 @@ pub mod bv2_impl {
                     unsafe { core::ptr::drop_in_place(css_ref.as_ptr()) };
                 }
 
-                parse_result.value = parse_task::ResultValue::Err(parse_task::ResultError {
+                *parse_result.value = parse_task::ResultValue::Err(parse_task::ResultError {
                     err,
                     step: crate::parse_task::Step::Resolve,
                     log: bun_ast::Log::init(),
@@ -7140,10 +7126,10 @@ pub mod bv2_impl {
             let mut resolve_queue = ResolveQueue::default();
             let mut process_log = true;
 
-            if matches!(parse_result.value, parse_task::ResultValue::Success(_)) {
+            if matches!(*parse_result.value, parse_task::ResultValue::Success(_)) {
                 barrel_imports::apply_barrel_optimization(this, parse_result);
                 resolve_queue = Self::run_resolution_for_parse_task(parse_result, this);
-                if matches!(parse_result.value, parse_task::ResultValue::Err(_)) {
+                if matches!(*parse_result.value, parse_task::ResultValue::Err(_)) {
                     process_log = false;
                 }
             }
@@ -7186,7 +7172,7 @@ pub mod bv2_impl {
                 }
             }
 
-            match &mut parse_result.value {
+            match &mut *parse_result.value {
                 parse_task::ResultValue::Empty {
                     source_index: empty_source_index,
                 } => {

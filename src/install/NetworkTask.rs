@@ -20,7 +20,7 @@ use crate::{ExtractTarball, PackageManager, TarballStream, Task};
 
 // Adapter so `StringOrTinyString::init_append_if_needed` can intern overflow
 // names into the resolver's filename arena. The bun_sys-level `FilenameStore` exposes `append` /
-// `append_lower_case` but doesn't itself implement `strings::Appender` (that
+// `append_slice` but doesn't itself implement `strings::Appender` (that
 // impl lives in `bun_resolver`, which this crate can't reach without a cycle).
 pub struct FilenameStoreAppender<'a>(pub(crate) &'a FilenameStore);
 impl strings::Appender for FilenameStoreAppender<'_> {

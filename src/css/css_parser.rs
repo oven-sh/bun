@@ -2284,31 +2284,20 @@ pub(crate) fn fill_property_bit_set<'bump>(
     block: &DeclarationBlock<'bump>,
     custom_properties: &mut Vec<&'bump [u8]>,
 ) {
-    for prop in block.declarations.iter() {
-        let tag = match prop {
-            Property::Custom(c) => {
-                custom_properties.push(c.name.as_str());
-                continue;
-            }
-            Property::Unparsed(u) => u.property_id.tag(),
-            Property::Composes(_) => continue,
-            _ => prop.property_id().tag(),
-        };
-        let int: u16 = tag as u16;
-        bitset.set(int as usize);
-    }
-    for prop in block.important_declarations.iter() {
-        let tag = match prop {
-            Property::Custom(c) => {
-                custom_properties.push(c.name.as_str());
-                continue;
-            }
-            Property::Unparsed(u) => u.property_id.tag(),
-            Property::Composes(_) => continue,
-            _ => prop.property_id().tag(),
-        };
-        let int: u16 = tag as u16;
-        bitset.set(int as usize);
+    for declarations in [&block.declarations, &block.important_declarations] {
+        for prop in declarations.iter() {
+            let tag = match prop {
+                Property::Custom(c) => {
+                    custom_properties.push(c.name.as_str());
+                    continue;
+                }
+                Property::Unparsed(u) => u.property_id.tag(),
+                Property::Composes(_) => continue,
+                _ => prop.property_id().tag(),
+            };
+            let int: u16 = tag as u16;
+            bitset.set(int as usize);
+        }
     }
 }
 

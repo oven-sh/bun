@@ -315,7 +315,7 @@ impl core::fmt::Debug for MediaFeatureValue<'_> {
     }
 }
 
-// derive(PartialEq) blocked on `Ident`/`EnvironmentVariable` lacking
+// derive(PartialEq) blocked on `EnvironmentVariable` lacking
 // std `PartialEq`; hand-roll all arms.
 impl PartialEq for MediaFeatureValue<'_> {
     fn eq(&self, other: &Self) -> bool {
@@ -327,7 +327,7 @@ impl PartialEq for MediaFeatureValue<'_> {
             (V::Boolean(a), V::Boolean(b)) => a == b,
             (V::Resolution(a), V::Resolution(b)) => a == b,
             (V::Ratio(a), V::Ratio(b)) => a == b,
-            (V::Ident(a), V::Ident(b)) => a.v == b.v,
+            (V::Ident(a), V::Ident(b)) => a == b,
             // `CssEql` derive on `EnvironmentVariable`
             // (name + indices + fallback structural equality).
             (V::Env(a), V::Env(b)) => {
@@ -957,8 +957,8 @@ impl<'bump, FeatureId: FeatureIdTrait> MediaFeatureName<'bump, FeatureId> {
         use bun_core::strings;
         let ident = input.expect_ident()?;
 
-        if strings::starts_with(ident, b"--") {
-            return Ok((MediaFeatureName::Custom(DashedIdent { v: ident }), None));
+        if let Some(custom) = DashedIdent::new(ident) {
+            return Ok((MediaFeatureName::Custom(custom), None));
         }
 
         let mut name: &[u8] = ident;

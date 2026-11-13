@@ -393,7 +393,7 @@ fn is_name_code_point(c: u8) -> bool {
 // `ParsedComponent` is the materialized form of a `SyntaxComponentKind` and
 // carries `Image` / `CssColor` / `Transform{,List}` / `TokenList` payloads.
 // No `#[derive]` — payload types lack a common Debug/Clone/PartialEq
-// surface (Image: none; TokenList: Default-only; Ident/CustomIdent: no Eq;
+// surface (Image: none; TokenList: Default-only;
 // Transform: no Debug). Only `deep_clone` + `to_css` are provided below.
 pub enum ParsedComponent<'bump> {
     /// A `<length>` value.

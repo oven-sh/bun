@@ -153,7 +153,7 @@ impl<'bump, T: DeepClone<'bump>> DeepClone<'bump> for Box<T> {
 /// `lhs.eql(&rhs)` for CSS types. This is the equivalent of doing
 /// `#[derive(PartialEq)]` in Rust — and most impls could be exactly that.
 /// Kept as a separate trait because some CSS types want structural
-/// equality that differs from `PartialEq` (e.g. `VendorPrefix`, idents).
+/// equality that differs from `PartialEq` (e.g. `VendorPrefix`).
 pub trait CssEql {
     fn eql(&self, other: &Self) -> bool;
 }
@@ -238,7 +238,7 @@ eql_simple!(f32, f64, i32, u32, i64, u64, usize, isize, u16, bool);
 /// require every field type to itself impl `CssEql`; it bridges
 /// `PartialEq` → `CssEql` wholesale. Prefer `#[derive(CssEql)]` only when a
 /// field's `CssEql` is intentionally *different* from its `PartialEq` (e.g.
-/// `Ident`, `Url`).
+/// `Url`).
 ///
 /// REJECTED alternative: `impl<T: PartialEq> CssEql for T {}` blanket — would
 /// overlap the existing `Option<T>`/`Vec<T>`/`[T]`/`Box<T>` blanket impls

@@ -492,8 +492,8 @@ impl<'bump> TokenList<'bump> {
                     continue;
                 }
                 Token::Ident(name) => {
-                    if name.starts_with(b"--") {
-                        tokens.push(TokenOrValue::DashedIdent(DashedIdent { v: *name }));
+                    if let Some(ident) = DashedIdent::new(name) {
+                        tokens.push(TokenOrValue::DashedIdent(ident));
                         continue;
                     }
                     if strings::eql_case_insensitive_ascii_check_length(name, b"revert-rule") {
@@ -1427,10 +1427,10 @@ impl<'bump> CustomPropertyName<'bump> {
     }
 
     pub(crate) fn from_str(name: &'bump [u8]) -> Self {
-        if name.starts_with(b"--") {
-            return CustomPropertyName::Custom(DashedIdent { v: name });
+        match DashedIdent::new(name) {
+            Some(custom) => CustomPropertyName::Custom(custom),
+            None => CustomPropertyName::Unknown(Ident { v: name }),
         }
-        CustomPropertyName::Unknown(Ident { v: name })
     }
 
     #[inline]

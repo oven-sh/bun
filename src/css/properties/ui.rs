@@ -4,8 +4,6 @@ use crate as css;
 use css::css_properties::Property;
 use css::{PrintErr, Printer, PropertyHandlerContext};
 
-use css::css_values::ident::DashedIdent;
-
 // bumpalo::Bump re-export (CSS is an arena crate)
 
 bitflags::bitflags! {
@@ -177,7 +175,7 @@ fn define_var<'bump>(name: &'bump [u8], value: css::Token<'bump>) -> Property<'b
     // `TokenList.v` is `Vec<TokenOrValue>` (std Vec — see custom.rs:320), so no arena
     // threading is needed here.
     Property::Custom(css::css_properties::custom::CustomProperty {
-        name: css::css_properties::custom::CustomPropertyName::Custom(DashedIdent { v: name }),
+        name: css::css_properties::custom::CustomPropertyName::from_str(name),
         value: css::TokenList {
             v: vec![css::css_properties::custom::TokenOrValue::Token(value)],
         },

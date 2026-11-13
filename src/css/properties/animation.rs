@@ -315,9 +315,9 @@ pub(crate) fn parse_unparsed<'bump>(
         for token in unparsed.value.v.iter_mut() {
             if let TokenOrValue::Token(Token::Ident(ident)) = *token
                 && !is_keyword(ident)
+                && let Some(ident) = CustomIdent::new(ident)
             {
-                let name = AnimationName::Ident(CustomIdent { v: ident });
-                *token = TokenOrValue::AnimationName(name);
+                *token = TokenOrValue::AnimationName(AnimationName::Ident(ident));
             }
         }
     }
@@ -331,7 +331,6 @@ fn is_keyword(ident: &[u8]) -> bool {
         || <AnimationFillMode as css::EnumProperty>::from_ascii_case_insensitive(ident).is_some()
         || <AnimationPlayState as css::EnumProperty>::from_ascii_case_insensitive(ident).is_some()
         || strings::eql_any_case_insensitive_ascii(ident, &[b"infinite", b"auto"])
-        || is_reserved_custom_ident(ident)
 }
 
 /// A value for the [animation-iteration-count](https://drafts.csswg.org/css-animations/#animation-iteration-count) property.

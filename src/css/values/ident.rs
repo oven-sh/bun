@@ -144,13 +144,14 @@ arena_slice_newtype! {
 }
 
 impl<'bump> DashedIdent<'bump> {
+    pub(crate) fn new(v: &'bump [u8]) -> Option<Self> {
+        v.starts_with(b"--").then_some(Self { v })
+    }
+
     pub fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, DashedIdent<'bump>> {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
-        if !strings::starts_with(ident, b"--") {
-            return Err(location.new_unexpected_token_error(Token::Ident(ident)));
-        }
-        Ok(DashedIdent { v: ident })
+        Self::new(ident).ok_or_else(|| location.new_unexpected_token_error(Token::Ident(ident)))
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
@@ -259,15 +260,14 @@ arena_slice_newtype! {
 }
 
 impl<'bump> CustomIdent<'bump> {
+    pub(crate) fn new(v: &'bump [u8]) -> Option<Self> {
+        (!is_reserved_custom_ident(v)).then_some(Self { v })
+    }
+
     pub fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, CustomIdent<'bump>> {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
-        let valid = !is_reserved_custom_ident(ident);
-
-        if !valid {
-            return Err(location.new_unexpected_token_error(Token::Ident(ident)));
-        }
-        Ok(CustomIdent { v: ident })
+        Self::new(ident).ok_or_else(|| location.new_unexpected_token_error(Token::Ident(ident)))
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {

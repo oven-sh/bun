@@ -64,12 +64,12 @@ impl<'bump> KeyframesName<'bump> {
         match tok {
             css::Token::Ident(s) => {
                 // CSS-wide keywords without quotes throws an error.
-                if strings::eql_case_insensitive_ascii_check_length(s, b"none")
-                    || is_reserved_custom_ident(s)
+                if !strings::eql_case_insensitive_ascii_check_length(s, b"none")
+                    && let Some(ident) = CustomIdent::new(s)
                 {
-                    Err(input.new_unexpected_token_error(css::Token::Ident(s)))
+                    Ok(KeyframesName::Ident(ident))
                 } else {
-                    Ok(KeyframesName::Ident(CustomIdent { v: s }))
+                    Err(input.new_unexpected_token_error(css::Token::Ident(s)))
                 }
             }
             css::Token::QuotedString(s) => Ok(KeyframesName::Custom(s)),

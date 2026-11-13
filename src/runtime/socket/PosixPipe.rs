@@ -16,7 +16,8 @@
 //!   a readable fd and a writer for a writable one, then fires `on_open`
 //!   (or the TLS handshake when `Bun.connect({ fd, tls })` asked for it).
 //! - Reader EOF is `on_end` followed by closing the writer (no half-open);
-//!   `close`/`shutdown` end the writer after its buffered bytes drain.
+//!   `shutdown` ends the writer after its buffered bytes drain, `close`
+//!   drops them and ends it at once.
 //! - `on_close` fires once, when every half that was started is done, and
 //!   releases the connection's ref on the owning context.
 //!
@@ -38,6 +39,7 @@ use core::ffi::{c_int, c_uint, c_void};
 use bun_boringssl_sys as boringssl;
 use bun_io::pipe_reader::BufferedReaderParent;
 use bun_io::pipe_reader::PosixFlags;
+use bun_io::pipe_writer::PosixPipeWriter;
 use bun_io::{BufferedReader, Chunk, ReadState, StreamingWriter, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -116,9 +118,13 @@ bitflags::bitflags! {
         const WRITER_DONE  = 1 << 9;
         /// Inside `open`, before the handlers may be dispatched to.
         const OPENING      = 1 << 10;
-        /// `shutdown`/`close` asked to end the writer while it still had
-        /// buffered bytes; the next full drain ends it.
+        /// `shutdown` asked to end the writer while it still had buffered
+        /// bytes; the next full drain ends it.
         const END_AFTER_DRAIN = 1 << 11;
+        /// The writer's fd is a blocking pipe (`FileType::Pipe`): its poll
+        /// drains at most the kernel's size hint per wakeup and reports
+        /// `Drained` with bytes left, without re-arming itself.
+        const WRITER_BLOCKING = 1 << 12;
     }
 }
 
@@ -350,25 +356,39 @@ impl PosixPipe {
                 // `Drained` is also reported for bytes parked below the
                 // writer's coalescing threshold; only an empty buffer is done.
                 if self.writer.get().has_pending_data() {
+                    if self.flags.get().contains(Flags::WRITER_BLOCKING) {
+                        // A size-hint-limited partial drain: the one-shot
+                        // poll fired and nothing else re-arms it.
+                        self.with_writer(|w| {
+                            <StreamingWriter<Self> as PosixPipeWriter>::register_poll(w);
+                        });
+                    }
                     return;
                 }
-                // The loop was held for the pending bytes; let it go.
-                self.writer.with_mut(|w| {
-                    w.disable_keeping_process_alive(self.event_loop_ctx());
-                });
-                if self.flags.get().contains(Flags::END_AFTER_DRAIN) {
-                    self.update_flags(|f| f.remove(Flags::END_AFTER_DRAIN));
-                    self.with_writer(|w| w.end());
-                    return;
-                }
-                if self.writer_backed_up.replace(false) {
-                    self.on_writable();
-                }
+                self.on_writer_drained();
             }
             WriteStatus::EndOfFile => {
                 // The writer already released its fd; report the close.
                 self.with_writer(|w| w.end());
             }
+        }
+    }
+
+    /// The writer's buffer just became empty, through `on_write(Drained)` or
+    /// a synchronous `flush()` (which reports no `on_write`): release the
+    /// loop hold `call_write_or_end` took, finish a pending `shutdown()`, and
+    /// deliver the `on_writable` a short write is waiting for.
+    fn on_writer_drained(&self) {
+        let ev = self.event_loop_ctx();
+        self.writer
+            .with_mut(|w| w.disable_keeping_process_alive(ev));
+        if self.flags.get().contains(Flags::END_AFTER_DRAIN) {
+            self.update_flags(|f| f.remove(Flags::END_AFTER_DRAIN));
+            self.with_writer(|w| w.end());
+            return;
+        }
+        if self.writer_backed_up.replace(false) {
+            self.on_writable();
         }
     }
 
@@ -671,21 +691,17 @@ impl PosixPipe {
             let _ = w.flush();
         });
         if !self.flags.get().disconnected() && self.flags.get().writer_active() {
-            let ev = self.event_loop_ctx();
-            let result = self.with_writer(|w| {
+            let (result, drained) = self.with_writer(|w| {
                 let result = w.flush();
-                // A synchronous drain reports no `on_write(Drained)`: release
-                // the hold `call_write_or_end` took once nothing is pending, or
-                // an unref()'d socket keeps the process alive after one small
-                // write (the coalescing threshold parks it for exactly this
-                // flush).
-                if !w.has_pending_data() {
-                    w.disable_keeping_process_alive(ev);
-                }
-                result
+                (result, !w.has_pending_data())
             });
             if let WriteResult::Err(err) = result {
                 self.on_error(err);
+                return;
+            }
+            // A synchronous drain reports no `on_write(Drained)`.
+            if drained && self.flags.get().writer_active() {
+                self.on_writer_drained();
             }
         }
     }
@@ -850,7 +866,10 @@ impl PosixPipe {
                 return Err(err);
             }
             self.write_fd.set(write_fd);
-            self.update_flags(|f| f.insert(Flags::HAS_WRITER));
+            self.update_flags(|f| {
+                f.insert(Flags::HAS_WRITER);
+                f.set(Flags::WRITER_BLOCKING, !info.nonblocking && !info.is_socket);
+            });
             self.writer.with_mut(|w| {
                 if let Some(poll) = w.get_poll() {
                     if info.nonblocking {
@@ -999,6 +1018,10 @@ impl PosixPipe {
         i32::try_from(encoded_data.len()).expect("int cast")
     }
 
+    /// `socket.destroy()`: bytes the kernel has not taken are dropped, the
+    /// writer ends now and its loop hold goes with it (`uv_close` cancels
+    /// queued writes; the Windows arm ends its writer the same way). Only
+    /// `shutdown` waits for the drain.
     #[bun_uws::uws_callback(export = "PosixPipe__close")]
     pub(crate) fn close(&self) {
         if self.flags.get().inert() {
@@ -1007,7 +1030,15 @@ impl PosixPipe {
         let _ = self.with_wrapper(|w| {
             let _ = w.shutdown(false);
         });
-        self.end_writer_or_finish();
+        self.update_flags(|f| f.remove(Flags::END_AFTER_DRAIN));
+        if self.flags.get().writer_active() {
+            self.with_writer(|w| {
+                w.outgoing.reset();
+                w.end();
+            });
+        } else {
+            self.finish_close();
+        }
     }
 
     #[bun_uws::uws_callback(export = "PosixPipe__shutdown")]

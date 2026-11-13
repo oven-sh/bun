@@ -2002,6 +2002,105 @@ describe("Socket fd adoption", () => {
     });
   });
 
+  // `destroy()` drops what the kernel has not taken (libuv cancels the queued
+  // writes on uv_close): an unref()'d socket whose peer never reads must not
+  // hold the loop for a drain that never comes. Only `end()` waits for it.
+  it.skipIf(isWindows)(
+    "an unref()'d adopted fd lets the process exit when destroy() drops a pending write",
+    async () => {
+      const dir = tmpdirSync();
+      execFileSync("mkfifo", [join(dir, "destroy-pending.fifo")]);
+      const script = /* js */ `
+      const fs = require("node:fs");
+      const net = require("node:net");
+      const path = ${JSON.stringify(join(dir, "destroy-pending.fifo"))};
+      // The read end stays open and is never read: the write below cannot drain.
+      const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      const wfd = fs.openSync(path, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+      const events = [];
+      const writer = new net.Socket({ fd: wfd, readable: true, writable: true });
+      writer.on("error", err => events.push("error:" + err.code));
+      writer.on("close", () => events.push("close"));
+      writer.write(Buffer.alloc(256 * 1024, "w"));
+      writer.unref();
+      writer.destroy();
+      process.on("exit", () => console.log(JSON.stringify(events)));
+    `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+        stdout: '["close"]',
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // `shutdown()` with bytes still queued ends the writer on the next full
+  // drain. When a `flush()` drains them synchronously instead (the peer read
+  // the pipe in between, and no loop turn ran the writable poll), that path
+  // has to end the writer too: the armed poll later finds an empty buffer and
+  // reports nothing, so nothing else would.
+  it.skipIf(isWindows)("Bun.connect({ fd }) ends a shut-down writer that flush() drains synchronously", async () => {
+    const { rfd, wfd } = openFifo("shutdown-flush.fifo");
+    const size = 96 * 1024;
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    let received = 0;
+    const chunk = Buffer.alloc(64 * 1024);
+    // Everything the pipe holds right now; stops at EAGAIN or EOF.
+    const readAll = () => {
+      for (;;) {
+        let n: number;
+        try {
+          n = fs.readSync(rfd, chunk);
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code === "EAGAIN") return;
+          throw e;
+        }
+        if (n === 0) return;
+        received += n;
+      }
+    };
+    const socket = await Bun.connect({
+      fd: wfd,
+      socket: {
+        open() {
+          events.push("open");
+        },
+        data() {},
+        error(_socket, err) {
+          events.push(`error:${(err as NodeJS.ErrnoException).code}`);
+        },
+        close() {
+          events.push("close");
+          closed.resolve();
+        },
+      },
+    });
+    // All synchronous from here: the writable poll armed by the short write
+    // never gets to run before the flush.
+    socket.write(Buffer.alloc(size, "w"));
+    socket.shutdown();
+    for (let i = 0; i < 16 && received < size; i++) {
+      readAll();
+      socket.flush();
+    }
+    readAll();
+    await closed.promise;
+    expect({ events, received, fd: fstatCode(wfd) }).toEqual({
+      events: ["open", "close"],
+      received: size,
+      fd: "EBADF",
+    });
+    fs.closeSync(rfd);
+  });
+
   // Runs in a child so the count starts from zero.
   it.skipIf(isWindows)("releases the native pipe context once the socket has closed", async () => {
     const dir = tmpdirSync();

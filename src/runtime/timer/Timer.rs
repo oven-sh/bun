@@ -189,7 +189,7 @@ impl All {
             Kind::SetTimeout,
             countdown_int,
             wrapped_promise,
-            JSValue::UNDEFINED,
+            JSValue::ZERO,
             all.fake_timers.set_timeout_clock(),
         ))
     }
@@ -201,7 +201,7 @@ impl All {
         clock: Clock,
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
-        debug_assert!(!callback.is_empty() && !arguments.is_empty());
+        debug_assert!(!callback.is_empty());
         let all = timer_all_mut();
         let id = all.next_id();
 
@@ -223,7 +223,7 @@ impl All {
         clock: Clock,
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
-        debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
+        debug_assert!(!callback.is_empty() && !countdown.is_empty());
         let all = timer_all_mut();
         let id = all.next_id();
 
@@ -266,7 +266,7 @@ impl All {
         clock: Clock,
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
-        debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
+        debug_assert!(!callback.is_empty() && !countdown.is_empty());
         let all = timer_all_mut();
         let id = all.next_id();
 

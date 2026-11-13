@@ -371,7 +371,8 @@ enum Restore {
 /// A pending faked `process.nextTick()` or `queueMicrotask()` call.
 struct Tick {
     callback: Strong,
-    arguments: Strong,
+    /// Holds nothing when the call had no arguments.
+    arguments: StrongOptional,
 }
 
 struct Firing;
@@ -1062,7 +1063,10 @@ impl FakeTimers {
                 return Err(Stop::Ticks(loop_limit_error(global, limit)?));
             }
             ran += 1;
-            let (callback, arguments) = (tick.callback.get(), tick.arguments.get());
+            let (callback, arguments) = (
+                tick.callback.get(),
+                tick.arguments.get().unwrap_or_default(),
+            );
             drop(tick);
             let thrown = TimerObjectInternals::call_catching(global, callback, arguments);
             if global.has_exception() {
@@ -1522,7 +1526,7 @@ impl FakeTimers {
         debug_assert!(self.active);
         self.ticks.push_back(Tick {
             callback: Strong::create(callback, global),
-            arguments: Strong::create(arguments, global),
+            arguments: StrongOptional::create(arguments, global),
         });
         self.post_auto_step();
     }

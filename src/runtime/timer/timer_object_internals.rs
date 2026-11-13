@@ -78,6 +78,7 @@ pub(crate) use bun_event_loop::EventLoopTimer::TimerFlags as Flags;
 // C++ symbol emitted from ImmediateList.cpp / setTimeout.cpp; already linked.
 unsafe extern "C" {
     /// A non-null `thrown` receives the callback's exception. Null reports it as uncaught.
+    /// `arguments` is the word `callbackArguments` (NodeTimers.cpp) packs: empty for no arguments.
     fn Bun__JSTimeout__call(
         global_object: &JSGlobalObject,
         timer: JSValue,
@@ -429,8 +430,7 @@ impl TimerObjectInternals {
         unsafe { (*(*vm).event_loop()).enter() };
         let callback =
             JSImmediate::callback_get_cached(timer).expect("ImmediateObject callback slot");
-        let arguments =
-            JSImmediate::arguments_get_cached(timer).expect("ImmediateObject arguments slot");
+        let arguments = JSImmediate::arguments_get_cached(timer).unwrap_or_default();
 
         let exception_thrown = {
             s.ref_();
@@ -549,14 +549,13 @@ impl TimerObjectInternals {
             KindBig::SetImmediate => (
                 JSImmediate::callback_get_cached(this_object)
                     .expect("ImmediateObject callback slot"),
-                JSImmediate::arguments_get_cached(this_object)
-                    .expect("ImmediateObject arguments slot"),
+                JSImmediate::arguments_get_cached(this_object).unwrap_or_default(),
                 JSValue::UNDEFINED,
                 JSValue::UNDEFINED,
             ),
             KindBig::SetTimeout | KindBig::SetInterval => (
                 JSTimeout::callback_get_cached(this_object).expect("TimeoutObject callback slot"),
-                JSTimeout::arguments_get_cached(this_object).expect("TimeoutObject arguments slot"),
+                JSTimeout::arguments_get_cached(this_object).unwrap_or_default(),
                 JSTimeout::idle_timeout_get_cached(this_object)
                     .expect("TimeoutObject idleTimeout slot"),
                 JSTimeout::repeat_get_cached(this_object).expect("TimeoutObject repeat slot"),

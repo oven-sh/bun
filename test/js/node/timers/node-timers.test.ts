@@ -446,6 +446,93 @@ it("a promise assigned to _onTimeout resolves to undefined, not the timer's argu
   });
 });
 
+describe("the callback's arguments", () => {
+  const shapes: unknown[][] = [[], [undefined], [null], [undefined, undefined]];
+
+  it("are the ones the timer was given, a lone undefined included", async () => {
+    const argumentsOf = (schedule: (callback: (...args: unknown[]) => void) => void) =>
+      new Promise<unknown[]>(resolve => schedule((...args) => resolve(args)));
+    for (const args of shapes) {
+      const received = await Promise.all([
+        argumentsOf(callback => void setTimeout(callback, 1, ...args)),
+        argumentsOf(callback => {
+          const interval = setInterval((...tick) => (clearInterval(interval), callback(...tick)), 1, ...args);
+        }),
+        argumentsOf(callback => void setImmediate(callback, ...args)),
+      ]);
+      expect(received).toStrictEqual([args, args, args]);
+    }
+  });
+
+  it("are the same on every tick of an interval", async () => {
+    const threeTicksOf = (args: unknown[]) => {
+      const { promise, resolve } = Promise.withResolvers<unknown[][]>();
+      const ticks: unknown[][] = [];
+      const interval = setInterval(
+        (...received: unknown[]) => {
+          if (ticks.push(received) < 3) return;
+          clearInterval(interval);
+          resolve(ticks);
+        },
+        1,
+        ...args,
+      );
+      return promise;
+    };
+    expect(await Promise.all(shapes.map(threeTicksOf))).toStrictEqual(shapes.map(args => [args, args, args]));
+  });
+
+  it("are the same when refresh() fires the timer again", async () => {
+    for (const args of shapes) {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      const fires: unknown[][] = [];
+      const timeout = setTimeout(
+        (...received: unknown[]) => {
+          fires.push(received);
+          if (fires.length === 1) timeout.refresh();
+          else if (fires.length === 2) setImmediate(() => timeout.refresh());
+          else resolve();
+        },
+        1,
+        ...args,
+      );
+      await promise;
+      expect(fires).toStrictEqual([args, args, args]);
+    }
+  });
+
+  it("are the same when _repeat turns the timeout into an interval", async () => {
+    for (const args of shapes) {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      const fires: unknown[][] = [];
+      const timeout = setTimeout(
+        (...received: unknown[]) => {
+          if (fires.push(received) === 1) return void ((timeout as any)._repeat = 1);
+          clearInterval(timeout);
+          resolve();
+        },
+        1,
+        ...args,
+      );
+      await promise;
+      expect(fires).toStrictEqual([args, args]);
+    }
+  });
+
+  it("go to a function assigned to _onTimeout", async () => {
+    for (const args of shapes) {
+      const { promise, resolve } = Promise.withResolvers<unknown[]>();
+      const timeout = setTimeout(() => {}, 1, ...args) as NodeJS.Timeout & { _onTimeout: (...args: unknown[]) => void };
+      timeout._onTimeout = (...received) => resolve(received);
+      expect(await promise).toStrictEqual(args);
+    }
+  });
+});
+
+it("Bun.sleep() resolves to undefined", async () => {
+  expect(await Promise.all([Bun.sleep(1), Bun.sleep(0)])).toStrictEqual([undefined, undefined]);
+});
+
 it("_onTimeout is the callback inside AsyncLocalStorage.run()", () => {
   const callback = () => {};
   const timer = new AsyncLocalStorage().run(1, () => setTimeout(callback, 100_000, 1, 2));

@@ -37,6 +37,30 @@ it("setTimeout", async () => {
   expect(result.length).toBe(10);
 });
 
+it("setTimeout passes every argument after the delay to the callback, a lone undefined included", async () => {
+  const argumentsOf = schedule => new Promise(resolve => schedule((...args) => resolve(args)));
+  const received = await Promise.all([
+    argumentsOf(callback => setTimeout(callback, 1)),
+    argumentsOf(callback => setTimeout(callback, 1, undefined)),
+    argumentsOf(callback => setTimeout(callback, 1, null)),
+    argumentsOf(callback => setTimeout(callback, 1, undefined, undefined)),
+    argumentsOf(callback => setTimeout(callback, undefined, undefined)),
+    argumentsOf(callback => setTimeout(callback, 1, ...[undefined])),
+    argumentsOf(callback => setTimeout.call(null, callback, 1, undefined)),
+    argumentsOf(callback => setTimeout.apply(null, [callback, 1, undefined])),
+  ]);
+  expect(received).toStrictEqual([
+    [],
+    [undefined],
+    [null],
+    [undefined, undefined],
+    [undefined],
+    [undefined],
+    [undefined],
+    [undefined],
+  ]);
+});
+
 it("clearTimeout", async () => {
   var called = false;
 

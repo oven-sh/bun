@@ -47,16 +47,17 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         }
 
         MarkedArgumentBuffer args;
-        if (auto* butterfly = dynamicDowncast<JSCellButterfly>(argumentsValue)) {
-            //  If it's a JSCellButterfly, there is more than 1 argument.
-            unsigned length = butterfly->length();
-            args.ensureCapacity(length);
-            for (unsigned i = 0; i < length; ++i) {
-                args.append(butterfly->get(i));
+        // Packed by `callbackArguments` in NodeTimers.cpp. An empty JSValue is no arguments, and it must not reach the downcast: it answers isCell().
+        if (argumentsValue) {
+            if (auto* butterfly = dynamicDowncast<JSCellButterfly>(argumentsValue)) {
+                unsigned length = butterfly->length();
+                args.ensureCapacity(length);
+                for (unsigned i = 0; i < length; ++i) {
+                    args.append(butterfly->get(i));
+                }
+            } else {
+                args.append(argumentsValue);
             }
-        } else if (!argumentsValue.isUndefined()) {
-            // Otherwise, it's a single argument.
-            args.append(argumentsValue);
         }
 
         JSC::profiledCall(globalObject, ProfilingReason::API, callbackValue, callData, timerObject, args);

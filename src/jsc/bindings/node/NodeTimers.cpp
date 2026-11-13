@@ -39,11 +39,12 @@ namespace Bun {
 
 using namespace JSC;
 
+// One JSValue that only `call()` in NodeTimerObject.cpp unpacks: empty is no arguments, a JSCellButterfly is two or more, any other value is the one argument (`undefined` too).
 static ALWAYS_INLINE JSValue callbackArguments(JSGlobalObject* globalObject, ThrowScope& scope, CallFrame* callFrame, unsigned first)
 {
     size_t argumentCount = callFrame->argumentCount();
     if (argumentCount <= first)
-        return jsUndefined();
+        return {};
     if (argumentCount == first + 1)
         return callFrame->uncheckedArgument(first);
 

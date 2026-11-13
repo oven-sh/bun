@@ -135,6 +135,14 @@ impl Flags {
     pub(crate) fn is_ssl(self) -> bool {
         self.contains(Self::IS_SSL)
     }
+    /// Nothing to tear down: `open` never started a half (or failed), or
+    /// `on_close` already ran. `close`/`shutdown` are no-ops then, like the
+    /// Windows arm without an adopted pipe; reaching `on_close` would deref
+    /// the context at zero.
+    #[inline]
+    fn inert(self) -> bool {
+        self.contains(Self::IS_CLOSED) || !self.intersects(Self::HAS_READER | Self::HAS_WRITER)
+    }
     #[inline]
     fn reader_active(self) -> bool {
         self.contains(Self::HAS_READER) && !self.contains(Self::READER_DONE)
@@ -775,7 +783,7 @@ impl PosixPipe {
         let mut info = Self::classify(fd)?;
         if !info.readable && !info.writable {
             return Err(
-                bun_sys::Error::from_code(bun_sys::E::EBADF, bun_sys::Tag::fcntl).with_fd(fd),
+                bun_sys::Error::from_code(bun_sys::E::EBADF, bun_sys::Tag::fstat).with_fd(fd),
             );
         }
         if !info.pollable {
@@ -993,6 +1001,9 @@ impl PosixPipe {
 
     #[bun_uws::uws_callback(export = "PosixPipe__close")]
     pub(crate) fn close(&self) {
+        if self.flags.get().inert() {
+            return;
+        }
         let _ = self.with_wrapper(|w| {
             let _ = w.shutdown(false);
         });
@@ -1001,6 +1012,9 @@ impl PosixPipe {
 
     #[bun_uws::uws_callback(export = "PosixPipe__shutdown")]
     pub(crate) fn shutdown(&self) {
+        if self.flags.get().inert() {
+            return;
+        }
         let handled = self.with_wrapper(|w| {
             let _ = w.shutdown(false);
         });

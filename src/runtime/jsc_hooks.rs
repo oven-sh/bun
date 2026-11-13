@@ -764,12 +764,25 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
     ServerEntryPoint::generate(unsafe { &mut (*state).entry_point }, watch, entry_path).is_ok()
 }
 
+/// The promise `load_preloads` returns for a step that threw, rejected with the exception `err` proves is pending.
+#[cold]
+#[inline(never)]
+fn rejected_load(
+    global: &JSGlobalObject,
+    err: bun_jsc::JsError,
+) -> bun_jsc::CrateResult<*mut JSInternalPromise> {
+    let rejected = JSInternalPromise::rejected_promise_with_caught_exception(global, err)?;
+    // The caller reports the error, so don't also report it as an unhandled rejection.
+    rejected.set_handled();
+    Ok(ptr::from_mut(rejected))
+}
+
 /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
 /// preload promise if any, else null.
 ///
 /// Error mapping: resolver `Failure` returns the resolver error,
 /// `Pending`/`NotFound` returns `error.ModuleNotFound`,
-/// `JSModuleLoader.import` throwing returns a rejected promise.
+/// a step that throws (defining the Vitest globals, `JSModuleLoader.import`) returns a rejected promise.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
@@ -804,14 +817,14 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     unsafe {
         if (*vm).transpiler.options.rewrite_jest_for_tests
             && (*vm).transpiler.options.vitest_globals
-        {
-            bun_removable_features::call_removable!(
+            && let Err(err) = bun_removable_features::call_removable!(
                 Test,
                 Abort,
                 crate::test_runner::jest::Jest::define_vitest_globals,
                 &*global
             )
-            .map_err(|_| bun_jsc::CrateError::JSError)?;
+        {
+            return rejected_load(&*global, err);
         }
     }
     // `vm.transpiler` (hence the `FileSystem` singleton) is always initialized here:
@@ -910,15 +923,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         {
             Ok(p) => p.as_ptr(),
             // Report a preload that fails to resolve the same way as one that fails to load.
-            Err(err) => {
-                let rejected = JSInternalPromise::rejected_promise_with_caught_exception(
-                    JSGlobalObject::opaque_ref(global),
-                    err,
-                )?;
-                // The caller reports the error, so don't also report it as an unhandled rejection.
-                rejected.set_handled();
-                return Ok(ptr::from_mut(rejected));
-            }
+            Err(err) => return rejected_load(JSGlobalObject::opaque_ref(global), err),
         };
 
         // SAFETY: per fn contract.

@@ -286,13 +286,8 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
 // fast path moves up-tier anyway and there's no win keeping `BunString` keys
 // here. Use `StringArrayHashMap<()>` (boxed `[u8]` keys); the JSC consumer
 // rebuilds `BunString`s from `.keys()`. Default hashing includes the trailing
-// NUL when `SENTINEL == true`. For keys produced by `join` (the
-// `prepare_matched_path` path) probe and stored key both carry the NUL, so
-// dedupe is exact there. The symlink path is the exception:
-// `prepare_matched_path_symlink` probes with `ZStr::as_bytes()` (NUL-less)
-// while its stored keys come from `dupe_z` (NUL included), so in SENTINEL
-// mode symlink-match probes never hit and symlink dedupe silently misses —
-// a known quirk deliberately left as-is.
+// NUL when `SENTINEL == true`, so both lookup and insertion must use the
+// matched-path representation produced by `join` or `dupe_matched`.
 type MatchedMap = bun_collections::StringArrayHashMap<()>;
 
 /// The glob walker references the .directory.path so its not safe to
@@ -1946,22 +1941,17 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         &mut self,
         symlink_full_path: &[u8],
     ) -> Result<Option<MatchedPath>, AllocError> {
+        let path = dupe_matched::<SENTINEL>(symlink_full_path);
         // PERF: two lookups here (contains_key + insert); profile if hot.
-        if self.matched_paths.contains_key(symlink_full_path) {
+        if self.matched_paths.contains_key(&path) {
             log!(
                 "(dupe) prepared match: {}",
                 bstr::BStr::new(symlink_full_path)
             );
             return Ok(None);
         }
-        if !SENTINEL {
-            let slice: Box<[u8]> = Box::from(symlink_full_path);
-            self.matched_paths.insert(&slice, ());
-            return Ok(Some(slice));
-        }
-        let slicez = dupe_z(symlink_full_path);
-        self.matched_paths.insert(&slicez, ());
-        Ok(Some(slicez))
+        self.matched_paths.insert(&path, ());
+        Ok(Some(path))
     }
 
     fn prepare_matched_path(
@@ -2359,5 +2349,124 @@ impl AccessorDirEntry for DirIterator::IteratorResult {
     }
     fn kind(&self) -> bun_sys::FileKind {
         self.kind
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Pattern parsing and path joining use these Highway kernels. As in
+    // bun_paths' tests, use scalar implementations to link without Bun's C++.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_index_of_char(
+        haystack: *const u8,
+        haystack_len: usize,
+        needle: u8,
+    ) -> usize {
+        // SAFETY: callers pass a valid (ptr, len) pair.
+        let haystack = unsafe { core::slice::from_raw_parts(haystack, haystack_len) };
+        haystack
+            .iter()
+            .position(|&b| b == needle)
+            .unwrap_or(haystack_len)
+    }
+
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_index_of_any_char(
+        text: *const u8,
+        text_len: usize,
+        chars: *const u8,
+        chars_len: usize,
+    ) -> usize {
+        // SAFETY: callers pass valid (ptr, len) pairs.
+        let (text, chars) = unsafe {
+            (
+                core::slice::from_raw_parts(text, text_len),
+                core::slice::from_raw_parts(chars, chars_len),
+            )
+        };
+        text.iter()
+            .position(|b| chars.contains(b))
+            .unwrap_or(text_len)
+    }
+
+    fn walker<const SENTINEL: bool>() -> GlobWalker<SyscallAccessor, SENTINEL> {
+        GlobWalker::init_with_cwd(b"*", b".", false, false, false, false, false, None)
+            .unwrap()
+            .unwrap()
+    }
+
+    fn symlink_matches_are_deduplicated<const SENTINEL: bool>() {
+        let mut walker = walker::<SENTINEL>();
+        // Exercise both the small-map scan and the hash index (built above eight entries).
+        for i in 0..16 {
+            let path = format!("link-{i}");
+            let matched = walker
+                .prepare_matched_path_symlink(path.as_bytes())
+                .unwrap()
+                .unwrap();
+            let expected = if SENTINEL { format!("{path}\0") } else { path };
+            assert_eq!(matched.as_ref(), expected.as_bytes());
+        }
+        for i in 0..16 {
+            let path = format!("link-{i}");
+            assert!(
+                walker
+                    .prepare_matched_path_symlink(path.as_bytes())
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        assert_eq!(walker.matched_paths.len(), 16);
+    }
+
+    fn symlink_matches_share_keys_with_regular_matches<const SENTINEL: bool>() {
+        let mut walker = walker::<SENTINEL>();
+        assert!(
+            walker
+                .prepare_matched_path(b"link-a", b"")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            walker
+                .prepare_matched_path_symlink(b"link-a")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            walker
+                .prepare_matched_path_symlink(b"link-b")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            walker
+                .prepare_matched_path(b"link-b", b"")
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(walker.matched_paths.len(), 2);
+    }
+
+    #[test]
+    fn sentinel_symlink_matches_are_deduplicated() {
+        symlink_matches_are_deduplicated::<true>();
+    }
+
+    #[test]
+    fn non_sentinel_symlink_matches_are_deduplicated() {
+        symlink_matches_are_deduplicated::<false>();
+    }
+
+    #[test]
+    fn sentinel_symlink_matches_share_keys_with_regular_matches() {
+        symlink_matches_share_keys_with_regular_matches::<true>();
+    }
+
+    #[test]
+    fn non_sentinel_symlink_matches_share_keys_with_regular_matches() {
+        symlink_matches_share_keys_with_regular_matches::<false>();
     }
 }

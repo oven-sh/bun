@@ -17,8 +17,8 @@
     }
   },
   "aot/engine/a-command-that-a-signal-ends-makes-no-test.test.ts": {
-    "default": 1200,
-    "asan": 4800
+    "default": 2500,
+    "asan": 10000
   },
   "aot/memory-of-builds-that-follow-a-path.test.ts": {
     "default": 60000,

@@ -8,12 +8,15 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { chmodSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "../supported";
-import { skipOrFail, testaot, whyNoTestaot } from "./testaot";
+import { skipOrFail, testaot, whyNoShell } from "./testaot";
 
 const otherwiseTestaot = `exec "$REAL_TESTAOT" "$@"\n`;
+// A built-in that is written in JavaScript: a link that runs to its end keeps modules of the library in the test.
+const answer = "[1, 2].map(value => value + 1).length";
 const files = {
-  "stored.js": `// answers: with-library\n// # One answer.\n// # RUN: run-in-shell $SHELL\nreport(1);\nreport("end");\n`,
-  "held.ir": "# -- source: main.ts\n# console.log(1);\n# -- end of source\n# RUN: walk\n",
+  "stored.js": `// answers: with-library\n// # One answer.\n// # RUN: run-in-shell $SHELL\nreport(${answer});\nreport("end");\n`,
+  "held.ir": `# -- source: main.ts\n# console.log(${answer});\n# -- end of source\n# RUN: walk\n`,
+  "links": `#!/bin/sh\n${otherwiseTestaot}`,
   // SIGKILL leaves no core behind.
   "dies-at-link": `#!/bin/sh\nif [ "$1" = link ]; then kill -KILL $$; fi\n${otherwiseTestaot}`,
   "stops-at-link": `#!/bin/sh\nif [ "$1" = link ]; then echo it stops >&2; exit 1; fi\n${otherwiseTestaot}`,
@@ -24,8 +27,16 @@ const ways = [
   ["update-ir-tests.ts", "--print-anew", "held.ir"],
 ] as const;
 
+/** The modules in the test that a tool printed: those of the program, and those of the library. */
+function modulesOf(text: string) {
+  const modules = text.split("\n").filter(line => line.startsWith("module "));
+  const ofTheLibrary = modules.filter(line => / kind=Runtime| flags=\[[^\]]*\bIsLibrary\b/.test(line)).length;
+  return { ofTheProgram: modules.length - ofTheLibrary, ofTheLibrary };
+}
+const noTest = { ofTheProgram: 0, ofTheLibrary: 0 };
+
 async function made(
-  standIn: "dies-at-link" | "stops-at-link" | "refuses-to-print",
+  standIn: "links" | "dies-at-link" | "stops-at-link" | "refuses-to-print",
   tool: string,
   flag: string,
   file: string,
@@ -41,15 +52,33 @@ async function made(
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  return { isMade: stdout.includes("\nmodule "), stderr, exitCode };
+  return { modules: modulesOf(stdout), stderr, exitCode };
 }
 
-if (whyNoTestaot) skipOrFail(whyNoTestaot);
+// As ./answers.ts: ../shell/tools, which the tools load, refuses to go on where there is a testaot and no jsc.
+if (whyNoShell) skipOrFail(whyNoShell);
 else {
   test.concurrent.skipIf(isWindows).each(ways)(
-    "%s %s: a link that stops behind the written program makes the test",
+    "%s %s: a link that runs to its end keeps what the program reaches in the library",
     async (tool, flag, file) => {
-      expect(await made("stops-at-link", tool, flag, file)).toEqual({ isMade: true, stderr: "", exitCode: 0 });
+      const { modules, stderr, exitCode } = await made("links", tool, flag, file);
+      expect({ ofTheProgram: modules.ofTheProgram, stderr, exitCode }).toEqual({
+        ofTheProgram: 1,
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(modules.ofTheLibrary).toBeGreaterThan(0);
+    },
+  );
+
+  test.concurrent.skipIf(isWindows).each(ways)(
+    "%s %s: a link that stops behind the written program makes the test, without the library",
+    async (tool, flag, file) => {
+      expect(await made("stops-at-link", tool, flag, file)).toEqual({
+        modules: { ofTheProgram: 1, ofTheLibrary: 0 },
+        stderr: "",
+        exitCode: 0,
+      });
     },
   );
 
@@ -57,8 +86,8 @@ else {
     "%s %s: a link that a signal ends makes none",
     async (tool, flag, file) => {
       expect(await made("dies-at-link", tool, flag, file)).toEqual({
-        isMade: false,
-        stderr: expect.stringMatching(/[\\/]dies-at-link link \S+program\.aot functions ended with SIGKILL:/),
+        modules: noTest,
+        stderr: expect.stringMatching(/[\\/]dies-at-link link .+program\.aot functions ended with SIGKILL:/),
         exitCode: 1,
       });
     },
@@ -68,15 +97,16 @@ else {
     "%s %s: a command that fails where nothing is written makes none",
     async (tool, flag, file) => {
       expect(await made("refuses-to-print", tool, flag, file)).toEqual({
-        isMade: false,
-        stderr: expect.stringMatching(/[\\/]refuses-to-print print \S+program\.aot ended with 3:/),
+        modules: noTest,
+        stderr: expect.stringMatching(/[\\/]refuses-to-print print .+program\.aot ended with 3:/),
         exitCode: 1,
       });
     },
   );
 
+  // `--print-anew` prints the first line of the message alone: the command and how it ended, which the cases above hold.
   test.concurrent.skipIf(isWindows)(
-    "the command that failed says what it wrote where ./answers.ts reads it",
+    `${ways[0][0]} ${ways[0][1]}: what the failed command wrote comes behind its name, where ./answers.ts reads it`,
     async () => {
       expect((await made("refuses-to-print", ...ways[0])).stderr).toMatch(/ ended with 3:\nit refuses\n/);
     },

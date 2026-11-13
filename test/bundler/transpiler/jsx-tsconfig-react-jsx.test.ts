@@ -310,4 +310,19 @@ describe("tsconfig jsxImportSource selects the createElement fallback import too
       expect.stringMatching(/^react\/jsx(-dev)?-runtime$/),
     ]);
   });
+
+  // An empty jsxImportSource still overrides the one an extended config sets.
+  for (const [mode, modeArgs] of buildModes) {
+    test.concurrent(`${mode}, jsxImportSource "" overrides the extended config's`, async () => {
+      using dir = tempDir("jsx-import-source-empty", {
+        "k.jsx": keyAfterSpread,
+        "base.json": JSON.stringify({ compilerOptions: { jsxImportSource: "shim" } }),
+        "tsconfig.json": JSON.stringify({ extends: "./base.json", compilerOptions: { jsxImportSource: "" } }),
+      });
+      expect(await buildImports(String(dir), [...modeArgs, "k.jsx"])).toEqual({
+        imports: ["react", "react/jsx-dev-runtime"],
+        exitCode: 0,
+      });
+    });
+  }
 });

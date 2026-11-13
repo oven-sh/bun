@@ -550,12 +550,15 @@ impl TSConfigJSON {
                 }
             }
 
-            // Parse "jsxImportSource". An empty string is unset, as in TypeScript and `Pragma::from_api`.
+            // Parse "jsxImportSource". An empty string means the default package, as in TypeScript
+            // (`jsxImportSource || "react"`), and still overrides a value from an extended config.
             if let Some(jsx_prop) = jsx_import_source_v {
-                if let Some(str) = jsx_prop.as_str().filter(|s| !s.is_empty()) {
-                    result.jsx.package_name = str.to_vec().into();
-                    result.jsx.set_import_source();
-                    result.jsx.classic_import_source = result.jsx.package_name.clone();
+                if let Some(str) = jsx_prop.as_str() {
+                    if !str.is_empty() {
+                        result.jsx.package_name = str.to_vec().into();
+                        result.jsx.set_import_source();
+                        result.jsx.classic_import_source = result.jsx.package_name.clone();
+                    }
                     result.jsx_flags.insert(JsxField::ImportSource);
                 }
             }

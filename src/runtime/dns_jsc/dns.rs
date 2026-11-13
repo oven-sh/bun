@@ -2547,10 +2547,10 @@ impl Resolver {
         scopeguard::defer! {
             crate::jsc_hooks::timer_all().increment_timer_ref(-1, self.vm().uws_loop_ref());
             // SAFETY: `this` is the heap allocation from `init`. This releases
-            // the ref taken by `set_timer`. Every caller holds at least one
-            // other ref for the duration of this call (a `RefPtr` or the
-            // global-resolver permanent pin), so this
-            // `deref` cannot reach 0 while `&self` is live.
+            // the ref taken by `set_timer`. Both callers hold another ref for
+            // the duration of this call (the guards of `with_channel` and
+            // `close_channel_for_terminate`), so this `deref` cannot reach 0
+            // while `&self` is live.
             unsafe { Self::deref(this) };
         }
 

@@ -1588,10 +1588,6 @@ pub(crate) mod environment_variables {
         let vm = global_object.bun_vm().as_mut();
         let name_slice = name.to_utf8();
 
-        // Synchronize the slot swap + env.map.put against a concurrently
-        // spawning worker's cloneFrom + env.map.cloneWithAllocator. Without
-        // this, the worker could clone the slot `Arc` between our drop
-        // (refcount → 0 → free) and the `None` write below.
         let mut slots = vm.proxy_env_storage.lock();
 
         let Some(slot) = slots.slot(name_slice.slice()) else {
@@ -1602,11 +1598,12 @@ pub(crate) mod environment_variables {
         // bytes stay alive; if not, they're freed now.
         *slot.ptr = None;
 
-        let env_map = &mut vm.transpiler.env_mut().map;
+        let env = vm.transpiler.env;
 
         // `delete process.env.X`
         if value.tag() == bun_core::Tag::Dead {
-            env_map.remove(slot.key);
+            // SAFETY: the VM's loader is live, and only this thread writes its map.
+            unsafe { bun_dotenv::Loader::update_map(env, |map| map.remove(slot.key)) };
             return;
         }
 
@@ -1615,7 +1612,10 @@ pub(crate) mod environment_variables {
             // process.env.X reads back as "" (Node.js semantics) instead
             // of undefined. isNoProxy treats empty strings the same as
             // absent — no bypass.
-            bun_core::handle_oom(env_map.put(slot.key, b""));
+            // SAFETY: as above.
+            bun_core::handle_oom(unsafe {
+                bun_dotenv::Loader::update_map(env, |map| map.put(slot.key, b""))
+            });
             return;
         }
 
@@ -1626,7 +1626,10 @@ pub(crate) mod environment_variables {
         // NOTE: `Map::put` boxes its own copy — the Arc wrapper now
         // only backs `proxy_env_storage` for worker `cloneFrom`; ordering is
         // kept for spec parity.
-        bun_core::handle_oom(env_map.put(slot.key, &stored.bytes));
+        // SAFETY: as above.
+        bun_core::handle_oom(unsafe {
+            bun_dotenv::Loader::update_map(env, |map| map.put(slot.key, &stored.bytes))
+        });
     }
 
     fn get_env_value<'a>(

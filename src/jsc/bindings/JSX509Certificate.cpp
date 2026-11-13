@@ -215,7 +215,7 @@ JSX509Certificate* JSX509Certificate::create(JSC::VM& vm, JSC::Structure* struct
 {
     auto* certificate = create(vm, structure);
     certificate->m_x509 = WTF::move(cert);
-    size_t size = i2d_X509(certificate->m_x509.get(), nullptr);
+    size_t size = std::max(i2d_X509(certificate->m_x509.get(), nullptr), 0);
     certificate->m_extraMemorySizeForGC = size;
     vm.heap.reportExtraMemoryAllocated(certificate, size);
     return certificate;
@@ -266,8 +266,7 @@ DEFINE_VISIT_CHILDREN(JSX509Certificate);
 size_t JSX509Certificate::estimatedSize(JSCell* cell, VM& vm)
 {
     JSX509Certificate* thisObject = uncheckedDowncast<JSX509Certificate>(cell);
-    size_t size = i2d_X509(thisObject->m_x509.get(), nullptr);
-    return Base::estimatedSize(cell, vm) + size;
+    return Base::estimatedSize(cell, vm) + thisObject->m_extraMemorySizeForGC;
 }
 
 void JSX509Certificate::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

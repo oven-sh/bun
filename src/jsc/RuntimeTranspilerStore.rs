@@ -321,7 +321,9 @@ impl RuntimeTranspilerStore {
         }
     }
 
-    pub fn transpile(
+    /// # Safety
+    /// `vm` is this thread's live VM, whose `transpiler_store` is `self`.
+    pub unsafe fn transpile(
         &mut self,
         vm: *mut VirtualMachine,
         global_object: &JSGlobalObject,
@@ -351,6 +353,16 @@ impl RuntimeTranspilerStore {
             }
         }
 
+        // SAFETY: fn contract; leaf-field reads, which do not overlap `self`.
+        let (is_main, extra_cjs_extensions) = unsafe {
+            (
+                (*ptr::addr_of!((*vm).main))
+                    .as_ref()
+                    .is_some_and(|main| main.slice() == path.text),
+                (*ptr::addr_of!((*vm).transpiler.resolver.opts.extra_cjs_extensions)).clone(),
+            )
+        };
+
         // Build the job by value and `get_init` it into the hive — the `Box`
         // alloc, `JSInternalPromise::create`, and `StrongOptional::create`
         // above all happen *before* the slot is claimed, so an OOM/throw on
@@ -378,6 +390,8 @@ impl RuntimeTranspilerStore {
                 poll_ref: KeepAlive::default(),
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
+                is_main,
+                extra_cjs_extensions,
                 has_plugins: global_object.has_plugins(),
                 parse_error: None,
                 work_task: WorkPoolTask {
@@ -439,6 +453,10 @@ pub struct TranspilerJob {
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) poll_ref: KeepAlive,
     pub(crate) generation_number: u32,
+    /// The path is the VM's main module. Decided on the JS thread, which writes `vm.main`.
+    is_main: bool,
+    /// The JS thread's list when the job was made: assigning to `require.extensions` drops the VM's.
+    extra_cjs_extensions: Option<std::sync::Arc<[Box<[u8]>]>>,
     /// Macros load through `Bun.plugin()` callbacks, which the pool thread's VM lacks, so the JS thread must run them.
     has_plugins: bool,
     pub(crate) log: bun_ast::Log,
@@ -712,12 +730,24 @@ impl TranspilerJob {
         // a bytewise copy. SAFETY: `vm.transpiler` is read via
         // `addr_of!` (no `&VirtualMachine` formed); every internal raw pointer in the copy
         // still targets memory owned by `vm.transpiler` (resolver caches, define, env) which
-        // outlives this stack frame; `vm.transpiler` is not concurrently mutated.
+        // outlives this stack frame, except in the fields that the JS thread writes while jobs
+        // run. Those are replaced below, before anything uses the copy.
         // The by-value copy must not be deinitialized; `ManuallyDrop` suppresses Drop so owned
         // fields aren't double-freed against `vm.transpiler`.
         let mut transpiler_storage =
             core::mem::ManuallyDrop::new(unsafe { ptr::read(ptr::addr_of!((*vm).transpiler)) });
         let transpiler: &mut Transpiler<'_> = &mut transpiler_storage;
+        // SAFETY: the bytes that this overwrites belong to the VM, so they are not dropped here.
+        unsafe {
+            ptr::write(
+                &raw mut transpiler.resolver.opts.extra_cjs_extensions,
+                this.extra_cjs_extensions.take(),
+            );
+        }
+        // Borrows the `paths` of a `require.resolve()` that runs on the JS thread.
+        transpiler.resolver.custom_dir_paths = None;
+        // Set during a resolve on the JS thread. Such a resolve writes a list that the copy shares.
+        transpiler.resolver.resolves_for_code_from_disk = false;
         transpiler.set_arena(&arena);
         transpiler.set_log(&raw mut *log_clone_guard.1);
         // Note: the resolver already shares opts with the parent
@@ -744,6 +774,7 @@ impl TranspilerJob {
             if let Some(ctx) = transpiler.macro_context.take() {
                 ctx.deinit();
             }
+            transpiler.resolver.opts.extra_cjs_extensions = None;
         });
         let transpiler: &mut Transpiler<'_> = &mut macro_ctx_guard;
 
@@ -798,14 +829,6 @@ impl TranspilerJob {
             }
         });
 
-        // SAFETY: leaf scalar field reads on `*vm`; see `vm` note above.
-        let (vm_main, vm_main_hash) = unsafe { ((*vm).main(), (*vm).main_hash) };
-        let is_main = vm_main.is_some_and(|vm_main| {
-            vm_main.len() == path.text.len()
-                && vm_main_hash == hash
-                && strings::eql_long(vm_main, path.text, false)
-        });
-
         let module_type: ModuleType = match this_tag {
             ResolvedSourceTag::PackageJsonTypeCommonjs => ModuleType::Cjs,
             ResolvedSourceTag::PackageJsonTypeModule => ModuleType::Esm,
@@ -836,7 +859,7 @@ impl TranspilerJob {
                 .as_ref()
                 .map(|d| d.set_breakpoint_on_first_line)
                 .unwrap_or(false)
-                && is_main
+                && this.is_main
                 && set_break_point_on_first_line(),
             runtime_transpiler_cache: if !JscRuntimeTranspilerCache::is_disabled() {
                 Some(&mut cache)
@@ -844,7 +867,7 @@ impl TranspilerJob {
                 None
             },
             // SAFETY: leaf-field read on `*vm.module_loader`; see `vm` note above.
-            remove_cjs_module_wrapper: is_main
+            remove_cjs_module_wrapper: this.is_main
                 && unsafe { (*vm).module_loader.eval_source.is_some() },
             module_type,
             keep_json_and_toml_as_one_statement: false,

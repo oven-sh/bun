@@ -1063,7 +1063,7 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
                 return throwDOMException(WebCore::DataError, "Invalid key type"_s);
             EVP_PKEY_up_ref(asymmetricKey().get());
             WebCore::EvpPKeyPtr platformKey(asymmetricKey().get());
-            result = WebCore::CryptoKeyAKP::create(identifier, type(), WTF::move(platformKey), extractable, usagesBitmap);
+            result = WebCore::CryptoKeyAKP::create(identifier, type(), WTF::move(platformKey), extractable, usagesBitmap, WebCore::CryptoKeyAKP::KeyOwner::KeyObject);
             if (!result)
                 return throwDOMException(WebCore::OperationError, ""_s);
             break;
@@ -1845,14 +1845,14 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
     }
 
     if (JSCryptoKey* cryptoKey = dynamicDowncast<JSCryptoKey>(keyValue)) {
-        auto& key = cryptoKey->wrapped();
-        checkCryptoKey(key, keyValue);
+        Ref key = cryptoKey->wrapped();
+        checkCryptoKey(key.get(), keyValue);
         RETURN_IF_EXCEPTION(scope, {});
 
         emitCryptoKeyDeprecationWarning(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto keyObject = create(key);
+        auto keyObject = create(key.get());
         if (keyObject.hasException()) [[unlikely]] {
             WebCore::propagateException(*globalObject, scope, keyObject.releaseException());
             RELEASE_AND_RETURN(scope, {});
@@ -1916,14 +1916,14 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
         }
 
         if (JSCryptoKey* cryptoKey = dynamicDowncast<JSCryptoKey>(dataValue)) {
-            auto& key = cryptoKey->wrapped();
-            checkCryptoKey(key, dataValue);
+            Ref key = cryptoKey->wrapped();
+            checkCryptoKey(key.get(), dataValue);
             RETURN_IF_EXCEPTION(scope, {});
 
             emitCryptoKeyDeprecationWarning(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
-            auto keyObject = create(key);
+            auto keyObject = create(key.get());
             if (keyObject.hasException()) [[unlikely]] {
                 WebCore::propagateException(*globalObject, scope, keyObject.releaseException());
                 RELEASE_AND_RETURN(scope, {});
@@ -2098,14 +2098,14 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
             }
             return handle;
         } else if (JSCryptoKey* cryptoKey = dynamicDowncast<JSCryptoKey>(keyValue)) {
-            auto& key = cryptoKey->wrapped();
-            if (key.type() != CryptoKeyType::Secret) {
-                ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, key.type(), "secret"_s);
+            Ref key = cryptoKey->wrapped();
+            if (key->type() != CryptoKeyType::Secret) {
+                ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, key->type(), "secret"_s);
                 return {};
             }
             emitCryptoKeyDeprecationWarning(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            auto keyObject = create(key);
+            auto keyObject = create(key.get());
             if (keyObject.hasException()) [[unlikely]] {
                 WebCore::propagateException(globalObject, scope, keyObject.releaseException());
                 return {};

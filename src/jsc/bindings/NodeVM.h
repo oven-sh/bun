@@ -126,6 +126,8 @@ public:
     // Performs a microtask checkpoint on this context's own queue
     // (microtaskMode: "afterEvaluate" contexts only; no-op otherwise).
     void drainOwnMicrotasks();
+    // Drops the own microtask queue with its jobs. The context then uses the VM's default queue.
+    void dropOwnMicrotaskQueue();
     JSValue dynamicImportCallback() const { return m_dynamicImportCallback.get(); }
 
     // Override property access to delegate to contextified object

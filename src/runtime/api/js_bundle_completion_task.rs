@@ -192,9 +192,10 @@ impl JSBundleCompletionTask {
             promise: jsc::JSPromiseStrong::default(),
             poll_ref: KeepAlive::init(),
             // Copy on the JS thread because only the JS thread writes to the VM's loader.
-            env: Box::new(bun_core::handle_oom(
-                global_this.bun_vm().env_loader().clone_loaded(),
-            )),
+            // SAFETY: the VM's loader is live, and only this thread writes its map.
+            env: Box::new(bun_core::handle_oom(unsafe {
+                bun_dotenv::Loader::clone_loaded(global_this.bun_vm().env_loader())
+            })),
             log: bun_ast::Log::init(),
             cancelled: core::sync::atomic::AtomicBool::new(false),
             bundle_loop: core::sync::atomic::AtomicPtr::new(ptr::null_mut()),

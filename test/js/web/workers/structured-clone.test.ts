@@ -951,6 +951,31 @@ describe("X25519 CryptoKey records", () => {
   });
 });
 
+describe("a view record out of the range of its resizable buffer is rejected", () => {
+  const record = (View: any, byteOffset: bigint, byteLength?: bigint) => {
+    const buffer = new ArrayBuffer(16, { maxByteLength: 32 });
+    const view =
+      byteLength === undefined ? new View(buffer, 8) : new View(buffer, 8, 8 / (View.BYTES_PER_ELEMENT ?? 1));
+    const bytes = new Uint8Array(serialize(view)).slice();
+    const fields = new DataView(bytes.buffer);
+    expect(fields.getBigUint64(6, true)).toBe(8n);
+    fields.setBigUint64(6, byteOffset, true);
+    if (byteLength !== undefined) fields.setBigUint64(14, byteLength, true);
+    return bytes;
+  };
+  test.each([Uint8Array, Uint16Array, Float64Array, DataView])("%p", View => {
+    for (const [byteOffset, byteLength] of [[32n, 8n], [40n, 0n], [8n, 32n], [2n ** 40n, 8n], [40n], [2n ** 40n]] as [
+      bigint,
+      bigint?,
+    ][]) {
+      const bytes = record(View, byteOffset, byteLength);
+      expect(() => deserialize(bytes)).toThrow(new TypeError("Unable to deserialize data."));
+    }
+    expect((deserialize(record(View, 8n, 8n)) as DataView).byteOffset).toBe(8);
+    expect((deserialize(record(View, 8n)) as DataView).byteOffset).toBe(8);
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/32981
 // %Object.prototype% is an immutable prototype exotic object that the structured
 // serialization spec carves out of the exotic-object rejection, so it clones to

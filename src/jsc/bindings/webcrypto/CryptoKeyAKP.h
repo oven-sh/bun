@@ -47,7 +47,9 @@ public:
     static const EVP_PKEY_ALG* algForIdentifier(CryptoAlgorithmIdentifier);
     static int nidForIdentifier(CryptoAlgorithmIdentifier);
 
-    static RefPtr<CryptoKeyAKP> create(CryptoAlgorithmIdentifier, CryptoKeyType, EvpPKeyPtr&&, bool extractable, CryptoKeyUsageBitmap);
+    enum class KeyOwner : bool { This,
+        KeyObject };
+    static RefPtr<CryptoKeyAKP> create(CryptoAlgorithmIdentifier, CryptoKeyType, EvpPKeyPtr&&, bool extractable, CryptoKeyUsageBitmap, KeyOwner = KeyOwner::This);
 
     static ExceptionOr<CryptoKeyPair> generatePair(CryptoAlgorithmIdentifier, bool extractable, CryptoKeyUsageBitmap publicUsages, CryptoKeyUsageBitmap privateUsages);
     // A null return means the key data could not be parsed ("Invalid keyData");
@@ -67,12 +69,15 @@ public:
     EVP_PKEY* platformKey() const { return m_key.get(); }
 
 private:
-    CryptoKeyAKP(CryptoAlgorithmIdentifier, CryptoKeyType, EvpPKeyPtr&&, bool extractable, CryptoKeyUsageBitmap);
+    CryptoKeyAKP(CryptoAlgorithmIdentifier, CryptoKeyType, EvpPKeyPtr&&, bool extractable, CryptoKeyUsageBitmap, KeyOwner);
+
+    size_t memoryCost() const final;
 
     CryptoKeyClass keyClass() const final { return CryptoKeyClass::AKP; }
     KeyAlgorithm algorithm() const final;
 
     EvpPKeyPtr m_key;
+    const KeyOwner m_keyOwner;
 };
 
 } // namespace WebCore

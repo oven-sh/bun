@@ -254,8 +254,9 @@ void ScriptExecutionContext::stopActiveDOMObjects()
         return ShouldContinue::Yes;
     });
 
-    if (isForModuleGraph()) {
-        if (auto* performance = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject())->existingPerformance())
+    // Null if the realm was collected with the graph: its Performance is gone too.
+    if (auto* globalObject = realm().m_globalObject; globalObject && isForModuleGraph()) {
+        if (auto* performance = globalObject->existingPerformance())
             performance->disconnectObserversOf(*this);
     }
 }

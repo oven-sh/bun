@@ -2,11 +2,56 @@
 
 #include "root.h"
 #include <JavaScriptCore/WriteBarrier.h>
+#include <wtf/Lock.h>
+#include <wtf/RefCounted.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 #include <array>
 
 namespace Bun {
+
+// The accumulators of the aggregates that run. The database cell marks them too, through its SqliteCallbackRoots.
+// Not a member of the cell: a sweep can finalize a statement after it destroyed the cell.
+class SqliteAccumulators final : public WTF::RefCounted<SqliteAccumulators> {
+public:
+    static Ref<SqliteAccumulators> create() { return adoptRef(*new SqliteAccumulators); }
+
+    unsigned add(JSC::VM& vm, JSC::JSCell* owner, JSC::JSValue value)
+    {
+        unsigned index;
+        if (m_free.isEmpty()) {
+            index = m_values.size();
+            WTF::Locker locker { m_lock };
+            m_values.append({});
+        } else
+            index = m_free.takeLast();
+        set(vm, owner, index, value);
+        return index;
+    }
+    void set(JSC::VM& vm, JSC::JSCell* owner, unsigned index, JSC::JSValue value) { m_values[index].set(vm, owner, value); }
+    JSC::JSValue get(unsigned index) const { return m_values[index].get(); }
+    void remove(unsigned index)
+    {
+        m_values[index].clear();
+        m_free.append(index);
+    }
+
+    template<typename Visitor>
+    void visit(Visitor& visitor)
+    {
+        WTF::Locker locker { m_lock };
+        for (auto& value : m_values)
+            visitor.append(value);
+    }
+
+private:
+    SqliteAccumulators() = default;
+
+    // For a m_values that grows while the collector's threads read it.
+    WTF::Lock m_lock;
+    WTF::Vector<JSC::WriteBarrier<JSC::Unknown>> m_values;
+    WTF::Vector<unsigned> m_free;
+};
 
 // The database cell marks what the user functions of its connection call (SqliteUserFunction.h).
 // A JSC::Strong in the context that SQLite owns would leak a database that one of its callbacks closes over.
@@ -36,10 +81,22 @@ public:
         m_functions.clear();
     }
 
+    Ref<SqliteAccumulators> accumulators(JSC::JSCell* owner)
+    {
+        if (!m_accumulators) {
+            auto accumulators = SqliteAccumulators::create();
+            WTF::Locker locker { owner->cellLock() };
+            m_accumulators = WTF::move(accumulators);
+        }
+        return *m_accumulators;
+    }
+
     template<typename Visitor>
     void visit(JSC::JSCell* owner, Visitor& visitor)
     {
         WTF::Locker locker { owner->cellLock() };
+        if (m_accumulators)
+            m_accumulators->visit(visitor);
         for (auto& function : m_functions) {
             for (auto& value : function.values)
                 visitor.append(value);
@@ -54,6 +111,7 @@ private:
     };
     // The collector's threads read it: every access holds the owner's cell lock.
     WTF::Vector<Function> m_functions;
+    RefPtr<SqliteAccumulators> m_accumulators;
 };
 
 } // namespace Bun

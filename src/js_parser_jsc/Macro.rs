@@ -433,11 +433,13 @@ impl Macro {
 
             // `env` is shared by every parse thread, and this VM's transpiler loads `.env` files
             // into its loader, so give the VM its own copy.
-            // SAFETY: `env` is the build's loader. It outlives the build and nothing writes to
-            // it while parse tasks run.
-            let owned_env_loader = match unsafe { env.as_ref() } {
-                Some(env) => Some(Box::new(env.clone_loaded()?)),
-                None => None,
+            let owned_env_loader = if env.is_null() {
+                None
+            } else {
+                // SAFETY: `env` is the loader of a build or of a JS VM and outlives its parse tasks. A
+                // VM writes its map on the JS thread through `update_map`, which this excludes.
+                let loader = unsafe { DotEnvLoader::clone_loaded(env) };
+                Some(Box::new(loader?))
             };
 
             let _vm = VirtualMachine::init(VirtualMachineInitOptions {

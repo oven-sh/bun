@@ -5596,3 +5596,123 @@ describe.concurrent("a node:vm timeout inside a streams operation", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// These crashed, so each runs in a child process.
+describe.concurrent("addAbortSignal() on a branch of a byte tee", () => {
+  async function run(src) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  it.each([
+    [
+      "a chunk",
+      "request.view[0] = 1; request.respond(1); abortController.abort();",
+      `[{"value":{"0":1},"done":false},"AbortError"]`,
+    ],
+    ["the end", "controller.close(); abortController.abort(); request.respond(0);", `[{"done":true},"AbortError"]`],
+  ])("addAbortSignal() on a tee branch whose BYOB read is about to get %s", async (_, abort, expected) => {
+    const result = await run(`
+      const { addAbortSignal } = require("node:stream");
+      let controller;
+      const source = new ReadableStream({ type: "bytes", start(c) { controller = c; } });
+      const [aborted, other] = source.tee();
+      const abortController = new AbortController();
+      addAbortSignal(abortController.signal, aborted);
+      const turn = () => new Promise(resolve => setImmediate(resolve));
+      await turn();
+      const read = aborted.getReader({ mode: "byob" }).read(new Uint8Array(16));
+      read.catch(() => {});
+      const otherRead = other.getReader().read();
+      await turn();
+      const request = controller.byobRequest;
+      ${abort}
+      console.log(JSON.stringify([await otherRead, await read.then(() => "fulfilled", e => e.name)]));
+    `);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe(expected);
+    expect(result).toMatchObject({ exitCode: 0, signalCode: null });
+  });
+});
+
+it("text() of one chunk over a SharedArrayBuffer decodes a copy of it", async () => {
+  // The worker keeps switching between two bytes a character and one, so bytes that are measured and then decoded in place
+  // produce more code units than there is room for.
+  using dir = tempDir("shared-chunk-text", {
+    "worker.js": `
+      const { workerData, parentPort } = require("node:worker_threads");
+      const words = new Uint32Array(workerData);
+      words.fill(0x61616161);
+      parentPort.postMessage("ready");
+      for (;;) {
+        words.fill(0xa9c3a9c3);
+        words.fill(0x61616161);
+      }
+    `,
+    "main.js": `
+      const { Worker } = require("node:worker_threads");
+      const { once } = require("node:events");
+      const shared = new SharedArrayBuffer(64 * 1024);
+      const worker = new Worker(require.resolve("./worker.js"), { workerData: shared });
+      await once(worker, "message");
+      for (const chunk of [new Uint8Array(shared), shared]) {
+        for (let i = 0; i < 50; i++) {
+          const stream = new ReadableStream({ start(c) { c.enqueue(chunk); c.close(); } });
+          const text = await Bun.readableStreamToText(stream);
+          if (/[^a\u00e9\ufffd]/.test(text)) throw new Error("unexpected text");
+        }
+      }
+      console.log("done");
+      process.exit(0);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "done\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+// A read that the bytes of a released BYOB read answer does not use the descriptor that autoAllocateChunkSize made for it.
+it.each([
+  [1, false, [[7], [9], [11]]],
+  [2, false, [[7], [9], [11]]],
+  [3, true, [[7], [9], [10], [11]]],
+])(
+  "byobRequest after %i default reads and an enqueue() behind a released BYOB read",
+  async (reads, hasRequest, expected) => {
+    let controller;
+    const stream = new ReadableStream({
+      type: "bytes",
+      autoAllocateChunkSize: 16,
+      start(c) {
+        controller = c;
+      },
+    });
+    const byob = stream.getReader({ mode: "byob" });
+    byob.read(new Uint32Array(2), { min: 2 }).catch(() => {});
+    await 1;
+    controller.byobRequest.view[0] = 7;
+    controller.byobRequest.respond(1);
+    byob.releaseLock();
+    const reader = stream.getReader();
+    const pending = Array.from({ length: reads }, () => reader.read());
+    controller.enqueue(new Uint8Array([9]));
+    const request = controller.byobRequest;
+    if (request) {
+      request.view[0] = 10;
+      request.respond(1);
+    }
+    controller.enqueue(new Uint8Array([11]));
+    controller.close();
+    const received = (await Promise.all(pending)).map(({ value }) => [...value]);
+    for (let result; !(result = await reader.read()).done;) received.push([...result.value]);
+    expect({ hasRequest: !!request, received }).toEqual({ hasRequest, received: expected });
+  },
+);

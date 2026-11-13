@@ -1763,7 +1763,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDefineFunction, (JSC::JSGlobalObject * le
     int rc;
     if (isAggregate) {
         roots = { function, callFrame->argument(5), callback(7), callback(8) };
-        rc = Bun::SqliteUserAggregate<SQLiteCallbacks>::create(db, nameUTF8.legacyCStringPointer(), argumentCount, flags, WTF::move(callbacks), callFrame->argument(5), function, callback(7), callback(8));
+        rc = Bun::SqliteUserAggregate<SQLiteCallbacks>::create(db, nameUTF8.legacyCStringPointer(), argumentCount, flags, WTF::move(callbacks), database, database->m_callbacks.accumulators(database), callFrame->argument(5), function, callback(7), callback(8));
     } else {
         rc = Bun::SqliteUserFunction<SQLiteCallbacks>::create(db, nameUTF8.legacyCStringPointer(), argumentCount, flags, WTF::move(callbacks), function);
     }

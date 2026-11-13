@@ -1,5 +1,5 @@
 import { file, gc, Serve, serve, Server } from "bun";
-import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import {
   bunEnv,
@@ -31,13 +31,14 @@ import { join, resolve } from "path";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
 import { on, once } from "node:events";
-import { createServer as createHttpServer } from "node:http";
+import { createServer as createHttpServer, type Server as HttpServer, type IncomingMessage } from "node:http";
 import net, { type AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
 import { Duplex } from "node:stream";
 import nodeTls from "node:tls";
 import { Worker } from "node:worker_threads";
 import { tmpdir } from "os";
+import { WebSocketServer } from "ws";
 
 let renderToReadableStream: any = null;
 let app_jsx: any = null;
@@ -893,6 +894,283 @@ describe("does not dispatch a pipelined request after Connection: close", () => 
       responses: 1,
       has400: false,
     });
+  });
+});
+
+// An async plugin setup() makes Bun.build() run the event loop until it settles, under the handler that calls it. What
+// the outer dispatch still reads of its socket has to survive the reads of the nested ticks.
+describe("a handler that runs the event loop", () => {
+  // Whether each runEventLoop() returned only after what it waits for.
+  let waited: boolean[] = [];
+  beforeEach(() => void (waited = []));
+  afterEach(() => expect(waited).toEqual([true]));
+  function runEventLoop(until: () => Promise<unknown>) {
+    let settled = false;
+    const built = Bun.build({
+      entrypoints: [join(import.meta.dir, "does-not-exist.ts")],
+      throw: false,
+      plugins: [{ name: "wait", setup: async () => void (await until().finally(() => (settled = true))) }],
+    });
+    built.catch(() => {});
+    waited.push(settled);
+  }
+
+  async function open(port: number, secure: boolean) {
+    const socket = secure
+      ? nodeTls.connect({ port, host: "127.0.0.1", ca: tls.cert, servername: "localhost" })
+      : net.connect(port, "127.0.0.1");
+    const opened = Promise.withResolvers<void>();
+    let received = "";
+    let check = () => {};
+    let fail: (error: Error) => void = opened.reject;
+    socket.on("error", error => fail(error));
+    socket.on("close", () => fail(new Error("closed after " + JSON.stringify(received))));
+    socket.on("data", chunk => {
+      received += chunk.toString("latin1");
+      check();
+    });
+    socket.once(secure ? "secureConnect" : "connect", () => opened.resolve());
+    await opened.promise;
+    return {
+      write: (data: string | Uint8Array) => void socket.write(data),
+      // What arrived, once it has `text` this many times.
+      has(text: string, times = 1) {
+        const { promise, resolve, reject } = Promise.withResolvers<string>();
+        fail = reject;
+        check = () => {
+          if (received.split(text).length > times) resolve(received);
+        };
+        check();
+        return promise;
+      },
+      [Symbol.dispose]: () => void socket.destroy(),
+    };
+  }
+
+  const upgrade =
+    "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+    "Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+  const request = (path: string, owner: string) =>
+    `GET ${path} HTTP/1.1\r\nHost: localhost\r\nX-Owner: ${owner}\r\n\r\n`;
+
+  const frame = (text: string) =>
+    Buffer.concat([Buffer.from([0x81, 0x80 | text.length, 0, 0, 0, 0]), Buffer.from(text)]);
+
+  it.each([
+    ["http", false],
+    ["https", true],
+  ])("keeps its own request and the requests behind it (%s)", async (_scheme, secure) => {
+    let runOnce = true;
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: secure ? tls : undefined,
+      fetch(req) {
+        if (runOnce && req.headers.has("x-owner")) {
+          runOnce = false;
+          runEventLoop(() => {
+            other.write(request("/other-1", "other") + request("/other-2", "other"));
+            return other.has("<GET other-2 other>");
+          });
+        }
+        return new Response(`<${req.method} ${req.url.split("/").at(-1)} ${req.headers.get("x-owner")}>`);
+      },
+    });
+    using other = await open(server.port!, secure);
+    using socket = await open(server.port!, secure);
+    socket.write(request("/first", "socket") + request("/second", "socket"));
+    const received = await socket.has("<GET second ");
+    expect(received.match(/<.*?>/g)).toEqual(["<GET first socket>", "<GET second socket>"]);
+  });
+
+  it("keeps the WebSocket frames that came with the one it is for", async () => {
+    let runOnce = true;
+    const messages: string[] = [];
+    const done = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: (req, server) => (server.upgrade(req) ? undefined : new Response("<other>")),
+      websocket: {
+        message(_ws, message) {
+          messages.push(message as string);
+          if (runOnce) {
+            runOnce = false;
+            runEventLoop(() => {
+              other.write(request("/other", Buffer.alloc(64, "x").toString()));
+              return other.has("<other>");
+            });
+          }
+          if (messages.length === 3) done.resolve();
+        },
+        close: () => done.reject(new Error("closed after " + JSON.stringify(messages))),
+      },
+    });
+    using other = await open(server.port!, false);
+    using socket = await open(server.port!, false);
+    socket.write(upgrade);
+    await socket.has("101 Switching Protocols");
+    socket.write(Buffer.concat(["first", "second", "third"].map(frame)));
+    await done.promise;
+    expect(messages).toEqual(["first", "second", "third"]);
+  });
+
+  // The connection is upgraded in the middle of a parse, which must not be taken for the end of the nested one.
+  it.each(["before upgrade()", "after upgrade()", "in open()"])("upgrades its own connection (%s)", async when => {
+    let runOnce = true;
+    const nested = (here: string) => {
+      if (!runOnce || here !== when) return;
+      runOnce = false;
+      runEventLoop(() => {
+        other.write(request("/other", "other"));
+        return other.has("<other>");
+      });
+    };
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        if (!req.headers.has("upgrade")) return new Response("<other>");
+        nested("before upgrade()");
+        const upgraded = server.upgrade(req);
+        nested("after upgrade()");
+        return upgraded ? undefined : new Response("<not upgraded>");
+      },
+      websocket: {
+        open: () => nested("in open()"),
+        message: (ws, message) => void ws.send("<" + message + ">"),
+      },
+    });
+    using other = await open(server.port!, false);
+    using socket = await open(server.port!, false);
+    // The frame comes in the read of the request, whose parse hands it to the WebSocket.
+    socket.write(Buffer.concat([Buffer.from(upgrade), frame("frame")]));
+    expect((await socket.has("<frame>")).match(/<.*?>/g)).toEqual(["<frame>"]);
+    other.write(request("/again", "other"));
+    expect((await other.has("<other>", 2)).match(/<.*?>/g)).toEqual(["<other>", "<other>"]);
+  });
+
+  // Something in the nested parse upgrades the connection of the outer one: the handler of a request, or of a WebSocket
+  // frame that came in the read of the request it belongs to.
+  it.each(["request", "frame"])("is told of an upgrade() of its connection by the handler of another %s", async by => {
+    let outer: Request | undefined;
+    let upgraded: boolean | undefined;
+    const upgradeOuter = () => void (upgraded = server.upgrade(outer!));
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req, server) {
+        if (outer) {
+          if (by === "request") return (upgradeOuter(), new Response("<other>"));
+          return server.upgrade(req, { data: "other" }) ? undefined : new Response("<not upgraded>");
+        }
+        outer = req;
+        runEventLoop(() => {
+          if (by === "request") other.write(request("/other", "other"));
+          else other.write(Buffer.concat([Buffer.from(upgrade), frame("go")]));
+          return other.has("<other>");
+        });
+        return upgraded ? undefined : new Response("<not upgraded>");
+      },
+      websocket: {
+        message(ws, message) {
+          if (ws.data !== "other") return void ws.send("<" + message + ">");
+          upgradeOuter();
+          ws.send("<other>");
+        },
+      },
+    });
+    using other = await open(server.port!, false);
+    using socket = await open(server.port!, false);
+    socket.write(Buffer.concat([Buffer.from(upgrade), frame("frame")]));
+    expect((await socket.has("<frame>")).match(/<.*?>/g)).toEqual(["<frame>"]);
+  });
+
+  async function listen(server: HttpServer) {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return (server.address() as AddressInfo).port;
+  }
+
+  // A close of its connection must not wait for the handler: the handler may be what waits for it.
+  it.each([
+    ["socket.destroy() in the handler of another request", "destroy", "request"],
+    ["closeAllConnections() in the handler of another request", "closeAll", "request"],
+    ["socket.destroy() after another request", "destroy", "timer"],
+  ])("node:http: its connection is closed at once by %s", async (_name, how, when) => {
+    const closed = Promise.withResolvers<void>();
+    const returned = Promise.withResolvers<void>();
+    let outer: IncomingMessage | undefined;
+    let other: Awaited<ReturnType<typeof open>>;
+    const close = () => (how === "destroy" ? outer!.socket.destroy() : server.closeAllConnections());
+    const server = createHttpServer((req, res) => {
+      if (outer) {
+        if (when === "request") close();
+        return void res.end("<other>");
+      }
+      outer = req;
+      req.socket.on("close", () => closed.resolve());
+      runEventLoop(async () => {
+        other.write(request("/other", "other"));
+        if (when === "timer") {
+          await other.has("<other>");
+          setImmediate(close);
+        }
+        // The test's own timeout cannot end this nested wait.
+        await Promise.race([closed.promise, Bun.sleep(4000).then(() => Promise.reject(new Error("not closed")))]);
+      });
+      returned.resolve();
+    });
+    try {
+      const port = await listen(server);
+      other = await open(port, false);
+      const socket = net.connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      socket.write(request("/first", "socket"));
+      await returned.promise;
+      socket.destroy();
+    } finally {
+      other![Symbol.dispose]();
+      server.close();
+      server.closeAllConnections();
+    }
+  });
+
+  // The nested tick parses the next request of the connection whose handler runs it.
+  it("node:http: is told of an upgrade of its connection by the next request of it", async () => {
+    const upgraded = Promise.withResolvers<void>();
+    const wss = new WebSocketServer({ noServer: true });
+    const server = createHttpServer((_req, res) => {
+      res.end("<first>");
+      runEventLoop(() =>
+        Promise.race([upgraded.promise, Bun.sleep(4000).then(() => Promise.reject(new Error("not upgraded")))]),
+      );
+    });
+    server.on("upgrade", (req, socket, head) => {
+      wss.handleUpgrade(req, socket, head, ws => {
+        ws.on("message", message => ws.send("<" + message + ">"));
+        upgraded.resolve();
+      });
+    });
+    try {
+      using socket = await open(await listen(server), false);
+      socket.write(request("/first", "socket"));
+      await socket.has("<first>");
+      socket.write(upgrade);
+      await socket.has("101 Switching Protocols");
+      // A fragmented message: where the parser of the outer parse kept its state, the WebSocket now keeps its fragments.
+      const [first, last] = [frame("frag"), frame("mented")];
+      first[0] = 0x01;
+      last[0] = 0x80;
+      socket.write(first);
+      await new Promise(resolve => setImmediate(resolve));
+      socket.write(last);
+      await socket.has("<fragmented>");
+    } finally {
+      wss.close();
+      server.close();
+      server.closeAllConnections();
+    }
   });
 });
 

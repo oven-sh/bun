@@ -915,10 +915,10 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
         globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
     }
 
-    // The plugin registries hold Strong<> roots into the old realm; owned by the global itself,
+    // Module mocks hold Strong<> roots into the old realm; owned by the global itself,
     // they would keep it (and everything it loaded) alive for the rest of the run.
-    oldGlobal->onLoadPlugins.clear();
-    oldGlobal->onResolvePlugins.clear();
+    oldGlobal->onLoadPlugins.clear(oldGlobal);
+    oldGlobal->onResolvePlugins.clear(oldGlobal);
     // If JSC's CodeCache holds fewer entries than a file loads modules, each file evicts what the next one needs.
     // Capped because an entry keeps 20 to 100 KB of unlinked and Baseline code alive.
     size_t loadedModules = oldGlobal->moduleLoader()->moduleMap().size() + oldGlobal->requireMap()->size();
@@ -3942,6 +3942,12 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
             guarded->visitAggregate(visitor);
     }
 
+    {
+        Locker locker { thisObject->cellLock() };
+        thisObject->onLoadPlugins.visit(visitor);
+        thisObject->onResolvePlugins.visit(visitor);
+    }
+
     // The LazyProperty / LazyClassStructure / WriteBarrier members (the vast
     // majority) are visited from an offset table by one loop; the handful of
     // other member types keep an explicit call.
@@ -5383,6 +5389,18 @@ extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::Glo
     stopActiveDOMObjectsOfDerivedRealms(globalObject);
 }
 
+static void retireDerivedRealms(Zig::GlobalObject* globalObject)
+{
+    for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
+        if (!derived)
+            continue;
+        derived->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
+        // Jobs are GC roots until they are dequeued, and only an evaluation in the context drains a queue of its own.
+        if (auto* context = dynamicDowncast<Bun::NodeVMGlobalObject>(derived.get()); context && context->hasOwnMicrotaskQueue())
+            context->dropOwnMicrotaskQueue();
+    }
+}
+
 // `bun test --isolate`: JSC drops microtasks queued against the finished file's realm from here on
 // (as WebCore does for a stopped document), and the realm reports ScriptExecutionStatus::Stopped so
 // its deferred work (FinalizationRegistry cleanup, wasm completions) is dropped too. Work the file
@@ -5392,10 +5410,7 @@ extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* glo
     globalObject->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
     // Again, to catch realms that close handlers created since the first pass.
     stopActiveDOMObjectsOfDerivedRealms(globalObject);
-    for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
-        if (derived)
-            derived->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
-    }
+    retireDerivedRealms(globalObject);
 }
 
 // `bun test --isolate=modules`: the global object is kept, but realms the finished file created from it are retired.
@@ -5403,10 +5418,7 @@ extern "C" void Zig__GlobalObject__retireDerivedRealmsForTestIsolation(Zig::Glob
 {
     Bun::retireWebViewsForTestIsolation(globalObject);
     stopActiveDOMObjectsOfDerivedRealms(globalObject);
-    for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
-        if (derived)
-            derived->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
-    }
+    retireDerivedRealms(globalObject);
 }
 
 extern "C" bool Bun__JSValue__isFromRetiredTestIsolationRealm(JSC::EncodedJSValue encodedValue)

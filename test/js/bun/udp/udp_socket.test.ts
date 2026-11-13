@@ -836,6 +836,58 @@ test("sendMany() sends every packet of a larger-than-one-batch call", async () =
   }
 });
 
+// On Windows, a nested tick delivers the reads of other UDP sockets only when the outer dispatch has returned.
+test.skipIf(isWindows)("the rest of a batch survives a data handler that runs the event loop", async () => {
+  const batch: string[] = [];
+  const other: string[] = [];
+  const batchArrived = Promise.withResolvers<void>();
+  const otherArrived = Promise.withResolvers<void>();
+  // Two datagrams in one call, and again until they arrived: UDP can lose them.
+  const sendUntil = async (arrived: Promise<void>, port: number, text: string) => {
+    const send = () => sender.sendMany([`${text} 1`, port, "127.0.0.1", `${text} 2`, port, "127.0.0.1"]);
+    send();
+    const timer = setInterval(send, 50);
+    await arrived;
+    clearInterval(timer);
+  };
+  const sender = await udpSocket({ hostname: "127.0.0.1" });
+  const otherReceiver = await udpSocket({
+    hostname: "127.0.0.1",
+    socket: {
+      data(_socket, packet) {
+        other.push(packet.toString());
+        otherArrived.resolve();
+      },
+    },
+  });
+  const receiver = await udpSocket({
+    hostname: "127.0.0.1",
+    socket: {
+      data(_socket, packet) {
+        batch.push(packet.toString());
+        if (batch.length >= 2) return batchArrived.resolve();
+        // Bun.build() runs the event loop until the plugin's setup() settles.
+        Bun.build({
+          entrypoints: [path.join(import.meta.dir, "does-not-exist.ts")],
+          throw: false,
+          plugins: [{ name: "wait", setup: () => sendUntil(otherArrived.promise, otherReceiver.port, "other") }],
+        }).catch(() => {});
+      },
+    },
+  });
+  try {
+    await sendUntil(batchArrived.promise, receiver.port, "batch");
+    expect({
+      batch: batch.filter(packet => !packet.startsWith("batch ")),
+      other: other.filter(packet => !packet.startsWith("other ")),
+    }).toEqual({ batch: [], other: [] });
+  } finally {
+    sender.close();
+    receiver.close();
+    otherReceiver.close();
+  }
+});
+
 test("udpSocket({ hostname }) does not leak the hostname", async () => {
   const code = /* js */ `
     const base = Buffer.alloc(200 * 1024, "a").toString();

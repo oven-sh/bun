@@ -45,6 +45,7 @@
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/OptionsList.h>
+#include <JavaScriptCore/ParseInt.h>
 #include <JavaScriptCore/ParserError.h>
 #include <JavaScriptCore/ScriptExecutable.h>
 #include <JavaScriptCore/SourceOrigin.h>
@@ -212,6 +213,81 @@ private:
     const unsigned m_overlayShape;
 };
 
+static unsigned endOfLine(StringView text, unsigned start)
+{
+    // Each search stops at the last one's result, so that a file with many comments is not searched to its end for each.
+    size_t end = std::min<size_t>(text.length(), text.find(u'\n', start));
+    end = std::min(end, text.left(end).find(u'\r', start));
+    if (!text.is8Bit()) {
+        end = std::min(end, text.left(end).find(u'\u2028', start));
+        end = std::min(end, text.left(end).find(u'\u2029', start));
+    }
+    return end;
+}
+
+static unsigned skipTrivia(StringView text, unsigned i)
+{
+    while (i < text.length()) {
+        auto rest = text.substring(i);
+        if (rest.startsWith("//"_s) || rest.startsWith("<!--"_s) || rest.startsWith("-->"_s)) {
+            i = endOfLine(text, i);
+        } else if (rest.startsWith("/*"_s)) {
+            size_t end = text.find("*/"_s, i + 2);
+            if (end == notFound)
+                return text.length();
+            i = end + 2;
+        } else if (JSC::isStrWhiteSpace(text[i])) {
+            i++;
+        } else
+            break;
+    }
+    return i;
+}
+
+// Whether `function` is all of a statement of the program whose completion value it is, with nothing but directives in front.
+// Nothing else can refer to it then: what comes behind a finished statement cannot name its value. The program has run, so
+// its text has no syntax error, and a directive that is called with the function has thrown.
+static bool isWholeStatement(JSFunction* function, const JSC::SourceProvider& program)
+{
+    FunctionExecutable* executable = function->jsExecutable();
+    if (executable->source().provider() != &program)
+        return false;
+    StringView text = program.source();
+
+    StringView front = text.left(executable->functionStart());
+    unsigned parentheses = 0;
+    unsigned i = front.startsWith("#!"_s) ? endOfLine(front, 0) : 0;
+    while ((i = skipTrivia(front, i)) < front.length()) {
+        char16_t c = front[i];
+        i++;
+        if (c == '(') {
+            parentheses++;
+        } else if (c == '"' || c == '\'') {
+            while (i < front.length() && front[i] != c && front[i] != '\n' && front[i] != '\r')
+                i += front[i] == '\\' ? 2 : 1;
+            if (i >= front.length() || front[i] != c)
+                return false;
+            i++;
+        } else if (c != ';')
+            return false;
+    }
+    // A declaration, whose name refers to the function, if the statement starts with it and it is no arrow function.
+    if (!parentheses && !executable->isArrowFunction())
+        return false;
+
+    StringView back = text.substring(executable->source().endOffset());
+    i = skipTrivia(back, 0);
+    for (; parentheses; parentheses--) {
+        if (i >= back.length() || back[i] != ')')
+            return false;
+        i = skipTrivia(back, i + 1);
+    }
+    if (i >= back.length() || back[i] == ';' || back[i] == '{')
+        return true;
+    // A word starts another statement, unless it is `in` or `instanceof`.
+    return (isASCIIAlpha(back[i]) || back[i] == '_' || back[i] == '$') && !back.substring(i).startsWith("in"_s);
+}
+
 // The require map lacks the compiled files.
 static bool hasLoadedCompiledCommonJSModule([[maybe_unused]] Zig::GlobalObject* globalObject)
 {
@@ -353,12 +429,14 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     ASSERT(fnValue);
 
     // A graph's module: the wrapper closes over the graph's overlay instead of the global scope.
-    // Only a wrapper that closed over the global scope and has not been linked yet can be moved:
-    // one a custom `Module.wrapper` made inside another function reads that function's variables by
-    // their offsets in its scope, and one that already ran was compiled for the chain it ran in.
+    // Only a wrapper that nothing but this call can run may be moved. Its code is compiled for the chain of the overlay:
+    // under any other chain, the one it was made in included, that code reads and writes variables at wrong places.
     JSModuleGraph* graph = moduleObject->moduleGraph();
-    if (auto* wrapper = graph ? dynamicDowncast<JSFunction>(fnValue) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == globalObject->globalScope() && !wrapper->jsExecutable()->eitherCodeBlock())
-        fnValue = JSFunction::create(vm, globalObject, wrapper->jsExecutable(), graph->overlay());
+    JSFunction* movedWrapper = nullptr;
+    if (auto* wrapper = graph && !sharedWrapper ? dynamicDowncast<JSFunction>(fnValue) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == globalObject->globalScope() && isWholeStatement(wrapper, *code.provider())) {
+        movedWrapper = JSFunction::create(vm, globalObject, wrapper->jsExecutable(), graph->overlay());
+        fnValue = movedWrapper;
+    }
 
     JSObject* fn = fnValue.getObject();
     if (!fn) [[unlikely]] {
@@ -404,8 +482,8 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
     RETURN_IF_EXCEPTION(scope, false);
 
-    if (auto* wrapper = graph && !sharedWrapper ? dynamicDowncast<JSFunction>(fn) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == graph->overlay()) {
-        if (CodeBlock* linked = wrapper->jsExecutable()->codeBlockForCall()) {
+    if (movedWrapper) {
+        if (CodeBlock* linked = movedWrapper->jsExecutable()->codeBlockForCall()) {
             linked = linked->baselineAlternative();
             globalObject->m_moduleGraphs->commonJSWrappers.set(sharedWrapperKey, linked);
             graph->keepCommonJSWrapper(vm, linked);

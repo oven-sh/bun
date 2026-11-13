@@ -54,6 +54,8 @@ public:
     static ExceptionOr<std::optional<size_t>> getKeyLength(const CryptoAlgorithmParameters&);
 
 private:
+    size_t memoryCost() const final { return sizeof(*this) + m_key.sizeInBytes(); }
+
     CryptoKeyHMAC(Vector<uint8_t>&& key, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap);
 
     KeyAlgorithm algorithm() const final;

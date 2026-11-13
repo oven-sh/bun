@@ -701,3 +701,56 @@ test.concurrent.each([2, 3, 4])(
   },
   60_000,
 );
+
+test.concurrent("ModuleGraph GC: a graph collected with the ShadowRealm that made it", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { heapStats } from "bun:jsc";
+      for (let i = 0; i < 20; i++) new ShadowRealm().evaluate("new Bun.ModuleGraph({}); 1");
+      for (let i = 0; i < 4; i++) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      console.log(heapStats().globalObjectCount < 10 ? "collected" : "kept");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "collected\n", stderr: "", exitCode: 0 });
+});
+
+// The realms are swept before the channels.
+test.concurrent(
+  "ModuleGraph GC: a graph with a BroadcastChannel collected with the ShadowRealm that made it",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+      for (let round = 0; round < 3; round++) {
+        for (let i = 0; i < 20; i++)
+          new ShadowRealm().evaluate("new Bun.ModuleGraph({}).run(() => { new BroadcastChannel('x'); }); 1");
+        await new Promise(resolve => setImmediate(resolve));
+        Bun.gc(false);
+        for (let i = 0; i < 10; i++) new ShadowRealm().evaluate("new Bun.ModuleGraph({}); 1");
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      console.log("done");
+      process.exit(0);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
+  },
+);

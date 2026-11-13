@@ -140,6 +140,7 @@ bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool 
         dead = false;
         sock = nullptr;
         rx.clear();
+        rxConsumed = 0;
         txQueue.clear();
     }
 
@@ -310,6 +311,18 @@ static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t n
     return jsUndefined();
 }
 
+// Nobody is left to open the segment, and its unlink is this side's job.
+static void unlinkScreenshot(Reader r)
+{
+    uint32_t nameLen = r.u32();
+    if (nameLen > r.remaining())
+        return;
+    WTF::Vector<char, 64> name;
+    name.append(std::span<const char>(reinterpret_cast<const char*>(r.bytes(nameLen)), nameLen));
+    name.append('\0');
+    shm_unlink(name.span().data());
+}
+
 void HostClient::handleReply(const Frame& h, Reader r)
 {
     auto* g = global;
@@ -317,9 +330,11 @@ void HostClient::handleReply(const Frame& h, Reader r)
     auto reply = static_cast<Reply>(h.op);
 
     auto it = viewsById.find(h.viewId);
-    if (it == viewsById.end()) return;
-    JSWebView* view = it->second.get();
-    if (!view) return; // collected — user dropped both view and promise
+    JSWebView* view = it == viewsById.end() ? nullptr : it->second.get();
+    if (!view) { // closed, or collected — user dropped both view and promise
+        if (reply == Reply::ScreenshotDone) unlinkScreenshot(r);
+        return;
+    }
 
     switch (reply) {
     // Events fire the callback; they arrive BEFORE the matching Done/Failed
@@ -510,21 +525,22 @@ void HostClient::onData(const char* data, int length)
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Bun__EventLoop__enter(global);
 
-    size_t off = 0;
-    while (rx.size() - off >= sizeof(Frame)) {
+    // rx is read again each time: a handler may run the event loop, whose onData() goes on from rxConsumed, or respawn the host.
+    while (rx.size() - rxConsumed >= sizeof(Frame)) {
         Frame h;
-        memcpy(&h, rx.span().data() + off, sizeof(h));
+        memcpy(&h, rx.span().data() + rxConsumed, sizeof(h));
         if (h.len > kMaxFrameLen) [[unlikely]] {
             // Child memory corruption. Stop parsing; rx tail is dead weight
             // until socket close, but we won't livelock growing it forever.
             rejectAllAndMarkDead("WebView host sent a corrupt frame"_s);
             break;
         }
-        if (rx.size() - off < sizeof(Frame) + h.len) break;
-        Reader r { rx.span().data() + off + sizeof(Frame),
-            rx.span().data() + off + sizeof(Frame) + h.len };
-        off += sizeof(Frame) + h.len;
+        if (rx.size() - rxConsumed < sizeof(Frame) + h.len) break;
+        Reader r { rx.span().data() + rxConsumed + sizeof(Frame),
+            rx.span().data() + rxConsumed + sizeof(Frame) + h.len };
+        rxConsumed += sizeof(Frame) + h.len;
 
+        // Runs script last, when it is done with the bytes of `r`.
         handleReply(h, r);
         // createError/jsString can throw (OOM). Report +
         // clear so one bad frame doesn't poison the rest of the batch.
@@ -533,7 +549,8 @@ void HostClient::onData(const char* data, int length)
             global->reportUncaughtExceptionAtEventLoop(global, exception);
         }
     }
-    if (off) rx.removeAt(0, off);
+    if (size_t consumed = std::exchange(rxConsumed, 0))
+        rx.removeAt(0, consumed);
 
     // exit() drains microtasks when outermost — all the reactions from
     // resolve()s above run here, before we return to usockets.

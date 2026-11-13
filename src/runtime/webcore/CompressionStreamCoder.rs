@@ -316,8 +316,9 @@ impl CompressionStreamCoder {
     /// must step again (with no input) before feeding the next chunk.
     fn step(&mut self, input: &[u8], finish: bool, out: &mut Vec<u8>) -> Result<bool, CodecError> {
         out.clear();
+        // A chunk that comes behind an abandoned one has input of its own. What it makes cannot be
+        // enqueued any more, so the rest of the abandoned one runs in its place.
         if let Some(mut pending) = self.pending.take() {
-            debug_assert!(input.is_empty());
             return match self.run(
                 &pending.input[pending.pos..],
                 pending.finish,

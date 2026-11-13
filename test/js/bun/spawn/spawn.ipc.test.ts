@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isLinux, isWindows, tempDir } from "harness";
 import path from "path";
 
 // The receiver rejects a JSON line that's longer than the UTF-8 encoding of a max-length string can be.
@@ -425,6 +425,231 @@ describe("ipc mode advanced", () => {
     },
   );
 });
+
+// Writes the messages with one write(), then makes the file "written". They fit the socket's buffer on Linux.
+// `later` is JavaScript: the messages for one more write(), once there is a file "more". A Buffer is written as it is.
+function senderOfOneRead(serialization: string, messages: unknown[], later = "[]") {
+  return `
+    const fs = require("node:fs");
+    const encode = {
+      json: message => Buffer.from(JSON.stringify(message) + "\\n"),
+      advanced(message) {
+        const body = Buffer.from(require("bun:jsc").serialize(message));
+        const header = Buffer.from([2, 0, 0, 0, 0]);
+        header.writeUInt32LE(body.length, 1);
+        return Buffer.concat([header, body]);
+      },
+    }["${serialization}"];
+    fs.writeSync(3, Buffer.concat(${JSON.stringify(messages)}.map(encode)));
+    fs.writeFileSync("written", "");
+    const later = ${later};
+    if (later.length) {
+      while (!fs.existsSync("more")) Bun.sleepSync(1);
+      fs.writeSync(3, Buffer.concat(later.map(message => (Buffer.isBuffer(message) ? message : encode(message)))));
+    }
+  `;
+}
+
+// The handler of the first message disconnects and then waits in a nested event loop until the
+// Subprocess is done, so that only the stack keeps it. Decoding the second message collects it. The
+// three messages arrive in one read: the receiver starts to read when they are all written.
+it.skipIf(!isLinux).concurrent.each(["json", "advanced"])(
+  "a Subprocess that is collected between two messages of one read: %s",
+  async serialization => {
+    using dir = tempDir("ipc-collected-between-messages", {
+      "entry.js": "",
+      "receiver.js": `
+        import { existsSync } from "node:fs";
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        (function start() {
+          let first = true;
+          Bun.spawn({
+            cmd: [process.execPath, "sender.js"],
+            env: { ...process.env, BUN_JSC_gcMaxHeapSize: undefined },
+            serialization: process.argv[2],
+            stdio: ["ignore", "inherit", "inherit"],
+            onDisconnect,
+            ipc(message, subprocess) {
+              if (!first) return;
+              first = false;
+              const { exited } = subprocess;
+              subprocess.disconnect();
+              Bun.build({
+                entrypoints: ["./entry.js"],
+                plugins: [
+                  {
+                    name: "ticks the event loop",
+                    async setup() {
+                      await Promise.all([disconnected, exited]);
+                      console.log("disconnected");
+                    },
+                  },
+                ],
+              });
+            },
+          });
+        })();
+        const cell = new Int32Array(new SharedArrayBuffer(4));
+        for (let i = 0; !existsSync("written"); i++) {
+          if (i === 20_000) throw new Error("the sender did not write");
+          Atomics.wait(cell, 0, 0, 1);
+        }
+        await disconnected;
+      `,
+      "sender.js": senderOfOneRead(serialization, [
+        "first",
+        Array.from({ length: 5000 }, (_, i) => ({ i })),
+        { cmd: "NODE_HANDLE" },
+      ]),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "receiver.js", serialization],
+      env: {
+        ...bunEnv,
+        // A full, synchronous collection for each 192 KB, also in the decoder.
+        BUN_JSC_gcMaxHeapSize: "196608",
+        BUN_JSC_useGenerationalGC: "0",
+        BUN_JSC_useConcurrentGC: "0",
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "disconnected\n", stderr: "", exitCode: 0 });
+  },
+);
+
+// The handler of the first message of a read waits in a nested event loop for a later read of the same channel. Linux
+// only, as the others: the messages have to be in one read.
+it.skipIf(!isLinux).concurrent.each([
+  ["json", "in order", `["m3", "m4"]`, ["m1", "m2", "m3", "m4"]],
+  ["advanced", "in order", `["m3", "m4"]`, ["m1", "m2", "m3", "m4"]],
+  [
+    "advanced",
+    "an undecodable one once",
+    `[Buffer.from([2, 4, 0, 0, 0, 255, 255, 255, 255]), "m4"]`,
+    ["m1", "m2", "Unable to deserialize data."],
+  ],
+])("a nested read of the same channel: %s, %s", async (serialization, _name, later, expected) => {
+  using dir = tempDir("ipc-nested-read-of-the-channel", {
+    "entry.js": "",
+    "receiver.js": `
+      import { existsSync, writeFileSync } from "node:fs";
+      const received = [];
+      process.on("uncaughtException", error => received.push(error.message));
+      let handled = false;
+      const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+      const { promise: fourth, resolve: onFourth } = Promise.withResolvers();
+      Bun.spawn({
+        cmd: [process.execPath, "sender.js"],
+        serialization: process.argv[2],
+        stdio: ["ignore", "inherit", "inherit"],
+        onDisconnect,
+        ipc(message) {
+          received.push(message);
+          if (message === "m4") onFourth();
+          if (received.length !== 1) return;
+          writeFileSync("more", "");
+          Bun.build({
+            entrypoints: ["./entry.js"],
+            plugins: [
+              {
+                name: "ticks the event loop",
+                async setup() {
+                  await Promise.race([fourth, disconnected]);
+                },
+              },
+            ],
+          });
+          handled = true;
+        },
+      });
+      const cell = new Int32Array(new SharedArrayBuffer(4));
+      for (let i = 0; !existsSync("written"); i++) {
+        if (i === 20_000) throw new Error("the sender did not write");
+        Atomics.wait(cell, 0, 0, 1);
+      }
+      await disconnected;
+      while (!handled) await new Promise(resolve => setImmediate(resolve));
+      console.log(JSON.stringify(received));
+      process.exit();
+    `,
+    "sender.js": senderOfOneRead(serialization, ["m1", "m2"], later),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "receiver.js", serialization],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(expected) + "\n", stderr: "", exitCode: 0 });
+});
+
+// The handler of the first message waits for the response to a fetch(), whose request the server reads on this event loop.
+it.skipIf(!isLinux).concurrent.each(["json", "advanced"])(
+  "the handler of the first of three messages of one read ticks the event loop: %s",
+  async serialization => {
+    using dir = tempDir("ipc-tick-between-messages", {
+      "entry.js": "",
+      "receiver.js": `
+        import { existsSync } from "node:fs";
+        using server = Bun.serve({ port: 0, fetch: () => new Response(Buffer.alloc(64 * 1024, "x")) });
+        const received = [];
+        let handled = false;
+        const { promise: disconnected, resolve: onDisconnect } = Promise.withResolvers();
+        Bun.spawn({
+          cmd: [process.execPath, "sender.js"],
+          serialization: process.argv[2],
+          stdio: ["ignore", "inherit", "inherit"],
+          onDisconnect,
+          ipc(message) {
+            received.push(message);
+            if (received.length !== 1) return;
+            Bun.build({
+              entrypoints: ["./entry.js"],
+              plugins: [
+                {
+                  name: "ticks the event loop",
+                  async setup() {
+                    await (await fetch(server.url)).bytes();
+                  },
+                },
+              ],
+            });
+            handled = true;
+          },
+        });
+        const cell = new Int32Array(new SharedArrayBuffer(4));
+        for (let i = 0; !existsSync("written"); i++) {
+          if (i === 20_000) throw new Error("the sender did not write");
+          Atomics.wait(cell, 0, 0, 1);
+        }
+        await disconnected;
+        // The sender exits while the first handler waits. The rest is delivered when it returns.
+        while (!handled) await new Promise(resolve => setImmediate(resolve));
+        console.log(JSON.stringify(received));
+        process.exit();
+      `,
+      "sender.js": senderOfOneRead(serialization, ["first", ["second"], { third: 3 }]),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "receiver.js", serialization],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: '["first",["second"],{"third":3}]\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
 
 // get_ipc_instance error path: on Windows, windows_configure_client can open
 // the pipe, mark the socket open, then fail read_start, at which point

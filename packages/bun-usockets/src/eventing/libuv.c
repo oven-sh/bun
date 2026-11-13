@@ -336,11 +336,12 @@ void us_loop_pump(struct us_loop_t *loop) {
    * timers are never processed. Bun's outer drive loops (wait_for_promise,
    * bun:test) supply their own keep-going predicate, so force exactly one
    * non-blocking iteration; UV_RUN_NOWAIT keeps the poll timeout at 0. */
-  loop->data.tick_depth++;
+  struct us_internal_outer_recv_bufs outer;
+  us_internal_loop_enter_tick(loop, &outer);
   loop->uv_loop->active_handles++;
   uv_run(loop->uv_loop, UV_RUN_NOWAIT);
   loop->uv_loop->active_handles--;
-  loop->data.tick_depth--;
+  us_internal_loop_leave_tick(loop, &outer);
 }
 
 struct us_loop_t *us_create_loop(void *hint,
@@ -473,9 +474,10 @@ void us_loop_run(struct us_loop_t *loop) {
   /* us_internal_loop_post only frees closed sockets at depth 1. A poll callback
    * that waits for a promise re-enters here while the outer dispatch is still
    * using its socket. us_loop_run_bun_tick does the same on POSIX. */
-  loop->data.tick_depth++;
+  struct us_internal_outer_recv_bufs outer;
+  us_internal_loop_enter_tick(loop, &outer);
   uv_run(loop->uv_loop, UV_RUN_ONCE);
-  loop->data.tick_depth--;
+  us_internal_loop_leave_tick(loop, &outer);
 }
 
 struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,

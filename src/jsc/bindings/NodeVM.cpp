@@ -1146,6 +1146,12 @@ void NodeVMGlobalObject::drainOwnMicrotasks()
     microtaskQueue().performMicrotaskCheckpoint</* useCallOnEachMicrotask */ true>(vm, [](JSGlobalObject*, JSGlobalObject*) {});
 }
 
+void NodeVMGlobalObject::dropOwnMicrotaskQueue()
+{
+    m_contextOptions.ownMicrotaskQueue = false;
+    setMicrotaskQueue(Ref { vm().defaultMicrotaskQueue() });
+}
+
 // The contextified object can itself be another context's global, so forwarding can recurse arbitrarily deep.
 static bool isSafeToForwardToContextifiedObject(JSGlobalObject* globalObject, ThrowScope& scope)
 {

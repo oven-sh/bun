@@ -79,7 +79,7 @@ public:
     void dispatchMessage(Ref<SerializedScriptValue>&&);
 
     void jsRef(JSGlobalObject*);
-    void jsUnref(JSGlobalObject*);
+    void jsUnref();
 
 private:
     friend class BunBroadcastChannelRegistry;
@@ -110,7 +110,8 @@ private:
 
     std::atomic<uint64_t> m_state { 0 };
 
-    bool m_hasRef { false };
+    // The Bun VM whose event loop this keeps alive.
+    void* m_vmKeptAlive { nullptr };
 };
 
 } // namespace WebCore

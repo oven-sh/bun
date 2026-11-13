@@ -4111,14 +4111,23 @@ static JSValue constructStderr(VM& vm, JSObject* processObject)
     return constructStdioWriteStream(processObject->globalObject(), processObject, 2);
 }
 
+// A thread has one table of names and one VM, so the three names are looked up once and kept until that VM ends.
+static thread_local UniquedStringImpl* keptNames[3];
+
+void forgetNamesOfStandardStreams()
+{
+    for (auto& name : keptNames) {
+        if (auto* kept = std::exchange(name, nullptr))
+            kept->deref();
+    }
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsStandardOutputStream, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = callFrame->argument(0);
 
-    // A thread has one table of names and one VM, so the three names are looked up once a thread and kept for as long as it lives.
-    static thread_local UniquedStringImpl* keptNames[3];
     if (!keptNames[0]) [[unlikely]] {
         unsigned index = 1;
         for (ASCIILiteral streamName : { "stdout"_s, "stderr"_s }) {

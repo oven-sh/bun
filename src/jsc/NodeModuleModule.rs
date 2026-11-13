@@ -161,13 +161,7 @@ fn on_require_extension_modify(
         }
     }
 
-    // PERF: the resolver's
-    // `extra_cjs_extensions` is owned `Box<[Box<[u8]>]>`, so we clone the keys.
-    vm.transpiler.resolver.opts.extra_cjs_extensions = vm
-        .commonjs_custom_extensions
-        .keys()
-        .to_vec()
-        .into_boxed_slice();
+    update_extra_cjs_extensions(vm);
     Ok(())
 }
 
@@ -188,13 +182,16 @@ fn on_require_extension_modify_non_function(
         drop(prev);
     }
 
-    // PERF: see `on_require_extension_modify`.
-    vm.transpiler.resolver.opts.extra_cjs_extensions = vm
-        .commonjs_custom_extensions
-        .keys()
-        .to_vec()
-        .into_boxed_slice();
+    update_extra_cjs_extensions(vm);
     Ok(())
+}
+
+fn update_extra_cjs_extensions(vm: &mut VirtualMachine) {
+    let keys = vm.commonjs_custom_extensions.keys();
+    vm.transpiler.resolver.opts.extra_cjs_extensions = match keys {
+        [] => None,
+        keys => Some(keys.into()),
+    };
 }
 
 pub fn find_longest_registered_extension<'a>(

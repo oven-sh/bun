@@ -72,6 +72,8 @@ extern "C" EncodedJSValue Bun__Bindgen__createObject(JSGlobalObject* globalObjec
         // Nothing was allocated since, so the collector has not looked at the object, and no write needs a barrier.
         static_assert(sizeof(WriteBarrier<Unknown>) == sizeof(JSValue));
         memcpy(static_cast<void*>(object->inlineStorage()), values, count * sizeof(JSValue));
+        // These stores came after the fence in finishCreation.
+        vm.mutatorFence();
         return JSValue::encode(object);
     }
     JSObject* object = constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min<unsigned>(count, JSFinalObject::maxInlineCapacity));

@@ -168,6 +168,8 @@ void JSCryptoKey::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 
     // static_assert(!std::is_base_of<ActiveDOMObject, CryptoKey>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
+
+    vm.heap.reportExtraMemoryAllocated(this, wrapped().memoryCostForGC());
 }
 
 JSObject* JSCryptoKey::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -313,6 +315,7 @@ void JSCryptoKey::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_algorithm);
     visitor.append(thisObject->m_usages);
+    visitor.reportExtraMemoryVisited(thisObject->wrapped().memoryCostForGC());
 }
 
 DEFINE_VISIT_CHILDREN(JSCryptoKey);

@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "BunClientData.h"
+#include "BunProcess.h"
 #include "WorkerMessagingProxy.h"
 #include "WebCoreJSBuiltins.h"
 
@@ -32,6 +33,9 @@
 #include "ModuleGraph.h"
 #include "StrongRootBlock.h"
 #include "IsolatedModuleCache.h"
+#include "v8/shim/FunctionTemplate.h"
+#include "v8/shim/GlobalInternals.h"
+#include "v8/shim/ObjectTemplate.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -45,6 +49,9 @@ JSHeapData::JSHeapData(Heap& heap)
     , m_heapCellTypeForHandleScopeImpl(JSC::IsoHeapCellType::Args<Bun::HandleScopeImpl>())
     , m_heapCellTypeForNativePromiseContext(JSC::IsoHeapCellType::Args<Bun::NativePromiseContext>())
     , m_heapCellTypeForJSModuleGraph(JSC::IsoHeapCellType::Args<Bun::JSModuleGraph>())
+    , m_heapCellTypeForV8GlobalInternals(JSC::IsoHeapCellType::Args<v8::shim::GlobalInternals>())
+    , m_heapCellTypeForFunctionTemplate(JSC::IsoHeapCellType::Args<v8::shim::FunctionTemplate>())
+    , m_heapCellTypeForObjectTemplate(JSC::IsoHeapCellType::Args<v8::shim::ObjectTemplate>())
     , m_domConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMConstructorBase)
     , m_domNamespaceObjectSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMObject)
     , m_subspaces(makeUnique<ExtendedDOMIsoSubspaces>())
@@ -109,6 +116,7 @@ JSVMClientData::~JSVMClientData()
     }
     ASSERT(m_sqliteDatabases.isEmpty());
 
+    Bun::forgetNamesOfStandardStreams();
     m_normalWorld = nullptr;
     if (vmHandle)
         Bun__VmHandle__release(std::exchange(vmHandle, nullptr));

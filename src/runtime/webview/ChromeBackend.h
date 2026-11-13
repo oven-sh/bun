@@ -463,6 +463,8 @@ public:
     WTF::HashMap<WTF::String, uint32_t> m_sessions;
 
     WTF::Vector<uint8_t> m_rx;
+    // How much of m_rx onData() has dispatched.
+    size_t m_rxConsumed = 0;
     WTF::Vector<uint8_t> m_txQueue;
     bool m_sockRefd = false;
 

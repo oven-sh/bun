@@ -3,12 +3,12 @@
 // It calls SQLite, so include it after the SQLite header of the module (lazy_sqlite3.h on macOS).
 
 #include "root.h"
+#include "SqliteCallbackRoots.h"
 #include "SqliteColumnNames.h"
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/JSGlobalObject.h>
-#include <JavaScriptCore/StrongInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <span>
@@ -224,6 +224,9 @@ struct SqliteUserAggregate {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(SqliteUserAggregate);
 
     Module module;
+    // The database cell, which whatever calls the function keeps alive.
+    JSC::JSCell* owner;
+    Ref<SqliteAccumulators> accumulators;
     // The first accumulator of a group. A function is called to make it.
     JSC::JSValue start;
     JSC::JSObject* step;
@@ -232,17 +235,18 @@ struct SqliteUserAggregate {
     // Null: the accumulator is the result.
     JSC::JSObject* result;
 
-    static int create(sqlite3* db, const char* name, int argumentCount, int flags, Module&& module, JSC::JSValue start, JSC::JSObject* step, JSC::JSObject* inverse, JSC::JSObject* result)
+    static int create(sqlite3* db, const char* name, int argumentCount, int flags, Module&& module, JSC::JSCell* owner, Ref<SqliteAccumulators>&& accumulators, JSC::JSValue start, JSC::JSObject* step, JSC::JSObject* inverse, JSC::JSObject* result)
     {
-        return sqlite3_create_window_function(db, name, argumentCount, flags, new SqliteUserAggregate { WTF::move(module), start, step, inverse, result },
+        return sqlite3_create_window_function(db, name, argumentCount, flags, new SqliteUserAggregate { WTF::move(module), owner, WTF::move(accumulators), start, step, inverse, result },
             xStep, xFinal, inverse ? xValue : nullptr, inverse ? xInverse : nullptr, xDestroy);
     }
 
 private:
     // Lives in sqlite3_aggregate_context(), which starts as zeroes, until xFinal.
-    // A window function keeps it from one sqlite3_step() to the next, so it has to be a root.
+    // A window function keeps it from one sqlite3_step() to the next.
     struct Accumulator {
-        JSC::Strong<JSC::Unknown> value;
+        // Of the value in `accumulators`.
+        unsigned index;
         bool initialized;
         bool isWindow;
     };
@@ -255,10 +259,9 @@ private:
             return accumulator;
 
         auto& vm = JSC::getVM(module.globalObject);
-        new (accumulator) Accumulator();
-        accumulator->initialized = true;
         // What xFinal finds if `start` throws.
-        accumulator->value.set(vm, JSC::jsUndefined());
+        accumulator->index = accumulators->add(vm, owner, JSC::jsUndefined());
+        accumulator->initialized = true;
 
         JSC::JSValue first = start;
         if (first.isCallable()) {
@@ -268,15 +271,15 @@ private:
                 return nullptr;
             }
         }
-        accumulator->value.set(vm, first);
+        accumulators->set(vm, owner, accumulator->index, first);
         return accumulator;
     }
 
-    static void destroyAccumulator(sqlite3_context* context)
+    void destroyAccumulator(sqlite3_context* context)
     {
         auto* accumulator = static_cast<Accumulator*>(sqlite3_aggregate_context(context, 0));
         if (accumulator && accumulator->initialized) {
-            accumulator->~Accumulator();
+            accumulators->remove(accumulator->index);
             accumulator->initialized = false;
         }
     }
@@ -295,11 +298,11 @@ private:
 
         JSC::MarkedArgumentBuffer arguments;
         arguments.ensureCapacity(argc + 1);
-        arguments.append(accumulator->value.get());
+        arguments.append(accumulators->get(accumulator->index));
         if (appendSqliteArguments(module, scope, arguments, argc, argv)) [[likely]] {
             JSC::JSValue next = callSqliteCallback(module, callback, JSC::jsUndefined(), arguments);
             if (!scope.exception() && !(Module::undefinedKeepsAccumulator && next.isUndefined())) [[likely]]
-                accumulator->value.set(vm, next);
+                accumulators->set(vm, owner, accumulator->index, next);
         }
         if (scope.exception()) [[unlikely]]
             sqlite3_result_error(context, "", 0);
@@ -319,7 +322,7 @@ private:
         if (accumulator && !(isFinal && accumulator->isWindow)) {
             accumulator->isWindow = !isFinal;
 
-            JSC::JSValue value = accumulator->value.get();
+            JSC::JSValue value = accumulators->get(accumulator->index);
             if (result) {
                 JSC::MarkedArgumentBuffer arguments;
                 arguments.append(value);

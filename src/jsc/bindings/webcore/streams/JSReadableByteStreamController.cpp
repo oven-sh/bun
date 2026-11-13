@@ -749,13 +749,14 @@ void readableByteStreamControllerEnqueue(JSGlobalObject* globalObject, JSReadabl
         readableByteStreamControllerProcessReadRequestsUsingQueue(globalObject, controller);
         RETURN_IF_EXCEPTION(scope, void());
         if (!readableStreamGetNumReadRequests(stream)) {
-            ASSERT(controller->m_pendingPullIntos.isEmpty());
+            while (!controller->m_pendingPullIntos.isEmpty() && controller->m_pendingPullIntos.first()->m_readerType == ReaderType::Default)
+                readableByteStreamControllerShiftPendingPullInto(controller);
             readableByteStreamControllerEnqueueChunkToQueue(globalObject, controller, WTF::move(transferredBuffer), byteOffset, byteLength);
             RETURN_IF_EXCEPTION(scope, void());
         } else {
             ASSERT(controller->m_queue.isEmpty());
             if (!controller->m_pendingPullIntos.isEmpty()) {
-                ASSERT(controller->m_pendingPullIntos.first()->m_readerType == ReaderType::Default);
+                ASSERT(controller->m_pendingPullIntos.first()->m_readerType != ReaderType::Byob);
                 readableByteStreamControllerShiftPendingPullInto(controller);
             }
             JSArrayBufferView* transferredView = constructViewOfType(globalObject, JSC::TypeUint8, WTF::move(transferredBuffer), byteOffset, byteLength);
@@ -1008,6 +1009,10 @@ void readableByteStreamControllerProcessReadRequestsUsingQueue(JSGlobalObject* g
             WTF::Locker locker { reader->cellLock() };
             readRequest = reader->m_readRequests.takeFirst().get();
         }
+        // The descriptor that autoAllocateChunkSize made for this request, which the queue answers instead. Before
+        // the fill, which can call pull().
+        if (!controller->m_pendingPullIntos.isEmpty() && controller->m_pendingPullIntos.first()->m_readerType == ReaderType::Default)
+            readableByteStreamControllerShiftPendingPullInto(controller);
         readableByteStreamControllerFillReadRequestFromQueue(globalObject, controller, readRequest);
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -1089,7 +1094,7 @@ void readableByteStreamControllerRespond(JSGlobalObject* globalObject, JSReadabl
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(!controller->m_pendingPullIntos.isEmpty());
+    RELEASE_ASSERT(!controller->m_pendingPullIntos.isEmpty());
     JSPullIntoDescriptor* firstDescriptor = controller->m_pendingPullIntos.first().get();
     ReadableStreamState state = controller->m_stream->m_state;
     if (state == ReadableStreamState::Closed) {
@@ -1208,7 +1213,7 @@ void readableByteStreamControllerRespondWithNewView(JSGlobalObject* globalObject
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(!controller->m_pendingPullIntos.isEmpty());
+    RELEASE_ASSERT(!controller->m_pendingPullIntos.isEmpty());
     ASSERT(!view->isDetached());
     JSPullIntoDescriptor* firstDescriptor = controller->m_pendingPullIntos.first().get();
     ReadableStreamState state = controller->m_stream->m_state;
@@ -1247,7 +1252,7 @@ void readableByteStreamControllerRespondWithNewView(JSGlobalObject* globalObject
 
 JSPullIntoDescriptor* readableByteStreamControllerShiftPendingPullInto(JSReadableByteStreamController* controller)
 {
-    ASSERT(!controller->m_byobRequest);
+    readableByteStreamControllerInvalidateBYOBRequest(controller);
     WTF::Locker locker { controller->cellLock() };
     return controller->m_pendingPullIntos.takeFirst().get();
 }

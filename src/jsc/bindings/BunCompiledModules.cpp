@@ -307,7 +307,7 @@ void recordFileRunFromSource(JSGlobalObject*, const String& path, ASCIILiteral w
 static bool isGivenByPlugin(Zig::GlobalObject* global, const String& name)
 {
     auto* modules = global->onLoadPlugins.virtualModules;
-    auto given = modules ? modules->get(name) : JSC::Strong<JSC::JSObject>();
+    JSC::JSObject* given = modules ? modules->get(name).get() : nullptr;
     return given && given->isCallable();
 }
 

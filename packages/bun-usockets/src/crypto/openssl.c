@@ -64,6 +64,8 @@
 
 struct loop_ssl_data {
   char *ssl_read_input, *ssl_read_output;
+  /* Kept from the last nested tick for the next one. NULL until there was one. */
+  char *spare_read_output;
   unsigned int ssl_read_input_length;
   unsigned int ssl_read_input_offset;
 
@@ -770,10 +772,29 @@ void us_internal_init_loop_ssl_data(struct us_loop_t *loop) {
   }
 }
 
+char *us_internal_ssl_replace_read_output(struct us_loop_t *loop) {
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
+  if (!loop_ssl_data) return NULL;
+  char *outer = loop_ssl_data->ssl_read_output;
+  loop_ssl_data->ssl_read_output = loop_ssl_data->spare_read_output ? loop_ssl_data->spare_read_output : ssl_alloc_read_output();
+  if (!loop_ssl_data->ssl_read_output) Bun__outOfMemory();
+  loop_ssl_data->spare_read_output = NULL;
+  return outer;
+}
+
+void us_internal_ssl_restore_read_output(struct us_loop_t *loop, char *outer) {
+  if (!outer) return;
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
+  if (!loop_ssl_data->spare_read_output) loop_ssl_data->spare_read_output = loop_ssl_data->ssl_read_output;
+  else us_free(loop_ssl_data->ssl_read_output);
+  loop_ssl_data->ssl_read_output = outer;
+}
+
 void us_internal_free_loop_ssl_data(struct us_loop_t *loop) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
   if (loop_ssl_data) {
     us_free(loop_ssl_data->ssl_read_output);
+    us_free(loop_ssl_data->spare_read_output);
     us_free(loop_ssl_data->ssl_write_batch);
     BIO_free(loop_ssl_data->shared_rbio);
     BIO_free(loop_ssl_data->shared_wbio);

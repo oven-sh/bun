@@ -141,19 +141,28 @@ impl InternalMsgHolder {
 
 bun_core::define_scoped_log!(log, IPC, visible);
 
-/// Union type that switches between simple Vec<u8> (for advanced mode)
+/// Union type that switches between a Vec<u8> and a position in it (for advanced mode)
 /// and JSONLineBuffer (for JSON mode with optimized newline tracking).
 enum IncomingBuffer {
     /// For advanced mode - uses length-prefix, no scanning needed
-    Advanced(Vec<u8>),
+    Advanced(AdvancedBuffer),
     /// For JSON mode - tracks newline positions to avoid O(n²) scanning
     Json(JSONLineBuffer),
+}
+
+/// `start` is kept here, not by the decode loop: a message handler can tick the event loop, and what
+/// is read there is decoded from where the outer loop got to.
+#[derive(Default)]
+struct AdvancedBuffer {
+    data: Vec<u8>,
+    /// Bytes of `data` that belong to messages that were delivered.
+    start: usize,
 }
 
 impl IncomingBuffer {
     fn init(mode: Mode) -> IncomingBuffer {
         match mode {
-            Mode::Advanced => IncomingBuffer::Advanced(Vec::<u8>::default()),
+            Mode::Advanced => IncomingBuffer::Advanced(AdvancedBuffer::default()),
             Mode::Json => IncomingBuffer::Json(JSONLineBuffer::new(json::max_line_len())),
         }
     }
@@ -922,6 +931,10 @@ pub(crate) struct SendQueue {
     pub(crate) mode: Mode,
     pub internal_msg_queue: JsCell<InternalMsgHolder>,
     incoming: JsCell<IncomingBuffer>,
+    /// What a read that is being delivered from the event loop's buffer still holds. A nested read of
+    /// this channel moves it to `incoming` first. A nested tick has receive buffers of its own, so it
+    /// stays readable until `on_data` returns.
+    undelivered: Cell<Option<core::ptr::NonNull<[u8]>>>,
     pub(crate) incoming_fd: Cell<Option<Fd>>,
 
     pub socket: JsCell<SocketUnion>,
@@ -1046,6 +1059,7 @@ impl SendQueue {
             mode,
             internal_msg_queue: JsCell::new(InternalMsgHolder::default()),
             incoming: JsCell::new(IncomingBuffer::init(mode)),
+            undelivered: Cell::new(None),
             incoming_fd: Cell::new(None),
             socket: JsCell::new(socket),
             owner: Cell::new(owner),
@@ -1070,6 +1084,13 @@ impl SendQueue {
     #[inline]
     pub(crate) fn as_ctx_ptr(&self) -> *mut SendQueue {
         self.root_ptr()
+    }
+
+    /// A message handler can tick the event loop, and the owner can be collected there.
+    #[inline]
+    fn ref_guard(&self) -> RefPtr<SendQueue> {
+        // SAFETY: `root_ptr` is the allocation's live root.
+        unsafe { RefPtr::init_ref(self.root_ptr()) }
     }
 
     #[inline]
@@ -2272,6 +2293,36 @@ enum DecodeStep {
     Fail(IPCDecodeError),
 }
 
+/// Returns false once the owner has detached: the messages that are left have no receiver.
+fn deliver(
+    send_queue: &SendQueue,
+    message: DecodedIPCMessage,
+    global_this: &JSGlobalObject,
+) -> bool {
+    if send_queue.owner_ref().is_none() {
+        return false;
+    }
+    crate::dispatch::fold(handle_ipc_message(send_queue, message, global_this));
+    true
+}
+
+fn deliver_buffered(
+    send_queue: &SendQueue,
+    global_this: &JSGlobalObject,
+    decode_next: impl Fn(&JsCell<IncomingBuffer>, &JSGlobalObject) -> DecodeStep,
+) {
+    loop {
+        match decode_next(&send_queue.incoming, global_this) {
+            DecodeStep::Message(result) => {
+                if !deliver(send_queue, result.message, global_this) {
+                    return;
+                }
+            }
+            step => return finish_decode(send_queue, &step),
+        }
+    }
+}
+
 fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
     match step {
         DecodeStep::Message(_) => unreachable!("caller dispatches Message"),
@@ -2320,40 +2371,37 @@ fn decode_next_json(incoming: &JsCell<IncomingBuffer>, global: &JSGlobalObject) 
     })
 }
 
-fn decode_next_advanced(
-    incoming: &JsCell<IncomingBuffer>,
-    global: &JSGlobalObject,
-    slice_start: &mut usize,
-) -> DecodeStep {
+fn decode_next_advanced(incoming: &JsCell<IncomingBuffer>, global: &JSGlobalObject) -> DecodeStep {
     incoming.with_mut(|inc| {
         let IncomingBuffer::Advanced(adv_buf) = inc else {
             unreachable!()
         };
-        let slice = &adv_buf.slice()[*slice_start..];
-        match decode_ipc_message(Mode::Advanced, slice, global, None) {
+        match decode_ipc_message(Mode::Advanced, &adv_buf.data[adv_buf.start..], global, None) {
             Ok(r) => {
-                let consumed = r.bytes_consumed as usize;
-                if consumed < slice.len() {
-                    *slice_start += consumed;
-                } else {
-                    adv_buf.clear();
-                    *slice_start = 0;
+                adv_buf.start += r.bytes_consumed as usize;
+                if adv_buf.start == adv_buf.data.len() {
+                    adv_buf.data.clear();
+                    adv_buf.start = 0;
                 }
                 DecodeStep::Message(r)
             }
             Err(IPCDecodeError::NotEnoughBytes) => {
                 // copy the remaining bytes to the start of the buffer
-                adv_buf.drain_front(*slice_start);
+                adv_buf.data.drain_front(adv_buf.start);
+                adv_buf.start = 0;
                 DecodeStep::Wait
             }
-            Err(e) => DecodeStep::Fail(e),
+            Err(e) => {
+                // A read that is delivered below this one goes on here: it must not report them again.
+                adv_buf.data.clear();
+                adv_buf.start = 0;
+                DecodeStep::Fail(e)
+            }
         }
     })
 }
 
-fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
-    let mut data = all_data;
-
+fn on_data2(send_queue: &SendQueue, data: &[u8]) {
     // In the VirtualMachine case, `globalThis` is an optional, in case
     // the vm is freed before the socket closes.
     let global_this = send_queue.get_global_this();
@@ -2369,51 +2417,55 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                 json_buf.append(data);
             });
 
-            loop {
-                match decode_next_json(&send_queue.incoming, &global_this) {
-                    DecodeStep::Message(result) => {
-                        crate::dispatch::fold(handle_ipc_message(
-                            send_queue,
-                            result.message,
-                            &global_this,
-                        ));
-                    }
-                    step => return finish_decode(send_queue, &step),
-                }
-            }
+            deliver_buffered(send_queue, &global_this, decode_next_json);
         }
         Mode::Advanced => {
             // Advanced mode: uses length-prefix, no newline scanning needed.
             // Try to decode directly from the incoming chunk first, only buffer if needed.
-            let buffered = send_queue.incoming.with_mut(|inc| {
+            let buffer = |data: &[u8]| {
+                send_queue.incoming.with_mut(|inc| {
+                    let IncomingBuffer::Advanced(adv_buf) = inc else {
+                        unreachable!()
+                    };
+                    handle_oom(adv_buf.data.write(data));
+                });
+            };
+            if let Some(undelivered) = send_queue.undelivered.take() {
+                // SAFETY: the `on_data2` that set it is on the stack, and its bytes outlive it.
+                buffer(unsafe { undelivered.as_ref() });
+            }
+            let has_buffered = send_queue.incoming.with_mut(|inc| {
                 let IncomingBuffer::Advanced(adv_buf) = inc else {
                     unreachable!()
                 };
-                adv_buf.len() != 0
+                !adv_buf.data.is_empty()
             });
-            if !buffered {
+            if has_buffered {
+                buffer(data);
+            } else {
+                let mut data = data;
                 loop {
                     match decode_ipc_message(Mode::Advanced, data, &global_this, None) {
                         Ok(result) => {
-                            let consumed = result.bytes_consumed as usize;
-                            crate::dispatch::fold(handle_ipc_message(
-                                send_queue,
-                                result.message,
-                                &global_this,
-                            ));
-                            if consumed < data.len() {
-                                data = &data[consumed..];
-                            } else {
+                            data = &data[result.bytes_consumed as usize..];
+                            if data.is_empty() {
+                                deliver(send_queue, result.message, &global_this);
                                 return;
+                            }
+                            send_queue
+                                .undelivered
+                                .set(Some(core::ptr::NonNull::from(data)));
+                            let delivered = deliver(send_queue, result.message, &global_this);
+                            let is_in_place = send_queue.undelivered.take().is_some();
+                            if !delivered {
+                                return;
+                            }
+                            if !is_in_place {
+                                break;
                             }
                         }
                         Err(IPCDecodeError::NotEnoughBytes) => {
-                            send_queue.incoming.with_mut(|inc| {
-                                let IncomingBuffer::Advanced(adv_buf) = inc else {
-                                    unreachable!()
-                                };
-                                handle_oom(adv_buf.write(data));
-                            });
+                            buffer(data);
                             log!("hit NotEnoughBytes");
                             return;
                         }
@@ -2422,26 +2474,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                 }
             }
 
-            // Buffer has existing data, append and process
-            send_queue.incoming.with_mut(|inc| {
-                let IncomingBuffer::Advanced(adv_buf) = inc else {
-                    unreachable!()
-                };
-                handle_oom(adv_buf.write(data));
-            });
-            let mut slice_start: usize = 0;
-            loop {
-                match decode_next_advanced(&send_queue.incoming, &global_this, &mut slice_start) {
-                    DecodeStep::Message(result) => {
-                        crate::dispatch::fold(handle_ipc_message(
-                            send_queue,
-                            result.message,
-                            &global_this,
-                        ));
-                    }
-                    step => return finish_decode(send_queue, &step),
-                }
-            }
+            deliver_buffered(send_queue, &global_this, decode_next_advanced);
         }
     }
 }
@@ -2466,6 +2499,7 @@ pub(crate) mod IPCHandlers {
         }
 
         pub(crate) fn on_data(send_queue: &SendQueue, _: Socket, all_data: &[u8]) {
+            let _guard = send_queue.ref_guard();
             let global_this = send_queue.get_global_this();
             // RAII: `enter()` now, `exit()` on drop. The guard holds the raw
             // `*mut EventLoop` so `&mut EventLoop` isn't held across `on_data2`.
@@ -2531,7 +2565,7 @@ pub(crate) mod IPCHandlers {
                 }
                 IncomingBuffer::Advanced(adv_buf) => {
                     // SAFETY: libuv writes into this region before on_read commits.
-                    let spare = unsafe { adv_buf.uv_alloc_spare_u8(suggested_size) };
+                    let spare = unsafe { adv_buf.data.uv_alloc_spare_u8(suggested_size) };
                     &mut spare[..suggested_size]
                 }
             }
@@ -2547,6 +2581,7 @@ pub(crate) mod IPCHandlers {
         /// current `len`).
         pub(crate) fn on_read(send_queue: &SendQueue, nread: usize) {
             log!("NewNamedPipeIPCHandler#onRead {}", nread);
+            let _guard = send_queue.ref_guard();
             let global_this = send_queue.get_global_this();
             let _scope = global_this.bun_vm().enter_event_loop_scope();
 
@@ -2565,18 +2600,7 @@ pub(crate) mod IPCHandlers {
                     });
 
                     // Process complete messages using next() - avoids O(n²) re-scanning
-                    loop {
-                        match decode_next_json(&send_queue.incoming, &global_this) {
-                            DecodeStep::Message(result) => {
-                                crate::dispatch::fold(handle_ipc_message(
-                                    send_queue,
-                                    result.message,
-                                    &global_this,
-                                ));
-                            }
-                            step => return finish_decode(send_queue, &step),
-                        }
-                    }
+                    deliver_buffered(send_queue, &global_this, decode_next_json);
                 }
                 Mode::Advanced => {
                     send_queue.incoming.with_mut(|inc| {
@@ -2584,25 +2608,9 @@ pub(crate) mod IPCHandlers {
                             unreachable!()
                         };
                         // SAFETY: `on_read_alloc` reserved ≥ nread bytes; libuv initialised them.
-                        unsafe { adv_buf.uv_commit(nread) };
+                        unsafe { adv_buf.data.uv_commit(nread) };
                     });
-                    let mut slice_start: usize = 0;
-                    loop {
-                        match decode_next_advanced(
-                            &send_queue.incoming,
-                            &global_this,
-                            &mut slice_start,
-                        ) {
-                            DecodeStep::Message(result) => {
-                                crate::dispatch::fold(handle_ipc_message(
-                                    send_queue,
-                                    result.message,
-                                    &global_this,
-                                ));
-                            }
-                            step => return finish_decode(send_queue, &step),
-                        }
-                    }
+                    deliver_buffered(send_queue, &global_this, decode_next_advanced);
                 }
             }
         }

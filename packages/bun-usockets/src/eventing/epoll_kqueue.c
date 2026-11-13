@@ -40,8 +40,6 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 /* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
 #define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
 #define CLEAR_POINTER_TAG(p) ((void *) ((uintptr_t) (p) & UNSET_BITS_49_UNTIL_64))
-#define LIKELY(cond) __builtin_expect((_Bool)(cond), 1)
-#define UNLIKELY(cond) __builtin_expect((_Bool)(cond), 0)
 
 #ifdef LIBUS_USE_EPOLL
 #define GET_READY_POLL(loop, index) (struct us_poll_t *) loop->ready_polls[index].data.ptr
@@ -448,7 +446,8 @@ static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop,
 void us_loop_run(struct us_loop_t *loop) {
     /* While we have non-fallthrough polls we shouldn't fall through */
     while (loop->num_polls) {
-        loop->data.tick_depth++;
+        struct us_internal_outer_recv_bufs outer;
+        us_internal_loop_enter_tick(loop, &outer);
         /* Emit pre callback */
         us_internal_loop_pre(loop);
 
@@ -468,7 +467,7 @@ void us_loop_run(struct us_loop_t *loop) {
 
         /* Emit post callback */
         us_internal_loop_post(loop);
-        loop->data.tick_depth--;
+        us_internal_loop_leave_tick(loop, &outer);
     }
 }
 
@@ -479,7 +478,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     if (loop->num_polls == 0)
         return;
 
-    loop->data.tick_depth++;
+    struct us_internal_outer_recv_bufs outer;
+    us_internal_loop_enter_tick(loop, &outer);
 
     /* Emit pre callback */
     us_internal_loop_pre(loop);
@@ -561,7 +561,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     /* Emit post callback */
     us_internal_loop_post(loop);
-    loop->data.tick_depth--;
+    us_internal_loop_leave_tick(loop, &outer);
 }
 
 void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop, struct us_poll_t *old_poll, struct us_poll_t *new_poll, int old_events, int new_events) {

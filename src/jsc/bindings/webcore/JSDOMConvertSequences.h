@@ -131,6 +131,7 @@ struct SequenceTraits<IDLType, std::array<typename IDLType::ImplementationType, 
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (index >= arraySize) {
             throwTypeError(&lexicalGlobalObject, scope);
+            return;
         }
         sequence[index] = std::forward<T>(element);
     }

@@ -5920,6 +5920,26 @@ describe("db.aggregate()", () => {
       db.close(true);
     });
 
+    it("its accumulator can reach it and is collected with it", () => {
+      const cells = () => {
+        Bun.gc(true);
+        const { SQLStatement = 0, SQLDatabase = 0 } = heapStats().objectTypeCounts;
+        return SQLStatement + SQLDatabase;
+      };
+      const before = cells();
+      for (let i = 0; i < 50; i++) {
+        const db = numbers(new Database(":memory:"));
+        const held = [];
+        db.aggregate("g", { start: () => held, step: (acc, _a) => acc, inverse: (acc, _a) => acc, result: () => 1 });
+        const query = db.prepare("SELECT g(a) OVER (ORDER BY a ROWS 1 PRECEDING) AS g FROM t");
+        const rows = query.iterate();
+        held.push(query, rows);
+        Bun.gc(i % 10 === 0);
+        expect(rows.next().value).toEqual({ g: 1 });
+      }
+      expect(cells() - before).toBeLessThan(20);
+    });
+
     it("so does collecting it", () => {
       using db = numbers(new Database(":memory:"));
       let calls = 0;

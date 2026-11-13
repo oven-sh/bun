@@ -536,14 +536,6 @@ impl String {
             },
         }
     }
-    /// `WTF::RefPtr(ptr)` — wrap a raw `*mut WTFStringImplStruct` someone else
-    /// keeps alive, taking a **new** ref for the returned `String`.
-    #[inline]
-    pub fn retain_wtf_impl(wtf: WTFStringImpl) -> Self {
-        let s = Self::adopt_wtf_impl(wtf);
-        s.ref_();
-        s
-    }
     /// Extract the raw `*mut WTFStringImplStruct`
     /// from a WTF-backed string, transferring ownership of the +1 ref to the caller. Returns
     /// null for non-WTF tags. Used by SQL data-cell paths that hand the impl pointer to C++.

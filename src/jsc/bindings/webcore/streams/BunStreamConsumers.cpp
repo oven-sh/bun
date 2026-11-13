@@ -11,6 +11,7 @@
 #include "GeneratedBlob.h"
 #include "GeneratedSink.h"
 #include "helpers.h"
+#include "JSBuffer.h"
 #include "JSDOMFormData.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDirectStreamController.h"
@@ -455,16 +456,22 @@ static JSValue concatenateChunks(JSC::VM& vm, JSGlobalObject* globalObject, JSAr
     return JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTF::move(buffer));
 }
 
-static bool binaryChunkSpan(JSValue chunk, std::span<const uint8_t>& out)
+static bool binaryChunkSpan(JSValue chunk, std::span<const uint8_t>& out, bool* isShared = nullptr)
 {
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk)) {
-        if (!view->isDetached())
+        if (!view->isDetached()) {
             out = view->span();
+            if (isShared)
+                *isShared = view->isShared();
+        }
         return true;
     }
     if (auto* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(chunk)) {
-        if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached())
+        if (auto* impl = jsBuffer->impl(); impl && !impl->isDetached()) {
             out = impl->span();
+            if (isShared)
+                *isShared = impl->isShared();
+        }
         return true;
     }
     return false;
@@ -586,12 +593,19 @@ static JSValue convertChunksToText(JSGlobalObject* globalObject, JSValue chunksV
             RELEASE_AND_RETURN(scope, jsString(vm, stripped));
         }
         std::span<const uint8_t> span;
-        if (binaryChunkSpan(chunk, span)) {
+        bool isShared = false;
+        if (binaryChunkSpan(chunk, span, &isShared)) {
             if (exceedsStringLimit(span.size())) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
             }
-            WTF::String text = Zig::convertUTF8ToString(span);
+            WTF::String text;
+            if (isShared) [[unlikely]] {
+                auto copy = Bun::copySharedBytes(globalObject, scope, span);
+                RETURN_IF_EXCEPTION(scope, {});
+                text = Zig::convertUTF8ToString(copy.span());
+            } else
+                text = Zig::convertUTF8ToString(span);
             if (text.isNull() && !span.empty()) [[unlikely]] {
                 throwOutOfMemoryError(globalObject, scope);
                 return {};

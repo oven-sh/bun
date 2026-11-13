@@ -143,6 +143,11 @@ impl BundleOptions {
             ExtOrder::MainField => &self.main_field_extension_order,
         }
     }
+
+    #[inline]
+    pub(crate) fn extra_cjs_extensions(&self) -> &[Box<[u8]>] {
+        self.extra_cjs_extensions.as_deref().unwrap_or_default()
+    }
 }
 
 pub mod bundle_options {
@@ -176,7 +181,8 @@ pub struct BundleOptions {
     pub extension_order: ExtensionOrder,
     pub conditions: Conditions,
     pub external: ExternalModules,
-    pub extra_cjs_extensions: Box<[Box<[u8]>]>,
+    /// Replaced on the JS thread while pool threads resolve with a copy of these options.
+    pub extra_cjs_extensions: Option<std::sync::Arc<[Box<[u8]>]>>,
     pub framework: Option<Framework>,
     pub global_cache: bun_options_types::global_cache::GlobalCache,
     // The bundler

@@ -610,8 +610,7 @@ impl<'a> Resolver<'a> {
     /// fresh `BundleOptions` subset and arena-allocates its own `Log`).
     ///
     /// # Safety
-    /// `env_loader()` returns `&'a Loader` and the caller picks `'a`: the
-    /// loader that `from.env_loader` points to must outlive `'a`.
+    /// The caller picks `'a`: the loader that `from.env_loader` points to must outlive it.
     pub unsafe fn for_worker(
         from: &Resolver<'_>,
         log: NonNull<bun_ast::Log>,
@@ -927,24 +926,6 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Safe read-only accessor for the optional `DotEnv::Loader` back-reference.
-    ///
-    /// Single `unsafe` deref site for the `env_loader: Option<NonNull<_>>`
-    /// field. The pointee is the Transpiler-owned loader (set from
-    /// `transpiler.env`) and strictly outlives the resolver. Only called once
-    /// resolution has begun (after `run_env_loader()`), so no `&mut Loader` is
-    /// live concurrently — see the field comment for why this is *not* stored
-    /// as `Option<&'a Loader>`.
-    #[inline]
-    pub(crate) fn env_loader(&self) -> Option<&'a DotEnv::Loader> {
-        // SAFETY: BACKREF — `env_loader` names the Transpiler-owned
-        // `DotEnv::Loader`, live for the resolver's lifetime `'a`; resolution
-        // never mutates the env, so no `&mut Loader` overlaps this shared
-        // borrow. Returned as `&'a` (not tied to `&self`) so callers may keep
-        // the env borrow across `&mut self` resolver calls.
-        self.env_loader.map(|p| unsafe { p.as_ref() })
-    }
-
     #[inline]
     pub(crate) fn use_package_manager(&self) -> bool {
         // TODO: make this configurable. the rationale for disabling
@@ -1129,7 +1110,7 @@ impl<'a> Resolver<'a> {
     ) -> Option<&'static [u8]> {
         let search = crate::compiled_program::ExtensionSearch {
             extensions: self.opts.ext_order_slice(self.extension_order),
-            extra_extensions: &self.opts.extra_cjs_extensions,
+            extra_extensions: self.opts.extra_cjs_extensions(),
             rewritten_extensions: &|extension, path| {
                 rewritten_file_extensions(extension, || {
                     strings::path_contains_node_modules_folder(path)
@@ -1153,7 +1134,7 @@ impl<'a> Resolver<'a> {
     ) -> PackageLookup {
         let search = crate::compiled_program::ExtensionSearch {
             extensions: self.opts.ext_order_slice(self.extension_order),
-            extra_extensions: &self.opts.extra_cjs_extensions,
+            extra_extensions: self.opts.extra_cjs_extensions(),
             rewritten_extensions: &|extension, path| {
                 rewritten_file_extensions(extension, || {
                     strings::path_contains_node_modules_folder(path)
@@ -1315,7 +1296,7 @@ impl<'a> Resolver<'a> {
     pub fn resolve_embedded_entry_point(&self, specifier: &[u8]) -> Option<&'static [u8]> {
         let search = crate::compiled_program::ExtensionSearch {
             extensions: self.opts.ext_order_slice(self.extension_order),
-            extra_extensions: &self.opts.extra_cjs_extensions,
+            extra_extensions: self.opts.extra_cjs_extensions(),
             rewritten_extensions: &|extension, path| {
                 rewritten_file_extensions(extension, || {
                     strings::path_contains_node_modules_folder(path)
@@ -1365,7 +1346,7 @@ impl<'a> Resolver<'a> {
         )?;
         let search = crate::compiled_program::ExtensionSearch {
             extensions: self.opts.ext_order_slice(self.extension_order),
-            extra_extensions: &self.opts.extra_cjs_extensions,
+            extra_extensions: self.opts.extra_cjs_extensions(),
             rewritten_extensions: &|extension, path| {
                 rewritten_file_extensions(extension, || {
                     strings::path_contains_node_modules_folder(path)
@@ -3265,10 +3246,12 @@ impl<'a> Resolver<'a> {
 
         // try resolve from `NODE_PATH`
         // https://nodejs.org/api/modules.html#loading-from-the-global-folders
-        let node_path: &[u8] = self
-            .env_loader()
-            .and_then(|env| env.get(b"NODE_PATH"))
-            .unwrap_or(b"");
+        // SAFETY: BACKREF, live for the resolver's lifetime. On a pool thread it is the JS thread's, which
+        // writes the map through `update_map`.
+        let node_path = self
+            .env_loader
+            .and_then(|env| unsafe { DotEnv::Loader::get_copy(env.as_ptr(), b"NODE_PATH") })
+            .unwrap_or_default();
         if !node_path.is_empty() {
             let delim = if cfg!(windows) { b';' } else { b':' };
             for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {
@@ -5693,11 +5676,10 @@ impl<'a> Resolver<'a> {
         // NOTE: index by `0..len` so each iteration takes a fresh short
         // borrow of `self.opts` that ends before `&mut self` is taken by
         // `load_index_with_extension` (avoids the forbidden lifetime-extension cast).
-        let n = self.opts.extra_cjs_extensions.len();
+        let n = self.opts.extra_cjs_extensions().len();
         for i in 0..n {
-            // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
-            // `extra_cjs_extensions` is heap-stable for the resolver's life.
-            let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
+            // BACKREF: see `RawSlice` note above.
+            let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions()[i]);
             if self
                 .load_index_with_extension(dir_info, &ext, out)
                 .is_success()
@@ -6295,11 +6277,10 @@ impl<'a> Resolver<'a> {
         // NOTE: index by `0..len` so each iteration takes a fresh short
         // borrow of `self.opts` that ends before `&mut self` is taken by
         // `load_extension` (avoids the forbidden lifetime-extension cast).
-        let n = self.opts.extra_cjs_extensions.len();
+        let n = self.opts.extra_cjs_extensions().len();
         for i in 0..n {
-            // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
-            // `extra_cjs_extensions` is heap-stable for the resolver's life.
-            let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
+            // BACKREF: see `RawSlice` note above.
+            let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions()[i]);
             if let Some(result) = self.load_extension(base, path, &ext, dir_entry) {
                 dec_ret!(Some(result));
             }

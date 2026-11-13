@@ -181,7 +181,7 @@ pub struct VirtualMachine {
     /// every case the storage outlives this VM but is not Rust-`'static`.
     /// `RawSlice` carries the BACKREF outlives-holder invariant — read via
     /// `main()`.
-    main: Option<bun_ptr::RawSlice<u8>>,
+    pub(crate) main: Option<bun_ptr::RawSlice<u8>>,
     pub main_entry_point: MainEntryPoint,
     pub did_look_for_server: bool,
     pub main_resolved_path: bun_core::String,
@@ -333,9 +333,6 @@ pub struct VirtualMachine {
     pub(crate) macro_event_loop: EventLoop,
     pub regular_event_loop: EventLoop,
     pub event_loop: *mut EventLoop, // BORROW_FIELD — points at sibling regular_event_loop/macro_event_loop
-
-    pub(crate) ref_strings: crate::ref_string::Map,
-    pub(crate) ref_strings_mutex: bun_threading::Mutex,
 
     pub(crate) active_tasks: usize,
 
@@ -3502,7 +3499,6 @@ impl VirtualMachine {
             addr_of_mut!((*vm).commonjs_custom_extensions).write(Default::default());
             addr_of_mut!((*vm).entry_point).write(Default::default());
             addr_of_mut!((*vm).origin).write(Default::default());
-            addr_of_mut!((*vm).ref_strings).write(Default::default());
             addr_of_mut!((*vm).modules).write(Default::default());
             addr_of_mut!((*vm).macro_event_loop).write(EventLoop::default());
             addr_of_mut!((*vm).proxy_env_storage).write(Default::default());
@@ -3521,7 +3517,6 @@ impl VirtualMachine {
             // Mutex fields: zeroed atomics ARE valid-unlocked, but write the
             // canonical value so the invariant is explicit.
             addr_of_mut!((*vm).remap_stack_frames_mutex).write(bun_threading::Mutex::new());
-            addr_of_mut!((*vm).ref_strings_mutex).write(bun_threading::Mutex::new());
 
             addr_of_mut!((*vm).transpiler_store)
                 .write(crate::runtime_transpiler_store::RuntimeTranspilerStore::init());
@@ -4475,12 +4470,6 @@ unsafe extern "C" {
     safe fn BakeCreateProdGlobal(console_ptr: *mut c_void) -> *mut JSGlobalObject;
 }
 
-extern "C" fn free_ref_string(str_: *mut crate::ref_string::RefString, _: *mut c_void, _: usize) {
-    // SAFETY: `str_` is the `ctx` we passed to `String::create_external` in
-    // `ref_counted_string`; it points at a heap `RefString`.
-    unsafe { crate::ref_string::RefString::destroy(str_) };
-}
-
 impl VirtualMachine {
     /// Whether native addons (`process.dlopen`) are allowed (`--no-addons` disables them).
     #[unsafe(export_name = "Bun__VM__allowAddons")]
@@ -5268,18 +5257,6 @@ impl VirtualMachine {
         Ok(vm)
     }
 
-    /// Stored as [`RefString::on_before_deinit`] (an unsafe-fn-ptr slot) in
-    /// [`Self::ref_counted_string`]; only ever invoked from
-    /// `RefString::destroy` with the live `*mut RefString` being torn down.
-    fn clear_ref_string(_: *mut c_void, ref_string: *mut crate::ref_string::RefString) {
-        // SAFETY: only reachable via `RefString::destroy`, which passes the
-        // live heap `RefString` allocated in `ref_counted_string`;
-        // safe-fn coerces to the unsafe-fn-ptr `Callback` slot type.
-        let hash = unsafe { &*ref_string }.hash;
-        // SAFETY: `get()` is the live per-thread VM.
-        VirtualMachine::get().as_mut().ref_strings.remove(&hash);
-    }
-
     /// Whether what is made of a file on disk is static code (`ResolvedSource::is_static`). A standalone executable is
     /// stored in itself, so to it a file on disk is not part of the program. A test run is compiled in place from such files.
     pub fn is_file_on_disk_static(in_standalone_executable: bool, path: &[u8]) -> bool {
@@ -5288,97 +5265,6 @@ impl VirtualMachine {
             && bun_core::code_generation_from_strings_by_flags()
                 != bun_core::CodeGenerationFromStrings::Strict;
         (!in_standalone_executable || runs_tests_in_place) && !path.starts_with(b"data:")
-    }
-
-    /// Builds a `ResolvedSource` backed by a ref-counted copy of `code` interned in the VM's ref-string map.
-    pub fn ref_counted_resolved_source(
-        &mut self,
-        ast: crate::resolved_source::PrintedAst,
-        code: &[u8],
-        specifier: &bun_core::String,
-        source_url: &[u8],
-        hash_: Option<u32>,
-    ) -> Result<ResolvedSource, crate::ref_string::StringTooLong> {
-        // refCountedString will panic if the code is empty
-        if code.is_empty() {
-            return Ok(ResolvedSource {
-                source_url: specifier.create_if_different(source_url),
-                ..ResolvedSource::printed(ast, Default::default())
-            });
-        }
-        let source = self.ref_counted_string(code, hash_)?;
-        // SAFETY: `ref_counted_string` returns a live `RefString` held in
-        // `self.ref_strings` until JSC calls the external-string finalizer.
-        let source_ref = unsafe { source.as_ref() };
-
-        Ok(ResolvedSource {
-            source_url: specifier.create_if_different(source_url),
-            ..ResolvedSource::printed(ast, bun_core::String::retain_wtf_impl(source_ref.impl_))
-        })
-    }
-
-    /// Interns `input_` in the VM's ref-string map and returns the ref-counted entry.
-    pub fn ref_counted_string(
-        &mut self,
-        input_: &[u8],
-        hash_: Option<u32>,
-    ) -> Result<NonNull<crate::ref_string::RefString>, crate::ref_string::StringTooLong> {
-        use crate::ref_string::{RefString, StringTooLong};
-        use bun_collections::zig_hash_map::MapEntry as Entry;
-        jsc::mark_binding();
-        debug_assert!(!input_.is_empty());
-        let hash = hash_.unwrap_or_else(|| RefString::compute_hash(input_));
-        let _unlock = self.ref_strings_mutex.lock_guard();
-        // Note: reshaped for borrowck — capture the back-pointer before
-        // `ref_strings.entry()` takes its unique borrow on `self`.
-        let self_ctx = NonNull::new(std::ptr::from_mut::<VirtualMachine>(self).cast::<c_void>());
-
-        match self.ref_strings.entry(hash) {
-            Entry::Occupied(o) => Ok(*o.get()),
-            Entry::Vacant(v) => {
-                if input_.len() > bun_core::String::max_length() {
-                    return Err(StringTooLong);
-                }
-                let buf = Box::<[u8]>::from(input_);
-                let len = buf.len();
-                let ptr = bun_core::heap::into_raw(buf).cast::<u8>().cast_const();
-                let ref_ = bun_core::heap::into_raw_nn(Box::new(RefString {
-                    ptr,
-                    len,
-                    hash,
-                    // Filled in just below — `create_external` needs the
-                    // `*mut RefString` ctx pointer first.
-                    impl_: core::ptr::null_mut(),
-                    ctx: self_ctx,
-                    // Set after `create_external` succeeds. If it fails, it runs `free_ref_string` while `v` still borrows the map.
-                    on_before_deinit: None,
-                }));
-                // SAFETY: `ref_` is the unique live `*mut RefString` (just
-                // boxed); `(ptr, len)` is its owned latin-1 buffer. The
-                // external-string finalizer (`free_ref_string`) is called by
-                // WTF on the JS thread when the impl refcount hits zero, with
-                // `ref_` as ctx.
-                let s = unsafe {
-                    bun_core::String::create_external::<*mut RefString>(
-                        bun_core::ffi::slice(ptr, len),
-                        ref_.as_ptr(),
-                        free_ref_string,
-                    )
-                };
-                if s.tag() == bun_core::Tag::Dead {
-                    // `create_external` already freed `ref_`.
-                    return Err(StringTooLong);
-                }
-                // SAFETY: `s` owns the impl, so `free_ref_string` has not run
-                // and `ref_` is still the unique live `RefString`.
-                unsafe {
-                    (*ref_.as_ptr()).impl_ = s.leak_wtf_impl();
-                    (*ref_.as_ptr()).on_before_deinit = Some(VirtualMachine::clear_ref_string);
-                }
-                v.insert(ref_);
-                Ok(ref_)
-            }
-        }
     }
 
     // Note: `flags` is a runtime arg —
@@ -6622,7 +6508,12 @@ impl VirtualMachine {
         self.restore_test_time_zone();
         if let Some(snapshot) = self.test_isolation_state.proxy_env.as_ref() {
             let mut slots = self.proxy_env_storage.lock();
-            slots.restore(&mut self.transpiler.env_mut().map, snapshot);
+            // SAFETY: the VM's loader is live, and only this thread writes its map.
+            unsafe {
+                bun_dotenv::Loader::update_map(self.transpiler.env, |map| {
+                    slots.restore(map, snapshot)
+                })
+            };
         }
     }
 

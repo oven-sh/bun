@@ -89,6 +89,20 @@ module.exports = debugMode => {
       console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
     },
 
+    // Bun only: 400 collected pairs of templates with 1000 properties each. Their
+    // property lists are about 70 KB per pair, 27 MiB if none of it is freed.
+    test_v8_template_properties_leak() {
+      nativeModule.make_templates_with_properties(50, 1000);
+      Bun.gc(true);
+      const before = process.memoryUsage.rss();
+      for (let i = 0; i < 8; i++) {
+        nativeModule.make_templates_with_properties(50, 1000);
+        Bun.gc(true);
+      }
+      const after = process.memoryUsage.rss();
+      console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
+    },
+
     test_v8_global() {
       console.log("global initial value =", nativeModule.global_get());
 

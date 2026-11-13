@@ -25,9 +25,12 @@ namespace Zig {
 
 using namespace JSC;
 
+class GlobalObject;
+
 class BunPlugin {
 public:
-    using VirtualModuleMap = WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSObject>>;
+    // The global object owns and visits these, all under its cellLock(). A Strong would keep the global object alive.
+    using VirtualModuleMap = WTF::UncheckedKeyHashMap<String, JSC::WriteBarrier<JSC::JSObject>>;
 
     // This is a list of pairs of regexps and functions to match against
     class Group {
@@ -36,16 +39,25 @@ public:
         // JavaScriptCore/RegularExpression does exist however it does not JIT
         // We want JIT!
         // TODO: evaluate if using JSInternalFieldImpl(2) is faster
-        Vector<JSC::Strong<JSC::RegExp>> filters = {};
-        Vector<JSC::Strong<JSC::JSObject>> callbacks = {};
+        Vector<JSC::WriteBarrier<JSC::RegExp>> filters = {};
+        Vector<JSC::WriteBarrier<JSC::JSObject>> callbacks = {};
         BunPluginTarget target { BunPluginTargetBun };
 
-        void append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* func);
+        void append(JSC::VM& vm, JSC::JSCell* owner, JSC::RegExp* filter, JSC::JSObject* func);
         JSObject* find(JSC::JSGlobalObject* globalObj, String& path);
         void clear()
         {
             filters.clear();
             callbacks.clear();
+        }
+
+        template<typename Visitor>
+        void visit(Visitor& visitor)
+        {
+            for (auto& filter : filters)
+                visitor.append(filter);
+            for (auto& callback : callbacks)
+                visitor.append(callback);
         }
     };
 
@@ -70,15 +82,24 @@ public:
             return nullptr;
         }
 
-        void append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* func, String& namespaceString);
+        void append(JSC::VM& vm, JSC::JSCell* owner, JSC::RegExp* filter, JSC::JSObject* func, String& namespaceString);
 
         bool isEmpty() const { return fileNamespace.filters.isEmpty() && groups.isEmpty(); }
 
-        void clear()
+        void clear(JSC::JSCell* owner)
         {
+            Locker locker { owner->cellLock() };
             fileNamespace.clear();
             namespaces.clear();
             groups.clear();
+        }
+
+        template<typename Visitor>
+        void visit(Visitor& visitor)
+        {
+            fileNamespace.visit(visitor);
+            for (auto& group : groups)
+                group.visit(visitor);
         }
     };
 
@@ -163,7 +184,7 @@ public:
         // The pending loads those modules are waiting for. Each gets exactly one reaction. Weak, so a load that never settles doesn't keep its global object alive.
         WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};
         // The mock a fetch in flight keeps resolving to, even if the mock is replaced or removed meanwhile (keepInFlightModuleMock).
-        VirtualModuleMap moduleMocksBeingLoaded = {};
+        WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSObject>> moduleMocksBeingLoaded = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
         WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
 
@@ -179,15 +200,28 @@ public:
 
         bool hasVirtualModules() const { return virtualModules != nullptr; }
 
-        void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
+        static void addVirtualModule(JSC::VM&, GlobalObject*, const String& path, JSC::JSObject*);
+        static void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
+
+        template<typename Visitor>
+        void visit(Visitor& visitor)
+        {
+            Base::visit(visitor);
+            if (virtualModules) {
+                for (auto& virtualModule : virtualModules->values())
+                    visitor.append(virtualModule);
+            }
+        }
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
 
-        void clear()
+        void clear(JSC::JSCell* owner)
         {
-            Base::clear();
-            delete virtualModules;
-            virtualModules = nullptr;
+            Base::clear(owner);
+            {
+                Locker locker { owner->cellLock() };
+                delete std::exchange(virtualModules, nullptr);
+            }
             mustDoExpensiveRelativeLookup = false;
             displacedPreloadModuleMocks.clear();
             runningModuleMocks.clear();
@@ -291,9 +325,7 @@ public:
 
         ~OnLoad()
         {
-            if (virtualModules) {
-                delete virtualModules;
-            }
+            delete std::exchange(virtualModules, nullptr);
         }
     };
 
@@ -318,8 +350,6 @@ public:
         bool isResolvingImportStatement { false };
     };
 };
-
-class GlobalObject;
 
 } // namespace Zig
 

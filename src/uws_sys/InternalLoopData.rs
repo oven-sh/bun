@@ -43,6 +43,7 @@ pub struct InternalLoopData {
     quic_timer: Cell<*mut Timer>,
     pub iterator: Cell<*mut SocketGroup>,
     recv_buf: Cell<*mut u8>,
+    spare_recv_buf: Cell<*mut u8>,
     send_buf: Cell<*mut u8>,
     ssl_data: Cell<*mut c_void>,
     pre_cb: Cell<Option<unsafe extern "C" fn(*mut Loop)>>,

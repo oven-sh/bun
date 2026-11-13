@@ -144,7 +144,7 @@ private:
     // Leaves m_x509 null, so only the overloads that take a certificate are public.
     static JSX509Certificate* create(JSC::VM& vm, JSC::Structure* structure);
 
-    uint16_t m_extraMemorySizeForGC = 0;
+    size_t m_extraMemorySizeForGC = 0;
 };
 
 void setupX509CertificateClassStructure(LazyClassStructure::Initializer& init);

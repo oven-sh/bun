@@ -15,6 +15,12 @@ class ObjectTemplate : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
 
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<ObjectTemplate*>(cell)->~ObjectTemplate();
+    }
+
     DECLARE_INFO;
 
     static ObjectTemplate* create(JSC::VM& vm, JSC::Structure* structure);
@@ -26,7 +32,8 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<ObjectTemplate, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForObjectTemplate, m_subspaceForObjectTemplate));
+        return WebCore::subspaceForImpl<ObjectTemplate, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForObjectTemplate, m_subspaceForObjectTemplate),
+            [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForObjectTemplate; });
     }
 
     DECLARE_VISIT_CHILDREN;

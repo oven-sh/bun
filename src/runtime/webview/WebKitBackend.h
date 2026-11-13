@@ -48,6 +48,8 @@ struct HostClient {
     std::unordered_map<uint32_t, JSC::Weak<JSWebView>> viewsById;
 
     WTF::Vector<uint8_t> rx;
+    // How much of rx onData() has dispatched.
+    size_t rxConsumed = 0;
     WTF::Vector<uint8_t> txQueue;
     bool sockRefd = false;
 

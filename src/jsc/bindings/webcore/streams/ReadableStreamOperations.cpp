@@ -85,7 +85,7 @@ JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* 
 
 JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch)
 {
-    if (!branch || branch->m_controllerKind != ControllerKind::Byte)
+    if (!branch || branch->m_controllerKind != ControllerKind::Byte || branch->m_state == ReadableStreamState::Errored)
         return nullptr;
     return uncheckedDowncast<JSReadableByteStreamController>(branch->m_controller.get());
 }

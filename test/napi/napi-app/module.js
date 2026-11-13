@@ -987,6 +987,19 @@ nativeTests.test_napi_wrap_proxy = () => {
   assert(nativeTests.try_wrap(target, 5));
   assert(nativeTests.try_wrap(proxy, 6));
   console.log(nativeTests.try_unwrap(target), nativeTests.try_unwrap(proxy));
+
+  // Takes the wrap off the Proxy, not off its target.
+  console.log("remove:", nativeTests.try_remove_wrap(proxy));
+  console.log("unwrap after remove:", nativeTests.try_unwrap(proxy), nativeTests.try_unwrap(target));
+  console.log("remove after remove:", nativeTests.try_remove_wrap(proxy));
+  console.log("wrap again:", nativeTests.try_wrap(proxy, 7), nativeTests.try_unwrap(proxy));
+
+  // The reference napi_wrap returned may be deleted once the wrap is removed.
+  const withRef = new Proxy({}, {});
+  createWrapWithWeakRef(withRef);
+  nativeTests.remove_wrap(withRef);
+  nativeTests.delete_wrap_ref();
+  console.log("unwrap after the reference is deleted:", nativeTests.get_wrap_data(withRef));
 };
 
 nativeTests.test_napi_wrap_cross_addon = () => {
@@ -1720,6 +1733,37 @@ nativeTests.test_external_buffer_untransferable = () => {
     attempt(`empty ${kind}: structuredClone`, () => structuredClone(arrayBuffer, { transfer: [arrayBuffer] }));
   }
   console.log("stats:", JSON.stringify(nativeTests.external_for_transfer_stats()));
+};
+
+// A key that is not a string becomes one that nothing but the call refers to.
+nativeTests.test_property_key_outlives_user_code = () => {
+  let seen = [];
+  const inner = new Proxy(
+    {},
+    {
+      has: (_, key) => (seen.push(key), false),
+      deleteProperty: (_, key) => (seen.push(key), true),
+    },
+  );
+  const churn = () => {
+    collectGarbage();
+    globalThis.churned = Array.from({ length: 1000 }, (_, i) => Buffer.alloc(41, 0x30 + (i % 10)).toString());
+  };
+  const outer = new Proxy(inner, {
+    get has() {
+      churn();
+    },
+    get deleteProperty() {
+      churn();
+    },
+  });
+  let made = 0;
+  const key = () => ({ toString: () => `key-${Buffer.alloc(36, 0x61).toString()}-${made++}` });
+  for (let i = 0; i < 5; i++) {
+    nativeTests.perform_has(outer, key());
+    nativeTests.perform_delete(outer, key());
+  }
+  console.log(seen.join("\n"));
 };
 
 // A worker creates the buffers and exits: the parent can only ever have copies,

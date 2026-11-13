@@ -3207,40 +3207,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     mi.into_deserialized()
                 });
 
-                // Watcher path uses ref-counted source.
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                if unsafe { &*jsc_vm }.is_watcher_enabled() {
-                    // SAFETY: `extra.source_code_printer` is non-null per
-                    // `TranspileExtra` contract; rederive after the print block
-                    // (Stacked Borrows — see the matching note below).
-                    let printer: &mut bun_js_printer::BufferPrinter =
-                        unsafe { &mut *extra.source_code_printer };
-                    let written = printer.ctx.get_written();
-                    let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
-                        && path.is_file()
-                        && loader.is_java_script_like()
-                    {
-                        bun_jsc::node_compile_cache::fetch(path.text, is_commonjs_module, written)
-                    } else {
-                        None
-                    };
-                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread
-                    // VM; `printer.ctx.get_written()` borrows thread-local data.
-                    let mut resolved_source = unsafe {
-                        (*jsc_vm).ref_counted_resolved_source(
-                            printed_ast,
-                            written,
-                            input_specifier,
-                            path.text,
-                            None,
-                        )
-                    }
-                    .map_err(|_| global_object.throw_string_too_long())?;
-                    resolved_source.module_info = module_info;
-                    resolved_source.bytecode_cache = node_compile_cache_blob.unwrap_or_default();
-                    return Ok(resolved_source);
-                }
-
                 // Final ResolvedSource.
                 let tag = match loader {
                     L::Json | L::Jsonc => ResolvedSourceTag::JsonForObjectLoader,
@@ -3314,6 +3280,11 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 // `None`.
                 debug_assert!(cache.output_code.is_none());
                 let written_len = written.len();
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                let is_watcher_enabled = unsafe { &*jsc_vm }.is_watcher_enabled();
+                if is_watcher_enabled && written_len > bun_core::String::max_length() {
+                    return Err(global_object.throw_string_too_long().into());
+                }
                 let source_code = bun_core::String::clone_latin1(written);
                 // `printer.ctx.buffer.deinit()`: release the
                 // large/--smol print buffer now instead of holding it until the

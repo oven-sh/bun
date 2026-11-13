@@ -3,7 +3,7 @@
 //! Struct + `Flags` packed-u32 state machine. `run_immediate_task()` +
 //! helpers (`event_loop_timer`/`ref_`/`deref_`/
 //! `set_enable_keeping_event_loop_alive`/`run`) drive the
-//! `__bun_run_immediate_task` dispatch path. `fire()` + `reschedule()`/
+//! `__bun_run_immediate_task` dispatch path. `fire()` + `schedule()`/
 //! `should_reschedule_timer()`/`convert_to_interval()` drive the
 //! `FIRE_TIMER` dispatch path (Timeout/Immediate arms). `init()` backs the
 //! `TimeoutObject::init` / `ImmediateObject::init` constructors.
@@ -148,7 +148,7 @@ impl TimerObjectInternals {
     /// Release a `TimeoutObject`/`ImmediateObject` that was unlinked from a
     /// timer heap by something other than [`Self::cancel`] (e.g.
     /// `FakeTimers::clear`'s `delete_min` drain). Downgrades the `Strong` JS
-    /// pin and releases the `+1` taken by `reschedule()`, so GC can collect
+    /// pin and releases the `+1` taken by `schedule()`, so GC can collect
     /// the wrapper and the box frees on the final deref.
     ///
     /// `cancel()` skips its own `remove`/`deref` because `state` is already
@@ -357,7 +357,7 @@ impl TimerObjectInternals {
             );
 
             // this increments the refcount and sets _idleStart
-            self.reschedule(timer, vm, cx.global().as_ptr());
+            self.schedule(timer, vm, cx.global().as_ptr());
         }
 
         self.this_value
@@ -643,11 +643,21 @@ impl TimerObjectInternals {
                 // Node doesn't drain microtasks after each timer callback.
                 if kind == KindBig::SetInterval {
                     if !s.should_reschedule_timer(repeat, idle_timeout) {
+                        // ACTIVE: the callback called refresh() first, so it fires once more.
+                        if s.event_loop_timer_state() != EventLoopTimerState::ACTIVE {
+                            s.this_value.with_mut(|r| r.downgrade());
+                        }
                         break 'is_timer_done true;
                     }
                     // `ref_()` above pins the parent across the deref.
                     match s.event_loop_timer_state() {
                         EventLoopTimerState::FIRED => {
+                            // A nested run of the callback may have ended the interval and downgraded.
+                            if matches!(s.this_value.get(), JsRef::Weak(_)) {
+                                s.this_value.with_mut(|r| {
+                                    r.upgrade(JSGlobalObject::opaque_ref(global_this))
+                                });
+                            }
                             // If we didn't clear the setInterval, reschedule it starting from
                             // SAFETY: `state` is the boxed per-thread `RuntimeState`;
                             // single-threaded JS heap so no concurrent `&mut` to
@@ -686,7 +696,7 @@ impl TimerObjectInternals {
                     if kind == KindBig::SetTimeout && !repeat.is_null() {
                         if let Some(num) = idle_timeout.get_number() {
                             if num != -1.0 {
-                                // reschedule() inside convertToInterval will see state == .FIRED
+                                // schedule() inside convertToInterval will see state == .FIRED
                                 // and add a ref; fall through to the switch below so the .ACTIVE
                                 // arm can balance it.
                                 s.convert_to_interval(global_this, this_object, repeat, vm);
@@ -703,7 +713,7 @@ impl TimerObjectInternals {
                             // The developer called timer.refresh() synchronously in the callback,
                             // or the timer was converted to an interval via t._repeat. Balance out
                             // the ref count: the transition from "FIRED" -> "ACTIVE" via
-                            // reschedule() caused it to increment.
+                            // schedule() caused it to increment.
                             s.deref();
                         }
                         _ => {
@@ -799,13 +809,15 @@ impl TimerObjectInternals {
         // `opaque_ffi!` ZST — safe deref; `vm.global` never null.
         let global_ref = JSGlobalObject::opaque_ref(global);
         JSTimeout::idle_timeout_set_cached(timer, global_ref, repeat);
-        self.this_value
-            .with_mut(|r| r.set_strong(timer, global_ref));
         self.update_flags(|f| f.set_kind(Kind::SetInterval));
         self.interval.set(new_interval);
         // SAFETY: `event_loop_timer()` points at this object's own timer; single field write.
         unsafe { (*self.event_loop_timer()).is_due_when_idle = false };
-        self.reschedule(timer, vm, global);
+        if self.may_reschedule(timer) {
+            self.this_value
+                .with_mut(|r| r.set_strong(timer, global_ref));
+            self.schedule(timer, vm, global);
+        }
     }
 
     fn should_reschedule_timer(&self, repeat: JSValue, idle_timeout: JSValue) -> bool {
@@ -820,30 +832,24 @@ impl TimerObjectInternals {
         true
     }
 
-    /// Re-insert the parent's
-    /// `EventLoopTimer` into the heap at `now + interval`. Called from
-    /// `init()`, `do_refresh()`, and `convert_to_interval()` above.
-    ///
-    /// Note (jsc/runtime crate cycle): `vm.timer` resolved via `runtime_state()`.
-    pub(crate) fn reschedule(
-        &self,
-        timer: JSValue,
-        vm: *mut VirtualMachine,
-        global_this: *mut JSGlobalObject,
-    ) {
-        if self.flags.get().kind() == Kind::SetImmediate {
-            return;
-        }
-
+    /// Asked before a timer that was made earlier takes a strong reference and is scheduled again: one
+    /// that will not fire must not root its wrapper.
+    #[inline]
+    fn may_reschedule(&self, timer: JSValue) -> bool {
         let idle_timeout =
             JSTimeout::idle_timeout_get_cached(timer).expect("TimeoutObject idleTimeout slot");
         let repeat = JSTimeout::repeat_get_cached(timer).expect("TimeoutObject repeat slot");
 
         // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L612
-        if !self.should_reschedule_timer(repeat, idle_timeout) {
-            return;
-        }
+        self.should_reschedule_timer(repeat, idle_timeout)
+    }
 
+    /// Re-insert the parent's
+    /// `EventLoopTimer` into the heap at `now + interval`. Called from
+    /// `init()`, `do_refresh()`, and `convert_to_interval()` above.
+    ///
+    /// Note (jsc/runtime crate cycle): `vm.timer` resolved via `runtime_state()`.
+    fn schedule(&self, timer: JSValue, vm: *mut VirtualMachine, global_this: *mut JSGlobalObject) {
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
 
@@ -1070,13 +1076,15 @@ impl TimerObjectInternals {
             return this_value;
         }
 
-        self.this_value
-            .with_mut(|r| r.set_strong(this_value, global_object));
-        self.reschedule(
-            this_value,
-            VirtualMachine::get_mut_ptr(),
-            global_object.as_ptr(),
-        );
+        if self.may_reschedule(this_value) {
+            self.this_value
+                .with_mut(|r| r.set_strong(this_value, global_object));
+            self.schedule(
+                this_value,
+                VirtualMachine::get_mut_ptr(),
+                global_object.as_ptr(),
+            );
+        }
 
         this_value
     }

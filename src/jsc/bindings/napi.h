@@ -283,7 +283,11 @@ public:
         }
         m_isFinishingFinalizers = false;
 
-        instanceDataFinalizer.call(this, instanceData, true);
+        // An env without one can outlive its realm (makeNapiEnvForFFI() of a ShadowRealm).
+        if (instanceDataFinalizer.callback()) {
+            Bun::NapiHandleScope handle_scope(m_globalObject);
+            instanceDataFinalizer.call(this, instanceData, true);
+        }
         instanceDataFinalizer.clear();
         // napi_get_instance_data is ungated: never hand out the finalized pointer.
         instanceData = nullptr;

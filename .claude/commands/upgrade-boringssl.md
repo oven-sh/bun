@@ -25,7 +25,8 @@ Resolve conflicts **preserving the fork's additions**. Most conflicts are upstre
 
 ```sh
 cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release
-ninja -C build crypto ssl decrepit
+ninja -C build crypto_test ssl_test decrepit_test
+for t in crypto_test ssl_test decrepit_test; do build/$t; done
 ```
 
 This catches mis-resolved conflicts before they reach Bun's CI.
@@ -44,7 +45,6 @@ NEW_SHA=$(git rev-parse HEAD)
 In the bun repo:
 
 - `scripts/build/deps/boringssl.ts` — set `BORINGSSL_COMMIT` to `$NEW_SHA`.
-- `test/js/node/process/process.test.js` — update the `boringssl:` entry in `expectedVersions` to `$NEW_SHA`.
 - `src/js/node/tls.ts` — three hand-maintained mirrors of BoringSSL tables must be re-derived from the new pin (a test pins the current set, but cannot see upstream additions on its own): `SUPPORTED_ECDH_GROUPS` ← `ssl/ssl_key_share.cc` `kNamedGroups` (every `name` and non-empty `alias`), `_VALID_CIPHERS_SET` ← `ssl/ssl_cipher.cc` `kCiphers`, `CIPHER_LIST_SELECTORS` ← `ssl/ssl_cipher.cc` `kCipherAliases`.
 - Regenerate the source lists (the file's header comment has the exact one-liner). Only `gen/sources.json` is authoritative — diff old vs new and apply the delta:
 
@@ -80,10 +80,10 @@ Then `bun run ci:watch` and fix anything that turns up.
 
 ## Preserved patches (what conflicts to expect)
 
-`git diff $(git merge-base HEAD upstream/main)..HEAD --stat` — currently ~35 files, ~550 insertions:
+`git diff $(git merge-base HEAD upstream/main)..HEAD --stat` — currently ~55 files, ~2100 insertions:
 
 - **SHA-512/224** — `crypto/fipsmodule/sha/sha512.cc.inc`, `crypto/sha/sha512.cc`, `include/openssl/{sha2,nid,digest}.h`
-- **SHA3-224/256/384/512 as `EVP_MD`** — `crypto/digest/digest_extra.cc`, `crypto/fipsmodule/{digest/digests.cc.inc,keccak/*}`, `include/openssl/{digest,nid}.h`
+- **SHA3-224, and NIDs + name lookup for upstream's SHA3-256/384/512 `EVP_MD`s** — `crypto/evp/p_keccak.cc`, `crypto/digest/digest_extra.cc`, `crypto/fipsmodule/keccak/*`, `include/openssl/{digest,nid}.h`
 - **HMAC-SHA3** — `crypto/hmac/hmac_test*.{cc,txt}`
 - **BLAKE2b-512** — `crypto/blake2/blake2.cc`, `include/openssl/blake2.h`
 - **RIPEMD160 in `crypto/` (not `decrepit/`) + `EVP_ripemd160` lookup** — `crypto/ripemd/ripemd.cc` (moved), `crypto/digest/digest_extra.cc`, `include/openssl/digest.h`, `gen/sources.*`, `build.json`
@@ -91,6 +91,11 @@ Then `bun run ci:watch` and fix anything that turns up.
 - **Electron `SSL_want` / `EVP_CIPHER_do_all_sorted`** — `ssl/ssl_lib.cc` (return `rwstate` directly), `ssl/ssl_test.cc` (drops the corresponding test block), `decrepit/evp/evp_do_all.cc`, `crypto/cipher/get_cipher.cc`, `include/openssl/cipher.h`
 - **MLDSA stack-frame pragma** — `crypto/fipsmodule/mldsa/mldsa.cc.inc`
 - **PKCS#1 v1.5 signature prefixes for the digests above** — `crypto/fipsmodule/rsa/rsa.cc.inc` (`kPKCS1SigPrefixes` rows for SHA-512/224, SHA-512/256, SHA3-\* and RIPEMD-160), `crypto/rsa/rsa_test.cc`
+- **`BORINGSSL_REQUIRE_MEMORY_HOOKS` / `OPENSSL_system_*`** — `crypto/{mem.cc,internal.h,err/err.cc,thread_*.cc}`, `ssl/ssl_buffer.cc`
+- **`BORINGSSL_PEM_FAST_PUBLIC_BASE64`** — `crypto/pem/pem_lib.cc`, `include/openssl/pem.h`
+- **`X509_LAZY_CERT_SET`, `X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS`** — `crypto/x509/{x509_lu,x509_vfy,x_name}.cc`, `include/openssl/x509.h`
+- **`X509_V_ERR_UNABLE_TO_VERIFY_LEAF_SIGNATURE`** (upstream no longer reports it; Node does) — `check_lone_untrusted_leaf` in `crypto/x509/x509_vfy.cc`
+- **OpenSSL's verdicts in the path builder** (attribute-certificate CRLs, partial chains, `keyUsage`-only anchors, auto-chaining) — `crypto/x509/{x509_vfy,v3_purp}.cc`, `ssl/ssl_x509.cc`
 
 If upstream upstreams any of these (check `git grep` on `upstream/main` before re-applying), drop the fork's copy.
 
@@ -100,3 +105,4 @@ If upstream upstreams any of these (check `git grep` on `upstream/main` before r
 - **`BIO_read`/`BIO_write` error-value narrowing** — can change `SSL_read` error paths over memory BIOs (`SSLWrapper` for TLS-over-duplex). If `node-tls-connect.test.ts` crashes in `flush_pending_events`, see `src/runtime/socket/UpgradedDuplex.rs::teardown` and `WindowsNamedPipe.rs`'s `WRAPPER_BUSY` for the re-entrant-drop guard.
 - **Per-handshake allocation churn (PQ key shares)** grows under ASAN quarantine; RSS-delta tests like `tls-connect-socket-churn.test.ts` may need their `isASAN` bound raised. The `sslCtxLiveCount` check is the real regression guard there — if that passes and LSAN is clean, raise the RSS bound.
 - **`asn1_string_st` / `GENERAL_NAME_st` layout** — Bun mirrors these in `src/boringssl_sys/boringssl.rs`; diff `include/openssl/{asn1,x509v3}.h` for field changes.
+- **Values Rust hardcodes** — upstream has renumbered an enum (`ssl_compliance_policy_t`) and taken a flag bit the fork used (`X509_V_FLAG_*`). Neither fails to link. Diff macro values (`clang -dM -E`) and enums between the old and new `include/openssl`.

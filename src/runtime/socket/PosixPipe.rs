@@ -2,8 +2,9 @@
 //!
 //! A pipe can't be a `us_socket_t` (uSockets reads it with `recv`), so a `BufferedReader` reads it
 //! and `write(2)` writes it, the way `FdPipe` does for a descriptor that is only written to. The
-//! descriptor is node's `uv_pipe_open` adoption: it is made non-blocking and, unless it is stdio,
-//! closed with the socket.
+//! descriptor is node's `uv_pipe_open` adoption: it is made non-blocking and closed with the
+//! socket, except stdio, whose open file description the rest of the program shares: that stays
+//! as it is, and a blocking one is read one `read(2)` per poll wakeup.
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -26,15 +27,20 @@ pub(crate) static LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 pub(crate) struct PosixPipe {
     handle: bun_uws::TransportHandle,
     fd: Fd,
+    /// Not opened `O_RDONLY`: `shutdown` closes it, since a pipe's peer sees EOF no other way.
+    writable: bool,
     /// `None` once closed or detached. `connect_finish` took the connection's ref on it, and `on_close` releases that ref.
     socket: Cell<Option<ThisPtr<TCPSocket>>>,
     reader: JsCell<BufferedReader>,
     /// The reader reached EOF, failed, or was released: it reports nothing more.
     reader_done: Cell<bool>,
+    /// `pause_stream` since the last `resume_stream`: a running read loop stops delivering.
+    paused: Cell<bool>,
     is_shutdown: Cell<bool>,
-    /// Inside `open`'s `start`: a reader error is returned from `open` instead of closing the socket.
-    opening: Cell<bool>,
-    open_error: Cell<Option<sys::Error>>,
+    /// Inside a `&mut` of `reader` that arms its poll (`open`'s `start`, `resume_stream`'s `watch`):
+    /// a registration error is parked in `arm_error` and handled once the borrow ends.
+    arming: Cell<bool>,
+    arm_error: Cell<Option<sys::Error>>,
     /// The errno of a failed read, reported through `on_close`.
     read_error: Cell<i32>,
     rejected_send_error: Cell<i32>,
@@ -59,25 +65,35 @@ bun_jsc::impl_abort_handle_owner!(PosixPipe, abort_handle, |this, _cause| {
 impl PosixPipe {
     /// Makes `fd` the transport of `socket` and reports it open.
     ///
-    /// `Err`: nothing was started, no handler ran, and `fd` is still the caller's (a caller that
-    /// duplicated stdio closes its duplicate). `Ok` holds what `TCPSocket::on_open` left pending.
+    /// `fd` is the program's own descriptor, stdio included: the pipe closes it unless it is stdio.
+    /// `Err`: nothing was started, no handler ran, and `fd` is still the caller's. `Ok` holds what
+    /// `TCPSocket::on_open` left pending.
     pub(crate) fn open(
         socket: ThisPtr<TCPSocket>,
         fd: Fd,
         pause_on_connect: bool,
         context: &bun_jsc::ScriptExecutionContext,
     ) -> Result<JsResult<()>, sys::SystemErrno> {
-        // Like `uv_pipe_open`. A blocking FIFO could block the reader's `read(2)` for good.
-        sys::update_nonblocking(fd, true).map_err(sys::SystemErrno::from)?;
+        let status = sys::get_fcntl_flags(fd).map_err(sys::SystemErrno::from)? as i32;
+        let writable = (status & libc::O_ACCMODE) != libc::O_RDONLY;
+        // Like `uv_pipe_open`: a blocking FIFO could block the reader's `read(2)` for good. Not
+        // on stdio, whose O_NONBLOCK the program's own reads and writes would then hit.
+        let mut nonblocking = (status & libc::O_NONBLOCK) != 0;
+        if !nonblocking && !fd.is_stdio() {
+            sys::update_nonblocking(fd, true).map_err(sys::SystemErrno::from)?;
+            nonblocking = true;
+        }
         let this = bun_core::heap::into_raw(Box::new(Self {
             handle: Default::default(),
             fd,
+            writable,
             socket: Cell::new(Some(socket)),
             reader: JsCell::new(BufferedReader::init::<Self>()),
             reader_done: Cell::new(false),
+            paused: Cell::new(false),
             is_shutdown: Cell::new(false),
-            opening: Cell::new(false),
-            open_error: Cell::new(None),
+            arming: Cell::new(false),
+            arm_error: Cell::new(None),
             read_error: Cell::new(0),
             rejected_send_error: Cell::new(0),
             is_queued: Cell::new(false),
@@ -97,7 +113,10 @@ impl PosixPipe {
             r.set_parent(this.cast::<c_void>());
             // `close` closes the descriptor itself, before the socket hears of the close.
             r.flags.remove(PosixFlags::CLOSE_HANDLE);
-            r.flags.insert(PosixFlags::NONBLOCKING);
+            // Without it the reader is a `FileType::Pipe`: one poll-guarded `read(2)` per wakeup.
+            if nonblocking {
+                r.flags.insert(PosixFlags::NONBLOCKING);
+            }
             // Armed by `resume_stream`; a registration now would only be undone in `on_open`.
             if pause_on_connect {
                 r.flags.insert(PosixFlags::IS_PAUSED);
@@ -105,13 +124,13 @@ impl PosixPipe {
             // The socket's own `poll_ref` decides whether the loop stays alive.
             r.update_ref(false);
         });
-        pipe.opening.set(true);
+        pipe.arming.set(true);
         // A registration that fails is reported through `on_reader_error`, not the return value.
         let started = pipe.reader.with_mut(|r| r.start(fd, true));
-        pipe.opening.set(false);
+        pipe.arming.set(false);
         let failed = match started {
             Err(err) => Some(err),
-            Ok(()) => pipe.open_error.take(),
+            Ok(()) => pipe.arm_error.take(),
         };
         if let Some(err) = failed {
             // SAFETY: nothing else points at `this`: no handle was handed out and the reader registered no poll.
@@ -179,8 +198,9 @@ impl PosixPipe {
             return false;
         };
         fold(TCPSocket::on_data(socket, self.socket_handle(), chunk));
-        // EOF arrives through `on_reader_done` right after this.
-        self.socket.get().is_some()
+        // EOF arrives through `on_reader_done` right after this. A `pause()` from the handler only
+        // disarmed the poll; the loop that is delivering stops here.
+        self.socket.get().is_some() && !self.paused.get()
     }
 
     fn on_reader_done(&self) {
@@ -199,8 +219,8 @@ impl PosixPipe {
     }
 
     fn on_reader_error(&self, err: sys::Error) {
-        if self.opening.get() {
-            self.open_error.set(Some(err));
+        if self.arming.get() {
+            self.arm_error.set(Some(err));
             return;
         }
         if self.reader_done.get() || self.socket.get().is_none() {
@@ -237,10 +257,22 @@ impl PosixPipe {
         };
         self.write_poll.set(Some(poll));
         // SAFETY: `poll` is this pipe's live hive slot, no other borrow of it is live, and the loop is this thread's.
-        unsafe { (*poll).register(&*ctx.loop_(), Flags::Writable, true) }.is_ok()
+        if unsafe { (*poll).register(&*ctx.loop_(), Flags::Writable, true) }.is_err() {
+            return false;
+        }
+        // The socket's queued bytes are a pending write: like libuv's `uv_write_t`, they hold the
+        // loop open however the socket is ref'd. `release_write_poll` drops it with the poll.
+        // SAFETY: as above.
+        unsafe { (*poll).enable_keeping_process_alive(ctx) };
+        true
     }
 
     pub(crate) fn on_poll(&self) {
+        if let Some(poll) = self.write_poll.get() {
+            // A further EAGAIN registers and holds again.
+            // SAFETY: this pipe's live hive slot, which the dispatcher passed on as a raw pointer.
+            unsafe { (*poll).disable_keeping_process_alive(bun_io::js_vm_ctx()) };
+        }
         if let Some(socket) = self.socket.get() {
             fold(TCPSocket::on_writable(socket, self.socket_handle()));
         }
@@ -300,16 +332,19 @@ impl Transport for PosixPipe {
         self.write(data).0
     }
 
-    /// A pipe has no half-close to send: the peer sees EOF when the descriptor closes, which waits for the peer's own EOF or a `close`.
+    /// A pipe has no half-close to send: the peer sees EOF only when the descriptor closes. The
+    /// socket calls this once its queued bytes are out, so a writable end closes now (from the
+    /// event loop, like `reject_send`); a read-only end has nothing to end and waits for EOF.
     fn shutdown(&self) {
         self.is_shutdown.set(true);
-        if self.reader_done.get() {
-            self.close();
+        if self.writable || self.reader_done.get() {
+            self.enqueue();
         }
     }
 
     fn shutdown_read(&self) {
         if self.reader_active() {
+            self.paused.set(true);
             self.reader.with_mut(|r| r.pause());
         }
     }
@@ -335,6 +370,7 @@ impl Transport for PosixPipe {
 
     fn pause_stream(&self) -> bool {
         if self.reader_active() {
+            self.paused.set(true);
             self.reader.with_mut(|r| r.pause());
         }
         true
@@ -342,11 +378,17 @@ impl Transport for PosixPipe {
 
     fn resume_stream(&self) -> bool {
         if self.reader_active() {
+            self.paused.set(false);
+            self.reader.with_mut(|r| r.unpause());
             // Arms the poll; bytes already waiting are delivered on the next tick, like a uSockets resume.
-            self.reader.with_mut(|r| {
-                r.unpause();
-                r.watch();
-            });
+            // A registration that fails (the program closed the descriptor) is handled after the
+            // borrow: `on_reader_error` would `close` and release the reader under it.
+            self.arming.set(true);
+            self.reader.with_mut(|r| r.watch());
+            self.arming.set(false);
+            if let Some(err) = self.arm_error.take() {
+                self.on_reader_error(err);
+            }
         }
         true
     }

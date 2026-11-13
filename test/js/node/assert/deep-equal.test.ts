@@ -1514,6 +1514,30 @@ describe("assert.partialDeepStrictEqual with cycles", () => {
     fails(() => assert.partialDeepStrictEqual(actual, expected));
   });
 
+  test("a member that both Sets hold is its own match", () => {
+    // The lookup finds it: no other member of `actual` is compared with it.
+    const reads: string[] = [];
+    const other = {
+      get v() {
+        reads.push("other");
+        return 1;
+      },
+    };
+    const shared = { v: 1 };
+    assert.partialDeepStrictEqual(new Set([other, shared]), new Set([shared]));
+    expect(reads).toEqual([]);
+
+    // A primitive that the Set of `actual` does not hold has no match: no member is compared with it.
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    expect(answerOf(new Set([proxy]), new Set([1]))).toBe("fail");
+
+    // An earlier member of `expected` took it, so it needs another member of `actual`.
+    const taken = { v: 1, w: 2 };
+    fails(() => assert.partialDeepStrictEqual(new Set([taken, { z: 1 }]), new Set([{ v: 1 }, taken])));
+    assert.partialDeepStrictEqual(new Set([taken, { v: 1, w: 2, z: 1 }]), new Set([{ v: 1 }, taken]));
+  });
+
   test("operand code runs once, and once more when a pair is inside its own comparison", () => {
     const counted = (reads: { count: number }, value: number) => ({
       get v() {
@@ -1778,9 +1802,8 @@ describe("assert.partialDeepStrictEqual with cycles", () => {
   });
 
   describe("as the first comparison of a new Node.js process", () => {
-    for (const { name, node, pair, bun, bug } of cycles.rows) {
-      const title = bug ? `${name} (Bun ${bug})` : bun ? `${name} (Node.js: ${node}, Bun: ${bun})` : name;
-      (bug ? test.failing : test)(title, () => {
+    for (const { name, node, pair, bun } of cycles.rows) {
+      test(bun ? `${name} (Node.js: ${node}, Bun: ${bun})` : name, () => {
         expect(answerOf(...(pair() as [unknown, unknown]))).toBe(bun ?? node);
       });
     }

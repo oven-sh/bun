@@ -44,8 +44,7 @@ const besideRings = (actual, expected) => [
 ];
 const collectGarbage = () => (typeof Bun !== "undefined" ? Bun.gc(true) : globalThis.gc?.());
 
-// name, the answer of Node.js, the operands. A fourth argument says that Bun answers something else: `bun` is an
-// answer that Bun means to give, `bug` says what Bun does for now.
+// name, the answer of Node.js, the operands. A fourth argument says that Bun means to answer something else.
 const rows = [];
 const row = (name, node, pair, difference) => rows.push({ name, node, pair, ...difference });
 
@@ -555,34 +554,38 @@ row(
   { bun: "pass" },
 );
 
-// Where Bun does not answer as Node.js yet. Node.js looks for each member of an expected Set in `actual` by lookup
-// before it compares members. Bun compares the members in their order.
-row(
-  "a member of an expected Set is also a member of a Set of actual",
-  "pass",
-  () => {
-    const expected = new Set();
-    expected.add(expected);
-    const inner = new Set();
-    inner.add(inner).add(expected);
-    return [new Set([inner]), expected];
-  },
-  { bug: "fails it" },
-);
-row(
-  "the expected Set is a member of actual",
-  "fail",
-  () => {
-    const actual = new Set();
-    const expected = new Set();
-    const third = new Set();
-    actual.add(actual).add(expected);
-    expected.add(expected).add(third);
-    third.add(third).add(expected);
-    return [actual, expected];
-  },
-  { bug: "passes it" },
-);
+// A member that both Sets hold is its own match: it is found by lookup, and is not compared with another member.
+row("a member of an expected Set is also a member of a Set of actual", "pass", () => {
+  const expected = new Set();
+  expected.add(expected);
+  const inner = new Set();
+  inner.add(inner).add(expected);
+  return [new Set([inner]), expected];
+});
+row("the expected Set is a member of actual", "fail", () => {
+  const actual = new Set();
+  const expected = new Set();
+  const third = new Set();
+  actual.add(actual).add(expected);
+  expected.add(expected).add(third);
+  third.add(third).add(expected);
+  return [actual, expected];
+});
+{
+  const ownCause = () => {
+    const error = new Error("x");
+    Object.defineProperty(error, "cause", { value: error, writable: true, configurable: true });
+    return error;
+  };
+  row("an Error that is its own cause is a member of both Sets, behind one that is not", "pass", () => {
+    const shared = ownCause();
+    return [new Set([ownCause(), shared]), new Set([shared])];
+  });
+  row("no such Error is a member of both Sets, so two of them are compared", "RangeError", () => [
+    new Set([ownCause(), ownCause()]),
+    new Set([ownCause()]),
+  ]);
+}
 
 // A seed and a set of kinds make one pair of small object graphs. A value of a graph is a number or another object of
 // that graph, so most graphs have cycles. One value in twenty is an object of the other graph.

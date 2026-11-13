@@ -828,6 +828,31 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
 // Expected's items as a subset of actual's; item equality is the partial
 // comparison itself — node matches object items with subset semantics
 // (Set([{a:1,b:2}]) partially contains Set([{a:1}])).
+enum class Itself : uint8_t {
+    Matched,
+    NoMatch,
+    Compare,
+};
+
+// node looks for the item itself first: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L757-L785
+static NEVER_INLINE Itself matchWithItself(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSSet* actualSet, JSC::MarkedArgumentBuffer& gcBuffer, size_t itemsStart, WTF::Vector<bool, 8>& usedIndices, JSValue expectedItem)
+{
+    bool shared = actualSet->has(globalObject, expectedItem);
+    RETURN_IF_EXCEPTION(scope, Itself::NoMatch);
+    // Only the value itself is equal to a value that is not an object.
+    if (!expectedItem.isObject() || expectedItem.isCallable())
+        return shared ? Itself::Matched : Itself::NoMatch;
+    for (size_t i = 0; shared && i < usedIndices.size(); i++) {
+        if (gcBuffer.at(itemsStart + i) == expectedItem) {
+            if (usedIndices[i])
+                break;
+            usedIndices[i] = true;
+            return Itself::Matched;
+        }
+    }
+    return Itself::Compare;
+}
+
 static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     auto& vm = globalObject->vm();
@@ -852,8 +877,12 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     RETURN_IF_EXCEPTION(scope, false);
     JSValue expectedItem;
     while (expectedIter->next(globalObject, expectedItem)) {
-        bool matched = false;
-        for (size_t i = 0; i < itemCount; i++) {
+        const Itself itself = matchWithItself(globalObject, scope, actualSet, gcBuffer, itemsStart, usedIndices, expectedItem);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (itself == Itself::NoMatch)
+            return false;
+        bool matched = itself == Itself::Matched;
+        for (size_t i = 0; !matched && i < itemCount; i++) {
             if (usedIndices[i])
                 continue;
             bool equal = compareBranch(globalObject, gcBuffer, cycles, scope, gcBuffer.at(itemsStart + i), expectedItem);

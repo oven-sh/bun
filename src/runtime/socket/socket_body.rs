@@ -758,9 +758,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                     };
                     if is_pipe {
                         // SAFETY: `!SSL`, so `Self` is `TCPSocket`.
-                        let tcp = unsafe {
-                            bun_ptr::ThisPtr::new(self.as_ctx_ptr().cast::<TCPSocket>())
-                        };
+                        let tcp =
+                            unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr().cast::<TCPSocket>()) };
                         // On `Err` the fd is still the caller's.
                         return super::posix_pipe::PosixPipe::open(
                             tcp,

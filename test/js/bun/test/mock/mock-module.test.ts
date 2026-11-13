@@ -2912,8 +2912,9 @@ describe.concurrent("a name that import and require() resolve to two files", () 
   test.each(isolationFlags)("the original is the file that the kind of the function loads %j", async args => {
     // Every specifier in this test file names one file, and each function loads that file. `mock` is the function
     // that mocks the names of the files, or empty. A mock of a name changes nothing for a specifier of one of its
-    // files: each test of a file expects what it expects with no mock.
-    const byPath = (mock: string, required: string, imported: string) => `
+    // files: each test of a file expects what it expects with no mock. With `ranBefore` the files have run when
+    // the mocks are made, and the original of each is what its mock has kept of it.
+    const byPath = (mock: string, required: string, imported: string, ranBefore = false) => `
       import { expect, jest, mock, test, vi } from "bun:test";
       const start = (globalThis.loaded ?? []).length;
       // A name, a specifier of the file that an import of it loads, and one of the file that require() of it loads.
@@ -2924,6 +2925,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
         ["./folder", "./folder/index.mjs", "./folder/index.cjs"],
         ["#dep", "./dep.mjs", "./dep.cjs"],
       ];
+      ${ranBefore ? `for (const [name] of names) (await import(name), require(name));` : ""}
       ${mock && `for (const [name] of names) ${mock}(name, () => ({ which: "mock" }));`}
       // Of what each function loads: which file it is, and what its function returns.
       const originals = async specifier =>
@@ -3006,6 +3008,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           ...inFolder("mock.module", "by-path.test.js", byPath("mock.module", "mock", "mock")),
           ...inFolder("jest.doMock", "by-path.test.js", byPath("jest.doMock", "mock", "mock")),
           ...inFolder("vi.doMock", "by-path.test.js", byPath("vi.doMock", "real cjs", "mock")),
+          ...inFolder("ran-before", "by-path.test.js", byPath("mock.module", "mock", "mock", true)),
           ...inFolder(
             "pending",
             "pending.test.js",
@@ -3029,7 +3032,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           ),
         ]),
       },
-      31,
+      37,
       args,
     );
   });

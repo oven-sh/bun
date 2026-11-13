@@ -89,6 +89,32 @@ Declarations persist for the rest of the session. Unlike in regular scripts, you
 
 ---
 
+## Preloading modules
+
+Use `--preload` (or `-r`) to run a module before the first evaluation. The globals it defines and the plugins it registers stay for the whole session. `--require` and `--import` are aliases of `--preload`, for Node.js compatibility.
+
+```ts setup.ts icon="/icons/typescript.svg"
+globalThis.answer = 42;
+```
+
+```sh terminal icon="terminal"
+bun repl --preload ./setup.ts
+```
+
+```txt
+Welcome to Bun v1.3.3
+Type .copy [code] to copy to clipboard. .help for more info.
+
+> answer
+42
+```
+
+The flags also apply to `-e` and `-p`. If a preload can't be found or throws, Bun prints the error and exits with code `1` before the prompt appears.
+
+`bun repl` runs only the preloads from the command line. It does not run the [`preload`](/runtime/bunfig#preload) list of a `bunfig.toml`.
+
+---
+
 ## Multi-line input
 
 When you press `Enter` on a line with unclosed brackets, braces, or parentheses, the REPL automatically continues on the next line. The prompt changes to `...` to indicate continuation.

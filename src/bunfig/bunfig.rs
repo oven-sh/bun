@@ -9,7 +9,7 @@
 #![allow(clippy::collapsible_if)]
 
 use bun_collections::VecExt;
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_alloc::Arena as Bump;
 use bun_ast::{E, Expr, ExprTag, expr::Data as ExprData};
@@ -29,6 +29,9 @@ use bun_options_types::schema::api;
 
 use bun_options_types::command_tag::Tag as CommandTag;
 use bun_options_types::context::ContextData;
+
+/// Set by `bun repl` before it parses argv: a bunfig.toml's `preload` is then checked and not kept.
+pub static IGNORE_PRELOAD: AtomicBool = AtomicBool::new(false);
 
 // TODO: replace api.TransformOptions with Bunfig
 pub(crate) struct Bunfig;
@@ -1358,7 +1361,14 @@ impl Bunfig {
             tool,
             counts,
         };
-        parser.parse(cmd)
+        let kept = IGNORE_PRELOAD
+            .load(Ordering::SeqCst)
+            .then(|| core::mem::take(&mut parser.ctx.preloads));
+        let result = parser.parse(cmd);
+        if let Some(kept) = kept {
+            parser.ctx.preloads = kept;
+        }
+        result
     }
 
     /// Checks whether the file sets `[install.security] scanner` without applying any settings.

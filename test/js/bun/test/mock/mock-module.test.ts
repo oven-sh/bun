@@ -2034,6 +2034,75 @@ describe.concurrent("a name that import and require() resolve to two files", () 
     );
   });
 
+  test("require() where Module._resolveFilename is replaced, and with options.paths", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "node_modules/single/package.json": `{ "name": "single", "main": "index.js" }`,
+        "node_modules/single/index.js": `module.exports = { which: "real single" };`,
+        "node_modules/other/package.json": `{ "name": "other", "main": "index.js" }`,
+        "node_modules/other/index.js": `module.exports = { which: "real other" };`,
+        "node_modules/cjs-lib/package.json": `{ "name": "cjs-lib", "main": "index.js" }`,
+        "node_modules/cjs-lib/index.js": `const other = require("other"); module.exports = { which: () => other.which };`,
+        "node_modules/create-require/package.json": JSON.stringify({
+          name: "create-require",
+          exports: { ".": { import: "./wrapper.mjs", require: "./index.cjs" } },
+        }),
+        "node_modules/create-require/index.cjs": `(globalThis.loaded ??= []).push("create-require cjs"); module.exports = { which: "real" };`,
+        "node_modules/create-require/wrapper.mjs": `import { createRequire } from "node:module"; const cjs = createRequire(import.meta.url)("./index.cjs"); (globalThis.loaded ??= []).push("create-require esm"); export const which = cjs.which; export default cjs;`,
+        "seen.cjs": `const lib = require("./lib"); exports.which = () => lib.which;`,
+        "replaced.test.js": `
+          import { afterAll, expect, mock, test, vi } from "bun:test";
+          import Module from "node:module";
+          const resolveFilename = Module._resolveFilename;
+          Module._resolveFilename = (...args) => resolveFilename.apply(Module, args);
+          afterAll(() => {
+            Module._resolveFilename = resolveFilename;
+          });
+          vi.mock("other", () => ({ which: "mock" }));
+          test("a factory that spreads require() of its name, with require() first", async () => {
+            mock.module("dual", () => ({ ...require("dual"), extra: 1 }));
+            expect(require("dual")).toEqual({ which: "real cjs", fn: expect.any(Function), extra: 1 });
+            expect((await import("dual")).extra).toBe(1);
+          });
+          test("and with import() first", async () => {
+            mock.module("#dep", () => ({ ...require("#dep"), extra: 1 }));
+            const imported = await import("#dep");
+            expect([imported.which, imported.extra, require("#dep").extra]).toEqual(["real cjs", 1, 1]);
+          });
+          test("a factory that requires a module that requires the name", () => {
+            mock.module("./lib", () => ({ which: "mock", seen: require("./seen.cjs").which() }));
+            expect(require("./lib")).toEqual({ which: "mock", seen: "real cjs" });
+            expect(require("./seen.cjs").which()).toBe("mock");
+          });
+          test("an ES module that loads the CommonJS file of its package with createRequire()", async () => {
+            mock.module("create-require", async importOriginal => ({ ...(await importOriginal()), extra: 1 }));
+            const imported = await import("create-require");
+            expect([imported.which, imported.extra, require("create-require").extra]).toEqual(["real", 1, 1]);
+            expect(globalThis.loaded.filter(file => file.startsWith("create-require"))).toEqual(["create-require cjs", "create-require esm"]);
+          });
+          test("a name that import and require() resolve to one file", () => {
+            mock.module("single", () => ({ ...require("single"), extra: 1 }));
+            expect(require("single")).toEqual({ which: "real single", extra: 1 });
+          });
+          test("vi.mock() leaves a library in node_modules the file", () => {
+            expect([require("other").which, require("cjs-lib").which()]).toEqual(["mock", "real other"]);
+          });
+        `,
+        "paths.test.cjs": `
+          const { expect, mock, test } = require("bun:test");
+          test("a factory that requires its name with options.paths", () => {
+            mock.module("dual/sub", () => ({ ...require("dual/sub", { paths: [__dirname] }), extra: 1 }));
+            expect(require("dual/sub", { paths: [__dirname] })).toEqual({ which: "real cjs", fn: expect.any(Function), extra: 1 });
+            mock.module("single", () => ({ ...require("single", { paths: [__dirname] }), extra: 1 }));
+            expect(require("single", { paths: [__dirname] })).toEqual({ which: "real single", extra: 1 });
+          });
+        `,
+      },
+      7,
+    );
+  });
+
   test("a mock that a preload made", async () => {
     await expectFixturesToPass(
       {

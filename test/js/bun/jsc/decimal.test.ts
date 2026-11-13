@@ -840,6 +840,40 @@ describe.concurrent.skipIf(!hasDecimal)("literals", () => {
     120_000,
   );
 
+  test.skipIf(!!unsupported).concurrent.each([
+    ["an alias", `const D = Decimal; console.log(["1.50"].map(text => new D(text)).join());`],
+    [
+      "a method added",
+      `Decimal.prototype.half = function () { return this.divide(2m); }; console.log(String(3m.half()));`,
+    ],
+    ["an accessor handed over", `console.log(new Decimal("1.45").add(0.01m).toFixed({ get digits() { return 1; } }));`],
+    ["a polyfill", `globalThis.Decimal ??= function () {}; console.log([1.5].map(x => new Decimal(x)).join());`],
+  ])(
+    "--aot knows that the global is there: %s",
+    async (_, source) => {
+      const result = await compileAndRun(["--aot"], { "main.js": source }, env);
+      expect(result).toEqual({ stdout: "1.5\n", stderr: "", exitCode: 0 });
+    },
+    120_000,
+  );
+
+  test.skipIf(!!unsupported)(
+    "--aot without the variable leaves it to the run whether the global is there",
+    async () => {
+      using dir = tempDir("decimal-literal", {
+        "main.js": `
+          const D = globalThis.Decimal ?? class { toString() { return "polyfill"; } };
+          console.log(["1.50"].map(text => new D(text)).join());
+        `,
+      });
+      await spawn([bunExe(), "build", "--compile", "--aot", "main.js", "--outfile", executable], String(dir), off);
+      const run = (variables: typeof off) => spawn([path.join(String(dir), executable)], String(dir), variables);
+      expect(await run(off)).toEqual({ stdout: "polyfill\n", stderr: "", exitCode: 0 });
+      expect(await run(env)).toEqual({ stdout: "1.5\n", stderr: "", exitCode: 0 });
+    },
+    120_000,
+  );
+
   test.skipIf(!!unsupported || !canTrim)(
     "--aot --trim",
     async () => {

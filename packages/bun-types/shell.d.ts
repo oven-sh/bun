@@ -39,6 +39,9 @@ declare module "bun" {
 
     /**
      * Escape strings for input into shell commands.
+     *
+     * The result is one word of a script. A `-` stays as it is, so in a `[...]` glob class that the script has around
+     * the result it makes a range. To match the characters of a value there, interpolate the value: `[${value}]`.
      * @param input
      */
     function escape(input: string): string;

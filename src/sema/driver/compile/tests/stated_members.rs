@@ -759,6 +759,7 @@ import { make } from './lib/make';
 export class Stated {
     made = make();
     both = { kept: null as import('./lib/item').Hidden | null, named: null as Hidden | null };
+    alone = null as import('./lib/item').Hidden | null;
 }
 ";
     let files = [
@@ -774,6 +775,7 @@ export class Stated {
         format!(
             "both: {{ kept: import('./lib/item').Hidden | null; named: Hidden | null; }} [import('./lib/item').Hidden {hidden}] [Hidden {hidden}]"
         ),
+        format!("alone: import('./lib/item').Hidden | null [import('./lib/item').Hidden {hidden}]"),
     ];
     assert_eq!(stated_members(&files), expected);
 }

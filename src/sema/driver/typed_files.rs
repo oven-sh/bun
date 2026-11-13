@@ -4819,9 +4819,7 @@ fn stated_members(
                         names = None;
                         continue;
                     };
-                    (holders.contains(&export))
-                        .then(|| behind_module(services, export, (from, to)))
-                        .flatten()
+                    behind_module(services, export, (from, to))
                 }
                 // The word is the type parameter only if nothing has that name where the member stands.
                 None if at.is_bound => {

@@ -813,6 +813,107 @@ For browsers that don't support `system-ui`, Bun's CSS bundler expands it to a c
 
 The expanded stack includes system fonts for macOS/iOS, Windows, Android, and Linux, plus fallbacks for older browsers.
 
+## External imports
+
+An external import is an `@import` that Bun does not bundle. That is a URL that starts with `http://`, `https://` or `//`, and a path that the [`external`](/bundler#external) option or a plugin marks as external. The `@import` rule stays in the bundle, and the browser loads the style sheet.
+
+CSS allows `@import` rules only at the start of a style sheet. So Bun prints every external import at the start of the bundle, ahead of the rules of your files:
+
+```css title="styles.css" icon="file-code"
+@import "./reset.css";
+@import "https://example.com/theme.css";
+
+.title {
+  font-weight: bold;
+}
+```
+
+```css title="reset.css" icon="file-code"
+.title {
+  color: black;
+}
+```
+
+```css title="Output" icon="file-code"
+@import "https://example.com/theme.css";
+
+/* reset.css */
+.title {
+  color: #000;
+}
+
+/* styles.css */
+.title {
+  font-weight: bold;
+}
+```
+
+### Rule order
+
+In the source files, the rules of `reset.css` come before the rules of `theme.css`. In the bundle, they come after them. The browser orders two rules of the same [cascade layer](https://developer.mozilla.org/en-US/docs/Web/CSS/@layer), and two rules that are in no layer, by their place in the style sheet. So if `reset.css` and `theme.css` both set the `color` of `.title`, the source files use the color of `theme.css`, and the bundle uses the color of `reset.css`.
+
+To get the same result from the source files and from the bundle, write the external import first:
+
+```css title="styles.css" icon="file-code"
+@import "https://example.com/theme.css";
+@import "./reset.css";
+```
+
+### Layer order
+
+A cascade layer gets its priority from the place where its name first appears. Bun keeps that order when an external import has a layer. If the import moves ahead of a layer that one of your files declares first, Bun declares that layer ahead of the import:
+
+```css title="styles.css" icon="file-code"
+@import "./base.css";
+@import "https://example.com/theme.css" layer(theme);
+
+.title {
+  font-weight: bold;
+}
+```
+
+```css title="base.css" icon="file-code"
+@layer base {
+  .title {
+    color: black;
+  }
+}
+```
+
+```css title="Output" icon="file-code"
+@layer base;
+@import "https://example.com/theme.css" layer(theme);
+
+/* base.css */
+@layer base {
+  .title {
+    color: #000;
+  }
+}
+
+/* styles.css */
+.title {
+  font-weight: bold;
+}
+```
+
+An `@layer` statement between two `@import` rules makes the later `@import` invalid, and a statement cannot have a media query. In those places Bun prints an `@import` of an empty style sheet that declares the layer, such as `@import "data:text/css," layer(base) screen;`.
+
+A [Content Security Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CSP) whose `style-src` does not allow `data:` blocks that import, and the browser reports it. Chrome and Firefox declare the layer of a blocked import. Safari does not, so there the layers have the order that they have without the import.
+
+Bun cannot declare these layers ahead of an external import, so they come after the layer of the import in the bundle:
+
+- A layer with no name: an `@layer` block with no name, or a file that you import with the `layer` keyword and no name, such as `@import "./a.css" layer;`. An external import inside such a file gets an anonymous layer of its own.
+- A layer that a file declares inside `@media` or `@supports`.
+- A layer under two media queries or two `supports()` conditions, from two levels of `@import`.
+- A layer with no `supports()` condition that comes after a layer or an external import with one. Browsers older than Chrome 122, Firefox 115 and Safari 17.5 ignore an `@import` that has `supports()`.
+- A layer between two imports of the same external URL, unless that import has a layer and this layer is outside it. Bun keeps only the last of the two imports.
+- Every layer that your files declare after one of these.
+
+To set the order yourself, start the entry file with an `@layer` statement that names the layers in order, ahead of its first `@import`. Bun keeps that statement ahead of every external import. Give a name to a layer that has none.
+
+Bun cannot read the external style sheet. If that style sheet declares layers of its own, Bun does not know their names, and the layers of your files come after them in the bundle.
+
 ## CSS Modules
 
 Bun's bundler also supports CSS modules, with the following features:

@@ -1,9 +1,10 @@
 use core::fmt;
+use core::ops::ControlFlow;
 
 use bun_alloc::Arena;
 
 use crate as css;
-use crate::css_rules::{CssRuleList, Location};
+use crate::css_rules::{CssRule, CssRuleList, Location};
 use crate::{PrintErr, Printer, SmallList};
 
 /// A CSS cascade layer name. Stored as a list of segments because dot
@@ -180,5 +181,245 @@ impl LayerStatementRule {
         } else {
             dest.write_str("@layer;")
         }
+    }
+}
+
+/// The names of the `@layer` blocks around a rule.
+type LayerPath = SmallList<&'static [u8], 8>;
+
+/// Whether `expected` is `name` inside the layers of `path`.
+fn is_name_in_path(expected: &LayerName, path: &LayerPath, name: &LayerName) -> bool {
+    let (expected, path, name) = (expected.v.slice(), path.slice(), name.v.slice());
+    expected.len() == path.len() + name.len()
+        && expected[..path.len()] == *path
+        && expected[path.len()..] == *name
+}
+
+/// Calls `visit(layers around it, name, is under a condition)` for each `@layer` name, in order.
+struct LayerNameWalk<'f> {
+    path: LayerPath,
+    conditions: u32,
+    visit: &'f mut dyn FnMut(&LayerPath, Option<&LayerName>, bool) -> ControlFlow<()>,
+}
+
+impl LayerNameWalk<'_> {
+    fn rules<'r, R: 'r>(
+        &mut self,
+        rules: impl IntoIterator<Item = &'r CssRule<R>>,
+    ) -> ControlFlow<()> {
+        for rule in rules {
+            self.rule(rule)?;
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn conditional<R>(&mut self, rules: &CssRuleList<R>) -> ControlFlow<()> {
+        self.conditions += 1;
+        let flow = self.rules(&rules.v);
+        self.conditions -= 1;
+        flow
+    }
+
+    fn rule<R>(&mut self, rule: &CssRule<R>) -> ControlFlow<()> {
+        match rule {
+            CssRule::LayerStatement(statement) => {
+                for name in statement.names.slice() {
+                    (self.visit)(&self.path, Some(name), self.conditions != 0)?;
+                }
+                ControlFlow::Continue(())
+            }
+            CssRule::LayerBlock(block) => {
+                // No other rule can name a layer inside an anonymous one.
+                let Some(name) = &block.name else {
+                    return (self.visit)(&self.path, None, self.conditions != 0);
+                };
+                (self.visit)(&self.path, Some(name), self.conditions != 0)?;
+                let depth = self.path.len();
+                self.path.append_slice(name.v.slice());
+                let flow = self.rules(&block.rules.v);
+                self.path.set_len(depth);
+                flow
+            }
+            CssRule::Media(media) if media.query.always_matches() => self.rules(&media.rules.v),
+            CssRule::Media(media) => self.conditional(&media.rules),
+            CssRule::Supports(supports) => self.conditional(&supports.rules),
+            CssRule::MozDocument(document) => self.conditional(&document.rules),
+            // A layer inside one of these rules is declared also where the rule does not apply.
+            CssRule::Style(style) => self.rules(&style.rules.v),
+            CssRule::Nesting(nesting) => self.rules(&nesting.style.rules.v),
+            CssRule::Container(container) => self.rules(&container.rules.v),
+            CssRule::Scope(scope) => self.rules(&scope.rules.v),
+            CssRule::StartingStyle(starting_style) => self.rules(&starting_style.rules.v),
+            CssRule::Import(_)
+            | CssRule::Keyframes(_)
+            | CssRule::FontFace(_)
+            | CssRule::FontPaletteValues(_)
+            | CssRule::Page(_)
+            | CssRule::CounterStyle(_)
+            | CssRule::Namespace(_)
+            | CssRule::NestedDeclarations(_)
+            | CssRule::Viewport(_)
+            | CssRule::CustomMedia(_)
+            | CssRule::Property(_)
+            | CssRule::Ignored
+            | CssRule::Unknown(_)
+            | CssRule::Custom(_) => ControlFlow::Continue(()),
+        }
+    }
+}
+
+impl<R> CssRuleList<R> {
+    /// The top-level rules that the bundler prints for a copy of a style sheet.
+    pub fn printed_rules(
+        &self,
+        has_layers_pre_import: bool,
+    ) -> impl Iterator<Item = &CssRule<R>> + Clone {
+        let mut keep_statements = !has_layers_pre_import;
+        let mut in_prologue = true;
+        self.v.iter().filter(move |rule| {
+            if in_prologue {
+                match rule {
+                    CssRule::Import(_) => {
+                        keep_statements = true;
+                        return false;
+                    }
+                    CssRule::Ignored => return false,
+                    CssRule::LayerStatement(_) => return keep_statements,
+                    _ => in_prologue = false,
+                }
+            }
+            !matches!(rule, CssRule::Import(_))
+        })
+    }
+
+    /// Whether the top-level `@layer` rules name exactly `names`, all names of the sheet, in order.
+    pub fn top_level_layers_are(&self, names: &[LayerName], has_layers_pre_import: bool) -> bool {
+        let mut expected = names.iter();
+        let mut is_next = |name: &LayerName| expected.next().is_some_and(|next| next.eql(name));
+        for rule in self.printed_rules(has_layers_pre_import) {
+            match rule {
+                CssRule::LayerStatement(statement) => {
+                    if !statement.names.slice().iter().all(&mut is_next) {
+                        return false;
+                    }
+                }
+                CssRule::LayerBlock(block) => {
+                    if let Some(name) = &block.name
+                        && !is_next(name)
+                    {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        expected.next().is_none()
+    }
+
+    /// Whether a rule, at any depth, is an `@layer` block with no name.
+    #[cold]
+    pub fn has_anonymous_layer(&self) -> bool {
+        let mut walk = LayerNameWalk {
+            path: LayerPath::default(),
+            conditions: 0,
+            visit: &mut |_: &LayerPath, name: Option<&LayerName>, _: bool| match name {
+                Some(_) => ControlFlow::Continue(()),
+                None => ControlFlow::Break(()),
+            },
+        };
+        walk.rules(&self.v).is_break()
+    }
+
+    /// Whether one `@layer` statement of `names` orders the layers as these rules do in every case.
+    #[cold]
+    pub fn layers_are_in_order_of(
+        &self,
+        names: &[LayerName],
+        layers_pre_import: &[LayerName],
+    ) -> bool {
+        let has_layers_pre_import = !layers_pre_import.is_empty();
+
+        // Nothing is inside a condition, and the rules have the names one by one.
+        let mut found = 0;
+        let mut walk = LayerNameWalk {
+            path: LayerPath::default(),
+            conditions: 0,
+            visit: &mut |path: &LayerPath, name: Option<&LayerName>, conditional: bool| {
+                let Some(name) = name else {
+                    return ControlFlow::Continue(());
+                };
+                let expected = names.get(found).filter(|_| !conditional);
+                if !expected.is_some_and(|expected| is_name_in_path(expected, path, name)) {
+                    return ControlFlow::Break(());
+                }
+                found += 1;
+                ControlFlow::Continue(())
+            },
+        };
+        if walk
+            .rules(self.printed_rules(has_layers_pre_import))
+            .is_continue()
+            && found == names.len()
+        {
+            return true;
+        }
+
+        // A trie of the layers, because the name `a.b` also declares `a`. Node 0 is no layer.
+        const DECLARED: u32 = u32::MAX;
+        let mut children: bun_collections::HashMap<(u32, &[u8]), u32> =
+            bun_collections::HashMap::new();
+        // The place of each node among the layers that `names` declare first, or `DECLARED`.
+        let mut place: Vec<u32> = vec![DECLARED];
+        let mut count = 0;
+        for (list, is_declared) in [(layers_pre_import, true), (names, false)] {
+            for name in list {
+                let mut node = 0;
+                for segment in name.v.slice() {
+                    let child = bun_core::handle_oom(children.get_or_put((node, *segment)));
+                    if !child.found_existing {
+                        *child.value_ptr = place.len() as u32;
+                        place.push(if is_declared {
+                            DECLARED
+                        } else {
+                            count += 1;
+                            count - 1
+                        });
+                    }
+                    node = *child.value_ptr;
+                }
+            }
+        }
+
+        // The statement declares each layer with no condition, in the order of `place`.
+        let mut reached = 0;
+        let mut walk = LayerNameWalk {
+            path: LayerPath::default(),
+            conditions: 0,
+            visit: &mut |path: &LayerPath, name: Option<&LayerName>, conditional: bool| {
+                let Some(name) = name else {
+                    return ControlFlow::Continue(());
+                };
+                let mut node = 0;
+                for segment in path.slice().iter().chain(name.v.slice()) {
+                    let Some(&child) = children.get(&(node, *segment)) else {
+                        return ControlFlow::Break(());
+                    };
+                    node = child;
+                    let layer = &mut place[node as usize];
+                    if *layer == DECLARED {
+                        continue;
+                    }
+                    if conditional || *layer != reached {
+                        return ControlFlow::Break(());
+                    }
+                    *layer = DECLARED;
+                    reached += 1;
+                }
+                ControlFlow::Continue(())
+            },
+        };
+        walk.rules(self.printed_rules(has_layers_pre_import))
+            .is_continue()
+            && reached == count
     }
 }

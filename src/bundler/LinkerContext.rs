@@ -3220,12 +3220,14 @@ impl<'a> LinkerContext<'a> {
     /// `log` is an explicit parameter (not `self.log`) because the dev-server
     /// caller (`finish_from_bake_dev_server`) runs this *before* `load()` has
     /// initialized `self.log`, passing a stack-local `Log` instead.
+    /// `failed_to_load(i)`: the load of file `i` failed (dev server only), so `i` has the error itself.
     pub(crate) fn scan_css_imports(
         file_source_index: u32,
         file_import_records: &[ImportRecord],
         css_asts: &[crate::bundled_ast::CssCol],
         sources: &[Source],
         loaders: &[Loader],
+        failed_to_load: impl Fn(u32) -> bool,
         log: &mut Log,
     ) -> ScanCssImportsResult {
         for record in file_import_records.iter() {
@@ -3234,6 +3236,51 @@ impl<'a> LinkerContext<'a> {
                 if css_asts[record.source_index.get() as usize].is_none() {
                     let source = &sources[file_source_index as usize];
                     let loader = loaders[record.source_index.get() as usize];
+
+                    match record.kind {
+                        // An "@import" takes a style sheet only. The loader table below is for "url()".
+                        ImportKind::At | ImportKind::AtConditional => {
+                            if loader != Loader::Css && !failed_to_load(record.source_index.get()) {
+                                let imported = bun_core::fmt::quote(
+                                    sources[record.source_index.get() as usize].path.pretty,
+                                );
+                                let loader: &str = match loader {
+                                    Loader::Bunsh => "sh",
+                                    loader => loader.into(),
+                                };
+                                // The first import of a file gives it its loader for the whole bundle.
+                                let note = if record.loader == Some(Loader::Css) {
+                                    format!(
+                                        "This \"@import\" needs {imported} as CSS, but an import attribute or a plugin gave it the \"{loader}\" loader. A file has one loader in a bundle.",
+                                    )
+                                } else {
+                                    format!(
+                                        "An \"@import\" rule can only import a CSS file, and {imported} is not a CSS file (it was loaded with the \"{loader}\" loader). If it holds CSS, rename it to end in \".css\" or give its extension the \"css\" loader.",
+                                    )
+                                };
+                                log.add_range_error_fmt_with_notes(
+                                    Some(source),
+                                    record.range,
+                                    Box::new([Data {
+                                        text: note.into_bytes().into(),
+                                        location: None,
+                                    }]),
+                                    format_args!("Cannot import {imported} into a CSS file"),
+                                );
+                                continue;
+                            }
+                        }
+                        ImportKind::EntryPointRun
+                        | ImportKind::EntryPointBuild
+                        | ImportKind::Stmt
+                        | ImportKind::Require
+                        | ImportKind::Dynamic
+                        | ImportKind::RequireResolve
+                        | ImportKind::Url
+                        | ImportKind::Composes
+                        | ImportKind::HtmlManifest
+                        | ImportKind::Internal => {}
+                    }
 
                     match loader {
                         Loader::Jsx

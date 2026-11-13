@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { devTest, emptyHtmlFile, imageFixtures, minimalFramework } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -808,6 +808,75 @@ devTest("css import before create project relative", {
     assert(backgroundImage);
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
     await dev.fetch("/").expect.toContain("HELLO");
+  },
+});
+// The loader of "a.svg" gives no style sheet, so the rule is a build error and is not dropped.
+devTest("an @import of a file that is not CSS fails the stylesheet until it is removed", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["main.css"] }),
+    "main.css": `@import "./b.css";\n.m { width: 1px; }`,
+    "b.css": `@import "./a.svg";\n.b { width: 1px; }`,
+    "a.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ['b.css:1:1: error: Cannot import "a.svg" into a CSS file'],
+    });
+    await c.expectReload(async () => {
+      await dev.write("b.css", `.b { width: 2px; }`);
+    });
+    await c.style(".b").width.expect.toBe("2px");
+  },
+});
+// The file that did not load has the error. Its importer gets no error of its own.
+devTest("an @import of a file that a plugin fails to load is not an invalid import", {
+  framework: minimalFramework,
+  pluginFile: `
+    export default [
+      {
+        name: "foo",
+        setup(build) {
+          build.onLoad({ filter: /\\.foo$/ }, async () => {
+            throw new Error("the plugin failed");
+          });
+        },
+      },
+    ];
+  `,
+  files: {
+    "routes/index.ts": `
+      import "../main.css";
+      export default function (req, meta) {
+        return new Response("ok");
+      }
+    `,
+    "main.css": `@import "./theme.foo";\n.m { width: 1px; }`,
+    "theme.foo": `.t { width: 1px; }`,
+  },
+  async test(dev) {
+    const failed = await dev.fetch("/");
+    // The error page carries the build errors as base64.
+    const errors = atob((await failed.text()).match(/atob\("([^"]+)"\)/)![1]);
+    expect({
+      status: failed.status,
+      pluginError: errors.includes("the plugin failed"),
+      invalidImport: errors.includes("Cannot import"),
+    }).toEqual({ status: 500, pluginError: true, invalidImport: false });
+  },
+});
+// The dev server builds the import order with the pass that `bun build` has.
+devTest("a redundant @import of a file with a layer under @media keeps a copy of the file", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["main.css"] }),
+    "main.css": `@import "./f.css";\n@import "./g.css";\n@import "./f.css";\n@layer b { .t { color: green; } }`,
+    "f.css": `@media print { @layer b { .p { color: red; } } }`,
+    "g.css": `@layer a { .t { color: red; } }`,
+  },
+  async test(dev) {
+    const html = await dev.fetch("/").text();
+    const css = await dev.fetch(html.match(/\/_bun\/asset\/\w+\.css/)![0]).text();
+    // On a screen "a" is the first layer, so ".t" is green.
+    expect(css.replace(/\s+/g, " ")).toStartWith("/* f.css */ @media print { @layer b { .p {");
   },
 });
 

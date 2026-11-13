@@ -31,6 +31,27 @@ describe("bundler", () => {
     },
   });
 
+  // A linked style sheet gets the same check as a CSS entry point.
+  itBundled("html/css-import-of-a-file-that-is-not-css", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body></body>
+</html>`,
+      "/styles.css": `@import "./a.svg";\nbody { background-color: red; }`,
+      "/a.svg": `<svg xmlns="http://www.w3.org/2000/svg"/>`,
+    },
+    entryPoints: ["/index.html"],
+    bundleErrors: {
+      "/styles.css": ['Cannot import "a.svg" into a CSS file'],
+    },
+  });
+
   // Test relative paths without "./" in script src
   itBundled("html/implicit-relative-paths", {
     outdir: "out/",
@@ -1060,6 +1081,33 @@ body {
         first: `@media screen{@layer b;}` + rest,
         second: `@layer b;` + rest,
       });
+    },
+  });
+
+  // The style sheets of a page have one import order. The external import of the second one must not declare its
+  // layer ahead of the layer of the first one.
+  itBundled("html/LayerOfAnEarlierStylesheetBeforeExternalImport", {
+    outdir: "out/",
+    minifyWhitespace: true,
+    files: {
+      "/index.html": `<!doctype html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./a.css" />
+    <link rel="stylesheet" href="./b.css" />
+  </head>
+  <body><div class="t"></div></body>
+</html>`,
+      "/a.css": `@import "./rules.css" layer(w) screen;`,
+      "/rules.css": `.t { color: red }`,
+      "/b.css": `@import "https://example.com/ext.css" layer(v);\n@layer v { .t { color: green } }`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      expect(stylesheetOf(api, "index.html")).toBe(
+        `@import "data:text/css," layer(w) screen;@import "https://example.com/ext.css" layer(v);` +
+          `@media screen{@layer w{.t{color:red}}}@layer v{.t{color:green}}\n`,
+      );
     },
   });
 

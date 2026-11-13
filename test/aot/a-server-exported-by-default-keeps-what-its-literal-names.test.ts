@@ -309,7 +309,7 @@ test.skipIf(isDebug || isASAN)("a Worker whose entry point is a data file of the
     "main.mjs": `
       import data from "./data.json" with { type: "json" };
       const worker = new Worker(new URL("./data.json", import.meta.url).href);
-      worker.addEventListener("error", event => console.log("error:", String(event.message).split("\n")[0]));
+      worker.addEventListener("error", event => console.log("error:", event.message));
       worker.addEventListener("close", event => console.log("closed:", event.code, data.name));
     `,
     "data.json": `{ "name": "data" }`,

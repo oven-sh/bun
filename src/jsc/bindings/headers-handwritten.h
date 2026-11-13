@@ -457,6 +457,8 @@ struct DeepMatchState {
     // If `records`, `recorded` gets 4 values per compared property (see recordIfAsked).
     // An undefined patternOfValue means `value` is the asymmetric matcher the property matched.
     bool records { false };
+    // Set by the first record of a matched asymmetric matcher. Without one there is no row to show.
+    bool recordedMatcher { false };
     JSC::MarkedArgumentBuffer recorded;
     WTF::Vector<JSC::Identifier> recordedNames;
 
@@ -464,6 +466,7 @@ struct DeepMatchState {
     {
         if (!records)
             return;
+        recordedMatcher |= patternOfValue.isUndefined();
         recorded.append(holder);
         recorded.append(pattern);
         recorded.append(value);
@@ -471,6 +474,27 @@ struct DeepMatchState {
         recordedNames.append(name);
     }
 };
+
+// JestMatchedRows.cpp. A place is an object together with the pattern it was compared with. 0 is no place and 1 is the root.
+struct MatchedRow {
+    JSC::JSValue value;
+    uint32_t childPlace { 0 };
+};
+JSC::Structure* createMatchedRowsStructure(JSC::VM&, JSC::JSGlobalObject*);
+// The rows cell for what `state` recorded (one cell per call), or empty if the root gets no row. Takes the names out of `state`. Enters no JavaScript.
+JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject*, DeepMatchState&, JSC::JSValue root, JSC::JSValue rootPattern);
+// `value` is empty if the place has no row of that name or index: the printer then reads the property from the object.
+MatchedRow matchedRow(JSC::JSCell* rows, uint32_t place, JSC::PropertyName);
+MatchedRow matchedRowAtIndex(JSC::JSCell* rows, uint32_t place, uint32_t index);
+// Which rows a walk takes. Bun 1.4 wrote a matcher into the object that the match read, so its text shows the matcher where a read of the property gives that object.
+enum class MatchedRowsTaken : bool { All,
+    AsOlderBunPrinted };
+// The row that a walk shows in place of a property, which it does not read then. A replay of Bun 1.4 gets none for a row that leads on to a matcher.
+MatchedRow matchedRow(JSC::JSCell* rows, uint32_t place, JSC::PropertyName, MatchedRowsTaken);
+// For a property that such a replay read: the place of `read` if it is the object that the match read under the name on its way to a matcher, and 0 if not.
+uint32_t matchedPlaceOfRead(JSC::JSCell* rows, uint32_t place, JSC::PropertyName, JSC::JSValue read);
+// Appends to `missing` the names of the rows of the place that are not among `names`, in the order of the walk. A replay of Bun 1.4 lists only a matcher there.
+void appendMissingMatchedRowNames(JSC::JSCell* rows, uint32_t place, std::span<const JSC::Identifier> names, WTF::Vector<JSC::Identifier>& missing, MatchedRowsTaken = MatchedRowsTaken::All);
 }
 
 /**

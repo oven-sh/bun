@@ -37,7 +37,9 @@ impl Expect {
             );
         }
 
-        let (mut pass, received_object) = received_object.jest_deep_match(expected, global, not)?;
+        // `.not` shows only the pattern, so it asks for no rows.
+        let rows_when = if not { None } else { Some(false) };
+        let (mut pass, rows) = received_object.jest_deep_match(expected, global, rows_when)?;
 
         if not {
             pass = !pass;
@@ -47,7 +49,7 @@ impl Expect {
         }
 
         // handle failure
-        let diff_formatter = DiffFormatter::new(global, received_object, expected, not)?;
+        let diff_formatter = DiffFormatter::with_matched_rows(global, received_object, expected, not, rows)?;
 
         if not {
             let signature: &str = get_signature("toMatchObject", "<green>expected<r>", true);

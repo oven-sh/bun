@@ -38,6 +38,7 @@ public:
     V(Structure, mockObjectStructure)                             \
     V(Structure, mockModuleStructure)                             \
     V(Structure, activeSpySetStructure)                           \
+    V(Structure, matchedRowsStructure)                            \
     V(JSFunction, withImplementationCleanupFunction)              \
     V(JSC::Structure, mockWithImplementationCleanupDataStructure) \
     V(JSCell, lazyPrototype)                                      \

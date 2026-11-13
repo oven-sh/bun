@@ -72,6 +72,7 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForJSX509Certificate { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForWasmStreamingCompiler { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSWebView { nullptr };
+    GCClient::IsoSubspace* m_clientSubspaceForJestMatchedRows { nullptr };
 
     GCClient::IsoSubspace* m_clientSubspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClasses] {};
     /* --- bun --- */

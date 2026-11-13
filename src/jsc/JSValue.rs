@@ -12,7 +12,7 @@ use core::marker::PhantomData;
 use crate::array_buffer::MarkedArrayBuffer_deallocator;
 use crate::{
     AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
-    JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError, JsResult,
+    JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError, JsResult, MatchedRows,
     StringJsc as _, ZigException, bun_string_jsc, ffi, host_fn,
 };
 
@@ -2174,6 +2174,17 @@ pub(crate) type ForEachPropertyCallback = extern "C" fn(
     is_private_symbol: bool,
 );
 
+/// `ForEachPropertyCallback` for the walkers with rows: `child_place` is the place of `value` in the matched rows, or 0 if it has none.
+pub type ForEachPropertyWithRowsCallback = extern "C" fn(
+    global: &JSGlobalObject,
+    ctx: *mut c_void,
+    key: &bun_core::EncodedSlice,
+    value: JSValue,
+    is_symbol: bool,
+    is_private_symbol: bool,
+    child_place: u32,
+);
+
 /// `JSValue.StringFormatter` — `Display` adapter that
 /// coerces the value via `toBunString` at format time.
 pub struct StringFormatter<'a> {
@@ -2537,6 +2548,64 @@ impl JSValue {
         JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(self, global, ctx, callback);
         scope.return_if_exception()
     }
+    /// `for_each_property_ordered_calling_getters` with the matched rows of `place`. SAFETY: `rows` is the live cell of a `jest_deep_match` call.
+    pub(crate) unsafe fn for_each_property_ordered_calling_getters_with_rows(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: ForEachPropertyWithRowsCallback,
+        rows: JSValue,
+        place: u32,
+    ) -> JsResult<bool> {
+        unsafe extern "C" {
+            fn JSC__JSValue__forEachPropertyOrderedCallingGettersWithRows(
+                this: JSValue,
+                global: &JSGlobalObject,
+                ctx: *mut c_void,
+                callback: ForEachPropertyWithRowsCallback,
+                rows: JSValue,
+                place: u32,
+            ) -> bool;
+        }
+        debug_assert!(rows.is_cell() && place != 0);
+        crate::top_scope!(scope, global);
+        // SAFETY: the caller vouches for `rows`, C++ answers for any `place`, and the rest is the contract of `JSC__JSValue__forEachProperty` above.
+        let is_same = unsafe {
+            JSC__JSValue__forEachPropertyOrderedCallingGettersWithRows(
+                self, global, ctx, callback, rows, place,
+            )
+        };
+        scope.return_if_exception().map(|()| is_same)
+    }
+    /// `for_each_property_ordered_with_non_enumerable` with the matched rows of `place`. SAFETY: as above.
+    pub(crate) unsafe fn for_each_property_ordered_with_non_enumerable_with_rows(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: ForEachPropertyWithRowsCallback,
+        rows: JSValue,
+        place: u32,
+    ) -> JsResult<()> {
+        unsafe extern "C" {
+            fn JSC__JSValue__forEachPropertyOrderedWithNonEnumerableWithRows(
+                this: JSValue,
+                global: &JSGlobalObject,
+                ctx: *mut c_void,
+                callback: ForEachPropertyWithRowsCallback,
+                rows: JSValue,
+                place: u32,
+            );
+        }
+        debug_assert!(rows.is_cell() && place != 0);
+        crate::top_scope!(scope, global);
+        // SAFETY: the caller vouches for `rows`, C++ answers for any `place`, and the rest is the contract of `JSC__JSValue__forEachProperty` above.
+        unsafe {
+            JSC__JSValue__forEachPropertyOrderedWithNonEnumerableWithRows(
+                self, global, ctx, callback, rows, place,
+            );
+        }
+        scope.return_if_exception()
+    }
     /// `JSValue.isBuffer` — `instanceof Buffer` check via
     /// the C++ `JSBuffer__isBuffer` shim. Accepts any JSValue; the C++ side
     /// handles non-cells (returns false), so no precondition is asserted.
@@ -2794,20 +2863,19 @@ impl JSValue {
             JSC__JSValue__jestStrictDeepEquals(self, other, global)
         })
     }
-    /// `JSValue.jestDeepMatch` — `expect(a).toMatchObject(b)` /
-    /// snapshot-property-matcher subset comparison. Also returns the value to print for `self`. If the result
-    /// equals `replace_when`, that's a copy with `subset`'s asymmetric matchers in place of what they matched.
+    /// `expect(a).toMatchObject(b)` and snapshot property matchers. With `rows_when: Some(result)`, also the matchers that passed if the comparison gives `result`.
     pub fn jest_deep_match(
         self,
         subset: JSValue,
         global: &JSGlobalObject,
-        replace_when: bool,
-    ) -> JsResult<(bool, JSValue)> {
-        let mut shown = self;
+        rows_when: Option<bool>,
+    ) -> JsResult<(bool, MatchedRows)> {
+        let mut rows = MatchedRows::default();
+        let out = rows_when.is_some().then_some(&mut rows);
         let matched = host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__jestDeepMatch(self, subset, global, replace_when, &mut shown)
+            JSC__JSValue__jestDeepMatch(self, subset, global, rows_when == Some(true), out)
         })?;
-        Ok((matched, shown))
+        Ok((matched, rows))
     }
 
     // ── BigInt ordering. ────────────────────────────────
@@ -2918,8 +2986,8 @@ unsafe extern "C" {
         this: JSValue,
         subset: JSValue,
         global: &JSGlobalObject,
-        replace_when: bool,
-        shown: &mut JSValue,
+        rows_when: bool,
+        rows: Option<&mut MatchedRows>,
     ) -> bool;
     safe fn JSC__JSValue__asBigIntCompare(this: JSValue, other: JSValue) -> ComparisonResult;
     safe fn JSC__JSValue__keys(global: &JSGlobalObject, value: JSValue) -> JSValue;

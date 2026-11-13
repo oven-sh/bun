@@ -21,6 +21,15 @@ export function createBunShellTemplateFunction(
     return this.toString();
   }
 
+  // An own read: a `raw` found on the prototype chain was not written by a template literal.
+  function templateRawStrings(first: TemplateStringsArray): readonly string[] {
+    if (first != null) {
+      const raw = $getByIdDirect(first, "raw");
+      if (raw !== undefined) return raw;
+    }
+    throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
+  }
+
   class ShellError extends Error {
     #output?: ShellOutput = undefined;
     info;
@@ -318,8 +327,7 @@ export function createBunShellTemplateFunction(
   }
 
   var BunShell = function BunShell(first: TemplateStringsArray, ...rest: unknown[]) {
-    if (first?.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
-    const parsed_shell_script = createParsedShellScript(first.raw, rest);
+    const parsed_shell_script = createParsedShellScript(templateRawStrings(first), rest);
 
     const cwd = BunShell[cwdSymbol];
     const env = BunShell[envSymbol];
@@ -338,8 +346,7 @@ export function createBunShellTemplateFunction(
     }
 
     var Shell = function Shell(first: TemplateStringsArray, ...rest: unknown[]) {
-      if (first?.raw === undefined) throw new Error("Please use '$' as a tagged template function: $`cmd arg1 arg2`");
-      const parsed_shell_script = createParsedShellScript(first.raw, rest);
+      const parsed_shell_script = createParsedShellScript(templateRawStrings(first), rest);
 
       const cwd = Shell[cwdSymbol];
       const env = Shell[envSymbol];

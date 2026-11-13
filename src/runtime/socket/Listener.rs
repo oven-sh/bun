@@ -1046,18 +1046,24 @@ impl Listener {
                         .get_truthy(cx.global(), "fdIsRawSocket")?
                         .is_some_and(|v| v.to_boolean()) =>
                 {
-                    let class = match bun_sys::fstat(*fd) {
-                        Ok(st) => {
-                            let mode = st.st_mode & libc::S_IFMT;
-                            if mode == libc::S_IFSOCK {
-                                FdClass::Socket
-                            } else if mode == libc::S_IFIFO || mode == libc::S_IFCHR {
-                                FdClass::Pipe
-                            } else {
-                                FdClass::Other(bun_sys::SystemErrno::ENOTSOCK as c_int)
+                    // `Fd::as_borrowed_fd` asserts on a raw -1, so a negative
+                    // descriptor must not reach `fstat`.
+                    let class = if fd.native() < 0 {
+                        FdClass::Other(bun_sys::SystemErrno::EBADF as c_int)
+                    } else {
+                        match bun_sys::fstat(*fd) {
+                            Ok(st) => {
+                                let mode = st.st_mode & libc::S_IFMT;
+                                if mode == libc::S_IFSOCK {
+                                    FdClass::Socket
+                                } else if mode == libc::S_IFIFO || mode == libc::S_IFCHR {
+                                    FdClass::Pipe
+                                } else {
+                                    FdClass::Other(bun_sys::SystemErrno::ENOTSOCK as c_int)
+                                }
                             }
+                            Err(_) => FdClass::Other(bun_sys::SystemErrno::EBADF as c_int),
                         }
-                        Err(_) => FdClass::Other(bun_sys::SystemErrno::EBADF as c_int),
                     };
                     (class, *fd)
                 }
@@ -1077,6 +1083,7 @@ impl Listener {
                         // SAFETY: caller passes a live TLSSocket, owned by its JS wrapper.
                         let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
                         debug_assert!(!prev.this_value.get().is_empty());
+                        prev.detach_for_reconnect();
                         prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
                             prev.socket.get().socket,
@@ -1169,6 +1176,7 @@ impl Listener {
                         // SAFETY: caller passes a live TCPSocket, owned by its JS wrapper.
                         let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
                         debug_assert!(!prev.this_value.get().is_empty());
+                        prev.detach_for_reconnect();
                         prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
                             prev.socket.get().socket,

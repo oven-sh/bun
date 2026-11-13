@@ -999,18 +999,14 @@ impl BunxCommand {
             .get(b"BUN_WHICH_IGNORE_CWD")
             .unwrap_or(b"")
             .to_vec();
-        let is_node_gyp = update_request.name == b"node-gyp" && opts.binary_name.is_none();
+
         let search_path: Vec<u8> = env_loader.get(b"PATH").unwrap().to_vec();
 
-        // Set by `bun install` to the only directories to look for node-gyp in.
-        let node_gyp_path: Option<Vec<u8>> = (env_loader.get(b"BUN_INTERNAL_NODE_GYP_PATH"))
-            .filter(|_| is_node_gyp)
-            .map(<[u8]>::to_vec);
-        let skip_project = node_gyp_path.is_some();
-        // `bun install` has ordered the PATH of its scripts, and node-gyp keeps that order.
-        let path: Vec<u8> = if is_node_gyp && (skip_project || !ignore_cwd.is_empty()) {
+        // Set by the shim that `bun install` writes, which has ordered the PATH of its scripts.
+        let path: Vec<u8> = if env_loader.has(b"BUN_INTERNAL_BUNX_KEEP_PATH_ORDER") {
             let path = Self::path_with_bin_dirs_last(&search_path, &inherited_path);
             env_loader.map.put(b"PATH", &path)?;
+            env_loader.map.remove(b"BUN_INTERNAL_BUNX_KEEP_PATH_ORDER");
             path
         } else {
             search_path.clone()
@@ -1089,9 +1085,7 @@ impl BunxCommand {
         };
         bun_output::scoped_log!(bunx, "install_param: {}", BStr::new(&install_param));
 
-        let path_for_bin_dirs: Vec<u8> = if let Some(node_gyp_path) = node_gyp_path {
-            node_gyp_path
-        } else if ignore_cwd.is_empty() {
+        let path_for_bin_dirs: Vec<u8> = if ignore_cwd.is_empty() {
             search_path
         } else {
             // Without the cwd passed through BUN_WHICH_IGNORE_CWD: a temp node-gyp script must not find itself.
@@ -1165,7 +1159,7 @@ impl BunxCommand {
 
         // 2. The project's installed copy of the package. It is skipped when the user typed a
         // version, a tag, or a URL, because that says where the package must come from.
-        if !is_versioned && !skip_project {
+        if !is_versioned {
             let project = bun_install::package_manager_real::project_directory(top_level_dir);
             let found = match Self::find_in_project(
                 this_transpiler,
@@ -1214,13 +1208,6 @@ impl BunxCommand {
                     update_request.name,
                 ),
             }
-        }
-
-        if skip_project && !is_versioned {
-            bun_core::note!(
-                "using <b>node-gyp<r> from the registry. To choose one, add it to package.json or set <b>npm_config_node_gyp<r>."
-            );
-            Output::flush();
         }
 
         let configured_cache = if cfg!(unix) {

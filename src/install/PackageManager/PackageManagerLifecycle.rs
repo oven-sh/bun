@@ -363,38 +363,21 @@ impl PackageManager {
             append_path_without_ancestor_bins(&mut env_path, &original_path, cwd)?;
         }
         if !list.bin_conflicts.is_empty() {
-            let shim_dir = script_env.get(b"BUN_WHICH_IGNORE_CWD");
-            let mut without_shim = EnvPath::init_capacity(env_path.slice().len())?;
+            // The shim is a command of its own only if it is configured with one to run.
+            let shim_dir = (script_env.get(b"BUN_WHICH_IGNORE_CWD"))
+                .filter(|_| (script_env.get(b"npm_config_node_gyp")).is_none_or(<[u8]>::is_empty));
+            let mut commands_path = EnvPath::init_capacity(env_path.slice().len())?;
             for entry in strings::split(env_path.slice(), &[bun_paths::DELIMITER]) {
                 if Some(entry) != shim_dir {
-                    without_shim.append(entry)?;
+                    commands_path.append(entry)?;
                 }
             }
-            let is_configured =
-                (script_env.get(b"npm_config_node_gyp")).is_some_and(|path| !path.is_empty());
-            let commands = if is_configured {
-                &env_path
-            } else {
-                &without_shim
-            };
             crate::bin::link_conflicting_bins(
                 &self.lockfile,
                 &list.bin_conflicts,
                 cwd,
-                commands.slice(),
+                commands_path.slice(),
             )?;
-            if list.bin_conflicts.node_gyp {
-                let mut node_gyp_path = EnvPath::init_capacity(original_path.len())?;
-                let mut builder = node_gyp_path.path_component_builder();
-                builder.append(cwd);
-                builder.append(b"node_modules/.bin");
-                builder.apply()?;
-                node_gyp_path.append(without_shim.slice())?;
-                script_env.put(b"BUN_INTERNAL_NODE_GYP_PATH", node_gyp_path.slice())?;
-            }
-        }
-        if !list.bin_conflicts.node_gyp {
-            script_env.remove(b"BUN_INTERNAL_NODE_GYP_PATH");
         }
         let mut inherited_path = list.is_dependency.then_some(env_path.slice());
         let store_entry = bun_paths::path_literal!("/node_modules/.bun/").as_bytes();

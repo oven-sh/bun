@@ -263,7 +263,7 @@ impl Scripts {
                 // Owned NUL-terminated copy.
                 cwd: ZBox::from_bytes(cwd),
                 package_name: Box::<[u8]>::from(package_name),
-                bin_conflicts: Default::default(),
+                bin_conflicts: Vec::new(),
             });
         }
 
@@ -445,7 +445,7 @@ pub struct List {
     pub(crate) cwd: ZBox,
     pub(crate) package_name: Box<[u8]>,
     /// Set for a package in a hoisted tree.
-    pub bin_conflicts: crate::bin::BinConflicts,
+    pub bin_conflicts: Vec<crate::bin::BinConflict>,
 }
 
 impl List {

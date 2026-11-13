@@ -2723,15 +2723,10 @@ fn write_yarn_lock_with_progress(
     manager: &mut PackageManager,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
-    // reshaped for borrowck — `Progress::start` returns
-    // `&mut self.root`, so re-access it via `manager.progress.root` after the
-    // `&mut manager` borrow ends instead of keeping a live `&mut Node`.
-    let mut node_started = false;
     if log_level.show_progress() {
         manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        let _ = manager.progress.start(b"Saving yarn.lock", 0);
+        manager.progress.start(b"Saving yarn.lock", 0);
         manager.progress.refresh();
-        node_started = true;
     } else if log_level != Options::LogLevel::Silent {
         bun_core::pretty_errorln!("Saved yarn.lock");
         Output::flush();
@@ -2739,11 +2734,11 @@ fn write_yarn_lock_with_progress(
 
     write_yarn_lock(manager)?;
     if log_level.show_progress() {
-        if node_started {
-            manager.progress.root.complete_one();
-        }
+        manager
+            .progress
+            .complete_one(crate::bun_progress::NodeId::Root);
         manager.progress.refresh();
-        manager.progress.root.end();
+        manager.progress.end();
         manager.progress = Default::default();
     }
     Ok(())

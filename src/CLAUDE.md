@@ -186,8 +186,10 @@ let s = bun_core::String::from_js(value, global)?;
 with runtime CPU dispatch). Byte and substring search **must** go through it —
 `str::find`/`contains`/`split*`, `slice::windows`, `memchr::*` and
 `bstr::ByteSlice::find*` are denied in `clippy.toml`, and the byte-literal forms
-of `<[u8]>::contains`, `iter().position/rposition/any(|b| b == b'x')` and
-`.split(|b| ..)` are rejected by `test/internal/source-lints/byte-search.test.ts`.
+of `<[u8]>::contains`, `iter().position/rposition/any(|b| b == b'x')` and every
+slice `split*` / `rsplit*` method (`.split(|b| ..)`, `.rsplit(|b| ..)`,
+`.splitn(n, |b| ..)`, ...) are rejected by
+`test/internal/source-lints/byte-search.test.ts`.
 Highway is the only SIMD in the Rust sources: both also ban `std::simd`, and the
 source lint bans the `core::arch` intrinsics. A new kernel goes in
 `src/jsc/bindings/highway_strings.cpp`, or in a `highway_*.cpp` of its own beside it, which

@@ -68,14 +68,16 @@ fn find_mapping_around(bytes: &[u8]) -> Option<Mapping> {
     let end = begin + bytes.len();
     let maps = crate::File::read_from(crate::Fd::cwd(), b"/proc/self/maps").ok()?;
     bun_core::strings::split(&maps, b"\n").find_map(|line| {
-        let mut fields = line.splitn(6, |&byte| byte == b' ');
-        let mut range = bun_core::strings::split(fields.next()?, b"-").map(parse_hex);
+        let (range, rest) = bun_core::strings::split_once_char(line, b' ')?;
+        let (protection, rest) = bun_core::strings::split_once_char(rest, b' ')?;
+        let (offset, rest) = bun_core::strings::split_once_char(rest, b' ')?;
+        let (_device, rest) = bun_core::strings::split_once_char(rest, b' ')?;
+        let (_inode, file) = bun_core::strings::split_once_char(rest, b' ')?;
+        let mut range = bun_core::strings::split(range, b"-").map(parse_hex);
         let low = range.next()??;
         let high = range.next()??;
-        let protection = fields.next()?;
-        let offset = parse_hex(fields.next()?)?;
-        let (_device, _inode) = (fields.next()?, fields.next()?);
-        let file = fields.next()?.trim_ascii_start();
+        let offset = parse_hex(offset)?;
+        let file = file.trim_ascii_start();
         (low <= begin && end <= high && protection == b"r--p" && file == executable)
             .then_some(Mapping { low, high, offset })
     })

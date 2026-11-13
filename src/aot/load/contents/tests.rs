@@ -1443,6 +1443,7 @@ fn url_that_names_no_file_of_code_is_no_entry_point() {
         ),
         (r#"new URL("./w.ts", "file:///elsewhere/")"#, false),
         ("new URL(process.argv[2], import.meta.url)", false),
+        (r#""./lib/.env""#, false),
         (
             r#"new (class URL { constructor(path: string, base: string) {} })("w.ts", import.meta.url)"#,
             true,

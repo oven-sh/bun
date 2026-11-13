@@ -57,6 +57,7 @@ export function serialize(message: unknown, handle: unknown, options: unknown) {
  * @returns {void}
  */
 export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Node.SerializedIPCHandle, fd: number) {
+  // Called from the next tick, as Node's handleMessage: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L966-L973
   const emit: (target: $Bindgen.Subprocess | null, message: unknown, handle: object) => void = $bindgen(
     "ipc_host.bind.ts",
     "emitHandleIPCMessage",
@@ -67,14 +68,14 @@ export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Nod
     case "net.Server": {
       const server = new net.Server();
       server.listen({ fd, exclusive: true }, () => {
-        emit(target, serialized.msg, server);
+        process.nextTick(emit, target, serialized.msg, server);
       });
       return;
     }
     case "net.Socket": {
       const socket = new net.Socket({ readable: true, writable: true });
       socket.connect({ fd, fdIsRawSocket: true });
-      emit(target, serialized.msg, socket);
+      process.nextTick(emit, target, serialized.msg, socket);
       return;
     }
     case "dgram.Native": {
@@ -83,12 +84,9 @@ export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Nod
       const { UDP } = require("internal/dgram");
       const wrap = new UDP();
       const err = wrap.open(fd);
-      if (err) {
-        // The wrap only owns the descriptor on success; don't leak it.
-        require("node:fs").closeSync(fd);
-        throw new Error(`failed to open received dgram handle: ${err}`);
-      }
-      emit(target, serialized.msg, wrap);
+      // The caller closes the descriptor of a parse that throws.
+      if (err) throw new Error(`failed to open received dgram handle: ${err}`);
+      process.nextTick(emit, target, serialized.msg, wrap);
       return;
     }
     case "dgram.Socket": {
@@ -96,7 +94,7 @@ export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Nod
       const dgram = require("node:dgram");
       const socket = new dgram.Socket(serialized.dgramType || "udp4");
       socket.bind({ fd, exclusive: true }, () => {
-        emit(target, serialized.msg, socket);
+        process.nextTick(emit, target, serialized.msg, socket);
       });
       return;
     }

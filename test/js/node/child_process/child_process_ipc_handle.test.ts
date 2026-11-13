@@ -814,4 +814,176 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
     });
     expect(exitCode).toBe(0);
   });
+  // Node emits every message that carries a handle from the next tick (handleMessage in
+  // lib/internal/child_process.js), after the conversion of the handle has run: a dgram.Socket is bound, and has
+  // emitted 'listening', when its message arrives. The subscriber of `udp.socket` is how a program reaches the
+  // socket before that message.
+  const received = {
+    "parent.js": `
+const { fork } = require('node:child_process');
+const dgram = require('node:dgram');
+const child = fork('child.js', [], process.argv[2] ? { execPath: process.argv[2] } : {});
+let report;
+child.on('message', m => { report = m; });
+child.on('close', code => console.log(JSON.stringify({ ...report, code })));
+const socket = dgram.createSocket('udp4');
+socket.bind(0, '127.0.0.1', () => child.send('socket', socket, () => socket.close()));
+`,
+  };
+  async function reportOf(files: Record<string, string>, args: string[] = []) {
+    using dir = tempDir("ipc-handle-dgram-received", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js", ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out: JSON.parse(stdout.trim()), stderr, exitCode };
+  }
+
+  const listeningThenMessage = {
+    ...received,
+    "child.js": `
+const order = [];
+// Held: Bun collects a channel that nothing but its subscribers keeps.
+globalThis.channel = require('node:diagnostics_channel').channel('udp.socket');
+globalThis.channel.subscribe(({ socket }) => {
+  socket.on('listening', () => {
+    order.push('listening');
+    process.nextTick(() => order.push('nextTick'));
+    queueMicrotask(() => order.push('microtask'));
+  });
+});
+process.on('message', (m, socket) => {
+  order.push('message');
+  setImmediate(() => {
+    socket.close();
+    process.send({ order }, () => process.disconnect());
+  });
+});
+`,
+  };
+  const order = { out: { order: ["listening", "nextTick", "message", "microtask"], code: 0 }, stderr: "", exitCode: 0 };
+  test.concurrent("the message of a received dgram.Socket arrives in the tick after its 'listening'", async () => {
+    expect(await reportOf(listeningThenMessage)).toEqual(order);
+  });
+  test.skipIf(!node).concurrent("node child: the message of a received dgram.Socket, as above", async () => {
+    expect(await reportOf(listeningThenMessage, [node!])).toEqual(order);
+  });
+
+  // The listener throws inside the frame that received the descriptor. The socket has adopted the descriptor by
+  // then: nothing else closes it. A file that the program opens next has another number, and outlives the socket.
+  const listenerThrows = {
+    ...received,
+    "child.js": `
+const fs = require('node:fs');
+let received;
+globalThis.channel = require('node:diagnostics_channel').channel('udp.socket');
+globalThis.channel.subscribe(({ socket }) => {
+  received = socket;
+  socket.on('listening', () => { throw new Error('thrown by the listener'); });
+});
+for (const event of ['uncaughtException', 'unhandledRejection']) {
+  process.on(event, error => {
+    const report = { event, message: error.message };
+    try { report.port = typeof received.address().port; } catch (e) { report.port = e.code; }
+    const file = fs.openSync(__filename, 'r');
+    received.close();
+    try { fs.fstatSync(file); report.file = 'open'; fs.closeSync(file); } catch (e) { report.file = e.code; }
+    process.send(report, () => process.disconnect());
+  });
+}
+// The channel is read from the first 'message' listener on. The listener above keeps the message from it.
+process.on('message', () => {});
+`,
+  };
+  const whole = {
+    out: { event: "uncaughtException", message: "thrown by the listener", port: "number", file: "open", code: 0 },
+    stderr: "",
+    exitCode: 0,
+  };
+  test.concurrent("a 'listening' listener that throws leaves a received dgram.Socket its descriptor", async () => {
+    expect(await reportOf(listenerThrows)).toEqual(whole);
+  });
+  test.skipIf(!node).concurrent("node child: a 'listening' listener that throws, as above", async () => {
+    expect(await reportOf(listenerThrows, [node!])).toEqual(whole);
+  });
+
+  // A plain message and a message with a handle that the receiver reads at once: the tick that the listener of the
+  // first queues runs before the second arrives. The receiver reads nothing until the sender has written both.
+  const oneRead = {
+    "parent.js": `
+const { fork } = require('node:child_process');
+const fs = require('node:fs');
+const [kind, written] = process.argv.slice(2);
+const child = fork('child.js', [kind, written]);
+const got = [];
+child.on('message', (m, handle) => {
+  if (m === 'ready') {
+    child.send('go', () => {
+      const deadline = Date.now() + 20000;
+      while (!fs.existsSync(written) && Date.now() < deadline);
+    });
+    return;
+  }
+  got.push(handle ? 'handle:' + m : m);
+  if (!handle) return process.nextTick(() => got.push('tick@' + m));
+  if (handle.destroy) handle.destroy(); else handle.close();
+  setImmediate(() => { console.log(JSON.stringify(got)); child.disconnect(); });
+});
+`,
+    "child.js": `
+const net = require('node:net');
+const dgram = require('node:dgram');
+const fs = require('node:fs');
+const [kind, written] = process.argv.slice(2);
+function withHandle(send) {
+  if (kind === 'net.Server') {
+    const server = net.createServer().listen(0, '127.0.0.1', () => send(server, () => server.close()));
+  } else if (kind === 'net.Socket') {
+    const server = net.createServer(socket => send(socket, () => server.close())).listen(0, '127.0.0.1', () => {
+      net.connect(server.address().port, '127.0.0.1').on('error', () => {}).unref();
+    });
+  } else {
+    const socket = dgram.createSocket('udp4');
+    socket.bind(0, '127.0.0.1', () => send(socket, () => socket.close()));
+  }
+}
+withHandle((handle, close) => {
+  process.on('message', m => {
+    if (m !== 'go') return;
+    process.send('plain');
+    process.send('h', handle, close);
+    setImmediate(() => fs.writeFileSync(written, ''));
+  });
+  process.on('disconnect', () => process.exit(0));
+  process.send('ready');
+});
+`,
+  };
+  async function readAtOnce(runtime: string, kind: string) {
+    using dir = tempDir("ipc-handle-one-read", oneRead);
+    await using proc = Bun.spawn({
+      cmd: [runtime, "parent.js", kind, "written"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { got: JSON.parse(stdout.trim()), stderr, exitCode };
+  }
+  // The other handles were emitted from a tick before: a net.Server from its 'listening', a dgram.Socket from the job of its bind.
+  const inOrder = { got: ["plain", "tick@plain", "handle:h"], stderr: "", exitCode: 0 };
+  test.concurrent(
+    "a net.Socket read together with a plain message arrives after the tick of that message",
+    async () => {
+      expect(await readAtOnce(bunExe(), "net.Socket")).toEqual(inOrder);
+    },
+  );
+  test.skipIf(!node).concurrent("node: a net.Socket read together with a plain message, as above", async () => {
+    expect(await readAtOnce(node!, "net.Socket")).toEqual(inOrder);
+  });
 });

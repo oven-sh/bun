@@ -129,3 +129,36 @@ export const socketOptions = [
     }),
   ),
 ];
+
+// Native code calls a handler later and with another `this`, as it may call every function that it keeps.
+export const keptByNativeCode = (readMembers: readonly string[], calledMembers: readonly string[]) => [
+  b.retained,
+  b.reachableValuesStoredIn(b.nativeMemory),
+  b.runsTransitively(
+    "OwnKeys",
+    "OwnValues",
+    "PrototypeChain",
+    "Iterate",
+    "ToPrimitive",
+    b.named(...readMembers),
+    ...(calledMembers.length > 0 ? [b.calls(...calledMembers)] : []),
+  ),
+];
+
+const datagramSocketOptionNames = ["port", "hostname", "flags", "fd", "sharedFd", "binaryType", "socket", "connect"];
+const datagramSocketHandlerNames = ["data", "drain", "error"];
+const datagramSocket = b.instance("UDPSocket");
+// udp_socket.rs on_data(), on_drain(), call_error_handler().
+const datagramSocketHandlerArguments: Readonly<Record<string, readonly b.PlaceLike[]>> = {
+  data: [datagramSocket, receivedChunk, b.f64, b.string, b.anyMadeOf("Object")],
+  drain: [datagramSocket],
+  error: [b.thrown],
+};
+
+// UDPSocket::create() in udp_socket.rs, behind `Bun.udpSocket()` and node:dgram's bind.
+export const datagramSocketOptions = [
+  ...keptByNativeCode(datagramSocketOptionNames, datagramSocketHandlerNames),
+  ...Object.entries(datagramSocketHandlerArguments).map(([handler, args]) =>
+    b.memberCalled(["socket", handler], { times: "PerEvent", this: datagramSocket, args, result: "Ignored" }),
+  ),
+];

@@ -161,6 +161,8 @@ NativeBindgenUdp_socketBindTsDgramBindFd/0: it is not called: it closes, cuts or
 NativeBindgenUdp_socketBindTsDgramBindFd/1: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeBindgenUdp_socketBindTsDgramCloseFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeBindgenUdp_socketBindTsDgramCloseFd/1: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
+NativeBindgenUdp_socketBindTsDgramCreateSocket/0: it is not called: it blocks, starts a process or opens a socket
+NativeBindgenUdp_socketBindTsDgramCreateSocket/1: it is not called: it blocks, starts a process or opens a socket
 NativeBindgenUdp_socketBindTsDgramListenFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeBindgenUdp_socketBindTsDgramListenFd/1: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeCppJSMIMEParamsCppCreateJSMIMEBinding/0: it is not called: this realm does not have it
@@ -246,6 +248,7 @@ NativeFunctionsUdp_socketBindTsConnect/0: it is not called: it asks the name ser
 NativeFunctionsUdp_socketBindTsDgramAdoptFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeFunctionsUdp_socketBindTsDgramBindFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeFunctionsUdp_socketBindTsDgramCloseFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
+NativeFunctionsUdp_socketBindTsDgramCreateSocket/0: it is not called: it blocks, starts a process or opens a socket
 NativeFunctionsUdp_socketBindTsDgramListenFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeFunctionsVirtual_machine_exportsBindTsSetSyntheticAllocationLimitForTesting/0: it is not called: it ends the process or makes it fail
 NativeFunctionsWorkerCppJsFunctionPostMessage/0: it is not called: it starts a thread, a process or a terminal

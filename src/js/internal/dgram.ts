@@ -30,7 +30,7 @@ function uvErrno(err, fallback: number): number {
 
 // A libuv-style UDP handle over a raw datagram descriptor: created/bound (or
 // adopted) but never reading. Live node:dgram sockets read through
-// Bun.udpSocket; this wrap exists so the cluster primary can hold a shared,
+// a native UDPSocket; this wrap exists so the cluster primary can hold a shared,
 // non-reading handle and so `// Flags: --expose-internals` tests can exercise
 // internalBinding('udp_wrap').UDP. Adopting a wrap's fd into a reading socket
 // transfers ownership of the descriptor — don't close the wrap afterwards.

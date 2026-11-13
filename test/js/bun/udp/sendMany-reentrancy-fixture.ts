@@ -41,14 +41,17 @@ const syncLookup: dgram.SocketOptions["lookup"] = (_host, opts: any, cb: any) =>
   cb(null, "127.0.0.1", 4);
 };
 
+// With a synchronous lookup 'listening' fires inside bind(), as on Node.
 const target = dgram.createSocket({ type: "udp4", lookup: syncLookup });
+const targetListening = once(target, "listening");
 target.bind(0, "127.0.0.1");
-await once(target, "listening");
+await targetListening;
 const targetPort = target.address().port;
 
 const sock = dgram.createSocket({ type: "udp4", lookup: syncLookup });
+const sockListening = once(sock, "listening");
 sock.bind(0, "127.0.0.1");
-await once(sock, "listening");
+await sockListening;
 
 let flipped = false;
 

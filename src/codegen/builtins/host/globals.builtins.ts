@@ -29,7 +29,15 @@ import {
   promiseOf,
   retainedByNativeCode,
 } from "./native-code.ts";
-import { convertedToString, iterated, sequencesOfTLSOptions, socketOptions, tlsOptionNames } from "./socket-options.ts";
+import {
+  convertedToString,
+  datagramSocketOptions,
+  iterated,
+  keptByNativeCode,
+  sequencesOfTLSOptions,
+  socketOptions,
+  tlsOptionNames,
+} from "./socket-options.ts";
 
 type Contents = Readonly<Record<string, b.TableType>>;
 type UsesByOperand = Readonly<Record<string, readonly b.UseSpec[]>>;
@@ -141,21 +149,6 @@ const refusal = (operand: string, implementation: b.ImplementationSpec = b.hostC
     uses: { [operand]: describedInErrorMessage },
     implementation,
   }) satisfies b.FunctionField;
-
-// Native code calls a handler later and with another `this`, as it may call every function that it keeps.
-const keptByNativeCode = (readMembers: readonly string[], calledMembers: readonly string[]) => [
-  b.retained,
-  b.reachableValuesStoredIn(b.nativeMemory),
-  b.runsTransitively(
-    "OwnKeys",
-    "OwnValues",
-    "PrototypeChain",
-    "Iterate",
-    "ToPrimitive",
-    b.named(...readMembers),
-    ...(calledMembers.length > 0 ? [b.calls(...calledMembers)] : []),
-  ),
-];
 
 // Native code copies what it reads out of the options. Each function that it calls has a b.memberCalled of its own, which says its `this`, and each sequence a b.memberCalled of its iterator.
 const readAndKeptIn = (cell: string, readMembers: readonly string[]) => [
@@ -799,21 +792,6 @@ const subprocessOptionNames = [
 ];
 
 const subprocessHandlerNames = ["ipc", "onExit", "onDisconnect", "data", "exit", "drain"];
-
-const datagramSocketOptionNames = ["port", "hostname", "flags", "fd", "sharedFd", "binaryType", "socket", "connect"];
-const datagramSocketHandlerNames = ["data", "drain", "error"];
-const datagramSocket = b.instance("UDPSocket");
-const receivedDatagram = b.union(
-  b.instance("Buffer"),
-  b.instance("Uint8Array").exactly,
-  b.instance("ArrayBuffer"),
-).fresh;
-// udp_socket.rs on_data(), on_drain(), call_error_handler().
-const datagramSocketHandlerArguments: Readonly<Record<string, readonly b.PlaceLike[]>> = {
-  data: [datagramSocket, receivedDatagram, b.f64, b.string, b.anyMadeOf("Object")],
-  drain: [datagramSocket],
-  error: [b.thrown],
-};
 
 const bundlerOptionNames = [
   "admit",
@@ -1673,14 +1651,7 @@ export default b.declarations(
         runsOnlyOperandCode: true,
         args: { options: b.any.optional },
         returns: settledWithAnyReason(b.instance("UDPSocket")),
-        uses: {
-          options: [
-            ...keptByNativeCode(datagramSocketOptionNames, datagramSocketHandlerNames),
-            ...Object.entries(datagramSocketHandlerArguments).map(([handler, args]) =>
-              b.memberCalled(["socket", handler], { times: "PerEvent", this: datagramSocket, args, result: "Ignored" }),
-            ),
-          ],
-        },
+        uses: { options: datagramSocketOptions },
       },
     },
     { table: b.staticTable("src/jsc/bindings/BunObject.cpp", "bunObjectTable") },

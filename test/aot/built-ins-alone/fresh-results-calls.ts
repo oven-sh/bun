@@ -57,6 +57,17 @@ const handedDatagram = (binaryType: string) =>
     "socket.close();",
     "handed",
   ].join("\n");
+/** What a 'message' listener of node:dgram is handed: what the `data` handler of its native socket got. */
+const handedMessage = [
+  'import { createSocket } from "node:dgram";',
+  "const { promise, resolve } = Promise.withResolvers();",
+  'const socket = createSocket("udp4").on("message", data => resolve(data));',
+  'await new Promise(bound => socket.bind(0, "127.0.0.1", bound));',
+  'socket.send("a", socket.address().port, "127.0.0.1");',
+  "const handed = await promise;",
+  "socket.close();",
+  "handed",
+].join("\n");
 const opened = 'open(socket) {\n  socket.write("a");\n  resolve(socket);\n}';
 const told = "data: (socket, data) => resolve(data)";
 
@@ -460,6 +471,9 @@ export const calls: Record<string, string[]> = {
   ],
   "Bun.udpSocket": ["const asked = Bun.udpSocket({});\n(await asked).close();\nasked"],
   "Bun.udpSocket > ArrayBuffer Buffer Uint8Array": ["buffer", "arraybuffer", "uint8array"].map(handedDatagram),
+  // Only node:dgram holds the binding, under the name of its file and under the one that compiled code calls.
+  "native:Bindgen:udp_socket.bind.ts:dgramCreateSocket > ArrayBuffer Buffer Uint8Array": [handedMessage],
+  "%NativeFunctions%.Udp_socketBindTsDgramCreateSocket > ArrayBuffer Buffer Uint8Array": [handedMessage],
   "Bun.write": [
     `${temporary}\nBun.write(folder + "/a", "a")`,
     `${temporary}\nBun.write(Bun.file(folder + "/b"), new Response("b"))`,

@@ -2080,6 +2080,18 @@ fn received_fd_to_js(fd: Fd) -> JSValue {
     }
 }
 
+thread_local! {
+    /// The descriptor of the handle message that `ipc_parse` reads on this thread, until a socket owns it.
+    static RECEIVED_FD: Cell<Option<Fd>> = const { Cell::new(None) };
+}
+
+/// A socket owns `fd` now: a parse of its handle message that fails later leaves it open.
+pub(crate) fn socket_took_received_fd(fd: Fd) {
+    if RECEIVED_FD.get() == Some(fd) {
+        RECEIVED_FD.set(None);
+    }
+}
+
 enum IPCCommand {
     Handle(JSValue),
     Ack,
@@ -2189,9 +2201,14 @@ fn handle_ipc_message(
                 // early-error return and the fall-through.
                 let _scope = global_this.bun_vm().enter_event_loop_scope();
                 let fd_js = received_fd_to_js(fd);
-                if let Err(e) = ipc_parse(global_this, target, msg_data, fd_js) {
+                let outer = RECEIVED_FD.replace(Some(fd));
+                let parsed = ipc_parse(global_this, target, msg_data, fd_js);
+                let untaken = RECEIVED_FD.replace(outer) == Some(fd);
+                if let Err(e) = parsed {
                     // ack written already, that's okay.
-                    let _ = fd.close_allowing_standard_io(None);
+                    if untaken {
+                        let _ = fd.close_allowing_standard_io(None);
+                    }
                     return Err(e);
                 }
                 drop(_scope);

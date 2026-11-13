@@ -2,7 +2,7 @@ import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 import { Worker } from "node:worker_threads";
 
-import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isWindows, nodeExeAtLeast } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
@@ -11,23 +11,20 @@ import { nodeDataCases } from "./testdata";
 // and make every later UDP test in the shard time out too. Bun.spawn lets the
 // test-level timeout actually fire, `await using` kills the primary on the way
 // out, and BUN_FEATURE_FLAG_NO_ORPHANS makes the workers follow it.
-async function runClusterFixture(fixture: string, deadlineMs: number) {
+async function runClusterFixture(fixture: string, deadlineMs: number, args: string[] = [], runtime = [bunExe()]) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), path.join(import.meta.dir, fixture)],
+    cmd: [...runtime, path.join(import.meta.dir, fixture), ...args],
     env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
     stdout: "pipe",
     stderr: "pipe",
   });
   const timedOut = Bun.sleep(deadlineMs).then(() => {
     proc.kill("SIGKILL");
-    return "deadline" as const;
+    return null;
   });
-  const result = await Promise.race([Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]), timedOut]);
-  if (result === "deadline") {
-    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
-    return { stdout, stderr, exitCode: null as number | null, signalCode: proc.signalCode };
-  }
-  const [stdout, stderr, exitCode] = result;
+  const output = Promise.all([proc.stdout.text(), proc.stderr.text()]);
+  const exitCode = await Promise.race([proc.exited, timedOut]);
+  const [stdout, stderr] = await output;
   return { stdout, stderr, exitCode, signalCode: proc.signalCode };
 }
 
@@ -955,4 +952,324 @@ test("a worker exiting from its first 'message' of a batch does not crash", asyn
     // 'exit'). Not awaited: terminate() after an exit never settles.
     worker.terminate();
   }
+});
+
+// Node completes a bind in the frame that resolved the address, and emits 'listening' there:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/dgram.js#L195-L211
+// That frame is the lookup callback, or bind() itself for a descriptor. For an IP address and for a
+// `lookup` option it is no promise job.
+describe("bind() completes in the frame that resolved the address", () => {
+  const outsideAJob = (...names: string[]) => names.map(name => `${name}: callback nextTick microtask`);
+  // The second bind of a handle. libuv on Windows accepts it and changes nothing:
+  // https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/win/udp.c#L200-L201
+  const secondBind = isWindows ? "listening" : `error:"bind EINVAL 127.0.0.1"`;
+  const rows = [
+    ...outsideAJob(
+      "'listening' of bind()",
+      "'listening' of bind(0)",
+      "'listening' of bind(0, address)",
+      "'listening' of bind({ port, address })",
+      "bind(callback)",
+      "bind(0, callback)",
+      "bind(0, address, callback)",
+      "bind({ port }, callback)",
+      "'listening' with a lookup option that calls back inside bind()",
+      "'listening' with a lookup option that calls back later",
+      "'listening' of the bind that send() starts",
+      "'listening' of the bind that connect() starts",
+    ),
+    "two sockets bound in one turn: callback-a callback-b nextTick-a nextTick-b microtask-a microtask-b",
+    "bind(0), then a nextTick and a microtask: listening nextTick microtask",
+    "bind(0, callback), then close() in a microtask: listening callback close",
+    "bind(0), then a listener from a microtask: missed",
+    "bind(0), then a listener from a microtask, inside a promise job: listening",
+    "bind(0, name, callback) with a lookup option that calls back inside, and the line after it: listening callback returned port:number",
+    "send() that binds with a lookup option that calls back inside, and the line after it: listening returned port:number send-callback",
+    `a 'listening' listener that throws, with a lookup option that calls back inside: bind() threw "thrown by the listener" port:number`,
+    "a receive buffer size that is refused, with a lookup option that calls back inside: bind() threw ERR_SOCKET_BUFFER_SIZE port:number",
+    "bind(0) under a dns.lookup that answers at once, and the line after it: returned port:none listening",
+    "bind(0, name) under a dns.lookup that answers at once, and the line after it: listening returned port:number",
+    `a lookup option that calls back twice: listening ${secondBind} port:number`,
+    `a lookup option that calls back twice, then close(): listening ${secondBind} close`,
+    ...outsideAJob(
+      "'error' of a bind to an address that is not local",
+      "'connect' of connect()",
+      "connect(callback)",
+      "send(callback)",
+    ),
+  ];
+  const rowsOfUdp6 = outsideAJob("'listening' of a udp6 bind(0)", "a udp6 bind(0, address, callback)");
+  const rowsOfDescriptors = [
+    ...outsideAJob("'listening' of bind({ fd })", "bind({ fd }, callback)"),
+    "bind({ fd }, callback) and the line after it: listening callback returned port:number",
+    `a lookup option that calls back twice, then bind({ fd }): listening error:"bind EINVAL 127.0.0.1" bind({ fd }) threw "open EBUSY"`,
+  ];
+  const rowsOfWorkers = [
+    ...outsideAJob("'listening' of bind(0) in a cluster worker"),
+    `a 'listening' listener that throws in a cluster worker: uncaughtException "thrown by the listener" port:number`,
+  ];
+  const udp6 = hasIPv6Loopback();
+  const expected = [...rows, ...(udp6 ? rowsOfUdp6 : []), ...(isWindows ? [] : rowsOfDescriptors)];
+  const flags = udp6 ? ["--udp6"] : [];
+
+  async function rowsOf(args: string[], runtime?: string[]) {
+    const { stdout, stderr, exitCode } = await runClusterFixture("dgram-bind-order-fixture.cjs", 30_000, args, runtime);
+    return { rows: stdout.trim().split(/\r?\n/), stderr, exitCode };
+  }
+
+  test("the order of what ran, for each way to bind", async () => {
+    expect(await rowsOf(flags)).toEqual({ rows: expected, stderr: "", exitCode: 0 });
+  });
+
+  // Cluster workers share a datagram descriptor on POSIX only.
+  test.skipIf(isWindows)("the order of what ran in a cluster worker", async () => {
+    expect(await rowsOf(["--workers"])).toEqual({ rows: rowsOfWorkers, stderr: "", exitCode: 0 });
+  });
+
+  // The default lookup of Node.js answers an IP address without dns.lookup since v26.12.1, the version that Bun reports.
+  const node = nodeExeAtLeast("26.12.1");
+  // Since v27.0.0 Node.js does not call a `lookup` option for an IP address either (nodejs/node#64131), so the bind
+  // that send() starts completes in a later tick. Bun calls it, as v26 does.
+  const sendRow = "send() that binds with a lookup option that calls back inside, and the line after it";
+  const expectedOfNode = nodeExeAtLeast("27.0.0-0")
+    ? expected.map(row => (row.startsWith(sendRow) ? `${sendRow}: returned port:none listening send-callback` : row))
+    : expected;
+
+  test.skipIf(!node)("Node.js prints the same rows", async () => {
+    const runtime = [node!, "--expose-internals", "--no-warnings"];
+    const [all, workers] = await Promise.all([
+      rowsOf(flags, runtime),
+      isWindows ? null : rowsOf(["--workers"], runtime),
+    ]);
+    expect({ rows: all.rows, exitCode: all.exitCode }).toEqual({ rows: expectedOfNode, exitCode: 0 });
+    if (workers)
+      expect({ rows: workers.rows, exitCode: workers.exitCode }).toEqual({ rows: rowsOfWorkers, exitCode: 0 });
+  });
+
+  async function run(script: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // Inside a promise job the throw rejected a promise of node:dgram, and the process got an unhandledRejection.
+  test.concurrent.each([
+    ["a 'listening' listener", `"udp4"`, `socket.on("listening", thrower).bind(0);`, "thrown"],
+    ["a bind callback", `"udp4"`, `socket.bind(0, thrower);`, "thrown"],
+    // node:dns calls back from a promise job for a host name, and reports what its callback throws.
+    [
+      "a 'listening' listener of a bind by host name",
+      `"udp4"`,
+      `socket.on("listening", thrower).bind(0, "localhost");`,
+      "thrown",
+    ],
+    // Node sets the buffer sizes in the same frame, with nothing that catches.
+    [
+      "a receive buffer size that is refused",
+      `{ type: "udp4", recvBufferSize: 2 ** 31 }`,
+      `socket.bind(0);`,
+      "ERR_SOCKET_BUFFER_SIZE",
+    ],
+  ])("a throw from %s is an uncaughtException", async (_, options, bind, error) => {
+    const result = await run(`
+      const socket = require("node:dgram").createSocket(${options});
+      const thrower = () => {
+        throw new Error("thrown");
+      };
+      for (const event of ["uncaughtException", "unhandledRejection"]) {
+        process.on(event, error => {
+          console.log(event, error.code ?? error.message, typeof socket.address().port);
+          socket.close();
+        });
+      }
+      ${bind}
+    `);
+    expect(result).toEqual({ stdout: `uncaughtException ${error} number\n`, stderr: "", exitCode: 0 });
+  });
+
+  // A program that handles rejections alone ends, as in Node.js.
+  test.concurrent("a throw from a 'listening' listener is no unhandledRejection", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const socket = require("node:dgram").createSocket("udp4");
+      process.on("unhandledRejection", () => {
+        console.log("unhandledRejection");
+        socket.close();
+      });
+      socket.on("listening", () => {
+        throw new Error("thrown by the listener");
+      });
+      socket.bind(0);
+    `);
+    expect({ stdout, thrown: stderr.includes("thrown by the listener"), exitCode }).toEqual({
+      stdout: "",
+      thrown: true,
+      exitCode: 1,
+    });
+  });
+
+  // The bind that send() starts is complete when the lookup calls back, so the datagram leaves in that tick.
+  test("a datagram sent before process.exit() in a promise job is delivered", async () => {
+    const receiver = createSocket("udp4");
+    const marker = createSocket("udp4");
+    try {
+      const messages: string[] = [];
+      const { promise: sawTheMarker, resolve: onMarker } = Promise.withResolvers<void>();
+      receiver.on("message", data => {
+        messages.push(String(data));
+        if (String(data) === "marker") onMarker();
+      });
+      await new Promise<void>(resolve => receiver.bind(0, "127.0.0.1", resolve));
+      const { port } = receiver.address();
+      // Not from the first job of the program: a tick runs before a promise job there, whatever the bind does.
+      const { stderr, exitCode } = await run(`
+        const socket = require("node:dgram").createSocket("udp4");
+        setImmediate(() => {
+          socket.send("metric", ${port}, "127.0.0.1");
+          Promise.resolve().then(() => process.exit(0));
+        });
+      `);
+      // The sender has exited. A datagram that it sent is in the queue of the receiver, ahead of the marker.
+      marker.send("marker", port, "127.0.0.1");
+      await sawTheMarker;
+      expect({ messages, stderr, exitCode }).toEqual({ messages: ["metric", "marker"], stderr: "", exitCode: 0 });
+    } finally {
+      receiver.close();
+      marker.close();
+    }
+  });
+
+  // node:dgram holds its own native entry: what a program stores at Bun.udpSocket is not what binds.
+  test.concurrent("a replaced Bun.udpSocket is not called", async () => {
+    const result = await run(`
+      Bun.udpSocket = () => {
+        throw new Error("replaced");
+      };
+      const socket = require("node:dgram").createSocket("udp4");
+      socket.on("error", error => console.log("error", error.message));
+      socket.bind(0, "127.0.0.1", () => {
+        console.log("listening", typeof socket.address().port);
+        socket.close();
+      });
+    `);
+    expect(result).toEqual({ stdout: "listening number\n", stderr: "", exitCode: 0 });
+  });
+
+  // The native call converts the port, and a port can be an object: its valueOf() runs inside the call.
+  test.concurrent("a port whose valueOf() closes the socket leaves nothing bound", async () => {
+    const result = await run(`
+      const socket = require("node:dgram").createSocket("udp4");
+      for (const event of ["listening", "close", "error"]) socket.on(event, () => console.log(event));
+      socket.bind({
+        port: {
+          valueOf() {
+            socket.close();
+            return 0;
+          },
+        },
+      });
+    `);
+    expect(result).toEqual({ stdout: "close\n", stderr: "", exitCode: 0 });
+  });
+
+  // A listener that the program attaches after bind() and an await that settles at once. Node.js runs the await
+  // first wherever bind() ran inside a promise job. node:dgram makes the tick queue when it loads, so that the
+  // first job of a program is no exception (#34115).
+  test.concurrent.each([
+    [
+      "the top level of an ES module",
+      `
+        import { createSocket } from "node:dgram";
+        const socket = createSocket("udp4");
+        socket.bind(0);
+        await null;
+        late(socket);
+      `,
+    ],
+    [
+      "an async function that a CommonJS module calls",
+      `
+        const socket = require("node:dgram").createSocket("udp4");
+        (async () => {
+          await null;
+          socket.bind(0);
+          await null;
+          late(socket);
+        })();
+      `,
+    ],
+    [
+      "an ES module that a setImmediate resumed",
+      `
+        import { createSocket } from "node:dgram";
+        await new Promise(resolve => setImmediate(resolve));
+        const socket = createSocket("udp4");
+        socket.bind(0);
+        await null;
+        late(socket);
+      `,
+    ],
+    [
+      "the caller of an async function that binds",
+      `
+        import { createSocket } from "node:dgram";
+        async function open() {
+          const socket = createSocket("udp4");
+          socket.bind(0);
+          return socket;
+        }
+        late(await open());
+      `,
+    ],
+  ])("a 'listening' listener attached after bind() and an await is in time in %s", async (_, program) => {
+    const result = await run(`
+      function late(socket) {
+        let heard = "missed";
+        socket.on("listening", () => (heard = "listening"));
+        setImmediate(() => {
+          console.log(heard);
+          socket.close();
+        });
+      }
+      ${program}
+    `);
+    expect(result).toEqual({ stdout: "listening\n", stderr: "", exitCode: 0 });
+  });
+
+  // dns.lookup() calls back from a promise job for a host name (src/js/node/dns.ts), and the bind completes in that job.
+  // Node.js calls back from the event loop: there the tick runs first. Bun prints "callback microtask nextTick".
+  test.failing("a tick of a 'listening' listener runs before its microtask, for a bind by host name", async () => {
+    const result = await run(`
+      const order = [];
+      const socket = require("node:dgram").createSocket("udp4");
+      socket.on("listening", () => {
+        order.push("callback");
+        process.nextTick(() => order.push("nextTick"));
+        queueMicrotask(() => order.push("microtask"));
+        setImmediate(() => {
+          console.log(order.join(" "));
+          socket.close();
+        });
+      });
+      // From a tick, so that the tick queue exists: Bun drains a queue that a promise job makes right after that job.
+      process.nextTick(() => socket.bind(0, "localhost"));
+    `);
+    expect(result).toEqual({ stdout: "callback nextTick microtask\n", stderr: "", exitCode: 0 });
+  });
+
+  // bun:test calls a test function and a hook outside a promise job, so up to their first await the tick of the
+  // lookup runs before the continuation of an await: the listener is "missed". node:test calls them inside a promise
+  // job, where it is in time. net.Server behaves the same.
+  test.failing("a 'listening' listener attached after bind() and the first await of a test function", async () => {
+    const socket = createSocket("udp4");
+    try {
+      socket.bind(0);
+      await null;
+      const { promise: heard, resolve } = Promise.withResolvers<string>();
+      socket.on("listening", () => resolve("listening"));
+      setImmediate(resolve, "missed");
+      expect(await heard).toBe("listening");
+    } finally {
+      socket.close();
+    }
+  });
 });

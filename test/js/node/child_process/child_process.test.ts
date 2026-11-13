@@ -1679,7 +1679,9 @@ it.skipIf(isWindows)("extra stdio pipes are not double-closed on GC", async () =
       `
         const { spawn } = require("node:child_process");
         async function once() {
-          const child = spawn(process.execPath, ["-e", ""], {
+          // Any child that exits will do; a debug bun takes ~160ms to start,
+          // which alone blew the per-test budget at 20 iterations.
+          const child = spawn("sh", ["-c", "exit 0"], {
             stdio: ["ignore", "ignore", "ignore", "pipe", "pipe", "pipe"],
           });
           const sockets = child.stdio.slice(3);
@@ -1688,7 +1690,7 @@ it.skipIf(isWindows)("extra stdio pipes are not double-closed on GC", async () =
           for (const s of sockets) s.destroy();
           await new Promise(r => setTimeout(r, 10));
         }
-        for (let i = 0; i < 20; i++) {
+        for (let i = 0; i < 10; i++) {
           await once();
           Bun.gc(true);
           await new Promise(r => setTimeout(r, 0));

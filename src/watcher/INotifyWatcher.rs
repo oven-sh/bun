@@ -148,18 +148,25 @@ impl INotifyWatcher {
         result
     }
 
-    pub(crate) fn watch_dir(&mut self, pathname: &ZStr) -> bun_sys::Result<EventListIndex> {
+    /// With `writes`, the directory also reports a write to a file in it.
+    pub(crate) fn watch_dir(
+        &mut self,
+        pathname: &ZStr,
+        writes: bool,
+    ) -> bun_sys::Result<EventListIndex> {
         use bun_sys::linux::IN;
         debug_assert!(self.loaded);
         let old_count = self.watch_count.fetch_add(1, Ordering::Release);
-        let watch_dir_mask = IN::EXCL_UNLINK
+        let mut watch_dir_mask = IN::EXCL_UNLINK
             | IN::DELETE
             | IN::DELETE_SELF
             | IN::CREATE
             | IN::MOVE_SELF
             | IN::ONLYDIR
-            | IN::MOVED_TO
-            | IN::MODIFY;
+            | IN::MOVED_TO;
+        if writes {
+            watch_dir_mask |= IN::MODIFY;
+        }
         let rc = bun_sys::linux::inotify_add_watch(self.fd.native(), pathname, watch_dir_mask);
         bun_core::scoped_log!(watcher, "inotify_add_watch({}) = {}", self.fd, rc);
         let result = if rc < 0 {
@@ -363,7 +370,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     // module on the JS thread, whose `add_file` re-appends the entry under
     // `this.mutex`, potentially reallocating the MultiArrayList backing while
     // this thread is mid-`items_eventlist_index()` on the next cycle. Under
-    // load (`watch-many-dirs.test.ts` writes 129 files concurrently, > the
+    // load (`watch-many-dirs.test.ts` replaces 129 files at once, > the
     // 128 `max_count` batch size, so the dir-event-only batch is common) the
     // unlocked read raced the realloc and the process occasionally died with
     // a non-zero exit code. Snapshot under the same mutex `add_file` takes.

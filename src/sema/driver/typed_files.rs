@@ -2201,12 +2201,18 @@ fn link(
             };
             // Of a module of another output, the file has the `declare global` blocks and what its types need.
             let is_written = |at: u32| {
-                let holds = |id: &StmtId| file[*id].start <= at && at < file[*id].loc.end;
+                let holds = |id: StmtId, at: u32| file[id].start <= at && at < file[id].loc.end;
+                let around = file.ids(file.body).find(|&id| holds(id, at));
                 let needed = wanted.iter().filter(|place| place.0 == index);
                 let mut needed = needed.filter_map(|place| declared[index].get(&place.1[..]));
                 index < mapped
-                    || (augmentations.iter()).any(|place| place.0 == index && holds(&place.1))
-                    || needed.any(|it| it.statements.iter().chain(&it.enum_statement).any(holds))
+                    || around.is_some_and(|around| {
+                        augmentations.contains(&(index, around))
+                            || needed.any(|it| {
+                                let mut places = it.names.iter().chain(&it.bindings);
+                                places.any(|&place| holds(around, place))
+                            })
+                    })
             };
             let names = (file.names.iter())
                 .filter(|head| !head.is_qualified())

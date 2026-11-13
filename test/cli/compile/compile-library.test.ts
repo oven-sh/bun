@@ -1275,6 +1275,33 @@ export function host() {
       ],
     },
     {
+      title: "gets a number where a signature that the file copies from another module has its name",
+      name: "Host",
+      files: {
+        "src/index.ts": `import type { make } from "./made";
+${hosted}export const made: typeof make = options => options.size;
+`,
+        "src/made.ts": `declare global {
+  namespace Host {
+    const version: number;
+    interface Options {
+      size: number;
+    }
+  }
+}
+export function make(options: Host.Options): number {
+  return options.size;
+}
+`,
+      },
+      lines: [
+        "declare namespace Host2 {",
+        "namespace Host {",
+        "declare function make(options: Host.Options): number;",
+        "return Host.version;",
+      ],
+    },
+    {
       title: "gets a number where a dependency that the bundle takes in as TypeScript declares it too",
       name: "Host",
       files: {

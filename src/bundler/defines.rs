@@ -58,8 +58,7 @@ fn env_string_define(bump: &bun_alloc::Arena, value: &[u8]) -> DefineData {
     })
 }
 
-/// Copies the dotenv loader's entries into `to_string` as `process.env.*` and
-/// `import.meta.env.*` defines (all of them, or only those starting with `prefix`).
+/// Copies the dotenv loader's entries into `to_string` as `process.env.*` and `import.meta.env.*` defines.
 pub(crate) fn copy_env_for_define(
     env: &bun_dotenv::Loader,
     to_string: &mut UserDefinesArray,
@@ -152,10 +151,8 @@ impl ImportMetaEnvMode {
         ]
     }
 
-    /// The define entries as (key, JSON value). For a client bundle, where a
-    /// browser has no `import.meta.env`, the first entry defines the object
-    /// itself with the mode keys only, so an unknown key reads `undefined`.
-    /// Insert these before the user's defines, so that the user's win.
+    /// The (key, JSON value) define entries. A client bundle also gets the object
+    /// itself with the mode keys only, so that an unknown key reads `undefined`.
     pub fn defines(self) -> Vec<(&'static [u8], Vec<u8>)> {
         let values = self.values();
         let mut out: Vec<(&'static [u8], Vec<u8>)> = Vec::with_capacity(Self::KEYS.len() + 1);

@@ -1,0 +1,1 @@
+"mock 1 false" | "mock 1 true": After the microtask unmock, the compiled run gives the second pending import a fresh copy of the mock; bun test gives the loaded namespace.

@@ -1,0 +1,10 @@
+{
+  "why": "The compiled run gives the call in front the failure of the load under the replaced mock; bun test runs the file for it. No words of a todo.txt tell the two answers apart: the compiled run alone is held to its answer until it follows.",
+  "printed": [
+    "in front: ResolveMessage ERR_MODULE_NOT_FOUND \"Cannot find package '\\u0000'\" | behind: ResolveMessage ERR_MODULE_NOT_FOUND \"Cannot find package '\\u0000'\" | one object: true | bodies undefined"
+  ],
+  "tests": [
+    "(pass) both calls get one error"
+  ],
+  "exitCode": 0
+}

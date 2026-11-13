@@ -1268,6 +1268,98 @@ it.concurrent("build.module() of a module whose import() is still loading its de
   });
 });
 
+// The second import() starts while the first is at its fetch: it gets the virtual module without a wait for that fetch, and the first ends on what it registered.
+it.concurrent.each([
+  ["the fetch ends first", "", "in flight: file\nnext: build.module()\n"],
+  [
+    "an import() starts before the fetch ends",
+    `console.log("before the fetch ends:", (await import(a)).from);`,
+    "before the fetch ends: build.module()\nin flight: build.module()\nnext: build.module()\n",
+  ],
+])("build.module() of a module whose import() is still at its fetch: %s", async (_, importBeforeTheFetchEnds, expected) => {
+  using dir = tempDir("plugin-module-import-at-fetch", {
+    "a.ts": `export const from = "disk";`,
+    "entry.ts": `
+      import { join } from "node:path";
+      const requested = Promise.withResolvers<void>();
+      const mayLoad = Promise.withResolvers<void>();
+      Bun.plugin({
+        name: "hold the fetch of a.ts open",
+        setup(build) {
+          build.onLoad({ filter: /[\\\\/]a\\.ts$/ }, async () => {
+            requested.resolve();
+            await mayLoad.promise;
+            return { contents: 'export const from = "file";', loader: "ts" };
+          });
+        },
+      });
+
+      const a = join(import.meta.dir, "a.ts");
+      const inFlight = import(a);
+      await requested.promise;
+      Bun.plugin({
+        name: "replace a.ts",
+        setup(build) {
+          build.module(a, () => ({ exports: { from: "build.module()" }, loader: "object" }));
+        },
+      });
+      ${importBeforeTheFetchEnds}
+      mayLoad.resolve();
+
+      console.log("in flight:", (await inFlight).from);
+      console.log("next:", (await import(a)).from);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+});
+
+it.concurrent("import() calls of one module that are at its fetch together share one onLoad() call", async () => {
+  using dir = tempDir("plugin-imports-share-fetch", {
+    "a.ts": `export const from = "disk";`,
+    "entry.ts": `
+      let calls = 0;
+      Bun.plugin({
+        name: "count the fetches of a.ts",
+        setup(build) {
+          build.onLoad({ filter: /[\\\\/]a\\.ts$/ }, async () => {
+            calls++;
+            await null;
+            return { contents: 'globalThis.bodyRuns = (globalThis.bodyRuns ?? 0) + 1; export const from = "onLoad()";', loader: "ts" };
+          });
+        },
+      });
+      const namespaces = await Promise.all([import("./a.ts"), import("./a.ts"), import("./a.ts")]);
+      console.log(JSON.stringify({
+        calls,
+        bodyRuns: globalThis.bodyRuns,
+        from: namespaces.map(namespace => namespace.from),
+        instances: new Set(namespaces).size,
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: { calls: 1, bodyRuns: 1, from: ["onLoad()", "onLoad()", "onLoad()"], instances: 1 },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it.concurrent(
   "import() after delete require.cache of a module that onResolve redirected a resolved path to",
   async () => {

@@ -1,0 +1,22 @@
+{
+  "why": "The compiled run runs top.mjs again for the importActual of its own factory, so hit counts from 1; bun test keeps the loaded instance. The two runs differ by a line or a test result, which no todo.txt can say: the compiled run alone is held to its answer until it follows.",
+  "printed": [
+    "SAID low runs",
+    "SAID top runs",
+    "SAID user runs",
+    "SAID a top(low),top,1,low",
+    "SAID top runs",
+    "SAID user runs",
+    "SAID b mocked top,top,1,mocked low",
+    "SAID b2 mocked top top hit,top,topName",
+    "SAID top runs",
+    "SAID user runs",
+    "SAID c top(cl),top,1,c low top(cl)"
+  ],
+  "tests": [
+    "(pass) a",
+    "(pass) b",
+    "(pass) c"
+  ],
+  "exitCode": 0
+}

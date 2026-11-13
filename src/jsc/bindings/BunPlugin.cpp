@@ -2569,6 +2569,9 @@ static bool isFetchedWithoutFactory(Zig::GlobalObject* globalObject, const Strin
 
 static bool isBeingFetchedWithoutFactory(Zig::GlobalObject* globalObject, JSC::ModuleRegistryEntry* entry)
 {
+    // The fetch of an import() is on the books of loadRootFetches: see moduleLoaderFetch().
+    if (entry->isAtFetchOfLoadByName())
+        return false;
     bool isBeingFetched = entry->status() == JSC::ModuleRegistryEntry::Status::Fetching;
 #if ENABLE(AOT)
     isBeingFetched |= globalObject->vm().hasCompiledCode() && entry->status() == JSC::ModuleRegistryEntry::Status::New;
@@ -2696,6 +2699,9 @@ __attribute__((noinline, minsize)) static void rankWaitingModuleMocks(Zig::Globa
             continue;
         }
         auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key));
+        // The entry is the load's alone until its fetch settles: see moduleLoaderFetch().
+        if (entry && entry->isAtFetchOfLoadByName())
+            entry = nullptr;
         JSC::JSPromise* unregisteredFetch = nullptr;
         if (entry)
             plugins.loadRootFetches.remove(key);
@@ -3489,8 +3495,8 @@ static void stashLoadedModule(Zig::GlobalObject* globalObject, const String& spe
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     String original = originalModuleKey(specifier);
-    // An earlier mock of the module may have left the instance it loaded there.
-    if (Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, original))) {
+    // An earlier mock of the module may have left the instance it loaded there. An import() that is at its fetch has left nothing, and gets the instance that moves there.
+    if (auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, original)); entry && !entry->isAtFetchOfLoadByName()) {
         evictModulesAndTheirImporters(globalObject, Vector<String> { original });
         RETURN_IF_EXCEPTION(scope, );
     }
@@ -3615,9 +3621,20 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         if (auto* record = entry->record())
             registeredKeys.add(record, String(mapKey.first));
     }
+    bool leavesEntryAtFetch = false;
     for (auto& [mapKey, entry] : loader->moduleMap()) {
         String key(mapKey.first);
         auto* record = entry->record();
+        // An import() that is at its fetch: JSC registers its entry ahead of the fetch, and no module has asked for it yet. It leaves at once, not when the load
+        // settles as the entries below do: whoever imports the key meanwhile would join it. The load does not put it back (JSModuleLoader::loadModule()).
+        // jest.resetModules() and vi.resetModules() leave it registered: the module that such an import() loads stays loaded.
+        if (entry->isAtFetchOfLoadByName()) {
+            if (evict.all) {
+                staysInRegistry.add(key);
+                leavesEntryAtFetch = true;
+            }
+            continue;
+        }
         if (JSC::JSPromise* pendingLoad = pendingLoadOf(globalObject, entry.get())) {
             loading.set(key, pendingLoad);
             pendingLoads.append(pendingLoad);
@@ -3771,7 +3788,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
 #endif
         plugins.evictedPreloadModules.add(key, JSC::Strong<JSC::JSCell> { vm, entry->record() });
     };
-    bool clearsRegistry = evict.all && !evict.exceptPackages && loading.isEmpty();
+    bool clearsRegistry = evict.all && !evict.exceptPackages && loading.isEmpty() && !leavesEntryAtFetch;
     if (clearsRegistry) {
         for (auto& displaced : plugins.displacedPreloadModuleMocks)
             giveLoadedModuleBackToPreloadModuleMock(globalObject, uncheckedDowncast<JSModuleMock>(displaced.get())->specifier->tryGetValue().data);
@@ -3821,7 +3838,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         bool leavesRegistry = !staysInRegistry.contains(key), leavesRequireCache = !staysInRequireCache.contains(key);
         if (leavesRegistry && !clearsRegistry) {
             auto identifier = JSC::Identifier::fromString(vm, key);
-            ASSERT(!loader->registryEntry(identifier) || neverLoads.contains(key) || !pendingLoadOf(globalObject, loader->registryEntry(identifier)));
+            ASSERT(!loader->registryEntry(identifier) || neverLoads.contains(key) || loader->registryEntry(identifier)->isAtFetchOfLoadByName() || !pendingLoadOf(globalObject, loader->registryEntry(identifier)));
             giveLoadedModuleBackToPreloadModuleMock(globalObject, key);
             keepPreloadModule(key, loader->getRegisteredMayBeNull(identifier, JSC::ScriptFetchParameters::Type::JavaScript));
             loader->removeEntry(identifier);
@@ -8573,9 +8590,9 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
     if (auto& beingLoaded = globalObject->onLoadPlugins.moduleMocksBeingLoaded; !beingLoaded.isEmpty()) [[unlikely]] {
         auto* moduleMock = dynamicDowncast<Zig::JSModuleMock>(beingLoaded.get(specifierString).get());
         if (moduleMock && moduleMock->state != Zig::JSModuleMock::State::NotCalled) {
-            // Only for the load it was kept for, which has a registry entry without a record. A load that starts now gets the current mock.
+            // Only for the load it was kept for, which has a registry entry without a record. A load that starts now gets the current mock: an import() has an entry of its own from its start.
             auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), specifierString));
-            if (entry && !entry->record()) {
+            if (entry && !entry->record() && !entry->isAtFetchOfLoadByName()) {
                 wasModuleMock = true;
                 return moduleMock;
             }
@@ -8789,7 +8806,8 @@ bool canRequireOriginalOfModuleMock(Zig::GlobalObject* globalObject, JSC::JSObje
     // An import of the mock loads what the original imports before it calls a factory that takes the original.
     String key = Zig::originalModuleKey(mock->specifier->tryGetValue().data);
     auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), key));
-    if (!entry)
+    // An import() of the original that is at its fetch has loaded nothing of it yet.
+    if (!entry || entry->isAtFetchOfLoadByName())
         return true;
     auto* cyclic = entry->record() ? dynamicDowncast<JSC::CyclicModuleRecord>(entry->record()) : nullptr;
     return entry->record() && (!cyclic || cyclic->isSCCEvaluated());
@@ -9009,7 +9027,7 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
         if (Zig::isStillRegisteredModuleMock(globalObject, mocked, mock)) [[likely]]
             continue;
         auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), mocked));
-        bool isFetchInFlight = entry && !entry->record();
+        bool isFetchInFlight = entry && !entry->record() && !entry->isAtFetchOfLoadByName();
         Vector<String> unfinished;
         if (!isFetchInFlight)
             unawaited.append(mock);

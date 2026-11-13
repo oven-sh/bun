@@ -1,0 +1,1 @@
+"c fx fx of leaf" | "c fx second": The compiled run registers the real fx that is still being fetched when mock.module runs, so the first later import gets it, not the mock.

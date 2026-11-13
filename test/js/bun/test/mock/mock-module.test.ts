@@ -611,6 +611,244 @@ test.concurrent("mock.module() of a module whose import() is still loading its d
   expect(exitCode).toBe(0);
 });
 
+// The import() in flight has fetched nothing yet here: its file is being read, or an onLoad() callback is pending.
+describe.concurrent("a mock of a module whose import() is still at its fetch", () => {
+  const moduleNamed = (name: string) => `
+    globalThis.bodyRuns ??= {};
+    globalThis.bodyRuns["${name}"] = (globalThis.bodyRuns["${name}"] ?? 0) + 1;
+    export const value = "real";
+  `;
+  const modules = (...names: string[]) => Object.fromEntries(names.map(name => [name + ".ts", moduleNamed(name)]));
+
+  test("the import in flight gets the module, every later one gets the mock", async () => {
+    await expectFixturesToPass(
+      {
+        ...modules("mock-module", "vi-mock", "jest-mock", "vi-doMock", "jest-doMock", "next", "never"),
+        "data.json": `{ "value": "real" }`,
+        "syntax.ts": `export const = ;`,
+        "at-fetch.test.ts": `
+          import { expect, jest, mock, test, vi } from "bun:test";
+
+          // vi.mock() and jest.mock() are not hoisted out of a function.
+          const mockFunctions = {
+            "mock.module": (id, factory) => mock.module(id, factory),
+            "vi.mock": (id, factory) => vi.mock(id, factory),
+            "jest.mock": (id, factory) => jest.mock(id, factory),
+            "vi.doMock": (id, factory) => vi.doMock(id, factory),
+            "jest.doMock": (id, factory) => jest.doMock(id, factory),
+          };
+          test.each(Object.entries(mockFunctions))("%s", async (name, layMock) => {
+            const id = "./" + name.replace(".", "-") + ".ts";
+            let calls = 0;
+            const inFlight = import(id);
+            layMock(id, () => (calls++, { value: "mock" }));
+            expect((await inFlight).value).toBe("real");
+            expect(calls).toBe(0);
+            expect((await import(id)).value).toBe("mock");
+            expect((await import(id)).value).toBe("mock");
+            expect(calls).toBe(1);
+            expect(globalThis.bodyRuns[name.replace(".", "-")]).toBe(1);
+          });
+
+          // The import() behind the mock registers the mock under the key of the module. The one in flight ends on what is registered there.
+          test("an import() between the mock and the end of the fetch", async () => {
+            const inFlight = import("./next.ts");
+            mock.module("./next.ts", () => ({ value: "mock" }));
+            const next = import("./next.ts");
+            expect([(await inFlight).value, (await next).value, (await import("./next.ts")).value]).toEqual(["mock", "mock", "mock"]);
+            expect(await inFlight).toBe(await next);
+            expect(globalThis.bodyRuns.next).toBeUndefined();
+          });
+
+          test("no later import: the factory is not called", async () => {
+            let calls = 0;
+            const inFlight = import("./never.ts");
+            mock.module("./never.ts", () => (calls++, { value: "mock" }));
+            expect((await inFlight).value).toBe("real");
+            expect(calls).toBe(0);
+          });
+
+          test("a JSON file", async () => {
+            const inFlight = import("./data.json");
+            mock.module("./data.json", () => ({ default: { value: "mock" }, value: "mock" }));
+            expect((await inFlight).value).toBe("real");
+            expect((await import("./data.json")).value).toBe("mock");
+          });
+
+          test("a file that fails to load", async () => {
+            const inFlight = import("./syntax.ts");
+            mock.module("./syntax.ts", () => ({ value: "mock" }));
+            expect(await inFlight.then(() => "loaded", () => "failed")).toBe("failed");
+            expect((await import("./syntax.ts")).value).toBe("mock");
+          });
+        `,
+      },
+      9,
+    );
+  });
+
+  test("several import() calls in flight share one module", async () => {
+    await expectFixturesToPass(
+      {
+        ...modules("three-sync", "three-async"),
+        "shared.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          test.each([
+            ["three-sync", () => ({ value: "mock" })],
+            ["three-async", async () => (await null, { value: "mock" })],
+          ])("%s", async (name, factory) => {
+            const id = "./" + name + ".ts";
+            const inFlight = [import(id), import(id), import(id)];
+            mock.module(id, factory);
+            const namespaces = await Promise.all(inFlight);
+            expect(namespaces.map(namespace => namespace.value)).toEqual(["real", "real", "real"]);
+            expect(new Set(namespaces).size).toBe(1);
+            expect(globalThis.bodyRuns[name]).toBe(1);
+            expect((await import(id)).value).toBe("mock");
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("an onLoad() callback holds the fetch open", async () => {
+    await expectFixturesToPass(
+      {
+        "sync-alone.ts": `export const value = "file";`,
+        "async-alone.ts": `export const value = "file";`,
+        "sync-joined.ts": `export const value = "file";`,
+        "async-joined.ts": `export const value = "file";`,
+        "held.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          function holdFetchOf(name) {
+            const requested = Promise.withResolvers();
+            const mayLoad = Promise.withResolvers();
+            let calls = 0;
+            Bun.plugin({
+              name: "hold the fetch of " + name + " open",
+              setup(build) {
+                build.onLoad({ filter: new RegExp("[\\\\\\\\/]" + name + "\\\\.ts$") }, async () => {
+                  calls++;
+                  requested.resolve();
+                  await mayLoad.promise;
+                  return { contents: 'export const value = "real";', loader: "ts" };
+                });
+              },
+            });
+            return { requested: requested.promise, land: mayLoad.resolve, calls: () => calls };
+          }
+          const factories = [
+            ["sync", () => ({ value: "mock" })],
+            ["async", async () => (await null, { value: "mock" })],
+          ];
+          test.each(factories)("the fetch ends before the next import(): %s factory", async (name, factory) => {
+            const id = "./" + name + "-alone.ts";
+            const fetch = holdFetchOf(name + "-alone");
+            const inFlight = import(id);
+            await fetch.requested;
+            mock.module(id, factory);
+            fetch.land();
+            expect((await inFlight).value).toBe("real");
+            expect((await import(id)).value).toBe("mock");
+            expect(fetch.calls()).toBe(1);
+          });
+          // The later import() registers the mock under the key of the module, and the import() in flight ends on what is registered there.
+          test.each(factories)("a later import() settles while the fetch is pending: %s factory", async (name, factory) => {
+            const id = "./" + name + "-joined.ts";
+            const fetch = holdFetchOf(name + "-joined");
+            const inFlight = import(id);
+            await fetch.requested;
+            mock.module(id, factory);
+            const later = await import(id);
+            expect(later.value).toBe("mock");
+            fetch.land();
+            expect(await inFlight).toBe(later);
+            expect((await import(id)).value).toBe("mock");
+            expect(fetch.calls()).toBe(1);
+          });
+        `,
+      },
+      4,
+    );
+  });
+
+  test("the import() of an earlier test file", async () => {
+    await expectFixturesToPass(
+      {
+        "t.ts": `export const value = "file";`,
+        "a.test.ts": `
+          import { test } from "bun:test";
+          test("leaves an import() at its fetch", async () => {
+            globalThis.requested = Promise.withResolvers();
+            globalThis.mayLoad = Promise.withResolvers();
+            Bun.plugin({
+              name: "hold the fetch of t.ts open",
+              setup(build) {
+                build.onLoad({ filter: /[\\\\/]t\\.ts$/ }, async () => {
+                  globalThis.requested.resolve();
+                  await globalThis.mayLoad.promise;
+                  return { contents: 'export const value = "real";', loader: "ts" };
+                });
+              },
+            });
+            globalThis.inFlight = import("./t.ts");
+            await globalThis.requested.promise;
+          });
+        `,
+        "b.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          mock.module("./t.ts", () => ({ value: "mock" }));
+          test("does not take the place of this file's mock", async () => {
+            globalThis.mayLoad.resolve();
+            expect((await globalThis.inFlight).value).toBe("real");
+            expect((await import("./t.ts")).value).toBe("mock");
+          });
+        `,
+      },
+      2,
+      ["./a.test.ts", "./b.test.ts"],
+    );
+  });
+
+  test("a mock that is replaced or removed, and vi.resetModules()", async () => {
+    await expectFixturesToPass(
+      {
+        ...modules("remock", "unmock", "reset"),
+        "changed.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("the mock is replaced", async () => {
+            vi.doMock("./remock.ts", () => ({ value: "first" }));
+            expect((await import("./remock.ts")).value).toBe("first");
+            vi.resetModules();
+            const inFlight = import("./remock.ts");
+            vi.doMock("./remock.ts", () => ({ value: "second" }));
+            expect((await inFlight).value).toBe("first");
+            expect((await import("./remock.ts")).value).toBe("second");
+            vi.doUnmock("./remock.ts");
+          });
+          test("the mock is removed", async () => {
+            vi.doMock("./unmock.ts", () => ({ value: "mock" }));
+            expect((await import("./unmock.ts")).value).toBe("mock");
+            vi.resetModules();
+            const inFlight = import("./unmock.ts");
+            vi.doUnmock("./unmock.ts");
+            expect((await inFlight).value).toBe("mock");
+            expect((await import("./unmock.ts")).value).toBe("real");
+          });
+          test("vi.resetModules() leaves the module that the import() loads", async () => {
+            const inFlight = import("./reset.ts");
+            vi.resetModules();
+            expect(await inFlight).toBe(await import("./reset.ts"));
+            expect(globalThis.bodyRuns.reset).toBe(1);
+          });
+        `,
+      },
+      3,
+    );
+  });
+});
+
 // The assertions are inside the fixtures. `pass` makes sure every test in them actually ran.
 async function expectFixturesToPass(files: Record<string, string>, pass: number, args: string[] = []) {
   using dir = tempDir("mock-module", files);

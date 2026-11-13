@@ -1,0 +1,11 @@
+{
+  "why": "The compiled run keeps the failure of the calls in flight: the later import gets the same error and the file never runs. No words of a todo.txt tell the two answers apart: the compiled run alone is held to its answer until it follows.",
+  "printed": [
+    "ResolveMessage ERR_MODULE_NOT_FOUND \"Cannot find package '\\u0000'\" | ResolveMessage ERR_MODULE_NOT_FOUND \"Cannot find package '\\u0000'\" | one object: true",
+    "later ResolveMessage ERR_MODULE_NOT_FOUND \"Cannot find package '\\u0000'\" | the same object: true | bodies undefined"
+  ],
+  "tests": [
+    "(pass) two calls and a later import get one error"
+  ],
+  "exitCode": 0
+}

@@ -1,0 +1,1 @@
+"real | real | real" | "real | mocked | mocked": The compiled run registers the real module imported in the same job before the mock call; later imports get real, bun test gives mocked.

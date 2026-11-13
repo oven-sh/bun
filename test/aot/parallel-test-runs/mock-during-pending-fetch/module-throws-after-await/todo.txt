@@ -1,0 +1,1 @@
+"| slow | slow" | "| slow | mocked": The compiled run registers the throwing real module whose fetch is pending at the mock call; the later import fails, bun test gives mocked.

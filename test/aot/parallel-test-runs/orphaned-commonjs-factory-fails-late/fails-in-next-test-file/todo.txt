@@ -1,0 +1,1 @@
+"b 1 RangeError" | "b 1 real x": The compiled run registers the late failure of the unmocked factory: the import in the next file fails; bun test gives the real module.

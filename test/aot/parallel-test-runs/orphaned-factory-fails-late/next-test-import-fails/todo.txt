@@ -1,0 +1,1 @@
+"late,last late" | "late,last second mock": Compiled run writes the failure of the replaced mock under the key; import fails in the next test, bun test gives the second mock

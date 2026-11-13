@@ -1,0 +1,1 @@
+"late,last late" | "late,last real": The compiled run keeps the failure of the removed mock under x.cjs, so the last import fails where bun test gets the real module.

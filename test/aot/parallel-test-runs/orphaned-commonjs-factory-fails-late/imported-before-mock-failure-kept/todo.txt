@@ -1,0 +1,1 @@
+"late,again late" | "real,again real": The compiled run registers the late failure of the unmocked factory: both later imports fail; bun test gives the module loaded before the mock.

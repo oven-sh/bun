@@ -1,0 +1,17 @@
+{
+  "why": "The compiled run registers the fx that the tax factory is fetching when jest.mock runs, so later imports get real fx and fx runs once. The two runs differ by a line or a test result, which no todo.txt can say: the compiled run alone is held to its answer until it follows.",
+  "printed": [
+    "tax runs",
+    "a tax",
+    "fx runs",
+    "c tax mock of fx",
+    "c fx fx",
+    "sale runs mock of fx fx",
+    "c sale mock of fx,fx"
+  ],
+  "tests": [
+    "(pass) a",
+    "(pass) c"
+  ],
+  "exitCode": 0
+}

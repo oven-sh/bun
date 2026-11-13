@@ -1,0 +1,1 @@
+"SAID x2 false" | "SAID x2 true": An import that starts before the unmock gets a fresh copy of the mock in the compiled run; bun test gives the loaded namespace.

@@ -1,0 +1,1 @@
+"mock 1 false" | "mock 1 true": An import that starts before a required factory unmocks gets a fresh mock copy in the compiled run; bun test gives the loaded namespace.

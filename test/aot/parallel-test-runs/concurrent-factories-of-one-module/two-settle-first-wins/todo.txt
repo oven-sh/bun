@@ -1,0 +1,1 @@
+"two value one" | "two value two": Compiled run gives both imports the result of the factory that settles first, value one; bun test gives each import its own factory result.

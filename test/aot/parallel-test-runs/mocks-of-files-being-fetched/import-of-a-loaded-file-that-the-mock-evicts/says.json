@@ -1,0 +1,19 @@
+{
+  "why": "After vi.doMock the compiled run gives the import that finds fx loaded a fresh copy and registers it, so later imports get real fx. The two runs differ by a line or a test result, which no todo.txt can say: the compiled run alone is held to its answer until it follows.",
+  "printed": [
+    "tax runs",
+    "fx runs",
+    "sale runs tax fx",
+    "a tax,fx",
+    "fx runs",
+    "c loaded fx",
+    "c fx fx",
+    "sale runs tax fx",
+    "c sale tax,fx"
+  ],
+  "tests": [
+    "(pass) a",
+    "(pass) c"
+  ],
+  "exitCode": 0
+}

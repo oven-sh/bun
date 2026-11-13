@@ -1,0 +1,3 @@
+"c fx fx" | "c fx second": The compiled run registers the real fx that vi.importActual is fetching when vi.doMock runs, so later imports get it instead of the mock.
+"runs tax fx" | "runs tax second": The compiled run registers the real fx that vi.importActual is fetching when vi.doMock runs, so later imports get it instead of the mock.
+"sale tax,fx" | "sale tax,second": The compiled run registers the real fx that vi.importActual is fetching when vi.doMock runs, so later imports get it instead of the mock.

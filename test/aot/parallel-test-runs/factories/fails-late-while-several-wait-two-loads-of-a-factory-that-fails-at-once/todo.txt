@@ -1,0 +1,2 @@
+"once 2 2" | "once 1 1": Compiled run calls the failing factory for each of two concurrent imports of dep.js; bun test calls it once, so compiled counts are one higher.
+"3,at once 4 4" | "2,at once 3 3": Compiled run calls the failing factory for each of two concurrent imports of dep.js; bun test calls it once, so compiled counts are one higher.

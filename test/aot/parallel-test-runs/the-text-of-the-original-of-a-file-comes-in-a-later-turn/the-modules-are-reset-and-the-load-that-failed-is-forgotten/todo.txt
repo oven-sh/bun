@@ -1,0 +1,2 @@
+"ResolveMessage ERR_MODULE_NOT_FOUND | bodies undefined" | "came opening | bodies 1": The compiled run keeps the failed load until the reset: the later import fails and the file runs once, not twice.
+"opening | bodies 1" | "opening | bodies 2": The compiled run keeps the failed load until the reset: the later import fails and the file runs once, not twice.

@@ -1,0 +1,23 @@
+{
+  "why": "The compiled run runs top.mjs again for the importActual in flight and later imports get that real copy; bun test gives them the mock. The two runs differ by a line or a test result, which no todo.txt can say: the compiled run alone is held to its answer until it follows.",
+  "printed": [
+    "SAID low runs",
+    "SAID top runs",
+    "SAID user runs",
+    "SAID a top(low),top,1,low",
+    "SAID top runs",
+    "SAID b hit,top,topName 1 top(ml) undefined",
+    "SAID user runs",
+    "SAID b2 top(ml),top,2,mocked low",
+    "SAID b3 top(ml) top true",
+    "SAID top runs",
+    "SAID user runs",
+    "SAID c top(low),top,1,low hit,top,topName"
+  ],
+  "tests": [
+    "(pass) a",
+    "(pass) b",
+    "(pass) c"
+  ],
+  "exitCode": 0
+}

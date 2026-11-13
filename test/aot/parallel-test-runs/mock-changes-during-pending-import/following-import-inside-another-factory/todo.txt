@@ -1,0 +1,1 @@
+"mock 1 false" | "mock 1 true": An import finds the mock loaded, then the mock is removed: the compiled run gives it a fresh copy, bun test the loaded instance.

@@ -1,0 +1,1 @@
+"third mock 2" | "third mock 1": An import that starts before the mock is replaced gets the second mock in the compiled run; bun test keeps the first, already loaded.

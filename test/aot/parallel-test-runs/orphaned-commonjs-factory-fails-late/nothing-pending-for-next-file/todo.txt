@@ -1,0 +1,2 @@
+"late,last late" | "late,last real": The compiled run keeps the failures of removed mocks under x1.cjs and y.cjs, so the last imports fail where bun test gets real modules.
+"two,last late two" | "two,last real": The compiled run keeps the failures of removed mocks under x1.cjs and y.cjs, so the last imports fail where bun test gets real modules.

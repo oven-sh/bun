@@ -1,0 +1,12 @@
+{
+  "why": "The compiled run keeps the failed load of the replaced mock: the later import fails and the new factory is never called. No words of a todo.txt tell the two answers apart: the compiled run alone is held to its answer until it follows.",
+  "printed": [
+    "the require: threw refused 1 | calls 1 | bodies undefined",
+    "the calls: ResolveMessage ERR_MODULE_NOT_FOUND \"Cannot find package '\\u0000'\" | ResolveMessage ERR_MODULE_NOT_FOUND \"Cannot find package '\\u0000'\" | one object: true | calls 1 | bodies undefined",
+    "later: ResolveMessage ERR_MODULE_NOT_FOUND \"Cannot find package '\\u0000'\" | calls 1 | bodies undefined"
+  ],
+  "tests": [
+    "(pass) the calls fail and no body runs"
+  ],
+  "exitCode": 0
+}

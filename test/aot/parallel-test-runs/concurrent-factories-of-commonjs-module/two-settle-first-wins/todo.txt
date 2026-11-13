@@ -1,0 +1,1 @@
+"two value one" | "two value two": The compiled run gives the second import the result of the first mock, which settles first; bun test gives it its own factory result.

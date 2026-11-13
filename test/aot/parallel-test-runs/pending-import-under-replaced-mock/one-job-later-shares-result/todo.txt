@@ -1,0 +1,1 @@
+"old x | old" | "new x | new": The compiled run registers the result of the replaced mock, so the first two imports get old x where bun test gives new x.

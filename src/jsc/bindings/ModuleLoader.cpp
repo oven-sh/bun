@@ -605,20 +605,10 @@ extern "C" void Bun__onFulfillAsyncModule(
     auto* specifierValue = Bun::toJS(globalObject, *specifier);
     RETURN_IF_EXCEPTION(scope, );
 
-    // The new C++ module loader does not create a registry entry until *after*
-    // this fetch promise resolves (provideFetch runs inside the
-    // ModuleLoadTopSettled microtask). Two concurrent dynamic imports of the
-    // same key therefore each get their own embedder fetch promise, and the
-    // loser of that race must still resolve so its loadModule chain can reach
-    // the (idempotent) provideFetch and reuse the already-loaded record.
-    // The old #6946/#12910 short-circuit was for the JS loader's *shared*
-    // entry.fetch promise; under the new loader returning here would strand
-    // the loser's promise pending forever.
-    //
-    // FIXME(module-loader): the loser still re-transpiled the file. The right
-    // fix is for JSModuleLoader::loadModule to ensureRegistered() *before*
-    // calling fetch so concurrent importers share the entry's fetchPromise
-    // instead of each round-tripping through the embedder.
+    // Every fetch settles its promise: the load that asked for it waits on that promise and on no other.
+    // JSModuleLoader::loadModule() registers the entry of an import() ahead of the fetch, so two import() calls
+    // of one key share one fetch. With compiled code it registers the entry when the fetch settles: each call
+    // then makes a fetch of its own, and the one that settles second finds the module registered.
 
     if (res->result.value.isCommonJSModule) {
         auto created = Bun::createCommonJSModule(globalObject, graph, specifierValue, res->result.value);

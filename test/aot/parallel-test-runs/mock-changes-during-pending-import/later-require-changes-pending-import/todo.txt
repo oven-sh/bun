@@ -1,0 +1,2 @@
+"SAID third real" | "SAID third mock 1": An import finds the mock loaded, then an unmock and a require follow: the compiled run gives it the real module, bun test the mock.
+"end: third real" | "end: third mock 1": An import finds the mock loaded, then an unmock and a require follow: the compiled run gives it the real module, bun test the mock.

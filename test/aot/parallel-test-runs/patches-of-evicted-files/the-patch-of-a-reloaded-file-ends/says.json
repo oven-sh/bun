@@ -1,0 +1,29 @@
+{
+  "why": "The compiled run loads a fresh s for the import in the factory of s, where bun test keeps the loaded s. The two runs differ by a line or a test result, which no todo.txt can say: the compiled run alone is held to its answer until it follows.",
+  "printed": [
+    "SAID m runs",
+    "SAID c runs",
+    "SAID s runs",
+    "SAID other runs",
+    "SAID a s(c),c(m),m(),s,c,m,1,1,1",
+    "SAID c runs",
+    "SAID s runs",
+    "SAID s runs",
+    "SAID p sF,sHit,sName s(c)",
+    "SAID other runs",
+    "SAID b Ms,Mc,Wm,s,c,Nm,1,1,8",
+    "SAID s runs",
+    "SAID other runs",
+    "SAID b2 s(c),Mc,Wm,s,c,Nm,1,2,8",
+    "SAID c runs",
+    "SAID s runs",
+    "SAID other runs",
+    "SAID c s(c),c(m),m(),s,c,m,1,1,2"
+  ],
+  "tests": [
+    "(pass) a",
+    "(pass) b",
+    "(pass) c"
+  ],
+  "exitCode": 0
+}

@@ -1,0 +1,3 @@
+"SAID second real,first late,u runs ran 1" | "SAID second real,first late,last real,u runs ran 1": The compiled run leaves the late failure of the removed mock factory under x.js, so a later import fails test t; bun test passes.
+"(fail) t" | "(pass) t": The compiled run leaves the late failure of the removed mock factory under x.js, so a later import fails test t; bun test passes.
+":1," | ":0,": The compiled run leaves the late failure of the removed mock factory under x.js, so a later import fails test t; bun test passes.

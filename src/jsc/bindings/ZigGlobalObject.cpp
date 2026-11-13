@@ -4486,6 +4486,10 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     auto& plugins = static_cast<Zig::GlobalObject*>(globalObject)->onLoadPlugins;
     bool runsScript = plugins.hasVirtualModules() || !plugins.isEmpty();
     JSC::ModuleRegistryEntry* entry = loader->getRegisteredMayBeNull(JSC::Identifier::fromString(vm, moduleKey), parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript);
+    // JSC registers the entry of an import(), or of another load by name, ahead of this fetch, so that a module that is mocked or evicted meanwhile is found
+    // (evictModulesAndTheirImporters()). That load takes the entry as the fetch leaves it, and no module has asked for it: there is nothing to mark and nothing to put back.
+    if (entry && entry->isAtFetchOfLoadByName())
+        entry = nullptr;
     bool isFirstFetch = entry && entry->status() == EntryStatus::New;
     if (isFirstFetch && runsScript)
         entry->setStatus(EntryStatus::Fetching);
@@ -4554,7 +4558,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         return didThrow();
     ASSERT(result);
     if (auto* promise = dynamicDowncast<JSC::JSPromise>(result)) {
-        // JSC doesn't add a registry entry for the module passed to import() until this settles.
+        // No module asks for the entry of the module passed to import() until this settles.
         if (!entry && plugins.loadRoots.contains(moduleKey) && !plugins.moduleMocksBeingLoaded.contains(moduleKey))
             plugins.loadRootFetches.set(moduleKey, JSC::Strong<JSC::JSObject> { vm, promise });
         return unlessFetchedMeanwhile(promise);
@@ -4691,7 +4695,8 @@ static void registerPrelinkedSubgraph(Zig::GlobalObject* globalObject, JSModuleL
                     Identifier key = prelinkedModuleKey(vm, graph, request.moduleIndex);
                     // Typed probe: graph modules and builtins are registered as JavaScript (here); a same-key entry of
                     // another type (`with { type: "text" }`) is a different module and gets a JavaScript sibling.
-                    if (auto* entry = loader->getRegisteredMayBeNull(key, ScriptFetchParameters::Type::JavaScript)) {
+                    // An import() that is at its fetch takes the record that is provided here.
+                    if (auto* entry = loader->getRegisteredMayBeNull(key, ScriptFetchParameters::Type::JavaScript); entry && !entry->isAtFetchOfLoadByName()) {
                         // Registered some other way (before the graph was set up, or re-imported after a registry delete).
                         if (!entry->record() || !isLoadedForPrelinking(entry->record())) {
                             complete = false;
@@ -4730,7 +4735,7 @@ static void registerPrelinkedSubgraph(Zig::GlobalObject* globalObject, JSModuleL
                     continue;
                 }
                 Identifier key = Identifier::fromString(vm, Bun::builtinModuleKeys[alias]);
-                if (auto* entry = loader->getRegisteredMayBeNull(key, ScriptFetchParameters::Type::JavaScript)) {
+                if (auto* entry = loader->getRegisteredMayBeNull(key, ScriptFetchParameters::Type::JavaScript); entry && !entry->isAtFetchOfLoadByName()) {
                     if (!entry->record() || !isLoadedForPrelinking(entry->record())) {
                         complete = false;
                         continue;
@@ -4963,7 +4968,9 @@ JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlob
             loader->setPrelinkedModuleGraph(*graph);
             // When HostLoadImportedModule already created the root's entry it drives fetch -> makeModule itself once this
             // hook returns; makeModule (Bun__analyzeTranspiledModule) then builds the root prelinked and registers its subgraph.
-            if (!loader->getRegisteredMayBeNull(rootKey, ScriptFetchParameters::Type::JavaScript) && !loader->prelinkedRecord(rootIndex) && rootSource->sourceCode().provider()->sourceType() == JSC::SourceProviderSourceType::BunTranspiledModule) {
+            // A load by name registers the root's entry too, and takes the record that is provided here.
+            auto* registered = loader->getRegisteredMayBeNull(rootKey, ScriptFetchParameters::Type::JavaScript);
+            if ((!registered || registered->isAtFetchOfLoadByName()) && !loader->prelinkedRecord(rootIndex) && rootSource->sourceCode().provider()->sourceType() == JSC::SourceProviderSourceType::BunTranspiledModule) {
                 JSModuleRecord* rootRecord = JSModuleRecord::createPrelinked(globalObject, vm, globalObject->moduleRecordStructure(), loader, rootKey, rootSource->sourceCode(), *graph, rootIndex);
                 auto* rootEntry = loader->ensureRegistered(globalObject, rootKey, ScriptFetchParameters::Type::JavaScript);
                 RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
@@ -4992,7 +4999,8 @@ JSC::JSPromise* StandaloneGlobalObject::moduleLoaderFetch(JSGlobalObject* jsGlob
     RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
     // When HostLoadImportedModule already created the root's entry it sets the root's status and loadPromise itself
     // once this hook returns, so the root (and therefore anything that can reach it) cannot be marked loaded here.
-    if (loader->registryEntry(rootKey))
+    // A load by name takes the root's entry as this hook leaves it.
+    if (auto* registered = loader->registryEntry(rootKey); registered && !registered->isAtFetchOfLoadByName())
         closure.complete = false;
     if (!closure.complete) {
         // The root goes through the caller's own fetch -> makeModule pipeline (which reads its module_info again); only

@@ -1,0 +1,1 @@
+"mock 1 false" | "mock 1 true": Imports that start before the second mock share a fresh copy of the first in the compiled run; bun test gives the loaded namespace.

@@ -10,6 +10,7 @@
 // The project is run all the same. It fails by any other difference, and once the two runs agree: the file goes out.
 // A file says.json in the folder, { why, printed, tests, exitCode }: `bun test` has more than one answer here, by how busy the machine is: the tests leave a call in flight that nobody awaits, and the run ends
 // when they have ended. A compiled run has one answer, the one that `bun test` gives most often: it alone is run, and held to what the file says.
+// The same file holds a compiled run to its answer where `bun test` has changed by more than words, a line more or another end of a test, and the compiled run has yet to follow: `why` says so.
 // A file one-thread.txt in the folder says why plain Bun reads the files of the project on one thread: with threads, files complete in the order in which the threads finish.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";

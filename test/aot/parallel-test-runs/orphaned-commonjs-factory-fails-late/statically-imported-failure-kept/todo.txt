@@ -1,0 +1,1 @@
+"late,again late" | "real,again real": The compiled run still fails later imports with the late failure of the removed mock; bun test gives them the statically imported real module

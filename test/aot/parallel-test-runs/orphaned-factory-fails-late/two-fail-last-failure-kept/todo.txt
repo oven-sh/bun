@@ -1,0 +1,1 @@
+"late one,again late one" | "real,again real": The compiled run keeps the last late failure of two ended mocks under x.js, so later imports fail; bun test gives the real module.

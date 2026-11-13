@@ -1,0 +1,1 @@
+"rejected with RangeError" | "mock, mock call": The real module fails while a mock stands over it: the compiled run rejects later imports with that failure, bun test gives them the mock.

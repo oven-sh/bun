@@ -1,0 +1,1 @@
+"2; third mock 3; calls 3" | "1; third threw call 2; calls 2": The compiled run calls the factory anew for the import one job behind the failure; bun test lets it share the first failing call.

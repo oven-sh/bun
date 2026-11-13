@@ -8,7 +8,7 @@ use core::ptr::NonNull;
 
 use bun_ast::Loader;
 use bun_ast::Log;
-use bun_bundler::bundle_v2::BundleV2Result;
+use bun_bundler::bundle_v2::BuildResult;
 use bun_bundler::options::{self as bundler_options, LoaderExt as _};
 use bun_core::strings;
 use bun_http::Headers;
@@ -17,7 +17,7 @@ use bun_jsc::JsCell;
 use bun_ptr::{RefCount, RefPtr, ThisPtr};
 use bun_uws::{AnyRequest, AnyResponse};
 
-use crate::api::js_bundle_completion_task::JSBundleCompletionTask;
+use crate::api::js_bundle_completion_task::{JSBundleCompletionTask, Receiver};
 use crate::api::js_bundler::js_bundler::{self as JSBundler, Config as JSBundlerConfig};
 use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::bake::dev_server::route_bundle;
@@ -433,13 +433,14 @@ impl Route {
         };
 
         // The build is the server's: it continues the script that made the server.
-        let mut completion_task =
-            JSBundleCompletionTask::new(config, plugins, global, server.context_id());
-        completion_task.started_at_ns = bun_core::util::Timespec::now_allow_mocked_time().ns();
-        // While we're building, ensure this doesn't get freed.
-        completion_task.html_build_task = Some(RefPtr::from_this(this));
+        let receiver = Receiver::Route {
+            plugins,
+            // While we're building, ensure this doesn't get freed.
+            route: RefPtr::from_this(this),
+            started_at_ns: bun_core::util::Timespec::now_allow_mocked_time().ns(),
+        };
         this.state.set(State::Building);
-        completion_task.schedule();
+        JSBundleCompletionTask::schedule(config, global, server.context_id(), receiver);
         Ok(())
     }
 
@@ -455,22 +456,25 @@ impl Route {
     }
 
     /// Called by the build task, which holds a ref on this route across the call.
-    pub(crate) fn on_complete(&self, completion_task: &mut JSBundleCompletionTask) {
+    pub(crate) fn on_complete(
+        &self,
+        result: bun_bundler::Result<BuildResult>,
+        log: Log,
+        started_at_ns: u64,
+    ) {
         // Still allocated, even if it has been stopped and its JS wrapper
         // collected since: the route holds a pending request on it until
         // `finish_building` (see `schedule_bundle`).
         let server = self.server.get().expect("server set");
 
-        match &mut completion_task.result {
-            BundleV2Result::Err(err) => {
+        match result {
+            Err(err) => {
                 if bun_core::Environment::ENABLE_LOGS {
                     bun_output::scoped_log!(debug, "onComplete: err - {}", err);
                 }
-                let mut log = Log::init();
-                completion_task.log.append_to(&mut log);
                 self.set_build_error(server, log);
             }
-            BundleV2Result::Value(bundle) => 'bundle: {
+            Ok(mut bundle) => 'bundle: {
                 if bun_core::Environment::ENABLE_LOGS {
                     bun_output::scoped_log!(debug, "onComplete: success");
                 }
@@ -481,7 +485,7 @@ impl Route {
 
                 if server.config().is_development() {
                     let now = bun_core::util::Timespec::now_allow_mocked_time().ns();
-                    let duration = now.saturating_sub(completion_task.started_at_ns);
+                    let duration = now.saturating_sub(started_at_ns);
                     let duration_f64 = duration as f64 / 1_000_000_000.0;
 
                     bun_output::print_elapsed(duration_f64);
@@ -605,7 +609,6 @@ impl Route {
                     // TODO: handle this case
                 }
             }
-            BundleV2Result::Pending => unreachable!(),
         }
 
         self.finish_building();

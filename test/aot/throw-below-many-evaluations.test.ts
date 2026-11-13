@@ -86,7 +86,8 @@ for (const [shape, count] of cases)
       "inner.cjs": `throw new Error("nothing here");\n`,
       "require.cjs": load(`require("./first.cjs")`),
       "import.mjs": load(`(await import("./first.cjs")).default`),
-      "levels.test.cjs": `require("bun:test").test("levels", () => {\n${load(`require("./first.cjs")`)}});\n`,
+      // describe() has no time limit. A test has five seconds, which some hundred files take where forty runs share eight processors.
+      "levels.test.cjs": `const { describe, test } = require("bun:test");\ndescribe("levels", () => {\n${load(`require("./first.cjs")`)}test("stand", () => {});\n});\n`,
       ...shapes[shape](count),
     });
     const folder = String(dir);
@@ -100,7 +101,8 @@ for (const [shape, count] of cases)
       expect({ entry, lines: lines(stdout), exitCode }).toEqual({ entry, lines: [line], exitCode: 0 });
     }
     for (const flags of [[], ["--aot"]]) {
-      const { stdout, exitCode } = await run([bunExe(), "test", ...flags, "./levels.test.cjs"], folder, bunEnv);
-      expect({ flags, lines: lines(stdout), exitCode }).toEqual({ flags, lines: [line], exitCode: 0 });
+      const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, "./levels.test.cjs"], folder, bunEnv);
+      const said = exitCode ? stderr : "";
+      expect({ flags, lines: lines(stdout), exitCode, said }).toEqual({ flags, lines: [line], exitCode: 0, said: "" });
     }
   });

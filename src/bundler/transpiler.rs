@@ -93,13 +93,12 @@ impl<'a> Transpiler<'a> {
     /// `resolve_results`, leaving them logically uninitialized. After this
     /// returns, `self` must never be dropped (or `deinit`'d again) — every
     /// caller holds a `Transpiler` that bypasses `Drop`: a raw-`dealloc`'d
-    /// `VirtualMachine` field, a `MaybeUninit` stack slot, or an arena-backed
-    /// `&'static mut`. Owned `Transpiler`s from [`Self::for_worker`] must use
+    /// `VirtualMachine` field. Owned `Transpiler`s from [`Self::for_worker`] must use
     /// normal `Drop` instead.
     pub unsafe fn deinit(&mut self) {
         self.macro_context = None;
         // SAFETY: `options`, `result`, and `resolver.opts` are init'd and never
-        // read past `destroy()` / the `--changed` scan teardown. Caller upholds
+        // read past `destroy()`. Caller upholds
         // the no-auto-drop contract above.
         unsafe {
             core::ptr::drop_in_place(&raw mut self.options);
@@ -181,32 +180,15 @@ impl<'a> Transpiler<'a> {
     /// callers. **Self-referential pointers are NOT yet wired** (the value may
     /// still be moved into its final slot); call [`Self::wire_after_move`]
     /// once the `Transpiler` is at its final address.
-    ///
-    /// # Safety
-    /// `from` must outlive the returned `Transpiler<'a>`. The two
-    /// lifetime-carrying borrows in `BundleOptions<'_>` (`framework`,
-    /// `optimize_imports`) are widened from `from`'s lifetime to `'a` via a
-    /// layout-preserving transmute. What they and `resolver.env_loader`
-    /// point to must outlive `'a`.
-    pub(crate) unsafe fn for_worker(
-        from: &Transpiler<'_>,
+    pub(crate) fn for_worker(
+        from: &Transpiler<'a>,
         arena: &'a Arena,
         log: *mut bun_ast::Log,
     ) -> Transpiler<'a> {
-        // Deep-clone the heavy nested fields at `from`'s lifetime, then
-        // lifetime-widen to `'a`. Layout is identical (only the lifetime
-        // parameter differs), so `transmute` is a no-op reinterpretation.
-        // SAFETY: see fn doc.
-        let options: options::BundleOptions<'a> = unsafe {
-            core::mem::transmute::<options::BundleOptions<'_>, options::BundleOptions<'a>>(
-                from.options.for_worker(),
-            )
-        };
+        let options = from.options.for_worker();
         let resolver_opts = resolver_bundle_options_subset(&options);
         let log_nn = core::ptr::NonNull::new(log).expect("Transpiler::for_worker: log is non-null");
-        // SAFETY: see fn doc — what `env_loader` points to outlives `'a`.
-        let resolver: Resolver<'a> =
-            unsafe { Resolver::for_worker(&from.resolver, log_nn, resolver_opts) };
+        let resolver = Resolver::for_worker(&from.resolver, log_nn, resolver_opts);
 
         Transpiler {
             options,

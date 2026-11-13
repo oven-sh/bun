@@ -513,6 +513,7 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | `toContain()` on a string with a value that isn't one     | an error                             | converts the value to a string                                       |
 | `.resolves.toThrow()` on a promise resolved to an error   | passes                               | fails                                                                |
 | `.not.not`                                                | cancels out                          | still negates                                                        |
+| `.not`, `.resolves`, `.rejects` on a stored `expect()`    | only apply to that chain             | apply to every later matcher on that `expect()`                      |
 | `vi.useFakeTimers()`                                      | leaves `setImmediate` real           | fakes `setImmediate` ([list](/test/dates-times#choose-what-to-fake)) |
 | `performance` while fake timers are on                    | the same object, on the fake clock   | a new object; the one it replaces still reads the real clock         |
 

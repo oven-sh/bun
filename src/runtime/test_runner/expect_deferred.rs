@@ -608,7 +608,8 @@ impl ExpectDeferred {
         }
 
         let promise = JSPromise::create(global).to_js();
-        let copy = expect.private_copy(global, call.this);
+        // The deferred matcher's own `Expect`, so a Vitest modifier that is read later can't change its flags.
+        let copy = expect.copy_with_flags(global, call.this, expect.flags.get(), true);
         js::expect_set_cached(thrown, global, copy);
         js::call_set_cached(
             thrown,
@@ -952,7 +953,6 @@ impl Expect {
         call: &MatcherCall<'_>,
         matcher: impl Fn(&mut JsScope<'a>) -> JsResult<JSValue>,
     ) -> JsResult<JSValue> {
-        self.matcher_ran.set(true);
         if !self.flags.get().is_plain() {
             return self.call_modified_matcher(cx, call, &matcher);
         }
@@ -1078,7 +1078,6 @@ impl Expect {
         // `parent: None` keeps the attempts out of the assertion count. Only `call` is counted.
         let expect = Expect {
             flags: Cell::new(Flags(self.flags.get().0 & Flags::NOT_MASK)),
-            matcher_ran: Cell::new(false),
             parent: None,
             custom_label: self.custom_label.clone(),
         }
@@ -1159,23 +1158,5 @@ impl Expect {
         // The replay counts this call again.
         self.add_to_expect_call_counter(-1);
         ExpectDeferred::defer(thrown, self, global, call)
-    }
-
-    /// The deferred matcher's own Expect, so later chaining can't change its flags.
-    fn private_copy(&self, global: &JSGlobalObject, this_value: JSValue) -> JSValue {
-        let copy = Expect {
-            flags: Cell::new(self.flags.get()),
-            matcher_ran: Cell::new(false),
-            parent: self.parent.clone(),
-            custom_label: self.custom_label.clone(),
-        }
-        .to_js(global);
-        if let Some(received) = expect_js::captured_value_get_cached(this_value) {
-            expect_js::captured_value_set_cached(copy, global, received);
-        }
-        if let Some(promise) = expect_js::result_value_get_cached(this_value) {
-            expect_js::result_value_set_cached(copy, global, promise);
-        }
-        copy
     }
 }

@@ -20,6 +20,55 @@ test("expect().not.not on an expect() that already ran a matcher", () => {
   expect(() => kept.not.not.toBe(2)).toThrow();
 });
 
+test("expect().not is a chain of its own, and .not on that chain cancels out", () => {
+  const kept: any = expect({ a: 1 });
+  const negated = kept.not;
+  expect(negated === kept).toBe(false);
+  // A chainable matcher returns the chain it was called on.
+  expect(kept.toContainKey("a") === kept).toBe(true);
+  expect(negated.toContainKey("b") === negated).toBe(true);
+  // jest has neither `.not.not` nor chainable matchers. A matcher that already ran on the chain changes nothing.
+  negated.not.toContainKey("a");
+  expect(() => negated.not.toContainKey("b")).toThrow();
+  kept.not.toContainKey("b").not.toContainKey("a");
+  expect(() => kept.not.toContainKey("b").not.toContainKey("b")).toThrow();
+});
+
+test("expect().resolves and .rejects in one chain", () => {
+  const resolves: any = expect(Promise.resolve(1)).resolves;
+  const rejects: any = expect(Promise.resolve(1)).rejects;
+  expect(resolves.resolves === resolves).toBe(true);
+  expect(rejects.rejects === rejects).toBe(true);
+  expect(() => resolves.rejects).toThrow("Cannot chain .rejects() after .resolves()");
+  expect(() => rejects.resolves).toThrow("Cannot chain .resolves() after .rejects()");
+  expect(() => resolves.not.rejects).toThrow("Cannot chain .rejects() after .resolves()");
+  const poll: any = expect.poll(() => 1);
+  expect(() => poll.resolves).toThrow("expect.poll() does not support .resolves");
+  expect(() => poll.not.rejects).toThrow("expect.poll() does not support .rejects");
+});
+
+test("expect().resolves.not that is read while a matcher of the chain runs is a chain of its own", async () => {
+  let calls = 0;
+  const chain: any = expect(() => Promise.resolve(++calls)).resolves;
+  let negated: any;
+  await chain.toSatisfy((value: number) => {
+    negated = chain.not;
+    return value === 1;
+  });
+  expect(calls).toBe(1);
+  // Each matcher on it calls the function again, as on a `.not` that is read outside of a matcher.
+  await negated.toBe(1);
+  await negated.toBe(2);
+  expect(calls).toBe(3);
+});
+
+test("printing an expect() does not change it", () => {
+  const kept = expect(1);
+  Bun.inspect(kept);
+  kept.toBe(1);
+  expect(() => kept.toBe(2)).toThrow();
+});
+
 // Fuzzer-found crash: Bun.jest() without an active test runner, followed by
 // misuse of the expect statics, must not crash the process. In particular,
 // `new` on a matcher registered via expect.extend() used to jump to a null

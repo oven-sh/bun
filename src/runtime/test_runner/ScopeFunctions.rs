@@ -686,6 +686,7 @@ impl ScopeFunctions {
                     callback,
                     bun_test::ExecutionEntryCfg {
                         calling,
+                        flavor: self.cfg.flavor,
                         around: None,
                         fixtures: Some(self.fixtures).filter(|fixtures| !fixtures.is_empty()),
                         timeout: options.timeout,

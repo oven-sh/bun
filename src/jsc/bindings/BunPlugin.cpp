@@ -1676,7 +1676,7 @@ uint32_t addToFactoryImportChains(Zig::GlobalObject*, JSC::AOT::ModuleID importe
 // With two paths, what the mock has kept of its module object in require.cache is the original of another file than the one an import loads.
 // The package's own files ask for that original by its key: a module object with the kept exports lies there, so that nothing runs the file a second time.
 // Like an original that was loaded from disk, it stays when the mock ends.
-__attribute__((minsize)) static void layKeptOriginalUnderItsKey(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+__attribute__((minsize)) static void layKeptOriginalUnderItsKey(Zig::GlobalObject* globalObject, JSModuleMock* mock, bool replacesWhatStands)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1695,8 +1695,14 @@ __attribute__((minsize)) static void layKeptOriginalUnderItsKey(Zig::GlobalObjec
     auto* standingModule = dynamicDowncast<Bun::JSCommonJSModule>(standing);
     if (standingModule && standingModule->getDirect(vm, Bun::builtinNames(vm).exportsPublicName()) == exports)
         return;
-    // What stands there was loaded from disk for an earlier mock, or holds what one had kept of a module object that has been loaded anew since. What is linked to it goes with it.
+    // What stands there otherwise was loaded from disk for an earlier mock, or holds what one had kept of a module object that has been loaded anew since.
+    // Where an original is about to be loaded it goes, with what is linked to it. Nothing needs that sooner.
     if (standingModule || Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, key))) {
+        if (!replacesWhatStands)
+            return;
+        // requireModuleKey() asked for it in the name of the file itself, which is no importer of it and stays. A requirer in require.cache has it among its children.
+        if (standingModule)
+            standingModule->m_parent = {};
         evictModulesAndTheirImporters(globalObject, Vector<String> { key });
         RETURN_IF_EXCEPTION(scope, );
     }
@@ -1752,7 +1758,7 @@ __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::Global
     }
     // The original that is loaded below may load that file, itself or through other files of its package.
     if (!exports) {
-        layKeptOriginalUnderItsKey(globalObject, mock);
+        layKeptOriginalUnderItsKey(globalObject, mock, true);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
 #if ENABLE(AOT)
@@ -6332,7 +6338,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
 #endif
 
     // Ahead of the factory: it may require the name again, and the package's own files may ask for the file once the mock is registered.
-    layKeptOriginalUnderItsKey(globalObject, mock);
+    layKeptOriginalUnderItsKey(globalObject, mock, false);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSC::JSPromise* pendingFactory = nullptr;

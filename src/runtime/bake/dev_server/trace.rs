@@ -17,6 +17,24 @@ impl DevServer {
 }
 
 impl DevServer {
+    /// Leaves the recorded failures that the route reaches in `gts.failures`. The caller holds `graph_safety_lock`.
+    pub(super) fn trace_route_failures(
+        &mut self,
+        route_bundle_index: route_bundle::Index,
+        gts: &mut GraphTraceState,
+    ) -> crate::Result<()> {
+        gts.clear();
+        match &self.route_bundles[route_bundle_index.get() as usize].data {
+            route_bundle::Data::Framework(fw) => {
+                self.trace_all_route_imports(fw.route_index, gts, TraceImportGoal::FindErrors)
+            }
+            route_bundle::Data::Html(html) => {
+                self.client_graph
+                    .trace_imports(html.bundled_file, gts, TraceImportGoal::FindErrors)
+            }
+        }
+    }
+
     /// For a framework route. An HTML route is traced from its `bundled_file` in the client graph.
     pub(super) fn trace_all_route_imports(
         &mut self,
@@ -36,7 +54,12 @@ impl DevServer {
         self.server_graph.trace_imports(
             from_opaque_file_id::<{ bake::Side::Server }>(rt_server_file),
             gts,
-            TraceImportGoal::FindCss,
+            // A failure below the server entry point fails every route of the router type.
+            if goal == TraceImportGoal::FindErrors {
+                goal
+            } else {
+                TraceImportGoal::FindCss
+            },
         )?;
         if let Some(id) = rt_client_file {
             self.client_graph.trace_imports(

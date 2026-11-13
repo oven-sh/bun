@@ -8,8 +8,9 @@
 //!
 //! Shape: `InternalSocket` is a `Copy` tagged raw pointer (passed by value
 //! through the entire HTTP-client state machine), all
-//! `NewSocketHandler` methods take `&self`, and the `#[cfg(windows)]` Pipe
-//! split is owned exactly once by the `on_socket!` macro below.
+//! `NewSocketHandler` methods take `&self`, and the `Pipe` arm (a Windows
+//! named pipe or a POSIX FIFO / char device — see [`PipePayload`]) is
+//! dispatched exactly once by the `on_socket!` macro below.
 
 use core::ffi::{c_int, c_uint, c_void};
 use core::mem::size_of;
@@ -17,6 +18,8 @@ use core::ptr::NonNull;
 
 use bun_core::{Fd, ZStr};
 
+#[cfg(unix)]
+use crate::PosixPipe;
 #[cfg(windows)]
 use crate::WindowsNamedPipe;
 use crate::{
@@ -58,9 +61,16 @@ pub enum InternalSocket {
     Connecting(*mut ConnectingSocket),
     Detached,
     UpgradedDuplex(*mut UpgradedDuplex),
-    #[cfg(windows)]
-    Pipe(*mut WindowsNamedPipe),
+    Pipe(*mut PipePayload),
 }
+
+/// Transport behind [`InternalSocket::Pipe`]: a libuv named pipe on Windows,
+/// a `BufferedReader`/`StreamingWriter` pair over a FIFO or char-device fd
+/// elsewhere. Both are opaque cycle-break shims (see `lib.rs`).
+#[cfg(windows)]
+pub type PipePayload = WindowsNamedPipe;
+#[cfg(unix)]
+pub type PipePayload = PosixPipe;
 
 // Variant + pointer-identity equality.
 impl PartialEq for InternalSocket {
@@ -72,7 +82,6 @@ impl PartialEq for InternalSocket {
             (InternalSocket::UpgradedDuplex(a), InternalSocket::UpgradedDuplex(b)) => {
                 core::ptr::eq(a, b)
             }
-            #[cfg(windows)]
             (InternalSocket::Pipe(a), InternalSocket::Pipe(b)) => core::ptr::eq(a, b),
             _ => false,
         }
@@ -94,10 +103,7 @@ impl InternalSocket {
     }
     #[inline]
     pub(crate) fn is_named_pipe(&self) -> bool {
-        #[cfg(windows)]
-        return matches!(self, InternalSocket::Pipe(_));
-        #[cfg(not(windows))]
-        return false;
+        matches!(self, InternalSocket::Pipe(_))
     }
 }
 
@@ -125,19 +131,16 @@ fn conn<'a>(p: *mut ConnectingSocket) -> &'a mut ConnectingSocket {
 fn duplex<'a>(p: *mut UpgradedDuplex) -> &'a mut UpgradedDuplex {
     bun_opaque::opaque_deref_mut(p)
 }
-/// Reborrow the `InternalSocket::Pipe` payload (Windows only).
-#[cfg(windows)]
+/// Reborrow the `InternalSocket::Pipe` payload (cycle-break shim).
 #[inline(always)]
-fn pipe<'a>(p: *mut WindowsNamedPipe) -> &'a mut WindowsNamedPipe {
+fn pipe<'a>(p: *mut PipePayload) -> &'a mut PipePayload {
     bun_opaque::opaque_deref_mut(p)
 }
 
-/// Five-arm `match self.socket` with the `#[cfg(windows)]` Pipe split owned
-/// exactly once. Each arm binds the deref'd opaque (`$s` / `$c` / `$d` / `$p`)
-/// so method bodies are one-liners and the per-arm `#[cfg]` noise lives here.
+/// Five-arm `match self.socket`. Each arm binds the deref'd opaque (`$s` /
+/// `$c` / `$d` / `$p`) so method bodies are one-liners.
 ///
-/// Arms not supplied default to: `connecting`/`detached` → `$det` expr;
-/// `pipe` → `$det` on non-Windows (no payload), supplied body on Windows.
+/// Short form: `connecting`/`detached` collapse to the `else` expr.
 macro_rules! on_socket {
     (
         $sock:expr;
@@ -152,11 +155,10 @@ macro_rules! on_socket {
             InternalSocket::Connecting(__c) => { let $c = conn(__c); $cing }
             InternalSocket::Detached => $det,
             InternalSocket::UpgradedDuplex(__d) => { let $d = duplex(__d); $dup }
-            #[cfg(windows)]
             InternalSocket::Pipe(__p) => { let $p = pipe(__p); $pip }
         }
     };
-    // Short form: connecting/detached/pipe-absent collapse to one default.
+    // Short form: connecting/detached collapse to one default.
     (
         $sock:expr;
         connected $s:ident => $conn:expr,
@@ -418,8 +420,9 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             InternalSocket::Connected(s) => {
                 sock(s).write_fd(data, Fd::from_native(file_descriptor))
             }
-            // A duplex falls back to a plain write (the fd is silently dropped).
-            InternalSocket::UpgradedDuplex(_) => self.write(data),
+            // A duplex or pipe falls back to a plain write (the fd is silently
+            // dropped — neither transport speaks SCM_RIGHTS).
+            InternalSocket::UpgradedDuplex(_) | InternalSocket::Pipe(_) => self.write(data),
             InternalSocket::Connecting(_) | InternalSocket::Detached => 0,
         }
     }
@@ -584,7 +587,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         match self.socket {
             InternalSocket::Connected(s) => sock(s).set_inline_reject(),
             InternalSocket::UpgradedDuplex(d) => duplex(d).set_inline_reject(),
-            #[cfg(windows)]
             InternalSocket::Pipe(p) => pipe(p).set_inline_reject(),
             _ => {}
         }
@@ -608,7 +610,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     pub fn wrapper_latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
         match self.socket {
             InternalSocket::UpgradedDuplex(d) => duplex(d).latest_session(),
-            #[cfg(windows)]
             InternalSocket::Pipe(p) => pipe(p).latest_session(),
             _ => core::ptr::null_mut(),
         }
@@ -647,9 +648,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             }
             InternalSocket::UpgradedDuplex(s) if IS_SSL => duplex(s).ssl().map(|p| p.cast()),
             InternalSocket::UpgradedDuplex(_) => None,
-            #[cfg(windows)]
             InternalSocket::Pipe(s) if IS_SSL => pipe(s).ssl().map(|p| p.cast()),
-            #[cfg(windows)]
             InternalSocket::Pipe(_) => None,
             InternalSocket::Detached => None,
         }
@@ -687,10 +686,14 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     }
 
     /// Underlying fd. Same fd regardless of TLS — read directly off the poll.
+    /// A Windows named pipe is a libuv handle, not an fd, so it reports
+    /// `Fd::INVALID` like the other non-fd transports.
     #[inline]
     pub fn fd(&self) -> Fd {
         match self.socket {
             InternalSocket::Connected(s) => sock(s).get_fd(),
+            #[cfg(unix)]
+            InternalSocket::Pipe(p) => Fd::from_native(pipe(p).fd()),
             _ => Fd::INVALID,
         }
     }

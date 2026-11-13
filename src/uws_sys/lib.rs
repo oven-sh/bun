@@ -181,7 +181,7 @@ pub use bun_core::Timespec;
 // `UnsafeCell<[u8;0]>` / `!Freeze` rationale; with UnsafeCell the reference is
 // ABI-identical to a non-null pointer, which lets us declare value-typed shims
 // as `safe fn` and drop per-call-site `unsafe { }`.
-bun_core::opaque_extern!(pub UpgradedDuplex, pub WindowsNamedPipe);
+bun_core::opaque_extern!(pub UpgradedDuplex, pub WindowsNamedPipe, pub PosixPipe);
 
 pub mod socket_transfer {
     use super::LIBUS_SOCKET_DESCRIPTOR;
@@ -416,6 +416,104 @@ impl WindowsNamedPipe {
     #[inline]
     pub(crate) fn resume_stream(&mut self) -> bool {
         WindowsNamedPipe__resume_stream(self)
+    }
+}
+
+// ── PosixPipe (cycle-break shim) ────────────────────────────────────────────
+// POSIX twin of `WindowsNamedPipe`: the real `PosixPipe` lives in
+// `bun_runtime::socket::posix_pipe` (a FIFO / char-device fd adopted by
+// `net.Socket({ fd })`); the runtime crate exports these with `#[no_mangle]`.
+#[cfg(unix)]
+unsafe extern "C" {
+    safe fn PosixPipe__ssl_error(this: &PosixPipe) -> us_bun_verify_error_t;
+    safe fn PosixPipe__is_established(this: &PosixPipe) -> bool;
+    safe fn PosixPipe__is_closed(this: &PosixPipe) -> bool;
+    safe fn PosixPipe__is_shutdown(this: &PosixPipe) -> bool;
+    safe fn PosixPipe__ssl(this: &PosixPipe) -> *mut bun_boringssl_sys::SSL;
+    safe fn PosixPipe__set_inline_reject(this: &PosixPipe);
+    safe fn PosixPipe__latest_session(this: &PosixPipe) -> *mut bun_boringssl_sys::SSL_SESSION;
+    safe fn PosixPipe__set_timeout(this: &mut PosixPipe, seconds: core::ffi::c_uint);
+    safe fn PosixPipe__flush(this: &mut PosixPipe);
+    fn PosixPipe__encode_and_write(this: *mut PosixPipe, ptr: *const u8, len: usize) -> i32;
+    fn PosixPipe__raw_write(this: *mut PosixPipe, ptr: *const u8, len: usize) -> i32;
+    safe fn PosixPipe__shutdown(this: &mut PosixPipe);
+    safe fn PosixPipe__shutdown_read(this: &mut PosixPipe);
+    safe fn PosixPipe__close(this: &mut PosixPipe);
+    safe fn PosixPipe__pause_stream(this: &mut PosixPipe) -> bool;
+    safe fn PosixPipe__resume_stream(this: &mut PosixPipe) -> bool;
+    safe fn PosixPipe__fd(this: &PosixPipe) -> core::ffi::c_int;
+}
+#[cfg(unix)]
+impl PosixPipe {
+    #[inline]
+    pub(crate) fn ssl_error(&self) -> us_bun_verify_error_t {
+        PosixPipe__ssl_error(self)
+    }
+    #[inline]
+    pub(crate) fn is_established(&self) -> bool {
+        PosixPipe__is_established(self)
+    }
+    #[inline]
+    pub(crate) fn is_closed(&self) -> bool {
+        PosixPipe__is_closed(self)
+    }
+    #[inline]
+    pub(crate) fn is_shutdown(&self) -> bool {
+        PosixPipe__is_shutdown(self)
+    }
+    #[inline]
+    pub(crate) fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
+        let p = PosixPipe__ssl(self);
+        if p.is_null() { None } else { Some(p) }
+    }
+    #[inline]
+    pub(crate) fn set_inline_reject(&self) {
+        PosixPipe__set_inline_reject(self)
+    }
+    #[inline]
+    pub(crate) fn latest_session(&self) -> *mut bun_boringssl_sys::SSL_SESSION {
+        PosixPipe__latest_session(self)
+    }
+    #[inline]
+    pub(crate) fn set_timeout(&mut self, seconds: core::ffi::c_uint) {
+        PosixPipe__set_timeout(self, seconds)
+    }
+    #[inline]
+    pub(crate) fn flush(&mut self) {
+        PosixPipe__flush(self)
+    }
+    #[inline]
+    pub(crate) fn encode_and_write(&mut self, data: &[u8]) -> i32 {
+        unsafe { PosixPipe__encode_and_write(self, data.as_ptr(), data.len()) }
+    }
+    #[inline]
+    pub(crate) fn raw_write(&mut self, data: &[u8]) -> i32 {
+        unsafe { PosixPipe__raw_write(self, data.as_ptr(), data.len()) }
+    }
+    #[inline]
+    pub(crate) fn shutdown(&mut self) {
+        PosixPipe__shutdown(self)
+    }
+    #[inline]
+    pub(crate) fn shutdown_read(&mut self) {
+        PosixPipe__shutdown_read(self)
+    }
+    #[inline]
+    pub(crate) fn close(&mut self) {
+        PosixPipe__close(self)
+    }
+    #[inline]
+    pub(crate) fn pause_stream(&mut self) -> bool {
+        PosixPipe__pause_stream(self)
+    }
+    #[inline]
+    pub(crate) fn resume_stream(&mut self) -> bool {
+        PosixPipe__resume_stream(self)
+    }
+    /// The adopted fd (same fd with or without TLS).
+    #[inline]
+    pub(crate) fn fd(&self) -> core::ffi::c_int {
+        PosixPipe__fd(self)
     }
 }
 

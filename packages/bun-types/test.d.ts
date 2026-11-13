@@ -2143,9 +2143,9 @@ declare module "bun:test" {
     toContainKey<X = T>(expected: __internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>): R;
 
     /**
-     * Asserts that an `object` contains all the provided keys.
+     * Asserts that an `object` contains all the provided keys and no other key.
      *
-     * The value must be an object.
+     * The value must be an object. It must have as many keys as `expected` has items.
      *
      * @example
      * expect({ a: 'hello', b: 'world' }).toContainAllKeys(['a','b']);
@@ -2227,15 +2227,18 @@ declare module "bun:test" {
     toContainValues(expected: Array<unknown>): R;
 
     /**
-     * Asserts that an `object` contains all the provided values.
+     * Asserts that an `object` contains all the provided values and no other value.
      *
-     * The value must be an object.
+     * The value must be an object. It must have as many values as `expected` has items.
      *
      * @example
      * const o = { a: 'foo', b: 'bar', c: 'baz' };
      * expect(o).toContainAllValues(['foo', 'bar', 'baz']);
      * expect(o).toContainAllValues(['baz', 'bar', 'foo']);
      * expect(o).not.toContainAllValues(['bar', 'foo']);
+     * expect({ a: 1, b: 2 }).not.toContainAllValues([1, 1]);
+     * expect({ a: 1, b: 1, c: 2 }).toContainAllValues([1, 2, 2]);
+     * expect(['s', 's']).toContainAllValues(['s', 's']);
      * @param expected the expected value
      */
     toContainAllValues(expected: Array<unknown>): R;

@@ -1,6 +1,6 @@
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSValue, JsResult};
-use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome};
+use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome, WalkFirst};
 
 impl Expect {
     #[optimize(size)]
@@ -17,17 +17,7 @@ impl Expect {
                 let values = value.values(g)?;
                 let count = values.get_length(g)?;
                 if count != expected.get_length(g)? { return Ok(ContainOutcome::pass(false)); }
-                let mut itr = expected.array_iterator(g)?;
-                let mut pass = false;
-                'outer: while let Some(item) = itr.next()? {
-                    let mut i: u32 = 0;
-                    while u64::from(i) < count {
-                        if values.get_index(g, i)?.jest_deep_equals(item, g)? { pass = true; continue 'outer; }
-                        i += 1;
-                    }
-                    return Ok(ContainOutcome::pass(false));
-                }
-                Ok(ContainOutcome::pass(pass))
+                Ok(ContainOutcome::pass(Self::lists_cover_each_other(g, values, expected, count, WalkFirst::Expected)?))
             })
     }
 }

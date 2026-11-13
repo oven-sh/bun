@@ -48,9 +48,14 @@ const decorators = "ES Decorators";
 const decoratorExpressions = "ES Decorators > decorator expressions";
 const checkerSpeaksFirst = "the program is refused, in the words of the type checker and not of the parser";
 const untypedParameters = "TS7006: the parameters of the decorator have no types";
+const blockFunctions = "block-level function declarations in CommonJS > known differences from node";
+const labelledFunction = "`bun run` prints a labelled function inside a block, so it is stored when the label runs";
+const argumentsStaysALet =
+  "`bun run` keeps a block function named `arguments` in its block, also where the name is a var";
 
 // path -> test name as `bun test` prints it -> why it fails.
 // A type error stops the build.
+// A test that is `test.failing` for what `bun run` does fails where compiled code does it right.
 // In mode `bundles` a test with several entry points is one test per entry point, `<id>/<file name of the entry point>`.
 const expectedFailures: Record<string, Record<string, string>> = {
   "test/bundler/transpiler/ts-use-define-for-class-fields.test.ts": {
@@ -76,6 +81,14 @@ const expectedFailures: Record<string, Record<string, string>> = {
     [`${decoratorExpressions} > repeated export around a decorator is rejected`]: checkerSpeaksFirst,
     [`${decoratorExpressions} > type arguments in decorator member expression are stripped`]:
       "TS1477: a property access follows an instantiation expression",
+  },
+  "test/bundler/transpiler/preserve-use-strict-cjs.test.ts": {
+    [`${blockFunctions} > labelThenPlain`]: labelledFunction,
+    [`${blockFunctions} > labelAfterVar`]: labelledFunction,
+    [`${blockFunctions} > labelAfterAssignment`]: labelledFunction,
+    [`${blockFunctions} > twoOfANameWithEval`]: "`bun run` drops the first of two functions of one name in a block",
+    [`${blockFunctions} > argumentsInArrow`]: argumentsStaysALet,
+    [`${blockFunctions} > argumentsBesideFunction`]: argumentsStaysALet,
   },
   "test/bundler/bundler_jsx.test.ts": {
     "bundler > jsx/AutomaticFragmentNamedImportDev": untypedJsxRuntime,

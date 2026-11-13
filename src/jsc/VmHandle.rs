@@ -121,12 +121,11 @@ pub struct Shared {
 struct DebugState {
     js_thread: std::thread::ThreadId,
     live: Guarded<LiveTickets>,
-    /// Test suite only (see [`test_gate`]): the [`TestGate`] mode armed, the
-    /// posts the gate is holding for `Draining` (the wait does not close past
-    /// them), and the awaited weak posts that have reached the gate so far (a
-    /// teardown that waits for one begins once this is not zero).
+    /// Test suite only, see [`test_gate`]: the [`TestGate`] mode armed.
     gate: AtomicU8,
+    /// Posts the gate holds for `Draining`. The wait does not close past them.
     parked: AtomicU32,
+    /// Awaited weak posts at the gate. A `weak-*` teardown begins at the first.
     weak_arrivals: AtomicU32,
 }
 
@@ -553,40 +552,26 @@ pub extern "C" fn Bun__VM__currentLoopKind(vm: &VirtualMachine) -> LoopKind {
 
 // ── Test suite only: deterministic late completions ───────────────────────
 //
-// `BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE` (first-level worker VMs; builds with
+// `BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE` (first-level worker VMs, builds with
 // debug assertions) orders a post from another thread against the worker's
-// teardown, so the path under test runs with its real preconditions every
-// time instead of only when the post happens to win or lose a race. Each post
-// is named on stderr with its outcome.
-//
-// `draining`: every post is held until the wait has begun, and the wait does
-// not close before a post it let through has been made. A ticket's completion
-// and a weak post alike are queued and released by the wait.
-//
-// `weak-draining:<TaskTag>`: the same, for work that comes back as a weak post
-// with that task tag. The teardown also does not begin until that post is at
-// the gate: nothing else ties a weak poster's timing to the worker, and C++
-// stops posting to a context once its teardown has begun.
-//
-// `weak-closed:<TaskTag>`: as `weak-draining`, but that post is held until the
-// wait has ended, and the teardown does not go on until it has been made. It
-// is refused and the poster frees its own payload. If a ticket is outstanding
-// when the post arrives, it is held only until `Draining`: making it may be
-// what that ticket's holder does before it hands the ticket back (WebCrypto
-// posts its result from the pool task that carries the ticket), and the wait
-// is for that ticket.
-//
-// The parked thread keeps whatever locks it holds (the fetch tasklet's mutex,
-// a streaming body's buffer lock), so a row whose worker then blocks on that
-// same lock never reaches teardown: a hang under the gate, not in production.
+// teardown, so the path under test runs every time instead of only when the
+// post wins or loses the race. Each post is named on stderr with its outcome.
+// The parked thread keeps the locks it holds, so a worker that blocks on one
+// of them never reaches its teardown: a hang under the gate, not in production.
 
-/// The mode a worker VM arms (see above); `Off` everywhere else.
+/// The mode a worker VM arms; `Off` everywhere else.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TestGate {
     Off = 0,
+    /// `draining`: every post is held until the wait has begun. The wait does
+    /// not close before each held post is made, so all are queued and released.
     Draining = 1,
+    /// `weak-draining:<TaskTag>`: as `Draining`, and the teardown does not
+    /// begin until the weak post with that tag is at the gate.
     WeakDraining = 2,
+    /// `weak-closed:<TaskTag>`: as `WeakDraining`, but that post is held until
+    /// the wait has ended, so it is refused.
     WeakClosed = 3,
 }
 
@@ -595,8 +580,7 @@ mod test_gate {
     use super::{Access, Ordering, Posted, Shared, State, TestGate, Ticket, VmHandle};
     type Task = core::ptr::NonNull<super::ConcurrentTaskItem>;
 
-    /// `BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE`: the mode, then for a `weak-*`
-    /// mode the task tag of the post it awaits (`weak-closed:CppTask`).
+    /// `<mode>` or `<mode>:<TaskTag>`, as in `weak-closed:CppTask`.
     fn env() -> (&'static [u8], &'static [u8]) {
         let value = bun_core::env_var::BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE::get().unwrap_or(b"");
         bun_core::strings::split_once_char(value, b':').unwrap_or((value, b""))
@@ -616,8 +600,8 @@ mod test_gate {
             self.0.debug.gate.store(mode as u8, Ordering::Relaxed);
         }
 
-        /// JS thread, as the VM's teardown begins: in the `weak-*` modes, wait
-        /// until the awaited weak post is at the gate.
+        /// JS thread, before the teardown begins: C++ stops posting to a
+        /// context once it is terminating, so a `weak-*` mode waits here.
         pub(crate) fn await_test_gate_weak_post(&self) {
             let s = &*self.0;
             if !awaits_weak_post(s) {
@@ -694,14 +678,12 @@ mod test_gate {
             };
             say(format_args!("late post: {} ({outcome})", tag.name()));
         };
-        // A worker gets weak posts a row is not about as well (the parent's
-        // flow-control ack on a stdio port, JSC's deferred work from a helper
-        // thread): only the awaited one lets the teardown begin or is held
-        // past the start of the wait.
+        // Other weak posts reach a worker too (a stdio port's flow-control ack).
         let awaited = awaits_weak_post(s) && tag.name().as_bytes() == env().1;
+        // With a ticket outstanding the wait is for that ticket, and its holder
+        // may make this post first (WebCrypto): hold it until `Draining` only.
         if awaited && mode(s) == TestGate::WeakClosed && s.tickets.load(Ordering::SeqCst) == 0 {
-            // Counted as a weak access in progress: `close_and_wait` returns
-            // only once this thread has posted and reported.
+            // A weak access in progress: `close_and_wait` returns after the post.
             s.active.fetch_add(1, Ordering::SeqCst);
             let _in_progress = Access(s);
             arrived(s);
@@ -721,14 +703,12 @@ mod test_gate {
         s.notify();
         r
     }
-    /// The awaited weak post is at the gate and already counted where
-    /// `close_and_wait` looks (`parked` or `active`): the teardown goes on.
+    /// The awaited weak post is at the gate, counted in `parked` or `active`.
     fn arrived(s: &Shared) {
         s.debug.weak_arrivals.fetch_add(1, Ordering::SeqCst);
         s.notify();
     }
-    /// `close_and_wait`: may `Draining` become `Closed`? Not while a post the
-    /// gate is holding for `Draining` has yet to be made.
+    /// `Draining` may become `Closed` only once every held post is made.
     pub(super) fn nothing_parked(s: &Shared) -> bool {
         s.debug.parked.load(Ordering::SeqCst) == 0
     }

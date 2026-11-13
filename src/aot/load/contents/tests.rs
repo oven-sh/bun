@@ -422,80 +422,116 @@ fn mutabilities_of(files: &Files<'_>, name: &str, builtin: BuiltinId) -> Vec<Mut
         .collect()
 }
 
+// A name reads the same where a Worker starts from it and where `preload` has it. Only where it starts a Worker is a name that is known in part
+// followed to the files that it may stand for.
 #[test]
-fn each_form_of_a_name_finds_the_file_that_the_worker_starts_from() {
-    let forms: [(&str, &str, &[&str], &[&str]); 7] = [
+fn each_form_of_a_name_finds_the_file_that_the_worker_starts_from_or_loads_first() {
+    let forms: [(&str, &str, &[&str], &[&str], &[&str]); 7] = [
         (
             "src/start.ts",
-            r#"new Worker("./w.ts");"#,
+            r#""./w.ts""#,
             &["AsWritten ./w.ts"],
+            &["w.ts"],
             &["w.ts"],
         ),
         (
             "src/start.ts",
-            r#"new Worker(import.meta.dir + "/w.ts");"#,
+            r#"import.meta.dir + "/w.ts""#,
             &["FromOwnFolder ./w.ts"],
+            &["src/w.ts"],
             &["src/w.ts"],
         ),
         (
             "src/start.ts",
-            r#"new Worker(new URL("./w.ts", import.meta.url));"#,
+            r#"new URL("./w.ts", import.meta.url)"#,
             &["FromOwnFolder ./w.ts", "Resolved(UrlObject) ./w.ts"],
+            &["src/w.ts"],
             &["src/w.ts"],
         ),
         (
             "src/start.cjs",
-            r#"new Worker(require.resolve("./w.ts"));"#,
+            r#"require.resolve("./w.ts")"#,
             &["Resolved(Path) ./w.ts"],
             &["src/w.ts"],
-        ),
-        (
-            "src/start.ts",
-            r#"new Worker(import.meta.resolve("./w.ts"));"#,
-            &["Resolved(Url) ./w.ts"],
             &["src/w.ts"],
         ),
         (
             "src/start.ts",
-            r#"new Worker(process.argv[2] ? "./w.ts" : "./src/w.ts");"#,
+            r#"import.meta.resolve("./w.ts")"#,
+            &["Resolved(Url) ./w.ts"],
+            &["src/w.ts"],
+            &["src/w.ts"],
+        ),
+        (
+            "src/start.ts",
+            r#"process.argv[2] ? "./w.ts" : "./src/w.ts""#,
             &["AsWritten ./src/w.ts | ./w.ts"],
+            &["src/w.ts", "w.ts"],
             &["src/w.ts", "w.ts"],
         ),
         (
             "src/start.ts",
-            r#"new Worker(import.meta.dir + "/pool/" + process.argv[2] + ".ts");"#,
+            r#"import.meta.dir + "/pool/" + process.argv[2] + ".ts""#,
             &["FromOwnFolder ./pool/*.ts"],
             &["src/pool/a.ts", "src/pool/b.ts"],
+            &[],
         ),
     ];
-    for (file, text, accepted, found) in forms {
-        let main = format!("import \"./{file}\";");
-        let project = executable(&[
-            ("main.ts", &main),
-            (file, text),
-            ("w.ts", WORKER),
-            ("src/w.ts", WORKER),
-            ("src/pool/a.ts", WORKER),
-            ("src/pool/b.ts", WORKER),
-        ]);
-        load(&project, |loaded| {
-            let starts = describe_starts(files_of(loaded), file, true);
-            let [start] = &starts[..] else {
-                panic!("{text}: {starts:?}");
+    let projects: [fn(&[(&str, &str)]) -> TestProject; 2] = [executable, test_run];
+    for (file, name, accepted, started_from, preloaded) in forms {
+        for (place, project_of) in [PlaceOfName::Constructor, PlaceOfName::Preload]
+            .into_iter()
+            .flat_map(|place| projects.map(|project_of| (place, project_of)))
+        {
+            let (text, found) = match place {
+                PlaceOfName::Constructor => (format!("new Worker({name});"), started_from),
+                _ => (
+                    format!(r#"new Worker("./job.ts", {{ preload: [{name}] }});"#),
+                    preloaded,
+                ),
             };
-            assert!(accepted.contains(&start.as_str()), "{text}: {start}");
-            let mut names = describe_found(&loaded.contents.found_entry_points);
-            names.sort_unstable();
-            let expected = found.iter().map(|name| format!("{name} StartsWorker"));
-            assert_eq!(names, expected.collect::<Vec<String>>(), "{text}");
-            assert_found_follow_written(loaded, 1);
-        });
+            let main = format!("import \"./{file}\";");
+            let project = project_of(&[
+                ("main.ts", &main),
+                (file, &text),
+                ("job.ts", WORKER),
+                ("w.ts", WORKER),
+                ("src/w.ts", WORKER),
+                ("src/pool/a.ts", WORKER),
+                ("src/pool/b.ts", WORKER),
+            ]);
+            load(&project, |loaded| {
+                let files = files_of(loaded);
+                let named = file_named(files, file);
+                let starts = contents_of(files, file).worker_starts.iter();
+                let starts: Vec<String> = starts
+                    .filter(|start| start.place == place)
+                    .map(|start| describe_start(files, named, start))
+                    .collect();
+                match (&starts[..], found.is_empty()) {
+                    ([], true) => {}
+                    ([start], false) => {
+                        assert!(accepted.contains(&start.as_str()), "{text}: {start}");
+                    }
+                    _ => panic!("{text}: {starts:?}"),
+                }
+                let mut names = describe_found(&loaded.contents.found_entry_points);
+                names.sort_unstable();
+                let job = (place == PlaceOfName::Preload).then_some(&"job.ts");
+                let mut expected: Vec<String> = (found.iter().chain(job))
+                    .map(|name| format!("{name} StartsWorker"))
+                    .collect();
+                expected.sort_unstable();
+                assert_eq!(names, expected, "{text}");
+                assert_found_follow_written(loaded, 1);
+            });
+        }
     }
 }
 
 #[test]
 fn preloads_are_entry_points() {
-    let rows: [(&str, &str, &[&str]); 8] = [
+    let rows: [(&str, &str, &[&str]); 13] = [
         ("", r#"{ preload: "./first.ts" }"#, &["first.ts"]),
         (
             "",
@@ -528,10 +564,39 @@ fn preloads_are_entry_points() {
             &["first.ts"],
         ),
         ("", r#"{ name: "./first.ts" }"#, &[]),
+        (
+            r#"const options = { preload: ["./first.ts"] }; const same = options;"#,
+            "same",
+            &["first.ts"],
+        ),
+        (
+            "",
+            r#"{ preload: [new URL("./first.ts", import.meta.url).href] }"#,
+            &["first.ts"],
+        ),
+        (
+            r#"import { fileURLToPath } from "node:url"; const first = fileURLToPath(new URL("./first.ts", import.meta.url));"#,
+            "{ preload: first }",
+            &["first.ts"],
+        ),
+        (
+            r#"import { join } from "node:path"; const options = { preload: [join(import.meta.dir, "second.ts"), "./first.ts"] };"#,
+            "options",
+            &["first.ts", "second.ts"],
+        ),
+        // The name is read, not what it was declared with.
+        (
+            r#"let first = "./first.ts"; if (process.argv[2]) first = "./second.ts";"#,
+            "{ preload: [first] }",
+            &["first.ts", "second.ts"],
+        ),
     ];
-    for (before, options, preloaded) in rows {
+    let projects: [fn(&[(&str, &str)]) -> TestProject; 2] = [executable, test_run];
+    for ((before, options, preloaded), project_of) in
+        (rows.into_iter()).flat_map(|row| projects.map(|project_of| (row, project_of)))
+    {
         let main = format!(r#"{before} new Worker("./w.ts", {options});"#);
-        let project = executable(&[
+        let project = project_of(&[
             ("main.ts", &main),
             ("w.ts", WORKER),
             ("first.ts", WORKER),
@@ -544,6 +609,84 @@ fn preloads_are_entry_points() {
             let expected = expected.map(|name| format!("{name} StartsWorker"));
             assert_eq!(names, expected.collect::<Vec<String>>(), "{main}");
             assert_found_follow_written(loaded, 1);
+            let contents = contents_of(files_of(loaded), "main.ts");
+            assert!(!contents.starts_worker_out_of_sight, "{main}");
+        });
+    }
+}
+
+#[test]
+fn names_under_preload_are_read_where_a_class_hands_its_options_to_worker() {
+    let main = r#"class Job extends Worker { constructor() { super("./w.ts", { preload: ["./first.ts", new URL("./second.ts", import.meta.url).href] }); } } new Job();"#;
+    let project = executable(&[
+        ("main.ts", main),
+        ("w.ts", WORKER),
+        ("first.ts", WORKER),
+        ("second.ts", WORKER),
+    ]);
+    load(&project, |loaded| {
+        let files = files_of(loaded);
+        let file = file_named(files, "main.ts");
+        let starts = contents_of(files, "main.ts").worker_starts.iter();
+        let preloaded: Vec<String> = starts
+            .filter(|start| start.place == PlaceOfName::Preload)
+            .map(|start| describe_start(files, file, start))
+            .collect();
+        assert_eq!(
+            preloaded,
+            ["AsWritten ./first.ts", "Resolved(Url) ./second.ts"]
+        );
+    });
+}
+
+// `preload` is an option of other classes too. Only where the constructor may be `Worker` is a name under it followed, and only where it is `Worker` does the name find a file.
+#[test]
+fn preload_in_the_options_of_what_is_no_worker_names_no_file() {
+    const PLAYER: &str = "class Player { constructor(file: string, options: object) {} }";
+    let rows: [(&str, &str, &[&str]); 6] = [
+        (
+            "Player",
+            r#"[process.argv[2] ? "./first.ts" : process.argv[3]]"#,
+            &[],
+        ),
+        (
+            "Player",
+            r#"[import.meta.dir + "/first.ts", new URL("./second.ts", import.meta.url).href]"#,
+            &[],
+        ),
+        ("Player", "config.setup", &[]),
+        (
+            "Worker",
+            r#"[process.argv[2] ? "./first.ts" : process.argv[3]]"#,
+            &["first.ts StartsWorker", "w.ts StartsWorker"],
+        ),
+        (
+            "Worker",
+            "config.setup",
+            &["first.ts StartsWorker", "w.ts StartsWorker"],
+        ),
+        // A name for `Worker` that only the load knows: a name under `preload` is read as far as the name of the file is.
+        (
+            "Thread",
+            r#"["./first.ts", new URL("./second.ts", import.meta.url).href]"#,
+            &["first.ts StartsWorker", "w.ts StartsWorker"],
+        ),
+    ];
+    for (constructor, preload, found) in rows {
+        let main = format!(
+            r#"import config from "./config.json"; {PLAYER} const {{ Worker: Thread }} = globalThis; new {constructor}("./w.ts", {{ preload: {preload} }});"#
+        );
+        let project = executable(&[
+            ("main.ts", &main),
+            ("config.json", r#"{ "setup": "./first.ts" }"#),
+            ("w.ts", WORKER),
+            ("first.ts", WORKER),
+            ("second.ts", WORKER),
+        ]);
+        load(&project, |loaded| {
+            let mut names = describe_found(&loaded.contents.found_entry_points);
+            names.sort_unstable();
+            assert_eq!(names, found, "{main}");
         });
     }
 }

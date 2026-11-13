@@ -2901,6 +2901,131 @@ fn name_of_a_worker_is_known_in_part() {
     }
 }
 
+// The names under `preload` of each construction, as `find_name_of_worker()` and the fold read each.
+const NAMES_PRELOADED: &[(&str, &[&str])] = &[
+    ("new Worker(f, { preload: './a.js' });", &["./a.js"]),
+    (
+        "new Worker(f, { preload: ['./a.js', './b.js'] });",
+        &["./a.js, ./b.js"],
+    ),
+    (
+        "const options = { preload: ['./a.js'] }; new Worker(f, options);",
+        &["./a.js"],
+    ),
+    (
+        "const more = { preload: './a.js' }; new Worker(f, { name: 'n', ...more });",
+        &["./a.js"],
+    ),
+    (
+        "const preload = ['./b.js', './a.js']; new Worker(f, { preload });",
+        &["./b.js, ./a.js"],
+    ),
+    (
+        "const first = './a.js'; new Worker(f, { preload: [first] });",
+        &["./a.js"],
+    ),
+    (
+        "const options = { ...options, preload: './a.js' }; new Worker(f, options);",
+        &["./a.js"],
+    ),
+    (
+        "const options = { preload: first }; const first = ['./a.js']; const same = options; new Worker(f, same);",
+        &["./a.js"],
+    ),
+    ("new Worker(f, { preload: [, './a.js'] });", &["./a.js"]),
+    (
+        "new Worker(f, { preload: [c ? './a.js' : './b.js'] });",
+        &["./a.js | ./b.js"],
+    ),
+    (
+        "new Worker(f, { preload: ['./a/' + x + '.js', './b.js'] });",
+        &["./a/*.js, ./b.js"],
+    ),
+    (
+        "new Worker(f, { preload: require('path').join(__dirname, 'a.js') });",
+        &["./a.js"],
+    ),
+    (
+        "export {}; new Worker(f, { preload: [new URL('./a.js', import.meta.url).href] });",
+        &["./a.js"],
+    ),
+    // A name that is stored again is read as a name, not as what it was declared with.
+    (
+        "let first = './a.js'; if (c) first = './b.js'; new Worker(f, { preload: [first] });",
+        &["./a.js | ./b.js"],
+    ),
+    (
+        "let first = './a.js'; if (c) first = './b.js'; new Worker(f, { preload: first });",
+        &["./a.js | ./b.js"],
+    ),
+    (
+        "class Job extends Worker { constructor() { super(f, { preload: [c ? './a.js' : './b.js'] }); } }",
+        &["./a.js | ./b.js"],
+    ),
+    (
+        "const options = { preload: [c ? './a.js' : './b.js'] }; new Worker(f, options); new Worker(g, options);",
+        &["./a.js | ./b.js", "./a.js | ./b.js"],
+    ),
+    // A constructor that may be no `Worker`: the names are listed and not followed.
+    (
+        "new Other(f, { preload: [c ? './a.js' : './b.js', './c.js'] });",
+        &["?, ./c.js"],
+    ),
+];
+
+const OPTIONS_THAT_PRELOAD_NOTHING: &[&str] = &[
+    "new Worker(f);",
+    "new Worker(f, options);",
+    "new Worker(f, { name: './a.js' });",
+    "new Worker(f, { preload() {} });",
+    "new Worker(f, { preload: [] });",
+    "new Worker({ preload: './a.js' });",
+    "if (false) new Worker(f, { preload: './a.js' });",
+];
+
+fn describe_names_preloaded(text: &str) -> Vec<String> {
+    let mut described = Vec::new();
+    let path = if text.starts_with("export") {
+        "a.mjs"
+    } else {
+        "a.cjs"
+    };
+    with_workspace(|w| {
+        let s = &w.analyze(&Source::new(path, text), &w.fold_inputs(&TARGET));
+        let describe = |name: ExprId| {
+            let folded = match s.analysis.decisions.constant(&s.hir, name) {
+                FoldedValue::Constant(Constant::String(text)) => ImportSpecifier::Constant(text),
+                _ => s.analysis.decisions.specifier(name),
+            };
+            let read = s.analysis.find_name_of_worker(name);
+            match &describe_specifier(s, &read.map_or(folded, |found| found.name))[..] {
+                [] => "?".to_owned(),
+                names => names.join(" | "),
+            }
+        };
+        let is_construction =
+            |kind: &ExprKind| matches!(kind, ExprKind::New(_) | ExprKind::Call(_));
+        for construction in find_exprs(&s.hir, is_construction) {
+            let preloaded = s.analysis.names_preloaded_by(construction).iter();
+            let names: Vec<String> = preloaded.map(|it| describe(it.name)).collect();
+            if !names.is_empty() {
+                described.push(names.join(", "));
+            }
+        }
+    });
+    described
+}
+
+#[test]
+fn names_under_preload_are_listed_for_each_construction() {
+    for &(text, names) in NAMES_PRELOADED {
+        assert_eq!(describe_names_preloaded(text), names, "{text}");
+    }
+    for &text in OPTIONS_THAT_PRELOAD_NOTHING {
+        assert!(describe_names_preloaded(text).is_empty(), "{text}");
+    }
+}
+
 const URLS_WITH_CODE_GIVEN_TO_CONSTRUCTORS: &[(&str, bool)] = &[
     ("new Worker('data:text/javascript,' + '1');", true),
     (

@@ -11,7 +11,7 @@ use bun_sema::bind::{Binding, BindingInitializer, CommonJsVariable, Decl, Parent
 use bun_sema::fold::{Constant, FoldedValue, ends_in_name_with_extension};
 use bun_sema::hir::{
     BinOp, CallId, ClassId, ExportSpecId, ExprId, ExprKind, File, MemberKey, NodeData, PatId,
-    PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp,
+    PatKind, PropKey, StmtId, StmtKind, UnOp,
 };
 use bun_sema::import_sites::{
     ENCODERS, Encoder, ImportSiteKind, ImportSpecifier, ResolvedForm, find_heritage_constructed,
@@ -808,9 +808,7 @@ impl ContentsScan<'_, '_> {
             return;
         };
         let options = arguments.next();
-        if let Some(options) = options {
-            self.add_preloads(construction, options);
-        }
+        self.add_files_preloaded(construction);
         let (name, form) = self.find_name_given_to_worker(argument);
         let is_code_known = self.add_code_given_to_worker(argument, options, &name);
         let callee = self.find_inherited_constructor(callee);
@@ -850,52 +848,26 @@ impl ContentsScan<'_, '_> {
         });
     }
 
-    fn add_preloads(&mut self, construction: ExprId, options: ExprId) {
-        let &FinishedFile { hir, atoms, .. } = self.request;
-        let mut literals = vec![self.find_value_under_name(options)];
-        let mut looked_at = 0;
-        while let Some(&literal) = literals.get(looked_at) {
-            looked_at += 1;
-            let ExprKind::Object(properties) = hir[literal].kind else {
+    /// `{ preload: [name] }`: the Worker loads the file before its own. The name is read as the name of that one is.
+    fn add_files_preloaded(&mut self, construction: ExprId) {
+        let analysis = self.request.analysis;
+        for preloaded in analysis.names_preloaded_by(construction) {
+            let name_node = preloaded.name;
+            let (name, form) = self.find_name_given_to_worker(name_node);
+            self.add_code_given_to_worker(name_node, None, &name);
+            // A name that is known in part names no file here: nothing looks for the files that it may name.
+            let mut alternatives = analysis.alternatives_of(&name).iter();
+            if alternatives.any(|it| matches!(it, ImportSpecifier::Pattern { .. })) {
                 continue;
-            };
-            for property in properties.iter().map(|property| hir[property]) {
-                match (property.kind, property.key) {
-                    (PropKind::Spread, _) => {
-                        let spread = self.find_value_under_name(property.value);
-                        if !literals.contains(&spread) {
-                            literals.push(spread);
-                        }
-                    }
-                    (PropKind::Init | PropKind::Shorthand, PropKey::Name(name))
-                        if atoms.bytes(name) == b"preload" =>
-                    {
-                        self.add_files_preloaded(construction, property.value);
-                    }
-                    _ => {}
-                }
             }
-        }
-    }
-
-    fn add_files_preloaded(&mut self, construction: ExprId, preload: ExprId) {
-        let hir = self.request.hir;
-        let preload = self.find_value_under_name(preload);
-        let names: Vec<ExprId> = match hir[preload].kind {
-            ExprKind::Array(names) => hir.ids(names).collect(),
-            _ => vec![preload],
-        };
-        for name_node in names {
-            if let Some(text) = self.find_constant_text(name_node) {
-                self.found.worker_starts.push(WorkerStart {
-                    at: construction,
-                    name_node,
-                    name: ImportSpecifier::Constant(text),
-                    form: WorkerNameForm::AsWritten,
-                    place: PlaceOfName::Preload,
-                    is_on_trust: false,
-                });
-            }
+            self.found.worker_starts.push(WorkerStart {
+                at: construction,
+                name_node,
+                name,
+                form,
+                place: PlaceOfName::Preload,
+                is_on_trust: self.is_worker_named_on_trust(name_node, form),
+            });
         }
     }
 

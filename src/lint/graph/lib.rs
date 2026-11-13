@@ -138,8 +138,7 @@ struct ResolverKey<'a> {
     config: &'a [u8],
     /// The `conditionNames` of eslint-import-resolver-typescript, if configured.
     conditions: Option<&'a [&'a [u8]]>,
-    /// The key of [`Caches::resolvers`]: [`ResolverKey::cache_key`]. The config alone stands for the default
-    /// conditions.
+    /// The key of [`Caches::resolvers`], from [`ResolverKey::cache_key`].
     cache_key: &'a [u8],
 }
 

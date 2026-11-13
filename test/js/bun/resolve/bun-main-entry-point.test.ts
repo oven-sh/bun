@@ -340,6 +340,21 @@ describe("the look for a server in the default export of the entry point", () =>
   const server = (name: string) => `{ name: ${JSON.stringify(name)}, fetch() {} }`;
   const serves = (name: string) => ({ stdout: servedBy(name), stderr: [], exitCode: 0 });
 
+  // How a Worker of each kind says that its entry point failed, and that it ended.
+  const workers = {
+    "node:worker_threads": `
+      import { Worker } from "node:worker_threads";
+      const worker = new Worker(new URL("./entry.mjs", import.meta.url));
+      worker.on("error", error => console.log("error:", error.message));
+      worker.on("exit", code => console.log("ended:", code));
+    `,
+    "web": `
+      const worker = new Worker(new URL("./entry.mjs", import.meta.url).href);
+      worker.addEventListener("error", event => console.log("error:", event.message));
+      worker.addEventListener("close", event => console.log("ended:", event.code));
+    `,
+  };
+
   describe("every way to start a program starts the server once", () => {
     test.concurrent.each([
       ["an ES module", ["entry.mjs"], { "entry.mjs": stub + `export default ${server("an ES module")};` }],
@@ -409,21 +424,6 @@ describe("the look for a server in the default export of the entry point", () =>
         stderr: [],
       });
     });
-
-    // How a Worker of each kind says that its entry point failed, and that it ended.
-    const workers = {
-      "node:worker_threads": `
-        import { Worker } from "node:worker_threads";
-        const worker = new Worker(new URL("./entry.mjs", import.meta.url));
-        worker.on("error", error => console.log("error:", error.message));
-        worker.on("exit", code => console.log("ended:", code));
-      `,
-      "web": `
-        const worker = new Worker(new URL("./entry.mjs", import.meta.url).href);
-        worker.addEventListener("error", event => console.log("error:", event.message));
-        worker.addEventListener("close", event => console.log("ended:", event.code));
-      `,
-    };
 
     describe.each(Object.keys(workers) as (keyof typeof workers)[])("the entry point of a %s Worker", kind => {
       test.concurrent.each([

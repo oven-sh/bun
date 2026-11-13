@@ -259,9 +259,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if p.lexer.token == T::TEqualsGreaterThan && level.lte(Level::Assign) {
             let ref_ = p.store_name_in_ref(name);
             // reshaped for borrowck — build binding before borrowing arena.
-            // `Arg` is non-Copy (owns Vec) → use fill_iter instead of alloc_slice_copy.
             let binding = p.b(B::Identifier { r#ref: ref_ }, loc);
-            let args = p.arena.alloc_slice_fill_iter([Arg {
+            let args = p.arena.alloc_slice_copy(&[Arg {
                 binding,
                 ..Default::default()
             }]);
@@ -642,19 +641,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )?;
         }
 
-        // spec passes the arena-backed `[]ExprNodeIndex` slice directly into
-        // `ParseClassOptions{.ts_decorators = ts_decorators}`. `ParseClassOptions::ts_decorators`
-        // is currently typed `&'a [Expr]` (parser.rs), so until that field is widened to
-        // `ExprNodeList` we copy into the arena (Expr is `Copy`) and let `ts_decorators` drop
-        // normally — no `mem::forget` / `from_raw_parts` lifetime laundering (forbidden per
-        // PORTING.md §Forbidden patterns; would leak heap when origin is `Owned`).
-        let ts_decorators_slice: &'a [Expr] = p.arena.alloc_slice_copy(ts_decorators.slice());
-
         let class = p.parse_class(
             class_keyword,
             name,
             &ParseClassOptions {
-                ts_decorators: ts_decorators_slice,
+                ts_decorators,
                 allow_ts_decorators: true,
                 ..Default::default()
             },

@@ -5936,8 +5936,6 @@ pub mod bv2_impl {
                 };
             }
 
-            // `Chunk: !Default` (Vec fields). Allocate via Vec then
-            // leak into the arena.
             let mut chunks: Vec<Chunk> =
                 Vec::with_capacity(1 + start.css_entry_points.count() + html_files.count());
 
@@ -6014,16 +6012,12 @@ pub mod bv2_impl {
                     ..Chunk::default()
                 });
             }
-            // Arena-owned; the
-            // `DevServerOutput` lifetime is documented as "tied to the bundler's
-            // arena". `alloc_slice_fill_iter` moves each `Chunk` into the bump.
-            let chunks: &mut [Chunk] = self.arena().alloc_slice_fill_iter(chunks);
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
             crate::linker_context_mod::generate_chunks_in_parallel::<true>(
                 &mut self.linker,
-                chunks,
+                &mut chunks,
             )
             .map_err(|_| AllocError)?;
 
@@ -6035,7 +6029,6 @@ pub mod bv2_impl {
                     &mut DevServerOutput {
                         chunks,
                         css_file_list: core::mem::take(&mut start.css_entry_points),
-                        html_files,
                     },
                 )
                 .map_err(|_| AllocError)
@@ -8211,9 +8204,8 @@ pub mod bv2_impl {
 
     /// The lifetime of this structure is tied to the bundler's arena
     pub struct DevServerOutput<'a> {
-        pub chunks: &'a mut [Chunk<'a>],
+        pub chunks: Vec<Chunk<'a>>,
         pub css_file_list: ArrayHashMap<Index, CssEntryPointMeta>,
-        pub html_files: ArrayHashMap<Index, ()>,
     }
 
     pub(crate) fn generate_unique_key() -> u64 {

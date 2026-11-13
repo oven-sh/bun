@@ -2105,6 +2105,112 @@ describe.concurrent("a name that import and require() resolve to two files", () 
     );
   });
 
+  test("an async factory over files of the name that have run", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        // A require() in the test file would count as the pending factory's own, and load the original.
+        "helper.cjs": `module.exports = name => require(name);`,
+        "async.test.js": `
+          import { describe, expect, jest, mock, test } from "bun:test";
+          import requireInHelper from "./helper.cjs";
+          describe.each(${JSON.stringify(names)})("%s", name => {
+            test("patches both once it settles, and require() gets the file until then", async () => {
+              const required = require(name);
+              const imported = await import(name);
+              let calls = 0;
+              const patched = mock.module(name, async () => {
+                calls++;
+                await 0;
+                return { which: "mock", fn: () => "mock" };
+              });
+              expect(requireInHelper(name)).toBe(required);
+              expect([required.which, imported.which]).toEqual(["real cjs", "real esm"]);
+              await patched;
+              expect([require(name).which, requireInHelper(name).which, imported.which, calls]).toEqual(["mock", "mock", "mock", 1]);
+              expect(require(name).fn).toBe(imported.fn);
+              jest.unmock(name);
+              expect(require(name)).toBe(required);
+              expect(await import(name)).toBe(imported);
+              expect([required.which, imported.which]).toEqual(["real cjs", "real esm"]);
+            });
+            test.each([
+              ["rejects", () => { throw new Error("late"); }, "late"],
+              ["gives no object", () => 42, "mock(module, fn) requires a function that returns an object"],
+              ["gives an export getter that throws", () => ({ get which() { throw new Error("getter"); } }), "getter"],
+            ])("one that %s brings back both files, not the mock before it", async (_, fail, message) => {
+              const required = require(name);
+              const imported = await import(name);
+              mock.module(name, () => ({ which: "first" }));
+              expect([require(name).which, imported.which]).toEqual(["first", "first"]);
+              let calls = 0;
+              const patched = mock.module(name, async () => {
+                calls++;
+                await 0;
+                return fail();
+              });
+              await expect(patched).rejects.toThrow(message);
+              expect(require(name)).toBe(required);
+              expect(await import(name)).toBe(imported);
+              expect([required.which, imported.which]).toEqual(["real cjs", "real esm"]);
+              // A fresh load is not served by the failed mock.
+              const ran = globalThis.loaded.length;
+              delete require.cache[require.resolve(name)];
+              expect([require(name).which, globalThis.loaded.length - ran, calls]).toEqual(["real cjs", 1, 1]);
+            });
+          });
+        `,
+      },
+      names.length * 4,
+    );
+  });
+
+  test("a factory that fails is called again by the next require() or import of the name", async () => {
+    const forBoth = forms.filter(([, , , ofRequire]) => ofRequire === "mock");
+    await expectFixturesToPass(
+      {
+        ...files,
+        ...Object.fromEntries(
+          forBoth.map(([mock, api, from]) => [
+            `${mock}.test.js`,
+            `
+            import { expect, test, ${api} } from "${from}";
+            globalThis.calls = {};
+            ${names
+              .map(
+                name => `
+            ${mock}("${name}", () => {
+              const call = (globalThis.calls["${name}"] = (globalThis.calls["${name}"] ?? 0) + 1);
+              if (call < 3) throw new Error("factory " + call);
+              return { which: "mock" };
+            });
+            test("${name}", async () => {
+              expect(() => require("${name}")).toThrow("factory 1");
+              await expect(import("${name}")).rejects.toThrow("factory 2");
+              expect([require("${name}").which, (await import("${name}")).which]).toEqual(["mock", "mock"]);
+              expect(globalThis.calls["${name}"]).toBe(3);
+            });`,
+              )
+              .join("")}
+            test("neither file of any of them ran", () => expect(globalThis.loaded).toBeUndefined());
+          `,
+          ]),
+        ),
+        "no-object.test.js": `
+          import { expect, mock, test } from "bun:test";
+          mock.module("dual", () => 42);
+          test("a factory that returns no object fails both", async () => {
+            const message = "mock(module, fn) requires a function that returns an object";
+            expect(() => require("dual")).toThrow(message);
+            await expect(import("dual")).rejects.toThrow(message);
+            expect(globalThis.loaded).toBeUndefined();
+          });
+        `,
+      },
+      forBoth.length * (names.length + 1) + 1,
+    );
+  });
+
   describe("a library in node_modules that loads the name", () => {
     const libraries = {
       ...files,

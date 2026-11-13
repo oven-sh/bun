@@ -1350,6 +1350,71 @@ impl<'s> File<'s> {
         }
     }
 
+    /// The nearest node above `node` that can hold a declaration. A walk of these skips the operators of a long expression and
+    /// the tests of a long `else if`.
+    pub fn nearest_holder(&self, node: Node) -> Node {
+        // Most are found in fewer steps than a table of the file is worth.
+        const STEPS_WITHOUT_TABLE: usize = 16;
+        let mut at = self.parent(node);
+        for _ in 0..STEPS_WITHOUT_TABLE {
+            if !self.holds_no_declaration(at) {
+                return at;
+            }
+            at = self.parent(at);
+        }
+        match self.holds_no_declaration(at) {
+            true => self.nearest_holders()[at.idx()],
+            false => at,
+        }
+    }
+
+    fn nearest_holders(&self) -> &[Node] {
+        (self.lazy.cells.nearest_holders).get_or_init(|| self.compute_nearest_holders())
+    }
+
+    fn compute_nearest_holders(&self) -> Box<[Node]> {
+        const UNKNOWN: Node = Node(u32::MAX - 1);
+        let rows = &self.parents().rows;
+        let mut holders = vec![UNKNOWN; rows.len()];
+        let mut below: Vec<usize> = Vec::new();
+        for start in 0..rows.len() {
+            let mut at = start;
+            let holder = loop {
+                if holders[at] != UNKNOWN {
+                    break holders[at];
+                }
+                below.push(at);
+                let parent = rows[at];
+                if !self.holds_no_declaration(parent) {
+                    break parent;
+                }
+                at = parent.idx();
+            };
+            for node in below.drain(..) {
+                holders[node] = holder;
+            }
+        }
+        holders.into()
+    }
+
+    fn holds_no_declaration(&self, node: Node) -> bool {
+        let is_declaration = |statement: StmtId| {
+            statement.is_some()
+                && matches!(
+                    self[statement].kind,
+                    StmtKind::Enum(_) | StmtKind::Module(_) | StmtKind::Fn(_) | StmtKind::Class(_)
+                )
+        };
+        match self.data(node) {
+            NodeData::Expr(_) | NodeData::Paren(_) => true,
+            NodeData::Stmt(statement) => match self[statement].kind {
+                StmtKind::If { yes, no, .. } => !is_declaration(yes) && !is_declaration(no),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     /// How many HIR nodes the most deeply nested one has above it.
     pub fn deepest_nesting(&self) -> u32 {
         const UNKNOWN: u32 = u32::MAX;
@@ -2963,8 +3028,22 @@ impl File<'_> {
             positions.dedup();
             let mut found = Vec::new();
             let mut children = Vec::new();
+            let count_before = |end: u32| positions.partition_point(|&position| position < end);
+            let written = match self.known_evaluations.is_empty() {
+                true => positions.len(),
+                false => count_before(self.written_text_end()),
+            };
             // Descend from the file, for each position at each level into the last child that doesn't start after it.
-            let mut entered = vec![(Node::FILE, 0..positions.len())];
+            let mut entered = vec![(Node::FILE, 0..written)];
+            // The texts follow the file, and their functions the arguments of calls in it.
+            for evaluation in self.known_evaluations.iter() {
+                let within = count_before(evaluation.start)..count_before(evaluation.end);
+                if !within.is_empty() {
+                    // In TypeScript, a type that is written nowhere is beside the function.
+                    let function = self.skip_type_assertions(evaluation.function);
+                    entered.push((self.node(function), within));
+                }
+            }
             while let Some((node, leading_here)) = entered.pop() {
                 children.clear();
                 self.for_each_child(node, &mut |child| {
@@ -3564,6 +3643,12 @@ impl File<'_> {
         })
     }
 
+    pub(crate) fn is_evaluated_text(&self, node: Node) -> bool {
+        !self.known_evaluations.is_empty()
+            && self.is_in_known_evaluation(self.start(node))
+            && !self.is_in_known_evaluation(self.start(self.parent(node)))
+    }
+
     /// `node.Flags&NodeFlagsAwaitContext != 0`, as set by the parser's first pass. Returns `Err` if it's the context of
     /// the returned top-level statement, which `reparseTopLevelAwait` may reparse.
     pub fn await_context(&self, node: Node) -> Result<bool, Node> {
@@ -3581,6 +3666,9 @@ impl File<'_> {
         let is_await = modifier == Flags::ASYNC;
         let (mut below, mut above) = (node, self.parent(node));
         loop {
+            if self.is_evaluated_text(below) {
+                return Ok(false);
+            }
             let kind = self.kind(above);
             match kind {
                 Kind::SourceFile => return Err(below),

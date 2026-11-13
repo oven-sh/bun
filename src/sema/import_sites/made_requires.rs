@@ -2,8 +2,9 @@ use super::call_sites::{
     expr_kind, find_module_printed_as_require, find_request_of_exports, is_free_common_js,
     is_free_name,
 };
-use super::parameters::find_values_passed_for_pattern;
+use super::parameters::{find_parameter_key_path, find_values_passed_for_pattern};
 use super::touched_exports::is_only_tested;
+use super::wrapper_variables::names_redeclared_require;
 use crate::atom::{Atom, known};
 use crate::bind::{
     Binding, BindingInitializer, BindingKind, BindingStability, Bound, CodeUnit, CommonJsVariable,
@@ -98,6 +99,10 @@ impl StepsLeft {
             passes_and: false,
             ..self
         }
+    }
+
+    fn is_proofs_alone(self) -> bool {
+        !self.passes_choices && !self.passes_and
     }
 
     fn most_other_values(self) -> OtherValues {
@@ -271,9 +276,12 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
 }
 
 pub fn may_be_modified(hir: &File<'_>, bound: &Bound<'_>, variable: CommonJsVariable) -> bool {
+    let mut redeclared = bound.runtime.redeclared_commonjs_variables().iter();
+    let is_redeclared = redeclared.any(|it| it.1 == variable);
     let variable = Binding::CommonJs(variable);
     let mut stores = bound.runtime.unbound_name_stores().iter();
-    stores.any(|&(target, _)| bound.binding(target) == variable)
+    is_redeclared
+        || stores.any(|&(target, _)| bound.binding(target) == variable)
         || !bound.runtime.eval_scopes().is_empty()
         || bound.file_uses_arguments() && has_mapped_arguments(hir, CodeUnit::File)
 }
@@ -644,14 +652,17 @@ fn is_handed_own_file_by_calls_in_sight(
                     {
                         break Some(place);
                     }
-                    let Some((values, path, _)) = find_values_passed_for_pattern(
-                        hir,
-                        bound,
-                        decisions,
-                        mention,
-                        &find_written,
-                        true,
-                    ) else {
+                    let passed = find_parameter_key_path(hir, bound, mention).and_then(|it| {
+                        find_values_passed_for_pattern(
+                            hir,
+                            bound,
+                            decisions,
+                            it,
+                            &find_written,
+                            true,
+                        )
+                    });
+                    let Some((values, path, _)) = passed else {
                         break Some(place);
                     };
                     for value in values {
@@ -723,6 +734,19 @@ pub(super) fn is_only_read_by_member(
                 && !is_callee(member)
                 && is_only_called_or_read(hir, bound, written, 0)
         })
+}
+
+/// Returns where the file mentions `object`, whose name is `name`.
+pub(super) fn find_mentions_of(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    object: SymbolId,
+    name: Atom,
+) -> Vec<ExprId> {
+    let mut mentions = find_identifiers_written(hir, name);
+    mentions.retain(|&it| bound.is_evaluated_ident(it));
+    mentions.retain(|&it| bound.binding(it) == Binding::Symbol(object));
+    mentions
 }
 
 fn find_value_written_under(hir: &File<'_>, object: ExprId, key: Atom) -> Option<ExprId> {
@@ -1630,6 +1654,13 @@ fn follow_each_side_once(
         {
             return Some(OwnRequire::OfFile);
         }
+        if !left.is_proofs_alone() && names_redeclared_require(hir, bound, e) {
+            let written = settled_initializer(hir, bound, e).and_then(|source| {
+                let left = StepsLeft { bindings, ..left };
+                follow_each_side_once(text, source, left, asked)
+            });
+            return written.or(Some(OwnRequire::OfFile));
+        }
         if let Some(result) =
             decisions.and_then(|decisions| find_result_expression(hir, decisions, e))
         {
@@ -1983,6 +2014,28 @@ pub fn is_made_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
     chain
         .last()
         .is_some_and(|e| find_arguments_of_create_require(text, e, StepsLeft::ALL).is_some())
+}
+
+/// `make()` and `(() => require)()`: a function of the file answers with a `require()`.
+pub fn answers_with_require(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    e: ExprId,
+) -> bool {
+    let mut e = follow_settled_bindings(hir, bound, e);
+    for _ in 0..LONGEST_CHAIN_OF_BINDINGS {
+        let Some(result) = return_value_of_settled_function(hir, bound, e) else {
+            return false;
+        };
+        if is_made_require(hir, bound, result)
+            || find_own_require(hir, bound, Some(decisions), result) == Some(OwnRequire::OfFile)
+        {
+            return true;
+        }
+        e = follow_settled_bindings(hir, bound, result);
+    }
+    false
 }
 
 pub fn is_create_require_behind_get_builtin_module(

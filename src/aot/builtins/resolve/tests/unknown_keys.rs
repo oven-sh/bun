@@ -511,6 +511,96 @@ fn a_program_that_may_evaluate_text_or_lay_a_method_for_the_printer_says_so() {
 }
 
 #[test]
+fn tested_evaluator_evaluates_nothing() {
+    let evaluator_comes_out =
+        |source: &str| with_case(PROGRAM, source, |case| case.resolved.evaluator_comes_out());
+    for source in [
+        "eval(f);",
+        "(0, eval)(f);",
+        "new Function(f);",
+        "Function(f)();",
+        "const made = Function; made(f);",
+        "let made = null; made = Function; made(f);",
+        "g(Function);",
+        "g(eval);",
+        "f.made = eval;",
+        "[Function];",
+        "({ Function });",
+        "class Made extends Function {}",
+        "Function.call(null, f);",
+        "Function.apply(null, [f]);",
+        "Function.bind(null, f);",
+        "Function.prototype.constructor(f);",
+        "Function.prototype.call.call(Function, null, f);",
+        "Reflect.construct(Function, [f]);",
+        "Reflect.apply(eval, null, [f]);",
+        "Reflect.get(globalThis, 'Function')(f);",
+        "globalThis['Function'](f);",
+        "globalThis.Function(f);",
+        "const { Function: made } = globalThis; made(f);",
+        "const { eval: run } = globalThis; run(f);",
+        "Function?.(f);",
+        "(Function || g)(f);",
+        "(f ? Function : g)(f);",
+        "Function`f`;",
+        "function made() { return Function; }",
+        "export { Function as Made } from 'f'; export default Function;",
+        "f.map(Function);",
+        "throw Function;",
+    ] {
+        assert!(evaluator_comes_out(source), "{source}");
+    }
+    for source in [
+        "f instanceof Function;",
+        "typeof Function;",
+        "typeof eval === 'function';",
+        "f.constructor === Function;",
+        "if (Function) g();",
+        "Function.prototype.call.bind(f);",
+        "Function.prototype.toString.call(f);",
+        "g(Function.prototype.apply);",
+        "const { call } = Function.prototype;",
+    ] {
+        assert!(!evaluator_comes_out(source), "{source}");
+    }
+}
+
+#[test]
+fn function_constructor_may_evaluate_source() {
+    let may_evaluate = |source: &str| {
+        with_case(PROGRAM, source, |case| {
+            case.resolved.may_call_unnamed_evaluator()
+        })
+    };
+    for source in [
+        "f.constructor(text);",
+        "exports.twice = function () {}; exports.twice.constructor(text);",
+        "function twice() {} twice.constructor(text);",
+        "new (() => {}).constructor(text);",
+        "Object.constructor(text);",
+        "f['constructor'](text);",
+        "const { constructor } = f;",
+        "const { constructor: made } = function () {};",
+        "g(f.constructor);",
+        "f.constructor.call(null, text);",
+        "f.constructor.bind(null, text);",
+        "const made = f.constructor;",
+        "Reflect.get(f, 'constructor');",
+    ] {
+        assert!(may_evaluate(source), "{source}");
+    }
+    for source in [
+        "f.constructor === g;",
+        "typeof f.constructor;",
+        "f.prototype.constructor = f;",
+        "f.constructor.kind;",
+        "class Made { constructor() {} }",
+    ] {
+        assert!(!may_evaluate(source), "{source}");
+    }
+}
+
+#[test]
 fn a_variable_that_the_function_of_a_block_is_stored_into_is_a_key_that_nobody_knows() {
     for source in [
         "var i = 0; { function i() {} } f[i];",

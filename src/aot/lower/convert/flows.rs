@@ -89,7 +89,7 @@ fn collect_function_types(
                 pending.push(constraint);
             }
             ShapeKind::Function(signatures) => {
-                function_types.extend(file.find_function_type(signatures));
+                function_types.extend(file.find_function_type(signatures.declared));
             }
             ShapeKind::ClassConstructor(class) => {
                 function_types.push(file.find_class_function_type(class));
@@ -307,6 +307,7 @@ mod tests {
             obfuscates: false,
             counts_executions: false,
             runs_tests: false,
+            divides_small_files: false,
         };
         let mut lowered = lower_program(&[("main.ts", source)], options);
         assert_eq!(lowered.len(), 1);

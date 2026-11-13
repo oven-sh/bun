@@ -356,7 +356,7 @@ group("only reached code counts", () => {
 });
 
 group("members of built-in classes", () => {
-  const input = `declare const input: any;\n`;
+  const input = `const input: any = JSON.parse(process.argv[2]);\n`;
   const members = async (text: string) => {
     const use = await runtimeUse({ "main.ts": declared + input + text, "other.ts": `export const localeCompare = 1;` });
     return {

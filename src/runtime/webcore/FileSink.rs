@@ -759,6 +759,12 @@ impl FileSink {
                 is_pollable,
             )
         };
+        if let PathOrFileDescriptor::Path(path) = &options.input_path
+            && let Some(error) =
+                crate::node::fs::refuse_open_for_write(path.slice(), options.flags())
+        {
+            return sys::Result::Err(error);
+        }
         let mut result = open(
             &mut pollable_out,
             &mut is_socket_out,
@@ -793,6 +799,10 @@ impl FileSink {
             sys::Result::Ok(fd) => fd,
         };
 
+        if let PathOrFileDescriptor::Path(path) = &options.input_path {
+            let is_whole = options.flags() & sys::O::TRUNC != 0;
+            crate::node::fs::note_opened_for_write(path.slice(), is_whole);
+        }
         match options.input_path {
             PathOrFileDescriptor::Path(_) => self.close_with_graph(context),
             #[cfg(unix)]

@@ -5,19 +5,19 @@
 # const k0 = JSON.parse('"go"'); function f(t) { return T[k0](t) & 1023; }
 # sink(f);
 # -- end of source
-# What a UMD file does: `exports.add = add` in a factory, so `lib.add` is proven undefined|add. The call as written, in the arm where the slot is empty, is heard as a call: the loop is bought twice,
-# the slot is read and tested in front of the typed copy, and no turn of that copy tests anything. With the effects of a throw alone on the first walk the turns were quiet, nothing was bought,
-# and every turn branched on the hoisted test: 55,100 > 115,600 instructions for 22,000 turns.
+# What a UMD file does: `exports.add = add` in a factory, so `lib.add` is proven undefined|add. A loop that asks nothing but this in every turn is bought twice for it:
+# the slot is read and tested once, in front of both copies, and no turn of the typed copy tests anything. Where nothing was bought every turn branched on the hoisted test: 49,700 > 93,700 instructions for 22,000 turns.
 # f3 = go
 # RUN: walk f3 mechanisms=all
 # CHECK-LABEL: code f3:Body
-# CHECK: isLoopHead=true:
-# CHECK: Call {{*}}calleeName="lib.add"
 # CHECK: [[inFront]]: undefined|f4 @JSValue = GetSlotOrUndefined {{*}}key="add"
 # CHECK: [[test]]: boolean @Boolean = TypeTest [[inFront]] testedType=f4
+# CHECK: isInLoop=true isLoopHead=true:
+# CHECK: Call {{*}}calleeName="lib.add"
 # CHECK: Branch [[test]]
 # CHECK: isInLoop=true isLoopHead=true:
 # CHECK-NOT: TypeTest
+# CHECK-NOT: Branch [[test]]
 # CHECK: Return
 # RUN(ANSWERS): run-in-shell globalThis.sink = f => { print(f(1)); print(f(2)); };
 # ANSWERS: 393

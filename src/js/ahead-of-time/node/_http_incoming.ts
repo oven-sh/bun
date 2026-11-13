@@ -212,6 +212,11 @@ declare global {
       [kAbortController]: AbortController | null;
     }
 
+    /** A stream that a program passes to a response in place of a request, with the members that the response reads. */
+    interface SubstituteRequest extends Readable, Omit<IncomingMessage, keyof Readable> {
+      [kAutoDestroyed]: boolean | undefined;
+    }
+
     type IncomingMessageConstructor = typeof IncomingMessage;
   }
 }

@@ -1,0 +1,16 @@
+# f2 = fill, f3 = readsBack
+# -- source: list-stored-inside-try.ts
+# declare function print(...values: any[]): void;
+# function fails(v: any) { if (v < 0) throw new Error("no"); return v + 1; }
+# function fill(list: any, target: any) { let s = 0; for (let i = 0; i < 64; i++) { const x = list[i]; try { target[i] = x + 1; } catch { s--; } s = (s + x) | 0; } return s; }
+# function readsBack(list: any, target: any) { let s = 0; for (let i = 0; i < 64; i++) { const x = list[i]; try { target[i] = x + 1; } catch { s--; } s = (s + target[i & 7]) | 0; } return s; }
+# const list: any = JSON.parse("[" + Array.from({ length: 64 }, (_, k) => (k * 37) % 101).join() + "]");
+# const target: any = list.map((v: any) => v & 7);
+# print(fill(list, target), readsBack(list, target), fails(1));
+# -- end of source
+# A loop that stores into a list inside a try asks for the list in front of it: the store goes by the kind of storage found there, and the iteration asks nothing of it.
+# RUN(FILL): walk f2 mechanisms=all
+# FILL-LABEL: code f2:Body
+# FILL: = PutContiguousIndex {{*}}goesByKindOfStorage
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: 3185 2696 2

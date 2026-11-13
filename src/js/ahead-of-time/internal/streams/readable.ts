@@ -850,7 +850,12 @@ function read(this: $Node.Readable, state: ReadableState, n: number) {
         } else if ((flags & Flag.ObjectMode) !== 0) {
           amount = 1;
         } else if (n !== n) {
-          if (length && ((flags & Flag.Decoder) === 0 || (flags & Flag.Flowing) !== 0)) break decided;
+          if (length && ((flags & Flag.Decoder) === 0 || (flags & Flag.Flowing) !== 0)) {
+            // The length of a chunk may be an accessor of the program. A single chunk is as long as the state says.
+            const buffer: unknown = state.buffer;
+            const index: unknown = state.bufferIndex;
+            if (!$isJSArray(buffer) || typeof index !== "number" || buffer.length - index !== 1) break decided;
+          }
           amount = length;
         } else {
           amount = n <= length ? n : (flags & Flag.Ended) !== 0 ? length : 0;
@@ -1607,6 +1612,14 @@ Readable.prototype.pause = function (this: $Node.Readable) {
 function flow(stream: $Node.Readable) {
   const state: ReadableState = IS_COMPILED_AHEAD_OF_TIME ? stateOf(stream) : stream._readableState;
   $debug("flow");
+  if (IS_COMPILED_AHEAD_OF_TIME) {
+    while (
+      (state[kState] & Flag.Flowing) !== 0 &&
+      ($findsDeclaredMember(stream, "read", Readable) ? read.$call(stream, stateOf(stream), NaN) : stream.read()) !==
+        null
+    );
+    return;
+  }
   while ((state[kState] & Flag.Flowing) !== 0 && stream.read() !== null);
 }
 

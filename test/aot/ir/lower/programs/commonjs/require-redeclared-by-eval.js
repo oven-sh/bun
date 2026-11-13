@@ -109,12 +109,14 @@ exports.n = 1;
 // CHECK-NEXT: v28 = StrictEq v25, v27
 // CHECK-NEXT: Branch v28 -> taken b7(), notTaken b8(| 0)
 // CHECK-NEXT: b7():
-// CHECK-NEXT: v29 = DirectEval v26, v7, v2, v6, v11, v12 evalScope=e4
-// CHECK-NEXT: Jump -> next b9(v29)
-// CHECK-NEXT: b8(v30):
-// CHECK-NEXT: v31 = Call v30, v17, v26 calleeName="eval"
+// CHECK-NEXT: v29 = Boolean boolean=true
+// CHECK-NEXT: PutModuleVariable v29 variable={{*}}
+// CHECK-NEXT: v31 = DirectEval v26, v7, v2, v6, v11, v12 evalScope=e4
 // CHECK-NEXT: Jump -> next b9(v31)
-// CHECK-NEXT: b9(v32):
-// CHECK-NEXT: v33 = NewClosure v11 function=[[f_3]]
-// CHECK-NEXT: Return v33
+// CHECK-NEXT: b8(v32):
+// CHECK-NEXT: v33 = Call v32, v17, v26 calleeName="eval"
+// CHECK-NEXT: Jump -> next b9(v33)
+// CHECK-NEXT: b9(v34):
+// CHECK-NEXT: v35 = NewClosure v11 function=[[f_3]]
+// CHECK-NEXT: Return v35
 // CHECK-NEXT: }

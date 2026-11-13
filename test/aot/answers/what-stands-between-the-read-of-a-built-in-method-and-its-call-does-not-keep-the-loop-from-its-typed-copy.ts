@@ -7,9 +7,11 @@
 // # RUN(FORM): walk f55 f56 mechanisms=all
 // # REQUIRES(FORM): as-written
 // # FORM-LABEL: f55
-// # FORM: TryCallInline {{*}}inlineBuiltin=DataViewSet
+// # FORM: = GetDataViewLimit
+// # FORM: PutDataViewElement
 // # FORM-LABEL: f56
-// # FORM: TryCallInline {{*}}inlineBuiltin=DataViewSet
+// # FORM: = GetDataViewLimit
+// # FORM: PutDataViewElement
 // # What the making of an argument does between the read and the call: (a list whose own prototype has a getter under an index) it detaches the buffer, makes it shorter, gives the receiver a method of its own, gives it another prototype; holes; a receiver that is
 // # nothing, whose arguments are not made; receivers in turn; the same form on a map, a set, a list, a text and a view. At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL

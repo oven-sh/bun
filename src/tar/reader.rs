@@ -1198,11 +1198,18 @@ impl Reader {
                 return Ok(());
             }
             Collect::Number(which) => {
+                let is_size = matches!(which, Number::Size);
+                if is_size
+                    && self.is_npm()
+                    && (value.is_empty() || !value.iter().all(u8::is_ascii_digit))
+                {
+                    return Err(Error::MalformedPaxAttribute);
+                }
                 let parsed = parse_decimal(value);
                 let valid = parsed >= 0 && parsed != i64::MAX;
                 if valid {
                     self.on_pax_number(which, parsed)?;
-                } else if matches!(which, Number::Size) {
+                } else if is_size {
                     return Err(Error::PaxSizeOverflow);
                 }
                 Status::warn_unless(valid)

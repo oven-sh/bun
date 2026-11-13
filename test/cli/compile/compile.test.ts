@@ -177,7 +177,7 @@ module.exports = { pack };
         "node_modules/packer/locales/en.json": `{ "hello": "hello" }`,
         "node_modules/packer/locales/README.md": "# translations\n",
       });
-      const codes = (text: string) => [...text.matchAll(/TS\d+/g)].map(String);
+      const codes = (text: string) => [...text.matchAll(/^\w+: (TS\d+):/gm)].map(match => match[1]);
       const notes = (text: string) => text.split("\n").filter(line => /^ {13,}[a-z]/.test(line));
       const counted =
         "             note  2 regular expressions in packer are compiled at run time (--explain lists them)";
@@ -563,6 +563,13 @@ describe.concurrent("bun compile with the name of an installed executable", () =
         "./script",
         "42\n",
       ));
+
+    test("a byte order mark before the first line", () =>
+      compilesInMode(
+        { "script": `﻿#!/usr/bin/env bun\nconst answer: number = 42;\nconsole.log(answer);` },
+        "./script",
+        "42\n",
+      ));
   });
 
   test("bun build --compile resolves the name to the library", async () => {
@@ -690,6 +697,119 @@ describe.skipIf(isWindows)("bun compile never writes over an entry point", () =>
     });
   });
 });
+describe.skipIf(isWindows || !!unsupported)("an executable never replaces a file of its program", () => {
+  const script = `#!/usr/bin/env bun\nconsole.log("the script");\n`;
+  const commands = [["compile"], ["build", "--compile", "--aot"]];
+  const cases: [string, Record<string, string>, string][] = [
+    ["an entry point", { "app.ts": `console.log("app");\n` }, "app.ts"],
+    ["another entry point", { "app.ts": "", "worker.ts": `console.log("worker");\n` }, "worker.ts"],
+    [
+      "an imported file",
+      {
+        "app.ts": `import { word } from "./helper";\nconsole.log(word);\n`,
+        "helper.ts": `export const word = "helper";\n`,
+      },
+      "helper.ts",
+    ],
+    [
+      "a required file",
+      { "app.ts": `console.log(require("./helper.cjs").word);\n`, "helper.cjs": `exports.word = "helper";\n` },
+      "helper.cjs",
+    ],
+    [
+      "a data file",
+      { "app.ts": `import data from "./data.json";\nconsole.log(data.word);\n`, "data.json": `{ "word": "data" }\n` },
+      "data.json",
+    ],
+    [
+      "an embedded file",
+      {
+        "app.ts": `import path from "./logo.bin" with { type: "file" };\nconsole.log(path.length > 0);\n`,
+        "logo.bin": "logo\n",
+      },
+      "logo.bin",
+    ],
+  ];
+
+  describe.each(commands)("%s", (...command) => {
+    test.concurrent.each(cases)("%s", async (_, files, outfile) => {
+      using dir = tempDir("compile-keeps-sources", files);
+      const entryPoints = "worker.ts" in files ? ["app.ts", "worker.ts"] : ["app.ts"];
+      const args = [...command.filter(Boolean), ...withoutDebugInformation, ...entryPoints, "--outfile", outfile];
+      const built = await bun(String(dir), ...args);
+      expect(built.stderr).toContain(`error: the executable would overwrite ${outfile}, which is `);
+      expect(built.exitCode).toBe(1);
+      expect(await Bun.file(join(String(dir), outfile)).text()).toBe(files[outfile]);
+    });
+  });
+
+  test.concurrent("build --compile --aot of a script named without an extension", async () => {
+    using dir = tempDir("build-keeps-script", { "serve": script });
+    const built = await bun(String(dir), "build", "--compile", "--aot", ...withoutDebugInformation, "./serve");
+    expect(built.stderr).toContain(
+      "error: the executable would overwrite serve, which is an entry point. Choose another path with --outfile\n",
+    );
+    expect(built.exitCode).toBe(1);
+    expect(await Bun.file(join(String(dir), "serve")).text()).toBe(script);
+  });
+
+  test.concurrent("build --compile --aot replaces a link to the entry point", async () => {
+    using dir = tempDir("build-replaces-link", { "app.ts": script });
+    symlinkSync("app.ts", join(String(dir), "out"));
+    const args = [...withoutDebugInformation, "app.ts", "--outfile", "out"];
+    const built = await bun(String(dir), "build", "--compile", "--aot", ...args);
+    expect(built.stderr).not.toContain("error");
+    expect(built.exitCode).toBe(0);
+    expect(await Bun.file(join(String(dir), "app.ts")).text()).toBe(script);
+  });
+
+  test.concurrent("Bun.build names its own option", async () => {
+    using dir = tempDir("api-keeps-sources", {
+      "serve": script,
+      "app.ts": script,
+      "main.ts": `import { word } from "./helper";\nconsole.log(word);\n`,
+      "helper.ts": `export const word = "helper";\n`,
+      "build.ts": `const requests = [
+  { entrypoints: ["./serve"], compile: { aot: true } },
+  { entrypoints: ["./app.ts"], compile: { aot: true, outfile: "./app.ts" } },
+  { entrypoints: ["./app.ts"], outdir: "./out/..", compile: { aot: true, outfile: "app.ts" } },
+  { entrypoints: ["./main.ts"], compile: { aot: true, outfile: "./helper.ts" } },
+];
+for (const request of requests) {
+  try {
+    await Bun.build(request as any);
+    console.log("built");
+  } catch (error) {
+    console.log(error.errors.map(it => it.message.replaceAll(process.cwd() + "/", "")).join());
+  }
+}
+`,
+    });
+    const built = await bun(String(dir), "build.ts");
+    const choose = "Choose another path with compile.outfile\n";
+    expect({ stdout: built.stdout, exitCode: built.exitCode }).toEqual({
+      stdout:
+        `the executable would overwrite serve, which is an entry point. ${choose}` +
+        `the executable would overwrite app.ts, which is an entry point. ${choose}` +
+        `the executable would overwrite app.ts, which is an entry point. ${choose}` +
+        `the executable would overwrite helper.ts, which is part of the program. ${choose}`,
+      exitCode: 0,
+    });
+    for (const name of ["serve", "app.ts"]) expect(await Bun.file(join(String(dir), name)).text()).toBe(script);
+    expect(await Bun.file(join(String(dir), "helper.ts")).text()).toBe(`export const word = "helper";\n`);
+  });
+  test.concurrent("another file is replaced", async () => {
+    using dir = tempDir("compile-replaces-file", { "app.ts": `console.log("app");\n`, "notes.txt": "notes\n" });
+    const built = await compile(String(dir), "app.ts", "--outfile", "notes.txt");
+    expect(built.stderr).not.toContain("error");
+    expect(await run(String(dir), [join(String(dir), "notes.txt")])).toEqual({
+      stdout: "app\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 describe.concurrent("bun compile without an entry point", () => {
   const prints = (text: string) => `console.log(${JSON.stringify(text)});`;
 

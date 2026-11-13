@@ -1055,9 +1055,10 @@ fn class_stored_under_a_name_that_nobody_reads_leaves_its_checks() {
     );
 }
 
-const NAME_OF_A_CLASS_BEHIND_A_REMOVED_IMPORT: [(&str, &str); 6] = [
+const NAME_OF_A_CLASS_BEHIND_A_REMOVED_IMPORT: [(&str, &str); 7] = [
+    ("main.mjs", "import './page.mjs';"),
     (
-        "main.mjs",
+        "page.mjs",
         "import { C } from './p/index.mjs'; console.log(C); const m = await import('./p/b.mjs'); console.log(m);",
     ),
     ("p/package.json", r#"{ "name": "p", "sideEffects": false }"#),
@@ -1113,8 +1114,8 @@ fn root_does_not_check_an_importer_behind_an_import_that_is_removed() {
 #[test]
 fn root_does_not_check_a_name_that_it_takes_through_a_file_that_is_left_out() {
     let mut files = NAME_OF_A_CLASS_BEHIND_A_REMOVED_IMPORT.to_vec();
-    files[0].1 = "import { C, K1 } from './p/index.mjs'; console.log(C); const m = await import('./p/b.mjs'); console.log(m);";
-    files[2].1 = "export { C } from './c2.mjs'; export { K1 } from './a2.mjs';";
+    files[1].1 = "import { C, K1 } from './p/index.mjs'; console.log(C); const m = await import('./p/b.mjs'); console.log(m);";
+    files[3].1 = "export { C } from './c2.mjs'; export { K1 } from './a2.mjs';";
     files.push(("p/a2.mjs", "export { K1 } from './b.mjs';"));
     assert_eq!(
         describe_checks(&files, false),
@@ -1165,9 +1166,10 @@ fn describe_imports(files: &[(&str, &str)]) -> Vec<String> {
     })
 }
 
-const UNREAD_NAME_OF_AN_INDEX: [(&str, &str); 4] = [
+const UNREAD_NAME_OF_AN_INDEX: [(&str, &str); 5] = [
+    ("main.mjs", "import './page.mjs';"),
     (
-        "main.mjs",
+        "page.mjs",
         "import { w } from './p/index.mjs'; const m = await import('./p/index.mjs'); console.log(m.z);",
     ),
     ("p/package.json", r#"{ "name": "p", "sideEffects": false }"#),
@@ -1182,16 +1184,27 @@ const UNREAD_NAME_OF_AN_INDEX: [(&str, &str); 4] = [
 fn unread_import_stays_where_the_link_looks_its_name_up() {
     assert_eq!(
         describe_imports(&UNREAD_NAME_OF_AN_INDEX),
-        ["main.mjs: p/index.mjs", "p/index.mjs: p/owner.cjs"]
+        [
+            "main.mjs: page.mjs",
+            "p/index.mjs: p/owner.cjs",
+            "page.mjs: p/index.mjs"
+        ]
     );
 }
 
 #[test]
 fn unread_import_goes_where_its_name_is_bound() {
     let mut files = UNREAD_NAME_OF_AN_INDEX;
-    files[2].1 = "export const w = 1; export const z = 2;";
-    let nothing: [&str; 0] = [];
-    assert_eq!(describe_imports(&files[..3]), nothing);
+    files[3].1 = "export const w = 1; export const z = 2;";
+    assert_eq!(describe_imports(&files[..4]), ["main.mjs: page.mjs"]);
+}
+
+#[test]
+fn unread_entry_point_import_is_kept() {
+    let mut files = UNREAD_NAME_OF_AN_INDEX;
+    files[3].1 = "export const w = 1; export const z = 2;";
+    files[1].0 = "main.mjs";
+    assert_eq!(describe_imports(&files[1..4]), ["main.mjs: p/index.mjs"]);
 }
 
 const UNREAD_NAME_OF_A_FILE_ON_A_CYCLE: [(&str, &str); 5] = [

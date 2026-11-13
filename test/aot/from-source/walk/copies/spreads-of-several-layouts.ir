@@ -1,0 +1,30 @@
+# f2 = spread, f4 = assign, f5 = headers
+# -- source: main.ts
+# type Style = { direction: string; grow: number; gap: number };
+# const initial: Style = { direction: "row", grow: 0, gap: 1 };
+# const styles: Partial<Style>[] = [{ grow: 1 }, { gap: 2, direction: "column" }, {}];
+# const common: Record<string, string> = { accept: "a", agent: "me" }, own: Record<string, string>[] = [{ key: "k" }, { accept: "b", id: "1" }, {}];
+# function spreadOne(style: Partial<Style>): Style { return { ...initial, ...style }; }
+# function spread(n: number): number { let sum = 0; for (let i = 0; i < n; i++) { const style = spreadOne(styles[i % 3]!); sum += style.grow + style.gap + style.direction.length; } return sum; }
+# function assignOne(style: Partial<Style>): Style { return Object.assign({}, initial, style); }
+# function assign(n: number): number { let sum = 0; for (let i = 0; i < n; i++) { const style = assignOne(styles[i % 3]!); sum += style.grow + style.gap + style.direction.length; } return sum; }
+# function headers(n: number): number { let sum = 0; for (let i = 0; i < n; i++) { const all = { ...common, ...own[i % 3] }; sum += all.accept!.length + (all.key ? 1 : 0); } return sum; }
+# let said = ""; for (let i = 1; i < 5; i++) said += spread(i * 3) + " " + assign(i * 3) + " " + headers(i * 3) + " ";
+# print(said);
+# -- end of source
+# Each order in which the source may list its keys is an arm of its own.
+# RUN: walk f2 mechanisms=all
+# CHECK: = HasKeyOrder {{*}} fields=[2]
+# RUN(BOTH): walk f2 mechanisms=all
+# BOTH: = HasKeyOrder {{*}} fields=[1, 0]
+# RUN(ASSIGN): walk f4 mechanisms=all
+# ASSIGN: = HasKeyOrder {{*}} fields=[2]
+# RUN(ASSIGNBOTH): walk f4 mechanisms=all
+# ASSIGNBOTH: = HasKeyOrder {{*}} fields=[1, 0]
+# An object that lists other names has its properties defined in each arm.
+# RUN(DEFINE): walk f5 mechanisms=all
+# DEFINE: PropDefine {{*}} key="key"
+# RUN(DEFINEBOTH): walk f5 mechanisms=all
+# DEFINEBOTH: PropDefine {{*}} key="id"
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 17 17 4 34 34 8 51 51 12 68 68 16

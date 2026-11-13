@@ -24,8 +24,8 @@
 # RUN(TURNS): emit f2 mechanisms=all
 # TURNS-LABEL: unit f2:Body
 # `i & 7` stands at two places of the text: nine of the one, among them the eight turns laid out, and one of the other. arm64 has one more BitAnd, at the entry, which is none of them.
-# TURNS-COUNT-9: = BitAnd({{*}}origin = 102)
-# TURNS-NOT: = BitAnd({{*}}origin = 102)
+# TURNS-COUNT-9: = BitAnd({{*}}origin = 101)
+# TURNS-NOT: = BitAnd({{*}}origin = 101)
 # RUN(OTHER): emit f2 mechanisms=all
 # OTHER-COUNT-1: = BitAnd({{*}}origin = 70)
 # OTHER-NOT: = BitAnd({{*}}origin = 70)

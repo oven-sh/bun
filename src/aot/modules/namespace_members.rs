@@ -71,6 +71,9 @@ impl FileBinder<'_, '_> {
             .unread_sites
             .shared_sort_unstable_by_key(|&(call, _)| call);
         imports
+            .destructured_holders
+            .shared_sort_unstable_by_key(|&(holder, _)| holder);
+        imports
             .accessed
             .shared_sort_unstable_by_key(|&(member, _)| member);
         imports
@@ -323,8 +326,9 @@ impl FileBinder<'_, '_> {
             let is_resolved_at_run_time = bound
                 .dynamic_lookup_scope(NodeData::Expr(reference))
                 .is_some();
-            let is_value =
-                is_resolved_at_run_time || self.bind_member_path(reference, root.stands_for);
+            let is_value = is_resolved_at_run_time
+                || (!self.bind_destructured_holder(reference, root)
+                    && self.bind_member_path(reference, root.stands_for));
             if !is_value {
                 continue;
             }
@@ -341,6 +345,28 @@ impl FileBinder<'_, '_> {
                 self.imports.namespaces_handed_out.push(module);
             }
         }
+    }
+
+    /// `const { name } = holder`
+    fn bind_destructured_holder(&mut self, reference: ExprId, root: Root) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let is_answer = matches!(
+            root.stands_for,
+            StandsFor::Exports(_) | StandsFor::RequiredNamespace(_)
+        );
+        if root.holder.is_none() || !is_answer {
+            return false;
+        }
+        let initializer = find_outermost_type_assertion(hir, bound, reference);
+        let Parent::VarInit(declaration) = bound.parent_of_expr(initializer) else {
+            return false;
+        };
+        if !self.bind_pattern(hir[declaration].pat, root.stands_for) {
+            return false;
+        }
+        let destructured = (reference, (root.symbol, root.stands_for.module()));
+        self.imports.destructured_holders.push(destructured);
+        true
     }
 
     fn look_at_root(&mut self, root: Root, holders: &mut [Holder]) {
@@ -389,7 +415,7 @@ impl FileBinder<'_, '_> {
     fn is_dead_site(&self, site: &PlannedSite) -> bool {
         let decisions = &self.analysis.decisions;
         match site.key {
-            SiteKey::Call(call) => decisions.is_dead_expr(call),
+            SiteKey::Call(call) | SiteKey::Request(call) => decisions.is_dead_expr(call),
             SiteKey::ImportEquals(declaration) => {
                 decisions.is_dead_stmt(self.hir[declaration].stmt)
             }
@@ -411,7 +437,10 @@ impl FileBinder<'_, '_> {
             ),
             _ => (StandsFor::Exports(target), View::Exports(target)),
         };
-        let may_answer_another_object = context.evicted.is_stored_in_cache(target)
+        let has_instances = matches!(target, ModuleRef::File(file) if context.modules.may_be_reevaluated(file))
+            && context.modules.interop(target).kind == ModuleKind::SourceText;
+        let may_answer_another_object = has_instances
+            || context.evicted.is_stored_in_cache(target)
             || (context.order.is_code_of_program(target)
                 && (context.evicted.contains(target)
                     || context.mocked.contains(target)
@@ -428,6 +457,7 @@ impl FileBinder<'_, '_> {
         }
         let call = match site.key {
             SiteKey::Call(call) => call,
+            SiteKey::Request(_) => return self.look_at(answer),
             SiteKey::ImportEquals(declaration) => {
                 let symbol = self.bound.declared_symbol(Decl::ImportEquals(declaration));
                 let is_holder = symbol.is_some()
@@ -457,7 +487,11 @@ impl FileBinder<'_, '_> {
                     return self.imports.unread_sites.push((call, false));
                 }
             }
-            Parent::Stmt(statement) if matches!(hir[statement].kind, StmtKind::Expr(_)) => {
+            // The file may define a getter as `module.exports`, and `require()` runs it.
+            Parent::Stmt(statement)
+                if matches!(hir[statement].kind, StmtKind::Expr(_))
+                    && !self.context.tables.commonjs.is_replaced_late(site.target) =>
+            {
                 return self.imports.unread_sites.push((call, true));
             }
             _ => {}
@@ -500,7 +534,7 @@ impl FileBinder<'_, '_> {
             return None;
         }
         let helpers = context.known_helpers;
-        let known = helpers.certain_callee(context.files, self.file, call.callee)?;
+        let known = helpers.callee_returning_marked_value(context.files, self.file, call.callee)?;
         if !matches!(
             known.shape.helper(),
             Helper::ImportStar | Helper::ImportDefault
@@ -590,6 +624,8 @@ impl FileBinder<'_, '_> {
             runs_once: site.position == SitePosition::InOrder,
             is_of_ordinary_object: is_ordinary_object,
             has_marker: false,
+            passes_over_marker: false,
+            reads_own_default: false,
             may_hold_answer: false,
             is_looked_at: false,
             is_called_through: false,
@@ -636,6 +672,8 @@ impl FileBinder<'_, '_> {
             && (asks_for_marker_alone || self.has_name_once_run(target, known::default));
         Some(CopiedExports {
             has_marker,
+            passes_over_marker,
+            reads_own_default: !asks_for_marker_alone,
             may_hold_answer: is_ordinary_object
                 && (asks_for_marker_alone
                     || passes_over_marker
@@ -777,7 +815,14 @@ impl FileBinder<'_, '_> {
             StandsFor::ImportedNamespace(_) if self.is_hidden_from_namespace(module, name) => {
                 return None;
             }
-            StandsFor::ImportedNamespace(_) => self.resolve_name(module, name),
+            StandsFor::ImportedNamespace(_) => match self.resolve_name(module, name) {
+                Ok((binding @ PendingBinding::Bound(ImportBinding::Variable(_)), Some(_)))
+                    if self.is_absent_from_mocks(module, name) =>
+                {
+                    Ok((binding, None))
+                }
+                resolved => resolved,
+            },
             StandsFor::RequiredNamespace(_) | StandsFor::Exports(_) | StandsFor::Copy { .. } => {
                 self.resolve_required_name(module, name)
             }

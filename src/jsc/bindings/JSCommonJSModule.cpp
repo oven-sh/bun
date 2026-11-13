@@ -95,6 +95,12 @@
 #include <JavaScriptCore/AOTPropertyWalk.h>
 #endif
 
+#if ENABLE(AOT)
+namespace Zig {
+void noteOriginalUnderPreloadMock(GlobalObject*, const WTF::String& originalKey);
+}
+#endif
+
 namespace Bun {
 using namespace JSC;
 
@@ -206,6 +212,16 @@ private:
     const unsigned m_overlayShape;
 };
 
+// The require map lacks the compiled files.
+static bool hasLoadedCompiledCommonJSModule([[maybe_unused]] Zig::GlobalObject* globalObject)
+{
+#if ENABLE(AOT)
+    return isBunTest && globalObject->aotInstance() && JSC::AOT::hasLoadedCommonJSFile(globalObject);
+#else
+    return false;
+#endif
+}
+
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -303,6 +319,27 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
 
         RELEASE_AND_RETURN(scope, true);
     }
+
+#if ENABLE(AOT)
+    // The original of a mocked file.
+    if (String key = isBunTest && globalObject->aotInstance() && filename.isString() ? asString(filename)->tryGetValue().data : String(); key.contains('?') && JSC::AOT::isCompiledOriginal(globalObject, key)) {
+        initializeModuleObject();
+        RETURN_IF_EXCEPTION(scope, false);
+        MarkedArgumentBuffer args;
+        JSValue exports = moduleObject->exportsObject();
+        RETURN_IF_EXCEPTION(scope, false);
+        args.append(exports);
+        args.append(requireFunction);
+        args.append(moduleObject);
+        args.append(filename);
+        args.append(dirname);
+        Zig::noteOriginalUnderPreloadMock(globalObject, key);
+        bool didRun = JSC::AOT::tryEvaluateCommonJSOriginal(globalObject, key, args);
+        RETURN_IF_EXCEPTION(scope, false);
+        RELEASE_ASSERT(didRun);
+        return true;
+    }
+#endif
 
     // Same out-param pattern as the eval-entry path above: the 3-arg
     // overload would swallow the exception, leaving the misleading
@@ -426,7 +463,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule, (JSGlobalObject * lex
     JSValue returnValue = jsNull();
     // See requireCompiledModule().
     bool isListedByHost = moduleObject->compiledModule == JSCommonJSModule::noCompiledModule || moduleObject->compiledModuleLoadedInto != JSCommonJSModule::noCompiledModule;
-    if (referrer && isListedByHost && referrer->listsAsChild(moduleObject)) [[likely]] {
+    if (referrer && isListedByHost && !std::exchange(moduleObject->isListedAsChild, false) && referrer->listsAsChild(moduleObject)) [[likely]] {
         if (referrer->m_childrenValue) [[unlikely]] {
             // It's too hard to append from native code:
             // referrer.children.indexOf(moduleObject) === -1 && referrer.children.push(moduleObject)
@@ -686,7 +723,7 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
     RETURN_IF_EXCEPTION(scope, {});
     if (parentOfCompiledModule) {
         if (auto* parent = dynamicDowncast<JSCommonJSModule>(parentOfCompiledModule))
-            thisObject->m_parent = JSC::Weak<JSCommonJSModule>(parent);
+            thisObject->setParent(vm, parent);
         return JSValue::encode(parentOfCompiledModule);
     }
 
@@ -884,10 +921,10 @@ JSC_DEFINE_CUSTOM_SETTER(setterParent,
     thisObject->m_isParentStored = true;
 
     if (auto* parent = dynamicDowncast<JSCommonJSModule>(decodedValue)) {
-        thisObject->m_parent = parent;
+        thisObject->setParent(JSC::getVM(globalObject), parent);
         thisObject->m_overriddenParent.clear();
     } else {
-        thisObject->m_parent = {};
+        thisObject->clearParent();
         bool keepsFormerParentAlive = thisObject->m_overriddenParent && dynamicDowncast<JSCommonJSModule>(thisObject->m_overriddenParent.get());
         if (keepsFormerParentAlive)
             thisObject->m_overriddenParent.clear();
@@ -1064,6 +1101,25 @@ JSC::Structure* JSCommonJSModule::createStructure(
     return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), NonArray);
 }
 
+void JSCommonJSModule::setParent(JSC::VM& vm, JSCommonJSModule* parent)
+{
+    m_parent = JSC::Weak<JSCommonJSModule>(parent);
+    JSValue filename = parent->filename();
+    m_parentFilename.setMayBeNull(vm, this, filename && filename.isString() ? asString(filename) : nullptr);
+}
+
+void JSCommonJSModule::clearParent()
+{
+    m_parent = {};
+    m_parentFilename.clear();
+}
+
+JSValue JSCommonJSModule::parentFilename() const
+{
+    auto* parent = m_parent.get();
+    return parent ? parent->filename() : JSValue(m_parentFilename.get());
+}
+
 JSCommonJSModule* JSCommonJSModule::create(
     JSC::VM& vm,
     JSC::Structure* structure,
@@ -1138,7 +1194,7 @@ JSCommonJSModule* JSCommonJSModule::create(
     if (parent && parent.isCell()) {
         if (auto* parentModule = dynamicDowncast<JSCommonJSModule>(parent)) {
             out->setModuleGraph(vm, parentModule->moduleGraph());
-            out->m_parent = JSC::Weak<JSCommonJSModule>(parentModule);
+            out->setParent(vm, parentModule);
         } else {
             out->m_overriddenParent.set(vm, out, parent);
         }
@@ -1180,7 +1236,7 @@ void JSCommonJSModule::destroy(JSC::JSCell* cell)
 }
 
 struct RecordBesideModuleObject {
-    uint32_t compiledModuleThatAsks { JSCommonJSModule::noCompiledModule };
+    uint32_t requestingCompiledModule { JSCommonJSModule::noCompiledModule };
     WTF::HashSet<uint32_t, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> compiledModulesAmongChildren;
 };
 
@@ -1195,14 +1251,14 @@ static WTF::HashMap<const JSCommonJSModule*, RecordBesideModuleObject>& recordsB
 uint32_t JSCommonJSModule::compiledModuleThatAsksByRecord() const
 {
     WTF::Locker locker { recordsBesideModuleObjectsLock };
-    return recordsBesideModuleObjects().find(this)->value.compiledModuleThatAsks;
+    return recordsBesideModuleObjects().find(this)->value.requestingCompiledModule;
 }
 
-void JSCommonJSModule::setCompiledModuleThatAsks(uint32_t module)
+void JSCommonJSModule::setRequestingCompiledModule(uint32_t module)
 {
     WTF::Locker locker { recordsBesideModuleObjectsLock };
     hasRecordBesideCell = true;
-    recordsBesideModuleObjects().ensure(this, [] { return RecordBesideModuleObject {}; }).iterator->value.compiledModuleThatAsks = module;
+    recordsBesideModuleObjects().ensure(this, [] { return RecordBesideModuleObject {}; }).iterator->value.requestingCompiledModule = module;
 }
 
 bool JSCommonJSModule::listsCompiledModuleAsChild(uint32_t module)
@@ -1440,6 +1496,7 @@ void JSCommonJSModule::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendHidden(thisObject->m_filename);
     visitor.appendHidden(thisObject->m_dirname);
     visitor.appendHidden(thisObject->m_paths);
+    visitor.appendHidden(thisObject->m_parentFilename);
     visitor.appendHidden(thisObject->m_overriddenParent);
     visitor.appendHidden(thisObject->m_overriddenCompile);
     visitor.appendHidden(thisObject->m_childrenValue);
@@ -1771,7 +1828,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
         // The process's entry point is module "."; a graph has no such module.
-        if (!graph && requireMap->size() == 0) {
+        if (!graph && requireMap->size() == 0 && !hasLoadedCompiledCommonJSModule(globalObject)) {
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
         }
 
@@ -1903,7 +1960,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
         // The process's entry point is module "."; a graph has no such module.
-        if (!graph && requireMap->size() == 0) {
+        if (!graph && requireMap->size() == 0 && !hasLoadedCompiledCommonJSModule(globalObject)) {
             requireMapKey = JSC::jsString(vm, WTF::String("."_s));
         }
 

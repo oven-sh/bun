@@ -26,11 +26,11 @@ bun compile ./repo.ts && ./repo
 
 ```txt
 RangeError: bad id -1
-      at find (/$bunfs/root/repo.ts:3:27)
-      at /$bunfs/root/repo.ts:7:12
+      at find (./repo.ts:3:27)
+      at ./repo.ts:7:12
 ```
 
-Stack traces have the file, line and column of your source code. You don't need a source map. The part after `/$bunfs/root/` is the path of the source file, relative to the folder of the entry point. An executable prints no source excerpt above the message.
+Stack traces have the file, line and column of your source code. You don't need a source map. A path in a stack trace is relative to the folder you ran the build in, as with [`--sourcemap`](/compiler/executables) without `--aot`. A package is at `./node_modules/pkg/index.js`, and a file above that folder at `../shared/log.ts`. An executable prints no source excerpt above the message.
 
 ### Minified executables and external source maps
 
@@ -40,8 +40,8 @@ bun compile --minify --sourcemap=external ./repo.ts && ./repo
 
 ```txt
 RangeError: bad id -1
-      at <anonymous> (/$bunfs/root/compiled.js:4:2)
-      at /$bunfs/root/compiled.js:1:4
+      at <anonymous> (./compiled.js:4:2)
+      at ./compiled.js:1:4
 ```
 
 `--sourcemap=external` moves function names, paths, lines and columns out of the executable and into `repo.map`, next to it. Every frame then points into `compiled.js`. That file doesn't exist. The line and column are a position in the map, and any source map library turns them back into your names, files and lines. Keep the map of every build you deploy, and don't ship it.
@@ -55,6 +55,40 @@ bun compile --obfuscate ./repo.ts
 ```
 
 `--obfuscate` does what `--sourcemap=external` does, and the `name` of every function and class in your program is `""`. Code that reads a name behaves differently. A table keyed by `constructor.name` puts every class under one key. Property names and strings stay in the executable, because your program uses them when it runs.
+
+### List the strings in the executable
+
+To check that a word isn't in your executable, search the list of its strings instead of its bytes. In the file, strings share characters, two strings that aren't related can be next to each other, and the names that a program only shows are compressed.
+
+```bash terminal icon="terminal"
+bun compile --metafile=meta.json ./repo.ts
+bun build --aot-stored-strings ./repo > strings.bin
+bun build --aot-stored-strings-json ./repo > strings.jsonl
+jq '.outputs[].inlinedStrings' meta.json
+```
+
+`--aot-stored-strings` prints each stored string as UTF-8, followed by a zero byte.
+
+`--aot-stored-strings-json` prints an object per line, and says where each string is in the file.
+
+```json
+{"type":"section","image":0,"section":"Text","offset":141190064,"length":88033}
+{"type":"string","image":0,"section":"Text","offset":141190065,"length":6,"encoding":"latin1","text":"bad id"}
+{"type":"uncovered","image":0,"section":"Text","offset":141190064,"length":1,"isZero":true}
+```
+
+| `type`      | What it is                                                                                                                                                                                                                                                                    |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `image`     | The compiled program in the file.                                                                                                                                                                                                                                             |
+| `section`   | A part of the image that has strings.                                                                                                                                                                                                                                         |
+| `string`    | A string. With the `encoding` `latin1`, `utf16le` or `utf8`, its characters are the `length` bytes at `offset`, and other strings can have some of the same bytes. With `coded` or `compressed`, those bytes are compressed, and hold up to eight strings or a block of text. |
+| `uncovered` | Bytes of the section that aren't in any string.                                                                                                                                                                                                                               |
+
+Both print a line per section to stderr. They exit with code `1` if a byte between the strings isn't zero, and `2` if they can't read the file.
+
+`inlinedStrings` in the metafile lists the strings whose characters are only in the machine code, up to eight at a time, like the label of a `case` or the other side of a `===`. The executable doesn't have them as a string, so the two commands can't print them.
+
+None of the lists has the strings of Bun itself, embedded files, or a single character that your program compares as a number.
 
 ### Use with Sentry
 
@@ -117,6 +151,8 @@ A package may catch an error and carry on. So the run ends with a list of every 
 ### What a test can't replace
 
 The build reads your tests to find out which built-in methods and which exports they replace, and compiled code checks for a replacement of those. Your tests are the test files, the preloads and the files that only they import. A file that your program imports too can't replace a built-in. It throws the `TypeError` of the executable.
+
+A file is your program's if `package.json` names it as an entry point, if another file of your program in the run loads it, or if a file that the run doesn't load imports it by a relative path that's written as one string. A file that only re-exports it counts if something imports that file. Where the build can't tell, the file counts as your tests', and code in it runs as under `bun test`.
 
 If the build can't see what a test replaces, as in `Object.prototype[name] = 1` with a name that's put together while the test runs, the write, the spy or the mock throws a `TypeError` that shows what to write instead.
 
@@ -192,7 +228,7 @@ bun check --aot --explain=guards ./total.ts
 ```txt
 note: 3 type guards can fail at run time. When one fails, the result is the same and at most the rest of that call runs slower.
 note: 1. the type of this value isn't proven, so it is checked here
-   at total.ts:3:3
+   at total.ts:3:14
 note: fix: nothing to fix unless it fails in hot code. Then trace the value back from here to where its type is lost
 ```
 

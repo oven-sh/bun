@@ -1,0 +1,34 @@
+# -- source: main.cjs
+# var Box = {};
+# (function (box, nothing) {
+#   box.is = function (value, type) {
+#     if (value === null) return false;
+#     if (type instanceof Function && value instanceof type) return true;
+#     if (value.constructor.__implements !== nothing && value.constructor.__implements[type]) return true;
+#     return false;
+#   };
+# })(Box);
+# function Circle(x) { this.x = x; }
+# Circle.prototype.take = function (other) { if (Box.is(other, Circle)) this.x += other.x; return this.x; };
+# function Square(x) { this.x = x; this.side = 2; }
+# Square.prototype.take = function (other) { if (Box.is(other, Square)) this.x += other.side; return this.x; };
+# function Segment(x) { this.x = x; this.end = x + 1; }
+# Segment.prototype.take = function (other) { if (Box.is(other, Segment)) this.x += other.end; return this.x; };
+# function run(count) {
+#   var circle = new Circle(1), square = new Square(2), segment = new Segment(0.5), sum = 0;
+#   for (var i = 0; i < count; i++) sum += circle.take(square) + square.take(segment) + segment.take(circle);
+#   return sum;
+# }
+# console.log(run(10), run(100));
+# -- end of source
+# Constructors that instanceof and a key ask stay known: each method has one caller, and no class escapes.
+# RUN: link functions
+# CHECK: function f1 callers-known
+# CHECK: function f2 callers-known
+# CHECK: function f3 callers-known
+# CHECK: function f4 callers-known
+# CHECK: function f5 callers-known
+# CHECK: function f6 callers-known
+# CHECK: function f7 callers-known
+# CHECK: function f8 callers-known
+# CHECK: function f9 callers-known

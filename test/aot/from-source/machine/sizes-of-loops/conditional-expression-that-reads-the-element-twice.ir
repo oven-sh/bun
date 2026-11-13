@@ -10,8 +10,9 @@
 # -- end of source
 # The compiler before this one: 18 instructions, 16 of them patches, a turn of the written loop steps by 8.
 # When the bound was taken: loop: operations 19, patches 0, moves 0, unlikely 6 ; loop: operations 9, patches 1, moves 0, unlikely 0.
-# RUN(X64): loops most:19,9 f1 mechanisms=all-Inlining
+# Eight iterations are unrolled, since the header of a view that an arm reads is hoisted too: 7.0 instructions an element became 4.4.
+# RUN(X64): loops most:44,9 f1 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f1:Body
-# X64-NEXT: loop: at most 19
+# X64-NEXT: loop: at most 44
 # X64-NEXT: loop: at most 9

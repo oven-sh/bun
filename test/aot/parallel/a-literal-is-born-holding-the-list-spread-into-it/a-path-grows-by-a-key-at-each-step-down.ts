@@ -12,7 +12,7 @@ function visit(node: Knot, path: string[]): number {
   for (let i = 0; i < kids.length; i++) count += visit(kids[i], [...path, kids[i].name]);
   return count;
 }
-(globalThis as any).kept = visit;
+(globalThis as any).kept = new Function("x", "return x")(visit);
 const root = tree(5, "r");
 let sum = 0;
 for (let t = 0; t < 40; t++) sum += visit(root, []);

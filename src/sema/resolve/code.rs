@@ -48,6 +48,8 @@ pub enum CodeImportForm {
     ResolveOnly,
     Macro,
     WrittenByHost,
+    /// The program doesn't load the file: a text of it may be the file's name.
+    Guess,
 }
 
 impl CodeImportForm {
@@ -90,6 +92,7 @@ pub struct SiteOfComputedLoad<'a> {
     pub type_attribute: Option<&'a [u8]>,
     pub opens_database: bool,
     pub starts_at_own_folder: bool,
+    pub is_written_in_load: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]

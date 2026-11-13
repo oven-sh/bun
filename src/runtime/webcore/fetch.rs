@@ -1710,19 +1710,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 None
             };
 
-            let s3_stream = Box::new(S3StreamWrapper {
+            let s3_stream = S3StreamWrapper {
                 url: BunString::create_atom_if_possible(url.href),
                 promise,
-                global: global_this,
-            });
-            // Shim: erases both the payload type and the `Result` return when
-            // coercing to the `fn (S3UploadResult, *mut c_void)` callback shape.
-            fn s3_stream_wrapper_resolve(result: s3::S3UploadResult<'_>, ctx: *mut libc::c_void) {
-                // SAFETY: ctx was produced by `heap::alloc(s3_stream)` below; the
-                // 'static lifetime is a raw-pointer fiction (the pointee's real
-                // lifetime is managed by the resolve callback itself).
-                let _ = S3StreamWrapper::resolve(result, ctx.cast::<S3StreamWrapper<'static>>());
-            }
+                global: jsc::GlobalRef::from(global_this),
+            };
             // `dupe()` heap-allocates a fresh intrusive-refcounted copy.
             // `upload_stream` adopts the ref by value (no extra bump) and the
             // MultiPartUpload derefs on completion.
@@ -1739,8 +1731,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 headers.as_ref().and_then(|h| h.get_content_encoding()),
                 proxy_url,
                 credentials_with_options.request_payer,
-                Some(s3_stream_wrapper_resolve),
-                bun_core::heap::into_raw(s3_stream).cast::<libc::c_void>(),
+                Some(Box::new(move |result| {
+                    let _ = s3_stream.resolve(result);
+                })),
             )?;
             return Ok(promise_value);
         }
@@ -1922,23 +1915,18 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// S3 ReadableStream upload Wrapper — module level because Rust does not allow
-// `impl` blocks inside fn bodies for types referenced by external fn pointers.
+// S3 ReadableStream upload Wrapper
 // ──────────────────────────────────────────────────────────────────────────
 
-struct S3StreamWrapper<'a> {
+struct S3StreamWrapper {
     promise: jsc::JSPromiseStrong,
     url: BunString,
-    global: &'a JSGlobalObject,
+    global: jsc::GlobalRef,
 }
 
-impl<'a> S3StreamWrapper<'a> {
-    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> JsResult<()> {
-        // SAFETY: self_ was created via heap::alloc in fetch_impl; we reclaim
-        // ownership here exactly once on the resolve callback.
-        let mut self_ = unsafe { bun_core::heap::take(self_) };
-        let global = self_.global;
-        // `defer bun.destroy(self)` → Box<Self> Drop at end of scope.
+impl S3StreamWrapper {
+    fn resolve(mut self, result: s3::S3UploadResult) -> JsResult<()> {
+        let global = &*self.global;
         match result {
             s3::S3UploadResult::Success => {
                 let response = RefPtr::new(Response::init(
@@ -1948,12 +1936,12 @@ impl<'a> S3StreamWrapper<'a> {
                         ..Default::default()
                     },
                     Body::new(BodyValue::Empty),
-                    self_.url,
+                    self.url,
                     false,
                 ));
                 let response_js = Response::to_js(response, global);
                 response_js.ensure_still_alive();
-                self_.promise.resolve(global, response_js)?;
+                self.promise.resolve(global, response_js)?;
             }
             s3::S3UploadResult::Failure(err) => {
                 let response = RefPtr::new(Response::init(
@@ -1967,13 +1955,13 @@ impl<'a> S3StreamWrapper<'a> {
                         bytes: err.message.to_vec(),
                         was_string: true,
                     })),
-                    self_.url,
+                    self.url,
                     false,
                 ));
 
                 let response_js = Response::to_js(response, global);
                 response_js.ensure_still_alive();
-                self_.promise.resolve(global, response_js)?;
+                self.promise.resolve(global, response_js)?;
             }
         }
         Ok(())

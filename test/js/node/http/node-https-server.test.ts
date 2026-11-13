@@ -8,7 +8,7 @@ import https from "node:https";
 import type { AddressInfo } from "node:net";
 import net from "node:net";
 import { join } from "node:path";
-import { pipeline } from "node:stream";
+import { Duplex, pipeline } from "node:stream";
 import tls from "node:tls";
 
 function listen(server: http.Server): Promise<number> {
@@ -40,6 +40,17 @@ function tlsRequest(port: number): Promise<string> {
   socket.on("data", chunk => (received += chunk));
   socket.on("error", (err: NodeJS.ErrnoException) => resolve(String(err.code)));
   socket.on("close", () => resolve(received));
+  return promise;
+}
+
+// Resolves with what a TLS client that sends nothing sees first: its handshake done, or the error that ended it.
+function tlsHandshake(port: number): Promise<string> {
+  const { promise, resolve } = Promise.withResolvers<string>();
+  const socket = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => {
+    resolve("secureConnect");
+    socket.destroy();
+  });
+  socket.on("error", (err: NodeJS.ErrnoException) => resolve(String(err.code)));
   return promise;
 }
 
@@ -327,7 +338,9 @@ describe("server.blockList", () => {
     expect(server.blockList).toBe(blockList);
     const port = await listen(server);
 
-    expect(await get(https, { port })).toBe("ECONNRESET");
+    // The server refuses the peer at accept, before the handshake. A client with no request queued behind its
+    // handshake reports that as ECONNRESET, whether the close reaches it as a FIN or as a reset.
+    expect(await tlsHandshake(port)).toBe("ECONNRESET");
     expect(events).toEqual([]);
 
     server.blockList = blockListOf("10.0.0.1");
@@ -397,9 +410,13 @@ describe("server.blockList", () => {
           const server = mod.createServer(options, (req, res) => { requests++; res.end("served"); });
           server.blockList = { check() { throw new Error(name + " check failed"); } };
           await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+          const target = { host: "127.0.0.1", port: server.address().port, agent: false, rejectUnauthorized: false };
+          // https: the refusal is at accept, before the handshake, so a TLS client with no request queued.
           const outcome = await new Promise(resolve =>
-            mod.get({ host: "127.0.0.1", port: server.address().port, agent: false, rejectUnauthorized: false }, res => resolve(res.statusCode))
-              .on("error", err => resolve(err.code)));
+            (name === "node:https"
+              ? require("node:tls").connect(target, () => resolve("secureConnect"))
+              : mod.get(target, res => resolve(res.statusCode))
+            ).on("error", err => resolve(err.code)));
           server.close();
           return { outcome, requests };
         }
@@ -421,6 +438,638 @@ describe("server.blockList", () => {
       ],
       errors: ["node:http check failed", "node:https check failed"],
     });
+    expect(exitCode).toBe(0);
+  });
+});
+
+// Node reports a TLS connection when TCP accepts it: 'connection', getConnections(), maxConnections and blockList act
+// before the handshake. The http connection state (parser, server.timeout, the timeout sweeps) comes with 'secureConnection'.
+describe.concurrent("a TLS connection before its handshake", () => {
+  type Socket = net.Socket & { _secureEstablished?: boolean; parser?: object | null };
+  type Listener = http.RequestListener;
+
+  function listenWithTls(server: http.Server): Promise<number> {
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
+    server.once("error", reject);
+    server.listen({ port: 0, host: "127.0.0.1", tls: validCert }, () =>
+      resolve((server.address() as AddressInfo).port),
+    );
+    return promise;
+  }
+
+  // The last two are Bun only: Node's http.Server ignores key and cert, and its listen() takes no tls option.
+  const entryPoints: [string, (listener?: Listener) => http.Server, (server: http.Server) => Promise<number>][] = [
+    ["https.createServer()", listener => https.createServer(validCert, listener), listen],
+    ["new https.Server()", listener => new https.Server(validCert, listener), listen],
+  ];
+  if (process.versions.bun) {
+    entryPoints.push(
+      ["http.createServer({ key, cert })", listener => http.createServer({ ...validCert } as http.ServerOptions, listener), listen], // prettier-ignore
+      ["http.createServer().listen({ tls })", listener => http.createServer(listener), listenWithTls],
+    );
+  }
+
+  function connections(server: http.Server) {
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
+    server.getConnections((err, count) => (err ? reject(err) : resolve(count)));
+    return promise;
+  }
+
+  // The first byte of a TLS record and no more: the handshake cannot go on. With a byte to read, TCP_DEFER_ACCEPT on
+  // Linux does not hold the accept back for 1 s.
+  async function stalledClient(port: number) {
+    const socket = net.connect(port, "127.0.0.1");
+    socket.on("error", () => {});
+    // A failed handshake can end with an alert: unread, it would hold the 'close' of this socket back.
+    socket.resume();
+    await once(socket, "connect");
+    socket.write(Buffer.from([0x16]));
+    return socket;
+  }
+
+  // Not events.once(): it rejects when the reset of the peer reaches the socket before its 'close'.
+  function closed(socket: net.Socket) {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    socket.on("close", () => resolve());
+    return promise;
+  }
+
+  function get(port: number) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    https
+      .get({ host: "127.0.0.1", port, agent: false, rejectUnauthorized: false }, res => {
+        let body = "";
+        res.on("data", chunk => (body += chunk)).on("end", () => resolve(body));
+      })
+      .on("error", reject);
+    return promise;
+  }
+
+  // A TLS client whose handshake waits: what the server sends stays here until release().
+  async function heldHandshake(port: number) {
+    const raw = net.connect(port, "127.0.0.1");
+    raw.on("error", () => {});
+    await once(raw, "connect");
+    let hold = true;
+    const held: Buffer[] = [];
+    const wire = new Duplex({
+      read() {},
+      write(chunk, _encoding, callback) {
+        raw.write(chunk, callback);
+      },
+    });
+    raw.on("data", (chunk: Buffer) => (hold ? held.push(chunk) : wire.push(chunk)));
+    raw.on("close", () => wire.push(null));
+    const client = tls.connect({ socket: wire, rejectUnauthorized: false });
+    client.on("error", () => {});
+    return {
+      raw,
+      client,
+      release() {
+        hold = false;
+        for (const chunk of held) wire.push(chunk);
+      },
+    };
+  }
+
+  test.each(entryPoints)(
+    "%s emits 'connection' at accept and 'secureConnection' after the handshake",
+    async (_label, create, listenOn) => {
+      const events: string[] = [];
+      const counts: number[] = [];
+      const server = create((req, res) => {
+        events.push(`request encrypted=${(req.socket as tls.TLSSocket).encrypted}`);
+        server.getConnections((_err, count) => {
+          counts.push(count);
+          res.end("ok");
+        });
+      });
+      server.on("connection", (socket: Socket) => {
+        events.push(`connection server=${(socket as any).server === server} secure=${!!socket._secureEstablished}`);
+        process.nextTick(() => events.push("tick"));
+      });
+      server.on("secureConnection", (socket: tls.TLSSocket & Socket) => {
+        events.push(`secureConnection encrypted=${socket.encrypted} secure=${!!socket._secureEstablished}`);
+      });
+      const port = await listenOn(server);
+      const stalled = await stalledClient(port);
+      try {
+        // The listener accepts in order: the stalled client is a connection before this one is served.
+        expect(await get(port)).toBe("ok");
+        expect(events).toEqual([
+          "connection server=true secure=false",
+          "tick",
+          "connection server=true secure=false",
+          "tick",
+          "secureConnection encrypted=true secure=true",
+          "request encrypted=true",
+        ]);
+        expect(counts).toEqual([2]);
+      } finally {
+        stalled.destroy();
+        server.close();
+      }
+    },
+  );
+
+  test("a client that sends nothing is a connection until it leaves", async () => {
+    const events: string[] = [];
+    const server = https.createServer(validCert, () => expect.unreachable());
+    for (const event of ["connection", "secureConnection"]) server.on(event, () => events.push(event));
+    const port = await listen(server);
+    const accepted = once(server, "connection");
+    const silent = net.connect(port, "127.0.0.1");
+    silent.on("error", () => {});
+    try {
+      const [[socket]] = (await Promise.all([accepted, once(silent, "connect")])) as [[Socket], unknown];
+      expect({ remotePort: socket.remotePort, destroyed: socket.destroyed }).toEqual({
+        remotePort: silent.localPort,
+        destroyed: false,
+      });
+      expect(await connections(server)).toBe(1);
+
+      const socketClosed = once(socket, "close");
+      silent.destroy();
+      await socketClosed;
+      expect(await connections(server)).toBe(0);
+      expect(events).toEqual(["connection"]);
+    } finally {
+      silent.destroy();
+      server.close();
+    }
+  });
+
+  test("a handshake that fails emits no second 'connection'", async () => {
+    const events: string[] = [];
+    const server = https.createServer(validCert, () => expect.unreachable());
+    for (const event of ["connection", "secureConnection"]) server.on(event, () => events.push(event));
+    const port = await listen(server);
+    const accepted = once(server, "connection");
+    const client = await stalledClient(port);
+    try {
+      const [socket] = (await accepted) as [Socket];
+      const socketClosed = once(socket, "close");
+      // Not a TLS record: the handshake fails and the server closes the connection.
+      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await Promise.all([socketClosed, closed(client)]);
+      expect(events).toEqual(["connection"]);
+      expect(await connections(server)).toBe(0);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  test("a 'connection' listener can destroy the socket before the handshake", async () => {
+    const events: string[] = [];
+    const server = https.createServer(validCert, () => expect.unreachable());
+    server.on("connection", socket => {
+      events.push("connection");
+      socket.destroy();
+    });
+    server.on("secureConnection", () => events.push("secureConnection"));
+    const port = await listen(server);
+    try {
+      expect(await tlsHandshake(port)).toBe("ECONNRESET");
+      expect(events).toEqual(["connection"]);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("a 'connection' listener can time out a client that stalls in its handshake", async () => {
+    const server = https.createServer(validCert, () => expect.unreachable());
+    const timedOut = Promise.withResolvers<void>();
+    server.on("connection", socket => {
+      socket.setTimeout(1, () => {
+        socket.destroy();
+        timedOut.resolve();
+      });
+    });
+    const port = await listen(server);
+    const stalled = await stalledClient(port);
+    try {
+      await Promise.all([timedOut.promise, closed(stalled)]);
+      expect(await connections(server)).toBe(0);
+    } finally {
+      stalled.destroy();
+      server.close();
+    }
+  });
+
+  // Node's http layer listens for 'timeout' on the socket from 'secureConnection' on.
+  test.each([
+    ["is not the 'timeout' event of the server", true],
+    ["does not destroy the socket", false],
+  ])("a timeout before the handshake %s", async (_label, serverListens) => {
+    const events: string[] = [];
+    const server = https.createServer(validCert, () => expect.unreachable());
+    if (serverListens) server.on("timeout", () => events.push("server timeout"));
+    const timedOut = Promise.withResolvers<Socket>();
+    server.on("connection", socket => {
+      socket.setTimeout(1);
+      socket.on("timeout", () => timedOut.resolve(socket));
+    });
+    const port = await listen(server);
+    const stalled = await stalledClient(port);
+    try {
+      const socket = await timedOut.promise;
+      expect({ events, destroyed: socket.destroyed }).toEqual({ events: [], destroyed: false });
+      expect(await connections(server)).toBe(1);
+    } finally {
+      stalled.destroy();
+      server.close();
+    }
+  });
+
+  test("a timeout that a 'connection' listener arms still counts after the handshake, below server.timeout", async () => {
+    // No answer: the end of a response starts the keep-alive timeout.
+    const requested = Promise.withResolvers<void>();
+    const server = https.createServer(validCert, () => requested.resolve());
+    server.timeout = 60_000;
+    let secure = false;
+    const timedOut = Promise.withResolvers<void>();
+    server.on("connection", socket => {
+      socket.setTimeout(20);
+      // It can fire once during the handshake. The request then starts it again.
+      socket.on("timeout", () => secure && timedOut.resolve());
+    });
+    server.on("secureConnection", () => (secure = true));
+    const port = await listen(server);
+    const client = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    client.on("error", () => {});
+    try {
+      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      await Promise.all([requested.promise, timedOut.promise]);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  test("server.maxConnections counts it and refuses the next peer before its handshake", async () => {
+    const events: string[] = [];
+    const server = https.createServer(validCert, () => expect.unreachable());
+    server.maxConnections = 1;
+    for (const event of ["connection", "secureConnection", "drop"]) server.on(event, () => events.push(event));
+    const port = await listen(server);
+    const stalled = await stalledClient(port);
+    try {
+      expect(await tlsHandshake(port)).toBe("ECONNRESET");
+      expect(events).toEqual(["connection", "drop"]);
+      expect(await connections(server)).toBe(1);
+    } finally {
+      stalled.destroy();
+      server.close();
+    }
+  });
+
+  test("server.blockList closes the peer before its handshake", async () => {
+    const events: string[] = [];
+    const blockList = new net.BlockList();
+    blockList.addAddress("127.0.0.1");
+    const server = https.createServer({ ...validCert, blockList } as https.ServerOptions, () => expect.unreachable());
+    for (const event of ["connection", "secureConnection", "drop"]) server.on(event, () => events.push(event));
+    const port = await listen(server);
+    const stalled = await stalledClient(port);
+    try {
+      await closed(stalled);
+      expect(events).toEqual([]);
+      expect(await connections(server)).toBe(0);
+    } finally {
+      stalled.destroy();
+      server.close();
+    }
+  });
+
+  test("the http connection state comes with 'secureConnection'", async () => {
+    const states: object[] = [];
+    const state = (event: string, socket: Socket) =>
+      states.push({ event, timeout: socket.timeout || 0, parser: socket.parser != null });
+    const server = https.createServer(validCert, (_req, res) => res.end("ok"));
+    server.timeout = 60_000;
+    server.on("connection", socket => state("connection", socket));
+    server.on("secureConnection", socket => state("secureConnection", socket));
+    const port = await listen(server);
+    try {
+      expect(await get(port)).toBe("ok");
+      expect(states).toEqual([
+        { event: "connection", timeout: 0, parser: false },
+        { event: "secureConnection", timeout: 60_000, parser: true },
+      ]);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("the headersTimeout sweep leaves it alone", async () => {
+    const server = https.createServer(
+      { ...validCert, headersTimeout: 50, connectionsCheckingInterval: 10 } as https.ServerOptions,
+      () => expect.unreachable(),
+    );
+    const accepted = once(server, "connection");
+    const port = await listen(server);
+    const stalled = await stalledClient(port);
+    const [stalledSocket] = (await accepted) as [Socket];
+    // This one finishes its handshake and sends no request: the sweep answers 408 and closes it. The stalled
+    // connection is older, so a sweep that took it would have closed it first.
+    const idle = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    idle.on("error", () => {});
+    let response = "";
+    idle.on("data", chunk => (response += chunk));
+    try {
+      await closed(idle);
+      expect(response).toStartWith("HTTP/1.1 408 ");
+      expect(stalledSocket.destroyed).toBe(false);
+      expect(await connections(server)).toBe(1);
+    } finally {
+      stalled.destroy();
+      idle.destroy();
+      server.close();
+    }
+  });
+
+  test("closeAllConnections() leaves it", async () => {
+    const server = https.createServer(validCert, (_req, res) => res.end("ok"));
+    const accepted = once(server, "connection");
+    const port = await listen(server);
+    const stalled = await stalledClient(port);
+    const [stalledSocket] = (await accepted) as [Socket];
+    const established = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    established.on("error", () => {});
+    try {
+      established.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      let response = "";
+      while (!response.endsWith("ok")) response += (await once(established, "data"))[0];
+      expect(await connections(server)).toBe(2);
+
+      const establishedClosed = closed(established);
+      server.closeAllConnections();
+      await establishedClosed;
+      expect(stalledSocket.destroyed).toBe(false);
+      expect(await connections(server)).toBe(1);
+
+      const stalledSocketClosed = once(stalledSocket, "close");
+      stalled.destroy();
+      await stalledSocketClosed;
+      expect(await connections(server)).toBe(0);
+    } finally {
+      stalled.destroy();
+      established.destroy();
+      server.close();
+    }
+  });
+
+  // The sweep of close() and closeIdleConnections() takes the idle connections of the http layer. A TLS connection
+  // joins them at 'secureConnection', so the one that a 'connection' listener is told about stays.
+  test.each([
+    ["close()", (server: http.Server) => void server.close()],
+    ["closeIdleConnections()", (server: http.Server) => server.closeIdleConnections()],
+  ])("%s in a 'connection' listener leaves the connection, and its request is served", async (_label, sweep) => {
+    const events: string[] = [];
+    const server = https.createServer(validCert, (_req, res) => {
+      events.push("request");
+      res.end("ok");
+    });
+    server.on("connection", () => {
+      events.push("connection");
+      sweep(server);
+    });
+    server.on("secureConnection", () => events.push("secureConnection"));
+    const port = await listen(server);
+    try {
+      expect(await get(port)).toBe("ok");
+      expect(events).toEqual(["connection", "secureConnection", "request"]);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  // What server-destroy and http-shutdown do: they destroy the sockets that 'connection' gave them.
+  test("close() completes when the sockets of 'connection' are destroyed, with a handshake pending", async () => {
+    const sockets = new Set<net.Socket>();
+    const server = https.createServer(validCert, () => expect.unreachable());
+    server.on("connection", socket => sockets.add(socket));
+    const accepted = once(server, "connection");
+    const port = await listen(server);
+    const stalled = await stalledClient(port);
+    try {
+      await accepted;
+      const serverClosed = Promise.withResolvers<Error | undefined>();
+      server.close(serverClosed.resolve);
+      for (const socket of sockets) socket.destroy();
+      expect(await serverClosed.promise).toBeUndefined();
+    } finally {
+      stalled.destroy();
+    }
+  });
+
+  test("socket.destroy(err) in a 'connection' listener reaches 'clientError'", async () => {
+    const error = new Error("refused");
+    const server = https.createServer(validCert, () => expect.unreachable());
+    server.on("connection", socket => socket.destroy(error));
+    const clientError = once(server, "clientError");
+    const port = await listen(server);
+    const stalled = await stalledClient(port);
+    try {
+      const [received] = await Promise.all([clientError, closed(stalled)]);
+      expect(received[0]).toBe(error);
+      expect(await connections(server)).toBe(0);
+    } finally {
+      stalled.destroy();
+      server.close();
+    }
+  });
+
+  test("socket.end() in a 'connection' listener leaves the connection until the peer closes it", async () => {
+    const events: string[] = [];
+    const server = https.createServer(validCert, () => expect.unreachable());
+    const ended = Promise.withResolvers<Socket>();
+    server.on("connection", socket => {
+      events.push("connection");
+      socket.end();
+      ended.resolve(socket);
+    });
+    server.on("secureConnection", () => events.push("secureConnection"));
+    const port = await listen(server);
+    // Keeps its side open behind the FIN of the server.
+    const client = net.connect({ port, host: "127.0.0.1", allowHalfOpen: true });
+    client.on("error", () => {});
+    client.resume();
+    try {
+      await once(client, "connect");
+      client.write(Buffer.from([0x16]));
+      const [socket] = await Promise.all([ended.promise, once(client, "end")]);
+      expect({ destroyed: socket.destroyed, count: await connections(server) }).toEqual({ destroyed: false, count: 1 });
+      server.closeAllConnections();
+      expect({ destroyed: socket.destroyed, count: await connections(server) }).toEqual({ destroyed: false, count: 1 });
+
+      const socketClosed = once(socket, "close");
+      client.destroy();
+      await socketClosed;
+      expect(events).toEqual(["connection"]);
+      expect(await connections(server)).toBe(0);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  // Node's http layer arms server.timeout on the TLSSocket at 'secureConnection', whatever the raw socket has.
+  test("server.timeout applies after the handshake when a 'connection' listener armed a longer timeout", async () => {
+    // No answer: the end of a response starts the keep-alive timeout.
+    const server = https.createServer(validCert, () => {});
+    server.timeout = 50;
+    server.on("connection", socket => socket.setTimeout(60_000));
+    const timedOut = once(server, "timeout");
+    const port = await listen(server);
+    const client = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    client.on("error", () => {});
+    try {
+      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+      const [socket] = (await timedOut) as [Socket];
+      expect(socket.timeout).toBe(50);
+      socket.destroy();
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  test("a timeout that fired during the handshake does not leave the connection without one", async () => {
+    const server = https.createServer(validCert, () => expect.unreachable());
+    server.timeout = 100;
+    const fired = Promise.withResolvers<void>();
+    server.on("connection", socket => {
+      socket.setTimeout(20);
+      socket.once("timeout", () => fired.resolve());
+    });
+    const port = await listen(server);
+    const { raw, client, release } = await heldHandshake(port);
+    try {
+      await fired.promise;
+      const rawClosed = closed(raw);
+      release();
+      // The handshake completes and the client sends nothing: a timeout of the server closes the connection.
+      await rawClosed;
+      expect(await connections(server)).toBe(0);
+    } finally {
+      client.destroy();
+      raw.destroy();
+      server.close();
+    }
+  });
+
+  // A server behind a TLS proxy marks its plain sockets like this. They are not connections in a handshake.
+  describe("a plain connection whose socket.encrypted the application sets", () => {
+    test("is still closed by closeAllConnections()", async () => {
+      const responding = Promise.withResolvers<void>();
+      const server = http.createServer((req, res) => {
+        (req.socket as any).encrypted = true;
+        res.write("x");
+        responding.resolve();
+      });
+      const port = await listen(server);
+      const client = net.connect(port, "127.0.0.1");
+      client.on("error", () => {});
+      client.resume();
+      try {
+        await once(client, "connect");
+        client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        await responding.promise;
+        const clientClosed = closed(client);
+        server.closeAllConnections();
+        await clientClosed;
+        expect(await connections(server)).toBe(0);
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+
+    test("is still answered 408 by the headersTimeout sweep", async () => {
+      const server = http.createServer({ headersTimeout: 50, connectionsCheckingInterval: 10 }, () =>
+        expect.unreachable(),
+      );
+      server.on("connection", socket => ((socket as any).encrypted = true));
+      const port = await listen(server);
+      const client = net.connect(port, "127.0.0.1");
+      client.on("error", () => {});
+      let response = "";
+      client.on("data", chunk => (response += chunk));
+      try {
+        await once(client, "connect");
+        client.write("GET / HTTP/1.1\r\nHost: localhost\r\n");
+        await closed(client);
+        expect(response).toStartWith("HTTP/1.1 408 ");
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+  });
+
+  // Node emits 'secureConnection' from the handshake, on its own stack: a 'connection' listener that threw does not
+  // take it away. The servers run in a child: under `bun test` an uncaught exception fails the test, handled or not.
+  test("a 'connection' listener that throws does not take 'secureConnection' away when the process handles the error", async () => {
+    const labels = entryPoints.map(([label]) => label);
+    const child = spawn(
+      bunExe(),
+      [
+        "-e",
+        `
+        const http = require("node:http");
+        const https = require("node:https");
+        const cert = JSON.parse(process.env.TEST_TLS);
+        let events = [];
+        process.on("uncaughtException", err => events.push("uncaught " + err.message));
+        function run(entry) {
+          events = [];
+          const listener = (req, res) => { events.push("request"); res.end("ok"); };
+          let server;
+          let listen = cb => server.listen(0, "127.0.0.1", cb);
+          if (entry === "https.createServer()") server = https.createServer(cert, listener);
+          else if (entry === "new https.Server()") server = new https.Server(cert, listener);
+          else if (entry === "http.createServer({ key, cert })") server = http.createServer({ ...cert }, listener);
+          else {
+            server = http.createServer(listener);
+            listen = cb => server.listen({ port: 0, host: "127.0.0.1", tls: cert }, cb);
+          }
+          server.timeout = 60_000;
+          server.on("connection", () => { events.push("connection"); throw new Error("boom"); });
+          server.on("secureConnection", socket =>
+            events.push("secureConnection parser=" + (socket.parser != null) + " timeout=" + socket.timeout));
+          return new Promise(resolve => listen(() => {
+            const done = outcome => { server.close(); resolve({ entry, outcome, events }); };
+            https.get({ host: "127.0.0.1", port: server.address().port, agent: false, rejectUnauthorized: false }, res => {
+              let body = "";
+              res.on("data", chunk => (body += chunk)).on("end", () => done(body));
+            }).on("error", err => done(err.code));
+          }));
+        }
+        (async () => {
+          const results = [];
+          for (const entry of JSON.parse(process.env.TEST_ENTRY_POINTS)) results.push(await run(entry));
+          console.log(JSON.stringify(results));
+        })();
+        `,
+      ],
+      {
+        env: { ...bunEnv, TEST_TLS: JSON.stringify(validCert), TEST_ENTRY_POINTS: JSON.stringify(labels) },
+        stdio: ["ignore", "pipe", "inherit"],
+      },
+    );
+    let stdout = "";
+    child.stdout.on("data", chunk => (stdout += chunk));
+    const [exitCode] = await once(child, "close");
+    expect(JSON.parse(stdout)).toEqual(
+      labels.map(entry => ({
+        entry,
+        outcome: "ok",
+        events: ["connection", "uncaught boom", "secureConnection parser=true timeout=60000", "request"],
+      })),
+    );
     expect(exitCode).toBe(0);
   });
 });

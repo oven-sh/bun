@@ -16534,15 +16534,14 @@ describe.concurrent("registry manifest with an unexpected shape", () => {
   });
 });
 
-// The progress bar copies the name it is currently showing into a fixed
-// 768-byte buffer (PackageManager.progress_name_buf). A longer name aborted the
+// The progress bar copies the name it is currently showing into a fixed-size
+// buffer. A longer name aborted the
 // install with "panic: range end index 900 out of range for slice of length
 // 768" whenever the progress bar was on. BUN_INSTALL_PROGRESS=1 turns it on
 // without a TTY; with colors enabled an emoji shares the buffer with the name,
 // so both color settings are covered.
 describe.concurrent("progress bar with a long name", () => {
-  // Names are now limited to 255 bytes, which always fit. The two tests with this name only check that the longest name
-  // is displayed and reported in full.
+  // The longest name a package can have.
   const longName = Buffer.alloc(255, "a").toString();
   const progressEnvs = [
     ["NO_COLOR", { ...env, BUN_INSTALL_PROGRESS: "1", NO_COLOR: "1" }],

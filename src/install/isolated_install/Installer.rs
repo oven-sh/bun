@@ -14,6 +14,7 @@ use bun_threading::{UnboundedQueue, WaitGroup, thread_pool};
 use bun_sys::{FdDirExt as _, FdExt as _};
 
 use crate::bin_real;
+use crate::bun_progress::NodeId;
 use crate::cache_publish::{RenameError, RenameRetry};
 use crate::lockfile::package;
 use crate::package_install::{
@@ -47,7 +48,6 @@ use crate::package_manager_real::package_manager_options::{Do, Enable};
 type ResolutionTag = resolution::Tag;
 
 type Bitset = DynamicBitSet;
-type ProgressNode = crate::bun_progress::Node;
 
 // ── Store id aliases ───────────────────────────────────────────────────────
 type StoreEntryId = store::entry::Id;
@@ -87,7 +87,6 @@ pub struct Installer<'a> {
 
     pub(crate) summary: InstallSummary,
     pub(crate) installed: Bitset,
-    pub(crate) install_node: Option<&'a mut ProgressNode>,
     pub(crate) is_new_bun_modules: bool,
     /// Set when the project's root `node_modules` is a symlink.
     pub(crate) linked: Option<LinkedNodeModules>,
@@ -686,8 +685,9 @@ impl<'a> Installer<'a> {
         self.manager_mut().decrement_pending_tasks();
         self.resume_unblocked_tasks(entry_id);
 
-        if let Some(node) = self.install_node.as_mut() {
-            node.complete_one();
+        let manager = self.manager();
+        if manager.options.log_level.show_progress() {
+            manager.progress.complete_one(NodeId::Install);
         }
 
         let store::Ids { dep_id, pkg_id } = self.store.ids(entry_id);

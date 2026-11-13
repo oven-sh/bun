@@ -2813,6 +2813,106 @@ describe.concurrent("a name that import and require() resolve to two files", () 
     );
   });
 
+  test.each(isolationFlags)("a file that ran before its mock runs once and stays one instance %j", async args => {
+    // An import of the name loads a.mjs, and require() loads b.mjs, which is an ES module too.
+    const twoESModules = (name: string) => ({
+      [`node_modules/${name}/package.json`]: JSON.stringify({
+        name,
+        type: "module",
+        exports: { import: "./a.mjs", default: "./b.mjs" },
+      }),
+      [`node_modules/${name}/a.mjs`]: `(globalThis.loaded ??= []).push("${name} a"); export const which = "real esm";`,
+      [`node_modules/${name}/b.mjs`]: `(globalThis.loaded ??= []).push("${name} b"); export const which = "real cjs"; export const state = {};`,
+    });
+    // An import of the name loads wrapper.mjs, which loads index.cjs, and require() loads index.cjs.
+    const wrapper = (name: string) => ({
+      [`node_modules/${name}/package.json`]: JSON.stringify({
+        name,
+        exports: { import: "./wrapper.mjs", require: "./index.cjs" },
+      }),
+      [`node_modules/${name}/index.cjs`]: `(globalThis.loaded ??= []).push("${name} cjs"); module.exports = { which: "real", state: {} };`,
+      [`node_modules/${name}/wrapper.mjs`]: `import cjs from "./index.cjs"; (globalThis.loaded ??= []).push("${name} esm"); export const which = cjs.which; export const state = cjs.state;`,
+    });
+    // Without --isolate the next test file gets the modules that this one has loaded.
+    const sharesModules = args.length === 0;
+    const loadedAnew = ["ends-import b", "ends-require b", "ends-wrap cjs", "ends-wrap esm"];
+    await expectFixturesToPass(
+      {
+        "package.json": JSON.stringify({ name: "project" }),
+        ...twoESModules("by-import"),
+        ...twoESModules("by-require"),
+        ...wrapper("wrap"),
+        ...twoESModules("ends-import"),
+        ...twoESModules("ends-require"),
+        ...wrapper("ends-wrap"),
+        "1.test.js": `
+          import { expect, jest, test } from "bun:test";
+          globalThis.imported = await import(require.resolve("ends-import"));
+          globalThis.required = require("ends-require");
+          globalThis.wrapped = await import("ends-wrap");
+          test.each(["ends-import", "ends-require", "ends-wrap"])("a mock of %s that ends with the test file", async name => {
+            jest.doMock(name, () => ({ which: "mock" }));
+            expect([require(name).which, (await import(name)).which]).toEqual(["mock", "mock"]);
+          });
+        `,
+        "2.test.js": `
+          import { expect, test } from "bun:test";
+          const start = (globalThis.loaded ?? []).length;
+          test("the next test file gets the files that ran, each as one instance", async () => {
+            const imported = await import(require.resolve("ends-import"));
+            const required = require("ends-require");
+            const wrapped = await import("ends-wrap");
+            expect([imported.which, required.which, wrapped.which]).toEqual(["real cjs", "real cjs", "real"]);
+            expect(require("ends-import").state).toBe(imported.state);
+            expect((await import(require.resolve("ends-require"))).state).toBe(required.state);
+            expect(require("ends-wrap").state).toBe(wrapped.state);
+            const sharesModules = ${sharesModules};
+            const same = [imported === globalThis.imported, required === globalThis.required, wrapped === globalThis.wrapped];
+            if (sharesModules) expect(same).toEqual([true, true, true]);
+            expect(globalThis.loaded.slice(start)).toEqual(sharesModules ? [] : ${JSON.stringify(loadedAnew)});
+          });
+        `,
+        "3.test.js": `
+          import { expect, jest, mock, test } from "bun:test";
+          const ran = name => globalThis.loaded.filter(file => file.startsWith(name + " "));
+          test("an ES module that an import of its path loaded", async () => {
+            const path = require.resolve("by-import");
+            const before = await import(path);
+            mock.module("by-import", () => ({ which: "mock" }));
+            const mocked = [require("by-import").which, (await import("by-import")).which, (await import(path)).which];
+            expect(mocked).toEqual(["mock", "mock", "mock"]);
+            jest.unmock("by-import");
+            expect((await import(path)) === before).toBe(true);
+            expect(require("by-import").state).toBe(before.state);
+            expect(ran("by-import")).toEqual(["by-import b"]);
+          });
+          test("an ES module that require() of the name loaded", async () => {
+            const path = require.resolve("by-require");
+            const before = require("by-require");
+            mock.module("by-require", () => ({ which: "mock" }));
+            const mocked = [require("by-require").which, (await import("by-require")).which, (await import(path)).which];
+            expect(mocked).toEqual(["mock", "mock", "mock"]);
+            jest.unmock("by-require");
+            expect(require("by-require") === before).toBe(true);
+            expect((await import(path)).state).toBe(before.state);
+            expect(ran("by-require")).toEqual(["by-require b"]);
+          });
+          test("an ES module that wraps the CommonJS file, imported by name", async () => {
+            const before = await import("wrap");
+            mock.module("wrap", () => ({ which: "mock" }));
+            expect([require("wrap").which, (await import("wrap")).which, before.which]).toEqual(["mock", "mock", "mock"]);
+            jest.unmock("wrap");
+            expect((await import("wrap")) === before).toBe(true);
+            expect([before.which, require("wrap").state === before.state]).toEqual(["real", true]);
+            expect(ran("wrap")).toEqual(["wrap cjs", "wrap esm"]);
+          });
+        `,
+      },
+      7,
+      args,
+    );
+  });
+
   test("a mock of the name and a mock of the path that require() resolves it to", async () => {
     const file = (first: string, second: string, mocked: string[], unmocked: string[]) => `
       import { expect, jest, mock, test } from "bun:test";

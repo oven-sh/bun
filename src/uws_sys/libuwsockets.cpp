@@ -1065,11 +1065,12 @@ extern "C"
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
-      /* No close gate here: callers (DevServer/HTMLBundle error paths) keep
-       * using the response after this returns, so closing inside this call
-       * would destruct the ext under them. A caller that is not inside a uWS
-       * request handler runs uws_res_close_if_done_and_marked itself once it
-       * is done with the response. onData gates the socket it is parsing. */
+      /* No close gate here: a close runs the server's close callbacks, and on
+       * a stopped server those free state that a caller (DevServer::defer_request)
+       * still uses when this returns. onData gates the socket it is parsing,
+       * and cork() gates a response that still holds its cork slot when its
+       * callback returns. Every other caller runs
+       * uws_res_close_if_done_and_marked once it is done with the response. */
     }
     else
     {

@@ -100,6 +100,7 @@ describe("FFI error messages", () => {
       // Error message should include the library name
       expect(err.message).toContain("libnonexistent12345.so");
       expect(err.message).toMatch(/Failed to open library "[^"]+": (?!unknown error).+/);
+      expect(err.constructor).toBe(Error);
       expect({ code: err.code, syscall: err.syscall }).toEqual({ code: "ERR_DLOPEN_FAILED", syscall: "dlopen" });
     }
   });
@@ -159,7 +160,7 @@ describe("FFI error messages", () => {
       // Error message should include some reference to the library or symbol not found
       expect(err.message).toMatch(/Symbol.*not found|symbol.*not found/i);
       // A missing symbol is a loader failure, the same class as a library that cannot open.
-      expect(err).not.toBeInstanceOf(TypeError);
+      expect(err.constructor).toBe(Error);
       expect({ code: err.code, syscall: err.syscall }).toEqual({ code: "ERR_DLOPEN_FAILED", syscall: "dlsym" });
       // The loader's own text follows the message, as it does for a library that cannot open.
       expect(err.message).toMatch(/not found in "[^"]+": (?!unknown error).+/);

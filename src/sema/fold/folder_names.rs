@@ -7,12 +7,10 @@ use super::run_order::RunOrder;
 use super::{Constant, Decision, FoldedValue};
 use crate::atom::{Atom, known};
 use crate::bind::{
-    Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit, CommonJsVariable, Decl,
-    Parent, PatParent, ScopeKind, SymbolId,
+    Binding, BindingInitializer, BindingKind, CommonJsVariable, Decl, PatParent, ScopeKind,
+    SymbolId,
 };
-use crate::hir::{
-    Chain, ExprId, ExprKind, Flags, FnId, ImportId, MemberKey, NodeData, StmtKind, UnOp,
-};
+use crate::hir::{Chain, ExprId, ExprKind, Flags, FnId, ImportId, MemberKey, NodeData, UnOp};
 use crate::hir_from_data::DataValue;
 use crate::import_sites::is_in_with_scope;
 use crate::module_format::settled_main_module_operand;
@@ -74,7 +72,7 @@ impl<'s> Folder<'_, 's> {
                 return folded;
             }
         }
-        if let BindingKind::Parameter | BindingKind::Var = kind
+        if kind == BindingKind::Parameter
             && self.names_of_undefined().binary_search(&symbol).is_ok()
             && self.has_static_lookup(e)
             && !self.is_assignment_target(e)
@@ -89,7 +87,7 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// Parameters that no argument is passed for, and variables that nothing stores to.
+    /// Parameters that no argument is passed for.
     fn names_of_undefined(&self) -> &[SymbolId] {
         self.names_of_undefined.get_or_init(|| {
             let (hir, bound) = (self.hir, self.bound);
@@ -103,40 +101,9 @@ impl<'s> Folder<'_, 's> {
                     names.extend(symbols.filter(|&it| self.is_parameter_without_argument(it)));
                 }
             }
-            for declaration in hir.var_decls.iter().filter(|it| it.init.is_none()) {
-                let symbol = bound.declared_symbol(Decl::Var(declaration.pat)).some();
-                names.extend(symbol.filter(|&it| self.is_variable_without_value(it)));
-            }
             names.sort_unstable();
             names
         })
-    }
-
-    /// `var name;` in a function, where nothing stores to it.
-    fn is_variable_without_value(&self, symbol: SymbolId) -> bool {
-        let (hir, bound) = (self.hir, self.bound);
-        let &[Decl::Var(pattern)] = bound.symbol(symbol).decls else {
-            return false;
-        };
-        let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
-            return false;
-        };
-        let Some(statement) = bound.var_stmt[declaration.idx()].some() else {
-            return false;
-        };
-        hir[declaration].init.is_none()
-            && bound.binding_stability(symbol) == BindingStability::NotInitializedOnce
-            && bound.stores_to(symbol).is_empty()
-            && !bound.runtime.is_stored_by_function_of_block(symbol)
-            && matches!(
-                bound.code_unit(bound.symbol_scope(symbol)),
-                CodeUnit::Function(_)
-            )
-            && match bound.parent_of_stmt(statement) {
-                Parent::FnBody(_) => true,
-                Parent::Stmt(around) => matches!(hir[around].kind, StmtKind::Block(_)),
-                _ => false,
-            }
     }
 
     /// The only call of the function stands where the function is written, and passes fewer arguments.

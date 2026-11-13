@@ -1006,8 +1006,18 @@ struct FoundOnDisk {
 
 static FOUND_ON_DISK: std::sync::OnceLock<FoundOnDisk> = std::sync::OnceLock::new();
 
+static FOUND_BEFORE_PROCESSES: std::sync::OnceLock<Option<FoundOnDisk>> =
+    std::sync::OnceLock::new();
+
 fn found_on_disk() -> Option<&'static FoundOnDisk> {
     FOUND_ON_DISK.get().filter(|found| found.paths.count() != 0)
+}
+
+fn found_before_processes() -> Option<&'static FoundOnDisk> {
+    match FOUND_BEFORE_PROCESSES.get()? {
+        Some(found) => Some(found),
+        None => found_on_disk(),
+    }
 }
 
 impl FoundOnDisk {
@@ -2187,6 +2197,14 @@ impl StandaloneModuleGraph {
     /// For what may remove files of the program: `FoundOnDisk`.
     pub fn note_found_on_disk(&self) {
         FOUND_ON_DISK.get_or_init(|| self.find_on_disk());
+    }
+
+    pub fn note_process_start(&self) {
+        FOUND_BEFORE_PROCESSES.get_or_init(|| {
+            let was_looked_at = FOUND_ON_DISK.get().is_some();
+            self.note_found_on_disk();
+            was_looked_at.then(|| self.find_on_disk())
+        });
         if found_on_disk().is_some() {
             HAS_WRITTEN_FILES.store(true, core::sync::atomic::Ordering::Release);
         }
@@ -2194,7 +2212,8 @@ impl StandaloneModuleGraph {
 
     /// Where the disk has `file`, if that was written since the program has started its first process. A file that the disk did not have counts only in a folder that it had.
     fn find_changed_file(&self, file: &File) -> Option<Box<[u8]>> {
-        let (program, found) = self.compiled_program.as_ref().zip(found_on_disk())?;
+        let program = self.compiled_program.as_ref()?;
+        let found = found_before_processes()?;
         if !self.is_file_for_file_system_alone(file) {
             return None;
         }

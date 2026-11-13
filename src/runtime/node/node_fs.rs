@@ -370,10 +370,16 @@ fn graph_after_disk(path: &[u8]) -> Option<&'static bun_standalone_graph::Graph>
     compiled_program_graph().filter(|_| !bun_standalone_graph::is_bun_standalone_file_path(path))
 }
 
-/// For what may remove files of the program, also half of a folder: a process that it starts, or a removal of its own.
+/// For a removal by the program, which may remove files of its own, also half of a folder.
 pub(crate) fn note_found_on_disk() {
     if let Some(graph) = compiled_program_graph() {
         graph.note_found_on_disk();
+    }
+}
+
+pub(crate) fn note_process_start() {
+    if let Some(graph) = compiled_program_graph() {
+        graph.note_process_start();
     }
 }
 

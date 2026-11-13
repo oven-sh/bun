@@ -10,13 +10,14 @@ use crate::ir::{TypeTable, ValueId};
 use crate::lower::FunctionLowering;
 use crate::lower::expression::Tail;
 use crate::lower::member::PropertyName;
-use crate::lower::object::finish_object;
+use crate::lower::object::{MOST_VALUES_THAT_WAIT_IN_REGISTERS, ObjectBuilder, finish_object};
 use crate::lower::scope;
 
 type Properties = Vec<(PropertyName, ValueId, ExprId)>;
 
 enum Source {
     Literal(ExprId, Properties),
+    MadeLiteral(ValueId, SmallVec<[PropertyName; 16]>),
     Value(ValueId),
 }
 
@@ -49,7 +50,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let target = self.lower_expression(target);
         let sources: SmallVec<[Source; 2]> = (sources.iter())
             .map(|&source| match self.is_literal_of_plain_names(source) {
-                true => Source::Literal(source, self.lower_values_of_literal(source)),
+                true => self.lower_source_literal(source),
                 false => Source::Value(self.lower_expression(source)),
             })
             .collect();
@@ -112,6 +113,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         self.emit_set_inside(object, name, value, ECMAMode::Strict, function);
                     }
                 }
+                Source::MadeLiteral(literal, names) => {
+                    for &name in names {
+                        let value = self.emit_get(*literal, name);
+                        self.emit_set_inside(object, name, value, ECMAMode::Strict, function);
+                    }
+                }
                 &Source::Value(value) => {
                     self.emit_builtin_call(BuiltinId::ObjectAssign, &[object, value]);
                 }
@@ -126,7 +133,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         sources: &[Source],
         is_tail: bool,
     ) -> ValueId {
-        let hir = self.file.hir;
         let result = self.builder.create_variable(None);
         let done = self.create_block();
         let split = self.split_on_type(target, TypeTable::OBJECT);
@@ -141,14 +147,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         for source in sources {
             written.push(match source {
                 Source::Literal(literal, properties) => {
-                    let layout = self.file.literal_layout(hir.skip_type_assertions(*literal));
-                    let mut made = self.begin_object(layout);
-                    for &(name, value, source) in properties {
-                        self.add_property(&mut made, name, value, Some(source));
-                    }
+                    let made = self.begin_literal_of(*literal, properties);
                     finish_object(self, made)
                 }
-                &Source::Value(value) => value,
+                &Source::MadeLiteral(value, _) | &Source::Value(value) => value,
             });
         }
         let outer = self.builder.set_tail_position(is_tail);
@@ -182,12 +184,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         })
     }
 
-    fn lower_values_of_literal(&mut self, literal: ExprId) -> Properties {
+    fn begin_literal_of(
+        &mut self,
+        literal: ExprId,
+        properties: &[(PropertyName, ValueId, ExprId)],
+    ) -> ObjectBuilder {
+        let literal = self.file.hir.skip_type_assertions(literal);
+        let layout = self.file.literal_layout(literal);
+        let mut made = self.begin_object(layout);
+        for &(name, value, source) in properties {
+            self.add_property(&mut made, name, value, Some(source));
+        }
+        made
+    }
+
+    fn lower_source_literal(&mut self, literal: ExprId) -> Source {
         let hir = self.file.hir;
         let ExprKind::Object(properties) = hir[hir.skip_type_assertions(literal)].kind else {
             unreachable!("is_literal_of_plain_names has looked");
         };
         let mut values = Properties::new();
+        let mut waiting = 0;
+        let mut made = None;
         for id in properties.iter() {
             let property = hir[id];
             let key = hir.runtime_property_key(id);
@@ -196,7 +214,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let given = self.name_under_property(&property, key, name);
             let value = self.lower_named_evaluation(property.value, given);
             values.push((name, value, property.value));
+            if let Some(made) = &mut made {
+                self.add_property(made, name, value, Some(property.value));
+                continue;
+            }
+            waiting += usize::from(!self.costs_no_word_while_it_waits(value));
+            if waiting > MOST_VALUES_THAT_WAIT_IN_REGISTERS {
+                made = Some(self.begin_literal_of(literal, &values));
+            }
         }
-        values
+        match made {
+            Some(made) => {
+                let names = values.iter().map(|&(name, ..)| name).collect();
+                Source::MadeLiteral(finish_object(self, made), names)
+            }
+            None => Source::Literal(literal, values),
+        }
     }
 }

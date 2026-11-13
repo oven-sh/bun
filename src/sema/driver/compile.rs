@@ -22,8 +22,7 @@ pub use log_message::log_message;
 pub use parts::PartsOfVisit;
 pub use roles::{decide_roles, keep_verified_roles};
 pub use threads::{
-    drop_thread_caches, run_on_one_thread_while, run_on_region_thread, run_on_threads_while,
-    wake_idle_region_threads,
+    drop_thread_caches, run_on_one_thread_while, run_on_region_thread, wake_idle_region_threads,
 };
 
 use self::effects::ProgramOrigins;

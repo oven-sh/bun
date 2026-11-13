@@ -33,11 +33,6 @@ const MIN_PROGRAM_COUNT: usize = 1_000;
 const MAX_FOLDED_STRING_BYTES: usize = 1 << 16;
 const DECLARATION_EXTENSIONS: [&str; 3] = [".d.ts", ".d.mts", ".d.cts"];
 
-pub(crate) const TYPESCRIPT_EXTENSIONS: [&str; 4] = [".ts", ".tsx", ".mts", ".cts"];
-pub(crate) const JAVASCRIPT_EXTENSIONS: [&str; 4] = [".js", ".jsx", ".mjs", ".cjs"];
-pub(crate) const SOURCE_EXTENSIONS: [&str; 8] =
-    [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
-
 #[derive(Copy, Clone)]
 pub(crate) struct Workspace<'s> {
     pub(crate) atoms: Interner<'s>,
@@ -456,13 +451,6 @@ impl<'s> Workspace<'s> {
     }
 
     #[track_caller]
-    pub(crate) fn class(&self, hir: &File<'s>, name: &str) -> ClassId {
-        let atom = self.atom(name);
-        let found = find_ids(&hir.classes, |class| class.name == atom).next();
-        self.expect_node(found, "class", name, 0)
-    }
-
-    #[track_caller]
     fn expect_node<Id>(&self, found: Option<Id>, kind: &str, name: &str, nth: usize) -> Id {
         match found {
             Some(id) => id,
@@ -542,11 +530,6 @@ impl Analyzed<'_> {
     #[track_caller]
     pub(crate) fn function(&self, name: &str) -> FnId {
         self.workspace.function(&self.hir, name)
-    }
-
-    #[track_caller]
-    pub(crate) fn class(&self, name: &str) -> ClassId {
-        self.workspace.class(&self.hir, name)
     }
 
     #[track_caller]

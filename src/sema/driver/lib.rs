@@ -18,7 +18,7 @@ pub use compile::{
     PassCount, Passes, RoleDecision, TextLocator, check_and_lower, check_and_lower_noting_commits,
     check_whole_files, decide_roles, drop_thread_caches, keep_verified_roles, load_program,
     log_message, resolve_names_known_in_part, run_on_one_thread_while, run_on_region_thread,
-    run_on_threads_while, says_that_name_is_not_found, wake_idle_region_threads,
+    says_that_name_is_not_found, wake_idle_region_threads,
 };
 
 use bstr::ByteSlice;

@@ -33,10 +33,7 @@ impl<T: fmt::Display> fmt::Display for Err<T> {
 // `to_error_instance` lives as an extension-trait method in `bun_css_jsc`.
 
 impl Err<ParserError> {
-    pub(crate) fn from_parse_error(
-        err: ParseError<ParserError>,
-        filename: &[u8],
-    ) -> Err<ParserError> {
+    pub(crate) fn from_parse_error(err: ParseError<ParserError>) -> Err<ParserError> {
         let kind = match err.kind {
             ParserErrorKind::basic(b) => match b {
                 BasicParseErrorKind::unexpected_token(t) => ParserError::unexpected_token(t),
@@ -51,7 +48,6 @@ impl Err<ParserError> {
         Err {
             kind,
             loc: Some(ErrorLocation {
-                filename,
                 line: err.location.line,
                 column: err.location.column,
             }),
@@ -166,8 +162,6 @@ impl fmt::Display for BasicParseErrorKind {
 
 /// A line and column location within a source file.
 pub struct ErrorLocation {
-    /// The filename in which the error occurred.
-    pub(crate) filename: Str,
     /// The line number, starting from 0.
     pub(crate) line: u32,
     /// The column number, starting from 1.
@@ -189,12 +183,6 @@ impl ErrorLocation {
             line_text,
             ..Default::default()
         })
-    }
-}
-
-impl fmt::Display for ErrorLocation {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}:{}", bs(self.filename), self.line, self.column)
     }
 }
 

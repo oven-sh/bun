@@ -249,7 +249,6 @@ impl<'a> Printer<'a> {
         self.error_kind = Some(css::PrinterError {
             kind,
             loc: maybe_loc.map(|loc| css::ErrorLocation {
-                filename: std::ptr::from_ref::<[u8]>(self.filename()),
                 line: loc.line - 1,
                 column: loc.column,
             }),

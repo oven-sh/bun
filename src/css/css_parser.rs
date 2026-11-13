@@ -2347,8 +2347,6 @@ pub struct StyleSheet<AtRule> {
     pub sources: Vec<Box<[u8]>>,
     pub source_map_urls: Vec<Option<Box<[u8]>>>,
     pub license_comments: Vec<&'static [u8]>, // TODO: lifetime — arena
-    /// [`ParserOptions::filename`] of the parse.
-    pub filename: &'static [u8], // TODO: lifetime
     /// [`ParserOptions::css_modules`] of the parse.
     pub css_modules: Option<css_modules::Config>,
     /// [`ParserOptions::flags`] of the parse.
@@ -2373,7 +2371,6 @@ impl<AtRule> StyleSheet<AtRule> {
             sources: Vec::new(),
             source_map_urls: Vec::new(),
             license_comments: Vec::new(),
-            filename: b"",
             css_modules: None,
             flags: ParserFlags::default(),
             layer_names: Vec::new(),
@@ -2466,15 +2463,9 @@ mod stylesheet_impl {
                     kind: MinifyErrorKind::unknown,
                     loc: crate::Location::default(),
                 });
-                let filename: &[u8] = self
-                    .sources
-                    .get(e.loc.source_index as usize)
-                    .map(|source| &**source)
-                    .unwrap_or(self.filename);
                 let minify_error = Err {
                     kind: e.kind,
                     loc: Some(ErrorLocation {
-                        filename,
                         line: e.loc.line,
                         column: e.loc.column,
                     }),
@@ -2685,12 +2676,12 @@ mod stylesheet_impl {
                         result_options.warn(&e);
                         continue;
                     }
-                    return Err(Err::from_parse_error(e, options.filename));
+                    return Err(Err::from_parse_error(e));
                 }
             }
             if parser.input.out_of_stack {
                 let e = parser.new_custom_error(ParserError::maximum_nesting_depth);
-                return Err(Err::from_parse_error(e, options.filename));
+                return Err(Err::from_parse_error(e));
             }
 
             let sources: Vec<Box<[u8]>> = vec![Box::<[u8]>::from(options.filename)];
@@ -2710,7 +2701,6 @@ mod stylesheet_impl {
                     sources,
                     source_map_urls,
                     license_comments,
-                    filename: options.filename,
                     css_modules: options.css_modules,
                     flags: options.flags,
                     layer_names,
@@ -2759,7 +2749,7 @@ mod stylesheet_impl {
             Ok(StyleAttribute {
                 declarations: match DeclarationBlock::parse(&mut parser, options) {
                     Ok(v) => v,
-                    Err(e) => return Err(Err::from_parse_error(e, b"")),
+                    Err(e) => return Err(Err::from_parse_error(e)),
                 },
                 sources,
             })

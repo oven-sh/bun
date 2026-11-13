@@ -537,7 +537,6 @@ pub enum Posted {
 
 pub struct JsPosterVTable {
     pub post: unsafe fn(data: *const (), task: NonNull<ConcurrentTask>) -> Posted,
-    pub clone: unsafe fn(data: *const ()) -> *const (),
     pub drop: unsafe fn(data: *const ()),
 }
 
@@ -567,16 +566,6 @@ impl JsPoster {
     pub fn post(&self, task: NonNull<ConcurrentTask>) -> Posted {
         // SAFETY: vtable contract.
         unsafe { (self.vtable.post)(self.data, task) }
-    }
-}
-
-impl Clone for JsPoster {
-    fn clone(&self) -> Self {
-        Self {
-            // SAFETY: vtable contract.
-            data: unsafe { (self.vtable.clone)(self.data) },
-            vtable: self.vtable,
-        }
     }
 }
 

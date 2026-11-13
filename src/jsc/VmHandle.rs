@@ -865,18 +865,12 @@ unsafe fn poster_post(data: *const (), task: NonNull<ConcurrentTaskItem>) -> Pos
     let d = unsafe { &*data.cast::<PosterData>() };
     d.handle.post(d.kind, task)
 }
-unsafe fn poster_clone(data: *const ()) -> *const () {
-    // SAFETY: as above; bump the Arc count and hand out the same pointer.
-    unsafe { Arc::increment_strong_count(data.cast::<PosterData>()) };
-    data
-}
 unsafe fn poster_drop(data: *const ()) {
-    // SAFETY: as above; balances `into_raw`/`increment_strong_count`.
+    // SAFETY: as above; balances `into_raw`.
     unsafe { drop(Arc::from_raw(data.cast::<PosterData>())) };
 }
 static POSTER_VTABLE: bun_event_loop::JsPosterVTable = bun_event_loop::JsPosterVTable {
     post: poster_post,
-    clone: poster_clone,
     drop: poster_drop,
 };
 
@@ -965,17 +959,11 @@ unsafe fn isolated_post(data: *const (), task: NonNull<ConcurrentTaskItem>) -> P
     // SAFETY: leaked Arc<IsolatedPosterInner>.
     unsafe { &*data.cast::<IsolatedPosterInner>() }.post(task)
 }
-unsafe fn isolated_clone(data: *const ()) -> *const () {
-    // SAFETY: as above.
-    unsafe { Arc::increment_strong_count(data.cast::<IsolatedPosterInner>()) };
-    data
-}
 unsafe fn isolated_drop(data: *const ()) {
     // SAFETY: as above.
     unsafe { drop(Arc::from_raw(data.cast::<IsolatedPosterInner>())) };
 }
 static ISOLATED_POSTER_VTABLE: bun_event_loop::JsPosterVTable = bun_event_loop::JsPosterVTable {
     post: isolated_post,
-    clone: isolated_clone,
     drop: isolated_drop,
 };

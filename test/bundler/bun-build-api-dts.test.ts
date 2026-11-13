@@ -365,6 +365,10 @@ export function useTotal(items: string[]) {
   const [n] = useState(items.length);
   return items.reduce((total: number = 0, item) => total + item.length + n, 0);
 }
+export function useLengths(items: string[]) {
+  const [n] = useState(items.length);
+  return items.reduce((total: number = 0, item) => total + item.length, 0) + n;
+}
 export function useSizes(items: Array<{ size: number }>) {
   const [n] = useState(items.length);
   return items.reduce((total: number = 0, { size }: { size: number }) => total + size + n, 0);
@@ -406,6 +410,7 @@ export function useStep(base: number) {
 ${useBeside}`,
     });
     expect(typed).toContain("return items.reduce((t0: number, item) => {");
+    expect(typed).toMatch(/^function _temp\(t0: number, item(?:: any)?\) \{$/m);
     expect(typed).toContain("return items.reduce((t0: number, t1) => {");
     expect(typed).toMatch(/let add = \(t0: number, t1(?:: any)?\) => \{/);
     expect(typed).toContain("return pick((label, t0: number) => {");
@@ -524,17 +529,16 @@ export function useLoose(first: number = 1, second: number = 2, third = 3) {
     expect(parametersIn(typed)).toEqual({ useState: "initial: T", useLoose: "t0?, t1?, t2?" });
   });
 
-  // The checker has no types of a module that it reaches through node_modules. Without them nothing says where a
-  // `typeof` is, so its parameters stay as the output has them. Main writes the typed file of this build too.
-  test("stays as the output has it in a module of another package of the workspace", async () => {
+  // The checker has no types of a module that it reaches through node_modules: the rule reads the syntax alone.
+  test("in a module of another package of the workspace", async () => {
     using dir = tempDir("build-api-dts-moved-default-workspace", {
       "app/tsconfig.json": JSON.stringify({
         compilerOptions: { ...JSON.parse(project["tsconfig.json"]).compilerOptions, jsx: "react-jsx" },
       }),
       "app/package.json": JSON.stringify({ name: "app", compilerOptions: { strict: true, jsx: "react-jsx" } }),
-      "app/src/index.tsx": `import { useState, useTotal } from "hooks";
-${useBeside}export function useAll(items: string[]): number {
-  return useTotal(items, 1) + useBeside(1, 2);
+      "app/src/index.tsx": `import { useTotal } from "hooks";
+export function useAll(items: string[]): number {
+  return useTotal(items);
 }
 `,
       "packages/hooks/package.json": JSON.stringify({
@@ -564,9 +568,39 @@ ${useBeside}export function useAll(items: string[]): number {
     expect(typed).toContain("return items.reduce((t1: number, item) => {");
     expect(parametersIn(typed)).toEqual({
       useState: "initial: T",
-      useTotal: "items: string[], t0: number",
-      useBeside: "t0?: number, t1?: number",
+      useTotal: "items: string[], t0?: number",
       useAll: "items: string[]",
+    });
+  });
+
+  // The rule reads the text that the compiler had, which is not the text on the disk here.
+  test("in a module that a plugin changes", async () => {
+    const typed = await typedFile(
+      {
+        "src/index.tsx": `import { useState } from "./state";
+export function useSigned(first: number = 1, second: typeof first = 2): number {
+  const [value] = useState(first);
+  return value + second;
+}
+${useBeside}`,
+      },
+      {
+        plugins: [
+          {
+            name: "banner",
+            setup(build) {
+              build.onLoad({ filter: /index\.tsx$/ }, async ({ path }) => ({
+                contents: "// a line that a plugin adds\n" + (await Bun.file(path).text()),
+                loader: "tsx",
+              }));
+            },
+          },
+        ],
+      },
+    );
+    expect(parametersIn(typed)).toMatchObject({
+      useSigned: expect.stringMatching(/^t0: number, t1: typeof /),
+      useBeside: "t0?: number, t1?: number",
     });
   });
 

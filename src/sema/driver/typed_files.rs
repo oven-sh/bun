@@ -229,39 +229,60 @@ fn names_used_as_values(modules: &[Option<Written<'_, '_>>]) -> FxHashSet<Atom> 
 
 fn defaulted_parameters(
     syntax: &Syntax<'_, '_>,
-    types: &ModuleTypes,
     used_as_values: &FxHashSet<Atom>,
 ) -> FxHashMap<u32, DefaultedParameter> {
     let file = syntax.file;
-    let start = |parameter: ParamId| file[file[parameter].pat].pos;
-    let has_default = |parameter: &ParamId| file[*parameter].default.is_some();
-    let queried: FxHashSet<u32> = types.locals.iter().map(|local| local.1).collect();
-    let declared = (file.fns.iter())
-        .filter(|function| function.kind == FnKind::Decl)
-        .map(|function| (function, function.name, function.name_pos));
+    let queries: Vec<(u32, Atom)> = (file.types.iter())
+        .filter_map(|ty| match ty.kind {
+            TypeNodeKind::Typeof { mut expr, .. } => loop {
+                match file.exprs.get(expr.idx())?.kind {
+                    ExprKind::Ident(name) => break Some((ty.pos, name)),
+                    ExprKind::Dot { obj, .. } => expr = obj,
+                    _ => break None,
+                }
+            },
+            _ => None,
+        })
+        .collect();
+    let name_of = |pattern: PatId| match file[pattern].kind {
+        PatKind::Ident(name) => Some(name),
+        _ => None,
+    };
+    let declared = file
+        .stmts
+        .iter()
+        .filter_map(|statement| match statement.kind {
+            StmtKind::Fn(function) => Some((&file[function], file[function].name, statement.loc)),
+            _ => None,
+        });
     let bound = file.var_decls.iter().filter_map(|declaration| {
-        let value = file.exprs.get(declaration.init.idx())?;
-        match (value.kind, file[declaration.pat].kind) {
-            (ExprKind::Fn(function), PatKind::Ident(name)) if declaration.ty.is_none() => {
-                Some((&file[function], name, file[declaration.pat].pos))
+        match file.exprs.get(declaration.init.idx())?.kind {
+            ExprKind::Fn(function) if declaration.ty.is_none() => {
+                Some((&file[function], name_of(declaration.pat)?, declaration.loc))
             }
             _ => None,
         }
     });
     let mut found = FxHashMap::default();
-    for (function, name, name_pos) in declared.chain(bound) {
+    for (function, name, span) in declared.chain(bound) {
+        let is_queried = |id: ParamId| {
+            let parameter = name_of(file[id].pat);
+            let inside = |at: u32| span.pos <= at && at < span.end;
+            file[id].default.is_some()
+                && (queries.iter()).any(|&(at, read)| inside(at) && Some(read) == parameter)
+        };
         // A call by its name takes a `?` as it takes a default value. A use as a value or under `typeof` reads a type, where they differ.
-        let is_observed = used_as_values.contains(&name)
-            || queried.contains(&name_pos)
-            || (function.params.iter()).any(|id| has_default(&id) && queried.contains(&start(id)));
-        if is_observed || !Syntax::has_javascript(function) {
+        let is_read = used_as_values.contains(&name)
+            || queries.iter().any(|query| query.1 == name)
+            || function.params.iter().any(is_queried);
+        if is_read || !Syntax::has_javascript(function) {
             continue;
         }
         let last_required = file.last_required_parameter(function.params);
         for (place, id) in function.params.iter().enumerate() {
-            if has_default(&id) && !file[id].flags.contains(Flags::OPTIONAL) {
+            if file[id].default.is_some() && !file[id].flags.contains(Flags::OPTIONAL) {
                 found.insert(
-                    start(id),
+                    file[file[id].pat].pos,
                     DefaultedParameter {
                         annotation: file[id].ty,
                         is_before_required: last_required.is_some_and(|last| place < last),
@@ -3207,14 +3228,9 @@ impl<'a> Transfer<'_, 'a, '_> {
                 };
                 let parameters = has_default.then(|| {
                     defaults_of.entry(source).or_insert_with(|| {
-                        // Without the types of this text, nothing says where a `typeof` is.
-                        let types =
-                            (module.types).filter(|types| types.text[..] == *module.syntax.text);
-                        types.map_or_else(FxHashMap::default, |types| {
-                            let used =
-                                used_as_values.get_or_insert_with(|| names_used_as_values(written));
-                            defaulted_parameters(&module.syntax, types, used)
-                        })
+                        let used =
+                            used_as_values.get_or_insert_with(|| names_used_as_values(written));
+                        defaulted_parameters(&module.syntax, used)
                     })
                 });
                 if let Some(&default) = parameters.and_then(|parameters| parameters.get(&key)) {

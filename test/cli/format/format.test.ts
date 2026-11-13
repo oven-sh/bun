@@ -2462,6 +2462,26 @@ describe.concurrent("bun fmt", () => {
         expect(await different({ "a.md": written }, args)).toEqual([]);
       });
     });
+
+    // https://github.com/oven-sh/bun/issues/48608
+    describe("keeps the whitespace in `[ ]` at the start of a list item, which decides whether it is a task", () => {
+      // Each row is the arguments, the text and Bun's output.
+      const rows = [
+        [["--prose-wrap=always", "--print-width=4"], "- [ ] a\n  ---\n", "- [ ]\n  a\n  ---\n"],
+        [["--prose-wrap=always", "--print-width=4"], "- [ ]\n", "- [ ]\n"],
+        [["--prose-wrap=always", "--print-width=4"], "- [ ] a\n", "- [ ] a\n"],
+        [["--prose-wrap=always"], "- [\n  ]\n", "- [\n  ]\n"],
+        [["--prose-wrap=never"], "- [\n  ]\n", "- [\n  ]\n"],
+        [["--prose-wrap=preserve"], "- [\n  ]\n", "- [\n  ]\n"],
+      ] as const;
+
+      test.each(rows)("%j: %j", async (args, before, after) => {
+        expect(rendered(after)).toBe(rendered(before));
+        const result = await format({ "a.md": before, "b.md": after }, [...args], { reads: ["a.md", "b.md"] });
+        expect(result.files).toEqual({ "a.md": after, "b.md": after });
+        expect(result.exitCode).toBe(0);
+      });
+    });
   });
 
   test("--prose-wrap=never doesn't add a line break to a YAML folded scalar that keeps its line breaks", async () => {

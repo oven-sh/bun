@@ -302,7 +302,7 @@ impl UpgradeCommand {
                     refresher.refresh();
 
                     if log.errors > 0 {
-                        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                        let _ = log.print(Output::error_writer());
                         Global::exit(1);
                     } else {
                         bun_core::pretty_errorln!(
@@ -323,7 +323,7 @@ impl UpgradeCommand {
                 refresher.root.end();
                 refresher.refresh();
 
-                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                let _ = log.print(Output::error_writer());
                 Global::exit(1);
             }
 

@@ -5524,6 +5524,10 @@ describe.concurrent("import cycles through a mocked module", () => {
       for (const [kind, mock] of Object.entries(mocks)) {
         if (only && !only.includes(kind)) continue;
         const hasFactory = kind !== "automock" && kind !== "spy";
+        // With two files per module, jest.mock() mocks `m0.mts` and `m0.ts`, and jest.requireActual() loads `m0.ts`. What
+        // `m0.ts` is the first to load gets `m0.mts` as it is on disk. Where the test file imports the mock first, that is
+        // the rest of the cycle: `m0.mts` runs ahead of it, and the module that imports "./m0" reads `m0.mts`, not the mock.
+        const readsTwin = twoFiles && kind === "requireActual" && entry === "m0";
         files[`${kind}-${entry}.test.ts`] = `
           import { expect, jest, test, vi } from "bun:test";
           import { order } from "./log";
@@ -5531,10 +5535,10 @@ describe.concurrent("import cycles through a mocked module", () => {
           ${mock}
           ${kind === "helper" ? `await import("./${entry}");` : `import "./${entry}";`}
           test("loads", async () => {
-            expect(order).toEqual(${JSON.stringify(order(hasFactory ? ["factory"] : []))});
+            expect(order).toEqual(${JSON.stringify([...(readsTwin ? ["m0"] : []), ...order(hasFactory ? ["factory"] : [])])});
             const mocked = await import("./m0");
             const importer = await import("./m${last}");
-            expect(importer.seesNext()).toEqual([mocked.name, mocked.fn()]);
+            expect(importer.seesNext()).toEqual(${readsTwin ? `["m0", "fn0"]` : "[mocked.name, mocked.fn()]"});
             expect([mocked.name, mocked.fn(), vi.isMockFunction(mocked.fn)]).toEqual(${
               hasFactory ? `["mock", "fn0", false]` : kind === "spy" ? `["m0", "fn0", true]` : `["m0", undefined, true]`
             });

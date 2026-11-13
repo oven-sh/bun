@@ -64,6 +64,8 @@ new!(pub BUN_CONFIG_DISABLE_ioctl_ficlonerange: boolean, "BUN_CONFIG_DISABLE_ioc
 //
 // It's unclear why this was done.
 new!(pub BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS: unsigned, "BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS", { default: 30 });
+// RFC 8305 §5 connection attempt delay; 0 dials the first four addresses at once instead.
+new!(pub BUN_CONFIG_CONNECT_ATTEMPT_DELAY_MS: unsigned, "BUN_CONFIG_CONNECT_ATTEMPT_DELAY_MS", { default: 250 });
 // Idle timeout for HTTP client sockets (fetch / `bun install`), in seconds.
 // The timer is armed when the socket opens and re-armed on every read/write;
 // if it fires the request fails with `error.Timeout`. Covers the TLS

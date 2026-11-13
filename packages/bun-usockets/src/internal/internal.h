@@ -194,6 +194,11 @@ extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_
 extern int Bun__addrinfo_cancel(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
 extern void Bun__addrinfo_freeRequest(struct addrinfo_request* addrinfo_req, int error);
 extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_request* addrinfo_req);
+/* BUN_CONFIG_CONNECT_ATTEMPT_DELAY_MS; 0 = dial the first four addresses at once. */
+extern int Bun__addrinfo_attemptDelayMs(void);
+/* The address that last connected through this cache entry: get returns 0 when none is recorded. */
+extern int Bun__addrinfo_getLastAddress(struct addrinfo_request* addrinfo_req, struct sockaddr_storage* out);
+extern void Bun__addrinfo_setLastAddress(struct addrinfo_request* addrinfo_req, const struct sockaddr_storage* addr);
 
 
 /* Loop related */
@@ -205,13 +210,17 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);
-#ifndef LIBUS_USE_LIBUV
-/* CLOCK_MONOTONIC in ns. The clock every deadline on the loop is measured
- * against, so anything comparing against one must read it and not another. */
+/* CLOCK_MONOTONIC (uv_hrtime on libuv) in ns: the clock the sweep and connect
+ * deadlines are measured against, so anything comparing against one must read it. */
 uint64_t us_internal_monotonic_ns(void);
+#ifndef LIBUS_USE_LIBUV
 long long us_internal_sweep_timeout_ns(struct us_loop_t *loop);
 void us_internal_sweep_if_due(struct us_loop_t *loop);
 #endif
+/* Wake the loop no later than `ns` to start a staggered connect attempt. */
+void us_internal_loop_arm_connect_deadline(struct us_loop_t *loop, long long ns);
+/* Start every staggered attempt that is due and re-arm for the next one. */
+void us_internal_connect_sweep(struct us_loop_t *loop);
 void us_internal_free_closed_sockets(us_loop_r loop);
 /* Defers closing `s` with `code` to us_internal_loop_post. */
 void us_internal_loop_close_unresumable_socket(struct us_loop_t *loop, struct us_socket_t *s, int code);
@@ -477,6 +486,17 @@ struct us_connecting_socket_t {
     uint16_t port;
     int error;
     struct addrinfo *addrinfo_head;
+    /* Staggered dial (RFC 8305 §5), only when attempt_delay_ms != 0: `lead` is
+     * dialed first, out of list order; `skip` then holds it so the cursor passes
+     * over it. next_attempt_ns is when the next address may start (0 = not armed). */
+    struct addrinfo *lead;
+    struct addrinfo *skip;
+    long long next_attempt_ns;
+    /* The loop's iteration_nr when a sweep found next_attempt_ns elapsed, or 0. */
+    size_t due_iteration;
+    uint16_t attempt_delay_ms;
+    /* Attempts opened and not yet failed. */
+    unsigned char pending_attempts;
     // this is used to track pending connecting sockets in the context
     struct us_connecting_socket_t* next_pending;
     struct us_connecting_socket_t* prev_pending;

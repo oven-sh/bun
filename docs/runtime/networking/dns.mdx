@@ -123,3 +123,15 @@ BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS=5 bun run my-script.ts
 #### Why is 30 seconds the default?
 
 The system API underneath (`getaddrinfo`) does not expose the TTL of a DNS entry, so Bun has to pick a number. We chose 30 seconds because it's long enough to see the benefits of caching and short enough to be unlikely to cause issues if a DNS entry changes. [Amazon Web Services recommends 5 seconds](https://docs.aws.amazon.com/sdk-for-java/v1/developer-guide/jvm-ttl-dns.html) for the Java Virtual Machine, though the JVM's default is to cache indefinitely.
+
+### Connecting to a name with several addresses
+
+When a name resolves to more than one address, Bun tries the addresses one at a time ([Happy Eyeballs, RFC 8305](https://www.rfc-editor.org/rfc/rfc8305)). Bun keeps the resolver's order and alternates between IPv6 and IPv4. This applies to `fetch`, `WebSocket`, `Bun.connect`, `Bun.SQL`, `RedisClient`, `S3Client` and `bun install`. `node:net` follows its `autoSelectFamily` option instead.
+
+Bun tries the next address as soon as an attempt fails, or after 250 ms without a connection. Earlier attempts keep going, up to six at a time, and Bun uses the first one that connects. While the name stays in the DNS cache, later connections start with the address that connected last.
+
+To change the delay, set `$BUN_CONFIG_CONNECT_ATTEMPT_DELAY_MS`. Set it to `0` to connect to the first four addresses at once and keep whichever answers first:
+
+```sh
+BUN_CONFIG_CONNECT_ATTEMPT_DELAY_MS=0 bun run my-script.ts
+```

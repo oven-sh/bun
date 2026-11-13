@@ -1850,6 +1850,13 @@ pub(crate) mod internal {
         })
     }
 
+    fn get_connect_attempt_delay_ms() -> c_int {
+        let ms = env_var::BUN_CONFIG_CONNECT_ATTEMPT_DELAY_MS
+            .get()
+            .unwrap_or(250);
+        c_int::try_from(ms).unwrap_or(c_int::MAX)
+    }
+
     // ───────────── Request ─────────────
 
     // The stack key borrows the caller's host string; `to_owned()` copies
@@ -1965,6 +1972,9 @@ pub(crate) mod internal {
 
         pub(crate) valid: bool,
 
+        /// The address that last connected through this entry; the staggered dial leads with it.
+        pub(crate) last_address: Option<SockaddrStorage>,
+
         #[cfg(target_os = "macos")]
         pub(crate) dns_sd: MacAsyncDNS,
     }
@@ -1979,6 +1989,7 @@ pub(crate) mod internal {
                 refcount,
                 created_at,
                 valid: true,
+                last_address: None,
                 #[cfg(target_os = "macos")]
                 dns_sd: MacAsyncDNS::default(),
             })
@@ -2334,7 +2345,7 @@ pub(crate) mod internal {
 
     // Pack getaddrinfo results into one allocation with address families
     // interleaved (RFC 8305 §4) so an unroutable family can never fill all
-    // CONCURRENT_CONNECTIONS parallel connect attempts. See #4938 / #33278.
+    // the pending connect attempts. See #4938 / #33278.
     fn process_results(info: *mut AddrInfo) -> Box<[ResultEntry]> {
         let mut count: usize = 0;
         let mut n_first: usize = 0;
@@ -3017,6 +3028,34 @@ pub(crate) mod internal {
     #[unsafe(no_mangle)]
     extern "C" fn Bun__addrinfo_getRequestResult(req: *mut Request) -> *mut RequestResult {
         get_request_result(req)
+    }
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__addrinfo_attemptDelayMs() -> c_int {
+        get_connect_attempt_delay_ms()
+    }
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__addrinfo_getLastAddress(
+        req: *mut Request,
+        out: *mut SockaddrStorage,
+    ) -> c_int {
+        let _guard = global_cache().lock();
+        // SAFETY: `req` is a live cache entry (the caller holds a ref) and `last_address` is only
+        // touched under the lock; `out` is the caller's storage for one sockaddr_storage.
+        unsafe {
+            match (*req).last_address {
+                Some(addr) => {
+                    *out = addr;
+                    1
+                }
+                None => 0,
+            }
+        }
+    }
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__addrinfo_setLastAddress(req: *mut Request, addr: *const SockaddrStorage) {
+        let _guard = global_cache().lock();
+        // SAFETY: as above; `addr` points at a sockaddr_storage for the duration of the call.
+        unsafe { (*req).last_address = Some(*addr) }
     }
     /// QUIC analogue of `Bun__addrinfo_set` — link-time export so `bun_http`
     /// (lower-tier crate) can register without a `bun_runtime` dep cycle.

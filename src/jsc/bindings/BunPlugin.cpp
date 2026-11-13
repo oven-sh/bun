@@ -4444,27 +4444,37 @@ static ModuleMocksThatLosePaths moduleMocksThatLosePathsTo(Zig::GlobalObject* gl
     return { loser(mock->importKey.get()), loser(mock->requireKey.get()) };
 }
 
-// Whether `moduleObject` holds what require() of a path gets of `mock` where nothing is loaded under the path: the result of the factory, or the `default` of a result
-// with `__esModule`. See commonJSExportsOfObjectModule() in ModuleLoader.cpp. Read without side effects: what only a getter or a Proxy could answer counts as missing.
-static bool holdsWhatRequireGotOfModuleMock(Zig::GlobalObject* globalObject, Bun::JSCommonJSModule* moduleObject, const JSModuleMock* mock)
+// What require() of a path gets of `mock` where nothing is loaded under the path: the result of the factory, or the `default` of a result with `__esModule`.
+// See commonJSExportsOfObjectModule() in ModuleLoader.cpp. Read without side effects: what only a getter or a Proxy could answer counts as missing. Empty until the factory has settled.
+static JSValue whatRequireGetsOfModuleMock(Zig::GlobalObject* globalObject, const JSModuleMock* mock)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* result = mock->state == JSModuleMock::State::Settled ? mock->result.get() : nullptr;
-    JSValue exports = moduleObject->getDirect(vm, Bun::builtinNames(vm).exportsPublicName());
-    if (!result || !exports)
-        return false;
+    if (!result)
+        return {};
     if (auto* commonJSModule = dynamicDowncast<Bun::JSCommonJSModule>(result))
-        return exports == commonJSModule->getDirect(vm, Bun::builtinNames(vm).exportsPublicName());
+        return commonJSModule->getDirect(vm, Bun::builtinNames(vm).exportsPublicName());
     auto valueOf = [&](JSC::PropertyName name) -> JSValue {
         JSC::PropertySlot slot(result, JSC::PropertySlot::InternalMethodType::VMInquiry, &vm);
         return result->getPropertySlot(globalObject, name, slot) && slot.isValue() ? slot.getValue(globalObject, name) : JSValue();
     };
     JSValue isESModule = valueOf(vm.propertyNames->__esModule);
-    RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, {});
     JSValue defaultValue = isESModule && isESModule.toBoolean(globalObject) ? valueOf(vm.propertyNames->defaultKeyword) : JSValue();
+    RETURN_IF_EXCEPTION(scope, {});
+    return defaultValue && !defaultValue.isUndefined() ? defaultValue : JSValue(result);
+}
+
+// Whether `moduleObject` holds that.
+static bool holdsWhatRequireGotOfModuleMock(Zig::GlobalObject* globalObject, Bun::JSCommonJSModule* moduleObject, const JSModuleMock* mock)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue exports = moduleObject->getDirect(vm, Bun::builtinNames(vm).exportsPublicName());
+    JSValue got = whatRequireGetsOfModuleMock(globalObject, mock);
     RETURN_IF_EXCEPTION(scope, false);
-    return exports == (defaultValue && !defaultValue.isUndefined() ? defaultValue : JSValue(result));
+    return exports && exports == got;
 }
 
 // `mock` has two paths and has taken them from `losers`. Its ES module is under the import path and its module object of require.cache under the require path: of those it has taken over what the losers saved.
@@ -7712,6 +7722,35 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__didBeginTestFile(Zig::GlobalObje
 #endif
 }
 
+// A preload that has required a mock of its own has left the module object that require() made of it in require.cache, under the path that require() loads for the mock.
+// A mock of a test file that took that path has put its own exports on it in place and saved nothing of it: under a mock that saved nothing, what is loaded is no original.
+// No test file has loaded it, so it stays for the next one, or comes back with giveBackPreloadModules(). `back` names the paths that the preload's mock has again:
+// with that path its module object gets its exports again, as its ES module gets them in giveLoadedModuleBackToPreloadModuleMock().
+// While no mock has had two paths, what a preload has required of a mock of its own stays as it is.
+static void giveModuleObjectBackToPreloadModuleMock(Zig::GlobalObject* globalObject, JSModuleMock* mock, PathsHeldByModuleMock back)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& plugins = globalObject->onLoadPlugins;
+    bool hasPathOfModuleObjectBack = mock->requireKey ? back.requirePath : back.importPath && plugins.hasHadModuleMockWithTwoPaths;
+    JSString* path = mock->keyForRequire();
+    if (!hasPathOfModuleObjectBack || plugins.testFileOfModule.get(path->tryGetValue().data))
+        return;
+    LoadedModule loaded;
+    findLoadedCommonJSModule(globalObject, path, loaded);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!loaded.commonJSModule)
+        return;
+    JSValue exports = whatRequireGetsOfModuleMock(globalObject, mock);
+    RETURN_IF_EXCEPTION(scope, );
+    auto& exportsName = Bun::builtinNames(vm).exportsPublicName();
+    JSValue held = loaded.commonJSModule->getDirect(vm, exportsName);
+    // It may hold the result of the factory itself instead: the preload's mock was laid over what require() had made of an earlier one, and patched that in place.
+    if (!exports || held == exports || held == JSValue(mock->result.get()))
+        return;
+    loaded.commonJSModule->putDirect(vm, exportsName, exports, 0);
+}
+
 extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoModuleMocksOfTestFile(Zig::GlobalObject* globalObject, bool nextLoadSharesModules)
 {
     auto& plugins = globalObject->onLoadPlugins;
@@ -7912,8 +7951,14 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
         }
 #endif
         appendMockedModule(evict, mock, back, !!mock->originalExports, !!mock->originalCommonJSExports);
-        if ((!mock->originalExports && !mock->originalCommonJSExports) || mock->state != JSModuleMock::State::Settled)
+        if (mock->state != JSModuleMock::State::Settled)
             continue;
+        if (!mock->originalExports && !mock->originalCommonJSExports) {
+            giveModuleObjectBackToPreloadModuleMock(globalObject, mock, back);
+            if (scope.exception()) [[unlikely]]
+                (void)scope.tryClearException();
+            continue;
+        }
         LoadedModule loaded = findLoadedModule(globalObject, mock);
         if (!scope.exception()) [[likely]]
             overrideLoadedModuleExports(globalObject, mock, loaded);

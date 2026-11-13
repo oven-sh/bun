@@ -593,7 +593,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
         windows: spawn_sync::WindowsOptions {
             // `init` takes the erased `*mut ()` event-loop pointer
             // directly, so unwrap it here.
-            loop_: EventLoopHandle::init(VirtualMachine::get().event_loop().cast()),
+            loop_: EventLoopHandle::init(VirtualMachine::get().event_loop_ptr()),
             ..Default::default()
         },
         ..Default::default()

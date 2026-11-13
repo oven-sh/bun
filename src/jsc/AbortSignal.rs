@@ -382,9 +382,6 @@ impl Timeout {
     fn dispatch(vm: *mut VirtualMachine, signal_ptr: *mut AbortSignal) {
         let _ = vm;
         let vm = VirtualMachine::get();
-        // RAII guard `exit`s on
-        // drop even if `signal` unwinds, and holds the raw VM-owned pointer so
-        // borrowck doesn't see two live `&mut EventLoop` across re-entrant JS.
         let _guard = vm.enter_event_loop_scope();
         // `AbortSignal` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
         // centralised non-null deref proof. `signalAbort()` takes

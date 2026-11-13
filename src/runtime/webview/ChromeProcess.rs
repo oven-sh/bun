@@ -493,7 +493,7 @@ fn spawn(
             bstr::BStr::new(chrome.as_bytes())
         );
 
-        let event_loop = EventLoopHandle::init(vm.event_loop().cast());
+        let event_loop = EventLoopHandle::init(vm.event_loop_ptr());
         let mut endpoints = Endpoints::create(event_loop)?;
 
         // Minimal flags. --remote-debugging-pipe is the one that matters;

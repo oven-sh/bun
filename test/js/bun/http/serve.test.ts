@@ -5416,7 +5416,7 @@ describe("requests pipelined in one read", () => {
   const postJson = `POST / HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 7\r\n\r\n{"a":1}`;
   // More awaits than the handler's promise needs to reach the server, so that the
   // response is complete when the last one resumes.
-  const trailingWork = (work: string) => `
+  const trailingWork = (work: string, response = `new Response("accepted", { status: 202 })`) => `
     async function trailing() {
       for (let i = 0; i < 4; i++) await null;
       ${work}
@@ -5427,18 +5427,27 @@ describe("requests pipelined in one read", () => {
       async fetch(req) {
         await req.json();
         trailing();
-        return new Response("accepted", { status: 202 });
+        return ${response};
       },
     });
   `;
 
-  it("sends a response before the JavaScript that runs after it", async () => {
+  // A response without a body ends on another path than a response with one.
+  it.each([
+    { name: "a response", response: undefined, status: "HTTP/1.1 202 Accepted", body: "accepted" },
+    {
+      name: "a response without a body",
+      response: `new Response(null, { status: 304 })`,
+      status: "HTTP/1.1 304 Not Modified",
+      body: "",
+    },
+  ])("sends $name before the JavaScript that runs after it", async ({ response, status, body }) => {
     // The trailing work blocks the server's thread until the client has the
     // response, so the server runs in a worker.
     using dir = tempDir("serve-response-before-trailing-js", {
       "server.mjs": `
         import { parentPort, workerData as received } from "node:worker_threads";
-        ${trailingWork(`parentPort.postMessage(Atomics.wait(received, 0, 0, 2000) === "timed-out" ? "timed-out" : "released");`)}
+        ${trailingWork(`parentPort.postMessage(Atomics.wait(received, 0, 0, 2000) === "timed-out" ? "timed-out" : "released");`, response)}
         parentPort.postMessage(server.port);
       `,
     });
@@ -5448,14 +5457,14 @@ describe("requests pipelined in one read", () => {
       const messages = on(worker, "message");
       const [port] = (await messages.next()).value!;
       const reply = await exchange(plain(port), postJson, reply => {
-        if (!reply.endsWith("accepted")) return false;
+        if (!reply.endsWith(body || "\r\n\r\n")) return false;
         Atomics.store(received, 0, 1);
         Atomics.notify(received, 0);
         return true;
       });
       const [outcome] = (await messages.next()).value!;
       expect({ responses: parseResponses(reply), outcome }).toEqual({
-        responses: [{ status: "HTTP/1.1 202 Accepted", body: "accepted" }],
+        responses: [{ status, body }],
         outcome: "released",
       });
     } finally {

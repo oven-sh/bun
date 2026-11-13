@@ -1591,7 +1591,7 @@ describe.concurrent("a response without a body closes a connection that is marke
   const statusLine = (reply: string) => reply.slice(0, reply.indexOf("\r\n"));
 
   // `reply` resolves with what the server sent once the server ends the connection. The client never ends it
-  // first and idleTimeout: 255 keeps the idle sweep away, so a connection the server leaves open times out.
+  // first and idleTimeout: 0 turns the idle sweep off, so nothing else ends a connection the server leaves open.
   function untilServerCloses(port: number, request: string, useTls = false) {
     const { promise: reply, resolve, reject } = Promise.withResolvers<string>();
     let received = "";
@@ -1620,8 +1620,9 @@ describe.concurrent("a response without a body closes a connection that is marke
     return { reply, [Symbol.dispose]: () => void socket.then(socket => socket.end(), reject) };
   }
 
-  // Four responses complete in one microtask drain, each inside the drain of the one before it, so all but
-  // the last two lose their cork slot to a later one.
+  // The four responses complete in one microtask drain, each inside the completion of the one before it:
+  // every body is rejected while all four requests are still pending. The first two responses lose their cork
+  // slot to the last two.
   test.each([
     { mark: "Connection: close on the request", request: upload("POST / HTTP/1.1", "Connection: close\r\n") },
     { mark: "an HTTP/1.0 request", request: upload("POST / HTTP/1.0") },
@@ -1640,13 +1641,15 @@ describe.concurrent("a response without a body closes a connection that is marke
     const concurrent = 4;
     const allStarted = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
+    const pendingWhenBodyRejected: number[] = [];
     let started = 0;
     using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
-      idleTimeout: 255,
+      idleTimeout: 0,
       tls: useTls ? tls : undefined,
-      async fetch() {
+      async fetch(req, server) {
+        req.text().catch(() => void pendingWhenBodyRejected.push(server.pendingRequests));
         if (++started === concurrent) allStarted.resolve();
         await release.promise;
         return new Response(null, { status: 304, headers });
@@ -1658,23 +1661,26 @@ describe.concurrent("a response without a body closes a connection that is marke
       () => clients.use(untilServerCloses(server.port, request, useTls)).reply,
     );
     await Promise.race([allStarted.promise, ...replies]);
+    // Leaves the read that delivered the last request. A response that completes in that read does not nest.
+    await new Promise(resolve => setImmediate(resolve));
     const stopped = stop ? server.stop() : undefined;
     release.resolve();
 
-    expect((await Promise.all(replies)).map(statusLine)).toEqual(
-      Array.from({ length: concurrent }, () => "HTTP/1.1 304 Not Modified"),
-    );
+    expect({ status: (await Promise.all(replies)).map(statusLine), pendingWhenBodyRejected }).toEqual({
+      status: Array.from({ length: concurrent }, () => "HTTP/1.1 304 Not Modified"),
+      pendingWhenBodyRejected: Array.from({ length: concurrent }, () => concurrent),
+    });
     await stopped;
   });
 
   test("after two corked WebSockets took its cork slot", async () => {
     const webSockets: ServerWebSocket<unknown>[] = [];
     const bothOpen = Promise.withResolvers<void>();
-    let tookSlot = false;
+    let pendingWhenCorked = -1;
     using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
-      idleTimeout: 255,
+      idleTimeout: 0,
       websocket: {
         open(ws) {
           if (webSockets.push(ws) === 2) bothOpen.resolve();
@@ -1688,15 +1694,17 @@ describe.concurrent("a response without a body closes a connection that is marke
         }
         const [first, second] = webSockets;
         req.text().catch(() => {
+          // Still 1: this runs while the response completes, before the server looks at its connection again.
+          pendingWhenCorked = server.pendingRequests;
           first.cork(() => {
             first.send("a");
-            // Both cork slots hold data now, so this cork() sends the least recently used one: the response's.
+            // If the response still holds a cork slot, both slots hold data now, and this cork() sends the
+            // least recently used one: the response's.
             second.cork(() => second.send("b"));
           });
-          tookSlot = true;
         });
         // Leaves the read that delivered the request, so that the response gets a cork slot of its own.
-        await Bun.sleep(0);
+        await new Promise(resolve => setImmediate(resolve));
         return new Response(null, { status: 304 });
       },
     });
@@ -1709,9 +1717,9 @@ describe.concurrent("a response without a body closes a connection that is marke
     await bothOpen.promise;
 
     const request = clients.use(untilServerCloses(server.port, upload("POST / HTTP/1.1", "Connection: close\r\n")));
-    expect({ status: statusLine(await request.reply), tookSlot }).toEqual({
+    expect({ status: statusLine(await request.reply), pendingWhenCorked }).toEqual({
       status: "HTTP/1.1 304 Not Modified",
-      tookSlot: true,
+      pendingWhenCorked: 1,
     });
   });
 
@@ -1719,12 +1727,12 @@ describe.concurrent("a response without a body closes a connection that is marke
     const streams: ReadableStreamDirectController[] = [];
     const bothStreaming = Promise.withResolvers<void>();
     const finish = Promise.withResolvers<void>();
-    let tookSlot = false;
+    let pendingWhenCorked = -1;
     using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
-      idleTimeout: 255,
-      async fetch(req) {
+      idleTimeout: 0,
+      async fetch(req, server) {
         if (new URL(req.url).pathname === "/stream") {
           return new Response(
             new ReadableStream({
@@ -1737,14 +1745,15 @@ describe.concurrent("a response without a body closes a connection that is marke
           );
         }
         req.text().catch(() => {
+          // Still 3, the two streams and this request: this runs while the response completes.
+          pendingWhenCorked = server.pendingRequests;
           // A write smaller than the cork buffer corks its socket until the event loop flushes it.
           for (const stream of streams) {
             stream.write("x");
             stream.flush();
           }
-          tookSlot = true;
         });
-        await Bun.sleep(0);
+        await new Promise(resolve => setImmediate(resolve));
         return new Response(null, { status: 304 });
       },
     });
@@ -1757,9 +1766,9 @@ describe.concurrent("a response without a body closes a connection that is marke
     await bothStreaming.promise;
 
     const request = clients.use(untilServerCloses(server.port, upload("POST / HTTP/1.1", "Connection: close\r\n")));
-    expect({ status: statusLine(await request.reply), tookSlot }).toEqual({
+    expect({ status: statusLine(await request.reply), pendingWhenCorked }).toEqual({
       status: "HTTP/1.1 304 Not Modified",
-      tookSlot: true,
+      pendingWhenCorked: 3,
     });
   });
 });

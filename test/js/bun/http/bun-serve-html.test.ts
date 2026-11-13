@@ -1306,7 +1306,7 @@ describe("requests while a dev server bundle is in flight", () => {
 });
 
 // The first request to an html route waits for the bundle and is answered from an event-loop task, outside the
-// read that delivered it. Both answers here end without a body on a connection that has to close.
+// read that delivered it. Each answer here ends without a body on a connection that has to close.
 describe("the request that waited for an html route's bundle gets its connection closed", () => {
   const page = (script: string) =>
     `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="${script}"></script></body></html>`;
@@ -1318,20 +1318,27 @@ describe("the request that waited for an html route's bundle gets its connection
       port: 0,
       hostname: "127.0.0.1",
       development: process.env.DEVELOPMENT === "true",
-      idleTimeout: 255,
       routes: { "/": html },
-      fetch: () => new Response("fetch"),
+      fetch: () => new Response("barrier"),
     });
-    // Resolves when the server ends the connection. The client never ends it first.
-    const { promise: reply, resolve, reject } = Promise.withResolvers();
+    const head = Promise.withResolvers();
     let received = "";
+    let ended = false;
     // The dev server only answers requests for its own host.
     const request = process.env.REQUEST.replace("HOST", "127.0.0.1:" + server.port);
     const socket = net.connect(server.port, "127.0.0.1", () => socket.write(request));
-    socket.on("data", chunk => (received += chunk.toString("latin1")));
-    socket.on("error", reject);
-    socket.on("end", () => resolve(received));
-    console.log((await reply).split("\\r\\n")[0]);
+    socket.on("data", chunk => {
+      received += chunk.toString("latin1");
+      if (received.includes("\\r\\n\\r\\n")) head.resolve();
+    });
+    socket.on("error", head.reject);
+    socket.on("end", () => (ended = true));
+    await head.promise;
+    // The server left the task that answered the request before it read this one, so its FIN is here by now.
+    // Without the barrier the test would wait for the idle timeout, which also closes the connection.
+    await (await fetch(new URL("/barrier", server.url))).text();
+    console.log(JSON.stringify({ status: received.split("\\r\\n")[0], ended }));
+    socket.destroy();
   `;
 
   test.concurrent.each([
@@ -1350,10 +1357,21 @@ describe("the request that waited for an html route's bundle gets its connection
       },
       status: "HTTP/1.1 405 Method Not Allowed",
     },
+    {
+      answer: "the 500 of the dev server after its plugins failed to load",
+      files: {
+        "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+        "plugin.ts": `throw new Error("plugin failed on purpose");`,
+        "index.html": page("./app.ts"),
+        "app.ts": `console.log("app");`,
+      },
+      env: { DEVELOPMENT: "true", REQUEST: "GET / HTTP/1.1\r\nHost: HOST\r\n\r\n" },
+      status: "HTTP/1.1 500 Internal Server Error",
+    },
   ])("$answer", async ({ files, env, status }) => {
     using dir = tempDir("bun-serve-html-bodyless-close", { ...files, "serve.ts": serve });
     const { stdout, stderr, exitCode } = await runServeFixture(dir, env);
-    expect({ stdout, exitCode }, stderr).toEqual({ stdout: status, exitCode: 0 });
+    expect({ stdout, exitCode }, stderr).toEqual({ stdout: JSON.stringify({ status, ended: true }), exitCode: 0 });
   });
 });
 

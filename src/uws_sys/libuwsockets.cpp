@@ -42,29 +42,6 @@ __attribute__((always_inline)) static inline auto withWebSocket(int ssl, uws_web
   return fn((TCPWebSocket *)ws);
 }
 
-/* Finishes the head of a response that sends no body bytes. */
-template <bool SSL>
-static void endHeadWithoutBody(uWS::HttpResponse<SSL> *uwsRes, bool close_connection)
-{
-  auto *data = uwsRes->getHttpResponseData();
-  /* After write()/flushHeaders() or an earlier end terminated the header section, header bytes would land inside the body (node:http res.destroy() mid-response). */
-  bool headers_open = !(data->state & (uWS::HttpResponseData<SSL>::HTTP_WRITE_CALLED | uWS::HttpResponseData<SSL>::HTTP_END_CALLED));
-  if (close_connection)
-  {
-    /* The header is advisory, as in internalEnd(): HTTP_CONNECTION_CLOSE is what makes the close gates tear the connection down. */
-    if (headers_open && !(data->state & uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE))
-    {
-      uwsRes->writeHeader("Connection", "close");
-    }
-    data->state |= uWS::HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
-  }
-  if (headers_open)
-  {
-    // Some HTTP clients require the complete "<header>\r\n\r\n" to be sent. If not, they may throw a ConnectionError.
-    uwsRes->uWS::template AsyncSocket<SSL>::write("\r\n", 2);
-  }
-}
-
 /* upgradeContext and id are only passed to behavior.upgrade */
 template <bool SSL>
 static auto makeBehavior(const uws_socket_behavior_t &behavior, void *upgradeContext = nullptr, size_t id = 0)
@@ -1008,11 +985,12 @@ extern "C"
       uwsRes->resetTimeout();
     }
   }
-  /* Completion gate for uws_res_end_sendfile, the one end that does not gate
-   * itself: closes the socket when the connection is marked to close
-   * (Connection: close, peer FIN, close-when-idle), the response is complete,
-   * and every outgoing byte has been flushed. Corked responses are left to the
-   * cork() wrapper's own post-uncork gate. */
+  /* Completion gate for response-end paths that bypass internalEnd (the
+   * sendfile path, uws_res_end_without_body): closes the socket when the
+   * connection is marked to close (Connection: close, peer FIN,
+   * close-when-idle), the response is complete, and every outgoing byte has
+   * been flushed. It uncorks first, as internalEnd does: the cork() wrapper's
+   * own gate is skipped when another socket's cork() took this response's slot. */
   void uws_res_close_if_done_and_marked(int ssl, uws_res_r res)
   {
     /* A callback upstream of this gate may already have closed the socket;
@@ -1024,17 +1002,19 @@ extern "C"
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      if (!uwsRes->AsyncSocket<true>::isCorked())
+      auto *data = uwsRes->getHttpResponseData();
+      if (!(data->state & uWS::HttpResponseData<true>::HTTP_RESPONSE_PENDING) && uwsRes->uncorkCompletedResponse())
       {
-        uwsRes->closeIfDoneAndMarked(uwsRes->getHttpResponseData());
+        uwsRes->closeIfDoneAndMarked(data);
       }
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      if (!uwsRes->AsyncSocket<false>::isCorked())
+      auto *data = uwsRes->getHttpResponseData();
+      if (!(data->state & uWS::HttpResponseData<false>::HTTP_RESPONSE_PENDING) && uwsRes->uncorkCompletedResponse())
       {
-        uwsRes->closeIfDoneAndMarked(uwsRes->getHttpResponseData());
+        uwsRes->closeIfDoneAndMarked(data);
       }
     }
   }
@@ -1059,26 +1039,63 @@ extern "C"
 
   void uws_res_end_without_body(int ssl, uws_res_r res, bool close_connection)
   {
-    withSSL(ssl, [&](auto isSSL) {
-      auto *uwsRes = (uWS::HttpResponse<decltype(isSSL)::value> *)res;
-      endHeadWithoutBody(uwsRes, close_connection);
-      /* Like end(): this sends the response and can close the socket before it returns. */
-      uwsRes->finishResponseInCorkBuffer(0);
-    });
-  }
-
-  /* uws_res_end_without_body(res, true) for node:http res.destroy(), which drops what is still corked and closes the socket itself: no uncork, no close gate. */
-  void uws_res_abandon(int ssl, uws_res_r res)
-  {
-    withSSL(ssl, [&](auto isSSL) {
-      constexpr bool SSL = decltype(isSSL)::value;
-      auto *uwsRes = (uWS::HttpResponse<SSL> *)res;
-      endHeadWithoutBody(uwsRes, true);
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       auto *data = uwsRes->getHttpResponseData();
-      data->state |= uWS::HttpResponseData<SSL>::HTTP_END_CALLED;
+      /* Once write()/flushHeaders() (HTTP_WRITE_CALLED) or an earlier end
+       * (HTTP_END_CALLED) terminated the header section, header bytes written
+       * here would land inside the body (node:http res.destroy() mid-response
+       * ends up here). Setting HTTP_CONNECTION_CLOSE is what makes the close
+       * gates tear the connection down; the header itself is only advisory,
+       * same as in internalEnd(). */
+      bool headers_open = !(data->state & (uWS::HttpResponseData<true>::HTTP_WRITE_CALLED | uWS::HttpResponseData<true>::HTTP_END_CALLED));
+      if (close_connection)
+      {
+        if (headers_open && !(data->state & uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE))
+        {
+          uwsRes->writeHeader("Connection", "close");
+        }
+        data->state |= uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE;
+      }
+      if (headers_open)
+      {
+        uwsRes->AsyncSocket<true>::write("\r\n", 2);
+      }
+      data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
-    });
+      /* No close gate here: callers (DevServer/HTMLBundle error paths) keep
+       * using the response after this returns, so closing inside this call
+       * would destruct the ext under them. A caller that is not inside a uWS
+       * request handler runs uws_res_close_if_done_and_marked itself once it
+       * is done with the response. onData gates the socket it is parsing. */
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      auto *data = uwsRes->getHttpResponseData();
+      /* See the SSL arm above. */
+      bool headers_open = !(data->state & (uWS::HttpResponseData<false>::HTTP_WRITE_CALLED | uWS::HttpResponseData<false>::HTTP_END_CALLED));
+      if (close_connection)
+      {
+        if (headers_open && !(data->state & uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE))
+        {
+          uwsRes->writeHeader("Connection", "close");
+        }
+        data->state |= uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE;
+      }
+      if (headers_open)
+      {
+        // Some HTTP clients require the complete "<header>\r\n\r\n" to be sent.
+        // If not, they may throw a ConnectionError.
+        uwsRes->AsyncSocket<false>::write("\r\n", 2);
+      }
+      data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
+      data->markDone(uwsRes);
+      uwsRes->resetTimeout();
+      /* No close gate here; see the SSL arm above. */
+    }
   }
 
   bool uws_res_write(int ssl, uws_res_r res, const char *data, size_t *length) nonnull_fn_decl;

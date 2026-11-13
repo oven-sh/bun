@@ -286,14 +286,8 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
-    /// Like `end`, this sends the response and can close the socket before it returns.
     pub fn end_without_body(&mut self, close_connection: bool) {
         c::uws_res_end_without_body(Self::ssl_flag(), self.as_raw(), close_connection)
-    }
-
-    /// `end_without_body(true)` for node:http `res.destroy()`: no uncork and no close gate.
-    pub(crate) fn abandon(&mut self) {
-        c::uws_res_abandon(Self::ssl_flag(), self.as_raw())
     }
 
     pub(crate) fn end_send_file(&mut self, write_offset: u64, close_connection: bool) {
@@ -306,8 +300,9 @@ impl<const SSL: bool> Response<SSL> {
     }
 
     /// Completion gate for end paths that bypass `internalEnd` (the sendfile
-    /// path): closes the socket when the connection is marked to close, the
-    /// response is complete, and every outgoing byte has been flushed.
+    /// path, `end_without_body`): uncorks as `end` does, then closes the socket
+    /// when the connection is marked to close, the response is complete, and
+    /// every outgoing byte has been flushed.
     pub(crate) fn close_if_done_and_marked(&mut self) {
         c::uws_res_close_if_done_and_marked(Self::ssl_flag(), self.as_raw())
     }
@@ -829,7 +824,7 @@ impl AnyResponse {
     }
 
     /// Completion gate for end paths that bypass `internalEnd` (the sendfile
-    /// path); see `Response::close_if_done_and_marked`.
+    /// path, `end_without_body`); see `Response::close_if_done_and_marked`.
     pub fn close_if_done_and_marked(self) {
         any_dispatch!(self, |r| r.close_if_done_and_marked())
     }
@@ -972,16 +967,6 @@ impl AnyResponse {
 
     pub fn end_without_body(self, close_connection: bool) {
         any_dispatch!(self, |r| r.end_without_body(close_connection))
-    }
-
-    /// HTTP/1 only: an HTTP/2 or HTTP/3 stream ends as `end_without_body(true)` does.
-    pub fn abandon(self) {
-        match self {
-            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).abandon(),
-            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).abandon(),
-            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).end_without_body(true),
-            AnyResponse::H2(ptr) => H2Response::as_handle(ptr).end_without_body(true),
-        }
     }
 
     /// HTTP/1 only: the handlers of an HTTP/2 or HTTP/3 stream belong to one response.
@@ -1385,7 +1370,6 @@ pub mod c {
             res: &mut uws_res,
             close_connection: bool,
         );
-        pub(crate) safe fn uws_res_abandon(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_end_sendfile(
             ssl: i32,
             res: &mut uws_res,

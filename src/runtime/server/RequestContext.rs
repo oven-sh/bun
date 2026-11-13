@@ -1335,6 +1335,11 @@ where
             self.reclaim_promise_cell();
             // SAFETY: FFI handle
             resp.end_without_body(close_connection);
+            // Outside the read that delivered the request, no parser gate runs
+            // the close check for Connection: close or a graceful-stop mark.
+            // The shim sends and gates here, before the drain below can let
+            // another socket take this response's cork slot.
+            resp.close_if_done_and_marked();
             // end_request_streaming_and_drain() must run after the last
             // `resp` access: its drain_microtasks() can re-enter lsquic (H3)
             // and free the stream out from under the local `resp` copy.

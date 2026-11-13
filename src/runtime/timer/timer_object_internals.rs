@@ -408,9 +408,8 @@ impl TimerObjectInternals {
         s.set_enable_keeping_event_loop_alive(vm, false);
         timer.ensure_still_alive();
 
-        // SAFETY: `vm` is live; `event_loop()` returns `*mut` to the embedded
-        // EventLoop. Re-entrancy is permitted by the raw-ptr contract above.
-        unsafe { (*(*vm).event_loop()).enter() };
+        // SAFETY: `vm` is live per fn contract.
+        unsafe { &*vm }.event_loop().enter();
         let callback =
             JSImmediate::callback_get_cached(timer).expect("ImmediateObject callback slot");
         let arguments =
@@ -445,8 +444,11 @@ impl TimerObjectInternals {
         };
         // --- after this point, the timer is no longer guaranteed to be alive ---
 
-        // SAFETY: `vm` is live; see `enter()` note above.
-        if unsafe { (*(*vm).event_loop()).exit_maybe_drain_microtasks(!exception_thrown) }.is_err()
+        // SAFETY: `vm` is live per fn contract.
+        let event_loop = unsafe { &*vm }.event_loop();
+        if event_loop
+            .exit_maybe_drain_microtasks(!exception_thrown)
+            .is_err()
         {
             return true;
         }
@@ -573,9 +575,8 @@ impl TimerObjectInternals {
         let timers = timer_all();
         let fake_clock = timers.fake_timers.installs();
 
-        // SAFETY: `vm` is live; `event_loop()` returns `*mut` to the embedded
-        // EventLoop. Re-entrancy is permitted by the raw-ptr contract above.
-        unsafe { (*(*vm).event_loop()).enter() };
+        // SAFETY: `vm` is live per fn contract.
+        unsafe { &*vm }.event_loop().enter();
         {
             // Ensure it stays alive for this scope.
             s.ref_();
@@ -694,8 +695,8 @@ impl TimerObjectInternals {
         }
         // --- after this point, the timer is no longer guaranteed to be alive ---
 
-        // SAFETY: `vm` is live; see `enter()` note above.
-        unsafe { (*(*vm).event_loop()).exit() };
+        // SAFETY: `vm` is live per fn contract.
+        unsafe { &*vm }.event_loop().exit();
     }
 
     /// # Safety

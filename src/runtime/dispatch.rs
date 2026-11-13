@@ -183,7 +183,7 @@ pub(crate) enum RunTaskResult {
 #[inline(never)]
 pub(crate) fn run_task(
     task: Task,
-    el: &mut EventLoop,
+    el: &EventLoop,
     vm: &mut VirtualMachine,
     global: &JSGlobalObject,
 ) -> JsResult<RunTaskResult> {
@@ -508,7 +508,7 @@ pub(crate) fn run_task(
         #[cfg(windows)]
         task_tag::CopyFileWindowsMkdirp => feature_arm!(
             [Bodies],
-            |copy: crate::webcore::blob::copy_file::CopyFileWindowsMkdirp<'_>| {
+            |copy: crate::webcore::blob::copy_file::CopyFileWindowsMkdirp| {
                 // SAFETY: the live copy `on_mkdirp_complete_concurrent` posted.
                 unsafe { crate::webcore::blob::copy_file::CopyFileWindowsMkdirp::run(copy) };
             }
@@ -645,12 +645,12 @@ pub(crate) fn run_task(
             [RuntimeTranspiler],
             (
                 store: *mut RuntimeTranspilerStore = cast_ptr!(RuntimeTranspilerStore),
-                el: &mut EventLoop = el,
+                el: &EventLoop = el,
                 global: &JSGlobalObject = global,
                 vm: &mut VirtualMachine = vm,
             ) {
                 // SAFETY: §Dispatch — tag identifies pointee; live for this dispatch.
-                unsafe { &mut *store }.run_from_js_thread(el.into(), global, vm.into());
+                unsafe { &mut *store }.run_from_js_thread(el, global, vm.into());
             }
         ),
 
@@ -892,13 +892,11 @@ const _: () = assert!(
 // ────────────────────────────────────────────────────────────────────────────
 
 pub(crate) fn tick_queue_with_count(
-    el: &mut EventLoop,
+    el: &EventLoop,
     vm: &mut VirtualMachine,
     counter: &mut u32,
 ) -> Result<(), Stopped> {
-    // SAFETY: `el.global` is set by VM init before the first tick; live for
-    // the duration of the drain loop.
-    let global: &JSGlobalObject = unsafe { el.global.expect("EventLoop.global unset").as_ref() };
+    let global = el.global_ref();
     let global_vm = global.vm();
 
     while let Some(task) = el.next_task() {
@@ -940,7 +938,6 @@ pub(crate) fn tick_queue_with_count(
         }
         el.drain_microtasks_with_global(global, global_vm)?;
     }
-    el.tasks.reset_head_if_empty();
     Ok(())
 }
 
@@ -1619,17 +1616,15 @@ pub(crate) unsafe fn __bun_js_timer_epoch(
 /// this is the isolated loop, **not** `vm.event_loop()`.
 ///
 /// # Safety
-/// `el` and `vm` must point at live `EventLoop`/`VirtualMachine` instances
-/// with no other `&mut` held across this call.
+/// `vm` must point at the live `VirtualMachine`, with no other `&mut` held across this call.
 #[unsafe(no_mangle)]
 unsafe fn __bun_tick_queue_with_count(
-    el: *mut EventLoop,
+    el: &EventLoop,
     vm: *mut bun_jsc::virtual_machine::VirtualMachine,
     counter: &mut u32,
 ) -> Result<(), Stopped> {
     // SAFETY: per fn contract.
-    let (el, vm_ref) = unsafe { (&mut *el, &mut *vm) };
-    tick_queue_with_count(el, vm_ref, counter)
+    tick_queue_with_count(el, unsafe { &mut *vm }, counter)
 }
 
 // (former duplicate `__bun_run_tasks` removed r6 — `bun_jsc::task::run_tasks`
@@ -1858,7 +1853,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             #[cfg(windows)]
             release_in!(
                 [Bodies],
-                crate::webcore::blob::copy_file::CopyFileWindowsMkdirp<'_>
+                crate::webcore::blob::copy_file::CopyFileWindowsMkdirp
             );
             #[cfg(not(windows))]
             unreachable!("windows-only tag");

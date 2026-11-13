@@ -1360,7 +1360,7 @@ impl BunTest {
         // SAFETY: `this_strong` keeps the cell alive and in place for the whole call.
         let on_stack = unsafe { OnStack::enter(&raw const (*this).execution.on_stack, &cfg_data) };
         let result: JSValue = match vm
-            .event_loop_mut()
+            .event_loop()
             .run_callback_with_result_and_forcefully_drain_microtasks(
                 vm.test_isolation_state.file_context,
                 cfg_callback,

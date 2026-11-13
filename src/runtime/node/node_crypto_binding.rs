@@ -140,7 +140,7 @@ macro_rules! extern_crypto_job {
                     // JS; free the ctx first, then invoke.
                     drop(this);
                     produced?;
-                    global.bun_vm().event_loop_mut().run_callback(
+                    global.bun_vm().event_loop().run_callback(
                         bun_event_loop::ContextId::NONE,
                         callback.get(),
                         global,
@@ -265,7 +265,7 @@ impl JobContext for RandomFillJob {
                 args = [error.to_js(), JSValue::UNDEFINED];
             }
         }
-        global.bun_vm().event_loop_mut().run_callback(
+        global.bun_vm().event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             js.callback.get(),
             global,
@@ -833,7 +833,7 @@ impl JobContext for ScryptJob {
 
     fn then(this: Self, js: ScryptJs, cx: &JsThread<'_>) -> JsResult<()> {
         let global = cx.global();
-        let event_loop = global.bun_vm().event_loop_mut();
+        let event_loop = global.bun_vm().event_loop();
         let callback = js.callback.get();
 
         if let Some(err) = this.err {
@@ -1165,7 +1165,7 @@ impl JobContext for Argon2<Vec<u8>> {
 
     fn then(mut this: Self, js: Argon2Js, cx: &JsThread<'_>) -> JsResult<()> {
         let global = cx.global();
-        let event_loop = global.bun_vm().event_loop_mut();
+        let event_loop = global.bun_vm().event_loop();
         let callback = js.callback.get();
         if this.failed {
             let exception = global.create_error_instance(format_args!("Argon2 derivation failed"));

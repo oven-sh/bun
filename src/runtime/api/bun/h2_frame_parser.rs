@@ -669,7 +669,7 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return false;
         }
-        self.vm.event_loop_ref().run_callback(
+        self.vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             callback,
             &self.global(),
@@ -686,7 +686,7 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return false;
         }
-        self.vm.event_loop_ref().run_callback(
+        self.vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             callback,
             &self.global(),
@@ -708,7 +708,7 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return JSValue::ZERO;
         }
-        self.vm.event_loop_ref().run_callback_with_result(
+        self.vm.event_loop().run_callback_with_result(
             bun_event_loop::ContextId::NONE,
             callback,
             &self.global(),
@@ -2948,7 +2948,7 @@ impl H2FrameParser {
         let found_existing = self
             .global_this
             .bun_vm()
-            .event_loop_mut()
+            .event_loop()
             .deferred_tasks
             .post_task(ctx, on_auto_flush_trampoline);
         debug_assert!(!found_existing);
@@ -2968,7 +2968,7 @@ impl H2FrameParser {
         let removed = self
             .global_this
             .bun_vm()
-            .event_loop_mut()
+            .event_loop()
             .deferred_tasks
             .unregister_task(ctx);
         debug_assert!(removed);
@@ -3072,7 +3072,7 @@ impl H2FrameParser {
         if self.pending_header_compression_error.get() {
             // Keep the pending latch set across dispatch+flush: re-entrant detach() ->
             // uncork()/unregister_auto_flush() must early-return at the guard instead of
-            // mutating the task map run() iterates (aliasing UB). Cleared once back here.
+            // mutating the task map run() iterates. Cleared once back here.
             self.dispatch_with_2_extra(
                 js::on_error_get_cached,
                 JSValue::js_number(ErrorCode::COMPRESSION_ERROR.0 as f64),
@@ -6317,7 +6317,7 @@ impl H2FrameParser {
             let Some(value) = (unsafe { (*stream).js_context.get() }) else {
                 continue;
             };
-            self.handlers.get().vm.event_loop_mut().run_callback(
+            self.handlers.get().vm.event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,
                 global_object,

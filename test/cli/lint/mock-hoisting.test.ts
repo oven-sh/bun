@@ -33,6 +33,8 @@ type Case = {
   dangerously?: string[];
   /** The file has a second fix, which `--fix` applies: it changes the file, and the rule still reports it. */
   partly?: true;
+  /** No flag changes the file: the rule doesn't report it, or reports it and has no fix for it. */
+  untouched?: "not reported" | "no fix";
 };
 
 const dep = { "dep.js": 'console.log(TAG, "runs dep.js");\nmodule.exports = { greet: () => "real" };\n' };
@@ -558,13 +560,81 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
         text: 'import { vitest, test } from "@effect/vitest";\n' + importGreet + mock("vitest") + greets(),
         prints: ["runs dep.js", "mock"],
       },
+      // Beside a default import, only the names in the braces change.
+      "a default import beside the name": {
+        text: 'import all, { vitest } from "vitest";\n' + importGreet + mock("vitest") + greets("all.test"),
+        prints: ["mock"],
+      },
+      "a default import beside the name and another": {
+        text:
+          'import all, { vitest, test } from "vitest";\n' +
+          importGreet +
+          mock("vitest") +
+          greets() +
+          greets("all.test"),
+        prints: ["mock", "mock"],
+      },
+
+      // `vi` and `vitest` are one object where a file imports them by name. A default import, a namespace or another
+      // export is another thing, whatever its name. The rule reports neither it nor a call on it.
       "a default import": {
         text: 'import vitest from "vitest";\n' + importGreet + mock("vitest") + greets(),
         prints: ["runs dep.js", "real"],
+        untouched: "not reported",
       },
       "a namespace": {
         text: 'import * as vitest from "vitest";\n' + importGreet + mock("vitest") + greets(),
         prints: ["runs dep.js", "real"],
+        untouched: "not reported",
+      },
+      // Under the new name, the namespace would take the call on the global `vi`, and it has no `fn`.
+      "a namespace, and a spy on the global vi": {
+        text: 'import * as vitest from "vitest";\n' + importGreet + spies("vi"),
+        prints: ["runs dep.js", "real"],
+        untouched: "not reported",
+      },
+      "a namespace whose members are read": {
+        text:
+          'import * as vitest from "vitest";\n' +
+          importGreet +
+          "const { test } = vitest;\nconst spy = vitest.vi.fn(greet);\n" +
+          'test("greets", () => {\n  console.log(TAG, spy());\n});\n',
+        prints: ["runs dep.js", "real"],
+        untouched: "not reported",
+      },
+      "a default import beside the names": {
+        text: 'import vitest, { test } from "vitest";\n' + importGreet + mock("vitest") + greets(),
+        prints: ["runs dep.js", "real"],
+        untouched: "not reported",
+      },
+      "another export under the name": {
+        text: 'import { test as vitest } from "vitest";\n' + importGreet + greets("vitest") + greets("vitest.skip"),
+        prints: ["runs dep.js", "real"],
+        untouched: "not reported",
+      },
+
+      // The calls would be on a default import that has the new name, so the import has no fix. Nor has a call beside
+      // an import of the name.
+      "a default import that has the new name": {
+        text: 'import vi, { vitest } from "vitest";\n' + importGreet + mock("vitest") + greets("vi.test"),
+        prints: ["mock"],
+        untouched: "no fix",
+      },
+      // The fix writes the names in the braces anew, which would drop the comment.
+      "a comment between the names": {
+        text: 'import { vitest, /* the runner */ test } from "vitest";\n' + importGreet + mock("vitest") + greets(),
+        prints: ["mock"],
+        untouched: "no fix",
+      },
+      // The call is on a parameter, which is another thing than the namespace. No fix of an import renames it.
+      "a call on a parameter of the name, beside a namespace": {
+        text:
+          'import * as vitest from "vitest";\n' +
+          'function register(vitest) {\n  vitest.doMock("./dep.js", () => ({ greet: () => "mock" }));\n}\n' +
+          "register({ doMock() {} });\n" +
+          'vitest.test("greets", () => {\n  console.log(TAG, require("./dep.js").greet());\n});\n',
+        prints: ["runs dep.js", "real"],
+        untouched: "no fix",
       },
       // The fix of an import renames every use of the name: the calls above it,
       "a mock above the import": {
@@ -612,6 +682,18 @@ const groups: { name: string; rule: string; config: Files; cases: Record<string,
       "two globals": {
         text: 'const { test } = require("vitest");\n' + requireGreet + mock("vi") + greets(),
         prints: ["mock"],
+      },
+      "a default import beside the name": {
+        text: 'import all, { vi } from "vitest";\n' + importGreet + mock("vi") + greets("all.test"),
+        prints: ["mock"],
+      },
+      "a namespace, and a spy on the global vitest": {
+        text:
+          'import * as vi from "vitest";\n' +
+          importGreet +
+          'const spy = vitest.fn(greet);\nvi.test("greets", () => {\n  console.log(TAG, spy());\n});\n',
+        prints: ["runs dep.js", "real"],
+        untouched: "not reported",
       },
     },
   },
@@ -712,6 +794,8 @@ type Result = {
 const results = new Map<string, Record<Step, Result>>();
 /** The exit code of `bun test` in each step. */
 const exitCodes: Partial<Record<Step, number>> = {};
+/** The warnings of `bun lint` about a fix that it didn't write, because the file would then have a syntax error. */
+const brokenFixes: string[] = [];
 
 // Each step has a copy of all the cases. A copy is linted in one run per rule and tested in one run of `bun test`: a
 // process per case and step would be some 300 of them.
@@ -734,6 +818,8 @@ beforeAll(async () => {
   const lint = async (copy: string, flag: string, g: number) => {
     const { stdout, stderr } = await run(join(root, copy, String(g)), "lint", "-f", "json", flag);
     if (!/^[[{]/.test(stdout)) throw new Error(`bun lint ${flag} printed no JSON: ${stdout}\n${stderr}`);
+    const warnings = stderr.split("\n").filter(line => line.includes("would cause a syntax error"));
+    brokenFixes.push(...warnings.map(line => `${groups[g].name}, ${flag}: ${line}`));
     const json = JSON.parse(stdout);
     // An oxlint config gives oxlint's JSON.
     const reports: { path: string; rule: string }[] = Array.isArray(json)
@@ -783,15 +869,25 @@ test("every case passes as written and after --fix", () => {
   });
 });
 
+// A fix that doesn't parse leaves the file as it is, which looks like a case that has no fix.
+test("every fix parses", () => {
+  expect(brokenFixes).toEqual([]);
+});
+
 for (const group of groups) {
   describe(group.name, () => {
     for (const { name, it, tag } of cases.filter(it => it.group === group)) {
       const held = it.dangerously !== undefined;
-      test(`${held ? "only --fix-dangerously fixes" : "--fix fixes"}: ${name}`, () => {
+      test(`${it.untouched ?? (held ? "only --fix-dangerously fixes" : "--fix fixes")}: ${name}`, () => {
+        const untouched = { prints: it.prints, isFixed: false, isReported: it.untouched === "no fix" };
         expect(results.get(tag)).toEqual({
           "as written": { prints: it.prints },
-          "--fix": { prints: it.prints, isFixed: !held || it.partly === true, isReported: held },
-          "--fix-dangerously": { prints: it.dangerously ?? it.prints, isFixed: true, isReported: false },
+          "--fix": it.untouched
+            ? untouched
+            : { prints: it.prints, isFixed: !held || it.partly === true, isReported: held },
+          "--fix-dangerously": it.untouched
+            ? untouched
+            : { prints: it.dangerously ?? it.prints, isFixed: true, isReported: false },
         });
       });
     }

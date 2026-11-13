@@ -14,9 +14,9 @@ deprecated: false
 
 Vitest exports its helper object under two names, `vi` and `vitest`. They're the same object. Using one name means a search for `vi.mock` finds every mock in the project.
 
-By default the name is `vi`. Both the import and the calls are reported.
+By default the name is `vi`. Both the import and the calls are reported: a `vitest` that the file imports by name, or the global, and each call on it. A default import, a namespace or another export that has the name, like `test as vitest`, is not the helper object. Neither it nor a call on it is reported.
 
-`--fix` renames the import and the calls. The fix of an import renames every use of the name in the file, so that none is left with the old name. An import has no fix if the file exports the name or uses it as a JSX tag.
+`--fix` renames the import and the calls. The fix of an import renames every use of the name in the file, so that none is left with the old name. Beside other names, it writes the names in the braces anew. An import has no fix if the file exports the name or uses it as a JSX tag, if a comment between the names in the braces would be lost, or if its default import has the new name, as in `import vi, { vitest } from "vitest"`.
 
 `bun test` [hoists](/test/mocks) a top-level `vi.mock()` for the global `vi` and for a named import from `vitest`, `bun:test` or `@jest/globals`, and not for a `vi` that comes from `require()` or from another package. `--fix` keeps a call of `mock()`, `unmock()`, `hoisted()`, `doMock()`, `doUnmock()`, `importActual()` or `importMock()` on the kind of `vi` that it has:
 
@@ -74,6 +74,19 @@ test("calls the listener", () => {
   const listener = vi.fn();
   emit("save", listener);
   expect(listener).toHaveBeenCalled();
+});
+```
+
+A namespace that has the name is not the helper object:
+
+{/* good */}
+```ts
+import * as vitest from "vitest";
+
+vitest.test("calls the listener", () => {
+  const listener = vitest.vi.fn();
+  emit("save", listener);
+  vitest.expect(listener).toHaveBeenCalled();
 });
 ```
 

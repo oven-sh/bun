@@ -4,7 +4,7 @@ use crate::jest::{self, JestFnKind, JestGeneralFnKind, PossibleJestNode};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::bun_test;
-use smallvec::SmallVec;
+use std::cell::OnceCell;
 
 /// This rule triggers an error when an unexpected Vitest accessor is used.
 pub struct ConsistentVitestVi {
@@ -14,11 +14,17 @@ pub struct ConsistentVitestVi {
 
 const CONSISTENT_VITEST_VI: &Message = &Message::new("", "The vitest function accessor used is not allowed");
 
+pub struct State<'a> {
+    /// `opposite`, looked up in the file's names.
+    opposite: Name<'a>,
+    /// [`ConsistentVitestVi::renamed_import`], looked up at the first call on the name.
+    import: OnceCell<Option<(Import<'a>, bool)>>,
+}
+
 impl Rule for ConsistentVitestVi {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "consistent-vitest-vi", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Call]).stmts(&[StmtTag::Import]);
-    /// `opposite`, looked up in the file's names.
-    type State<'a> = Name<'a>;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         match options.object(0).str("fn") {
@@ -27,8 +33,8 @@ impl Rule for ConsistentVitestVi {
         }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Name<'a>> {
-        file.find_name(self.opposite)
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        Some(State { opposite: file.find_name(self.opposite)?, import: OnceCell::new() })
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -40,23 +46,22 @@ impl Rule for ConsistentVitestVi {
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let Some((object, name)) = self.renamed(cx.file(), cx.state, node) {
+        if let Some((object, name)) = self.renamed(cx.file(), cx.state.opposite, node) {
             let (file, function) = (cx.file(), self.function);
+            let import = *cx.state.import.get_or_init(|| self.renamed_import(file));
+            // oxlint also reports a call on a default import, a namespace or another export that has the name. None of them is the helper object.
+            if let Some((import, false)) = import
+                && self.declared(import).is_some_and(|it| Node::Expr(name).scope().resolve_bytes(self.opposite.as_bytes()) == Some(it))
+            {
+                return;
+            }
             // The fix of an import that declares the name renames its uses too, so that no file is renamed in part.
-            let has_import = || self.renamed_import(file).is_some();
+            let has_import = import.is_some();
             cx.report(object.outer_span(), CONSISTENT_VITEST_VI)
                 .data("function", function)
                 .data("opposite", self.opposite)
-                .fix_where_safe(|| has_import() || !self.changes_call(file, name), |fixer| (!has_import()).then(|| fixer.replace(name.span(), function)));
+                .fix_where_safe(|| has_import || !self.changes_call(file, name), |fixer| (!has_import).then(|| fixer.replace(name.span(), function)));
         }
-    }
-}
-
-fn span_of(specifier: &ImportEntry) -> Span {
-    match specifier.import_name {
-        ImportImportName::Name(specifier) => specifier.span(),
-        ImportImportName::Default(local) => local.span(),
-        ImportImportName::NamespaceObject(local) => specifier.declaration.namespace_span().unwrap_or_else(|| local.span()),
     }
 }
 
@@ -75,38 +80,49 @@ impl ConsistentVitestVi {
         Node::Stmt(import.stmt()).scope().resolve_bytes(self.opposite.as_bytes())
     }
 
-    /// The import from Vitest that declares the name that the rule renames.
-    fn renamed_import<'a>(&self, file: &'a File<'a>) -> Option<Import<'a>> {
+    /// The helper object under the name that the rule renames: `vi` or `vitest`, imported by name. A default import, a namespace or another export is another thing.
+    fn accessor<'a>(&self, import: Import<'a>) -> Option<ImportSpec<'a>> {
+        let is_helper = |it: &ImportSpec<'a>| it.local().bytes() == self.opposite.as_bytes() && matches!(it.imported().bytes(), b"vi" | b"vitest");
+        import.named().iter().find(is_helper)
+    }
+
+    /// The import from Vitest that declares the name that the rule renames, and whether the name is then the helper object: see [`Self::accessor`].
+    fn renamed_import<'a>(&self, file: &'a File<'a>) -> Option<(Import<'a>, bool)> {
         let declares = |it: Import<'a>| import_entries_of(it).any(|it| it.local_name().bytes() == self.opposite.as_bytes());
         let mut imports = file.stmts_of_kind(StmtTag::Import).filter_map(|it| match it.kind() {
             StmtKind::Import(import) => Some(import),
             _ => None,
         });
-        imports.find(|it| jest::is_vitest_import_source(it.spec().bytes()) && declares(*it))
+        let import = imports.find(|it| jest::is_vitest_import_source(it.spec().bytes()) && declares(*it))?;
+        Some((import, self.accessor(import).is_some()))
     }
 
     fn check_import<'a>(&self, import: Import<'a>, cx: &Cx<'a, Self>) {
-        let is_named = |specifier: &ImportEntry, name: &str| specifier.local_name().bytes() == name.as_bytes();
-        let Some(vitest_import) = import_entries_of(import).find(|it| is_named(it, self.opposite)) else {
+        // oxlint also reports a default import, a namespace or another export that has the name, and its fix gives it the name of the helper object.
+        let Some(vitest_import) = self.accessor(import) else {
             return;
         };
         let file = cx.file();
-        let report = cx.report(span_of(&vitest_import), CONSISTENT_VITEST_VI);
+        let report = cx.report(vitest_import.span(), CONSISTENT_VITEST_VI);
         report.data("function", self.function).data("opposite", self.opposite).fix_where_safe(|| !self.changes_uses(file, import), |fixer| {
-            let specifiers: SmallVec<[ImportEntry; 8]> = import_entries_of(import).collect();
-            let mut import_text = Vec::new();
-            for specifier in specifiers.iter().filter(|it| !is_named(it, self.opposite)) {
-                import_text.extend_from_slice(if import_text.is_empty() { "" } else { ", " }.as_bytes());
-                import_text.extend_from_slice(fixer.file().slice(span_of(specifier)));
+            let (specifiers, is_named) = (import.named(), |it: Ident<'a>, name: &str| it.bytes() == name.as_bytes());
+            // The calls would be on a default import that has the new name.
+            if import.default().is_some_and(|it| is_named(it, self.function)) {
+                return None;
             }
-            let renamed_import = if import_text.is_empty() {
-                fixer.replace(vitest_import.local_name().span(), self.function)
+            // Only an import of nothing else keeps its specifier. Otherwise the names in the braces lose the name and get the new one.
+            let renamed_import = if import_entries_of(import).count() == 1 {
+                fixer.replace(vitest_import.local().span(), self.function)
             } else {
-                if !specifiers.iter().any(|it| is_named(it, self.function)) {
-                    import_text.extend_from_slice(b", ");
-                    import_text.extend_from_slice(self.function.as_bytes());
+                let others = specifiers.iter().filter(|it| !is_named(it.local(), self.opposite)).map(|it| file.slice(it.span()));
+                let new_name = (!specifiers.iter().any(|it| is_named(it.local(), self.function))).then_some(self.function.as_bytes());
+                let mut import_text = Vec::new();
+                for name in others.chain(new_name) {
+                    import_text.extend_from_slice(if import_text.is_empty() { "" } else { ", " }.as_bytes());
+                    import_text.extend_from_slice(name);
                 }
-                fixer.replace(Span::new(span_of(specifiers.first()?).start, span_of(specifiers.last()?).end), import_text)
+                let names = Span::new(specifiers.first()?.span().start, specifiers.last()?.span().end);
+                Some(fixer.replace(names, import_text)).filter(|it| fixer.keeps_comments(it))?
             };
             // Every use of the name gets the new name in the same fix: a file with the import renamed and a use not, or the other way round, runs differently.
             let mut fixes = vec![renamed_import];

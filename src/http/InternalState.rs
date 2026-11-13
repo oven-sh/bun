@@ -54,6 +54,9 @@ pub struct InternalState<'a> {
     pub(crate) request_body: bun_ptr::RawSlice<u8>,
     pub(crate) original_request_body: HTTPRequestBody<'a>,
     pub(crate) request_sent_len: usize,
+    /// The serialized request head, held from its first partial write until all of it is out.
+    /// `request_sent_len` indexes these bytes.
+    pub(crate) partial_request_head: Vec<u8>,
     pub(crate) fail: Option<Error>,
     /// `errno` of the failed `connect(2)` when `fail` is `ConnectionRefused`.
     pub(crate) connect_errno: Option<bun_errno::SystemErrno>,
@@ -138,6 +141,7 @@ impl Default for InternalState<'_> {
             request_body: bun_ptr::RawSlice::EMPTY,
             original_request_body: HTTPRequestBody::Bytes(b""),
             request_sent_len: 0,
+            partial_request_head: Vec::new(),
             fail: None,
             connect_errno: None,
             dns_error: 0,
@@ -161,6 +165,12 @@ impl<'a> InternalState<'a> {
             stage: Stage::Pending,
             ..Default::default()
         }
+    }
+
+    /// Start sending a new request head: the one inside a proxy tunnel follows its CONNECT.
+    pub(crate) fn rewind_request_head(&mut self) {
+        self.request_sent_len = 0;
+        self.partial_request_head = Vec::new();
     }
 
     pub(crate) fn is_chunked_encoding(&self) -> bool {

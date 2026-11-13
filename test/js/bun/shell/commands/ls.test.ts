@@ -1,6 +1,8 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { isPosix, isRoot, tempDir, tempDirWithFiles } from "harness";
+import { isLinux, isPosix, isRoot, tempDir, tempDirWithFiles } from "harness";
+import { closeSync, mkdirSync, openSync, rmdirSync } from "node:fs";
+import { join } from "node:path";
 import { createTestBuilder } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -472,6 +474,42 @@ describe.concurrent("bunshell ls", () => {
         .setTempdir(tempdir)
         .stdout(s => expect(sortedLsOutput(s)).toEqual(["./foo:", "a", "b", "broken-link", "c", "foo"]))
         .run();
+    });
+
+    // Linux answers getdents64(2) with ENOENT for a directory that was removed
+    // after it was opened, and GNU ls (libc readdir) lists it as empty.
+    // /proc/self/fd/<n> names such a directory by path.
+    test.skipIf(!isLinux)("a directory that was removed after it was opened lists as empty", async () => {
+      using tempdir = tempDir("ls-removed-dir", {});
+      const removed = join(String(tempdir), "removed");
+      mkdirSync(removed);
+      const fd = openSync(removed, "r");
+      try {
+        rmdirSync(removed);
+        const run = async (...flags: string[]) => {
+          const { stdout, stderr, exitCode } = await $`ls ${flags} /proc/self/fd/${fd}`.quiet();
+          return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
+        };
+        expect({ plain: await run(), all: await run("-a"), recursive: await run("-R") }).toEqual({
+          plain: { stdout: "", stderr: "", exitCode: 0 },
+          all: { stdout: ".\n..\n", stderr: "", exitCode: 0 },
+          recursive: { stdout: "", stderr: "", exitCode: 0 },
+        });
+      } finally {
+        closeSync(fd);
+      }
+    });
+
+    // The same with no /proc: the shell keeps its working directory open.
+    test.skipIf(!isLinux)("a working directory that was removed lists as empty", async () => {
+      using tempdir = tempDir("ls-removed-cwd", { "cwd/file.txt": "" });
+      const cwd = join(String(tempdir), "cwd");
+      const { stdout, stderr, exitCode } = await $`cd ${cwd} && rm -rf ${cwd} && ls`.quiet().nothrow();
+      expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 });

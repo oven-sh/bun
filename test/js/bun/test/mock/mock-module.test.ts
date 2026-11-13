@@ -2910,6 +2910,47 @@ describe.concurrent("a name that import and require() resolve to two files", () 
   });
 
   test.each(isolationFlags)("the original is the file that the kind of the function loads %j", async args => {
+    // Every specifier in this test file names one file, and each function loads that file. `mock` is the function
+    // that mocks the names of the files, or empty. A mock of a name changes nothing for a specifier of one of its
+    // files: each test of a file expects what it expects with no mock.
+    const byPath = (mock: string, required: string, imported: string) => `
+      import { expect, jest, mock, test, vi } from "bun:test";
+      const start = (globalThis.loaded ?? []).length;
+      // A name, a specifier of the file that an import of it loads, and one of the file that require() of it loads.
+      const names = [
+        ["dual", Bun.resolveSync("dual", import.meta.dir), require.resolve("dual")],
+        ["./lib", "./lib.mjs", "./lib.cjs"],
+        ["pkg", "pkg/esm", "pkg/cjs"],
+        ["./folder", "./folder/index.mjs", "./folder/index.cjs"],
+        ["#dep", "./dep.mjs", "./dep.cjs"],
+      ];
+      ${mock && `for (const [name] of names) ${mock}(name, () => ({ which: "mock" }));`}
+      // Of what each function loads: which file it is, and what its function returns.
+      const originals = async specifier =>
+        [jest.requireActual(specifier), jest.createMockFromModule(specifier), await vi.importActual(specifier)].map(module => [module.which, module.fn()]);
+      // The file, an automock of it, and the file.
+      const file = which => [[which, which], [which, undefined], [which, which]];
+      test.each(names)("each file of %s, by a specifier that names it", async (name, forImport, forRequire) => {
+        expect([await originals(forImport), await originals(forRequire)]).toEqual([file("real esm"), file("real cjs")]);
+      });
+      test("what require() and an import of each name get, and each file ran once", async () => {
+        for (const [name] of names) expect([name, require(name).which, (await import(name)).which]).toEqual([name, "${required}", "${imported}"]);
+        expect(globalThis.loaded.slice(start)).toEqual(names.flatMap(([name]) => [name + " esm", name + " cjs"]));
+      });
+    `;
+    // Each file of this package has a subpath of its own.
+    const pkg = {
+      "node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        exports: { ".": { import: "./esm.mjs", require: "./cjs.cjs" }, "./esm": "./esm.mjs", "./cjs": "./cjs.cjs" },
+      }),
+      "node_modules/pkg/esm.mjs": esm("pkg"),
+      "node_modules/pkg/cjs.cjs": cjs("pkg"),
+    };
+    // Each of these test files has a folder with files of its own: without --isolate the next test file gets the
+    // modules that this one has loaded.
+    const inFolder = (folder: string, testFile: string, text: string) =>
+      Object.entries({ ...files, ...pkg, [testFile]: text }).map(([name, file]) => [`${folder}/${name}`, file]);
     await expectFixturesToPass(
       {
         ...files,
@@ -2960,8 +3001,35 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             expect(globalThis.loaded.filter(name => name.startsWith("./lib "))).toEqual(["./lib esm", "./lib cjs"]);
           });
         `,
+        ...Object.fromEntries([
+          ...inFolder("no-mock", "by-path.test.js", byPath("", "real cjs", "real esm")),
+          ...inFolder("mock.module", "by-path.test.js", byPath("mock.module", "mock", "mock")),
+          ...inFolder("jest.doMock", "by-path.test.js", byPath("jest.doMock", "mock", "mock")),
+          ...inFolder("vi.doMock", "by-path.test.js", byPath("vi.doMock", "real cjs", "mock")),
+          ...inFolder(
+            "pending",
+            "pending.test.js",
+            `
+              import { expect, mock, test } from "bun:test";
+              const start = (globalThis.loaded ?? []).length;
+              test("require() of the path of the ES module gets that file while an async factory has yet to settle", async () => {
+                const importPath = Bun.resolveSync("dual", import.meta.dir);
+                const { promise, resolve } = Promise.withResolvers();
+                mock.module("dual", async () => {
+                  await promise;
+                  return { which: "mock" };
+                });
+                expect([require(importPath).which, require("dual").which]).toEqual(["real esm", "real cjs"]);
+                resolve();
+                expect((await import("dual")).which).toBe("mock");
+                expect([require(importPath).which, require("dual").which]).toEqual(["mock", "mock"]);
+                expect(globalThis.loaded.slice(start)).toEqual(["dual esm", "dual cjs"]);
+              });
+            `,
+          ),
+        ]),
       },
-      6,
+      31,
       args,
     );
   });

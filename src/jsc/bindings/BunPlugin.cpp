@@ -6939,6 +6939,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     if (isCurrent) {
         // A mock of a preload that loses a path to a mock of a test file has the path again when the file ends, with what it saved, as `previous` has.
         // So it gives nothing up below: it keeps what it saved of its ES module, and what it saved of its module object is kept apart here.
+        // One that the factory has ended answers for no path by now, so nothing of it is kept apart: it is listed, and keeps what it saved as unmock() left it.
         displacePreloadModuleMocksUnderPathsOf(globalObject, mock, previous);
         bool givesESExportsUp = gaveESExports && !(gaveESExports->isFromPreload && !mock->isFromPreload);
         // Not before: until here the table names the earlier mocks for these paths, and a factory that ends one of them ends it with what it saved.
@@ -6949,7 +6950,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             gaveESExports->originalExportsOfEvictedModule.clear();
             gaveESExports->patchOrder = 0;
         }
-        if (gaveCommonJSExports)
+        if (gaveCommonJSExports && !(gaveCommonJSExports->isFromPreload && !mock->isFromPreload))
             gaveCommonJSExports->originalCommonJSExports.clear();
         // Asked here, not where the mock was made: the factory may have ended a mock that answered then.
         auto losers = moduleMocksThatLosePathsTo(globalObject, mock);

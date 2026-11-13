@@ -50,6 +50,8 @@ pub struct EventLoop {
     /// Set when teardown releases the queue: from then on `enqueue_task`
     /// releases instead of parking (nothing will tick this loop again).
     closed_for_tasks: bool,
+    /// The last `tick()` ended with tasks of this thread queued (`Drained::TasksLeft`).
+    last_tick_left_tasks: bool,
     /// Set when teardown goes on to destroy the JSC VM: the global object goes
     /// with it, in no particular order with the finalizers that still enqueue.
     global_is_going: bool,
@@ -70,10 +72,7 @@ pub struct EventLoop {
     /// (link-time `__bun_run_immediate_task`) casts it back.
     pub immediate_tasks: Vec<*mut ()>,
     pub next_immediate_tasks: Vec<*mut ()>,
-    /// Tasks that asked to run on the *next* loop iteration — after I/O and
-    /// timers have had a turn — rather than in the current drain, which runs
-    /// until the queue is empty (a task that re-posts itself there never lets
-    /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
+    /// Tasks that asked to run after I/O and timers have had a turn: `auto_tick` promotes them into `tasks`.
     pub yield_tasks: Vec<Task>,
 
     pub concurrent_tasks: ConcurrentQueue,
@@ -128,6 +127,7 @@ impl Default for EventLoop {
         Self {
             tasks: Queue::init(),
             closed_for_tasks: false,
+            last_tick_left_tasks: false,
             global_is_going: false,
             immediate_tasks: Vec::new(),
             next_immediate_tasks: Vec::new(),
@@ -239,8 +239,7 @@ unsafe extern "Rust" {
     fn __bun_tick_queue_with_count(
         el: *mut EventLoop,
         vm: *mut VirtualMachine,
-        counter: &mut u32,
-    ) -> Result<(), Stopped>;
+    ) -> Result<Drained, Stopped>;
     /// `ImmediateObject::runImmediateTask` — `task` is an erased
     /// `*mut bun_runtime::timer::ImmediateObject`; returns whether the callback
     /// threw. Defined in `bun_runtime::dispatch`. Link-time resolved.
@@ -258,14 +257,31 @@ unsafe extern "Rust" {
 }
 
 #[inline]
-fn tick_queue_with_count(
-    el: &mut EventLoop,
-    vm: *mut VirtualMachine,
-    counter: &mut u32,
-) -> Result<(), Stopped> {
+fn tick_queue_with_count(el: &mut EventLoop, vm: *mut VirtualMachine) -> Result<Drained, Stopped> {
     // SAFETY: `el` is the queue to drain (may be the isolated spawnSync loop);
     // `vm` is the live per-thread VM (caller contract).
-    unsafe { __bun_tick_queue_with_count(el, vm, counter) }
+    unsafe { __bun_tick_queue_with_count(el, vm) }
+}
+
+/// What one drain of the task queue did.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Drained {
+    /// No task ran.
+    Nothing,
+    /// Tasks ran.
+    Tasks,
+    /// Tasks ran, and the next generation is still queued (`EventLoop::next_task_within`).
+    TasksLeft,
+}
+
+/// One drain of the task queue by `tick()`: see [`EventLoop::next_task_within`].
+pub struct TaskDrain {
+    /// How many tasks of the generation that is running have not run yet.
+    left: usize,
+    /// How many more generations the drain can begin.
+    generations_left: u32,
+    /// What the drain has done so far.
+    pub drained: Drained,
 }
 
 /// RAII pairing for [`EventLoop::enter`] / [`EventLoop::exit`].
@@ -630,13 +646,14 @@ impl EventLoop {
 
     /// `None`: a task's fold or the checkpoint after it met the VM's termination and landed it; the
     /// turn is over (`tick()` / `tick_tasks_only()` return rather than run more against that VM).
-    fn tick_with_count(&mut self, virtual_machine: *mut VirtualMachine) -> Result<u32, Stopped> {
-        let mut counter: u32 = 0;
+    fn tick_with_count(
+        &mut self,
+        virtual_machine: *mut VirtualMachine,
+    ) -> Result<Drained, Stopped> {
         // Only this thread writes `task_drains`, so a plain load and store is enough.
         let drains = self.task_drains.load(Ordering::Relaxed);
         self.task_drains.store(drains + 1, Ordering::Relaxed);
-        tick_queue_with_count(self, virtual_machine, &mut counter)?;
-        Ok(counter)
+        tick_queue_with_count(self, virtual_machine)
     }
 
     fn tick_concurrent(&mut self) {
@@ -835,6 +852,9 @@ impl EventLoop {
     /// next `tick()`, after a non-blocking poll (`has_pending_tasks`).
     const CONCURRENT_REFILLS_PER_TICK: u32 = 8;
 
+    /// Generations of tasks per drain (`next_task_within`). libuv runs its pending queue 1 + 8 times a turn.
+    const GENERATIONS_PER_DRAIN: u32 = 9;
+
     /// Work is queued that the next `tick()` will run: the poll before it must
     /// not block.
     pub fn has_pending_tasks(&self) -> bool {
@@ -852,10 +872,8 @@ impl EventLoop {
         }
     }
 
-    /// The task that the drain of the queue runs next. Plugin requests go first. Like every other
-    /// task that another thread posts, they cannot keep `tick()` from returning: it takes new ones
-    /// `CONCURRENT_REFILLS_PER_TICK` times in a row, and again after each other task.
-    pub fn next_task(&mut self) -> Option<Task> {
+    /// The plugin request to run next. New ones are taken `CONCURRENT_REFILLS_PER_TICK` times in a row.
+    fn next_plugin_request(&mut self) -> Option<Task> {
         if self.plugin_requests.readable_length() == 0
             && self.plugin_request_refills_left > 0
             && !self.concurrent_plugin_requests.is_empty()
@@ -864,13 +882,81 @@ impl EventLoop {
             let batch = self.concurrent_plugin_requests.pop_batch();
             Self::take_concurrent_tasks(&mut self.plugin_requests, batch);
         }
-        if let Some(request) = self.plugin_requests.read_item() {
-            self.plugin_requests.reset_head_if_empty();
-            return Some(request);
-        }
+        let request = self.plugin_requests.read_item()?;
+        self.plugin_requests.reset_head_if_empty();
+        Some(request)
+    }
+
+    /// Whether [`Self::next_plugin_request`] can have one to return.
+    #[inline]
+    fn plugin_request_waits(&self) -> bool {
+        self.plugin_requests.readable_length() != 0
+            || (self.plugin_request_refills_left > 0 && !self.concurrent_plugin_requests.is_empty())
+    }
+
+    #[inline]
+    fn next_queued_task(&mut self) -> Option<Task> {
         let task = self.tasks.read_item()?;
         self.plugin_request_refills_left =
             (self.plugin_request_refills_left + 1).min(Self::CONCURRENT_REFILLS_PER_TICK);
+        Some(task)
+    }
+
+    /// The next task for a release of the whole queue. `tick()` reads with [`Self::next_task_within`].
+    pub fn next_task(&mut self) -> Option<Task> {
+        self.next_plugin_request()
+            .or_else(|| self.next_queued_task())
+    }
+
+    /// Begins a drain of the task queue by `tick()`. Its first generation is what is queued now.
+    #[inline]
+    pub fn begin_drain(&self) -> TaskDrain {
+        let queued = self.tasks.readable_length();
+        TaskDrain {
+            left: queued,
+            generations_left: Self::GENERATIONS_PER_DRAIN - 1,
+            drained: Drained::Nothing,
+        }
+    }
+
+    /// The next task of `drain`. A generation is what was queued when it began: a drain runs 9, then leaves the rest.
+    #[inline(never)]
+    pub fn next_task_within(&mut self, drain: &mut TaskDrain) -> Option<Task> {
+        if self.plugin_request_waits() {
+            return self.next_plugin_request_within(drain);
+        }
+        self.next_queued_task_within(drain)
+    }
+
+    /// [`Self::next_task_within`] when a plugin request can be due: they go first.
+    #[cold]
+    #[inline(never)]
+    fn next_plugin_request_within(&mut self, drain: &mut TaskDrain) -> Option<Task> {
+        if let Some(request) = self.next_plugin_request() {
+            drain.drained = Drained::Tasks;
+            return Some(request);
+        }
+        self.next_queued_task_within(drain)
+    }
+
+    #[inline(always)]
+    fn next_queued_task_within(&mut self, drain: &mut TaskDrain) -> Option<Task> {
+        if drain.left == 0 {
+            let queued = self.tasks.readable_length();
+            if queued == 0 {
+                return None;
+            }
+            if drain.generations_left == 0 {
+                drain.drained = Drained::TasksLeft;
+                return None;
+            }
+            drain.generations_left -= 1;
+            drain.left = queued;
+        }
+        // `None` with tasks left to run: a `tick()` nested in a task of this generation ran them.
+        let task = self.next_queued_task()?;
+        drain.left -= 1;
+        drain.drained = Drained::Tasks;
         Some(task)
     }
 
@@ -879,11 +965,27 @@ impl EventLoop {
         crate::top_scope!(scope, self.global_ref());
         self.entered_event_loop_count += 1;
         // `Err(Stopped)`: a fold or checkpoint met the VM's termination; the turn is over.
-        let _ = self.tick_turn(&mut scope);
+        self.last_tick_left_tasks = self.tick_turn(&mut scope).unwrap_or(false);
         self.entered_event_loop_count -= 1;
     }
 
-    fn tick_turn(&mut self, scope: &mut crate::TopExceptionScope) -> Result<(), Stopped> {
+    /// How many more times [`Self::run_tasks_left`] calls `tick()`.
+    const TICKS_FOR_TASKS_LEFT: u32 = 1024;
+
+    /// For a driver that stops running this loop: `tick()` again while the last one left tasks queued.
+    pub fn run_tasks_left(&mut self) {
+        let mut ticks = 0;
+        while self.last_tick_left_tasks
+            && ticks < Self::TICKS_FOR_TASKS_LEFT
+            && self.vm_ref().script_allowed()
+        {
+            self.tick();
+            ticks += 1;
+        }
+    }
+
+    /// `Ok(true)`: a drain ended with tasks queued (`Drained::TasksLeft`).
+    fn tick_turn(&mut self, scope: &mut crate::TopExceptionScope) -> Result<bool, Stopped> {
         let ctx = self.vm();
         self.plugin_request_refills_left = Self::CONCURRENT_REFILLS_PER_TICK;
         self.tick_concurrent();
@@ -895,10 +997,17 @@ impl EventLoop {
         let global_vm = self.vm_ref().jsc_vm();
 
         let mut refills = 0u32;
+        // A drain that ends with tasks queued ends the turn.
+        let mut tasks_left = false;
         'tick: loop {
             loop {
-                if self.tick_with_count(ctx)? == 0 {
-                    break;
+                match self.tick_with_count(ctx)? {
+                    Drained::Nothing => break,
+                    Drained::Tasks => {}
+                    Drained::TasksLeft => {
+                        tasks_left = true;
+                        break 'tick;
+                    }
                 }
                 if refills == Self::CONCURRENT_REFILLS_PER_TICK {
                     break 'tick;
@@ -914,7 +1023,7 @@ impl EventLoop {
                 // Every task's exception was folded above; one still pending here escaped whoever
                 // produced it.
                 debug_assert!(false, "a task returned Ok with a JS exception pending");
-                return Ok(());
+                return Ok(false);
             }
             if refills == Self::CONCURRENT_REFILLS_PER_TICK {
                 break;
@@ -927,8 +1036,8 @@ impl EventLoop {
             break;
         }
 
-        while refills < Self::CONCURRENT_REFILLS_PER_TICK {
-            if self.tick_with_count(ctx)? == 0 {
+        while !tasks_left && refills < Self::CONCURRENT_REFILLS_PER_TICK {
+            if self.tick_with_count(ctx)? != Drained::Tasks {
                 break;
             }
             refills += 1;
@@ -937,7 +1046,8 @@ impl EventLoop {
 
         self.global_ref()
             .handle_rejected_promises()
-            .map_err(|_| Stopped)
+            .map_err(|_| Stopped)?;
+        Ok(tasks_left)
     }
 
     /// Tick the task queue without draining microtasks afterward.
@@ -950,7 +1060,8 @@ impl EventLoop {
         // overlap `&mut self: EventLoop`, which is a value field of the VM).
         let prev = self.vm_ref().suppress_microtask_drain.replace(true);
 
-        while let Ok(1..) = self.tick_with_count(vm) {
+        // Until the queue is empty: the next drain runs what this one left queued.
+        while let Ok(Drained::Tasks | Drained::TasksLeft) = self.tick_with_count(vm) {
             self.tick_concurrent();
         }
 
@@ -1499,10 +1610,17 @@ impl EventLoop {
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
-        loop_.tick_with_timeout(
-            Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
-            uws::NOW_NS_UNKNOWN,
-        );
+        let has_pending_tasks = self.has_pending_tasks();
+        #[cfg(windows)]
+        if has_pending_tasks {
+            self.wakeup();
+        }
+        // Queued tasks do not wait for the park.
+        let park = bun_core::Timespec {
+            sec: if has_pending_tasks { 0 } else { 1 },
+            nsec: 0,
+        };
+        loop_.tick_with_timeout(Some(&park), uws::NOW_NS_UNKNOWN);
 
         self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();

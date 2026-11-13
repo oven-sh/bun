@@ -1043,11 +1043,6 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     unsafe { (*el).tick_immediate_tasks(vm) };
     // SAFETY: as above.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
-    #[cfg(windows)]
-    if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
-        // SAFETY: `el` is the live per-thread event loop.
-        unsafe { (*el).wakeup() };
-    }
 
     // ── pending unref ───────────────────────────────────────────────────
     #[cfg(unix)]
@@ -1119,6 +1114,12 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             || uv_idle_started
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
+        // `get_timeout` ignores `has_pending_immediate` on Windows, so queued work wakes the poll here.
+        #[cfg(windows)]
+        if has_pending_immediate {
+            // SAFETY: `el` is the live per-thread event loop.
+            unsafe { (*el).wakeup() };
+        }
         // Fold the QUIC deadline into the poll timeout.
         let quic_next_tick_us = loop_.internal_loop_data.quic_next_tick_us();
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
@@ -1209,11 +1210,6 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     unsafe { (*el).tick_immediate_tasks(vm) };
     // SAFETY: as above.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
-    #[cfg(windows)]
-    if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
-        // SAFETY: `el` is the live per-thread event loop.
-        unsafe { (*el).wakeup() };
-    }
 
     #[cfg(unix)]
     {
@@ -1258,6 +1254,12 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             || uv_idle_started
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
+        // See `auto_tick`: queued work wakes the libuv poll itself.
+        #[cfg(windows)]
+        if has_pending_immediate {
+            // SAFETY: `el` is the live per-thread event loop.
+            unsafe { (*el).wakeup() };
+        }
         let quic_next_tick_us = loop_.internal_loop_data.quic_next_tick_us();
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
         if loop_.is_active() {

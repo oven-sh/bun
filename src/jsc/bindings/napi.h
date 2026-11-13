@@ -356,10 +356,9 @@ public:
     // Node's pending_finalizers: refs whose value was swept during GC and whose finalizer runs on a later event-loop turn; ~NapiRef removes itself.
     void enqueueRefFinalizer(Zig::NapiRef* ref)
     {
-        bool wasEmpty = m_pendingRefFinalizers.isEmpty();
         m_pendingRefFinalizers.add(ref);
-        if (wasEmpty)
-            Bun__napi_enqueue_finalizer(this, drainOneRefFinalizer, this, nullptr);
+        // One task per ref: a task that queued the next one would be a chain (`EventLoop::next_task_within`).
+        Bun__napi_enqueue_finalizer(this, drainOneRefFinalizer, this, nullptr);
     }
 
     void dequeueRefFinalizer(Zig::NapiRef* ref)

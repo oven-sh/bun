@@ -726,7 +726,7 @@ impl ErrorDeferred {
     }
 }
 
-/// [`ErrorDeferred::reject_later`]'s hop to the next turn of the loop.
+/// [`ErrorDeferred::reject_later`]'s hop to a task of its own.
 pub(crate) struct ErrorDeferredTask {
     /// The context of the script that asked; it may stop before the task runs.
     asking: bun_jsc::ContextId,

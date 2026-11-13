@@ -148,7 +148,7 @@ pub fn handle_rejected_promise(
     jsc_vm.auto_garbage_collect();
 }
 
-/// `Bun__handleHandledPromise`'s hop to the next turn of the loop.
+/// `Bun__handleHandledPromise`'s hop to a task of its own.
 pub struct HandledPromiseTask {
     // VM-lifetime backref (JSC_BORROW) — `GlobalRef` encapsulates the deref.
     global_this: crate::GlobalRef,

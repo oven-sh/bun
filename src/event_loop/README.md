@@ -54,6 +54,7 @@ Built-in JSC microtask queue for promises and queueMicrotask.
                ▼
 ┌─────────────────────────────────────┐
 │  3. Drain regular task queue        │ ← tickQueueWithCount()
+│     One generation at a time        │
 │     For each task:                  │
 │       - Run task                    │
 │       - Release weak refs           │
@@ -66,6 +67,8 @@ Built-in JSC microtask queue for promises and queueMicrotask.
 │  4. Handle rejected promises        │
 └─────────────────────────────────────┘
 ```
+
+A generation is the tasks that were queued when it began. A task that is queued on the JS thread while a generation runs belongs to the next one. One drain runs at most 9 generations (`GENERATIONS_PER_DRAIN`). A drain that ends with tasks queued ends the tick. Those tasks wait for the next tick. In the run loop that tick follows a non-blocking I/O poll. So a task that queues its successor each time it runs cannot keep timers, immediates and I/O from running. A task that is queued in the 9th generation of a drain is in the next tick, so whatever runs between two ticks runs before it. Promises that are rejected and still have no handler are reported when the tick ends, as at the end of every tick.
 
 ### autoTick Flow (`event_loop.rs:349-401`)
 
@@ -341,7 +344,7 @@ The Bun event loop processes work in this order:
 1. **Immediate tasks** (setImmediate)
 2. **I/O polling** (epoll/kqueue)
 3. **Timer callbacks** (setTimeout/setInterval)
-4. **Regular tasks** from the task queue
+4. **Regular tasks** from the task queue, at most 9 generations per drain
    - For each task:
      - Run the task
      - Release weak references

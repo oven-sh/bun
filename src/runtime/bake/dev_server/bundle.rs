@@ -284,12 +284,7 @@ impl DevServer {
             server.on_pending_request();
         }
         while let Some(item) = self.next_bundle.requests.pop_first() {
-            // SAFETY: `pop_first` returns a valid `*mut Node<DeferredRequest>`;
-            // `data` was initialized by `defer_request`.
-            unsafe {
-                let d = (*item).data.assume_init_mut();
-                d.abort_and_deref();
-            }
+            item.take_handler().fail();
         }
         // Reset these routes so their next request gets the plugin error.
         for &route_bundle_index in self.next_bundle.route_queue.keys() {
@@ -448,7 +443,6 @@ impl DevServer {
             resolution_failure_entries: Default::default(),
         });
 
-        self.next_bundle.requests = deferred_request::List::default();
         self.next_bundle.route_queue.clear_retaining_capacity();
         Ok(())
     }
@@ -476,7 +470,7 @@ impl DevServer {
         debug_assert!(self.current_bundle.is_none());
 
         // If there were pending requests, begin another bundle.
-        if self.next_bundle.reload_event.is_some() || !self.next_bundle.requests.first.is_null() {
+        if self.next_bundle.reload_event.is_some() || self.next_bundle.requests.first().is_some() {
             let mut entry_points = EntryPointList::empty();
 
             let (is_reload, timer) = if let Some(event) = self.next_bundle.reload_event.take() {

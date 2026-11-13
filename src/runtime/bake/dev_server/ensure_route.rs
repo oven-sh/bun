@@ -55,7 +55,7 @@ impl RequestEnsureRouteBundledCtx<'_> {
 }
 
 #[derive(Copy, Clone)]
-enum BundleQueueType {
+pub(super) enum BundleQueueType {
     NextBundle,
     CurrentBundle,
 }
@@ -259,117 +259,43 @@ impl DevServer {
         req: ReqOrSaved<'_>,
         resp: AnyResponse,
     ) -> crate::Result<Deferral> {
-        let deferred_slot = self.deferred_request_pool.claim();
-        let deferred_node_ptr: *mut deferred_request::Node = deferred_slot.addr().as_ptr();
-        // Precompute the data slot pointer (used inside the initializer for
-        // abort-callback registration) without forming a reference to the
-        // still-uninitialized slot.
-        // SAFETY: `deferred_node_ptr` is a valid (allocated, aligned) hive-pool
-        // slot; `addr_of_mut!` projects to the field without a reference, so
-        // the uninit `data` is never read.
-        let deferred_data_ptr: *mut c_void =
-            unsafe { ::core::ptr::addr_of_mut!((*deferred_node_ptr).data) }.cast::<c_void>();
-        debug_log!("DeferredRequest(0x{:x}).init", deferred_data_ptr as usize);
-
-        let method = match &req {
-            ReqOrSaved::Req(r) => Method::which(r.method()).unwrap_or(Method::GET),
-            _ => unreachable!(),
+        let ReqOrSaved::Req(req) = req else {
+            unreachable!()
         };
+        let method = Method::which(req.method()).unwrap_or(Method::GET);
 
-        let mut deferred_data = DeferredRequest {
-            route_bundle_index,
-            dev: std::ptr::from_ref(self),
-            referenced_by_devserver: true,
-            weakly_referenced_by_requestcontext: false,
-            handler: match kind {
-                deferred_request::HandlerKind::BundledHtmlPage => 'brk: {
-                    // Note: `on_aborted<U: 'static>` rejects `DeferredRequest`;
-                    // erase to `c_void` and cast back inside the trampoline.
-                    resp.on_aborted(
-                        |p: *mut c_void, r: AnyResponse| {
-                            // SAFETY: p is the &mut deferred.data registered below; lifetime erased
-                            unsafe { &mut *p.cast::<DeferredRequest>() }.on_abort(r)
-                        },
-                        deferred_data_ptr,
-                    );
-                    break 'brk Handler::BundledHtmlPage(ResponseAndMethod {
-                        response: resp,
-                        method,
-                    });
-                }
-                deferred_request::HandlerKind::ServerHandler => 'brk: {
-                    let server_handler: SavedRequest = match req {
-                        ReqOrSaved::Req(r) => {
-                            let global = self.vm().global();
-                            match self
-                                .server
-                                .as_ref()
-                                .unwrap()
-                                .prepare_and_save_js_request_context(
-                                    r,
-                                    resp,
-                                    global,
-                                    Some(method),
-                                )? {
-                                Some(saved) => saved,
-                                // `deferred_slot` drops here, releasing the
-                                // still-uninitialized slot without `drop_in_place`.
-                                None => return Ok(Deferral::Answered),
-                            }
-                        }
-                        _ => unreachable!(),
-                    };
-                    server_handler.ctx.ref_();
-                    server_handler.ctx.set_additional_on_abort_callback(Some(
-                        crate::server::any_request_context::AdditionalOnAbortCallback {
-                            cb: {
-                                fn cb(ptr: *mut c_void) {
-                                    DeferredRequest::on_abort_wrapper(ptr)
-                                }
-                                cb
-                            },
-                            // SAFETY: deferred.data is a live field of a HiveArray-owned node
-                            data: unsafe { ::core::ptr::NonNull::new_unchecked(deferred_data_ptr) },
-                            deref_fn: {
-                                fn deref_fn(ptr: *mut c_void) {
-                                    // SAFETY: ptr is &mut DeferredRequest from above
-                                    let self_: &mut DeferredRequest =
-                                        unsafe { &mut *ptr.cast::<DeferredRequest>() };
-                                    self_.weak_deref();
-                                }
-                                deref_fn
-                            },
-                        },
-                    ));
-                    break 'brk Handler::ServerHandler(server_handler);
-                }
-            },
-        };
-
-        if matches!(deferred_data.handler, Handler::ServerHandler(_)) {
-            deferred_data.weak_ref();
-        }
-
-        // `next` is a placeholder: `prepend` overwrites it before any read.
-        let deferred_ptr = deferred_slot
-            .write(deferred_request::Node {
-                next: ::core::ptr::null_mut(),
-                data: ::core::mem::MaybeUninit::new(deferred_data),
-            })
-            .as_ptr();
-
-        let requests_array = match bundle_field {
-            BundleQueueType::CurrentBundle => {
-                &mut self
-                    .current_bundle
-                    .as_mut()
-                    .expect("infallible: bundle active")
-                    .requests
+        match kind {
+            deferred_request::HandlerKind::BundledHtmlPage => {
+                let handler = Handler::BundledHtmlPage(ResponseAndMethod {
+                    response: resp,
+                    method,
+                });
+                let deferred = self.queue_request(bundle_field, route_bundle_index, handler);
+                resp.on_aborted(
+                    |deferred: *mut deferred_request::Node, _| {
+                        // SAFETY: the list lets go of the request after the response has ended.
+                        unsafe { (*deferred).value.on_abort() }
+                    },
+                    deferred.as_ptr(),
+                );
             }
-            BundleQueueType::NextBundle => &mut self.next_bundle.requests,
-        };
-        // SAFETY: `deferred_ptr` was just initialized via `deferred_slot.write()`.
-        unsafe { requests_array.prepend(&mut *deferred_ptr) };
+            deferred_request::HandlerKind::ServerHandler => {
+                let global = self.vm().global();
+                let Some(saved) = self
+                    .server
+                    .as_ref()
+                    .unwrap()
+                    .prepare_and_save_js_request_context(req, resp, global, Some(method))?
+                else {
+                    return Ok(Deferral::Answered);
+                };
+                let ctx = saved.ctx;
+                ctx.ref_();
+                let handler = Handler::ServerHandler(saved);
+                let deferred = self.queue_request(bundle_field, route_bundle_index, handler);
+                ctx.set_deferred_request(deferred.clone());
+            }
+        }
         Ok(Deferral::Queued)
     }
 }

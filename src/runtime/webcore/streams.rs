@@ -444,44 +444,23 @@ impl Pending {
         let clone = Box::new(core::mem::take(self));
         // `mem::take` resets `state`/`result`/`future` via `Default`;
         // no reader observes `future` after this.
-        // `Task::from_boxed` owns the `Box → *mut` leak; the matching
-        // `heap::take` lives in `run_from_js_thread` (the dispatch arm).
         vm.event_loop()
             .enqueue_task(bun_event_loop::Task::from_boxed(clone));
     }
-
-    /// # Safety
-    /// `this` must be a valid, uniquely-owned pointer previously produced by
-    /// `bun_core::heap::into_raw` (via `Task::from_boxed` in `run_on_next_tick`).
-    pub(crate) fn run_from_js_thread(this: *mut Pending) {
-        // SAFETY: this was heap-allocated in run_on_next_tick
-        let mut boxed = unsafe { bun_core::heap::take(this) };
-        boxed.run();
-    }
-
-    /// The loop refused the deferred fulfilment (VM teardown): nobody awaits
-    /// the read any more, so drop the promise's root and the parked result.
-    pub(crate) fn release_without_running(this: *mut Pending) {
-        // SAFETY: heap-allocated in run_on_next_tick; refused, so we own it.
-        let mut boxed = unsafe { bun_core::heap::take(this) };
-        boxed.state = PendingState::Used;
-        if let PendingFuture::Promise { promise, .. } = &boxed.future {
-            JSPromise::opaque_ref(*promise).to_js().unprotect();
-        }
-        drop(boxed);
-    }
 }
 
-impl bun_event_loop::Taskable for Pending {
+impl bun_event_loop::BoxedTask for Pending {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::StreamPending;
-    /// Deferred out of a finalizer or a late completion: do the script-free
-    /// part of what the dispatch would have done.
-    unsafe fn release_unrun(this: *mut Self) {
-        Pending::release_without_running(this);
+    /// Nobody awaits the read any more: drop the promise's root and the parked result.
+    fn release_unrun(mut self: Box<Self>) {
+        self.state = PendingState::Used;
+        if let PendingFuture::Promise { promise, .. } = &self.future {
+            JSPromise::opaque_ref(*promise).to_js().unprotect();
+        }
     }
     /// `Pending::run` checks the context whose script is reading: most sources call it from their
     /// own completion, not through this task.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

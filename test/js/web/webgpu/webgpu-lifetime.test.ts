@@ -1,3 +1,4 @@
+// Runs alone: its last tests disturb other processes that use the GPU of a macOS virtual machine.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, libcPathForDlopen, tempDir } from "harness";
 import { hasAdapter, runWithDriverOfChrome } from "./driver";
@@ -87,14 +88,6 @@ describe.skipIf(!hasAdapter).concurrent("the process", () => {
       device.lost.then(({ reason }) => console.log(reason));
       device.destroy();`;
     expect(await run({ "index.js": script })).toEqual(printed("destroyed"));
-  });
-
-  test("ends at process.exit()", async () => {
-    const script = `
-      for (const promise of startEverything(await requestDevice())) promise.finally(() => console.log("settled"));
-      console.log("exit");
-      process.exit(0);`;
-    expect(await run({ "index.js": script })).toEqual(printed("exit"));
   });
 
   test("prints an error that no scope captures and no listener cancels", async () => {
@@ -254,6 +247,18 @@ describe.skipIf(!hasAdapter).concurrent("the garbage collector", () => {
   });
 });
 
+const withBusyWorker = (inWorker: string, onMessage: string) => ({
+  "index.js": `
+    const worker = new Worker("./worker.js");
+    worker.onerror = event => event.preventDefault();
+    worker.onmessage = () => { ${onMessage} };
+    worker.addEventListener("close", () => console.log("closed"));`,
+  "worker.js": `
+    startEverything(await requestDevice());
+    postMessage("started");
+    ${inWorker}`,
+});
+
 describe.skipIf(!hasAdapter).concurrent("a worker", () => {
   test("has a GPU of its own", async () => {
     const files = {
@@ -277,20 +282,8 @@ describe.skipIf(!hasAdapter).concurrent("a worker", () => {
     ["calls process.exit()", "process.exit(0)", ""],
     ["throws", `throw new Error("thrown")`, ""],
     ["runs to its end", "", ""],
-    ["is cut off by the end of the process", "for (;;);", `console.log("closed"), process.exit(0)`],
   ])("%s", async (_, inWorker, onMessage) => {
-    const files = {
-      "index.js": `
-        const worker = new Worker("./worker.js");
-        worker.onerror = event => event.preventDefault();
-        worker.onmessage = () => { ${onMessage} };
-        worker.addEventListener("close", () => console.log("closed"));`,
-      "worker.js": `
-        startEverything(await requestDevice());
-        postMessage("started");
-        ${inWorker}`,
-    };
-    expect(await run(files)).toEqual(printed("closed"));
+    expect(await run(withBusyWorker(inWorker, onMessage))).toEqual(printed("closed"));
   });
 });
 
@@ -391,7 +384,32 @@ describe.skipIf(!hasAdapter).concurrent("other contexts", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("bun test --isolate drops what a file leaves under way", async () => {
+  test("a ShadowRealm and a context of node:vm", async () => {
+    const script = `
+      const use = gpu => gpu.requestAdapter().then(adapter => adapter.requestDevice()).then(device => (device.destroy(), device.lost));
+      const inRealm = new Promise(new ShadowRealm().evaluate(\`resolve => { (\${use})(navigator.gpu).then(lost => resolve(lost.reason)); }\`));
+      const inContext = require("node:vm").runInNewContext(\`(\${use})(gpu)\`, { gpu: navigator.gpu });
+      Bun.gc(true);
+      console.log(await inRealm, (await inContext).reason);`;
+    expect(await run({ "index.js": script })).toEqual(printed("destroyed destroyed"));
+  });
+});
+
+// Last and one at a time: the Apple Paravirtual device then fails the pipelines that other processes are compiling.
+describe.skipIf(!hasAdapter)("the process ends while a pipeline compiles", () => {
+  test("at process.exit()", async () => {
+    const script = `
+      for (const promise of startEverything(await requestDevice())) promise.finally(() => console.log("settled"));
+      console.log("exit");
+      process.exit(0);`;
+    expect(await run({ "index.js": script })).toEqual(printed("exit"));
+  });
+
+  test("for a worker", async () => {
+    expect(await run(withBusyWorker("for (;;);", `console.log("exit"), process.exit(0)`))).toEqual(printed("exit"));
+  });
+
+  test("for a file of bun test --isolate, which drops what that leaves under way", async () => {
     const file = `
       import { test } from "bun:test";
       test("starts", async () => {
@@ -402,15 +420,5 @@ describe.skipIf(!hasAdapter).concurrent("other contexts", () => {
     expect(stdout).not.toContain("settled");
     expect(stderr).toContain(" 2 pass");
     expect(exitCode).toBe(0);
-  });
-
-  test("a ShadowRealm and a context of node:vm", async () => {
-    const script = `
-      const use = gpu => gpu.requestAdapter().then(adapter => adapter.requestDevice()).then(device => (device.destroy(), device.lost));
-      const inRealm = new Promise(new ShadowRealm().evaluate(\`resolve => { (\${use})(navigator.gpu).then(lost => resolve(lost.reason)); }\`));
-      const inContext = require("node:vm").runInNewContext(\`(\${use})(gpu)\`, { gpu: navigator.gpu });
-      Bun.gc(true);
-      console.log(await inRealm, (await inContext).reason);`;
-    expect(await run({ "index.js": script })).toEqual(printed("destroyed destroyed"));
   });
 });

@@ -607,7 +607,7 @@ function collectFunction(
       signature.requiredArguments > 0 || signature.rejects ? null : thunkOf(signature),
     ),
   );
-  // By the types alone, a signature fits a call that has more arguments, and the first that fits is taken.
+  // For what reads no dispatch and takes the first that fits: by the types alone, one fits a call that has more arguments.
   const countOf = ({ args }: DeclaredField) => (fn.dispatchesByCount ? Object.keys(args).length : 0);
   const fields = overloads.flatMap(overload => overload.fields).toSorted((a, b) => countOf(b) - countOf(a));
   // Nobody has read a member of a class of which the schema says nothing but that it is there.

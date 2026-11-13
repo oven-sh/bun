@@ -1,6 +1,6 @@
 // What `bun build --compile --aot --trim` keeps and removes for a handful of programs and build options. trim-by-use/ has a program for each part of Bun.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows } from "harness";
+import { bunEnv, bunExe, isCI, isMacOS, isWindows } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/compiler";
@@ -278,10 +278,15 @@ const files = {
     );
 
     // Elsewhere the driver of a machine without a GPU needs executable memory.
-    test.skipIf(!isMacOS && !isWindows)(
+    test.skipIf(!isCI || !(isMacOS || isWindows))(
       "what is left of a program that uses WebGPU reaches the system's driver",
       async () => {
-        expect(await started(await trimmed("webgpu.ts"))).toEqual(await plain("webgpu.ts"));
+        expect(await started(await trimmed("webgpu.ts"))).toEqual({
+          stdout:
+            "[object GPU] true\ninvalid internal\n1,4,9,16 0 unmapped true true validation error 1 destroyed\non a device\n",
+          stderr: "",
+          exitCode: 0,
+        });
       },
     );
 

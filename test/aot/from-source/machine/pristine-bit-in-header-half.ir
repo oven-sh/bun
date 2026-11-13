@@ -1,0 +1,14 @@
+# ARM64 cores forward the header of a new array to a load that starts where the store starts or at its middle, and to no load of the flags alone.
+# -- source: pristine-bit-in-header-half.ts
+# declare function say(...x: unknown[]): void;
+# function merge(a: number[], b: number[]): number[] { const out: number[] = []; let i = 0, j = 0; while (i < a.length && j < b.length) out.push(a[i]! < b[j]! ? a[i++]! : b[j++]!); while (i < a.length) out.push(a[i++]!); while (j < b.length) out.push(b[j++]!); return out; }
+# for (const list of [[1, 4, 7, 9], [], [0.5]]) say(merge(list, [2, 3, 8]));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK: = IsPristine
+# REQUIRES(HALF): arm64
+# RUN(HALF): emit f1:Body mechanisms=all
+# HALF-LABEL: unit f1:Body
+# HALF-NOT: = Load8Z({{*}}JSCell_typeInfoFlags
+# HALF: = Load({{*}}, offset = 4, JSCell_usefulBytes
+# HALF-NOT: = Load8Z({{*}}JSCell_typeInfoFlags

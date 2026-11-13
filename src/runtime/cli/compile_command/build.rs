@@ -97,6 +97,7 @@ pub(crate) fn compile_to_executable(
     // With =strict a Worker runs nothing but compiled code.
     used.starts_workers_from_unseen_code = build.starts_workers_from_unseen_code
         && options.code_generation_from_strings != CodeGenerationFromStrings::Strict;
+    used.can_reach_test_runner |= options.runs_tests || options.loads_code_from_disk;
     let trimming = trimming::decide_trimming(request, &used)?;
     let untrimmed_outfile = bun_core::env_var::BUN_DEBUG_TEST_UNTRIMMED_OUTFILE
         .get_not_empty()
@@ -672,6 +673,7 @@ fn add_assets(
         log,
     );
     fs_only_paths.extend(asset_paths);
+    set_times_of_folders(&mut fs_only_paths);
     Ok((
         named_at_root,
         encode_files_for_file_system_alone(fs_only_paths),
@@ -1009,8 +1011,8 @@ fn add_data_files_under_root(
         }
     }
     fs_only_paths.extend(folders.into_iter().map(|folder| PathForFileSystemAlone {
-        modified_at: modified_at(&[&root[..], b"/", &folder].concat()).unwrap_or(0),
         path_below_root: folder,
+        modified_at: 0,
         is_folder: true,
         is_asset: false,
         size_without_bytes: None,
@@ -1206,7 +1208,7 @@ fn add_assets_under_root(
     Ok((named_at_root, paths))
 }
 
-/// Pushes the file at `path_below_root` (`path_on_disk` during the build) and its parent folders.
+/// Pushes the file at `path_below_root` (`path_on_disk` during the build) and the folders below the root that hold it.
 fn push_asset_paths(
     path_below_root: &[u8],
     path_on_disk: &[u8],
@@ -1215,25 +1217,45 @@ fn push_asset_paths(
     paths: &mut Vec<PathForFileSystemAlone>,
 ) {
     let path_below_root = bun_core::strings::remove_leading_dot_slash(path_below_root);
-    let mut path_on_disk = path_on_disk;
+    let is_above_root = path_below_root.starts_with(b"../");
+    // `stat()` has a time for a file above the root only where the program does nothing but ask about the file.
+    let has_time = !is_above_root || size_without_bytes.is_some();
     paths.push(PathForFileSystemAlone {
         path_below_root: path_below_root.to_vec(),
-        modified_at: modified_at(path_on_disk).unwrap_or(0),
+        modified_at: has_time
+            .then(|| modified_at(path_on_disk))
+            .flatten()
+            .unwrap_or(0),
         is_folder: false,
         // `Bun.embeddedFiles` lists only explicit assets.
         is_asset: is_explicit,
         size_without_bytes,
     });
-    for folder in folders_up_to(path_below_root, 1) {
-        let name_length = bun_paths::basename(path_on_disk).len();
-        path_on_disk = trim_trailing_separators(&path_on_disk[..path_on_disk.len() - name_length]);
-        paths.push(PathForFileSystemAlone {
+    if is_above_root {
+        return;
+    }
+    paths.extend(
+        folders_up_to(path_below_root, 1).map(|folder| PathForFileSystemAlone {
             path_below_root: folder.to_vec(),
-            modified_at: modified_at(path_on_disk).unwrap_or(0),
+            modified_at: 0,
             is_folder: true,
             is_asset: true,
             size_without_bytes: None,
-        });
+        }),
+    );
+}
+
+/// The time that the disk has for a folder also moves with files that are no part of the program.
+fn set_times_of_folders(paths: &mut [PathForFileSystemAlone]) {
+    let mut newest: std::collections::BTreeMap<Vec<u8>, i64> = Default::default();
+    for file in paths.iter().filter(|it| !it.is_folder) {
+        for folder in folders_up_to(&file.path_below_root, 1) {
+            let time = newest.entry(folder.to_vec()).or_insert(file.modified_at);
+            *time = file.modified_at.max(*time);
+        }
+    }
+    for folder in paths.iter_mut().filter(|it| it.is_folder) {
+        folder.modified_at = newest.get(&folder.path_below_root).copied().unwrap_or(0);
     }
 }
 

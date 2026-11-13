@@ -6,10 +6,14 @@
 # function run(count) { for (let i = 0; i < count; i++) kept[i & 3] = new B(i); return Object.keys(kept[1]).join(); }
 # print(run(9));
 # -- end of source
-# The parent's constructor runs first, so its keys come first. With m in front of x in the planned order, both stores asked the table of key orders at each construction. f1 = run
+# The parent's constructor runs first, so its keys come first: one allocation lists x ahead of m, and asks no table of key orders. f1 = run
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
-# CHECK: PutSlotOrAdd {{*}} key="x" {{*}} orderWordAfter=
-# CHECK: PutSlotOrAdd {{*}} key="m" {{*}} orderWordAfter=
+# CHECK-NOT: HasKeyOrder
+# CHECK: = NewObject -, {{*}} layout=L1 fields=[1, 0]
+# CHECK-NOT: HasKeyOrder
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS: field L1.0 "m"
+# FIELDS: field L1.1 "x"
 # RUN(ANSWERS): run-in-shell
 # ANSWERS: x,m

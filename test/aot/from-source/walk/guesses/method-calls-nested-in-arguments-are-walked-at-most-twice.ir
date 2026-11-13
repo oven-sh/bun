@@ -16,7 +16,8 @@
 # RUN: walk f2 mechanisms=all
 # CHECK-LABEL: code f2:Body
 # CHECK: = ShapeTest {{*}}layouts=[L0]
-# CHECK-NOT: = ShapeTest
+# CHECK: = AreMembersUnchanged {{*}}key="add"
+# CHECK-NOT: = AreMembersUnchanged
 # RUN(ANSWERS): run-in-shell globalThis.hide = value => value;
 # ANSWERS: 2 8
 # ANSWERS-NEXT: exited with 0

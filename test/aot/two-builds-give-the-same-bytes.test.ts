@@ -3,7 +3,7 @@
 // there are registers, so each of them moves several values between the stack and registers at the ends of its loop: the order of such
 // moves once followed addresses.
 import { describe, expect } from "bun:test";
-import { readFileSync, rmSync } from "fs";
+import { mkdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported } from "./harness/commands";
@@ -174,6 +174,108 @@ describe.skipIf(!!unsupported)("compile/aot/two-builds-give-the-same-bytes", () 
       expect(printed).toEqual(["the data", "cli"]);
     });
   }, 600_000);
+
+  // The time that the disk has for a folder moves with files that are no part of the program.
+  const readsAt = (path: string) =>
+    `console.log(require("node:fs").readFileSync(require("node:path").join(__dirname, "${path}"), "utf8"));\n`;
+  const addTo = (folder: string) => writeFileSync(join(folder, "other.txt"), "of nobody");
+  test.each([
+    {
+      name: "an asset below the entry point",
+      files: { "app/entry.cjs": readsAt("data/deep/one.txt"), "app/data/deep/one.txt": "one" },
+      flags: ["--asset", "data/deep/one.txt"],
+      folders: ["", "app", "app/data", "app/data/deep"],
+      change: addTo,
+    },
+    {
+      name: "a folder given as an asset",
+      files: { "app/entry.cjs": readsAt("data/deep/one.txt"), "app/data/deep/one.txt": "one" },
+      flags: ["--asset", "data"],
+      folders: ["", "app", "app/data", "app/data/deep"],
+    },
+    {
+      name: "an asset above the entry point",
+      files: { "app/entry.cjs": readsAt("../shared/deep/one.txt"), "shared/deep/one.txt": "one" },
+      flags: ["--asset", "../shared/deep/one.txt"],
+      folders: ["", "app", "shared", "shared/deep"],
+      change: addTo,
+    },
+    {
+      name: "the package.json above the entry point",
+      files: { "app/src/entry.cjs": readsAt("../package.json"), "app/package.json": `{ "name": "app" }` },
+      working: "app/src",
+      folders: ["", "app", "app/src"],
+      change: addTo,
+    },
+    {
+      name: "the package.json of a package behind a link",
+      files: {
+        "app/entry.cjs": `console.log(require("linked"));\n`,
+        "store/node_modules/linked/package.json": `{ "name": "linked", "version": "1.0.0" }`,
+        "store/node_modules/linked/index.js": `module.exports = JSON.parse(require("node:fs").readFileSync(require("node:path").join(__dirname, "package.json"), "utf8")).version;\n`,
+      },
+      links: { "app/node_modules/linked": "store/node_modules/linked" },
+      folders: ["", "app", "app/node_modules", "store", "store/node_modules", "store/node_modules/linked"],
+      change: addTo,
+    },
+    {
+      name: "data files under a made path",
+      files: {
+        "app/entry.cjs": `console.log(require("./locales/" + (process.argv[2] ?? "en") + ".json").hello);\n`,
+        "app/locales/en.json": `{ "hello": "hello" }`,
+        "app/locales/de.json": `{ "hello": "hallo" }`,
+      },
+      folders: ["", "app", "app/locales"],
+    },
+  ] as {
+    name: string;
+    files: Record<string, string>;
+    flags?: string[];
+    links?: Record<string, string>;
+    working?: string;
+    folders: string[];
+    change?: (folder: string) => void;
+  }[])(
+    "a build whose embedded files lie in folders that have changed since the build before is equal: $name",
+    async ({ files, flags = [], links = {}, working = "app", folders, change }) => {
+      await slot(async () => {
+        using dir = tempDir("aot-same-bytes-in-changed-folders", files);
+        for (const [link, target] of Object.entries(links)) {
+          mkdirSync(join(String(dir), link, ".."), { recursive: true });
+          symlinkSync(join(String(dir), target), join(String(dir), link), "junction");
+        }
+        const executable = join(String(dir), isWindows ? "built.exe" : "built");
+        const hashes: string[] = [];
+        const printed: string[] = [];
+        const exitCodes: (number | null)[] = [];
+        for (let build = 1; build <= 2; build++) {
+          for (const folder of folders) {
+            if (build === 2) change?.(join(String(dir), folder));
+            utimesSync(join(String(dir), folder), build * 100_000_000, build * 100_000_000);
+          }
+          const command = [
+            bunExe(),
+            "build",
+            "--compile",
+            ...withoutDebugInformation,
+            "--aot",
+            "./entry.cjs",
+            ...flags,
+          ];
+          built(await spawned([...command, "--outfile", executable], join(String(dir), working), bunEnv));
+          hashes.push(Bun.hash(readFileSync(executable)).toString(16));
+          const ran = await spawned([executable], String(dir), bunEnv);
+          printed.push(ran.stdout);
+          exitCodes.push(ran.exitCode);
+          rmSync(executable);
+        }
+        expect(printed[1]).toBe(printed[0]);
+        expect(exitCodes).toEqual([0, 0]);
+        expect(hashes[1]).toBe(hashes[0]);
+      });
+    },
+    600_000,
+  );
 
   test("builds of one program in two folders are equal", async () => {
     await slot(async () => {

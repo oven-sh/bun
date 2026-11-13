@@ -34,6 +34,27 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    fn key_of_factory(&self, factory: FnId) -> FunctionKey {
+        FunctionKey::Source(FunctionRef {
+            file: self.file,
+            function: factory,
+        })
+    }
+
+    pub(in crate::lower) fn define_missing_factories(&mut self) {
+        let hir = self.hir;
+        for copied in &hir.copied_factories[..] {
+            let key = self.key_of_factory(copied.factory);
+            if self.fragment.is_function_named(key) && !self.fragment.is_function_defined(key) {
+                let name = self.find_factory_name(copied.factory);
+                let header =
+                    function::create_header_of_missing_function(self, copied.factory, name);
+                let function = self.add_header_of_missing_function(key, header);
+                self.lower_left_out_function(function);
+            }
+        }
+    }
+
     fn find_factory_name(&mut self, factory: FnId) -> Option<StringId> {
         match self.hir[factory].name.is_some() {
             true => Some(self.intern_own_name(factory)),
@@ -64,7 +85,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             unreachable!("a copied factory is a function");
         };
         let site = hir[copied.call];
-        if self.file.scopes.function_called_by_name(call).is_some() {
+        let called_by_name = self.file.scopes.function_called_by_name(call);
+        if called_by_name.is_some_and(|function| function != copied.factory) {
+            return self.lower_expression(call);
+        }
+        if called_by_name.is_some() {
             let arguments = self.lower_arguments(site.args);
             self.set_position(hir[call].pos);
             let callee = Callee::without_key(
@@ -83,12 +108,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             key: None,
             ..callee
         };
-        let factory = self
-            .file
-            .reference_function(FunctionKey::Source(FunctionRef {
-                file: self.file.file,
-                function: copied.factory,
-            }));
+        let key = self.file.key_of_factory(copied.factory);
+        let factory = self.file.reference_function(key);
         let is_factory = self.builder.is_closure_of(factory, callee.function);
         let enters_copy = self.create_block();
         let differs = Edge::with_proofs(ordinary, &[0]);

@@ -229,9 +229,14 @@ impl Declarations<'_, '_> {
             }
         }
         let mut symbol_scopes = vec![ScopeId::NONE; bound.symbols.len()];
+        let mut merged_exports: Vec<(usize, SymbolId)> = Vec::new();
         for (index, scope) in bound.scopes.iter().enumerate() {
             for &(_, symbol) in bound.table(scope.locals) {
-                for owner in [symbol, bound.symbols[symbol.idx()].export_symbol] {
+                let listed = &bound.symbols[symbol.idx()];
+                if listed.flags.contains(SymFlags::EXPORT_VALUE) && listed.decls.len() >= 2 {
+                    merged_exports.push((index, symbol));
+                }
+                for owner in [symbol, listed.export_symbol] {
                     if let Some(entry) = symbol_scopes.get_mut(owner.idx())
                         && entry.is_none()
                     {
@@ -241,37 +246,31 @@ impl Declarations<'_, '_> {
             }
         }
         let mut exported_values = Vec::new();
-        for (index, scope) in bound.scopes.iter().enumerate() {
-            for &(_, local) in bound.table(scope.locals) {
-                let listed = &bound.symbols[local.idx()];
-                let decls = &listed.decls[..];
-                if decls.len() < 2 || !listed.flags.contains(SymFlags::EXPORT_VALUE) {
+        for (index, local) in merged_exports {
+            let listed = &bound.symbols[local.idx()];
+            let (mut value, mut has_local_value) = (None, false);
+            for &decl in &listed.decls[..] {
+                let own = declaration_symbol(bound, decl);
+                if own.is_none() || own == local {
+                    has_local_value |=
+                        own == local && declaration_creates_binding(hir, bound, decl);
                     continue;
                 }
-                let (mut value, mut has_local_value) = (None, false);
-                for &decl in decls {
-                    let own = declaration_symbol(bound, decl);
-                    if own.is_none() || own == local {
-                        has_local_value |=
-                            own == local && declaration_creates_binding(hir, bound, decl);
-                        continue;
-                    }
-                    let entry = &mut symbol_scopes[own.idx()];
-                    if entry.is_none() {
-                        *entry = ScopeId(index as u32);
-                    }
-                    if value.is_none() && declaration_creates_binding(hir, bound, decl) {
-                        value = Some(own);
-                    }
+                let entry = &mut symbol_scopes[own.idx()];
+                if entry.is_none() {
+                    *entry = ScopeId(index as u32);
                 }
-                // A value beside an export that is only declared stays the namespace's own.
-                let is_in_namespace = matches!(scope.kind, ScopeKind::Module(_));
-                let own_value = (has_local_value && is_in_namespace).then_some(local);
-                if let Some(value) = value.or(own_value)
-                    && has_bit(&valueless_symbols, listed.export_symbol.idx())
-                {
-                    exported_values.push((local, value));
+                if value.is_none() && declaration_creates_binding(hir, bound, decl) {
+                    value = Some(own);
                 }
+            }
+            // A value beside an export that is only declared stays the namespace's own.
+            let is_in_namespace = matches!(bound.scopes[index].kind, ScopeKind::Module(_));
+            let own_value = (has_local_value && is_in_namespace).then_some(local);
+            if let Some(value) = value.or(own_value)
+                && has_bit(&valueless_symbols, listed.export_symbol.idx())
+            {
+                exported_values.push((local, value));
             }
         }
         exported_values.shared_sort_by_key(|entry| entry.0);

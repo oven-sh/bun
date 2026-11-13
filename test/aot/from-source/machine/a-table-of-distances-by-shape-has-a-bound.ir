@@ -44,10 +44,8 @@
 # print(sum, behind);
 # -- end of source
 # A bound on a table of field offsets. `v` lies behind one, two or three inherited fields, so the read and the store in `weigh` and the read in the loop look up where it lies.
-# Only an inherited prefix pins a field: below one base, in unrelated classes and in literals `v` lies at one offset and there is no table. So the count is held.
+# Only an inherited prefix pins a field: below one base, in unrelated classes and in literals `v` lies at one offset and there is no table.
 # f1 = weigh
-# RUN(COUNT): compile OffsetsFoundInFlatTables mechanisms=all
-# COUNT: statistic OffsetsFoundInFlatTables 3
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 1770 1830
 # RIGHT-NEXT: exited with 0

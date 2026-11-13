@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/memory-of-builds-that-follow-a-path.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/wide-lists-in-parts.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -308,6 +312,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/a-damaged-list-of-package-names-says-so.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-data-file-asked-for-with-a-type-by-a-path-of-the-run-is-another-module-in-a-test-run.test.ts": {
     "default": 26300,
     "asan": 105200
@@ -365,6 +373,22 @@
     "asan": 240000
   },
   "aot/a-few-of-every-sweep-4.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-few-of-every-sweep-5.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-few-of-every-sweep-6.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-few-of-every-sweep-7.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-few-of-every-sweep-8.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -1188,6 +1212,10 @@
     "default": 22300,
     "asan": 89200
   },
+  "aot/assigned-literal-frames.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/augmented-package.test.ts": {
     "default": 20400,
     "asan": 81600
@@ -1616,7 +1644,75 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/engine/from-source-33.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-34.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-35.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-36.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-37.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-38.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-39.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/engine/from-source-4.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-40.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-41.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-42.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-43.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-44.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-45.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-46.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-47.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-48.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-49.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -1624,7 +1720,67 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/engine/from-source-50.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-51.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-52.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-53.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-54.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-55.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-56.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-57.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-58.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-59.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/engine/from-source-6.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-60.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-61.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-62.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-63.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/from-source-64.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -1848,6 +2004,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/failed-import-cost-in-a-test-run.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/fake-clock.test.ts": {
     "default": 700,
     "asan": 2800
@@ -1871,6 +2031,10 @@
   "aot/files-that-load-again-by-module.test.ts": {
     "default": 3200,
     "asan": 12800
+  },
+  "aot/files-written-by-child-processes.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/fixed-runs-closed.test.ts": {
     "default": 13000,
@@ -1988,6 +2152,10 @@
     "default": 14200,
     "asan": 56800
   },
+  "aot/import-order-in-a-test-run.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/import-read-cost-stays-flat.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -1995,6 +2163,10 @@
   "aot/import-settled.test.ts": {
     "default": 3400,
     "asan": 13600
+  },
+  "aot/imports-in-evaluated-strings.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/installed-types-that-the-program-leads-to-are-its-own.test.ts": {
     "default": 60000,
@@ -2027,6 +2199,10 @@
   "aot/kept-realms.test.ts": {
     "default": 3400,
     "asan": 13600
+  },
+  "aot/known-evaluations-check-level.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/known-name-warnings.test.ts": {
     "default": 3600,
@@ -2100,6 +2276,10 @@
     "default": 5000,
     "asan": 20000
   },
+  "aot/memory-of-builds-that-follow-a-path.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/messages-quote-hoisted-imports.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -2113,6 +2293,10 @@
     "asan": 240000
   },
   "aot/misnumbered-function-records.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/missing-comma-operands.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -2147,6 +2331,10 @@
   "aot/mock-commonjs-sites.test.ts": {
     "default": 7100,
     "asan": 28400
+  },
+  "aot/mock-cost-beside-other-modules.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/mock-ends-for-require.test.ts": {
     "default": 1700,
@@ -2304,6 +2492,10 @@
     "default": 1000,
     "asan": 4000
   },
+  "aot/mocked-files-above-ended-mocks.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/mocks-are-hoisted-above-the-imports.test.ts": {
     "default": 18400,
     "asan": 73600
@@ -2345,6 +2537,10 @@
     "asan": 8000
   },
   "aot/mocks-laid-twice.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/mocks-of-deferred-imports.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -2508,6 +2704,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/narrow-references-across-awaits.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/natives-find-what-tests-replace.test.ts": {
     "default": 109000,
     "asan": 436000
@@ -2557,6 +2757,10 @@
     "asan": 240000
   },
   "aot/originals-of-mocks-run-compiled.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/originals-outlive-later-runs.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -2617,6 +2821,10 @@
     "asan": 240000
   },
   "aot/perf/members-under-keys.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/pipes-beside-code.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -2732,11 +2940,19 @@
     "default": 1000,
     "asan": 4000
   },
+  "aot/repeated-import-calls-in-a-test-run.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/replaced-constructor-prototypes.test.ts": {
     "default": 91300,
     "asan": 365200
   },
   "aot/reports-of-a-failure-behind-requires-that-gave-up.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/require-cost-beside-other-modules.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -2976,6 +3192,10 @@
     "default": 16600,
     "asan": 66400
   },
+  "aot/sources-removed-by-child-processes.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/spies-in-joined-text.test.ts": {
     "default": 3300,
     "asan": 13200
@@ -3023,6 +3243,14 @@
   "aot/strict-functions.test.ts": {
     "default": 1600,
     "asan": 6400
+  },
+  "aot/strings-of-builtin-methods.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/strings-of-doubles-are-kept.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/stub-global.test.ts": {
     "default": 1700,
@@ -3203,6 +3431,10 @@
   "aot/text-that-a-test-compiles-into-a-module-requires-what-it-names.test.ts": {
     "default": 1000,
     "asan": 4000
+  },
+  "aot/texts-matched-across-awaits.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/texts-nothing-can-run.test.ts": {
     "default": 600,
@@ -3440,6 +3672,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/throw-below-many-evaluations.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/tool-loads-a-plugin.test.ts": {
     "default": 1200,
     "asan": 4800
@@ -3535,6 +3771,10 @@
   "aot/update-timings-keeps-memory-table.test.ts": {
     "default": 1600,
     "asan": 6400
+  },
+  "aot/values-held-across-many-calls.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/verifier-rejects-hole-as-nan.test.ts": {
     "default": 60000,
@@ -3719,6 +3959,10 @@
   "aot/whoever-lists-require-cache-or-compares-what-an-entry-exports-asks-for-no-export.test.ts": {
     "default": 1800,
     "asan": 7200
+  },
+  "aot/wide-lists-in-parts.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/worker-apart-dynamic-require.test.ts": {
     "default": 1800,

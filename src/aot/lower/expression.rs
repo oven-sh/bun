@@ -269,6 +269,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         {
             return self.lower_identifier(operand);
         }
+        if !self.loose_loops.is_empty()
+            && let Some(value) = self.try_lower_in_loose_loop(expression)
+        {
+            return value;
+        }
         if !self.enter_nesting(position) {
             return self.builder.undefined();
         }
@@ -522,10 +527,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         evaluation: Evaluation<'_>,
     ) -> Option<ExprId> {
         evaluation.name?;
-        if self.file.counts_executions() {
+        let hir = self.file.hir;
+        if self.file.counts_executions() || self.file.stands_as_written(hir[operator].pos) {
             return None;
         }
-        let hir = self.file.hir;
         let decisions = self.file.decisions();
         let mut operand = decisions.find_operand_alone_in_bun_run(hir, operator)?;
         // A chain of operators nests on the left, as deep as it is long.

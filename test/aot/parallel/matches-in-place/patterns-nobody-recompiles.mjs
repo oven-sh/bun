@@ -1,3 +1,4 @@
+// STATISTIC: RegExpMatchAllocationsElided >= 1
 // Nothing names compile(): the groups of a constant pattern are known, though its prototype is looked through and RegExp is found by its species.
 const pick = (x) => [x][JSON.parse("0")];
 const TOKEN = /(?<word>[a-z]+)|(?<number>\d+)|(?<space>\s+)|(?<other>.)/iy, DATE = /(?<y>\d{4})-(?<m>\d\d)(?:-(?<d>\d\d))?/, LAST = /(\w)(\d)?$/g;

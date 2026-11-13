@@ -4081,6 +4081,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                 };
                 // With no type, a member has the type of what the constructor stores, if the check looks for one.
                 let is_typed_by_stores = self.no_implicit_any || module.is_unchecked();
+                let mut types_of_private_fields: Vec<(u32, Vec<u8>)> = Vec::new();
                 for (place, member) in members.iter().enumerate() {
                     let key = (index as u32, syntax.member_key(member));
                     if syntax.is_type_only_member(member) {
@@ -4092,8 +4093,25 @@ impl<'a> Transfer<'_, 'a, '_> {
                         add(place, &text);
                     } else if member.kind == MemberKind::Property
                         && !output_members.contains_key(&key)
-                        // The bundle keeps each private name, and `declare` allows none (TS18019).
-                        && !matches!(member.key, PropKey::Private(_))
+                        && matches!(member.key, PropKey::Private(_))
+                    {
+                        // `declare` allows no private name (TS18019). The bundle keeps each: its field takes the type.
+                        let name = syntax.word(key.1);
+                        let is_kept = |kept: &&Member| {
+                            matches!(kept.key, PropKey::Private(_))
+                                && kept.kind == MemberKind::Property
+                                && kept.init.is_none()
+                                && output.word(output.member_key(kept)) == name
+                        };
+                        let mut fields = in_output.members.iter().map(|kept| &output_file[kept]);
+                        let stated = self.linked.stated_members.get(&key);
+                        let stated = stated.filter(|stated| !stated.is_value);
+                        if let (Some(kept), Some(stated)) = (fields.find(is_kept), stated) {
+                            let at = output.member_type_span(kept).0;
+                            types_of_private_fields.push((at, [b": ", &stated.text[..]].concat()));
+                        }
+                    } else if member.kind == MemberKind::Property
+                        && !output_members.contains_key(&key)
                     {
                         // The stores of an assigned member type it, unless they type it in another way.
                         let is_typed_by_stores = is_typed_by_stores
@@ -4156,6 +4174,9 @@ impl<'a> Transfer<'_, 'a, '_> {
                             add(0, &[&b"declare "[..], &typed, colon, stated, b";"].concat());
                         }
                     }
+                }
+                for (at, text) in types_of_private_fields {
+                    insertions.add(at, Order::Slot, text);
                 }
             }
         }

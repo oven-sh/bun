@@ -1001,26 +1001,38 @@ export class Server {
     });
   });
 
-  // The bundle has `"fast"` for `Mode.Fast`, and its source map has no place for the field. The field stays as it is.
-  test("a private field keeps its one declaration where the build cannot tell which field it is", async () => {
+  // The bundle has `0` for `Level.Low`, and its source map has no place for the field. The class has one `#level`.
+  test("a private field that the source map has no place for gets its type by its name", async () => {
+    const caller = (library: string) => `import { Box } from "${library}";
+const level: number = new Box().level;
+const wrong: string = new Box().level;
+`;
+    const reads = (library: string) => `import { Box } from "${library}";
+const type0: never = new Box().level;
+`;
     using dir = tempDir("build-dts-assigned-fields-private-enum", {
       ...project(assigned),
-      "src/mode.ts": `export enum Mode { Fast = "fast", Slow = "slow" }\n`,
-      "src/index.ts": `import { Mode } from "./mode";
+      "src/level.ts": `export enum Level { Low, High }\n`,
+      "src/index.ts": `import { Level } from "./level";
 export class Box {
-  #mode = Mode.Fast;
-  get mode() { return this.#mode; }
+  #level = Level.Low;
+  get level() { return this.#level; }
+  raise(): void { this.#level = Level.High; }
 }
 `,
+      "callers/of-the-sources.ts": caller("../src/index"),
+      "callers/of-the-typed-file.ts": caller("../out/index.aot"),
+      "types/of-the-sources.ts": reads("../src/index"),
+      "types/of-the-typed-file.ts": reads("../out/index.aot"),
     });
     const build = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
     expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     const typed = readFileSync(join(String(dir), "out/index.aot.ts"), "utf8");
-    expect(typed.match(/^.*#mode\b.*;$/gm)).toEqual([
-      '    this.#mode = "fast" /* Fast */;',
-      "  #mode;",
-      "    return this.#mode;",
-    ]);
+    expect(typed.match(/^ *#level.*;$/gm)).toEqual(["  #level: Level;"]);
+    expect(await checkedIn(String(dir))).toEqual({
+      errors: { "callers/of-the-sources.ts": ["(3,7): TS2322"], "callers/of-the-typed-file.ts": ["(3,7): TS2322"] },
+      types: { "types/of-the-sources.ts": ["Level"], "types/of-the-typed-file.ts": ["Level"] },
+    });
   });
 
   // What the stores of the bundle say of such a member is another type than the one of the sources: `"em"` is a
@@ -1067,6 +1079,20 @@ export class Holder {
 `,
       },
       "index.aot.ts:11:12: TS2339: Property 'fixed' does not exist on type 'Box'.",
+    ],
+    // The field has its type, and the bundle stores `"fast"` with no cast.
+    [
+      "an enum with text values of another module, at a private name,",
+      {
+        "src/mode.ts": `export enum Mode { Fast = "fast", Slow = "slow" }\n`,
+        "src/index.ts": `import { Mode } from "./mode";
+export class Box {
+  #mode = Mode.Fast;
+  get mode() { return this.#mode; }
+}
+`,
+      },
+      "index.aot.ts:5:5: TS2322: Type '\"fast\"' is not assignable to type 'Mode'.",
     ],
   ])("a field whose type is %s leaves the typed files out", async (_, sources, first) => {
     using dir = tempDir("build-dts-assigned-fields-other-stores", { ...project(assigned), ...sources });

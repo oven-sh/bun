@@ -5097,7 +5097,7 @@ fn heads_of_stated(file: &File<'_>, spans: &[(u32, u32)]) -> Vec<Option<Vec<Head
 fn name_of_import_type(text: &[u8], at: usize) -> Option<(usize, usize)> {
     let specifier = text.get(at..)?.strip_prefix(b"import(")?;
     let quote = *specifier.first()?;
-    let close = 1 + specifier[1..].iter().position(|&byte| byte == quote)?;
+    let close = 1 + bun_core::strings::index_of_char_usize(&specifier[1..], quote)?;
     let name = specifier.get(close + 1..)?.strip_prefix(b").")?;
     let start = text.len() - name.len();
     Some((start, token_end(text, start, false)))

@@ -1,4 +1,4 @@
-// STATISTIC: RowsOfCallsOfMethodsOfOneTableBehindOneTest >= 1
+// STATISTIC: CollectionCallRunsGuardedOnce >= 1
 const OUT: unknown[] = [];
 class Sym { name: unknown; decl: Sym | undefined; flags: number; constructor(name: unknown, flags: number) { this.flags = flags; this.name = name; this.decl = undefined; } }
 function add(table: Map<unknown, Sym>, bases: Sym[]): void {
@@ -10,7 +10,7 @@ function add(table: Map<unknown, Sym>, bases: Sym[]): void {
     }
   }
 }
-(globalThis as any).handed = add;
+(globalThis as any).handed = new Function("x", "return x")(add);
 function show(table: Map<unknown, Sym>): string { let s = table.size + ":"; for (const [k, v] of table) s += (Object.is(k, -0) ? "-0" : typeof k === "object" ? "obj" : String(k)) + "=" + v.flags + ","; return s; }
 let calls = 0; const key = { valueOf() { calls++; return 1; }, toString() { calls++; return "k"; } };
 const t = new Map<unknown, Sym>();

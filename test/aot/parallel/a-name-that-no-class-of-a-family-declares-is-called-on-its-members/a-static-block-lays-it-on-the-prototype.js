@@ -1,5 +1,5 @@
-// STATISTIC: SharedCallsWhoseSilentMembersSleep >= 1
-// STATISTIC: SharedCallsWhoseSleepersWereWoken = 0
+// STATISTIC: SharedCallsWithDormantMembers >= 1
+// STATISTIC: SharedCallsWithActivatedMembers = 0
 class Base { tag() { return 0; } }
 class A extends Base { a() { return "a"; } }
 class B extends Base { b() { return "b"; } }

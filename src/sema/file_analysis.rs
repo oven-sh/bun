@@ -13,8 +13,9 @@ use crate::fold::{Decisions, FoldError, FoldInputs};
 use crate::hir::{ExprId, File, ImportEqualsId, ImportedName, NodeData};
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{
-    ChangedPath, ExportedFileChanger, FileReadBesideCaller, ImportSite, ImportSiteKind,
-    ImportSpecifier, JsxImport, JsxImportSet, JsxMode, OwnUrlHanded, ResolvedForm, ResolvedFrom,
+    CallerRelativeRead, ChangedPath, ExportedFileChanger, ImportSite, ImportSiteKind,
+    ImportSpecifier, JsxImport, JsxImportSet, JsxMode, NamedPath, OwnUrlArgument, ResolvedForm,
+    ResolvedFrom, WorkerName,
 };
 use crate::module_format::{DeclaredModuleType, FormatByDeclaredType, ModuleFormat};
 use crate::session::Arena;
@@ -39,16 +40,45 @@ pub struct FileAnalysis<'s> {
     alternatives: &'s [ImportSpecifier],
     paths_from_own_directory: &'s [ExprId],
     answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
-    names_of_workers: &'s [(ExprId, ImportSpecifier)],
+    names_of_workers: &'s [WorkerName],
     pub paths_of_changed_files: &'s [ChangedPath],
-    pub paths_of_files_read: &'s [(ExprId, Atom)],
-    pub files_read_beside_callers: &'s [FileReadBesideCaller],
-    pub own_urls_handed: &'s [OwnUrlHanded],
+    /// File reads with a path relative to this module, as in `fs.readFileSync(path.join(import.meta.dirname, "a.txt"))`: the operand and each path it can name.
+    pub module_relative_reads: &'s [(ExprId, Atom)],
+    /// The same of paths that are not known in between, as in `fs.readFileSync(path.join(import.meta.dirname, "lang", `${name}.json`))`: the operand, the start and the end.
+    pub module_relative_patterns: &'s [(ExprId, Atom, Atom)],
+    /// What the order of the stores rules out, as far as that is followed. It is embedded too.
+    pub reads_ruled_out: &'s [(ExprId, Atom)],
+    pub patterns_ruled_out: &'s [(ExprId, Atom, Atom)],
+    pub caller_relative_reads: &'s [CallerRelativeRead],
+    /// Path operands of file reads, queries and folder listings with a value that can't be resolved, as in `fs.existsSync(path.join(folder, "package.json"))`.
+    pub unknown_path_reads: &'s [ExprId],
+    /// The operands in `module_relative_reads` of calls that ask about a file and don't read its contents, as in `fs.existsSync(..)`. Sorted.
+    pub path_queries: &'s [ExprId],
+    /// The operands in `module_relative_reads` of calls that list or copy what lies in a folder, as in `fs.readdirSync(..)`. Sorted.
+    pub path_listings: &'s [ExprId],
+    /// The operands of `process.chdir(..)` that lead to the file's own folder, each with the path.
+    pub folders_entered: &'s [(ExprId, Atom)],
+    /// The reads of paths that start at the working directory.
+    pub reads_below_working_folder: &'s [(ExprId, Atom)],
+    pub named_paths: &'s [NamedPath],
+    /// Files and folders that the file creates or writes to, relative to its own folder.
+    pub paths_created: &'s [Atom],
+    /// Written names of WebAssembly files, as in `folder + "a.wasm"` where `folder` may be the file's own.
+    pub web_assembly_names: &'s [(ExprId, Atom)],
+    /// Functions that read a file by a path that their callers give, whole or in part. Sorted.
+    pub reading_functions: &'s [SymbolId],
+    /// What leads to the file's own folder and is passed to a function, as in `find(__dirname)`, each with the function, or is handed on otherwise, as in `{ cwd: __dirname }`. Not the operand of a read that is known, the text that such a read gives, or what a started process is passed.
+    pub own_folder_arguments: &'s [(ExprId, Option<ExprId>)],
+    /// Loads whose name is partly unknown, as in `require(path.join(process.argv[2] ?? __dirname, "a.json"))`: the argument and each name it is known to take. Sorted by argument.
+    pub known_load_names: &'s [(ExprId, Atom)],
+    pub own_url_arguments: &'s [OwnUrlArgument],
     pub exported_file_changers: &'s [ExportedFileChanger],
-    pub asked_of_other_files: &'s [(Atom, Atom)],
-    pub asked_of_data_files: &'s [(Atom, Atom)],
-    pub asked_of_own_exports: &'s [Atom],
-    pub names_out_of_data_files: &'s [(Atom, ExprId, bool)],
+    pub other_file_queries: &'s [(Atom, Atom)],
+    pub data_file_queries: &'s [(Atom, Atom)],
+    /// The exports of other files, each with its specifier, that a path of a file read may be made of. The members of an object are written with a NUL between them.
+    pub own_path_queries: &'s [(Atom, Atom)],
+    pub own_export_queries: &'s [Atom],
+    pub names_from_data_files: &'s [(Atom, ExprId, bool)],
     pub names_resolved_from_listed_folders: &'s [(Atom, Atom, ExprId)],
     pub options_of_resolves_with_unread_folders: &'s [ExprId],
     keys_stored_in_caches: &'s [(ExprId, ImportSpecifier)],
@@ -79,6 +109,13 @@ impl FileAnalysis<'_> {
         self.jsx_imports.contains(JsxImport::JsxDev)
     }
 
+    pub fn known_load_names_at(&self, argument: ExprId) -> impl Iterator<Item = Atom> {
+        let names = self.known_load_names;
+        let names = &names[names.partition_point(|it| it.0 < argument)..];
+        let names = names.iter().take_while(move |it| it.0 == argument);
+        names.map(|it| it.1)
+    }
+
     pub fn alternatives_of<'a>(&'a self, specifier: &'a ImportSpecifier) -> &'a [ImportSpecifier] {
         match *specifier {
             ImportSpecifier::OneOf(range) => {
@@ -102,10 +139,10 @@ impl FileAnalysis<'_> {
         index.ok().map(|index| answers[index].1)
     }
 
-    pub fn find_name_of_worker(&self, argument: ExprId) -> Option<&ImportSpecifier> {
+    pub fn find_name_of_worker(&self, argument: ExprId) -> Option<&WorkerName> {
         let names = self.names_of_workers;
-        let index = names.binary_search_by_key(&argument, |&(argument, _)| argument);
-        index.ok().map(|index| &names[index].1)
+        let index = names.binary_search_by_key(&argument, |it| it.argument);
+        index.ok().map(|index| &names[index])
     }
 
     pub fn find_key_stored_in_cache(&self, key: ExprId) -> Option<&ImportSpecifier> {
@@ -176,6 +213,18 @@ pub fn analyze_file<'s>(
     arena: &'s Arena,
 ) -> (Bound<'s>, FileAnalysis<'s>) {
     analyze::run(hir, options, inputs, &file, atoms, arena)
+}
+
+/// The bindings of a file that is neither folded nor scanned: those that `analyze_file` returns, unless they depend on
+/// sloppy mode.
+pub fn bind_file<'s>(
+    hir: &mut File<'s>,
+    options: BindOptions,
+    inputs: &FoldInputs<'s>,
+    atoms: &Interner<'s>,
+    arena: &'s Arena,
+) -> Bound<'s> {
+    analyze::bind(hir, options, inputs, atoms, arena)
 }
 
 pub struct AnalyzedAgain<'s> {

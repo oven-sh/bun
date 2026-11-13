@@ -1,4 +1,4 @@
-// STATISTIC: CopiesWalkedWhereTheirGuardsFail >= 1
+// STATISTIC: CallsInlinedAfterFailedGuards >= 1
 "use strict";
 // Plate.prototype is another object from the fourth turn on.
 function Plate(from) { this.wide = from.wide; this.tall = from.tall; }

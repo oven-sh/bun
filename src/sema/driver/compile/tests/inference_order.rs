@@ -195,6 +195,7 @@ fn ask_for_parameters_from_height(
             checked_elsewhere: &[],
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
+            alias_mentions: None,
             max_inference_nodes,
             limits: Default::default(),
         };
@@ -526,6 +527,7 @@ fn ask_for_results_of_a_circle_across_files(threads: usize) -> Vec<String> {
             checked_elsewhere: &[],
             builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
             named_values: &NoNamedValues,
+            alias_mentions: None,
             max_inference_nodes: 4096,
             limits: Default::default(),
         };
@@ -602,6 +604,7 @@ fn a_function_is_listed_once_among_the_members_of_the_cycles_it_is_in() {
                 checked_elsewhere: &[],
                 builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
                 named_values: &NoNamedValues,
+                alias_mentions: None,
                 max_inference_nodes: 0,
                 limits: Default::default(),
             };

@@ -1,4 +1,4 @@
-// STATISTIC: StepsOfIteratorsThatAreNeverMade >= 1
+// STATISTIC: IteratorAllocationsElidedInSteps >= 1
 const n = JSON.parse("3"), log = [];
 const make = () => { const m = new Map(); for (let i = 0; i < 4; i++) m.set("k" + i, i / 2); return m; };
 { const maps = [make(), make(), make()]; maps[1].keys = () => { log.push("own"); return ["q", 7][Symbol.iterator](); };

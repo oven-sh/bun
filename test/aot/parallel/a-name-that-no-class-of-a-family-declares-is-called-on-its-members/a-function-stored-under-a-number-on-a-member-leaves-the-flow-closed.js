@@ -1,5 +1,5 @@
 // Under: --aot-check=FlowFixpoint: a store under a written number opens the member's layout, and a member whose layout is open reads, under any name, all that is found beside its fields: what lies under numbers too. Its porter asks the node that the member itself would ask: the check wakes every sleeper and nothing grows.
-// STATISTIC: SharedCallsWhoseSilentMembersSleep >= 1
+// STATISTIC: SharedCallsWithDormantMembers >= 1
 class Base { tag() { return 0; } }
 class A extends Base { a() { return "a"; } }
 class B extends Base { b() { return "b"; } }

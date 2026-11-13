@@ -1,5 +1,5 @@
 // `{ a, ...(c ? { p } : undefined) }`: the way that brings undefined, null, a boolean, a number, a bigint or a symbol copies nothing, and nothing is called for it: the object is as if the spread were not written.
-// STATISTIC: CopiesOfWhatHasNoProperties >= 5
+// STATISTIC: ObjectSpreadsRemovedAsEmpty >= 5
 function withUndefined(a: number, p: number | undefined) { const o: any = { a, ...(p !== undefined ? { p } : undefined) }; return o; }
 function withNull(a: number, p: number | null) { const o: any = { a, ...(p !== null ? { p } : null) }; return o; }
 function withFalse(a: number, on: boolean) { const o: any = { a, ...(on ? { on } : false), z: a + 1 }; return o; }

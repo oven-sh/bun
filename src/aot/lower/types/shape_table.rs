@@ -67,7 +67,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 let function_type = self.find_class_function_type(class);
                 self.intern_checked(Type::function(function_type))
             }
-            ShapeKind::Function(signatures) => match self.find_function_type(signatures) {
+            ShapeKind::Function(signatures) => match self.find_function_type(signatures.declared) {
                 Some(function_type) => self.intern_checked(Type::function(function_type)),
                 None => Mapped::checked(TypeTable::FUNCTION),
             },

@@ -708,6 +708,14 @@ impl FunctionBuilder {
         self.write_variable(variable, narrowed);
     }
 
+    pub fn is_undefined(&self, value: ValueId) -> bool {
+        self.opcode_of(value) == Some(Opcode::Undefined)
+    }
+
+    pub fn is_absent(&self, value: ValueId) -> bool {
+        self.opcode_of(value) == Some(Opcode::Absent)
+    }
+
     pub fn is_undefined_or_null(&self, value: ValueId) -> bool {
         matches!(
             self.opcode_of(value),
@@ -732,14 +740,6 @@ impl FunctionBuilder {
 
     pub fn is_new_closure(&self, value: ValueId) -> bool {
         matches!(self.opcode_of(value), Some(Opcode::NewClosure))
-    }
-
-    pub fn write_released_variable(&mut self, variable: LocalVariable, assigned: ValueId) {
-        let released = self.read_variable(variable);
-        self.write_variable(variable, assigned);
-        if self.is_open() && !self.is_undefined_or_null(released) {
-            self.release_hint(released);
-        }
     }
 
     fn must_split_before_store(&self, variable: LocalVariable) -> bool {

@@ -410,6 +410,7 @@ fn binding_summary(binding: Resolution) -> Summary {
 fn provider_summary(provider: Resolution) -> Summary {
     Summary {
         provider,
+        has_unmocked_provider: true,
         ..Summary::EMPTY
     }
 }
@@ -418,6 +419,7 @@ fn required(resolution: Resolution, (module, name): NodeKey) -> ResolvedName {
     ResolvedName {
         resolution,
         required_name: Some(RequiredName::new(ModuleRef::File(module), name)),
+        is_compared_only_with_mocks: false,
     }
 }
 
@@ -473,6 +475,42 @@ fn a_file_that_may_be_mocked_has_every_name() {
                 .is_empty()
         );
     });
+}
+
+#[test]
+fn mocked_failing_names_stay_open() {
+    for is_mocked in [true, false] {
+        let mock = match is_mocked {
+            true => "import { mock } from 'bun:test'; mock.module('./mocked.js', () => ({}));\n",
+            false => "",
+        };
+        let main = format!("{mock}import './holder.js'; import './hands_on.js'");
+        let files = [
+            ("main.test.js", main.as_str()),
+            (
+                "mocked.js",
+                "export { round } from './way.js'; export const held = 1",
+            ),
+            ("way.js", "export * from './mocked.js'"),
+            ("holder.js", "export * from './way.js'"),
+            ("hands_on.js", "export { round } from './mocked.js'"),
+        ];
+        with_export_tables(&files, |tables, modules, input| {
+            let round = input.files.atoms.intern(b"round");
+            let resolve = |file: &str| {
+                let file = file_named(input, file);
+                tables.resolve(modules, file, round).resolution
+            };
+            let fails = |file: &str| !tables.failures_of(file_named(input, file)).is_empty();
+            assert!(fails("mocked.js"));
+            assert_eq!(resolve("mocked.js"), Resolution::NotFound);
+            assert_eq!(fails("hands_on.js"), !is_mocked);
+            for barrel in ["way.js", "holder.js"] {
+                let is_open = matches!(resolve(barrel), Resolution::DynamicStar { .. });
+                assert_eq!(is_open, is_mocked, "{barrel}");
+            }
+        });
+    }
 }
 
 #[test]
@@ -1074,6 +1112,18 @@ fn binding_beside_provider_is_compared_at_run_time() {
     let [first, second] = [2, 3].map(|file| provider_summary(synthetic(file)));
     let joined = first.join(second, inner_key).join(binding, outer_key);
     assert_eq!(joined.resolve(), required(variable, outer_key));
+
+    let of_mock = Summary {
+        has_unmocked_provider: false,
+        ..provider_summary(Resolution::DynamicStar {
+            module: FileId(6),
+            name,
+        })
+    };
+    let joined = binding.join(of_mock, inner_key).resolve();
+    assert!(joined.is_compared_only_with_mocks);
+    let joined = binding.join(of_mock, inner_key).join(first, outer_key);
+    assert!(!joined.resolve().is_compared_only_with_mocks);
 }
 
 #[test]

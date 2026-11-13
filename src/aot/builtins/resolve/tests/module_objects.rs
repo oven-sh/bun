@@ -2,7 +2,7 @@ use super::super::{ModuleField, ModuleObjectOwner, ModuleObjectUse};
 use super::*;
 use ModuleObjectOwner::{EntryPoint, OwnFile, Related};
 use ModuleObjectUse::{
-    Children, Field, HandedOn, HolderHandedOn, Object, Parent, ParentTested, Tested,
+    Children, Escaped, Field, HolderEscaped, Object, Parent, ParentTested, Tested,
 };
 
 type Mention = (&'static str, ModuleObjectOwner, ModuleObjectUse);
@@ -94,7 +94,7 @@ fn a_field_that_may_hold_something_else() {
         &[
             ("require.main", EntryPoint, Object),
             ("", OwnFile, Object),
-            ("", EntryPoint, HandedOn),
+            ("", EntryPoint, Escaped),
         ],
     );
     assert_mentions("module.parent.id;", &[("module.parent", OwnFile, Parent)]);
@@ -133,7 +133,7 @@ fn a_store_through_type_syntax_or_a_rest_is_a_store() {
         "(module.children as any) = 1;",
         &[
             ("module", OwnFile, Object),
-            ("module.children", OwnFile, HandedOn),
+            ("module.children", OwnFile, Escaped),
         ],
     );
     assert_mentions_in(
@@ -188,7 +188,7 @@ fn the_object_is_what_its_exports_are_called_with() {
         "module['exports'](1);",
         "module.exports`a`;",
     ] {
-        assert_mentions(source, &[("module", OwnFile, HandedOn)]);
+        assert_mentions(source, &[("module", OwnFile, Escaped)]);
     }
     for source in [
         "new module.exports();",
@@ -214,51 +214,48 @@ fn the_object_where_nothing_follows_it() {
         "module.constructor;",
         "module.hasOwnProperty(key);",
     ] {
-        assert_mentions(source, &[("module", OwnFile, HandedOn)]);
+        assert_mentions(source, &[("module", OwnFile, Escaped)]);
     }
     for source in [
         "const { constructor } = module;",
         "const { __proto__: above } = module;",
     ] {
-        let expected = [("module", OwnFile, Object), ("module", OwnFile, HandedOn)];
+        let expected = [("module", OwnFile, Object), ("module", OwnFile, Escaped)];
         assert_mentions(source, &expected);
     }
-    assert_mentions("const m = module; f(m);", &[("m", OwnFile, HandedOn)]);
-    assert_mentions(
-        "f(require.main);",
-        &[("require.main", EntryPoint, HandedOn)],
-    );
+    assert_mentions("const m = module; f(m);", &[("m", OwnFile, Escaped)]);
+    assert_mentions("f(require.main);", &[("require.main", EntryPoint, Escaped)]);
     assert_mentions(
         "x = [process.mainModule];",
-        &[("process.mainModule", EntryPoint, HandedOn)],
+        &[("process.mainModule", EntryPoint, Escaped)],
     );
     assert_mentions(
         "f(module.children[0]);",
         &[
             ("module.children", OwnFile, Children),
-            ("module.children[0]", Related, HandedOn),
+            ("module.children[0]", Related, Escaped),
         ],
     );
     assert_mentions(
         "for (const child of module.children) {}",
-        &[("module.children", OwnFile, HandedOn)],
+        &[("module.children", OwnFile, Escaped)],
     );
     assert_mentions(
         "const { parent } = module; f(parent);",
         &[
             ("module", OwnFile, Object),
             ("module", OwnFile, Parent),
-            ("parent", Related, HandedOn),
+            ("parent", Related, Escaped),
         ],
     );
 }
 
 #[test]
 fn the_main_module_without_its_name() {
-    assert_mentions("require[key];", &[("require[key]", EntryPoint, HandedOn)]);
-    assert_mentions("process[key];", &[("process[key]", EntryPoint, HandedOn)]);
-    assert_mentions("f(require);", &[("require", EntryPoint, HandedOn)]);
-    assert_mentions("x = [require];", &[("require", EntryPoint, HandedOn)]);
+    assert_mentions("require[key];", &[("require[key]", EntryPoint, Escaped)]);
+    assert_mentions("process[key];", &[("process[key]", EntryPoint, Escaped)]);
+    assert_mentions("f(require);", &[("require", EntryPoint, Escaped)]);
+    assert_mentions("x = [require];", &[("require", EntryPoint, Escaped)]);
     for source in [
         "Object.getPrototypeOf(require);",
         "Reflect.getPrototypeOf(require).main;",
@@ -266,7 +263,7 @@ fn the_main_module_without_its_name() {
         "const { __proto__: above } = require;",
         "const { ...members } = require;",
     ] {
-        assert_mentions(source, &[("require", EntryPoint, HandedOn)]);
+        assert_mentions(source, &[("require", EntryPoint, Escaped)]);
     }
     for source in [
         "process.pid; f(process);",
@@ -280,7 +277,7 @@ fn the_main_module_without_its_name() {
         "const { ...members } = process;",
         "const { [key]: member } = process;",
     ] {
-        assert_mentions(source, &[("process", EntryPoint, HolderHandedOn)]);
+        assert_mentions(source, &[("process", EntryPoint, HolderEscaped)]);
     }
     for source in [
         "f(globalThis);",
@@ -288,14 +285,14 @@ fn the_main_module_without_its_name() {
         "globalThis[key];",
         "const { ...globals } = globalThis;",
     ] {
-        assert_mentions(source, &[("globalThis", EntryPoint, HolderHandedOn)]);
+        assert_mentions(source, &[("globalThis", EntryPoint, HolderEscaped)]);
     }
     for source in [
         "(function () { return this; })();",
         "function f() { this[key]; }",
         "function f() { this.process.pid; }",
     ] {
-        assert_mentions(source, &[("this", EntryPoint, HolderHandedOn)]);
+        assert_mentions(source, &[("this", EntryPoint, HolderEscaped)]);
     }
     for source in [
         "globalThis.own; globalThis.process.pid; typeof globalThis;",
@@ -315,7 +312,7 @@ fn the_main_module_without_its_name() {
 #[test]
 fn where_no_expression_names_the_object() {
     for source in ["eval(text);", "arguments;"] {
-        let expected = [("", OwnFile, Object), ("", EntryPoint, HandedOn)];
+        let expected = [("", OwnFile, Object), ("", EntryPoint, Escaped)];
         assert_mentions(source, &expected);
     }
     for source in [
@@ -324,8 +321,6 @@ fn where_no_expression_names_the_object() {
         "exports = module.exports;",
         "exports = other.exports = f;",
         "x = exports = module.exports = f;",
-        "if (x) exports = module.exports = f;",
-        "function g() { exports = module.exports = f; }",
         "exports = module.exports = f; exports = 1;",
         "exports += module.exports = f;",
         "__filename = 1;",
@@ -346,6 +341,8 @@ fn the_store_that_goes_along_with_module_exports_in_other_places() {
     assert!(goes_along("var app = exports = module.exports = {};"));
     assert!(goes_along("const app = exports = module.exports = {};"));
     assert!(goes_along("exports = module.exports = f;"));
+    assert!(goes_along("if (x) exports = module.exports = f;"));
+    assert!(goes_along("function g() { exports = module.exports = f; }"));
     assert!(!goes_along(
         "if (c) var app = exports = module.exports = {};"
     ));
@@ -376,7 +373,7 @@ fn the_store_that_stands_inside_the_store_to_module_exports() {
     assert!(!goes_along("other.exports = exports = f;"));
     assert!(!goes_along("module.exports = use(exports = f);"));
     assert!(!goes_along("module.exports.name = exports = f;"));
-    assert!(!goes_along("if (c) module.exports = exports = f;"));
+    assert!(goes_along("if (c) module.exports = exports = f;"));
 }
 
 #[test]
@@ -418,7 +415,7 @@ fn tests_of_other_objects() {
     assert_mentions(
         "f(module.parent || 1); module.parent === x;",
         &[
-            ("module.parent", OwnFile, HandedOn),
+            ("module.parent", OwnFile, Escaped),
             ("module.parent", OwnFile, Parent),
         ],
     );
@@ -440,14 +437,14 @@ fn along_children_and_parent() {
             ("require.main.children", EntryPoint, Children),
             ("require.main.children[i].children", Related, Children),
             ("module.parent", OwnFile, Parent),
-            ("module.parent.parent", Related, HandedOn),
+            ("module.parent.parent", Related, Escaped),
         ],
     );
     assert_mentions(
         "module.children = { push(child) {} };",
         &[
             ("module", OwnFile, Object),
-            ("module.children", OwnFile, HandedOn),
+            ("module.children", OwnFile, Escaped),
         ],
     );
     with_case(SCRIPT, "module.children[0].exports;", |case| {
@@ -472,7 +469,7 @@ fn members_that_a_pattern_reads() {
         "const { id, ...others } = module;",
         "const { [key]: found } = module;",
     ] {
-        assert_mentions(source, &[object, ("module", OwnFile, HandedOn)]);
+        assert_mentions(source, &[object, ("module", OwnFile, Escaped)]);
     }
     assert_mentions(
         "const { parent: { children } } = module;",
@@ -523,7 +520,7 @@ fn a_require_that_the_program_has_made() {
         &[(
             "createRequire(import.meta.url).main.children",
             EntryPoint,
-            HandedOn,
+            Escaped,
         )],
     );
     let source = format!("{import} let made = createRequire(\"/a\"); made = f; made.main;");
@@ -544,10 +541,10 @@ fn an_es_module_has_no_module_object() {
 fn a_require_that_nobody_follows() {
     let import = "import { createRequire } from \"node:module\";";
     let source = format!("{import} f(createRequire(\"/a\"));");
-    let handed_on = [("createRequire(\"/a\")", EntryPoint, HandedOn)];
-    assert_mentions_in(PROGRAM, &source, &handed_on);
+    let escaped_use = [("createRequire(\"/a\")", EntryPoint, Escaped)];
+    assert_mentions_in(PROGRAM, &source, &escaped_use);
     let source = format!("{import} f(createRequire);");
-    assert_mentions_in(PROGRAM, &source, &[("createRequire", EntryPoint, HandedOn)]);
+    assert_mentions_in(PROGRAM, &source, &[("createRequire", EntryPoint, Escaped)]);
 }
 
 #[test]
@@ -568,17 +565,17 @@ fn a_var_that_may_still_be_undefined_only_may_hold_the_object() {
         assert_unresolved(case, "m.id");
         assert_unresolved(case, "m.exports");
     });
-    assert_mentions("var m = module; f(m);", &[kept, ("m", Related, HandedOn)]);
+    assert_mentions("var m = module; f(m);", &[kept, ("m", Related, Escaped)]);
     for source in [
         "var m = module; m.exports();",
         "var m = module; m.exports?.(1);",
         "function f() { var m = module; return m.exports(); }",
     ] {
-        assert_mentions(source, &[kept, ("m", Related, HandedOn)]);
+        assert_mentions(source, &[kept, ("m", Related, Escaped)]);
     }
     assert_mentions(
         "var m = module; const n = m; n.id;",
-        &[kept, ("m", Related, HandedOn)],
+        &[kept, ("m", Related, Escaped)],
     );
     assert_mentions(
         "var m = module; m.parent.id;",

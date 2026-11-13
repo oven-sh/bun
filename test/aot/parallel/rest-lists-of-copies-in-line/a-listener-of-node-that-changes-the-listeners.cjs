@@ -1,5 +1,5 @@
 // A listener adds and removes listeners while it is called; once() too.
-// STATISTIC: RestListsMadeWhereTheyLeave >= 1
+// STATISTIC: RestArrayAllocationsSunk >= 1
 const { EventEmitter } = require("node:events");
 const emitter = new EventEmitter();
 let got = "";

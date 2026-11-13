@@ -19,7 +19,7 @@ pub(super) const BUG_REPORT_REQUEST: &[u8] =
     b"This is a bug in Bun. Please report it at https://github.com/oven-sh/bun/issues";
 
 impl Entry {
-    fn new(code: u32, message: Msg) -> Entry {
+    pub(super) fn new(code: u32, message: Msg) -> Entry {
         let (file, line, column) = match &message.data.location {
             Some(location) => (
                 location.file.to_vec(),
@@ -45,6 +45,10 @@ impl Diagnostics {
             error_count: 0,
             missing_at_load: FxHashSet::default(),
             int32_flows: FxHashMap::default(),
+            ignore_comments: Vec::new(),
+            withheld: Vec::new(),
+            has_run_to_end: false,
+            should_list_silenced: false,
         }
     }
 
@@ -72,6 +76,7 @@ impl Diagnostics {
         self.add_with_locator(locator.as_mut(), diagnostic);
     }
 
+    /// Renders a warning as `add` would, for a caller that may emit it later.
     pub(crate) fn render(view: ProgramView<'_, '_>, warning: Diagnostic) -> Option<Msg> {
         let mut kept = Diagnostics::new();
         kept.add(Some(view), warning);
@@ -85,6 +90,14 @@ impl Diagnostics {
         diagnostic: Diagnostic,
     ) {
         let code = diagnostic.code;
+        // The program has no place for a warning about a string that it evaluates.
+        if let (Some(locator), Some(span)) = (locator.as_deref(), diagnostic.span)
+            && diagnostic.severity != Severity::Error
+            && let hir = locator.view().files().hir(span.file)
+            && (hir.is_in_known_evaluation(span.start) || hir.is_in_copied_factory(span.start))
+        {
+            return;
+        }
         let origin = match (locator.as_deref(), diagnostic.span) {
             (Some(locator), Some(span)) => locator.view().origin(span.file),
             (None, Some(_)) | (Some(_) | None, None) => FileOrigin::NoFile,
@@ -170,6 +183,7 @@ impl Diagnostics {
     pub(crate) fn write_to(mut self, log: &mut Log) {
         self.drop_invalid_patterns_beside_other_errors();
         self.drop_second_error_of_import();
+        self.apply_ignore_comments();
         self.entries.shared_sort_by(|a, b| a.key.cmp(&b.key));
         self.entries
             .dedup_by(|next, previous| next.key == previous.key);

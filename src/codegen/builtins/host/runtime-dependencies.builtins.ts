@@ -322,12 +322,22 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "%ModuleRequirePrototype%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
   "Math.max": functionsIn("prelude/written-lists", "maxOfList"),
   "Math.min": functionsIn("prelude/written-lists", "minOfList"),
-  "Array.prototype.sort": functionsIn("prelude/array-sort", "sort", "sortByDifference", "sortByReversedDifference").map(
-    called => ({
-      ...called,
-      when: b.whenCallRunsOtherCode,
-    }),
-  ),
+  "Array.prototype.sort": functionsIn(
+    "prelude/array-sort",
+    "sort",
+    "sortByDifference",
+    "sortByReversedDifference",
+    "sortByKeys",
+  ).map(called => ({
+    ...called,
+    when: b.whenCallRunsOtherCode,
+  })),
+  "Array.prototype.toSorted": functionsIn(
+    "prelude/array-sort",
+    "toSorted",
+    "toSortedByDifference",
+    "toSortedByReversedDifference",
+  ).map(called => ({ ...called, when: b.whenCallRunsOtherCode })),
   "Buffer.from": functionsIn("builtins/JSBufferConstructor", "from"),
   "Buffer.isBuffer": functionsIn("builtins/JSBufferConstructor", "isBuffer"),
   "Buffer.prototype.offset": functionsIn("builtins/JSBufferPrototype", "offset"),
@@ -430,6 +440,16 @@ const nodeCryptoBinding = ["native:Cpp:node_crypto_binding.cpp:createNodeCryptoB
 // The run time warns of a promise that is rejected without a handler, and of one that gets its handler afterwards, only where `--unhandled-rejections` is set. No text can name this entry: the build names it for the option.
 const warningsOfRejections = "%WarningsOfRejections%";
 const promises = [warningsOfRejections];
+
+// A test run may run a file from source. Compiled code never calls these functions: the interpreter does. No text can name these entries: the build names them for test runs.
+// The second function calls functions of others, which only code that the build did not see keeps.
+const interpretedFiles = "%InterpretedFiles%";
+const functionsOfInterpreter = [
+  b.functionIn("IteratorHelpers", "performIteration"),
+  b.functionIn("DisposableStackPrototype", "getDisposeMethod"),
+];
+const interpretedAsyncFiles = "%InterpretedAsyncFiles%";
+const asyncFunctionsOfInterpreter = [b.functionIn("DisposableStackPrototype", "getAsyncDisposeMethod")];
 
 // The overload for a delay that fits a timer says that it runs no code.
 const timersWithOtherDelays = ["setInterval", "setTimeout"].map(path => ({ path, when: b.whenCallRunsOtherCode }));
@@ -807,6 +827,8 @@ const undeclaredNativeCode = "%UndeclaredNativeCode%";
 export default b.declarations(
   b.namespace(undeclaredNativeCode, {}, { callsFunctions: warningFunctionsOfUndeclaredCode }),
   b.namespace(warningsOfRejections, {}, { listsAllMembers: true }),
+  b.namespace(interpretedFiles, {}, { callsFunctions: functionsOfInterpreter }),
+  b.namespace(interpretedAsyncFiles, {}, { callsFunctions: asyncFunctionsOfInterpreter }),
   ...nativeCalls,
   callsOfInspect,
   Object.entries(loadedModulesByPath).flatMap(([path, loads]) => b.extend(path, { loads })),

@@ -39,6 +39,7 @@ pub fn loader_by_name(path: &[u8]) -> Loader {
     loader_by_path_or(DEFAULT_LOADERS, path, Loader::File)
 }
 
+/// Each ending that `table` reads with another loader than `DEFAULT_LOADERS` do, a zero byte, the type attribute of that loader, a zero byte.
 pub fn encode_loaders_given_to_build<E: AsRef<[u8]>>(table: &[(E, Loader)]) -> Vec<u8> {
     let mut encoded = Vec::new();
     for (ending, loader) in table {

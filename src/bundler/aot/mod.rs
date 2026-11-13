@@ -5,6 +5,7 @@ mod components;
 mod css_modules;
 mod data_loaders;
 mod data_values;
+mod database_log;
 mod defines;
 mod metafile;
 mod native_plugins;
@@ -31,9 +32,11 @@ use bun_resolver::package_names::{
 };
 use bun_sema_driver::Libs;
 use core::ptr::NonNull;
+pub use database_log::read_database_with_log;
 pub use metafile::{MetafileFiles, MetafileOutput, write_metafile, write_metafile_files};
 pub use options::expand_entry_points;
 use options::{OptionsInput, options_from_bundler};
+pub use paths::FileIdentity;
 pub use services::FileFinder;
 pub use services::FilesForFileSystem;
 use services::{BundlerServices, NamesWanted, is_at_or_below};
@@ -54,6 +57,8 @@ pub struct AotBuildRequest<'r, 'a> {
     pub module_prefix: &'r [u8],
     /// The absolute path of the executable that the build writes.
     pub outfile: Option<&'r [u8]>,
+    /// The real path of the file that the executable replaces, if any.
+    pub replaced_file: Option<&'r [u8]>,
     /// `transpiler.log`. The resolver and the bundler write through that pointer while the build
     /// runs, so no reference to the log is held across a call that may reach them.
     pub log: *mut Log,
@@ -85,6 +90,8 @@ pub struct AotBuild {
     /// `CompiledProgram::refused_data`
     pub refused_data: Vec<u8>,
     pub files_for_file_system: FilesForFileSystem,
+    /// Whether `AotBuildRequest::replaced_file` is a source of the program or an embedded file.
+    pub is_source_replaced: bool,
     /// `CompiledProgram::loaders_given_to_build`
     pub loaders_given_to_build: Vec<u8>,
     pub output_files: Vec<OutputFile>,
@@ -119,6 +126,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         image_form,
         module_prefix,
         outfile,
+        replaced_file,
         log,
         arena,
         event_loop,
@@ -196,7 +204,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     // `options::root_directory` widens a root that nobody wrote to the assets below the working directory.
     let root_directory = &options.paths.root_directory[..];
     let is_root_widened = !is_root_written && is_at_or_below(root_directory, working_directory);
-    let folder_of_assets_that_keep_paths = match is_root_widened {
+    let assets_root = match is_root_widened {
         true => working_directory.to_vec(),
         false => root_directory.to_vec(),
     };
@@ -210,7 +218,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             root_directory: Box::from(&options.paths.root_directory[..]),
         },
     )
-    .with_assets(assets_by_absolute_paths, folder_of_assets_that_keep_paths);
+    .with_assets(assets_by_absolute_paths, assets_root);
     let mut said_by_compiler = Log::init();
     let result = bun_aot::compile(&options, &services, &mut said_by_compiler);
     // SAFETY: the log outlives the build, and the reference ends with the statement.
@@ -296,7 +304,13 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
                 shown: &options.paths.entry_point_names,
                 embedded: &options.paths.entry_point_file_names,
             };
+            let is_source_replaced = replaced_file.is_some_and(|replaced| {
+                let mut sources = compilation.program_files.iter();
+                sources.any(|source| source.source_path == replaced)
+                    || embedded.iter().any(|file| file.src_path.text == replaced)
+            });
             let mut build = output::finish_build(compilation, &names, embedded);
+            build.is_source_replaced = is_source_replaced;
             build.package_names = package_names;
             build.further_package_names = further_package_names;
             build.refused_data = refused_data;

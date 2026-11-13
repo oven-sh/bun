@@ -5,15 +5,15 @@
 # function total(list, t) { let s = t & 1; for (let i = 0; i < list.length; i++) { count = count + 1; const [x, y, z] = list[i]; s += x * 2 + y - z; } return s; }
 # print(total(rows, 3), count);
 # -- end of source
-# A turn of a typed copy may begin again in the closed copy only while it has done nothing that can be seen. Here a variable of the file is stored in front of the pattern: the value is not held there, and the turn of the third row,
-# which has an iterator of its own, counts once.
-# THE LIE, testing=TurnsAreTakenToHaveDoneNothingWherePatternsAreHeld: the hold is laid though the turn has stored. The turn of the third row begins again behind its store and counts twice.
+# An iteration of a specialized version may restart in the generic version only while it has had no observable effect.
+# Here a module variable is stored before the pattern, so no iteration guard is built on the operand of the pattern.
+# The iteration of the third row, which has an iterator of its own, increments `count` once.
+# Fault injection, testing=AssumeIterationsRestartable: the iteration guard is built even though the iteration has already stored.
+# The build stops there (an-iteration-that-cannot-be-undone-and-restarts-stops-the-build.ir). Under the net of effects the run does.
 # RUN: run-in-shell mechanisms=all
 # CHECK: 56 4
 # CHECK-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=TurnsAreTakenToHaveDoneNothingWherePatternsAreHeld
-# LIE: 56 5
-# LIE-NEXT: exited with 0
-# RUN(HELD): run-in-shell mechanisms=all testing=TurnsAreTakenToHaveDoneNothingWherePatternsAreHeld,CheckEffectsAtRunTime
-# HELD: AOT: f{{*}} at {{*}}: a turn of a loop begins again in the closed copy, so the state of the walk says that nothing was done in it
+# RUN(HELD): run-in-shell mechanisms=all testing=AssumeIterationsRestartable,CheckEffectsAtRunTime
+# HELD: bun: internal AOT error: effects check failed
+# HELD-NEXT: a loop iteration restarts in the generic version, so the compiler's state says that nothing observable happened in it
 # HELD: crashed with

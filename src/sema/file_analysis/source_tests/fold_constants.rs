@@ -900,6 +900,93 @@ const REPEATED_KEYS: &[(&str, &str)] = &[
     ),
 ];
 
+const TYPES_OF_OWN_OBJECTS: &[FoldedRow] = &[
+    (
+        "a.cjs",
+        "let o = { p: {} }; v(typeof o.p);",
+        Pure(Text("object")),
+    ),
+    ("a.cjs", "let o = { p() {} }; v(typeof o.p);", Unknown),
+    (
+        "a.cjs",
+        "let o = { p: () => 1 }; v(typeof o.p);",
+        Pure(Text("function")),
+    ),
+    (
+        "a.cjs",
+        "let o = { p: {} }; (function () { v(typeof o.p); o.p = 1; })();",
+        Pure(Text("object")),
+    ),
+    (
+        "a.cjs",
+        "let o = { p: {} }; (function () { v(typeof o); })();",
+        Pure(Text("object")),
+    ),
+    (
+        "a.cjs",
+        "let o = { p: {} }; o.p = f(); v(typeof o.p);",
+        Unknown,
+    ),
+    (
+        "a.cjs",
+        "let o = { p: {} }; g(); v(typeof o.p); function g() { o.p = 1; }",
+        Unknown,
+    ),
+    ("a.cjs", "let o = { p: {} }; g(o); v(typeof o.p);", Unknown),
+    (
+        "a.cjs",
+        "let o = { p: {} }; for (;;) { v(typeof o.p); o.p = 1; }",
+        Unknown,
+    ),
+    (
+        "a.cjs",
+        "let o = { p: {} }; (function () { v(typeof o.p); })(o.p = 1);",
+        Unknown,
+    ),
+    (
+        "a.cjs",
+        "let o = { p: {} }; (function g(n) { v(typeof o.p); o.p = 1; n && g(); })(1);",
+        Unknown,
+    ),
+    (
+        "a.cjs",
+        "let o = { get p() { return 1; } }; v(typeof o.p);",
+        Unknown,
+    ),
+    (
+        "a.cjs",
+        "let o = { p: {} }; delete o.p; v(typeof o.p);",
+        Unknown,
+    ),
+    (
+        "a.cjs",
+        "let o = { p: {} }; o.q = 1; v(typeof o.p);",
+        Unknown,
+    ),
+    (
+        "a.cjs",
+        "let o = { p: {} }; eval(s); v(typeof o.p);",
+        Unknown,
+    ),
+    (
+        "a.mjs",
+        "export const o = { p: {} }; v(typeof o.p);",
+        Unknown,
+    ),
+    ("a.cjs", "v(typeof o.p); var o = { p: {} };", Unknown),
+    ("a.cjs", "f(); v(typeof module.exports);", Unknown),
+    (
+        "a.cjs",
+        "(function () { v(typeof module.exports); })(module.exports = 1);",
+        Unknown,
+    ),
+    (
+        "a.cjs",
+        "(function (d = f()) { v(typeof module.exports); })();",
+        Unknown,
+    ),
+];
+
 fn folded(path: &str, text: &str, fold: Fold<'_>, test: impl for<'s> FnOnce(&Analyzed<'s>) + Send) {
     with_workspace(|w| {
         let inputs = w.fold_inputs(&fold);
@@ -1090,6 +1177,13 @@ fn constants_are_published() {
 }
 
 #[test]
+fn own_object_types_are_folded() {
+    for &(path, text, expected) in TYPES_OF_OWN_OBJECTS {
+        analyzed(path, text, |s| assert_folded(s, probe(s), expected, text));
+    }
+}
+
+#[test]
 fn text_is_replaced_at_an_end_where_every_run_finds_the_method() {
     for &(path, text, expected) in REPLACED_AT_AN_END {
         folded(path, text, LOCKED_REPLACE, |s| {
@@ -1217,6 +1311,124 @@ fn const_reads_check_the_dead_zone() {
                 "{text}"
             );
             assert!(!s.analysis.decisions.is_dead_expr(e), "{text}");
+        });
+    }
+}
+
+const INITIALIZED_READS: &[(&str, &str, bool)] = &[
+    ("a.mjs", "let X = 1; v(X);", true),
+    ("a.cjs", "var X = 1; v(X);", true),
+    ("a.mjs", "f(); const X = 1; v(X);", true),
+    ("a.cjs", "f(); var X = 1; function g() { v(X); }", true),
+    (
+        "a.cjs",
+        "var f = () => 1, X = 1; function g() { v(X); }",
+        true,
+    ),
+    (
+        "a.cjs",
+        "class A { m() { v(X); } } var X = 1; new A();",
+        false,
+    ),
+    (
+        "a.mjs",
+        r#"import "./b"; var X = 1; function g() { v(X); }"#,
+        true,
+    ),
+    ("a.cjs", "v(X); var X = 1;", false),
+    ("a.cjs", "var X = 1; X = 2; v(X);", false),
+    ("a.cjs", "{ var X = 1; } v(X);", false),
+    ("a.mjs", "function g() { let X = 1; v(X); }", false),
+    ("a.cjs", "g(); var X = 1; function g() { v(X); }", false),
+    ("a.cjs", "f(g); var X = 1; function g() { v(X); }", false),
+    (
+        "a.cjs",
+        "f(() => 1); var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.cjs",
+        "var h = () => g(), y = h(); var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.cjs",
+        "class A { static x = 1; } var X = 1; function g() { v(X); }",
+        true,
+    ),
+    (
+        "a.cjs",
+        "class A { static x = f(); } var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.cjs",
+        "class A { static { f(); } } var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.cjs",
+        "class A { [k] = 1; } var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.cjs",
+        "class A extends B {} var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.jsx",
+        "f(<a />); var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.ts",
+        "enum E { A = 1 } var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.ts",
+        "namespace N { f(); } var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.cjs",
+        r#"import("./b"); var X = 1; function g() { v(X); }"#,
+        false,
+    ),
+    (
+        "a.cjs",
+        "{ let X; eval(s); } var X = 1; function g() { v(X); }",
+        false,
+    ),
+    (
+        "a.mjs",
+        r#"import "./b"; var X = 1; export function g() { v(X); }"#,
+        false,
+    ),
+    (
+        "a.mjs",
+        r#"import "./b"; var X = 1; export class A { x = v(X); }"#,
+        false,
+    ),
+    (
+        "a.mjs",
+        r#"import "./b"; var X = 1; function g() { v(X); } export { g };"#,
+        false,
+    ),
+    (
+        "a.mjs",
+        r#"import "./b"; var X = 1; export default () => v(X);"#,
+        false,
+    ),
+];
+
+#[test]
+fn initialized_reads() {
+    for &(path, text, is_initialized) in INITIALIZED_READS {
+        analyzed(path, text, |s| {
+            let read = s.analysis.decisions.constant_read(probe(s));
+            assert_eq!(read.is_some(), is_initialized, "{text}");
         });
     }
 }

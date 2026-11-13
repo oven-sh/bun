@@ -1,10 +1,11 @@
-# What the checks look at is what is emitted: where code is verified, the verifier runs once more behind the sweep, on the swept code.
-# THE LIE, testing=SweepTurnsBranchThatDecidesIntoJump: in each unit the sweep turns one branch whose other side is entered by another way too into a jump to its taken side. The Narrowed behind it stays.
-# The verifier's run in front of the sweep sees nothing of it: the build went through under check=Validate, and the program died where it ran.
+# The checks look at the code that is emitted: where code is verified, the verifier runs once more after the sweep, on the swept code.
+# Fault injection, testing=MisfoldBranchInSweep: in each unit, the sweep replaces one branch with a jump to its taken side. It picks a branch whose other side is also entered by another path.
+# The Narrowed after the branch stays.
+# The verifier's run before the sweep sees none of this: the build used to succeed under check=Validate, and the program crashed when it ran.
 # -- source: main.js
-# function fill(to, x) { for (let i = 0; i < to.length; i++) to[i] = x | 0; return to; }
+# function fill(to, x) { for (let i = 0; i < to.length; i++) to[i] = (x ^ i) | 0; return to; }
 # print(fill([1.5, 2.5, 3.5].slice(), 7).join() + " " + fill([1, 2, 3].slice(), 7).join());
 # -- end of source
-# OPTIONS: check=Validate testing=SweepTurnsBranchThatDecidesIntoJump
+# OPTIONS: check=Validate testing=MisfoldBranchInSweep
 # DIAGNOSTIC: OpcodeNotInForm
 # RUN: compile mechanisms=all

@@ -107,8 +107,8 @@
 # print(nest(JSON.parse("3")));
 # -- end of source
 # The twin of the eight: twice the width, and the walks are five for each loop side by side and two. A wish that cost a walk of the whole nest for each loop that wishes would make a square of it.
-# RUN: compile WalksOfLoops mechanisms=all
-# CHECK: statistic WalksOfLoops 82
+# RUN: compile LoopVisits mechanisms=all
+# CHECK: statistic LoopVisits 82
 # RUN(SHELL): run-in-shell mechanisms=all
 # SHELL: 1718
 # SHELL-NEXT: exited with 0

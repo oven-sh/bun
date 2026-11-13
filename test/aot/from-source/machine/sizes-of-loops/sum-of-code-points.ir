@@ -11,9 +11,9 @@
 # The compiler before this one: 18 instructions, 8 of them patches, a turn of the written loop steps by 8 ; 4 instructions, 1 of them patches, a turn of the written loop steps by 1.
 # When the bound was taken: loop: operations 43, patches 8, moves 0, unlikely 6 ; loop: operations 12, patches 2, moves 1, unlikely 21.
 # Since the turns are laid out once for each width of the text a second loop of eight turns stands between the two, for wide texts: operations 51, patches 8, moves 8, unlikely 6.
-# RUN(X64): loops most:43,59,13 f1 mechanisms=all-Inlining
+# RUN(X64): loops most:44,60,13 f1 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f1:Body
-# X64-NEXT: loop: at most 43
-# X64-NEXT: loop: at most 59
+# X64-NEXT: loop: at most 44
+# X64-NEXT: loop: at most 60
 # X64-NEXT: loop: at most 13

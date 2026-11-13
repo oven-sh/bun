@@ -1,5 +1,5 @@
 // In the dead zone the turn stores into a variable around in front of the read: plain stores, then throws at the read, in turn one.
-// STATISTIC: FieldsOfScopesBehindTheirStoresReadInFrontOfTypedCopies >= 0
+// STATISTIC: CapturedVariableReadsHoisted >= 0
 const said: string[] = [];
 function tell(what: () => unknown) { try { said.push(String(what())); } catch (error: any) { said.push(error.constructor.name + ": " + error.message); } }
 const through = new Function("x", "return x");

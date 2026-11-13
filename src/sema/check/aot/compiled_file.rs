@@ -3,6 +3,7 @@ use crate::bind::PatParent;
 use crate::check::mapped::AccessNode;
 use crate::check::shape::{Access, Found};
 use crate::check::{Checker, Program, root_declaration};
+use crate::fold::{Constant, FoldedValue};
 use crate::hir::{ExprId, PatId, StmtId, VarKind};
 use crate::module_format::ModuleFormat;
 use crate::program::{FileId, FileRole, Files, Sym};
@@ -175,6 +176,23 @@ impl<'s> Checker<'_, 's> {
         self.files
             .compiled(file)
             .is_some_and(|compiled| compiled.analysis.decisions.is_dead_expr(expression))
+    }
+
+    pub(in crate::check) fn constant_string(&self, file: FileId, key: ExprId) -> Option<Atom> {
+        let decisions = &self.files.compiled(file)?.analysis.decisions;
+        let constant = match decisions.constant(self.hir(file), key) {
+            FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
+                Some(constant)
+            }
+            FoldedValue::Unknown => {
+                let constant = decisions.constant_read(key);
+                constant.or_else(|| decisions.constant_of_let(key))
+            }
+        };
+        match constant {
+            Some(Constant::String(text)) => Some(text),
+            _ => None,
+        }
     }
 
     #[inline]

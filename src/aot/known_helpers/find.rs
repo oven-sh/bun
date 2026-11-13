@@ -1,7 +1,6 @@
 use super::canonical::{CanonicalFunction, CanonicalInput, OuterName, canonical_function};
 use super::quiet::{
-    Quiet, enclosing_statement, is_absent_from_object_prototype, is_global_name,
-    is_in_statement_of_file, plain_member,
+    Quiet, is_absent_from_object_prototype, is_global_name, is_in_statement_of_file, plain_member,
 };
 use super::table::{Table, TableEntry, signature_of};
 use super::{Helper, Reference, Shape, find_by_key};
@@ -52,6 +51,7 @@ pub struct KnownFunction {
     pub functions: Box<[FnId]>,
     pub references: Box<[KnownReference]>,
     pub relies_on_facts: bool,
+    pub names_locked_globals: bool,
     pub is_named_only_to_be_called: bool,
 }
 
@@ -454,7 +454,7 @@ impl<'a, 's> Finder<'a, 's> {
             return false;
         };
         let created = match self.file.bound.fns[function.idx()].owner {
-            FnOwner::Expr(created) => enclosing_statement(self.file.bound, created),
+            FnOwner::Expr(created) => self.file.bound.statement_of_expr(created),
             FnOwner::None | FnOwner::Stmt(_) | FnOwner::Member(_) | FnOwner::Type(_) => None,
         };
         let (Some(defined), Some(created)) = (definition.statement, created) else {
@@ -473,7 +473,7 @@ impl<'a, 's> Finder<'a, 's> {
         match bound.binding_initializer(hir, symbol) {
             BindingInitializer::Expression(value) => Some(Definition {
                 value,
-                statement: enclosing_statement(bound, value),
+                statement: bound.statement_of_expr(value),
                 is_stored_again: stores.iter().any(|store| is_live(store.target)),
             }),
             BindingInitializer::Opaque if bound.binding_kind(symbol) == BindingKind::Var => {
@@ -632,6 +632,10 @@ impl<'a, 's> Finder<'a, 's> {
         let hir = self.file.hir;
         if self.file.decisions.is_dead_expr(expression) {
             return false;
+        }
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+            alternatives.push(Alternative::Other);
+            return true;
         }
         let expression = hir.skip_type_assertions(expression);
         let held = match hir[expression].kind {
@@ -812,6 +816,18 @@ impl<'a, 's> Finder<'a, 's> {
         })
     }
 
+    fn finds_locked_members(&self, shape: Shape) -> bool {
+        let is_locked_member = |member: BuiltinId| {
+            is_locked(member)
+                && table::entry(member).mutability == Mutability::AlwaysLocked
+                && !self.file.builtins.is_unlocked(member)
+        };
+        match shape {
+            Shape::ExportStarOfKeysIfMissing => is_locked_member(BuiltinId::ArrayPrototypeForEach),
+            _ => true,
+        }
+    }
+
     fn is_fact(&mut self, reference: KnownReference) -> bool {
         match reference {
             KnownReference::Helper {
@@ -849,6 +865,7 @@ impl<'a, 's> Finder<'a, 's> {
         }
         let references = matched.references.clone();
         let answer = matched.verdict == Verdict::Accepted
+            && self.finds_locked_members(matched.entry.shape)
             && self.names_only_locked_globals(&matched.canonical.globals)
             && references
                 .into_iter()
@@ -887,12 +904,17 @@ impl<'a, 's> Finder<'a, 's> {
     fn finish(self) -> FileHelpers {
         let head_allows_reads_of_open_globals = !self.may_start_early();
         let replace_themselves = self.matched.iter().filter(|(_, matched)| {
-            matched.verdict == Verdict::Accepted
-                && matched.entry.shape == Shape::TypeofAnswersSymbolForSymbols
+            matched.verdict == Verdict::Accepted && matched.entry.shape.replaces_itself()
         });
         let only_called: SmallVec<[FnId; 1]> = replace_themselves
             .map(|(&function, _)| function)
             .filter(|&function| self.is_named_only_to_be_called(function))
+            .collect();
+        let names_locked_globals: SmallVec<[FnId; 4]> = self
+            .matched
+            .iter()
+            .filter(|(_, matched)| self.names_only_locked_globals(&matched.canonical.globals))
+            .map(|(&function, _)| function)
             .collect();
         let accepted = self.matched.into_iter().filter_map(|(function, matched)| {
             (matched.verdict == Verdict::Accepted).then(|| {
@@ -901,6 +923,7 @@ impl<'a, 's> Finder<'a, 's> {
                     functions: matched.canonical.inner_functions.into_boxed_slice(),
                     references: matched.references.into_boxed_slice(),
                     relies_on_facts: matched.relies_on_facts.unwrap_or(false),
+                    names_locked_globals: names_locked_globals.contains(&function),
                     is_named_only_to_be_called: only_called.contains(&function),
                 };
                 (function, known)

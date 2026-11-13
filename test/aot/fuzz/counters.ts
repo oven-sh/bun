@@ -1,6 +1,6 @@
 // What a batch of programs makes the compiler do.
 //
-//   bun test/aot/fuzz/counters.ts [--want=CallsInlined,LoopsWalkedAgain] [--flags="--aot-allow-code-from-disk"] [--jobs=8] [--all] <programs or folders ..>
+//   bun test/aot/fuzz/counters.ts [--want=CallsInlined,WalkLoopsVersioned] [--flags="--aot-allow-code-from-disk"] [--jobs=8] [--all] <programs or folders ..>
 //
 // The compiler counts what it touches and some of what it does: calls inlined, loops walked again, tests that rejoin, values spilled
 // (aot/ir/schema/statistics.def in the engine; --explain=statistics prints every counter). That count, not a neighbor's red control, says whether a batch asked for it.

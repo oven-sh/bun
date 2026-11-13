@@ -14,10 +14,10 @@ const namesOfRemovedFamilies = (executable: string) => {
 };
 
 const familiesThatHelloWorldKeepsToday = [
-  "OperationsOnProxies",
-  "OperationsThatChangeArrays",
-  "OperationsThatSearchStrings",
-  "OperationsOfMembershipTests",
+  "ProxyOperations",
+  "ArrayMutationOperations",
+  "StringSearchOperations",
+  "MembershipTestOperations",
 ];
 
 const files = {
@@ -103,19 +103,19 @@ describe.skipIf(!canTrim || !!unsupported).each([[[] as string[]], [["--trim"]]]
       using dir = tempDirForAotBuilds("compile-trim-operations", files);
       const executable = await build(String(dir), "uses-many");
       const removed = namesOfRemovedFamilies(executable);
-      expect(removed).toContain("OperationsOfChecks");
-      expect(removed).not.toContain("OperationsOnMapsAndSets");
+      expect(removed).toContain("SelfCheckOperations");
+      expect(removed).not.toContain("MapAndSetOperations");
       expect(await spawned([executable], String(dir), bunEnv)).toMatchObject({ stdout: outputOfUsesMany, exitCode: 0 });
     }, 600_000);
 
     // The list decides, so this cannot come about by itself. Were it to, the program would end wherever it first calls what is gone.
     test("an image that lists an operation of a family that is gone does not start", async () => {
       using dir = tempDirForAotBuilds("compile-trim-operations", files);
-      const executable = await build(String(dir), "uses-many", withoutFeatures(["OperationsOnMapsAndSets"]));
-      expect(namesOfRemovedFamilies(executable)).toContain("OperationsOnMapsAndSets");
+      const executable = await build(String(dir), "uses-many", withoutFeatures(["MapAndSetOperations"]));
+      expect(namesOfRemovedFamilies(executable)).toContain("MapAndSetOperations");
       const { stdout, stderr, exitCode } = await spawned([executable], String(dir), bunEnv);
       expect(stdout).toBe("");
-      expect(saysFeatureWasRemoved(stderr, "OperationsOnMapsAndSets")).toBe(true);
+      expect(saysFeatureWasRemoved(stderr, "MapAndSetOperations")).toBe(true);
       expect(exitCode).toBe(70);
     }, 600_000);
   },

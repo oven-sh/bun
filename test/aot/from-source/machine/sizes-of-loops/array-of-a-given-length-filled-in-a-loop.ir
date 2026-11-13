@@ -10,10 +10,11 @@
 # -- end of source
 # The compiler before this one: 6 instructions, 0 of them patches, a turn of the written loop steps by 1.
 # When the bound was taken: loop: operations 18, patches 2, moves 0, unlikely 0 ; loop: operations 62, patches 3, moves 1, unlikely 0.
-# A store of a number into a list stands in turns laid out in a row: eight turns in 137; the written loop stands behind them for the rest, as it was.
-# RUN(X64): loops most:137,18,63 f1 mechanisms=all-Inlining
+# A store of a number into a list stands in turns laid out in a row: eight turns in 98; the written loop stands behind them for the rest, as it was.
+# An integer wider than int32 is boxed as an integer, by an arm for int32s and one for doubles: 122 operations for 98, 9.4 instructions an element for 9.6.
+# RUN(X64): loops most:123,18,63 f1 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f1:Body
-# X64-NEXT: loop: at most 137
+# X64-NEXT: loop: at most 123
 # X64-NEXT: loop: at most 18
 # X64-NEXT: loop: at most 63

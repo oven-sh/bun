@@ -25,7 +25,7 @@ use bun_removable_features::{Feature, FeatureSet};
 pub use self::records::{Position, builtin_of, feature_of, position_of};
 pub use self::shared::{
     EngineModuleId, ExecutableIdentity, RegExpLiteralCreation, RejectedOptionWord, StoredStrings,
-    TargetImageForm, classify_regexp_literal, describe_difference_of_runtime,
+    StoredStringsForm, TargetImageForm, classify_regexp_literal, describe_difference_of_runtime,
     describe_regexp_construction_error, describe_regexp_syntax_error, has_compiler,
     image_alignment, read_stored_strings, relocate_image,
 };
@@ -38,10 +38,11 @@ pub use self::used_features::used_features;
 use crate::emit::{ExternalBodies, ExternalFunctionBodies, ProgramBytes};
 pub use crate::ir::generated::{
     AccessCountRecord, AccessRecord, AllocationRemarkRecord, BuiltinUseRecord, FeatureUseRecord,
-    FormBytesRecord, FunctionNameRecord, InternalErrorRecord, LackedFunctionRecord,
-    LackedModuleRecord, LayoutNameRecord, LocaleUseRecord, ModuleBytesRecord, ObfuscatedSiteRecord,
-    SourceLocation, TextRange, TypeTestRecord, UnseenCodeRecord, UserDiagnosticRecord, Witness,
-    WorkerEntryRecord, WorkerStartRecord, WorkerURLRecord,
+    FormBytesRecord, FunctionNameRecord, InlinedStringRecord, InternalErrorRecord,
+    LayoutNameRecord, LocaleUseRecord, MissingFunctionRecord, MissingModuleRecord,
+    ModuleBytesRecord, ObfuscatedSiteRecord, SourceLocation, TextRange, TypeOriginRecord,
+    TypeTestRecord, UnseenCodeRecord, UserDiagnosticRecord, Witness, WorkerEntryRecord,
+    WorkerStartRecord, WorkerURLStartRecord,
 };
 use crate::ir::generated::{
     AdmittedCode, CompileAction, CompileOptions, ExcludedCode, ImageForm, OutputOptions,
@@ -57,6 +58,7 @@ pub struct EngineRequest<'a> {
     pub identity: ExecutableIdentity,
     pub image_form: Option<TargetImageForm>,
     pub thread_count: NonZeroUsize,
+    pub lists_inlined_strings: bool,
 }
 
 pub struct EngineOptions {
@@ -118,6 +120,10 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
         HeapSize::Huge => ReferenceWidth::Wide,
     };
     record.reports = reports_of(options);
+    record.excluded_code |= ExcludedCode::UNLISTED_GLOBALS;
+    if request.lists_inlined_strings {
+        record.reports |= ReportSet::INLINED_STRINGS;
+    }
     record.thread_count = u32::try_from(request.thread_count.get()).unwrap_or(u32::MAX);
     if options.admits_inspector {
         record.admitted_code |= AdmittedCode::INSPECTOR;
@@ -144,9 +150,6 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     if !options.loads_code_from_disk {
         record.excluded_code |= ExcludedCode::CODE_OUTSIDE_IMAGE;
     }
-    if options.isolates_code_from_disk {
-        record.excluded_code |= ExcludedCode::FILES_OF_IMAGE_FOR_CODE_OUTSIDE;
-    }
     if options.obfuscates {
         record.output |= OutputOptions::OBFUSCATE;
     }
@@ -155,9 +158,6 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     }
     if options.runs_in_several_realms {
         record.output |= OutputOptions::RUNS_IN_SEVERAL_REALMS;
-    }
-    if options.runs_in_place {
-        record.output |= OutputOptions::RUNS_IN_PLACE_OF_FILES;
     }
     let mut removed = FeatureSet::from_features(&options.trim.remove_internal);
     for name in &options.trim.remove {
@@ -175,11 +175,11 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     }
     fill_feature_bits(&mut record.removed_features, &removed);
     fill_feature_bits(
-        &mut record.target.features_kept_only_when_named,
+        &mut record.target.features_retained_by_name,
         &if options.trim.removes_unused {
             FeatureSet::all()
         } else {
-            bun_trim::features_kept_only_when_named()
+            bun_trim::features_retained_by_name()
         },
     );
 }
@@ -214,6 +214,9 @@ impl EngineOptions {
         self.record.excluded_code |= ExcludedCode::CODE_OUTSIDE_IMAGE;
     }
 
+    /// The record as the engine gets it, to be written behind a program that goes to a file: which code is left out is no part of the
+    /// program, and whoever compiles the file again is to compile what this build compiled. The number of threads is left out: it
+    /// changes nothing in what is compiled, and builds that differ in it alone write the same file.
     pub fn record_bytes(&self) -> Vec<u8> {
         let mut record = self.record;
         record.thread_count = 0;
@@ -273,8 +276,10 @@ pub fn compile(
             (&raw mut owner).cast::<c_void>(),
             &raw const record,
             &raw const REGION_THREADS,
-            size_of_function_text,
-            copy_function_text,
+            function_source_size,
+            copy_function_source,
+            view_function_source,
+            release_function_sources,
         );
         EngineResult::new(NonNull::new(result).expect("Bun__AOT__compile returned null"))
     }
@@ -287,16 +292,16 @@ struct ProgramOwner<'a> {
 }
 
 /// SAFETY: `owner` is the `ProgramOwner` of a running `compile`, whose `texts` nothing changes.
-unsafe extern "C" fn size_of_function_text(owner: *mut c_void, module: u32) -> usize {
+unsafe extern "C" fn function_source_size(owner: *mut c_void, module: u32) -> usize {
     // SAFETY: the caller's promise.
     let texts = unsafe { (*owner.cast::<ProgramOwner<'_>>()).texts };
     texts
         .get(ModuleId::new(module as usize))
-        .map_or(0, ModuleSource::function_text_len)
+        .map_or(0, ModuleSource::function_source_len)
 }
 
-/// SAFETY: as `size_of_function_text`, and `destination` has room for what that answered.
-unsafe extern "C" fn copy_function_text(owner: *mut c_void, module: u32, destination: *mut u8) {
+/// SAFETY: as `function_source_size`, and `destination` has room for the size that it returned.
+unsafe extern "C" fn copy_function_source(owner: *mut c_void, module: u32, destination: *mut u8) {
     // SAFETY: the caller's promise.
     let texts = unsafe { (*owner.cast::<ProgramOwner<'_>>()).texts };
     let Some(source) = texts.get(ModuleId::new(module as usize)) else {
@@ -304,8 +309,25 @@ unsafe extern "C" fn copy_function_text(owner: *mut c_void, module: u32, destina
     };
     // SAFETY: the caller's promise.
     let destination =
-        unsafe { core::slice::from_raw_parts_mut(destination, source.function_text_len()) };
-    source.copy_function_text_to(destination);
+        unsafe { core::slice::from_raw_parts_mut(destination, source.function_source_len()) };
+    source.copy_function_source_to(destination);
+}
+
+/// SAFETY: as `function_source_size`, and the engine reads the result before it calls `release_function_sources`.
+unsafe extern "C" fn view_function_source(owner: *mut c_void, module: u32) -> *const u8 {
+    // SAFETY: the caller's promise.
+    let texts = unsafe { (*owner.cast::<ProgramOwner<'_>>()).texts };
+    let source = texts.get(ModuleId::new(module as usize));
+    let held = source.and_then(ModuleSource::held_function_source);
+    held.map_or(core::ptr::null(), <[u8]>::as_ptr)
+}
+
+/// SAFETY: as `function_source_size`, and the engine reads no function source any more.
+unsafe extern "C" fn release_function_sources(owner: *mut c_void) {
+    // SAFETY: the caller's promise.
+    let texts = unsafe { (*owner.cast::<ProgramOwner<'_>>()).texts };
+    // SAFETY: the caller's promise, and nothing else reads one while the engine runs.
+    unsafe { texts.release_function_sources() };
 }
 
 /// SAFETY: `owner` is the `ProgramOwner` of a running `compile`, which nothing else touches until this returns.
@@ -462,8 +484,10 @@ unsafe extern "C" {
         program_owner: *mut c_void,
         options: *const CompileOptions,
         thread_pool: *const HostThreadPool,
-        size_of_function_text: unsafe extern "C" fn(*mut c_void, u32) -> usize,
-        copy_function_text: unsafe extern "C" fn(*mut c_void, u32, *mut u8),
+        function_source_size: unsafe extern "C" fn(*mut c_void, u32) -> usize,
+        copy_function_source: unsafe extern "C" fn(*mut c_void, u32, *mut u8),
+        view_function_source: unsafe extern "C" fn(*mut c_void, u32) -> *const u8,
+        release_function_sources: unsafe extern "C" fn(*mut c_void),
     ) -> *mut BunAOTResult;
     fn Bun__AOT__resultSection(result: *const BunAOTResult, section: u32) -> BunAOTBytes;
     fn Bun__AOT__freeResult(result: *mut BunAOTResult);
@@ -496,16 +520,18 @@ result_records! {
     locales_used: LocaleUseRecord = LocalesUsed,
     worker_entries: WorkerEntryRecord = WorkerEntries,
     worker_starts_without_name: WorkerStartRecord = WorkerStartsWithoutName,
-    urls_that_start_workers: WorkerURLRecord = URLsThatStartWorkers,
-    library_functions_lacked: LackedFunctionRecord = LibraryFunctionsLacked,
-    library_modules_lacked: LackedModuleRecord = LibraryModulesLacked,
+    worker_starts_from_urls: WorkerURLStartRecord = WorkerStartsFromURLs,
+    missing_library_functions: MissingFunctionRecord = MissingLibraryFunctions,
+    missing_library_modules: MissingModuleRecord = MissingLibraryModules,
     obfuscated_sites: ObfuscatedSiteRecord = ObfuscatedSites,
     bytes_by_module: ModuleBytesRecord = BytesByModule,
     accesses: AccessRecord = Accesses,
+    type_origins: TypeOriginRecord = TypeOrigins,
     access_counts: AccessCountRecord = AccessCounts,
     type_tests: TypeTestRecord = TypeTests,
     allocation_remarks: AllocationRemarkRecord = AllocationRemarks,
     bytes_by_form: FormBytesRecord = BytesByForm,
     function_names: FunctionNameRecord = FunctionNames,
     layout_names: LayoutNameRecord = LayoutNames,
+    inlined_strings: InlinedStringRecord = InlinedStrings,
 }

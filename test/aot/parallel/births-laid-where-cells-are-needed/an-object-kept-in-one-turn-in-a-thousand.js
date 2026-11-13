@@ -1,5 +1,5 @@
 // Objects are made in a loop, one in 1,024 is kept, every one is read: in a variable of the module, in a list, in a field, by nobody.
-// STATISTIC: BirthsLaidWhereCellsAreNeeded >= 2
+// STATISTIC: AllocationsSunk >= 2
 class Reading {
     constructor(at, value) { this.at = at; this.value = value; }
     weight() { return this.at + this.value; }

@@ -16,20 +16,20 @@
 # print(said());
 # -- end of source
 # A store by name through a receiver mixed of many kinds loses the member among them: a lost layout finds whatever is stored beside fields under the name anywhere, and what it finds wants IT as the receiver: its porter has it awake, alone; the others sleep. RED CONTROLS: porters that take what is of the member for the unknown (a group that forgets one member), and porters that hear nothing: the check of closure wakes every sleeper and sees the callee's receiver climb.
-# RUN(COUNT): compile SharedCallsWhoseSilentMembersSleep SharedCallsWhoseSleepersWereWoken SleepersWokenInSharedCalls mechanisms=all
-# COUNT: statistic SharedCallsWhoseSilentMembersSleep 1
-# COUNT: statistic SharedCallsWhoseSleepersWereWoken 0
-# COUNT: statistic SleepersWokenInSharedCalls 0
+# RUN(COUNT): compile SharedCallsWithDormantMembers SharedCallsWithActivatedMembers DormantMembersActivated mechanisms=all
+# COUNT: statistic SharedCallsWithDormantMembers 1
+# COUNT: statistic SharedCallsWithActivatedMembers 0
+# COUNT: statistic DormantMembersActivated 0
 # RUN(ANSWERS): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
 # ANSWERS: none,none,none,none,none,none,
 # ANSWERS: none,late of B1,none,none,none,none,
 # RUN(CLOSED): closure mechanisms=all
 # CLOSED-NOT: climbs
-# RUN(FORGETS): closure testing=PortersTakeWhatIsOfTheMemberForTheUnknown mechanisms=all
+# RUN(FORGETS): closure testing=TreatMemberCalleesAsUnknown mechanisms=all
 # FORGETS: newest first: f2.parameter0 climbs from {{*}} to {{*}}L2
 # FORGETS: oldest first: f2.parameter0 climbs from {{*}} to {{*}}L2
 # FORGETS: scattered: f2.parameter0 climbs from {{*}} to {{*}}L2
-# RUN(DEAF): closure testing=NobodyWakesSleepersOfSharedCalls mechanisms=all
+# RUN(DEAF): closure testing=IgnoreDormantMemberUpdates mechanisms=all
 # DEAF: newest first: f2.parameter0 climbs from {{*}} to {{*}}L2
 
 module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)

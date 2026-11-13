@@ -12,8 +12,8 @@
 # RUN(TWICE): walk f3 mechanisms=all
 # TWICE-LABEL: code f3:Body
 # TWICE: BeginMemberGuards layout=L0
-# With it the front asks the guards of the stores that a try of the loop saw asked.
-# TWICE-NEXT: = AreMembersUnchanged conditions=[{layout=L0 key="total"}, {kind=MemberPassedByStores layout=L0 key="legs"}, {kind=MemberPassedByStores layout=L0 key="age"}]
+# With it the front may ask what the births and the stores of the turns lean on.
+# TWICE-NEXT: = AreMembersUnchanged conditions=[{layout=L0 key="total"}
 # TWICE: ) isInLoop=true isLoopHead=true:
 # TWICE-NOT: BeginMemberGuards
 # TWICE: = PropGet {{*}} key="call"

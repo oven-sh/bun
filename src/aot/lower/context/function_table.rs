@@ -30,12 +30,21 @@ impl FunctionTable {
     }
 
     fn add(&mut self, function: FunctionId, header: Function) {
+        self.add_header(function, header);
+        self.queue.push_back(function);
+    }
+
+    fn add_header(&mut self, function: FunctionId, header: Function) {
         let place = self.places.place(function.index());
         if self.headers.len() <= place {
             self.headers.resize_with(place + 1, || None);
         }
         self.headers[place] = Some(header);
-        self.queue.push_back(function);
+    }
+
+    fn header_mut(&mut self, function: FunctionId) -> Option<&mut Function> {
+        let place = self.places.find(function.index())?;
+        self.headers.get_mut(place)?.as_mut()
     }
 }
 
@@ -59,12 +68,43 @@ impl FileLowering<'_, '_, '_, '_> {
             return function;
         }
         debug_assert!(header.body.code.is_empty(), "a header has no body");
-        if !self.inputs.options.embeds_function_text {
-            header.text = SourceRange::default();
+        if !self.inputs.options.embeds_function_source {
+            header.source_range = SourceRange::default();
         }
         self.place_declared_records(key, header.position);
-        self.functions.add(function, header);
+        match self.is_key_of_other_part(key) {
+            true => {
+                self.request_function(key, &header);
+                self.functions.add_header(function, header);
+            }
+            false => self.functions.add(function, header),
+        }
         function
+    }
+
+    pub(in crate::lower) fn function_header_mut(&mut self, function: FunctionId) -> &mut Function {
+        self.functions
+            .header_mut(function)
+            .expect("the function was declared by declare_function")
+    }
+
+    pub(in crate::lower) fn add_header_of_missing_function(
+        &mut self,
+        key: FunctionKey,
+        header: Function,
+    ) -> FunctionId {
+        let function = self.fragment.declare_function(key);
+        self.functions.add_header(function, header);
+        function
+    }
+
+    pub(in crate::lower) fn forget_header(&mut self, key: FunctionKey) {
+        let function = self.fragment.declare_function(key);
+        if let Some(place) = self.functions.places.find(function.index())
+            && let Some(header) = self.functions.headers.get_mut(place)
+        {
+            *header = None;
+        }
     }
 
     fn place_declared_records(&mut self, key: FunctionKey, position: u32) {

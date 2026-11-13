@@ -1,4 +1,4 @@
-// STATISTIC: ListsAskedInFrontOfTypedCopiesBehindStoresOfTheTurn >= 1
+// STATISTIC: ArrayRowsHoisted >= 2
 // Under: --aot-harden=proof-checks: what was asked in front is held against the cell at every access
 'use strict';
 const n = +process.argv[2] || 3; const said = [];

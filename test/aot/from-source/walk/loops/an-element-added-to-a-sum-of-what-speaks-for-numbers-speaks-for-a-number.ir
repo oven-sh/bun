@@ -5,7 +5,7 @@
 # function sum(start) { let total = start; for (let place = 0; place < rows.length; place++) total = total + rows[place] + more[place]; return total; }
 # print(sum([].length + 1));
 # -- end of source
-# RUN(COUNT): compile ListsAskedForBesideListsInFrontOfLoops mechanisms=all
-# COUNT: statistic ListsAskedForBesideListsInFrontOfLoops 2
+# RUN(COUNT): compile ArraysGuardedBesideArrays mechanisms=all
+# COUNT: statistic ArraysGuardedBesideArrays 2
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 25.5

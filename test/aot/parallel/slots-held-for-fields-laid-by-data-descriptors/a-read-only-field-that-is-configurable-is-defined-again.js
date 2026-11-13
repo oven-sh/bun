@@ -1,6 +1,6 @@
 // The constructor lays `works` by a data descriptor, read-only and configurable. Its slot is held to what is seen defined. Code out of a text defines it again with a text, which the language lets it do.
-// STATISTIC: FieldsHeldToWhatIsSeen >= 2
-// COUNTER: FieldsLeftSlotByStoreOfOtherType >= 1
+// STATISTIC: FieldTypesEnforced >= 2
+// COUNTER: FieldsEvictedByTypeMismatch >= 1
 // Under: --aot-testing=CheckProofsAtRunTime: what is proven is asked again at run time
 class Works { constructor(teeth) { this.teeth = teeth; this.turns = 1; } }
 function Clock(teeth) {

@@ -1,4 +1,5 @@
-// STATISTIC: SlotsShownFilledByTruthOfWhatWasReadOffThem >= 1
+// STATISTIC: SlotsProvenFilledByTruthiness >= 1
+const outside: any = JSON.parse("{}");
 interface Part { id: number }
 class Kind { flags: number; constructor(flags: number) { this.flags = flags; } }
 interface Whole extends Kind { part: Part; label: string }
@@ -7,11 +8,11 @@ function tell(line: string) { lines.push(line); }
 const part: Part = { id: 3 };
 const other: Part = { id: 8 };
 function drop(kind: Kind): number { delete (kind as any).part; return 1; }
-(globalThis as any).dropper = [drop];
-function idOf(kind: Kind): number | undefined { return (kind as Whole).part && (globalThis as any).dropper[0](kind) && ((kind as Whole).part as any); }
+outside.dropper = [drop];
+function idOf(kind: Kind): number | undefined { return (kind as Whole).part && outside.dropper[0](kind) && ((kind as Whole).part as any); }
 function both(a: Kind, b: Kind): string { return String(idOf(a)) + " " + String(idOf(b)); }
-(globalThis as any).handed = [both];
-const asked: (a: Kind, b: Kind) => string = (globalThis as any).handed[0];
+outside.handed = [both];
+const asked: (a: Kind, b: Kind) => string = outside.handed[0];
 function ask(a: any, b: any) { try { tell(asked(a, b)); } catch (error) { tell("threw " + (error as Error).name); } }
 const bare = new Kind(4);
 const full = new Kind(4);

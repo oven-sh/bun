@@ -234,6 +234,46 @@ describe("Atomics", () => {
       expect(Atomics.load(view, 0)).toBe(50n);
     });
 
+    test("bytes whose old value is unused, in optimized code", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const bytes = new Uint8Array(8);
+          const operations = { add: (a, b) => a + b, sub: (a, b) => a - b, and: (a, b) => a & b, or: (a, b) => a | b, xor: (a, b) => a ^ b };
+          const wrong = [];
+          for (const name in operations) {
+            // How many values are live decides which register holds the operand.
+            for (const live of [1, 4, 6]) {
+              for (let operand = 0; operand < live; operand++) {
+                const names = Array.from({ length: live }, (_, i) => "x" + i);
+                const declarations = names.map((x, i) => "const " + x + " = (" + "abcdef"[i] + " + " + i * 3 + ") | 0;").join(" ");
+                const operate = new Function("bytes", "return function (a, b, c, d, e, f) { " + declarations + " const g = b * 7 | 0; Atomics." + name + "(bytes, 3, x" + operand + "); return " + names.join(" ^ ") + " ^ g ^ f; }")(bytes);
+                for (let i = 0; i < 500; i++) operate(i, 2, 3, 4, 5, 6);
+                const values = [0x13, 0x226, 0x337, 0x448, 0x559, 0x66a];
+                bytes[3] = 0x6c;
+                operate(...values);
+                if (bytes[3] !== (operations[name](0x6c, values[operand] + operand * 3) & 255)) wrong.push(name + " " + live + " " + operand);
+              }
+            }
+          }
+          console.log(JSON.stringify(wrong));
+          `,
+        ],
+        env: {
+          ...bunEnv,
+          BUN_JSC_useConcurrentJIT: "0",
+          BUN_JSC_thresholdForJITAfterWarmUp: "10",
+          BUN_JSC_thresholdForOptimizeAfterWarmUp: "50",
+          BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "200",
+        },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[]\n", stderr: "", exitCode: 0 });
+    });
+
     test("BigUint64Array", () => {
       const buffer = new SharedArrayBuffer(32);
       const view = new BigUint64Array(buffer);

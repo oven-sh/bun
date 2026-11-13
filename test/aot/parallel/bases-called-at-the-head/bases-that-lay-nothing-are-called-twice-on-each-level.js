@@ -1,6 +1,6 @@
 // The bases lay nothing and hand the object back. Only the last level stores, and its birth is listed. No store ends a second reading here: what is remembered of the first does.
 // STATISTIC: BodiesReadForBirths <= 100
-// STATISTIC: FieldsListedAtBirthsByConstructors = 1
+// STATISTIC: ConstructorFieldsFoldedIntoAllocations = 1
 function E0() { return this; }
 function E1() { E0.call(this); E0.call(this); }
 Object.setPrototypeOf(E1.prototype, E0.prototype);

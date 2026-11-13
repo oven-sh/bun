@@ -133,15 +133,9 @@ fn the_list_of_the_runner_and_the_imports_say_whose_a_file_is() {
             let file = files.by_path.get(format!("/project/{name}").as_bytes());
             let index = file.unwrap().idx();
             let is_of_product = expected == WhoseFile::OfProduct;
-            assert_eq!(
-                plan.finds_builtins_read_only[index], is_of_product,
-                "{name}"
-            );
+            assert_eq!(plan.has_read_only_builtins[index], is_of_product, "{name}");
             let is_of_tests = expected == WhoseFile::OfTests;
-            assert_eq!(
-                plan.loads_compiled_files_alone[index], !is_of_tests,
-                "{name}"
-            );
+            assert_eq!(plan.rejects_uncompiled_code[index], !is_of_tests, "{name}");
         }
     });
 }
@@ -343,12 +337,12 @@ fn a_file_two_steps_below_a_test_file_that_nothing_speaks_for_is_nobodys_and_so_
             let file = files.by_path.get(format!("/project/{name}").as_bytes());
             let index = file.unwrap().idx();
             assert_eq!(
-                plan.finds_builtins_read_only[index],
+                plan.has_read_only_builtins[index],
                 expected == WhoseFile::OfProduct,
                 "{name}"
             );
             assert_eq!(
-                plan.loads_compiled_files_alone[index],
+                plan.rejects_uncompiled_code[index],
                 expected != WhoseFile::OfTests,
                 "{name}"
             );
@@ -593,7 +587,7 @@ fn tool_may_load(manifest: &str, product: &str) -> bool {
     with_run(&files, (1, 0), |files, run| {
         let may_load = |name: &str| {
             let file = files.by_path.get(format!("/project/{name}").as_bytes());
-            !run.loads_compiled_files_alone[file.unwrap().idx()]
+            !run.rejects_uncompiled_code[file.unwrap().idx()]
         };
         assert!(!may_load("node_modules/tool/index.js"));
         may_load(LOADER)
@@ -1580,19 +1574,108 @@ fn what_a_file_of_the_product_writes_on_a_built_in_opens_nothing_and_a_text_goes
 }
 
 #[test]
+fn statements_check_for_earlier_replacements() {
+    let binds = |files: &[(&str, &str)], listed: (usize, usize), runs_in_several_realms: bool| {
+        let mut project = project_of_run(files, listed);
+        project.aot.runs_in_several_realms = runs_in_several_realms;
+        run_build(&project, BUNDLED_LIBS, &WithoutServices, |build| {
+            build.with_loaded_projects(|build, loaded| {
+                let bound = build.bind_modules(&loaded)?;
+                let files = loaded.project(ProjectId::Application).loaded.files();
+                let graph = &bound.projects.get(ProjectId::Application).graph;
+                let imported = ModuleRef::File(file_at(files, "x.ts"));
+                let mut requests = graph.requests(file_at(files, "a.test.ts")).iter();
+                Ok(requests.any(|request| request.target == imported))
+            })
+        })
+    };
+    let test = "import { test } from 'bun:test';\n";
+    let a = format!("{test}import {{ x }} from './x';\ntest('a', () => {{ x(); }});\n");
+    let x = "export const x = () => 1;\n";
+    let makers = [
+        "Bun.plugin({ name: 'p', setup() {} });",
+        "require('node:module')._extensions['.x'] = () => {};",
+        "import(`${process.argv[2]}?again`);",
+    ];
+    for maker in makers {
+        let b = format!("{test}test('b', () => {{ {maker} }});\n");
+        let in_test_file = [
+            ("a.test.ts", &a[..]),
+            ("b.test.ts", &b[..]),
+            ("x.ts", x),
+            MANIFEST,
+        ];
+        assert!(binds(&in_test_file, (2, 0), true), "{maker}");
+        assert!(!binds(&in_test_file, (2, 0), false), "{maker}");
+
+        let helper = format!("{maker}\nexport {{}};\n");
+        let in_preload = [
+            ("a.test.ts", &a[..]),
+            ("b.ts", &helper[..]),
+            ("x.ts", x),
+            MANIFEST,
+        ];
+        assert!(!binds(&in_preload, (2, 1), true), "{maker}");
+
+        let in_helper = |text: &str, kind: &str| {
+            let name = format!("helper.{kind}");
+            let files = [
+                ("a.test.ts", text),
+                (&name[..], &helper[..]),
+                ("x.ts", x),
+                MANIFEST,
+            ];
+            binds(&files, (1, 0), true)
+        };
+        assert!(
+            in_helper(&format!("import './helper';\n{a}"), "ts"),
+            "{maker}"
+        );
+        let mocks =
+            "import { mock } from 'bun:test';\nmock.module('./x', () => import('./helper'));\n";
+        assert!(!in_helper(&format!("{mocks}{a}"), "ts"), "{maker}");
+
+        let commonjs = format!("{maker}\nexports.one = 1;\n");
+        let in_commonjs = |text: &str| {
+            let files = [
+                ("a.test.ts", text),
+                ("b.test.ts", "import './helper.cjs';\n"),
+                ("helper.cjs", &commonjs[..]),
+                ("x.ts", x),
+                MANIFEST,
+            ];
+            binds(&files, (2, 0), true)
+        };
+        assert!(in_commonjs(&a), "{maker}");
+        assert!(
+            !in_commonjs(&format!("import './helper.cjs';\n{a}")),
+            "{maker}"
+        );
+    }
+    let b = format!("{test}test('b', () => {{ delete require.cache[process.argv[2]]; }});\n");
+    let taken_out = [
+        ("a.test.ts", &a[..]),
+        ("b.test.ts", &b[..]),
+        ("x.ts", x),
+        MANIFEST,
+    ];
+    assert!(!binds(&taken_out, (2, 0), true));
+}
+
+#[test]
 fn link_is_told_whose_a_file_is() {
     let mut files = PROJECT.to_vec();
     files.push(("src/main.ts", "import { app } from './app';\napp();\n"));
     with_bound_run(&files, (2, 1), |files, graph| {
         let flags = |name: &str| flags_of_module(graph, ModuleRef::File(file_at(files, name)));
         let of_product = flags("src/app.ts");
-        assert!(of_product.contains(ModuleFlags::FINDS_BUILTINS_READ_ONLY));
-        assert!(of_product.contains(ModuleFlags::LOADS_COMPILED_FILES_ALONE));
+        assert!(of_product.contains(ModuleFlags::HAS_READ_ONLY_BUILTINS));
+        assert!(of_product.contains(ModuleFlags::REJECTS_UNCOMPILED_CODE));
         let of_tests = flags("checks/latest.ts");
-        assert!(!of_tests.contains(ModuleFlags::FINDS_BUILTINS_READ_ONLY));
-        assert!(!of_tests.contains(ModuleFlags::LOADS_COMPILED_FILES_ALONE));
+        assert!(!of_tests.contains(ModuleFlags::HAS_READ_ONLY_BUILTINS));
+        assert!(!of_tests.contains(ModuleFlags::REJECTS_UNCOMPILED_CODE));
         let of_neither = flags("node_modules/tool/index.js");
-        assert!(!of_neither.contains(ModuleFlags::FINDS_BUILTINS_READ_ONLY));
-        assert!(of_neither.contains(ModuleFlags::LOADS_COMPILED_FILES_ALONE));
+        assert!(!of_neither.contains(ModuleFlags::HAS_READ_ONLY_BUILTINS));
+        assert!(of_neither.contains(ModuleFlags::REJECTS_UNCOMPILED_CODE));
     });
 }

@@ -238,7 +238,7 @@ impl Writer<'_, '_, '_, '_> {
             ShapeKind::Symbol => b"Symbol".to_vec(),
             ShapeKind::AnyObject => b"AnyObject".to_vec(),
             ShapeKind::Function(signatures) => {
-                format!("Function({})", signatures.len()).into_bytes()
+                format!("Function({})", signatures.declared.len()).into_bytes()
             }
             ShapeKind::ClassConstructor(class) => {
                 wrapped("ClassConstructor", &self.class_location(class))

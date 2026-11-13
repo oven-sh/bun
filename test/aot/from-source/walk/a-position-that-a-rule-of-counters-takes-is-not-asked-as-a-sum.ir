@@ -7,8 +7,8 @@
 # function skip(text, pos) { while (true) { const ch = text.charCodeAt(pos); if (ch === 47) { pos += 2; while (pos < text.length) { if (text.charCodeAt(pos) === 10) break; pos++; } continue; } if (ch === 32) { pos++; continue; } return pos; } }
 # publish(skip);
 # -- end of source
-# RUN: compile SumsAskedForNumbersInFrontOfLoops mechanisms=all
-# CHECK: statistic SumsAskedForNumbersInFrontOfLoops 0
+# RUN: compile SumsGuardedAsNumbers mechanisms=all
+# CHECK: statistic SumsGuardedAsNumbers 0
 # RUN(SKIP): walk f1 mechanisms=all
 # SKIP: code f1:Body
 # SKIP-NOT: : number @Double) isInLoop=true isLoopHead=true

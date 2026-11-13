@@ -10,8 +10,8 @@
 # function run(count) { var c = new Store(8), keys = ["k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7", "k8", "k9", "ka", "kb"], total = 0; for (var i = 0; i < count; i++) { var k = keys[i % 6], v = c.get(k); if (v === undefined) c.set(k, i & 7); else total += v; } return total + c.size; }
 # publish(run);
 # -- end of source
-# RUN: compile LoopsWalkedAgainWithoutAskingSums mechanisms=all
-# CHECK: statistic LoopsWalkedAgainWithoutAskingSums 2
+# RUN: compile LoopsRevisitedWithoutSumGuards mechanisms=all
+# CHECK: statistic LoopsRevisitedWithoutSumGuards 1
 # RUN(LOOP): walk f2 mechanisms=all
 # LOOP: code f2:Body
 # LOOP: (v{{*}}: i32 @Int32, v{{*}}) isInLoop=true isLoopHead=true

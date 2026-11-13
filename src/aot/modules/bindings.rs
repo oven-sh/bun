@@ -36,6 +36,8 @@ pub struct CopiedExports {
     pub runs_once: bool,
     pub is_of_ordinary_object: bool,
     pub has_marker: bool,
+    pub passes_over_marker: bool,
+    pub reads_own_default: bool,
     pub may_hold_answer: bool,
     pub is_looked_at: bool,
     pub is_called_through: bool,
@@ -140,7 +142,7 @@ pub struct RequiredName {
     pub asked_by: Option<ExportStatement>,
     pub is_found_unless_mocked: bool,
     pub drops_export_if_absent: bool,
-    pub is_asked_for_by_star: bool,
+    pub is_requested_by_star_export: bool,
 }
 
 impl RequiredName {
@@ -151,7 +153,7 @@ impl RequiredName {
             asked_by: None,
             is_found_unless_mocked: false,
             drops_export_if_absent: false,
-            is_asked_for_by_star: false,
+            is_requested_by_star_export: false,
         }
     }
 }

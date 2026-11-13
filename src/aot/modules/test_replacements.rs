@@ -142,6 +142,15 @@ impl FileBinder<'_, '_> {
     }
 
     fn replace_export(&mut self, spied_on: StandsFor, name: Atom) {
+        if let StandsFor::ImportedNamespace(module) | StandsFor::RequiredNamespace(module) =
+            spied_on
+            && let ModuleRef::Runtime(library) = self.context.modules.module_behind(module)
+            && !(table::module_data(library).flags).contains(table::ModuleFlags::HAS_SOURCE)
+        {
+            let module = ModuleRef::Runtime(library);
+            self.imports.namespaces_spied_on_whole.push(module);
+            return;
+        }
         let resolved = match spied_on {
             StandsFor::ImportedNamespace(module) => {
                 self.resolve_name(self.context.modules.module_behind(module), name)

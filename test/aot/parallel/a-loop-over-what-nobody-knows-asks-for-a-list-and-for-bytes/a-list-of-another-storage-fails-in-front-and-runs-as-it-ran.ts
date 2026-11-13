@@ -1,4 +1,4 @@
-// STATISTIC: CopiesOfLoopsWhoseFrontLeadsToTheRest >= 3
+// STATISTIC: LoopVersionsFailingIntoFallback >= 3
 // The turn stores ints, so the list's copy asks in front for storage of ints. A list of halves is a list and fails that question: no turn has run, so it goes on to the copy of the rest and not into the closed copy.
 const key: string = JSON.parse('"go"');
 const T: Record<string, (c: any) => string> = { go(c: any): string { for (let i = 0; i < c.length; i++) c[i] = (c[i] + 1) & 127; return Array.prototype.join.call(c); } };

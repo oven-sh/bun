@@ -1,8 +1,7 @@
-# `this.cells[square + step]` in a loop over written steps. `square` is declared a number, so the key is a number of which nothing says that it is whole. An element read under such a key had no typed form: its level was
-# unknown, it might run other code, and in the typed copy of the loop the walk began the turn again in the copy as written AT THE READ, ON THE USUAL WAY: the first square on the board ended the typed copy for the rest of the loop.
-# Now, in a turn of a typed copy that may still begin again, the key of an element of a list DECLARED TO HOLD NUMBERS ALONE is asked for an int32; where it is none (1.5, NaN, 2 ** 32) the turn begins again as written; behind
-# the test the read is typed as under any whole key (made).
-# A key that goes round the loop, the head's own parameter or a step of it, is left to the counters, which hold it to an int32 by themselves (round). A list of texts has no such form: nothing is asked (texts).
+# `this.cells[square + step]` in a loop over written steps. `square` is declared a number, so nothing says that the key is whole. In the specialized loop `square` is asked for an int32 in front,
+# because the sum is a key and is cut by a bitwise operator: the sum is an integer (made, texts).
+# A product has no such addend: the key of an element of a list declared to hold numbers alone is asked for an int32 in the iteration, and where it is none (1.5, NaN, 2 ** 32) the iteration restarts as written (scaled).
+# A key that goes round the loop, the header's own parameter or a step of it, is left to the counters, which hold it to an int32 by themselves (round).
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;
 # declare function hand(...values: unknown[]): void;
@@ -15,6 +14,15 @@
 #     let seen = 0;
 #     for (const step of STEPS) {
 #       const from = square + step;
+#       if (!(from & 0x88) && this.cells[from] === want) return from * 1000 + seen;
+#       seen++;
+#     }
+#     return -1 - seen;
+#   }
+#   scaled(square: number, want: number): number {
+#     let seen = 0;
+#     for (const step of STEPS) {
+#       const from = square * step;
 #       if (!(from & 0x88) && this.cells[from] === want) return from * 1000 + seen;
 #       seen++;
 #     }
@@ -38,22 +46,27 @@
 # const field = new Field();
 # (field.cells as any)["38.5"] = 90;
 # hand(field);
-# print(field.made(52, 3), field.made(52, 99), field.made(52.5, 90), field.made(52.5, 3), field.made(NaN, 3), field.made(2 ** 32 + 52, 3), field.made(-0, 0), field.round(5, 0.5), field.round(2.5, 0.5), field.texts(52, "n3"), field.texts(52.5, "n3"));
+# print(field.made(52, 3), field.made(52, 99), field.made(52.5, 90), field.made(52.5, 3), field.made(NaN, 3), field.made(2 ** 32 + 52, 3), field.made(-0, 0), field.scaled(-2, 3), field.scaled(-2, 99), field.scaled(-0.5, 3), field.scaled(NaN, 3), field.scaled(2 ** 32, 3), field.round(5, 0.5), field.round(2.5, 0.5), field.texts(52, "n3"), field.texts(52.5, "n3"));
 # -- end of source
-# f2 = made, f3 = round, f4 = texts
-# RUN(EVENT): compile KeysHeldToWholeNumbersInTurnsOfTypedCopies mechanisms=all
-# One for each kind of storage that the turn tells apart.
-# EVENT: statistic KeysHeldToWholeNumbersInTurnsOfTypedCopies 3
+# f2 = made, f3 = scaled, f4 = round, f5 = texts
+# RUN(EVENT): compile NumberKeysGuardedInIterations mechanisms=all
+# One: the list is asked in front for one kind of storage that takes both.
+# EVENT: statistic NumberKeysGuardedInIterations 1
 # RUN(MADE): walk f2 mechanisms=all
 # MADE-LABEL: code f2:Body
 # MADE: = TypeTest {{*}}testedType=i32
-# MADE: = NumberToInteger
-# MADE: = GetArrayElement {{*}}arrayStorage=Double level=Proven [keyIsIntegral]
-# RUN(ROUND): walk f3 mechanisms=all
-# ROUND-LABEL: code f3:Body
+# MADE: = Add {{*}}form=Integers
+# MADE: = GetArrayElement {{*}}arrayStorage=Double level=Proven [keyIsIntegral
+# RUN(SCALED): walk f3 mechanisms=all
+# SCALED-LABEL: code f3:Body
+# SCALED: = TypeTest {{*}}testedType=i32
+# SCALED: = NumberToInteger
+# SCALED: = GetArrayElement {{*}}arrayStorage=Double level=Proven [keyIsIntegral, admitsInt32Storage]
+# RUN(ROUND): walk f4 mechanisms=all
+# ROUND-LABEL: code f4:Body
 # ROUND-NOT: = NumberToInteger
-# RUN(TEXTS): walk f4 mechanisms=all
-# TEXTS-LABEL: code f4:Body
-# TEXTS-NOT: testedType=i32
+# RUN(TEXTS): walk f5 mechanisms=all
+# TEXTS-LABEL: code f5:Body
+# TEXTS: = Add {{*}}form=Integers
 # RUN(ANSWERS): run-in-shell hand = function () { };
-# ANSWERS: 38003 -9 38503 -9 -9 -9 -9 1.78125 NaN 38003 -9
+# ANSWERS: 38003 -9 38503 -9 -9 -9 -9 66000 -9 -9 -9 -9 1.78125 NaN 38003 -9

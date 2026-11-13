@@ -26,7 +26,11 @@ pub(super) enum DefaultHolder {
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn bind_pattern(&mut self, pattern: PatId, value: ValueId, source: Option<ExprId>) {
-        self.destructure(PatternNode::Binding(pattern), value, source);
+        self.destructure_source(PatternNode::Binding(pattern), value, source);
+    }
+
+    pub(in crate::lower) fn bind_parameter_pattern(&mut self, pattern: PatId, value: ValueId) {
+        self.destructure(PatternNode::Binding(pattern), value, None);
     }
 
     pub(crate) fn assign_pattern(
@@ -35,7 +39,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         value: ValueId,
         source: Option<ExprId>,
     ) {
-        self.destructure(PatternNode::Assignment(target), value, source);
+        self.destructure_source(PatternNode::Assignment(target), value, source);
+    }
+
+    fn destructure_source(&mut self, node: PatternNode, value: ValueId, source: Option<ExprId>) {
+        let position = source.and_then(|source| self.file.destructured_position(source));
+        let outer = core::mem::replace(&mut self.destructured_position, position);
+        self.destructure(node, value, source);
+        self.destructured_position = outer;
+    }
+
+    fn report_destructuring_after(&mut self, expression: ExprId) {
+        let position = self.file.destructured_position(expression);
+        self.destructured_position = position.or(self.destructured_position);
     }
 
     fn destructure(&mut self, node: PatternNode, value: ValueId, source: Option<ExprId>) {
@@ -166,6 +182,7 @@ pub(super) fn apply_default_with(
         }
         None => lowering.lower_expression(default),
     };
+    lowering.report_destructuring_after(default);
     let default_value = convert(lowering, default_value);
     lowering.builder.write_variable(result, default_value);
     lowering.jump(join);
@@ -186,13 +203,14 @@ mod tests {
     fn lower(source: &str) -> Fragment {
         let options = LoweringOptions {
             platform: host_platform(),
-            embeds_function_text: false,
-            reads_function_texts_back: false,
+            embeds_function_source: false,
+            reparses_function_sources: false,
             removable: Default::default(),
             minifies_identifiers: false,
             obfuscates: false,
             counts_executions: false,
             runs_tests: false,
+            divides_small_files: false,
         };
         let mut lowered = lower_program(&[("main.ts", source)], options);
         assert_eq!(lowered.len(), 1);

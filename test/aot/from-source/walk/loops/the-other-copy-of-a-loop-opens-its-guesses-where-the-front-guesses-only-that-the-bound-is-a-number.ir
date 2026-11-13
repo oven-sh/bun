@@ -11,6 +11,7 @@
 # -- end of source
 # RUN: walk f5:Body mechanisms=all
 # CHECK-LABEL: code f5:Body
+# CHECK: frame 2 callee=f4
 # CHECK-NOT: CallTable
-# CHECK: = CallDirect {{*}}function=f4
+# CHECK: isLoopHead=true
 # CHECK-NOT: CallTable

@@ -1910,6 +1910,7 @@ dependencies = [
  "bun_jsc",
  "bun_options_types",
  "bun_paths",
+ "bun_removable_features",
  "bun_sourcemap",
  "bun_wyhash",
 ]

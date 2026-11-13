@@ -1,5 +1,5 @@
 "use strict";
-// STATISTIC: LoopsLaidOutForEachKindOfView >= 3
+// STATISTIC: UnrolledLoopsForTypedArrays >= 3
 // A short counted loop over what nobody has typed: behind the front, views of all kinds but bytes share one copy, and the eight turns that the code generator lays out in a row stand once for each kind, the kind asked in front.
 // Every kind, at every length from 0 to 40 (no stretch of eight, one, several, with and without a rest), views that begin in the middle of their memory, the greatest and least of each kind, NaN of several bit patterns, -0.
 var key = JSON.parse('"go"');

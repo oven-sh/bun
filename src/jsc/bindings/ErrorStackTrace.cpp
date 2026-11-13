@@ -168,7 +168,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
 #if ENABLE(AOT)
         if (frame.isCompiledFrame()) {
             const auto& compiledFrame = frame.compiledFrame();
-            function.code = static_cast<uintptr_t>(compiledFrame.function.index()) << 2 | (compiledFrame.hasCalleeInFrame ? 2 : 0) | 1;
+            function.code = static_cast<uintptr_t>(compiledFrame.function.index()) << 2 | 1;
         }
 #endif
         auto& functionWithOtherName = functionsWithOtherNames[((std::bit_cast<uintptr_t>(function.callee) >> 4) + (function.code >> 2)) % functionsWithOtherNames.size()];
@@ -311,6 +311,8 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
             m_sourcePositions = { OrdinalNumber::fromOneBasedInt(position->startOfExpression().line), OrdinalNumber::fromOneBasedInt(position->startOfExpression().column) };
             m_sourcePositionsState = SourcePositionsState::Calculated;
             m_isFunctionOrEval = frame.codeType() == JSC::FunctionCode || frame.codeType() == JSC::EvalCode;
+            if (!JSC::AOT::FunctionDescription(frame.compiledFrame().function).isHelperOfCompiler() && !position->isInEvaluatedString)
+                m_compiledModule = position->source;
         }
         return;
 #endif
@@ -507,10 +509,16 @@ String externalSourceMapFileURL()
     return String(url);
 }
 
+String externalSourceMapDisplayPath()
+{
+    static const auto path = MAKE_STATIC_STRING_IMPL(AOT_BUILD_FOLDER_PREFIX "compiled.js");
+    return String(path);
+}
+
 String sourceURL(const JSC::AOT::SourcePosition& position)
 {
     if (position.source)
-        return JSC::AOT::sourceURLOf(position.source);
+        return JSC::AOT::sourceURLOf(position);
     return hasExternalSourceMap() ? externalSourceMapFileURL() : String();
 }
 
@@ -519,6 +527,15 @@ String sourceURL(const JSC::AOT::TraceFrame& frame, const JSC::AOT::SourcePositi
     if (JSC::AOT::FunctionDescription(frame.function).isHelperOfCompiler()) [[unlikely]]
         return JSC::AOT::compilerHelpersModule;
     return sourceURL(position);
+}
+
+String displayPath(const JSC::AOT::TraceFrame& frame, const JSC::AOT::SourcePosition& position)
+{
+    if (JSC::AOT::FunctionDescription(frame.function).isHelperOfCompiler()) [[unlikely]]
+        return JSC::AOT::compilerHelpersModule;
+    if (position.source)
+        return JSC::AOT::displayPathOf(position);
+    return hasExternalSourceMap() ? externalSourceMapDisplayPath() : String();
 }
 #endif
 
@@ -540,6 +557,18 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
 #endif
 
     return sourceURL(frame.codeBlock());
+}
+
+String displayPath(JSC::VM& vm, const JSC::StackFrame& frame)
+{
+#if ENABLE(AOT)
+    if (frame.isCompiledFrame() && frame.hasLineAndColumnInfo()) [[unlikely]] {
+        auto position = frame.compiledPosition();
+        return position ? displayPath(frame.compiledFrame(), *position) : String();
+    }
+#endif
+
+    return sourceURL(vm, frame);
 }
 
 String sourceURL(JSC::StackVisitor& visitor)
@@ -644,7 +673,7 @@ static String compiledFunctionName(JSC::VM& vm, const JSC::StackFrame& frame)
     JSC::AOT::FunctionDescription description(frame.compiledFrame().function);
     if (frame.isAsyncFrame() || frame.compiledFrame().isAtFailedTailCall)
         return description.name(vm);
-    return description.stackTraceName(vm, frame.callee(), frame.compiledFrame().hasCalleeInFrame);
+    return description.stackTraceName(vm);
 }
 
 static String functionNameOfCompiledFrame(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags)

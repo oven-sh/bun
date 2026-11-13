@@ -2,13 +2,13 @@
 # each visit asked the source's kind, loaded its storage and asked its length anew, where map, reduce, some and find do not.
 # The walk knows by object that the turns leave the source as it is: they write what is made here alone and run no other code.
 # Where the function reaches for the source itself (GROWS) nothing is taken from in front.
-# RUN(EVENT): compile StoragesTakenFromInFrontOfTurnsThatFillWhatIsMadeHere mechanisms=all
-# EVENT: statistic StoragesTakenFromInFrontOfTurnsThatFillWhatIsMadeHere 4
+# RUN(EVENT): compile ArrayStorageLoadsHoisted mechanisms=all
+# EVENT: statistic ArrayStorageLoadsHoisted 4
 # RUN(TAKEN): walk f1 mechanisms=all
 # TAKEN-LABEL: code f1:Body
 # TAKEN: = HasContiguousIndex {{*}} storage={{*}} [isInBounds]
 # TAKEN: = GetOwnContiguousIndex {{*}} storage=
-# TAKEN: = TryPutIndex
+# TAKEN: = AppendElement
 # RUN(GROWS): walk f2 mechanisms=all
 # GROWS-LABEL: code f2:Body
 # GROWS-NOT: = HasContiguousIndex {{*}} storage=
@@ -21,7 +21,10 @@
 # function kept(orders: Order[], rounds: number): number {
 #   let total = 0;
 #   for (let round = 0; round < rounds; round++)
-#     total += orders.filter(order => order.open).length;
+#   {
+#     const open = orders.filter(order => order.open);
+#     total += open.length > 0 ? open.length : 0;
+#   }
 #   return total;
 # }
 # function grown(orders: Order[], rounds: number): number {

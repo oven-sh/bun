@@ -10,8 +10,8 @@ import { describe, test } from "./supported";
 
 const testRunner = "bun:test and node:test (test)";
 
-async function saysOfTestRunner(text: string) {
-  using dir = tempDir("aot-trim-test-runner", { "main.ts": "// @ts-nocheck\n" + text });
+async function saysOfTestRunner(text: string, files: Record<string, string> = {}) {
+  using dir = tempDir("aot-trim-test-runner", { "main.ts": "// @ts-nocheck\n" + text, ...files });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "check", "--aot", "--no-pretty", "--explain=trim", "main.ts"],
     cwd: String(dir),
@@ -46,6 +46,42 @@ describe.concurrent("the test runner stays only in a program that names it", () 
   ])("%s keeps it", async (_, text) => {
     expect(await saysOfTestRunner(text)).toEqual(["kept"]);
   });
+
+  // The program imports the name and nothing else. The loader creates the whole module for it.
+  test.each([
+    ["bun:test", "mock", "mock(() => 1)()"],
+    ["bun:test", "spyOn", `spyOn({ f() { return 1; } }, "f").mock.calls.length`],
+    ["bun:test", "expectTypeOf", "expectTypeOf(1).toBeNumber()"],
+    ["bun:test", "setSystemTime", "setSystemTime(new Date(0))"],
+    ["bun:test", "test", `test("one", () => {})`],
+    ["bun:test", "aroundEach", "typeof aroundEach"],
+    ["bun:test", "expect", "typeof expect"],
+    ["bun:test", "vi", "typeof vi"],
+    ["bun:test/vitest", "mock", "mock(() => 1)()"],
+    ["bun:test/vitest", "inject", "typeof inject"],
+    ["bun:test/vitest", "vitest", "typeof vitest.fn"],
+    ["node:test", "mock", "typeof mock.fn"],
+  ])("an import of %s with %s alone keeps it", async (module, name, use) => {
+    expect(await saysOfTestRunner(`import { ${name} } from "${module}";\nconsole.log(${use});`)).toEqual(["kept"]);
+  });
+
+  test.each([
+    ["import *", `import * as runner from "bun:test";\nconsole.log(typeof runner.mock);`],
+    ["import()", `const { mock } = await import("bun:test");\nconsole.log(typeof mock);`],
+    ["require()", `const { spyOn } = require("bun:test");\nconsole.log(typeof spyOn);`],
+  ])("%s of bun:test, for a mock alone, keeps it", async (_, text) => {
+    const said = await saysOfTestRunner(text);
+    expect(said).toEqual(["kept"]);
+  });
+
+  test.each([
+    ["by its name", `export { mock } from "bun:test";`],
+    ["under another name", `import { mock as original } from "bun:test";\nexport { original as mock };`],
+    ["with everything else", `export * from "bun:test";`],
+  ])("a file that exports mock of bun:test again, %s, keeps it", async (_, again) => {
+    const text = `import { mock } from "./again";\nconsole.log(mock(() => 1)());`;
+    expect(await saysOfTestRunner(text, { "again.ts": "// @ts-nocheck\n" + again })).toEqual(["kept"]);
+  });
 });
 
 const underKeyFromRunTime = `const key = process.argv[2];
@@ -63,6 +99,15 @@ try {
 } catch (error) {
   console.log("caught:", error.constructor.name);
 }
+console.log("held");
+`;
+
+const mocksAlone = `import { expectTypeOf, mock, spyOn } from "bun:test";
+const doubled = mock(value => value * 2);
+const object = { read() { return 1; } };
+const spy = spyOn(object, "read");
+console.log(doubled(4), object.read(), spy.mock.calls.length, doubled.mock.calls.length);
+expectTypeOf(doubled).toBeFunction();
 console.log("held");
 `;
 
@@ -91,5 +136,11 @@ describe.skipIf(!!without("a Bun that trims"))("in a trimmed executable", () => 
     const shown = { stdout: "caught: Error\nheld\n", exitCode: 0 };
     expect(await shownBy(named, ["--trim"])).toEqual(shown);
     expect(await shownBy(named, [])).toEqual(shown);
+  }, 600_000);
+
+  test("a program that imports mock, spyOn and expectTypeOf alone has them", async () => {
+    const shown = { stdout: "8 1 1 1\nheld\n", exitCode: 0 };
+    expect(await shownBy(mocksAlone, ["--trim"])).toEqual(shown);
+    expect(await shownBy(mocksAlone, [])).toEqual(shown);
   }, 600_000);
 });

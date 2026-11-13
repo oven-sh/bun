@@ -100,20 +100,18 @@ impl bun_event_loop::Taskable for Queue {
     }
 }
 
-impl bun_event_loop::Taskable for AsyncModule {
+impl bun_event_loop::BoxedTask for AsyncModule {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::AsyncModule;
     /// A module whose dependencies finished installing but whose fulfilment
     /// will not run: undo `done()`'s bookkeeping and drop it (its promise
     /// handle, arena and parse result go with the box).
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box `done()` queued.
-        let this = unsafe { bun_core::heap::take(this) };
+    fn release_unrun(self: Box<Self>) {
         let vm = VirtualMachine::get();
-        this.poll_ref.unref(bun_io::js_vm_ctx());
+        self.poll_ref.unref(bun_io::js_vm_ctx());
         vm.modules.scheduled.update(|n| n - 1);
     }
     /// Fulfils a module fetch of a loader; calls no script of its own.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -251,11 +249,8 @@ impl Queue {
         // SAFETY: `ctx` is the leaked `WakeContext` registered with this handler.
         let ctx = unsafe { &*ctx.cast::<WakeContext>() };
         let task = ConcurrentTaskItem::create_from(ctx.queue.cast_mut());
-        if let crate::vm_handle::Posted::Refused(task) = ctx.handle.post(ctx.kind, task) {
-            // That VM has closed: nobody is waiting on these modules any more.
-            // SAFETY: refused ⇒ we own the task box.
-            unsafe { drop(bun_core::heap::take(task.as_ptr())) };
-        }
+        // Refused: that VM has closed, nobody is waiting on these modules any more.
+        let _ = ctx.handle.post(ctx.kind, task);
     }
 
     #[inline(never)]

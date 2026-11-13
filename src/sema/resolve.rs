@@ -4103,8 +4103,7 @@ impl<'h> Resolver<'h> {
     /// JavaScript in a nearer one. A specifier that the search for types finds explicitly
     /// unresolved isn't searched for again.
     fn node_modules(&self, spec: &[u8], from_dir: &[u8], look: Look) -> Found {
-        // With `condition_names`, the first key of `exports` that matches wins, whatever kind of file it names. As
-        // in eslint-import-resolver-typescript, JavaScript then loses to the package's `@types`.
+        // eslint-import-resolver-typescript: one pass, then `@types` over JavaScript.
         if self.options.condition_names.is_some() {
             let found = self.node_modules_once(spec, from_dir, look);
             if let Found::File(path) = &found

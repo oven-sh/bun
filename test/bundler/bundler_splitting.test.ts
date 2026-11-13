@@ -967,7 +967,7 @@ describe("bundler", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
       const [name] = readdirSync(join(String(dir), outdir));

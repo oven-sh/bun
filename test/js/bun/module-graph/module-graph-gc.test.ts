@@ -319,6 +319,28 @@ describe("ModuleGraph GC: cells a graph made go with it", () => {
     expect(held.length).toBe(8);
   });
 
+  test("a disposed graph the host still holds does not keep its main module", async () => {
+    // The first import is a CommonJS module, and the graph's require map holds that module as require.main.
+    await (async () => {
+      const graph = new ModuleGraph({ globals: { TAG: "warm" } });
+      await graph.import(file("cjs.cjs"));
+    })();
+    const baseline = await baselineOf("Module");
+    const held: Graph[] = [];
+    await (async () => {
+      for (let i = 0; i < 8; i++) {
+        const graph = new ModuleGraph({ globals: { TAG: "held" + i } });
+        await graph.import(file("cjs.cjs"));
+        graph.dispose();
+        held.push(graph);
+      }
+    })();
+    // Kept, it is one module for each of the eight.
+    const limits = { Module: baseline.Module + 7 };
+    expect((await settle(limits)).Module).toBeLessThanOrEqual(limits.Module);
+    expect(held.length).toBe(8);
+  });
+
   test("overlay symbol tables of graphs that are gone are not retained", async () => {
     const make = async (names: number) => {
       for (let i = 0; i < names; i++) {

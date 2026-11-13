@@ -3890,7 +3890,7 @@ impl VirtualMachine {
             // The path is the key of the module: there is nothing to resolve.
             let main = (self.main()).expect("the entry point has a path");
             let main_str = bun_core::StringView::from_bytes(main);
-            jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &main_str)
+            jsc::JSModuleLoader::load_and_evaluate_entry_point_ptr(global, &main_str)
                 .map(NonNull::as_ptr)
                 .ok_or(crate::CrateError::JSError)?
         } else if !self.transpiler.options.disable_transpilation {
@@ -3901,7 +3901,7 @@ impl VirtualMachine {
         } else {
             let main = (self.main()).expect("a file entry point has a path");
             let main_str = bun_core::StringView::from_bytes(main);
-            jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str)
+            jsc::JSModuleLoader::resolve_and_load_and_evaluate_entry_point_ptr(global, &main_str)
                 .map(NonNull::as_ptr)
                 .ok_or(crate::CrateError::JSError)?
         };
@@ -6245,7 +6245,7 @@ impl VirtualMachine {
         let global = self.global;
         let main = (self.main()).expect("set to the test file above");
         let main_str = bun_core::StringView::from_bytes(main);
-        let promise = match jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(
+        let promise = match jsc::JSModuleLoader::resolve_and_load_and_evaluate_entry_point_ptr(
             global, &main_str,
         ) {
             Some(promise) => promise.as_ptr(),

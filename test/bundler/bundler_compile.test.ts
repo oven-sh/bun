@@ -1354,6 +1354,31 @@ describe("bundler", () => {
     },
     run: { stdout: new Array(7).fill("true").join("\n") },
   });
+  // A file from disk asks, so the bundler does not write the answer into the code.
+  for (const { format, bytecode, mainModule } of [
+    { format: "cjs", bytecode: false, mainModule: "object" },
+    { format: "cjs", bytecode: true, mainModule: "object" },
+    // No CommonJS module runs for an entry point that is an ES module.
+    { format: "esm", bytecode: false, mainModule: "undefined" },
+  ] as const) {
+    itBundled(`compile/MainModuleAfterCacheIsEmptied+${format}${bytecode ? "+bytecode" : ""}`, {
+      compile: true,
+      format,
+      bytecode,
+      files: {
+        "/entry.js": /* js */ `
+          const fromDisk = (x => require(x))("from-disk");
+          for (const key of Object.keys(require.cache)) delete require.cache[key];
+          console.log(fromDisk.ask());
+        `,
+        "/node_modules/from-disk/index.js": "throw new Error('Must be runtime import.')",
+      },
+      runtimeFiles: {
+        "/node_modules/from-disk/index.js": `exports.ask = () => [typeof require.main, typeof process.mainModule].join(" ");`,
+      },
+      run: { stdout: `${mainModule} ${mainModule}`, setCwd: true },
+    });
+  }
   itBundled("compile/SourceMap", {
     target: "bun",
     compile: true,

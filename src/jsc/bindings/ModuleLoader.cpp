@@ -779,6 +779,9 @@ void evaluateCommonJSCustomExtension(
         throwTypeError(globalObject, scope, makeString("require.extension is not a function"_s));
         return;
     }
+    // The handler runs the text by itself, or gives it to `module._compile`.
+    Bun::becomeMainModuleIfEntryPoint(globalObject, target);
+    RETURN_IF_EXCEPTION(scope, );
     MarkedArgumentBuffer arguments;
     arguments.append(target);
     arguments.append(filenameValue);
@@ -1094,7 +1097,26 @@ JSValue fetchCommonJSModuleNonBuiltin(
     RELEASE_AND_RETURN(scope, jsNumber(-1));
 }
 
-extern "C" JSC::JSPromise* JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(JSC::JSGlobalObject* globalObject, const BunString* specifier)
+// JSC::loadAndEvaluateModule() of an entry point that no module imports. (`bun:main` imports the entry point of `bun run`.)
+static JSC::JSPromise* loadAndEvaluateEntryPoint(JSC::JSGlobalObject* globalObject, const WTF::String& key)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Bun::nameMainModule(defaultGlobalObject(globalObject), jsString(vm, key));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_AND_RETURN(scope, JSC::loadAndEvaluateModule(globalObject, key, nullptr, nullptr));
+}
+
+extern "C" JSC::JSPromise* JSC__JSModuleLoader__loadAndEvaluateEntryPoint(JSC::JSGlobalObject* globalObject, const BunString* key)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* promise = loadAndEvaluateEntryPoint(globalObject, makeAtomString(key->toWTFString()).string());
+    EXCEPTION_ASSERT(!!promise == !scope.exception());
+    return promise;
+}
+
+extern "C" JSC::JSPromise* JSC__JSModuleLoader__resolveAndLoadAndEvaluateEntryPoint(JSC::JSGlobalObject* globalObject, const BunString* specifier)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -1110,7 +1132,7 @@ extern "C" JSC::JSPromise* JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(
     if (scope.exception()) [[unlikely]]
         return nullptr;
 
-    auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
+    auto* promise = loadAndEvaluateEntryPoint(globalObject, key.string());
     EXCEPTION_ASSERT(!!promise == !scope.exception());
     if (auto* exception = scope.exception()) [[unlikely]] {
         if (!scope.tryClearException())

@@ -1194,12 +1194,12 @@ static JSC_DEFINE_CUSTOM_SETTER(setBunObjectMain, (JSC::JSGlobalObject * globalO
 {
     (void)thisEncoded;
     (void)propertyName;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     if (Bun::hasCompiledModules()) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
         Bun::willSetMainModulePath(defaultGlobalObject(globalObject), JSValue::decode(encodedValue));
         RETURN_IF_EXCEPTION(scope, false);
     }
-    return BunObject_setter_main(globalObject, encodedValue);
+    RELEASE_AND_RETURN(scope, BunObject_setter_main(globalObject, encodedValue));
 }
 
 // LazyProperty wrappers for stdin/stderr/stdout

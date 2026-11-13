@@ -1777,6 +1777,106 @@ describe("Bun.ModuleGraph — CommonJS surface per graph", () => {
     expect(a.paths[0]).toBe(join(dir, "node_modules"));
     expect(a.resolve("./state.cjs")).toBe(join(dir, "state.cjs"));
   });
+  test("require.main stays the module of the first import after that module leaves require.cache", async () => {
+    // Only the second load asks while it loads: nothing reads require.main before the first one leaves the cache.
+    using d = tempDir("module-graph-main-evicted", {
+      "entry.cjs": `
+        const child = require("./child.cjs");
+        child.loads = (child.loads ?? 0) + 1;
+        if (child.loads === 2) exports.isMain = require.main === module;
+        exports.evict = () => {
+          delete require.cache[__filename];
+          const secondLoad = require(__filename);
+          return { own: require.main === module, ofChild: child.main() === module, ofSecondLoad: secondLoad.isMain };
+        };
+      `,
+      "child.cjs": `exports.main = () => require.main;`,
+    });
+    const entry = (await new ModuleGraphClass().import(join(String(d), "entry.cjs"))).default;
+    expect(entry.evict()).toEqual({ own: true, ofChild: true, ofSecondLoad: false });
+  });
+  test("require.main is the module that runs when the host imports the main module again", async () => {
+    using d = tempDir("module-graph-main-again", {
+      "entry.cjs": `
+        const counter = require("./counter.cjs");
+        exports.load = ++counter.loads;
+        exports.isMain = () => require.main === module;
+        exports.evict = () => delete require.cache[__filename];
+      `,
+      "counter.cjs": `exports.loads = 0;`,
+    });
+    const graph = new ModuleGraphClass();
+    const first = (await graph.import(join(String(d), "entry.cjs"))).default;
+    // With the module in the cache, an import loads nothing.
+    expect((await graph.import(join(String(d), "entry.cjs"))).default).toBe(first);
+    expect(first.isMain()).toBe(true);
+    first.evict();
+    const second = (await graph.import(join(String(d), "entry.cjs"))).default;
+    expect([first.load, second.load, first.isMain(), second.isMain()]).toEqual([1, 2, false, true]);
+  });
+  test("require.main is not an own property of a graph's require()", async () => {
+    using d = tempDir("module-graph-main-own", {
+      "entry.cjs": `module.exports = [Object.keys(require), Object.hasOwn(require, "main"), require.main === module];`,
+    });
+    const entry = (await new ModuleGraphClass().import(join(String(d), "entry.cjs"))).default;
+    expect(entry).toEqual([["resolve"], false, true]);
+  });
+  test("a first import that throws in its load leaves the graph without a main module", async () => {
+    // The graph runs the module under the key while the host's import of that key is in an onLoad callback.
+    using d = tempDir("module-graph-main-throws", {
+      "host.mjs": `
+        import { createRequire } from "node:module";
+        import { join } from "node:path";
+        const first = join(import.meta.dir, "first.cjs");
+        const graph = new Bun.ModuleGraph();
+        let asked = false;
+        Bun.plugin({
+          name: "throws after the graph ran the module",
+          setup(build) {
+            build.onLoad({ filter: /first\\.cjs$/ }, () => {
+              if (asked) return;
+              asked = true;
+              globalThis.firstModule = graph.run(() => createRequire(first)(first));
+              throw new Error("thrown by the onLoad callback");
+            });
+          },
+        });
+        const failed = await graph.import(first).then(() => "loaded", error => error.message);
+        const whileAlone = globalThis.firstModule.isMain();
+        const second = (await graph.import(join(import.meta.dir, "second.cjs"))).default;
+        console.log([failed, whileAlone, globalThis.firstModule.isMain(), second.isMain()].join());
+      `,
+      "first.cjs": `exports.isMain = () => require.main === module;`,
+      "second.cjs": `exports.isMain = () => require.main === module;`,
+    });
+    expect(await runBun(["host.mjs"], { cwd: String(d) })).toEqual({
+      stdout: "thrown by the onLoad callback,false,false,true",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+  test("a graph that imports bun:main leaves the main module of the host alone", async () => {
+    using d = tempDir("module-graph-bun-main", {
+      "entry.cjs": `
+        const child = require("./child.cjs");
+        if (typeof IN_GRAPH === "undefined") {
+          setImmediate(async () => {
+            delete require.cache[__filename];
+            const ask = () => [require.main === module, child.main() === module, process.mainModule === module].join();
+            const before = ask();
+            await new Bun.ModuleGraph({ globals: { IN_GRAPH: true } }).import("bun:main");
+            console.log(before, ask());
+          });
+        }
+      `,
+      "child.cjs": `exports.main = () => require.main;`,
+    });
+    expect(await runBun(["entry.cjs"], { cwd: String(d) })).toEqual({
+      stdout: "true,true,true true,true,true",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
   test("require.cache is the graph's: keys, delete + re-require re-evaluates in this graph only", async () => {
     const a = (await ModuleGraph().import(join(dir, "main.cjs"))).default;
     const b = (await ModuleGraph().import(join(dir, "main.cjs"))).default;

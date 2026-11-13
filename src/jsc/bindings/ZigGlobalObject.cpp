@@ -4124,6 +4124,7 @@ void GlobalObject::clearModuleRegistry()
 {
     this->moduleLoader()->clearAll(); // takes the loader's cellLock itself (visitChildren iterates the maps under it)
     this->requireMap()->clear(this);
+    Bun::clearMainModule(this->vm(), this->requireMap());
 }
 
 void GlobalObject::reload()
@@ -4456,6 +4457,13 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (compiled)
             return compiled;
+    }
+
+    // The `bun:main` module imports one module: the entry point. (The main module of a Bun.ModuleGraph is its first import.)
+    static constexpr ASCIILiteral importerOfEntryPoint = "bun:main"_s;
+    if (referrer.length() == importerOfEntryPoint.length() && referrer == importerOfEntryPoint && loader == globalObject->moduleLoader()) [[unlikely]] {
+        Bun::nameMainModule(static_cast<Zig::GlobalObject*>(globalObject), moduleKeyJS);
+        RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
     auto moduleKeyBun = Bun::toString(moduleKey);

@@ -1012,6 +1012,34 @@ describe.concurrent(() => {
     expect(await proc.exited).toBe(0);
   });
 
+  // Node stores the main module into process.mainModule when the entry point loads, after the preloads.
+  it.each([
+    ["reads it", `process.mainModule;`],
+    ["asks whether process has it", `"mainModule" in process;`],
+    ["loops over the keys of process", `for (const key in process);`],
+    ["spreads process", `({ ...process });`],
+    ["takes the entries of process", `Object.entries(process);`],
+    ["inspects process", `require("node:util").inspect(process);`],
+    ["deletes another property of process", `delete process.binding;`],
+  ])("process.mainModule is the entry point although a preload %s", async (_, preload) => {
+    using dir = tempDir("process-main-module", {
+      "preload.cjs": preload,
+      "entry.cjs": `
+        const descriptor = Object.getOwnPropertyDescriptor(process, "mainModule");
+        console.log(process.mainModule === module, descriptor.value === module, "get" in descriptor);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-r", "./preload.cjs", "./entry.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true true false\n", stderr: "", exitCode: 0 });
+  });
+
   describe("process.onBeforeExit", () => {
     it("emitted", async () => {
       await using proc = Bun.spawn({

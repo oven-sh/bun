@@ -1829,7 +1829,7 @@ JSValue mainModuleOfExecutable(Zig::GlobalObject* globalObject)
             return moduleObject ? JSValue(moduleObject) : jsUndefined();
         }
     }
-    RELEASE_AND_RETURN(scope, globalObject->requireMap()->get(globalObject, main));
+    RELEASE_AND_RETURN(scope, mainModuleOfProcess(globalObject, nullptr));
 }
 
 void willSetMainModulePath(Zig::GlobalObject* globalObject, JSValue path)

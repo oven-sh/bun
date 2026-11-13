@@ -831,4 +831,43 @@ console.log(useB(undefined, 1), useBeside());
       { useState: "initial: T", useBeside: "t0?: number, t1?: number", useOther: "t0: number" },
     ]);
   });
+
+  // Each output has its own copy of `thing.tsx`: what one output reads as a value, the other output does not.
+  test("with two entry points that each have a copy of a module", async () => {
+    using dir = tempDir("build-api-dts-moved-default-copies", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(project["tsconfig.json"]).compilerOptions, jsx: "react-jsx" },
+      }),
+      "package.json": JSON.stringify({ name: "hooks", compilerOptions: { strict: true, jsx: "react-jsx" } }),
+      "src/state.ts": state,
+      "src/thing.tsx": `import { useState } from "./state";
+function useThing(first: number = 1): number {
+  const [value] = useState(first);
+  return value;
+}
+export default useThing;
+${useBeside}`,
+      "src/a.tsx": `import thing, { useBeside } from "./thing";
+export const a = thing() + useBeside();
+`,
+      "src/b.tsx": `import thing, { useBeside } from "./thing";
+export const b = thing() + [1].map(useBeside).length;
+`,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/a.tsx"), join(root, "src/b.tsx")],
+      outdir: join(root, "out"),
+      tsconfig: join(root, "tsconfig.json"),
+      target: "bun",
+      reactCompiler: true,
+      dts: true,
+    });
+    expect(built.logs).toEqual([]);
+    const typed = (name: string) => parametersIn(readFileSync(join(root, "out", name), "utf8"));
+    expect({ a: typed("a.aot.ts"), b: typed("b.aot.ts") }).toEqual({
+      a: { useState: "initial: T", useThing: "t0?: number", useBeside: "t0?: number, t1?: number" },
+      b: { useState: "initial: T", useThing: "t0?: number", useBeside: "t0: number, t1: number" },
+    });
+  });
 });

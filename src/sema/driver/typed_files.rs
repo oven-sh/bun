@@ -220,59 +220,85 @@ fn named_functions<'f>(
     declared.chain(held)
 }
 
-/// How many times the outputs of a build read each name as a value: an identifier that is not the callee of a call. `None` if an output does not parse.
-fn values_read<'a>(outputs: &[Output<'a>]) -> Option<FxHashMap<&'a [u8], u32>> {
-    let session = Session::new();
-    let atoms = Interner::new_in(&session);
-    let parsed = outputs.iter().map(|output| {
-        let path = [output.path, b".ts"].concat();
-        parse(&session, &atoms, &path, output.javascript)
-    });
-    let files: Vec<File<'_>> = parsed.collect::<Result<_, _>>().ok()?;
-    let word = |output: &Output<'a>, at: u32| {
-        let text = output.javascript;
-        &text[at as usize..token_end(text, at as usize, false)]
-    };
-    let mut reads: FxHashMap<&'a [u8], u32> = FxHashMap::default();
-    let mut is_read_whole = vec![false; outputs.len()];
-    for (file, output) in files.iter().zip(outputs) {
-        let callees: FxHashSet<ExprId> = file.calls.iter().map(|call| call.callee).collect();
-        let identifiers = (file.exprs.iter().zip(0u32..)).filter(|&(expression, id)| {
-            matches!(expression.kind, ExprKind::Ident(_)) && !callees.contains(&ExprId(id))
+/// How many times the outputs of a build read a name as a value: an identifier that is not the callee of a call.
+struct Reads<'a> {
+    /// For each output, the names that it does not import from another output.
+    own: Vec<FxHashMap<&'a [u8], u32>>,
+    /// The names that an output imports from another output, and every export of an output that `import()` loads.
+    shared: FxHashMap<&'a [u8], u32>,
+}
+
+impl<'a> Reads<'a> {
+    /// `None` if an output does not parse.
+    fn of(outputs: &[Output<'a>]) -> Option<Reads<'a>> {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let parsed = outputs.iter().map(|output| {
+            let path = [output.path, b".ts"].concat();
+            parse(&session, &atoms, &path, output.javascript)
         });
-        for (expression, _) in identifiers {
-            *reads.entry(word(output, expression.pos)).or_default() += 1;
+        let files: Vec<File<'_>> = parsed.collect::<Result<_, _>>().ok()?;
+        let word = |output: &Output<'a>, at: u32| {
+            let text = output.javascript;
+            &text[at as usize..token_end(text, at as usize, false)]
+        };
+        let (mut own, mut shared) = (Vec::new(), FxHashMap::default());
+        let mut is_loaded = vec![false; outputs.len()];
+        for (file, output) in files.iter().zip(outputs) {
+            let directory = ancestors(output.path).nth(1).unwrap_or(b"/");
+            let other_output = |specifier: &[u8]| {
+                let is_relative = specifier.starts_with(b"./") || specifier.starts_with(b"../");
+                let target = is_relative.then(|| absolute(directory, specifier))?;
+                outputs.iter().position(|other| other.path == target)
+            };
+            // The bundler gives a binding that crosses to another output one name in both. Every other name is the output's own.
+            let imports = (file.imports.iter())
+                .filter(|import| other_output(atoms.bytes(import.spec)).is_some());
+            let imported: FxHashSet<&[u8]> = imports
+                .flat_map(|import| import.named.iter())
+                .map(|id| word(output, file[id].pos))
+                .collect();
+            let callees: FxHashSet<ExprId> = file.calls.iter().map(|call| call.callee).collect();
+            let mut reads: FxHashMap<&'a [u8], u32> = FxHashMap::default();
+            for (expression, id) in file.exprs.iter().zip(0u32..) {
+                if matches!(expression.kind, ExprKind::Ident(_)) && !callees.contains(&ExprId(id)) {
+                    let name = word(output, expression.pos);
+                    let counts = if imported.contains(name) {
+                        &mut shared
+                    } else {
+                        &mut reads
+                    };
+                    *counts.entry(name).or_default() += 1;
+                }
+            }
+            own.push(reads);
+            // `import("./other.js")` gives the other output as an object that has every export as a value.
+            let loaded = (file.specifier_uses.iter())
+                .filter(|used| used.kind == SpecifierKind::ImportCall)
+                .filter_map(|used| other_output(atoms.bytes(used.spec)));
+            loaded.for_each(|other| is_loaded[other] = true);
         }
-        // `import("./other.js")` gives the other output as an object that has every export as a value.
-        let directory = ancestors(output.path).nth(1).unwrap_or(b"/");
-        let loaded = (file.specifier_uses.iter())
-            .filter(|used| used.kind == SpecifierKind::ImportCall)
-            .map(|used| atoms.bytes(used.spec));
-        for specifier in loaded {
-            let is_relative = specifier.starts_with(b"./") || specifier.starts_with(b"../");
-            let target = is_relative.then(|| absolute(directory, specifier));
-            if let Some(other) =
-                target.and_then(|target| outputs.iter().position(|other| other.path == target))
-            {
-                is_read_whole[other] = true;
+        let loaded = files.iter().zip(outputs).zip(is_loaded);
+        for ((file, output), _) in loaded.filter(|it| it.1) {
+            for exported in file.export_specs.iter() {
+                *shared.entry(word(output, exported.local_pos)).or_default() += 1;
             }
         }
+        Some(Reads { own, shared })
     }
-    let read_whole = files.iter().zip(outputs).zip(is_read_whole);
-    for ((file, output), _) in read_whole.filter(|it| it.1) {
-        for exported in file.export_specs.iter() {
-            *reads.entry(word(output, exported.local_pos)).or_default() += 1;
-        }
+
+    fn count(&self, output: usize, name: &[u8]) -> u32 {
+        let count = |reads: &FxHashMap<&[u8], u32>| reads.get(name).copied().unwrap_or(0);
+        count(&self.own[output]) + count(&self.shared)
     }
-    Some(reads)
 }
 
 /// For each name, how many variables of the output hold it that the bundler wrote for `export default <name>` and that nothing reads: `var thing_default = useThing`.
 fn unread_default_exports<'a>(
-    output: &Syntax<'a, '_>,
+    (index, output): (usize, &Syntax<'a, '_>),
     mappings: &Mappings,
     modules: &[Option<Written<'_, '_>>],
-    reads: &FxHashMap<&[u8], u32>,
+    reads: &Reads<'_>,
 ) -> FxHashMap<&'a [u8], u32> {
     let file = output.file;
     let mut found = FxHashMap::default();
@@ -293,7 +319,7 @@ fn unread_default_exports<'a>(
             exported.find(|it| it.pos == key && matches!(it.kind, ExprKind::Ident(_)))
         };
         if matches!(variable.kind, PatKind::Ident(_))
-            && !reads.contains_key(output.word(variable.pos))
+            && reads.count(index, output.word(variable.pos)) == 0
             && is_of_default_export().is_some()
         {
             *found.entry(output.word(value.pos)).or_default() += 1;
@@ -1622,7 +1648,8 @@ struct Bundle<'a> {
     emitted_declarations: &'a [ModuleTypes],
     entry_point: Option<&'a [u8]>,
     outputs: &'a [Output<'a>],
-    reads: &'a OnceCell<Option<FxHashMap<&'a [u8], u32>>>,
+    index: usize,
+    reads: &'a OnceCell<Option<Reads<'a>>>,
 }
 
 struct Written<'a, 's> {
@@ -3269,7 +3296,7 @@ impl<'a> Transfer<'_, 'a, '_> {
             FxHashMap::default();
         let mut named_under_typeof: Option<FxHashSet<&[u8]>> = None;
         let mut named_function_of = None;
-        let mut held_by_default_exports = None;
+        let mut held_by_default_exports: Option<FxHashMap<&[u8], u32>> = None;
         let parameter_count_of: FxHashMap<u32, usize> = output_file
             .fns
             .iter()
@@ -3325,13 +3352,12 @@ impl<'a> Transfer<'_, 'a, '_> {
                     && let Some(&function) = named_function_of
                         .get_or_insert_with(|| output.named_function_of_parameters())
                         .get(&slot.key)
-                    && let Some(reads) = bundle.reads.get_or_init(|| values_read(bundle.outputs))
-                    && reads.get(output.word(function))
-                        == held_by_default_exports
-                            .get_or_insert_with(|| {
-                                unread_default_exports(output, mappings, written, reads)
-                            })
-                            .get(output.word(function))
+                    && let Some(reads) = bundle.reads.get_or_init(|| Reads::of(bundle.outputs))
+                    && let held = held_by_default_exports.get_or_insert_with(|| {
+                        unread_default_exports((bundle.index, output), mappings, written, reads)
+                    })
+                    && reads.count(bundle.index, output.word(function))
+                        == held.get(output.word(function)).copied().unwrap_or(0)
                 {
                     let annotation = (default.annotation.some())
                         .filter(|_| !module.is_unchecked())
@@ -4861,13 +4887,14 @@ fn typed_outputs(
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
     let mut found = Vec::new();
     let reads = OnceCell::new();
-    for output in outputs {
+    for (index, output) in outputs.iter().enumerate() {
         let shown = inside(outdir, output.path).unwrap_or(output.path);
         let bundle = Bundle {
             modules,
             emitted_declarations,
             entry_point: output.entry_point,
             outputs,
+            index,
             reads: &reads,
         };
         let typed =

@@ -46,15 +46,11 @@ impl JSModuleLoader {
         ))
     }
 
-    /// [`Self::load_and_evaluate_module_ptr`] of an entry point that no module imports (`bun:main`
-    /// imports the entry point of `bun run`): the CommonJS module that runs under `key` is the
-    /// main module.
+    /// [`Self::load_and_evaluate_module_ptr`] of an entry point: the CommonJS module under `key` becomes the main module.
     pub fn load_and_evaluate_entry_point_ptr(
         global_object: *mut JSGlobalObject,
         key: &BunString,
     ) -> Option<core::ptr::NonNull<JSInternalPromise>> {
-        // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
-        // centralised zero-byte deref proof (panics on null).
         core::ptr::NonNull::new(JSC__JSModuleLoader__loadAndEvaluateEntryPoint(
             JSGlobalObject::opaque_ref(global_object),
             key,

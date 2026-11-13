@@ -202,20 +202,15 @@ JSC::JSValue createRequireCacheObject(JSC::JSGlobalObject*, JSC::JSMap* requireM
 // Returns `graph`'s `require.cache` object, created on first use, or the global object's if `graph` is null.
 JSC::JSValue requireCacheOf(Zig::GlobalObject*, JSModuleGraph* graph, JSCommonJSModule* owner);
 
-// The main module of a loader is the CommonJS module that runs under the key of the loader's entry point. The require
-// map of the loader holds it beside its entries, so nothing that changes an entry changes it. Node stores the module
-// that it loads as the entry point in the same way, before the module runs:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L1359-L1364
+// A loader's main module is the CommonJS module that runs under the key of its entry point. Its require map holds it beside the entries.
 
 // `require.main` of a require() of `graph`'s loader (null: the global object's).
 JSC::JSValue mainModuleOf(Zig::GlobalObject*, JSModuleGraph* graph);
-// `process.mainModule`, and `require.main` where neither a graph nor an ahead-of-time executable answers.
-// `graph`: the one of the test file, if the test file has one.
+// `process.mainModule`. `graph`: the one of the running test file, if it has one.
 JSC::JSValue mainModuleOfProcess(Zig::GlobalObject*, JSModuleGraph* graph);
 // The global object's loader is about to load its entry point, the module under `key`. (A graph has mainPath().)
 void nameMainModule(Zig::GlobalObject*, JSC::JSString* key);
-// Code that can run the text of `module` is about to get it. If the cache holds `module` under the key of the entry
-// point, it is the main module from now on.
+// Call before code runs the text of `module`. If the cache holds it under the entry point's key, it is the main module from now on.
 void becomeMainModuleIfEntryPoint(Zig::GlobalObject*, JSCommonJSModule* module);
 void clearMainModule(JSC::VM&, JSC::JSMap* requireMap);
 

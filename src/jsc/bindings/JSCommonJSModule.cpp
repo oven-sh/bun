@@ -166,22 +166,19 @@ static JSCommonJSModule* requirerOf(JSValue require)
     return bound ? dynamicDowncast<JSCommonJSModule>(bound->boundThis()) : nullptr;
 }
 
-// A require map holds the main module of its loader under this name. The global object's map holds the key of the
-// entry point there instead, from when a load names the key (nameMainModule()) until a CommonJS module runs under it.
+// A require map holds its loader's main module under this name. The global object's map holds the entry point's key first.
 static const Identifier& mainModuleName(VM& vm)
 {
     return WebCore::builtinNames(vm).mainModulePrivateName();
 }
 
-// The loader that loads the test files of `bun test` holds no main module. `require.main` is there what the cache
-// holds under the path of the running test file, at every read: test/aot/the-main-module-of-a-test-run.test.ts.
+// `bun test` stores no main module: a test file reads by path (test/aot/the-main-module-of-a-test-run.test.ts).
 static bool loadsTestFiles(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
 {
     return isBunTest && (!graph || graph == testFileModuleGraph(globalObject)) && Bun__isMainThreadVM();
 }
 
-// The key that `graph`'s loader (null: the global object's) has for its entry point: no CommonJS module has run
-// under it. Not a string if no load named one.
+// The entry point's key in `graph`'s loader (null: the global object's) before a CommonJS module runs under it, or not a string.
 static JSValue namedKeyOfEntryPoint(JSModuleGraph* graph, JSValue slot)
 {
     if (graph)
@@ -212,8 +209,7 @@ static JSValue mainModuleOfLoader(Zig::GlobalObject* globalObject, JSModuleGraph
 
 JSValue mainModuleOfProcess(Zig::GlobalObject* globalObject, JSModuleGraph* graph)
 {
-    // A test file, and a program that stored a path into `Bun.main`: what the cache holds under the path in `Bun.main`
-    // at this read.
+    // A test file and a program that stored into `Bun.main` read what the cache holds under the path in `Bun.main`.
     if (loadsTestFiles(globalObject, graph) || JSValue::decode(Bun__VM__overriddenMain(globalObject->bunVM()))) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         JSValue path = JSValue::decode(BunObject_getter_main(globalObject));
@@ -244,8 +240,7 @@ void nameMainModule(Zig::GlobalObject* globalObject, JSString* key)
     JSValue held = requireMap->get(globalObject, key);
     RETURN_IF_EXCEPTION(scope, );
     JSValue named = key;
-    // A preload has loaded the entry point, so this load runs no module. That module is the main module if its key is
-    // the path in `Bun.main`, as before. Under another key it ran as a module that is not, and the loader names no key.
+    // A preload has run the entry point: that module is the main module only if its key is the path in `Bun.main`.
     if (auto* loaded = dynamicDowncast<JSCommonJSModule>(held); loaded && loaded->hasEvaluated) {
         JSValue path = JSValue::decode(BunObject_getter_main(globalObject));
         RETURN_IF_EXCEPTION(scope, );

@@ -5673,8 +5673,7 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
     process->queueNextTick<2>(globalObject, function, { JSValue::decode(arg1), JSValue::decode(arg2) });
 }
 
-// Nothing holds what this answers: the main module is not there when a preload reads it, a hot reload loads another,
-// and `bun test` runs many in one process. A store makes the property an ordinary one, as in Node.
+// Answers at every read: a preload reads before there is a main module, a hot reload loads another, and `bun test` runs many.
 JSC_DEFINE_CUSTOM_GETTER(processMainModule, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue, PropertyName))
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
@@ -6294,9 +6293,7 @@ void Process::finishCreation(JSC::VM& vm)
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
-    // Not a row of the table above. A PropertyCallback row keeps what its callback answers at the first read, a CustomAccessor
-    // row shows the program a getter where Node has a data property, and the engine's collector of static tables
-    // (aot/builtins/generator/collect-static-tables.ts in WebKit) has no word for a custom value.
+    // Not a row of the table above: WebKit's aot/builtins/generator/collect-static-tables.ts has no word for a custom value.
     putDirectCustomAccessor(vm, WebCore::builtinNames(vm).mainModulePublicName(), CustomGetterSetter::create(vm, processMainModule, nullptr), PropertyAttribute::CustomValue | 0);
 
     // No-op stubs Node only has on the main thread; a worker_threads Worker's process lacks them.

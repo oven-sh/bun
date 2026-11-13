@@ -819,8 +819,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * globalObject, JSC::Ca
 
 extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*);
 
-// Module.runMain(path) loads the entry point by its path, and an override of Module.runMain can load it by any means,
-// where `bun:main` would have imported it. With a `key`, nothing happens unless the entry point is the module under it.
+// Module.runMain() or an override of it loads the entry point in place of `bun:main`. With a `key`: only if the entry point is the module under it.
 static void nameEntryPointAsMainModule(Zig::GlobalObject* globalObject, const String* key = nullptr)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));

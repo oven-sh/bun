@@ -739,14 +739,52 @@ impl<const SSL: bool> NewSocket<SSL> {
                 *uws::us_socket_t::opaque_mut(s).ext() = Some(this);
                 self.socket.set(SocketHandler::<SSL>::from(s));
             }
-            UnixOrHost::Fd(f) if !SSL && self.flags.get().contains(Flags::WRITE_ONLY_FD) => {
-                // SAFETY: `!SSL`, so `Self` is `TCPSocket`.
-                let tcp = unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr().cast::<TCPSocket>()) };
-                return Ok(super::fd_pipe::FdPipe::open(tcp, *f, cx.context()));
-            }
             UnixOrHost::Fd(f) => {
+                let socket_flags = self.flags.get();
+                // node never closes stdio, so the transport owns a duplicate and the process keeps its own descriptor.
+                #[cfg(unix)]
+                let (f, owns_dup) = if f.is_stdio() {
+                    (sys::dup(*f).map_err(sys::SystemErrno::from)?, true)
+                } else {
+                    (*f, false)
+                };
+                #[cfg(not(unix))]
+                let (f, owns_dup) = (*f, false);
+                let close_dup = |errno: sys::SystemErrno| {
+                    if owns_dup {
+                        use bun_sys::FdExt as _;
+                        f.close();
+                    }
+                    errno
+                };
+                if !SSL && socket_flags.contains(Flags::WRITE_ONLY_FD) {
+                    // SAFETY: `!SSL`, so `Self` is `TCPSocket`.
+                    let tcp =
+                        unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr().cast::<TCPSocket>()) };
+                    return Ok(super::fd_pipe::FdPipe::open(tcp, f, cx.context()));
+                }
+                // A pipe or a FIFO can't be a `us_socket_t`: it reads through a `PosixPipe`. `fdIsRawSocket` skips the `fstat`.
+                #[cfg(unix)]
+                if !SSL && !socket_flags.contains(Flags::RAW_SOCKET_FD) {
+                    let is_pipe = socket_flags.contains(Flags::READABLE_PIPE_FD) || {
+                        let st = sys::fstat(f).map_err(|e| close_dup(e.into()))?;
+                        (st.st_mode & libc::S_IFMT) == libc::S_IFIFO
+                    };
+                    if is_pipe {
+                        // SAFETY: `!SSL`, so `Self` is `TCPSocket`.
+                        let tcp = unsafe {
+                            bun_ptr::ThisPtr::new(self.as_ctx_ptr().cast::<TCPSocket>())
+                        };
+                        return super::posix_pipe::PosixPipe::open(
+                            tcp,
+                            f,
+                            socket_flags.contains(Flags::PAUSE_ON_CONNECT),
+                            cx.context(),
+                        );
+                    }
+                }
                 // The fd is connected, so it is registered paused outright; a dial is paused in on_open.
-                let flags = if self.flags.get().contains(Flags::PAUSE_ON_CONNECT) {
+                let flags = if socket_flags.contains(Flags::PAUSE_ON_CONNECT) {
                     flags | uws::LIBUS_SOCKET_OPEN_PAUSED
                 } else {
                     flags
@@ -763,7 +801,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     false,
                 );
                 if s.is_null() {
-                    return Err(last_errno());
+                    return Err(close_dup(last_errno()));
                 }
                 *uws::us_socket_t::opaque_mut(s).ext() = Some(this);
                 let sock = SocketHandler::<SSL>::from(s);
@@ -1452,28 +1490,39 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `on_connecting_error` dispatch early-returns and no JS callback fires;
     /// `mark_inactive`/`deref` balance the refs the previous `connect_finish`
     /// took. Caller must hold an independent +1 across this call. Only
-    /// Connected / Connecting are this socket's to drop. False, with nothing changed, while another owner (uWS, a transport, an unfinished close) points at `self`.
+    /// Connected / Connecting and a transport with [`uws::Transport::detach`] are this socket's to drop. False, with nothing changed, while another owner (uWS, another transport, an unfinished close) points at `self`.
     #[must_use]
     pub(crate) fn detach_for_reconnect(&self) -> bool {
         if self.flags.get().contains(Flags::HELD_BY_SERVER) {
             return false;
         }
         let old = self.socket.get();
-        match old.socket {
-            uws::InternalSocket::Connected(_) | uws::InternalSocket::Connecting(_) => {}
+        let is_native = match old.socket {
+            uws::InternalSocket::Connected(_) | uws::InternalSocket::Connecting(_) => true,
             uws::InternalSocket::Detached => return self.closing.get().is_detached(),
-            uws::InternalSocket::UwsHttp(_) | uws::InternalSocket::Transport(_) => return false,
-        }
-        let Some(ext) = old.ext::<*mut c_void>() else {
-            return false;
+            uws::InternalSocket::UwsHttp(_) => return false,
+            // A transport that supports it closes without reporting `on_close`.
+            uws::InternalSocket::Transport(_) => {
+                if !old.detach_transport() {
+                    return false;
+                }
+                false
+            }
         };
-        // SAFETY: ext slot is sized for `*mut c_void`; single-threaded.
-        unsafe { *ext = core::ptr::null_mut() };
+        if is_native {
+            let Some(ext) = old.ext::<*mut c_void>() else {
+                return false;
+            };
+            // SAFETY: ext slot is sized for `*mut c_void`; single-threaded.
+            unsafe { *ext = core::ptr::null_mut() };
+        }
         self.socket.set(SocketHandler::<SSL>::DETACHED);
         self.discard_queued_writes();
         self.bytes_read.set(0);
         self.detach_native_callback();
-        old.close(uws::CloseCode::Failure);
+        if is_native {
+            old.close(uws::CloseCode::Failure);
+        }
         self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
         if self.flags.get().contains(Flags::IS_ACTIVE) {
             self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
@@ -4002,6 +4051,18 @@ pub(crate) mod testing_apis {
                 .load(core::sync::atomic::Ordering::Relaxed)
         }
         #[cfg(not(windows))]
+        {
+            0
+        }
+    }
+
+    /// Live `PosixPipe`s (one per socket over a pipe or FIFO descriptor); always 0 on Windows.
+    pub(crate) fn posix_pipe_live_count() -> usize {
+        #[cfg(unix)]
+        {
+            crate::socket::posix_pipe::LIVE_COUNT.load(core::sync::atomic::Ordering::Relaxed)
+        }
+        #[cfg(not(unix))]
         {
             0
         }

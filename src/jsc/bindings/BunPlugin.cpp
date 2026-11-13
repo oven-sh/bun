@@ -772,16 +772,27 @@ struct PathsHeldByModuleMock {
     bool requirePath { false };
 };
 
-// A path that a later mock or build.module() has taken stays theirs. Returns the paths that the mock had until now.
-static PathsHeldByModuleMock unregisterModuleMock(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+// A path that a later mock or build.module() has taken stays theirs. `ending` names the paths that end: a later mock that takes one of two leaves the mock the other.
+// Returns the paths that the mock had until now and has no more.
+static PathsHeldByModuleMock unregisterModuleMock(Zig::GlobalObject* globalObject, JSModuleMock* mock, PathsHeldByModuleMock ending = { true, true })
 {
-    auto removeIfHeld = [&](JSC::JSString* key) {
-        if (!key || moduleMockAnsweringFor(globalObject, key->tryGetValue().data) != mock)
+    auto removeIfHeld = [&](JSC::JSString* key, bool ends) {
+        if (!ends || !key || moduleMockAnsweringFor(globalObject, key->tryGetValue().data) != mock)
             return false;
         globalObject->onLoadPlugins.virtualModules->remove(key->tryGetValue().data);
         return true;
     };
-    return { removeIfHeld(mock->importKey.get()), removeIfHeld(mock->requireKey.get()) };
+    return { removeIfHeld(mock->importKey.get(), ending.importPath), removeIfHeld(mock->requireKey.get(), ending.requirePath) };
+}
+
+// The paths of `mock` that `laterMock` takes from it. A later mock with one path, or of a name that require() resolves to another file, takes the import path alone.
+// With no later mock the end is of both.
+static PathsHeldByModuleMock pathsThatModuleMockTakes(const JSModuleMock* laterMock, const JSModuleMock* mock)
+{
+    if (!laterMock)
+        return { true, true };
+    auto takes = [&](JSC::JSString* key) { return key && laterMock->hasKey(key->tryGetValue().data); };
+    return { takes(mock->importKey.get()), takes(mock->requireKey.get()) };
 }
 
 // The paths that the table has `mock` under. A later mock or build.module() may have taken one of two.
@@ -3605,6 +3616,8 @@ struct ModulesToEvict {
     // { the path that require() resolves a mocked name to, the path of an import of it }, where the two differ and the first is listed above.
     Vector<std::pair<String, String>> pathsOfTwoFileMocks;
     bool onlyImportersFromEarlierTestFiles { false };
+    // Of the patched modules that are listed, no importer goes: they leave the registry or require.cache alone.
+    bool keepsImportersOfPatchedModules { false };
     // Forces a pass even with nothing listed, to sweep the modules that failed to load or threw.
     bool isEndOfTestFile { false };
     bool hasLoadSettled { false };
@@ -3999,7 +4012,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             // The file that an import of a mocked name loads got the file that require() resolves the name to as it is on disk: see keyOfImportWithTwoPaths().
             if (stays && evict.pathsOfTwoFileMocks.containsIf([&](auto& paths) { return paths.first == key && paths.second == importer; }))
                 continue;
-            if (!testFile || importer == key || (isPatched && evict.onlyImportersFromEarlierTestFiles && testFile == plugins.testFile))
+            if (!testFile || importer == key || (isPatched && (evict.keepsImportersOfPatchedModules || (evict.onlyImportersFromEarlierTestFiles && testFile == plugins.testFile))))
                 continue;
             bool stayed = staysInRegistry.remove(importer);
             stayed |= staysInRequireCache.remove(importer);
@@ -4186,6 +4199,30 @@ static void restoreModuleObjectOfModuleMock(Zig::GlobalObject* globalObject, JSM
     mock->originalCommonJSExports.clear();
 }
 
+// A mock with two paths that a later mock or build.module() leaves with its require path alone is loaded under that path from then on: see keyOfImportWithTwoPaths().
+// Until then an import of the path was led to the mock's import path, so what the loader holds under the path itself ran before the mock, or is of a mock that has ended.
+// It leaves the registry, and the next import of the path fetches the mock. Its module object stays in require.cache, where the mock may have patched it,
+// and its importers stay linked to it. What the loader had made of a CommonJS module is made of that module object again after the mock. An ES module runs again when it is next loaded then.
+__attribute__((minsize)) static void makeWayForModuleMockUnderRequirePath(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+{
+    if (!mock->requireKey)
+        return;
+    String requireKey = mock->requireKey->tryGetValue().data;
+    if (moduleMockAnsweringFor(globalObject, requireKey) != mock)
+        return;
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, requireKey));
+    auto* record = entry ? entry->record() : nullptr;
+    // The mock's own module stays: a mock of a preload has had this path alone before, in an earlier test file.
+    if (!entry || (record && record->hasLiveExports() && record->liveExportsSource() == mock))
+        return;
+    ModulesToEvict evict;
+    evict.keepsImportersOfPatchedModules = true;
+    evict.patchedCommonJSModules.append(requireKey);
+    RELEASE_AND_RETURN(scope, evictModulesAndTheirImporters(globalObject, WTF::move(evict)));
+}
+
 // build.module() takes `path` from the mock that answers for it, and takes over nothing. A mock with two paths keeps the other one, and what it saved of this one ends here.
 // A mock with one path is out of the table with that, as it was before a mock could have two.
 static void endSidesOfModuleMockUnderPath(Zig::GlobalObject* globalObject, const String& path)
@@ -4194,9 +4231,11 @@ static void endSidesOfModuleMockUnderPath(Zig::GlobalObject* globalObject, const
     auto* mock = moduleMockAnsweringFor(globalObject, path);
     if (!mock || !mock->requireKey)
         return;
-    if (mock->importKey->tryGetValue().data == path)
-        RELEASE_AND_RETURN(scope, restoreESModuleOfModuleMock(globalObject, mock));
-    RELEASE_AND_RETURN(scope, restoreModuleObjectOfModuleMock(globalObject, mock));
+    if (mock->importKey->tryGetValue().data != path)
+        RELEASE_AND_RETURN(scope, restoreModuleObjectOfModuleMock(globalObject, mock));
+    restoreESModuleOfModuleMock(globalObject, mock);
+    RETURN_IF_EXCEPTION(scope, );
+    RELEASE_AND_RETURN(scope, makeWayForModuleMockUnderRequirePath(globalObject, mock));
 }
 
 // The mocks that answer for the paths of a mock with two paths, asked before that mock takes them.
@@ -4227,7 +4266,10 @@ __attribute__((minsize)) static void endSidesThatModuleMockLeaves(Zig::GlobalObj
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     // A preload's mock that a test file displaces comes back when the file ends, with what it saved, and so does what the eviction takes out of a preload's modules.
     auto comesBack = [&](const JSModuleMock* loser) { return loser->isFromPreload && !mock->isFromPreload; };
+    // Only the entry that is left goes. A path has one list of importers for its ES module and its module object: those that this test file has loaded hold the side
+    // that `mock` has taken over, and stay as they do under any later mock of a path that patches.
     ModulesToEvict evict;
+    evict.onlyImportersFromEarlierTestFiles = true;
     String importKey = mock->importKey->tryGetValue().data;
     if (auto* loser = losers.ofImportPath) {
         if (loser->keyForRequire()->tryGetValue().data == importKey && !comesBack(loser)) {
@@ -4237,7 +4279,7 @@ __attribute__((minsize)) static void endSidesThatModuleMockLeaves(Zig::GlobalObj
         LoadedModule underImportPath;
         findLoadedCommonJSModule(globalObject, mock->importKey.get(), underImportPath);
         RETURN_IF_EXCEPTION(scope, );
-        // Out of require.cache, with its importers. The ES module under the path stays.
+        // Out of require.cache. The ES module under the path stays.
         if (underImportPath.commonJSModule || underImportPath.staleCommonJSEntry)
             evict.patchedESModules.append(importKey);
     }
@@ -4255,7 +4297,7 @@ __attribute__((minsize)) static void endSidesThatModuleMockLeaves(Zig::GlobalObj
             keepModuleMockOfLoadInFlight(globalObject, loser, requireKey, underRequirePath);
         // A loser that had lost its import path before was loaded under this one by an import, as a mock of the path itself is: see keyOfImportWithTwoPaths().
         bool isLoserItself = underRequirePath.esmNamespace && underRequirePath.esmNamespace->moduleRecord()->hasLiveExports();
-        // Out of the registry if it is the loser's own record, and its importers either way. The module object under the path stays.
+        // Out of the registry if it is the loser's own record. The module object under the path stays.
         if (hadESModuleThere ? underRequirePath.esmNamespace || underRequirePath.staleESMEntry : isLoserItself) {
             evict.patchedCommonJSModules.append(requireKey);
             evict.pathsOfTwoFileMocks.append({ requireKey, importKey });
@@ -4358,7 +4400,7 @@ static void handLoadOfOriginalOn(JSC::VM& vm, JSModuleMock* mock, JSModuleMock* 
 static constexpr uint64_t markOfCallWhoseMockHasEnded = 1ull << 63;
 #endif
 
-__attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, ModulesToEvict& evict, [[maybe_unused]] JSModuleMock* laterMock = nullptr)
+__attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, ModulesToEvict& evict, [[maybe_unused]] JSModuleMock* laterMock = nullptr, PathsHeldByModuleMock ending = { true, true })
 {
     String specifier = mock->importKey->tryGetValue().data;
 #if ENABLE(AOT)
@@ -4373,7 +4415,8 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
 
     // A path that a later mock or build.module() has taken is theirs, with what lies under it. This end restores and evicts only under the paths that the mock still had:
     // its ES module under the import path, its module object of require.cache under the require path. With one path both are under it.
-    PathsHeldByModuleMock held = unregisterModuleMock(globalObject, mock);
+    // `ending` names the paths that end. A later mock that takes one of two ends the mock under that one: under the other the mock goes on, with what it saved there.
+    PathsHeldByModuleMock held = unregisterModuleMock(globalObject, mock, ending);
     if (!mock->requireKey)
         held.requirePath = held.importPath;
 #if ENABLE(AOT)
@@ -4465,9 +4508,19 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
     }
 #endif
     keepModuleMockOfLoadInFlight(globalObject, mock, specifier, loaded);
+    // A mock that had its require path alone was loaded under that path, and a load in flight there is its own: see keyOfImportWithTwoPaths().
+    if (held.requirePath && !held.importPath && ending.importPath) {
+        LoadedModule underRequirePath;
+        findLoadedESModule(globalObject, mock->requireKey.get(), underRequirePath);
+        RETURN_IF_EXCEPTION(scope, );
+        keepModuleMockOfLoadInFlight(globalObject, mock, mock->requireKey->tryGetValue().data, underRequirePath);
+    }
     if (mock->hasSetLoadedModuleAside || (mock->isOfVitest() && isInNodeModules(specifier))) {
-        for (auto& path : pathsOfMockedModule(globalObject, mock))
-            evict.packagesToBringBack.append(path);
+        for (auto& path : pathsOfMockedModule(globalObject, mock)) {
+            // Under a path that does not end, what the mock has set aside stays aside.
+            if (path == specifier ? ending.importPath : ending.requirePath)
+                evict.packagesToBringBack.append(path);
+        }
     }
 
     JSObject* saved = mock->originalExportsOfEvictedModule ? mock->originalExportsOfEvictedModule.get() : mock->originalExports.get();
@@ -4486,6 +4539,14 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
     bool isLoaded = loaded.esmNamespace || loaded.staleESMEntry || loaded.commonJSModule || wasLoadedOverCompiledModule || mock->requireKey;
     if (overwritten || originalCommonJSExports || isLoaded)
         appendMockedModule(evict, mock, held, !!overwritten, !!originalCommonJSExports);
+    // A mock that goes on under its require path keeps nothing of the ES module under the path that it has lost.
+    if (held.importPath && isRegisteredModuleMock(globalObject, mock)) {
+        mock->originalExports.clear();
+        mock->originalNamespace.clear();
+        mock->patchedNamespace.clear();
+        mock->originalExportsOfEvictedModule.clear();
+        mock->patchOrder = 0;
+    }
 }
 
 #if ENABLE(AOT)
@@ -4512,7 +4573,8 @@ static void unmockModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, JS
     if (vm.hasCompiledCode() && !mock->isFromPreload && !mock->wasLaidOverFailedLoad && (mock->wasAskedFor || (mock->moduleRequestedByLoad && mock->importsOriginal)))
         dropOriginalThatFailedAndLeftNoRecord(globalObject, specifier);
 #endif
-    unmockModule(globalObject, mock, evict, endsUnderPlainToo ? laterMock : nullptr);
+    // A later mock ends the mock under the paths that it takes. A mock with two paths that loses its import path alone goes on under its require path.
+    unmockModule(globalObject, mock, evict, endsUnderPlainToo ? laterMock : nullptr, pathsThatModuleMockTakes(laterMock, mock));
     RETURN_IF_EXCEPTION(scope, );
 #if ENABLE(AOT)
     // `bun test` makes no end where a mock that patches is laid over one that waits, and so no pass.
@@ -4521,6 +4583,10 @@ static void unmockModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, JS
 #endif
     evictModulesAndTheirImporters(globalObject, WTF::move(evict));
     RETURN_IF_EXCEPTION(scope, );
+    if (laterMock) {
+        makeWayForModuleMockUnderRequirePath(globalObject, mock);
+        RETURN_IF_EXCEPTION(scope, );
+    }
 #if ENABLE(AOT)
     // A later mock of Vitest's kind sets aside again what this end has brought back.
     if (movesCompiledFile && laterMock)
@@ -6171,6 +6237,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
 #if ENABLE(AOT)
         auto* broughtBack = vm.hasCompiledCode() ? mockOfPreloadThatEndBringsBack(globalObject, previous, specifier) : nullptr;
 #endif
+        // It ends under the paths that this mock takes. With two paths it keeps its require path where this mock takes the import path alone.
         unmockModule(globalObject, previous, mock);
         RETURN_IF_EXCEPTION(scope, {});
 #if ENABLE(AOT)
@@ -6666,6 +6733,13 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
 
         endSidesThatModuleMockLeaves(globalObject, mock, losers);
         RETURN_IF_EXCEPTION(scope, {});
+        // A mock with two paths that has lost its import path alone goes on under its require path: `previous`, or the mock of another name whose import path is this one's require path.
+        for (JSModuleMock* left : { previous, losers.ofRequirePath }) {
+            if (!left)
+                continue;
+            makeWayForModuleMockUnderRequirePath(globalObject, left);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
 
         bool wasLoadedByEarlierTestFile = (mock->originalExports || mock->originalCommonJSExports) && !mock->isFromPreload && (!previous || previous->isFromPreload) && plugins.testFile > 1 && testFileOfMockedModule(globalObject, mock) != plugins.testFile;
 #if ENABLE(AOT)
@@ -8820,7 +8894,7 @@ __attribute__((minsize)) static NEVER_INLINE String keyOfImportWithTwoPaths(Zig:
     if (Zig::wasLoadedByOriginal(globalObject, mock, importer, otherFile))
         return Zig::originalModuleKey(key);
     // The one ES module lies under the mock's import path while the mock has that path. Once a later mock or build.module() has taken it,
-    // an import of this path loads the mock under this path, as it does for a mock of the path itself.
+    // an import of this path loads the mock under this path, as it does for a mock of the path itself. What the loader held there has made way: see makeWayForModuleMockUnderRequirePath().
     String importKey = mock->importKey->tryGetValue().data;
     return isESM && Zig::moduleMockAnsweringFor(globalObject, importKey) == mock ? importKey : key;
 }

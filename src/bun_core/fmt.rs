@@ -1911,7 +1911,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                 if self.opts.redact_sensitive_information {
                     return write!(writer, "{}", redacted_source(text));
                 } else {
-                    return write_bytes(writer, text);
+                    return write!(writer, "{}", bstr::BStr::new(text));
                 }
             }
         }

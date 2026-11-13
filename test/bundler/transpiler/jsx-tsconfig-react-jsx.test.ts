@@ -179,10 +179,7 @@ async function buildImports(
   return { imports: importsOf(stdout), exitCode };
 }
 
-// A tsconfig.json that does not choose between "react-jsx" and "react-jsxdev" must leave the
-// dev/prod choice to NODE_ENV, exactly like having no tsconfig.json (and like `bun run`, which
-// already behaved that way). `bun build` used to switch to the development runtime as soon as any
-// tsconfig.json existed.
+// A tsconfig.json with no dev/prod opinion leaves the NODE_ENV choice alone, like no tsconfig.json.
 describe("bun build: NODE_ENV=production with a tsconfig.json that does not choose dev/prod", () => {
   const productionEnv = { ...noNodeEnv, NODE_ENV: "production" };
 
@@ -221,13 +218,8 @@ describe("bun build: NODE_ENV=production with a tsconfig.json that does not choo
   }
 });
 
-// A key after a {...spread} makes the automatic runtime fall back to `createElement`, imported from
-// the jsxImportSource package itself rather than from its /jsx-runtime entry. Both imports have to
-// follow jsxImportSource. Merging a tsconfig into the JSX settings used to carry only the runtime
-// import, and every entry point merges: Bun.build() and Bun.Transpiler always, the CLI as soon as a
-// bunfig.toml or --jsx-* flag is present, "extends" chains, and (at build time) a tsconfig.json in
-// the entry point's own directory. The plain CLI case only worked because the root tsconfig.json was
-// copied over the JSX settings wholesale, which is what broke NODE_ENV above; now it merges too.
+// A key after a {...spread} falls back to `createElement`, imported from the jsxImportSource package
+// itself. That import follows jsxImportSource on every entry point, as the runtime import does.
 describe("tsconfig jsxImportSource selects the createElement fallback import too", () => {
   const keyAfterSpread = `const p = {};\nglobalThis.a = <div {...p} key="k" />;\nglobalThis.b = <span />;\n`;
   const tsconfig = JSON.stringify({ compilerOptions: { jsxImportSource: "shim" } });
@@ -298,5 +290,10 @@ describe("tsconfig jsxImportSource selects the createElement fallback import too
     });
     expect(importsOf(transpiler.transformSync(keyAfterSpread))).toEqual(shimImportsAnyEnv);
     expect(importsOf(await transpiler.transform(keyAfterSpread))).toEqual(shimImportsAnyEnv);
+    // scanImports() lists both the runtime entry and the package a classic fallback would import.
+    expect(transpiler.scanImports(shimFiles["m.jsx"]).map(i => i.path)).toEqual([
+      expect.stringMatching(/^shim\/jsx(-dev)?-runtime$/),
+      "shim",
+    ]);
   });
 });

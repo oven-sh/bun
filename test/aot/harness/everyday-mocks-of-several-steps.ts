@@ -23,14 +23,19 @@ async function outcomeOf(files: Record<string, string>, words: string, oneThread
     .sort()
     .map(name => "./" + name);
   const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, ...testFiles], String(dir), env);
+  const lines = stderr.split("\n").filter(Boolean);
+  // A run that came to its end says how many tests it ran. The exit code alone does not tell: a report of AddressSanitizer ends a run with 1, as a failed test does, unless it is told to abort.
+  const hasDied = exitCode > 1 || !lines.some(line => /^Ran \d+ tests? across \d+ files?\. /.test(line));
+  // A report of a sanitizer ends with the stacks of the threads that started one another, so the lines that name the fault go in front.
+  const namesFault = (line: string) => /^(==\d+==ERROR|SUMMARY): /.test(line);
   return {
     printed: stdout.split("\n").filter(line => line.startsWith("SAID ")),
-    tests: stderr
-      .split("\n")
+    tests: lines
       .filter(line => /^\((pass|fail|skip|todo)\) /.test(line))
       .map(line => line.replace(/ \[[\d.]+m?s\]$/, "")),
     exitCode,
-    lastWords: exitCode > 1 ? stderr.split("\n").filter(Boolean).slice(-12) : [],
+    // A run that dies says why here, and nowhere else.
+    lastWords: hasDied ? [...lines.slice(0, -12).filter(namesFault), ...lines.slice(-12)] : [],
     // A compiled run ends with a list of the files that it did not run again where `bun test` does: `  room.cjs, while 2-second.test.mjs ran`.
     didNotRunAgain: (stdout + "\n" + stderr).split("\n").filter(line => /^ {2}\S+, while \S+ ran$/.test(line)).length,
   };
@@ -45,11 +50,14 @@ function each(
 ) {
   const stretch = Math.ceil(cases.length / parts);
   for (const { name, files } of cases.slice((part - 1) * stretch, part * stretch)) {
-    test(name, async () => {
+    // A case shares nothing with the others, so they run beside one another on every lane, as many as `--max-concurrency` says.
+    test.concurrent(name, async () => {
       const [plain, compiled] = await Promise.all([
         outcomeOf(files, "", plainOnOneThread),
         outcomeOf(files, wordsOfAll, false, "--aot"),
       ]);
+      // A run that died fails its case, with its last words, also where the two runs are known to part.
+      expect({ plain: plain.lastWords, compiled: compiled.lastWords }).toEqual({ plain: [], compiled: [] });
       // A run that printed nothing would be the same as any other that printed nothing.
       expect(plain.printed).not.toBeEmpty();
       judge(name, plain, compiled);
@@ -57,17 +65,25 @@ function each(
   }
 }
 type Outcome = Awaited<ReturnType<typeof outcomeOf>>;
+// Also for failing-module-mocks.ts and everyday-failing-tests.ts.
 export { each };
 
-// In a compiled run the top-level code of a file runs once, also for the next test file, and the run says at its end which files that was. So a compiled run may print other lines than `bun test` here, and
-// then it has to say so.
+// Each test file prints one line at its end: what the room says, what the hall says, and how often the files that use the lamp have run so far.
+const shapeOf = (line: string) => line.replace(/^(SAID \S+) [^,]+,[^,]+ ran \d+$/, "$1 <room>,<hall> ran <count>");
+
+// A compiled run may keep what the top-level code of a file computed where `bun test` runs the file again, and then lists the file at its end. No case here comes to that
+// today: each prints the lines of `bun test` and lists no file, and fails once it does not.
 export function mocksFromOneTestFileToTheNextIn(part: number, parts: number) {
-  each(mocksFromOneTestFileToTheNext(), part, parts, (name, plain, compiled) => {
-    expect({ ...compiled, printed: [], didNotRunAgain: 0 }).toEqual({ ...plain, printed: [] });
-    // What a line says may differ then, but not that each test file prints its line, and how it is made.
-    const shapeOf = (line: string) => line.replace(/^(SAID \S+) .* ran \d+$/, "$1 ran");
-    expect(compiled.printed.map(shapeOf)).toEqual(plain.printed.map(shapeOf));
-    if (!Bun.deepEquals(compiled.printed, plain.printed)) expect(compiled.didNotRunAgain).toBeGreaterThan(0);
+  each(mocksFromOneTestFileToTheNext(), part, parts, (_, plain, compiled) => {
+    // What a line says is up to `bun test`. That every test file passes and prints its line is up to the case.
+    expect({ ...plain, printed: plain.printed.map(shapeOf) }).toEqual({
+      printed: ["first", "second", "third"].map(file => `SAID ${file} <room>,<hall> ran <count>`),
+      tests: ["(pass) first", "(pass) second", "(pass) third"],
+      exitCode: 0,
+      lastWords: [],
+      didNotRunAgain: 0,
+    });
+    expect(compiled).toEqual(plain);
   });
 }
 

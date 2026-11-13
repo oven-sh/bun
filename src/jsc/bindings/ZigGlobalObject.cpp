@@ -640,6 +640,9 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
 
 extern "C" void Bun__didCreateNextTickQueue(JSC::VM* vm)
 {
+    // Outside a checkpoint of the default microtask queue, GlobalObject::drainMicrotasks runs the ticks when the callback ends.
+    if (!vm->defaultMicrotaskQueue().isPerformingMicrotaskCheckpoint())
+        return;
     newNextTickQueueWaitsForMicrotaskToEnd = true;
     vm->setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
 }

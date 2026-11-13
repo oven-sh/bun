@@ -6533,7 +6533,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
 
     auto& plugins = globalObject->onLoadPlugins;
     if (isCurrent) {
-        // A mock of a preload that loses a path to a mock of a test file gives nothing up: it has the path again when the file ends, with what it saved, as `previous` has.
+        // A mock of a preload that loses a path to a mock of a test file has the path again when the file ends, with what it saved, as `previous` has.
+        // So it gives nothing up below: it keeps what it saved of its ES module, and what it saved of its module object is kept apart here.
         displacePreloadModuleMocksUnderPathsOf(globalObject, mock, previous);
         bool givesESExportsUp = gaveESExports && !(gaveESExports->isFromPreload && !mock->isFromPreload);
         // Not before: until here the table names the earlier mocks for these paths, and a factory that ends one of them ends it with what it saved.

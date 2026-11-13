@@ -865,14 +865,12 @@ pub(crate) fn run_root() -> &'static [u8] {
     bun_paths::fs::FileSystem::instance().initial_top_level_dir()
 }
 
-/// `path` as the run names it: relative to `run_root()`. A name that is no absolute path, like a plugin's "virtual:module",
-/// is below `run_root()` too, and not below the working directory.
+/// `path` relative to `run_root()`. A name that is no absolute path, like a plugin's "virtual:module", is below it too.
 pub(crate) fn run_relative(path: &[u8]) -> &'static [u8] {
     resolve_path::relative_to_base(run_root(), path)
 }
 
-/// The path to open for a report that an option names. A relative name is below `run_root()` and is appended as written,
-/// so the system still resolves its `..` and symlinks.
+/// The path to open for a report option. A relative name is appended to `run_root()` as written: the system resolves its `..`.
 pub(crate) fn report_path<'a>(
     written: &'a [u8],
     buf: &'a mut bun_paths::PathBuffer,
@@ -880,8 +878,7 @@ pub(crate) fn report_path<'a>(
     if bun_paths::is_absolute(written) {
         return Ok(written);
     }
-    // On Windows the open drops the drive letter of "C:dir\r.xml" and resolves the rest below its directory.
-    // It takes a name with no separator and no dot, like "C:name", as written.
+    // Like the Windows open: it drops the drive letter of "C:dir\r.xml", and takes "C:name" (no separator, no dot) as written.
     let below_root = match written {
         [drive, b':', rest @ ..]
             if cfg!(windows)

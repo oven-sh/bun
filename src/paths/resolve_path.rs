@@ -694,8 +694,7 @@ pub fn relative(from: &[u8], to: &[u8]) -> &'static [u8] {
     relative_platform::<platform::Auto, false>(from, to)
 }
 
-/// [`relative`] from an absolute `base`, for a `to` that is below `base` when it is not absolute.
-/// [`relative`] takes such a `to` to be below the working directory.
+/// [`relative`], except that a `to` which is not absolute is below `base`, not below the working directory.
 pub fn relative_to_base<'a>(base: &'a [u8], to: &[u8]) -> &'a [u8] {
     debug_assert!(platform::Auto::P.is_absolute(base));
     relative_platform_below::<platform::Auto, false>(Some(base), base, to)
@@ -807,8 +806,7 @@ pub fn relative_platform<P: PlatformT, const ALWAYS_COPY: bool>(
     relative_platform_below::<P, ALWAYS_COPY>(None, from, to)
 }
 
-/// [`relative_platform`] for operands that are below `base` when they are relative. Without a `base` they are below
-/// the working directory.
+/// [`relative_platform`] with relative operands below `base`. Without a `base` they are below the working directory.
 fn relative_platform_below<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     base: Option<&'a [u8]>,
     from: &[u8],

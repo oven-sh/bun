@@ -173,9 +173,9 @@ pub(crate) trait BlobExt {
         cx: &mut JsScope<'_>,
         options: JsLocal<'_>,
     ) -> JsResult<JSValue>;
-    fn do_read_file_internal<C: read_file::ReadFileCompletion + 'static>(
+    fn do_read_file_internal(
         &self,
-        ctx: Box<C>,
+        ctx: Box<dyn read_file::ReadFileCompletion>,
         cx: &bun_jsc::JsThread<'_>,
     );
     fn get_content_type(&self) -> Option<Utf8Bytes<'_>>;
@@ -437,7 +437,7 @@ impl BlobExt for Blob {
             let promise_value = handler.promise.value();
             promise_value.ensure_still_alive();
 
-            read_file::ReadFileUV::start(self, read_file::ReadFileCompletionFns::of(handler), cx);
+            read_file::ReadFileUV::start(self, handler, cx);
             return promise_value;
         }
 
@@ -449,11 +449,7 @@ impl BlobExt for Blob {
             let promise_value = handler.promise.value();
             promise_value.ensure_still_alive();
 
-            read_file::ReadFile::schedule(
-                file_read,
-                read_file::ReadFileCompletionFns::of(handler),
-                cx,
-            );
+            read_file::ReadFile::schedule(file_read, handler, cx);
 
             debug!("doReadFile: read_file_task scheduled");
             promise_value
@@ -592,19 +588,19 @@ impl BlobExt for Blob {
         Image::from_blob_js(cx.global(), this_value.to_js(), options.to_js())
     }
 
-    fn do_read_file_internal<C: read_file::ReadFileCompletion + 'static>(
+    fn do_read_file_internal(
         &self,
-        ctx: Box<C>,
+        ctx: Box<dyn read_file::ReadFileCompletion>,
         cx: &bun_jsc::JsThread<'_>,
     ) {
         #[cfg(windows)]
         {
-            read_file::ReadFileUV::start(self, read_file::ReadFileCompletionFns::of(ctx), cx);
+            read_file::ReadFileUV::start(self, ctx, cx);
         }
         #[cfg(not(windows))]
         {
             let file_read = read_file::ReadFile::create(self);
-            read_file::ReadFile::schedule(file_read, read_file::ReadFileCompletionFns::of(ctx), cx);
+            read_file::ReadFile::schedule(file_read, ctx, cx);
         }
     }
     fn get_content_type(&self) -> Option<Utf8Bytes<'_>> {

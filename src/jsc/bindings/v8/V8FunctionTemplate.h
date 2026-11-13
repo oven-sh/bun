@@ -67,6 +67,12 @@ public:
      */
     BUN_EXPORT void SetClassName(Local<String> name);
 
+    /**
+     * Returns true if the given object is an instance of this function
+     * template.
+     */
+    BUN_EXPORT bool HasInstance(Local<Value> object);
+
 private:
     shim::FunctionTemplate* localToObjectPointer()
     {

@@ -1,8 +1,12 @@
 #include "V8Object.h"
+#include "V8Function.h"
 #include "shim/InternalFieldObject.h"
+#include "shim/TemplateProperty.h"
 #include "V8HandleScope.h"
 #include "JavaScriptCore/ConstructData.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/ProxyObject.h"
+#include "JavaScriptCore/JSGlobalProxy.h"
 #include "v8_compatibility_assertions.h"
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Object)
@@ -209,6 +213,81 @@ Maybe<bool> Object::DefineOwnProperty(Local<Context> context, Local<Name> key, L
     bool success = object->methodTable()->defineOwnProperty(object, globalObject, identifier, descriptor, false);
     RETURN_IF_EXCEPTION(scope, Nothing<bool>());
     return Just(success);
+}
+
+Maybe<bool> Object::SetNativeDataProperty(
+    Local<Context> context,
+    Local<Name> name,
+    AccessorNameGetterCallback getter,
+    AccessorNameSetterCallback setter,
+    Local<Value> data,
+    PropertyAttribute attributes,
+    SideEffectType,
+    SideEffectType)
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    // V8 defines nothing on a receiver that is not a JSObject, a Proxy included.
+    JSObject* object = localToObjectPointer<JSObject>();
+    if (!object || object->inherits<JSC::ProxyObject>()) {
+        return Just(false);
+    }
+    // V8 defines a property of context->Global() on the global object, not on its proxy.
+    if (object->type() == JSC::GlobalProxyType) {
+        object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
+    }
+
+    Identifier identifier = name->localToJSValue().toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
+
+    // V8 leaves an own property that is not configurable as it is and returns false.
+    JSC::PropertyDescriptor existing;
+    bool hasOwn = object->getOwnPropertyDescriptor(globalObject, identifier, existing);
+    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
+    if (hasOwn && !existing.configurable()) {
+        return Just(false);
+    }
+
+    JSValue jsData = data.IsEmpty() ? JSC::jsUndefined() : data->localToJSValue();
+    bool defined = shim::defineNativeAccessor(globalObject, object, name->localToJSValue(), jsData, getter, setter, static_cast<unsigned>(attributes));
+    RETURN_IF_EXCEPTION(scope, Nothing<bool>());
+    return Just(defined);
+}
+
+Maybe<bool> Object::SetPrototypeV2(Local<Context> context, Local<Value> prototype)
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    JSObject* object = localToObjectPointer<JSObject>();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    // V8 ignores a prototype that is not an object or null.
+    JSValue proto = prototype->localToJSValue();
+    if (!proto.isObject() && !proto.isNull()) {
+        return Just(true);
+    }
+    // V8 returns Nothing for a prototype that [[SetPrototypeOf]] refuses (a cycle, a
+    // non-extensible object) and leaves no exception. It swallows a Proxy trap's throw
+    // too, but not an exception the addon threw before the call.
+    bool hadException = !!scope.exception();
+    bool success = object->setPrototype(vm, globalObject, proto, false);
+    if (scope.exception()) [[unlikely]] {
+        if (!hadException && object->inherits<JSC::ProxyObject>()) {
+            scope.clearExceptionExceptTermination();
+        }
+        return Nothing<bool>();
+    }
+    if (!success) {
+        return Nothing<bool>();
+    }
+    return Just(true);
+}
+
+MaybeLocal<Value> Object::CallAsFunction(Local<Context> context, Local<Value> recv, int argc, Local<Value> argv[])
+{
+    return shim::callAsFunction(context, localToJSValue(), recv, argc, argv);
 }
 
 internal::ExternalPointerTag ToExternalPointerTag(uint16_t api_tag)

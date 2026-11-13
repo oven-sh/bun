@@ -342,5 +342,271 @@ module.exports = debugMode => {
         }
       }
     },
+    test_v8_object_set_native_data_property() {
+      const proxyTarget = {};
+      const { proxy: revoked, revoke } = Proxy.revocable({}, {});
+      revoke();
+      const fixed = {};
+      Object.defineProperty(fixed, "fixed", { value: 1 });
+      Object.defineProperty(fixed, "0", { value: 2 });
+      const array = [1, 2];
+      const [ctor, plain] = nativeModule.test_v8_object_set_native_data_property(
+        new Proxy(proxyTarget, {}),
+        revoked,
+        fixed,
+        array,
+      );
+      console.log("proxy target keys =", JSON.stringify(Object.keys(proxyTarget)));
+      console.log("fixed =", fixed.fixed, fixed[0], "array length =", array.length);
+      console.log("ctor.prototype is object =", typeof ctor.prototype === "object" && ctor.prototype !== null);
+      console.log("plain[0] =", plain[0]);
+      console.log("ctor.level =", ctor.level);
+      ctor.level = "x";
+      ctor.level = "y";
+      console.log("setter calls =", nativeModule.get_object_accessor_set_count());
+      console.log("ctor.level after set =", ctor.level);
+      // V8 shows a native data property as a data property and Bun as an
+      // accessor, so only the attributes are compared.
+      const levelDesc = Object.getOwnPropertyDescriptor(ctor, "level");
+      console.log("level attributes:", levelDesc.enumerable, levelDesc.configurable);
+      console.log("plain.readOnly =", plain.readOnly);
+      plain.readOnly = 1;
+      console.log("plain.readOnly after sloppy assignment =", plain.readOnly);
+      const readOnlyDesc = Object.getOwnPropertyDescriptor(plain, "readOnly");
+      console.log("readOnly attributes:", readOnlyDesc.enumerable, readOnlyDesc.configurable);
+      console.log("keys =", JSON.stringify(Object.keys(plain)));
+      console.log("plain[Symbol.iterator] =", plain[Symbol.iterator]);
+      console.log(
+        "globalThis.nativeGlobalProp =",
+        globalThis.nativeGlobalProp,
+        "own =",
+        Object.hasOwn(globalThis, "nativeGlobalProp"),
+      );
+    },
+
+    test_v8_function_template_has_instance() {
+      const [ctor, constructed, fromObjectTemplate] = nativeModule.test_v8_function_template_has_instance();
+      console.log("ObjectTemplate::New(isolate, F) instance instanceof F =", fromObjectTemplate instanceof ctor);
+      const fromCreate = Object.create(ctor.prototype);
+      console.log("Object.create(F.prototype) =", nativeModule.has_instance(fromCreate));
+      console.log("instanceof for Object.create =", fromCreate instanceof ctor);
+      Object.setPrototypeOf(constructed, {});
+      console.log("reparented instance =", nativeModule.has_instance(constructed));
+      console.log("instanceof for reparented =", constructed instanceof ctor);
+      class Sub extends ctor {}
+      const sub = new Sub();
+      console.log("subclass instance =", nativeModule.has_instance(sub));
+      console.log("plain =", nativeModule.has_instance({}));
+      console.log("string =", nativeModule.has_instance("s"));
+    },
+
+    test_v8_template_holds_its_own_instance() {
+      const [ctor, early] = nativeModule.test_v8_template_holds_its_own_instance();
+      console.log("early instanceof F =", early instanceof ctor);
+      console.log("F.sample instanceof F =", ctor.sample instanceof ctor);
+      console.log("F.prototype.proto instanceof F =", ctor.prototype.proto instanceof ctor);
+    },
+
+    test_v8_node_buffer() {
+      const u16 = new Uint16Array([0x6162, 0x6364, 0x6566]);
+      const copy = nativeModule.test_v8_node_buffer(
+        [Buffer.from("abc"), new Uint16Array(u16.buffer, 2, 2), u16.buffer, {}, "str", new DataView(u16.buffer, 1, 3)],
+        ["héllo wörld", "\ud83d\ude00 surrogates \ud83d", "48656c6c6f", "SGVsbG8=", "SGVsbG8", "ab=", ""],
+      );
+      for (const [name, view] of [
+        ["Buffer.alloc(32)", Buffer.alloc(32)],
+        ["Buffer.from", Buffer.from("hello world")],
+        ["new Uint8Array(32)", new Uint8Array(32)],
+        ["Uint16Array at an offset", new Uint16Array(new ArrayBuffer(64), 8, 4)],
+      ]) {
+        const stable = nativeModule.buffer_data_is_stable(view, () => view.buffer.byteLength);
+        console.log(name, "stable =", stable, "first bytes =", view[0], view[1]);
+      }
+      console.log(
+        "copy is Buffer =",
+        Buffer.isBuffer(copy),
+        "proto ok =",
+        Object.getPrototypeOf(copy) === Buffer.prototype,
+      );
+      console.log("copy =", JSON.stringify([...copy]), "toString =", JSON.stringify(copy.toString("latin1")));
+      console.log("copy.buffer byteLength =", copy.buffer.byteLength, "offset =", copy.byteOffset);
+    },
+
+    test_v8_string_utf8_value() {
+      try {
+        nativeModule.utf8_value_with_pending_exception("still converted");
+        console.log("did not throw");
+      } catch (e) {
+        console.log("caught", e.message);
+      }
+      nativeModule.test_v8_string_utf8_value([
+        "plain",
+        "h\u00e9\ud83d\ude00",
+        "lone \ud83d surrogate",
+        12.5,
+        null,
+        { toString: () => "from toString" },
+        {
+          toString() {
+            throw new Error("toString threw");
+          },
+        },
+        Symbol("sym"),
+      ]);
+    },
+
+    test_v8_exception_range_and_syntax() {
+      for (const e of nativeModule.test_v8_exception_range_and_syntax()) {
+        console.log(
+          e.constructor.name,
+          "message =",
+          JSON.stringify(e.message),
+          "instanceof Error =",
+          e instanceof Error,
+        );
+      }
+      try {
+        nativeModule.throw_range_error();
+        console.log("did not throw");
+      } catch (e) {
+        console.log("caught", e.constructor.name, e instanceof RangeError, e.message);
+      }
+    },
+
+    test_v8_regexp() {
+      nativeModule.test_v8_regexp([
+        /abc/,
+        /a\/b/gi,
+        new RegExp(""),
+        new RegExp("/", "my"),
+        /x/dsu,
+        /[\p{L}--[a-z]]/v,
+        require("node:vm").runInNewContext("/from-vm/gi"),
+        "not a regexp",
+        { source: "fake", flags: "g" },
+        Object.create(RegExp.prototype),
+        new (class extends RegExp {})("sub", "g"),
+      ]);
+    },
+
+    test_v8_symbol_get_iterator() {
+      const iterable = {
+        *[Symbol.iterator]() {
+          yield "^/users/\\d+$";
+          yield "^/posts/\\d+$";
+          yield 42;
+        },
+      };
+      nativeModule.test_v8_symbol_get_iterator(iterable, Symbol.iterator);
+      nativeModule.test_v8_symbol_get_iterator(new Set(["a"]), Symbol.iterator);
+    },
+
+    test_v8_object_set_prototype_and_call() {
+      const { proxy: revoked, revoke } = Proxy.revocable({}, {});
+      revoke();
+      const [groups, child] = nativeModule.test_v8_object_set_prototype_and_call(
+        Object.freeze({}),
+        function (a) {
+          return `${this === undefined ? "undefined" : this === globalThis ? "global" : this.tag}:${arguments.length}:${a}`;
+        },
+        function () {
+          throw new Error("callee threw");
+        },
+        new Proxy(
+          {},
+          {
+            setPrototypeOf() {
+              throw new Error("trap threw");
+            },
+          },
+        ),
+        revoked,
+      );
+      console.log("groups proto =", Object.getPrototypeOf(groups));
+      console.log("groups has toString =", "toString" in groups);
+      console.log(
+        "child proto is plain object =",
+        Object.getPrototypeOf(child) !== Object.prototype && typeof Object.getPrototypeOf(child) === "object",
+      );
+      const receiver = { tag: "js" };
+      console.log(
+        "call result =",
+        nativeModule.call_as_function(
+          function (a, b) {
+            return `${this.tag}:${arguments.length}:${a}:${b}`;
+          },
+          receiver,
+          1,
+          "two",
+        ),
+      );
+      try {
+        nativeModule.call_as_function(function () {
+          throw new Error("callee threw");
+        }, receiver);
+        console.log("did not throw");
+      } catch (e) {
+        console.log("caught", e.message);
+      }
+      try {
+        nativeModule.call_as_function({}, receiver);
+        console.log("did not throw");
+      } catch (e) {
+        console.log("caught", e.constructor.name);
+      }
+    },
+
+    test_v8_value_conversions() {
+      const ab = new Uint8Array([9, 8]).buffer;
+      const sab = new SharedArrayBuffer(4);
+      new Uint8Array(sab)[0] = 5;
+      nativeModule.test_v8_value_conversions([
+        ab,
+        sab,
+        new Uint8Array(ab),
+        new DataView(ab),
+        Buffer.from("x"),
+        new Proxy(ab, {}),
+        [],
+        {},
+        "12.5",
+        "",
+        "abc",
+        0,
+        -0,
+        NaN,
+        1e21,
+        true,
+        false,
+        null,
+        undefined,
+        { valueOf: () => 3 },
+      ]);
+      for (const value of [
+        "7",
+        { valueOf: () => 3 },
+        {
+          valueOf() {
+            throw new Error("valueOf threw");
+          },
+        },
+        10n,
+        Symbol("s"),
+        null,
+        undefined,
+      ]) {
+        try {
+          const object = nativeModule.number_value_then_to_object(value);
+          console.log("returned", typeof object, object instanceof Object);
+        } catch (e) {
+          // The message of an engine TypeError differs between V8 and JSC.
+          console.log("caught", e.constructor.name, e.message === "valueOf threw" ? e.message : "");
+        }
+      }
+    },
+
+    test_v8_global_reset_cycle() {
+      nativeModule.test_v8_global_reset_cycle(100);
+    },
   };
 };

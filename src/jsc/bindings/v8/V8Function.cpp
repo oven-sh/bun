@@ -58,13 +58,12 @@ bool functionSourcePosition(const JSC::JSCell* cell, WTF::String& url, JSC::Line
 
 } // namespace
 
-MaybeLocal<Value> Function::Call(Local<Context> context, Local<Value> recv, int argc, Local<Value> argv[])
+MaybeLocal<Value> shim::callAsFunction(Local<Context> context, JSC::JSValue callee, Local<Value> recv, int argc, Local<Value> argv[])
 {
     auto* globalObject = context->globalObject();
     auto& vm = context->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    JSC::JSValue callee = localToJSValue();
     JSC::JSValue thisValue = recv.IsEmpty() ? JSC::jsUndefined() : recv->localToJSValue();
 
     JSC::MarkedArgumentBuffer args;
@@ -73,10 +72,15 @@ MaybeLocal<Value> Function::Call(Local<Context> context, Local<Value> recv, int 
         args.append(argv[i]->localToJSValue());
     }
 
-    JSC::JSValue result = JSC::call(globalObject, callee, thisValue, args, "v8::Function::Call"_s);
+    JSC::JSValue result = JSC::call(globalObject, callee, thisValue, args, "Object is not a function"_s);
     RETURN_IF_EXCEPTION(scope, MaybeLocal<Value>());
 
     return context->currentHandleScope()->createLocal<Value>(vm, result);
+}
+
+MaybeLocal<Value> Function::Call(Local<Context> context, Local<Value> recv, int argc, Local<Value> argv[])
+{
+    return shim::callAsFunction(context, localToJSValue(), recv, argc, argv);
 }
 
 MaybeLocal<Object> Function::NewInstance(Local<Context> context, int argc, Local<Value> argv[]) const

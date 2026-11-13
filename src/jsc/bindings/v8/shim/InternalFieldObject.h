@@ -33,19 +33,24 @@ public:
     FieldContainer* internalFields() { return &m_fields; }
     void*& alignedPointerAt(int i) { return m_alignedPointers[i]; }
     size_t alignedPointerCount() const { return m_alignedPointers.size(); }
-    static InternalFieldObject* create(JSC::VM& vm, JSC::Structure* structure, int internalFieldCount);
+    // The ObjectTemplate that made this instance. FunctionTemplate::HasInstance
+    // compares its constructor, as V8 compares the constructor of an object's map.
+    ObjectTemplate* objectTemplate() const { return m_objectTemplate.get(); }
+    static InternalFieldObject* create(JSC::VM& vm, JSC::Structure* structure, ObjectTemplate* objectTemplate, int internalFieldCount);
 
     DECLARE_VISIT_CHILDREN;
 
 protected:
-    InternalFieldObject(JSC::VM& vm, JSC::Structure* structure, int internalFieldCount)
+    InternalFieldObject(JSC::VM& vm, JSC::Structure* structure, ObjectTemplate* objectTemplate, int internalFieldCount)
         : Base(vm, structure)
+        , m_objectTemplate(vm, this, objectTemplate)
         , m_fields(WTF::FillWith {}, internalFieldCount, JSC::WriteBarrier<JSC::Unknown>(vm, this, JSC::jsUndefined()))
         , m_alignedPointers(WTF::FillWith {}, internalFieldCount, static_cast<void*>(nullptr))
     {
     }
 
 private:
+    JSC::WriteBarrier<ObjectTemplate> m_objectTemplate;
     FieldContainer m_fields;
     WTF::FixedVector<void*> m_alignedPointers;
 };

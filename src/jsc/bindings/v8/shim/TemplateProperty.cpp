@@ -118,6 +118,51 @@ static JSC::JSValue invokeAccessor(
     return localRet->localToJSValue();
 }
 
+bool defineNativeAccessor(
+    JSC::JSGlobalObject* globalObject,
+    JSC::JSObject* target,
+    JSC::JSValue nameValue,
+    JSC::JSValue dataValue,
+    AccessorNameGetterCallback getter,
+    AccessorNameSetterCallback setter,
+    unsigned attributes)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::Identifier identifier = nameValue.toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    JSC::JSObject* getterFn = nullptr;
+    JSC::JSObject* setterFn = nullptr;
+
+    // Pass nameValue/dataValue as trailing captures so JSNativeStdFunction
+    // stores them in m_captures (WriteBarrier<Unknown>, visited by GC). The
+    // lambda also captures them by value; JSC's GC is non-moving so the
+    // closure copies remain valid as long as m_captures keeps the cells alive.
+    if (getter) {
+        getterFn = JSC::JSNativeStdFunction::create(
+            vm, globalObject, 0, WTF::String(),
+            [nameValue, dataValue, getter](JSC::JSGlobalObject* global, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+                JSC::JSValue result = invokeAccessor(global, callFrame->thisValue(), nameValue, dataValue, getter, nullptr, JSC::JSValue());
+                return JSC::JSValue::encode(result);
+            },
+            nameValue, dataValue);
+    }
+    if (setter) {
+        setterFn = JSC::JSNativeStdFunction::create(
+            vm, globalObject, 1, WTF::String(),
+            [nameValue, dataValue, setter](JSC::JSGlobalObject* global, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+                invokeAccessor(global, callFrame->thisValue(), nameValue, dataValue, nullptr, setter, callFrame->argument(0));
+                return JSC::JSValue::encode(JSC::jsUndefined());
+            },
+            nameValue, dataValue);
+    }
+
+    auto* getterSetter = JSC::GetterSetter::create(vm, globalObject, getterFn, setterFn);
+    RELEASE_AND_RETURN(scope, target->putDirectAccessor(globalObject, identifier, getterSetter, toJSCAttributes(attributes) | JSC::PropertyAttribute::Accessor));
+}
+
 void applyTemplateProperties(
     JSC::JSGlobalObject* globalObject,
     JSC::JSObject* target,
@@ -136,43 +181,7 @@ void applyTemplateProperties(
     }
 
     for (const auto& acc : accessors) {
-        JSC::Identifier identifier = acc.name.get().toPropertyKey(globalObject);
-        RETURN_IF_EXCEPTION(scope, void());
-
-        JSC::JSValue nameValue = acc.name.get();
-        JSC::JSValue dataValue = acc.data.get();
-        AccessorNameGetterCallback getter = acc.getter;
-        AccessorNameSetterCallback setter = acc.setter;
-
-        JSC::JSObject* getterFn = nullptr;
-        JSC::JSObject* setterFn = nullptr;
-
-        // Pass nameValue/dataValue as trailing captures so JSNativeStdFunction
-        // stores them in m_captures (WriteBarrier<Unknown>, visited by GC). The
-        // lambda also captures them by value; JSC's GC is non-moving so the
-        // closure copies remain valid as long as m_captures keeps the cells alive.
-        if (getter) {
-            getterFn = JSC::JSNativeStdFunction::create(
-                vm, globalObject, 0, WTF::String(),
-                [nameValue, dataValue, getter](JSC::JSGlobalObject* global, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-                    JSC::JSValue result = invokeAccessor(global, callFrame->thisValue(), nameValue, dataValue, getter, nullptr, JSC::JSValue());
-                    return JSC::JSValue::encode(result);
-                },
-                nameValue, dataValue);
-        }
-        if (setter) {
-            setterFn = JSC::JSNativeStdFunction::create(
-                vm, globalObject, 1, WTF::String(),
-                [nameValue, dataValue, setter](JSC::JSGlobalObject* global, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-                    invokeAccessor(global, callFrame->thisValue(), nameValue, dataValue, nullptr, setter, callFrame->argument(0));
-                    return JSC::JSValue::encode(JSC::jsUndefined());
-                },
-                nameValue, dataValue);
-        }
-
-        auto* getterSetter = JSC::GetterSetter::create(vm, globalObject, getterFn, setterFn);
-        target->putDirectAccessor(globalObject, identifier, getterSetter,
-            toJSCAttributes(acc.attributes) | JSC::PropertyAttribute::Accessor);
+        defineNativeAccessor(globalObject, target, acc.name.get(), acc.data.get(), acc.getter, acc.setter, acc.attributes);
         RETURN_IF_EXCEPTION(scope, void());
     }
 }

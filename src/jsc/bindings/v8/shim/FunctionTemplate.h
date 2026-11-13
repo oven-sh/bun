@@ -69,6 +69,7 @@ public:
 
     // Memoized; shared by GetFunction() and nested Template::Set materialization.
     Function* makeFunction(JSC::VM& vm, Zig::GlobalObject* globalObject, GlobalInternals* internals);
+    Function* cachedFunction() const { return m_cachedFunction.get(); }
 
 private:
     FunctionCallback m_callback;

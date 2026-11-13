@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 1875531f3206b237748e40dd0f6c4cd6c9c7ff651cabce5944618af79b75cec5.
+// Written against that file with the SHA-256 6101a98ae874f20cbe6ee93c0ecdfe27c0272ebb85ed2169f677fd68bd31ab7d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -2066,6 +2066,10 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
       // Node's createHandle() wraps PIPE and TCP fds only: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L183-L199
       if (stats.isFile()) {
         throw $ERR_INVALID_FD_TYPE("FILE");
+      }
+      // A terminal is read through tty.ReadStream, as in Node. Write-only wrapping of one (stderr on a terminal) stays.
+      if (opts.readable === true && stats.isCharacterDevice()) {
+        throw $ERR_INVALID_FD_TYPE("TTY");
       }
     }
   }

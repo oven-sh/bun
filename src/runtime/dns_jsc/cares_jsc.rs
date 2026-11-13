@@ -750,14 +750,11 @@ impl ErrorDeferredTask {
     }
 }
 
-impl bun_event_loop::Taskable for ErrorDeferredTask {
+impl bun_event_loop::BoxedTask for ErrorDeferredTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::DnsErrorDeferred;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — boxed in `reject_later`.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// `run` enters the asking script's context itself.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

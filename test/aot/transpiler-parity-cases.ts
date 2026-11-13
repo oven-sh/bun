@@ -50,6 +50,8 @@ const checkerSpeaksFirst = "the program is refused, in the words of the type che
 const untypedParameters = "TS7006: the parameters of the decorator have no types";
 const blockFunctions = "block-level function declarations in CommonJS > known differences from node";
 const labelledFunction = "`bun run` prints a labelled function inside a block, so it is stored when the label runs";
+const argumentsStaysALet =
+  "`bun run` keeps a block function named `arguments` in its block, also where the name is a var";
 
 // path -> test name as `bun test` prints it -> why it fails.
 // A type error stops the build.
@@ -85,6 +87,8 @@ const expectedFailures: Record<string, Record<string, string>> = {
     [`${blockFunctions} > labelAfterVar`]: labelledFunction,
     [`${blockFunctions} > labelAfterAssignment`]: labelledFunction,
     [`${blockFunctions} > twoOfANameWithEval`]: "`bun run` drops the first of two functions of one name in a block",
+    [`${blockFunctions} > argumentsInArrow`]: argumentsStaysALet,
+    [`${blockFunctions} > argumentsBesideFunction`]: argumentsStaysALet,
   },
   "test/bundler/bundler_jsx.test.ts": {
     "bundler > jsx/AutomaticFragmentNamedImportDev": untypedJsxRuntime,

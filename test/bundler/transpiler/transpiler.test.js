@@ -6098,6 +6098,16 @@ describe("block-level function declarations", () => {
     ["a try block", "try {\n  function f() {}\n} catch {}\nmodule.exports = f;\n"],
     ["a switch case", "switch (x) {\n  case 1:\n    function f() {}\n}\nmodule.exports = f;\n"],
     ["a block inside a function", "function o() {\n  {\n    function f() {}\n  }\n  return f;\n}\n"],
+    ["a block inside a generator", "function* o() {\n  {\n    function f() {}\n  }\n  return f;\n}\n"],
+    ["a block inside an async function", "async function o() {\n  {\n    function f() {}\n  }\n  return f;\n}\n"],
+    [
+      "a block inside an arrow function",
+      "const o = () => {\n  {\n    function f() {}\n  }\n  return f;\n};\nmodule.exports = o;\n",
+    ],
+    [
+      "a block inside an object method",
+      "module.exports = {\n  m() {\n    {\n      function f() {}\n    }\n    return f;\n  }\n};\n",
+    ],
     ["a block, after another statement", "{\n  g();\n  function f() {}\n}\nmodule.exports = f;\n"],
   ])("sloppy code keeps the declaration in %s", (_, code) => {
     expect(print(code)).toBe(code);
@@ -6128,10 +6138,13 @@ describe("block-level function declarations", () => {
     expect(print(code)).toBe(expected);
   });
 
-  // With the declaration, JavaScriptCore reads `undefined` for `arguments` before the block in a generator.
-  it("sloppy code lowers a function named arguments to let", () => {
-    expect(print("function* o() {\n  {\n    function arguments() {}\n  }\n  return arguments;\n}\n")).toBe(
-      "function* o() {\n  {\n    let arguments = function() {};\n  }\n  return arguments;\n}\n",
+  // The name decides, not the kind of the function around it. Compiled code leaves the arguments object for this name,
+  // and with the declaration JavaScriptCore reads `undefined` for `arguments` before the block in a generator.
+  it("sloppy code lowers only a function named arguments to let", () => {
+    expect(
+      print("function* o() {\n  {\n    function arguments() {}\n    function f() {}\n  }\n  return arguments;\n}\n"),
+    ).toBe(
+      "function* o() {\n  {\n    let arguments = function() {};\n    function f() {}\n  }\n  return arguments;\n}\n",
     );
   });
 

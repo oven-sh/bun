@@ -194,6 +194,33 @@ out.letOfDeadBlock = attempt(function () {
   })();
 });
 
+// The parameters have a scope of their own: the closure of a default never sees the var.
+out.defaultParameterClosure = attempt(function (read = () => typeof f) {
+  const seen = [read(), typeof f];
+  { function f() {} }
+  seen.push(read(), typeof f);
+  return seen;
+});
+
+out.nameOfTheFunctionAround = attempt(function f() {
+  const seen = [typeof f, f === arguments.callee];
+  { function f() {} }
+  seen.push(f === arguments.callee);
+  return seen;
+});
+
+out.withObject = attempt(function () {
+  const o = { f: "prop" };
+  with (o) { { function f() {} } }
+  return [typeof f, typeof o.f];
+});
+
+out.arrowFunction = attempt(() => {
+  const before = typeof f;
+  { function f() {} }
+  return [before, typeof f];
+});
+
 out.source = attempt(function () {
   { function named(a, b) { return a + b; } }
   return [named.name, named.toString().split(" ").join("").startsWith("functionnamed(a,b)")];
@@ -230,6 +257,10 @@ module.exports = out;
       constOfEnclosingBlock: "string",
       letOfEnclosingBlock: "string",
       letOfDeadBlock: "string",
+      defaultParameterClosure: ["undefined", "undefined", "undefined", "function"],
+      nameOfTheFunctionAround: ["undefined", false, false],
+      withObject: ["function", "string"],
+      arrowFunction: ["undefined", "function"],
       source: ["named", true],
     });
   });
@@ -253,9 +284,9 @@ module.exports = g;
     expect(await bunRun(path.join(String(dir), "nested.cjs"))).toSpawn("1");
   });
 
-  // The name `arguments` keeps the `let`. With the declaration, JavaScriptCore reads `undefined` for `arguments`
-  // before the block in a generator and in an async function that has an `await`.
-  // test262 annexB/language/function-code/block-decl-func-skip-arguments.js. V8 has the function after the block.
+  // The name `arguments` keeps the `let`, as on main and in compiled code. An ordinary name beside it does not.
+  // With the declaration, JavaScriptCore reads `undefined` for `arguments` before the block in a generator
+  // and in an async function that has an `await`. After the block Node has the function (ECMA-262 since ES2018).
   test.concurrent("a function named arguments stays in its block", async () => {
     using dir = tempDir("block-level-function", {
       "arguments.cjs": `
@@ -264,37 +295,37 @@ const out = {};
 
 out.plain = (function () {
   const seen = [tag(arguments)];
-  { seen.push(typeof arguments); function arguments() {} }
-  seen.push(tag(arguments));
+  { seen.push(typeof arguments); function arguments() {} function other() {} }
+  seen.push(tag(arguments), typeof other);
   return seen;
 })();
 
 out.generator = (function* () {
   const a = arguments;
-  { function arguments() {} }
-  return tag(a);
+  { function arguments() {} function other() {} }
+  return [tag(a), typeof other];
 })().next().value;
 
 out.generatorMethod = ({
-  *m() { const a = arguments; { function arguments() {} } return tag(a); },
+  *m() { const a = arguments; { function arguments() {} function other() {} } return [tag(a), typeof other]; },
 }).m().next().value;
 
 (async () => {
   out.asyncGenerator = (await (async function* () {
     const a = arguments;
-    { function arguments() {} }
-    yield tag(a);
+    { function arguments() {} function other() {} }
+    yield [tag(a), typeof other];
   })().next()).value;
 
   out.asyncWithAwait = await (async function () {
     const a = arguments;
     await 0;
-    { function arguments() {} }
-    return tag(a);
+    { function arguments() {} function other() {} }
+    return [tag(a), typeof other];
   })();
 
   out.asyncMethodWithAwait = await ({
-    async m() { const a = arguments; await 0; { function arguments() {} } return tag(a); },
+    async m() { const a = arguments; await 0; { function arguments() {} function other() {} } return [tag(a), typeof other]; },
   }).m();
 
   console.log(JSON.stringify(out));
@@ -304,12 +335,12 @@ out.generatorMethod = ({
     const result = await bunRun(path.join(String(dir), "arguments.cjs"));
     expect(result).toSpawn();
     expect(JSON.parse(result.stdout)).toEqual({
-      plain: ["[object Arguments]", "function", "[object Arguments]"],
-      generator: "[object Arguments]",
-      generatorMethod: "[object Arguments]",
-      asyncGenerator: "[object Arguments]",
-      asyncWithAwait: "[object Arguments]",
-      asyncMethodWithAwait: "[object Arguments]",
+      plain: ["[object Arguments]", "function", "[object Arguments]", "function"],
+      generator: ["[object Arguments]", "function"],
+      generatorMethod: ["[object Arguments]", "function"],
+      asyncGenerator: ["[object Arguments]", "function"],
+      asyncWithAwait: ["[object Arguments]", "function"],
+      asyncMethodWithAwait: ["[object Arguments]", "function"],
     });
   });
 
@@ -574,13 +605,18 @@ module.exports = (function () {${body}
     expect(await bunRun(["-e", code])).toSpawn("outer string");
   });
 
-  // Right on main and in node, wrong here. A row fails when its cause is fixed, and then it moves to the tables above.
+  // Right in node, wrong here. A row fails when its cause is fixed, and then it moves to the tables above.
   describe("known differences from node", () => {
     const node = {
+      // Right on main.
       labelThenPlain: "plain",
       labelAfterVar: "V",
       labelAfterAssignment: "A",
       twoOfANameWithEval: "2",
+      // Wrong on main too: the name `arguments` keeps the `let` of main.
+      argumentsAfterBlock: "[object Function]",
+      argumentsInArrow: "function",
+      argumentsBesideFunction: "block",
     };
     let rows: Promise<Record<string, string>> | undefined;
     const run = () =>
@@ -626,6 +662,25 @@ out.twoOfANameWithEval = attempt(function () {
   return typeof f === "function" ? f() : typeof f;
 });
 
+out.argumentsAfterBlock = attempt(function () {
+  { function arguments() {} }
+  return Object.prototype.toString.call(arguments);
+});
+
+// An arrow function has no arguments object, so the name is an ordinary var there.
+out.argumentsInArrow = attempt(function () {
+  return (() => {
+    { function arguments() {} }
+    return typeof arguments;
+  })();
+});
+
+out.argumentsBesideFunction = attempt(function () {
+  function arguments() { return "top"; }
+  { function arguments() { return "block"; } }
+  return arguments();
+});
+
 console.log(JSON.stringify(out));
 `,
         });
@@ -645,6 +700,7 @@ console.log(JSON.stringify(out));
     }
 
     // A file with no CommonJS marker runs as a module, and the dead declaration is still printed.
+    // https://github.com/oven-sh/bun/issues/44802
     for (const [what, dead] of [
       ["sloppy-only text", "function o() { var static = 1; }"],
       ["a sloppy-only name", "function yield() {}"],

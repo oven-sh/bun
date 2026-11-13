@@ -60,6 +60,7 @@ static bool haveUnfinishedImporterInCommon(Zig::GlobalObject*, const String& ear
 namespace Zig {
 
 static void evictModulesAndTheirImporters(Zig::GlobalObject*, Vector<String>&& modules);
+static void evictModulesAndTheirImporters(Zig::GlobalObject*, Vector<String>&& modules, const String& importerThatStays);
 static void endSidesOfModuleMockUnderPath(Zig::GlobalObject*, const String& path);
 #if ENABLE(AOT)
 static void clearCompiledProgramFailures(Zig::GlobalObject*);
@@ -1876,9 +1877,9 @@ uint32_t addToFactoryImportChains(Zig::GlobalObject*, JSC::AOT::ModuleID importe
 #endif
 
 // With two paths, what the mock has kept of its module object in require.cache is the original of another file than the one an import loads.
-// The package's own files ask for that original by its key: a module object with the kept exports lies there, so that nothing runs the file a second time.
-// Like an original that was loaded from disk, it stays when the mock ends.
-__attribute__((minsize)) static void layKeptOriginalUnderItsKey(Zig::GlobalObject* globalObject, JSModuleMock* mock, bool replacesWhatStands)
+// The package's own files and the mock's factory ask for that original by its key: a module object with the kept exports lies there, so that nothing runs the file a second time.
+// It stays when the mock ends, and leaves require.cache with the module object whose exports it holds: see evictModulesAndTheirImporters().
+__attribute__((minsize)) static void layKeptOriginalUnderItsKey(Zig::GlobalObject* globalObject, JSModuleMock* mock)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1898,14 +1899,13 @@ __attribute__((minsize)) static void layKeptOriginalUnderItsKey(Zig::GlobalObjec
     if (standingModule && standingModule->getDirect(vm, Bun::builtinNames(vm).exportsPublicName()) == exports)
         return;
     // What stands there otherwise was loaded from disk for an earlier mock, or holds what one had kept of a module object that has been loaded anew since.
-    // Where an original is about to be loaded it goes, with what is linked to it. Nothing needs that sooner.
+    // It goes with what is linked to it. So do the originals of the file that an import loads: one that got it from require() or createRequire() is linked to it by nothing that the loader knows.
+    // The file itself stays, with the exports that the mock has kept: requireModuleKey() asked for what goes in its name, and what it has required may have required that in turn.
     if (standingModule || Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, key))) {
-        if (!replacesWhatStands)
-            return;
-        // requireModuleKey() asked for it in the name of the file itself, which is no importer of it and stays. A requirer in require.cache has it among its children.
         if (standingModule)
             standingModule->m_parent = {};
-        evictModulesAndTheirImporters(globalObject, Vector<String> { key });
+        String originalOfImport = originalModuleKey(mock->importKey->tryGetValue().data);
+        evictModulesAndTheirImporters(globalObject, Vector<String> { key, originalOfImport, makeString(originalOfImport, "&spy"_s), originalModuleKey(originalOfImport) }, path->tryGetValue().data);
         RETURN_IF_EXCEPTION(scope, );
     }
 
@@ -1962,7 +1962,7 @@ __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::Global
     }
     // The original that is loaded below may load that file, itself or through other files of its package.
     if (!exports) {
-        layKeptOriginalUnderItsKey(globalObject, mock, true);
+        layKeptOriginalUnderItsKey(globalObject, mock);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
 #if ENABLE(AOT)
@@ -3716,6 +3716,8 @@ struct ModulesToEvict {
     bool onlyImportersFromEarlierTestFiles { false };
     // Of the patched modules that are listed, no importer goes: they leave the registry or require.cache alone.
     bool keepsImportersOfPatchedModules { false };
+    // A module that stays though it is found to import or require one that goes: see layKeptOriginalUnderItsKey().
+    String importerThatStays;
     // Forces a pass even with nothing listed, to sweep the modules that failed to load or threw.
     bool isEndOfTestFile { false };
     bool hasLoadSettled { false };
@@ -4104,6 +4106,28 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     keys.removeAllMatching([&](const String& key) { return !evicted.add(key).isNewEntry; });
     for (size_t i = 0; i < keys.size(); ++i) {
         String key = keys[i];
+        // What a mock with two paths has laid under the key of the original of `key` holds the exports of the file's module object under `key`: see layKeptOriginalUnderItsKey().
+        // It leaves require.cache with that module object, and what is linked to it goes with it. Under a mock the exports of the file are what the mock has kept,
+        // and a mock's own module object is no file: one whose factory returned the original has the exports of an original that was loaded from disk, which stays.
+        if (plugins.hasHadModuleMockWithTwoPaths && !staysInRequireCache.contains(key) && !loading.contains(key)) [[unlikely]] {
+            String original = originalModuleKey(key);
+            JSValue laidValue = evicted.contains(original) ? jsUndefined() : requireMap->get(globalObject, jsString(vm, original));
+            RETURN_IF_EXCEPTION(scope, );
+            auto* laid = dynamicDowncast<Bun::JSCommonJSModule>(laidValue);
+            JSValue moduleValue = laid ? requireMap->get(globalObject, jsString(vm, key)) : jsUndefined();
+            RETURN_IF_EXCEPTION(scope, );
+            if (auto* module = dynamicDowncast<Bun::JSCommonJSModule>(moduleValue)) {
+                auto& exportsName = Bun::builtinNames(vm).exportsPublicName();
+                auto* mock = moduleMockAnsweringFor(globalObject, key);
+                bool isUnderMock = mock && mock->keyForRequire()->tryGetValue().data == key;
+                bool isOfEndedMock = !isUnderMock && !evict.patchedCommonJSModules.contains(key) && evict.pathsOfTwoFileMocks.containsIf([&](auto& paths) { return paths.first == key; });
+                JSValue exportsOfFile = isUnderMock ? mock->originalCommonJSExports.get() : isOfEndedMock ? JSValue() : module->getDirect(vm, exportsName);
+                if (exportsOfFile && laid->getDirect(vm, exportsName) == exportsOfFile) {
+                    evicted.add(original);
+                    keys.append(original);
+                }
+            }
+        }
         auto importers = importersOf.find(key);
         if (importers == importersOf.end())
             continue;
@@ -4118,7 +4142,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             // The file that an import of a mocked name loads got the file that require() resolves the name to as it is on disk: see keyOfImportWithTwoPaths().
             if (stays && evict.pathsOfTwoFileMocks.containsIf([&](auto& paths) { return paths.first == key && paths.second == importer; }))
                 continue;
-            if (!testFile || importer == key || (isPatched && (evict.keepsImportersOfPatchedModules || (evict.onlyImportersFromEarlierTestFiles && testFile == plugins.testFile))))
+            if (!testFile || importer == key || importer == evict.importerThatStays || (isPatched && (evict.keepsImportersOfPatchedModules || (evict.onlyImportersFromEarlierTestFiles && testFile == plugins.testFile))))
                 continue;
             bool stayed = staysInRegistry.remove(importer);
             stayed |= staysInRequireCache.remove(importer);
@@ -4246,6 +4270,13 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
 static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Vector<String>&& modules)
 {
     evictModulesAndTheirImporters(globalObject, ModulesToEvict { WTF::move(modules) });
+}
+
+static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Vector<String>&& modules, const String& importerThatStays)
+{
+    ModulesToEvict evict { WTF::move(modules) };
+    evict.importerThatStays = importerThatStays;
+    evictModulesAndTheirImporters(globalObject, WTF::move(evict));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEvictModulesThatHaveLoaded, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
@@ -6754,8 +6785,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     }
 #endif
 
-    // Ahead of the factory: it may require the name again, and the package's own files may ask for the file once the mock is registered.
-    layKeptOriginalUnderItsKey(globalObject, mock, false);
+    // Ahead of the factory: it may load the original by the name alone, which comes to no mock before this one is registered, and the package's own files ask for the file from then on.
+    layKeptOriginalUnderItsKey(globalObject, mock);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSC::JSPromise* pendingFactory = nullptr;

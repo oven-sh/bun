@@ -1222,7 +1222,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if let Some(tz) = vm.env_loader().get(b"TZ") {
             if !tz.is_empty() {
                 let _ = vm
-                    .global()
+                    .jsc_vm()
                     .set_time_zone(&bun_core::EncodedSlice::from_bytes(tz));
             }
         }

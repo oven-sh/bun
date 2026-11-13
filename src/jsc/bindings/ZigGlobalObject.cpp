@@ -3973,18 +3973,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
 }
 
-extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, const EncodedSlice* timeZone)
-{
-    auto& vm = JSC::getVM(globalObject);
-
-    if (WTF::setTimeZoneOverride(Zig::toString(*timeZone))) {
-        Bun::resetDateCachesAfterTimeZoneChange(vm);
-        return true;
-    }
-
-    return false;
-}
-
 extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

@@ -1138,22 +1138,19 @@ describe.concurrent("bun test --isolate", () => {
     });
   });
 
-  // On debug builds `vm.global().set_time_zone()` temporaries in `TestCommand::exec`'s frame keep the first file alive.
-  test.skipIf(isDebug)(
-    "with --isolate, only the last two finished files can still be waiting for garbage collection",
-    async () => {
-      // File i keeps 16 * 2 ** i URLSearchParams on its global, so the live count is a bitmask of the live files.
-      const keep = (file: number) =>
-        `globalThis.kept = Array.from({ length: ${16 * 2 ** file} }, () => new URLSearchParams());`;
-      const files: Record<string, string> = {};
-      for (let file = 0; file < 12; file++) {
-        files[`${String(file).padStart(2, "0")}.test.ts`] = `
+  test("with --isolate, only the last two finished files can still be waiting for garbage collection", async () => {
+    // File i keeps 16 * 2 ** i URLSearchParams on its global, so the live count is a bitmask of the live files.
+    const keep = (file: number) =>
+      `globalThis.kept = Array.from({ length: ${16 * 2 ** file} }, () => new URLSearchParams());`;
+    const files: Record<string, string> = {};
+    for (let file = 0; file < 12; file++) {
+      files[`${String(file).padStart(2, "0")}.test.ts`] = `
           import { test } from "bun:test";
           ${keep(file)}
           test("passes", () => {});
         `;
-      }
-      files["counts.test.ts"] = `
+    }
+    files["counts.test.ts"] = `
         import { generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
         import { test } from "bun:test";
         ${Heap}
@@ -1173,24 +1170,97 @@ describe.concurrent("bun test --isolate", () => {
           console.log(JSON.stringify({ alive, held }));
         }, 60_000);
       `;
-      using dir = tempDir("isolate-collects-globals", files);
-      const { stdout, stderr, exitCode } = await runTests(
-        String(dir),
-        ["--isolate"],
-        Object.keys(files).map(file => "./" + file),
+    using dir = tempDir("isolate-collects-globals", files);
+    const { stdout, stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      Object.keys(files).map(file => "./" + file),
+    );
+    const printed = stdout.replace(/^bun test .*\n/, "");
+    expect(printed, stderr).toStartWith("{");
+    const { alive, held }: Record<"alive" | "held", number[]> = JSON.parse(printed);
+    expect({
+      theFileThatCounts: held.includes(12),
+      heldLongAfterItsEnd: held.filter(file => file < 10),
+      exitCode,
+    }).toEqual({ theFileThatCounts: true, heldLongAfterItsEnd: [], exitCode: 0 });
+    // A leak that the snapshot can't see keeps all ten. A stray word keeps one file, and which words are left depends on the build.
+    expect(alive.filter(file => file < 10).length).toBeLessThan(5);
+  });
+
+  // `TestCommand::exec` and the frames it starts the run from are on the stack until the last file ends, and the first
+  // file runs in the global the process started with. A debug build keeps every read of `vm.global()` in the frame
+  // that made it, so one read there before the first file keeps that file alive for the whole run.
+  test.each([
+    ["--isolate", {}],
+    // With an empty TZ the runner sets no time zone when it starts, only the coverage profiler.
+    ["--isolate --coverage", { TZ: "" }],
+    // `--parallel=1` runs the files in the process that was started. With this delay one worker runs all three.
+    ["--parallel=2 --parallel-delay=600000", {}],
+  ])("a process does not keep the global of the first file it ran: bun test %s", async (flags, env) => {
+    const log = `import.meta.dir + "/" + process.pid + ".log"`;
+    const counts = `
+      import { generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
+      import { test } from "bun:test";
+      import { appendFileSync } from "node:fs";
+      ${Heap}
+      Bun.gc(true);
+      const marks = heapStats().objectTypeCounts.BigInt64Array ?? 0;
+      // A root holds the mark for good. With no path from a root, a word of a native frame names it.
+      const heldByRoots = marks ? new Heap().pathsTo("BigInt64Array") : [];
+      appendFileSync(${log}, JSON.stringify({ marks, heldByRoots }) + "\\n");
+      test("counts the marks", () => {});
+    `;
+    using dir = tempDir("isolate-first-file-is-collected", {
+      "0.test.ts": `
+        import { test } from "bun:test";
+        import { appendFileSync } from "node:fs";
+        globalThis.mark = new BigInt64Array(1);
+        appendFileSync(${log}, "marked\\n");
+        test("hangs a mark on its global", () => {});
+      `,
+      "1.test.ts": counts,
+      "2.test.ts": counts,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      flags.split(" "),
+      ["./0.test.ts", "./1.test.ts", "./2.test.ts"],
+      {
+        ...bunEnv,
+        // Bun starts no collection of its own (the runner's level, the idle timer): the files ask for each one.
+        BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+        BUN_GC_TIMER_DISABLE: "1",
+        // An in-flight JIT compilation roots the code it compiles.
+        BUN_JSC_useConcurrentJIT: "0",
+        ...env,
+      },
+    );
+    const logs = fs
+      .readdirSync(String(dir))
+      .filter(name => name.endsWith(".log"))
+      .map(name =>
+        fs
+          .readFileSync(join(String(dir), name), "utf8")
+          .trim()
+          .split("\n"),
       );
-      const printed = stdout.replace(/^bun test .*\n/, "");
-      expect(printed, stderr).toStartWith("{");
-      const { alive, held }: Record<"alive" | "held", number[]> = JSON.parse(printed);
-      expect({
-        theFileThatCounts: held.includes(12),
-        heldLongAfterItsEnd: held.filter(file => file < 10),
+    // The frame of `TestCommand::run` may still name the global of the file before the one that runs, so only the
+    // file two after the marked one is asked. Other builds leave words of old stack in frames that live for the whole
+    // run, and one in `run_as_worker` can point into the first file: there only a root may not hold the mark.
+    const asked = ({ marks, heldByRoots }: { marks: number; heldByRoots: string[] }) =>
+      isDebug ? { marks, heldByRoots } : { heldByRoots };
+    expect(
+      {
+        logs: logs.map(([first, , ...later]) => ({ first, twoFilesLater: later.map(line => asked(JSON.parse(line))) })),
         exitCode,
-      }).toEqual({ theFileThatCounts: true, heldLongAfterItsEnd: [], exitCode: 0 });
-      // A leak that the snapshot can't see keeps all ten. A stray word keeps one file, and which words are left depends on the build.
-      expect(alive.filter(file => file < 10).length).toBeLessThan(5);
-    },
-  );
+      },
+      stderr,
+    ).toEqual({
+      logs: [{ first: "marked", twoFilesLater: [asked({ marks: 0, heldByRoots: [] })] }],
+      exitCode: 0,
+    });
+  });
 
   // --rerun-each runs of a file share one global, even with --isolate.
   test.each(["--rerun-each=3", "--isolate --rerun-each=3", "--parallel=1 --rerun-each=3"])(

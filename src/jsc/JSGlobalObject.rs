@@ -332,10 +332,6 @@ impl JSGlobalObject {
         JSGlobalObject__clearTerminationException(self)
     }
 
-    pub fn set_time_zone(&self, time_zone: &EncodedSlice) -> bool {
-        JSGlobalObject__setTimeZone(self, time_zone)
-    }
-
     #[inline]
     pub fn to_js_value(&self) -> JSValue {
         // JSValue is #[repr(transparent)] over the encoded pointer-width word; a
@@ -1561,7 +1557,6 @@ unsafe extern "C" {
     safe fn JSGlobalObject__clearExceptionExceptTermination(this: &JSGlobalObject) -> bool;
     safe fn JSGlobalObject__clearTerminationException(this: &JSGlobalObject);
     safe fn JSGlobalObject__hasException(this: &JSGlobalObject) -> bool;
-    safe fn JSGlobalObject__setTimeZone(this: &JSGlobalObject, time_zone: &EncodedSlice) -> bool;
     safe fn JSGlobalObject__tryTakeException(this: &JSGlobalObject) -> JSValue;
 
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is

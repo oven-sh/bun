@@ -535,18 +535,14 @@ pub fn for_each_first_load(global: &JSGlobalObject, mut each: &mut dyn FnMut(&[u
 }
 
 /// What `for_each_first_load` named in the process that ran the test files before those of this one.
-pub fn note_first_load_in_earlier_process(
-    global: &JSGlobalObject,
-    path: &[u8],
-    was_synchronous: bool,
-) {
+pub fn note_first_load_in_earlier_process(vm: &crate::VM, path: &[u8], was_synchronous: bool) {
     if compiled_program().is_none() {
         return;
     }
     // SAFETY: the VM is that of this thread, and `path` outlives the call, which copies it.
     unsafe {
         Bun__AOT__noteFirstLoadInEarlierProcess(
-            global.vm_ptr(),
+            vm.as_mut_ptr(),
             FfiSlice::new(path),
             was_synchronous,
         )

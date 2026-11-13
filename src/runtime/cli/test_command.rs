@@ -2923,7 +2923,8 @@ impl TestCommand {
             vm.transpiler.options.minify_identifiers = false;
             vm.transpiler.options.minify_whitespace = false;
             vm.transpiler.options.dead_code_elimination = false;
-            vm.global().vm().enable_control_flow_profiler();
+            // Not through `vm.global()`: this frame lives for the whole run and the GC scans it, so a copy of the start-up global in it keeps the first `--isolate` file alive.
+            vm.jsc_vm().enable_control_flow_profiler();
         }
 
         // For tests, we default to UTC time zone
@@ -2939,7 +2940,7 @@ impl TestCommand {
 
         if !tz_name.is_empty() {
             _ = vm
-                .global()
+                .jsc_vm()
                 .set_time_zone(&EncodedSlice::from_bytes(tz_name));
         }
         vm.test_isolation_state.time_zone = Some(Box::from(tz_name));

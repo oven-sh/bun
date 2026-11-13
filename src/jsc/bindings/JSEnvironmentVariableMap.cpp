@@ -66,6 +66,16 @@ void resetDateCachesAfterTimeZoneChange(JSC::VM& vm)
     invalidateLiveDateInstanceCaches(vm);
 }
 
+extern "C" bool JSC__VM__setTimeZone(JSC::VM* vm, const EncodedSlice* timeZone)
+{
+    if (WTF::setTimeZoneOverride(Zig::toString(*timeZone))) {
+        resetDateCachesAfterTimeZoneChange(*vm);
+        return true;
+    }
+
+    return false;
+}
+
 const JSC::ClassInfo JSEnvironmentVariableMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEnvironmentVariableMap) };
 
 // Node's EnvSetter DEP0104 (https://github.com/nodejs/node/blob/main/src/node_env_var.cc): once per

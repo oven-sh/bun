@@ -1,6 +1,6 @@
 use bstr::BStr;
 use bun_ast::op::Level;
-use bun_sema::atom::{Atom, Interner};
+use bun_sema::atom::Interner;
 use bun_sema::check::Checker;
 use bun_sema::check::services::{
     Child, NodeRef, Services, SymbolFlags, SymbolOp, SymbolRef, SymbolTable, TypeFlags,
@@ -15,6 +15,7 @@ use bun_sema::resolve::{Dialect, ScriptKind};
 use bun_sema::session::Session;
 use bun_sema::types::TypeId;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
+use std::cell::OnceCell;
 
 struct Source<'a> {
     path: &'a [u8],
@@ -194,87 +195,129 @@ fn parse<'s>(
     }
 }
 
-fn names_used_as_values(modules: &[Option<Written<'_, '_>>]) -> FxHashSet<Atom> {
-    let mut names = FxHashSet::default();
-    for file in modules.iter().flatten().map(|module| module.syntax.file) {
-        let mut not_values: FxHashSet<ExprId> = file.calls.iter().map(|call| call.callee).collect();
-        not_values.extend(
-            file.stmts
-                .iter()
-                .filter_map(|statement| match statement.kind {
-                    StmtKind::ExportDefault(exported) | StmtKind::ExportAssign(exported) => {
-                        Some(exported)
-                    }
-                    _ => None,
-                }),
-        );
-        for (expression, id) in file.exprs.iter().zip(0u32..) {
-            if let ExprKind::Ident(name) | ExprKind::Dot { name, .. } = expression.kind
-                && !not_values.contains(&ExprId(id))
-            {
-                names.insert(name);
-            }
-        }
-        let imports = file.import_specs.iter().map(|it| (it.imported, it.local));
-        let exports = file.export_specs.iter().map(|it| (it.local, it.exported));
-        names.extend(
-            imports
-                .chain(exports)
-                .filter(|(name, other)| name != other)
-                .map(|it| it.0),
-        );
-    }
-    names
-}
-
-fn defaulted_parameters(
-    syntax: &Syntax<'_, '_>,
-    used_as_values: &FxHashSet<Atom>,
-) -> FxHashMap<u32, DefaultedParameter> {
-    let file = syntax.file;
-    let queries: Vec<(u32, Atom)> = (file.types.iter())
-        .filter_map(|ty| match ty.kind {
-            TypeNodeKind::Typeof { mut expr, .. } => loop {
-                match file.exprs.get(expr.idx())?.kind {
-                    ExprKind::Ident(name) => break Some((ty.pos, name)),
-                    ExprKind::Dot { obj, .. } => expr = obj,
-                    _ => break None,
-                }
-            },
-            _ => None,
-        })
-        .collect();
-    let name_of = |pattern: PatId| match file[pattern].kind {
-        PatKind::Ident(name) => Some(name),
-        _ => None,
-    };
+/// A function that a statement declares, or that a variable without a type annotation holds: where its name is, and its statement.
+fn named_functions<'f>(
+    file: &'f File<'_>,
+) -> impl Iterator<Item = (&'f Func, u32, TextRange)> + 'f {
     let declared = file
         .stmts
         .iter()
-        .filter_map(|statement| match statement.kind {
-            StmtKind::Fn(function) => Some((&file[function], file[function].name, statement.loc)),
+        .filter_map(move |statement| match statement.kind {
+            StmtKind::Fn(function) if file[function].name.is_some() => {
+                Some((&file[function], file[function].name_pos, statement.loc))
+            }
             _ => None,
         });
-    let bound = file.var_decls.iter().filter_map(|declaration| {
+    let held = file.var_decls.iter().filter_map(move |declaration| {
+        let is_name = matches!(file[declaration.pat].kind, PatKind::Ident(_));
         match file.exprs.get(declaration.init.idx())?.kind {
-            ExprKind::Fn(function) if declaration.ty.is_none() => {
-                Some((&file[function], name_of(declaration.pat)?, declaration.loc))
+            ExprKind::Fn(function) if is_name && declaration.ty.is_none() => {
+                Some((&file[function], file[declaration.pat].pos, declaration.loc))
             }
             _ => None,
         }
     });
+    declared.chain(held)
+}
+
+/// How many times the outputs of a build read each name as a value: an identifier that is not the callee of a call. `None` if an output does not parse.
+fn values_read<'a>(outputs: &[Output<'a>]) -> Option<FxHashMap<&'a [u8], u32>> {
+    let session = Session::new();
+    let atoms = Interner::new_in(&session);
+    let parsed = outputs.iter().map(|output| {
+        let path = [output.path, b".ts"].concat();
+        parse(&session, &atoms, &path, output.javascript)
+    });
+    let files: Vec<File<'_>> = parsed.collect::<Result<_, _>>().ok()?;
+    let word = |output: &Output<'a>, at: u32| {
+        let text = output.javascript;
+        &text[at as usize..token_end(text, at as usize, false)]
+    };
+    let mut reads: FxHashMap<&'a [u8], u32> = FxHashMap::default();
+    let mut is_read_whole = vec![false; outputs.len()];
+    for (file, output) in files.iter().zip(outputs) {
+        let callees: FxHashSet<ExprId> = file.calls.iter().map(|call| call.callee).collect();
+        let identifiers = (file.exprs.iter().zip(0u32..)).filter(|&(expression, id)| {
+            matches!(expression.kind, ExprKind::Ident(_)) && !callees.contains(&ExprId(id))
+        });
+        for (expression, _) in identifiers {
+            *reads.entry(word(output, expression.pos)).or_default() += 1;
+        }
+        // `import("./other.js")` gives the other output as an object that has every export as a value.
+        let directory = ancestors(output.path).nth(1).unwrap_or(b"/");
+        let loaded = (file.specifier_uses.iter())
+            .filter(|used| used.kind == SpecifierKind::ImportCall)
+            .map(|used| atoms.bytes(used.spec));
+        for specifier in loaded {
+            let is_relative = specifier.starts_with(b"./") || specifier.starts_with(b"../");
+            let target = is_relative.then(|| absolute(directory, specifier));
+            if let Some(other) =
+                target.and_then(|target| outputs.iter().position(|other| other.path == target))
+            {
+                is_read_whole[other] = true;
+            }
+        }
+    }
+    let read_whole = files.iter().zip(outputs).zip(is_read_whole);
+    for ((file, output), _) in read_whole.filter(|it| it.1) {
+        for exported in file.export_specs.iter() {
+            *reads.entry(word(output, exported.local_pos)).or_default() += 1;
+        }
+    }
+    Some(reads)
+}
+
+/// For each name, how many variables of the output hold it that the bundler wrote for `export default <name>` and that nothing reads: `var thing_default = useThing`.
+fn unread_default_exports<'a>(
+    output: &Syntax<'a, '_>,
+    mappings: &Mappings,
+    modules: &[Option<Written<'_, '_>>],
+    reads: &FxHashMap<&[u8], u32>,
+) -> FxHashMap<&'a [u8], u32> {
+    let file = output.file;
     let mut found = FxHashMap::default();
-    for (function, name, span) in declared.chain(bound) {
-        let is_queried = |id: ParamId| {
-            let parameter = name_of(file[id].pat);
-            let inside = |at: u32| span.pos <= at && at < span.end;
-            file[id].default.is_some()
-                && (queries.iter()).any(|&(at, read)| inside(at) && Some(read) == parameter)
+    for declaration in file.var_decls.iter() {
+        let variable = &file[declaration.pat];
+        let value = file.exprs.get(declaration.init.idx());
+        let Some(value) = value.filter(|value| matches!(value.kind, ExprKind::Ident(_))) else {
+            continue;
         };
-        // A call by its name takes a `?` as it takes a default value. A use as a value or under `typeof` reads a type, where they differ.
-        let is_read = used_as_values.contains(&name)
-            || queries.iter().any(|query| query.1 == name)
-            || function.params.iter().any(is_queried);
+        // The bundler maps the name of such a variable to the `useThing` of `export default useThing`.
+        let is_of_default_export = || {
+            let (source, key) = mappings.original(variable.pos)?;
+            let source = modules[source as usize].as_ref()?.syntax.file;
+            let mut exported = source.stmts.iter().filter_map(|it| match it.kind {
+                StmtKind::ExportDefault(exported) => source.exprs.get(exported.idx()),
+                _ => None,
+            });
+            exported.find(|it| it.pos == key && matches!(it.kind, ExprKind::Ident(_)))
+        };
+        if matches!(variable.kind, PatKind::Ident(_))
+            && !reads.contains_key(output.word(variable.pos))
+            && is_of_default_export().is_some()
+        {
+            *found.entry(output.word(value.pos)).or_default() += 1;
+        }
+    }
+    found
+}
+
+fn defaulted_parameters(
+    syntax: &Syntax<'_, '_>,
+    is_under_typeof: impl Fn(&[u8]) -> bool,
+) -> FxHashMap<u32, DefaultedParameter> {
+    let file = syntax.file;
+    let queries = syntax.typeof_names();
+    let mut found = FxHashMap::default();
+    for (function, name, span) in named_functions(file) {
+        let is_queried = |id: ParamId| {
+            let parameter = syntax.word(file[file[id].pat].pos);
+            let is_inside = |at: u32| span.pos <= at && at < span.end;
+            file[id].default.is_some()
+                && (queries.iter()).any(|&(at, read)| is_inside(at) && read == parameter)
+        };
+        // A `typeof` reads a type, where a `?` is not a default value: `typeof first` has no `undefined` for `first: number = 1`.
+        let is_read = is_under_typeof(syntax.word(name)) || function.params.iter().any(is_queried);
         if is_read || !Syntax::has_javascript(function) {
             continue;
         }
@@ -418,6 +461,32 @@ impl<'a, 's> Syntax<'a, 's> {
             None => start,
         };
         Some(Slot::new(Place::Binding, key, (start, end)))
+    }
+
+    /// Where each `typeof` of a type is, and the name that it starts with.
+    fn typeof_names(&self) -> Vec<(u32, &'a [u8])> {
+        let file = self.file;
+        let queries = file.types.iter().filter_map(|ty| match ty.kind {
+            TypeNodeKind::Typeof { mut expr, .. } => loop {
+                let queried = file.exprs.get(expr.idx())?;
+                match queried.kind {
+                    ExprKind::Ident(_) => break Some((ty.pos, self.word(queried.pos))),
+                    ExprKind::Dot { obj, .. } => expr = obj,
+                    _ => break None,
+                }
+            },
+            _ => None,
+        });
+        queries.collect()
+    }
+
+    /// Each parameter of a function of `named_functions`, and where the name of that function is.
+    fn named_function_of_parameters(&self) -> FxHashMap<u32, u32> {
+        let file = self.file;
+        let parameters = named_functions(file).flat_map(|(function, name, _)| {
+            (function.params.iter()).map(move |id| (file[file[id].pat].pos, name))
+        });
+        parameters.collect()
     }
 
     fn may_have_default_without_slot(&self, parameter: u32) -> bool {
@@ -1552,6 +1621,8 @@ struct Bundle<'a> {
     modules: &'a [ModuleTypes],
     emitted_declarations: &'a [ModuleTypes],
     entry_point: Option<&'a [u8]>,
+    outputs: &'a [Output<'a>],
+    reads: &'a OnceCell<Option<FxHashMap<&'a [u8], u32>>>,
 }
 
 struct Written<'a, 's> {
@@ -3149,7 +3220,7 @@ fn add_types(
         hoisted: Vec::new(),
         optional_parameter_properties,
     };
-    transfer.copy_slots(&source_slots, &written);
+    transfer.copy_slots(&source_slots, &written, bundle);
     transfer.annotate_generated_code();
     transfer.copy_casts();
     transfer.type_enum_and_namespace_objects();
@@ -3188,13 +3259,17 @@ impl<'a> Transfer<'_, 'a, '_> {
         &mut self,
         source_slots: &FxHashMap<(Place, u32, u32), Slot>,
         every_module: &[Option<Written<'_, '_>>],
+        bundle: &Bundle<'_>,
     ) {
         let (output, mappings, written, linked) =
             (self.output, self.mappings, self.modules, self.linked);
         let (output_file, insertions) = (output.file, &mut self.insertions);
+        let type_references = &self.type_references;
         let mut defaults_of: FxHashMap<u32, FxHashMap<u32, DefaultedParameter>> =
             FxHashMap::default();
-        let mut used_as_values = None;
+        let mut named_under_typeof: Option<FxHashSet<&[u8]>> = None;
+        let mut named_function_of = None;
+        let mut held_by_default_exports = None;
         let parameter_count_of: FxHashMap<u32, usize> = output_file
             .fns
             .iter()
@@ -3232,12 +3307,32 @@ impl<'a> Transfer<'_, 'a, '_> {
                 };
                 let parameters = has_default.then(|| {
                     defaults_of.entry(source).or_insert_with(|| {
-                        let used = used_as_values
-                            .get_or_insert_with(|| names_used_as_values(every_module));
-                        defaulted_parameters(&module.syntax, used)
+                        let named = named_under_typeof.get_or_insert_with(|| {
+                            let modules = every_module.iter().flatten();
+                            let queries = modules.flat_map(|module| module.syntax.typeof_names());
+                            queries.map(|query| query.1).collect()
+                        });
+                        defaulted_parameters(&module.syntax, |name| {
+                            let is_referenced = |types: &ModuleTypes| {
+                                type_references.contains(&(&types.path[..], name))
+                            };
+                            named.contains(name) || module.types.is_some_and(is_referenced)
+                        })
                     })
                 });
-                if let Some(&default) = parameters.and_then(|parameters| parameters.get(&key)) {
+                // A call of a function by its name takes a `?` as it takes a default value. A use of the function as a value reads its type.
+                if let Some(&default) = parameters.and_then(|parameters| parameters.get(&key))
+                    && let Some(&function) = named_function_of
+                        .get_or_insert_with(|| output.named_function_of_parameters())
+                        .get(&slot.key)
+                    && let Some(reads) = bundle.reads.get_or_init(|| values_read(bundle.outputs))
+                    && reads.get(output.word(function))
+                        == held_by_default_exports
+                            .get_or_insert_with(|| {
+                                unread_default_exports(output, mappings, written, reads)
+                            })
+                            .get(output.word(function))
+                {
                     let annotation = (default.annotation.some())
                         .filter(|_| !module.is_unchecked())
                         .zip(found);
@@ -4765,12 +4860,15 @@ fn typed_outputs(
 ) -> Result<Vec<(Vec<u8>, TypedText)>, TypedFilesError> {
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
     let mut found = Vec::new();
+    let reads = OnceCell::new();
     for output in outputs {
         let shown = inside(outdir, output.path).unwrap_or(output.path);
         let bundle = Bundle {
             modules,
             emitted_declarations,
             entry_point: output.entry_point,
+            outputs,
+            reads: &reads,
         };
         let typed =
             add_types_by_source_map(output.path, output.javascript, output.source_map, &bundle)

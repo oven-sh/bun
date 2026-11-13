@@ -284,6 +284,45 @@ console.log(useMake(undefined, 1), useName(), useOver(), useOver("a"), useArrow(
     });
   });
 
+  // What reads a function as a value is an identifier of the output. A property with its name, or an export of it, is none.
+  test("can be left out of a function that a module exports, and whose name a property has", async () => {
+    const typed = await typedFile({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(project["tsconfig.json"]).compilerOptions, jsx: "react-jsx" },
+      }),
+      "package.json": JSON.stringify({ name: "hooks", compilerOptions: { strict: true, jsx: "react-jsx" } }),
+      // The bundler writes `var thing_default = useThing` for the last line.
+      "src/thing.tsx": `import { useState } from "./state";
+function useThing(first: number = 1): number {
+  const [value] = useState(first);
+  return value;
+}
+export default useThing;
+`,
+      "src/index.tsx": `import { useState } from "./state";
+import thing from "./thing";
+const info = { useBeside: 1, useMain: 2 };
+${useBeside}export default function useMain(first: number = 1): number {
+  const [value] = useState(first);
+  return value;
+}
+function useInner(first: number = 1): number {
+  const [value] = useState(first);
+  return value;
+}
+export { useInner as useOuter, thing };
+console.log(info.useBeside, info.useMain, useBeside(), useMain(), useInner(), thing());
+`,
+    });
+    expect(parametersIn(typed)).toEqual({
+      useState: "initial: T",
+      useThing: "t0?: number",
+      useBeside: "t0?: number, t1?: number",
+      useMain: "t0?: number",
+      useInner: "t0?: number",
+    });
+  });
+
   const queried = `import { useState } from "./state";
 function take(point: [number, number]): number {
   return point[0] + point[1];
@@ -421,6 +460,89 @@ ${useBeside}`,
     expect(typed).toContain("let step = (t0: number) => {");
     expect(typed).toContain("step = (t1: number) => {");
     expect(typed).toContain("function useBeside(t0?: number, t1?: number): number {");
+  });
+
+  // The bundler gives a function one name in the outputs: `items.reduce(useAdd, 0)` for `import useOther from "./add"`.
+  // Main writes the typed file of this build too: only `useBeside` has other parameters there.
+  test("stays as the output has it in a function that another module has as a value under another name", async () => {
+    const hook = (head: string, tail = "") => `import { useState } from "./state";
+${head}(total: number = 0, { size }: { size: number }) {
+  const [n] = useState(size);
+  return total + n;
+}
+${tail}`;
+    const typed = await typedFile({
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(project["tsconfig.json"]).compilerOptions, jsx: "react-jsx", allowJs: true },
+      }),
+      "package.json": JSON.stringify({ name: "hooks", compilerOptions: { strict: true, jsx: "react-jsx" } }),
+      "src/add.tsx": hook("export default function useAdd"),
+      "src/scaled.tsx": hook("export function useScaled"),
+      "src/spread.tsx": hook("export function useSpread"),
+      "src/queried.tsx": hook("export default function useQueried"),
+      "src/mapped.tsx": hook("function useMapped", "export default useMapped;\n"),
+      "src/held.tsx": hook("function useHeld", "export default useHeld;\n"),
+      "src/typed.tsx": hook("function useTyped", "export default useTyped;\n"),
+      "src/first.ts": `const alias = 5;\nexport const five = alias + 0;\n`,
+      "src/renamed.tsx": hook(
+        "export function useRenamed",
+        `export const alias = useRenamed;
+export function sumRenamed(items: Array<{ size: number }>): number {
+  const other: typeof alias = (total = 0, { size }) => total - size;
+  return items.reduce(other, 0);
+}
+`,
+      ),
+      "src/pick.ts": `export function pick<T>(make: (seed: T, item: { size: number }) => T, seed: T): T {
+  return make(seed, { size: 1 });
+}
+`,
+      "src/glue.js": `import { pick } from "./pick";
+import { useScaled } from "./scaled";
+export const picked = pick(useScaled, 0);
+`,
+      "src/index.tsx": `import { five } from "./first";
+import useOther from "./add";
+import { picked } from "./glue.js";
+import held from "./held";
+import mapped from "./mapped";
+import useAlias from "./queried";
+import { alias as renamed, sumRenamed } from "./renamed";
+import * as spread from "./spread";
+import { useState } from "./state";
+import typed from "./typed";
+const { useSpread: taken } = spread;
+export const alias = held;
+export { renamed };
+export function sum(items: Array<{ size: number }>): number {
+  const add: typeof useAlias = (total = 0, { size }) => total + size;
+  const other: typeof alias = (total = 0, { size }) => total - size;
+  const third: typeof typed = (total = 0, { size }) => total * size;
+  const sums = [useOther, taken, add, other, third, mapped].map(each => items.reduce(each, 0));
+  const called = useAlias(1, { size: 1 }) + held(1, { size: 1 }) + typed(1, { size: 1 });
+  return sums.length + called + picked + sumRenamed(items) + five;
+}
+${useBeside}`,
+    });
+    expect(parametersIn(typed)).toMatchObject({
+      // `import useOther from "./add"`, then `useOther` as a value.
+      useAdd: "t0: number, t1",
+      // A JavaScript module gives it to a call.
+      useScaled: "t0: number, t1",
+      // `const { useSpread: taken } = spread`, for `import * as spread from "./spread"`.
+      useSpread: "t0: number, t1",
+      // `typeof useAlias`, for `import useAlias from "./queried"`.
+      useQueried: "t0: number, t1",
+      // `mapped_default` as a value, for `var mapped_default = useMapped`.
+      useMapped: "t0: number, t1",
+      // `typeof alias`, for `const alias = held_default`.
+      useHeld: "t0: number, t1",
+      // `typeof typed`, for `import typed from "./typed"`.
+      useTyped: "t0: number, t1",
+      // `typeof alias`, for `const alias = useRenamed` that the bundler writes as `alias2`.
+      useRenamed: "t0: number, t1",
+      useBeside: "t0?: number, t1?: number",
+    });
   });
 
   // React's `useCallback` is not in the output: its callback is where the call was, as an argument of `pick`.
@@ -641,7 +763,7 @@ console.log(usePair(), usePair(1), usePair(1, 2));
     expect(typed).toContain("function useFormat(t0: ((value: number) => string) | undefined,value: number): string{");
   });
 
-  test("with two entry points and splitting", async () => {
+  test("with two entry points, splitting, and a file that import() loads", async () => {
     using dir = tempDir("build-api-dts-moved-default-splitting", {
       "tsconfig.json": JSON.stringify({
         compilerOptions: { ...JSON.parse(project["tsconfig.json"]).compilerOptions, jsx: "react-jsx" },
@@ -654,9 +776,27 @@ ${useBeside}export function useOther(first: number = 1): number {
   return value;
 }
 `,
+      "src/lazy.tsx": `import { useState } from "./state";
+export function useFar(first: number = 1): number {
+  const [value] = useState(first);
+  return value + useNear();
+}
+function useNear(first: number = 1): number {
+  const [value] = useState(first);
+  return value;
+}
+export default function useLazy(first: number = 1): number {
+  const [value] = useState(first);
+  return value;
+}
+`,
       "src/a.tsx": `import { useBeside } from "./hooks";
 export function useA(first: number = 1): number {
   return useBeside(first);
+}
+export async function far(items: number[]): Promise<number[]> {
+  const lazy = await import("./lazy");
+  return items.map(lazy.useFar).concat(items.map(lazy.default));
 }
 console.log(useA(), useBeside());
 `,
@@ -685,6 +825,8 @@ console.log(useB(undefined, 1), useBeside());
     expect(typed.map(parametersIn).sort((a, b) => Object.keys(a)[0].localeCompare(Object.keys(b)[0]))).toEqual([
       { useA: "t0?: number" },
       { useB: "t0: number | undefined, end: number" },
+      // `import("./lazy")` gives every export of that file as a value.
+      { useFar: "t0: number", useNear: "t0?: number", useLazy: "t0: number" },
       // Another file of the build has `useOther` as a value.
       { useState: "initial: T", useBeside: "t0?: number, t1?: number", useOther: "t0: number" },
     ]);

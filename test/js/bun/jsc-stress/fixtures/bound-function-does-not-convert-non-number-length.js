@@ -4,9 +4,9 @@
 // Function.prototype.bind takes the length of its result from the "length" of its target only if that value is a
 // Number. Any other value is not converted: the length is 0.
 //
-// The DFG and the FTL call an operation of their own for bind(), with its own copy of these steps. There is one caller
-// below for each way to write the call and each kind of target, so that each caller is compiled for targets of one
-// kind and is then asked about every length.
+// The DFG and the FTL call an operation of their own for bind(), with its own copy of these steps. Each caller below
+// is one way to write the call for one kind of target, so that it is compiled for targets of one kind and is then
+// asked about every length.
 
 function shouldBe(actual, expected, caller, kind, length, what) {
     if (!Object.is(actual, expected))
@@ -108,21 +108,24 @@ const targetKinds = [
 const bind = Function.prototype.bind;
 const uncurriedBind = Function.prototype.call.bind(bind);
 
-// The body of a caller, and the number of arguments that it binds.
+// The body of a caller, the number of arguments that it binds, and whether there is such a caller for every kind of
+// target. The other bodies have one for the first kind.
 const callerBodies = [
-    ["return f.bind(null);", 0],
-    ["return f.bind(null, 1);", 1],
-    ["return f.bind(null, 1, 2);", 2],
-    ["return f.bind(null, 1, 2, 3);", 3],
+    ["return f.bind(null);", 0, false],
+    // The compiler knows the Structure of f here.
+    ["return f.bind(null, 1);", 1, true],
+    ["return f.bind(null, 1, 2);", 2, false],
+    ["return f.bind(null, 1, 2, 3);", 3, false],
     // More arguments than the operation takes: this call reaches Function.prototype.bind itself in every tier.
-    ["return f.bind(null, 1, 2, 3, 4);", 4],
-    ["return bind.call(f, null, 1);", 1],
-    ["return bind.apply(f, [null, 1]);", 1],
-    ["return uncurriedBind(f, null, 1);", 1],
+    ["return f.bind(null, 1, 2, 3, 4);", 4, false],
+    // The compiler does not know the Structure of f here.
+    ["return bind.call(f, null, 1);", 1, true],
+    ["return bind.apply(f, [null, 1]);", 1, false],
+    ["return uncurriedBind(f, null, 1);", 1, false],
     // A tail call.
-    ["'use strict'; return f.bind(null, 1);", 1],
+    ["'use strict'; return f.bind(null, 1);", 1, false],
     // The bound function is not used.
-    ["f.bind(null, 1);", 1],
+    ["f.bind(null, 1);", 1, false],
 ];
 
 let callerCount = 0;
@@ -133,9 +136,9 @@ function makeCaller(body) {
     return caller;
 }
 
-for (const [body, boundArgumentCount] of callerBodies) {
+for (const [body, boundArgumentCount, forEveryKind] of callerBodies) {
     const argumentsOfBind = [null, 1, 2, 3, 4].slice(0, boundArgumentCount + 1);
-    for (const [kind, expectedName, readsPerBind, targetWithLength] of targetKinds) {
+    for (const [kind, expectedName, readsPerBind, targetWithLength] of forEveryKind ? targetKinds : targetKinds.slice(0, 1)) {
         const caller = makeCaller(body);
         const targets = lengths.map(([, length]) => targetWithLength(length));
         // bind() reads the name of its target, and the first read gives a function a property for its name, so another

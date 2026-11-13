@@ -39,3 +39,16 @@ export const build = b.fn({
 });
 
 export const workerLiveCount = b.fn({ returns: b.usize });
+
+const setupReaction = {
+  ...js,
+  feature: "Bundler",
+  args: {
+    value: b.any,
+    context: b.nativePromiseContext("crate::api::JSBundler::DeferredPluginSetup").withValue,
+  },
+  returns: b.any,
+} as const;
+
+export const onSetupResolve = b.fn({ ...setupReaction, export: "Bun__Bundler__onSetupResolve" });
+export const onSetupReject = b.fn({ ...setupReaction, export: "Bun__Bundler__onSetupReject" });

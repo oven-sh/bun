@@ -51,6 +51,7 @@ public:
         HTMLRewriterPipeFree,
         S3UploadStream,
         CronJob,
+        BundlerDeferredSetup,
     };
 
     // `held` is visited, so the reaction keeps it alive for as long as the

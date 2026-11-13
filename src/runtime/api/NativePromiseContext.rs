@@ -70,10 +70,11 @@ pub(crate) enum Tag {
     S3UploadStream,
     /// A `Bun.cron()` job whose tick returned a promise.
     CronJob,
+    BundlerDeferredSetup,
 }
 
 impl Tag {
-    pub(crate) const COUNT: usize = 12;
+    pub(crate) const COUNT: usize = 13;
 
     #[inline]
     const fn from_raw(n: u8) -> Tag {
@@ -90,6 +91,7 @@ impl Tag {
             9 => Tag::HTMLRewriterPipeFree,
             10 => Tag::S3UploadStream,
             11 => Tag::CronJob,
+            12 => Tag::BundlerDeferredSetup,
             _ => unreachable!(),
         }
     }
@@ -129,6 +131,9 @@ impl NativePromiseContextType for crate::webcore::s3::client::S3UploadStreamWrap
 }
 impl NativePromiseContextType for crate::api::cron::CronJob {
     const TAG: Tag = Tag::CronJob;
+}
+impl NativePromiseContextType for crate::api::JSBundler::DeferredPluginSetup {
+    const TAG: Tag = Tag::BundlerDeferredSetup;
 }
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer. `ctx` is stored
@@ -226,7 +231,10 @@ fn clear_remembered_cell(ctx: *mut c_void, tag: Tag) {
                 (*ctx.cast::<DebugHTTPSServerMuxRequestContext>()).promise_cell_collected()
             }
             Tag::CronJob => (*ctx.cast::<crate::api::cron::CronJob>()).tick_cell_collected(),
-            Tag::HTMLRewriterSuspension | Tag::HTMLRewriterPipeFree | Tag::S3UploadStream => {}
+            Tag::HTMLRewriterSuspension
+            | Tag::HTMLRewriterPipeFree
+            | Tag::S3UploadStream
+            | Tag::BundlerDeferredSetup => {}
         }
     }
 }
@@ -289,6 +297,13 @@ impl DeferredDerefTask {
                 Tag::HTMLRewriterPipeFree => unsafe {
                     <html_rewriter::RewriterPipe as bun_ptr::CellRefCounted>::deref_nn(
                         NonNull::new_unchecked(ctx.cast::<html_rewriter::RewriterPipe>()),
+                    )
+                },
+                // The suspended parser owns native target/default data only. Its JS
+                // roots are visited by the dying cell, so no JSC operation is needed.
+                Tag::BundlerDeferredSetup => unsafe {
+                    bun_core::heap::destroy(
+                        ctx.cast::<crate::api::JSBundler::DeferredPluginSetup>(),
                     )
                 },
                 _ => {}
@@ -362,6 +377,11 @@ impl DeferredDerefTask {
                         ctx.cast::<crate::api::cron::CronJob>(),
                     ));
                 }
+                Tag::BundlerDeferredSetup => {
+                    bun_core::heap::destroy(
+                        ctx.cast::<crate::api::JSBundler::DeferredPluginSetup>(),
+                    );
+                }
             }
         }
     }
@@ -396,3 +416,7 @@ const _: () = assert!(
 );
 const _: () =
     assert!(core::mem::align_of::<crate::api::cron::CronJob>() > DeferredDerefTask::TAG_MASK);
+const _: () = assert!(
+    core::mem::align_of::<crate::api::JSBundler::DeferredPluginSetup>()
+        > DeferredDerefTask::TAG_MASK
+);

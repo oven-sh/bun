@@ -72,7 +72,6 @@ fn dangerously_run_without_jit_protections<R>(func: impl FnOnce() -> R) -> R {
 #[repr(C)]
 struct Offsets {
     js_array_buffer_view_offset_of_length: u32,
-    js_array_buffer_view_offset_of_byte_offset: u32,
     js_array_buffer_view_offset_of_vector: u32,
     js_cell_offset_of_type: u32,
     call_frame_argument_count_including_this_slot: u32,

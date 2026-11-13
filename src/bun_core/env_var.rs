@@ -777,7 +777,7 @@ macro_rules! platform_specific_new {
                 }
             }
 
-            /// Equal to `.platform_key()` except fails to compile if current platform is supported.
+            /// Equal to `platform_key()` except fails to compile if current platform is supported.
             pub(crate) fn key() -> &'static ZStr {
                 assert_platform_supported();
                 platform_key().unwrap()
@@ -863,7 +863,6 @@ macro_rules! platform_specific_new {
                 #[inline] pub fn get_not_empty(&self) -> Option<K::ValueType>
                     where K::ValueType: $crate::env_var::HasLen { get_not_empty() }
                 #[inline] pub fn key(&self) -> &'static $crate::ZStr { key() }
-                #[inline] pub fn platform_key(&self) -> Option<&'static $crate::ZStr> { platform_key() }
             }
 
             fn assert_platform_supported() {

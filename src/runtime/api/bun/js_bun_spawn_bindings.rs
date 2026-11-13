@@ -300,12 +300,11 @@ pub(crate) fn spawn_sync(
         && let Some(runner) = crate::test_runner::jest::Jest::runner()
         && let Some(active_file) = runner.bun_test_root.active_file.clone()
     {
-        let vm = cx.vm().as_mut();
-        runner.remove_active_timeout(vm);
+        runner.remove_active_timeout();
         crate::test_runner::bun_test::BunTest::bun_test_timeout_callback(
             &active_file,
             &deadline,
-            vm,
+            cx.vm(),
         );
         if cx.global().has_exception() {
             return Ok(JSValue::ZERO);
@@ -1316,9 +1315,9 @@ fn spawn_maybe_sync(
         abort_handle: bun_jsc::AbortHandle::for_owner::<SubprocessT<'static>>(),
         context: cx.context().id(),
         event_loop_timer_refd: Cell::new(false),
-        event_loop_timer: JsCell::new(crate::timer::EventLoopTimer::init_paused(
+        event_loop_timer: crate::timer::EventLoopTimer::init_paused(
             crate::timer::EventLoopTimerTag::SubprocessTimeout,
-        )),
+        ),
         exited_due_to_maxbuf: Cell::new(None),
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
@@ -1602,28 +1601,14 @@ fn spawn_maybe_sync(
         // registered before onProcessExit can potentially be called.
         if let Some(timeout_val) = timeout {
             let ts = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, i64::from(timeout_val));
-            // Note: `EventLoopTimer.next` is a local-stub Timespec until
-            // `bun_event_loop` switches to `bun_core::Timespec`; copy fieldwise.
-            subprocess.event_loop_timer.with_mut(|t| {
-                t.next = crate::timer::ElTimespec {
-                    sec: ts.sec,
-                    nsec: ts.nsec,
-                };
-            });
+            subprocess.event_loop_timer.next.set(ts);
             // `Timer::All` lives in `bun_runtime`; reach it via the
             // `RuntimeHooks` dispatch (`VirtualMachineRef::timer_insert`) which
             // forwards to `crate::timer::All::insert`.
             // SAFETY: `jsc_vm_ptr` is the live per-thread VM; the timer node is
             // owned by the boxed `Subprocess` and stays at a stable address
             // until `Subprocess::finalize` removes it from the heap.
-            unsafe {
-                jsc::VirtualMachineRef::timer_insert(
-                    jsc_vm_ptr,
-                    core::ptr::addr_of!(subprocess.event_loop_timer)
-                        .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                        .cast_mut(),
-                );
-            }
+            unsafe { (*jsc_vm_ptr).timer_insert(&raw const subprocess.event_loop_timer) };
             subprocess.set_event_loop_timer_refd(true);
         }
 
@@ -1812,22 +1797,15 @@ fn spawn_maybe_sync(
         // This does mean if an AbortSignal times out it will throw
         if let Some(signal) = subprocess.abort_signal_ref() {
             if let Some(abort_signal_timeout) = signal.get_timeout() {
-                // Note: `AbortSignal::Timeout.event_loop_timer` uses the
-                // bun_event_loop-local `Timespec` stub; convert fieldwise.
-                //
                 // A fake-heap deadline is on the mocked clock, which cannot
                 // advance while this call blocks; only a real-heap one is
                 // comparable with `now`.
-                if abort_signal_timeout.event_loop_timer.state
+                if abort_signal_timeout.event_loop_timer.state.get()
                     == crate::timer::EventLoopTimerState::ACTIVE
-                    && abort_signal_timeout.event_loop_timer.in_heap
+                    && abort_signal_timeout.event_loop_timer.in_heap.get()
                         == crate::timer::InHeap::Regular
                 {
-                    let next = &abort_signal_timeout.event_loop_timer.next;
-                    let next_ts = Timespec {
-                        sec: next.sec,
-                        nsec: next.nsec,
-                    };
+                    let next_ts = abort_signal_timeout.event_loop_timer.next.get();
                     if user_timespec.eql(&Timespec::EPOCH)
                         || next_ts.order(&user_timespec) == core::cmp::Ordering::Less
                     {

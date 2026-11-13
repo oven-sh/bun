@@ -87,10 +87,10 @@ mod watcher_atomics;
 pub(super) use crate::server::SavedRequestUnion;
 pub(crate) use bundle::EntryPointList;
 use bundle::{RouteIndexAndRecurseFlag, TestingBatch};
-use deferred_request::{DeferredRequest, DeferredScriptRequest, Handler, ResponseAndMethod};
+use deferred_request::{DeferredScriptRequest, Handler, ResponseAndMethod};
 pub(crate) use directory_watch_store::DirectoryWatchStore;
 use ensure_route::{
-    HTMLRouter, ReqOrSaved, RequestEnsureRouteBundledCtx, ensure_route_is_bundled,
+    BundleQueueType, HTMLRouter, ReqOrSaved, RequestEnsureRouteBundledCtx, ensure_route_is_bundled,
     trace_route_failures,
 };
 use failures::mark_all_route_children;
@@ -536,7 +536,7 @@ pub(crate) struct DevServer {
     /// will immediately enqueue this.
     pub(crate) next_bundle: NextBundle,
     pub(crate) deferred_request_pool:
-        HiveArrayFallback<deferred_request::Node, { DeferredRequest::MAX_PREALLOCATED }>,
+        HiveArrayFallback<deferred_request::Node, { deferred_request::MAX_PREALLOCATED }>,
     /// UWS can handle closing the websocket connections themselves
     pub(crate) active_websocket_connections: HashMap<*mut HmrSocket, ()>,
 

@@ -609,11 +609,9 @@ impl Drop for DevServer {
 
         {
             while let Some(r) = self.next_bundle.requests.pop_first() {
-                // SAFETY: `pop_first` returns a live node linked by `defer_request`,
-                // which initialized `data`. This exclusive borrow ends at `deref_`.
-                let data = unsafe { (*r).data.assume_init_mut() };
-                debug_assert!(!matches!(data.handler, Handler::ServerHandler(_)));
-                data.abort_and_deref();
+                let handler = r.take_handler();
+                debug_assert!(!matches!(handler, Handler::ServerHandler(_)));
+                handler.fail();
             }
         }
 

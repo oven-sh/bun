@@ -419,6 +419,7 @@ enum Drive {
     Next(u32, NextStep),
 }
 
+/// `First` is `nextAsync()` of @sinonjs/fake-timers 15.4.0: the timer runs before the pending ticks (https://github.com/sinonjs/fake-timers/issues/597).
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum NextStep {
     First,
@@ -1320,7 +1321,12 @@ impl FakeTimers {
                 drive.drive = Drive::Next(steps, NextStep::AfterFirst);
                 // SAFETY: as above.
                 let Some(timer) = (unsafe { (*all).fake_timers.timers.delete_min() }) else {
-                    return Ok(Some(Step::Finished));
+                    // Jest's `tickAsync(0)` runs the ticks when there was no timer too.
+                    // SAFETY: as above.
+                    if unsafe { (*all).fake_timers.ticks.is_empty() } {
+                        return Ok(Some(Step::Finished));
+                    }
+                    return Ok(Some(Step::Again));
                 };
                 Self::drive_threw(global, id, Self::fire(global, timer)?);
                 Ok(Some(Step::Again))
@@ -1331,13 +1337,21 @@ impl FakeTimers {
                 }
                 drive.drive = Drive::Next(steps, NextStep::SameInstant);
                 drive.during_tick = true;
+                // SAFETY: as above.
+                let ran_ticks = !unsafe { (*all).fake_timers.ticks.is_empty() };
                 Self::run_ticks(global)?;
+                // A tick can call `useFakeTimers()`, which settles this drive. A timer that is due now is then one of the new clock.
+                // SAFETY: as above.
+                if unsafe { (*all).fake_timers.drive_mut(id) }.is_none() {
+                    return Ok(None);
+                }
                 // SAFETY: as above.
                 let now = unsafe { (*all).fake_timers.now };
                 // SAFETY: as above.
                 let Some(timer) = (unsafe { (*all).fake_timers.pop_due(&now) }) else {
+                    // A tick that just ran can queue more after an `await`. Jest looks for what is left after those promise jobs, so the next step does.
                     // SAFETY: as above.
-                    let none_left = unsafe { (*all).fake_timers.is_empty() };
+                    let none_left = !ran_ticks && unsafe { (*all).fake_timers.is_empty() };
                     // SAFETY: as above.
                     let Some(drive) = (unsafe { (*all).fake_timers.drive_mut(id) }) else {
                         return Ok(None);

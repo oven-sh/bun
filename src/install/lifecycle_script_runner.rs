@@ -1107,23 +1107,18 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         debug_assert!(self.remaining_fds == 0);
 
         self.process = None;
-
-        self.stdout.deinit();
-        self.stderr.deinit();
         self.stdout = OutputReader::init::<Self>();
         self.stderr = OutputReader::init::<Self>();
     }
 
     /// Consumes and frees a heap-allocated `LifecycleScriptSubprocess` created by [`Self::new`].
-    /// Cleanup side effects (`reset_polls`, `ensure_not_in_heap`) run via `Drop`.
     ///
     /// # Safety
     /// `this` must have been produced by `Self::new` (`heap::alloc`) and not yet destroyed;
     /// the caller must not use any outstanding `&`/`&mut` to `*this` after this returns.
     pub(crate) unsafe fn destroy(this: *mut Self) {
         // SAFETY: caller contract — `this` came from `heap::alloc` in `Self::new` and is
-        // uniquely owned here. Dropping the Box runs `Drop` (reset_polls + ensure_not_in_heap)
-        // then frees the allocation.
+        // uniquely owned here.
         drop(unsafe { bun_core::heap::take(this) });
     }
 
@@ -1303,7 +1298,7 @@ bun_io::impl_buffered_reader_parent! {
 
 impl Drop for LifecycleScriptSubprocess<'_> {
     fn drop(&mut self) {
-        self.reset_polls();
+        debug_assert!(self.remaining_fds == 0);
         self.ensure_not_in_heap();
     }
 }

@@ -8527,6 +8527,42 @@ describe("numeric tokens that print as written", () => {
   minify_test("a{--v:5.0 .10}", "a{--v:5 .1}");
 });
 
+// https://github.com/parcel-bundler/lightningcss/issues/1286
+describe("a resolution kept as tokens prints the unit it was written with", () => {
+  // The targets of `bun build`. Chrome 80 to 112 read only `x` in -webkit-image-set().
+  const targets = { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 };
+  const as_written = (css: string, expected = css) =>
+    test(css, () => {
+      expect({
+        no_targets: cssInternals.minifyTest(css, ""),
+        default_targets: cssInternals.minifyTest(css, "", targets),
+      }).toEqual({ no_targets: expected, default_targets: expected });
+    });
+
+  as_written(
+    "a{cursor:-webkit-image-set(url(a.png) 1x,url(b.png) 2x) 5 8,text}",
+    "a{cursor:-webkit-image-set(url(a.png) 1x,url(b.png) 2x)5 8,text}",
+  );
+  as_written("a{content:-webkit-image-set(url(a.png) 1x,url(b.png) 2x)}");
+  as_written("a{list-style-image:image-set(url(a.png) 1x,url(b.png) 2x)}");
+  as_written("a{background:image-set(url(a.png) 1x,url(b.png) 2x),var(--c)}");
+  as_written(
+    "a{background-image:-webkit-image-set(var(--lo) 1x,var(--hi) 2x)}",
+    "a{background-image:-webkit-image-set(var(--lo)1x,var(--hi)2x)}",
+  );
+  as_written("a{--bg:image-set(url(a.png) 1x,url(b.png) 2x)}");
+  as_written("a{--r:2x;--k:2dppx;--u:2X;--p:96dpi;--q:1dpcm}");
+  as_written("@container style(--r:2x){a{color:red}}");
+  as_written('@property --x{syntax:"*";inherits:false;initial-value:2dppx}');
+  // Not one rule: it would print one unit for both.
+  as_written(".a{--r:2x}.b{--r:2dppx}");
+
+  test("a media query is read as a resolution and takes the unit the targets have", () => {
+    const css = "@media (min-resolution:2x){a{color:red}}";
+    expect(cssInternals.minifyTest(css, "", targets)).toBe("@media (min-resolution:2dppx){a{color:red}}");
+  });
+});
+
 describe("number serialization", () => {
   minify_test(".foo{opacity:0.000001}", ".foo{opacity:.000001}");
   minify_test(".foo{width:1e21px;height:1e22px}", ".foo{width:1e21px;height:1e22px}");

@@ -114,6 +114,8 @@ pub struct ParseTask<'a> {
     pub(crate) package_version: ast::StoreStr,
     pub(crate) package_name: ast::StoreStr,
     pub(crate) is_entry_point: bool,
+    /// The import of this HTML file waits for the onLoad plugins: see `BundleV2::html_import_after_on_load`.
+    pub(crate) on_load_decides_html_import: bool,
 }
 
 pub enum ParseTaskStage {
@@ -323,6 +325,7 @@ impl<'a> ParseTask<'a> {
             },
             stage: ParseTaskStage::NeedsSourceCode,
             is_entry_point: false,
+            on_load_decides_html_import: false,
         }
     }
 
@@ -364,6 +367,7 @@ impl Default for ParseTask<'_> {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            on_load_decides_html_import: false,
         }
     }
 }
@@ -656,6 +660,7 @@ pub mod parse_worker {
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
+            on_load_decides_html_import: false,
         };
         let source = Source {
             path: bun_paths::fs::Path {

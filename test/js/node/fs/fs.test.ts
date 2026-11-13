@@ -3898,8 +3898,7 @@ describe("rm", () => {
     expect(existsSync(path)).toBe(false);
   });
 
-  // Non-recursive rm reports the errno unlink(2) returned. It used to map any
-  // errno outside a short list (EPERM, ENOTDIR, EISDIR, ...) to EFAULT.
+  // Non-recursive rm reports the errno unlink(2) returned (#48811).
   const rmErrnoFixture = /* js */ `
     const { rm, rmSync } = require("node:fs");
     const { rm: rmP } = require("node:fs/promises");
@@ -3914,6 +3913,7 @@ describe("rm", () => {
     });
   `;
 
+  // Windows reports ENOENT for a path below a file, so `force` makes it succeed there.
   it.skipIf(isWindows)("non-recursive rm reports ENOTDIR when a path component is a file", async () => {
     using dir = tempDir("rm-enotdir", { "file.txt": "x", "fixture.js": rmErrnoFixture });
     await using proc = Bun.spawn({
@@ -3943,18 +3943,18 @@ describe("rm", () => {
       const file = join(sticky, "protected");
       let spawnOptions: { uid?: number; gid?: number } = {};
       let restore = () => {};
-      if (isMacOS) {
-        execFileSync("chflags", ["uchg", file]);
-        restore = () => execFileSync("chflags", ["nouchg", file]);
-      } else {
-        const unprivileged = unprivilegedSpawnOptions(String(dir));
-        restore = () => unprivileged[Symbol.dispose]();
-        fs.chownSync(sticky, 0, 0);
-        fs.chmodSync(sticky, 0o1777);
-        fs.chownSync(file, 0, 0);
-        spawnOptions = unprivileged;
-      }
       try {
+        if (isMacOS) {
+          execFileSync("chflags", ["uchg", file]);
+          restore = () => execFileSync("chflags", ["nouchg", file]);
+        } else {
+          const unprivileged = unprivilegedSpawnOptions(String(dir));
+          restore = () => unprivileged[Symbol.dispose]();
+          fs.chownSync(sticky, 0, 0);
+          fs.chmodSync(sticky, 0o1777);
+          fs.chownSync(file, 0, 0);
+          spawnOptions = unprivileged;
+        }
         await using proc = Bun.spawn({
           cmd: [bunExe(), "fixture.js", file],
           env: bunEnv,

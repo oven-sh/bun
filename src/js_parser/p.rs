@@ -5009,7 +5009,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ///   import-stmt emitters (`generate_import_stmt` etc.).
     ///   `module_scope.generated` alone is not read by `NumberRenamer`'s
     ///   top-level pass for wrap=none/ESM.
-    /// - Otherwise: `printAst` uses `NoOpRenamer`, which prints
+    /// - Otherwise: `printAst` uses `Renamer::no_op`, which prints
     ///   `symbol.original_name` verbatim with no collision handling. The
     ///   `generatedSymbolName` hash suffix appended here is the sole
     ///   collision guard on that path.

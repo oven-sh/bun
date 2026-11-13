@@ -7,6 +7,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isLinux,
   isMacOS,
   isWindows,
   tempDir,
@@ -539,6 +540,99 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(exitCode).toBe(0);
     });
   });
+
+  // A string source above 1 KiB preallocates the destination with fallocate().
+  // The preallocation must not grow the file: an O_APPEND write lands at the
+  // real end, and a grown file puts NUL bytes before the data.
+  describe.skipIf(isWindows)("Bun.write(fd, string) on an O_APPEND fd", () => {
+    function summarize(log) {
+      const out = fs.readFileSync(log);
+      return { head: out.subarray(0, 9).toString(), size: out.length, firstNul: out.indexOf(0) };
+    }
+
+    it("appends to stdout redirected with >>", async () => {
+      const size = 2000;
+      using dir = tempDir("bun-write-stdout-append-string", { "out.log": "abc\n" });
+      const log = join(String(dir), "out.log");
+      const script = `process.stderr.write(String(await Bun.write(Bun.stdout, Buffer.alloc(${size}, "x").toString())))`;
+
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", `"$BUN" -e ${JSON.stringify(script)} >> ${JSON.stringify(log)}`],
+        env: { ...bunEnv, BUN: bunExe() },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, resolved: stderr, ...summarize(log) }).toEqual({
+        stdout: "",
+        resolved: String(size),
+        head: "abc\nxxxxx",
+        size: 4 + size,
+        firstNul: -1,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // A string under 256 KiB to a Bun.file(fd) is written on the main thread
+    // without a preallocation, so use a larger one to reach the async path.
+    it("appends to a file descriptor opened with 'a'", async () => {
+      const size = 300_000;
+      using dir = tempDir("bun-write-fd-append-string", { "out.log": "abc\n" });
+      const log = join(String(dir), "out.log");
+      const script = `
+        import fs from "node:fs";
+        const fd = fs.openSync(${JSON.stringify(log)}, "a");
+        try {
+          process.stderr.write(String(await Bun.write(Bun.file(fd), Buffer.alloc(${size}, "x").toString())));
+        } finally { fs.closeSync(fd); }
+      `;
+
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, resolved: stderr, ...summarize(log) }).toEqual({
+        stdout: "",
+        resolved: String(size),
+        head: "abc\nxxxxx",
+        size: 4 + size,
+        firstNul: -1,
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // Linux preallocates a path destination to the source's st_size before
+  // copy_file_range. A source fd positioned past 0 supplies fewer bytes, so
+  // the destination must end at the bytes copied, with no NUL tail, and the
+  // blocks reserved past that end must be released.
+  it.skipIf(!isLinux)(
+    "Bun.write(path, Bun.file(fd)) with a positioned fd does not leave preallocated zeros",
+    async () => {
+      // The preallocate threshold is 2 MiB of source.
+      const skip = 2 * 1024 * 1024;
+      const tail = 64 * 1024;
+      using dir = tempDir("bun-write-fd-positioned", {});
+      const src = join(String(dir), "src.bin");
+      const dst = join(String(dir), "dst.bin");
+      fs.writeFileSync(src, Buffer.concat([Buffer.alloc(skip, "S"), Buffer.alloc(tail, "T")]));
+
+      const fd = fs.openSync(src, "r");
+      try {
+        fs.readSync(fd, Buffer.alloc(skip), 0, skip, null);
+        const written = await Bun.write(dst, Bun.file(fd));
+        const stat = fs.statSync(dst);
+        expect({
+          written,
+          size: stat.size,
+          content: fs.readFileSync(dst).equals(Buffer.alloc(tail, "T")),
+          allocatedBelow1MiB: stat.blocks * 512 < 1024 * 1024,
+        }).toEqual({ written: tail, size: tail, content: true, allocatedBelow1MiB: true });
+      } finally {
+        fs.closeSync(fd);
+      }
+    },
+  );
 
   // fstat on a FIFO reports st_size == 0, so the kernel-copy / bounded loop
   // must terminate on EOF, not on the stat-derived budget.

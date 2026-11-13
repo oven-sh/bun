@@ -825,34 +825,47 @@ static bool mapSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     return true;
 }
 
+// node looks every item of `expected` up in `actual` before it compares one: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L757-L785
+static NEVER_INLINE bool lookUpItems(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSSet* actualSet, JSC::JSSet* expectedSet, JSC::MarkedArgumentBuffer& gcBuffer, size_t itemsStart, size_t itemCount)
+{
+    auto iter = JSC::JSSetIterator::create(globalObject->vm(), globalObject->setIteratorStructure(), expectedSet, JSC::IterationKind::Keys);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue expectedItem;
+    while (iter->next(globalObject, expectedItem)) {
+        bool shared = actualSet->has(globalObject, expectedItem);
+        RETURN_IF_EXCEPTION(scope, false);
+        // Only the value itself is equal to a value that is not an object.
+        if (!expectedItem.isObject() || expectedItem.isCallable()) {
+            if (!shared)
+                return false;
+            continue;
+        }
+        // An object that `actual` holds too goes on as the place of that item.
+        for (size_t i = 0; shared && i < itemCount; i++) {
+            if (gcBuffer.at(itemsStart + i) == expectedItem) {
+                expectedItem = JSC::jsNumber(static_cast<uint32_t>(i));
+                break;
+            }
+        }
+        gcBuffer.append(expectedItem);
+    }
+    return true;
+}
+
+// `expectedItem` is a place from lookUpItems, and on return the object there.
+static NEVER_INLINE bool matchWithItself(JSC::MarkedArgumentBuffer& gcBuffer, size_t itemsStart, WTF::Vector<bool, 8>& usedIndices, JSValue& expectedItem)
+{
+    const size_t place = expectedItem.asInt32();
+    expectedItem = gcBuffer.at(itemsStart + place);
+    if (usedIndices[place])
+        return false;
+    usedIndices[place] = true;
+    return true;
+}
+
 // Expected's items as a subset of actual's; item equality is the partial
 // comparison itself — node matches object items with subset semantics
 // (Set([{a:1,b:2}]) partially contains Set([{a:1}])).
-enum class Itself : uint8_t {
-    Matched,
-    NoMatch,
-    Compare,
-};
-
-// node looks for the item itself first: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L757-L785
-static NEVER_INLINE Itself matchWithItself(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSSet* actualSet, JSC::MarkedArgumentBuffer& gcBuffer, size_t itemsStart, WTF::Vector<bool, 8>& usedIndices, JSValue expectedItem)
-{
-    bool shared = actualSet->has(globalObject, expectedItem);
-    RETURN_IF_EXCEPTION(scope, Itself::NoMatch);
-    // Only the value itself is equal to a value that is not an object.
-    if (!expectedItem.isObject() || expectedItem.isCallable())
-        return shared ? Itself::Matched : Itself::NoMatch;
-    for (size_t i = 0; shared && i < usedIndices.size(); i++) {
-        if (gcBuffer.at(itemsStart + i) == expectedItem) {
-            if (usedIndices[i])
-                break;
-            usedIndices[i] = true;
-            return Itself::Matched;
-        }
-    }
-    return Itself::Compare;
-}
-
 static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected)
 {
     auto& vm = globalObject->vm();
@@ -866,6 +879,9 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
         RETURN_IF_EXCEPTION(scope, false);
         JSValue item;
         while (iter->next(globalObject, item)) {
+            // Only an object is compared with an object of `expected`: lookUpItems finds every other value.
+            if (!item.isObject())
+                continue;
             gcBuffer.append(item);
             itemCount++;
         }
@@ -873,15 +889,15 @@ static bool setSubset(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuff
     WTF::Vector<bool, 8> usedIndices;
     usedIndices.fill(false, itemCount);
 
-    auto expectedIter = JSC::JSSetIterator::create(vm, globalObject->setIteratorStructure(), expectedSet, JSC::IterationKind::Keys);
+    // Every lookup comes before the first comparison, which can run a getter that changes a Set.
+    bool allLookedUp = lookUpItems(globalObject, scope, actualSet, expectedSet, gcBuffer, itemsStart, itemCount);
     RETURN_IF_EXCEPTION(scope, false);
-    JSValue expectedItem;
-    while (expectedIter->next(globalObject, expectedItem)) {
-        const Itself itself = matchWithItself(globalObject, scope, actualSet, gcBuffer, itemsStart, usedIndices, expectedItem);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (itself == Itself::NoMatch)
-            return false;
-        bool matched = itself == Itself::Matched;
+    if (!allLookedUp)
+        return false;
+    const size_t askedEnd = gcBuffer.size();
+    for (size_t asked = itemsStart + itemCount; asked < askedEnd; asked++) {
+        JSValue expectedItem = gcBuffer.at(asked);
+        bool matched = expectedItem.isInt32() && matchWithItself(gcBuffer, itemsStart, usedIndices, expectedItem);
         for (size_t i = 0; !matched && i < itemCount; i++) {
             if (usedIndices[i])
                 continue;

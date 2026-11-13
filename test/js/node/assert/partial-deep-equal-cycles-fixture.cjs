@@ -585,6 +585,18 @@ row("the expected Set is a member of actual", "fail", () => {
     new Set([ownCause(), ownCause()]),
     new Set([ownCause()]),
   ]);
+  // The Set of actual does not hold the 2, so the Sets differ, and no member is compared.
+  row("a Set of three does not hold a number of the expected Set, beside such Errors", "fail", () => [
+    new Set([ownCause(), 0, 1]),
+    new Set([ownCause(), 2]),
+  ]);
+  row(
+    "a Set of two does not hold a number of the expected Set, beside such Errors",
+    "RangeError",
+    () => [new Set([ownCause(), 0]), new Set([ownCause(), 2])],
+    // Node.js compares the first members of Sets of two before it looks for the number.
+    { bun: "fail" },
+  );
 }
 
 // A seed and a set of kinds make one pair of small object graphs. A value of a graph is a number or another object of

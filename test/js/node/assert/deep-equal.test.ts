@@ -1531,11 +1531,47 @@ describe("assert.partialDeepStrictEqual with cycles", () => {
     const { proxy, revoke } = Proxy.revocable({}, {});
     revoke();
     expect(answerOf(new Set([proxy]), new Set([1]))).toBe("fail");
+    // And a primitive of `actual` is no match for an object: the two are not compared.
+    expect(answerOf(new Set([1]), new Set([proxy]))).toBe("fail");
+    // A function is a value with no other match too: the Set does not hold this one, so no member is compared.
+    expect(answerOf(new Set([proxy, 0, 1]), new Set([{}, () => {}]))).toBe("fail");
 
     // An earlier member of `expected` took it, so it needs another member of `actual`.
     const taken = { v: 1, w: 2 };
     fails(() => assert.partialDeepStrictEqual(new Set([taken, { z: 1 }]), new Set([{ v: 1 }, taken])));
     assert.partialDeepStrictEqual(new Set([taken, { v: 1, w: 2, z: 1 }]), new Set([{ v: 1 }, taken]));
+    // It took itself, so a later member of `expected` needs another member of `actual`.
+    fails(() => assert.partialDeepStrictEqual(new Set([taken, { z: 1 }]), new Set([taken, { v: 1 }])));
+  });
+
+  test("a Set of actual is looked up as it is before a member is compared", () => {
+    // The getter takes 2 away from `actual`, which held it when the comparison of the Sets began.
+    const shrinks = new Set<unknown>([
+      {
+        get n() {
+          shrinks.delete(2);
+          return 1;
+        },
+      },
+      2,
+      1,
+    ]);
+    assert.partialDeepStrictEqual(shrinks, new Set([{ n: 1 }, 2]));
+    expect(shrinks.has(2)).toBe(false);
+
+    // `actual` does not hold 2, so the Sets differ, and the getter that adds 2 does not run.
+    const grows = new Set<unknown>([
+      {
+        get n() {
+          grows.add(2);
+          return 1;
+        },
+      },
+      0,
+      1,
+    ]);
+    expect(answerOf(grows, new Set([{ n: 1 }, 2]))).toBe("fail");
+    expect(grows.has(2)).toBe(false);
   });
 
   test("operand code runs once, and once more when a pair is inside its own comparison", () => {

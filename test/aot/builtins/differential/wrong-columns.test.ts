@@ -83,6 +83,12 @@ const flattensResultOfCallback = overload({
   throws: true,
   ...returning(instanceOf("Array", { freshness: "Yes" })),
 });
+const convertsResultOfCallback = overload({
+  parameters: [parameter(first, { accepted: anyFunction, uses: ["Inspects", "Calls"] })],
+  callbacks: [callback(first, { resultUse: "Converted" })],
+  throws: true,
+  ...returning(primitive("String")),
+});
 const returnsOperand = overload({
   parameters: [parameter(first, { uses: ["Inspects", "Returns"] })],
   transfers: [{ from: operandPlace(first), to: { place: "Result" } }],
@@ -344,6 +350,13 @@ const cases: Case[] = [
     double: (called: Function) => [called()].flat(),
     declared: flattensResultOfCallback,
     wrong: { ...flattensResultOfCallback, callbacks: [callback(first, { resultUse: "Tested" })] },
+    column: "callbacks.resultUse",
+  },
+  {
+    title: "the result of a callback that is converted to a string",
+    double: (called: Function) => `${called()}`,
+    declared: convertsResultOfCallback,
+    wrong: { ...convertsResultOfCallback, callbacks: [callback(first, { resultUse: "Tested" })] },
     column: "callbacks.resultUse",
   },
   {

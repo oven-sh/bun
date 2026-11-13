@@ -82,6 +82,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.count_statement(statement);
                 continue;
             }
+            if self.lower_store_at_birth(statement) {
+                continue;
+            }
             let Some(declarations) = find_resource_declarations(hir, statement) else {
                 self.lower_statement_in_list(statement, statements_behind(statements, index));
                 continue;

@@ -4,6 +4,7 @@ use core::hash::{BuildHasher, Hash};
 use core::mem::{replace, take};
 use core::ops::Range;
 use core::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 use bun_core::strings::{last_index_of, split};
 use bun_sema::atom::{Atom, known};
@@ -223,7 +224,7 @@ struct FileUnits {
     inner_modules: FxHashMap<FnId, u32>,
     keeps_module_object: AtomicBool,
     has_object_made_by_require: AtomicBool,
-    this_positions: ThisPositions,
+    this_positions: OnceLock<ThisPositions>,
 }
 
 impl FileUnits {
@@ -1109,6 +1110,24 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
+    fn is_read_off_object(&self, member: ExprId) -> bool {
+        let graph = self.input.graph;
+        graph.member_binding(self.file, member).is_none()
+            && matches!(
+                graph.member(self.file, member),
+                None | Some(Member::OnObject)
+            )
+    }
+
+    fn add_module_of_object_read(&mut self, reference: ExprId, interest: Interest) {
+        if let Interest::Export(module, _) | Interest::CalledExport(module, _) = interest
+            && let Some((member, _)) = self.find_member_read_from(reference)
+            && self.is_read_off_object(member)
+        {
+            self.add_interest(reference, Interest::Evaluation(module));
+        }
+    }
+
     fn add_names_read_from_awaited_import(
         &self,
         module: ModuleRef,
@@ -1439,6 +1458,7 @@ impl<'a, 's> FileScan<'a, 's> {
                     let item = Interest::HandedOnNamespace(module_with_code(module));
                     self.add_interest(reference, item);
                 }
+                self.add_module_of_object_read(reference, interest);
             }
             if let Some((holder, name)) = self.find_name_read_off_file_between(symbol, binding) {
                 let read = Interest::Export(ModuleRef::File(holder), name);
@@ -1587,6 +1607,7 @@ impl<'a, 's> FileScan<'a, 's> {
                     _ => continue,
                 },
             };
+            self.add_module_of_object_read(access, interest);
             self.add_interest(access, interest);
         }
     }
@@ -2145,8 +2166,6 @@ impl<'a, 's> FileScan<'a, 's> {
     }
 
     fn scan(mut self, asks_what_files_spell: bool) -> FileUnits {
-        let jsx_takes_this = self.input.files.analysis(self.file).jsx_takes_this();
-        self.units.this_positions = ThisPositions::of(self.hir, jsx_takes_this);
         self.find_sites();
         self.collect_units();
         let region_count = self.units.units.len() + 1;
@@ -2547,7 +2566,13 @@ impl<'a, 's> Walk<'a, 's> {
                 .function_flags(function)
                 .contains(FunctionFlags::HAS_DIRECT_EVAL)
             || match &self.files[file.idx()] {
-                Some(units) => units.this_positions.evaluates_own_this(hir, function),
+                Some(units) => {
+                    let jsx_takes_this = || self.input.files.analysis(file).jsx_takes_this();
+                    let positions = &units.this_positions;
+                    let positions =
+                        positions.get_or_init(|| ThisPositions::of(hir, jsx_takes_this()));
+                    positions.evaluates_own_this(hir, function)
+                }
                 None => {
                     let jsx_takes_this = self.input.files.analysis(file).jsx_takes_this();
                     evaluates_own_this(hir, function, jsx_takes_this)
@@ -2849,7 +2874,11 @@ impl<'a, 's> Walk<'a, 's> {
         };
         sources().any(|source| source.builtins.evaluator_comes_out())
             || (sources().any(|source| source.builtins.mentions_evaluator())
-                && sources().any(|source| source.builtins.may_call_unnamed_evaluator()))
+                && (files.compiled_files().iter()).any(|&file| {
+                    parsed_source(files, file).is_some_and(|source| {
+                        source.builtins.may_call_unnamed_evaluator(files.hir(file))
+                    })
+                }))
     }
 
     fn reach_entry_points_seeded_last(&self, found: &mut Found, seeded_last: &[FileId]) {
@@ -3325,6 +3354,14 @@ impl Reacher<'_, '_, '_> {
                 self.reach_region(found.0, unit + 1);
             }
         }
+        for source in walk
+            .input
+            .graph
+            .commonjs()
+            .sources_of_spread_name(module, name)
+        {
+            self.reach_named_member(source, name);
+        }
         !walk.input.graph.ignores_this(module, name)
     }
 
@@ -3522,7 +3559,7 @@ impl Reacher<'_, '_, '_> {
         for &unit in stores.chain(&shown.parts_of_object) {
             self.reach_region(file, unit + 1);
         }
-        for &source in graph.name_sources(module) {
+        for &source in graph.object_sources(module) {
             self.reach_every_export(source);
         }
         if index != 0 {
@@ -3552,7 +3589,7 @@ impl Reacher<'_, '_, '_> {
         {
             return self.reach_what_object_shows(found);
         }
-        for &source in walk.input.graph.name_sources(module) {
+        for &source in walk.input.graph.object_sources(module) {
             self.look_at(source);
         }
     }

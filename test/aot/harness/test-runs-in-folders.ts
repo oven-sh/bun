@@ -14,9 +14,11 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, readFileSync, readdirSync, renameSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { test } from "../supported";
+import { slots } from "./commands";
 import { run } from "./run";
+import { sharedSlot } from "./shared-slots";
 
 const root = join(import.meta.dir, "..", "parallel-test-runs");
 const holdsFile = (folder: string): boolean =>
@@ -83,6 +85,9 @@ function layPackages(folder: string) {
 // bunEnv drops each BUN_DEBUG_ variable of whoever runs this file.
 const wordsOfAll = process.env.AOT_TEST_RUN_WORDS ?? "";
 
+// CI runs three of these files at once, and each of their tests starts two runs, so that six runs stand beside one another for each processor. The files count their runs together.
+const runsUnderWay = join(dirname(bunExe()), "test-runs-under-way");
+
 async function outcomeOf(dir: string, words: string, ...flags: string[]) {
   layPackages(dir);
   // As users run it: whoever runs this file may have switched the thread off that reads the texts.
@@ -93,7 +98,9 @@ async function outcomeOf(dir: string, words: string, ...flags: string[]) {
     BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: oneThread,
     BUN_DEBUG_TEST_AOT_WORDS: words,
   };
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, ...testFilesIn(dir)], dir, env);
+  const { stdout, stderr, exitCode } = await sharedSlot(runsUnderWay, slots, () =>
+    run([bunExe(), "test", ...flags, ...testFilesIn(dir)], dir, env),
+  );
   return {
     printed: stdout.split("\n").filter(line => line && !line.startsWith("bun test v")),
     // The times differ from run to run.

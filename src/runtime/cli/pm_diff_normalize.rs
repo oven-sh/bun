@@ -88,7 +88,7 @@ pub(crate) fn normalize(path: &[u8], bytes: &[u8], options: Options) -> Option<N
             let ast = parse_js(&arena, &source, loader, options)?;
             print_js(&arena, ast, &source, options)
         }
-        Kind::Css => normalize_css(path, bytes),
+        Kind::Css => normalize_css(bytes),
         Kind::Json => normalize_json(path, bytes),
     }?;
     out.was_minified = looks_minified(bytes);
@@ -898,24 +898,13 @@ fn align_by<A, B>(
     out
 }
 
-fn normalize_css(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
-    // The CSS parser wants a `'static` arena and this command runs on one thread; a `'static` arena cannot be
-    // reset in safe code, so the total CSS fed through it is capped and anything past that diffs as text.
-    static ARENA: std::sync::LazyLock<Arena> = std::sync::LazyLock::new(Arena::new);
-    static FED: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-    const CSS_BUDGET: usize = 64 * 1024 * 1024;
-    if FED.fetch_add(bytes.len(), core::sync::atomic::Ordering::Relaxed) + bytes.len() > CSS_BUDGET
-    {
-        return None;
-    }
-    let alloc: &'static Arena = &ARENA;
-    let mut opts = bun_css::ParserOptions::default(None);
-    opts.filename = alloc.alloc_slice_copy(path);
+fn normalize_css(bytes: &[u8]) -> Option<Normalized> {
+    let alloc = &Arena::new();
     let mut import_records = Vec::<bun_ast::ImportRecord>::default();
     let (sheet, _extra) = bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
         alloc,
         bytes,
-        opts,
+        bun_css::ParserOptions::default(None),
         Some(&mut import_records),
         bun_ast::Index::INVALID,
     )

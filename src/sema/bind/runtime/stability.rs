@@ -1,5 +1,6 @@
 use super::bits::has_bit;
 use super::declaration_kinds::pattern_root;
+use super::lookup::is_global_of_script;
 use super::queries::{find_entry, find_symbol};
 use super::references::is_loop_head;
 use super::{
@@ -43,6 +44,17 @@ pub(super) fn compute_stability(input: &mut RuntimeInput<'_, '_>) {
             && !pass.bound.binding_kind(store.symbol).is_immutable()
         {
             *recorded = BindingStability::Stored;
+        }
+    }
+    // Any code may store to the globals of a script, and read them.
+    let mut scripts = input.hir.global_code();
+    scripts.retain(|it| it.1 == GlobalCode::Script);
+    for (function, _) in scripts {
+        let scope = &pass.bound.scopes[pass.bound.fns[function.idx()].scope.idx()];
+        for &(_, local) in pass.bound.table(scope.locals) {
+            if is_global_of_script(pass.hir, pass.bound, local) {
+                stabilities[local.idx()] = BindingStability::Stored;
+            }
         }
     }
     let initializers = pass.initializers.iter().map(|recorded| match *recorded {

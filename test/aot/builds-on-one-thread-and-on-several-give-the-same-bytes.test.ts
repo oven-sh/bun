@@ -19,6 +19,19 @@ console.log(
     : "nothing is inherited",
 );
 `,
+  // The flow asks which functions name the list where it looks for constructor functions: on a thread of its own it once asked before the answer was there.
+  "methods.mjs": `
+const METHODS = ["get", "post", "put"];
+class App {
+  constructor() { this.count = 0; }
+  has(name) { return METHODS.includes(name) && METHODS.indexOf(name) >= 0; }
+}
+METHODS.forEach(method => {
+  App.prototype[method] = function (path) { return this.has(method) ? path.length + this.count++ : -1; };
+});
+const app = new App();
+console.log(app.get("a"), app.post("ab"), app.put("abc"), app.has("delete"));
+`,
 };
 
 // An alias may name the type of a value whose annotation names other aliases of the same file. Such an annotation was once looked at on its own while those aliases were still being looked at:
@@ -149,6 +162,13 @@ describe.skipIf(!!unsupported)("compile/aot/builds-on-one-thread-and-on-several-
   test("builds on one, two and eight threads are equal", async () => {
     await slot(async () => {
       const hashes = await hashBuilds(folder, "./entry.mjs", [1, 2, 8]);
+      expect(hashes).toEqual(hashes.map(() => hashes[0]));
+    });
+  }, 600_000);
+
+  test("builds of methods laid under a list of names are equal on one, two and eight threads", async () => {
+    await slot(async () => {
+      const hashes = await hashBuilds(folder, "./methods.mjs", [1, 2, 8]);
       expect(hashes).toEqual(hashes.map(() => hashes[0]));
     });
   }, 600_000);

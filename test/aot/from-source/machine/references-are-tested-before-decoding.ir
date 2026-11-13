@@ -1,0 +1,16 @@
+# `init` is a narrow reference, undefined, null or empty. One test tells the reference, which goes on in the next read as a cell.
+# RUN(EVENT): compile ReferencesTestedBeforeDecoding ReadsContinuedByNextRead mechanisms=all
+# EVENT: statistic ReferencesTestedBeforeDecoding 1
+# EVENT: statistic ReadsContinuedByNextRead 1
+# -- source: reads.ts
+# declare function sink(...values: unknown[]): void;
+# declare function source(): any;
+# class Base { kind: number; constructor(kind: number) { this.kind = kind; } }
+# class Text extends Base { text: string; constructor(text: string) { super(1); this.text = text; } }
+# class Computed extends Base { inner: Base | undefined; outer: Base | undefined; constructor(inner: Base) { super(3); this.inner = inner; this.outer = undefined; } }
+# class Entry { kind: number; flags: number; constructor(kind: number) { this.kind = kind; this.flags = 0; } }
+# class Prop extends Entry { name: Base; init: Base | undefined; type: Base | undefined; constructor(name: Base, init: Base | undefined) { super(10); this.name = name; this.init = init; this.type = undefined; } }
+# function inner(entry: Entry): unknown { return ((entry as Prop).init as Computed).inner; }
+# const text = new Text("a"), computed = new Computed(text);
+# sink(inner, Base, Text, Computed, Entry, Prop, text, computed, new Prop(text, computed), source());
+# -- end of source

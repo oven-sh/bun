@@ -302,11 +302,7 @@ impl FileSink {
             if let Some(stream) = (*this).pipe.get().take_stream() {
                 if let Some(global) = (*this).js_global() {
                     if !status.is_ok() {
-                        // SAFETY: `bun_vm()` is non-null when `global_object()` was;
-                        // `event_loop()` returns the live VM-owned `*mut EventLoop`.
-                        let _entered = bun_jsc::event_loop::EventLoop::enter_scope(
-                            global.bun_vm().as_mut().event_loop(),
-                        );
+                        let _entered = global.bun_vm().enter_event_loop_scope();
                         crate::dispatch::fold(stream.cancel(global));
                     } else {
                         stream.done();

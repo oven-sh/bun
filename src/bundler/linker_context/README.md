@@ -61,7 +61,7 @@ The LinkerContext operates in several main phases:
 
 1. **Symbol Renaming Phase**: Renames symbols in each chunk in parallel to avoid conflicts
 2. **Source Map Processing**: Handles line offset calculations for source maps
-3. **CSS Preparation**: Processes CSS chunks, removing duplicate rules in serial order
+3. **CSS Preparation**: Nests the conditions of external `@import` rules into data URLs
 4. **Code Generation Phase**: Generates compile results for each part in parallel
    - JavaScript chunks: Generates code for each part range
    - CSS chunks: Processes CSS imports and generates stylesheets
@@ -1027,16 +1027,6 @@ This function is essential for maintaining JavaScript module semantics across di
 - Live reload integration
 
 ### Post-Processing Phase
-
-#### `prepareCssAstsForChunk.rs`
-
-**Purpose**: Prepares CSS ASTs before final processing.
-
-**Key functions**:
-
-- CSS rule deduplication
-- CSS optimization passes
-- Asset reference resolution
 
 #### `postProcessJSChunk.rs`
 

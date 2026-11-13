@@ -330,7 +330,7 @@ pub mod bv2_impl {
     use crate::options_impl::TargetExt;
     use crate::transpiler::Transpiler;
 
-    use crate::{bun_css, import_record};
+    use crate::import_record;
     use bun_alloc::{AllocError, Arena as ThreadLocalArena};
 
     use self::bake_types as bake;
@@ -5385,8 +5385,7 @@ pub mod bv2_impl {
             // slab. For JS-only bundles every `css` slot is `None`, so this loop
             // is N×branch with no work; only CSS entries pay a real drop. The
             // macro takes only one side (`linker.graph.ast` is a bitwise SoA
-            // `memcpy` of `graph.ast`), and `CssChunk::asts` `forget()`s its
-            // aliases, so this is the unique drop.
+            // `memcpy` of `graph.ast`), so this is the unique drop.
             {
                 macro_rules! take_ast_cols {
                     ($ast:expr) => {{
@@ -5952,7 +5951,6 @@ pub mod bv2_impl {
                 let _ = start.css_entry_points.ordered_remove(&entry_point);
             }
             for (entry_point, order) in css_orders {
-                let order_len = order.len() as usize;
                 chunks.push(Chunk {
                     entry_point: chunk::EntryPoint::non_entry_point(
                         entry_point.get(),
@@ -5960,10 +5958,6 @@ pub mod bv2_impl {
                     ),
                     content: chunk::Content::Css(chunk::CssChunk {
                         imports_in_chunk_in_order: order,
-                        asts: (0..order_len)
-                            .map(|_| bun_css::BundlerStyleSheet::empty())
-                            .collect::<Vec<_>>()
-                            .into_boxed_slice(),
                     }),
                     output_source_map: SourceMap::SourceMapPieces::init(),
                     ..Chunk::default()

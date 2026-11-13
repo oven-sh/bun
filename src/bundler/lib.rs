@@ -227,9 +227,6 @@ pub mod linker_context {
     #[path = "postProcessJSChunk.rs"]
     pub mod post_process_js_chunk;
 
-    #[path = "prepareCssAstsForChunk.rs"]
-    pub mod prepare_css_asts_for_chunk;
-
     #[path = "renameSymbolsInChunk.rs"]
     pub(crate) mod rename_symbols_in_chunk;
 

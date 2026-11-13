@@ -121,6 +121,34 @@ devTest("react in html", {
     expect(await c.elemText("h1")).toBe("Yay");
   },
 });
+// https://github.com/oven-sh/bun/issues/48638
+devTest("[serve.static] reactCompiler compiles the client graph and keeps Fast Refresh", {
+  fixture: "react-spa-compiler",
+  async test(dev) {
+    // Each module prints alone, so the compiler's import has to print as a member of its namespace.
+    const html = await dev.fetch("/").text();
+    const chunk = await dev.fetch(html.match(/src="([^"]+\.js)"/)![1]).text();
+    expect(chunk).toContain("react_compiler_runtime.c(");
+    expect(chunk).not.toContain(" _c(");
+
+    await using c = await dev.client();
+    await c.click("button");
+    await c.click("button");
+    await c.expectElemText("button", "count 2");
+    // The compiler caches the `<Child items={items} />` element. Without it,
+    // `items` is a new array on every render and Child renders on every click.
+    await c.expectElemText("#child", "a,b renders=1");
+
+    // A text-only edit keeps the state through Fast Refresh.
+    await dev.write("App.tsx", dev.read("App.tsx").replace("count {count}", "clicks {count}"));
+    await c.expectElemText("button", "clicks 2");
+    // Fast Refresh resets the memo cache once. The element is cached again after that.
+    const afterRefresh = await c.elemText("#child");
+    await c.click("button");
+    await c.expectElemText("button", "clicks 3");
+    await c.expectElemText("#child", afterRefresh);
+  },
+});
 // https://github.com/oven-sh/bun/issues/17447
 devTest("react refresh should register and track hook state", {
   framework: minimalFramework,

@@ -369,6 +369,10 @@ impl Route {
             config.code_splitting = xform.serve_splitting;
         }
 
+        if xform.serve_react_compiler {
+            config.react_compiler = bun_ast::runtime::ReactCompilerMode::Client;
+        }
+
         config.target = bun_ast::Target::Browser;
         let is_development = development.is_development();
 

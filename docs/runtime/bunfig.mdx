@@ -167,6 +167,17 @@ The default port for `Bun.serve` to listen on. Default `3000`. You can also set 
 port = 3000
 ```
 
+### `serve.static.reactCompiler`
+
+Run Bun's built-in React Compiler over the `.jsx` and `.tsx` files of an HTML route, in development and in production. Default `false`. Experimental.
+
+```toml title="bunfig.toml" icon="settings"
+[serve.static]
+reactCompiler = true
+```
+
+See [Fullstack dev server](/bundler/fullstack#react-compiler) for the other `[serve.static]` keys.
+
 ## Test runner
 
 The `[test]` section of `bunfig.toml` configures the test runner.

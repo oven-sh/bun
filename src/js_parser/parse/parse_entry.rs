@@ -2493,6 +2493,20 @@ impl<'a> Parser<'a> {
                                     is_top_level: true,
                                 })?;
                                 p.is_import_item.insert(item.name.ref_, ());
+                                // ensure every e_import_identifier holds the namespace
+                                if p.options.features.hot_module_reloading {
+                                    let symbol =
+                                        &mut p.symbols[item.name.ref_.inner_index() as usize];
+                                    if symbol.namespace_alias.is_none() {
+                                        symbol.namespace_alias =
+                                            Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
+                                                namespace_ref: import.namespace_ref,
+                                                alias: item.alias,
+                                                import_record_index: import.import_record_index,
+                                                was_originally_property_access: false,
+                                            }));
+                                    }
+                                }
                                 p.named_imports.put(
                                     item.name.ref_,
                                     js_ast::NamedImport {

@@ -59,6 +59,12 @@ impl Framework {
         out.options.react_fast_refresh = mode == Mode::Development
             && renderer == Graph::Client
             && self.react_fast_refresh.is_some();
+        out.options.react_compiler = if renderer == Graph::Client && bundler_options.react_compiler
+        {
+            bun_ast::runtime::ReactCompilerMode::Client
+        } else {
+            bun_ast::runtime::ReactCompilerMode::Disabled
+        };
         out.options.server_components = self.server_components.is_some();
 
         out.options.conditions = bun_bundler::options::ESMConditions::init(

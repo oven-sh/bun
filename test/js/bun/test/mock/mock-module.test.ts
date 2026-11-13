@@ -4216,6 +4216,36 @@ describe.concurrent("a module that a factory loads while the module awaits impor
     },
   );
 
+  // The copy is linked to the original only while the factory that asked for it runs.
+  test.each([
+    ["an import statement", `import { name } from "./dep.js";`],
+    ["await import()", `const { name } = await import("./dep.js");`],
+  ])(
+    "a factory that does not await its import() of a module that waits through %s, and still runs when the copy does, gives the copy the original",
+    async (_, waits) => {
+      await expectFixturesToPass(
+        {
+          ...files,
+          "waits.js": `${waits} ${counted} (globalThis.ran ??= Promise.withResolvers()).resolve();`,
+          "unawaited.test.js": `
+          import { expect, test, vi } from "bun:test";
+          import * as waits from "./waits.js";
+          vi.mock("./dep.js", async () => {
+            globalThis.inFactory = import("./waits.js");
+            await (globalThis.ran ??= Promise.withResolvers()).promise;
+            return { name: "mock" };
+          });
+          test("the factory returns when the copy has run", async () => {
+            const inFactory = await globalThis.inFactory;
+            expect([waits.seen, inFactory.seen, inFactory === waits, globalThis.runs]).toEqual(["mock", "real", false, 2]);
+          });
+        `,
+        },
+        1,
+      );
+    },
+  );
+
   // The module has called import() for the mocked module, and no body waits for that promise.
   test.each([
     ["does not await the import()", `export const later = import("./dep.js");`],

@@ -341,6 +341,9 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     /// created this reloader. Set once at init and never reassigned; the
     /// context outlives the reloader (and every `Task` it spawns).
     pub ctx: bun_ptr::BackRef<Ctx, bun_ptr::Mut>,
+    /// A copy for the watcher thread: the transpiler belongs to the thread of `ctx`.
+    #[cfg(not(windows))]
+    loaders: bun_ast::LoaderHashTable,
     pub(crate) verbose: bool,
     pub(crate) pending_count: AtomicU32,
 
@@ -695,9 +698,12 @@ where
             return;
         }
 
+        // SAFETY: `this` is the live owning context; it outlives the reloader.
+        let ctx = unsafe { bun_ptr::BackRef::from_raw_mut(this) };
         let reloader = bun_core::heap::into_raw(Box::new(Self {
-            // SAFETY: `this` is the live owning context; it outlives the reloader.
-            ctx: unsafe { bun_ptr::BackRef::from_raw_mut(this) },
+            ctx,
+            #[cfg(not(windows))]
+            loaders: bun_core::handle_oom(ctx.get_loaders().clone()),
             // SAFETY: see above.
             verbose: unsafe { (*this).log_level_at_least_info() },
             pending_count: AtomicU32::new(0),
@@ -1104,10 +1110,8 @@ where
                                     continue;
                                 }
 
-                                // `ctx` is a BACKREF that outlives the reloader.
                                 let loader = self
-                                    .ctx
-                                    .get_loaders()
+                                    .loaders
                                     .get(PathName::find_extname(changed_name))
                                     .copied()
                                     .unwrap_or(bun_ast::Loader::File);

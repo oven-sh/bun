@@ -5008,7 +5008,7 @@ struct ModuleMockSpecifier {
     WTF::String keyForRequire() const { return requireKeyString ? requireKeyString->tryGetValue().data : key; }
 };
 
-// `forRequire`: the caller loads what require() loads, so the name is resolved that way too.
+// `forRequire`: the caller loads what require() loads, or ends the mock of it, so the name is resolved that way too.
 static ModuleMockSpecifier moduleMockSpecifierArgument(Zig::GlobalObject* globalObject, JSC::CallFrame* callframe, ASCIILiteral signature, bool forRequire = false)
 {
     auto& vm = JSC::getVM(globalObject);

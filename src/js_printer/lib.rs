@@ -7005,7 +7005,7 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_dev_server_module(
             &mut self,
             source: &bun_ast::Source,
-            ast: &js_ast::Ast,
+            ast: &BundledFile,
             part: &js_ast::Part,
         ) {
             self.indent();
@@ -7129,7 +7129,7 @@ pub(crate) mod __gated_printer {
                 // Print export stars
                 self.indent();
                 let mut had_any_stars = false;
-                for &star in ast.export_star_import_records.iter() {
+                for &star in ast.export_star_import_records {
                     let record = self.import_record(star as usize);
                     if record.path.is_disabled {
                         continue;
@@ -7148,7 +7148,7 @@ pub(crate) mod __gated_printer {
                 self.print(b"], ");
 
                 // Print the code
-                if !ast.top_level_await_keyword.is_empty() {
+                if ast.has_top_level_await {
                     self.print(b"async");
                 }
                 self.print_fn_args(
@@ -7165,7 +7165,7 @@ pub(crate) mod __gated_printer {
                 self.print(b"}, ");
 
                 // Print isAsync
-                self.print(if !ast.top_level_await_keyword.is_empty() {
+                self.print(if ast.has_top_level_await {
                     b"true".as_slice()
                 } else {
                     b"false".as_slice()
@@ -7591,7 +7591,7 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
     generate_source_map: GenerateSourceMap,
     opts: &mut Options<'a>,
     source: &'a bun_ast::Source<'a>,
-    tree: &Ast,
+    approximate_newline_count: usize,
 ) -> SourceMap::chunk::Builder<'a> {
     if generate_source_map == GenerateSourceMap::Disable {
         return SourceMap::chunk::Builder::default();
@@ -7608,8 +7608,7 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
             Some(table) => LineOffsetTables::Borrowed(table),
             None if generate_source_map == GenerateSourceMap::Lazy => LineOffsetTables::Deferred {
                 contents: source.contents(),
-                approximate_line_count: i32::try_from(tree.approximate_newline_count)
-                    .expect("int cast"),
+                approximate_line_count: i32::try_from(approximate_newline_count).expect("int cast"),
             },
             None => LineOffsetTables::None,
         },
@@ -7623,8 +7622,7 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
     // `data` directly; the prepend-count (Lazy) path writes through
     // `internal` and would just waste the reservation.
     if builder.source_map.ctx.internal.is_none() {
-        let hint =
-            (source.contents.len() / 4).max(tree.approximate_newline_count.saturating_mul(4));
+        let hint = (source.contents.len() / 4).max(approximate_newline_count.saturating_mul(4));
         let _ = builder.source_map.ctx.data.grow_if_needed(hint);
     }
     builder
@@ -7753,7 +7751,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         GenerateSourceMap::lazy_if(GENERATE_SOURCE_MAP),
         &mut opts,
         source,
-        tree,
+        tree.approximate_newline_count,
     );
     let mut printer = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::init(
         writer,
@@ -7898,10 +7896,20 @@ pub fn print_json<W: WriterTrait>(
     Ok(printer.writer.slice().len())
 }
 
+/// What printing a file's statements into a chunk reads from the file's AST.
+pub struct BundledFile<'a> {
+    pub approximate_newline_count: usize,
+    pub has_lazy_export: bool,
+    pub has_top_level_await: bool,
+    pub exports_kind: js_ast::ExportsKind,
+    pub named_exports: &'a js_ast::NamedExports,
+    pub export_star_import_records: &'a [u32],
+}
+
 pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
     bump: &'a bun_alloc::Arena,
     target: bun_ast::Target,
-    ast: &Ast,
+    ast: &BundledFile,
     source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
     import_records: &'a [ImportRecord<'a>],
@@ -7932,7 +7940,7 @@ pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
     writer: W,
     bump: &'a bun_alloc::Arena,
     target: bun_ast::Target,
-    ast: &Ast,
+    ast: &BundledFile,
     source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
     import_records: &'a [ImportRecord<'a>],
@@ -7973,7 +7981,7 @@ pub(crate) fn print_with_writer_and_platform<
 >(
     mut writer: W,
     bump: &'a bun_alloc::Arena,
-    ast: &Ast,
+    ast: &BundledFile,
     source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
     import_records: &'a [ImportRecord<'a>],
@@ -7993,7 +8001,7 @@ pub(crate) fn print_with_writer_and_platform<
         GenerateSourceMap::eager_if(GENERATE_SOURCE_MAPS),
         &mut opts,
         source,
-        ast,
+        ast.approximate_newline_count,
     );
     let mut printer = PrinterType::<W, IS_BUN_PLATFORM, GENERATE_SOURCE_MAPS>::init(
         writer,

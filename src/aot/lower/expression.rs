@@ -269,6 +269,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         {
             return self.lower_identifier(operand);
         }
+        if !self.loose_loops.is_empty()
+            && let Some(value) = self.try_lower_in_loose_loop(expression)
+        {
+            return value;
+        }
         if !self.enter_nesting(position) {
             return self.builder.undefined();
         }

@@ -17,8 +17,8 @@ use bun_sema::hir;
 use bun_sema::json::Json;
 use bun_sema::resolve::{
     CachedConfig, FileStamp, Host, ModuleDetection, ParseOptions, Paths, ScriptKind, ancestors,
-    case_insensitive_hash, inside, is_declaration_file_name, is_same_path, join, root_length,
-    to_file_name_lower_case, to_path, typescript_path,
+    case_insensitive_hash, inside, is_declaration_file_name, is_plainly_normalized, is_same_path,
+    join, root_length, to_file_name_lower_case, to_path, typescript_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::util::SharedSort;
@@ -82,7 +82,10 @@ fn with_root(path: &[u8]) -> Cow<'_, [u8]> {
 
 /// Converts a native path to the checker's path format. It must be absolute.
 pub fn from_native(path: &[u8]) -> Vec<u8> {
-    let path = join(b"/", bun_paths::string_paths::without_nt_prefix(path));
+    let path = match !cfg!(windows) && is_plainly_normalized(path) {
+        true => path.to_vec(),
+        false => join(b"/", bun_paths::string_paths::without_nt_prefix(path)),
+    };
     // A POSIX path's root is `/`, even if its first name looks like a drive or a URL. See `root_length`.
     match !cfg!(windows) && root_length(&path) > 1 && !path.starts_with(b"//") {
         true => [b"/\0", &path[..]].concat(),

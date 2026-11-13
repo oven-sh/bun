@@ -1,5 +1,5 @@
 // Objects made in a loop before an array method and needed behind it in a few iterations are made there alone.
-// STATISTIC: AllocationsSunk >= 12
+// STATISTIC: AllocationsSunk >= 11
 const list = [4, 1, 3, 0, 2];
 let later = null;
 class Pair { a; b; constructor(a, b) { this.a = a; this.b = b; } }

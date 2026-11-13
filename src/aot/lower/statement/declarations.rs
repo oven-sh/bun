@@ -1,5 +1,6 @@
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingStability, Decl, SymbolId};
+use bun_sema::check::aot::ObjectMemberKind;
 use bun_sema::fold::{TreeNode, push_children};
 use bun_sema::hir::{
     ClassId, ExprId, ExprKind, Flags, FnBody, FnId, IdList, NodeData, PatId, PatKind, StmtId,
@@ -10,10 +11,11 @@ use smallvec::SmallVec;
 
 use super::statements_behind;
 use crate::builtins::id::BuiltinId;
-use crate::ir::{BlockId, DeclaredType, ValueId, VariableKey};
+use crate::ir::{BlockId, DeclaredType, LocalVariable, TypeTable, ValueId, VariableKey};
 use crate::lower::call::emit_call;
 use crate::lower::expression::{Evaluation, Tail, TailCast};
 use crate::lower::member::PropertyName;
+use crate::lower::object::finish_object;
 use crate::lower::{FileLowering, FunctionLowering, control, scope};
 use crate::modules::{CopiedExports, ShownNames};
 
@@ -195,6 +197,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if self.leaves_function_unmade(decl.pat) {
             return;
         }
+        if !behind.is_empty() {
+            self.note_closing_loop(decl.pat, initializer, behind);
+        }
         if let Some((made, names)) =
             self.file
                 .find_object_created_for_maker(decl.pat, initializer, behind)
@@ -304,14 +309,35 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         else {
             return false;
         };
-        let ExprKind::Call(site) = hir[copy.written].kind else {
-            return false;
-        };
-        let site = hir[site];
         let holder = Sym {
             file: file.file,
             id: symbol,
         };
+        if copy.wraps_unmarked_answer {
+            let inputs = file.inputs;
+            // A coverage report counts the calls of a helper.
+            if inputs.options.counts_executions && inputs.sources.is_in_coverage_report(holder.file)
+            {
+                return false;
+            }
+            let assigned = match hir[copy.written].kind {
+                ExprKind::Cond { test, .. } => match hir[test].kind {
+                    ExprKind::Binary { left, .. } => left,
+                    _ => return false,
+                },
+                _ => required,
+            };
+            let answer = self.lower_expression(assigned);
+            self.set_position(hir[copy.written].pos);
+            let held = self.lower_unmarked_answer(holder, answer, copy.written);
+            self.set_position(self.file.hir[pattern].pos);
+            self.initialize_converted_symbol(symbol, name, held);
+            return true;
+        }
+        let ExprKind::Call(site) = hir[copy.written].kind else {
+            return false;
+        };
+        let site = hir[site];
         let helper = self.lower_expression(site.callee);
         let answer = self.lower_expression(required);
         let mut arguments: SmallVec<[ValueId; 4]> = SmallVec::new();
@@ -407,6 +433,64 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
         self.continue_in(done);
         self.builder.read_variable(held)
+    }
+
+    /// `answer && answer.__esModule ? answer : { default: answer }`, without the object where only its default is read: the
+    /// variable of the holder keeps it.
+    fn lower_unmarked_answer(&mut self, holder: Sym, answer: ValueId, written: ExprId) -> ValueId {
+        let held = self.builder.create_variable(None);
+        let (wraps, is_plain, done) = (
+            self.create_block(),
+            self.create_block(),
+            self.create_block(),
+        );
+        let split = self.split_on_type(answer, TypeTable::FUNCTION);
+        self.builder.switch_to(split.not_taken);
+        self.hold_marked_answer(split.not_taken_value, (held, done), wraps);
+        self.continue_in(wraps);
+        let wrapper = self.emit_wrapper(written, answer);
+        self.builder.write_variable(held, wrapper);
+        self.jump(done);
+        self.builder.switch_to(split.taken);
+        let function = split.taken_value;
+        self.hold_marked_answer(function, (held, done), is_plain);
+        self.continue_in(is_plain);
+        let variable = VariableKey::RequiredAnswer(holder);
+        let variable = self.file.ensure_variable(variable);
+        self.builder.put_module_variable(variable, function);
+        self.builder.write_variable(held, function);
+        self.jump(done);
+        self.continue_in(done);
+        self.builder.read_variable(held)
+    }
+
+    fn hold_marked_answer(
+        &mut self,
+        answer: ValueId,
+        (held, done): (LocalVariable, BlockId),
+        otherwise: BlockId,
+    ) {
+        let split = self.split_on_truthiness(answer);
+        self.builder.switch_to(split.not_taken);
+        self.jump(otherwise);
+        self.builder.switch_to(split.taken);
+        let marker = self.emit_named_read(answer, known::__esModule);
+        self.go_on_if(marker, true, otherwise);
+        self.builder.write_variable(held, answer);
+        self.jump(done);
+    }
+
+    fn emit_wrapper(&mut self, written: ExprId, answer: ValueId) -> ValueId {
+        let hir = self.file.hir;
+        if let ExprKind::Cond { branches, .. } = hir[written].kind {
+            return self.lower_expression(hir.branches(branches).no);
+        }
+        let name = self.file.name_key(known::default);
+        let members = [(name, ObjectMemberKind::Field)];
+        let layout = self.file.layout_of_names_made_at(written, &members);
+        let mut wrapper = self.begin_object(layout);
+        self.add_property(&mut wrapper, PropertyName::Constant(name), answer, None);
+        finish_object(self, wrapper)
     }
 
     fn store_plain_answer(

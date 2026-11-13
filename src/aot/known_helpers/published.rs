@@ -8,6 +8,17 @@ pub enum Helper {
     ClassPrivateFieldGet,
     ClassPrivateFieldSet,
     ClassPrivateFieldIn,
+    AssertClassBrand,
+    CheckPrivateRedeclaration,
+    PrivateElementAdd,
+    PrivateGetterCall,
+    PrivateSetterCall,
+    ClassExtractFieldDescriptor,
+    ClassApplyDescriptorGet,
+    ClassApplyDescriptorSet,
+    PrivateAccessCheck,
+    PrivateWrapper,
+    ThrowTypeError,
     MarkAsModule,
     Export,
     ExportSetter,
@@ -58,6 +69,28 @@ pub enum Shape {
     ClassPrivateFieldSetInWeakMap,
     ClassPrivateFieldSetByKind,
     ClassPrivateFieldInAsksStateOrComparesConstructor,
+    ClassPrivateFieldInAsksState,
+    ClassPrivateFieldGetOfBrandedReceiver,
+    ClassPrivateFieldGetOrGetterCall,
+    ClassPrivateFieldSetOfBrandedReceiver,
+    ClassPrivateFieldSetOrSetterCall,
+    ClassPrivateMethodOfReceiver,
+    AssertClassBrandAnswersReceiverOrMember,
+    CheckPrivateRedeclarationThrows,
+    PrivateFieldAddSetsEntry,
+    PrivateMethodAddAddsEntry,
+    PrivateElementAddAnswersCollection,
+    PrivateElementAddAnswersNothing,
+    PrivateGetterCallOfBrandedReceiver,
+    PrivateSetterCallOfBrandedReceiver,
+    ClassPrivateFieldGetByDescriptor,
+    ClassPrivateFieldSetByDescriptor,
+    ClassExtractFieldDescriptorAnswersEntry,
+    ClassApplyDescriptorGetAnswersValue,
+    ClassApplyDescriptorSetStoresValue,
+    PrivateAccessCheckThrows,
+    PrivateWrapperOfAccessors,
+    ThrowTypeErrorThrowsMessage,
     MarkAsModuleDefinesFlag,
     MarkAsModuleWithTag,
     ExportDefinesGetters,
@@ -96,6 +129,8 @@ pub enum Shape {
     DefinePropertiesOfDescriptorsUnderConvertedKeys,
     CreateClassDefinesBothSides,
     CreateClassDefinesBothSidesAndLocksPrototype,
+    CreateClassDefinesPrototype,
+    CreateClassDefinesAndLocksPrototype,
     ToPropertyKeyAnswersSymbolOrText,
     ToPrimitiveAsksMethodOfObject,
     TypeofAnswersSymbolForSymbols,
@@ -155,6 +190,8 @@ impl Shape {
             Shape::IsNativeReflectConstructByTrial => Helper::IsNativeReflectConstruct,
             Shape::CreateClassDefinesBothSides => Helper::CreateClass,
             Shape::CreateClassDefinesBothSidesAndLocksPrototype => Helper::CreateClass,
+            Shape::CreateClassDefinesPrototype => Helper::CreateClass,
+            Shape::CreateClassDefinesAndLocksPrototype => Helper::CreateClass,
             Shape::CommonJsRunsCallbackOnce => Helper::CommonJs,
             Shape::CommonJsRunsCallbackOnceThenDropsIt => Helper::CommonJs,
             Shape::CommonJsRunsFirstKeyOnce => Helper::CommonJs,
@@ -175,6 +212,28 @@ impl Shape {
             Shape::ClassPrivateFieldSetInWeakMap => Helper::ClassPrivateFieldSet,
             Shape::ClassPrivateFieldSetByKind => Helper::ClassPrivateFieldSet,
             Shape::ClassPrivateFieldInAsksStateOrComparesConstructor => Helper::ClassPrivateFieldIn,
+            Shape::ClassPrivateFieldInAsksState => Helper::ClassPrivateFieldIn,
+            Shape::ClassPrivateFieldGetOfBrandedReceiver => Helper::ClassPrivateFieldGet,
+            Shape::ClassPrivateFieldGetOrGetterCall => Helper::ClassPrivateFieldGet,
+            Shape::ClassPrivateFieldSetOfBrandedReceiver => Helper::ClassPrivateFieldSet,
+            Shape::ClassPrivateFieldSetOrSetterCall => Helper::ClassPrivateFieldSet,
+            Shape::ClassPrivateMethodOfReceiver => Helper::ClassPrivateFieldGet,
+            Shape::AssertClassBrandAnswersReceiverOrMember => Helper::AssertClassBrand,
+            Shape::CheckPrivateRedeclarationThrows => Helper::CheckPrivateRedeclaration,
+            Shape::PrivateFieldAddSetsEntry => Helper::PrivateElementAdd,
+            Shape::PrivateMethodAddAddsEntry => Helper::PrivateElementAdd,
+            Shape::PrivateElementAddAnswersCollection => Helper::PrivateElementAdd,
+            Shape::PrivateElementAddAnswersNothing => Helper::PrivateElementAdd,
+            Shape::PrivateGetterCallOfBrandedReceiver => Helper::PrivateGetterCall,
+            Shape::PrivateSetterCallOfBrandedReceiver => Helper::PrivateSetterCall,
+            Shape::PrivateAccessCheckThrows => Helper::PrivateAccessCheck,
+            Shape::ClassPrivateFieldGetByDescriptor => Helper::ClassPrivateFieldGet,
+            Shape::ClassPrivateFieldSetByDescriptor => Helper::ClassPrivateFieldSet,
+            Shape::ClassExtractFieldDescriptorAnswersEntry => Helper::ClassExtractFieldDescriptor,
+            Shape::ClassApplyDescriptorGetAnswersValue => Helper::ClassApplyDescriptorGet,
+            Shape::ClassApplyDescriptorSetStoresValue => Helper::ClassApplyDescriptorSet,
+            Shape::PrivateWrapperOfAccessors => Helper::PrivateWrapper,
+            Shape::ThrowTypeErrorThrowsMessage => Helper::ThrowTypeError,
             Shape::MarkAsModuleDefinesFlag => Helper::MarkAsModule,
             Shape::MarkAsModuleWithTag => Helper::MarkAsModule,
             Shape::ExportGettersIfMissing => Helper::Export,
@@ -243,7 +302,235 @@ const DEFINE_NORMAL_PROPERTY: (&str, Reference) = (
     Reference::Helper(Helper::DefineNormalProperty),
 );
 
+const ASSERT_CLASS_BRAND: (&str, Reference) = (
+    "_assertClassBrand",
+    Reference::Helper(Helper::AssertClassBrand),
+);
+
+const CHECK_PRIVATE_REDECLARATION: (&str, Reference) = (
+    "_checkPrivateRedeclaration",
+    Reference::Helper(Helper::CheckPrivateRedeclaration),
+);
+
+const ACCESS_CHECK: (&str, Reference) = (
+    "__accessCheck",
+    Reference::Helper(Helper::PrivateAccessCheck),
+);
+
+const EXTRACT_FIELD_DESCRIPTOR: (&str, Reference) = (
+    "_classExtractFieldDescriptor",
+    Reference::Helper(Helper::ClassExtractFieldDescriptor),
+);
+
+const APPLY_DESCRIPTOR_GET: (&str, Reference) = (
+    "_classApplyDescriptorGet",
+    Reference::Helper(Helper::ClassApplyDescriptorGet),
+);
+
+const APPLY_DESCRIPTOR_SET: (&str, Reference) = (
+    "_classApplyDescriptorSet",
+    Reference::Helper(Helper::ClassApplyDescriptorSet),
+);
+
+const PRIVATE_GET: (&str, Reference) = (
+    "__privateGet",
+    Reference::Helper(Helper::ClassPrivateFieldGet),
+);
+
+const PRIVATE_SET: (&str, Reference) = (
+    "__privateSet",
+    Reference::Helper(Helper::ClassPrivateFieldSet),
+);
+
+const TYPE_ERROR: (&str, Reference) = ("__typeError", Reference::Helper(Helper::ThrowTypeError));
+
 pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
+    PublishedFunction {
+        shape: Shape::AssertClassBrandAnswersReceiverOrMember,
+        text: "function(e, t, n) {\nif (\"function\" == typeof e ? e === t : e.has(t)) return arguments.length < 3 ? t : n;\nthrow new TypeError(\"Private element is not present on this object\");\n}",
+        references: &[],
+        origin: "babel 7.24.6 and after",
+    },
+    PublishedFunction {
+        shape: Shape::AssertClassBrandAnswersReceiverOrMember,
+        text: "function(brand, receiver, returnValue) {\nif (typeof brand === \"function\" ? brand === receiver : brand.has(receiver)) {\nreturn arguments.length < 3 ? receiver : returnValue;\n}\nthrow new TypeError(\"Private element is not present on this object\");\n}",
+        references: &[],
+        origin: "babel 7.24.0 to 7.24.5",
+    },
+    PublishedFunction {
+        shape: Shape::CheckPrivateRedeclarationThrows,
+        text: "function(e, t) {\nif (t.has(e)) throw new TypeError(\"Cannot initialize the same private elements twice on an object\");\n}",
+        references: &[],
+        origin: "babel 7.14 and after",
+    },
+    PublishedFunction {
+        shape: Shape::PrivateFieldAddSetsEntry,
+        text: "function(e, t, a) {\n_checkPrivateRedeclaration(e, t), t.set(e, a);\n}",
+        references: &[CHECK_PRIVATE_REDECLARATION],
+        origin: "babel 7.14 and after",
+    },
+    PublishedFunction {
+        shape: Shape::PrivateMethodAddAddsEntry,
+        text: "function(e, a) {\n_checkPrivateRedeclaration(e, a), a.add(e);\n}",
+        references: &[CHECK_PRIVATE_REDECLARATION],
+        origin: "babel 7.14 and after",
+    },
+    PublishedFunction {
+        shape: Shape::ClassPrivateFieldGetOfBrandedReceiver,
+        text: "function(s, a) {\nreturn s.get(_assertClassBrand(s, a));\n}",
+        references: &[ASSERT_CLASS_BRAND],
+        origin: "babel 7.24 and after",
+    },
+    PublishedFunction {
+        shape: Shape::ClassPrivateFieldSetOfBrandedReceiver,
+        text: "function(s, a, r) {\nreturn s.set(_assertClassBrand(s, a), r), r;\n}",
+        references: &[ASSERT_CLASS_BRAND],
+        origin: "babel 7.24.6 and after",
+    },
+    PublishedFunction {
+        shape: Shape::ClassPrivateFieldSetOfBrandedReceiver,
+        text: "function(privateMap, receiver, value) {\nprivateMap.set(_assertClassBrand(privateMap, receiver), value);\nreturn value;\n}",
+        references: &[ASSERT_CLASS_BRAND],
+        origin: "babel 7.24.0 to 7.24.5",
+    },
+    PublishedFunction {
+        shape: Shape::PrivateGetterCallOfBrandedReceiver,
+        text: "function(s, r, a) {\nreturn a(_assertClassBrand(s, r));\n}",
+        references: &[ASSERT_CLASS_BRAND],
+        origin: "babel 7.24 and after",
+    },
+    PublishedFunction {
+        shape: Shape::PrivateSetterCallOfBrandedReceiver,
+        text: "function(s, r, a, t) {\nreturn r(_assertClassBrand(s, a), t), t;\n}",
+        references: &[ASSERT_CLASS_BRAND],
+        origin: "babel 7.24.6 and after",
+    },
+    PublishedFunction {
+        shape: Shape::PrivateSetterCallOfBrandedReceiver,
+        text: "function(privateMap, setter, receiver, value) {\nsetter(_assertClassBrand(privateMap, receiver), value);\nreturn value;\n}",
+        references: &[ASSERT_CLASS_BRAND],
+        origin: "babel 7.24.0 to 7.24.5",
+    },
+    PublishedFunction {
+        shape: Shape::ClassPrivateFieldGetByDescriptor,
+        text: "function(receiver, privateMap) {\nvar descriptor = _classExtractFieldDescriptor(receiver, privateMap, \"get\");\nreturn _classApplyDescriptorGet(receiver, descriptor);\n}",
+        references: &[EXTRACT_FIELD_DESCRIPTOR, APPLY_DESCRIPTOR_GET],
+        origin: "babel 7.14 to 7.23, swc",
+    },
+    PublishedFunction {
+        shape: Shape::ClassPrivateFieldSetByDescriptor,
+        text: "function(receiver, privateMap, value) {\nvar descriptor = _classExtractFieldDescriptor(receiver, privateMap, \"set\");\n_classApplyDescriptorSet(receiver, descriptor, value);\nreturn value;\n}",
+        references: &[EXTRACT_FIELD_DESCRIPTOR, APPLY_DESCRIPTOR_SET],
+        origin: "babel 7.14 to 7.23, swc",
+    },
+    PublishedFunction {
+        shape: Shape::ClassExtractFieldDescriptorAnswersEntry,
+        text: "function(receiver, privateMap, action) {\nif (!privateMap.has(receiver)) {\nthrow new TypeError(\"attempted to \" + action + \" private field on non-instance\");\n}\nreturn privateMap.get(receiver);\n}",
+        references: &[],
+        origin: "babel 7.14 to 7.23, swc",
+    },
+    PublishedFunction {
+        shape: Shape::ClassApplyDescriptorGetAnswersValue,
+        text: "function(receiver, descriptor) {\nif (descriptor.get) {\nreturn descriptor.get.call(receiver);\n}\nreturn descriptor.value;\n}",
+        references: &[],
+        origin: "babel 7.14 to 7.23, swc",
+    },
+    PublishedFunction {
+        shape: Shape::ClassApplyDescriptorSetStoresValue,
+        text: "function(receiver, descriptor, value) {\nif (descriptor.set) {\ndescriptor.set.call(receiver, value);\n} else {\nif (!descriptor.writable) {\nthrow new TypeError(\"attempted to set read only private field\");\n}\ndescriptor.value = value;\n}\n}",
+        references: &[],
+        origin: "babel 7.14 to 7.23, swc",
+    },
+    PublishedFunction {
+        shape: Shape::ClassPrivateMethodOfReceiver,
+        text: "function(receiver, privateSet, fn) {\nif (!privateSet.has(receiver)) {\nthrow new TypeError(\"attempted to get private field on non-instance\");\n}\nreturn fn;\n}",
+        references: &[],
+        origin: "babel 7.0 to 7.23, swc",
+    },
+    PublishedFunction {
+        shape: Shape::PrivateWrapperOfAccessors,
+        text: "(obj, member, setter, getter) => ({\nset _(value) {\n__privateSet(obj, member, value, setter);\n},\nget _() {\nreturn __privateGet(obj, member, getter);\n}\n})",
+        references: &[PRIVATE_SET, PRIVATE_GET],
+        origin: "esbuild 0.11 and after",
+    },
+    PublishedFunction {
+        shape: Shape::ThrowTypeErrorThrowsMessage,
+        text: "(msg) => {\nthrow TypeError(msg);\n}",
+        references: &[],
+        origin: "esbuild 0.21 and after",
+    },
+    PublishedFunction {
+        shape: Shape::PrivateAccessCheckThrows,
+        text: "(obj, member, msg) => member.has(obj) || __typeError(\"Cannot \" + msg)",
+        references: &[TYPE_ERROR],
+        origin: "esbuild 0.21 and after",
+    },
+    PublishedFunction {
+        shape: Shape::PrivateAccessCheckThrows,
+        text: "(obj, member, msg) => {\nif (!member.has(obj)) throw TypeError(\"Cannot \" + msg);\n}",
+        references: &[],
+        origin: "esbuild 0.11 to 0.20",
+    },
+    PublishedFunction {
+        shape: Shape::ClassPrivateFieldInAsksState,
+        text: "(member, obj) => Object(obj) !== obj ? __typeError('Cannot use the \"in\" operator on this value') : member.has(obj)",
+        references: &[TYPE_ERROR],
+        origin: "esbuild 0.21 and after",
+    },
+    PublishedFunction {
+        shape: Shape::ClassPrivateFieldInAsksState,
+        text: "(member, obj) => {\nif (Object(obj) !== obj) throw TypeError('Cannot use the \"in\" operator on this value');\nreturn member.has(obj);\n}",
+        references: &[],
+        origin: "esbuild 0.11 to 0.20",
+    },
+    PublishedFunction {
+        shape: Shape::ClassPrivateFieldGetOrGetterCall,
+        text: "(obj, member, getter) => (__accessCheck(obj, member, \"read from private field\"), getter ? getter.call(obj) : member.get(obj))",
+        references: &[ACCESS_CHECK],
+        origin: "esbuild 0.21 and after",
+    },
+    PublishedFunction {
+        shape: Shape::ClassPrivateFieldGetOrGetterCall,
+        text: "(obj, member, getter) => {\n__accessCheck(obj, member, \"read from private field\");\nreturn getter ? getter.call(obj) : member.get(obj);\n}",
+        references: &[ACCESS_CHECK],
+        origin: "esbuild 0.11 to 0.20",
+    },
+    PublishedFunction {
+        shape: Shape::PrivateElementAddAnswersCollection,
+        text: "(obj, member, value) => member.has(obj) ? __typeError(\"Cannot add the same private member more than once\") : member instanceof WeakSet ? member.add(obj) : member.set(obj, value)",
+        references: &[TYPE_ERROR],
+        origin: "esbuild 0.21 and after",
+    },
+    PublishedFunction {
+        shape: Shape::PrivateElementAddAnswersNothing,
+        text: "(obj, member, value) => {\nif (member.has(obj)) throw TypeError(\"Cannot add the same private member more than once\");\nmember instanceof WeakSet ? member.add(obj) : member.set(obj, value);\n}",
+        references: &[],
+        origin: "esbuild 0.11 to 0.20",
+    },
+    PublishedFunction {
+        shape: Shape::ClassPrivateFieldSetOrSetterCall,
+        text: "(obj, member, value, setter) => (__accessCheck(obj, member, \"write to private field\"), setter ? setter.call(obj, value) : member.set(obj, value), value)",
+        references: &[ACCESS_CHECK],
+        origin: "esbuild 0.21 and after",
+    },
+    PublishedFunction {
+        shape: Shape::ClassPrivateFieldSetOrSetterCall,
+        text: "(obj, member, value, setter) => {\n__accessCheck(obj, member, \"write to private field\");\nsetter ? setter.call(obj, value) : member.set(obj, value);\nreturn value;\n}",
+        references: &[ACCESS_CHECK],
+        origin: "esbuild 0.11 to 0.20",
+    },
+    PublishedFunction {
+        shape: Shape::ClassPrivateMethodOfReceiver,
+        text: "(obj, member, method) => (__accessCheck(obj, member, \"access private method\"), method)",
+        references: &[ACCESS_CHECK],
+        origin: "esbuild 0.21 and after",
+    },
+    PublishedFunction {
+        shape: Shape::ClassPrivateMethodOfReceiver,
+        text: "(obj, member, method) => {\n__accessCheck(obj, member, \"access private method\");\nreturn method;\n}",
+        references: &[ACCESS_CHECK],
+        origin: "esbuild 0.11 to 0.20",
+    },
     PublishedFunction {
         shape: Shape::DefineNormalPropertyDefinesWhatIsThereAndStoresWhatIsNot,
         text: "(obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value",
@@ -441,6 +728,12 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
     },
     PublishedFunction {
         shape: Shape::IsNativeReflectConstructByTrial,
+        text: "function _isNativeReflectConstruct() {\ntry {\nvar t = !Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {}));\n} catch (t) {}\nreturn (_isNativeReflectConstruct = function () {\nreturn !!t;\n})();\n}",
+        references: &[],
+        origin: "babel 7.23 and after, where functions are not named, and by terser",
+    },
+    PublishedFunction {
+        shape: Shape::IsNativeReflectConstructByTrial,
         text: "function _isNativeReflectConstruct() {\ntry {\nvar t = !Boolean.prototype.valueOf.call(Reflect.construct(Boolean, [], function () {}));\n} catch (t) {}\nreturn (_isNativeReflectConstruct = function _isNativeReflectConstruct() {\nreturn !!t;\n})();\n}",
         references: &[],
         origin: "babel 7.23 and after",
@@ -495,6 +788,60 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
             Reference::Helper(Helper::DefineProperties),
         )],
         origin: "babel 7.24.6 and after",
+    },
+    PublishedFunction {
+        shape: Shape::CreateClassDefinesAndLocksPrototype,
+        text: "function(e, r, t) {\nreturn r && _defineProperties(e.prototype, r), Object.defineProperty(e, \"prototype\", { writable: !1 }), e;\n}",
+        references: &[(
+            "_defineProperties",
+            Reference::Helper(Helper::DefineProperties),
+        )],
+        origin: "babel 7.24.6 and after, its static side left out by rollup",
+    },
+    PublishedFunction {
+        shape: Shape::CreateClassDefinesAndLocksPrototype,
+        text: "function(e, r) {\nreturn r && _defineProperties(e.prototype, r), Object.defineProperty(e, \"prototype\", { writable: !1 }), e;\n}",
+        references: &[(
+            "_defineProperties",
+            Reference::Helper(Helper::DefineProperties),
+        )],
+        origin: "babel 7.24.6 and after, its static side left out by rollup",
+    },
+    PublishedFunction {
+        shape: Shape::CreateClassDefinesAndLocksPrototype,
+        text: "function(Constructor, protoProps, staticProps) {\nif (protoProps) _defineProperties(Constructor.prototype, protoProps);\nObject.defineProperty(Constructor, \"prototype\", { writable: false });\nreturn Constructor;\n}",
+        references: &[(
+            "_defineProperties",
+            Reference::Helper(Helper::DefineProperties),
+        )],
+        origin: "babel 7.18 and after, its static side left out by rollup",
+    },
+    PublishedFunction {
+        shape: Shape::CreateClassDefinesPrototype,
+        text: "function(Constructor, protoProps, staticProps) {\nif (protoProps) _defineProperties(Constructor.prototype, protoProps);\nreturn Constructor;\n}",
+        references: &[(
+            "_defineProperties",
+            Reference::Helper(Helper::DefineProperties),
+        )],
+        origin: "babel 7 before 7.18, its static side left out by rollup",
+    },
+    PublishedFunction {
+        shape: Shape::CreateClassDefinesAndLocksPrototype,
+        text: "function(Constructor, protoProps) {\nif (protoProps) _defineProperties(Constructor.prototype, protoProps);\nObject.defineProperty(Constructor, \"prototype\", { writable: false });\nreturn Constructor;\n}",
+        references: &[(
+            "_defineProperties",
+            Reference::Helper(Helper::DefineProperties),
+        )],
+        origin: "babel 7.18 and after, its static side left out by rollup",
+    },
+    PublishedFunction {
+        shape: Shape::CreateClassDefinesPrototype,
+        text: "function(Constructor, protoProps) {\nif (protoProps) _defineProperties(Constructor.prototype, protoProps);\nreturn Constructor;\n}",
+        references: &[(
+            "_defineProperties",
+            Reference::Helper(Helper::DefineProperties),
+        )],
+        origin: "babel 7 before 7.18, its static side left out by rollup",
     },
     PublishedFunction {
         shape: Shape::ToPropertyKeyAnswersSymbolOrText,
@@ -558,6 +905,30 @@ pub(super) static PUBLISHED_FUNCTIONS: &[PublishedFunction] = &[
         text: "function(t, r) {\nif (\"object\" != typeof t || !t) return t;\nvar e = t[Symbol.toPrimitive];\nif (void 0 !== e) {\nvar i = e.call(t, r || \"default\");\nif (\"object\" != typeof i) return i;\nthrow new TypeError(\"@@toPrimitive must return a primitive value.\");\n}\nreturn (\"string\" === r ? String : Number)(t);\n}",
         references: &[],
         origin: "babel 7.24.0 and after, where typeof is not transformed: validator 13",
+    },
+    PublishedFunction {
+        shape: Shape::ToPrimitiveAsksMethodOfObject,
+        text: "function(t, r) {\nif (\"object\" != typeof t || !t) return t;\nvar e = t[Symbol.toPrimitive];\nif (void 0 !== e) {\nvar i = e.call(t, r);\nif (\"object\" != typeof i) return i;\nthrow new TypeError(\"@@toPrimitive must return a primitive value.\");\n}\nreturn (String)(t);\n}",
+        references: &[],
+        origin: "babel 7.24.0 and after, the hint known to rollup, where typeof is not transformed",
+    },
+    PublishedFunction {
+        shape: Shape::ToPrimitiveAsksMethodOfObject,
+        text: "function(t, r) {\nif (\"object\" != _typeof(t) || !t) return t;\nvar e = t[Symbol.toPrimitive];\nif (void 0 !== e) {\nvar i = e.call(t, r);\nif (\"object\" != _typeof(i)) return i;\nthrow new TypeError(\"@@toPrimitive must return a primitive value.\");\n}\nreturn (String)(t);\n}",
+        references: &[("_typeof", Reference::Helper(Helper::Typeof))],
+        origin: "babel 7.24.0 and after, the hint known to rollup",
+    },
+    PublishedFunction {
+        shape: Shape::ToPrimitiveAsksMethodOfObject,
+        text: "function(t, r) {\nif (\"object\" != typeof t || !t) return t;\nvar e = t[Symbol.toPrimitive];\nif (void 0 !== e) {\nvar i = e.call(t, r || \"default\");\nif (\"object\" != typeof i) return i;\nthrow new TypeError(\"@@toPrimitive must return a primitive value.\");\n}\nreturn (String)(t);\n}",
+        references: &[],
+        origin: "babel 7.24.0 and after, the hint known to rollup, where typeof is not transformed",
+    },
+    PublishedFunction {
+        shape: Shape::ToPrimitiveAsksMethodOfObject,
+        text: "function(t, r) {\nif (\"object\" != _typeof(t) || !t) return t;\nvar e = t[Symbol.toPrimitive];\nif (void 0 !== e) {\nvar i = e.call(t, r || \"default\");\nif (\"object\" != _typeof(i)) return i;\nthrow new TypeError(\"@@toPrimitive must return a primitive value.\");\n}\nreturn (String)(t);\n}",
+        references: &[("_typeof", Reference::Helper(Helper::Typeof))],
+        origin: "babel 7.24.0 and after, the hint known to rollup",
     },
     PublishedFunction {
         shape: Shape::ToPrimitiveAsksMethodOfObject,

@@ -16,10 +16,8 @@ use super::typecast::is_cast_target;
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::print::call_like_expression::arguments::arguments_grouped_layout;
 use crate::js::print::call_like_expression::is_printed_as_member_chain;
-use crate::js::print::parameters::FormatFormalParameters;
 use crate::prelude::*;
 use crate::{best_fitting, write};
-use bun_core::strings;
 use smallvec::SmallVec;
 
 type Members<'a> = SmallVec<[ChainMember<'a>; 8]>;
@@ -301,8 +299,8 @@ impl<'a, 'b> MemberChain<'a, 'b> {
     /// Three layouts aren't, at any depth. The arguments of a call: if one that isn't the grouped one breaks, every
     /// argument goes on its own line the next time (`write_grouped_arguments`). A chain: if a group before its last
     /// one breaks, or its last one does after a function argument, every group goes on its own line the next time
-    /// (`groups_should_break`). An element: if its opening breaks, so do its children (`jsx/element.rs`). A `{` in
-    /// such a place is a reason to say no.
+    /// (`groups_should_break`). An element: if its opening breaks, so do its children (`jsx/element.rs`). An object
+    /// in such a place is a reason to say no.
     fn last_group_prints_the_same_once_broken(&self, f: &Formatter<'a>) -> bool {
         let Some(last) = self.groups().last() else {
             return false;
@@ -317,7 +315,7 @@ impl<'a, 'b> MemberChain<'a, 'b> {
             if let Node::Expr(e) = node
                 && let ExprKind::Jsx(jsx) = e.kind()
                 && !jsx.children().is_empty()
-                && strings::contains_char(f.source_text().text_for(&e.span()), b'{')
+                && has_object_like(node)
             {
                 return false;
             }
@@ -360,11 +358,10 @@ impl<'a, 'b> MemberChain<'a, 'b> {
         if calls.function_breaks_last {
             return false;
         }
-        let Some(before_last) = self.group(self.group_ends.len().saturating_sub(2)).last() else {
-            return false;
-        };
-        let before_last_group = Span::new(self.root.span().start, before_last.expr().span().end);
-        !strings::contains_char(f.source_text().text_for(&before_last_group), b'{')
+        let mut before_last_group = (0..self.group_ends.len().saturating_sub(1))
+            .flat_map(|index| self.group(index))
+            .flat_map(nodes_of_member);
+        !before_last_group.any(has_object_like)
     }
 
     /// Prettier's `nodeHasComment`.
@@ -477,25 +474,28 @@ fn push_arguments_if_printed_the_same<'a>(
     f: &Formatter<'a>,
 ) -> bool {
     for member in members {
-        match member {
-            ChainMember::CallExpression { expression, .. } => {
-                if let Some(call) = expression.as_call_like() {
-                    if !arguments_print_the_same_once_broken(call, f) {
-                        return false;
-                    }
-                    rest.extend(call.args().iter().map(Node::from));
-                }
-            }
-            ChainMember::ComputedMember(e) => {
-                if let Some(index) = e.index() {
-                    rest.push(Node::from(index));
-                }
-            }
-            ChainMember::Node(head) => rest.push(Node::from(*head)),
-            ChainMember::StaticMember(_) | ChainMember::TSNonNullExpression(_) => {}
+        if let ChainMember::CallExpression { expression, .. } = member
+            && let Some(call) = expression.as_call_like()
+            && !arguments_print_the_same_once_broken(call, f)
+        {
+            return false;
         }
+        rest.extend(nodes_of_member(member));
     }
     true
+}
+
+/// What `member` adds to the chain: the arguments of a call, the index of a computed member, the head.
+fn nodes_of_member<'a>(member: &ChainMember<'a>) -> SmallVec<[Node<'a>; 2]> {
+    match member {
+        ChainMember::CallExpression { expression, .. } => expression
+            .as_call_like()
+            .map(|call| call.args().iter().map(Node::from).collect())
+            .unwrap_or_default(),
+        ChainMember::ComputedMember(e) => e.index().map(Node::from).into_iter().collect(),
+        ChainMember::Node(head) => SmallVec::from_elem(Node::from(*head), 1),
+        ChainMember::StaticMember(_) | ChainMember::TSNonNullExpression(_) => SmallVec::new(),
+    }
 }
 
 /// True if the arguments of `call` are printed the same way the next time once one of them breaks: none but the
@@ -510,16 +510,32 @@ fn arguments_print_the_same_once_broken<'a>(call: Call<'a>, f: &Formatter<'a>) -
         true => 0,
         false => args.len().saturating_sub(1),
     };
-    let can_stay_expanded =
-        |span: Span| strings::contains_char(f.source_text().text_for(&span), b'{');
     !(args.iter().enumerate()).any(|(index, argument)| match index == grouped {
-        false => can_stay_expanded(argument.span()),
+        false => has_object_like(Node::from(argument)),
         true => argument.as_fn().is_some_and(|function| {
-            can_stay_expanded(FormatFormalParameters(function).span())
-                || (function.type_params().iter()).any(|it| can_stay_expanded(it.span()))
-                || (function.return_type()).is_some_and(|it| can_stay_expanded(it.span()))
+            (function.params_with_this().map(Node::from))
+                .chain(function.type_params().iter().map(Node::from))
+                .chain(function.return_type().map(Node::from))
+                .any(has_object_like)
         }),
     })
+}
+
+/// True if `node` has an object, an object type or a mapped type in it: what can stay broken once it's printed
+/// broken, `GroupMode::StaysExpanded`.
+fn has_object_like(node: Node<'_>) -> bool {
+    let mut rest = SmallVec::<[Node<'_>; 8]>::new();
+    rest.push(node);
+    while let Some(node) = rest.pop() {
+        match node {
+            Node::Expr(e) if matches!(e.kind(), ExprKind::Object(_)) => return true,
+            Node::Type(ty) if matches!(ty.kind(), TypeKind::Object(_) | TypeKind::Mapped(_)) => {
+                return true;
+            }
+            _ => node.for_each_child(|child| rest.push(child)),
+        }
+    }
+    false
 }
 
 fn has_leading_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool {

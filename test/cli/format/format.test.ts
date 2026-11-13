@@ -1528,6 +1528,9 @@ describe.concurrent("bun fmt", () => {
       ["ts", `abc.b().c((x) => ({ ${props} }));\n`, `abc.b().c((x) => (${broken()}));\n`],
       ["ts", `abc.b().c([{ ${props} }]);\n`, `abc.b().c([\n  ${broken("  ")},\n]);\n`],
       ["ts", `abc.b().c({ a: 1 }, { ${props} });\n`, `abc.b().c(\n  { a: 1 },\n  ${broken("  ")},\n);\n`],
+      // An argument beside the object that can't stay broken doesn't count.
+      ["ts", `abc.b().c(() => {}, { ${props} });\n`, `abc.b().c(() => {}, ${broken()});\n`],
+      ["ts", `abc.b().c("{", { ${props} });\n`, `abc.b().c("{", ${broken()});\n`],
       ["ts", `abc.b().c({ ${props} } as Foo);\n`, `abc.b().c(${broken()} as Foo);\n`],
       ["ts", `abc.b().c(x.y().z({ ${props} }));\n`, `abc.b().c(\n  x.y().z(${broken("  ")}),\n);\n`],
       ["ts", `abc.b().c(x.y(1).z({ ${props} }));\n`, `abc.b().c(\n  x.y(1).z(${broken("  ")}),\n);\n`],
@@ -1638,8 +1641,7 @@ describe.concurrent("bun fmt", () => {
     // broken return type of the grouped function does the same, a chain inside the last group whose earlier group
     // breaks puts every group of that chain on its own line, and an element whose opening breaks puts its children
     // on their own lines. Those are other layouts of the call, of the inner chain or of the element, not of the
-    // chain's head, so they still take two passes, as with the tools. The `{` in `() => {}` counts as an object that
-    // can stay broken.
+    // chain's head, so they still take two passes, as with the tools.
     test("still takes two passes when the object is beside a grouped argument", async () => {
       const rows: [string, string, string][] = [
         [
@@ -1653,9 +1655,14 @@ describe.concurrent("bun fmt", () => {
           `abc.b().c(\n  foo(\n    ${broken("    ")},\n    () => {},\n  ),\n);\n`,
         ],
         [
-          `abc.b().c(() => {}, { ${props} });\n`,
-          `abc\n  .b()\n  .c(() => {}, ${broken("  ")});\n`,
-          `abc.b().c(() => {}, ${broken()});\n`,
+          `abc.b().c((options: { firstProperty: number; secondProperty: number; thirdProperty: number }, callback) => { x; });\n`,
+          `abc\n  .b()\n  .c(\n    (\n      options: {\n        firstProperty: number;\n        secondProperty: number;\n        thirdProperty: number;\n      },\n      callback,\n    ) => {\n      x;\n    },\n  );\n`,
+          `abc.b().c(\n  (\n    options: {\n      firstProperty: number;\n      secondProperty: number;\n      thirdProperty: number;\n    },\n    callback,\n  ) => {\n    x;\n  },\n);\n`,
+        ],
+        [
+          `abc.b().c(<T extends { firstLongProperty: string; secondLongProperty: string; thirdLong: string }>(x: T) => { x; });\n`,
+          `abc\n  .b()\n  .c(\n    <\n      T extends {\n        firstLongProperty: string;\n        secondLongProperty: string;\n        thirdLong: string;\n      },\n    >(\n      x: T,\n    ) => {\n      x;\n    },\n  );\n`,
+          `abc.b().c(\n  <\n    T extends {\n      firstLongProperty: string;\n      secondLongProperty: string;\n      thirdLong: string;\n    },\n  >(\n    x: T,\n  ) => {\n    x;\n  },\n);\n`,
         ],
         [
           `abc.b().c(async ({ id, token }: Props): Promise<{ id: number; name: string; email: string; ok: boolean }> => { return x; });\n`,

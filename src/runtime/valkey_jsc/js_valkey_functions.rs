@@ -899,19 +899,15 @@ impl JSValkeyClient {
         rest: &[JSValue],
         is_fields: fn(JSValue) -> bool,
     ) -> bool {
-        // An iterator adds (key, collection): an index and the array, a key and the `Map` or object, the value again and the `Set`.
+        // An iterator adds (key, collection): a key and the `Map` or object, the value again and the `Set`.
+        // An index and its array pass the test below without this.
         if let [key, collection] = rest
             && collection.is_object()
+            && !collection.is_array()
             && !Self::is_field(global, *collection)
+            && (!key.is_object() || *key == fields)
         {
-            let is_key = if collection.is_array() {
-                key.is_number()
-            } else {
-                !key.is_object()
-            };
-            if is_key || *key == fields {
-                return false;
-            }
+            return false;
         }
         rest.first().is_some_and(|value| is_fields(*value))
             || rest.iter().any(|value| Self::is_field(global, *value))

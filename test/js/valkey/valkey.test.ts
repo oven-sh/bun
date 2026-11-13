@@ -7783,6 +7783,7 @@ describe("RedisClient command encoding", () => {
     ],
     ['hset("h", { a: 1 }, "b", new String("2"))', c => c.hset("h", { a: 1 }, "b", new String("2")), hsetForms("HSET")],
     ['hset("h", { a: 1 }, "tags", ["x", "y"])', c => c.hset("h", { a: 1 }, "tags", ["x", "y"]), hsetForms("HSET")],
+    ['hset("h", { a: 1 }, "b", 2)', c => c.hset("h", { a: 1 }, "b", 2), hsetForms("HSET")],
     ['hset("h", ["a", "1"], "b", "2")', c => c.hset("h", ["a", "1"], "b", "2"), hsetForms("HSET")],
     ['hset("h", ["a", "1"], ["b", "2"])', c => c.hset("h", ["a", "1"], ["b", "2"]), hsetForms("HSET")],
     ['hmset("h", { a: 1 }, "b", "2")', c => c.hmset("h", { a: 1 }, "b", "2"), hsetForms("HMSET")],

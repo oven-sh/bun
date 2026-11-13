@@ -990,7 +990,7 @@ impl FakeTimers {
                 _ => bun_jsc::cpp::Bun__FakeTimers__createFunction(global, api as u8)?,
             };
             Bun__FakeTimers__setOriginal(global, originals, fake, original);
-            // A mock function is an `InternalFunction`, and no timer function is one.
+            // Saves the calls on `original` for a function that is no mock: a mock function is an `InternalFunction`, and no timer function is one.
             let is_mock = original.js_type() == bun_jsc::JSType::InternalFunction;
             fakes.push(Replaced {
                 api,

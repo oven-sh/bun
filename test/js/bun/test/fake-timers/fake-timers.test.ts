@@ -3264,6 +3264,29 @@ describe("a spy that is restored while fake timers are on", () => {
     },
   );
 
+  // On the two clocks no restored spy goes back, as before this rule was for every function. The fake stays where the test put the spy.
+  test.each(ofClocks.filter(([, title]) => title !== "setTimeout"))(
+    "%s of %s: a restored spy that the test put on the property itself stays off after useRealTimers()",
+    (_, title, spyOn, owner) => {
+      const name = title.split(".").at(-1)!;
+      const target = owner as unknown as Record<string, unknown>;
+      const real = target[name];
+      try {
+        const spy = spyOn(target, name);
+        spy.mockRestore();
+        target[name] = spy;
+        jest.useFakeTimers();
+        const fake = target[name];
+        expect(fake).not.toBe(spy);
+        jest.useRealTimers();
+        expect(target[name]).toBe(fake);
+      } finally {
+        jest.useRealTimers();
+        target[name] = real;
+      }
+    },
+  );
+
   describe("in the hooks of a test file", () => {
     afterEach(() => {
       jest.restoreAllMocks();

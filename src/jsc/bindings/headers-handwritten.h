@@ -129,6 +129,8 @@ typedef struct ResolvedSource {
     BunString source_code;
     BunString source_url;
     bool isCommonJSModule;
+    // IsolatedModuleCache::insert() skips this source: see `from_earlier_generation` in ResolvedSource.rs.
+    bool from_earlier_generation;
     // `bun build --compile`: StringImpl::hash() of source_code computed at build time (0 = unknown).
     uint32_t source_code_hash;
     JSC::EncodedJSValue cjsCustomExtension;
@@ -158,7 +160,7 @@ typedef struct ResolvedSource {
     // validated against). If empty, origin is derived from source_url.
     BunString origin_path;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, depends_on_more_than_source) == 78 && offsetof(ResolvedSource, is_static) == 79 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_entry_offset) == 100 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 136 && offsetof(ResolvedSource, from_earlier_generation) == 49 && offsetof(ResolvedSource, is_prelinked_module) == 77 && offsetof(ResolvedSource, depends_on_more_than_source) == 78 && offsetof(ResolvedSource, is_static) == 79 && offsetof(ResolvedSource, bytecode_cache) == 80 && offsetof(ResolvedSource, bytecode_cache_persistent) == 97 && offsetof(ResolvedSource, bytecode_cache_entry_offset) == 100 && offsetof(ResolvedSource, module_info) == 104, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;

@@ -52,7 +52,7 @@ Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String&
 
 void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider, const CodeString* pluginContents)
 {
-    if (!isTagCacheable(static_cast<SyntheticModuleType>(provider.m_tag)) || provider.m_dependsOnMoreThanSource)
+    if (!isTagCacheable(static_cast<SyntheticModuleType>(provider.m_tag)) || provider.m_dependsOnMoreThanSource || provider.m_fromEarlierGeneration)
         return;
     provider.m_madeFromHash = madeFromHash(vm, key, pluginContents);
     WebCore::clientData(vm)->isolationSourceProviderCache.set(key, &provider);

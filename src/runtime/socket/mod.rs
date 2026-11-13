@@ -38,6 +38,10 @@ pub(crate) mod windows_named_pipe_context;
 #[path = "posix_pipe_stub.rs"]
 pub(crate) mod posix_pipe;
 
+#[cfg(unix)]
+#[path = "PosixPipeContext.rs"]
+pub(crate) mod posix_pipe_context;
+
 mod bundled_root_certs;
 mod cert_files;
 #[cfg(all(unix, not(target_vendor = "apple")))]
@@ -97,6 +101,9 @@ pub(crate) use socket_body::{
 
 #[cfg(windows)]
 pub(crate) use windows_named_pipe_context::WindowsNamedPipeContext;
+
+#[cfg(unix)]
+pub(crate) use posix_pipe_context::PosixPipeContext;
 
 pub(crate) use udp_socket::UDPSocket;
 

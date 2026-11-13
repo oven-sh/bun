@@ -2678,7 +2678,7 @@ pub mod bv2_impl {
                         let idx = self
                             .enqueue_parse_task(
                                 &file_map_result,
-                                file_map_result.path_pair.primary,
+                                path_primary,
                                 &mut tmp_source,
                                 loader,
                                 import_record.original_target,
@@ -2920,7 +2920,7 @@ pub mod bv2_impl {
                 let idx = self
                     .enqueue_parse_task(
                         &resolve_result,
-                        self.parse_task_path(&resolve_result, path),
+                        self.parse_task_path(&resolve_result, path, target),
                         &mut tmp_source,
                         loader,
                         import_record.original_target,
@@ -3114,7 +3114,7 @@ pub mod bv2_impl {
                 ..Default::default()
             })?;
             // Arena-owned; freed on heap reset.
-            let task_path = self.parse_task_path(result, path);
+            let task_path = self.parse_task_path(result, path, target);
             let task_val = ParseTask::init(result, task_path, source_index, self);
             let task: &mut ParseTask = self.arena().alloc(task_val);
             task.loader = Some(loader);
@@ -6194,9 +6194,11 @@ pub mod bv2_impl {
             &self,
             result: &_resolver::Result<'_>,
             active: Fs::Path<'a>,
+            target: options::Target,
         ) -> Fs::Path<'a> {
             if result.path_pair.primary.is_disabled {
-                path_in_arena(&result.path_pair.primary, self.arena())
+                self.path_with_pretty_initialized(&result.path_pair.primary, target)
+                    .expect("oom")
             } else {
                 active
             }
@@ -7059,7 +7061,7 @@ pub mod bv2_impl {
                 // Arena-owned.
                 let resolve_task_val = ParseTask::init(
                     &resolve_result,
-                    resolve_result.path_pair.primary,
+                    self.parse_task_path(&resolve_result, import_record.path, target),
                     bun_ast::Index::INVALID,
                     self,
                 );

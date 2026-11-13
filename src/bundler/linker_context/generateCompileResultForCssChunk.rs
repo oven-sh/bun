@@ -62,11 +62,7 @@ fn generate_compile_result_for_css_chunk_impl(
     let _trace = bun_core::perf::trace("Bundler.generateCodeForFileInChunkCss");
     // `defer trace.end()` — RAII; Drop ends the trace.
 
-    // `worker.arena` (= `BackRef` to `worker.heap`) is a disjoint field from
-    // `worker.temporary_arena` borrowed `&mut` below, so a direct shared
-    // borrow via `BackRef::get` is fine. The heap is pinned for the worker's
-    // lifetime; see `Worker::arena`.
-    let arena = worker.arena.get();
+    let arena = worker.arena();
     let _arena_reset = scopeguard::guard(&mut worker.temporary_arena, |arena| {
         // temporary_arena is initialized in Worker::create before any task runs.
         if let Some(a) = arena.as_mut() {
@@ -217,7 +213,7 @@ impl SharedBlockEdges {
 /// and every rule printer writes a block the same way.
 fn shared_block_edges<'a>(
     c: &LinkerContext,
-    css_content: &'a CssChunk,
+    css_content: &CssChunk<'a>,
     i: usize,
     arena: &'a bun_alloc::Arena,
 ) -> Result<SharedBlockEdges, ()> {

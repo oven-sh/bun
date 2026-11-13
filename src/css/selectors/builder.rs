@@ -35,14 +35,14 @@ use crate::selector::parser::{
 /// (from left to right). Once the process is complete, callers should invoke
 /// build(), which transforms the contents of the SelectorBuilder into a heap-
 /// allocated Selector and leaves the builder in a drained state.
-pub struct SelectorBuilder<Impl: ValidSelectorImpl> {
+pub struct SelectorBuilder<'bump, Impl: ValidSelectorImpl<'bump>> {
     /// The entire sequence of simple selectors, from left to right, without combinators.
     ///
     /// We make this large because the result of parsing a selector is fed into a new
     /// Arc-ed allocation, so any spilled vec would be a wasted allocation. Also,
     /// Components are large enough that we don't have much cache locality benefit
     /// from reserving stack space for fewer of them.
-    simple_selectors: SmallList<GenericComponent<Impl>, 32>,
+    simple_selectors: SmallList<GenericComponent<'bump, Impl>, 32>,
 
     /// The combinators, and the length of the compound selector to their left.
     combinators: SmallList<(Combinator, usize), 32>,
@@ -50,24 +50,24 @@ pub struct SelectorBuilder<Impl: ValidSelectorImpl> {
     /// The length of the current compound selector.
     current_len: usize,
 
-    alloc: ArenaPtr,
+    alloc: ArenaPtr<'bump>,
 }
 
-pub(crate) struct BuildResult<Impl: ValidSelectorImpl> {
+pub(crate) struct BuildResult<'bump, Impl: ValidSelectorImpl<'bump>> {
     pub(crate) specificity_and_flags: SpecificityAndFlags,
-    pub(crate) components: Vec<GenericComponent<Impl>, ArenaPtr>,
+    pub(crate) components: Vec<GenericComponent<'bump, Impl>, ArenaPtr<'bump>>,
 }
 
-impl<Impl: ValidSelectorImpl> Default for SelectorBuilder<Impl> {
+impl<'bump, Impl: ValidSelectorImpl<'bump>> Default for SelectorBuilder<'bump, Impl> {
     #[inline]
     fn default() -> Self {
         Self::init_in(ArenaPtr::global())
     }
 }
 
-impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
+impl<'bump, Impl: ValidSelectorImpl<'bump>> SelectorBuilder<'bump, Impl> {
     #[inline]
-    pub(crate) fn init_in(alloc: ArenaPtr) -> Self {
+    pub(crate) fn init_in(alloc: ArenaPtr<'bump>) -> Self {
         Self {
             simple_selectors: SmallList::default(),
             combinators: SmallList::default(),
@@ -93,13 +93,13 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     }
 
     /// Pushes a simple selector onto the current compound selector.
-    pub(crate) fn push_simple_selector(&mut self, ss: GenericComponent<Impl>) {
+    pub(crate) fn push_simple_selector(&mut self, ss: GenericComponent<'bump, Impl>) {
         debug_assert!(!ss.is_combinator());
         self.simple_selectors.append(ss);
         self.current_len += 1;
     }
 
-    pub(crate) fn last_simple_selector(&self) -> Option<&GenericComponent<Impl>> {
+    pub(crate) fn last_simple_selector(&self) -> Option<&GenericComponent<'bump, Impl>> {
         self.simple_selectors.last()
     }
 
@@ -114,7 +114,7 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     /// Consumes the builder, producing a Selector.
     ///
     /// *NOTE*: This will free all allocated memory in the builder
-    pub(crate) fn build(&mut self, flags: SelectorFlags) -> BuildResult<Impl> {
+    pub(crate) fn build(&mut self, flags: SelectorFlags) -> BuildResult<'bump, Impl> {
         let specificity = compute_specificity::<Impl>(self.simple_selectors.slice());
         // `build_with_specificity_and_flags()` drains the contents; `Drop` on
         // `SelectorBuilder` frees the SmallList capacity when the builder goes
@@ -133,7 +133,10 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     /// order requires additional allocations, and undoing the reversal when serializing the
     /// selector. So we could just change this code to store the components in the same order
     /// as the source.
-    fn build_with_specificity_and_flags(&mut self, spec: SpecificityAndFlags) -> BuildResult<Impl> {
+    fn build_with_specificity_and_flags(
+        &mut self,
+        spec: SpecificityAndFlags,
+    ) -> BuildResult<'bump, Impl> {
         // Capture combinators.len() before borrowing simple_selectors.slice().
         let combinators_len = self.combinators.len();
 

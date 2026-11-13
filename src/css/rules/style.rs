@@ -6,25 +6,20 @@ use crate::selectors::selector;
 use crate::{PrintErr, Printer, VendorPrefix};
 
 // `StyleRule` is generic over the custom at-rule type `R`.
-//
-// `DeclarationBlock<'bump>` borrows the parser arena (bumpalo Vecs).
-// Threading `'bump` here cascades into `CssRule<'bump, R>` / `CssRuleList<'bump, R>`
-// (see the rules/mod.rs lifetime-erasure note); for now the lifetime is erased
-// to `'static`.
-pub struct StyleRule<R> {
+pub struct StyleRule<'bump, R> {
     /// The selectors for the style rule.
-    pub(crate) selectors: selector::parser::SelectorList,
+    pub(crate) selectors: selector::parser::SelectorList<'bump>,
     /// A vendor prefix override, used during selector printing.
     pub(crate) vendor_prefix: VendorPrefix,
     /// The declarations within the style rule.
-    pub(crate) declarations: DeclarationBlock<'static>,
+    pub(crate) declarations: DeclarationBlock<'bump>,
     /// Nested rules within the style rule.
-    pub(crate) rules: CssRuleList<R>,
+    pub(crate) rules: CssRuleList<'bump, R>,
     /// The location of the rule in the source file.
     pub(crate) loc: Location,
 }
 
-impl<R> StyleRule<R> {
+impl<R> StyleRule<'_, R> {
     /// Returns whether the rule is empty.
     pub(crate) fn is_empty(&self) -> bool {
         self.selectors.v.is_empty() || (self.declarations.is_empty() && self.rules.v.len() == 0)
@@ -32,7 +27,7 @@ impl<R> StyleRule<R> {
 }
 
 // ─── behavior bodies ──────────────────────────────────────────────────────
-impl<R> StyleRule<R> {
+impl<'bump, R> StyleRule<'bump, R> {
     /// Returns a hash of this rule for use when deduplicating.
     /// Includes the selectors and properties.
     pub(crate) fn hash_key(&self) -> u64 {
@@ -63,11 +58,8 @@ impl<R> StyleRule<R> {
         if self.vendor_prefix.contains(VendorPrefix::NONE)
             && context.targets.should_compile_selectors()
         {
-            self.vendor_prefix = selector::downlevel_selectors(
-                context.arena,
-                self.selectors.v.slice_mut(),
-                context.targets,
-            );
+            self.vendor_prefix =
+                selector::downlevel_selectors(self.selectors.v.slice_mut(), context.targets);
         }
     }
 
@@ -113,8 +105,8 @@ impl<R> StyleRule<R> {
 /// (`selectors/selector.rs`) and `MAX_SELECTOR_EXPANSION` (`rules/mod.rs`).
 const MAX_PREFIX_EXPANSION_BYTES: usize = 64 << 20;
 
-impl<R> StyleRule<R> {
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+impl<'bump, R> StyleRule<'bump, R> {
+    pub fn to_css(&self, dest: &mut Printer<'_, 'bump>) -> Result<(), PrintErr> {
         if self.vendor_prefix.is_empty() {
             self.to_css_base(dest, true)?;
         } else {
@@ -178,7 +170,11 @@ impl<R> StyleRule<R> {
         Ok(())
     }
 
-    fn to_css_base(&self, dest: &mut Printer, is_final_prefix_pass: bool) -> Result<(), PrintErr> {
+    fn to_css_base(
+        &self,
+        dest: &mut Printer<'_, 'bump>,
+        is_final_prefix_pass: bool,
+    ) -> Result<(), PrintErr> {
         use css::properties::Property;
 
         // If supported, or there are no targets, preserve nesting. Otherwise, write nested rules after parent.
@@ -299,15 +295,15 @@ impl<R> StyleRule<R> {
     }
 }
 
-impl<R> StyleRule<R> {
+impl<'bump, R> StyleRule<'bump, R> {
     pub(crate) fn minify(
         &mut self,
-        context: &mut MinifyContext<'_, '_>,
+        context: &mut MinifyContext<'_, 'bump>,
         parent_is_unused: bool,
         split_rule_count: u32,
     ) -> Result<bool, MinifyErr>
     where
-        R: for<'b> css::generics::DeepClone<'b>,
+        R: css::generics::DeepClone<'bump>,
     {
         use css::context::DeclarationContext;
 
@@ -346,14 +342,9 @@ impl<R> StyleRule<R> {
         // }
 
         context.handler_context.context = DeclarationContext::StyleRule;
-        // `DeclarationBlock<'static>` (see the struct-level note above) forces
-        // `minify` to want `DeclarationHandler<'static>`; route through the
-        // single centralized `'bump`-erasure helper instead of open-coding the
-        // lifetime cast. Collapses when `CssRule<'bump, R>`
-        // re-threads the arena lifetime.
         self.declarations.minify(
-            super::dc::decl_handler_static(&mut *context.handler),
-            super::dc::decl_handler_static(&mut *context.important_handler),
+            context.handler,
+            context.important_handler,
             &mut context.handler_context,
         );
         context.handler_context.context = DeclarationContext::None;
@@ -388,12 +379,12 @@ impl<R> StyleRule<R> {
     /// so the nested rules are charged for the combinations they expand into.
     pub(crate) fn minify_nested_rules(
         &mut self,
-        context: &mut MinifyContext<'_, '_>,
+        context: &mut MinifyContext<'_, 'bump>,
         parent_is_unused: bool,
         split_rule_count: u32,
     ) -> Result<(), MinifyErr>
     where
-        R: for<'b> css::generics::DeepClone<'b>,
+        R: css::generics::DeepClone<'bump>,
     {
         use css::context::{DeclarationContext, PropertyHandlerContext};
 
@@ -408,7 +399,7 @@ impl<R> StyleRule<R> {
             context.selector_expansion_multiplier.saturating_mul(copies);
 
         let mut handler_context = context.handler_context.child(DeclarationContext::StyleRule);
-        core::mem::swap::<PropertyHandlerContext<'_>>(
+        core::mem::swap::<PropertyHandlerContext>(
             &mut context.handler_context,
             &mut handler_context,
         );
@@ -416,7 +407,7 @@ impl<R> StyleRule<R> {
         let result =
             self.rules
                 .minify_nested(context, parent_is_unused, Some(&mut handler_context));
-        core::mem::swap::<PropertyHandlerContext<'_>>(
+        core::mem::swap::<PropertyHandlerContext>(
             &mut context.handler_context,
             &mut handler_context,
         );
@@ -428,7 +419,7 @@ impl<R> StyleRule<R> {
     /// This means it has the same selectors, properties, and importance.
     #[inline]
     pub(crate) fn is_duplicate(&self, other: &Self) -> bool {
-        let same_property_ids = |a: &DeclarationList<'_>, b: &DeclarationList<'_>| {
+        let same_property_ids = |a: &DeclarationList, b: &DeclarationList| {
             a.len() == b.len()
                 && a.iter()
                     .zip(b.iter())
@@ -442,8 +433,8 @@ impl<R> StyleRule<R> {
 }
 
 // ─── deep_clone ───────────────────────────────────────────────────────────
-impl<R> StyleRule<R> {
-    pub(crate) fn deep_clone<'bump>(&self, bump: &'bump bun_alloc::Arena) -> Self
+impl<'bump, R> StyleRule<'bump, R> {
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self
     where
         R: crate::generics::DeepClone<'bump>,
     {
@@ -451,7 +442,7 @@ impl<R> StyleRule<R> {
         Self {
             selectors: self.selectors.deep_clone(),
             vendor_prefix: self.vendor_prefix,
-            declarations: super::dc::decl_block_static(&self.declarations, bump),
+            declarations: super::dc::decl_block(&self.declarations, bump),
             rules: self.rules.deep_clone(bump),
             loc: self.loc,
         }

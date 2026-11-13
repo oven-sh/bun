@@ -3,22 +3,22 @@ use css::{CssResult, PrintErr, Printer};
 
 /// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value.
 #[derive(Clone)]
-pub struct Url {
+pub struct Url<'bump> {
     /// The url as written.
-    text: &'static [u8],
+    text: &'bump [u8],
     /// The import record of this `url()`.
     pub(crate) import_record_idx: u32,
 }
 
-impl Url {
-    pub(crate) fn new(text: &'static [u8], import_record_idx: u32) -> Url {
+impl<'bump> Url<'bump> {
+    pub(crate) fn new(text: &'bump [u8], import_record_idx: u32) -> Url<'bump> {
         Url {
             text,
             import_record_idx,
         }
     }
 
-    pub fn parse(input: &mut css::Parser) -> CssResult<Url> {
+    pub fn parse(input: &mut css::Parser<'_, 'bump>) -> CssResult<'bump, Url<'bump>> {
         let start_pos = input.position();
         let url = input.expect_url()?;
         let end_pos = input.position();
@@ -38,9 +38,6 @@ impl Url {
         if dest.minify && !is_internal && !is_placeholder {
             let mut buf: Vec<u8> = Vec::new();
             // PERF(alloc) we could use stack fallback here?
-            // `Token::to_css_generic(UnquotedUrl(url))` is inlined here —
-            // `Token` payloads are `&'static [u8]` placeholders and we only
-            // have `&'a [u8]`.
             use css::WriteAll;
             if buf
                 .write_all(b"url(")

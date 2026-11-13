@@ -3,16 +3,6 @@ use core::fmt;
 
 use crate::{Location, SourceLocation, Token};
 
-// Arena-owned byte slice. CSS is an AST crate (see PORTING.md §Allocators); these
-// slices point into the parser arena / source text and are never individually freed.
-use crate::Str;
-
-#[inline(always)]
-fn bs(p: Str) -> &'static BStr {
-    // SAFETY: arena/source slice outlives the error value; only used transiently for Display.
-    BStr::new(unsafe { crate::arena_str(p) })
-}
-
 /// A printer error.
 pub type PrinterError = Err<PrinterErrorKind>;
 
@@ -32,8 +22,10 @@ impl<T: fmt::Display> fmt::Display for Err<T> {
 
 // `to_error_instance` lives as an extension-trait method in `bun_css_jsc`.
 
-impl Err<ParserError> {
-    pub(crate) fn from_parse_error(err: ParseError<ParserError>) -> Err<ParserError> {
+impl<'bump> Err<ParserError<'bump>> {
+    pub(crate) fn from_parse_error(
+        err: ParseError<'bump, ParserError<'bump>>,
+    ) -> Err<ParserError<'bump>> {
         let kind = match err.kind {
             ParserErrorKind::basic(b) => match b {
                 BasicParseErrorKind::unexpected_token(t) => ParserError::unexpected_token(t),
@@ -84,36 +76,22 @@ impl<T: fmt::Display> Err<T> {
 }
 
 /// Extensible parse errors that can be encountered by client parsing implementations.
-pub struct ParseError<T> {
+pub struct ParseError<'bump, T> {
     /// Details of this error
-    pub(crate) kind: ParserErrorKind<T>,
+    pub(crate) kind: ParserErrorKind<'bump, T>,
     /// Location where this error occurred
     pub(crate) location: SourceLocation,
 }
 
-impl<T> ParseError<T> {
-    pub fn basic(self) -> BasicParseError {
-        match self.kind {
-            ParserErrorKind::basic(kind) => BasicParseError {
-                kind,
-                location: self.location,
-            },
-            ParserErrorKind::custom(_) => {
-                panic!("Not a basic parse error. This is a bug in Bun's css parser.")
-            }
-        }
-    }
-}
-
 #[allow(non_camel_case_types)]
-pub enum ParserErrorKind<T> {
+pub enum ParserErrorKind<'bump, T> {
     /// A fundamental parse error from a built-in parsing routine.
-    basic(BasicParseErrorKind),
+    basic(BasicParseErrorKind<'bump>),
     /// A parse error reported by downstream consumer code.
     custom(T),
 }
 
-impl<T: fmt::Display> fmt::Display for ParserErrorKind<T> {
+impl<T: fmt::Display> fmt::Display for ParserErrorKind<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::basic(kind) => kind.fmt(f),
@@ -122,22 +100,22 @@ impl<T: fmt::Display> fmt::Display for ParserErrorKind<T> {
     }
 }
 
-/// Details about a `BasicParseError`
+/// The fundamental parsing errors that can be triggered by built-in parsing routines.
 #[allow(non_camel_case_types)]
-pub enum BasicParseErrorKind {
+pub enum BasicParseErrorKind<'bump> {
     /// An unexpected token was encountered.
-    unexpected_token(Token),
+    unexpected_token(Token<'bump>),
     /// The end of the input was encountered unexpectedly.
     end_of_input,
     /// An `@` rule was encountered that was invalid.
-    at_rule_invalid(Str),
+    at_rule_invalid(&'bump [u8]),
     /// The body of an '@' rule was invalid.
     at_rule_body_invalid,
     /// A qualified rule was encountered that was invalid.
     qualified_rule_invalid,
 }
 
-impl fmt::Display for BasicParseErrorKind {
+impl fmt::Display for BasicParseErrorKind<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::unexpected_token(token) => {
@@ -147,7 +125,7 @@ impl fmt::Display for BasicParseErrorKind {
                 write!(f, "unexpected end of input")
             }
             Self::at_rule_invalid(rule) => {
-                write!(f, "invalid @ rule encountered: '@{}'", bs(*rule))
+                write!(f, "invalid @ rule encountered: '@{}'", BStr::new(rule))
             }
             Self::at_rule_body_invalid => {
                 // try writer.print("invalid @ body rule encountered: '@{s}'", .{});
@@ -224,13 +202,13 @@ impl fmt::Display for PrinterErrorKind {
 
 /// A parser error.
 #[allow(non_camel_case_types)]
-pub enum ParserError {
+pub enum ParserError<'bump> {
     /// An at rule body was invalid.
     at_rule_body_invalid,
     /// An at rule prelude was invalid.
     at_rule_prelude_invalid,
     /// An unknown or unsupported at rule was encountered.
-    at_rule_invalid(Str),
+    at_rule_invalid(&'bump [u8]),
     /// Unexpectedly encountered the end of input data.
     end_of_input,
     /// A declaration was invalid.
@@ -248,28 +226,28 @@ pub enum ParserError {
     /// Invalid qualified rule.
     qualified_rule_invalid,
     /// A selector was invalid.
-    selector_error(SelectorError),
+    selector_error(SelectorError<'bump>),
     /// An `@import` rule was encountered after any rule besides `@charset` or `@layer`.
     unexpected_import_rule,
     /// A `@namespace` rule was encountered after any rules besides `@charset`, `@import`, or `@layer`.
     unexpected_namespace_rule,
     /// An unexpected token was encountered.
-    unexpected_token(Token),
+    unexpected_token(Token<'bump>),
     /// Maximum nesting depth was reached.
     maximum_nesting_depth,
     unexpected_value {
-        expected: Str,
-        received: Str,
+        expected: &'bump [u8],
+        received: &'bump [u8],
     },
     input_too_large,
 }
 
-impl fmt::Display for ParserError {
+impl fmt::Display for ParserError<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::at_rule_body_invalid => f.write_str("Invalid at-rule body"),
             Self::at_rule_prelude_invalid => f.write_str("Invalid at-rule prelude"),
-            Self::at_rule_invalid(name) => write!(f, "Unknown at-rule @{}", bs(*name)),
+            Self::at_rule_invalid(name) => write!(f, "Unknown at-rule @{}", BStr::new(name)),
             Self::end_of_input => f.write_str("Unexpected end of input"),
             Self::invalid_declaration => f.write_str("Invalid declaration"),
             Self::invalid_media_query => f.write_str("Invalid media query"),
@@ -290,54 +268,36 @@ impl fmt::Display for ParserError {
             Self::unexpected_token(token) => write!(f, "Unexpected token: {}", token),
             Self::maximum_nesting_depth => f.write_str("Maximum CSS nesting depth exceeded"),
             Self::unexpected_value { expected, received } => {
-                write!(f, "Expected {}, received {}", bs(*expected), bs(*received))
+                write!(f, "Expected {}, received {}", BStr::new(expected), BStr::new(received))
             }
             Self::input_too_large => f.write_str("CSS file is too large to parse (2 GiB maximum)"),
         }
     }
 }
 
-/// The fundamental parsing errors that can be triggered by built-in parsing routines.
-pub struct BasicParseError {
-    /// Details of this error
-    pub kind: BasicParseErrorKind,
-    /// Location where this error occurred
-    pub(crate) location: SourceLocation,
-}
-
-impl BasicParseError {
-    #[inline]
-    pub(crate) fn into_default_parse_error(self) -> ParseError<ParserError> {
-        ParseError {
-            kind: ParserErrorKind::basic(self.kind),
-            location: self.location,
-        }
-    }
-}
-
 /// A selector parsing error.
 #[allow(non_camel_case_types)]
-pub enum SelectorError {
+pub enum SelectorError<'bump> {
     /// An unexpected token was found in an attribute selector.
-    bad_value_in_attr(Token),
+    bad_value_in_attr(Token<'bump>),
     /// An unexpected token was found in a class selector.
-    class_needs_ident(Token),
+    class_needs_ident(Token<'bump>),
     /// A dangling combinator was found.
     dangling_combinator,
     /// An empty selector.
     empty_selector,
     /// A `|` was expected in an attribute selector.
-    expected_bar_in_attr(Token),
+    expected_bar_in_attr(Token<'bump>),
     /// A namespace was expected.
-    expected_namespace(Str),
+    expected_namespace(&'bump [u8]),
     /// An unexpected token was encountered in a namespace.
-    explicit_namespace_unexpected_token(Token),
+    explicit_namespace_unexpected_token(Token<'bump>),
     /// An invalid pseudo class was encountered after a pseudo element.
     invalid_pseudo_class_after_pseudo_element,
     /// An invalid pseudo class was encountered after a `-webkit-scrollbar` pseudo element.
     invalid_pseudo_class_after_webkit_scrollbar,
     /// Invalid qualified name in attribute selector.
-    invalid_qual_name_in_attr(Token),
+    invalid_qual_name_in_attr(Token<'bump>),
     /// The current token is not allowed in this state.
     invalid_state,
     /// The selector is required to have the `&` nesting selector at the start.
@@ -345,20 +305,20 @@ pub enum SelectorError {
     /// The selector is missing a `&` nesting selector.
     missing_nesting_selector,
     /// No qualified name in attribute selector.
-    no_qualified_name_in_attribute_selector(Token),
+    no_qualified_name_in_attribute_selector(Token<'bump>),
     /// An invalid token was encountered in a pseudo element.
-    pseudo_element_expected_ident(Token),
+    pseudo_element_expected_ident(Token<'bump>),
     /// An unexpected identifier was encountered.
-    unexpected_ident(Str),
+    unexpected_ident(&'bump [u8]),
     /// An unexpected token was encountered inside an attribute selector.
-    unexpected_token_in_attribute_selector(Token),
+    unexpected_token_in_attribute_selector(Token<'bump>),
     /// An unsupported pseudo class or pseudo element was encountered.
-    unsupported_pseudo_class_or_element(Str),
-    unexpected_selector_after_pseudo_element(Token),
-    ambiguous_css_module_class(Str),
+    unsupported_pseudo_class_or_element(&'bump [u8]),
+    unexpected_selector_after_pseudo_element(Token<'bump>),
+    ambiguous_css_module_class(&'bump [u8]),
 }
 
-impl fmt::Display for SelectorError {
+impl fmt::Display for SelectorError<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::dangling_combinator => {
@@ -377,10 +337,14 @@ impl fmt::Display for SelectorError {
                 f.write_str("Invalid pseudo-class after -webkit-scrollbar")
             }
 
-            Self::expected_namespace(s) => write!(f, "Expected namespace '{}'", bs(*s)),
-            Self::unexpected_ident(s) => write!(f, "Unexpected identifier '{}'", bs(*s)),
+            Self::expected_namespace(s) => write!(f, "Expected namespace '{}'", BStr::new(s)),
+            Self::unexpected_ident(s) => write!(f, "Unexpected identifier '{}'", BStr::new(s)),
             Self::unsupported_pseudo_class_or_element(s) => {
-                write!(f, "Unsupported pseudo-class or pseudo-element '{}'", bs(*s))
+                write!(
+                    f,
+                    "Unsupported pseudo-class or pseudo-element '{}'",
+                    BStr::new(s)
+                )
             }
 
             Self::bad_value_in_attr(tok) => {
@@ -415,7 +379,7 @@ impl fmt::Display for SelectorError {
             Self::ambiguous_css_module_class(name) => write!(
                 f,
                 "CSS module class: '{}' is currently not supported.",
-                bs(*name)
+                BStr::new(name)
             ),
         }
     }

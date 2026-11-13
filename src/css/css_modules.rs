@@ -222,22 +222,22 @@ pub enum ExportedName<'a> {
     Global(&'a [u8]),
 }
 
-pub trait ComposesGraph {
-    fn stylesheet(&self, source_index: u32) -> Option<&BundlerStyleSheet>;
+pub trait ComposesGraph<'bump> {
+    fn stylesheet(&self, source_index: u32) -> Option<&BundlerStyleSheet<'bump>>;
     fn source(&self, source_index: u32) -> &Source<'_>;
     fn import_record(&self, source_index: u32, import_record_index: u32) -> &ImportRecord<'_>;
 }
 
-pub struct ComposesVisitor<'a> {
-    graph: &'a dyn ComposesGraph,
+pub struct ComposesVisitor<'a, 'bump> {
+    graph: &'a dyn ComposesGraph<'bump>,
     visited: ArrayHashMap<Ref, ()>,
-    names: Vec<ExportedName<'a>>,
+    names: Vec<ExportedName<'bump>>,
     stack_check: StackCheck,
     pub out_of_stack: bool,
 }
 
-impl<'a> ComposesVisitor<'a> {
-    pub fn new(graph: &'a dyn ComposesGraph) -> Self {
+impl<'a, 'bump> ComposesVisitor<'a, 'bump> {
+    pub fn new(graph: &'a dyn ComposesGraph<'bump>) -> Self {
         Self {
             graph,
             visited: ArrayHashMap::new(),
@@ -250,11 +250,11 @@ impl<'a> ComposesVisitor<'a> {
     /// Returns the classes `local` composes first, then `local` itself.
     pub fn exported_names(
         &mut self,
-        sheet: &'a BundlerStyleSheet,
+        sheet: &BundlerStyleSheet<'bump>,
         local: CssRef,
         source_index: u32,
         log: &mut Log,
-    ) -> &[ExportedName<'a>] {
+    ) -> &[ExportedName<'bump>] {
         self.visited.clear_retaining_capacity();
         self.names.clear();
         self.visit_local(sheet, local, source_index, log);
@@ -263,7 +263,7 @@ impl<'a> ComposesVisitor<'a> {
 
     fn visit_local(
         &mut self,
-        sheet: &'a BundlerStyleSheet,
+        sheet: &BundlerStyleSheet<'bump>,
         local: CssRef,
         source_index: u32,
         log: &mut Log,
@@ -284,8 +284,8 @@ impl<'a> ComposesVisitor<'a> {
 
     fn visit_compose(
         &mut self,
-        sheet: &'a BundlerStyleSheet,
-        compose: &'a Composes,
+        sheet: &BundlerStyleSheet<'bump>,
+        compose: &Composes<'bump>,
         source_index: u32,
         log: &mut Log,
     ) {
@@ -321,40 +321,33 @@ impl<'a> ComposesVisitor<'a> {
                     return;
                 };
                 for name in compose.names.slice() {
-                    if let Some(other) = other_sheet.local_scope.get(name.v()) {
-                        self.visit_composed(
-                            other_sheet,
-                            name.v(),
-                            other,
-                            other_index,
-                            compose,
-                            log,
-                        );
+                    if let Some(other) = other_sheet.local_scope.get(name.v) {
+                        self.visit_composed(other_sheet, name.v, other, other_index, compose, log);
                     }
                 }
             }
             // `foo` in `composes: foo from global` is not renamed
             Some(Specifier::Global) => {
                 for name in compose.names.slice() {
-                    self.names.push(ExportedName::Global(name.v()));
+                    self.names.push(ExportedName::Global(name.v));
                 }
             }
             // it is from the current file
             None => {
                 for name in compose.names.slice() {
-                    let Some(local) = sheet.local_scope.get(name.v()) else {
+                    let Some(local) = sheet.local_scope.get(name.v) else {
                         log.add_error_fmt(
                             self.graph.source(source_index),
                             compose.loc,
                             format_args!(
                                 "The name {} never appears in {} as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
-                                quote(name.v()),
+                                quote(name.v),
                                 quote(self.graph.source(source_index).path.pretty),
                             ),
                         );
                         continue;
                     };
-                    self.visit_composed(sheet, name.v(), local, source_index, compose, log);
+                    self.visit_composed(sheet, name.v, local, source_index, compose, log);
                 }
             }
         }
@@ -362,7 +355,7 @@ impl<'a> ComposesVisitor<'a> {
 
     fn visit_composed(
         &mut self,
-        sheet: &'a BundlerStyleSheet,
+        sheet: &BundlerStyleSheet<'bump>,
         name: &[u8],
         local: &LocalEntry,
         source_index: u32,

@@ -46,10 +46,10 @@ mod ext {
     /// `options.css_modules.dashed_idents` and parses the
     /// `from <specifier>` suffix when enabled.
     #[inline]
-    pub(super) fn dashed_ident_ref_parse(
-        input: &mut Parser,
+    pub(super) fn dashed_ident_ref_parse<'bump>(
+        input: &mut Parser<'_, 'bump>,
         options: &ParserOptions,
-    ) -> Result<DashedIdentReference> {
+    ) -> Result<'bump, DashedIdentReference<'bump>> {
         DashedIdentReference::parse_with_options(input, options)
     }
 
@@ -68,7 +68,7 @@ mod ext {
             Some(m) => m.config.custom_idents,
             None => false,
         };
-        dest.write_ident(this.v(), css_module_custom_idents_enabled)
+        dest.write_ident(this.v, css_module_custom_idents_enabled)
     }
 }
 
@@ -77,9 +77,7 @@ mod ext {
 // their `hash` bodies in css_parser.rs forward to `generic::implement_*`
 // which bound on these traits — provide them here so the cycle closes and
 // `#[derive(CssEql/CssHash/DeepClone)]` on `TokenOrValue` resolves the
-// `Token(Token)` arm. Hand-written (not derived) because `Token` carries
-// `&'static [u8]` payloads (arena-lifetime placeholder) and named-field
-// variants whose layout lives outside this module's edit scope.
+// `Token(Token)` arm.
 impl CssEql for crate::Num {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
@@ -98,20 +96,20 @@ impl CssHash for crate::Num {
         }
     }
 }
-impl CssEql for crate::Dimension {
+impl CssEql for crate::Dimension<'_> {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
         self.num.eql(&other.num) && strings::eql(self.unit, other.unit)
     }
 }
-impl CssHash for crate::Dimension {
+impl CssHash for crate::Dimension<'_> {
     #[inline]
     fn hash(&self, hasher: &mut Wyhash) {
         self.num.hash(hasher);
         hasher.update(self.unit);
     }
 }
-impl CssEql for Token {
+impl CssEql for Token<'_> {
     fn eql(&self, other: &Self) -> bool {
         use Token::*;
         match (self, other) {
@@ -161,7 +159,7 @@ impl CssEql for Token {
         }
     }
 }
-impl CssHash for Token {
+impl CssHash for Token<'_> {
     fn hash(&self, hasher: &mut Wyhash) {
         use Token::*;
         // `Token::kind() as u32` gives a stable per-variant discriminant.
@@ -188,11 +186,9 @@ impl CssHash for Token {
         }
     }
 }
-impl<'bump> DeepClone<'bump> for Token {
+impl<'bump> DeepClone<'bump> for Token<'bump> {
     #[inline]
     fn deep_clone(&self, _bump: &'bump Arena) -> Self {
-        // All `&'static [u8]` payloads borrow the parser source/arena (`'static`
-        // is a placeholder) — identity copy is correct. `Num`/`Dimension` are POD.
         *self
     }
 }
@@ -204,11 +200,11 @@ pub use css_parser::CssResult as Result;
 
 /// PERF: nullable optimization
 #[derive(Default, CssEql, CssHash, DeepClone)]
-pub struct TokenList {
-    pub(crate) v: Vec<TokenOrValue>,
+pub struct TokenList<'bump> {
+    pub(crate) v: Vec<TokenOrValue<'bump>>,
 }
 
-impl TokenList {
+impl<'bump> TokenList<'bump> {
     // deinit(): body only freed owned `Vec` fields — handled by `Drop` on `Vec`.
 
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
@@ -301,7 +297,11 @@ impl TokenList {
         Ok(())
     }
 
-    pub fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<TokenList> {
+    pub fn parse(
+        input: &mut Parser<'_, 'bump>,
+        options: &ParserOptions,
+        depth: usize,
+    ) -> Result<'bump, TokenList<'bump>> {
         let mut tokens: Vec<TokenOrValue> = Vec::new();
         TokenListFns::parse_into(input, &mut tokens, options, depth)?;
 
@@ -320,11 +320,11 @@ impl TokenList {
     }
 
     pub(crate) fn parse_raw(
-        input: &mut Parser,
-        tokens: &mut Vec<TokenOrValue>,
+        input: &mut Parser<'_, 'bump>,
+        tokens: &mut Vec<TokenOrValue<'bump>>,
         options: &ParserOptions,
         depth: usize,
-    ) -> Result<()> {
+    ) -> Result<'bump, ()> {
         if depth > 500 {
             return Err(input.new_custom_error(ParserError::maximum_nesting_depth));
         }
@@ -378,11 +378,11 @@ impl TokenList {
     }
 
     pub(crate) fn parse_into(
-        input: &mut Parser,
-        tokens: &mut Vec<TokenOrValue>,
+        input: &mut Parser<'_, 'bump>,
+        tokens: &mut Vec<TokenOrValue<'bump>>,
         options: &ParserOptions,
         depth: usize,
-    ) -> Result<()> {
+    ) -> Result<'bump, ()> {
         let result = Self::parse_into_impl(input, tokens, options, depth);
         if result.is_err() {
             // See `ParserInput::token_list_parse_failures`.
@@ -392,11 +392,11 @@ impl TokenList {
     }
 
     fn parse_into_impl(
-        input: &mut Parser,
-        tokens: &mut Vec<TokenOrValue>,
+        input: &mut Parser<'_, 'bump>,
+        tokens: &mut Vec<TokenOrValue<'bump>>,
         options: &ParserOptions,
         depth: usize,
-    ) -> Result<()> {
+    ) -> Result<'bump, ()> {
         if depth > 500 {
             return Err(input.new_custom_error(ParserError::maximum_nesting_depth));
         }
@@ -470,9 +470,7 @@ impl TokenList {
                             TokenListFns::parse(input2, options, depth + 1)
                         })?;
                         tokens.push(TokenOrValue::Function(Function {
-                            name: Ident {
-                                v: std::ptr::from_ref::<[u8]>(*f),
-                            },
+                            name: Ident { v: *f },
                             arguments,
                         }));
                     }
@@ -495,9 +493,7 @@ impl TokenList {
                 }
                 Token::Ident(name) => {
                     if name.starts_with(b"--") {
-                        tokens.push(TokenOrValue::DashedIdent(DashedIdent {
-                            v: std::ptr::from_ref::<[u8]>(*name),
-                        }));
+                        tokens.push(TokenOrValue::DashedIdent(DashedIdent { v: *name }));
                         continue;
                     }
                     if strings::eql_case_insensitive_ascii_check_length(name, b"revert-rule") {
@@ -557,7 +553,7 @@ impl TokenList {
         Ok(())
     }
 
-    pub(crate) fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
+    pub(crate) fn get_fallback(&self, bump: &'bump Arena, kind: ColorFallbackKind) -> Self {
         let mut tokens = TokenList::default();
         tokens.v.reserve_exact(self.v.len());
         for old in self.v.iter() {
@@ -575,9 +571,9 @@ impl TokenList {
 
     pub(crate) fn get_fallbacks(
         &mut self,
-        bump: &Arena,
+        bump: &'bump Arena,
         targets: &css::targets::Targets,
-    ) -> css::SmallList<Fallbacks, 2> {
+    ) -> css::SmallList<Fallbacks<'bump>, 2> {
         // Get the full list of possible fallbacks, and remove the lowest one, which will replace
         // the original declaration. The remaining fallbacks need to be added as @supports rules.
         let mut fallbacks = self.get_necessary_fallbacks(targets);
@@ -659,16 +655,16 @@ impl TokenList {
     // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 }
 
-pub type TokenListFns = TokenList;
+pub type TokenListFns<'bump> = TokenList<'bump>;
 
-pub(crate) type Fallbacks = (SupportsCondition, TokenList);
+pub(crate) type Fallbacks<'bump> = (SupportsCondition<'bump>, TokenList<'bump>);
 
 /// A color value with an unresolved alpha value (e.g. a variable).
 /// These can be converted from the modern slash syntax to older comma syntax.
 /// This can only be done when the only unresolved component is the alpha
 /// since variables can resolve to multiple tokens.
 #[derive(CssEql, CssHash, DeepClone)]
-pub enum UnresolvedColor {
+pub enum UnresolvedColor<'bump> {
     /// An rgb() color.
     RGB {
         /// The red component.
@@ -678,7 +674,7 @@ pub enum UnresolvedColor {
         /// The blue component.
         b: f32,
         /// The unresolved alpha component.
-        alpha: TokenList,
+        alpha: TokenList<'bump>,
     },
     /// An hsl() color.
     HSL {
@@ -689,18 +685,18 @@ pub enum UnresolvedColor {
         /// The lightness component.
         l: f32,
         /// The unresolved alpha component.
-        alpha: TokenList,
+        alpha: TokenList<'bump>,
     },
     /// The light-dark() function.
     LightDark {
         /// The light value.
-        light: TokenList,
+        light: TokenList<'bump>,
         /// The dark value.
-        dark: TokenList,
+        dark: TokenList<'bump>,
     },
 }
 
-impl UnresolvedColor {
+impl<'bump> UnresolvedColor<'bump> {
     // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 
     // deinit(): body only freed owned `TokenList` fields — handled by `Drop`.
@@ -791,11 +787,11 @@ impl UnresolvedColor {
     }
 
     fn parse(
-        input: &mut Parser,
+        input: &mut Parser<'_, 'bump>,
         f: &[u8],
         options: &ParserOptions,
         depth: usize,
-    ) -> Result<UnresolvedColor> {
+    ) -> Result<'bump, UnresolvedColor<'bump>> {
         use css_values::color::{
             ComponentParser, HSL, RgbComponents, SRGB, parse_hsl_hwb_components,
             parse_rgb_components,
@@ -855,7 +851,10 @@ impl UnresolvedColor {
         Err(input.new_custom_error(ParserError::invalid_value))
     }
 
-    fn light_dark_owned(light: UnresolvedColor, dark: UnresolvedColor) -> UnresolvedColor {
+    fn light_dark_owned(
+        light: UnresolvedColor<'bump>,
+        dark: UnresolvedColor<'bump>,
+    ) -> UnresolvedColor<'bump> {
         UnresolvedColor::LightDark {
             light: TokenList {
                 v: vec![TokenOrValue::UnresolvedColor(light)],
@@ -871,7 +870,7 @@ impl UnresolvedColor {
 // `from light-dark(...)` relative-color path can rebuild a `light-dark()` of
 // whatever output type the caller is producing. The trait lives in
 // `values::color` and we wire `UnresolvedColor` into it here.
-impl css_values::color::LightDarkOwned for UnresolvedColor {
+impl css_values::color::LightDarkOwned for UnresolvedColor<'_> {
     #[inline]
     fn light_dark_owned(light: Self, dark: Self) -> Self {
         UnresolvedColor::light_dark_owned(light, dark)
@@ -880,17 +879,21 @@ impl css_values::color::LightDarkOwned for UnresolvedColor {
 
 /// A CSS variable reference.
 #[derive(CssEql, CssHash, DeepClone)]
-pub struct Variable {
+pub struct Variable<'bump> {
     /// The variable name.
-    pub name: DashedIdentReference,
+    pub name: DashedIdentReference<'bump>,
     /// A fallback value in case the variable is not defined.
-    pub fallback: Option<TokenList>,
+    pub fallback: Option<TokenList<'bump>>,
 }
 
-impl Variable {
+impl<'bump> Variable<'bump> {
     // deinit(): body only freed owned `TokenList` field — handled by `Drop`.
 
-    fn parse(input: &mut Parser, options: &ParserOptions, depth: usize) -> Result<Self> {
+    fn parse(
+        input: &mut Parser<'_, 'bump>,
+        options: &ParserOptions,
+        depth: usize,
+    ) -> Result<'bump, Self> {
         let name = ext::dashed_ident_ref_parse(input, options)?;
 
         let fallback = if input.try_parse(|i| i.expect_comma()).is_ok() {
@@ -912,7 +915,7 @@ impl Variable {
         dest.write_char(b')')
     }
 
-    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
+    fn get_fallback(&self, bump: &'bump Arena, kind: ColorFallbackKind) -> Self {
         Variable {
             name: self.name,
             fallback: self
@@ -927,33 +930,33 @@ impl Variable {
 
 /// A CSS environment variable reference.
 #[derive(CssEql, CssHash, DeepClone)]
-pub struct EnvironmentVariable {
+pub struct EnvironmentVariable<'bump> {
     /// The environment variable name.
-    pub name: EnvironmentVariableName,
+    pub name: EnvironmentVariableName<'bump>,
     /// Optional indices into the dimensions of the environment variable.
     /// TODO(zack): this could totally be a smallvec, why isn't it?
     pub(crate) indices: Vec<CSSInteger>,
     /// A fallback value in case the variable is not defined.
-    pub fallback: Option<TokenList>,
+    pub fallback: Option<TokenList<'bump>>,
 }
 
-impl EnvironmentVariable {
+impl<'bump> EnvironmentVariable<'bump> {
     // deinit(): body only freed owned `Vec`/`TokenList` fields — handled by `Drop`.
 
     pub(crate) fn parse(
-        input: &mut Parser,
+        input: &mut Parser<'_, 'bump>,
         options: &ParserOptions,
         depth: usize,
-    ) -> Result<EnvironmentVariable> {
+    ) -> Result<'bump, EnvironmentVariable<'bump>> {
         input.expect_function_matching(b"env")?;
         input.parse_nested_block(|i| EnvironmentVariable::parse_nested(i, options, depth))
     }
 
     fn parse_nested(
-        input: &mut Parser,
+        input: &mut Parser<'_, 'bump>,
         options: &ParserOptions,
         depth: usize,
-    ) -> Result<EnvironmentVariable> {
+    ) -> Result<'bump, EnvironmentVariable<'bump>> {
         let name = EnvironmentVariableName::parse(input)?;
         let mut indices: Vec<i32> = Vec::new();
         while let Ok(idx) = input.try_parse(CSSIntegerFns::parse) {
@@ -990,7 +993,7 @@ impl EnvironmentVariable {
         dest.write_char(b')')
     }
 
-    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
+    fn get_fallback(&self, bump: &'bump Arena, kind: ColorFallbackKind) -> Self {
         EnvironmentVariable {
             name: self.name,
             indices: self.indices.clone(),
@@ -1006,19 +1009,19 @@ impl EnvironmentVariable {
 
 /// A CSS environment variable name.
 #[derive(Clone, Copy, CssEql, CssHash, DeepClone)]
-pub enum EnvironmentVariableName {
+pub enum EnvironmentVariableName<'bump> {
     /// A UA-defined environment variable.
     Ua(UAEnvironmentVariable),
     /// A custom author-defined environment variable.
-    Custom(DashedIdentReference),
+    Custom(DashedIdentReference<'bump>),
     /// An unknown environment variable.
-    Unknown(CustomIdent),
+    Unknown(CustomIdent<'bump>),
 }
 
-impl EnvironmentVariableName {
+impl<'bump> EnvironmentVariableName<'bump> {
     // eql / hash — provided by `#[derive(CssEql, CssHash)]`.
 
-    fn parse(input: &mut Parser) -> Result<EnvironmentVariableName> {
+    fn parse(input: &mut Parser<'_, 'bump>) -> Result<'bump, EnvironmentVariableName<'bump>> {
         if let Ok(ua) = input.try_parse(UAEnvironmentVariable::parse) {
             return Ok(EnvironmentVariableName::Ua(ua));
         }
@@ -1114,14 +1117,14 @@ impl EnumProperty for UAEnvironmentVariable {
 
 /// A custom CSS function.
 #[derive(CssEql, CssHash, DeepClone)]
-pub struct Function {
+pub struct Function<'bump> {
     /// The function name.
-    pub name: Ident,
+    pub name: Ident<'bump>,
     /// The function arguments.
-    pub(crate) arguments: TokenList,
+    pub(crate) arguments: TokenList<'bump>,
 }
 
-impl Function {
+impl<'bump> Function<'bump> {
     // deinit(): body only freed owned `TokenList` field — handled by `Drop`.
 
     fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
@@ -1141,7 +1144,7 @@ impl Function {
             Some(TokenOrValue::Token(Token::Ident(ident)))
                 if strings::eql_case_insensitive_ascii_check_length(ident, b"from")
         ) && strings::eql_any_case_insensitive_ascii(
-            self.name.v(),
+            self.name.v,
             &[
                 b"rgb", b"rgba", b"hsl", b"hsla", b"hwb", b"lab", b"lch", b"oklab", b"oklch",
                 b"color",
@@ -1149,7 +1152,7 @@ impl Function {
         )
     }
 
-    fn get_fallback(&self, bump: &Arena, kind: ColorFallbackKind) -> Self {
+    fn get_fallback(&self, bump: &'bump Arena, kind: ColorFallbackKind) -> Self {
         Function {
             name: self.name,
             arguments: self.arguments.get_fallback(bump, kind),
@@ -1158,40 +1161,32 @@ impl Function {
 }
 
 /// The source text of a number, percentage or dimension token.
-#[derive(Clone, Copy, CssEql, CssHash)]
-pub struct RawNumber(&'static [u8]);
+#[derive(Clone, Copy, CssEql, CssHash, DeepClone)]
+pub struct RawNumber<'bump>(&'bump [u8]);
 
-impl RawNumber {
+impl RawNumber<'_> {
     fn to_css(self, dest: &mut Printer) -> PrintResult<()> {
         dest.write_bytes(self.0)
     }
 }
 
-impl<'bump> DeepClone<'bump> for RawNumber {
-    #[inline]
-    fn deep_clone(&self, _bump: &'bump Arena) -> Self {
-        // Borrows the parser source, as the slices of `Token` do.
-        *self
-    }
-}
-
 /// A raw CSS token, or a parsed value.
 #[derive(CssEql, CssHash, DeepClone)]
-pub enum TokenOrValue {
+pub enum TokenOrValue<'bump> {
     /// A token.
-    Token(Token),
+    Token(Token<'bump>),
     /// A parsed CSS color.
     Color(CssColor),
     /// A color with unresolved components.
-    UnresolvedColor(UnresolvedColor),
+    UnresolvedColor(UnresolvedColor<'bump>),
     /// A parsed CSS url.
-    Url(Url),
+    Url(Url<'bump>),
     /// A CSS variable reference.
-    Var(Variable),
+    Var(Variable<'bump>),
     /// A CSS environment variable reference.
-    Env(EnvironmentVariable),
+    Env(EnvironmentVariable<'bump>),
     /// A custom CSS function.
-    Function(Function),
+    Function(Function<'bump>),
     /// A length.
     Length(LengthValue),
     /// An angle.
@@ -1201,14 +1196,14 @@ pub enum TokenOrValue {
     /// A resolution.
     Resolution(Resolution),
     /// A dashed ident.
-    DashedIdent(DashedIdent),
+    DashedIdent(DashedIdent<'bump>),
     /// An animation name.
-    AnimationName(AnimationName),
+    AnimationName(AnimationName<'bump>),
     /// A numeric token that prints as written. See `Parser::raw_number_text`.
-    RawNumber(RawNumber),
+    RawNumber(RawNumber<'bump>),
 }
 
-impl TokenOrValue {
+impl TokenOrValue<'_> {
     // eql / hash / deep_clone — provided by `#[derive(CssEql, CssHash, DeepClone)]`.
 
     // deinit(): all arms only freed owned fields — handled by `Drop`.
@@ -1223,16 +1218,16 @@ impl TokenOrValue {
 // `TokenList` payload, and `media_query::MediaFeatureValue` derives
 // `Debug + Clone` over an `EnvironmentVariable` payload. The leaf value types
 // (`Url`, `CustomIdent`, …) don't all `#[derive(Clone)]` yet, so hand-roll
-// the structural clone here. Arena-slice payloads (`*const [u8]`) are
+// the structural clone here. Arena-slice payloads are
 // `Copy`, and the only owning fields are `Vec<TokenOrValue>` / `Vec<i32>`.
 
-impl Clone for TokenList {
+impl Clone for TokenList<'_> {
     fn clone(&self) -> Self {
         TokenList { v: self.v.clone() }
     }
 }
 
-impl Clone for TokenOrValue {
+impl Clone for TokenOrValue<'_> {
     fn clone(&self) -> Self {
         match self {
             TokenOrValue::Token(t) => TokenOrValue::Token(*t),
@@ -1253,7 +1248,7 @@ impl Clone for TokenOrValue {
     }
 }
 
-impl Clone for UnresolvedColor {
+impl Clone for UnresolvedColor<'_> {
     fn clone(&self) -> Self {
         match self {
             UnresolvedColor::RGB { r, g, b, alpha } => UnresolvedColor::RGB {
@@ -1276,7 +1271,7 @@ impl Clone for UnresolvedColor {
     }
 }
 
-impl Clone for Variable {
+impl Clone for Variable<'_> {
     fn clone(&self) -> Self {
         Variable {
             name: self.name,
@@ -1285,7 +1280,7 @@ impl Clone for Variable {
     }
 }
 
-impl Clone for EnvironmentVariable {
+impl Clone for EnvironmentVariable<'_> {
     fn clone(&self) -> Self {
         EnvironmentVariable {
             name: self.name,
@@ -1295,7 +1290,7 @@ impl Clone for EnvironmentVariable {
     }
 }
 
-impl Clone for Function {
+impl Clone for Function<'_> {
     fn clone(&self) -> Self {
         Function {
             name: self.name,
@@ -1304,7 +1299,7 @@ impl Clone for Function {
     }
 }
 
-impl core::fmt::Debug for EnvironmentVariable {
+impl core::fmt::Debug for EnvironmentVariable<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Minimal — `media_query::MediaFeatureValue` derives `Debug`.
         f.debug_struct("EnvironmentVariable")
@@ -1318,19 +1313,19 @@ impl core::fmt::Debug for EnvironmentVariable {
 /// This type is used when the value of a known property could not
 /// be parsed, e.g. in the case css `var()` references are encountered.
 /// In this case, the raw tokens are stored instead.
-pub struct UnparsedProperty {
+pub struct UnparsedProperty<'bump> {
     /// The id of the property.
-    pub(crate) property_id: css::properties::PropertyId,
+    pub(crate) property_id: css::properties::PropertyId<'bump>,
     /// The property value, stored as a raw token list.
-    pub(crate) value: TokenList,
+    pub(crate) value: TokenList<'bump>,
 }
 
-impl UnparsedProperty {
+impl<'bump> UnparsedProperty<'bump> {
     pub(crate) fn parse(
-        property_id: css::properties::PropertyId,
-        input: &mut Parser,
+        property_id: css::properties::PropertyId<'bump>,
+        input: &mut Parser<'_, 'bump>,
         options: &ParserOptions,
-    ) -> Result<UnparsedProperty> {
+    ) -> Result<'bump, UnparsedProperty<'bump>> {
         let value = input.parse_until_before(Delimiters::BANG | Delimiters::SEMICOLON, |i| {
             TokenList::parse(i, options, 0)
         })?;
@@ -1340,10 +1335,10 @@ impl UnparsedProperty {
 
     pub(crate) fn get_prefixed(
         &self,
-        bump: &Arena,
+        bump: &'bump Arena,
         targets: &css::targets::Targets,
         feature: css::prefixes::Feature,
-    ) -> UnparsedProperty {
+    ) -> UnparsedProperty<'bump> {
         let mut clone = self.deep_clone(bump);
         let prefix = self.property_id.prefix();
         clone.property_id = clone
@@ -1355,16 +1350,16 @@ impl UnparsedProperty {
     /// Returns a new UnparsedProperty with the same value and the given property id.
     pub(crate) fn with_property_id(
         &self,
-        bump: &Arena,
-        property_id: css::properties::PropertyId,
-    ) -> UnparsedProperty {
+        bump: &'bump Arena,
+        property_id: css::properties::PropertyId<'bump>,
+    ) -> UnparsedProperty<'bump> {
         UnparsedProperty {
             property_id,
             value: self.value.deep_clone(bump),
         }
     }
 
-    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &'bump Arena) -> Self {
         UnparsedProperty {
             property_id: self.property_id.deep_clone(bump),
             value: self.value.deep_clone(bump),
@@ -1377,19 +1372,19 @@ impl UnparsedProperty {
 }
 
 /// A CSS custom property, representing any unknown property.
-pub struct CustomProperty {
+pub struct CustomProperty<'bump> {
     /// The name of the property.
-    pub name: CustomPropertyName,
+    pub name: CustomPropertyName<'bump>,
     /// The property value, stored as a raw token list.
-    pub(crate) value: TokenList,
+    pub(crate) value: TokenList<'bump>,
 }
 
-impl CustomProperty {
+impl<'bump> CustomProperty<'bump> {
     pub(crate) fn parse(
-        name: CustomPropertyName,
-        input: &mut Parser,
+        name: CustomPropertyName<'bump>,
+        input: &mut Parser<'_, 'bump>,
         options: &ParserOptions,
-    ) -> Result<CustomProperty> {
+    ) -> Result<'bump, CustomProperty<'bump>> {
         let value = input
             .parse_until_before(Delimiters::BANG | Delimiters::SEMICOLON, |input2| {
                 TokenListFns::parse(input2, options, 0)
@@ -1398,7 +1393,7 @@ impl CustomProperty {
         Ok(CustomProperty { name, value })
     }
 
-    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &'bump Arena) -> Self {
         CustomProperty {
             name: self.name.deep_clone(bump),
             value: self.value.deep_clone(bump),
@@ -1412,14 +1407,14 @@ impl CustomProperty {
 
 /// A CSS custom property name.
 #[derive(Debug, Clone, Copy, CssEql, CssHash, DeepClone)]
-pub enum CustomPropertyName {
+pub enum CustomPropertyName<'bump> {
     /// An author-defined CSS custom property.
-    Custom(DashedIdent),
+    Custom(DashedIdent<'bump>),
     /// An unknown CSS property.
-    Unknown(Ident),
+    Unknown(Ident<'bump>),
 }
 
-impl CustomPropertyName {
+impl<'bump> CustomPropertyName<'bump> {
     pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         match self {
             CustomPropertyName::Custom(custom) => {
@@ -1427,40 +1422,23 @@ impl CustomPropertyName {
                 // which applies CSS-Modules dashed-ident renaming.
                 dest.write_dashed_ident(custom)
             }
-            CustomPropertyName::Unknown(unknown) => {
-                // SAFETY: arena-owned slice valid for printer lifetime.
-                let v = unsafe { crate::arena_str(unknown.v) };
-                dest.serialize_identifier(v)
-            }
+            CustomPropertyName::Unknown(unknown) => dest.serialize_identifier(unknown.v),
         }
     }
 
-    pub(crate) fn from_str(name: &[u8]) -> CustomPropertyName {
+    pub(crate) fn from_str(name: &'bump [u8]) -> Self {
         if name.starts_with(b"--") {
-            return CustomPropertyName::Custom(DashedIdent {
-                v: std::ptr::from_ref::<[u8]>(name),
-            });
+            return CustomPropertyName::Custom(DashedIdent { v: name });
         }
-        CustomPropertyName::Unknown(Ident {
-            v: std::ptr::from_ref::<[u8]>(name),
-        })
+        CustomPropertyName::Unknown(Ident { v: name })
     }
 
     #[inline]
-    fn as_ptr(&self) -> *const [u8] {
+    pub(crate) fn as_str(&self) -> &'bump [u8] {
         match self {
             CustomPropertyName::Custom(custom) => custom.v,
             CustomPropertyName::Unknown(unknown) => unknown.v,
         }
-    }
-
-    /// Borrow the underlying name slice.
-    /// SAFETY: caller must ensure the parser arena outlives the borrow
-    /// (slices are arena-owned `*const [u8]`; see `DashedIdent::as_slice`).
-    #[inline]
-    pub(crate) fn as_str(&self) -> &[u8] {
-        // SAFETY: see doc comment.
-        unsafe { crate::arena_str(self.as_ptr()) }
     }
 
     // deep_clone / eql — provided by `#[derive(DeepClone, CssEql)]`.

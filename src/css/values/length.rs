@@ -41,7 +41,9 @@ pub(crate) type LengthPercentage = DimensionPercentage<LengthValue>;
 
 impl LengthPercentage {
     /// `<length-percentage [0,∞]>`
-    pub(crate) fn parse_non_negative(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse_non_negative<'bump>(
+        input: &mut Parser<'_, 'bump>,
+    ) -> CssResult<'bump, Self> {
         input.parse_with_non_negative(true, Self::parse)
     }
 }
@@ -272,7 +274,7 @@ define_length_units! {
 // construction (one `=> $feature` per variant), so no separate assert needed.
 
 impl LengthValue {
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let location = input.current_source_location();
         let token = *input.next()?;
         match &token {
@@ -421,7 +423,7 @@ impl Length {
         self.clone()
     }
 
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Length> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Length> {
         match input.try_parse(Calc::<Length>::parse) {
             // PERF: I don't like this redundant allocation
             Ok(Calc::Value(v)) => return Ok(*v),
@@ -718,9 +720,9 @@ impl protocol::PartialCmp for LengthValue {
         LengthValue::partial_cmp(*self, *rhs)
     }
 }
-impl protocol::Parse for LengthValue {
+impl<'bump> protocol::Parse<'bump> for LengthValue {
     #[inline]
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         LengthValue::parse(input)
     }
 }
@@ -810,9 +812,9 @@ impl protocol::PartialCmp for Angle {
         Angle::partial_cmp(*self, *rhs)
     }
 }
-impl protocol::Parse for Angle {
+impl<'bump> protocol::Parse<'bump> for Angle {
     #[inline]
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         Angle::parse(input)
     }
 }

@@ -11,17 +11,14 @@ use super::ArrayList;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `<keyframes-name> = <custom-ident> | <string>`
-// Stores `&'static [u8]` per the rules/mod.rs `CssRule<R>` lifetime-erasure
-// note (mod.rs:37-41).
-// TODO(refactor): re-thread `'bump` here.
-pub enum KeyframesName {
+pub enum KeyframesName<'bump> {
     /// `<custom-ident>` of a `@keyframes` name.
-    Ident(CustomIdent),
+    Ident(CustomIdent<'bump>),
     /// `<string>` of a `@keyframes` name.
-    Custom(&'static [u8]),
+    Custom(&'bump [u8]),
 }
 
-impl KeyframesName {
+impl KeyframesName<'_> {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         use bun_core::strings;
 
@@ -33,7 +30,7 @@ impl KeyframesName {
 
         match self {
             KeyframesName::Ident(ident) => {
-                dest.write_ident(ident.v(), css_module_animation_enabled)?;
+                dest.write_ident(ident.v, css_module_animation_enabled)?;
             }
             KeyframesName::Custom(s) => {
                 // CSS-wide keywords and `none` cannot remove quotes.
@@ -50,9 +47,8 @@ impl KeyframesName {
     }
 }
 
-impl KeyframesName {
+impl KeyframesName<'_> {
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // `Custom(&'static [u8])` is an arena-owned slice → identity copy.
         match self {
             Self::Ident(i) => Self::Ident(i.deep_clone(bump)),
             Self::Custom(s) => Self::Custom(s),
@@ -61,8 +57,8 @@ impl KeyframesName {
 }
 
 // ─── KeyframesName parse ──────────────────────────────────────────────────
-impl KeyframesName {
-    pub fn parse(input: &mut css::Parser) -> css::Result<KeyframesName> {
+impl<'bump> KeyframesName<'bump> {
+    pub fn parse(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, KeyframesName<'bump>> {
         use bun_core::strings;
         let tok = *input.next()?;
         match tok {
@@ -73,9 +69,7 @@ impl KeyframesName {
                 {
                     Err(input.new_unexpected_token_error(css::Token::Ident(s)))
                 } else {
-                    Ok(KeyframesName::Ident(CustomIdent {
-                        v: std::ptr::from_ref::<[u8]>(s),
-                    }))
+                    Ok(KeyframesName::Ident(CustomIdent { v: s }))
                 }
             }
             css::Token::QuotedString(s) => Ok(KeyframesName::Custom(s)),
@@ -155,7 +149,7 @@ impl KeyframeSelector {
 // ─── KeyframeSelector parse ───────────────────────────────────────────────
 
 impl KeyframeSelector {
-    fn parse(input: &mut css::Parser) -> css::Result<KeyframeSelector> {
+    fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, KeyframeSelector> {
         if let Ok(p) = input.try_parse(Percentage::parse) {
             return Ok(KeyframeSelector::Percentage(p));
         }
@@ -185,26 +179,25 @@ impl KeyframeSelector {
 /// An individual keyframe within an `@keyframes` rule.
 ///
 /// See [KeyframesRule](KeyframesRule).
-pub struct Keyframe {
+pub struct Keyframe<'bump> {
     /// A list of keyframe selectors to associate with the declarations in this keyframe.
     pub(crate) selectors: ArrayList<KeyframeSelector>,
     /// The declarations for this keyframe.
-    // Lifetime erased to `'static` per rules/mod.rs `CssRule<R>` note.
-    pub(crate) declarations: DeclarationBlock<'static>,
+    pub(crate) declarations: DeclarationBlock<'bump>,
 }
 
-impl Keyframe {
+impl Keyframe<'_> {
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         dest.write_comma_separated(self.selectors.iter(), |d, sel| sel.to_css(d))?;
         super::decl_block_to_css(&self.declarations, dest)
     }
 }
 
-impl Keyframe {
-    fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+impl<'bump> Keyframe<'bump> {
+    fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         Self {
             selectors: self.selectors.iter().map(|s| s.deep_clone(bump)).collect(),
-            declarations: super::dc::decl_block_static(&self.declarations, bump),
+            declarations: super::dc::decl_block(&self.declarations, bump),
         }
     }
 }
@@ -213,19 +206,19 @@ impl Keyframe {
 // KeyframesRule
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct KeyframesRule {
+pub struct KeyframesRule<'bump> {
     /// The animation name.
     /// <keyframes-name> = <custom-ident> | <string>
-    pub name: KeyframesName,
+    pub name: KeyframesName<'bump>,
     /// A list of keyframes in the animation.
-    pub(crate) keyframes: ArrayList<Keyframe>,
+    pub(crate) keyframes: ArrayList<Keyframe<'bump>>,
     /// A vendor prefix for the rule, e.g. `@-webkit-keyframes`.
     pub(crate) vendor_prefix: VendorPrefix,
     /// The location of the rule in the source file.
     pub(crate) loc: Location,
 }
 
-impl KeyframesRule {
+impl KeyframesRule<'_> {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
@@ -284,8 +277,8 @@ impl KeyframesRule {
     }
 }
 
-impl KeyframesRule {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+impl<'bump> KeyframesRule<'bump> {
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         Self {
             name: self.name.deep_clone(bump),
             keyframes: self.keyframes.iter().map(|k| k.deep_clone(bump)).collect(),
@@ -307,14 +300,14 @@ const _: () = {
     };
     use css::{BasicParseErrorKind, Parser, ParserOptions, ParserState, Result};
 
-    impl DeclarationParser for KeyframesListParser {
-        type Declaration = Keyframe;
+    impl<'bump> DeclarationParser<'bump> for KeyframesListParser {
+        type Declaration = Keyframe<'bump>;
 
         fn parse_value(
             _this: &mut Self,
-            name: &'static [u8],
-            input: &mut Parser,
-        ) -> Result<Self::Declaration> {
+            name: &'bump [u8],
+            input: &mut Parser<'_, 'bump>,
+        ) -> Result<'bump, Self::Declaration> {
             Err(
                 input.new_error(BasicParseErrorKind::unexpected_token(css::Token::Ident(
                     name,
@@ -323,7 +316,7 @@ const _: () = {
         }
     }
 
-    impl RuleBodyItemParser for KeyframesListParser {
+    impl RuleBodyItemParser<'_> for KeyframesListParser {
         fn parse_qualified(_this: &Self) -> bool {
             true
         }
@@ -333,16 +326,19 @@ const _: () = {
         }
     }
 
-    impl AtRuleParser for KeyframesListParser {
+    impl<'bump> AtRuleParser<'bump> for KeyframesListParser {
         type Prelude = ();
-        type AtRule = Keyframe;
+        type AtRule = Keyframe<'bump>;
     }
 
-    impl QualifiedRuleParser for KeyframesListParser {
+    impl<'bump> QualifiedRuleParser<'bump> for KeyframesListParser {
         type Prelude = ArrayList<KeyframeSelector>;
-        type QualifiedRule = Keyframe;
+        type QualifiedRule = Keyframe<'bump>;
 
-        fn parse_prelude(_this: &mut Self, input: &mut Parser) -> Result<Self::Prelude> {
+        fn parse_prelude(
+            _this: &mut Self,
+            input: &mut Parser<'_, 'bump>,
+        ) -> Result<'bump, Self::Prelude> {
             input.parse_comma_separated(KeyframeSelector::parse)
         }
 
@@ -350,8 +346,8 @@ const _: () = {
             _this: &mut Self,
             prelude: Self::Prelude,
             _start: &ParserState,
-            input: &mut Parser,
-        ) -> Result<Self::QualifiedRule> {
+            input: &mut Parser<'_, 'bump>,
+        ) -> Result<'bump, Self::QualifiedRule> {
             let mut options = ParserOptions::default(None);
             // Unlike lightningcss: a browser drops an invalid item and keeps the keyframe.
             options.error_recovery = true;

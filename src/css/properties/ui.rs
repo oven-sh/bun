@@ -24,7 +24,9 @@ bitflags::bitflags! {
 }
 
 impl ColorScheme {
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<ColorScheme> {
+    pub(crate) fn parse<'bump>(
+        input: &mut css::Parser<'_, 'bump>,
+    ) -> css::Result<'bump, ColorScheme> {
         let mut res = ColorScheme::empty();
         let ident = input.expect_ident()?;
 
@@ -165,14 +167,13 @@ impl ColorSchemeHandler {
 
     pub(crate) fn finalize(
         &mut self,
-        _: &mut css::DeclarationList<'_>,
-        _: &mut PropertyHandlerContext<'_>,
+        _: &mut css::DeclarationList,
+        _: &mut PropertyHandlerContext,
     ) {
     }
 }
 
-fn define_var(name: &'static [u8], value: css::Token) -> Property {
-    // `name` is `&'static [u8]` because all call sites pass byte-string literals.
+fn define_var<'bump>(name: &'bump [u8], value: css::Token<'bump>) -> Property<'bump> {
     // `TokenList.v` is `Vec<TokenOrValue>` (std Vec — see custom.rs:320), so no arena
     // threading is needed here.
     Property::Custom(css::css_properties::custom::CustomProperty {

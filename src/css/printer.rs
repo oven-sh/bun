@@ -10,7 +10,7 @@ use crate::css_parser as css;
 use crate::values as css_values;
 
 use crate::{Location, PrintErr, PrintResult};
-use css_values::ident::DashedIdent;
+use css_values::ident::{DashedIdent, IdentOrRef};
 
 // Byte-oriented writer (writeAll/writeByte/print equivalents).
 use bun_io::Write;
@@ -106,7 +106,7 @@ impl<'a> ImportInfo<'a> {
 ///
 /// `Printer` also includes helper functions that assist with writing output
 /// that respects options such as `minify`, and `css_modules`.
-pub struct Printer<'a> {
+pub struct Printer<'a, 'bump> {
     pub dest: &'a mut dyn Write,
     pub(crate) loc: Location,
     pub(crate) indent_amt: u32,
@@ -132,7 +132,7 @@ pub struct Printer<'a> {
     // INVARIANT: `with_context()` points this at a stack-local `StyleContext` (via an
     // unsafe variance cast — see the SAFETY note there) and always restores the parent
     // before that frame returns; never stash `ctx` beyond the `with_context` call.
-    pub(crate) ctx: Option<&'a css::StyleContext<'a>>,
+    pub(crate) ctx: Option<&'a css::StyleContext<'a, 'bump>>,
     /// Number of parent-selector substitutions performed for `&` while
     /// serializing the current rule prelude with compiled nesting (targets
     /// without CSS nesting support). Reset per prelude (in
@@ -168,7 +168,7 @@ pub struct Printer<'a> {
     pub(crate) arena: &'a Bump,
 }
 
-impl<'a> Printer<'a> {
+impl<'a, 'bump> Printer<'a, 'bump> {
     pub(crate) fn lookup_symbol(&self, ref_: bun_ast::Ref) -> &'a [u8] {
         let symbols = self.symbols;
 
@@ -329,14 +329,14 @@ impl<'a> Printer<'a> {
         Ok((record.path.text, false))
     }
 
-    pub(crate) fn context(&self) -> Option<&css::StyleContext<'a>> {
+    pub(crate) fn context(&self) -> Option<&css::StyleContext<'a, 'bump>> {
         self.ctx
     }
 }
 
 /// `Printer` participates in `serializer::serialize_*<W: bun_io::Write>` so
 /// `Token::to_css` and friends can write through it generically.
-impl<'a> bun_io::Write for Printer<'a> {
+impl bun_io::Write for Printer<'_, '_> {
     #[inline]
     fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
         Printer::write_str(self, buf).map_err(|_| bun_core::Error::WriteFailed)
@@ -347,7 +347,7 @@ impl<'a> bun_io::Write for Printer<'a> {
     }
 }
 
-impl<'a> Printer<'a> {
+impl<'a, 'bump> Printer<'a, 'bump> {
     /// Serialize a CSS identifier through this printer.
     ///
     /// Thin wrapper over `css::serializer::serialize_identifier`. The
@@ -466,14 +466,11 @@ impl<'a> Printer<'a> {
     }
 
     /// An `Ident` prints as written. A `Ref` is a local name of a CSS module and prints hashed.
-    pub(crate) fn write_ident_or_ref(
-        &mut self,
-        ident: css_values::ident::IdentOrRef,
-    ) -> PrintResult<()> {
-        if let Some(identifier) = ident.as_ident() {
-            return self.serialize_identifier(identifier.v());
-        }
-        let ref_ = ident.as_ref().unwrap();
+    pub(crate) fn write_ident_or_ref(&mut self, ident: IdentOrRef) -> PrintResult<()> {
+        let ref_ = match ident {
+            IdentOrRef::Ident(identifier) => return self.serialize_identifier(identifier.v),
+            IdentOrRef::Ref(ref_) => ref_,
+        };
 
         if self.local_names.is_none() {
             let ref_ = self.symbols.follow(ref_);
@@ -542,7 +539,7 @@ impl<'a> Printer<'a> {
     pub(crate) fn write_dashed_ident(&mut self, ident: &DashedIdent) -> PrintResult<()> {
         self.write_str(b"--")?;
 
-        let ident_v = ident.v();
+        let ident_v = ident.v;
 
         let dashed_idents = match &self.css_module {
             Some(m) => m.config.dashed_idents,
@@ -704,7 +701,7 @@ impl<'a> Printer<'a> {
 
     pub(crate) fn with_context<C, F>(
         &mut self,
-        selectors: &css::SelectorList,
+        selectors: &css::SelectorList<'bump>,
         closure: C,
         func: F,
     ) -> PrintResult<()>
@@ -724,12 +721,10 @@ impl<'a> Printer<'a> {
             vendor_prefix: self.vendor_prefix,
         };
 
-        // `&ctx` is stack-local but the field type is `&'a StyleContext<'a>`;
-        // soundness relies on restoring `parent` before this frame returns.
-        // SAFETY: ctx outlives the call to func; self.ctx is restored to `parent` before return.
-        // Inner-lifetime variance cast via raw pointer (`StyleContext<'x>` and
-        // `StyleContext<'a>` share layout; only the borrow-checker tag differs).
-        self.ctx = Some(unsafe { &*core::ptr::from_ref(&ctx).cast::<css::StyleContext<'a>>() });
+        // SAFETY: `ctx` and `selectors` do not live for `'a`, but they outlive the call to `func`,
+        // and `self.ctx` is restored to `parent` before this returns.
+        self.ctx =
+            Some(unsafe { &*core::ptr::from_ref(&ctx).cast::<css::StyleContext<'a, 'bump>>() });
         let res = func(closure, self);
         self.ctx = parent;
 

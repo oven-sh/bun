@@ -69,8 +69,7 @@ const cases: [keyof typeof shapes, number][] = [
   ["the same with a cycle at each level", 250],
   ["the same with a cycle at each level", isASAN ? 300 : 400],
   ["the error is caught half way up", isASAN ? 300 : 600],
-  // A test of `bun test` has five seconds. Under ASan the modules of a thousand take a fifth of a second, where the machine is not busy.
-  ["modules import one another", isASAN ? 1_000 : 4_000],
+  ["modules import one another", 4_000],
   ["CommonJS files require one another", isASAN ? 600 : 1_000],
 ];
 

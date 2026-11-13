@@ -184,6 +184,10 @@ export const namedPipeContextLiveCount = b.fn({
   returns: b.usize,
   rustPath: testing("named_pipe_context_live_count"),
 });
+export const posixPipeContextLiveCount = b.fn({
+  returns: b.usize,
+  rustPath: testing("posix_pipe_context_live_count"),
+});
 export const duplexUpgradeContextLiveCount = b.fn({
   returns: b.usize,
   rustPath: testing("duplex_upgrade_context_live_count"),

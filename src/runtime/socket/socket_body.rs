@@ -4808,6 +4808,21 @@ pub(crate) mod testing_apis {
         }
     }
 
+    /// Live `PosixPipeContext`s (one per socket adopted over a POSIX FIFO or
+    /// character device fd, e.g. `new net.Socket({ fd, readable: true })`);
+    /// always 0 on Windows.
+    pub(crate) fn posix_pipe_context_live_count() -> usize {
+        #[cfg(unix)]
+        {
+            crate::socket::posix_pipe_context::LIVE_COUNT
+                .load(core::sync::atomic::Ordering::Relaxed)
+        }
+        #[cfg(not(unix))]
+        {
+            0
+        }
+    }
+
     /// Live `DuplexUpgradeContext`s (one per TLS socket over a JS stream).
     pub(crate) fn duplex_upgrade_context_live_count() -> usize {
         DUPLEX_UPGRADE_CONTEXT_LIVE_COUNT.load(core::sync::atomic::Ordering::Relaxed)

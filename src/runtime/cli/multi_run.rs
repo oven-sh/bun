@@ -385,14 +385,14 @@ impl<'a> State<'a> {
         &self,
         config: &ScriptConfig,
         line: &[u8],
-        writer: &mut OutputWriter,
+        writer: &OutputWriter,
     ) -> Result<(), Error> {
         self.write_prefix(config, writer)?;
         writer.write_all(line)?;
         Ok(())
     }
 
-    fn write_prefix(&self, config: &ScriptConfig, writer: &mut OutputWriter) -> Result<(), Error> {
+    fn write_prefix(&self, config: &ScriptConfig, writer: &OutputWriter) -> Result<(), Error> {
         if self.use_colors {
             writer.write_all(COLORS[config.color_idx % COLORS.len()])?;
         }

@@ -884,6 +884,8 @@ The class names are unique to each file, so they don't collide.
 
 Importing a CSS module at runtime (`bun run`, `bun test`) gives you the same object. Server-rendered markup and component tests see the same class names the bundler emits, as long as both run from the same working directory.
 
+`bun build --no-bundle` rejects a `.module.css` entry point. It does not link, so it cannot scope the class names. Copy the file unchanged instead: whatever imports it (`bun run`, `bun test`, or a later bundle) scopes it.
+
 ### Composition
 
 CSS modules can compose class selectors together to reuse style rules across multiple classes.

@@ -530,16 +530,6 @@ impl<'a> Printer<'a> {
             return self.serialize_identifier(identifier.v());
         }
         let ref_ = ident.as_ref().unwrap();
-
-        if self.local_names.is_none() {
-            let ref_ = self.symbols.follow(ref_);
-            let Some(symbol) = self.symbols.get_const(ref_) else {
-                return Err(self.add_fmt_error());
-            };
-            let name: &'a [u8] = symbol.original_name.slice();
-            return self.write_ident(name, true);
-        }
-
         let name: &'a [u8] = self.lookup_symbol(ref_);
         self.serialize_identifier(name)
     }

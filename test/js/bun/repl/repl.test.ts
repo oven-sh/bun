@@ -56,6 +56,11 @@ async function runRepl(
   return { stdout, stderr, exitCode, outputs };
 }
 
+/** The texts the REPL copied to the clipboard. Each copy is one OSC 52 sequence that carries the UTF-8 text in base64. */
+function copiedTexts(stdout: string): string[] {
+  return Array.from(stdout.matchAll(/\x1b\]52;c;([^\x07]*)\x07/g), match => Buffer.from(match[1], "base64").toString());
+}
+
 interface Screen {
   /** One string per row, holding exactly the cells that were written to it. */
   rows: string[];
@@ -215,7 +220,12 @@ async function withTerminalRepl(
     resize: (cols: number) => void;
     allOutput: () => string;
   }) => Promise<void>,
-  options: { env?: Record<string, string | undefined>; cols?: number } = {},
+  options: {
+    env?: Record<string, string | undefined>;
+    cols?: number;
+    /** Where the REPL keeps .bun_repl_history. Defaults to an empty directory. */
+    home?: string;
+  } = {},
 ) {
   const received: string[] = [];
   const cols = options.cols ?? 120;
@@ -226,7 +236,8 @@ async function withTerminalRepl(
   const decoder = new TextDecoder();
 
   // The REPL loads and saves $HOME/.bun_repl_history (USERPROFILE on Windows).
-  using home = tempDir("repl-home", {});
+  using tempHome = tempDir("repl-home", {});
+  const home = options.home ?? String(tempHome);
   await using terminal = new Bun.Terminal({
     cols,
     rows,
@@ -247,8 +258,8 @@ async function withTerminalRepl(
       ...bunEnv,
       TERM: "xterm-256color",
       ...options.env,
-      HOME: String(home),
-      USERPROFILE: String(home),
+      HOME: home,
+      USERPROFILE: home,
     },
   });
 
@@ -367,6 +378,32 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    test("_ holds the value of a block, which is evaluated as written", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        "42",
+        "{ let y = 7; y }",
+        "_",
+        // The value of a block is not read as the { value } wrapper of the REPL transform.
+        "{ ({ value: 5 }) }",
+        "_",
+        // A promise is the value as it is. Only a top-level await is awaited.
+        "{ Promise.resolve(1) }",
+        "_",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "42",
+        "7",
+        "7",
+        "{\n  value: 5,\n}",
+        "{\n  value: 5,\n}",
+        "Promise { <resolved> }",
+        "Promise { <resolved> }",
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("REPL commands", () => {
@@ -465,6 +502,50 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test(".load evaluates a file that is a block as written and sets _", async () => {
+      using dir = tempDir("repl-load-block", {
+        "block.js": "{ let z = 9; z }\n",
+      });
+      const filePath = path.join(String(dir), "block.js");
+      const { outputs, stderr, exitCode } = await runRepl([`.load ${filePath}`, "_", ".exit"]);
+      expect(outputs).toEqual([`Loading ${filePath}...\n9`, "9"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".load runs a block that has a byte that is not valid UTF-8", async () => {
+      using dir = tempDir("repl-load-latin1", {
+        // 0xE9 is "é" in Latin-1. It is read as U+FFFD.
+        "latin1.js": Buffer.from('{ console.log("caf\xe9") }\n', "latin1"),
+      });
+      const filePath = path.join(String(dir), "latin1.js");
+      const { outputs, stderr, exitCode } = await runRepl([`.load ${filePath}`, ".exit"]);
+      expect(outputs).toEqual([`Loading ${filePath}...\ncaf\ufffd\nundefined`]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    // The REPL transform does not take these files, and they are not valid UTF-8.
+    test.each([
+      [
+        "a Latin-1 file that has a syntax error",
+        Buffer.from('console.log("ran");\nvar s = "caf\xe9";\nvar x = [1, 2;\n', "latin1"),
+        "SyntaxError: Unexpected token ';'. Expected either a closing ']' or a ',' following an array element.",
+      ],
+      [
+        "a UTF-16BE file",
+        Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from('console.log("ran");\n', "utf16le").swap16()]),
+        "SyntaxError: Invalid character '\\ufffd'",
+      ],
+    ])(".load shows the syntax error of %s", async (_, bytes, error) => {
+      using dir = tempDir("repl-load-syntax-error", { "file.js": bytes });
+      const filePath = path.join(String(dir), "file.js");
+      const { outputs, stderr, exitCode } = await runRepl([`.load ${filePath}`, "_error.name", "1 + 1", ".exit"]);
+      expect(outputs).toEqual([`Loading ${filePath}...\n${error}`, '"SyntaxError"', "2"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     test(".save saves the session to a file", async () => {
       using dir = tempDir("repl-save-test", {});
       const filePath = path.join(String(dir), "saved.js");
@@ -539,6 +620,66 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    test(".copy copies the value of a block, which is evaluated as written", async () => {
+      const { stdout, outputs, stderr, exitCode } = await runRepl([
+        ".copy { let x = 1; x }",
+        // The value of a block is not read as the { value } wrapper of the REPL transform.
+        ".copy { ({ value: 5 }) }",
+        // Text that is not ASCII stays as it is.
+        '.copy { "caf\u00e9" }',
+        // A promise is the value as it is. Only a top-level await is awaited.
+        ".copy { Promise.resolve(1) }",
+        "_",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "Copied 1 characters to clipboard",
+        "Copied 15 characters to clipboard",
+        // The message counts UTF-8 bytes. That number is not pinned for text that is not ASCII.
+        expect.stringMatching(/^Copied \d+ characters to clipboard$/),
+        "Copied 22 characters to clipboard",
+        // .copy <block> sets _
+        "Promise { <resolved> }",
+      ]);
+      expect(copiedTexts(stdout)).toEqual(["1", "{\n  value: 5,\n}", "caf\u00e9", "Promise { <resolved> }"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".copy awaits a top-level await and copies what it resolves to", async () => {
+      const { stdout, outputs, stderr, exitCode } = await runRepl([
+        ".copy await Promise.resolve(5)",
+        "_",
+        // The promise settles in a later turn of the event loop.
+        // The { value } wrapper of the REPL transform is removed one time only.
+        ".copy await new Promise(resolve => setImmediate(resolve, { value: 9 }))",
+        "_",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "Copied 1 characters to clipboard",
+        "5",
+        "Copied 15 characters to clipboard",
+        "{\n  value: 9,\n}",
+      ]);
+      expect(copiedTexts(stdout)).toEqual(["5", "{\n  value: 9,\n}"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test(".copy of code that throws undefined or null prints the thrown value and copies nothing", async () => {
+      const { stdout, outputs, stderr, exitCode } = await runRepl([
+        ".copy throw undefined",
+        ".copy throw null",
+        ".copy { throw null }",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(["undefined", "null", "null"]);
+      expect(copiedTexts(stdout)).toEqual([]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("error handling", () => {
@@ -578,6 +719,32 @@ describe.concurrent("Bun REPL", () => {
         ".exit",
       ]);
       expect(outputs).toEqual(["[native code: Exception]", "42", "{}", "123"]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a thrown undefined or null is an error and not the value of the input", async () => {
+      const { stdout, outputs, stderr, exitCode } = await runRepl([
+        "42",
+        "throw null",
+        "{ throw null }",
+        "throw undefined",
+        // The last result is still 42.
+        ".copy",
+        "{ throw undefined }",
+        ".copy",
+        ".exit",
+      ]);
+      expect(outputs).toEqual([
+        "42",
+        "null",
+        "null",
+        "undefined",
+        "Copied 2 characters to clipboard",
+        "undefined",
+        "Copied 2 characters to clipboard",
+      ]);
+      expect(copiedTexts(stdout)).toEqual(["42", "42"]);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
@@ -922,12 +1089,73 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    // The REPL transform does not take a block or sloppy-mode syntax.
+    test.each([
+      ["-e", "{ console.log('ran') }", "ran\n", 0],
+      ["-p", "{ let x = 1; x }", "1\n", 0],
+      // The value of a block is not read as the { value } wrapper of the REPL transform.
+      ["-p", "{ ({ value: 5 }) }", "{\n  value: 5,\n}\n", 0],
+      // A promise is the value as it is. Only a top-level await is awaited.
+      ["-p", "{ Promise.resolve(1) }", "Promise { <resolved> }\n", 0],
+      // The script runs one time.
+      ["-p", "{ globalThis.n = (globalThis.n ?? 0) + 1 }", "1\n", 0],
+      ["-p", "function f(a, a) { return a } f(1, 2)", "2\n", 0],
+      // Text that is not ASCII stays as it is.
+      ["-p", '{ "caf\u00e9 \u4e16\u754c" }', '"caf\u00e9 \u4e16\u754c"\n', 0],
+      ["-e", "{ setTimeout(() => console.log('from timer'), 1) }", "from timer\n", 0],
+      ["-e", "{ process.on('beforeExit', () => console.log('beforeExit fired')) }", "beforeExit fired\n", 0],
+      ["-e", "{ process.exitCode = 42 }", "", 42],
+    ])("%s %j is evaluated as written", async (flag, script, stdout, exitCode) => {
+      expect(await runReplWith([flag, script])).toEqual({ stdout, stderr: "", exitCode });
+    });
+
+    // argv is bytes on POSIX only. `printf` writes the byte 0xE9, which is not valid UTF-8. It is read as U+FFFD.
+    async function runReplWithPrintf(flag: string, script: string) {
+      await using proc = Bun.spawn({
+        cmd: ["sh", "-c", 'exec "$0" repl "$1" "$(printf "$2")"', bunExe(), flag, script],
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...bunEnv, NO_COLOR: "1" },
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    test.skipIf(isWindows).each([
+      // The REPL transform does not take a block.
+      ['{ "caf\\351" }', '"caf\ufffd"\n'],
+      // The REPL transform takes this script. It keeps a /*! */ comment as it is.
+      ['console.log("ran"); /*! \\351 */ 1 + 1', "ran\n2\n"],
+    ])("-p runs a script that has a byte that is not valid UTF-8: %s", async (script, output) => {
+      expect(await runReplWithPrintf("-p", script)).toEqual({ stdout: output, stderr: "", exitCode: 0 });
+    });
+
+    test.skipIf(isWindows)("-e writes the syntax error of a script that is not valid UTF-8", async () => {
+      // The REPL transform does not take this script.
+      const script = 'console.log("ran"); var s = "caf\\351"; var x = [1, 2;';
+      expect(await runReplWithPrintf("-e", script)).toEqual({
+        stdout: "",
+        stderr: expect.stringMatching(/^SyntaxError: Unexpected token ';'/),
+        exitCode: 1,
+      });
+    });
+
     test("-e with thrown error writes to stderr and exits with code 1", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-e", "throw new Error('boom')"]);
       expect(stdout).toBe("");
       // A source preview precedes the message and its stack frames.
       expect(stderr).toMatch(/^error: boom\n +at /m);
       expect(exitCode).toBe(1);
+    });
+
+    // undefined and null are values that a script can throw.
+    test.each([
+      ["throw undefined", "undefined\n"],
+      ["{ throw undefined }", "undefined\n"],
+      ["throw null", "null\n"],
+      ["{ throw null }", "null\n"],
+    ])("-e %j writes the thrown value to stderr and exits with code 1", async (script, stderr) => {
+      expect(await runReplWith(["-e", script])).toEqual({ stdout: "", stderr, exitCode: 1 });
     });
 
     test("-e with syntax error writes to stderr and exits with code 1", async () => {
@@ -1117,6 +1345,44 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       // Should evaluate the same expression again
       await waitFor("333");
     });
+  });
+
+  test("a recalled history line that is not valid UTF-8 shows its syntax error", async () => {
+    using home = tempDir("repl-history-latin1", {
+      // 0xE9 is "é" in Latin-1. The REPL transform does not take this line.
+      ".bun_repl_history": Buffer.from('var s = "caf\xe9"; var x = ];\n', "latin1"),
+    });
+    await withTerminalRepl(
+      async ({ send, waitFor }) => {
+        send("\x1b[A");
+        await waitFor("var x = ];");
+        send("\n");
+        const output = await waitFor("Unexpected token ']'");
+        expect(stripAnsi(output)).toContain("SyntaxError: Unexpected token ']'");
+      },
+      { home: String(home) },
+    );
+  });
+
+  test("tab does not complete a recalled word that is not valid UTF-8", async () => {
+    using home = tempDir("repl-history-latin1-tab", {
+      // 0xE9 is "é" in Latin-1.
+      ".bun_repl_history": Buffer.from("__tcOne.caf\xe9\n", "latin1"),
+    });
+    await withTerminalRepl(
+      async ({ send, waitFor }) => {
+        // One property and no prototype: a prefix that matches every name completes to it.
+        send("globalThis.__tcOne = Object.assign(Object.create(null), { only: 'tcONE' + 'MARK' }); 0\n");
+        await waitFor(/\b0\b/);
+        // The line just typed is the newest entry.
+        send("\x1b[A\x1b[A");
+        await waitFor("__tcOne.caf");
+        send("\t\n");
+        const output = await waitFor(/tcONEMARK|SyntaxError/);
+        expect(stripAnsi(output)).toContain("SyntaxError: Invalid character '\\ufffd'");
+      },
+      { home: String(home) },
+    );
   });
 
   test("down arrow restores temp line after history", async () => {

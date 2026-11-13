@@ -108,4 +108,30 @@ describe.skipIf(totalmem() < 10 * 1024 ** 3)("a 2 GiB file", () => {
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   }, 120_000);
+
+  // `bun repl` gives a source that its own parser does not take to JavaScriptCore as one string,
+  // and a string holds less than 2**31 characters.
+  test("is an error in .load of bun repl", async () => {
+    using dir = tempDir("source-too-large-repl", {});
+    const file = sparseFile(String(dir), "big.js");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repl"],
+      stdin: Buffer.from(`.load ${file}\n_error.name\n1 + 1\n.exit\n`),
+      stdout: "pipe",
+      stderr: "pipe",
+      // The REPL keeps its history file in the home directory.
+      env: { ...bunEnv, TERM: "dumb", NO_COLOR: "1", HOME: String(dir), USERPROFILE: String(dir) },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The REPL writes "> " and a newline for every prompt, then what the line evaluated to.
+    const outputs = Bun.stripANSI(stdout)
+      .split("> \n")
+      .slice(1, -1)
+      .map(chunk => chunk.trim());
+    expect({ outputs, stderr, exitCode }).toEqual({
+      outputs: [`Loading ${file}...\nRangeError: Out of memory`, '"RangeError"', "2"],
+      stderr: "",
+      exitCode: 0,
+    });
+  }, 120_000);
 });

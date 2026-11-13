@@ -7234,20 +7234,28 @@ static void displaceMockOfPreloadAgain(Zig::GlobalObject* globalObject, JSModule
 }
 #endif
 
-static JSC::EncodedJSValue unmock(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, JSValue returned)
+// `forRequire`: jest.unmock() and jest.dontMock() end the mock that require() of the name gets too. As in Vitest, vi.unmock() and vi.doUnmock() end the mock that an import of it gets.
+static JSC::EncodedJSValue unmock(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, JSValue returned, bool forRequire = false)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    auto specifier = moduleMockSpecifierArgument(globalObject, callframe, "unmock(module)"_s);
+    auto specifier = moduleMockSpecifierArgument(globalObject, callframe, "unmock(module)"_s, forRequire);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (JSModuleMock* mock = moduleMockAnsweringFor(globalObject, specifier.key)) {
+    // Both are asked before either ends. A mock ends under every path that it has, so one that answers for both paths of the name ends once.
+    JSModuleMock* ofRequirePath = moduleMockAnsweringFor(globalObject, specifier.keyForRequire());
+    JSModuleMock* ofImportPath = moduleMockAnsweringFor(globalObject, specifier.key);
+    if (ofImportPath == ofRequirePath)
+        ofImportPath = nullptr;
+    for (JSModuleMock* mock : { ofRequirePath, ofImportPath }) {
+        if (!mock)
+            continue;
 #if ENABLE(AOT)
         // Under `bun test` it stays displaced until the end of the test file: nothing is registered here.
         if (mock->cameBackAtEndOfMockOfTestFile)
-            return JSValue::encode(returned);
+            continue;
 #endif
         if (mock->isFromPreload && !JSMock__isInPreload(globalObject))
             displacePreloadModuleMock(globalObject, mock);
@@ -7268,7 +7276,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionViUnmock, (JSC::JSGlobalObject * globalObject
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionJestUnmock, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    return unmock(globalObject, callframe, callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict()));
+    return unmock(globalObject, callframe, callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict()), true);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionImportActualModule, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))

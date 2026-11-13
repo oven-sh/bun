@@ -548,11 +548,14 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 names.push(symbol);
             }
         }
+        let imports = tracker.imports.into_iter();
+        let imports = imports.map(|(specifier, module)| (specifier, self.symbol(module)));
         Some(StatedType {
             is_refused: tracker.is_refused || text.is_none(),
             text: text.unwrap_or_default(),
             is_value,
             names,
+            imports: imports.collect(),
         })
     }
 }
@@ -562,6 +565,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 struct NamedWhereStated {
     is_refused: bool,
     named: Vec<Sym>,
+    imports: Vec<(Vec<u8>, Sym)>,
 }
 
 impl<'p> SymbolTracker<'p> for NamedWhereStated {
@@ -590,5 +594,12 @@ impl<'p> SymbolTracker<'p> for NamedWhereStated {
 
     fn report_truncation_error(&mut self, _: &mut Checker<'p, '_>) {
         self.is_refused = true;
+    }
+
+    fn track_import_type(&mut self, _: &mut Checker<'p, '_>, module: Sym, specifier: &[u8]) {
+        let is_known = |known: &(Vec<u8>, Sym)| known.1 == module && known.0 == specifier;
+        if !self.imports.iter().any(is_known) {
+            self.imports.push((specifier.to_vec(), module));
+        }
     }
 }

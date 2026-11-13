@@ -1124,6 +1124,8 @@ pub(super) trait SymbolTracker<'p> {
     fn report_inference_fallback(&mut self, c: &mut Checker<'p, '_>, file: FileId, node: hir::Node);
     /// `ReportTruncationError`
     fn report_truncation_error(&mut self, c: &mut Checker<'p, '_>);
+    /// Not a method of `nodebuilder.SymbolTracker`: the printer writes `import("specifier")` for `module`.
+    fn track_import_type(&mut self, _: &mut Checker<'p, '_>, _module: Sym, _specifier: &[u8]) {}
 }
 
 /// `TrackedSymbolArgs`
@@ -1466,6 +1468,13 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             enclosing_declaration: self.enclosing_declaration,
             meaning,
         });
+    }
+
+    /// `SymbolTracker::track_import_type`, also for a part that the printer does not keep.
+    pub(super) fn track_import_type(&mut self, module: Sym, specifier: &[u8]) {
+        if let Some(tracker) = self.tracker.as_deref_mut() {
+            tracker.track_import_type(self.c, module, specifier);
+        }
     }
 
     /// `wrappingTracker.TrackSymbol`, `SymbolTrackerImpl.TrackSymbol`
@@ -2562,6 +2571,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
             let non_root_parts =
                 (last > 0).then(|| self.create_access_from_symbol_chain(chain, last, 1));
             let (specifier, attributes) = self.import_type_specifier(chain[0]);
+            self.track_import_type(chain[0], &specifier);
             if self.flags & ALLOW_NODE_MODULES_RELATIVE_PATHS == 0
                 && attributes.is_empty()
                 && bun_core::strings::contains(&specifier, b"/node_modules/")

@@ -976,6 +976,38 @@ export class Box {
     expect(typed).not.toContain("import type");
   });
 
+  // For the type of the package the printer writes `import("ext").Request`. wrapper.ts has a `Request` of its own.
+  test("a type of a package is not stated with a type of the sources that has its name", async () => {
+    using dir = tempDir("build-dts-members-same-name", {
+      ...project({ strict: true, lib: ["es2015"] }),
+      "node_modules/ext/package.json": JSON.stringify({ name: "ext", version: "1.0.0", types: "index.d.ts" }),
+      "node_modules/ext/index.js": `export {};\n`,
+      "node_modules/ext/index.d.ts": `export interface Request { url: string }\n`,
+      "src/wrapper.ts": `import type { Request as Raw } from "ext";
+export interface Request { wrapped: boolean }
+export interface Other { o: number }
+export function pair(): { raw: Raw; wrapped: Request } { return { raw: { url: "/" }, wrapped: { wrapped: true } }; }
+export function own(): { wrapped: Request; other: Other } { return { wrapped: { wrapped: true }, other: { o: 1 } }; }
+`,
+      "src/index.ts": `import { pair, own } from "./wrapper";
+declare const __DEV__: boolean;
+export class Ctx {
+  held;
+  own;
+  constructor() {
+    if (__DEV__) this.held = pair();
+    if (__DEV__) this.own = own();
+  }
+}
+`,
+    });
+    const flags = ["--outdir", "out", "--dts", "--define", "__DEV__=false"];
+    const build = await bun(String(dir), "build", "./src/index.ts", ...flags);
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const typed = readFileSync(join(String(dir), "out/index.aot.ts"), "utf8");
+    expect(typed).toContain("class Ctx {\n  held;\n  own: { wrapped: Request; other: Other; } | undefined;\n");
+  });
+
   // Beside an `accessor` field the bundle keeps a field for a parameter property.
   test("a parameter property whose field the bundle keeps gets its type at that field", async () => {
     using dir = tempDir("build-dts-assigned-fields-kept-parameter", {

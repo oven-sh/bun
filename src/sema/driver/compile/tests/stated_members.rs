@@ -489,3 +489,291 @@ fn a_name_is_stated_only_where_the_bundle_has_it_in_scope() {
     ];
     assert_eq!(stated_members(&files), expected);
 }
+
+const PACKAGE: [(&str, &str); 3] = [
+    (
+        "node_modules/ext/package.json",
+        r#"{ "name": "ext", "version": "1.0.0", "main": "index.js", "types": "index.d.ts" }"#,
+    ),
+    ("node_modules/ext/index.js", "export {};\n"),
+    (
+        "node_modules/ext/index.d.ts",
+        "export interface Request { url: string }\n",
+    ),
+];
+
+const WRAPPER: &str = "import type { Request as Raw } from 'ext';
+export type { Request as Outside } from 'ext';
+export interface Request { wrapped: boolean }
+export interface Other { o: number }
+export function pair(): { raw: Raw; wrapped: Request } { return null as any; }
+export function own(): { wrapped: Request; other: Other } { return null as any; }
+";
+
+#[test]
+fn a_name_behind_import_is_what_the_module_of_that_specifier_exports() {
+    let main = "import { pair, own } from './wrapper';
+export class Stated {
+    mixed = pair();
+    own = own();
+}
+";
+    let mut files = vec![("main.ts", main), ("wrapper.ts", WRAPPER)];
+    files.extend(PACKAGE);
+    // `mixed` has `import("ext").Request`, which is no `Request` of wrapper.ts.
+    let expected = [
+        "own: { wrapped: import(\"./wrapper\").Request; other: import(\"./wrapper\").Other; } [import(\"./wrapper\").Request is Request of /project/wrapper.ts] [import(\"./wrapper\").Other is Other of /project/wrapper.ts]",
+    ];
+    assert_eq!(stated_members(&files), expected);
+}
+
+#[test]
+fn a_name_behind_a_namespace_import_is_what_that_module_exports() {
+    let again = "export interface Outside { again: boolean }
+export function again(): Outside { return { again: true }; }
+";
+    let main = "import * as wrapper from './wrapper';
+import { again } from './again';
+declare const outside: unknown;
+export class Stated {
+    outside = { outside: outside as wrapper.Outside, again: again() };
+    other = null as wrapper.Other | null;
+}
+";
+    let mut files = vec![
+        ("main.ts", main),
+        ("wrapper.ts", WRAPPER),
+        ("again.ts", again),
+    ];
+    files.extend(PACKAGE);
+    // `wrapper.Outside` is a type of the package, and no `Outside` of again.ts.
+    let expected = ["other: wrapper.Other | null [wrapper.Other is Other of /project/wrapper.ts]"];
+    assert_eq!(stated_members(&files), expected);
+}
+
+#[test]
+fn a_specifier_is_the_module_that_the_printer_wrote_it_for() {
+    let paths = options(r#", "paths": { "@/*": ["./*"] }"#);
+    // The file of the module, the specifier of its import in main.ts, and the specifier as the printer writes it.
+    let cases = [
+        ("item.ts", "@/item", "@/item"),
+        ("lib/index.ts", "./lib", "./lib"),
+        ("index.ts", ".", "."),
+        ("größe.ts", "./größe", "./gr\\u00F6\\u00DFe"),
+    ];
+    for (path, specifier, printed) in cases {
+        let main = format!(
+            "import {{ hide }} from '{specifier}';\nexport class Stated {{\n    hidden = hide();\n}}\n"
+        );
+        let files = [
+            ("main.ts", &main[..]),
+            (path, ITEM),
+            ("tsconfig.json", &paths[..]),
+        ];
+        let name = format!("import(\"{printed}\").Hidden");
+        let expected = [format!(
+            "hidden: {name} [{name} is Hidden of /project/{path}]"
+        )];
+        assert_eq!(stated_members(&files), expected, "{specifier}");
+    }
+}
+
+#[test]
+fn a_specifier_that_the_printer_wrote_for_two_modules_states_no_member() {
+    let entry = "import type { Name as OfIndex } from './index';
+export interface Name { entry: true }
+export interface Alone { alone: true }
+export function both(): { entry: Name; index: OfIndex } { return null as any; }
+export function alone(): Alone { return { alone: true }; }
+";
+    let main = "import { both, alone } from './lib';
+export class Stated {
+    both = both();
+    alone = alone();
+}
+";
+    let files = [
+        ("main.ts", main),
+        ("lib/package.json", r#"{ "main": "./entry.ts" }"#),
+        ("lib/entry.ts", entry),
+        ("lib/index.ts", "export interface Name { index: true }\n"),
+    ];
+    // `./lib` is entry.ts for the import of main.ts, and index.ts for the printer, which cuts `/index` off.
+    let expected = [
+        "alone: import(\"./lib\").Alone [import(\"./lib\").Alone is Alone of /project/lib/entry.ts]",
+    ];
+    assert_eq!(stated_members(&files), expected);
+}
+
+#[test]
+fn a_module_that_is_no_source_states_no_member_by_a_source_of_its_stem() {
+    let scripts = options(r#", "allowJs": true"#);
+    let pair = "import { Shape as OfScript } from './shape.mjs';
+import type { Shape as OfSource } from './shape';
+export function pair(): { script: OfScript; source: OfSource } { return null as any; }
+export function source(): OfSource { return { source: true }; }
+";
+    let main = "import { pair, source } from './pair';
+export class Stated {
+    pair = pair();
+    source = source();
+}
+";
+    let files = [
+        ("main.ts", main),
+        ("pair.ts", pair),
+        ("shape.mjs", "export class Shape { script = true }\n"),
+        ("shape.ts", "export interface Shape { source: boolean }\n"),
+        ("tsconfig.json", &scripts[..]),
+    ];
+    let expected = [
+        "source: import(\"./shape\").Shape [import(\"./shape\").Shape is Shape of /project/shape.ts]",
+    ];
+    assert_eq!(stated_members(&files), expected);
+}
+
+#[test]
+fn an_export_that_is_an_alias_merged_with_a_type_states_no_member() {
+    let wrapper = "import { handlers } from './handlers';
+export { handlers as Handlers };
+export interface Handlers { h: number }
+export interface Plain { p: number }
+export function get(): Handlers { return { h: 1 }; }
+export function plain(): Plain { return { p: 1 }; }
+";
+    let main = "import { get, plain } from './wrapper';
+export class Stated {
+    handlers = get();
+    plain = plain();
+}
+";
+    let files = [
+        ("main.ts", main),
+        ("wrapper.ts", wrapper),
+        ("handlers.ts", "export const handlers = { h: 1 };\n"),
+    ];
+    let expected = [
+        "plain: import(\"./wrapper\").Plain [import(\"./wrapper\").Plain is Plain of /project/wrapper.ts]",
+    ];
+    assert_eq!(stated_members(&files), expected);
+}
+
+#[test]
+fn a_name_behind_a_module_has_the_meaning_of_its_place() {
+    let wrapper = "import { handlers } from './handlers';
+export { handlers as Handlers };
+export interface Handlers { h: number }
+export function nested(): { inner: Handlers } { return { inner: handlers }; }
+";
+    let main = "import { nested } from './wrapper';
+import * as barrel from './barrel';
+import * as items from './item';
+export class Stated {
+    nested = nested();
+    query = null as unknown as typeof barrel.Handlers;
+    hidden = null as items.Hidden | null;
+}
+";
+    let files = [
+        ("main.ts", main),
+        ("wrapper.ts", wrapper),
+        ("barrel.ts", "export { Handlers } from './wrapper';\n"),
+        ("handlers.ts", "export const handlers = { h: 1 };\n"),
+        ("item.ts", ITEM),
+    ];
+    // For `nested` the printer follows the alias to the constant. Behind `typeof`, `barrel.Handlers` is the interface.
+    let expected = ["hidden: items.Hidden | null [items.Hidden is Hidden of /project/item.ts]"];
+    assert_eq!(stated_members(&files), expected);
+}
+
+#[test]
+fn a_specifier_of_two_modules_states_no_member_where_one_of_them_refuses_the_name() {
+    let entry = "import type { Name as OfIndex } from './index';
+export interface Name { entry: true }
+declare const ofEntry: Name;
+declare const ofIndex: OfIndex;
+export function both() { return { entry: ofEntry, index: ofIndex }; }
+";
+    let index = "import { handlers } from './handlers';
+export { handlers as Name };
+export interface Name { index: true }
+";
+    let main = "import { both } from './lib';
+export class Stated {
+    both = both();
+    plain = 1;
+}
+";
+    let files = [
+        ("main.ts", main),
+        ("lib/package.json", r#"{ "main": "./entry.ts" }"#),
+        ("lib/entry.ts", entry),
+        ("lib/index.ts", index),
+        ("lib/handlers.ts", "export const handlers = { h: 1 };\n"),
+    ];
+    assert_eq!(stated_members(&files), ["plain: number"]);
+}
+
+const VERSIONS: [(&str, &str); 3] = [
+    (
+        "types.ts",
+        "export interface Request { legacy: true }\nexport interface RequestV2 { v2: true }\n",
+    ),
+    (
+        "api.ts",
+        "export { RequestV2 as Request } from './types';\n",
+    ),
+    (
+        "pairs.ts",
+        "import type { Request as Legacy } from './types';
+export declare function pair(): { now: import('./api').Request; old: Legacy };
+export declare function now(): { now: import('./api').Request };
+",
+    ),
+];
+
+#[test]
+fn a_name_that_the_printer_copies_behind_a_new_specifier_is_the_one_of_its_source() {
+    let main = "import { pair, now } from './pairs';
+export class Stated {
+    pair = pair();
+    now = now();
+}
+";
+    let mut files = vec![("main.ts", main)];
+    files.extend(VERSIONS);
+    // The printer writes `./types` for `./api` and keeps `Request`, which api.ts has for `RequestV2`.
+    let name = "import(\"./types\").Request";
+    let expected = [format!(
+        "now: {{ now: {name}; }} [{name} is RequestV2 of /project/types.ts]"
+    )];
+    assert_eq!(stated_members(&files), expected);
+}
+
+#[test]
+fn an_import_type_that_a_source_wrote_is_the_module_of_its_specifier() {
+    let make =
+        "export function make(): { held: import('./item').Hidden } { return null as any; }\n";
+    let main = "import type { Hidden } from './lib/item';
+import { make } from './lib/make';
+export class Stated {
+    made = make();
+    both = { kept: null as import('./lib/item').Hidden | null, named: null as Hidden | null };
+}
+";
+    let files = [
+        ("main.ts", main),
+        ("lib/make.ts", make),
+        ("lib/item.ts", ITEM),
+    ];
+    let hidden = "is Hidden of /project/lib/item.ts";
+    let expected = [
+        format!(
+            "made: {{ held: import(\"./lib/item\").Hidden; }} [import(\"./lib/item\").Hidden {hidden}]"
+        ),
+        format!(
+            "both: {{ kept: import('./lib/item').Hidden | null; named: Hidden | null; }} [import('./lib/item').Hidden {hidden}] [Hidden {hidden}]"
+        ),
+    ];
+    assert_eq!(stated_members(&files), expected);
+}

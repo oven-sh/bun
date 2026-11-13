@@ -556,6 +556,8 @@ pub struct StatedType {
     pub is_refused: bool,
     /// The symbols that the printer named in `text`.
     pub names: Vec<SymbolRef>,
+    /// Each specifier that the printer wrote in an `import("..")`, and the module that it wrote it for.
+    pub imports: Vec<(Vec<u8>, SymbolRef)>,
 }
 
 /// A type's components, where they aren't just a list of types.

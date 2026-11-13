@@ -38,6 +38,8 @@ pub(crate) struct Html {
     pub(crate) bundled_file: incremental_graph::ClientFileIndex,
     pub(crate) script_injection_offset: Option<ByteOffset>,
     pub(crate) bundled_html_text: Option<Box<[u8]>>,
+    /// The stylesheets that the `<link>`s of `bundled_html_text` load only under a `media` condition.
+    pub(crate) media_links: Box<[bun_bundler::bake_types::HtmlMediaLink]>,
     /// The rendered page, built on first request. The `StaticRoute::on*`
     /// handlers take their own ref per in-flight response, so the route may
     /// outlive this handle.
@@ -132,6 +134,9 @@ impl RouteBundle {
             Data::Html(html) => {
                 if let Some(text) = &html.bundled_html_text {
                     cost += text.len();
+                }
+                for link in &html.media_links {
+                    cost += core::mem::size_of_val(link) + link.media.len();
                 }
                 if let Some(cached) = html.cached_response.as_deref() {
                     cost += cached.memory_cost();

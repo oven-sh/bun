@@ -19,7 +19,7 @@ use bun_ast::Index as AstIndex;
 // literal `*entry` is not `Copy`; we duplicate the values bitwise instead.
 // `conditions` slabs come from `fork_conditions`, which allocates them
 // from the `LinkerGraph` arena (`graph.heap`). Each `ImportConditions` in a slab
-// is a bitwise copy of the conditions of an `ImportRule`. The rule's stylesheet
+// is a bitwise copy of one of `entry_conditions` or of an `ImportRule`'s. The rule's stylesheet
 // owns their heap and outlives the link. The `Vec` headers aliasing a
 // slab are `mem::forget`'d everywhere (`CssImportOrder::drop` + the
 // post-`visit()` forget below); the slab itself is bulk-freed with the arena.
@@ -81,6 +81,8 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     this: &LinkerContext<'a>,
     temp_arena: &Arena,
     entry_points: &[Index],
+    // `entry_conditions[i]` wraps `entry_points[i]` as the conditions of an "@import" do. Its heap is arena-owned.
+    entry_conditions: &[Option<&'a ImportConditions>],
 ) -> Result<Vec<CssImportOrder<'a>>, CssImportChainTooDeep> {
     let _ = temp_arena;
 
@@ -388,12 +390,24 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     let mut wrapping_conditions: Vec<ImportConditions> = Vec::new();
     let mut wrapping_import_records: Vec<ImportRecord> = Vec::new();
     // Include all files reachable from any entry point
-    for entry_point in entry_points {
-        visitor.visit(
-            *entry_point,
-            &mut wrapping_conditions,
-            &mut wrapping_import_records,
-        );
+    for (i, entry_point) in entry_points.iter().enumerate() {
+        if let Some(conditions) = entry_conditions.get(i).copied().flatten() {
+            let mut nested_conditions =
+                core::mem::ManuallyDrop::new(fork_conditions(&wrapping_conditions, arena));
+            // SAFETY: never dropped (see the note at `bitwise_copy`).
+            nested_conditions.append_assume_capacity(unsafe { bitwise_copy(conditions) });
+            visitor.visit(
+                *entry_point,
+                &mut nested_conditions,
+                &mut wrapping_import_records,
+            );
+        } else {
+            visitor.visit(
+                *entry_point,
+                &mut wrapping_conditions,
+                &mut wrapping_import_records,
+            );
+        }
         if visitor.too_deep.is_some() {
             break;
         }

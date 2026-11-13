@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { type Client, type Dev, devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -669,6 +669,191 @@ devTest("changing html file with link tag works", {
     await c.style(".other").color.expect.toBe("red");
     await c.style(".test").color.expect.toBe("#00f");
     await c.style(".test").fontSize.expect.toBe("24px");
+  },
+});
+// The `<link>` tags that the dev server adds to the page, in their order. Each stylesheet has one rule,
+// and the class of that rule names the file.
+async function stylesheetLinksOf(dev: Dev) {
+  const tags = (await dev.fetch("/").text()).matchAll(
+    /<link rel="stylesheet"( media="([^"]*)")? href="(\/_bun\/[^"]+)">/g,
+  );
+  return Promise.all(
+    Array.from(tags, async ([, , media = null, href]) => ({
+      media,
+      stylesheet: (await dev.fetch(href).text()).match(/\.([a-z-]+) \{/)?.[1],
+    })),
+  );
+}
+// The dev server lists the stylesheets of a page last to first (#28117).
+function expectInPageOrder<T>(actual: T[], inPageOrder: T[]) {
+  expect(actual).toEqual(inPageOrder.toReversed());
+}
+// The sheets that show hot-updated CSS, with the media that each one applies for.
+function hotSheetsOf(c: Client) {
+  return c.js<{ media: string; selector: string }[]>`
+    document.adoptedStyleSheets
+      .filter(sheet => !sheet.disabled)
+      .map(sheet => ({ media: sheet.media.mediaText ?? sheet.media, selector: sheet.cssRules[0].selectorText }))
+  `;
+}
+// https://github.com/oven-sh/bun/issues/18526
+devTest("stylesheet link with media keeps its media", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <link rel="stylesheet" href="screen.css">
+          <link rel="stylesheet" href="print.css" media="print">
+          <script type="module" src="script.ts"></script>
+          <link rel="stylesheet" href="last.css">
+        </head>
+        <body></body>
+      </html>
+    `,
+    "screen.css": `.screen { color: red; }`,
+    "print.css": `.print { color: black; }`,
+    "from-script.css": `.from-script { color: blue; }`,
+    "last.css": `.last { color: red; }`,
+    "script.ts": `import "./from-script.css";`,
+  },
+  async test(dev) {
+    const links = (media: string) => [
+      { media: null, stylesheet: "screen" },
+      { media, stylesheet: "print" },
+      { media: null, stylesheet: "from-script" },
+      { media: null, stylesheet: "last" },
+    ];
+    expectInPageOrder(await stylesheetLinksOf(dev), links("print"));
+
+    // Only the `media` of the link changes. The stylesheets are not bundled again.
+    await dev.patch("index.html", { find: `media="print"`, replace: `media='print and (min-width: 1px), (a: "b")'` });
+    expectInPageOrder(await stylesheetLinksOf(dev), links(`print and (min-width: 1px), (a: &quot;b&quot;)`));
+    await dev.patch("index.html", { find: `media='print and (min-width: 1px), (a: "b")'`, replace: `media="print"` });
+    expectInPageOrder(await stylesheetLinksOf(dev), links("print"));
+
+    await using c = await dev.client("/");
+    expect(await hotSheetsOf(c)).toEqual([]);
+
+    await dev.write("print.css", `.print { color: gray; }`);
+    await c.style(".print").color.expect.toBe("gray");
+    await dev.write("screen.css", `.screen { color: green; }`);
+    await c.style(".screen").color.expect.toBe("green");
+    // The new text of print.css must not apply on screen.
+    expect(await hotSheetsOf(c)).toEqual([
+      { media: "print", selector: ".print" },
+      { media: "", selector: ".screen" },
+    ]);
+  },
+});
+// The dev server writes its tags before </body> for this page, where the client does not register them.
+devTest("stylesheet link with media keeps its media in a hot update of a page with no head end tag", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <link rel="stylesheet" href="screen.css">
+          <link rel="stylesheet" href="print.css" media="print">
+        <body></body>
+      </html>
+    `,
+    "screen.css": `.screen { color: red; }`,
+    "print.css": `.print { color: black; }`,
+    "more.css": `.more { color: black; }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await dev.write("print.css", `@import "./more.css";\n.print { color: gray; }`);
+    await c.style(".more").color.expect.toBe("#000");
+    expect(await hotSheetsOf(c)).toEqual([{ media: "print", selector: ".more" }]);
+  },
+});
+devTest("stylesheet links with media for a stylesheet that the page loads in more than one way", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <link rel="preload" as="style" href="preloaded.css">
+          <link rel="stylesheet" href="preloaded.css" media="print">
+          <link rel="stylesheet" href="two-media.css" media="print">
+          <link rel="stylesheet" as="style" href="two-media.css" media="(orientation: portrait)">
+          <link rel="stylesheet" href="also-linked.css" media="print">
+          <link rel="stylesheet" href="also-linked.css">
+          <link rel="stylesheet" href="also-imported.css" media="print">
+          <link rel="stylesheet" href="onload.css" media="print" onload="this.media='all'">
+          <link rel="stylesheet" href="all.css" media=" ALL ">
+          <link rel="stylesheet" href="empty.css" media="">
+          <link rel="stylesheet" href="comment.css" media="/**/">
+          <link rel="stylesheet" href="blank-entry.css" media="screen,,print">
+          <link rel="stylesheet" href="invalid.css" media="print and">
+          <link rel="stylesheet" href="reference.css" media="(width &gt;= 600px)">
+          <link rel="stylesheet" href="disabled.css" media="print" disabled>
+          <link rel="stylesheet" href="https://cdn.example.com/framework.css" media="print">
+          <script type="module" src="script.ts"></script>
+        </head>
+        <body></body>
+      </html>
+    `,
+    ...Object.fromEntries(
+      [
+        "preloaded",
+        "two-media",
+        "also-linked",
+        "also-imported",
+        "onload",
+        "all",
+        "empty",
+        "comment",
+        "blank-entry",
+        "invalid",
+        "reference",
+        "disabled",
+      ].map(name => [`${name}.css`, `.${name} { color: red; }`]),
+    ),
+    "script.ts": `import "./also-imported.css";`,
+  },
+  async test(dev) {
+    const links = await stylesheetLinksOf(dev);
+    expect(links.sort((a, b) => a.stylesheet!.localeCompare(b.stylesheet!))).toEqual([
+      { media: null, stylesheet: "all" },
+      // The script imports also-imported.css and another link loads also-linked.css, each for every medium.
+      { media: null, stylesheet: "also-imported" },
+      { media: null, stylesheet: "also-linked" },
+      { media: null, stylesheet: "blank-entry" },
+      { media: null, stylesheet: "comment" },
+      { media: null, stylesheet: "disabled" },
+      { media: null, stylesheet: "empty" },
+      { media: null, stylesheet: "invalid" },
+      { media: null, stylesheet: "onload" },
+      // A preload does not apply the stylesheet.
+      { media: "print", stylesheet: "preloaded" },
+      { media: null, stylesheet: "reference" },
+      // One tag for the stylesheet. It applies when either link does.
+      { media: "print, (orientation: portrait)", stylesheet: "two-media" },
+    ]);
+  },
+});
+// The import record of a link with `media` keeps the place of its tag, and the error shows it.
+devTest("missing stylesheet of a link with media", {
+  files: {
+    "index.html": `<!DOCTYPE html>
+<html>
+<head>
+<link rel="stylesheet" href="./missing.css">
+<link rel="stylesheet" href="./missing-print.css" media="print">
+</head>
+<body></body>
+</html>`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [
+        'index.html: error: Could not resolve: "./missing.css"',
+        'index.html:5:1: error: Could not resolve: "./missing-print.css"',
+      ],
+    });
   },
 });
 devTest("a page recovers after the missing @import of a shared stylesheet is created", {

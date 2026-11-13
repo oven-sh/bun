@@ -28,7 +28,7 @@ use bun_paths::{self as paths, PathBuffer};
 use bun_sys as sys;
 use bun_uws::{self as uws, AnyResponse, Opcode, Request, WebSocketUpgradeContext};
 use bun_watcher::WatchItemColumns as _;
-use bun_wyhash::{Wyhash, hash};
+use bun_wyhash::Wyhash;
 
 use crate::api::server::StaticRoute;
 use crate::api::{AnyServer, SavedRequest};

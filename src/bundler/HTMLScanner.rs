@@ -3,7 +3,7 @@ use std::borrow::Cow;
 
 use crate::Error;
 use crate::bun_fs as fs;
-use bun_alloc::AstAlloc;
+use bun_alloc::{Arena, AstAlloc};
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Log, Range, Source};
 use bun_paths::fs::Path as FsPath;
@@ -68,7 +68,13 @@ impl<'a> HTMLScanner<'a> {
 }
 
 impl<'a> HTMLScanner<'a> {
-    fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
+    fn create_import_record(
+        &mut self,
+        input_path: &[u8],
+        kind: ImportKind,
+        flags: ImportRecordFlags,
+        range: Range,
+    ) -> Result<(), Error> {
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
         let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
@@ -110,12 +116,12 @@ impl<'a> HTMLScanner<'a> {
         let record = ImportRecord {
             path: FsPath::init(owned),
             kind,
-            range: Range::NONE,
+            range,
             tag: ImportRecordTag::default(),
             loader: None,
             source_index: AstIndex::default(),
             original_path: b"",
-            flags: ImportRecordFlags::default(),
+            flags,
         };
 
         self.import_records.push(record);
@@ -136,13 +142,27 @@ impl<'a> HTMLScanner<'a> {
 
     fn on_tag(
         &mut self,
-        _element: &mut Element<'_, '_>,
+        element: &mut Element<'_, '_>,
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,
     ) {
         let _ = url_attribute;
-        let _ = self.create_import_record(path, kind);
+        let mut flags = ImportRecordFlags::default();
+        let mut range = Range::NONE;
+        if kind == ImportKind::At {
+            flags = stylesheet_link_flags(element);
+        }
+        if flags.contains(ImportRecordFlags::HTML_LINK_MEDIA) {
+            let tag = element.source_location().bytes();
+            range = Range {
+                loc: Loc {
+                    start: tag.start as i32,
+                },
+                len: tag.len() as i32,
+            };
+        }
+        let _ = self.create_import_record(path, kind, flags, range);
     }
 
     pub(crate) fn scan(&mut self, input: &[u8]) -> Result<(), Error> {
@@ -237,8 +257,12 @@ const TAG_HANDLERS: [TagHandler; 16] = [
     TagHandler::new("script[src]", "src", ImportKind::Stmt),
     // CSS Stylesheets
     TagHandler::new("link[rel='stylesheet'][href]", "href", ImportKind::At),
-    // CSS Assets
-    TagHandler::new("link[as='style'][href]", "href", ImportKind::At),
+    // CSS Assets. The row above has the stylesheet links, so that one link gives one import record.
+    TagHandler::new(
+        "link[as='style'][href]:not([rel='stylesheet'])",
+        "href",
+        ImportKind::At,
+    ),
     // Font files
     TagHandler::new(
         "link[as='font'][href], link[type^='font/'][href]",
@@ -280,6 +304,88 @@ const TAG_HANDLERS: [TagHandler; 16] = [
     //     // Iframes
     //     TagHandler::new("iframe[src]", "src", ImportKind::Url),
 ];
+
+/// `HTML_LINK_MEDIA` or `HTML_LINK_PRELOAD` for a `<link>` that matches a stylesheet row of `TAG_HANDLERS`, or neither.
+fn stylesheet_link_flags(link: &Element<'_, '_>) -> ImportRecordFlags {
+    let attributes = link.attributes();
+    // `href` and the `rel` or `as` of the row: no `media`, and a preload has both `rel` and `as`.
+    if attributes.len() <= 2 {
+        return ImportRecordFlags::empty();
+    }
+    let (mut rel, mut media, mut has_as) = (None, None, false);
+    // The browser takes the first of two attributes with one name.
+    for attribute in attributes {
+        match attribute.name().as_str() {
+            "rel" if rel.is_none() => rel = Some(attribute),
+            "media" if media.is_none() => media = Some(attribute),
+            "as" => has_as = true,
+            "rel" | "media" | "href" | "type" | "crossorigin" | "integrity" | "referrerpolicy"
+            | "fetchpriority" | "blocking" | "hreflang" | "charset" | "nonce" => {}
+            // The page can change this link: `disabled`, `title`, `onload="this.media='all'"`, a script that finds it by `id`.
+            _ => return ImportRecordFlags::empty(),
+        }
+    }
+    let has_media = media.is_some_and(|media| {
+        let media = media.value();
+        let media = media.trim_ascii();
+        !media.is_empty() && !media.eq_ignore_ascii_case("all")
+    });
+    if !(has_media || has_as) {
+        return ImportRecordFlags::empty();
+    }
+    let is_stylesheet = rel.is_some_and(|rel| {
+        bun_core::strings::tokenize_any(rel.value().as_bytes(), b" \t\n\x0C\r")
+            .any(|token| token.eq_ignore_ascii_case(b"stylesheet"))
+    });
+    if !is_stylesheet {
+        ImportRecordFlags::HTML_LINK_PRELOAD
+    } else if has_media {
+        ImportRecordFlags::HTML_LINK_MEDIA
+    } else {
+        ImportRecordFlags::empty()
+    }
+}
+
+/// The `media` of the `<link>` whose start tag is `tag`: the `range` of an `HTML_LINK_MEDIA` record.
+pub(crate) fn media_of_link(tag: &[u8]) -> Option<String> {
+    let mut media = None;
+    let on_link: lol_html::ElementHandler<'_> = Box::new(|link: &mut Element<'_, '_>| {
+        media = link.get_attribute("media");
+        Ok(())
+    });
+    let settings = lol_html::Settings {
+        element_content_handlers: vec![element_entry("link", on_link).ok()?],
+        ..lol_html::Settings::new()
+    };
+    let sink = OutputSink::Callback(Box::new(|_: &[u8]| {}));
+    let mut rewriter = lol_html::HtmlRewriter::new(settings, sink);
+    rewriter.write(tag).ok()?;
+    rewriter.end().ok()?;
+    media
+}
+
+/// A `media` value that is not a media query list that Bun can parse.
+pub(crate) struct InvalidLinkMedia;
+
+/// The `media` of a `<link>` as the conditions of an "@import", with their heap in `arena`. `Ok(None)`: it always matches.
+pub(crate) fn conditions_of_link_media(
+    media: &str,
+    arena: &Arena,
+) -> Result<Option<bun_css::ImportConditions>, InvalidLinkMedia> {
+    // lol-html does not decode a character reference such as `&gt;` (https://github.com/oven-sh/bun/pull/41616).
+    if bun_core::strings::contains_char(media.as_bytes(), b'&') {
+        return Err(InvalidLinkMedia);
+    }
+    let text = arena.alloc_slice_copy(media.as_bytes());
+    let media =
+        bun_css::media_query::MediaList::parse_string(text, arena).map_err(|_| InvalidLinkMedia)?;
+    Ok(
+        (!media.always_matches()).then(|| bun_css::ImportConditions {
+            media,
+            ..Default::default()
+        }),
+    )
+}
 
 const SELECTOR_CAP: usize = TAG_HANDLERS.len() + 3;
 

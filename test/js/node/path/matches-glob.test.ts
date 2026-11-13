@@ -238,6 +238,8 @@ describe("path.matchesGlob(path, glob) matches as minimatch does for Node", () =
     ["C:/file", "c:/file", true, false],
     ["//?/c:/file", "C:/*", true, false],
     ["//?/c:/file", "//?/C:/*", true, false],
+    ["c:/file", "//?/C:/*", true, false],
+    ["x/file", "//?/C:/*", false, false],
     ["c:", "C:", true, false],
     ["c:x", "C:*", false, false],
     ["a\\b", "a/b", true, false],

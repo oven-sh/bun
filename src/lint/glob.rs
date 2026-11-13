@@ -217,7 +217,7 @@ pub struct Minimatch {
     collapses_dots: bool,
     /// `platform: "win32"` is set.
     is_windows: bool,
-    /// The drive the pattern starts with, in upper case.
+    /// The drive the pattern starts with, in upper case and without a `//?/`.
     drive: Drive,
 }
 
@@ -254,21 +254,17 @@ impl Drive {
     }
 }
 
-/// The path with its drive letter in upper case, without a `//?/` that `pattern_drive` doesn't have.
-fn fold_drive(path: Cow<'_, [u8]>, pattern_drive: Drive) -> Cow<'_, [u8]> {
+/// The path with its drive letter in upper case and without a `//?/`, as the pattern's drive is.
+fn fold_drive(path: Cow<'_, [u8]>) -> Cow<'_, [u8]> {
     let drive = Drive::of(&path);
     let Some(letter) = drive.letter_at() else {
         return path;
     };
-    let skip = match (drive, pattern_drive) {
-        (Drive::Unc, Drive::Bare) => 4,
-        _ => 0,
-    };
-    if skip == 0 && path[letter].is_ascii_uppercase() {
+    if drive == Drive::Bare && path[letter].is_ascii_uppercase() {
         return path;
     }
-    let mut folded = path[skip..].to_vec();
-    folded[letter - skip].make_ascii_uppercase();
+    let mut folded = path[letter..].to_vec();
+    folded[0].make_ascii_uppercase();
     Cow::Owned(folded)
 }
 
@@ -402,11 +398,15 @@ impl Minimatch {
             true => 0,
             false => source.iter().take_while(|it| **it == b'!').count(),
         };
-        let drive = match options.is_windows {
+        let mut drive = match options.is_windows {
             true => Drive::of(&source[bangs..]),
             false => Drive::None,
         };
-        if let Some(letter) = drive.letter_at() {
+        if drive == Drive::Unc {
+            source.drain(bangs..bangs + 4);
+            drive = Drive::Bare;
+        }
+        if let Some(letter) = drive.letter_at().filter(|_| !options.nocase) {
             source[bangs + letter].make_ascii_uppercase();
         }
         let pattern = &source[bangs..];
@@ -470,7 +470,7 @@ impl Minimatch {
         };
         let path = match self.drive {
             Drive::None => path,
-            drive => fold_drive(path, drive),
+            Drive::Bare | Drive::Unc => fold_drive(path),
         };
         let path = match self.folds_case {
             true => Cow::Owned(path.to_ascii_lowercase()),

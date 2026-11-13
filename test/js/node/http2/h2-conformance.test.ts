@@ -1149,6 +1149,41 @@ function requestHeaderBlock(method: "GET" | "POST", extra: Buffer = Buffer.alloc
   ]);
 }
 
+// Restate's HTTP/2 peer rejects >100 empty DATA frames on a stream. Awaiting
+// zero-length writes must not create one DATA frame per callback, and batching
+// them must not leave an extra frame either.
+for (const mode of ["awaited", "batched"] as const) {
+  test(`node:http2 ${mode} empty response writes do not emit DATA frames`, async () => {
+    const testServer = http2.createServer(async (_req, res) => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      if (mode === "awaited") {
+        for (let i = 0; i < 150; i++) {
+          await new Promise<void>(resolve => res.write(new Uint8Array(0), resolve));
+        }
+      } else {
+        for (let i = 0; i < 150; i++) res.write(new Uint8Array(0));
+      }
+      res.end("ok");
+    });
+    testServer.listen(0, "127.0.0.1");
+    await once(testServer, "listening");
+    const c = await RawH2.connect((testServer.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
+      const data = c.frames.filter(f => f.type === FrameType.DATA && f.streamId === 1);
+      expect(Buffer.concat(data.map(f => f.payload)).toString()).toBe("ok");
+      // A final empty END_STREAM DATA is allowed, but the writes above emit none.
+      expect(data.filter(f => f.length === 0).length).toBeLessThanOrEqual(1);
+    } finally {
+      c.destroy();
+      await new Promise<void>(resolve => testServer.close(() => resolve()));
+    }
+  });
+}
+
 const CONTENT_LENGTH_5 = Buffer.concat([Buffer.from([0x0f, 0x0d]), hpackLiteral("5")]);
 
 describe("request header and body framing (RFC 9113 §8.1)", () => {

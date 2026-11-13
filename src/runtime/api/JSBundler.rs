@@ -867,24 +867,17 @@ pub(crate) mod js_bundler {
     }
 
     impl Config {
-        pub(crate) fn from_js(
+        fn from_js(
             global_this: &JSGlobalObject,
             config: JSValue,
             plugins: &mut Option<*mut Plugin>,
-        ) -> JsResult<Config> {
+            context: jsc::ContextId,
+        ) -> JsResult<ConfigParse> {
             // Config implements Drop, so functional-record-update from Default::default()
             // is rejected by rustc (E0509). Construct default then mutate instead.
             let mut this = Config::default();
             // `define` defaults to `StringMap::init(false)`; only the flag differs.
             this.define.dupe_keys = true;
-            // errdefer this.deinit(allocator) — handled by `impl Drop for Config` on `?` paths.
-            // errdefer if (plugins.*) |plugin| plugin.deinit() — scopeguard below.
-            let mut plugins = scopeguard::guard(plugins, |p| {
-                if let Some(pl) = p.take() {
-                    Plugin::destroy(pl);
-                }
-            });
-
             let mut did_set_target = false;
             if let Some(slice) = config.get_optional_slice(global_this, b"target")? {
                 if slice.slice().starts_with(b"bun-") {
@@ -911,12 +904,51 @@ pub(crate) mod js_bundler {
                 drop(slice);
             }
 
-            // Plugins must be resolved first as they are allowed to mutate the config JSValue
-            if let Some(array) = config.get_array(global_this, "plugins")? {
-                let length = array.get_length(global_this)?;
-                let mut iter = array.array_iterator(global_this)?;
-                let mut onstart_promise_array = JSValue::UNDEFINED;
-                let mut i: usize = 0;
+            let (array, initial_length, iterator) =
+                if let Some(array) = config.get_array(global_this, "plugins")? {
+                    let initial_length = array.get_length(global_this)? as usize;
+                    let iterator = array.array_iterator(global_this)?;
+                    (array, initial_length, Some(iterator))
+                } else {
+                    (JSValue::UNDEFINED, 0, None)
+                };
+            Self::setup_plugins(
+                this,
+                global_this,
+                config,
+                plugins,
+                context,
+                array,
+                iterator,
+                initial_length,
+                did_set_target,
+                JSValue::UNDEFINED,
+                None,
+            )
+        }
+
+        fn setup_plugins(
+            this: Config,
+            global_this: &JSGlobalObject,
+            config: JSValue,
+            plugins: &mut Option<*mut Plugin>,
+            context: jsc::ContextId,
+            array: JSValue,
+            mut iterator: Option<jsc::JSArrayIterator<'_>>,
+            initial_length: usize,
+            did_set_target: bool,
+            mut onstart_promise_array: JSValue,
+            result: Option<JSValue>,
+        ) -> JsResult<ConfigParse> {
+            let mut plugins = scopeguard::guard(plugins, |p| {
+                if let Some(plugin) = p.take() {
+                    Plugin::destroy(plugin);
+                }
+            });
+            if let Some(err) = onstart_promise_array.to_error() {
+                return Err(global_this.throw_value(err));
+            }
+            if let Some(iter) = &mut iterator {
                 while let Some(plugin) = iter.next()? {
                     if !plugin.is_object() {
                         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -959,7 +991,7 @@ pub(crate) mod js_bundler {
                         }
                     };
 
-                    let is_last = i == (length as usize).saturating_sub(1);
+                    let is_last = iter.i as usize == initial_length;
                     // SAFETY: bun_plugins is a valid pointer created/stored above
                     let mut plugin_result = unsafe {
                         (*bun_plugins).add_plugin(
@@ -974,17 +1006,66 @@ pub(crate) mod js_bundler {
                     if !plugin_result.is_empty_or_undefined_or_null() {
                         if let Some(promise) = plugin_result.as_any_promise() {
                             promise.set_handled(global_this.vm());
-                            // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
-                            global_this
-                                .bun_vm()
-                                .as_mut()
-                                .wait_for_promise(promise)
-                                .map_err(|stopped| stopped.throw(global_this))?;
                             match promise
                                 .unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled)
                             {
                                 jsc::PromiseResult::Pending => {
-                                    unreachable!("wait_for_promise returned Ok")
+                                    let result = result.unwrap_or_else(|| {
+                                        jsc::JSPromise::create(global_this).to_js()
+                                    });
+                                    let result_root = jsc::Strong::create(result, global_this);
+                                    let held = JSValue::create_array_from_slice(
+                                        global_this,
+                                        &[config, array, result, JSValue::from_cell(bun_plugins)],
+                                    )?;
+                                    let held_root = jsc::Strong::create(held, global_this);
+                                    let state =
+                                        bun_core::heap::into_raw(Box::new(DeferredPluginSetup {
+                                            config: this,
+                                            plugin: bun_plugins,
+                                            next: iter.i,
+                                            length: iter.len,
+                                            initial_length,
+                                            did_set_target,
+                                            context,
+                                            generation: global_this
+                                                .bun_vm()
+                                                .test_isolation_generation,
+                                        }));
+                                    let cell = crate::api::native_promise_context::create(
+                                        global_this,
+                                        state,
+                                        held,
+                                    );
+                                    let cell_root = jsc::Strong::create(cell, global_this);
+                                    // The reaction's visited slot now owns the plugin's lifetime. A
+                                    // native Strong here would leak an abandoned setup promise cycle.
+                                    plugins.take();
+                                    JSValue::from_cell(bun_plugins).unprotect();
+                                    plugin_result.then_with_value(
+                                        global_this,
+                                        cell,
+                                        crate::generated_bindgen::js_bundler::Bun__Bundler__onSetupResolve,
+                                        crate::generated_bindgen::js_bundler::Bun__Bundler__onSetupReject,
+                                    );
+                                    if global_this.bun_vm().script_execution_status()
+                                        != jsc::ScriptExecutionStatus::Running
+                                    {
+                                        if let Some(state) =
+                                            crate::api::native_promise_context::take::<
+                                                DeferredPluginSetup,
+                                            >(cell)
+                                        {
+                                            // SAFETY: taking the cell transfers its sole native allocation.
+                                            unsafe {
+                                                bun_core::heap::destroy(state.as_ptr());
+                                            }
+                                            crate::api::native_promise_context::take_held(cell);
+                                        }
+                                        return Err(JsError::Terminated);
+                                    }
+                                    drop((cell_root, held_root, result_root));
+                                    return Ok(ConfigParse::Pending(result));
                                 }
                                 jsc::PromiseResult::Fulfilled(val) => {
                                     plugin_result = val;
@@ -1001,10 +1082,19 @@ pub(crate) mod js_bundler {
                     }
 
                     onstart_promise_array = plugin_result;
-                    i += 1;
                 }
             }
+            let parsed = Self::finish_from_js(this, global_this, config, did_set_target)?;
+            scopeguard::ScopeGuard::into_inner(plugins);
+            Ok(ConfigParse::Complete(parsed))
+        }
 
+        fn finish_from_js(
+            mut this: Config,
+            global_this: &JSGlobalObject,
+            config: JSValue,
+            did_set_target: bool,
+        ) -> JsResult<Config> {
             if let Some(macros_flag) = config.get_boolean_loose(global_this, "macros")? {
                 this.no_macros = !macros_flag;
             }
@@ -1855,9 +1945,96 @@ pub(crate) mod js_bundler {
                 }
             }
 
-            scopeguard::ScopeGuard::into_inner(plugins);
             Ok(this)
         }
+    }
+
+    enum ConfigParse {
+        Complete(Config),
+        Pending(JSValue),
+    }
+
+    // Only the native target/default fields have been parsed while setup is pending.
+    // All JS roots live in the GC cell's visited array, never in this allocation.
+    #[repr(align(16))]
+    pub(crate) struct DeferredPluginSetup {
+        config: Config,
+        plugin: *mut Plugin,
+        next: u32,
+        length: u32,
+        initial_length: usize,
+        did_set_target: bool,
+        context: jsc::ContextId,
+        generation: u32,
+    }
+
+    pub(crate) fn settle_plugin_setup(
+        global: &JSGlobalObject,
+        outcome: Result<JSValue, JSValue>,
+        context: Option<core::ptr::NonNull<DeferredPluginSetup>>,
+        cell: JSValue,
+    ) -> JsResult<JSValue> {
+        let Some(state) = context else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        // SAFETY: the cell transfers its sole native allocation; the visited roots
+        // keep the config, plugin cell and result promise alive throughout resume.
+        let state = unsafe { bun_core::heap::take(state.as_ptr()) };
+        let held = jsc::Strong::create(crate::api::native_promise_context::take_held(cell), global);
+        let vm = global.bun_vm();
+        if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running
+            || vm.has_outlived_its_script(state.context, state.generation)
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let _context = vm.enter_context(state.context);
+        let result = held.get().get_index(global, 2)?;
+        let promise =
+            jsc::JSPromise::opaque_mut(result.as_promise().expect("private build result promise"));
+        let value = match outcome {
+            Ok(value) => value,
+            Err(reason) => {
+                Plugin::opaque_ref(state.plugin).tombstone();
+                promise.reject(global, Ok(reason))?;
+                return Ok(JSValue::UNDEFINED);
+            }
+        };
+        let config = held.get().get_index(global, 0)?;
+        let array = held.get().get_index(global, 1)?;
+        let mut iterator = match array.array_iterator(global) {
+            Ok(iterator) => iterator,
+            Err(err) => {
+                Plugin::opaque_ref(state.plugin).tombstone();
+                promise.reject(global, Err(err))?;
+                return Ok(JSValue::UNDEFINED);
+            }
+        };
+        // Reacquire the array's fast path without retaining its butterfly across await.
+        // Preserve the original bound if setup changed the array's length.
+        iterator.i = state.next;
+        iterator.len = state.length;
+        JSValue::from_cell(state.plugin).protect();
+        let mut plugins = Some(state.plugin);
+        match Config::setup_plugins(
+            state.config,
+            global,
+            config,
+            &mut plugins,
+            state.context,
+            array,
+            Some(iterator),
+            state.initial_length,
+            state.did_set_target,
+            value,
+            Some(result),
+        ) {
+            Ok(ConfigParse::Complete(config)) => {
+                schedule_build(global, state.context, config, plugins, Some(result));
+            }
+            Ok(ConfigParse::Pending(_)) => {}
+            Err(err) => promise.reject(global, Err(err))?,
+        }
+        Ok(JSValue::UNDEFINED)
     }
 
     // `Config` owns only `Drop`-aware fields (`Box<[u8]>` map values, `Vec`s,
@@ -1918,8 +2095,20 @@ pub(crate) mod js_bundler {
         }
 
         let mut plugins: Option<*mut Plugin> = None;
-        let config = Config::from_js(global_this, config, &mut plugins)?;
+        let config = match Config::from_js(global_this, config, &mut plugins, context)? {
+            ConfigParse::Complete(config) => config,
+            ConfigParse::Pending(promise) => return Ok(promise),
+        };
+        Ok(schedule_build(global_this, context, config, plugins, None))
+    }
 
+    fn schedule_build(
+        global_this: &JSGlobalObject,
+        context: jsc::ContextId,
+        config: Config,
+        plugins: Option<*mut Plugin>,
+        result: Option<JSValue>,
+    ) -> JSValue {
         // `BundleV2.generateFromJavaScript` — the completion-task struct lives in
         // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
         // fields name `Config`/`Plugin`/`HTMLBundle::Route`; lower-tier crates
@@ -1930,10 +2119,14 @@ pub(crate) mod js_bundler {
             global_this,
             context,
         );
-        completion.promise = jsc::JSPromiseStrong::init(global_this);
+        if let Some(result) = result {
+            completion.promise.set(global_this, result);
+        } else {
+            completion.promise = jsc::JSPromiseStrong::init(global_this);
+        }
         let promise = completion.promise.value();
         completion.schedule();
-        Ok(promise)
+        promise
     }
 
     // NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by
@@ -2674,4 +2867,31 @@ impl BuildArtifact {
         formatter.reset_line();
         Ok(())
     }
+}
+
+pub(crate) fn on_setup_resolve(
+    cx: &mut JsScope<'_>,
+    value: JsLocal<'_>,
+    context: (
+        Option<core::ptr::NonNull<js_bundler::DeferredPluginSetup>>,
+        JsLocal<'_>,
+    ),
+) -> JsResult<JSValue> {
+    js_bundler::settle_plugin_setup(cx.global(), Ok(value.to_js()), context.0, context.1.to_js())
+}
+
+pub(crate) fn on_setup_reject(
+    cx: &mut JsScope<'_>,
+    value: JsLocal<'_>,
+    context: (
+        Option<core::ptr::NonNull<js_bundler::DeferredPluginSetup>>,
+        JsLocal<'_>,
+    ),
+) -> JsResult<JSValue> {
+    js_bundler::settle_plugin_setup(
+        cx.global(),
+        Err(value.to_js()),
+        context.0,
+        context.1.to_js(),
+    )
 }

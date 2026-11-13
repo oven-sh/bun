@@ -19,6 +19,379 @@ import { unsupported } from "../aot/harness/commands";
 import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {
+  test.each(["fulfilled", "rejected"] as const)("returns before a plugin setup promise is %s", async outcome => {
+    using dir = tempDir(`bun-build-pending-setup-${outcome}`, {
+      "entry.ts": "export const value = VALUE;",
+    });
+    const fixture = /* js */ `
+      import assert from "node:assert/strict";
+      const gate = Promise.withResolvers();
+      function phase(name) { console.log(name); }
+      const failure = new Error("setup rejected");
+      const build = Bun.build({
+        entrypoints: ["./entry.ts"],
+        plugins: [{
+          name: "gated",
+          async setup(builder) {
+            phase("setup:start");
+            await gate.promise;
+            phase("setup:resume");
+            ${
+              outcome === "rejected"
+                ? "throw failure;"
+                : `
+              builder.config.define = { VALUE: "42" };
+              builder.onLoad({ filter: /entry\\.ts$/ }, () => {
+                phase("onLoad");
+                return { contents: "export const value = VALUE;", loader: "ts" };
+              });
+            `
+            }
+          },
+        }, {
+          name: "following",
+          setup() { phase("following"); },
+        }],
+      });
+      assert(build instanceof Promise);
+      phase("returned");
+      gate.resolve();
+      ${
+        outcome === "rejected"
+          ? `
+        await assert.rejects(build, error => error === failure);
+        phase("rejected");
+      `
+          : `
+        const result = await build;
+        assert.equal(result.success, true);
+        assert.equal(result.outputs.length, 1);
+        assert.deepEqual(result.logs, []);
+        const output = await result.outputs[0].text();
+        await Bun.write("output.mjs", output);
+        const module = await import("./output.mjs");
+        assert.equal(module.value, 42);
+        phase("built");
+      `
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      // The caller releases setup only after Bun.build returns; a blocking host call cannot finish.
+      timeout: 2_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const order =
+      outcome === "rejected"
+        ? ["setup:start", "returned", "setup:resume", "rejected"]
+        : ["setup:start", "returned", "setup:resume", "following", "onLoad", "built"];
+    expect(stdout.startsWith("setup:start\n")).toBe(true);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode ?? null }).toEqual({
+      stdout: order.join("\n") + "\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("pending setup preserves plugin array iteration and reads options after setup", async () => {
+    using dir = tempDir("bun-build-pending-setup-options", {
+      "entry.ts": "export const value = VALUE;",
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        import assert from "node:assert/strict";
+        const gate = Promise.withResolvers();
+        const phases = [];
+        const plugins = [{
+          name: "first",
+          async setup(builder) {
+            phases.push("first");
+            await gate.promise;
+            builder.config.define = { VALUE: "42" };
+            plugins[1] = {
+              name: "replacement",
+              async setup(builder) {
+                phases.push("replacement");
+                await Bun.file("entry.ts").text();
+                builder.onStart(async () => {
+                  assert.equal(await Bun.file("entry.ts").text(), "export const value = VALUE;");
+                  phases.push("onStart");
+                });
+              },
+            };
+            plugins.push({ name: "appended", setup() { throw new Error("iteration bound changed"); } });
+            builder.config.plugins = [{ name: "new-array", setup() { throw new Error("plugins getter re-read"); } }];
+          },
+        }, { name: "original", setup() { throw new Error("replacement ignored"); } }];
+        const config = { plugins, entrypoints: ["entry.ts"] };
+        let definitions;
+        // initialOptions spreads enumerable fields before calling setup. Keep this
+        // getter specific to the native configuration read after setup finishes.
+        Object.defineProperty(config, "define", {
+          get() { phases.push("define"); return definitions; },
+          set(value) { definitions = value; },
+        });
+        const build = Bun.build(config);
+        assert.deepEqual(phases, ["first"]);
+        phases.push("returned");
+        gate.resolve();
+        const result = await build;
+        assert.equal(result.success, true);
+        assert.equal(result.outputs.length, 1);
+        const output = await result.outputs[0].text();
+        await Bun.write("output.mjs", output);
+        const module = await import("./output.mjs");
+        assert.equal(module.value, 42);
+        assert.deepEqual(phases, ["first", "returned", "replacement", "onStart", "define"]);
+        console.log("options and iteration preserved");
+      `,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 2_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode ?? null }).toEqual({
+      stdout: "options and iteration preserved\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("async plugin file reads preserve concurrent shell completions", async () => {
+    using dir = tempDir("bun-build-pending-setup-shell", {
+      "entry.ts": "export const value = 42;",
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        import assert from "node:assert/strict";
+        import { $ } from "bun";
+        let build;
+        let setupCount = 0;
+        const commands = Array.from({ length: 34 }, () => $\`printf completed\`.quiet().then(result => {
+          assert.equal(result.text(), "completed");
+          if (!build) build = Bun.build({
+            entrypoints: ["entry.ts"],
+            plugins: [{
+              name: "file-reader",
+              async setup() {
+                setupCount++;
+                assert.equal(await Bun.file("entry.ts").text(), "export const value = 42;");
+              },
+            }],
+          });
+        }));
+        await Promise.all(commands);
+        assert.equal(setupCount, 1);
+        const result = await build;
+        assert.equal(result.success, true);
+        assert.equal(result.outputs.length, 1);
+        console.log("all shell completions and build settled");
+      `,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 2_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode ?? null }).toEqual({
+      stdout: "all shell completions and build settled\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("abandoned pending plugin setup does not retain its GC context", async () => {
+    using dir = tempDir("bun-build-abandoned-setup", { "entry.ts": "export const value = 42;" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        import assert from "node:assert/strict";
+        import { heapStats } from "bun:jsc";
+        const count = () => heapStats().objectTypeCounts.NativePromiseContext ?? 0;
+        Bun.gc(true);
+        const baseline = count();
+        let gates = [];
+        let builds = [];
+        for (let i = 0; i < 16; i++) {
+          const gate = Promise.withResolvers();
+          gates.push(gate);
+          builds.push(Bun.build({
+            entrypoints: ["entry.ts"],
+            plugins: [{ name: "pending", async setup() { await gate.promise; } }],
+          }));
+        }
+        Bun.gc(true);
+        assert(count() >= baseline + 16, "pending reaction contexts must exist before abandonment");
+        assert.equal(gates.length, 16);
+        assert.equal(builds.length, 16);
+        gates = undefined;
+        builds = undefined;
+        const deadline = performance.now() + 1_000;
+        do {
+          Bun.gc(true);
+          await new Promise(setImmediate);
+        } while (count() > baseline && performance.now() < deadline);
+        assert(count() <= baseline, "abandoned setup contexts must be collected");
+        console.log("pending contexts collected");
+      `,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 2_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode ?? null }).toEqual({
+      stdout: "pending contexts collected\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("a worker can terminate with pending plugin setup", async () => {
+    using dir = tempDir("bun-build-worker-pending-setup", {
+      "entry.ts": "export const value = 42;",
+      "worker.ts": /* js */ `
+        self.onmessage = () => {};
+        Bun.build({
+          entrypoints: ["entry.ts"],
+          plugins: [{
+            name: "pending",
+            async setup() {
+              postMessage("setup:start");
+              await new Promise(() => {});
+            },
+          }],
+        });
+        postMessage("returned");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        import assert from "node:assert/strict";
+        const { join } = await import("node:path");
+        const { pathToFileURL } = await import("node:url");
+        const worker = new Worker(pathToFileURL(join(process.cwd(), "worker.ts")));
+        const phases = [];
+        await new Promise((resolve, reject) => {
+          worker.onmessage = event => {
+            phases.push(event.data);
+            if (event.data === "returned") resolve();
+          };
+          worker.onerror = reject;
+        });
+        assert.deepEqual(phases, ["setup:start", "returned"]);
+        await worker.terminate();
+        console.log("pending worker terminated");
+      `,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 2_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode ?? null }).toEqual({
+      stdout: "pending worker terminated\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("a disposed module graph does not continue pending plugin setup", async () => {
+    using dir = tempDir("bun-build-disposed-setup", {
+      "entry.ts": "export const value = 42;",
+      "graph.mjs": /* js */ `
+        export function start() {
+          return Bun.build({
+            entrypoints: ["entry.ts"],
+            plugins: [{
+              name: "waiting",
+              async setup() {
+                phase("setup:start");
+                await gate;
+                phase("setup:resume");
+              },
+            }, { name: "following", setup() { phase("following"); } }],
+          });
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        import assert from "node:assert/strict";
+        const gate = Promise.withResolvers();
+        const phases = [];
+        const graph = new Bun.ModuleGraph({ globals: {
+          gate: gate.promise,
+          phase(name) {
+            phases.push(name);
+            if (name === "setup:start") console.log(name);
+          },
+        } });
+        const app = await graph.import(process.cwd() + "/graph.mjs");
+        const build = graph.run(() => app.start());
+        assert.equal(typeof build.then, "function");
+        assert.deepEqual(phases, ["setup:start"]);
+        let settled = false;
+        let hostReleased = false;
+        build.then(() => settled = true, () => settled = true);
+        gate.promise.then(() => hostReleased = true);
+        graph.dispose();
+        gate.resolve();
+        for (let i = 0; i < 8; i++) await new Promise(setImmediate);
+        assert.equal(hostReleased, true);
+        assert.equal(phases.includes("following"), false);
+        assert.equal(settled, false);
+        console.log("disposed graph stayed stopped");
+      `,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 2_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.startsWith("setup:start\n")).toBe(true);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode ?? null }).toEqual({
+      stdout: "setup:start\ndisposed graph stayed stopped\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
   test("css works", async () => {
     const dir = tempDirWithFiles("bun-build-api-css", {
       "a.css": `

@@ -301,6 +301,9 @@ public:
     Bun::StrongRootBlock* m_strongRootBlockCursor { nullptr };
     JSC::Structure* m_strongRootBlockStructure { nullptr };
 
+    // The paths whose keys Bun::IsolatedModuleCache::evictPathsOfFinishedTestFile evicts.
+    WTF::UncheckedKeyHashSet<WTF::String> isolationSourceProviderCachePathsOfTestFile;
+
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
     // All access should go through that class. Stored as the JSC base type to
     // avoid pulling ZigSourceProvider.h into this header; the cache class

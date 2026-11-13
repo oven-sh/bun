@@ -6812,14 +6812,11 @@ pub(crate) fn open_dir_at_windows_nt_path(
     options: WindowsOpenDirOptions,
 ) -> Maybe<Fd> {
     use bun_windows_sys::externs as w;
-    // No FILE_ADD_FILE|FILE_ADD_SUBDIRECTORY: child creates via RootDirectory
-    // check the directory's ACL, not this handle's access mask, so requesting
-    // them only narrows where this open is admitted.
-    let base_flags = w::STANDARD_RIGHTS_READ
-        | w::FILE_READ_ATTRIBUTES
-        | w::FILE_READ_EA
-        | w::SYNCHRONIZE
-        | w::FILE_TRAVERSE;
+    // Child opens via RootDirectory check the child's ACL, not this handle's
+    // access mask. Avoid requesting FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY,
+    // FILE_READ_EA, or FILE_TRAVERSE: read-only process containers reject
+    // directory opens with unnecessary rights.
+    let base_flags = w::STANDARD_RIGHTS_READ | w::FILE_READ_ATTRIBUTES | w::SYNCHRONIZE;
     let iterable_flag: u32 = if options.iterable {
         w::FILE_LIST_DIRECTORY
     } else {

@@ -171,6 +171,10 @@ public:
                 data->state |= HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE;
                 idle = false;
             }
+        } else if (idle && !Super::hasFullyDrained()) {
+            /* Bun.serve: close() would drop the bytes of a finished response that are still in the backpressure buffer.
+             * Not idle until they are out: the graceful stop() marks the connection, and onWritable closes it. */
+            idle = false;
         }
         if (!idle) {
             return false;

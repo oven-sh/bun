@@ -3411,15 +3411,20 @@ describe.concurrent("a name that import and require() resolve to two files", () 
       [`${name}.importer.mjs`]: `import { which } from "${name}"; (globalThis.loaded ??= []).push("importer of ${name}"); export const read = () => which;`,
       [`${name}.requirer.cjs`]: `(globalThis.loaded ??= []).push("requirer of ${name}"); const required = require("${name}"); exports.read = () => required.which;`,
     });
-    // A test file and the two names that it mocks. Before its mocks it loads the CommonJS file of by-require-<n> with
+    // A test file and the names that it mocks. Before its mocks it loads the CommonJS file of by-require-<n> with
     // the requirer of that name, and the ES module of by-import-<n> with the importer of that name. A mock leaves these
     // as they are. The importer of the first name and the requirer of the second are loaded for this test file, and get
     // the mock.
+    // It loads the ES module of path-mocked-<n> and of vi-mocked-<n> as well, and mocks each twice: the first mock has
+    // the path of that ES module alone, the second is of the name. The requirer of the name is loaded for this test
+    // file behind the second, and gets the mock.
     const testFile = (path: string, mock: string, n: number) => ({
       ...dualPackage(`by-require-${n}`),
       ...dualPackage(`by-import-${n}`),
+      ...dualPackage(`path-mocked-${n}`),
+      ...dualPackage(`vi-mocked-${n}`),
       [path]: `
-        import { expect, jest, mock, test } from "bun:test";
+        import { expect, jest, mock, test, vi } from "bun:test";
         const start = (globalThis.loaded ?? []).length;
         // How often a file has run since this test file began.
         const ran = file => globalThis.loaded.slice(start).filter(name => name === file).length;
@@ -3427,6 +3432,8 @@ describe.concurrent("a name that import and require() resolve to two files", () 
         const requirer = require("./by-require-${n}.requirer.cjs");
         const imported = await import("by-import-${n}");
         const importer = await import("./by-import-${n}.importer.mjs");
+        await import("path-mocked-${n}");
+        await import("vi-mocked-${n}");
         test("a mock of the name whose CommonJS file this test file has loaded", async () => {
           ${mock}("by-require-${n}", () => ({ which: "mock" }));
           expect([require("by-require-${n}").which, (await import("by-require-${n}")).which]).toEqual(["mock", "mock"]);
@@ -3447,29 +3454,47 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           expect([imported.which, require("by-import-${n}").which]).toEqual(["real esm", "real cjs"]);
           expect([ran("by-import-${n} esm"), ran("importer of by-import-${n}"), ran("requirer of by-import-${n}")]).toEqual([1, 1, 1]);
         });
+        test("a mock of the name whose ES module this test file has mocked by its path", () => {
+          mock.module("./node_modules/path-mocked-${n}/esm.mjs", () => ({ which: "first" }));
+          ${mock}("path-mocked-${n}", () => ({ which: "mock" }));
+          expect([require("./path-mocked-${n}.requirer.cjs").read(), ran("requirer of path-mocked-${n}")]).toEqual(["mock", 1]);
+        });
+        test("a mock of the name that this test file has mocked with vi.doMock()", () => {
+          vi.doMock("vi-mocked-${n}", () => ({ which: "first" }));
+          ${mock}("vi-mocked-${n}", () => ({ which: "mock" }));
+          expect([require("./vi-mocked-${n}.requirer.cjs").read(), ran("requirer of vi-mocked-${n}")]).toEqual(["mock", 1]);
+        });
       `,
     });
+    const project = {
+      "package.json": JSON.stringify({ name: "project" }),
+      // Nothing has loaded a file of their names when these two run.
+      ...testFile("1.jest.doMock.test.js", "jest.doMock", 1),
+      ...testFile("1.mock.module.test.js", "mock.module", 2),
+      // The test file before these two has loaded the other file of each of their names: the ES module through the
+      // importer, and the CommonJS file through the requirer.
+      "2.test.js": `
+        import { expect, test } from "bun:test";
+        test.each([3, 4])("an earlier test file loads the other file of each name that ends in %d", async n => {
+          const importer = await import("./by-require-" + n + ".importer.mjs");
+          const requirer = require("./by-import-" + n + ".requirer.cjs");
+          expect([importer.read(), requirer.read()]).toEqual(["real esm", "real cjs"]);
+          for (const name of ["path-mocked-", "vi-mocked-"]) expect(require("./" + name + n + ".requirer.cjs").read()).toBe("real cjs");
+        });
+      `,
+      ...testFile("3.jest.doMock.test.js", "jest.doMock", 3),
+      ...testFile("3.mock.module.test.js", "mock.module", 4),
+    };
+    await expectFixturesToPass(project, 18, args);
+    // Once more behind a preload that has loaded, for the last two test files, the ES module of each by-require name
+    // and the CommonJS file of each by-import name. What a preload loads is booked to no test file.
     await expectFixturesToPass(
       {
-        "package.json": JSON.stringify({ name: "project" }),
-        // Nothing has loaded a file of their names when these two run.
-        ...testFile("1.jest.doMock.test.js", "jest.doMock", 1),
-        ...testFile("1.mock.module.test.js", "mock.module", 2),
-        // The test file before these two has loaded the other file of each of their names: the ES module through the
-        // importer, and the CommonJS file through the requirer.
-        "2.test.js": `
-          import { expect, test } from "bun:test";
-          test.each([3, 4])("an earlier test file loads the other file of each name that ends in %d", async n => {
-            const importer = await import("./by-require-" + n + ".importer.mjs");
-            const requirer = require("./by-import-" + n + ".requirer.cjs");
-            expect([importer.read(), requirer.read()]).toEqual(["real esm", "real cjs"]);
-          });
-        `,
-        ...testFile("3.jest.doMock.test.js", "jest.doMock", 3),
-        ...testFile("3.mock.module.test.js", "mock.module", 4),
+        ...project,
+        "preload.js": `for (const n of [3, 4]) { await import("by-require-" + n); require("by-import-" + n); }`,
       },
-      10,
-      args,
+      18,
+      ["--preload", "./preload.js", ...args],
     );
   });
 

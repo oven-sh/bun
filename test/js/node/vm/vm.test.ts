@@ -2639,6 +2639,53 @@ test.concurrent("operations on contexts that are nested too deeply throw a Range
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "went all the way down: \n", stderr: "", exitCode: 0 });
 });
 
+// A level of these takes so little of the stack that the test above would need thousands of contexts to overflow it.
+test.concurrent("delete and ownKeys on nested contexts throw a RangeError when the stack runs out", async () => {
+  const fixture = /* js */ `
+    const vm = require("node:vm");
+    const single = vm.runInContext("this", vm.createContext({}));
+    let nested = single;
+    for (let depth = 0; depth < 20; depth++) nested = vm.runInContext("this", vm.createContext(nested));
+    const operations = {
+      "delete": inner => delete inner.missing,
+      "ownKeys": inner => Reflect.ownKeys(inner),
+    };
+    for (const name in operations) {
+      // The first call takes more of the stack than the later ones.
+      operations[name](single);
+      operations[name](nested);
+      let outcome;
+      // Unwinds from the overflow to the first call that has the stack for one context. 20 more contexts need more than that.
+      (function descend() {
+        try {
+          descend();
+        } catch (overflow) {
+          if (outcome) return;
+          try {
+            operations[name](single);
+          } catch {
+            throw overflow;
+          }
+          try {
+            operations[name](nested);
+            outcome = "returned";
+          } catch (error) {
+            outcome = error.name;
+          }
+        }
+      })();
+      console.log(name + ":", outcome);
+    }
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "delete: RangeError\nownKeys: RangeError\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test.concurrent("DONT_CONTEXTIFY: an accessor's `this` is globalThis in every JIT tier", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -2692,6 +2739,479 @@ test.concurrent("the globalThis of a contextified context is not itself a contex
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const rejected = `ERR_INVALID_ARG_TYPE The "contextifiedObject" argument must be an vm.Context\n`;
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "false\n" + rejected + rejected, stderr: "", exitCode: 0 });
+});
+
+// Every expected value is what Node.js 26.12.1 returns. None is the value of a read through the contextified object, because Node.js reads nothing through the global of another context.
+describe.each([
+  ["a plain object", (held: object) => held],
+  ["the globalThis of another context", (held: object) => runInContext("globalThis", createContext(held))],
+  ["a Proxy", (held: object) => new Proxy(held, {})],
+])("when the contextified object is %s", (kind, contextified) => {
+  const typeError = expect.objectContaining({ name: "TypeError" });
+
+  test.each([
+    ["a bare name", (context: object) => runInContext("delete held", context)],
+    ["this", (context: object) => runInContext("delete this.held", context)],
+    ["globalThis in strict code", (context: object) => runInContext(`"use strict"; delete globalThis.held`, context)],
+    [
+      "Reflect.deleteProperty()",
+      (context: object) => runInContext(`Reflect.deleteProperty(globalThis, "held")`, context),
+    ],
+    ["a Script", (context: object) => new Script("delete held").runInContext(context)],
+  ])("delete through %s removes the property from it", (_, run) => {
+    const held = { held: 1 };
+    const context = createContext(contextified(held));
+    expect(run(context)).toBe(true);
+    expect(Object.keys(held)).toEqual([]);
+    expect(runInContext(`["held" in globalThis, Object.hasOwn(globalThis, "held")]`, context)).toEqual([false, false]);
+  });
+
+  test("runInNewContext() deletes from it", () => {
+    const held = { held: 1 };
+    expect(runInNewContext("delete held", contextified(held))).toBe(true);
+    expect(Object.keys(held)).toEqual([]);
+  });
+
+  test("delete of a property that is not configurable fails", () => {
+    const held = Object.defineProperty({}, "fixed", { value: 1, enumerable: true });
+    const context = createContext(contextified(held));
+    expect(runInContext("[delete fixed, delete globalThis.fixed]", context)).toEqual([false, false]);
+    expect(() => runInContext(`"use strict"; delete globalThis.fixed`, context)).toThrow(typeError);
+    expect(Object.keys(held)).toEqual(["fixed"]);
+  });
+
+  test("a store to an accessor calls the setter and not the getter", () => {
+    const calls: string[] = [];
+    const held = {
+      get accessor() {
+        calls.push("get");
+        return 1;
+      },
+      set accessor(value) {
+        calls.push("set " + value);
+      },
+      get getterOnly() {
+        calls.push("get");
+        return 1;
+      },
+    };
+    const context = createContext(contextified(held));
+    runInContext("accessor = 5; this.accessor = 6; globalThis.accessor = 7; getterOnly = 8", context);
+    expect(calls).toEqual(["set 5", "set 6", "set 7"]);
+
+    // Behind a Proxy or another context, the global of the context keeps a copy of the value, where Node.js keeps none.
+    delete (held as { accessor?: number }).accessor;
+    expect(runInContext(`Object.hasOwn(globalThis, "accessor")`, context)).toBe(kind !== "a plain object");
+  });
+});
+
+// A bare name reads the variable, so the variable takes the value. Over a plain object it stays undefined.
+// Node.js gives 1 over a Proxy, where it reads the accessor, and calls no setter behind an object that inherits from the global of another context.
+test.each([
+  ["the globalThis of another context", (held: object) => runInContext("globalThis", createContext(held))],
+  [
+    "an object that inherits from the globalThis of another context",
+    (held: object) => Object.create(runInContext("globalThis", createContext(held))),
+  ],
+  ["a Proxy", (held: object) => new Proxy(held, {})],
+])("a var declared over an accessor of %s takes the value", (_, contextified) => {
+  const calls: string[] = [];
+  const held = {
+    get declared() {
+      calls.push("get");
+      return 1;
+    },
+    set declared(value) {
+      calls.push("set " + value);
+    },
+  };
+  expect(runInContext("var declared = 5; declared", createContext(contextified(held)))).toBe(5);
+  expect(calls).toEqual(["set 5"]);
+});
+
+// Node.js reads the accessor in each script. A store that left nothing on the global of the context would let the `var` hide the accessor.
+test.each([
+  ["a Proxy", (held: object) => new Proxy(held, {})],
+  ["an object that inherits from a Proxy", (held: object) => Object.create(new Proxy(held, {}))],
+])("a var declared after a store to an accessor of %s reads the accessor", (_, contextified) => {
+  const calls: string[] = [];
+  const held = {
+    get accessor() {
+      calls.push("get");
+      return 1;
+    },
+    set accessor(value) {
+      calls.push("set " + value);
+    },
+  };
+  const context = createContext(contextified(held));
+  expect([
+    runInContext("accessor = 5; accessor", context),
+    runInContext("var accessor; accessor", context),
+    runInContext("accessor = 7; accessor", context),
+  ]).toEqual([1, 1, 1]);
+  expect(calls).toEqual(["set 5", "get", "get", "set 7", "get"]);
+});
+
+test("a store through the globalThis of another context reaches what the contextified object of that context inherits", () => {
+  const calls: unknown[] = [];
+  function nested() {
+    const held = Object.create({
+      data: 0,
+      get accessor() {
+        calls.push("get");
+        return 1;
+      },
+      set accessor(value: unknown) {
+        calls.push(value);
+      },
+    });
+    const context = createContext(runInContext("globalThis", createContext(held)));
+    return { held, context, handle: runInContext("globalThis", context) };
+  }
+
+  // This file is strict code, and its realm is not the one of the context.
+  const fromOutside = nested();
+  fromOutside.handle.accessor = 5;
+  fromOutside.handle.data = 6;
+  expect(fromOutside.held).toEqual({ data: 6 });
+
+  runInContext("accessor = Symbol.iterator", nested().context);
+  expect(calls).toEqual([5, Symbol.iterator]);
+});
+
+test("a store of a new name through the globalThis of another context reaches a Proxy as the contextified object of that context", () => {
+  const held: Record<string, unknown> = {};
+  const traps: string[] = [];
+  const proxy = new Proxy(held, {
+    set(target, key, value, receiver) {
+      traps.push(`set ${String(key)}`);
+      return Reflect.set(target, key, value, receiver);
+    },
+  });
+  const context = createContext(runInContext("this", createContext(proxy)));
+
+  // This file is strict code, and its realm is not the one of the context.
+  runInContext("this", context).created = 1;
+  runInContext("marked = Symbol.iterator", context);
+  expect(held).toEqual({ created: 1, marked: Symbol.iterator });
+  expect(traps).toEqual(["set created", "set marked"]);
+});
+
+test("a store of a new name through the globalThis of another context reaches that context", () => {
+  const inner = createContext({});
+  const outer = createContext(runInContext("this", inner));
+
+  // This file is strict code, and its realm is not the one of the context.
+  runInContext("this", outer).created = 1;
+  runInContext("marked = Symbol.iterator", outer);
+  expect(runInContext("[typeof created, typeof marked]", inner)).toEqual(["number", "symbol"]);
+});
+
+test("a store of a new name reaches a contextified object that inherits from the globalThis of another context", () => {
+  const first = {};
+  const held = Object.create(runInContext("this", createContext(first)));
+  const context = createContext(held);
+
+  // This file is strict code, and its realm is not the one of the context.
+  runInContext("this", context).created = 1;
+  runInContext("marked = Symbol.iterator", context);
+  expect(Object.getOwnPropertyNames(held)).toEqual(["created", "marked"]);
+  expect(Object.getOwnPropertyNames(first)).toEqual([]);
+});
+
+// The global of jest-environment-node 30 is a context over a Proxy of this shape.
+test("delete removes a global from a Proxy with defineProperty and deleteProperty traps", () => {
+  const target = Object.create(Object.getPrototypeOf(globalThis));
+  const deleted: PropertyKey[] = [];
+  const context = createContext(
+    new Proxy(target, {
+      defineProperty: (held, key, attributes) => Reflect.defineProperty(held, key, attributes),
+      deleteProperty(held, key) {
+        deleted.push(key);
+        return Reflect.deleteProperty(held, key);
+      },
+    }),
+  );
+  expect(
+    runInContext(
+      "this.installed = function () {}; [delete this.installed, 'installed' in this, typeof installed]",
+      context,
+    ),
+  ).toEqual([true, false, "undefined"]);
+  expect(runInContext("globalThis.flag = true; delete globalThis.flag; typeof flag", context)).toBe("undefined");
+  expect(deleted).toEqual(["installed", "flag"]);
+  expect(Object.keys(target)).toEqual([]);
+});
+
+test("a Proxy as the contextified object gets the traps of a store, a definition and a delete", () => {
+  const traps: string[] = [];
+  const target = {
+    data: 1,
+    get accessor() {
+      return 1;
+    },
+    set accessor(value) {},
+  };
+  const handler: ProxyHandler<typeof target> = {};
+  for (const trap of ["get", "set", "defineProperty", "deleteProperty", "getOwnPropertyDescriptor", "getPrototypeOf"]) {
+    handler[trap] = (...args: [object, string | symbol]) => {
+      if (typeof args[1] !== "symbol") traps.push(args[1] === undefined ? trap : `${trap} ${args[1]}`);
+      return Reflect[trap](...args);
+    };
+  }
+  const context = createContext(new Proxy(target, handler));
+  const inner = runInContext("this", context);
+  const trapsOf = (run: () => unknown) => {
+    traps.length = 0;
+    run();
+    return [...traps];
+  };
+
+  // Node.js asks for the descriptor once more after the setter.
+  expect(trapsOf(() => runInContext("accessor = 5", context)).slice(0, 2)).toEqual([
+    "getOwnPropertyDescriptor accessor",
+    "set accessor",
+  ]);
+  expect(trapsOf(() => Reflect.defineProperty(inner, "defined", { value: 1, configurable: true }))).toEqual([
+    "getOwnPropertyDescriptor defined",
+    "defineProperty defined",
+  ]);
+  expect(trapsOf(() => runInContext("delete this.data", context))).toEqual(["deleteProperty data"]);
+  expect(Object.keys(target)).toEqual(["accessor"]);
+});
+
+// Node.js keeps no copy on the global either.
+test("a definition over a Proxy that hides the property goes to the Proxy alone", () => {
+  const target = {};
+  const context = createContext(new Proxy(target, { getOwnPropertyDescriptor: () => undefined }));
+  runInContext(`Object.defineProperty(globalThis, "hidden", { value: 1, configurable: true })`, context);
+  expect(Object.getOwnPropertyNames(target)).toEqual(["hidden"]);
+  expect(runInContext(`Object.hasOwn(globalThis, "hidden")`, context)).toBe(false);
+});
+
+test("a Proxy as the contextified object decides a delete", () => {
+  const typeError = expect.objectContaining({ name: "TypeError" });
+  const refused = { held: 1 };
+  const refusing = createContext(new Proxy(refused, { deleteProperty: () => false }));
+  expect(runInContext("delete this.held", refusing)).toBe(false);
+  expect(() => runInContext(`"use strict"; delete this.held`, refusing)).toThrow(typeError);
+  expect(refused).toEqual({ held: 1 });
+
+  const thrown = new RangeError("thrown by the trap");
+  const throwing = new Proxy(
+    {},
+    {
+      deleteProperty() {
+        throw thrown;
+      },
+    },
+  );
+  expect(() => runInContext("delete this.held", createContext(throwing))).toThrow(thrown);
+
+  const { proxy, revoke } = Proxy.revocable({}, {});
+  const revoked = createContext(proxy);
+  revoke();
+  expect(() => runInContext("delete this.held", revoked)).toThrow(typeError);
+});
+
+// Node.js asks whether the name is there before a bare `delete`. So it calls no trap for a name that the Proxy does not report, and its result is true.
+test("a bare delete over a Proxy goes to the deleteProperty trap for every name", () => {
+  const thrown = new RangeError("thrown by the trap");
+  const run = (code: string, target: object, handler: ProxyHandler<object>) =>
+    runInContext(code, createContext(new Proxy(target, handler)));
+
+  expect(run("delete missing", {}, { deleteProperty: () => false })).toBe(false);
+  expect(() =>
+    run(
+      "delete missing",
+      {},
+      {
+        deleteProperty() {
+          throw thrown;
+        },
+      },
+    ),
+  ).toThrow(thrown);
+
+  const hidden = { held: 1 };
+  expect(run("delete held", hidden, { getOwnPropertyDescriptor: () => undefined })).toBe(true);
+  expect(hidden).toEqual({});
+});
+
+// Node.js goes on to the set trap when this trap throws.
+test("a getOwnPropertyDescriptor trap that throws ends a store over a Proxy before the set trap", () => {
+  const thrown = new RangeError("thrown by the trap");
+  const traps: string[] = [];
+  const target = { held: 1 };
+  const context = createContext(
+    new Proxy(target, {
+      getOwnPropertyDescriptor() {
+        traps.push("getOwnPropertyDescriptor");
+        throw thrown;
+      },
+      set(held, key, value, receiver) {
+        traps.push("set");
+        return Reflect.set(held, key, value, receiver);
+      },
+    }),
+  );
+  expect(() => runInContext("this.held = 2", context)).toThrow(thrown);
+  expect(traps).toEqual(["getOwnPropertyDescriptor"]);
+  expect(target).toEqual({ held: 1 });
+});
+
+test("delete goes to the [[Delete]] of the contextified object, whatever its class", () => {
+  const args = (function (..._: number[]) {
+    return arguments;
+  })(1, 2);
+  expect([
+    runInContext("delete this.length", createContext([1, 2])),
+    runInContext("delete this.length", createContext(new String("ab"))),
+    runInContext("delete this.lastIndex", createContext(/a/g)),
+    runInContext("delete this.length", createContext(args)),
+    "length" in args,
+  ]).toEqual([false, false, false, true, false]);
+  expect(() => runInContext(`"use strict"; delete this.length`, createContext([1, 2]))).toThrow(
+    expect.objectContaining({ name: "TypeError" }),
+  );
+});
+
+test.concurrent("delete goes to the [[Delete]] of the main globalThis as the contextified object", async () => {
+  const fixture = /* js */ `
+    const vm = require("node:vm");
+    globalThis.held = 1;
+    Object.defineProperty(globalThis, "fixed", { value: 1 });
+    console.log(vm.runInNewContext("delete held", globalThis), "held" in globalThis);
+    console.log(vm.runInNewContext("delete this.fixed", globalThis));
+    try {
+      vm.runInNewContext("'use strict'; delete this.fixed", globalThis);
+    } catch (error) {
+      console.log(error.name);
+    }
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true false\nfalse\nTypeError\n", stderr: "", exitCode: 0 });
+});
+
+// These hold on a build without this change too. They guard the parts of the lookup that no other test reaches.
+describe("the lookup of a declared property", () => {
+  const data = "{ value: 7, writable: true, enumerable: true, configurable: true }";
+
+  test.each([
+    ["Object.prototype", () => Object.prototype],
+    ["an Array", () => []],
+    ["a Proxy", () => new Proxy({}, {})],
+  ])("finds an index on a contextified object that inherits from %s", (_, inherited) => {
+    // A store to an enumerable accessor leaves no copy on the global of the context.
+    const calls: unknown[] = [];
+    const withAccessor = Object.defineProperty(Object.create(inherited()), "3", {
+      get: () => 1,
+      set: value => void calls.push(value),
+      enumerable: true,
+      configurable: true,
+    });
+    const overAccessor = createContext(withAccessor);
+    runInContext("Reflect.set(globalThis, '3', 7); var key = '3'; globalThis[key] = 8", overAccessor);
+    expect(calls).toEqual([7, 8]);
+    delete withAccessor[3];
+    expect(runInContext("Object.hasOwn(globalThis, '3')", overAccessor)).toBe(false);
+
+    // A definition over a property that is there leaves no copy either.
+    const withData = Object.assign(Object.create(inherited()), { 3: "old" });
+    const overData = createContext(withData);
+    expect(runInContext(`Reflect.defineProperty(globalThis, '3', ${data})`, overData)).toBe(true);
+    expect(withData[3]).toBe(7);
+    delete withData[3];
+    expect(runInContext("Object.hasOwn(globalThis, '3')", overData)).toBe(false);
+  });
+
+  test("finds an index for a Symbol that is stored to it", () => {
+    const globalOf = (held: object) => runInContext("globalThis", createContext(held));
+    const plain = { 3: "old" };
+    runInContext("var key = '3'; globalThis[key] = Symbol.iterator", createContext(plain));
+    expect(plain[3]).toBe(Symbol.iterator);
+
+    for (const held of [{ 3: "old" }, Object.assign(Object.create([]), { 3: "old" })]) {
+      Reflect.set(globalOf(globalOf(held)), "3", Symbol.iterator);
+      expect(held[3]).toBe(Symbol.iterator);
+    }
+  });
+
+  test("ends at a typed array for a numeric name", () => {
+    for (const [name, wrap] of [
+      ["1.5", (array: object) => array],
+      ["9", (array: object) => Object.create(array)],
+    ] as const) {
+      const calls: unknown[] = [];
+      const prototype = Object.create(Uint8Array.prototype, {
+        [name]: { get: () => 1, set: value => void calls.push(value), enumerable: true, configurable: true },
+      });
+      const context = createContext(wrap(Object.setPrototypeOf(new Uint8Array(2), prototype)));
+      expect(runInContext(`Reflect.set(globalThis, '${name}', 7)`, context)).toBe(true);
+      expect(calls).toEqual([]);
+      // The name is not declared, so the store goes on to the global of the context.
+      expect(runInContext(`Object.hasOwn(globalThis, '${name}')`, context)).toBe(true);
+    }
+  });
+
+  test.each([
+    ["an Array", () => [1]],
+    ["an object that inherits from an Array", () => Object.create([1])],
+  ])("goes on to what %s inherits", (_, make) => {
+    const held = make();
+    runInContext("map = Symbol.iterator", createContext(held));
+    expect(Object.hasOwn(held, "map")).toBe(true);
+  });
+
+  // Object.getPrototypeOf(import.meta) is null, and its properties are on the object that it inherits from all the same.
+  test("goes on to what import.meta inherits", () => {
+    const held = Object.create(import.meta);
+    // This file is strict code, and its realm is not the one of the context.
+    runInContext("this", createContext(held)).url = "stored";
+    expect(Object.hasOwn(held, "url")).toBe(true);
+  });
+});
+
+// The lookup of a declared property stops at a Proxy. Without that it never ends here.
+// Serial: the test runner kills the subprocess of a test that times out only when no other test runs beside it.
+test.serial("stores and definitions end when the contextified object is on its own prototype chain", async () => {
+  const fixture = /* js */ `
+    const vm = require("node:vm");
+    const attempt = run => {
+      try {
+        return run();
+      } catch (error) {
+        return error.name;
+      }
+    };
+    const value = { value: 1, configurable: true, enumerable: true, writable: true };
+
+    const target = {};
+    const proxy = new Proxy(target, {});
+    Object.setPrototypeOf(target, proxy);
+    const overProxy = vm.runInContext("this", vm.createContext(proxy));
+    console.log(attempt(() => Reflect.defineProperty(overProxy, "defined", value)), Object.keys(target).join());
+    console.log(attempt(() => Reflect.set(overProxy, "stored", 1)), Object.keys(target).join());
+    console.log(attempt(() => Reflect.set(overProxy, "defined", 2)), target.defined);
+    console.log(attempt(() => Reflect.deleteProperty(overProxy, "defined")), Object.keys(target).join());
+
+    // Node.js stores here, because it reads nothing through the global of another context.
+    const first = {};
+    const outer = vm.runInContext("this", vm.createContext(vm.runInContext("this", vm.createContext(first))));
+    Object.setPrototypeOf(first, outer);
+    console.log(attempt(() => Reflect.set(outer, "stored", 1)));
+    console.log(attempt(() => Reflect.defineProperty(outer, "defined", value)), Object.keys(first).join());
+    console.log(attempt(() => Reflect.deleteProperty(outer, "defined")), Object.keys(first).join());
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "true defined\nRangeError defined\ntrue 2\ntrue \nRangeError\ntrue defined\ntrue \n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 // Every expected value is what Node.js returns.
@@ -2758,8 +3278,12 @@ describe.each([
         context,
       ),
     ).toEqual([8, 10, 2, 3, 10, 11, true, true]);
-    expect(runInContext("[typeof created, counter]", context)).toEqual([typeof sandbox.created, sandbox.counter]);
-    expect(target.counter).toBe(sandbox === proxy ? 10 : 1);
+    // A Proxy deletes from its target, as in Node.js since nodejs/node#63742. An object that inherits from the Proxy deletes the copy that the stores gave it.
+    expect(runInContext("[typeof created, typeof counter]", context)).toEqual([
+      typeof sandbox.created,
+      typeof sandbox.counter,
+    ]);
+    expect(target.counter).toBe(sandbox === proxy ? undefined : 1);
     // Strict code only stores to the contextified object's own properties. Node.js treats a Proxy as having none.
     if (sandbox !== proxy) {
       expect(() => runInContext("'use strict'; counter = 5", context)).toThrow(notDefined("counter"));

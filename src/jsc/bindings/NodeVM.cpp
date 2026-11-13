@@ -69,6 +69,7 @@
 #include "JavaScriptCore/MicrotaskQueue.h"
 #include "JavaScriptCore/MicrotaskQueueInlines.h"
 #include "JavaScriptCore/AOTModuleHost.h"
+#include "JavaScriptCore/AOTPropertyWalk.h"
 #include "BunCompiledModules.h"
 
 namespace Bun {
@@ -1155,6 +1156,68 @@ static bool isSafeToForwardToContextifiedObject(JSGlobalObject* globalObject, Th
     return false;
 }
 
+// V8's GetRealNamedPropertyAttributes(): JSObject::getPropertySlot()'s two loops, except that a Proxy or another context's global ends the walk and declares every name.
+static ALWAYS_INLINE bool getDeclaredPropertySlotOfContextifiedObject(JSGlobalObject* globalObject, JSObject* contextifiedObject, PropertyName propertyName, PropertySlot& slot)
+{
+    VM& vm = JSC::getVM(globalObject);
+    JSObject* object = contextifiedObject;
+    while (!TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags())) {
+        Structure* structure = object->structureID().decode();
+        if (object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot))
+            return true;
+        JSValue prototype = structure->storedPrototype(object);
+        if (!prototype.isObject()) {
+            object = nullptr;
+            break;
+        }
+        object = asObject(prototype);
+    }
+
+    // getOwnNonIndexPropertySlot() finds no index, so an index starts again and asks every object through its method table.
+    std::optional<uint32_t> index = parseIndex(propertyName);
+    if (index)
+        object = contextifiedObject;
+    else if (!object)
+        return false;
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    [[maybe_unused]] JSObject* first = object;
+    while (true) {
+        Structure* structure = object->structureID().decode();
+        if (!index && !TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags())) {
+            if (object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot))
+                return true;
+        } else {
+            if (auto* proxy = dynamicDowncast<JSGlobalProxy>(object)) {
+                if (auto* context = dynamicDowncast<NodeVMGlobalObject>(proxy->target()); context && context->contextifiedObject())
+                    return true;
+            }
+            auto& methodTable = structure->classInfoForCells()->methodTable;
+            bool found = index ? methodTable.getOwnPropertySlotByIndex(object, globalObject, *index, slot) : methodTable.getOwnPropertySlot(object, globalObject, propertyName, slot);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (found || object->type() == ProxyObjectType)
+                return true;
+            if (isTypedArrayType(object->type()) && isCanonicalNumericIndexString(propertyName.uid()))
+                return false;
+        }
+
+        JSValue prototype;
+        if (!structure->typeInfo().overridesGetPrototype()) [[likely]]
+            prototype = object->getPrototypeDirect();
+#if ENABLE(AOT)
+        else if (!index && vm.hasCompiledCode() && JSC::AOT::PropertyWalk::isOrdinaryPrototypeChain(first, object))
+            prototype = object->getPrototypeDirect();
+#endif
+        else {
+            prototype = object->getPrototype(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        if (!prototype.isObject())
+            return false;
+        object = asObject(prototype);
+    }
+}
+
 bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
@@ -1180,8 +1243,8 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
         isContextualStore = false;
     }
     bool isDeclaredOnGlobalObject = slot.type() == JSC::PutPropertySlot::NewProperty;
-    PropertySlot getter(sandbox, PropertySlot::InternalMethodType::Get, nullptr);
-    bool isDeclaredOnSandbox = sandbox->getPropertySlot(globalObject, propertyName, getter);
+    PropertySlot getter(sandbox, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
+    bool isDeclaredOnSandbox = getDeclaredPropertySlotOfContextifiedObject(globalObject, sandbox, propertyName, getter);
     RETURN_IF_EXCEPTION(scope, false);
 
     bool isDeclared = isDeclaredOnGlobalObject || isDeclaredOnSandbox;
@@ -1201,7 +1264,8 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     RETURN_IF_EXCEPTION(scope, false);
     if (!result) return false;
 
-    if (isDeclaredOnSandbox && getter.isAccessor() and (getter.attributes() & PropertyAttribute::DontEnum) == 0) {
+    // An accessor that a Proxy reports does not end the store. The value on the global keeps a later `var` of that name from hiding the accessor.
+    if (isDeclaredOnSandbox && getter.isAccessor() and (getter.attributes() & PropertyAttribute::DontEnum) == 0 && !getter.isTaintedByOpaqueObject()) {
         return true;
     }
 
@@ -1355,7 +1419,7 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     // resolves the same name via setGetterSlot/setCustom/setValue(3-arg), which
     // happens once the sandbox has transitioned to an uncacheable dictionary.
     PropertySlot sandboxSlot(globalObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
-    bool isDeclaredOnSandbox = contextifiedObject->getPropertySlot(globalObject, propertyName, sandboxSlot);
+    bool isDeclaredOnSandbox = getDeclaredPropertySlotOfContextifiedObject(globalObject, contextifiedObject, propertyName, sandboxSlot);
     RETURN_IF_EXCEPTION(scope, false);
 
     if (isDeclaredOnSandbox && !isDeclaredOnGlobalProxy) {
@@ -1564,11 +1628,11 @@ bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
 
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!isSafeToForwardToContextifiedObject(globalObject, scope)) [[unlikely]]
+        return false;
 
     auto* sandbox = thisObject->m_sandbox.get();
-    // Objects and functions of compiled code have properties that only their own method table finds. All other objects, including Proxies, take the same path as in bun run.
-    bool isCompiled = sandbox->type() == CompiledObjectType || sandbox->type() == SlimClosureType;
-    bool deleted = isCompiled ? sandbox->methodTable()->deleteProperty(sandbox, globalObject, propertyName, slot) : sandbox->deleteProperty(sandbox, globalObject, propertyName, slot);
+    bool deleted = sandbox->methodTable()->deleteProperty(sandbox, globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
     if (!deleted) {
         return false;
@@ -1656,6 +1720,8 @@ void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* glo
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
 
     if (thisObject->m_sandbox) {
+        if (!isSafeToForwardToContextifiedObject(globalObject, scope)) [[unlikely]]
+            return;
         thisObject->m_sandbox->methodTable()->getOwnPropertyNames(thisObject->m_sandbox.get(), globalObject, propertyNames, mode);
         RETURN_IF_EXCEPTION(scope, );
     }

@@ -177,12 +177,7 @@ impl StatWatcherScheduler {
 
     /// Set the timer (this function is not thread safe, should be called only from the main thread)
     fn set_timer(this: *mut Self, interval: i32) {
-        // jsc/runtime crate cycle: `vm.timer: api.Timer.All` lives in `RuntimeState` (this crate),
-        // not as a value field on the low-tier `VirtualMachine`. Recover it via
-        // the per-thread `runtime_state()` (single JS thread; see jsc_hooks.rs).
-        // SAFETY: main-thread-only per fn contract; `runtime_state()` is non-null
-        // after `bun_runtime::init()`. Raw-ptr-per-field re-entry pattern.
-        let timer_all = unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer };
+        let timer_all = crate::jsc_hooks::timer_all();
         // SAFETY: `this` is live: a scheduler ref is held for the whole call by
         // every caller (`set_interval`'s caller, `timer_callback`'s `&mut self`,
         // `shutdown_for_exit`'s `RareData` ref) or, for `StatWatcherTimerUpdate`
@@ -194,7 +189,8 @@ impl StatWatcherScheduler {
         if interval == 0 {
             // if the timer is active we need to remove it
             // SAFETY: `elt` is the live embedded EventLoopTimer.
-            if unsafe { (*elt).state } == EventLoopTimerState::ACTIVE {
+            let elt = unsafe { &*elt };
+            if elt.state.get() == EventLoopTimerState::ACTIVE {
                 timer_all.remove(elt);
             }
             return;
@@ -220,11 +216,10 @@ impl StatWatcherScheduler {
     }
 
     pub(crate) fn timer_callback(&mut self) {
-        let has_been_cleared = self.event_loop_timer.state == EventLoopTimerState::CANCELLED
+        let has_been_cleared = self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED
             || self.vm().script_execution_status() != jsc::ScriptExecutionStatus::Running;
 
-        self.event_loop_timer.state = EventLoopTimerState::FIRED;
-        self.event_loop_timer.heap = Default::default();
+        self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
 
         if has_been_cleared || self.is_shutdown.load(Ordering::Relaxed) {
             return;

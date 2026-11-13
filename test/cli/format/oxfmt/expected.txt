@@ -132,12 +132,12 @@ FAIL oxfmt markdown/markdown/prose-wrap/cj-line-break.md { printWidth: 80, prose
 FAIL oxfmt markdown/markdown/prose-wrap/cj-line-break.md { printWidth: 100, proseWrap: "always" }
 FAIL oxfmt markdown/markdown/prose-wrap/cj-line-break.md { printWidth: 80, proseWrap: "never" }
 FAIL oxfmt markdown/markdown/prose-wrap/cj-line-break.md { printWidth: 100, proseWrap: "never" }
-FAIL oxfmt markdown/markdown/prose-wrap/code-span-fence-at-line-start.md { printWidth: 80, proseWrap: "always" }
-FAIL oxfmt markdown/markdown/prose-wrap/code-span-fence-at-line-start.md { printWidth: 100, proseWrap: "always" }
-FAIL oxfmt markdown/markdown/prose-wrap/code-span-fence-at-line-start.md { printWidth: 80, proseWrap: "never" }
-FAIL oxfmt markdown/markdown/prose-wrap/code-span-fence-at-line-start.md { printWidth: 100, proseWrap: "never" }
-FAIL oxfmt markdown/markdown/prose-wrap/code-span-fence-at-line-start.md { printWidth: 80, proseWrap: "preserve" }
-FAIL oxfmt markdown/markdown/prose-wrap/code-span-fence-at-line-start.md { printWidth: 100, proseWrap: "preserve" }
+FAIL prettier markdown/markdown/prose-wrap/code-span-fence-at-line-start.md { printWidth: 80, proseWrap: "always" }
+FAIL prettier markdown/markdown/prose-wrap/code-span-fence-at-line-start.md { printWidth: 100, proseWrap: "always" }
+FAIL prettier markdown/markdown/prose-wrap/code-span-fence-at-line-start.md { printWidth: 80, proseWrap: "never" }
+FAIL prettier markdown/markdown/prose-wrap/code-span-fence-at-line-start.md { printWidth: 100, proseWrap: "never" }
+FAIL prettier markdown/markdown/prose-wrap/code-span-fence-at-line-start.md { printWidth: 80, proseWrap: "preserve" }
+FAIL prettier markdown/markdown/prose-wrap/code-span-fence-at-line-start.md { printWidth: 100, proseWrap: "preserve" }
 FAIL oxfmt markdown/markdown/prose-wrap/container-directive.md { printWidth: 80, proseWrap: "always" }
 FAIL oxfmt markdown/markdown/prose-wrap/container-directive.md { printWidth: 100, proseWrap: "always" }
 FAIL oxfmt markdown/markdown/prose-wrap/container-directive.md { printWidth: 80, proseWrap: "never" }
@@ -164,6 +164,12 @@ FAIL oxfmt markdown/markdown/prose-wrap/liquid-inline-wrap.md { printWidth: 80, 
 FAIL oxfmt markdown/markdown/prose-wrap/liquid-inline-wrap.md { printWidth: 100, proseWrap: "never" }
 FAIL oxfmt markdown/markdown/prose-wrap/setext-heading-wrap.md { printWidth: 80, proseWrap: "always" }
 FAIL oxfmt markdown/markdown/prose-wrap/setext-heading-wrap.md { printWidth: 100, proseWrap: "always" }
+FAIL prettier markdown/markdown/prose-wrap/stray-delimiters.md { printWidth: 80, proseWrap: "always" }
+FAIL prettier markdown/markdown/prose-wrap/stray-delimiters.md { printWidth: 100, proseWrap: "always" }
+FAIL prettier markdown/markdown/prose-wrap/stray-delimiters.md { printWidth: 80, proseWrap: "never" }
+FAIL prettier markdown/markdown/prose-wrap/stray-delimiters.md { printWidth: 100, proseWrap: "never" }
+FAIL prettier markdown/markdown/prose-wrap/stray-delimiters.md { printWidth: 80, proseWrap: "preserve" }
+FAIL prettier markdown/markdown/prose-wrap/stray-delimiters.md { printWidth: 100, proseWrap: "preserve" }
 FAIL oxfmt markdown/markdown/prose-wrap/stray-delimiters.md { printWidth: 80, proseWrap: "always" }
 FAIL oxfmt markdown/markdown/prose-wrap/stray-delimiters.md { printWidth: 100, proseWrap: "always" }
 FAIL oxfmt markdown/markdown/prose-wrap/stray-delimiters.md { printWidth: 80, proseWrap: "never" }
@@ -197,5 +203,5 @@ FAIL prettier yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 80, proseW
 FAIL prettier yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 100, proseWrap: "always" }
 FAIL prettier yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 80, proseWrap: "never" }
 FAIL prettier yaml/yaml/prose-wrap/trailing-spaces.yaml { printWidth: 100, proseWrap: "never" }
-as Prettier prints them: 1526/1570
-as oxfmt prints them, in its flavor: 1343/1498
+as Prettier prints them: 1514/1570
+as oxfmt prints them, in its flavor: 1349/1498

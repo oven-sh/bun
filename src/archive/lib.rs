@@ -12,7 +12,7 @@ use bun_paths::PathBuffer;
 use bun_paths::{OSPathChar, SEP, SEP_STR};
 #[cfg(unix)]
 use bun_sys::beneath::{self, Symlinks};
-use bun_sys::{self, Fd, FdExt};
+use bun_sys::{self, Fd, FdExt, File};
 use bun_wyhash::hash;
 
 pub mod error;
@@ -55,13 +55,13 @@ pub fn open_memory(bytes: &[u8], dialect: Dialect) -> bun_tar::Result<MemoryDeco
     MemoryDecoder::new(bytes, Options::for_host(dialect))
 }
 
-/// Writes the contents of the current entry to `fd`.
-pub fn read_data_into_fd(
+/// Writes the contents of the current entry to `file`, then closes it.
+pub fn read_data_into_file(
     reader: &mut MemoryDecoder<'_>,
-    fd: Fd,
+    file: File,
     strategy: &mut WriteStrategy,
 ) -> Result<(), ReadDataError> {
-    let mut writer = EntryWriter::new(fd);
+    let mut writer = EntryWriter::new(file);
     loop {
         match reader.next()? {
             Event::Data { offset, bytes } => writer.write(strategy, offset, bytes)?,
@@ -93,7 +93,7 @@ impl Default for WriteStrategy {
 /// Never sizes a write or an allocation from the entry header or the sparse map, because
 /// nothing verifies them.
 pub struct EntryWriter {
-    fd: Fd,
+    file: File,
     /// One past the last byte written.
     end: i64,
     /// The file position, which only `write` and `lseek` move.
@@ -103,19 +103,14 @@ pub struct EntryWriter {
 }
 
 impl EntryWriter {
-    pub fn new(fd: Fd) -> Self {
+    pub fn new(file: File) -> Self {
         Self {
-            fd,
+            file,
             end: 0,
             cursor: 0,
             #[cfg(windows)]
             marked_sparse: false,
         }
-    }
-
-    #[inline]
-    pub fn fd(&self) -> Fd {
-        self.fd
     }
 
     /// NTFS gives a range that nothing writes real clusters unless the file is marked sparse.
@@ -126,7 +121,7 @@ impl EntryWriter {
             self.marked_sparse = true;
             // A volume without sparse file support refuses the mark. The hole then takes up
             // disk space.
-            let _ = bun_sys::set_sparse(self.fd);
+            let _ = bun_sys::set_sparse(self.file.fd());
         }
     }
 
@@ -139,12 +134,10 @@ impl EntryWriter {
         if data.is_empty() {
             return Ok(());
         }
-        let fd = self.fd;
-        let file = bun_sys::File::borrow(&fd);
 
         #[cfg(unix)]
         if strategy.pwrite {
-            match file.pwrite_all(data, offset) {
+            match self.file.pwrite_all(data, offset) {
                 Ok(()) => {
                     self.end = self.end.max(offset + data.len() as i64);
                     return Ok(());
@@ -164,11 +157,11 @@ impl EntryWriter {
             if offset > self.end {
                 self.before_hole();
             }
-            bun_sys::set_file_offset(self.fd, offset as u64)?;
+            self.file.seek_to(offset as u64)?;
             self.cursor = offset;
         }
 
-        file.write_all(data)?;
+        self.file.write_all(data)?;
         self.cursor += data.len() as i64;
         self.end = self.end.max(self.cursor);
         Ok(())
@@ -178,7 +171,7 @@ impl EntryWriter {
     pub fn finish(&mut self, end: i64) -> bun_sys::Maybe<()> {
         if end > self.end {
             self.before_hole();
-            bun_sys::ftruncate(self.fd, end)?;
+            bun_sys::ftruncate(self.file.fd(), end)?;
             self.end = end;
         }
         Ok(())
@@ -375,21 +368,6 @@ fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> crate::Result<()> {
     })
 }
 
-struct OutputFile {
-    fd: Fd,
-    close: bool,
-}
-
-impl Drop for OutputFile {
-    fn drop(&mut self) {
-        if self.close {
-            // Closing is slow under Windows antivirus, but closing asynchronously gains nothing and
-            // can make NtSetInformationFile fail.
-            self.fd.close();
-        }
-    }
-}
-
 pub struct Archiver;
 
 pub mod archiver {
@@ -403,8 +381,8 @@ pub mod archiver {
     pub struct Plucker {
         pub contents: MutableString,
         pub(crate) filename_hash: u64,
-        pub found: bool,
-        pub fd: Fd,
+        /// The file `contents` would have been written to.
+        pub file: Option<File>,
     }
 
     impl Plucker {
@@ -412,34 +390,19 @@ pub mod archiver {
             Ok(Plucker {
                 contents: MutableString::init(estimated_size)?,
                 filename_hash: hash(slice_as_bytes(filepath)),
-                fd: Fd::INVALID,
-                found: false,
+                file: None,
             })
         }
     }
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Default)]
     pub struct ExtractOptions {
         pub depth_to_skip: usize,
-        pub close_handles: bool,
         pub log: bool,
         pub npm: bool,
         pub skip_symlinks: bool,
         /// Only this call writes to the destination, so it holds no symlink until the last entry is out.
         pub new_destination: bool,
-    }
-
-    impl Default for ExtractOptions {
-        fn default() -> Self {
-            Self {
-                depth_to_skip: 0,
-                close_handles: true,
-                log: false,
-                npm: false,
-                skip_symlinks: false,
-                new_destination: false,
-            }
-        }
     }
 }
 
@@ -891,11 +854,8 @@ impl Archiver {
                         }
                     };
 
-                    let mut output = match file_handle_native.make_lib_uv_owned() {
-                        Ok(fd) => OutputFile {
-                            fd,
-                            close: options.close_handles,
-                        },
+                    let output = match file_handle_native.make_lib_uv_owned() {
+                        Ok(fd) => File::from_fd(fd),
                         Err(err) => {
                             file_handle_native.close();
                             return Err(err.into());
@@ -923,15 +883,14 @@ impl Archiver {
                                         }
                                         return Err(err.into());
                                     }
-                                    plucker_.found = !plucker_.contents.list.is_empty();
-                                    plucker_.fd = output.fd;
-                                    output.close = false;
+                                    plucker_.file =
+                                        (!plucker_.contents.list.is_empty()).then_some(output);
                                     continue 'loop_;
                                 }
                             }
                         }
                         if let Err(err) =
-                            read_data_into_fd(&mut reader, output.fd, &mut write_strategy)
+                            read_data_into_file(&mut reader, output, &mut write_strategy)
                         {
                             if options.log {
                                 log_archive_error(path_slice, err);
@@ -968,12 +927,8 @@ impl Archiver {
             }
         };
 
-        let _close_guard = scopeguard::guard(dir, |d| {
-            if options.close_handles {
-                d.close();
-            }
-        });
+        let dir = File::from_fd(dir);
 
-        Self::extract_to_dir(file_buffer, dir, ctx, appender, options)
+        Self::extract_to_dir(file_buffer, dir.fd(), ctx, appender, options)
     }
 }

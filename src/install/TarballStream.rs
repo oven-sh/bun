@@ -26,7 +26,7 @@ use bun_paths::resolve_path::{self, platform};
 use bun_paths::{self, OSPathChar, OSPathSliceZ};
 #[cfg(not(windows))]
 use bun_sys::FdDirExt;
-use bun_sys::{self, Dir, Fd, FdExt, FileKind, Mode, O};
+use bun_sys::{self, Dir, Fd, File, FileKind, Mode, O};
 use bun_threading::{Mutex, thread_pool};
 
 use crate::NetworkTask;
@@ -120,7 +120,7 @@ struct Extraction {
     /// Temp directory files are written into before being renamed into the
     /// cache. Lazily opened on the first drain so the HTTP thread never
     /// touches the filesystem.
-    dest: Option<Fd>,
+    dest: Option<File>,
     /// Owned copy of the temp-directory name.
     // `ZBox` is the owned NUL-terminated counterpart of `&ZStr`.
     tmpname: ZBox,
@@ -367,7 +367,7 @@ impl TarballStream {
                             (crate::Error::Fail, Some(http_err)) => http_err,
                             (err, _) => err,
                         });
-                        (*this).extraction.close_output_file();
+                        (*this).extraction.out = None;
                     }
 
                     if (*this).fail.is_none() && !(*this).extraction.done {
@@ -591,14 +591,12 @@ impl Extraction {
         // allocator.dupeZ → owned NUL-terminated copy.
         self.tmpname = ZBox::from_bytes(tmpname.as_bytes());
 
-        self.dest = Some(
-            bun_sys::make_path::make_open_path(
-                Dir::borrow(&tarball.temp_dir),
-                self.tmpname.as_bytes(),
-                Default::default(),
-            )?
-            .into_raw(),
-        );
+        let dest = bun_sys::make_path::make_open_path(
+            Dir::borrow(&tarball.temp_dir),
+            self.tmpname.as_bytes(),
+            Default::default(),
+        )?;
+        self.dest = Some(File::from_fd(dest.into_raw()));
         Ok(())
     }
 
@@ -607,16 +605,7 @@ impl Extraction {
         let Some(mut out) = self.out.take() else {
             return Ok(());
         };
-        let result = out.finish(end);
-        out.fd().close();
-        result.map_err(|e| e.to_zig_err().into())
-    }
-
-    /// For an entry that did not reach its end.
-    fn close_output_file(&mut self) {
-        if let Some(out) = self.out.take() {
-            out.fd().close();
-        }
+        out.finish(end).map_err(|e| e.to_zig_err().into())
     }
 
     fn write_block(&mut self, offset: i64, bytes: &[u8]) -> crate::Result<()> {
@@ -630,7 +619,7 @@ impl Extraction {
     /// Process one entry header. Opens the output file (or creates the
     /// directory). With `out` left empty, the entry's data is skipped.
     fn begin_entry(&mut self, entry: &tar::Entry) -> crate::Result<()> {
-        self.out = None;
+        debug_assert!(self.out.is_none());
         let mut os_path_buf: Vec<OSPathChar> = Vec::new();
         let pathname: &[OSPathChar] = bun_archive::os_path(entry, &mut os_path_buf)?;
 
@@ -724,7 +713,7 @@ impl Extraction {
 
         let path: OSPathZ = OSPathSliceZ::from_buf(&norm_buf[..], norm_len);
         let path_slice: &[OSPathChar] = &path[..];
-        let dest = self.dest.unwrap();
+        let dest = self.dest.as_ref().unwrap().fd();
 
         match kind {
             FileKind::Directory => {
@@ -737,9 +726,9 @@ impl Extraction {
                 // archive never reach `openat`'s mode argument.
                 #[cfg(not(windows))]
                 let mode: Mode = Mode::try_from((entry.perm() & 0o777) | 0o666).expect("int cast");
-                let fd = open_output_file(dest, path, path_slice, mode)?;
+                let file = File::from_fd(open_output_file(dest, path, path_slice, mode)?);
                 self.entry_count += 1;
-                self.out = Some(bun_archive::EntryWriter::new(fd));
+                self.out = Some(bun_archive::EntryWriter::new(file));
             }
             _ => {}
         }
@@ -769,7 +758,7 @@ impl TarballStream {
             let network: *mut NetworkTask = (*this).network_task;
             let manager: *mut PackageManager = (*this).package_manager;
 
-            (*this).extraction.close_output_file();
+            (*this).extraction.out = None;
 
             // The HTTP thread has delivered the final `has_more=false` chunk
             // (that's the only way `closed` gets set) and `notify()` does not
@@ -814,15 +803,13 @@ impl TarballStream {
             // Temp-dir cleanup must happen before we release the stream or
             // publish the task: both `(*this).extraction.tmpname` and
             // `task.request.extract.tarball.temp_dir` become invalid once
-            // `Drop` runs / the main thread recycles the Task.
+            // the stream drops / the main thread recycles the Task.
             // SAFETY: task is live (see above).
             if (*task).status != TaskStatus::Success && !(*this).extraction.tmpname.is_empty() {
                 // `populate_result` closes `dest` on the success path before the
                 // rename; the early-return failure paths leave it open, so close
                 // it here first — Windows can't remove an open directory.
-                if let Some(d) = (*this).extraction.dest.take() {
-                    d.close();
-                }
+                (*this).extraction.dest = None;
                 // SAFETY: task is live (see above). `request` is an untagged
                 // union; `extract` is the active variant. Explicit `&` (no
                 // implicit autoref through the raw-ptr deref) for the
@@ -851,7 +838,7 @@ impl TarballStream {
 
             // The `Box<TarballStream>` lives in `(*network).tarball_stream`
             // (`generate_network_task_for_tarball` stores `Some(init(..))` there). Take
-            // it out via the Option and drop the Box — this both runs `Drop` and
+            // it out via the Option and drop the Box — this both frees it and
             // leaves `tarball_stream = None` so `HiveArray::put`'s
             // `drop_in_place<NetworkTask>` (1e76047) does not double-free a
             // dangling Box. Before 1e76047 the dangling `Some` was harmless
@@ -949,8 +936,9 @@ impl TarballStream {
                 if self.extraction.resolved_github_dirname.is_empty() {
                     break 'insert_tag;
                 }
-                if bun_sys::File::openat(
-                    self.extraction.dest.unwrap(),
+                let dest = self.extraction.dest.as_ref().unwrap().fd();
+                if File::openat(
+                    dest,
                     bun_core::zstr!(".bun-tag"),
                     O::WRONLY | O::CREAT | O::TRUNC | if cfg!(windows) { 0 } else { O::NOFOLLOW },
                     0o664,
@@ -958,18 +946,13 @@ impl TarballStream {
                 .and_then(|f| f.write_all(self.extraction.resolved_github_dirname))
                 .is_err()
                 {
-                    let _ = bun_sys::unlinkat(
-                        self.extraction.dest.unwrap(),
-                        bun_core::zstr!(".bun-tag"),
-                    );
+                    let _ = bun_sys::unlinkat(dest, bun_core::zstr!(".bun-tag"));
                 }
             }
         }
 
         // Close the temp dir handle before renaming so Windows can move it.
-        if let Some(d) = self.extraction.dest.take() {
-            d.close();
-        }
+        self.extraction.dest = None;
 
         let (name, basename) = tarball.name_and_basename();
 
@@ -1008,17 +991,6 @@ impl TarballStream {
         self.bytes_received = 0;
         self.content_length = None;
         self.mutex.unlock();
-    }
-}
-
-impl Drop for TarballStream {
-    fn drop(&mut self) {
-        if let Some(out) = self.extraction.out.take() {
-            out.fd().close();
-        }
-        if let Some(d) = self.extraction.dest {
-            d.close();
-        }
     }
 }
 

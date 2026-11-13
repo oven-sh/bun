@@ -144,7 +144,8 @@ public:
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSWeakSetType, StructureFlags), info());
+        // Not JSWeakSetType: JSC casts to JSWeakSet by that byte alone (JSCast.h), and this class is not JSWeakSet.
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(ObjectType, StructureFlags), info());
     }
 
     static ActiveSpySet* create(VM& vm, Structure* structure)

@@ -1835,7 +1835,11 @@ function Socket(options?): void {
     this[kended] = true;
     this._handle.unref();
   } else if (fdIsReadablePipe) {
-    Socket.prototype.connect.$call(this, { fd, [kFdIsReadablePipe]: true });
+    Socket.prototype.connect.$call(this, {
+      fd,
+      [kFdIsReadablePipe]: true,
+      pauseOnConnect: opts.pauseOnCreate === true,
+    });
   } else if (process.platform !== "win32" && fd > 2 && opts.readable !== false && !this[bunTlsSymbol]) {
     try {
       stats ??= require("node:fs").fstatSync(fd);

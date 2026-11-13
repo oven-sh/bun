@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 367a4886c538a0b9caa465ef0a835e48beae3f703cbe3b4e0b4dc41565858e72.
+// Written against that file with the SHA-256 1875531f3206b237748e40dd0f6c4cd6c9c7ff651cabce5944618af79b75cec5.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -201,6 +201,7 @@ declare global {
       keepAliveInitialDelay?: number;
       typeOfService?: number;
       blockList?: BlockList;
+      pauseOnCreate?: boolean;
     }
 
     interface SocketConstructor {
@@ -2216,7 +2217,11 @@ function Socket(this: $Node.Socket, options?: $Node.SocketOptions): void {
     this[kended] = true;
     this._handle!.unref();
   } else if (fdIsReadablePipe) {
-    Socket.prototype.connect.$call(this, { fd, [kFdIsReadablePipe]: true });
+    Socket.prototype.connect.$call(this, {
+      fd,
+      [kFdIsReadablePipe]: true,
+      pauseOnConnect: opts.pauseOnCreate === true,
+    });
   } else if (
     process.platform !== "win32" &&
     fd !== undefined &&

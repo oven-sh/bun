@@ -113,7 +113,7 @@ pub(crate) fn copy_env_for_define(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ImportMetaEnvMode {
     pub production: bool,
-    /// The bundle runs on the server, where `import.meta.env` is `process.env`.
+    /// The bundle runs on the server. It gets the mode keys and no object.
     pub ssr: bool,
     /// A static production build (`bun build --app`).
     pub static_build: bool,

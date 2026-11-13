@@ -499,13 +499,15 @@ impl<'a> Transpiler<'a> {
         let mut is_development = false;
         if had_explicit_node_env {
             if let Some(node_env) = self.options.define.dots.get(b"NODE_ENV".as_slice()) {
-                if !node_env.is_empty() {
-                    if let Some(s) = node_env[0].data.value.e_string() {
-                        if s.eql_comptime(b"production") {
-                            is_production = true;
-                        } else if s.eql_comptime(b"development") {
-                            is_development = true;
-                        }
+                // `import.meta.env.NODE_ENV` shares the tail; only `process.env.NODE_ENV` picks the mode.
+                let process_env_node_env = node_env.iter().find(|dot| {
+                    dot.parts.len() == 3 && &*dot.parts[0] == b"process" && &*dot.parts[1] == b"env"
+                });
+                if let Some(s) = process_env_node_env.and_then(|dot| dot.data.value.e_string()) {
+                    if s.eql_comptime(b"production") {
+                        is_production = true;
+                    } else if s.eql_comptime(b"development") {
+                        is_development = true;
                     }
                 }
             }

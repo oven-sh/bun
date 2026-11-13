@@ -8,14 +8,16 @@
 // worker drains, or refused once it has closed, and it frees its own payload.
 //
 // Here each of those paths runs deterministically for one producer at a time:
-// with BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE the other thread's post is held
-// until the worker's teardown is already waiting, so it always lands *during*
-// the wait, and the runtime names it on stderr. A row passes only if the named
-// line appeared (the work really was on another thread, really came back
-// during teardown, and — for ticketed work — was taken through the door at
-// the expected site) and the process exited cleanly; on the ASAN build the
-// release paths are also checked for use-after-free and leaks. Builds with
-// debug assertions only (debug, ASAN): the gate does not exist in release.
+// with BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE=draining the other thread's post is
+// held until the worker's teardown is already waiting, so it always lands
+// *during* the wait, and the runtime names it on stderr. With =closed a weak
+// post is held until the wait has ended instead, so it is always refused. A row
+// passes only if the named line appeared (the work really was on another
+// thread, really came back at that stage, and — for ticketed work — was taken
+// through the door at the expected site) and the process exited cleanly; on
+// the ASAN build the release paths are also checked for use-after-free and
+// leaks. Builds with debug assertions only (debug, ASAN): the gate does not
+// exist in release.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isAndroid, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
@@ -39,9 +41,17 @@ type Row = {
 } & (Ticketed | Weak);
 // Ticketed work: substring of the site (file) the ticket was taken at, as
 // logged by "[vm] late completion from <file>:<line>".
-type Ticketed = { ticket: string; weak?: never };
-// Weak posters: the task tag logged by "[vm] late post: <tag> (...)".
-type Weak = { weak: string; ticket?: never };
+type Ticketed = { ticket: string; weak?: never; underTicket?: never };
+// Weak posters: the task tag logged by "[vm] weak post at the gate: <tag>" when
+// the post reaches the gate and by "[vm] late post: <tag> (<outcome>)" when it
+// is made. Each runs under both gates: released by the wait under `draining`,
+// refused under `closed`. The gate does not hold a post past the start of the
+// wait while a ticket is outstanding, because the wait may be for that very
+// poster: such a row (`underTicket`) is released under both.
+type Weak = { weak: string; underTicket?: true; ticket?: never };
+
+const RELEASED = "released by the wait";
+const REFUSED = "refused";
 
 const ROWS: Row[] = [
   // ── thread pool: bun_jsc::Job ────────────────────────────────────────────
@@ -98,6 +108,7 @@ const ROWS: Row[] = [
     name: "crypto.subtle.digest",
     worker: `crypto.subtle.digest("SHA-256", Buffer.alloc(65536));`,
     weak: "CppTask",
+    underTicket: true,
   },
   {
     name: "Bun.password.hash",
@@ -205,6 +216,12 @@ const ROWS: Row[] = [
     skip: !isLinux && !isAndroid,
   },
   {
+    // JSC compiles on a helper thread, which hands the result to the VM as deferred work.
+    name: "WebAssembly.compile",
+    worker: `WebAssembly.compile(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]));`,
+    weak: "JSCDeferredWorkTask",
+  },
+  {
     name: "BroadcastChannel message from another thread",
     worker: `const bc = new BroadcastChannel("wlc"); bc.onmessage = () => {};`,
     // An open channel keeps the parent's loop alive (as in Node); close it once posted.
@@ -224,50 +241,131 @@ const ROWS: Row[] = [
 // the worker waits for (with the gate armed, a parent→worker post is itself a
 // cross-thread post that waits for the worker's teardown). Rows with a parent
 // side post in response to "armed".
+//
+// Nothing makes a worker wait for a weak post, and C++ stops posting to a
+// context whose teardown has begun. So a weak row's worker stays in a read of
+// the host's stdin instead, and the test closes that stdin once the gate has
+// reported the row's post.
+//
+// The worker's stdout and stderr are captured and left unread: piped through,
+// the parent's end asks for data with a message on the stream's port, which is
+// one more weak post to the worker than the row is about.
 function host(row: Row, dir: string) {
   const worker = `
     const { parentPort, workerData } = require("node:worker_threads");
     parentPort.on("message", () => {});
     ${row.worker}
     parentPort.postMessage("armed");
-    setImmediate(() => setImmediate(() => process.exit(0)));
+    ${
+      row.weak
+        ? `require("node:fs").readSync(0, Buffer.alloc(1)); process.exit(0);`
+        : `setImmediate(() => setImmediate(() => process.exit(0)));`
+    }
   `;
   return `
     const { Worker, MessageChannel } = require("node:worker_threads");
     const { port1, port2 } = new MessageChannel();
     const data = { port: port2, dir: ${JSON.stringify(dir)} };
     ${row.prelude ?? ""}
-    const w = new Worker(${JSON.stringify(worker)}, { eval: true, workerData: data, transferList: [port2] });
+    const w = new Worker(${JSON.stringify(worker)}, { eval: true, workerData: data, transferList: [port2], stdout: true, stderr: true });
     w.on("error", e => { console.error("worker error:", e && e.message); process.exitCode = 1; });
-    w.once("message", () => { ${row.parent ?? ""} });
+    w.once("message", () => { ${row.parent ? `console.error("[row] posting"); ${row.parent}` : ""} });
     w.on("exit", code => { port1.close(); ${row.onExit ?? ""} if (code !== 0) { console.error("worker exit code", code); process.exitCode = 1; } });
   `;
 }
 
+// Runs the row's host under `gate` and returns what it printed. A weak row's
+// host is released (its stdin closed) when the gate reports the row's post.
+async function runHost(row: Row, gate: "draining" | "closed") {
+  using dir = tempDir("worker-late-completion", row.files ?? {});
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", host(row, String(dir))],
+    env: { ...bunEnv, ...row.env, BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE: gate },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const readStderr = async () => {
+    const decoder = new TextDecoder();
+    let text = "";
+    let held = !!row.weak;
+    for await (const chunk of proc.stderr) {
+      text += decoder.decode(chunk, { stream: true });
+      if (held && text.includes(`[vm] weak post at the gate: ${row.weak}\n`)) {
+        held = false;
+        proc.stdin.end();
+      }
+    }
+    return text;
+  };
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), readStderr(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
 describe.skipIf(!isDebug && !isASAN)("work that comes back after its worker began tearing down", () => {
   for (const row of ROWS) {
-    test.concurrent.skipIf(!!row.skip)(row.name, async () => {
-      using dir = tempDir("worker-late-completion", row.files ?? {});
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", host(row, String(dir))],
-        env: { ...bunEnv, ...row.env, BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE: "1" },
-        stdout: "pipe",
-        stderr: "pipe",
+    if (row.ticket) {
+      const ticket = row.ticket;
+      test.concurrent.skipIf(!!row.skip)(row.name, async () => {
+        const { stdout, stderr, exitCode } = await runHost(row, "draining");
+        const seen = stderr.split("\n").some(l => l.startsWith("[vm] late completion from ") && l.includes(ticket));
+        expect({
+          exitCode,
+          seen,
+          // On a failure, everything the host printed.
+          detail: exitCode === 0 && seen ? "" : stdout + stderr,
+        }).toEqual({ exitCode: 0, seen: true, detail: "" });
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const lines = stderr.split("\n").filter(l => l.startsWith("[vm] "));
-      const seen =
-        "ticket" in row && row.ticket
-          ? lines.some(l => l.startsWith("[vm] late completion from ") && l.includes(row.ticket))
-          : lines.some(l => l.startsWith(`[vm] late post: ${row.weak} (`));
-      expect({
-        exitCode,
-        seen,
-        // On a failure, everything the host printed.
-        detail: exitCode === 0 && seen ? "" : stdout + stderr,
-      }).toEqual({ exitCode: 0, seen: true, detail: "" });
-    });
+      continue;
+    }
+    for (const gate of ["draining", "closed"] as const) {
+      const outcome = gate === "draining" || row.underTicket ? RELEASED : REFUSED;
+      // Exactly the row's own post, in order: asked for, at the gate, made.
+      const expected = [
+        ...(row.parent ? ["[row] posting"] : []),
+        `[vm] weak post at the gate: ${row.weak}`,
+        `[vm] late post: ${row.weak} (${outcome})`,
+      ];
+      test.concurrent.skipIf(!!row.skip)(`${row.name} (${gate} gate: ${outcome})`, async () => {
+        const { stdout, stderr, exitCode } = await runHost(row, gate);
+        const posts = stderr
+          .split("\n")
+          .filter(
+            l =>
+              l === "[row] posting" || l.startsWith("[vm] weak post at the gate: ") || l.startsWith("[vm] late post: "),
+          );
+        expect({
+          exitCode,
+          posts,
+          // On a failure, everything the host printed.
+          detail: exitCode === 0 && Bun.deepEquals(posts, expected) ? "" : stdout + stderr,
+        }).toEqual({ exitCode: 0, posts: expected, detail: "" });
+      });
+    }
   }
+});
+
+// A mode the gate does not know (main's old "1", a typo) must not read as "off":
+// a row would then run ungated and fail with nothing that names the variable.
+// The Worker constructor throws, so the process exits through its normal path
+// (the VM is torn down, which LeakSanitizer needs).
+test.concurrent.skipIf(!isDebug && !isASAN)("a gate mode that does not exist is refused by name", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `try { new (require("node:worker_threads").Worker)("", { eval: true }); } catch (e) { console.log(e.constructor.name + ": " + e.message); }`,
+    ],
+    env: { ...bunEnv, BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "TypeError: BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE=1: the modes are draining and closed\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 const cc = isWindows ? null : process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -387,7 +485,8 @@ describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled"
         const w = new Worker(
           'require("node:fs").readFile(require("node:worker_threads").workerData, () => {});' +
           'require("node:worker_threads").parentPort.postMessage("reading");',
-          { eval: true, workerData: fifo },
+          // Captured stdio, as in host() above: the parent must not park at the gate before it terminates.
+          { eval: true, workerData: fifo, stdout: true, stderr: true },
         );
         w.on("error", e => { console.error("worker error:", e); process.exitCode = 1; });
         w.once("message", () => {
@@ -398,7 +497,7 @@ describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled"
       ],
       // The gate env also brings the debug build's outstanding-ticket report
       // forward (2s instead of 10s).
-      env: { ...bunEnv, BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE: "1" },
+      env: { ...bunEnv, BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE: "draining" },
       stdout: "pipe",
       stderr: "pipe",
     });

@@ -72,11 +72,12 @@ pub struct WebWorker {
     parent: *mut VirtualMachine,
     /// The parent's `--hot` / `--watch` mode, inherited by the worker VM.
     hot_reload: crate::virtual_machine::HotReload,
-    /// Whether the worker VM arms `bun_jsc::vm_handle`'s test gate (debug
+    /// The `bun_jsc::vm_handle` test gate mode that the worker VM arms (debug
     /// builds, `BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE`, first-level workers only:
     /// a nested worker parked on a post to its worker parent would keep that
     /// parent from ever reaching its own wait).
-    arm_test_gate: bool,
+    #[cfg(debug_assertions)]
+    test_gate: crate::vm_handle::TestGate,
     execution_context_id: u32,
     mini: bool,
     eval_mode: bool,
@@ -482,6 +483,18 @@ impl WebWorker {
         // its own thread; the worker never dereferences `parent`.
         // SAFETY: `parent` is the calling thread's live VM.
         let parent_ref = unsafe { &*parent };
+        #[cfg(debug_assertions)]
+        let test_gate = if parent_ref.is_main_thread() {
+            match crate::vm_handle::TestGate::from_env() {
+                Ok(mode) => mode,
+                Err(message) => {
+                    *error_message = BunString::clone_utf8(&message);
+                    return core::ptr::null_mut();
+                }
+            }
+        } else {
+            crate::vm_handle::TestGate::Off
+        };
         let mut transform_options = (*parent_ref.transpiler.options.transform_options).clone();
         if !inherit_exec_argv {
             let hooks = runtime_hooks().expect("RuntimeHooks not installed");
@@ -538,10 +551,8 @@ impl WebWorker {
             messaging_proxy: proxy,
             parent,
             hot_reload: parent_ref.hot_reload,
-            arm_test_gate: cfg!(debug_assertions)
-                && parent_ref.is_main_thread()
-                && bun_core::env_var::feature_flag::BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE::get()
-                    .unwrap_or(false),
+            #[cfg(debug_assertions)]
+            test_gate,
             execution_context_id: this_context_id,
             mini,
             eval_mode,
@@ -897,9 +908,10 @@ impl WebWorker {
         self.hot_reload
     }
 
+    #[cfg(debug_assertions)]
     #[inline]
-    pub(crate) fn arm_test_gate(&self) -> bool {
-        self.arm_test_gate
+    pub(crate) fn test_gate(&self) -> crate::vm_handle::TestGate {
+        self.test_gate
     }
 
     #[inline]

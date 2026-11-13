@@ -2957,6 +2957,15 @@ describe.concurrent("a name that import and require() resolve to two files", () 
     // modules that this one has loaded.
     const inFolder = (folder: string, testFile: string, text: string) =>
       Object.entries({ ...files, ...pkg, [testFile]: text }).map(([name, file]) => [`${folder}/${name}`, file]);
+    // Without --isolate the test files share globalThis.loaded and the modules. Of the two names that automock.test.js
+    // mocks, actual.test.js has run three files by then, and none of them runs again.
+    const [loaded, ran] =
+      args.length === 0
+        ? [
+            `globalThis.loaded.filter(name => name.startsWith("#dep ") || name.startsWith("dual "))`,
+            `["dual cjs", "dual esm", "#dep cjs"]`,
+          ]
+        : ["globalThis.loaded", `["#dep cjs"]`];
     await expectFixturesToPass(
       {
         ...files,
@@ -2990,7 +2999,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             expect([required.which, required.fn()]).toEqual(["real cjs", undefined]);
             expect(required.fn).toHaveBeenCalledTimes(1);
             expect((await import("#dep")).fn).toBe(required.fn);
-            expect(globalThis.loaded.filter(name => name.startsWith("#dep "))).toEqual(["#dep cjs"]);
+            expect(${loaded}).toEqual(${ran});
           });
           test("and loads the file of __mocks__ for both", async () => {
             expect([require("dual").which, (await import("dual")).which]).toEqual(["manual", "manual"]);

@@ -143,6 +143,13 @@ row("a pair is taken out of the Set when its comparison is over", "fail", () => 
   a3.a = a4;
   return [a0, a4];
 });
+row("a pair that was taken out of the Set is compared again", "pass", () => {
+  const actual = {};
+  actual.self = actual;
+  const expected = {};
+  expected.self = expected;
+  return [{ both: { a: actual, b: actual } }, { both: { a: expected, b: expected } }];
+});
 row("both objects are in the Set, from other pairs", "pass", () => {
   const actual = [];
   actual.push(actual, actual);
@@ -197,14 +204,18 @@ row("both objects are in the Set, and their values differ", "pass", () => {
     ];
   });
   row("objects that are left stay alive while the Set has them", "pass", () => {
-    // No candidate but the last matches, and each of the others leaves a new object of its getter in the Set. Then
-    // the memory is collected, and later pairs of new objects must not be taken for objects of the Set.
+    // Only the last candidate of a search matches. Each of the others leaves a new object of a getter in the Set: an
+    // object of `actual` in the first search, of `expected` in the second. Then the memory is collected, and later
+    // pairs of new objects must not be taken for objects of the Set.
     const getterOf = key => Object.defineProperty({}, key, { enumerable: true, get: () => ({ v: 1 }) });
     const actual = { loop: ring(1) };
     const expected = { loop: ring(1) };
-    actual.left = Array.from({ length: 500 }, () => getterOf("x"));
-    actual.left.push({ x: actual });
-    expected.left = [{ x: expected }];
+    actual.first = Array.from({ length: 250 }, () => getterOf("x"));
+    actual.first.push({ x: actual });
+    expected.first = [{ x: expected }];
+    actual.second = Array.from({ length: 250 }, () => ({ x: actual }));
+    actual.second.push({ x: { v: 1 } });
+    expected.second = [getterOf("x")];
     Object.defineProperty(actual, "collect", { enumerable: true, get: () => (collectGarbage(), 1) });
     expected.collect = 1;
     actual.later = Array.from({ length: 500 }, () => getterOf("y"));
@@ -226,6 +237,10 @@ row("both objects are in the Set, and their values differ", "pass", () => {
     parentAgainst(Object.defineProperty({}, "type", { value: "Script" })),
   );
   row("an expected with an index key, actual is in the Set", "fail", () => parentAgainst({ 0: 1 }));
+  row("an expected with a large index key, actual is in the Set", "fail", () => parentAgainst({ 1000000000: 1 }));
+  row("an expected that is a Proxy, actual is in the Set", "fail", () =>
+    parentAgainst(new Proxy({ type: "Script" }, {})),
+  );
 }
 row("an expected with no key, actual is the second pair", "pass", () => {
   const inner = {};
@@ -249,6 +264,31 @@ row("a longer expected array, both arrays are in the Set", "fail", () => {
   const pair = [outer, outer];
   outer.push(pair);
   return besideRings([inner, inner], pair);
+});
+row("a larger expected Map, both Maps are in the Set", "fail", () => {
+  const inner = new Map();
+  inner.set("a", inner);
+  const outer = new Map();
+  const pair = new Map([
+    ["a", outer],
+    ["b", outer],
+  ]);
+  outer.set("a", pair);
+  return besideRings(
+    new Map([
+      ["a", inner],
+      ["b", inner],
+    ]),
+    pair,
+  );
+});
+row("a larger expected Set, both Sets are in the Set", "fail", () => {
+  const inner = new Set();
+  inner.add(inner);
+  const outer = new Set();
+  const pair = new Set([outer, 1]);
+  outer.add(pair);
+  return besideRings(new Set([inner, 1]), pair);
 });
 row("a typed array has its elements compared before, and only named keys after", "pass", () => {
   const actual = new Uint8Array([1, 2]);
@@ -294,10 +334,48 @@ for (const [kind, make, add] of [
   });
 }
 
+for (const [kind, make] of [
+  ["a Map", () => new Map()],
+  ["a Set", () => new Set()],
+]) {
+  row(`an index key of ${kind} is compared`, "fail", () => [
+    Object.assign(make(), { 0: 1 }),
+    Object.assign(make(), { 0: 2 }),
+  ]);
+}
+
 // An Error has `message`, `name`, `cause` and `errors` compared before its pair reaches the memos (L391-L404).
 {
   const hiddenCause = (error, cause) =>
     Object.defineProperty(error, "cause", { value: cause, writable: true, configurable: true });
+  row("an empty message of expected, against any message", "pass", () => [new Error("boom"), new Error("")]);
+  row("an own cause of expected that is undefined, against an own cause", "pass", () => [
+    new Error("x", { cause: 1 }),
+    new Error("x", { cause: undefined }),
+  ]);
+  row("an own cause of expected that is undefined, against no own cause", "fail", () => [
+    new Error("x"),
+    new Error("x", { cause: undefined }),
+  ]);
+  row("a cause that expected inherits is compared", "fail", () => {
+    class WithCause extends Error {
+      get cause() {
+        return 1;
+      }
+    }
+    return [new Error("x", { cause: 2 }), new WithCause("x")];
+  });
+  row("the cause of the first Error has memos of its own", "pass", () => {
+    // `again` of `actual` is its cause, which was the first object of the memos of the cause.
+    const make = again => {
+      const cause = { v: 1 };
+      const error = new Error("m", { cause });
+      error.loop = ring(1);
+      error.again = again ?? cause;
+      return error;
+    };
+    return [make(), make({ v: 1 })];
+  });
   row("Errors that are in the Set still have their messages compared", "fail", () => {
     const actual = new Error("a");
     actual.loop = ring(1);

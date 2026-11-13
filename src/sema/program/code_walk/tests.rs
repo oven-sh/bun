@@ -944,19 +944,13 @@ fn entry_with_targets(targets: Vec<u32>) -> CodeEntry<'static, 'static> {
 
 fn package_depths(edges: &[&[(u32, bool)]], entry_points: &[u32]) -> Vec<u32> {
     let targets_of = |edges: &&[(u32, bool)]| edges.iter().map(|edge| edge.0).collect();
-    let mut entries: Vec<CodeEntry<'_, '_>> = (edges.iter())
+    let entries: Vec<CodeEntry<'_, '_>> = (edges.iter())
         .map(|edges| entry_with_targets(targets_of(edges)))
         .collect();
     let steps: Vec<Vec<bool>> = (edges.iter())
         .map(|edges| edges.iter().map(|edge| edge.1).collect())
         .collect();
-    compute_package_depths(
-        &StatementsHost::default(),
-        &mut entries,
-        entry_points,
-        &steps,
-    );
-    entries.iter().map(|entry| entry.package_depth).collect()
+    compute_package_depths(&StatementsHost::default(), &entries, entry_points, &steps)
 }
 
 #[test]

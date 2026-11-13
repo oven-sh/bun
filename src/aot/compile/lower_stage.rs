@@ -44,7 +44,7 @@ use bun_threading::Guarded;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use std::num::NonZeroUsize;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Above this, the checker's types are freed once, halfway through the files. Nine in ten of them are read by no later file.
 const TEXT_BYTES_OF_ONE_PASS: u64 = 256 << 20;
@@ -1085,8 +1085,9 @@ impl Build<'_> {
                         || file.builtins.mentions_evaluator()
                         || file.builtins.loads_unknown_modules()
                 }));
+        let in_parallel = self.parallel_runner();
         let reads_source_paths =
-            project == ProjectId::Application && reads_source_paths(files, sources);
+            project == ProjectId::Application && reads_source_paths(files, sources, &in_parallel);
         let may_have_plugins = project == ProjectId::Application
             && !self.options.load.runs_tests
             && crate::load::contents::load_names::names_plugin(files);
@@ -1129,8 +1130,8 @@ impl Build<'_> {
     }
 }
 
-fn reads_source_paths(files: &Files<'_>, sources: &Sources) -> bool {
-    files.compiled_files().iter().any(|&file| {
+fn reads_source_paths(files: &Files<'_>, sources: &Sources, in_parallel: InParallel<'_>) -> bool {
+    let reads_source_path = |file: FileId| {
         if !sources.has_source_path(file) {
             return false;
         }
@@ -1145,7 +1146,16 @@ fn reads_source_paths(files: &Files<'_>, sources: &Sources) -> bool {
         }) || sites.any(|site| {
             matches!(site.kind, ImportSiteKind::RequireResolve(call) if !decisions.is_dead_expr(call))
         })
-    })
+    };
+    let is_found = AtomicBool::new(false);
+    let chunks: Vec<&[FileId]> = files.compiled_files().chunks(256).collect();
+    in_parallel(chunks.len(), &|chunk| {
+        let mut files = chunks[chunk].iter();
+        if !is_found.load(Ordering::Relaxed) && files.any(|&file| reads_source_path(file)) {
+            is_found.store(true, Ordering::Relaxed);
+        }
+    });
+    is_found.into_inner()
 }
 
 pub(super) fn may_fail_where_loaded(

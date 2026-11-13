@@ -704,6 +704,9 @@ impl<'a> LoadHost<'a> {
     }
 
     fn is_among(&self, sorted_paths: &[Vec<u8>], path: &[u8]) -> bool {
+        if sorted_paths.is_empty() || self.disk.is_case_sensitive() {
+            return contains(sorted_paths, path);
+        }
         let mut buffer = path_buffer_pool::get();
         let path = to_path_in(path, self.disk.is_case_sensitive(), &mut buffer[..]);
         contains(sorted_paths, &path)
@@ -742,14 +745,12 @@ impl<'a> LoadHost<'a> {
     }
 
     fn plugin_loader(&self, path: &[u8]) -> Option<Loader> {
-        if self
-            .modules_with_queries
-            .text_in_place_of_file(path)
-            .is_some()
-        {
+        let with_query = self.modules_with_queries.find(path);
+        if with_query.is_some_and(|module| module.wrapper.is_some()) {
             return None;
         }
-        let module = (self.plugins).loaded(self.modules_with_queries.file_behind(path))?;
+        let file = with_query.map_or(path, |module| &module.file);
+        let module = self.plugins.loaded(file)?;
         module.is_from_plugin.then_some(module.loader)
     }
 
@@ -1442,11 +1443,13 @@ impl CodeHost for LoadHost<'_> {
 
     fn is_given_in_memory(&self, path: &[u8]) -> bool {
         let load = &self.input.options.load;
+        if load.in_memory_file_keys.is_empty() {
+            return false;
+        }
         let native = to_native(path);
-        !load.in_memory_file_keys.is_empty()
-            && (load.in_memory_files)
-                .binary_search_by(|(file, _)| file[..].cmp(native))
-                .is_ok()
+        (load.in_memory_files)
+            .binary_search_by(|(file, _)| file[..].cmp(native))
+            .is_ok()
     }
 
     fn directory_of_dynamic_imports<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {

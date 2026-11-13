@@ -1054,10 +1054,15 @@ impl SourceProvider for BundlerServices {
     fn fill_package_json_gaps(&self, module_paths: &[&[u8]]) -> Vec<(Vec<u8>, Vec<u8>)> {
         let has_any = !(self.files_for_file_system.lock().embedded_manifests).is_empty();
         let (mut added, mut closed) = (Vec::new(), FxHashSet::default());
+        let mut asked: FxHashSet<Vec<u8>> = FxHashSet::default();
         for path in module_paths.iter().filter(|_| has_any) {
             let path = with_platform_separators(path);
-            if let Some(folder) = bun_paths::dirname(&path).filter(|it| !closed.contains(*it)) {
-                self.fill_gaps_above(folder, &mut closed, &mut added);
+            // Whatever is added has an embedded `package.json` above it, so a folder that had none above it still has none.
+            if let Some(folder) = bun_paths::dirname(&path).filter(|it| !asked.contains(*it)) {
+                asked.insert(folder.to_vec());
+                if !closed.contains(folder) {
+                    self.fill_gaps_above(folder, &mut closed, &mut added);
+                }
             }
         }
         self.fill_gaps_in_packages(&mut added);

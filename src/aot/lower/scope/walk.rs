@@ -198,6 +198,8 @@ struct Walker<'x, 's> {
     is_commonjs: bool,
     file_scope: ScopeId,
     inner_module_parameters: Vec<SymbolId>,
+    /// The table of bodies of a bundle, which are walked as modules. `NONE` in other files.
+    literal_of_bodies: ExprId,
     jsx_uses: Vec<(ExprId, Binding)>,
     metadata_uses: Vec<(ClassId, Binding)>,
     class_decorators: Vec<(ClassId, ExprId)>,

@@ -70,7 +70,7 @@ These throw a `TypeError`:
 
 Their property descriptors are what `bun run` reports, `writable: true` included. The exception is `Buffer.concat`, which reports `writable: false`. `minizlib` 3, which `tar` 7 and `npm` use, reads that descriptor and replaces the function only if it is writable.
 
-The build has to see the assignment to `Date.now`, `process.argv` and the others that can be replaced. Spell out the object and the name. It can't see [code from a string](#code-from-strings), so `eval("Date.now = () => 5")` throws if your code uses `Date.now`.
+The build has to see the assignment to `Date.now`, `process.argv` and the others that can be replaced. Spell out the object and the name. It can't see [code from a string](#code-from-strings) that it can't work out, so `eval("Date.now = " + code)` throws if your code uses `Date.now`.
 
 If the line that throws is in a package, look the package up in [Libraries](/compiler/libraries).
 
@@ -269,9 +269,9 @@ A path made from `import.meta.dirname` climbs at most one folder above the root 
 
 `--asset` follows no symbolic links inside a folder, so what they lead to isn't embedded. Where the build can see such a read, it warns and names the link to pass as an asset of its own (`TS100165`).
 
-`fs.stat()` gives an embedded file the modification time that it had when you built. A folder is as new as the newest embedded file in it, so two builds of the same files are identical.
+`fs.stat()` gives an embedded file the modification time that it had when you built. A file above the root of the executable has time `0`, unless the program only asks about it and the executable holds its size alone. A folder is as new as the newest file in it that the executable holds, so two builds of the same files are identical.
 
-Your own code is in there as machine code, not as text. `fs.existsSync()` finds a compiled file, but its size is `0` and reading it fails with `ENOENT`.
+Your own code is in there as machine code, not as text. `fs.existsSync()` finds a compiled file, but its size is `0` and reading it fails with `ENOENT`. A compiled file whose source was removed from disk isn't found where the executable runs beside its sources, which means that the file's folder and code around it are still on disk.
 
 Some packages load their own files by a name that they put together when the program runs:
 

@@ -92,6 +92,10 @@ test("a bound that is not met yet says what was counted", async () => {
     "parallel/not-met-on-another-processor.js": `// STATISTIC: ${bound} Todo on ${process.platform} mips: some day\n${right}`,
     "parallel/met.js": `// STATISTIC: ImageFunctionsEmitted >= 1 Todo: some day\n${right}`,
     "parallel/held.js": `// STATISTIC: ImageFunctionsEmitted >= 1\n${right}`,
+    "parallel/held-on-this-processor.js": `// STATISTIC on ${process.arch}: ImageFunctionsEmitted >= 1\n${right}`,
+    "parallel/broken-on-this-processor.js": `// STATISTIC on ${process.arch}: ${bound}\n${right}`,
+    "parallel/broken-on-another-processor.js": `// STATISTIC on ${process.arch === "x64" ? "arm64" : "x64"}: ${bound}\n${right}`,
+    "parallel/on-no-processor.js": `// STATISTIC on mips: ${bound}\n${right}`,
   });
   const root = join(String(dir), "parallel");
   const files = [
@@ -102,6 +106,10 @@ test("a bound that is not met yet says what was counted", async () => {
     "not-met-on-another-processor.js",
     "met.js",
     "held.js",
+    "held-on-this-processor.js",
+    "broken-on-this-processor.js",
+    "broken-on-another-processor.js",
+    "on-no-processor.js",
   ];
   const { stdout, exitCode } = await run(
     [
@@ -142,6 +150,16 @@ test("a bound that is not met yet says what was counted", async () => {
       goalsNotMet: { "ImageFunctionsEmitted >= 1": counted },
     },
     "held.js": { verdict: "pass", goalsNotMet: undefined },
+    "held-on-this-processor.js": { verdict: "pass", goalsNotMet: undefined },
+    "broken-on-this-processor.js": {
+      verdict: `compile: ${bound}, but the build counted ${counted}`,
+      goalsNotMet: undefined,
+    },
+    "broken-on-another-processor.js": { verdict: "pass", goalsNotMet: undefined },
+    "on-no-processor.js": {
+      verdict: `read: not of the form \`// STATISTIC | STATISTIC on x64 | COUNT | COUNTER | COUNTER in every build: <name> (= | >= | <=) <n>\`: // STATISTIC on mips: ${bound}`,
+      goalsNotMet: undefined,
+    },
   });
   expect(exitCode).toBe(1);
 

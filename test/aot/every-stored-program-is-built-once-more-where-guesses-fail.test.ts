@@ -37,8 +37,21 @@ async function start(words: string[], environment: Record<string, string>, progr
 type Ran = Awaited<ReturnType<typeof start>>;
 // The builds are what costs. The driver is started once for each list of arguments, and every test that asks the same of it reads that run.
 const runs = new Map<string, Promise<Ran>>();
-const started = (words: string[], environment: Record<string, string>, programs: Record<string, string>) =>
-  runs.getOrInsertComputed(JSON.stringify([words, environment, programs]), () => start(words, environment, programs));
+async function started(
+  words: string[],
+  environment: Record<string, string>,
+  programs: Record<string, string>,
+): Promise<Ran> {
+  const key = JSON.stringify([words, environment, programs]);
+  const begun = runs.get(key);
+  if (!begun) return runs.getOrInsertComputed(key, () => start(words, environment, programs));
+  // By itself the driver ends with 0 or 1. A run that was ended, as where its test ran out of time and bun:test killed what it had started, has not said everything.
+  // Only the test that began it reads it. Another test that asks for it begins a run of its own, as if nothing were shared.
+  const ran = await begun.catch(() => undefined);
+  if (ran?.exitCode === 0 || ran?.exitCode === 1) return ran;
+  if (runs.get(key) === begun) runs.delete(key);
+  return started(words, environment, programs);
+}
 const driven = (words: string[], environment: Record<string, string> = {}, head = "", text = program) =>
   started(words, environment, { "sums.ts": head + text });
 /** The one line in which the driver says how a program went. */
@@ -146,12 +159,9 @@ test("a line leaves the build of one way out; the other ways are held, and stder
 }, 360_000);
 
 const noSuchWay = "its flags are those of no way in which the program is built whatever the build of CI";
+const misspelt = `${noBuild.replace("proof-checks", "proof-cheks")}: for the test`;
 const refusedLines = [
-  [
-    "names a way that this driver does not build",
-    `${noBuild.replace("proof-checks", "proof-cheks")}: for the test\n`,
-    noSuchWay,
-  ],
+  ["names a way that this driver does not build", `${misspelt}\n`, noSuchWay],
   [
     "names the way that goes by the number of CI's build",
     "// No build under --aot-testing=FailSpeculations:3: for the test\n",
@@ -188,6 +198,23 @@ test.each(refusedLines)(
   },
   120_000,
 );
+
+// One of them with the builds behind the first: the driver has one verdict for a file, and here three ways pass beside the one that is refused.
+test("a line that is not read leaves out no build: the other three ways pass, and the line alone fails the program", async () => {
+  const ran = await driven([], {}, `${misspelt}\n`);
+  expect({ ...saidOf(ran), counts: countsOf(ran) }).toEqual({
+    ways: {
+      compiled: "fail",
+      "under --aot-erase-types": "pass",
+      "under --aot-testing=FailSpeculations:3": "pass",
+      "under --aot-harden=proof-checks": "pass",
+    },
+    stage: "read",
+    message: `${misspelt}: ${noSuchWay}`,
+    counts: fourBuilds + "left out by a line: 0 not compared | 0 not built\n",
+    exitCode: 1,
+  });
+}, 120_000);
 
 test("another exit code in a way that is not compared fails it all the same", async () => {
   expect(saidOf(await driven([], {}, notCompared, "process.exit(3);\n"))).toEqual({

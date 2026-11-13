@@ -11,6 +11,7 @@ import {
   isASAN,
   isDebug,
   isLinux,
+  isMacOS,
   isMusl,
   isWindows,
   tempDir,
@@ -2019,6 +2020,849 @@ describe("Socket fd adoption", () => {
     } finally {
       fs.closeSync(fd);
     }
+  });
+
+  // `readable: true` over a pipe/FIFO reads natively: reads and writes are
+  // asynchronous, and an adopted fd > 2 is closed once the socket has closed.
+  // @sap/hana-client (#48751) wraps its completion pipe's read end this way.
+  //
+  // Readiness of a named FIFO is not reliably reported on macOS (PipeReader.rs),
+  // so reads over a named FIFO are only covered there by the pipe(2) tests at
+  // the end of this block.
+  const fifoReadsUnsupported = isWindows || isMacOS;
+
+  it.skipIf(fifoReadsUnsupported)("readable: true reads from an adopted FIFO fd and closes it on 'close'", async () => {
+    const { rfd, wfd } = openFifo("readable.fifo");
+    const socket = new Socket({ fd: rfd, readable: true });
+    const events: string[] = [];
+    socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    socket.on("end", () => events.push("end"));
+    socket.on("close", () => events.push("close"));
+    const closed = once(socket, "close");
+
+    // A 'data' that never comes fails with the state of the socket and of the
+    // pipe (was the byte read but not delivered, or never read?), not with a
+    // bare test timeout.
+    const first = new Promise<Buffer>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(
+          new Error(
+            `no 'data' within 10s: ${JSON.stringify({
+              events,
+              readableFlowing: socket.readableFlowing,
+              connecting: socket.connecting,
+              pending: socket.pending,
+              destroyed: socket.destroyed,
+              handle: (socket as any)._handle ? "present" : "null",
+              leftInPipe: drain(rfd),
+            })}`,
+          ),
+        );
+      }, 10_000);
+      socket.once("data", chunk => {
+        clearTimeout(timer);
+        resolve(chunk);
+      });
+    });
+    fs.writeSync(wfd, "ping");
+    events.push(`data:${await first}`);
+    expect({ events, destroyed: socket.destroyed, fd: fstatCode(rfd) }).toEqual({
+      events: ["data:ping"],
+      destroyed: false,
+      fd: "open",
+    });
+
+    const second = once(socket, "data");
+    fs.writeSync(wfd, "pong");
+    events.push(`data:${(await second)[0]}`);
+    // EOF from the write end closing: 'end', then allowHalfOpen=false destroys.
+    fs.closeSync(wfd);
+    await closed;
+    expect({ events, destroyed: socket.destroyed, fd: fstatCode(rfd) }).toEqual({
+      events: ["data:ping", "data:pong", "end", "close"],
+      destroyed: true,
+      fd: "EBADF",
+    });
+  });
+
+  // A write larger than the pipe buffer can only complete once a reader drains
+  // it; a synchronous write(2) there would block the thread (or fail with
+  // EAGAIN on a non-blocking end). Both ends are adopted sockets.
+  it.skipIf(fifoReadsUnsupported)(
+    "readable: true writes asynchronously: a write larger than the pipe buffer completes once drained",
+    async () => {
+      const { rfd, wfd } = openFifo("async-write.fifo", fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+      const size = 256 * 1024;
+      const payload = Buffer.alloc(size, "z");
+
+      const reader = new Socket({ fd: rfd, readable: true });
+      const writer = new Socket({ fd: wfd, readable: true, writable: true });
+      const errors: string[] = [];
+      reader.on("error", err => errors.push(`reader:${(err as NodeJS.ErrnoException).code}`));
+      writer.on("error", err => errors.push(`writer:${(err as NodeJS.ErrnoException).code}`));
+
+      let received = 0;
+      let chunks = 0;
+      const drained = Promise.withResolvers<void>();
+      reader.on("data", (chunk: Buffer) => {
+        received += chunk.length;
+        chunks++;
+        if (received >= size) drained.resolve();
+      });
+      const readerEnded = once(reader, "end");
+      const readerClosed = once(reader, "close");
+
+      const written = new Promise<string | undefined>(resolve =>
+        writer.write(payload, err => resolve((err as NodeJS.ErrnoException | null)?.code)),
+      );
+      // The callback can only fire once the reader has taken most of the payload
+      // (a sync write(2) on this non-blocking end fails with EAGAIN instead).
+      expect(await written).toBeUndefined();
+      await drained.promise;
+      expect({ received, multipleChunks: chunks > 1, bytesWritten: writer.bytesWritten }).toEqual({
+        received: size,
+        multipleChunks: true,
+        bytesWritten: size,
+      });
+
+      // Shutting down the writer's fd is the reader's EOF.
+      const writerClosed = once(writer, "close");
+      writer.end();
+      await readerEnded;
+      await readerClosed;
+      writer.destroy();
+      await writerClosed;
+      expect({ errors, fds: [fstatCode(rfd), fstatCode(wfd)] }).toEqual({ errors: [], fds: ["EBADF", "EBADF"] });
+    },
+  );
+
+  it.skipIf(fifoReadsUnsupported)(
+    "net.connect({ fd }) over a FIFO read end reads and closes the fd on 'close'",
+    async () => {
+      const { rfd, wfd } = openFifo("connect.fifo");
+      const events: string[] = [];
+      const socket = connect({ fd: rfd });
+      socket.on("end", () => events.push("end"));
+      socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+      socket.on("close", () => events.push("close"));
+      const closed = once(socket, "close");
+
+      const data = once(socket, "data");
+      fs.writeSync(wfd, "ping");
+      events.push(`data:${(await data)[0]}`);
+      expect(fstatCode(rfd)).toBe("open");
+      fs.closeSync(wfd);
+      await closed;
+      expect({ events, fd: fstatCode(rfd) }).toEqual({ events: ["data:ping", "end", "close"], fd: "EBADF" });
+    },
+  );
+
+  it.skipIf(fifoReadsUnsupported)(
+    "Bun.connect({ fd }) over a FIFO read end delivers data and end, then closes the fd",
+    async () => {
+      const { rfd, wfd } = openFifo("bun-connect.fifo");
+      const events: string[] = [];
+      const gotData = Promise.withResolvers<void>();
+      const ended = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<void>();
+      const socket = await Bun.connect({
+        fd: rfd,
+        socket: {
+          open() {
+            events.push("open");
+          },
+          data(_socket, chunk) {
+            events.push(`data:${chunk}`);
+            gotData.resolve();
+          },
+          end() {
+            events.push("end");
+            ended.resolve();
+          },
+          error(_socket, err) {
+            events.push(`error:${(err as NodeJS.ErrnoException).code}`);
+          },
+          connectError(_socket, err) {
+            events.push(`connectError:${(err as NodeJS.ErrnoException).code}`);
+          },
+          close() {
+            events.push("close");
+            closed.resolve();
+          },
+        },
+      });
+      fs.writeSync(wfd, "ping");
+      await gotData.promise;
+      expect(fstatCode(rfd)).toBe("open");
+      fs.closeSync(wfd);
+      await ended.promise;
+      // A no-op if the pipe already closed itself after EOF.
+      socket.end();
+      await closed.promise;
+      expect({ events, fd: fstatCode(rfd) }).toEqual({ events: ["open", "data:ping", "end", "close"], fd: "EBADF" });
+    },
+  );
+
+  // The #48751 shape: the bytes come from another process that opens the FIFO
+  // for writing, writes, and closes it.
+  it.skipIf(fifoReadsUnsupported)("delivers what a child process writes into the FIFO", async () => {
+    const path = join(tmpdirSync(), "child-writer.fifo");
+    execFileSync("mkfifo", [path]);
+    const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    const socket = new Socket({ fd: rfd, readable: true });
+    const events: string[] = [];
+    let received = "";
+    socket.on("data", chunk => (received += chunk));
+    socket.on("end", () => events.push("end"));
+    socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    socket.on("close", () => events.push("close"));
+    const closed = once(socket, "close");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("node:fs");
+          const fd = fs.openSync(${JSON.stringify(path)}, "w");
+          fs.writeSync(fd, "from the child");
+          fs.closeSync(fd);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, closed]);
+    expect({ received, events, stderr, fd: fstatCode(rfd) }).toEqual({
+      received: "from the child",
+      events: ["end", "close"],
+      stderr: "",
+      fd: "EBADF",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The hana-client flow: `net.Socket({ fd, readable: true })` (no `new`),
+  // unref()'d right away so an idle pipe never holds the process open, ref()'d
+  // while native work is outstanding so the completion byte is waited for.
+  it.concurrent.skipIf(fifoReadsUnsupported)(
+    "an adopted readable fd keeps the loop alive while ref()'d and releases it when unref()'d",
+    async () => {
+      const dir = tmpdirSync();
+      const script = (mode: "ref" | "unref") => /* js */ `
+        const fs = require("node:fs");
+        const net = require("node:net");
+        const path = ${JSON.stringify(join(dir, `${mode}.fifo`))};
+        const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        const wfd = fs.openSync(path, "w");
+        const events = [];
+        const socket = net.Socket({ fd: rfd, readable: true });
+        socket.unref();
+        socket.on("data", chunk => events.push("data:" + chunk));
+        socket.on("end", () => events.push("end"));
+        socket.on("close", () => events.push("close"));
+        socket.on("error", err => events.push("error:" + err.code));
+        process.on("exit", () => console.log(JSON.stringify(events)));
+        if (${JSON.stringify(mode)} === "ref") {
+          socket.ref();
+          // Nothing but the socket keeps the loop alive after this runs.
+          setImmediate(() => {
+            fs.writeSync(wfd, "x");
+            fs.closeSync(wfd);
+          });
+        }
+      `;
+      const run = async (mode: "ref" | "unref") => {
+        execFileSync("mkfifo", [join(dir, `${mode}.fifo`)]);
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script(mode)],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { events: stdout.trim(), stderr: stderr.trim(), exitCode };
+      };
+      const [ref, unref] = await Promise.all([run("ref"), run("unref")]);
+      expect({ ref, unref }).toEqual({
+        ref: { events: JSON.stringify(["data:x", "end", "close"]), stderr: "", exitCode: 0 },
+        unref: { events: "[]", stderr: "", exitCode: 0 },
+      });
+    },
+  );
+
+  // Loop liveness of an adopted pipe fd follows libuv's stream rules: the
+  // socket's own ref holds the loop (`unref()` drops it), the reader never
+  // holds it on its own, and bytes the kernel has not taken yet hold it until
+  // they are written. So an unref()'d writer with a write larger than the pipe
+  // buffer keeps the process running, the unref()'d reader at the other end is
+  // serviced meanwhile, and the process exits by itself once the write is done.
+  it.concurrent.skipIf(fifoReadsUnsupported)(
+    "an unref()'d adopted fd keeps the loop alive only while a write is pending",
+    async () => {
+      const dir = tmpdirSync();
+      execFileSync("mkfifo", [join(dir, "pending-write.fifo")]);
+      const size = 256 * 1024;
+      const script = /* js */ `
+        const fs = require("node:fs");
+        const net = require("node:net");
+        const path = ${JSON.stringify(join(dir, "pending-write.fifo"))};
+        const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        const wfd = fs.openSync(path, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+        const errors = [];
+        let received = 0;
+        let written = false;
+        const reader = new net.Socket({ fd: rfd, readable: true });
+        reader.unref();
+        reader.on("error", err => errors.push("reader:" + err.code));
+        reader.on("data", chunk => (received += chunk.length));
+        const writer = new net.Socket({ fd: wfd, readable: true, writable: true });
+        writer.on("error", err => errors.push("writer:" + err.code));
+        writer.write(Buffer.alloc(${size}, "w"), () => (written = true));
+        writer.unref();
+        process.on("exit", () => console.log(JSON.stringify({ errors, written, received })));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const report = JSON.parse(stdout.trim() || "null");
+      // A pipe holds at most 64 KiB, so anything beyond that was written after
+      // the script finished, by a loop only the pending write was holding; the
+      // last chunk may still sit in the pipe when the write completes and the
+      // loop lets go.
+      expect({
+        errors: report?.errors,
+        written: report?.written,
+        receivedPastPipeBuffer: report?.received > 64 * 1024,
+        receivedAtMost: report?.received <= size,
+        stderr: stderr.trim(),
+        exitCode,
+      }).toEqual({
+        errors: [],
+        written: true,
+        receivedPastPipeBuffer: true,
+        receivedAtMost: true,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // A write the kernel took right away leaves nothing pending: an unref()'d
+  // socket must not pin the process after it.
+  it.concurrent.skipIf(fifoReadsUnsupported)(
+    "an unref()'d adopted fd lets the process exit once a small write is flushed",
+    async () => {
+      const dir = tmpdirSync();
+      execFileSync("mkfifo", [join(dir, "small-write.fifo")]);
+      const script = /* js */ `
+        const fs = require("node:fs");
+        const net = require("node:net");
+        const path = ${JSON.stringify(join(dir, "small-write.fifo"))};
+        const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        const wfd = fs.openSync(path, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+        const writer = new net.Socket({ fd: wfd, readable: true, writable: true });
+        writer.on("error", err => console.log("error:" + err.code));
+        writer.write("ping");
+        writer.unref();
+        process.on("exit", () => {
+          const chunk = Buffer.alloc(64);
+          let out = "";
+          try {
+            out = chunk.toString("utf8", 0, fs.readSync(rfd, chunk));
+          } catch (e) {
+            out = "read:" + e.code;
+          }
+          console.log(out);
+        });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+        stdout: "ping",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // `destroy()` drops what the kernel has not taken (libuv cancels the queued
+  // writes on uv_close): an unref()'d socket whose peer never reads must not
+  // hold the loop for a drain that never comes. Only `end()` waits for it.
+  it.concurrent.skipIf(fifoReadsUnsupported)(
+    "an unref()'d adopted fd lets the process exit when destroy() drops a pending write",
+    async () => {
+      const dir = tmpdirSync();
+      execFileSync("mkfifo", [join(dir, "destroy-pending.fifo")]);
+      const script = /* js */ `
+        const fs = require("node:fs");
+        const net = require("node:net");
+        const path = ${JSON.stringify(join(dir, "destroy-pending.fifo"))};
+        // The read end stays open and is never read: the write below cannot drain.
+        const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        const wfd = fs.openSync(path, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+        const events = [];
+        const writer = new net.Socket({ fd: wfd, readable: true, writable: true });
+        writer.on("error", err => events.push("error:" + err.code));
+        writer.on("close", () => events.push("close"));
+        writer.write(Buffer.alloc(256 * 1024, "w"));
+        writer.unref();
+        writer.destroy();
+        process.on("exit", () => console.log(JSON.stringify(events)));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+        stdout: '["close"]',
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // Runs in a child so the count starts from zero.
+  it.concurrent.skipIf(fifoReadsUnsupported)(
+    "releases the native pipe context once the socket has closed",
+    async () => {
+      const dir = tmpdirSync();
+      for (const name of ["a.fifo", "b.fifo"]) execFileSync("mkfifo", [join(dir, name)]);
+      const script = /* js */ `
+      const fs = require("node:fs");
+      const net = require("node:net");
+      const { posixPipeInternals } = require("bun:internal-for-testing");
+      const dir = ${JSON.stringify(dir)};
+      function openFifo(name) {
+        const path = dir + "/" + name;
+        const rfd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        const wfd = fs.openSync(path, "w");
+        return { rfd, wfd };
+      }
+      const a = openFifo("a.fifo");
+      const b = openFifo("b.fifo");
+      const before = posixPipeInternals.liveCount();
+
+      const events = [];
+      const nodeSocket = new net.Socket({ fd: a.rfd, readable: true });
+      const nodeClosed = new Promise(resolve => nodeSocket.on("close", () => (events.push("node:close"), resolve())));
+      nodeSocket.on("data", chunk => events.push("node:data:" + chunk));
+      nodeSocket.on("error", err => events.push("node:error:" + err.code));
+
+      const bunClosed = Promise.withResolvers();
+      const bunData = Promise.withResolvers();
+      const bunSocket = await Bun.connect({
+        fd: b.rfd,
+        socket: {
+          data(_socket, chunk) {
+            events.push("bun:data:" + chunk);
+            bunData.resolve();
+          },
+          end(socket) {
+            events.push("bun:end");
+            // A no-op if the pipe already closed itself after EOF.
+            socket.end();
+          },
+          error(_socket, err) {
+            events.push("bun:error:" + err.code);
+          },
+          close() {
+            events.push("bun:close");
+            bunClosed.resolve();
+          },
+        },
+      });
+      const nodeData = new Promise(resolve => nodeSocket.once("data", resolve));
+      fs.writeSync(a.wfd, "1");
+      fs.writeSync(b.wfd, "2");
+      await nodeData;
+      await bunData.promise;
+      const whileOpen = posixPipeInternals.liveCount() - before;
+
+      fs.closeSync(a.wfd);
+      fs.closeSync(b.wfd);
+      await nodeClosed;
+      await bunClosed.promise;
+
+      // Finalizing the handles must not touch a socket its context already released.
+      Bun.gc(true);
+      // A context frees itself from a task it queues once its pipe has closed.
+      for (let i = 0; i < 100 && posixPipeInternals.liveCount() > 0; i++) {
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      console.log(JSON.stringify({ events: events.sort(), before, whileOpen, after: posixPipeInternals.liveCount() }));
+    `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ report: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+        report: JSON.stringify({
+          events: ["bun:close", "bun:data:2", "bun:end", "node:close", "node:data:1"],
+          before: 0,
+          whileOpen: 2,
+          after: 0,
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // The adopted fd is owned, not borrowed (node: uv_pipe_open + uv_close):
+  // destroying the socket closes it, on the event-loop thread, before 'close'
+  // is emitted. fstat() right after 'close' is therefore EBADF, never a race
+  // against a close(2) still queued on a pool thread. The FIFO's other end,
+  // which the socket never saw, stays open.
+  it.skipIf(fifoReadsUnsupported)(
+    "destroy() closes the adopted fd (> 2) before 'close' fires, without EOF",
+    async () => {
+      const { rfd, wfd } = openFifo("destroy-open.fifo");
+      try {
+        const socket = new Socket({ fd: rfd, readable: true });
+        const errors: string[] = [];
+        socket.on("error", err => errors.push((err as NodeJS.ErrnoException).code!));
+        const data = once(socket, "data");
+        fs.writeSync(wfd, "ping");
+        expect(String((await data)[0])).toBe("ping");
+        expect(fstatCode(rfd)).toBe("open");
+
+        let fdAtClose: string | undefined;
+        const closed = new Promise<void>(resolve =>
+          socket.once("close", () => {
+            fdAtClose = fstatCode(rfd);
+            resolve();
+          }),
+        );
+        socket.destroy();
+        await closed;
+        expect({ errors, fdAtClose, rfd: fstatCode(rfd), wfd: fstatCode(wfd) }).toEqual({
+          errors: [],
+          fdAtClose: "EBADF",
+          rfd: "EBADF",
+          wfd: "open",
+        });
+      } finally {
+        fs.closeSync(wfd);
+      }
+    },
+  );
+
+  // An fd open for both directions (a FIFO opened O_RDWR: what it writes, it
+  // reads back) is read and written through one socket, and nothing it opened
+  // to do so outlives 'close'. Runs in a child so the fd table is otherwise still.
+  it.concurrent.skipIf(fifoReadsUnsupported)(
+    "closes everything a read-write adopted fd used once 'close' fires",
+    async () => {
+      const path = join(tmpdirSync(), "loopback.fifo");
+      execFileSync("mkfifo", [path]);
+      const script = /* js */ `
+      const fs = require("node:fs");
+      const net = require("node:net");
+      const openFds = () => fs.readdirSync("/dev/fd").map(Number);
+      const fstatCode = fd => {
+        try {
+          fs.fstatSync(fd);
+          return "open";
+        } catch (e) {
+          return e.code;
+        }
+      };
+      const before = openFds();
+      const fd = fs.openSync(${JSON.stringify(path)}, "r+");
+      const socket = new net.Socket({ fd, readable: true, writable: true });
+      socket.on("error", err => console.log(JSON.stringify({ error: err.code })));
+      socket.once("data", chunk => {
+        const got = String(chunk);
+        socket.once("close", () => {
+          const leaked = openFds().filter(n => !before.includes(n));
+          console.log(JSON.stringify({ got, fd: fstatCode(fd), leaked }));
+        });
+        socket.destroy();
+      });
+      socket.write("loop");
+    `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ report: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+        report: JSON.stringify({ got: "loop", fd: "EBADF", leaked: [] }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // Stdio is the exception to ownership: fds 0-2 are only ever dup()'d, so
+  // the socket going away neither closes fd 0 nor leaves O_NONBLOCK on it
+  // (the flag lives on the open file description, so setting it on the dup
+  // would have changed fd 0 too). The child's fd 0 is a *blocking* FIFO read
+  // end; after the socket has closed, fd 0 is still open, still blocking, and
+  // a plain blocking read(2) on it still works.
+  it.skipIf(fifoReadsUnsupported)(
+    "an adopted fd 0 is neither closed nor switched to O_NONBLOCK by the socket",
+    async () => {
+      const path = join(tmpdirSync(), "stdin.fifo");
+      execFileSync("mkfifo", [path]);
+      // A blocking read end needs a writer to exist, and a writer needs a reader:
+      // a throwaway non-blocking read end breaks the cycle.
+      const tmp = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      const wfd = fs.openSync(path, "w");
+      const rfd = fs.openSync(path, "r");
+      fs.closeSync(tmp);
+      try {
+        const script = /* js */ `
+        const fs = require("node:fs");
+        const net = require("node:net");
+        // O_NONBLOCK is 0o4000 on Linux; elsewhere the blocking read below is the check.
+        const nonblocking = () =>
+          process.platform === "linux"
+            ? (parseInt(fs.readFileSync("/proc/self/fdinfo/0", "utf8").match(/^flags:\\s*(\\d+)/m)[1], 8) & 0o4000) !== 0
+            : false;
+        const fstatCode = fd => {
+          try {
+            fs.fstatSync(fd);
+            return "open";
+          } catch (e) {
+            return e.code;
+          }
+        };
+        const socket = new net.Socket({ fd: 0, readable: true });
+        socket.on("error", err => console.log(JSON.stringify({ error: err.code })));
+        socket.once("data", chunk => {
+          const got = String(chunk);
+          socket.once("close", () => {
+            console.log(JSON.stringify({ got, stdin: fstatCode(0), nonblocking: nonblocking() }));
+            const buf = Buffer.alloc(64);
+            const n = fs.readSync(0, buf);
+            console.log(JSON.stringify({ after: buf.toString("utf8", 0, n) }));
+          });
+          socket.destroy();
+        });
+      `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", script],
+          env: bunEnv,
+          stdin: rfd,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        fs.writeSync(wfd, "ping");
+        // The second line can only be read once the first was printed (the fd
+        // is blocking): the bytes for it are written in response to the first.
+        let stdout = "";
+        let wroteAfter = false;
+        const decoder = new TextDecoder();
+        for await (const chunk of proc.stdout) {
+          stdout += decoder.decode(chunk, { stream: true });
+          if (!wroteAfter && stdout.includes("\n")) {
+            wroteAfter = true;
+            fs.writeSync(wfd, "after\n");
+          }
+        }
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        const lines = stdout
+          .trim()
+          .split("\n")
+          .map(line => JSON.parse(line));
+        expect({ lines, stderr: stderr.trim(), exitCode }).toEqual({
+          lines: [{ got: "ping", stdin: "open", nonblocking: false }, { after: "after\n" }],
+          stderr: "",
+          exitCode: 0,
+        });
+      } finally {
+        fs.closeSync(rfd);
+        fs.closeSync(wfd);
+      }
+    },
+  );
+
+  // The constructor installs the onread handlers before the fd is adopted;
+  // the callback must see every byte and 'data' none.
+  it.skipIf(fifoReadsUnsupported)(
+    "readable: true with onread hands the bytes to the callback, not to 'data'",
+    async () => {
+      const { rfd, wfd } = openFifo("onread.fifo");
+      const seen: string[] = [];
+      const buffer = Buffer.alloc(64);
+      const socket = new Socket({
+        fd: rfd,
+        readable: true,
+        onread: {
+          buffer,
+          callback(n: number, buf: Buffer) {
+            seen.push(buf.toString("utf8", 0, n));
+            return true;
+          },
+        },
+      });
+      let pushed = 0;
+      socket.on("data", () => pushed++);
+      socket.on("error", err => seen.push(`error:${(err as NodeJS.ErrnoException).code}`));
+      const closed = once(socket, "close");
+      fs.writeSync(wfd, "onread-hello");
+      fs.closeSync(wfd);
+      await closed;
+      expect({ seen, pushed, fd: fstatCode(rfd) }).toEqual({ seen: ["onread-hello"], pushed: 0, fd: "EBADF" });
+    },
+  );
+
+  it.skipIf(fifoReadsUnsupported)("readable: true with pauseOnCreate delivers nothing until resume()", async () => {
+    const { rfd, wfd } = openFifo("pause-on-create.fifo");
+    const got: string[] = [];
+    const socket = new Socket({ fd: rfd, readable: true, pauseOnCreate: true });
+    socket.on("data", chunk => got.push(String(chunk)));
+    socket.on("error", err => got.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    fs.writeSync(wfd, "early");
+    // Two immediate turns are past the read(0) that would have started the flow.
+    await new Promise<void>(resolve => setImmediate(() => setImmediate(resolve)));
+    expect({ got, flowing: socket.readableFlowing }).toEqual({ got: [], flowing: false });
+    socket.resume();
+    await once(socket, "data");
+    socket.pause();
+    fs.writeSync(wfd, "between");
+    await new Promise<void>(resolve => setImmediate(() => setImmediate(resolve)));
+    const whilePaused = got.join("");
+    socket.resume();
+    const closed = once(socket, "close");
+    fs.closeSync(wfd);
+    await closed;
+    expect({ whilePaused, all: got.join(""), fd: fstatCode(rfd) }).toEqual({
+      whilePaused: "early",
+      all: "earlybetween",
+      fd: "EBADF",
+    });
+  });
+
+  // connect({ fd }) adopts natively, and pauseOnConnect holds the pipe back the
+  // way it holds a dialled socket back.
+  it.skipIf(fifoReadsUnsupported)("connect({ fd, pauseOnConnect: true }) delivers nothing until resume()", async () => {
+    const { rfd, wfd } = openFifo("pause-on-connect.fifo");
+    const got: string[] = [];
+    const socket = connect({ fd: rfd, pauseOnConnect: true });
+    socket.on("data", chunk => got.push(String(chunk)));
+    socket.on("error", err => got.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    fs.writeSync(wfd, "early");
+    await new Promise<void>(resolve => setImmediate(() => setImmediate(resolve)));
+    expect({ got, flowing: socket.readableFlowing, fd: fstatCode(rfd) }).toEqual({
+      got: [],
+      flowing: false,
+      fd: "open",
+    });
+    socket.resume();
+    await once(socket, "data");
+    const closed = once(socket, "close");
+    fs.closeSync(wfd);
+    await closed;
+    expect({ got, fd: fstatCode(rfd) }).toEqual({ got: ["early"], fd: "EBADF" });
+  });
+
+  // node lets connect() be called again on a socket that already has a handle.
+  // Over a readable pipe the pipe is dropped without a 'close' of its own (and
+  // its owned fd with it) and the socket dials like a fresh one.
+  it.skipIf(fifoReadsUnsupported)(
+    "connect(port) on a socket over a readable pipe drops the pipe and dials",
+    async () => {
+      const server = createServer(peer => peer.pipe(peer));
+      await new Promise<void>(resolve => server.listen(0, resolve));
+      const { rfd, wfd } = openFifo("reconnect.fifo");
+      try {
+        const socket = new Socket({ fd: rfd, readable: true });
+        const events: string[] = [];
+        socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+        socket.on("close", () => events.push("close"));
+        const fromPipe = once(socket, "data");
+        fs.writeSync(wfd, "pipe");
+        events.push(`data:${(await fromPipe)[0]}`);
+
+        socket.connect((server.address() as AddressInfo).port, "127.0.0.1");
+        await once(socket, "connect");
+        events.push("connect");
+        const echoed = once(socket, "data");
+        socket.write("tcp");
+        events.push(`data:${(await echoed)[0]}`);
+        socket.end();
+        await once(socket, "close");
+        expect({ events, rfd: fstatCode(rfd) }).toEqual({
+          events: ["data:pipe", "connect", "data:tcp", "close"],
+          rfd: "EBADF",
+        });
+      } finally {
+        server.close();
+        fs.closeSync(wfd);
+      }
+    },
+  );
+
+  // An anonymous pipe(2), which is what a shell pipeline hands a process: sh
+  // creates it, `cat` feeds it what this test writes, and the child reads it
+  // through the given fd (fd 3 is a dup of fd 0, both the pipe's read end).
+  // An adopted fd > 2 is closed with the socket; fd 0 never is.
+  it.skipIf(isWindows).each([
+    [3, "EBADF"],
+    [0, "open"],
+  ])("reads a pipe(2) read end on fd %d to EOF and leaves it %s", async (fd, afterClose) => {
+    const script = /* js */ `
+      const fs = require("node:fs");
+      const net = require("node:net");
+      const fstatCode = fd => {
+        try {
+          fs.fstatSync(fd);
+          return "open";
+        } catch (e) {
+          return e.code;
+        }
+      };
+      const events = [];
+      let received = "";
+      const socket = new net.Socket({ fd: ${fd}, readable: true });
+      socket.on("data", chunk => (received += chunk));
+      socket.on("end", () => events.push("end"));
+      socket.on("error", err => events.push("error:" + err.code));
+      socket.on("close", () => {
+        console.log(JSON.stringify({ kind: fs.fstatSync(0).isFIFO() ? "pipe" : "other", received, events, fd: fstatCode(${fd}) }));
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", 'cat | exec "$0" -e "$1" 3<&0', bunExe(), script],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    proc.stdin.write("ping");
+    await proc.stdin.flush();
+    proc.stdin.write("pong");
+    await proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const report = JSON.parse(stdout.trim() || "null");
+    expect({ ...report, stderr: stderr.trim() }).toEqual({
+      kind: "pipe",
+      received: "pingpong",
+      events: ["end", "close"],
+      fd: afterClose,
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
 });
 

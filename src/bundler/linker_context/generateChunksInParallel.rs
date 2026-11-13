@@ -58,10 +58,8 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             crate::linker_context::cross_chunk_names::assign_unminified(c, chunks)?;
         }
         if !c.options.minify_identifiers {
-            c.renamer_rows = crate::linker_context::rename_symbols_in_chunk::renamer_rows(
-                c.graph.symbols.symbols_for_source.len(),
-                chunks,
-            );
+            c.renamer_rows =
+                crate::linker_context::rename_symbols_in_chunk::renamer_rows(c, chunks);
         }
         c.worker_pool()
             .each_ptr(&*c, |c, chunk, _| c.generate_js_renamer(chunk), chunks);

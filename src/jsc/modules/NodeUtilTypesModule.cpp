@@ -333,6 +333,9 @@ struct CycleState {
     End ended { End::None };
     // A run under node's memos.
     std::optional<Memos> memos;
+    // The pairs that such a run is inside of, and the pairs that a run before it was inside of where its stack ended.
+    size_t nestedPairs { 0 };
+    size_t pairsWhereStackEnded { std::numeric_limits<size_t>::max() };
 };
 
 using Comparison = bool(JSC::JSGlobalObject*, JSC::MarkedArgumentBuffer&, CycleState&, JSC::ThrowScope&, JSValue actual, JSValue expected);
@@ -378,6 +381,8 @@ static NEVER_INLINE bool endsAtStackEnd(JSC::JSGlobalObject* globalObject, Cycle
 {
     const bool calledDeep = !cycles.memos && cycles.open.size() < 2 * pairsOfADeepComparison;
     if (!cycles.throwsAtStackEnd && !calledDeep) {
+        if (!cycles.memos)
+            cycles.pairsWhereStackEnded = cycles.open.size() / 2;
         cycles.ended = End::NoStack;
         return true;
     }
@@ -438,6 +443,12 @@ static NEVER_INLINE std::optional<bool> enterMemos(JSC::JSGlobalObject* globalOb
     Memos& memos = *cycles.memos;
     JSC::JSCell* actualCell = actual.asCell();
     JSC::JSCell* expectedCell = expected.asCell();
+    // After a run that ended on its stack, the memos answer only for a pair that the other run went below. They end
+    // a comparison that cannot end. They do not take over one that is only deep.
+    if (cycles.nestedPairs + 1 >= cycles.pairsWhereStackEnded) [[unlikely]] {
+        cycles.ended = End::NoStack;
+        return false;
+    }
     if (!memos.a) {
         memos.a = actualCell;
         memos.b = expectedCell;
@@ -521,6 +532,7 @@ static NEVER_INLINE std::optional<bool> enterMemos(JSC::JSGlobalObject* globalOb
 static NEVER_INLINE void leaveMemos(CycleState& cycles, JSC::JSCell* actualCell, JSC::JSCell* expectedCell)
 {
     Memos& memos = *cycles.memos;
+    cycles.nestedPairs--;
     memos.deep = false;
     if (memos.hasSet) {
         memos.set.remove(actualCell);
@@ -532,6 +544,7 @@ static NEVER_INLINE bool withMemos(JSC::JSGlobalObject* globalObject, JSC::Marke
 {
     if (const std::optional<bool> answer = enterMemos(globalObject, cycles, scope, actual, expected, arm))
         return *answer;
+    cycles.nestedPairs++;
     const bool result = bodyOf(arm)(globalObject, cycles.memos->kept, cycles, scope, actual, expected);
     leaveMemos(cycles, actual.asCell(), expected.asCell());
     return result;
@@ -1177,7 +1190,8 @@ static NEVER_INLINE bool compareAgain(JSC::JSGlobalObject* globalObject, JSC::Ma
     auto& vm = globalObject->vm();
     if (cycles.ended == End::NoStack) {
         // No pair came again in the stack that the run had. The comparison cannot end in another way (a new object
-        // for each read, rings that meet late), or it is only deep. The memos end the first kind early.
+        // for each read, rings that meet late), or it is only deep. The memos end the first kind early
+        // (pairsWhereStackEnded keeps them from the end of the second kind).
         cycles.ended = End::None;
         cycles.memos.emplace(gcBuffer);
         bool result = compareBranch(globalObject, gcBuffer, cycles, scope, actual, expected);
@@ -1198,6 +1212,8 @@ static NEVER_INLINE bool compareAgain(JSC::JSGlobalObject* globalObject, JSC::Ma
     cycles.ended = End::None;
     cycles.stackEnd = vm.stackLimit();
     cycles.throwsAtStackEnd = true;
+    cycles.nestedPairs = 0;
+    cycles.pairsWhereStackEnded = std::numeric_limits<size_t>::max();
     cycles.memos.emplace(gcBuffer);
     return compareBranch(globalObject, gcBuffer, cycles, scope, actual, expected);
 }

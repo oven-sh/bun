@@ -330,6 +330,9 @@ describe("assert.partialDeepStrictEqual", () => {
       expect(answerOf(fresh(), ring(1))).toBe("fail");
       // The same pair comes again after 10,100 levels.
       expect(answerOf(ring(100), ring(101))).toBe("fail");
+      // The second run compares many pairs before the one that ends it, and is inside of few at a time.
+      const wide = () => Array.from({ length: 8000 }, () => ({ v: 1 }));
+      expect(answerOf({ wide: wide(), next: fresh() }, { wide: wide(), next: ring(1) })).toBe("fail");
 
       let deep = {};
       let deepToo = {};
@@ -363,28 +366,52 @@ describe("assert.partialDeepStrictEqual", () => {
     });
 
     test("the depth of the caller does not change an answer", () => {
-      // With little stack left, the first run has no room. The memos then give other answers for these three.
+      // With little stack left, the first run has no room. The memos give other answers for these four.
       const inActual = { p: { q: { p: {} } } };
       const loop = { v: 2 };
       loop.next = loop;
       const expectedRing = { v: 1 };
       expectedRing.next = { v: 2, next: expectedRing };
+      // A list of 64 arrays, where the last one has a link back.
+      const list = [];
+      let last = list;
+      let expectedList = [63, [62]];
+      for (let i = 0; i < 63; i++) {
+        const next = [];
+        last.push(i, next);
+        if (i === 62) next.push(63, last);
+        last = next;
+        expectedList = [62 - i, expectedList];
+      }
       const pairs = [
-        [tree(), partOfTree("Program")],
-        [{ p: { q: inActual } }, inActual],
-        [{ v: 1, next: loop }, expectedRing],
+        [tree(), partOfTree("Program"), "pass"],
+        [{ p: { q: inActual } }, inActual, "pass"],
+        [{ v: 1, next: loop }, expectedRing, "fail"],
+        [list, expectedList, "pass"],
       ];
       const answers = pairs.map(() => new Set());
-      const down = level => {
-        if (level % 32 === 0) pairs.forEach((pair, i) => answers[i].add(answerOf(...pair)));
-        down(level + 1);
+      // The stack ends at the deepest call. On the way back, every 32nd caller compares the four. A caller has
+      // stack enough when 192 of them in a row got no RangeError.
+      let callers = 0;
+      let left = 192;
+      const down = () => {
+        try {
+          down();
+        } finally {
+          if (left > 0 && callers++ % 32 === 0) {
+            left--;
+            pairs.forEach(([actual, expected], i) => {
+              const answer = answerOf(actual, expected);
+              if (answer === "RangeError") left = 192;
+              answers[i].add(answer);
+            });
+          }
+        }
       };
-      expect(() => down(0)).toThrow(RangeError);
-      expect(answers.map(answersOfPair => [...answersOfPair].filter(answer => answer !== "RangeError"))).toEqual([
-        ["pass"],
-        ["pass"],
-        ["fail"],
-      ]);
+      expect(down).toThrow(RangeError);
+      expect(answers.map(answersOfPair => [...answersOfPair].filter(answer => answer !== "RangeError"))).toEqual(
+        pairs.map(([, , answer]) => [answer]),
+      );
     });
 
     describe("as the first comparison of a new Node.js process", () => {

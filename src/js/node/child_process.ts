@@ -1325,9 +1325,10 @@ class ChildProcess extends EventEmitter {
             // #spawn mapped "pipe" at i>=3 to "socket-fd", so the parent-end
             // fd in handle.stdio[i] is UnownedFd: we own it and
             // net.connect({fd}) -> usockets will close it on socket close.
+            // It is always a socketpair end, so skip the fd-type fstat.
             const fd = handle && handle.stdio[i];
             if (fd == null) return null;
-            return require("node:net").connect({ fd });
+            return require("node:net").connect({ fd, fdIsRawSocket: true });
         }
         return null;
     }

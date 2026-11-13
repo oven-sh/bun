@@ -199,6 +199,56 @@ pub(crate) fn shell_escape<'a>(
     Ok(BunString::clone_utf8(&outbuf))
 }
 
+/// Shared implementation of the `Bun.*Case` functions (#15087).
+///
+/// `to_utf8()` transcodes Latin-1/UTF-16-backed strings to UTF-8, so the
+/// conversion runs on one encoding regardless of how the JS string is stored.
+fn case_change(input: &BunString, case: crate::api::string_case::Case) -> BunString {
+    let utf8 = input.to_utf8();
+    let text = std::str::from_utf8(&utf8).expect("BunString::to_utf8() always yields valid UTF-8");
+    BunString::clone_utf8(crate::api::string_case::convert(case, text).as_bytes())
+}
+
+/// `Bun.camelCase("two words")` -> `"twoWords"`.
+pub(crate) fn camel_case(input: &BunString) -> BunString {
+    case_change(input, crate::api::string_case::Case::Camel)
+}
+
+/// `Bun.capitalCase("two words")` -> `"Two Words"`.
+pub(crate) fn capital_case(input: &BunString) -> BunString {
+    case_change(input, crate::api::string_case::Case::Capital)
+}
+
+/// `Bun.constantCase("two words")` -> `"TWO_WORDS"`.
+pub(crate) fn constant_case(input: &BunString) -> BunString {
+    case_change(input, crate::api::string_case::Case::Constant)
+}
+
+/// `Bun.dotCase("two words")` -> `"two.words"`.
+pub(crate) fn dot_case(input: &BunString) -> BunString {
+    case_change(input, crate::api::string_case::Case::Dot)
+}
+
+/// `Bun.kebabCase("two words")` -> `"two-words"`.
+pub(crate) fn kebab_case(input: &BunString) -> BunString {
+    case_change(input, crate::api::string_case::Case::Kebab)
+}
+
+/// `Bun.pascalCase("two words")` -> `"TwoWords"`.
+pub(crate) fn pascal_case(input: &BunString) -> BunString {
+    case_change(input, crate::api::string_case::Case::Pascal)
+}
+
+/// `Bun.snakeCase("two words")` -> `"two_words"`.
+pub(crate) fn snake_case(input: &BunString) -> BunString {
+    case_change(input, crate::api::string_case::Case::Snake)
+}
+
+/// `Bun.trainCase("two words")` -> `"Two-Words"`.
+pub(crate) fn train_case(input: &BunString) -> BunString {
+    case_change(input, crate::api::string_case::Case::Train)
+}
+
 /// `Bun.gc(force)`: heap size after the collection.
 pub(crate) fn gc_from_js(cx: &mut JsScope<'_>, force: bool) -> usize {
     cx.global().bun_vm().as_mut().garbage_collect_from_js(force)

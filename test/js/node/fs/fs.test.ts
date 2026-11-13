@@ -3964,8 +3964,8 @@ describe("rm", () => {
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stderr).toBe("");
         expect(JSON.parse(stdout)).toEqual({ rmSync: "EPERM", promise: "EPERM", callback: "EPERM" });
-        expect(exitCode).toBe(0);
         expect(fs.existsSync(file)).toBe(true);
+        expect(exitCode).toBe(0);
       } finally {
         restore();
       }

@@ -1699,9 +1699,9 @@ impl JSValkeyClient {
             );
         };
 
-        // Two arguments, or a function in the second place, means .unsubscribe(channel, listener) is invoked.
+        // Two arguments, or a channel and a function, means .unsubscribe(channel, listener) is invoked.
         if let &[_, listener_cb, ref rest @ ..] = args_view
-            && (rest.is_empty() || listener_cb.is_callable())
+            && (rest.is_empty() || (channel_or_many.is_string() && listener_cb.is_callable()))
         {
             // In this case, the first argument is a channel string and the second
             // argument is the handler to remove.
@@ -1719,9 +1719,13 @@ impl JSValkeyClient {
                 ));
             }
 
-            if !rest.iter().all(|arg| arg.is_undefined_or_null()) {
+            // Any other argument after the listener is not read. A second listener would stay subscribed.
+            if rest
+                .iter()
+                .any(|arg| arg.is_callable() && *arg != listener_cb)
+            {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "unsubscribe does not accept arguments after the listener"
+                    "unsubscribe takes one listener. Call it again for each other listener"
                 )));
             }
 

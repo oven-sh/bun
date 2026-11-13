@@ -378,9 +378,7 @@ impl SideEffects {
                             }
                         }
 
-                        // G::Property is not Copy (Vec ts_decorators field), so swap
-                        // so the kept property lands at `end` without cloning.
-                        e_object.properties.slice_mut().swap(end, j);
+                        e_object.properties.copy_within(j..=j, end);
                         end += 1;
                     }
                     e_object.properties.shrink_retaining_capacity(end);

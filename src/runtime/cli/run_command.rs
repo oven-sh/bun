@@ -822,7 +822,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             let loaders = loaders_from_transform_options(loaders, bun_ast::Target::Bun).ok()?;
             crate::jsc_hooks::loader_for_path(&bun_resolver::fs::Path::init(path), &loaders)
         };
-        let is_in_memory = !ctx.runtime_options.eval.script.is_empty();
+        let is_in_memory = ctx.runtime_options.eval.has_eval || !ctx.runtime_options.eval.script.is_empty();
         let named = (!is_in_memory).then(|| loader.or_else(by_name)).flatten();
         // `[eval]`, `[stdin]`, and a name that says nothing.
         named.unwrap_or(Loader::Tsx)
@@ -1094,7 +1094,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.set_main(entry);
 
         if let Some(entry) = entry
-            && !ctx.runtime_options.eval.script.is_empty()
+            && (ctx.runtime_options.eval.has_eval || !ctx.runtime_options.eval.script.is_empty())
         {
             vm.module_loader.eval_source = Some(Box::new(bun_ast::Source::init_path_string(
                 entry,
@@ -3172,6 +3172,129 @@ impl RunCommand {
         // values. Explicit `--env-file` is still honored. #6338
         ctx.args.disable_default_env_files = true;
 
+        // `bun node <file>`: argv[1]=="node" made which() take the node
+        // emulation path, but the literal "node" positional is still in
+        // ctx.positionals[0] — clap's stop_after_positional_at=1 parked
+        // everything after it in passthrough, so node flags like `-e` were
+        // never parsed either. Remove the "node" placeholder and re-parse the
+        // passthrough head as node flags. argv0=node (symlink) keeps
+        // IS_NODE_ARG false and never takes this path.
+        if crate::cli::IS_NODE_ARG.load(::core::sync::atomic::Ordering::Relaxed) {
+            if ctx.positionals.first().is_some_and(|p| p.as_ref() == b"node") {
+                ctx.positionals.remove(0);
+                // clap stopped after the "node" placeholder, so the flags and
+                // the script are still in passthrough. Walk them once: consume
+                // eval/print, version and help; skip other Node flags so none
+                // is mistaken for the script; the first non-flag is the script.
+                // After an eval script every remaining argument belongs to it.
+                let takes_value = |flag: &[u8]| {
+                    let name = bun_core::strings::split_once_char(flag, b'=').map_or(flag, |it| it.0);
+                    matches!(
+                        name,
+                        b"--require"
+                            | b"-r"
+                            | b"--loader"
+                            | b"--experimental-loader"
+                            | b"--import"
+                            | b"--conditions"
+                            | b"-C"
+                            | b"--inspect-port"
+                            | b"--inspect-publish-uid"
+                            | b"--max-old-space-size"
+                            | b"--max-semi-space-size"
+                            | b"--stack-size"
+                            | b"--title"
+                            | b"--trace-event-file-pattern"
+                            | b"--redirect-warnings"
+                            | b"--diagnostic-dir"
+                            | b"--icu-data-dir"
+                            | b"--openssl-config"
+                            | b"--tls-cipher-list"
+                            | b"--use-largepages"
+                            | b"--v8-pool-size"
+                            | b"--watch-path"
+                            | b"--env-file"
+                            | b"--test-reporter"
+                            | b"--test-reporter-destination"
+                            | b"--experimental-policy"
+                            | b"--heapsnapshot-signal"
+                            | b"--report-directory"
+                            | b"--report-filename"
+                            | b"--secure-heap"
+                            | b"--secure-heap-min"
+                    )
+                };
+                let mut eval_seen = false;
+                let mut target: Option<Box<[u8]>> = None;
+                while let Some(first) = ctx.passthrough.first().cloned() {
+                    let first: &[u8] = &first;
+                    if first == b"--" {
+                        ctx.passthrough.remove(0);
+                        if !ctx.passthrough.is_empty() {
+                            target = Some(ctx.passthrough.remove(0));
+                        }
+                        break;
+                    }
+                    if first == b"-e" || first == b"--eval" || first == b"-p" || first == b"--print" {
+                        let print = first == b"-p" || first == b"--print";
+                        ctx.passthrough.remove(0);
+                        let Some(script) = ctx.passthrough.first().cloned() else {
+                            Output::err_generic("Missing value for --eval/--print", ());
+                            bun_core::Global::exit(1);
+                        };
+                        ctx.passthrough.remove(0);
+                        // The script is process-lifetime, like the CLI argv it came from.
+                        ctx.runtime_options.eval.script = Box::leak(script);
+                        ctx.runtime_options.eval.has_eval = true;
+                        ctx.runtime_options.eval.eval_and_print = print;
+                        eval_seen = true;
+                        break;
+                    }
+                    if let Some(script) = first.strip_prefix(b"--eval=") {
+                        ctx.passthrough.remove(0);
+                        ctx.runtime_options.eval.script = Box::leak(script.to_vec().into_boxed_slice());
+                        ctx.runtime_options.eval.has_eval = true;
+                        eval_seen = true;
+                        break;
+                    }
+                    if let Some(script) = first.strip_prefix(b"--print=") {
+                        ctx.passthrough.remove(0);
+                        ctx.runtime_options.eval.script = Box::leak(script.to_vec().into_boxed_slice());
+                        ctx.runtime_options.eval.has_eval = true;
+                        ctx.runtime_options.eval.eval_and_print = true;
+                        eval_seen = true;
+                        break;
+                    }
+                    if first == b"--version" {
+                        crate::cli::print_version_and_exit();
+                    } else if first == b"--revision" {
+                        crate::cli::print_revision_and_exit();
+                    } else if first == b"--help" || first == b"-h" {
+                        crate::cli::command::tag_print_help(CommandTag::RunAsNodeCommand, true);
+                        Output::flush();
+                        bun_core::Global::exit(0);
+                    } else if first.len() > 1 && first[0] == b'-' {
+                        // Node's own arguments are execArgv, not process.argv;
+                        // drop the flag (and its value) instead of promoting it
+                        // as the file.
+                        ctx.passthrough.remove(0);
+                        if takes_value(first) && !ctx.passthrough.is_empty() {
+                            ctx.passthrough.remove(0);
+                        }
+                    } else {
+                        target = Some(ctx.passthrough.remove(0));
+                        break;
+                    }
+                }
+                if !eval_seen
+                    && let Some(target) = target
+                    && ctx.positionals.is_empty()
+                {
+                    ctx.positionals.push(target);
+                }
+            }
+        }
+
         // `node --interactive [-e code]`: same gate as AutoCommand — a script
         // positional wins, and `-p` currently bypasses the REPL (see mod.rs).
         if ctx.runtime_options.interactive
@@ -3181,7 +3304,7 @@ impl RunCommand {
             return Self::exec_node_repl(ctx);
         }
 
-        if !ctx.runtime_options.eval.script.is_empty() {
+        if ctx.runtime_options.eval.has_eval || !ctx.runtime_options.eval.script.is_empty() {
             // synthetic `[eval]` path under cwd
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
             let mut cwd_buf = bun_paths::path_buffer_pool::get();
@@ -3205,6 +3328,12 @@ impl RunCommand {
                 return Self::exec_node_repl(ctx);
             }
             Self::exec_as_if_node_missing_script();
+        }
+
+        // `bun node -` reads the script from stdin, as `bun run -` does.
+        if ctx.positionals[0].as_ref() == b"-" {
+            Self::exec_stdin(ctx)?;
+            return Ok(());
         }
 
         // borrowck — `boot_and_handle_error` takes `&mut ctx`, so

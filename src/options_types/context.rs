@@ -715,6 +715,9 @@ pub struct RuntimeOptions {
 #[derive(Default)]
 pub struct Eval {
     pub script: &'static [u8],
+    /// Whether `-e`/`--eval`/`-p`/`--print` was given, including an empty
+    /// script. `script` alone cannot tell an empty one from no option.
+    pub has_eval: bool,
     pub eval_and_print: bool,
     /// Under `--interactive`, `script` holds the node:repl bootstrap; this
     /// holds the user's actual `-e` bytes so `process._eval` reports them

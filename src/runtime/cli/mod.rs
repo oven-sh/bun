@@ -330,6 +330,12 @@ pub(crate) use bun_install::PRETEND_TO_BE_NODE;
 /// This is set `true` during `Command.which()` if argv0 is "bunx"
 static IS_BUNX_EXE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// This is set `true` during `Command.which()` if argv[1] is "node"
+/// (i.e. `bun node <file>`), so `exec_as_if_node` knows to skip the
+/// "node" positional. argv0=node (symlink) keeps this false.
+pub(crate) static IS_NODE_ARG: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
 bun_core::declare_scope!(CLI, hidden);
 
 pub(crate) type LoaderColonList =
@@ -769,26 +775,19 @@ pub(crate) mod command {
             return Tag::RunAsNodeCommand;
         }
 
-        let Some(mut first_arg_name) = iter.next() else {
+        let Some(first_arg_name) = super::script_or_command::first_word() else {
             return Tag::AutoCommand;
         };
-        while !first_arg_name.is_empty()
-            && first_arg_name[0] == b'-'
-            && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
-        {
-            // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
-            // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
-            // that and boot the legacy `bun repl` implementation instead.
-            match iter.next() {
-                Some(n) => first_arg_name = n,
-                None => return Tag::AutoCommand,
-            }
-        }
 
-        // `bun --cwd <dir> lint`: `<dir>` is the value of a flag.
-        let starts_with_flag = argv.get(1).is_some_and(|it| it.starts_with(b"-"));
-        if starts_with_flag && let Some(it) = super::script_or_command::command_after_flags() {
-            first_arg_name = it;
+        if first_arg_name == b"node" {
+            // `bun node <file>`: emulate node even though argv0 is "bun".
+            // Node-mode must not warn on flags Bun doesn't know.
+            bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG
+                .store(false, core::sync::atomic::Ordering::Relaxed);
+            // SAFETY: single-threaded startup
+            PRETEND_TO_BE_NODE.store(true, core::sync::atomic::Ordering::Relaxed);
+            IS_NODE_ARG.store(true, core::sync::atomic::Ordering::Relaxed);
+            return Tag::RunAsNodeCommand;
         }
 
         type RootCommandMatcher = strings::ExactSizeMatcher<12>;

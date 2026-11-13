@@ -898,13 +898,19 @@ impl JSValkeyClient {
                 || value.as_array_buffer(global).is_some()
                 || value.as_class_ref::<crate::webcore::Blob>().is_some()
         };
-        // An iterator adds (key, collection): `map()` an index and the array, a `Map` its key, a `Set` the value again.
+        // An iterator adds (key, collection): an index and the array, a key and the `Map` or object, the value again and the `Set`.
         if let [key, collection] = rest
             && collection.is_object()
             && !is_field(collection)
-            && (!key.is_object() || *key == fields)
         {
-            return false;
+            let is_key = if collection.is_array() {
+                key.is_number()
+            } else {
+                !key.is_object()
+            };
+            if is_key || *key == fields {
+                return false;
+            }
         }
         rest.first().is_some_and(|value| is_fields(*value)) || rest.iter().any(is_field)
     }

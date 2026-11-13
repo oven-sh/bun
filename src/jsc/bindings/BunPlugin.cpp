@@ -7030,9 +7030,11 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         // With two paths the mock has saved of two files: of the ES module under its import path, and of the module object under the path of require.cache.
         // Two test files may have loaded the two, so each side has the number of its own path. A number outlasts the module that it was written for,
         // so it is read only for a side that the mock has saved something of: that side is loaded now. The eviction lists both sides either way, and keeps the importers of this test file.
-        bool wasESModuleLoadedByEarlierTestFile = mock->originalExports && plugins.testFileOfModule.get(specifier) != plugins.testFile;
-        bool wasModuleObjectLoadedByEarlierTestFile = mock->originalCommonJSExports && plugins.testFileOfModule.get(requireCachePath) != plugins.testFile;
-        bool wasLoadedByEarlierTestFile = (wasESModuleLoadedByEarlierTestFile || wasModuleObjectLoadedByEarlierTestFile) && !mock->isFromPreload && (!previous || previous->isFromPreload) && plugins.testFile > 1;
+        // An earlier mock of this test file has made the eviction for the side that it stood at, and for that side alone: with two paths each side is asked for its own.
+        JSModuleMock* previousOfModuleObject = mock->requireKey ? previousOfRequire : previous;
+        bool wasESModuleLoadedByEarlierTestFile = mock->originalExports && (!previous || previous->isFromPreload) && plugins.testFileOfModule.get(specifier) != plugins.testFile;
+        bool wasModuleObjectLoadedByEarlierTestFile = mock->originalCommonJSExports && (!previousOfModuleObject || previousOfModuleObject->isFromPreload) && plugins.testFileOfModule.get(requireCachePath) != plugins.testFile;
+        bool wasLoadedByEarlierTestFile = (wasESModuleLoadedByEarlierTestFile || wasModuleObjectLoadedByEarlierTestFile) && !mock->isFromPreload && plugins.testFile > 1;
 #if ENABLE(AOT)
         loaded.staleESMEntry |= loadFailedUnderMockThatIsDisplaced;
 #endif

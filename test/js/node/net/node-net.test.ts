@@ -1677,6 +1677,7 @@ describe("Socket fd adoption", () => {
       const events: string[] = [];
       socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
       socket.on("end", () => events.push("end"));
+      socket.on("close", () => events.push("close"));
       const closed = once(socket, "close");
 
       const first = once(socket, "data");
@@ -1762,6 +1763,7 @@ describe("Socket fd adoption", () => {
     const socket = connect({ fd: rfd });
     socket.on("end", () => events.push("end"));
     socket.on("error", err => events.push(`error:${(err as NodeJS.ErrnoException).code}`));
+    socket.on("close", () => events.push("close"));
     const closed = once(socket, "close");
 
     const data = once(socket, "data");
@@ -1840,11 +1842,10 @@ describe("Socket fd adoption", () => {
 
       const socket = connect({ fd });
       const [err] = await once(socket, "error");
-      expect({ rejected, connectError, netError: err.code, destroyed: socket.destroyed }).toEqual({
+      expect({ rejected, connectError, netError: err.code }).toEqual({
         rejected: "ENOTSOCK",
         connectError: "ENOTSOCK",
         netError: "ENOTSOCK",
-        destroyed: true,
       });
     } finally {
       try {

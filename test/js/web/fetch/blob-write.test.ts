@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { closeSync, openSync } from "fs";
 import { expectMaxObjectTypeCount, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
@@ -53,6 +54,23 @@ test("Bun.file(path).delete() does not throw", async () => {
   const file = Bun.file(path.join(dir, "a"));
   await expect(file.delete()).resolves.toBeUndefined();
   expect(await Bun.file(path.join(dir, "a")).exists()).toBe(false);
+});
+
+// A file made from a descriptor has no path to unlink.
+test.each(["unlink", "delete"] as const)("Bun.file(fd).%s() rejects", async method => {
+  await using dir = tempDir("bun-unlink-fd", { a: "Hello, world!" });
+  const fd = openSync(path.join(dir, "a"), "r");
+  try {
+    const promise = Bun.file(fd)[method]();
+    await expect(promise).rejects.toBeInstanceOf(TypeError);
+    await expect(promise).rejects.toMatchObject({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: "Is not possible to unlink a file descriptor",
+    });
+  } finally {
+    closeSync(fd);
+  }
+  expect(await Bun.file(path.join(dir, "a")).exists()).toBe(true);
 });
 
 test("blob.writer() throws for data-backed blob", () => {

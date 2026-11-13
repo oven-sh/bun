@@ -316,7 +316,7 @@ impl<'a> LinkerGraph<'a> {
 // Symbol/part graph mutation surface needed by
 // `linker_context/scanImportsAndExports.rs` and `LinkerContext::do_step5`.
 //
-// Expressed as free fns over individual SoA column slices so callers that
+// Expressed over individual SoA column slices so callers that
 // already hold a `BundledAstColumnsMut` / `JSMetaColumnsMut` split-borrow
 // can hand in just the columns these touch without re-borrowing
 // `&mut LinkerGraph` (RUST_IDIOMS_AUDIT.md §3). The `&mut self` methods are
@@ -359,7 +359,7 @@ pub(crate) fn generate_new_symbol(
     ref_
 }
 
-fn top_level_symbol_to_parts<'a>(
+pub(crate) fn top_level_symbol_to_parts<'a>(
     top_level_symbol_to_parts_overlay: &'a [TopLevelSymbolToParts],
     top_level_symbols_to_parts: &'a [bundled_ast::TopLevelSymbolToParts],
     id: u32,
@@ -374,7 +374,7 @@ fn top_level_symbol_to_parts<'a>(
     &[]
 }
 
-fn add_part_to_file(
+pub(crate) fn add_part_to_file(
     parts: &mut [part::List<'_>],
     top_level_symbol_to_parts_overlay: &mut [TopLevelSymbolToParts],
     top_level_symbols_to_parts: &[bundled_ast::TopLevelSymbolToParts],
@@ -418,136 +418,21 @@ fn add_part_to_file(
     Ok(part_id)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn generate_symbol_import_and_use(
-    parts: &mut [part::List<'_>],
-    ast_flags: &mut [bundled_ast::Flags],
-    exports_ref: &[Ref],
-    module_ref: &[Ref],
-    top_level_symbols_to_parts: &[bundled_ast::TopLevelSymbolToParts],
-    imports_to_bind: &mut [js_meta::RefImportData],
-    top_level_symbol_to_parts_overlay: &[TopLevelSymbolToParts],
-    source_index: u32,
-    part_index: u32,
-    ref_: Ref,
-    use_count: u32,
-    source_index_to_import_from: Index,
-) -> Result<(), bun_alloc::AllocError> {
-    if use_count == 0 {
-        return Ok(());
-    }
-
-    let exports_ref_v = exports_ref[source_index as usize];
-    let module_ref_v = module_ref[source_index as usize];
-
-    // Mark this symbol as used by this part
-    {
-        let part: &mut Part = &mut parts[source_index as usize].as_mut_slice()[part_index as usize];
-        let uses_entry = part.symbol_uses.get_or_put(ref_)?;
-        if !uses_entry.found_existing {
-            *uses_entry.value_ptr = symbol::Use::unscoped(use_count);
-        } else {
-            uses_entry.value_ptr.merge(symbol::Use::unscoped(use_count));
-        }
-    }
-
-    if !exports_ref_v.is_empty() && ref_.eql(exports_ref_v) {
-        ast_flags[source_index as usize].insert(bundled_ast::Flags::USES_EXPORTS_REF);
-    }
-
-    if !module_ref_v.is_empty() && ref_.eql(module_ref_v) {
-        ast_flags[source_index as usize].insert(bundled_ast::Flags::USES_MODULE_REF);
-    }
-
-    // null ref shouldn't be there.
-    debug_assert!(!ref_.is_empty());
-
-    // Track that this specific symbol was imported
-    if source_index_to_import_from.get() != source_index {
-        imports_to_bind[source_index as usize].put(
-            ref_,
-            js_meta::ImportToBind {
-                data: ImportTracker {
-                    source_index: source_index_to_import_from,
-                    import_ref: ref_,
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-        )?;
-    }
-
-    // Pull in all parts that declare this symbol
-    let part_ids = top_level_symbol_to_parts(
-        top_level_symbol_to_parts_overlay,
-        top_level_symbols_to_parts,
-        source_index_to_import_from.get(),
-        ref_,
-    );
-    let dependencies =
-        &mut parts[source_index as usize].as_mut_slice()[part_index as usize].dependencies;
-    dependencies.extend(part_ids.iter().map(move |&part_id| Dependency {
-        source_index: source_index_to_import_from,
-        part_index: part_id,
-    }));
-    Ok(())
+/// The columns that say which part declares and which part uses a symbol.
+pub(crate) struct SymbolUses<'s, 'a> {
+    pub(crate) parts: &'s mut [part::List<'a>],
+    pub(crate) ast_flags: &'s mut [bundled_ast::Flags],
+    pub(crate) exports_ref: &'s [Ref],
+    pub(crate) module_ref: &'s [Ref],
+    pub(crate) named_exports: &'s [bundled_ast::NamedExports],
+    pub(crate) top_level_symbols_to_parts: &'s [bundled_ast::TopLevelSymbolToParts],
+    pub(crate) top_level_symbol_to_parts_overlay: &'s mut [TopLevelSymbolToParts],
+    pub(crate) imports_to_bind: &'s mut [RefImportData],
 }
 
-impl<'a> LinkerGraph<'a> {
+impl SymbolUses<'_, '_> {
     pub(crate) fn runtime_function(&self, name: &[u8]) -> Ref {
-        runtime_function(self.ast.items_named_exports(), name)
-    }
-
-    /// Shared-ref view of a symbol that is known to exist (the `Ref` was
-    /// produced by the symbol table itself). Thin wrapper over
-    /// [`symbol::Map::get_const`]; callers previously open-coded
-    /// `unsafe { &*graph.symbols.get(r).expect(..) }`.
-    #[inline]
-    pub(crate) fn symbol(&self, ref_: Ref) -> &Symbol {
-        self.symbols
-            .get_const(ref_)
-            .expect("infallible: ref in symbol table")
-    }
-
-    /// Mutable view of a symbol that is known to exist. Takes `&self` (not
-    /// `&mut self`): the linker mutates per-symbol fields (`link`,
-    /// `namespace_alias`, `import_item_status`, ...) through shared
-    /// `&LinkerContext`/`&LinkerGraph` paths while iterating disjoint graph
-    /// columns, mirroring the prior open-coded `unsafe { &mut *get(r) }`.
-    ///
-    /// # Safety
-    /// Caller must ensure no other live `&`/`&mut` borrow aliases the same
-    /// symbol slot for the returned reference's lifetime (the `&self` signature
-    /// alone cannot enforce this — two calls with the same `Ref` while both
-    /// results are live is UB). Mirrors the prior open-coded
-    /// `unsafe { &mut *get(r) }` call-site obligation.
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) unsafe fn symbol_mut(&self, ref_: Ref) -> &mut Symbol {
-        // SAFETY: `ref_` was produced by this symbol table, so `get` is
-        // infallible and points at a live slot; caller guarantees the mutated
-        // slot is disjoint from any other borrow held at the call site.
-        unsafe {
-            &mut *self
-                .symbols
-                .get(ref_)
-                .expect("infallible: ref in symbol table")
-        }
-    }
-
-    pub(crate) fn generate_new_symbol(
-        &mut self,
-        source_index: u32,
-        kind: symbol::Kind,
-        original_name: &[u8],
-    ) -> Ref {
-        generate_new_symbol(
-            &mut self.symbols,
-            self.ast.items_module_scope_mut(),
-            source_index,
-            kind,
-            original_name,
-        )
+        runtime_function(self.named_exports, name)
     }
 
     pub(crate) fn generate_runtime_symbol_import_and_use(
@@ -577,6 +462,155 @@ impl<'a> LinkerGraph<'a> {
         )
     }
 
+    pub(crate) fn generate_symbol_import_and_use(
+        &mut self,
+        source_index: u32,
+        part_index: u32,
+        ref_: Ref,
+        use_count: u32,
+        source_index_to_import_from: Index,
+    ) -> Result<(), bun_alloc::AllocError> {
+        if use_count == 0 {
+            return Ok(());
+        }
+
+        let exports_ref_v = self.exports_ref[source_index as usize];
+        let module_ref_v = self.module_ref[source_index as usize];
+
+        // Mark this symbol as used by this part
+        {
+            let part: &mut Part =
+                &mut self.parts[source_index as usize].as_mut_slice()[part_index as usize];
+            let uses_entry = part.symbol_uses.get_or_put(ref_)?;
+            if !uses_entry.found_existing {
+                *uses_entry.value_ptr = symbol::Use::unscoped(use_count);
+            } else {
+                uses_entry.value_ptr.merge(symbol::Use::unscoped(use_count));
+            }
+        }
+
+        if !exports_ref_v.is_empty() && ref_.eql(exports_ref_v) {
+            self.ast_flags[source_index as usize].insert(bundled_ast::Flags::USES_EXPORTS_REF);
+        }
+
+        if !module_ref_v.is_empty() && ref_.eql(module_ref_v) {
+            self.ast_flags[source_index as usize].insert(bundled_ast::Flags::USES_MODULE_REF);
+        }
+
+        // null ref shouldn't be there.
+        debug_assert!(!ref_.is_empty());
+
+        // Track that this specific symbol was imported
+        if source_index_to_import_from.get() != source_index {
+            self.imports_to_bind[source_index as usize].put(
+                ref_,
+                js_meta::ImportToBind {
+                    data: ImportTracker {
+                        source_index: source_index_to_import_from,
+                        import_ref: ref_,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )?;
+        }
+
+        // Pull in all parts that declare this symbol
+        let part_ids = top_level_symbol_to_parts(
+            self.top_level_symbol_to_parts_overlay,
+            self.top_level_symbols_to_parts,
+            source_index_to_import_from.get(),
+            ref_,
+        );
+        let dependencies =
+            &mut self.parts[source_index as usize].as_mut_slice()[part_index as usize].dependencies;
+        dependencies.extend(part_ids.iter().map(move |&part_id| Dependency {
+            source_index: source_index_to_import_from,
+            part_index: part_id,
+        }));
+        Ok(())
+    }
+}
+
+/// See [`crate::LinkerContext::is_external_dynamic_import`].
+pub(crate) fn is_external_dynamic_import(
+    code_splitting: bool,
+    entry_point_kinds: &[entry_point::Kind],
+    record: &bun_ast::ImportRecord,
+    source_index: u32,
+) -> bool {
+    if !code_splitting || record.source_index.get() == source_index {
+        return false;
+    }
+    let crosses_chunk = match record.kind {
+        ImportKind::Dynamic => true,
+        ImportKind::Require => record
+            .flags
+            .contains(bun_ast::ImportRecordFlags::CROSS_CHUNK_REQUIRE),
+        _ => false,
+    };
+    crosses_chunk && entry_point_kinds[record.source_index.get() as usize].is_entry_point()
+}
+
+impl<'a> LinkerGraph<'a> {
+    pub(crate) fn runtime_function(&self, name: &[u8]) -> Ref {
+        runtime_function(self.ast.items_named_exports(), name)
+    }
+
+    /// Shared-ref view of a symbol that is known to exist (the `Ref` was
+    /// produced by the symbol table itself).
+    #[inline]
+    pub(crate) fn symbol(&self, ref_: Ref) -> &Symbol {
+        self.symbols
+            .get_const(ref_)
+            .expect("infallible: ref in symbol table")
+    }
+
+    pub(crate) fn generate_new_symbol(
+        &mut self,
+        source_index: u32,
+        kind: symbol::Kind,
+        original_name: &[u8],
+    ) -> Ref {
+        generate_new_symbol(
+            &mut self.symbols,
+            self.ast.items_module_scope_mut(),
+            source_index,
+            kind,
+            original_name,
+        )
+    }
+
+    fn symbol_uses(&mut self) -> SymbolUses<'_, 'a> {
+        let ast = self.ast.split_mut();
+        let meta = self.meta.split_mut();
+        SymbolUses {
+            parts: ast.parts,
+            ast_flags: ast.flags,
+            exports_ref: ast.exports_ref,
+            module_ref: ast.module_ref,
+            named_exports: ast.named_exports,
+            top_level_symbols_to_parts: ast.top_level_symbols_to_parts,
+            top_level_symbol_to_parts_overlay: meta.top_level_symbol_to_parts_overlay,
+            imports_to_bind: meta.imports_to_bind,
+        }
+    }
+
+    pub(crate) fn generate_runtime_symbol_import_and_use(
+        &mut self,
+        source_index: index::Int,
+        entry_point_part_index: Index,
+        name: &[u8],
+        count: u32,
+    ) -> Result<(), bun_alloc::AllocError> {
+        self.symbol_uses().generate_runtime_symbol_import_and_use(
+            source_index,
+            entry_point_part_index,
+            name,
+            count,
+        )
+    }
+
     pub(crate) fn add_part_to_file(
         &mut self,
         id: u32,
@@ -600,16 +634,7 @@ impl<'a> LinkerGraph<'a> {
         use_count: u32,
         source_index_to_import_from: Index,
     ) -> Result<(), bun_alloc::AllocError> {
-        let ast = self.ast.split_mut();
-        let meta = self.meta.split_mut();
-        generate_symbol_import_and_use(
-            ast.parts,
-            ast.flags,
-            ast.exports_ref,
-            ast.module_ref,
-            ast.top_level_symbols_to_parts,
-            meta.imports_to_bind,
-            meta.top_level_symbol_to_parts_overlay,
+        self.symbol_uses().generate_symbol_import_and_use(
             source_index,
             part_index,
             ref_,

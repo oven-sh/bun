@@ -83,7 +83,7 @@ const fourBuilds =
 
 test("a program is built as written, with its types erased, where one guess in three fails, and where proofs are checked", async () => {
   expect(await waysOf([])).toEqual(inFourWays("3"));
-}, 120_000);
+});
 
 test("the builds of each way are counted, and --no-erased is named where it leaves them out", async () => {
   const [whole, first] = await Promise.all([driven([]), driven(["--no-erased"])]);
@@ -92,23 +92,19 @@ test("the builds of each way are counted, and --no-erased is named where it leav
     "builds by way: compiled 1 | --no-erased leaves out every build behind the first\n" +
       "left out by a line: 0 not compared | 0 not built\n",
   );
-}, 120_000);
+});
 
 test.each([
   ["137940", "3"],
   ["137941", "2"],
   ["137942", "7"],
-])(
-  "in build %s of CI it is one guess in %s",
-  async (number, n) => {
-    expect(await waysOf([], { BUILDKITE_BUILD_NUMBER: number })).toEqual(inFourWays(n));
-  },
-  120_000,
-);
+])("in build %s of CI it is one guess in %s", async (number, n) => {
+  expect(await waysOf([], { BUILDKITE_BUILD_NUMBER: number })).toEqual(inFourWays(n));
+});
 
 test("--one-guess-in says which, with a seed or without", async () => {
   expect(await waysOf(["--one-guess-in=5:8"], { BUILDKITE_BUILD_NUMBER: "137941" })).toEqual(inFourWays("5:8"));
-}, 120_000);
+});
 
 test.each(["1", "1:8", "0", "three"])(
   "--one-guess-in=%s is refused: where every guess fails no typed copy is entered",
@@ -141,7 +137,7 @@ test("a program that prints what goes by the copy that runs is built and run the
       "  not compared: sums.ts under --aot-harden=proof-checks\n",
     exitCode: 0,
   });
-}, 120_000);
+});
 
 const noBuild = "// No build under --aot-harden=proof-checks";
 const { "under --aot-harden=proof-checks": _, ...theOtherThree } = inFourWays("3").ways;
@@ -156,7 +152,7 @@ test("a line leaves the build of one way out; the other ways are held, and stder
       "  not built: sums.ts under --aot-harden=proof-checks\n",
     exitCode: 0,
   });
-}, 360_000);
+});
 
 const noSuchWay = "its flags are those of no way in which the program is built whatever the build of CI";
 const misspelt = `${noBuild.replace("proof-checks", "proof-cheks")}: for the test`;
@@ -185,19 +181,15 @@ const refusedLines = [
 const withRefusedLines = () =>
   started(["--no-erased"], {}, Object.fromEntries(refusedLines.map(([, head, , name]) => [name, head + program])));
 
-test.each(refusedLines)(
-  "a line that %s fails the program",
-  async (_, head, why, name) => {
-    expect(saidOf(await withRefusedLines(), name)).toEqual({
-      ways: { compiled: "fail" },
-      stage: "read",
-      // The line, and why it is not read.
-      message: `${head.split("\n").findLast(Boolean)}: ${why}`,
-      exitCode: 1,
-    });
-  },
-  120_000,
-);
+test.each(refusedLines)("a line that %s fails the program", async (_, head, why, name) => {
+  expect(saidOf(await withRefusedLines(), name)).toEqual({
+    ways: { compiled: "fail" },
+    stage: "read",
+    // The line, and why it is not read.
+    message: `${head.split("\n").findLast(Boolean)}: ${why}`,
+    exitCode: 1,
+  });
+});
 
 // One of them with the builds behind the first: the driver has one verdict for a file, and here three ways pass beside the one that is refused.
 test("a line that is not read leaves out no build: the other three ways pass, and the line alone fails the program", async () => {
@@ -214,7 +206,7 @@ test("a line that is not read leaves out no build: the other three ways pass, an
     counts: fourBuilds + "left out by a line: 0 not compared | 0 not built\n",
     exitCode: 1,
   });
-}, 120_000);
+});
 
 test("another exit code in a way that is not compared fails it all the same", async () => {
   expect(saidOf(await driven([], {}, notCompared, "process.exit(3);\n"))).toEqual({
@@ -229,7 +221,7 @@ test("another exit code in a way that is not compared fails it all the same", as
     message: "the reference ended with exit code 3, not with 0: see `// Exit code:`",
     exitCode: 1,
   });
-}, 120_000);
+});
 
 // The program of from-source/machine/where-the-emitters-hold-the-dividend-of-a-division-of-the-built-ins-is-held-to-its-told-range.ir, which says what the fault does to it.
 // Its loop counts `left` down. With one that tests `turn !== turns`, the first build and the one with its types erased never end under this fault, and fill the memory until the driver ends them.
@@ -265,7 +257,7 @@ test("a stop in a way that is not compared fails it all the same", async () => {
     stderr: expect.stringMatching(/^bun: internal AOT error: type check failed at \S+ \(tally\)$/m),
     exitCode: 1,
   });
-}, 120_000);
+});
 
 test("the lines by which something of a stored program is not compared or not built are these, and a new one is written here too", () => {
   const stored = join(import.meta.dir, "parallel");
@@ -285,7 +277,7 @@ test("the lines by which something of a stored program is not compared or not bu
     "gc/a-generator-that-has-ended-lets-go-of-what-it-stored.mjs: Prints what the compiler saves",
     "lists-handed-to-apply/a-written-list-of-66000-elements-handed-to-a-function-in-sight.cjs: No build under --aot-harden=proof-checks",
   ]);
-}, 120_000);
+});
 
 test("--no-erased leaves it out with the other builds behind the first, and --deal prices it", async () => {
   expect(await waysOf(["--no-erased"])).toEqual({ ways: { compiled: "pass" }, exitCode: 0 });
@@ -297,4 +289,4 @@ test("--no-erased leaves it out with the other builds behind the first, and --de
     { lines: [{ ms: 4 * ms, files: [join(whole.root, "sums.ts")] }], exitCode: 0 },
     { lines: [{ ms, files: [join(first.root, "sums.ts")] }], exitCode: 0 },
   ]);
-}, 120_000);
+});

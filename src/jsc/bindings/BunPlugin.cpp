@@ -1109,7 +1109,11 @@ __attribute__((minsize)) static bool wasLoadedByOriginal(Zig::GlobalObject* glob
     if (asker.isNull())
         return false;
     JSC::JSString* file = original == JSModuleMock::OriginalOfImport ? mock->importKey.get() : mock->requireKey.get();
-    if (withoutOriginalModuleQuery(asker) == file->tryGetValue().data)
+    String askerFile = withoutOriginalModuleQuery(asker);
+    // One of the two files asks. import.meta.require() and import() name an original without its query, and keyOfImportWithTwoPaths() does not know it for one then.
+    if (mock->hasKey(askerFile))
+        mock->mayHaveLoadedOriginal = true;
+    if (askerFile == file->tryGetValue().data)
         return true;
 
     auto& vm = JSC::getVM(globalObject);

@@ -658,7 +658,8 @@ public:
     static bool defineOwnProperty(JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
 
     // Returns null once settled, otherwise a promise for that. `dependency` is the namespace of dependencyKeyOfModuleMock(), if it's loaded.
-    JSC::JSPromise* run(Zig::GlobalObject* globalObject, bool synchronous, JSObject* dependency = nullptr);
+    // `loadsDependencyAtOnce`: where it is not, a mock without a factory loads it as require() does, and is pending only if that module awaits.
+    JSC::JSPromise* run(Zig::GlobalObject* globalObject, bool synchronous, JSObject* dependency = nullptr, bool loadsDependencyAtOnce = false);
     void settle(Zig::GlobalObject* globalObject, JSValue value);
     void settleWithPromised(Zig::GlobalObject* globalObject, JSValue value);
     void didFail(Zig::GlobalObject* globalObject, JSValue error);
@@ -686,7 +687,7 @@ public:
 private:
     JSModuleMock(JSC::VM&, JSC::Structure*, JSC::JSValue factory, JSC::JSString* importKey, JSC::JSString* requireKey, JSC::JSString* writtenSpecifier, ModuleMockFunction);
 
-    JSValue callFactory(Zig::GlobalObject* globalObject, bool synchronous, JSObject* dependency);
+    JSValue callFactory(Zig::GlobalObject* globalObject, bool synchronous, JSObject* dependency, bool loadsDependencyAtOnce = false);
 };
 
 const JSC::ClassInfo JSModuleMock::s_info = { "ModuleMock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSModuleMock) };
@@ -1268,7 +1269,8 @@ static JSC::JSPromise* importModuleFrom(Zig::GlobalObject* globalObject, const S
     return promise;
 }
 
-static JSValue importModuleKeySync(Zig::GlobalObject* globalObject, const String& key)
+// `pendingLoad`: where the module awaits, nothing is thrown, and the promise of its load is stored there.
+static JSValue importModuleKeySync(Zig::GlobalObject* globalObject, const String& key, JSC::JSPromise** pendingLoad)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1292,6 +1294,10 @@ static JSValue importModuleKeySync(Zig::GlobalObject* globalObject, const String
         return {};
     case JSC::JSPromise::Status::Pending:
         break;
+    }
+    if (pendingLoad) {
+        *pendingLoad = promise;
+        return {};
     }
     JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, key, "\" is unsupported. use \"await import()\" instead."_s));
     return {};
@@ -2180,7 +2186,7 @@ static bool addHoistingNote(JSC::VM& vm, JSValue error)
     return true;
 }
 
-__attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* globalObject, bool synchronous, JSObject* dependency)
+__attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* globalObject, bool synchronous, JSObject* dependency, bool loadsDependencyAtOnce)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2294,7 +2300,8 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
         return {};
     }
 #endif
-    if (!dependency && !factoryValue && !spy)
+    // With two paths, originalNamespace is the original of the file that an import loads. An automock of Jest's kind is made of the file that require() loads.
+    if (!dependency && !factoryValue && !spy && !(requireKey && isOfJest()))
         dependency = originalNamespace.get();
 #if ENABLE(AOT)
     if (!dependency && !factoryValue && !spy && unevaluatedCompiledModule && (wasLaidOverFactoryThatTakesOriginal || !JSC::AOT::hasActiveMock(globalObject, JSC::AOT::ModuleID(*unevaluatedCompiledModule)))) {
@@ -2388,9 +2395,13 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
         addToImportChain(globalObject, *running, key);
     }
 
-    if (synchronous) {
-        JSValue moduleNamespace = importModuleKeySync(globalObject, key);
+    if (synchronous || loadsDependencyAtOnce) {
+        // A require() cannot wait for a module that awaits. Whoever can is handed the promise of its load, as below.
+        JSC::JSPromise* pendingLoad = nullptr;
+        JSValue moduleNamespace = importModuleKeySync(globalObject, key, synchronous ? nullptr : &pendingLoad);
         RETURN_IF_EXCEPTION(scope, {});
+        if (pendingLoad)
+            return pendingLoad;
         RELEASE_AND_RETURN(scope, exportsOfModuleMockWithoutFactory(globalObject, this, moduleNamespace));
     }
 
@@ -2679,7 +2690,7 @@ static String fileOfFunction(JSValue function)
     return url.isValid() && url.protocolIsFile() ? url.fileSystemPath() : String();
 }
 
-__attribute__((minsize)) JSC::JSPromise* JSModuleMock::run(Zig::GlobalObject* globalObject, bool synchronous, JSObject* dependency)
+__attribute__((minsize)) JSC::JSPromise* JSModuleMock::run(Zig::GlobalObject* globalObject, bool synchronous, JSObject* dependency, bool loadsDependencyAtOnce)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2716,7 +2727,7 @@ __attribute__((minsize)) JSC::JSPromise* JSModuleMock::run(Zig::GlobalObject* gl
     }
 #endif
 
-    JSValue value = callFactory(globalObject, synchronous, dependency);
+    JSValue value = callFactory(globalObject, synchronous, dependency, loadsDependencyAtOnce);
     if (!scope.exception()) [[likely]] {
         if (auto* promise = dynamicDowncast<JSC::JSPromise>(value)) {
             switch (promise->status()) {
@@ -6422,10 +6433,13 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     // False once the factory itself has re-mocked or unmocked the module, which wins.
     bool isCurrent = true;
     if (loaded.esmNamespace || loaded.compiledModule || loaded.commonJSModule) {
+        // An automock of Jest's kind is made of the file that require() loads. With two paths only the ES module of the name may be loaded: the other file is then loaded here, as require() loads it,
+        // so that the ES module is patched before this call returns and a require() of the name finds a mock that has settled.
+        bool loadsFileOfRequireAtOnce = !mock->factory.get() && mock->isOfJest() && mock->requireKey;
 #if ENABLE(AOT)
-        pendingFactory = mock->run(globalObject, placeOfMockThatEnds && !mock->factory.get());
+        pendingFactory = mock->run(globalObject, placeOfMockThatEnds && !mock->factory.get(), nullptr, loadsFileOfRequireAtOnce);
 #else
-        pendingFactory = mock->run(globalObject, false);
+        pendingFactory = mock->run(globalObject, false, nullptr, loadsFileOfRequireAtOnce);
 #endif
         // As in Vitest and Jest, a hoisted factory that reads a variable declared below the call waits for the first import.
 #if ENABLE(AOT)

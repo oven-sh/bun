@@ -5059,9 +5059,9 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
     RETURN_IF_EXCEPTION(scope, {});
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    noteModuleEvaluation(globalObject, moduleLoader);
     if (Bun::isEntryPointWrapper(globalObject, moduleLoader, key, moduleRecordValue)) [[unlikely]]
         RELEASE_AND_RETURN(scope, Bun::evaluateEntryPointWrapper(globalObject, moduleLoader, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode));
+    noteModuleEvaluation(globalObject, moduleLoader);
     RELEASE_AND_RETURN(scope, moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode));
 }
 

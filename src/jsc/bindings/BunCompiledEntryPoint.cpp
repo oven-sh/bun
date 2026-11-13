@@ -22,6 +22,7 @@ extern "C" BunString Bun__VM__entryRootKey(void*);
 #endif
 extern "C" void Bun__VM__didLookForServer(void*);
 extern "C" BunString Bun__VM__entryPath(void*);
+extern "C" void Bun__noteEntryEvaluation(Zig::GlobalObject*);
 
 namespace Bun {
 
@@ -145,6 +146,8 @@ JSValue evaluateEntryPointWrapper(Zig::GlobalObject* globalObject, JSModuleLoade
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // A CommonJS entry point evaluates without moduleLoaderEvaluate(), so this can be the first module of the load that it gets.
+    Bun__noteEntryEvaluation(globalObject);
     JSValue result = moduleLoader->evaluateNonVirtual(globalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
     RETURN_IF_EXCEPTION(scope, {});
     Bun__VM__didLookForServer(globalObject->bunVM());

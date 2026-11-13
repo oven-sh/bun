@@ -21,8 +21,7 @@ JSC::JSValue evaluateEntryPointWrapper(Zig::GlobalObject*, JSC::JSModuleLoader*,
 
 ALWAYS_INLINE bool isEntryPointWrapper(Zig::GlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSValue key, JSC::JSValue moduleRecord)
 {
-    // Asked for every module that evaluates. A look is pending only until the entry point has evaluated, and nearly every
-    // module has a key of another length.
+    // Asked for every module that evaluates in front of the entry point: nearly all have a key of another length.
     return Bun__VM__shouldLookForServerBehindBunMain(globalObject->bunVM()) && key.isString() && asString(key)->length() == "bun:main"_s.length() && isRegisteredEntryPointWrapper(globalObject, moduleLoader, moduleRecord);
 }
 

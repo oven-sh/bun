@@ -5623,7 +5623,17 @@ static NEVER_INLINE SUPPRESS_ASAN void clearStackBelowCaller()
         dead[i] = 0;
 }
 
-size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
+// Its frame has slots that nothing writes, as the request of the branch not taken, so it goes on the stack that was cleared.
+static NEVER_INLINE void collectFully(JSC::VM* vm, bool sync)
+{
+    if (sync)
+        vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+    else
+        vm->heap.collectSync(JSC::CollectionScope::Full);
+}
+
+// Red zones are such slots too, and this frame is above what is cleared.
+SUPPRESS_ASAN size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);
 
@@ -5638,19 +5648,14 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
     // A full collection only drops the caches that nothing has used since the one before it.
     vm->sourceProviderCacheMap.clear();
 
-    if (sync) {
-        vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
-        // What the call above left on the stack must not be scanned by the collection below; see the helper's comment.
-        clearStackBelowCaller();
-        vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+    vm->heap.deleteAllUnlinkedCodeBlocks(sync ? JSC::PreventCollectionAndDeleteAllCode : JSC::DeleteAllCodeIfNotCollecting);
+    // What the call above left on the stack must not be scanned by the collection below; see the helper's comment.
+    clearStackBelowCaller();
+    collectFully(vm, sync);
 #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
+    if (sync)
         malloc_zone_pressure_relief(nullptr, 0);
 #endif
-    } else {
-        vm->heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
-        clearStackBelowCaller();
-        vm->heap.collectSync(JSC::CollectionScope::Full);
-    }
 
     vm->finalizeSynchronousJSExecution();
 

@@ -855,7 +855,7 @@ impl CreateCommand {
                     Ok(r) => r,
                     Err(_) => {
                         if log.errors > 0 {
-                            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                            let _ = log.print(Output::error_writer());
                         }
                         break 'process_package_json;
                     }
@@ -868,7 +868,7 @@ impl CreateCommand {
                 }
 
                 if log.errors > 0 {
-                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                    let _ = log.print(Output::error_writer());
 
                     break 'process_package_json;
                 }
@@ -1830,7 +1830,7 @@ impl Example {
                 refresher.refresh();
 
                 if log.errors > 0 {
-                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                    let _ = log.print(Output::error_writer());
                 } else {
                     bun_core::pretty_errorln!("Error parsing package: <r><red>{}<r>", err.name(),);
                 }
@@ -1842,7 +1842,7 @@ impl Example {
             refresher.root.end();
             refresher.refresh();
 
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print(Output::error_writer());
             Global::exit(1);
         }
         let tarball_url: &[u8] = if let Some(q) = expr.as_property(b"dist")
@@ -1975,7 +1975,7 @@ impl Example {
             Ok(e) => e,
             Err(err) => {
                 if log.errors > 0 {
-                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                    let _ = log.print(Output::error_writer());
                 } else {
                     bun_core::pretty_errorln!("Error parsing examples: <r><red>{}<r>", err.name(),);
                 }
@@ -1984,7 +1984,7 @@ impl Example {
         };
 
         if log.errors > 0 {
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print(Output::error_writer());
             Global::exit(1);
         }
 

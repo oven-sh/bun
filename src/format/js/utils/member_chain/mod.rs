@@ -507,6 +507,7 @@ fn arguments_print_the_same_once_broken<'a>(call: Call<'a>, f: &Formatter<'a>) -
         false => can_stay_expanded(argument.span()),
         true => argument.as_fn().is_some_and(|function| {
             can_stay_expanded(FormatFormalParameters(function).span())
+                || (function.type_params().iter()).any(|it| can_stay_expanded(it.span()))
                 || (function.return_type()).is_some_and(|it| can_stay_expanded(it.span()))
         }),
     })

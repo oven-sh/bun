@@ -365,6 +365,30 @@ struct InstanceStates {
     ran_out_of_stack: bool,
 }
 
+/// What `getModuleInstanceState` reads: the syntax, and nothing that the binder makes of it.
+struct InstanceStateOf<'f, 's> {
+    f: &'f File<'s>,
+    /// `f.text` is empty in a file that was parsed without a reader.
+    text: &'f [u8],
+    stack_check: bun_core::StackCheck,
+}
+
+/// `GetModuleInstanceState` for a namespace at the top level of a file that isn't bound.
+pub fn module_instance_state(f: &File, text: &[u8], m: ModuleId) -> ModuleInstanceState {
+    let mut states = InstanceStates {
+        by_module: vec![InstanceState::Unknown; f.modules.len()],
+        answered: Vec::new(),
+        reached_in_progress: false,
+        ran_out_of_stack: false,
+    };
+    let syntax = InstanceStateOf {
+        f,
+        text,
+        stack_check: bun_core::StackCheck::init(),
+    };
+    syntax.instance_state_of_module(m, &mut vec![f.body], &mut states)
+}
+
 impl<'f, 's> Binder<'f, 's> {
     pub(super) fn run(
         f: &'f File<'s>,
@@ -3334,7 +3358,12 @@ impl<'f, 's> Binder<'f, 's> {
             .by_module
             .resize(self.f.modules.len(), InstanceState::Unknown);
         let mut outer = std::mem::take(&mut self.statement_lists);
-        let state = self.instance_state_of_module(m, &mut outer, &mut states);
+        let syntax = InstanceStateOf {
+            f: self.f,
+            text: &self.f.text,
+            stack_check: self.stack_check,
+        };
+        let state = syntax.instance_state_of_module(m, &mut outer, &mut states);
         self.statement_lists = outer;
         if states.reached_in_progress {
             for &answered in &states.answered {
@@ -3345,7 +3374,9 @@ impl<'f, 's> Binder<'f, 's> {
         self.instance_states = states.by_module;
         state
     }
+}
 
+impl<'f, 's> InstanceStateOf<'f, 's> {
     /// `getModuleInstanceState`, and `getModuleInstanceStateCached` for the body. `outer` has the
     /// statement lists that enclose `m`, innermost last. A body that's queried while it's in
     /// progress contributes nothing. (A cycle through a statement always passes through a body.)
@@ -3444,7 +3475,7 @@ impl<'f, 's> Binder<'f, 's> {
             ..
         } = self.f[spec];
         // `export { "a" }`
-        if matches!(self.f.text.get(local_pos as usize), Some(b'"' | b'\'')) {
+        if matches!(self.text.get(local_pos as usize), Some(b'"' | b'\'')) {
             return ModuleInstanceState::Instantiated;
         }
         for depth in (0..outer.len()).rev() {
@@ -3500,7 +3531,9 @@ impl<'f, 's> Binder<'f, 's> {
             _ => false,
         }
     }
+}
 
+impl<'f, 's> Binder<'f, 's> {
     fn var_decl(&mut self, d: VarDeclId, always_assigned: bool) {
         let decl = &self.f[d];
         let mut flags = match decl.kind {

@@ -1298,6 +1298,16 @@ impl Mappings {
         Ok(Mappings { entries })
     }
 
+    /// The source that prints `at`, by the entries of `start..end` alone: the banner, the footer and the helpers have none.
+    fn source_within(&self, start: u32, at: u32, end: u32) -> Option<u32> {
+        let until = self.entries.partition_point(|entry| entry.0 <= at);
+        let before = self.entries[..until]
+            .last()
+            .filter(|entry| entry.0 >= start);
+        let after = self.entries[until..].first().filter(|entry| entry.0 < end);
+        before.or(after).map(|entry| entry.1)
+    }
+
     fn original(&self, generated: u32) -> Option<(u32, u32)> {
         let until = self.entries.partition_point(|entry| entry.0 <= generated);
         let last = self.entries[..until]
@@ -1553,6 +1563,13 @@ struct Declared {
     is_ambient_value: bool,
     is_function: bool,
     is_default_expression: bool,
+}
+
+impl Declared {
+    /// An import is a binding that is not one of `names`.
+    fn has_no_binding_of_its_own(&self) -> bool {
+        self.bindings.iter().all(|at| !self.names.contains(at))
+    }
 }
 
 impl<'a, 's> Syntax<'a, 's> {
@@ -1920,6 +1937,82 @@ impl<'a, 's> Syntax<'a, 's> {
         }
         declared
     }
+
+    /// The namespaces among the statements of a name that make no JavaScript.
+    fn erased_namespaces(&self, found: &Declared) -> impl Iterator<Item = ModuleId> {
+        let file = self.file;
+        (found.statements.iter()).filter_map(move |&statement| match file[statement].kind {
+            StmtKind::Module(module) => Some(module),
+            _ => None,
+        })
+    }
+
+    fn erased_text(&self, found: &Declared) -> Vec<&'a [u8]> {
+        let file = self.file;
+        let text = |&id: &StmtId| &self.text[file[id].start as usize..file[id].loc.end as usize];
+        found.statements.iter().map(text).collect()
+    }
+
+    /// TypeScript makes an object of a namespace that holds a value, and the code of the program can read it.
+    fn is_erased_object(&self, found: &Declared) -> bool {
+        use bun_sema::bind::{ModuleInstanceState, module_instance_state};
+        let file = self.file;
+        let is_erased = |&statement: &StmtId| file.is_erased_statement(statement);
+        found.statements.iter().all(is_erased)
+            && self.erased_namespaces(found).any(|module| {
+                module_instance_state(file, self.text, module)
+                    != ModuleInstanceState::NonInstantiated
+            })
+    }
+
+    /// The names that the JavaScript reads and no scope of it binds, each with the sources that print a read of it.
+    fn free_reads(&self, mappings: &Mappings) -> FxHashMap<Vec<u8>, Vec<Option<u32>>> {
+        use bun_sema::bind::{BindOptions, Binding, RuntimeBindOptions, bind};
+        let mut reads: FxHashMap<Vec<u8>, Vec<Option<u32>>> = FxHashMap::default();
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let how = bun_sema_parser::CompileParseOptions {
+            path: b"output.ts",
+            script_kind: Some(ScriptKind::Ts),
+            experimental_decorators: false,
+            every_file_is_a_module: true,
+            reads_jsdoc: false,
+            ignores_pure_comments: false,
+        };
+        let file = bun_sema_parser::parse_for_compile(session.arena(), &how, self.text, &atoms);
+        if file.has_errors || file.ran_out_of_stack {
+            return reads;
+        }
+        let runtime = BindOptions {
+            runtime: Some(RuntimeBindOptions::default()),
+            ..BindOptions::default()
+        };
+        let bound = bind(&file, runtime, &atoms, session.arena());
+        let statements: Vec<(u32, u32)> = (file.ids(file.body))
+            .map(|id| (file[id].start, file[id].loc.end))
+            .collect();
+        for (index, expr) in file.exprs.iter().enumerate() {
+            let ExprKind::Ident(name) = expr.kind else {
+                continue;
+            };
+            let binding = bound.binding(ExprId(index as u32));
+            if !matches!(binding, Binding::Free | Binding::CommonJs(_)) {
+                continue;
+            }
+            let around = statements.partition_point(|statement| statement.0 <= expr.pos);
+            let reader = around.checked_sub(1).and_then(|around| {
+                let (start, end) = statements[around];
+                mappings.source_within(start, expr.pos, end)
+            });
+            let name = atoms.bytes(name);
+            match reads.get_mut(name) {
+                Some(readers) if readers.contains(&reader) => {}
+                Some(readers) => readers.push(reader),
+                None => drop(reads.insert(name.to_vec(), vec![reader])),
+            }
+        }
+        reads
+    }
 }
 
 struct NamespaceObject<'a> {
@@ -1943,9 +2036,64 @@ struct Linked {
     ambient_enums: FxHashSet<(usize, u32)>,
     ambient_signatures: FxHashSet<(usize, u32)>,
     replaced_statements: FxHashSet<(usize, u32)>,
+    /// The statements of each name that `is_pinned` in `link` holds for, by module.
+    pinned_statements: FxHashSet<(usize, u32)>,
+    two_meanings: Option<TwoMeanings>,
     modules_of_untyped_values: Vec<Vec<u8>>,
     emitted_enums: FxHashMap<(u32, u32), Vec<u8>>,
     enum_names: FxHashMap<(u32, u32), Vec<u8>>,
+}
+
+/// `other`: the module where `name` is something else than in `declared_in`. `None`: text of no module, as a banner.
+#[derive(Clone, Debug)]
+pub struct TwoMeanings {
+    pub name: Vec<u8>,
+    pub declared_in: Vec<u8>,
+    pub other: Option<Vec<u8>>,
+}
+
+/// What else has `name`, which the modules `same` keep for one declaration. `Some(None)`: text of no module, as a banner.
+fn second_meaning_of(
+    name: &[u8],
+    same: &[usize],
+    readers: Option<&Vec<Option<u32>>>,
+    written: &[Option<Written<'_, '_>>],
+) -> Option<Option<usize>> {
+    let reader = (readers.into_iter().flatten())
+        .find(|reader| !reader.is_some_and(|source| same.contains(&(source as usize))));
+    if let Some(reader) = reader {
+        return Some(reader.map(|source| source as usize));
+    }
+    let names_another = |module: &Written<'_, '_>| {
+        let (syntax, file) = (&module.syntax, module.syntax.file);
+        let is_global = |at: u32| {
+            file.ids(file.body).map(|id| &file[id]).any(|statement| {
+                let opens_global_scope = matches!(statement.kind, StmtKind::Module(declared)
+                    if matches!(file[declared].name, ModuleName::Global));
+                opens_global_scope && statement.start <= at && at < statement.loc.end
+            })
+        };
+        let is_known = |at: u32| {
+            module.types.is_some_and(|types| {
+                types.references.iter().any(|reference| reference.0 == at)
+                    || types.globals.contains(&at)
+                    || (types.locals.iter()).any(|local| local.0 == at && !is_global(local.1))
+            })
+        };
+        let type_names = (syntax.file.names.iter())
+            .filter(|written| !written.is_qualified())
+            .map(|written| written.pos());
+        let type_queries = (syntax.file.exprs.iter())
+            .filter(|expr| matches!(expr.kind, ExprKind::Ident(_)))
+            .map(|expr| expr.pos)
+            .filter(|&at| is_inside(&module.type_ranges, at));
+        type_names
+            .chain(type_queries)
+            .any(|at| syntax.word(at) == name && !is_known(at))
+    };
+    (0..written.len())
+        .find(|index| !same.contains(index) && written[*index].as_ref().is_some_and(names_another))
+        .map(Some)
 }
 
 fn link(
@@ -2162,11 +2310,13 @@ fn link(
         }
     }
 
-    let declared_in_output: FxHashSet<&[u8]> = output
+    let mut declared_in_output: FxHashSet<&[u8]> = output
         .top_level_value_names()
         .into_iter()
         .map(|at| output.word(at))
         .collect();
+    let free_reads = std::cell::OnceCell::new();
+    let mut pinned: Vec<(&[u8], usize)> = Vec::new();
     let mut names: Vec<FxHashMap<&[u8], Vec<u8>>> = vec![FxHashMap::default(); written.len()];
     let mut values: Vec<FxHashMap<&[u8], &[u8]>> = vec![FxHashMap::default(); written.len()];
     let mut imports: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
@@ -2294,6 +2444,41 @@ fn link(
             {
                 continue;
             }
+            let syntax = &module.syntax;
+            // A module without types keeps its text, and so the name of what it declares.
+            let is_held_elsewhere = || {
+                written.iter().zip(&declared).any(|(other, declared)| {
+                    let other = other.as_ref().filter(|other| other.types.is_none());
+                    other
+                        .zip(declared.get(name))
+                        .is_some_and(|(other, theirs)| {
+                            other.syntax.erased_text(theirs) != syntax.erased_text(found)
+                        })
+                })
+            };
+            // The JavaScript of this module reads the name, and a read cannot follow a new name.
+            let is_pinned = module.types.is_some_and(|types| !types.is_script)
+                && syntax.erased_namespaces(found).next().is_some()
+                && found.has_no_binding_of_its_own()
+                && !emitted_from.contains_key(&index)
+                && (taken.contains(name) || !name.is_ascii())
+                && syntax.is_erased_object(found)
+                && !is_held_elsewhere()
+                && (free_reads.get_or_init(|| output.free_reads(mappings)))
+                    .get(name)
+                    .is_some_and(|readers| readers.contains(&Some(index as u32)));
+            if is_pinned {
+                pinned.push((name, index));
+                declared_in_output.insert(name);
+                let statements = found.statements.iter();
+                linked
+                    .pinned_statements
+                    .extend(statements.map(|statement| (index, statement.0)));
+            }
+            let name_to_write = |taken: &mut FxHashSet<Vec<u8>>| match is_pinned {
+                true => name.to_vec(),
+                false => unique(name, taken),
+            };
             if let Some((statement, imported_as)) = found.import {
                 let (file, statement) = (module.syntax.file, &module.syntax.file[statement]);
                 let StmtKind::Import(import) = statement.kind else {
@@ -2307,7 +2492,7 @@ fn link(
                     continue;
                 }
                 if is_relative {
-                    names[index].insert(name, unique(name, &mut taken));
+                    names[index].insert(name, name_to_write(&mut taken));
                     continue;
                 }
                 let imported = match imported_as {
@@ -2318,11 +2503,14 @@ fn link(
                     }
                 };
                 let key = [imported, b" ", tail].concat();
-                if let Some(known) = imports.get(&key) {
+                if let Some(known) = imports
+                    .get(&key)
+                    .filter(|known| !is_pinned || &known[..] == name)
+                {
                     names[index].insert(name, known.clone());
                     continue;
                 }
-                let local = unique(name, &mut taken);
+                let local = name_to_write(&mut taken);
                 let clause = match imported_as {
                     ImportedAs::Default => local.clone(),
                     ImportedAs::Namespace => [&b"* as "[..], &local[..]].concat(),
@@ -2347,6 +2535,10 @@ fn link(
                 );
                 imports.insert(key, local.clone());
                 names[index].insert(name, local);
+                continue;
+            }
+            if is_pinned {
+                names[index].insert(name, name.to_vec());
                 continue;
             }
             if found.is_ambient_value
@@ -2777,11 +2969,60 @@ fn link(
     );
     hoisted_statements.shared_sort();
     hoisted_statements.dedup();
+    let mut kept: Vec<(&[u8], usize, Vec<(usize, Vec<StmtId>)>)> = Vec::new();
+    for &(name, keeper) in &pinned {
+        if kept.iter().any(|known| known.0 == name) {
+            continue;
+        }
+        let is_written_as_it = |&other: &usize| match written[other].as_ref().map(|it| it.types) {
+            Some(Some(_)) => names[other].get(name).is_some_and(|new| &new[..] == name),
+            Some(None) => declared[other].contains_key(name),
+            None => false,
+        };
+        let declarers = (0..written.len()).filter(is_written_as_it).map(|other| {
+            let found = declared[other].get(name);
+            (
+                other,
+                found.map_or_else(Vec::new, |it| it.statements.clone()),
+            )
+        });
+        kept.push((name, keeper, declarers.collect()));
+    }
     drop(names);
     drop(declared);
     for (module, edits) in written.iter_mut().zip(all_edits) {
         if let Some(module) = module {
             module.edits = edits;
+        }
+    }
+    for (name, keeper, declarers) in kept {
+        let text_of = |(index, statements): &(usize, Vec<StmtId>)| -> Vec<u8> {
+            let module = written[*index].as_ref();
+            let text = |&id: &StmtId| {
+                module.map(|module| module.statement_text(id, Flags::EXPORT | Flags::DEFAULT))
+            };
+            statements.iter().filter_map(text).flatten().collect()
+        };
+        let kept_text = declarers.iter().find(|it| it.0 == keeper).map(text_of);
+        let (same, others): (Vec<_>, Vec<_>) =
+            (declarers.iter()).partition(|&declarer| Some(text_of(declarer)) == kept_text);
+        for (index, statements) in &same {
+            let statements = statements.iter().map(|statement| (*index, statement.0));
+            linked.pinned_statements.extend(statements);
+        }
+        let same: Vec<usize> = same.iter().map(|declarer| declarer.0).collect();
+        let readers = free_reads.get().and_then(|reads| reads.get(name));
+        let other = match others.first() {
+            Some(other) => Some(Some(other.0)),
+            None => second_meaning_of(name, &same, readers, written),
+        };
+        if let Some(other) = other {
+            linked.two_meanings = Some(TwoMeanings {
+                name: name.to_vec(),
+                declared_in: paths[keeper].to_vec(),
+                other: other.map(|index| paths[index].to_vec()),
+            });
+            break;
         }
     }
     let mut declarations = Vec::new();
@@ -3002,6 +3243,9 @@ fn add_types(
     transfer.copy_statements();
     transfer.copy_directives();
     transfer.copy_members();
+    if let Some(found) = &linked.two_meanings {
+        return Err(TypedFilesError::TwoMeanings(found.clone()));
+    }
     transfer.finish()
 }
 
@@ -3577,6 +3821,7 @@ impl<'a> Transfer<'_, 'a, '_> {
         );
         let (output_file, insertions) = (output.file, &mut self.insertions);
         let mut ambient_values: FxHashSet<&[u8]> = FxHashSet::default();
+        let mut pinned_texts: FxHashSet<Vec<u8>> = FxHashSet::default();
         let output_identifiers: FxHashSet<&[u8]> =
             output.used_names().map(|at| output.word(at)).collect();
         let mut output_statements: FxHashMap<(u32, u32), u32> = FxHashMap::default();
@@ -3679,7 +3924,12 @@ impl<'a> Transfer<'_, 'a, '_> {
                             }
                         }
                         _ if syntax.is_type_only_statement(id) => {
-                            module.statement_text(id, Flags::EXPORT | Flags::DEFAULT)
+                            let text = module.statement_text(id, Flags::EXPORT | Flags::DEFAULT);
+                            let is_pinned = linked.pinned_statements.contains(&(index, id.0));
+                            if is_pinned && !pinned_texts.insert(text.clone()) {
+                                continue;
+                            }
+                            text
                         }
                         _ => continue,
                     };
@@ -4124,6 +4374,7 @@ pub struct ModuleTypes {
     pub augmented_modules: Vec<(u32, Box<[u8]>)>,
     pub locals: Vec<(u32, u32)>,
     pub emitted_declarations: Box<[u8]>,
+    pub is_script: bool,
 }
 
 impl ModuleTypes {
@@ -4457,6 +4708,7 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
             augmented_modules,
             locals,
             emitted_declarations: Box::default(),
+            is_script: !hir.has_module_syntax || hir.is_script_for_project,
         }
     }))
 }
@@ -4476,6 +4728,7 @@ pub enum TypedFilesError {
     },
     MappingsNotBase64,
     NoFinalLineBreak,
+    TwoMeanings(TwoMeanings),
     SourceMapNotJson,
     SourceMapWithoutSources,
     SourceMapWithoutMappings,
@@ -4501,6 +4754,18 @@ impl core::fmt::Display for TypedFilesError {
             }
             TypedFilesError::NoFinalLineBreak => {
                 f.write_str("the JavaScript does not end with a line break")
+            }
+            TypedFilesError::TwoMeanings(TwoMeanings {
+                name,
+                declared_in,
+                other,
+            }) => {
+                let (name, declared_in) = (BStr::new(name), BStr::new(declared_in));
+                write!(f, "{declared_in} declares \"{name}\" and reads it, and ")?;
+                match other {
+                    Some(other) => write!(f, "{} means another \"{name}\"", BStr::new(other)),
+                    None => write!(f, "code that the build adds means another \"{name}\""),
+                }
             }
             TypedFilesError::SourceMapNotJson => f.write_str("the source map is not JSON"),
             TypedFilesError::SourceMapWithoutSources => {

@@ -2614,14 +2614,14 @@ describe("Socket fd adoption", () => {
     },
   );
 
-  // Stdio is the exception to ownership: fds 0-2 are only ever dup()'d, so
-  // the socket going away neither closes fd 0 nor leaves O_NONBLOCK on it
-  // (the flag lives on the open file description, so setting it on the dup
-  // would have changed fd 0 too). The child's fd 0 is a *blocking* FIFO read
-  // end; after the socket has closed, fd 0 is still open, still blocking, and
-  // a plain blocking read(2) on it still works.
+  // Stdio is the exception to ownership: the socket going away never closes
+  // fd 0. Adoption is uv_pipe_open's: the descriptor is made non-blocking and,
+  // as in node, nothing puts the flag back (it lives on the open file
+  // description, which stdin shares with the parent). The child's fd 0 is a
+  // *blocking* FIFO read end; after the socket has closed, fd 0 is still open,
+  // now non-blocking, and read(2) on it still delivers what is written next.
   it.skipIf(fifoReadsUnsupported)(
-    "an adopted fd 0 is neither closed nor switched to O_NONBLOCK by the socket",
+    "an adopted fd 0 is not closed by the socket and is left O_NONBLOCK, like uv_pipe_open",
     async () => {
       const path = join(tmpdirSync(), "stdin.fifo");
       execFileSync("mkfifo", [path]);
@@ -2654,9 +2654,18 @@ describe("Socket fd adoption", () => {
           const got = String(chunk);
           socket.once("close", () => {
             console.log(JSON.stringify({ got, stdin: fstatCode(0), nonblocking: nonblocking() }));
+            // fd 0 is non-blocking now: read(2) is EAGAIN until the parent's reply arrives.
             const buf = Buffer.alloc(64);
-            const n = fs.readSync(0, buf);
-            console.log(JSON.stringify({ after: buf.toString("utf8", 0, n) }));
+            for (;;) {
+              try {
+                const n = fs.readSync(0, buf);
+                console.log(JSON.stringify({ after: buf.toString("utf8", 0, n) }));
+                break;
+              } catch (e) {
+                if (e.code !== "EAGAIN") throw e;
+                Bun.sleepSync(5);
+              }
+            }
           });
           socket.destroy();
         });
@@ -2669,8 +2678,8 @@ describe("Socket fd adoption", () => {
           stderr: "pipe",
         });
         fs.writeSync(wfd, "ping");
-        // The second line can only be read once the first was printed (the fd
-        // is blocking): the bytes for it are written in response to the first.
+        // The bytes for the second line are written in response to the first,
+        // so the child's read of them can only succeed after the socket closed.
         let stdout = "";
         let wroteAfter = false;
         const decoder = new TextDecoder();
@@ -2687,7 +2696,8 @@ describe("Socket fd adoption", () => {
           .split("\n")
           .map(line => JSON.parse(line));
         expect({ lines, stderr: stderr.trim(), exitCode }).toEqual({
-          lines: [{ got: "ping", stdin: "open", nonblocking: false }, { after: "after\n" }],
+          // The flag is only inspected on Linux (/proc); the read above is the check elsewhere.
+          lines: [{ got: "ping", stdin: "open", nonblocking: process.platform === "linux" }, { after: "after\n" }],
           stderr: "",
           exitCode: 0,
         });
@@ -2841,6 +2851,7 @@ describe("Socket fd adoption", () => {
       socket.on("end", () => events.push("end"));
       socket.on("error", err => events.push("error:" + err.code));
       socket.on("close", () => {
+        events.push("close");
         console.log(JSON.stringify({ kind: fs.fstatSync(0).isFIFO() ? "pipe" : "other", received, events, fd: fstatCode(${fd}) }));
       });
     `;

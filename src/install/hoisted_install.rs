@@ -14,7 +14,7 @@ use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 
 use crate::lockfile::tree;
-use crate::{DependencyID, ExtractData, PackageID};
+use crate::{DependencyID, PackageID};
 // Bring the `items_<field>{,_mut}()` column accessors for
 // `MultiArrayList::Slice<Package>` into scope.
 use crate::PackageManager;
@@ -23,30 +23,8 @@ use crate::package_install;
 use crate::package_installer::{DeferredLinks, NodeModulesFolder, PackageInstaller, TreeContext};
 use crate::package_manager::{self, WorkspaceFilter};
 use crate::package_manager_real::ProgressStrings;
-use crate::package_manager_real::run_tasks;
-use crate::package_manager_task as Task;
+use crate::package_manager_real::run_tasks::{Caller, run_tasks};
 use crate::prune::LinkedNodeModules;
-
-/// `RunTasksCallbacks` impl for the hoisted-install loop, with
-/// `Ctx == PackageInstaller`.
-pub(crate) struct HoistedRunTasksCallbacks<'a>(core::marker::PhantomData<&'a mut ()>);
-
-impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
-    type Ctx = PackageInstaller<'a>;
-
-    const HAS_ON_EXTRACT: bool = true;
-    const IS_PACKAGE_INSTALLER: bool = true;
-
-    fn on_extract_package_installer(
-        ctx: &mut Self::Ctx,
-        task_id: Task::Id,
-        dependency_id: DependencyID,
-        data: &mut ExtractData,
-        log_level: package_manager::Options::LogLevel,
-    ) {
-        ctx.install_enqueued_packages_after_extraction(task_id, dependency_id, &*data, log_level);
-    }
-}
 
 /// Restores the trees that `Lockfile::filter` replaced for the install pass, and ends the progress
 /// bar.
@@ -88,7 +66,7 @@ fn run_tasks_until_done(
         // SAFETY: `mgr` is the caller's provenance root for its live exclusive borrow.
         let manager = unsafe { &mut *mgr };
         let log_level = manager.options.log_level;
-        run_tasks::run_tasks::<HoistedRunTasksCallbacks>(manager, installer, true, log_level)?;
+        run_tasks(manager, Caller::HoistedLinker(installer), true, log_level)?;
 
         // A script that has ended makes room for one that waits.
         installer.run_available_scripts(log_level);
@@ -481,12 +459,7 @@ pub(crate) fn install_hoisted_packages(
                 // We want to minimize how often we call this function
                 // That's part of why we unroll this loop
                 if this.pending_task_count() > 0 {
-                    run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
-                        this,
-                        &mut installer,
-                        true,
-                        log_level,
-                    )?;
+                    run_tasks(this, Caller::HoistedLinker(&mut installer), true, log_level)?;
                     if !this.options.do_.install_packages() {
                         return Err(crate::Error::InstallFailed);
                     }
@@ -499,12 +472,7 @@ pub(crate) fn install_hoisted_packages(
                 installer.install_package(*dependency_id, log_level);
             }
 
-            run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
-                this,
-                &mut installer,
-                true,
-                log_level,
-            )?;
+            run_tasks(this, Caller::HoistedLinker(&mut installer), true, log_level)?;
             if !this.options.do_.install_packages() {
                 return Err(crate::Error::InstallFailed);
             }

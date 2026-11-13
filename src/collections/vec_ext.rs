@@ -15,7 +15,6 @@
 
 use core::alloc::Allocator;
 use core::fmt;
-use core::mem::ManuallyDrop;
 
 use bun_alloc::AllocError;
 use bun_core::strings;
@@ -102,9 +101,6 @@ pub trait VecExt<T>: Sized {
     fn move_to_list(&mut self) -> Vec<T>;
     fn move_to_list_managed(&mut self) -> Vec<T>;
     fn to_owned_slice(&mut self) -> Box<[T]>;
-    /// Non-owning header alias.  For `Vec` this is `from_raw_parts` into a
-    /// `ManuallyDrop` — same UB-if-dropped contract as before.
-    fn shallow_copy(&self) -> ManuallyDrop<Self>;
 
     fn memory_cost(&self) -> usize;
     fn deep_clone_with<F>(&self, clone_one: F) -> Self
@@ -340,18 +336,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     #[inline]
     fn to_owned_slice(&mut self) -> Box<[T]> {
         self.move_to_list().into_boxed_slice()
-    }
-    #[inline]
-    fn shallow_copy(&self) -> ManuallyDrop<Self> {
-        // SAFETY: caller must not drop/grow the alias; original stays the owner.
-        ManuallyDrop::new(unsafe {
-            Vec::from_raw_parts_in(
-                self.as_ptr().cast_mut(),
-                self.len(),
-                self.capacity(),
-                A::default(),
-            )
-        })
     }
 
     #[inline]

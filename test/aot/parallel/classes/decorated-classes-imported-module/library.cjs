@@ -1,0 +1,21 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.Late = exports.Extended = exports.Point = void 0;
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+  var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+  for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+  return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+const metadata = new WeakMap();
+const Injectable = () => target => { metadata.set(target, 1); };
+let Point = class Point { constructor(x, y) { this.x = x; this.y = y; this.next = undefined; } sum() { return this.x + this.y; } };
+exports.Point = Point;
+exports.Point = Point = __decorate([Injectable()], Point);
+let Extended = class Extended { constructor(x) { this.x = x; } sum() { return this.x; } };
+exports.Extended = Extended;
+exports.Extended = Extended = __decorate([target => class extends target { constructor(...args) { super(...args); this.more = args.length; } }], Extended);
+let Late = class Late { constructor(x) { this.x = x; } sum() { return this.x; } };
+exports.Late = Late;
+exports.replace = () => { exports.Late = class { constructor(x) { this.z = x; } sum() { return -this.z; } }; };
+exports.Late = Late = __decorate([Injectable()], Late);
+exports.own = x => new exports.Point(x, 3).sum();

@@ -113,14 +113,7 @@ fn testing_impl<'a>(
     };
     use bun_jsc::LogJsc as _;
 
-    let arena = Arena::new();
-    // The CSS parser allocates into this bump arena; freed when it drops.
-    //
-    // SAFETY: `StyleSheet::parse` requires `&'static Bump`
-    // because the rule tree stores lifetime-erased refs (see the css_parser.rs
-    // notes on `'bump` threading). The arena strictly outlives every value parsed
-    // out of it below.
-    let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+    let alloc = &Arena::new();
 
     let global = cx.global();
     let browsers = targets.map(Browsers::from);
@@ -232,15 +225,7 @@ pub(crate) fn attr_test<'a>(
     };
     use bun_jsc::LogJsc as _;
 
-    let arena = Arena::new();
-    // StyleAttribute::parse allocates its
-    // AST into this bump; freed when `arena` drops at end of scope.
-    //
-    // SAFETY: `StyleAttribute` stores `DeclarationBlock<'static>` (lifetime
-    // erased crate-wide until 'bump threads through the rule tree — see the
-    // css_parser.rs notes). The arena strictly outlives the parsed
-    // `stylesheet` below.
-    let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+    let alloc = &Arena::new();
 
     let global = cx.global();
     let targets = Targets {

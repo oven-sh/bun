@@ -17,7 +17,7 @@
 # -- end of source
 # The names read off `row` are the keys of the literal in `make`, so the front end writes that layout as what is expected. Link says of the layout that its objects stay with compiled code, and the
 # row comes out of a parse: the test could never pass, every row failed it and left the typed copy. The layout is not tested for there. The row stays shaped like it: what is read off it under a name
-# is expected to be of the kind that the layout's field holds, so the products in `area`, copied in line, ask for numbers in both copies of the loop, and `row.name + from` asks for a text, not for a number because a number stands beside it. A read that stays generic says that its receiver is no object of compiled code, so that its stub asks the structure first. In `Pair` the names are those of its own instances; with that layout gone the empty literal that
+# is expected to be of the kind that the layout's field holds, so the products in `area`, copied in line, ask for numbers in both copies of the loop, and `row.name + from` asks for a text, not for a number because a number stands beside it. A read that stays generic says that its receiver is no object of compiled code, so that its site asks the structure in line. In `Pair` the names are those of its own instances; with that layout gone the empty literal that
 # stands in for a missing pair is no guess either, for it answers none of the names: the reads stay one operation each and the instance still falls away.
 # f1 = Pair, f2 = total, f3 = areas, f4 = labels, f5 = firsts
 # RUN(COUNT): compile UnescapedShapesDroppedFromSpeculations mechanisms=all
@@ -42,9 +42,13 @@
 # TEXT: testedType=string
 # TEXT: = Strcat
 # RUN(STUB): bytes f4:Body mechanisms=all
-# STUB-NOT: Stub ReadAtSite.Of
-# STUB: Stub ReadAtSiteAskingStructureFirst.OfAnyValue
-# STUB-NOT: Stub ReadAtSite.Of
+# REQUIRES(STUB): x86_64
+# STUB: Call Stub ReadAtSite.OfAnyValue under (SiteCache "main.cjs" 788 "main.cjs" 691 "name" 8)
+# STUB-NEXT: InstanceAccess InstanceWord SiteCache "main.cjs" 788 "main.cjs" 691 "name" 8
+# RUN(ARM64): bytes f4:Body mechanisms=all
+# REQUIRES(ARM64): arm64
+# ARM64: InstanceOffset InstanceWord SiteCache "main.cjs" 788 "main.cjs" 691 "name" 8
+# ARM64: Call Stub ReadAtSite.OfAnyValue under (SiteCache "main.cjs" 788 "main.cjs" 691 "name" 8)
 # RUN(LITERAL): walk f5 mechanisms=all
 # LITERAL-LABEL: code f5:Body
 # LITERAL-NOT: = ShapeTest

@@ -5,6 +5,7 @@ use super::bindings::{
     AnswerMember, CopiedExports, Holder, ImportBinding, ModuleExport, ModuleRequest,
     SyntheticExportId, list_in_order_of_stars,
 };
+use super::commonjs_exports::AliasTarget;
 use super::failures::ModuleFailureId;
 use super::graph::{ModuleGraph, find};
 use super::imports::{MockedModules, NamedMember};
@@ -16,7 +17,7 @@ use super::test_run_evictions::{NamedByCopies, is_marked};
 use super::wrapped::InnerModuleKind;
 use crate::builtins::RuntimeModule;
 use crate::ir::generated::ModuleRequestKind;
-use crate::ir::parallel::{InParallel, for_each_mut};
+use crate::ir::parallel::{InParallel, for_each_mut, map_each};
 use crate::load::contents::load_names::{
     PathAlone, find_module_looked_up_in_cache, find_why_resolver_takes_name_for_path,
 };
@@ -32,6 +33,7 @@ use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_sort_by_number::SortByNumber;
 use core::ops::Range;
+use smallvec::SmallVec;
 use std::borrow::Cow;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -84,6 +86,12 @@ pub enum Member {
     Undefined,
     Marker(bool),
     OnObject,
+}
+
+/// What a getter of a module's exports returns where every variable of `holders` is set. It throws elsewhere.
+pub struct MemberBehindGetters {
+    pub holders: SmallVec<[Sym; 2]>,
+    pub member: Member,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -830,6 +838,51 @@ impl ModuleGraph {
         self.finish_member(accessed.module, binding, accessed.is_imported)
     }
 
+    pub fn member_behind_getters(
+        &self,
+        file: FileId,
+        access: ExprId,
+    ) -> Option<MemberBehindGetters> {
+        let accessed = find(&self.row(file).accessed, access)?;
+        let (mut module, mut name) = (accessed.module, accessed.name);
+        if accessed.is_imported
+            || self.shape(module) != Shape::Value
+            || !self.runs_body_once(ModuleRef::File(file))
+        {
+            return None;
+        }
+        let mut holders = SmallVec::new();
+        for _ in 0..=self.commonjs().module_count() {
+            let ModuleRef::Inner {
+                file: written_in, ..
+            } = module
+            else {
+                return None;
+            };
+            if written_in != file || !self.runs_body_once(module) {
+                return None;
+            }
+            let getter = self.commonjs().read_getter(module, name)?;
+            let (source, name_there) = match getter.target {
+                AliasTarget::Binding(symbol) => {
+                    let member = Member::Binding(symbol);
+                    return Some(MemberBehindGetters { holders, member });
+                }
+                AliasTarget::Member { module, name } => (module, name),
+            };
+            holders.push(Sym {
+                file,
+                id: getter.holder?,
+            });
+            match self.member(file, getter.returned)? {
+                Member::OnObject => (module, name) = (source, name_there),
+                Member::Copy(_) => return None,
+                member => return Some(MemberBehindGetters { holders, member }),
+            }
+        }
+        None
+    }
+
     /// `limit` of `__export(lib, { limit: () => limit }); lib.limit`: the variables of the file that members name.
     pub fn bindings_read_as_members(&self, file: FileId) -> impl Iterator<Item = SymbolId> + '_ {
         let members = self.row(file).fixed_members.iter();
@@ -1298,6 +1351,10 @@ impl ModuleGraph {
         self.commonjs().name_sources(module)
     }
 
+    pub fn object_sources(&self, module: ModuleRef) -> &[ModuleRef] {
+        self.commonjs().object_sources(module)
+    }
+
     pub fn set_keeps_module_object(&mut self, module: ModuleRef) {
         self.plan.add(|plan| &mut plan.keeps_module_object, module);
         self.look_at(module);
@@ -1389,8 +1446,10 @@ impl ModuleGraph {
         let mut steps = StepClock::new(Stage::BindModules);
         self.settle_holders();
         steps.end("plan: holders");
-        let linked_files = self.find_linked_files(ModuleKind::CommonJs);
-        let data_files = self.find_linked_files(ModuleKind::Data);
+        let kinds = vec![ModuleKind::CommonJs, ModuleKind::Data];
+        let found = map_each(kinds, in_parallel, &|kind| self.find_linked_files(kind));
+        let [linked_files, data_files] = <[LinkedFiles; 2]>::try_from(found)
+            .unwrap_or_else(|_| unreachable!("as many as kinds"));
         steps.end("plan: linked files");
         let prefixes = self.collect_prefixes(&linked_files, in_parallel);
         steps.end("plan: prefixes");

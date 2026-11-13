@@ -25,6 +25,7 @@ use super::worker_entries::{
 use crate::builtins::ResolvedBuiltins;
 use crate::builtins::table::{self, BuiltinFlags, BuiltinId, Origin};
 use crate::compile::EntryPointPaths;
+use crate::ir::filter_each;
 use crate::load::externals::contains;
 use crate::load::host::{LoadHost, ResolveWhoseFoldersBringNothing};
 use crate::load::loaders::{gives_data, loader_named_by_path, script_kind_of};
@@ -459,6 +460,34 @@ impl Mention {
     }
 }
 
+/// False where `EntryPointFinder::collect_mentions()` finds nothing in `file`.
+fn may_mention(code: &dyn CodeView<'_>, file: FileId) -> bool {
+    let analysis = code.analysis(file);
+    if !analysis.names_from_data_files.is_empty()
+        || !analysis.names_resolved_from_listed_folders.is_empty()
+    {
+        return true;
+    }
+    let Some(source) = parsed_source_in(code, file) else {
+        return false;
+    };
+    let contents = &source.contents;
+    let names = &contents.names;
+    contents.names_worker_constructor
+        || contents.starts_worker_out_of_sight
+        || contents.hands_worker_constructor_on
+        || source.loader == Loader::File
+        || !contents.worker_starts.is_empty()
+        || !contents.urls_with_code.is_empty()
+        || !contents.texts_behind_object_urls.is_empty()
+        || !names.sought_from_unknown_folders.is_empty()
+        || !names.written_arms_of_unknown_names.is_empty()
+        || !names.guessed_arms.is_empty()
+        || !names.arms_of_makers_called_first.is_empty()
+        || !names.followed_names.is_empty()
+        || !names.under_parameters.is_empty()
+}
+
 pub(crate) struct EntryPointFinder<'a, 'h> {
     input: FinderInput<'a, 'h>,
     code_from_root: CodeOptions,
@@ -502,6 +531,16 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         (self.input.host).note_files_of_packages_that_worker_may_start(&may_start);
     }
 
+    fn filter_files(
+        &self,
+        code: &dyn CodeView<'_>,
+        is_wanted: &(dyn Fn(FileId) -> bool + Sync),
+    ) -> Vec<FileId> {
+        let host = self.input.host;
+        let in_parallel = |count: usize, work: &(dyn Fn(usize) + Sync)| host.parallel(count, work);
+        filter_each(code.compiled_files(), &in_parallel, is_wanted)
+    }
+
     fn collect_mentions(&self, code: &dyn CodeView<'_>, found: &FoundSoFar) -> Vec<Mention> {
         let mut mentions = Vec::new();
         let mut names_worker_constructor = false;
@@ -511,7 +550,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         let mut code_of_workers: BTreeMap<Option<usize>, CodeOfWorkers> = BTreeMap::new();
         let mut loads: FxHashMap<(Atom, u32), Vec<(FileId, bool)>> = FxHashMap::default();
         let mut sought: FxHashSet<(Atom, bool)> = FxHashSet::default();
-        for &file in code.compiled_files() {
+        for file in self.filter_files(code, &|file| may_mention(code, file)) {
             let analysis = code.analysis(file);
             for &(name, argument, is_guess) in analysis.names_from_data_files {
                 let mut sites = analysis.import_sites.iter();
@@ -664,12 +703,16 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 }
             }
         }
-        let callers = match loads.is_empty() {
-            true => &[][..],
-            false => code.compiled_files(),
+        let passes_texts = |file: FileId| {
+            let source = parsed_source_in(code, file);
+            source.is_some_and(|it| !it.contents.names.texts_passed_to_properties.is_empty())
         };
-        let callers = callers.iter();
-        let callers = callers.filter_map(|&file| Some((file, parsed_source_in(code, file)?)));
+        let callers = match loads.is_empty() {
+            true => Vec::new(),
+            false => self.filter_files(code, &passes_texts),
+        };
+        let callers = callers.into_iter();
+        let callers = callers.filter_map(|file| Some((file, parsed_source_in(code, file)?)));
         let passed = callers.flat_map(|(caller, source)| {
             let passed = source.contents.names.texts_passed_to_properties.iter();
             passed.map(move |passed| (caller, passed))
@@ -861,8 +904,12 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         found: &FoundSoFar,
         levels: usize,
     ) -> Vec<Mention> {
-        let files = code.compiled_files().iter();
-        let sources = files.filter_map(|&file| parsed_source_in(code, file));
+        let holds_code = |file: FileId| {
+            let source = parsed_source_in(code, file);
+            source.is_some_and(|it| !it.contents.code_by_levels_above_root.is_empty())
+        };
+        let files = self.filter_files(code, &holds_code).into_iter();
+        let sources = files.filter_map(|file| parsed_source_in(code, file));
         let held = sources.flat_map(|it| &it.contents.code_by_levels_above_root);
         let mut of_levels = CodeOfWorkers::default();
         for &(_, text, r#type) in held.filter(|it| it.0 == levels) {

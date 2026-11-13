@@ -40,9 +40,10 @@ pub(super) fn run<'s>(
     let (mut folded, mut scan) = fold_bound_file(hir, &bound, inputs, file, atoms, arena);
     let decision = decide_format(hir, &bound, &folded, &scan);
     let is_module = decision.formats.get(file.declared_module_type) == ModuleFormat::Esm;
+    let has_sloppy_functions = hir.makes_sloppy_functions();
     if is_module && !hir.is_strict_by_syntax {
         hir.set_strict();
-        if bound.runtime.depends_on_sloppy_mode() {
+        if has_sloppy_functions || bound.runtime.depends_on_sloppy_mode() {
             drop(bound);
             let step = file_steps::count(FileStep::Bind);
             bound = bind_below_defines(hir, options, names_in_place, atoms, arena);
@@ -53,7 +54,9 @@ pub(super) fn run<'s>(
             (folded, scan) = fold_bound_file(hir, &bound, inputs, file, atoms, arena);
         }
     }
-    bound.runtime.set_module_goal(is_module);
+    bound
+        .runtime
+        .set_module_goal(is_module, has_sloppy_functions);
     let analysis = create_analysis(hir, &folded, &scan, &decision, file, arena);
     (bound, analysis)
 }

@@ -78,6 +78,8 @@ struct Before {
     description: u32,
 }
 
+const MOST_WORDS_OF_FIELD: usize = 8;
+
 fn push_field(field: &Field, before: &mut Before, words: &mut Vec<u32>) {
     let Field {
         key,
@@ -103,19 +105,33 @@ fn push_field(field: &Field, before: &mut Before, words: &mut Vec<u32>) {
     describe(HAS_ORIGIN_FIELD, origin_field.is_some());
     describe(HAS_VARIABLE_NAME, variable_name.is_some());
     let key = optional_id_to_word(key);
-    words.push(key.wrapping_sub(before.key));
-    words.push(description ^ before.description);
+    let mut of_field = [0; MOST_WORDS_OF_FIELD];
+    of_field[0] = key.wrapping_sub(before.key);
+    of_field[1] = description ^ before.description;
+    let mut count = 2;
+    let mut add = |word: u32| {
+        of_field[count] = word;
+        count += 1;
+    };
     (before.key, before.description) = (key, description);
     if description & SAYS_TYPE != 0 {
         let ty = ty.to_word();
-        words.push(ty.wrapping_sub(before.ty));
+        add(ty.wrapping_sub(before.ty));
         before.ty = ty;
     }
-    words.extend(site.map(TypeSiteId::to_word));
-    words.extend(computed_key);
-    words.extend(origin_layout.map(LayoutId::to_word));
-    words.extend(origin_field);
-    words.extend(variable_name.map(StringId::to_word));
+    const RARE: u32 =
+        HAS_SITE | HAS_COMPUTED_KEY | HAS_ORIGIN_LAYOUT | HAS_ORIGIN_FIELD | HAS_VARIABLE_NAME;
+    if description & RARE != 0 {
+        let rare = [
+            site.map(TypeSiteId::to_word),
+            computed_key,
+            origin_layout.map(LayoutId::to_word),
+            origin_field,
+            variable_name.map(StringId::to_word),
+        ];
+        rare.into_iter().flatten().for_each(add);
+    }
+    words.extend_from_slice(&of_field[..count]);
 }
 
 fn read_field(before: &mut Before, words: &mut WordReader<'_>) -> Field {
@@ -190,6 +206,7 @@ impl PackedLayout {
             count_of(declared_order),
         ]);
         let mut before = Before::default();
+        words.reserve(fields.len() * MOST_WORDS_OF_FIELD);
         for field in fields {
             push_field(field, &mut before, words);
         }

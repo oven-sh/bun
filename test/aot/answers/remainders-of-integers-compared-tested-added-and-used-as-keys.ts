@@ -11,8 +11,9 @@
 // # behind `typeof y !== "number"` the front end goes on writing the value that was tested, of which the walk knows no more than in front of the test. So the dividend is `+y`, which the row of the conversion proves a number
 // # RUN(NUMBER): walk f25 mechanisms=all
 // # NUMBER-LABEL: code f25:Body
-// # NUMBER: = RemainderOfIntegers
+// # NUMBER: frequency=Unlikely
 // # NUMBER: = Mod
+// # NUMBER: = RemainderOfIntegers
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 9451 of 9451 of 9451

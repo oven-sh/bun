@@ -768,23 +768,23 @@ impl<'a, 's> TextsOfFile<'a, 's> {
         reads
     }
 
-    /// What the reads at `operands` read, for those of which the statements of the file tell.
+    /// What the reads at `operands` read, for those of which the statements of the file tell, and whether they read nothing else.
     pub(super) fn find_executed_reads(
         &self,
         operands: FxHashMap<ExprId, bool>,
-    ) -> FxHashMap<ExprId, SmallVec<[Atom; 2]>> {
+    ) -> FxHashMap<ExprId, (SmallVec<[Atom; 2]>, bool)> {
         let (names, asked) = (&self.written_names, &self.asked);
         let find = super::alternatives::find_executed_alternatives;
         let executed = find(&self.inputs, names, asked, operands);
         let text = |atom: Atom| self.inputs.atoms.bytes(atom);
-        let reads = executed.into_iter().map(|(operand, found)| {
+        let reads = executed.into_iter().map(|(operand, (found, are_all))| {
             let mut paths: SmallVec<[Atom; 2]> = SmallVec::new();
             for found in &found {
                 paths.extend(self.to_module_relative_paths(found));
             }
             paths.shared_sort_unstable_by_key(|it| text(*it));
             paths.dedup();
-            (operand, paths)
+            (operand, (paths, are_all))
         });
         reads.collect()
     }
@@ -1200,7 +1200,15 @@ pub(super) fn find_list_iterated_by_read(
     };
     let handed = hir.skip_type_assertions(hir.ids(args).next()?);
     // Almost every callback is written in place.
-    if matches!(hir[handed].kind, ExprKind::Fn(_)) || !is_list_walk(atoms.bytes(walk)) {
+    let is_literal = matches!(
+        hir[handed].kind,
+        ExprKind::Fn(_)
+            | ExprKind::String(_)
+            | ExprKind::Number(_)
+            | ExprKind::Object(_)
+            | ExprKind::Array(_)
+    );
+    if is_literal || !is_list_walk(atoms.bytes(walk)) {
         return None;
     }
     let (Holder::Fs, function) = find_function(inputs, handed)? else {
@@ -1223,6 +1231,17 @@ pub(super) struct FilePathOperands<'a> {
     pub(super) made: Option<ExprId>,
     /// It becomes the working directory.
     pub(super) entered: Option<ExprId>,
+}
+
+impl FilePathOperands<'_> {
+    fn is_empty(&self) -> bool {
+        self.changed.is_empty()
+            && self.read.is_none()
+            && self.listed.is_none()
+            && self.created.is_none()
+            && self.made.is_none()
+            && self.entered.is_none()
+    }
 }
 
 /// What `callee` calls, and with which arguments: `fs.readFileSync.call(fs, path)` calls `fs.readFileSync` with what follows the first argument.
@@ -1270,13 +1289,12 @@ pub(super) fn find_file_path_operands<'a>(
     inputs: &ScanInputs<'a, '_>,
     callee: ExprId,
     args: IdList<ExprId>,
-) -> FilePathOperands<'a> {
+) -> Option<FilePathOperands<'a>> {
     let &ScanInputs { hir, atoms, .. } = inputs;
     let (callee, args) = find_called(inputs, callee, args);
-    let mut found = FilePathOperands::default();
     let written_name = match hir.member_key(callee) {
         Some((_, MemberKey::Name(name))) => Some(atoms.bytes(name)),
-        Some(_) => return found,
+        Some(_) => return None,
         None => None,
     };
     let may_be_named = |name: &[u8]| {
@@ -1298,8 +1316,9 @@ pub(super) fn find_file_path_operands<'a>(
         || written_name.is_none()
             && !matches!(hir[callee].kind, ExprKind::Ident(_) | ExprKind::Call(_))
     {
-        return found;
+        return None;
     }
+    let mut found = FilePathOperands::default();
     let may_be_chdir = match hir[callee].kind {
         ExprKind::Ident(name) => atoms.bytes(name) == b"chdir",
         _ => written_name == Some(b"chdir"),
@@ -1337,7 +1356,7 @@ pub(super) fn find_file_path_operands<'a>(
             found.changed.extend(given);
         }
         if !found.changed.is_empty() || written_name.is_some_and(|name| !may_be_named(name)) {
-            return found;
+            return Some(found);
         }
     }
     match find_function(inputs, callee) {
@@ -1413,5 +1432,5 @@ pub(super) fn find_file_path_operands<'a>(
             }
         }
     }
-    found
+    (!found.is_empty()).then_some(found)
 }

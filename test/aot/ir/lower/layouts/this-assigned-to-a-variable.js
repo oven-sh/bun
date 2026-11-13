@@ -1,7 +1,7 @@
 // RUN: link
 // `t = Parent.call(this) || this; t.x = 1;`: a variable without a value that one assignment fills with `this` stands for `this`, and so does the assignment itself.
 // CHECK: layout {{*}}name="Assigned" {{*}}key="own" declared={type=anything} flags=[IsRequired]}
-// CHECK: layout {{*}}name="Sequence" {{*}}key="first" declared={type=anything} flags=[IsRequired]}, {key="second" declared={type=anything} flags=[IsRequired]}
+// CHECK: layout {{*}}name="Sequence" {{*}}key="first" declared={type=anything} flags=[IsRequired]}, {key="a" declared={type=anything}}, {key="second" declared={type=anything} flags=[IsRequired]}
 // CHECK: layout {{*}}name="Returned" {{*}}key="own" declared={type=anything}}
 
 // RUN(NONE): link

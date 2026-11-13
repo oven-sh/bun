@@ -27,6 +27,7 @@ use crate::builtins::RuntimeModule::{
 use crate::builtins::{BuiltinId, Mutability, Resolved};
 use crate::compile::testing::{BUNDLED_LIBS, TestProject, default_settings, run_build};
 use crate::compile::{Build, LoadedBuild};
+use crate::ir::run_serially;
 use crate::load::ProjectId;
 use crate::load::source_provider::{
     DataFailure, DeferredLoad, Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest,
@@ -2073,7 +2074,7 @@ fn name_known_in_part_brings_no_library_module() {
             assert!(!holds_library_module(loaded, BunWrap), "{name}");
             assert_eq!(found.written_as_values, [NodeDgram], "{name}");
             assert_eq!(found.loads_by_unknown_name, fits, "{name}");
-            let held = find_library_modules_that_unknown_names_may_stand_for(files);
+            let held = find_library_modules_that_unknown_names_may_stand_for(files, &run_serially);
             assert_eq!(held.contains(&NodeDgram), fits, "{name}");
             assert!(!fits || holds_library_module(loaded, NodeDgram), "{name}");
             assert!(found.loads_by_unknown_path, "{name}");
@@ -2168,7 +2169,7 @@ export const os = { os: 1 }.os;"#;
             written.sort_unstable_by_key(|module| module.registry_id());
             let names = &contents_of(files, "writes.ts").names;
             assert_eq!(names.written_as_values, written);
-            let held = find_library_modules_that_unknown_names_may_stand_for(files);
+            let held = find_library_modules_that_unknown_names_may_stand_for(files, &run_serially);
             for module in written {
                 assert_eq!(held.contains(&module), are_held, "{module:?}");
                 assert!(
@@ -2205,7 +2206,7 @@ export interface Told { "node:http2": 9 }"#;
             let names = &contents_of(files, "writes.ts").names;
             assert_eq!(names.written_as_keys, written);
             assert!(names.written_as_values.is_empty());
-            let held = find_library_modules_that_unknown_names_may_stand_for(files);
+            let held = find_library_modules_that_unknown_names_may_stand_for(files, &run_serially);
             for module in written {
                 assert_eq!(held.contains(&module), are_held, "{module:?}");
                 assert!(
@@ -2263,7 +2264,10 @@ console.log(createRequire(import.meta.url)(names.list[JSON.parse("1")]));"#;
                     .all(|&module| holds_library_module(loaded, module))
             );
             assert!(holds_library_module(loaded, NodeVm));
-            let held = find_library_modules_that_unknown_names_may_stand_for(files_of(loaded));
+            let held = find_library_modules_that_unknown_names_may_stand_for(
+                files_of(loaded),
+                &run_serially,
+            );
             assert!(held.contains(&NodeVm) && !held.contains(&NodeDgram));
         },
     );

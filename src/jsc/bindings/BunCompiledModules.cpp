@@ -52,7 +52,7 @@ bool hasPendingCompiledPatch(Zig::GlobalObject*, JSC::AOT::ModuleID);
 bool deferCompiledPatchToNextLoad(Zig::GlobalObject*, JSC::AOT::ModuleID, bool isFactoryPending);
 JSC::JSPromise* evaluateCompiledOriginalBeforeFactory(Zig::GlobalObject*, JSC::AOT::ModuleID, bool& hasFactory);
 JSC::JSValue requireCompiledOriginal(Zig::GlobalObject*, JSC::AOT::ModuleID, bool isForOwnFactory);
-void didStartCompiledModuleImport(Zig::GlobalObject*, const ScopedLambda<bool(JSC::AOT::ModuleID)>& isReached);
+void didStartCompiledModuleImport(Zig::GlobalObject*, const ScopedLambda<BitVector()>& reachedModules);
 bool reinstallBodyMocks(Zig::GlobalObject*, const WTF::ScopedLambda<bool(JSC::AOT::ModuleID)>& isReached);
 JSC::JSPromise* nextPendingCompiledFactory(Zig::GlobalObject*, const WTF::ScopedLambda<bool(JSC::AOT::ModuleID)>& isInGraph, JSC::AOT::PendingFactoryRequester, JSC::JSValue& state);
 uint64_t pendingCompiledFactoryCallID(Zig::GlobalObject*, JSC::AOT::ModuleID, bool& shouldRejectEveryRequire);
@@ -518,6 +518,23 @@ void throwIfOnlyTyped(Zig::GlobalObject* globalObject, const String& key, const 
     throwException(globalObject, scope, JSValue::decode(ResolveMessage__createModuleNotFound(globalObject, &specifierString, &referrer, isForRequire)));
 }
 
+// The loader takes the exports of that module and evaluates nothing.
+static bool isCommonJSModuleUnderActualKey(Zig::GlobalObject* globalObject, const String& key)
+{
+    if (!isBunTest || !key.endsWith("?actual"_s))
+        return false;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+    JSValue entry = testFileRequireMap(globalObject)->get(globalObject, jsString(globalObject->vm(), key));
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return false;
+    }
+    auto* module = entry.isCell() ? dynamicDowncast<JSCommonJSModule>(entry.asCell()) : nullptr;
+    auto file = module && module->hasEvaluated ? findModuleForPath(key.left(key.length() - "?actual"_s.length())) : std::nullopt;
+    JSValue original = file ? AOT::retainedOriginalExports(globalObject, *file) : JSValue();
+    return original && original == module->getDirect(globalObject->vm(), WebCore::clientData(globalObject->vm())->builtinNames().exportsPublicName());
+}
+
 static std::optional<AOT::ModuleID> moduleForRequest(Zig::GlobalObject* globalObject, const String& path, AOT::LoadKind way)
 {
     auto module = findModuleForPath(path);
@@ -525,7 +542,7 @@ static std::optional<AOT::ModuleID> moduleForRequest(Zig::GlobalObject* globalOb
         module = findDefaultForm(path);
     if (!module) {
         // Each query of a file is a separate instance, which the loader creates from the source. The source has the path alone.
-        if (size_t query = path.find('?'); query != notFound && findModuleForPath(path.left(query)) && !AOT::isCompiledOriginal(globalObject, path))
+        if (size_t query = path.find('?'); query != notFound && findModuleForPath(path.left(query)) && !AOT::isCompiledOriginal(globalObject, path) && !isCommonJSModuleUnderActualKey(globalObject, path))
             recordFileRunFromSource(globalObject, path, "it was imported under a query"_s);
         return module;
     }
@@ -1227,8 +1244,22 @@ void didUnmockCompiledFile(Zig::GlobalObject* globalObject, const String& key, b
             AOT::stashActualKeyExports(globalObject, *file);
         return;
     }
-    if (runsAtNextLoad)
-        return didDeleteRequireCacheEntry(globalObject, key);
+    if (runsAtNextLoad) {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        didDeleteRequireCacheEntry(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, );
+        // The evaluation stays under the key of the original, where a mock that imports its original finds it.
+        auto file = compiledModuleForPath(key);
+        JSValue original = file && AOT::isEvicted(globalObject, *file) && !AOT::isESModule(*file) && !AOT::isDataFile(*file) ? AOT::retainedOriginalExports(globalObject, *file) : JSValue();
+        if (!original)
+            return;
+        String keyOfOriginal = makeString(key, "?actual"_s);
+        auto* module = JSCommonJSModule::create(globalObject, keyOfOriginal, original, true, JSValue());
+        RETURN_IF_EXCEPTION(scope, );
+        scope.release();
+        testFileRequireMap(globalObject)->set(globalObject, jsString(globalObject->vm(), keyOfOriginal), module);
+        return;
+    }
     auto module = restoresOriginal && reloadsFilesFromDisk() ? compiledModuleForPath(key) : std::nullopt;
     if (!module || !AOT::isEvicted(globalObject, *module) || AOT::isESModule(*module))
         return;
@@ -2135,11 +2166,11 @@ static uint32_t willLoad(JSGlobalObject* globalObject, AOT::ModuleID callerModul
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 
-static void didStartImport(JSGlobalObject* globalObject, JSPromise* import, const String& path, const ScopedLambda<bool(JSC::AOT::ModuleID)>& isReached)
+static void didStartImport(JSGlobalObject* globalObject, JSPromise* import, const String& path, const ScopedLambda<BitVector()>& reachedModules)
 {
     if (!isBunTest)
         return;
-    Zig::didStartCompiledModuleImport(defaultGlobalObject(globalObject), isReached);
+    Zig::didStartCompiledModuleImport(defaultGlobalObject(globalObject), reachedModules);
     didStartDynamicImport(defaultGlobalObject(globalObject), import, path);
 }
 

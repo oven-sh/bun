@@ -42,7 +42,7 @@ pub struct AlignContentContentPosition {
 }
 
 impl AlignContentContentPosition {
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let overflow = input.try_parse(OverflowPosition::parse).ok();
         let value = ContentPosition::parse(input)?;
         Ok(Self { overflow, value })
@@ -70,7 +70,7 @@ pub enum BaselinePosition {
 }
 
 impl BaselinePosition {
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
 
@@ -139,7 +139,7 @@ impl JustifyContentContentPosition {
 }
 
 impl JustifyContent {
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"normal"))
             .is_ok()
@@ -237,7 +237,7 @@ impl AlignSelfSelfPosition {
         }
     }
 
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let overflow = input.try_parse(OverflowPosition::parse).ok();
         let self_position = SelfPosition::parse(input)?;
         Ok(Self {
@@ -294,7 +294,7 @@ impl JustifySelfSelfPosition {
 }
 
 impl JustifySelf {
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"auto"))
             .is_ok()
@@ -403,7 +403,7 @@ impl AlignItemsSelfPosition {
         }
     }
 
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let overflow = input.try_parse(OverflowPosition::parse).ok();
         let self_position = SelfPosition::parse(input)?;
         Ok(Self {
@@ -460,7 +460,7 @@ impl JustifyItemsSelfPosition {
 }
 
 impl JustifyItems {
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         if input
             .try_parse(|i| i.expect_ident_matching(b"normal"))
             .is_ok()
@@ -548,7 +548,7 @@ pub enum LegacyJustify {
 }
 
 impl LegacyJustify {
-    fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
 
@@ -613,7 +613,7 @@ pub struct Gap {
 }
 
 impl Gap {
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let row = GapValue::parse(input)?;
         let column = input
             .try_parse(GapValue::parse)
@@ -645,7 +645,7 @@ pub struct PlaceItems {
 }
 
 impl PlaceItems {
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let align = AlignItems::parse(input)?;
         let justify = match input.try_parse(JustifyItems::parse) {
             Ok(v) => v,
@@ -707,7 +707,7 @@ pub struct PlaceSelf {
 }
 
 impl PlaceSelf {
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let align = AlignSelf::parse(input)?;
         let justify = match input.try_parse(JustifySelf::parse) {
             Ok(v) => v,
@@ -797,7 +797,7 @@ pub struct PlaceContent {
 }
 
 impl PlaceContent {
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> CssResult<'bump, Self> {
         let align = AlignContent::parse(input)?;
         let justify = match JustifyContent::parse(input) {
             Ok(v) => v,
@@ -1167,11 +1167,11 @@ impl PlaceItems {
 }
 
 impl AlignHandler {
-    pub(crate) fn handle_property(
+    pub(crate) fn handle_property<'bump>(
         &mut self,
-        property: &Property,
-        dest: &mut DeclarationList<'_>,
-        context: &mut PropertyHandlerContext<'_>,
+        property: &Property<'bump>,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext,
     ) -> bool {
         match property {
             Property::AlignContent((val, vp)) => {
@@ -1327,13 +1327,13 @@ impl AlignHandler {
 
     pub(crate) fn finalize(
         &mut self,
-        dest: &mut DeclarationList<'_>,
-        context: &mut PropertyHandlerContext<'_>,
+        dest: &mut DeclarationList,
+        context: &mut PropertyHandlerContext,
     ) {
         self.flush(dest, context);
     }
 
-    fn flush(&mut self, dest: &mut DeclarationList<'_>, context: &mut PropertyHandlerContext<'_>) {
+    fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
         if !self.has_any {
             return;
         }
@@ -1452,7 +1452,7 @@ impl AlignHandler {
     /// Gets prefixes for standard properties.
     fn flush_prefixes_helper(
         &self,
-        context: &PropertyHandlerContext<'_>,
+        context: &PropertyHandlerContext,
         feature: Feature,
     ) -> VendorPrefix {
         let mut prefix = context.targets.prefixes(VendorPrefix::NONE, feature);

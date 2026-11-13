@@ -305,6 +305,8 @@ int us_internal_ssl_writev(us_socket_r s, const struct us_iovec_t *iov, int coun
 /* Platform error code of the write that just returned if it killed the connection, else 0. */
 int us_internal_ssl_fatal_write_error(us_socket_r s);
 unsigned int us_internal_ssl_spill_pending(us_socket_r s);
+/* Nothing sends the spill of `s` any more: it stops holding the event loop. */
+void us_internal_ssl_spill_release_loop(us_socket_r s);
 void *us_internal_ssl_get_native_handle(us_socket_r s);
 /* Drops the listen socket's references to ls->ssl_ctx and ls->server_names. Called from us_listen_socket_close. */
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls);

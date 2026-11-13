@@ -29,6 +29,7 @@ import { pathToFileURL } from "node:url";
 import * as clientWrap from "./node-tls-client-wrap-fixture.mjs";
 import { report as closeReport, stalledConnection } from "./tls-client-close-fixture.mjs";
 import { report as refuseReport } from "./tls-server-refuse-fixture.mjs";
+import { report as unrefWriteReport } from "./tls-unref-write-fixture.mjs";
 
 const symbolConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
@@ -3665,6 +3666,68 @@ describe.concurrent("a client paused while connecting", () => {
       exitCode: 0,
       failureDetail: "",
     });
+  });
+});
+
+// libuv counts a write request toward the life of the event loop whatever
+// unref() did to the handle. node's TLSWrap sends every sealed record with such
+// a request, so the process stays until the kernel has them all:
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L719-L734
+// Cleartext that waits for the handshake is not sealed yet, and holds nothing:
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1121-L1133
+// One test runs the same rows in node, so the reports are pinned to it.
+describe.concurrent("a write in flight on an unref'd socket", () => {
+  const completed = { callbacks: "all", delivered: "all", errors: [], exitCode: 0 };
+  const inFlight = [
+    ["TLSv1.3", "unref() before the writes", completed],
+    ["TLSv1.3", "unref() while a write is in flight", completed],
+    ["TLSv1.3", "end(data) after unref()", completed],
+    ["TLSv1.3", "writes on an accepted socket", completed],
+    ["TLSv1.3", "unref() of the net.Socket before tls.connect({ socket })", completed],
+    ["TLSv1.3", "a write made before the handshake", completed],
+    ["TLSv1.2", "a write made before the handshake", completed],
+    ["TLSv1.3", "an upload on an unref'd http2 session", completed],
+  ] as const;
+  const waiting = [
+    [
+      "TLSv1.3",
+      "a write that still waits for the handshake",
+      { callbacks: "0 of 1", delivered: "0 of 65536", errors: [], exitCode: 0 },
+    ],
+  ] as const;
+  const rows = [...inFlight, ...waiting];
+  const expectReport = async (version: string, shape: string, expected: unknown) => {
+    expect(await unrefWriteReport(shape, version)).toEqual(expected);
+  };
+
+  // A process that exits on Windows resets the sockets it has open, and the peer loses what it has not read by then:
+  // https://learn.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-wsacleanup#remarks
+  // The child of these rows exits with megabytes in the kernel. In CI on Windows every write callback had run, and
+  // the peer was short of some of them. node's own run of the fixture ends with `write EPROTO` there.
+  it.skipIf(isWindows).each(inFlight)("%s %s", expectReport);
+  it.each(waiting)("%s %s", expectReport);
+
+  // Not beside the rows above: node runs all of them at once.
+  it.serial.skipIf(isWindows || !nodeExe())("node gives the same reports", async () => {
+    const { reports } = await reportsFromNode(
+      "tls-unref-write-fixture.mjs",
+      rows.map(([version, shape]) => [version, shape]),
+    );
+    expect(reports).toEqual(rows.map(([, , expected]) => expected));
+  });
+
+  // destroy() cancels the write, so the process does not wait for a peer that reads nothing:
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1310-L1331
+  // The child exits with 4 when it is still there three seconds later.
+  it("destroy() with a write in flight lets the process exit", async () => {
+    expect((await unrefWriteReport("destroy() with a write in flight", "TLSv1.3")).exitCode).toBe(0);
+  });
+
+  // The write in flight keeps the process there for the reset, and the reset ends the write. The child exits with 4
+  // when it is still there three seconds after the close.
+  it("a reset by the peer ends a write in flight, and the process exits", async () => {
+    const { errors, exitCode } = await unrefWriteReport("the peer resets the connection", "TLSv1.3");
+    expect({ sawTheReset: errors.length > 0, exitCode }).toEqual({ sawTheReset: true, exitCode: 0 });
   });
 });
 

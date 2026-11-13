@@ -106,6 +106,18 @@ struct us_loop_t {
 #endif
 };
 
+/* A hold on the event loop that no poll stands for. Rust takes the same through `Loop::ref_` and `Loop::unref`
+ * (src/uws_sys/Loop.rs). */
+static inline void us_internal_loop_ref(struct us_loop_t *loop) {
+    loop->num_polls++;
+    loop->bun_polls++;
+}
+
+static inline void us_internal_loop_unref(struct us_loop_t *loop) {
+    loop->num_polls--;
+    loop->bun_polls--;
+}
+
 struct us_poll_t {
     alignas(LIBUS_EXT_ALIGNMENT) struct {
         signed int fd : 27; // we could have this unsigned if we wanted to, -1 should never be used

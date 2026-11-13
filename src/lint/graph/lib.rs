@@ -131,6 +131,34 @@ const EXTENSIONS: [&[u8]; 8] = [
     b".js", b".mjs", b".cjs", b".jsx", b".ts", b".mts", b".cts", b".tsx",
 ];
 
+/// What a file's imports are resolved with, and the key of [`Caches::resolvers`].
+#[derive(Copy, Clone)]
+struct ResolverKey<'a> {
+    /// The `tsconfig.json` path. Empty if there's none.
+    config: &'a [u8],
+    /// The `conditionNames` of eslint-import-resolver-typescript, if configured.
+    conditions: Option<&'a [&'a [u8]]>,
+}
+
+impl<'a> ResolverKey<'a> {
+    fn of(config: &'a [u8]) -> Self {
+        ResolverKey {
+            config,
+            conditions: None,
+        }
+    }
+
+    /// The config alone stands for the default conditions.
+    fn bytes(&self) -> Cow<'a, [u8]> {
+        match self.conditions {
+            None => Cow::Borrowed(self.config),
+            Some(conditions) => {
+                Cow::Owned([self.config, b"\0", &conditions.join(&b"\0"[..])].concat())
+            }
+        }
+    }
+}
+
 struct ProjectResolver<'h> {
     resolver: Resolver<'h>,
     /// `baseUrl`, which TypeScript 7 dropped but ESLint's and oxlint's resolvers still support.
@@ -142,7 +170,7 @@ struct ProjectResolver<'h> {
 /// Caches for lookups that are repeated often.
 #[derive(Default)]
 struct Caches<'h> {
-    /// Keyed by the `tsconfig.json` path. An empty key means there's none.
+    /// Keyed by [`ResolverKey::bytes`].
     resolvers: ShardedMap<Vec<u8>, ProjectResolver<'h>>,
     /// Maps a directory to the `tsconfig.json` path for its files. With [`Store::tsconfig`], the key is a file.
     configs: ShardedMap<Vec<u8>, Vec<u8>>,
@@ -151,8 +179,8 @@ struct Caches<'h> {
     /// Caches [`Graph::configs_of_typescript_resolver`], keyed by the directory and the projects, and
     /// [`Graph::listed_projects`], keyed by the projects.
     typescript_configs: ShardedMap<Vec<u8>, Vec<Vec<u8>>>,
-    /// The resolution of a non-relative specifier, keyed by the `tsconfig.json`, the directory, the kind of import and
-    /// the specifier.
+    /// The resolution of a non-relative specifier, keyed by [`ResolverKey::bytes`], the directory, the kind of import
+    /// and the specifier.
     non_relative: ShardedMap<Vec<u8>, Option<(Vec<u8>, bool)>>,
     /// Maps a path to its real path, with symbolic links followed.
     real_paths: ShardedMap<Vec<u8>, Vec<u8>>,
@@ -598,20 +626,24 @@ impl<'h> Graph<'h> {
         b""
     }
 
-    /// Returns the resolver for the files that the config at `config` applies to. An empty `config` means no config.
-    /// `directory` is the directory of one of those files.
-    fn resolver_of(&self, config: &[u8], directory: &[u8]) -> &ProjectResolver<'h> {
+    /// Returns the resolver for the files that `key` applies to. `directory` is the directory of one of those files.
+    fn resolver_of(&self, key: ResolverKey, directory: &[u8]) -> &ProjectResolver<'h> {
         let caches = self.caches();
-        if let Some(resolver) = caches.resolvers.get_ref(config) {
+        let bytes = key.bytes();
+        if let Some(resolver) = caches.resolvers.get_ref(&bytes[..]) {
             return resolver;
         }
         // One thread reads a config while the others that need it wait.
         let _loading = self.loading.lock();
-        if let Some(resolver) = caches.resolvers.get_ref(config) {
+        if let Some(resolver) = caches.resolvers.get_ref(&bytes[..]) {
             return resolver;
         }
         let store: &'h Store = self.store;
-        let mut project = self.load_project(config, directory);
+        let mut project = self.load_project(key.config, directory);
+        if let Some(conditions) = key.conditions {
+            project.options.condition_names =
+                Some(conditions.iter().map(|it| it.to_vec()).collect());
+        }
         let raw_option = |name: &[u8]| {
             let mut options = project.raw_compiler_options.iter();
             options.find(|it| it.0 == name).map(|it| &it.1)
@@ -630,7 +662,7 @@ impl<'h> Graph<'h> {
             base_url,
             es_module_interop,
         };
-        caches.resolvers.insert_ref(config.to_vec(), resolver)
+        caches.resolvers.insert_ref(bytes.into_owned(), resolver)
     }
 
     /// `configured_paths` is the `paths` option, whose entries are relative to the working directory.
@@ -671,7 +703,7 @@ impl<'h> Graph<'h> {
             base_url: None,
         };
         // No TypeScript config applies here.
-        let plain = self.resolver_of(b"", cwd);
+        let plain = self.resolver_of(ResolverKey::of(b""), cwd);
         let (found, at) = (plain.resolver).resolve_as_require(specifier, from, &how)?;
         // `path.join(configured_paths, specifier)`
         let is_relative = at
@@ -687,13 +719,13 @@ impl<'h> Graph<'h> {
     /// its extension, or with one of `extensions` appended. This also goes through `paths` and `baseUrl`.
     fn resolve_other_file(
         &self,
-        config: &[u8],
+        key: ResolverKey,
         (specifier, from): (&[u8], &[u8]),
         extensions: &[&[u8]],
     ) -> Option<Vec<u8>> {
         let ProjectResolver {
             resolver, base_url, ..
-        } = self.resolver_of(config, directory_of(from));
+        } = self.resolver_of(key, directory_of(from));
         let how = AsRequire {
             extensions,
             module_directories: &[b"node_modules"],
@@ -745,13 +777,18 @@ impl<'h> Graph<'h> {
             let found = (by.resolve)(self, typescript_path(from), specifier, is_require)?;
             return Some((Cow::Owned(join(&self.store.cwd, &found)), false));
         }
-        self.resolve_any_path(self.config_of(from), from, specifier, is_require)
-            .filter(|it| !self.flavor().resolves_as_node() || is_read_by_oxlint(&it.0))
+        self.resolve_any_path(
+            ResolverKey::of(self.config_of(from)),
+            from,
+            specifier,
+            is_require,
+        )
+        .filter(|it| !self.flavor().resolves_as_node() || is_read_by_oxlint(&it.0))
     }
 
     fn resolve_any_path(
         &self,
-        config: &[u8],
+        key: ResolverKey,
         from: &[u8],
         specifier: &[u8],
         is_require: bool,
@@ -765,25 +802,25 @@ impl<'h> Graph<'h> {
             {
                 return found.map(|it| (Cow::Owned(it), false));
             }
-            return self.resolve_with_project(config, from, specifier, is_require);
+            return self.resolve_with_project(key, from, specifier, is_require);
         }
         // A non-relative specifier resolves the same way in every file of a directory with the same `tsconfig.json`,
         // and it's slow to resolve.
-        let key = [
-            config,
+        let cache_key = [
+            &key.bytes()[..],
             b"\0",
             directory_of(from),
             if is_require { b"\0r\0" } else { b"\0i\0" },
             specifier,
         ]
         .concat();
-        let found = match self.caches().non_relative.get_ref(&key[..]) {
+        let found = match self.caches().non_relative.get_ref(&cache_key[..]) {
             Some(found) => found,
             None => {
                 let found = self
-                    .resolve_with_project(config, from, specifier, is_require)
+                    .resolve_with_project(key, from, specifier, is_require)
                     .map(|it| (it.0.into_owned(), it.1));
-                self.caches().non_relative.insert_ref(key, found)
+                self.caches().non_relative.insert_ref(cache_key, found)
             }
         };
         found.as_ref().map(|it| (Cow::Owned(it.0.clone()), it.1))
@@ -841,7 +878,7 @@ impl<'h> Graph<'h> {
 
     fn resolve_with_project(
         &self,
-        config: &[u8],
+        key: ResolverKey,
         from: &[u8],
         specifier: &[u8],
         is_require: bool,
@@ -853,7 +890,7 @@ impl<'h> Graph<'h> {
         };
         let ProjectResolver {
             resolver, base_url, ..
-        } = self.resolver_of(config, directory_of(from));
+        } = self.resolver_of(key, directory_of(from));
         let base_url = base_url
             .as_ref()
             .filter(|_| !specifier.starts_with(b".") && !specifier.starts_with(b"/"));
@@ -1265,7 +1302,10 @@ impl Modules for Graph<'_> {
         let found = match lookup {
             // No system allows a path that long.
             _ if specifier.len() > 4096 => return None,
-            Lookup::TypeScript(projects) => {
+            Lookup::TypeScript {
+                projects,
+                condition_names,
+            } => {
                 // `removeQuerystring`
                 let end = strings::last_index_of_char(specifier, b'?').unwrap_or(specifier.len());
                 let specifier = &specifier[..end];
@@ -1289,8 +1329,12 @@ impl Modules for Graph<'_> {
                 let is_exact_name =
                     |it: &Vec<u8>| it.strip_suffix(name).is_some_and(|it| it.ends_with(b"/"));
                 let found = configs.iter().find_map(|config| {
+                    let key = ResolverKey {
+                        config,
+                        conditions: condition_names.as_deref(),
+                    };
                     let other = |extensions: &[&[u8]]| {
-                        self.resolve_other_file(config, (specifier, &from), extensions)
+                        self.resolve_other_file(key, (specifier, &from), extensions)
                     };
                     let exact_file = (!is_script && name.len() < specifier.len())
                         .then(|| other(&[]))
@@ -1298,7 +1342,7 @@ impl Modules for Graph<'_> {
                     if let Some(exact_file) = exact_file.filter(is_exact_name) {
                         return Some((Cow::Owned(exact_file), false));
                     }
-                    let found = self.resolve_any_path(config, &real, specifier, is_require);
+                    let found = self.resolve_any_path(key, &real, specifier, is_require);
                     let added: &[&[u8]] = match is_script {
                         true => &[b".json", b".node"],
                         false => &[
@@ -1386,7 +1430,8 @@ impl Modules for Graph<'_> {
     fn es_module_interop(&self, directory: &[u8]) -> bool {
         let directory = from_native(directory);
         let config = find_config_file(self.store.disk(), &directory).unwrap_or_default();
-        self.resolver_of(&config, &directory).es_module_interop
+        self.resolver_of(ResolverKey::of(&config), &directory)
+            .es_module_interop
     }
 
     fn is_path_of(&self, module: ModuleId, path: &[u8]) -> bool {

@@ -101,9 +101,18 @@ fn require_resolver<'s>(name: &[u8], config: Option<&'s Json>) -> Option<Lookup<
         let projects = file
             .or_else(|| option(b"project"))
             .filter(|it| it.is_truthy());
-        Some(Lookup::TypeScript(
-            projects.into_iter().flat_map(concat).flatten().collect(),
-        ))
+        // The resolver throws on a value that isn't an array of strings, so nothing is found.
+        let condition_names = match option(b"conditionNames") {
+            None => None,
+            Some(Json::Array(names)) => {
+                Some(names.iter().map(Json::as_str).collect::<Option<_>>()?)
+            }
+            Some(_) => return None,
+        };
+        Some(Lookup::TypeScript {
+            projects: projects.into_iter().flat_map(concat).flatten().collect(),
+            condition_names,
+        })
     } else {
         None
     }

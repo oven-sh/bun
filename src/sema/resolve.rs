@@ -704,6 +704,10 @@ pub struct Options {
     /// `customConditions`: conditions that match in the `exports` and `imports` of a
     /// `package.json`, in addition to the default ones.
     pub custom_conditions: Vec<Vec<u8>>,
+    /// Exactly the conditions that match in `exports` and `imports`, besides `default`. Not a TypeScript
+    /// option: eslint-import-resolver-typescript's `conditionNames`, which replaces `import`, `require`,
+    /// `node`, `types` and `custom_conditions`.
+    pub condition_names: Option<Vec<Vec<u8>>>,
     /// `GetResolvePackageJsonExports`. The resolver uses `has_exports_feature`.
     pub resolve_package_json_exports: bool,
     /// `GetResolvePackageJsonImports`. The resolver uses `has_imports_feature`.
@@ -2978,6 +2982,9 @@ impl<'h> Resolver<'h> {
                 conditions.push(b"node");
             }
             conditions.extend(self.options.custom_conditions.iter().map(Vec::as_slice));
+            if let Some(names) = &self.options.condition_names {
+                conditions = names.iter().map(Vec::as_slice).collect();
+            }
             let quoted = conditions.iter().map(|it| [b"'", *it, b"'"].concat());
             let quoted: Vec<Vec<u8>> = quoted.collect();
             let mode: &[u8] = if look.esm { b"ESM" } else { b"CJS" };
@@ -4695,9 +4702,14 @@ impl<'h> Resolver<'h> {
 
     /// `conditionMatches` against the conditions `GetConditions` returns, which include `types`.
     fn condition_matches(&self, condition: &[u8], look: Look) -> bool {
+        if condition == b"default" {
+            return true;
+        }
+        if let Some(names) = &self.options.condition_names {
+            return names.iter().any(|it| it == condition);
+        }
         let by_mode: &[u8] = if look.import { b"import" } else { b"require" };
-        condition == b"default"
-            || condition == by_mode
+        condition == by_mode
             || condition == b"node" && (self.options.resolves_like_node || look.all_features)
             || self
                 .options

@@ -1035,6 +1035,71 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
     }
   });
 
+  describe("the typescript resolver's conditionNames", () => {
+    // A package that gives every entry of a wildcard export the same declaration file, as lucide-react does.
+    const files = (settings: string) => ({
+      "bunfig.toml": `[lint.rules]\n"import/no-duplicates" = "error"\n"import/no-unresolved" = "error"\n${settings}`,
+      "node_modules/icons-pkg/package.json": JSON.stringify({
+        name: "icons-pkg",
+        type: "module",
+        exports: {
+          "./icons/*": { types: "./dist/icon.d.mts", default: "./dist/esm/icons/*.mjs" },
+          ".": { node: "./dist/node.js", import: "./dist/import.js", default: "./dist/default.js" },
+        },
+      }),
+      "node_modules/icons-pkg/dist/icon.d.mts": "declare const icon: () => string;\nexport default icon;\n",
+      "node_modules/icons-pkg/dist/esm/icons/check.mjs": `export default () => "check";\n`,
+      "node_modules/icons-pkg/dist/esm/icons/x.mjs": `export default () => "x";\n`,
+      "node_modules/icons-pkg/dist/node.js": "export const icons = 1;\n",
+      "node_modules/icons-pkg/dist/import.js": "export const icons = 1;\n",
+      "node_modules/icons-pkg/dist/default.js": "export const icons = 1;\n",
+      "src/index.ts": `import Check from "icons-pkg/icons/check";\nimport X from "icons-pkg/icons/x";\nexport const icons = [Check(), X()];\n`,
+      "src/root.ts": `import { icons } from "icons-pkg";\nimport { icons as again } from "icons-pkg";\nexport const both = [icons, again];\n`,
+    });
+    const duplicates = ["src/index.ts:1 import/no-duplicates", "src/index.ts:2 import/no-duplicates"];
+    const rootDuplicates = ["src/root.ts:1 import/no-duplicates", "src/root.ts:2 import/no-duplicates"];
+    const setting = (conditions: string) =>
+      `[lint.settings]\n"import/resolver" = { typescript = { conditionNames = ${conditions} } }\n`;
+
+    test("by default, every wildcard entry resolves to the shared types, as with eslint-import-resolver-typescript", async () => {
+      expect(await lintIn(".", files(""), ["src"])).toMatchObject({ found: [...duplicates, ...rootDuplicates] });
+      expect(await lintIn(".", files(setting(`["types", "import", "default"]`)), ["src"])).toMatchObject({
+        found: [...duplicates, ...rootDuplicates],
+      });
+    });
+
+    test("a list without `types` resolves each entry to its code", async () => {
+      expect(await lintIn(".", files(setting(`["import", "default"]`)), ["src"])).toMatchObject({
+        found: rootDuplicates,
+        exitCode: 1,
+      });
+    });
+
+    test("only the listed conditions match, and `default` always does", async () => {
+      const stdout = async (conditions: string) => {
+        using dir = tempDir("bun-lint", files(setting(conditions)));
+        await using proc = spawn({
+          cmd: [bunExe(), "lint", "-f", "unix", "src/root.ts"],
+          env,
+          cwd: String(dir),
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        return (await proc.stdout.text()).replaceAll("\\", "/");
+      };
+      expect(await stdout(`["node", "import"]`)).toContain("icons-pkg/dist/node.js");
+      expect(await stdout(`["import"]`)).toContain("icons-pkg/dist/import.js");
+      expect(await stdout(`[]`)).toContain("icons-pkg/dist/default.js");
+    });
+
+    test("a value that isn't an array of strings makes the resolver fail, so nothing is reported", async () => {
+      for (const conditions of [`"import"`, `["import", 1]`, `true`]) {
+        expect(await lintIn(".", files(setting(conditions)), ["src"])).toMatchObject({ found: [], exitCode: 0 });
+      }
+    });
+  });
+
   test.each([
     `parserOptions = { project = "./config/tsconfig.lint.json" }`,
     `parserOptions = { project = ["./config/tsconfig.lint.json"] }`,

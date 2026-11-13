@@ -168,4 +168,9 @@ interface::define_linked_functions! {
     fn bun_aot_name_values_of_unlinked_files<'a>(files: &'a Files<'_>) -> Box<dyn NamedValues + 'a> {
         Box::new(UnlinkedFiles::new(files))
     }
+
+    fn bun_aot_carried_bun_types() -> Option<(&'static [u8], Vec<(Vec<u8>, Vec<u8>)>)> {
+        use crate::load::runtime_types::{TYPE_ROOT, read_all};
+        Some((TYPE_ROOT, read_all().collect()))
+    }
 }

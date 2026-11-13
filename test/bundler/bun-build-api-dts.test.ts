@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
-import { tempDir } from "harness";
+import { tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "path";
 
 const project = {
@@ -117,6 +117,35 @@ export { join };
     expect(built.success).toBe(false);
     expect(built.logs.map(log => log.message).join("\n")).toContain("TS2322");
     expect(filesIn(root)).not.toContain("out");
+  });
+
+  // Only a build with --aot reads an .aot.ts file, and its program always has the types of Bun.
+  test("a library that reads import.meta, in a project that has @types/bun and no DOM types", async () => {
+    using dir = tempDirWithBunTypes("build-api-dts-import-meta", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          module: "Preserve",
+          moduleResolution: "bundler",
+          target: "ESNext",
+          lib: ["ESNext"],
+          types: ["bun"],
+          skipLibCheck: true,
+        },
+      }),
+      "package.json": JSON.stringify({ name: "where", compilerOptions: { strict: true, lib: ["esnext"] } }),
+      "src/index.ts": `export const here: string = import.meta.url;\n`,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      outdir: join(root, "out"),
+      tsconfig: join(root, "tsconfig.json"),
+      dts: true,
+    });
+    expect(built.logs).toEqual([]);
+    expect(filesIn(join(root, "out"))).toEqual(["index.aot.ts", "index.d.ts", "index.js"]);
+    expect(readFileSync(join(root, "out/index.aot.ts"), "utf8")).toContain("const here: string = import.meta.url;");
   });
 
   test("minify: the declaration files, and a warning about the rest", async () => {

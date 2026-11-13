@@ -1,23 +1,26 @@
+use core::sync::atomic::{AtomicBool, Ordering};
+
 use bstr::BStr;
 use bun_ast::LoaderHashTable;
 use bun_paths::platform::Auto;
 use bun_paths::resolve_path::join_abs_string;
 use bun_sema::check::Checker;
-use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
 use bun_sema::config::{
     self, Project, default_options_of_aot_package, find_package_with_compiler_options,
     load_for_aot_package, load_options_for_build,
 };
+use bun_sema::hir::find_transpiled_mark;
 use bun_sema::json::Json;
 use bun_sema::program::FileId;
 use bun_sema::session::Session;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::host::{Disk, Provided, from_native};
+use bun_sema_driver::typed_file_errors::{LeavesOut, error_that_leaves_out, first_error};
 use bun_sema_driver::typed_files::{
     ModuleTypes, Output, annotate_implicit_any, build_typed_files, emitted_declarations_of,
     module_types, tsconfig_of_sources, typed_path_beside,
 };
-use bun_sema_driver::{Diagnostic, PlanOptions, Report, Request};
+use bun_sema_driver::{PlanOptions, Request};
 use bun_threading::Guarded;
 
 use super::declarations::{LIBS_WITHOUT_CONFIGURATION, bundler_path};
@@ -97,19 +100,22 @@ impl NotedModuleTypes {
     }
 }
 
-// What costs a package its types in the build of a program that installs it.
-fn first_error(report: &Report) -> Option<&Diagnostic> {
-    report.diagnostics.iter().find(|reported| {
-        let effect = effect_of(
-            FileOrigin::DependencySource,
-            reported.class,
-            reported.category,
-        );
-        effect != Effect::Dropped
-    })
+type Texts = Vec<(Vec<u8>, Vec<u8>)>;
+
+/// The types of Bun as the compiler carries them: the type root that they lie below, and each file with its text.
+type CarriedBunTypes = (&'static [u8], Texts);
+
+type AfterFile<'a> = &'a (dyn Fn(&mut Checker<'_, '_>, FileId) + Sync);
+
+/// The program that the typed files are type checked in.
+enum CheckedIn<'a> {
+    /// Their own: the files, under what the package.json says of them.
+    OwnProgram,
+    /// One that loads them: with the types of Bun (`Some`: the compiler's copy of them), and code read as a module.
+    ProgramWithBunTypes(Option<CarriedBunTypes>, AfterFile<'a>),
 }
 
-type Texts = Vec<(Vec<u8>, Vec<u8>)>;
+const AS_PROGRAM_WITH_BUN_TYPES: [&[u8]; 4] = [b"--moduleDetection", b"force", b"--types", b"bun"];
 
 const STATED_AS_THE_SOURCES_STATE_THEM: [&[u8]; 7] = [
     b"jsx",
@@ -276,32 +282,88 @@ pub(crate) fn typed_files_for_build(
     let sources_tsconfig = tsconfig;
     let tsconfig_path = without_sources.as_ref().map(|file| bundler_path(&file.0));
     let tsconfig = tsconfig_path.as_deref();
-    let check = |typed: &mut Texts, declarations: &Texts, libs: &Texts| {
-        let paths: Vec<Vec<u8>> = (typed.iter().chain(libs))
+    let entry_paths = |typed: &Texts, libs: &Texts| -> Vec<Vec<u8>> {
+        (typed.iter().chain(libs))
             .map(|file| file.0.clone())
-            .collect();
+            .collect()
+    };
+    let check_once = |paths: &[Vec<u8>], texts: [&Texts; 3], checked_in: CheckedIn<'_>| {
         let entries = Paths::EntryPoints(Entries {
-            paths: &paths,
+            paths,
             script_kinds: &[],
             script_kinds_by_extension: &by_extension,
             conditions,
         });
-        let request = request(cwd, tsconfig, &entries, &[], 0, None);
+        let texts = texts.into_iter().flatten().chain(&without_sources);
+        let mut already_read = already_read(cwd, &mut texts.map(|file| (&file.0[..], &file.1[..])));
+        let mut options = Vec::new();
+        let mut plan_options = PlanOptions::default();
+        let mut after_file = None;
+        if let CheckedIn::ProgramWithBunTypes(carried, note) = checked_in {
+            options = bun_sema_driver::parse_command_line(&AS_PROGRAM_WITH_BUN_TYPES, cwd)
+                .compiler_options;
+            after_file = Some(note);
+            // Without this a checker for the files that are not checked starts on this thread, whatever its stack is.
+            plan_options.after_file_only_for_checked_files = true;
+            if let Some((type_root, files)) = carried {
+                plan_options.type_root_of_last_resort = Some(type_root);
+                already_read.extend(files);
+            }
+        }
+        let request = Request {
+            plan_options,
+            after_file,
+            ..request(cwd, tsconfig, &entries, &options, 0, None)
+        };
+        let provided = Provided {
+            already_read,
+            ..Default::default()
+        };
+        let provided = with_pages(cwd, provided);
+        bun_sema_driver::check_provided_then(&request, provided, |report| report)
+    };
+    let check = |typed: &mut Texts, declarations: &Texts, libs: &Texts| {
+        let paths = entry_paths(typed, libs);
         let mut rounds = 0;
         loop {
-            let texts = typed.iter().chain(declarations).chain(libs);
-            let texts = texts.chain(&without_sources);
-            let provided = Provided {
-                already_read: already_read(cwd, &mut texts.map(|file| (&file.0[..], &file.1[..]))),
-                ..Default::default()
-            };
-            let provided = with_pages(cwd, provided);
-            let report = bun_sema_driver::check_provided_then(&request, provided, |report| report);
+            let texts = [&*typed, declarations, libs];
+            let report = check_once(&paths, texts, CheckedIn::OwnProgram);
             rounds += 1;
             if rounds == 3 || !annotate_implicit_any(typed, &report.diagnostics) {
                 return report;
             }
         }
+    };
+    // The verdict on a text: its own check and, where that has an error, the check in a program that loads the files.
+    let judge = |typed: &mut Texts, declarations: &Texts| {
+        let report = check(typed, declarations, &newest_lib);
+        let with_bun_types = first_error(&report).and_then(|_| {
+            // `bun run --aot` takes a file that begins with this mark for JavaScript, so none is newly written.
+            if (typed.iter()).any(|file| find_transpiled_mark(&file.1).is_some()) {
+                return None;
+            }
+            let carried = match report.has_bun_types_installed {
+                true => None,
+                false => Some(bun_removable_features::removable_body!(
+                    AotCompiler,
+                    ReturnDefault,
+                    { bun_aot::load::carried_bun_types() }
+                )?),
+            };
+            // A file that only declares is a script to a program that loads it, unless that program forces modules.
+            let is_read_otherwise = AtomicBool::new(false);
+            let note = |checker: &mut Checker<'_, '_>, file: FileId| {
+                let file = checker.hir(file);
+                let is_module_by_force = file.is_forced_module && file.only_declares();
+                is_read_otherwise.fetch_or(is_module_by_force, Ordering::SeqCst);
+            };
+            let texts = [&*typed, declarations, &newest_lib];
+            let paths = entry_paths(typed, &newest_lib);
+            let checked_in = CheckedIn::ProgramWithBunTypes(carried, &note);
+            let report = check_once(&paths, texts, checked_in);
+            (!is_read_otherwise.load(Ordering::SeqCst)).then_some(report)
+        });
+        (report, with_bun_types)
     };
     let without_emitted_declarations = build_typed_files(outdir, &outputs, modules, &[]);
     let untyped_modules = without_emitted_declarations
@@ -360,12 +422,28 @@ pub(crate) fn typed_files_for_build(
         Ok(found) => found,
         Err(why) => return warn(format_args!("{why}")),
     };
-    let report = check(
-        &mut found.typed,
-        &found.declarations_while_checked,
-        &newest_lib,
-    );
-    if let Some(first) = first_error(&report) {
+    let (report, with_bun_types) = judge(&mut found.typed, &found.declarations_while_checked);
+    let typed = found.typed.len();
+    if let Some(error) = error_that_leaves_out(&report, with_bun_types.as_ref(), typed) {
+        let under = match error {
+            LeavesOut::OnlyWithBunTypes(_) => {
+                " with Bun's types, which every program that loads them has"
+            }
+            LeavesOut::InOwnProgram(_) => {
+                let without_newest_lib = check(
+                    &mut found.typed,
+                    &found.declarations_while_checked,
+                    &Vec::new(),
+                );
+                match first_error(&without_newest_lib) {
+                    None => {
+                        " under \"lib\": [\"esnext\"], which a project that installs the package may have"
+                    }
+                    Some(_) => "",
+                }
+            }
+        };
+        let (LeavesOut::InOwnProgram(first) | LeavesOut::OnlyWithBunTypes(first)) = error;
         let path = bundler_path(&first.path);
         let separator = std::path::MAIN_SEPARATOR_STR.as_bytes();
         let shown = path
@@ -374,17 +452,6 @@ pub(crate) fn typed_files_for_build(
                 inside.strip_prefix(separator).unwrap_or(inside)
             });
         let text = bun_core::strings::split(&first.text[..], b"\n").next();
-        let without_newest_lib = check(
-            &mut found.typed,
-            &found.declarations_while_checked,
-            &Vec::new(),
-        );
-        let under = match first_error(&without_newest_lib) {
-            None => {
-                " under \"lib\": [\"esnext\"], which a project that installs the package may have"
-            }
-            Some(_) => "",
-        };
         return warn(format_args!(
             "they have type errors{under}, the first at {}:{}:{}: TS{}: {}",
             BStr::new(shown),

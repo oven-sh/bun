@@ -1,5 +1,7 @@
 import { expect } from "bun:test";
+import { readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
 import { test } from "./supported";
 
 const manifest = (name: string) =>
@@ -90,6 +92,53 @@ test.concurrent("a package without type errors changes nothing", async () => {
   const expected = { found: [], closing: "✓ No type errors in 2 files", exitCode: 0 };
   expect(await check(files)).toEqual(expected);
   expect(await check(files, "--all")).toEqual(expected);
+});
+
+// The library is a project as `bun init` writes it. Its build type checks index.aot.ts with the types of Bun, as this
+// program does, so `import.meta.url` and `import.meta.dir` are no errors in either.
+test.concurrent("a package that bun compile --library builds from a library that reads import.meta", async () => {
+  using library = tempDir("aot-check-built-library", {
+    "tsconfig.json": JSON.stringify({
+      compilerOptions: {
+        lib: ["ESNext"],
+        target: "ESNext",
+        module: "Preserve",
+        moduleDetection: "force",
+        types: ["bun"],
+        moduleResolution: "bundler",
+        strict: true,
+        skipLibCheck: true,
+      },
+    }),
+    "package.json": JSON.stringify({ name: "where", version: "1.0.0" }),
+    "node_modules/@types/bun/package.json": JSON.stringify({
+      name: "@types/bun",
+      version: "1.0.0",
+      types: "index.d.ts",
+    }),
+    "node_modules/@types/bun/index.d.ts":
+      "interface ImportMeta {\n  readonly url: string;\n  readonly dir: string;\n}\n",
+    "src/index.ts":
+      "export const here: string = import.meta.url;\nexport function folder(): string {\n  return import.meta.dir;\n}\n",
+  });
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "compile", "--library", "src/index.ts"],
+    cwd: String(library),
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, said, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect({ said, buildExitCode }).toEqual({ said: "", buildExitCode: 0 });
+  const dist = join(String(library), "dist");
+  const built = readdirSync(dist).sort();
+  expect(built).toEqual(["index.aot.ts", "index.d.ts", "index.js", "package.json"]);
+  const files = {
+    ...app,
+    ...Object.fromEntries(built.map(name => [`node_modules/where/${name}`, readFileSync(join(dist, name), "utf8")])),
+    "main.ts": 'import { folder, here } from "where";\nconsole.log(here, folder());\n',
+  };
+  expect(await check(files, "--all")).toEqual({ found: [], closing: "✓ No type errors in 2 files", exitCode: 0 });
 });
 
 test.concurrent("the build does not stop for a type error in a package", async () => {

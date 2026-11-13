@@ -12,9 +12,15 @@
 #include "ExtendedDOMIsoSubspaces.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/LazyProperty.h>
+#include <JavaScriptCore/AsyncFunctionPrototype.h>
+#include <JavaScriptCore/AsyncGeneratorFunctionPrototype.h>
+#include <JavaScriptCore/GeneratorFunctionPrototype.h>
+#include <JavaScriptCore/JSArrayBufferPrototype.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSPromiseConstructor.h>
+#include <JavaScriptCore/JSPromisePrototype.h>
+#include <JavaScriptCore/JSTypedArrayViewPrototype.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/Weak.h>
@@ -28,6 +34,7 @@
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/ArrayConstructor.h>
+#include <JavaScriptCore/ArrayPrototype.h>
 #include <JavaScriptCore/ObjectPrototypeInlines.h>
 #include <JavaScriptCore/RegExpPrototype.h>
 #include <JavaScriptCore/PropertyNameArray.h>
@@ -724,6 +731,12 @@ public:
     {
         this->clear();
         this->resetConfiguration(globalObject);
+    }
+
+    JSObject* initialImplementation() const
+    {
+        JSValue initial = m_initialImplementation.get();
+        return initial ? initial.getObject() : nullptr;
     }
 
     // What mockReset() goes back to in Vitest: the function given to vi.fn(), or a spy's original. Only call it on a new mock.
@@ -2528,7 +2541,10 @@ enum class AutomockKind : uint8_t {
 enum class AutomockRole : uint8_t {
     Member,
     Exports,
+    // The `prototype` of a function.
     Prototype,
+    // The `prototype` of a class, which holds the methods of the instances. It is mocked whatever Object.prototype.toString() says of it.
+    ClassPrototype,
 };
 
 struct Automocker {
@@ -2540,7 +2556,7 @@ struct Automocker {
     JSC::MarkedArgumentBuffer pending {};
     JSC::JSFunction* accessor { nullptr };
 
-    AutomockKind kindOf(JSValue);
+    AutomockKind kindOf(JSValue, AutomockRole);
     JSValue replacementFor(JSValue, AutomockRole = AutomockRole::Member);
     void mockElements(JSObject* original, JSC::JSArray* replacement);
     void mockMembers(JSObject* original, JSObject* replacement, AutomockKind);
@@ -2552,7 +2568,7 @@ __attribute__((minsize)) NEVER_INLINE JSString* objectPrototypeToStringOutOfLine
     return JSC::objectPrototypeToString(globalObject, value);
 }
 
-AutomockKind Automocker::kindOf(JSValue value)
+AutomockKind Automocker::kindOf(JSValue value, AutomockRole role)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
@@ -2561,6 +2577,14 @@ AutomockKind Automocker::kindOf(JSValue value)
     // A global object has no Symbol.toStringTag that would make the check below keep it.
     if (asObject(value)->isGlobalObject() || asObject(value)->type() == JSC::GlobalProxyType)
         return AutomockKind::Keep;
+    if (role == AutomockRole::ClassPrototype) {
+        // A function, and the `prototype` of AsyncFunction, GeneratorFunction or AsyncGeneratorFunction, go by their tag like any other value.
+        auto* object = asObject(value);
+        bool isOfFunctions = value.isCallable() || object->inherits<JSC::AsyncFunctionPrototype>() || object->inherits<JSC::GeneratorFunctionPrototype>() || object->inherits<JSC::AsyncGeneratorFunctionPrototype>();
+        // Any other `prototype` of a class holds the methods of the instances, whatever it is itself: an array, an Error, an object with the tag of Map.
+        if (!isOfFunctions)
+            return AutomockKind::Object;
+    }
 
     bool isArray = JSC::isArray(globalObject, value);
     RETURN_IF_EXCEPTION(scope, AutomockKind::Keep);
@@ -2601,7 +2625,7 @@ __attribute__((minsize)) JSValue Automocker::replacementFor(JSValue value, Autom
     if (!known.isUndefined())
         return known;
 
-    AutomockKind kind = kindOf(value);
+    AutomockKind kind = kindOf(value, role);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSObject* original = asObject(value);
@@ -2616,7 +2640,7 @@ __attribute__((minsize)) JSValue Automocker::replacementFor(JSValue value, Autom
     case AutomockKind::Object: {
         // Spy in place, so that spied methods still find the private fields, internal slots and prototype of their `this`.
         bool inPlace = spy;
-        if (spy && leaveOriginalAlone && role == AutomockRole::Prototype) {
+        if (spy && leaveOriginalAlone && (role == AutomockRole::Prototype || role == AutomockRole::ClassPrototype)) {
             replacement = JSC::constructEmptyObject(globalObject, original);
             break;
         }
@@ -2696,6 +2720,76 @@ void Automocker::mockElements(JSObject* original, JSC::JSArray* replacement)
     replacement->setLength(globalObject, length, true);
 }
 
+// A function of the tested code, as opposed to one that the runtime provides: a native one, or one of a built-in module.
+static bool isUserFunction(JSObject* object)
+{
+#if ENABLE(AOT)
+    if (object->vm().hasCompiledCode() && JSC::AOT::CompiledCallee::isCompiledCallee(object))
+        return !JSC::AOT::belongsToBuiltinModule(object);
+#endif
+    auto* function = dynamicDowncast<JSC::JSFunction>(object);
+    if (!function || function->isHostOrBuiltinFunction())
+        return false;
+    // The engine never marks the constructor that it makes for a class as builtin. The class source tells for a built-in module, not for a builtin function.
+    auto* classSource = function->jsExecutable()->classSource().provider();
+    return !classSource || !classSource->sourceOrigin().url().protocolIs("builtin"_s);
+}
+
+// The prototype of a compiled class gets its members when somebody first looks at them, and is a plain object from then on.
+static void materializeCompiledMembers(JSC::VM& vm, JSObject* object)
+{
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode()) [[unlikely]]
+        JSC::AOT::PropertyWalk::materializeLazyProperties(vm, object);
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(object);
+#endif
+}
+
+// Whether a class's `prototype` is a plain object of the tested code, not one that the whole process shares such as Math or Map.prototype.
+static bool ownsPrototype(JSC::VM& vm, JSObject* constructor, JSValue prototype)
+{
+    auto* object = prototype.getObject();
+    if (!object)
+        return false;
+    materializeCompiledMembers(vm, object);
+    if (object->type() != JSC::FinalObjectType && object->type() != JSC::CompiledObjectType)
+        return false;
+    // A prototype belongs to the function that a read of `constructor` finds: after `factory.prototype = Class.prototype`, to Class.
+    JSValue named = object->getDirect(vm, vm.propertyNames->constructor);
+    bool isOwn = !!named;
+    for (auto* holder = object->getPrototypeDirect().getObject(); holder && !named; holder = holder->getPrototypeDirect().getObject()) {
+        materializeCompiledMembers(vm, holder);
+        named = holder->getDirect(vm, vm.propertyNames->constructor);
+    }
+    auto* owner = named ? named.getObject() : nullptr;
+    // An own `constructor` that is no object names nobody. Then the function that has the prototype decides.
+    if (isOwn && !owner)
+        owner = constructor;
+    // An earlier spy in place has left its mock of the class there.
+    if (auto* mock = owner ? dynamicDowncast<JSMockFunction>(owner) : nullptr)
+        owner = mock->initialImplementation();
+    return owner && isUserFunction(owner);
+}
+
+// Whether the object is, or inherits from, the `prototype` of one of these built-in classes. Calls no Proxy trap.
+template<typename... Prototypes>
+static bool inheritsFromPrototype(JSObject* object)
+{
+    for (; object; object = object->getPrototypeDirect().getObject()) {
+        if ((object->inherits<Prototypes>() || ...))
+            return true;
+    }
+    return false;
+}
+
+// Methods of these classes, such as `then` and `map`, construct through `this.constructor[Symbol.species]`. A spy on the prototype makes that the mock of the class.
+static bool constructsThroughSpecies(JSObject* prototype)
+{
+    return inheritsFromPrototype<JSC::JSPromisePrototype, JSC::JSArrayBufferPrototype, JSC::ArrayPrototype, JSC::JSTypedArrayViewPrototype, JSC::RegExpPrototype>(prototype);
+}
+
 __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObject* replacement, AutomockKind kind)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2725,6 +2819,9 @@ __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObje
                 continue;
             if (kind == AutomockKind::Module && key == vm.propertyNames->toStringTagSymbol)
                 continue;
+            // An automock of a promise class has no `then`: with a mock of it, an `await` of an instance never settles.
+            if (!spy && key == vm.propertyNames->then && inheritsFromPrototype<JSC::JSPromisePrototype>(original))
+                continue;
 
             JSC::PropertyDescriptor descriptor;
             bool found = holder->getOwnPropertyDescriptor(globalObject, key, descriptor);
@@ -2753,7 +2850,16 @@ __attribute__((minsize)) void Automocker::mockMembers(JSObject* original, JSObje
                 continue;
             }
 
-            JSValue mocked = replacementFor(value, isFunction && key == vm.propertyNames->prototype ? AutomockRole::Prototype : AutomockRole::Member);
+            AutomockRole role = AutomockRole::Member;
+            if (isFunction && key == vm.propertyNames->prototype) {
+                // Only `new` makes an instance from the `prototype` of the mock. The generators of a generator function inherit from its own `prototype`.
+                bool isOfClass = original->isConstructor();
+                // With `spy`, the tag still decides for a prototype that the tested code does not own, and for one that constructs through Symbol.species.
+                if (isOfClass && spy)
+                    isOfClass = ownsPrototype(vm, original, value) && !constructsThroughSpecies(asObject(value));
+                role = isOfClass ? AutomockRole::ClassPrototype : AutomockRole::Prototype;
+            }
+            JSValue mocked = replacementFor(value, role);
             RETURN_IF_EXCEPTION(scope, );
 
             if (inPlace) {

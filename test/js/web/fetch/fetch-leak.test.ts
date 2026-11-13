@@ -540,12 +540,16 @@ test.concurrent(
       // and the lazy Blob body is never read, so no fs I/O happens.
       await fetch(prefix + i + pad);
     }
-    for (let i = 0; i < 200; i++) { try { await hit(-i); } catch {} }
-    Bun.gc(true);
-    const baseline = rss();
-
+    // The first ITERS iterations are warm-up. The FTL JIT compiles this loop
+    // from about iteration 3000 on, and its memory stays: a baseline taken
+    // before that reads 20 to 26 MiB of growth on ASAN builds with no leak.
     const ITERS = 20000;
-    for (let i = 0; i < ITERS; i++) {
+    let baseline = 0;
+    for (let i = 0; i < 2 * ITERS; i++) {
+      if (i === ITERS) {
+        Bun.gc(true);
+        baseline = rss();
+      }
       try { await hit(i); } catch {}
       if ((i & 1023) === 0) Bun.gc(true);
     }
@@ -558,9 +562,9 @@ test.concurrent(
       finalMB: (final / 1024 / 1024) | 0,
       deltaMB: Math.round(deltaMB * 10) / 10,
     }));
-    // ~0.9 KiB × 20000 ≈ 18 MiB raw leak (measured ~32 MiB on debug+ASAN)
-    // when the extra ref is dropped on the floor; ~12 MiB noise with the fix.
-    if (deltaMB > 20) {
+    // ~0.9 KiB × 20000 ≈ 18 MiB raw leak (measured 17 MiB on debug+ASAN)
+    // when the extra ref is dropped on the floor; under 1 MiB with the fix.
+    if (deltaMB > 8) {
       throw new Error("fetch(file://) leaked " + deltaMB.toFixed(1) + " MB over " + ITERS + " iterations");
     }
   `;

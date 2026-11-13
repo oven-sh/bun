@@ -2130,6 +2130,8 @@ describe.concurrent("Readable.fromWeb over a native stream: each 'data' chunk is
       "a listener moves its chunk out while the next read waits": "aaaaaaaa bbbbbbbb cccccccc end",
       // The next read used to write over a chunk that the listener kept.
       "a listener keeps the chunks and reads again": blocks.join(" "),
+      // It used to be an unhandled rejection when the stream does not destroy itself.
+      "an 'error' listener throws": "uncaughtException",
       "a listener keeps a chunk that fills the buffer and reads again": Array.from(
         "abcdefghijkl",
         run => run + 1024,

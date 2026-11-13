@@ -1,8 +1,8 @@
 // child.stdout read with a plain 'data' listener, timed from the first chunk to 'end', best of RUNS passes.
 //
-// - "lockstep" rows: the child writes its next block when the parent has read the one before. Every chunk is one
-//   block, and is shorter than the buffer that the stream reads into. They report microseconds per chunk. The buffer
-//   is 64 KiB: 4 KiB and 16 KiB divide it, 4000 B and 15000 B do not.
+// - "lockstep" rows: the child writes its next block when the parent has read the whole of the one before. A block
+//   is shorter than the buffer that the stream reads into, and arrives as one chunk unless the pipe splits it. They
+//   report microseconds per chunk. The buffer is 64 KiB: 4 KiB and 16 KiB divide it, 4000 B and 15000 B do not.
 // - "bulk" rows: the child writes without a wait for the parent. They report MB/s.
 //
 //   bun bench/snippets/child-process-stdout.mjs
@@ -27,21 +27,25 @@ function read(script, stdin, onChunk) {
     child.stdout.on("data", chunk => {
       if (chunks++ === 0) start = performance.now();
       bytes += chunk.length;
-      onChunk?.(child);
+      onChunk?.(child, chunk);
     });
     child.stdout.on("end", () => resolve({ bytes, chunks, ms: performance.now() - start }));
   });
 }
 
-// The child writes one block for each line on its stdin.
+// The child writes one block for each line on its stdin, and gets a line for each block that the parent has read whole.
 const lockstep = (size, count) => ({
   bytes: size * count,
-  run: () =>
-    read(
+  run: () => {
+    let unanswered = 0;
+    return read(
       `const b=Buffer.alloc(${size},97);let i=0;const next=()=>{if(i++<${count})process.stdout.write(b);else process.exit(0)};process.stdin.on("data",next);next()`,
       "pipe",
-      child => child.stdin.write("\n"),
-    ),
+      (child, chunk) => {
+        for (unanswered += chunk.length; unanswered >= size; unanswered -= size) child.stdin.write("\n");
+      },
+    );
+  },
 });
 const bulk = (size, count) => ({
   bytes: size * count,

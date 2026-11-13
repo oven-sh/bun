@@ -205,7 +205,7 @@ function pump(stream: NativeReadable) {
         try {
           chunk = nativePullSettled(pull, result);
         } catch (err) {
-          errorOrDestroy(stream, err as Error);
+          errorOutOfPromise(stream, err);
           return;
         }
         try {
@@ -217,7 +217,7 @@ function pump(stream: NativeReadable) {
       },
       reason => {
         stream[kPendingRead] = false;
-        errorOrDestroy(stream, reason);
+        errorOutOfPromise(stream, reason);
       },
     );
     return;
@@ -233,6 +233,15 @@ function deliver(stream: NativeReadable, chunk: PullResult, isClosed: boolean) {
   } catch (err) {
     process.nextTick(readAfterThrow, stream);
     throw err;
+  }
+}
+
+// Without autoDestroy, 'error' is emitted at once: a listener that throws is an uncaughtException, not a rejection.
+function errorOutOfPromise(stream: NativeReadable, err: unknown) {
+  try {
+    errorOrDestroy(stream, err as Error);
+  } catch (thrown) {
+    process.nextTick(rethrow, thrown);
   }
 }
 

@@ -205,6 +205,28 @@ const groups = {
         await once(readable, "end");
         return kept.join(" ");
       }),
+    // The source fails while a read waits. Node.js emits 'error' from a tick, so a listener that throws there is an
+    // uncaught exception, not the rejection of a promise that nobody holds.
+    "an 'error' listener throws": () =>
+      fetched(async (body, next, fail) => {
+        const readable = Readable.fromWeb(body, { autoDestroy: false });
+        const thrown = new Error("thrown by the listener");
+        const { promise, resolve } = Promise.withResolvers();
+        const onUncaught = error => settle("uncaughtException", error);
+        const onRejection = error => settle("unhandledRejection", error);
+        function settle(kind, error) {
+          process.off("uncaughtException", onUncaught);
+          process.off("unhandledRejection", onRejection);
+          resolve(error === thrown ? kind : `${kind}: ${error}`);
+        }
+        process.on("uncaughtException", onUncaught);
+        process.on("unhandledRejection", onRejection);
+        readable.on("error", () => {
+          throw thrown;
+        });
+        readable.on("data", () => fail());
+        return promise;
+      }),
     // A block is 4 runs of 1024 bytes and the stream reads into a buffer of 1024, so a read that waits gets it
     // filled whole.
     "a listener keeps a chunk that fills the buffer and reads again": () => {

@@ -161,7 +161,8 @@ row("both objects are in the Set, and their values differ", "pass", () => {
 });
 
 // Node.js leaves the new object of a pair in its Set when the other object of the pair was there (L578-L583). A
-// later pair can then find an object there that is not inside the comparison.
+// later pair can then find an object there that is not inside the comparison. These rows go when Node.js stops doing
+// that, as it did for the pair below the first one (nodejs/node#62509).
 {
   const lateRing = () => {
     const late = {};
@@ -214,10 +215,18 @@ row("both objects are in the Set, and their values differ", "pass", () => {
 
 // Before it asks its memos, Node.js answers false for an `expected` array that is longer than `actual` (L295), and
 // true for an `expected` with nothing to compare (L523-L528).
-row("an expected with no key, actual is in the Set", "pass", () => [
-  { loop: ring(1), ast: tree() },
-  { loop: ring(1), ast: { body: [{ parent: {} }] } },
-]);
+{
+  // The parent of the tree is in the Set when it meets `parent`.
+  const parentAgainst = parent => [
+    { loop: ring(1), ast: tree() },
+    { loop: ring(1), ast: { body: [{ parent }] } },
+  ];
+  row("an expected with no key, actual is in the Set", "pass", () => parentAgainst({}));
+  row("an expected with a key that is not enumerable, actual is in the Set", "pass", () =>
+    parentAgainst(Object.defineProperty({}, "type", { value: "Script" })),
+  );
+  row("an expected with an index key, actual is in the Set", "fail", () => parentAgainst({ 0: 1 }));
+}
 row("an expected with no key, actual is the second pair", "pass", () => {
   const inner = {};
   inner.self = inner.loop = inner;
@@ -296,6 +305,15 @@ for (const [kind, make, add] of [
     const expected = new Error("a");
     expected.loop = ring(1);
     expected.self = new Error("b");
+    return [actual, expected];
+  });
+  row("an expected Error with a key, actual is the first Error again", "fail", () => {
+    const actual = new Error("a");
+    actual.loop = ring(1);
+    actual.self = actual;
+    const expected = new Error("a");
+    expected.loop = ring(1);
+    expected.self = Object.assign(new Error("a"), { code: 1 });
     return [actual, expected];
   });
   row("Errors that are both in the Set, from other pairs, with other messages", "fail", () => {

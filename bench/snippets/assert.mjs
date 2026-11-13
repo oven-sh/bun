@@ -23,10 +23,20 @@ function tree(parentOf) {
   return root;
 }
 
+// Records by id, each with a link back to the table.
+function table(size) {
+  const records = {};
+  for (let id = 1; id <= size; id++) records[id] = { name: `record ${id}`, table: records };
+  return records;
+}
+
 const chains = [chain(64), chain(64)];
 const trees = [tree(() => ({})), tree(() => ({}))];
 const treesWithParent = [tree(parent => ({ parent })), tree(parent => ({ parent }))];
 const partOfTreeWithParent = tree(() => ({ parent: { type: "Program" } }));
+const tables = [table(1000), table(1000)];
+const rows = Array.from({ length: 200 }, (_, i) => [i, "x", "y"]);
+const lastRow = [[199, "x", "y"]];
 
 bench("partialDeepStrictEqual", () => {
   assert.partialDeepStrictEqual({ foo: "123", bar: { baz: [1, 2, 3] }, beep: "boop" }, { bar: { baz: [2, 3] } });
@@ -46,6 +56,14 @@ bench("partialDeepStrictEqual (tree of 20, parent links in actual)", () => {
 
 bench("partialDeepStrictEqual (tree of 20, parent links in both)", () => {
   assert.partialDeepStrictEqual(treesWithParent[0], treesWithParent[1]);
+});
+
+bench("partialDeepStrictEqual (table of 1000 records, links back in both)", () => {
+  assert.partialDeepStrictEqual(tables[0], tables[1]);
+});
+
+bench("partialDeepStrictEqual (the last of 200 rows)", () => {
+  assert.partialDeepStrictEqual(rows, lastRow);
 });
 
 await run();

@@ -344,8 +344,10 @@ describe("assert.partialDeepStrictEqual", () => {
     test("a deep comparison with no pair that repeats is never left to the memos", () => {
       // A list with links in both directions, against its part that goes to the last item and one link back. The
       // memos fail that link back, because only `actual` was there before.
-      const answers = new Set();
-      for (let depth = 64; !answers.has("RangeError"); depth += 32) {
+      let depth = 0;
+      let answer;
+      do {
+        depth += 64;
         const items = Array.from({ length: depth }, (_, v) => ({ v }));
         items.forEach((item, i) => {
           if (i > 0) item.previous = items[i - 1];
@@ -353,9 +355,9 @@ describe("assert.partialDeepStrictEqual", () => {
         });
         let expected = { v: depth - 1, previous: { v: depth - 2 } };
         for (let v = depth - 2; v >= 0; v--) expected = { v, next: expected };
-        answers.add(answerOf(items[0], expected));
-      }
-      expect([...answers]).toEqual(["pass", "RangeError"]);
+        answer = answerOf(items[0], expected);
+      } while (answer === "pass");
+      expect(answer).toBe("RangeError");
     });
 
     test("the depth of the caller does not change an answer", () => {

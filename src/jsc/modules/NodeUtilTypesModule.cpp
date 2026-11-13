@@ -514,20 +514,18 @@ static NEVER_INLINE std::optional<bool> enterMemos(JSC::JSGlobalObject* globalOb
     return !actualIsNew && !expectedIsNew;
 }
 
-// What handleCycles does once objEquiv has answered for a pair. While `deep` is set, `c` is in the Set if there is
-// one, so the pair that set `deep` is the only compared pair with `c`. For the first pair of all nothing is left to
-// do, and what this does then has no effect.
+// What handleCycles does once objEquiv has answered for a pair. Without a Set, the pair is the one that set `deep`,
+// or the first pair of all. `deep` is not read once there is a Set. For the first pair of all nothing is left to do,
+// and what this does then has no effect.
 // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L561-L588
 static NEVER_INLINE void leaveMemos(CycleState& cycles, JSC::JSCell* actualCell, JSC::JSCell* expectedCell)
 {
     Memos& memos = *cycles.memos;
-    if (memos.deep && memos.c == actualCell) {
-        memos.deep = false;
-        if (!memos.hasSet)
-            return;
+    memos.deep = false;
+    if (memos.hasSet) {
+        memos.set.remove(actualCell);
+        memos.set.remove(expectedCell);
     }
-    memos.set.remove(actualCell);
-    memos.set.remove(expectedCell);
 }
 
 static NEVER_INLINE bool withMemos(JSC::JSGlobalObject* globalObject, JSC::MarkedArgumentBuffer& gcBuffer, CycleState& cycles, JSC::ThrowScope& scope, JSValue actual, JSValue expected, Arm arm)

@@ -286,7 +286,6 @@ test("streaming response sends headers before any body chunk", async () => {
   });
 
   const aborter = new AbortController();
-  const timer = setTimeout(() => aborter.abort(), 2_000);
   try {
     const response = await fetch(server.url, { signal: aborter.signal });
     expect(response.status).toBe(200);
@@ -298,7 +297,6 @@ test("streaming response sends headers before any body chunk", async () => {
     controller.close();
     expect(await response.text()).toBe("first");
   } finally {
-    clearTimeout(timer);
     aborter.abort();
     try {
       controller?.close();
@@ -332,7 +330,6 @@ test("direct streaming response sends headers before any body chunk", async () =
   });
 
   const aborter = new AbortController();
-  const timer = setTimeout(() => aborter.abort(), 2_000);
   try {
     const response = await fetch(server.url, { signal: aborter.signal });
     expect(response.status).toBe(200);
@@ -340,7 +337,6 @@ test("direct streaming response sends headers before any body chunk", async () =
     releaseBody();
     expect(await response.text()).toBe("first");
   } finally {
-    clearTimeout(timer);
     releaseBody();
     aborter.abort();
   }

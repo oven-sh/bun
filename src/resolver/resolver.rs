@@ -2304,23 +2304,31 @@ impl<'a> Resolver<'a> {
                 };
 
                 // The importer's package.json "browser" map wins over the builtin
-                // polyfill. The lookup uses the bare name so it matches the same
-                // spellings the polyfill table below does.
-                let browser_map_overrides_builtin = self.care_about_browser_field
-                    && matches!(self.dir_info_cached(source_dir), Ok(Some(info))
-                    if info
-                        .get_enclosing_browser_scope()
-                        .is_some_and(|scope| {
-                            self.check_browser_map::<{ BrowserMapPathKind::PackagePath }>(
-                                &scope,
-                                import_path_without_node_prefix,
-                            )
+                // polyfill. A bare key covers both spellings, as the polyfill table
+                // does. A `node:` key matches only the specifier as written, and wins.
+                let browser_map_name = if self.care_about_browser_field
+                    && let Ok(Some(info)) = self.dir_info_cached(source_dir)
+                    && let Some(scope) = info.get_enclosing_browser_scope()
+                {
+                    let mut has_key = |name: &[u8]| {
+                        self.check_browser_map::<{ BrowserMapPathKind::PackagePath }>(&scope, name)
                             .is_some()
-                        }));
+                    };
+                    if had_node_prefix && has_key(import_path) {
+                        Some(import_path)
+                    } else if has_key(import_path_without_node_prefix) {
+                        Some(import_path_without_node_prefix)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
 
-                if browser_map_overrides_builtin {
-                    // check_package_path re-runs this lookup; give it the bare name.
-                    import_path = import_path_without_node_prefix;
+                if let Some(name) = browser_map_name {
+                    // The `--external` check below and check_package_path, which re-runs
+                    // this lookup, use the name that matched.
+                    import_path = name;
                 } else {
                     result.jsx = self.opts.jsx.clone();
 

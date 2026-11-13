@@ -43,9 +43,7 @@ pub(crate) fn drain_microtasks(cx: &mut JsScope<'_>) {
     // straight to the thread-local for the VM.
     let vm = VirtualMachine::get_mut();
     let jsc_vm = global.vm();
-    let _ = vm
-        .event_loop_mut()
-        .drain_microtasks_with_global(global, jsc_vm);
+    let _ = vm.event_loop().drain_microtasks_with_global(global, jsc_vm);
 }
 
 /// `export fn Bun__logUnhandledException(exception: JSValue) void { get().runErrorHandler(exception, null); }`

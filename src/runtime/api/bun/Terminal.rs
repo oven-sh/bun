@@ -382,9 +382,7 @@ impl Terminal {
             } else {
                 options.rows
             }),
-            event_loop_handle: EventLoopHandle::init(
-                global_object.bun_vm().as_mut().event_loop().cast(),
-            ),
+            event_loop_handle: EventLoopHandle::init(global_object.bun_vm().event_loop_ptr()),
             global_this: bun_ptr::BackRef::new(global_object),
             writer: JsCell::new(IOWriter::default()),
             reader: JsCell::new(IOReader::init::<Terminal>()),
@@ -1696,7 +1694,7 @@ impl Terminal {
         if let Some(this_jsvalue) = self.this_value.get().try_get() {
             if let Some(callback) = js::drain_get_cached(this_jsvalue) {
                 let global_this = self.global();
-                global_this.bun_vm().event_loop_mut().run_callback(
+                global_this.bun_vm().event_loop().run_callback(
                     bun_event_loop::ContextId::NONE,
                     callback,
                     global_this,
@@ -1832,7 +1830,7 @@ impl Terminal {
             JSValue::NULL
         };
 
-        global_this.bun_vm().event_loop_mut().run_callback(
+        global_this.bun_vm().event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             callback,
             global_this,
@@ -1891,7 +1889,7 @@ impl Terminal {
 
         // Each chunk's `data` callback is its own top-level call: reported and
         // reading continues, as a stream 'data' listener that throws does.
-        global_this.bun_vm().event_loop_mut().run_callback(
+        global_this.bun_vm().event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             callback,
             global_this,

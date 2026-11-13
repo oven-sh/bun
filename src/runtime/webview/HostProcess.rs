@@ -197,7 +197,7 @@ fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Res
     // argv[0] non-null; valid for this call.
     let spawned = unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr()) }??;
 
-    let event_loop = EventLoopHandle::init(vm.event_loop().cast());
+    let event_loop = EventLoopHandle::init(vm.event_loop_ptr());
     let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess {
         process: spawned.to_process_handle(event_loop),
         retired: false,

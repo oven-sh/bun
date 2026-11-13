@@ -583,8 +583,8 @@ impl QuicStream {
         self.inbound.with_mut(|i| i.ended = true);
         self.with_state(|s| s.read_ended = 1);
         if let Some(wakeup) = self.take_wakeup() {
-            let vm = global.bun_vm().as_mut();
-            vm.event_loop_ref().run_callback(
+            let vm = global.bun_vm();
+            vm.event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 wakeup.get(),
                 global,
@@ -623,8 +623,8 @@ impl QuicStream {
         });
         self.with_state(|s| s.read_ended = 1);
         if let Some(wakeup) = self.take_wakeup() {
-            let vm = global.bun_vm().as_mut();
-            vm.event_loop_ref().run_callback(
+            let vm = global.bun_vm();
+            vm.event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 wakeup.get(),
                 global,
@@ -693,8 +693,8 @@ impl QuicStream {
             }
             None => JSValue::UNDEFINED,
         };
-        let vm = global.bun_vm().as_mut();
-        vm.event_loop_ref().run_callback(
+        let vm = global.bun_vm();
+        vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             cb,
             global,

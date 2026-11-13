@@ -97,7 +97,7 @@ impl InternalMsgHolder {
         let cb = self.cb.get().unwrap();
         let worker = self.worker.get().unwrap();
 
-        let event_loop = global.bun_vm().event_loop_mut();
+        let event_loop = global.bun_vm().event_loop();
 
         event_loop.run_callback(
             bun_event_loop::ContextId::NONE,
@@ -1171,7 +1171,7 @@ impl SendQueue {
         self.ref_();
         self.get_global_this()
             .bun_vm()
-            .event_loop_mut()
+            .event_loop()
             .enqueue_task(Task::init(self.root_ptr()));
     }
 
@@ -2467,8 +2467,6 @@ pub(crate) mod IPCHandlers {
 
         pub(crate) fn on_data(send_queue: &SendQueue, _: Socket, all_data: &[u8]) {
             let global_this = send_queue.get_global_this();
-            // RAII: `enter()` now, `exit()` on drop. The guard holds the raw
-            // `*mut EventLoop` so `&mut EventLoop` isn't held across `on_data2`.
             let _scope = global_this.bun_vm().enter_event_loop_scope();
             on_data2(send_queue, all_data);
         }
@@ -2496,7 +2494,6 @@ pub(crate) mod IPCHandlers {
             log!("onWritable");
 
             let global_this = send_queue.get_global_this();
-            // RAII: see `on_data`.
             let _scope = global_this.bun_vm().enter_event_loop_scope();
             log!("IPC call continueSend() from onWritable");
             send_queue.continue_send(&global_this, ContinueSendReason::OnWritable);

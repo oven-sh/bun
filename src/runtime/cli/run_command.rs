@@ -1613,9 +1613,7 @@ impl Run<'_> {
                     // The core run-loop below does the actual waiting.
                     if vm.hot_reload != cli::command::HotReload::None || handled {
                         vm.add_main_to_watcher_if_needed();
-                        // SAFETY: `event_loop` is a self-pointer into this VM;
-                        // uniquely accessed here.
-                        vm.event_loop_ref().tick();
+                        vm.event_loop().tick();
                     } else {
                         exit_with_unhandled_note(vm);
                     }
@@ -1636,7 +1634,7 @@ impl Run<'_> {
         // standalone executable has no transpiler garbage, and its unlinked code blocks came from the embedded bytecode
         // cache — deleting them here only means decoding them again on first call — so leave its heap to the collector.
         if vm.standalone_module_graph.is_none()
-            && (vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0)
+            && (vm.is_event_loop_alive() || vm.event_loop().tick_concurrent_with_count() > 0)
         {
             global.vm().release_weak_refs();
             // `bun_alloc::Arena` has no per-heap collect to run alongside this
@@ -1666,10 +1664,8 @@ impl Run<'_> {
                 }
                 vm.on_before_exit();
                 vm.report_exception_in_hot_reloaded_module_if_needed();
-                // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
-                // accessed here. Watcher arm keeps the process alive across
-                // reloads.
-                vm.event_loop_ref().tick_possibly_forever();
+                // Watcher arm keeps the process alive across reloads.
+                vm.event_loop().tick_possibly_forever();
             }
         } else {
             while vm.is_event_loop_alive() {

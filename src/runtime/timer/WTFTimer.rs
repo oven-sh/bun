@@ -238,7 +238,7 @@ unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut
     // long as the VM.
     let this = unsafe {
         let vm_ref = &*vm;
-        let el = &*vm_ref.event_loop();
+        let el = vm_ref.event_loop();
         Box::new(WTFTimer {
             vm: NonNull::new_unchecked(vm),
             imminent: bun_ptr::BackRef::new(&el.imminent_gc_timer),

@@ -985,9 +985,7 @@ class MockPropertyContext {
   }
 
   static {
-    // What the end of a test file does in place of restore(): it defines the
-    // saved descriptor as it is. restore() adds `value`, as Node's does, and an
-    // accessor rejects that. False if `ctx` is not of a mock.property().
+    // For the end of a test file. restore() adds `value`, as Node's does, and an accessor descriptor rejects that.
     undoPropertyMock = function undoPropertyMock(ctx: object) {
       if (!(#object in ctx)) return false;
       // @ts-ignore
@@ -1325,21 +1323,14 @@ class MockTracker {
   }
 
   static {
-    // Ends the mocks of a test file for getRootNode(). Node has no such step: it
-    // runs each file in a new process. This writes what reset() writes, but
-    // newest first, so two mocks of one property leave what was there before
-    // the first. reset() goes oldest first, as Node's does, and leaves the
-    // first mock. An error does not stop the pass.
+    // For getRootNode(). Newest first, so two mocks of one property leave what it had before the first.
     endMocksOfFile = function endMocksOfFile(rootTracker: MockTracker | null, moduleTracker: MockTracker) {
       let first: { error: unknown } | undefined;
       const ofRoot = rootTracker !== null ? rootTracker.#mocks : kNoMocks;
       const ofModule = moduleTracker.#mocks;
-      // The trackers forget the mocks before the first write. A mock that
-      // cannot come off then does not fail every later file. A write can run
-      // a Proxy trap, and a mock that the trap makes is a mock of the next
-      // file: a trap that makes one on each write cannot keep the pass going.
       let i = ofRoot.length - 1;
       let j = ofModule.length - 1;
+      // Forgotten before any write: a failed undo is not repeated, and a mock a Proxy trap makes is the next file's.
       if (i >= 0) rootTracker!.#mocks = [];
       if (j >= 0) moduleTracker.#mocks = [];
       while (i >= 0 || j >= 0) {
@@ -1369,8 +1360,8 @@ class MockTracker {
   }
 }
 
-// The mocks of the module-level tracker end at each test-file boundary (see
-// getRootNode and endMocksOfFile), matching Node's per-process module state.
+// The module-level tracker is reset automatically at each test-file boundary
+// (see getRootNode), matching Node's per-process module state.
 const mock = MockTracker.createFileScoped();
 
 // -----------------------------------------------------------------------------

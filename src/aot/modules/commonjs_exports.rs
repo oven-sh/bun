@@ -193,6 +193,16 @@ struct Alias {
     returned_start: u32,
 }
 
+#[derive(Copy, Clone, Debug)]
+struct DefinedGetter {
+    definition: ExprId,
+    returned: ExprId,
+    is_enumerable: bool,
+    needs_marker: bool,
+    is_in_front_of_load: bool,
+    is_fixed: bool,
+}
+
 /// A getter that the exports have for good before their module runs anything that others may see.
 #[derive(Copy, Clone, Debug)]
 pub(in crate::modules) struct FixedGetter {
@@ -1449,15 +1459,8 @@ impl Scan<'_, '_, '_> {
         ))
     }
 
-    fn add_alias(
-        &mut self,
-        name: Atom,
-        target: AliasTarget,
-        node: ExprId,
-        returned: ExprId,
-        is_enumerable: bool,
-        needs_marker: bool,
-    ) {
+    fn add_alias(&mut self, name: Atom, target: AliasTarget, getter: DefinedGetter) {
+        let (node, returned) = (getter.definition, getter.returned);
         self.found.aliases.push(Alias {
             name,
             target,
@@ -1466,11 +1469,11 @@ impl Scan<'_, '_, '_> {
                 AliasTarget::Binding(_) => self.text.classify_value(returned, 0),
                 AliasTarget::Member { .. } => StoredValue::Unknown,
             },
-            is_enumerable,
+            is_enumerable: getter.is_enumerable,
             is_seen_unfilled: false,
-            needs_marker,
-            is_defined_in_front_of_load: false,
-            is_fixed: false,
+            needs_marker: getter.needs_marker,
+            is_defined_in_front_of_load: getter.is_in_front_of_load,
+            is_fixed: getter.is_fixed,
             returned,
             start: self.text.hir[node].pos,
             returned_start: self.text.hir[returned].pos,
@@ -1520,21 +1523,18 @@ impl Scan<'_, '_, '_> {
                     Some(found) => found,
                     None => self.find_alias_target(returned, call_node, true)?,
                 };
-                self.add_alias(
-                    name,
-                    target,
-                    call_node,
+                let getter = DefinedGetter {
+                    definition: call_node,
                     returned,
                     is_enumerable,
                     needs_marker,
-                );
+                    is_in_front_of_load: behind_load.is_none(),
+                    is_fixed: written.is_configurable != Some(true),
+                };
+                self.add_alias(name, target, getter);
                 self.found
                     .holders_in_erased_getters
                     .extend(handed_to_helper);
-                if let Some(alias) = self.found.aliases.last_mut() {
-                    alias.is_defined_in_front_of_load = behind_load.is_none();
-                    alias.is_fixed = written.is_configurable != Some(true);
-                }
                 self.found.erased.extend(text.statement_of(call_node));
             }
             DescribedPart::Data { .. } | DescribedPart::Accessor { .. } => return None,
@@ -1608,18 +1608,15 @@ impl Scan<'_, '_, '_> {
         }
         let is_fixed = self.defines_fixed_getters(definition);
         for (name, target, returned, is_enumerable, needs_marker, is_in_front_of_load) in aliases {
-            self.add_alias(
-                name,
-                target,
+            let getter = DefinedGetter {
                 definition,
                 returned,
                 is_enumerable,
                 needs_marker,
-            );
-            if let Some(alias) = self.found.aliases.last_mut() {
-                alias.is_defined_in_front_of_load = is_in_front_of_load;
-                alias.is_fixed = is_fixed;
-            }
+                is_in_front_of_load,
+                is_fixed,
+            };
+            self.add_alias(name, target, getter);
         }
         if marks_module {
             let ignored = StoredValue::IgnoresThis;

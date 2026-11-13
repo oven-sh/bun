@@ -295,9 +295,13 @@ impl<'h> Resolver<'h> {
         path: &[u8],
         is_javascript: impl FnOnce() -> bool,
     ) -> &'h TranspileSettings {
-        if self.is_aot_source_of_dependency(path, is_javascript) {
-            return self.aot_package_settings(dirname::<Posix>(path));
+        match self.is_aot_source_of_dependency(path, is_javascript) {
+            true => self.aot_package_settings(dirname::<Posix>(path)),
+            false => self.configured_transpile_settings(path),
         }
+    }
+
+    fn configured_transpile_settings(&self, path: &[u8]) -> &'h TranspileSettings {
         let config = match self.transpiles_by_working_directory() {
             true => self.code_config_in_working_directory(),
             false if self.code_host().is_given_in_memory(path) => None,

@@ -344,6 +344,7 @@ pub(super) struct TypeAnswers<'c> {
     object: u32,
     ty: TypeId,
     made_in: u32,
+    seen_in: u32,
 }
 
 impl Default for TypeAnswers<'_> {
@@ -357,6 +358,7 @@ impl Default for TypeAnswers<'_> {
             object: 0,
             ty: TypeId::ANY,
             made_in: 0,
+            seen_in: 0,
         }
     }
 }
@@ -378,7 +380,6 @@ pub(super) struct ObjectAnswers<'c> {
 pub(super) struct KeptMemo<'c> {
     rows: ByType,
     types: Blocks<TypeAnswers<'c>>,
-    seen_in: Vec<u32>,
     objects: Blocks<ObjectAnswers<'c>>,
     member_types: Blocks<Option<(Atom, PositionTypes)>>,
     pub(super) signatures: FxHashMap<SigId, SignatureShape<'c>>,
@@ -422,7 +423,6 @@ impl<'c> KeptMemo<'c> {
         let KeptMemo {
             rows,
             types,
-            seen_in,
             objects,
             member_types,
             signatures,
@@ -454,7 +454,6 @@ impl<'c> KeptMemo<'c> {
         changed_objects.clear();
         rows.clear();
         types.truncate(0);
-        seen_in.clear();
         objects.truncate(0);
         member_types.truncate(0);
         signatures.clear();
@@ -487,7 +486,7 @@ impl<'c> KeptMemo<'c> {
         let row = match self.rows.get(ty) {
             0 => self.add_type(ty),
             row => {
-                self.seen_in[row as usize - 1] = self.visit;
+                self.types[row as usize - 1].seen_in = self.visit;
                 TypeRow(row - 1)
             }
         };
@@ -501,9 +500,9 @@ impl<'c> KeptMemo<'c> {
         self.types.push(TypeAnswers {
             ty,
             made_in: self.visit,
+            seen_in: self.visit,
             ..TypeAnswers::default()
         });
-        self.seen_in.push(self.visit);
         let count = self.types.len() as u32;
         self.rows.set(ty, count);
         TypeRow(count - 1)
@@ -559,7 +558,7 @@ impl<'c> KeptMemo<'c> {
         for (added, new_row) in new_rows.iter_mut().enumerate() {
             let row = self.carried_count + added;
             let answers = self.types[row];
-            if self.seen_in[row] == answers.made_in {
+            if answers.seen_in == answers.made_in {
                 self.rows.set(answers.ty, 0);
                 continue;
             }
@@ -574,7 +573,6 @@ impl<'c> KeptMemo<'c> {
                 object,
                 ..answers
             };
-            self.seen_in[carried_count] = self.seen_in[row];
             carried_count += 1;
             *new_row = carried_count as u32;
             self.rows.set(answers.ty, *new_row);
@@ -595,7 +593,6 @@ impl<'c> KeptMemo<'c> {
         changed.clear();
         self.changed_objects = changed;
         self.types.truncate(carried_count);
-        self.seen_in.truncate(carried_count);
         self.objects.replace_rows_from(first_object, &objects);
         self.member_types
             .replace_rows_from(first_member_type, &member_types);

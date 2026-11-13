@@ -42,8 +42,13 @@
 # TEXT: testedType=string
 # TEXT: = Strcat
 # RUN(STUB): bytes f4:Body mechanisms=all
+# REQUIRES(STUB): x86_64
 # STUB: Call Stub ReadAtSite.OfAnyValue under (SiteCache "main.cjs" 788 "main.cjs" 691 "name" 8)
 # STUB-NEXT: InstanceAccess InstanceWord SiteCache "main.cjs" 788 "main.cjs" 691 "name" 8
+# RUN(ARM64): bytes f4:Body mechanisms=all
+# REQUIRES(ARM64): arm64
+# ARM64: InstanceOffset InstanceWord SiteCache "main.cjs" 788 "main.cjs" 691 "name" 8
+# ARM64: Call Stub ReadAtSite.OfAnyValue under (SiteCache "main.cjs" 788 "main.cjs" 691 "name" 8)
 # RUN(LITERAL): walk f5 mechanisms=all
 # LITERAL-LABEL: code f5:Body
 # LITERAL-NOT: = ShapeTest

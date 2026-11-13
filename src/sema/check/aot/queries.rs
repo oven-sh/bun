@@ -1455,7 +1455,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         has_accessor
     }
 
-    fn shape_of(&mut self, class: ClassDeclaration) -> Option<&'c ClassShape<'c>> {
+    pub(super) fn shape_of(&mut self, class: ClassDeclaration) -> Option<&'c ClassShape<'c>> {
         match class {
             ClassDeclaration::Class(class) => Some(self.class_shape(class)),
             ClassDeclaration::Function(function) => self.constructor_function_shape(function),

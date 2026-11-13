@@ -1,4 +1,4 @@
-// STATISTIC: SpilledFirstOperandsRead >= 8
+// STATISTIC on x64: SpilledFirstOperandsRead >= 8
 // Thirty-two doubles are more than the registers hold. A product whose first operand was spilled reads it in memory.
 class Matrix {
   constructor() { this.elements = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]; }

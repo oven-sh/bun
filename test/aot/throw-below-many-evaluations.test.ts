@@ -1,7 +1,7 @@
 // A file at the bottom of many files that load one another catches what a require() throws. Only the files that the error left have failed.
 // The run time marks what an evaluation begins with a byte. Evaluations nested more deeply than a byte counts shared a mark, and all of them failed.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { built, spawned } from "./harness/commands";
 import { run } from "./harness/run";
@@ -61,16 +61,16 @@ const shapes = {
   },
 } satisfies Record<string, (count: number) => Record<string, string>>;
 
-// Each level of the first three takes some kilobytes of stack.
+// Each level of the first three takes some kilobytes of stack, three times as many under ASan.
 const cases: [keyof typeof shapes, number][] = [
   ["a module imports a CommonJS file, which requires the next module", 100],
   ["a module imports a CommonJS file, which requires the next module", 250],
-  ["a module imports a CommonJS file, which requires the next module", 600],
+  ["a module imports a CommonJS file, which requires the next module", isASAN ? 300 : 600],
   ["the same with a cycle at each level", 250],
-  ["the same with a cycle at each level", 400],
-  ["the error is caught half way up", 600],
+  ["the same with a cycle at each level", isASAN ? 300 : 400],
+  ["the error is caught half way up", isASAN ? 300 : 600],
   ["modules import one another", 4_000],
-  ["CommonJS files require one another", 1_000],
+  ["CommonJS files require one another", isASAN ? 600 : 1_000],
 ];
 
 const load = (call: string) => `let first;

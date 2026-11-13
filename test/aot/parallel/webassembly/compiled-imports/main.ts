@@ -1,5 +1,5 @@
 // A module calls functions of JavaScript that were compiled: with fewer, as many and more arguments than they take, in registers and on the stack, and functions that were not.
-// STATISTIC: WasmImportStubsCallingClosures = 9
+// STATISTIC on x64: WasmImportStubsCallingClosures = 9
 // COUNTER in every build: WasmInstancesInterpreted = 0
 /// <reference path="../wasm-files.d.ts" />
 import path from "./module.wasm";

@@ -4132,11 +4132,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     /// The names that the text of a class reads and stores off its objects, but for what the class defines and what is only called.
     pub fn names_used_off_instances(&mut self, class: ClassDeclaration) -> Vec<Atom> {
         let (file, hir, bound) = (self.file, self.hir(), self.bound());
-        let shape = match class {
-            ClassDeclaration::Class(class) => Some(self.class_shape(class)),
-            ClassDeclaration::Function(function) => self.constructor_function_shape(function),
-        };
-        let Some(shape) = shape else {
+        let Some(shape) = self.shape_of(class) else {
             return Vec::new();
         };
         let mut methods: SmallVec<[FnId; 8]> = SmallVec::new();
@@ -5473,8 +5469,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    fn extends_in_file(&self, class: ClassDeclaration, above: ClassDeclaration) -> bool {
-        let mut current = class;
+    fn extends_in_file(&self, below: ClassDeclaration, above: ClassDeclaration) -> bool {
+        let mut current = below;
         for _ in 0..self.hir().classes.len() {
             match self.base_in_file(current) {
                 BaseClass::InFile(base) if base == above => return true,

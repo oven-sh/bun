@@ -88,7 +88,11 @@ enum Shortcut {
 #[derive(Copy, Clone)]
 enum StoreCount {
     Never,
-    Once(ValueId, BlockId),
+    Once {
+        value: ValueId,
+        block: BlockId,
+        has_narrowings: bool,
+    },
     Many,
 }
 
@@ -97,7 +101,6 @@ struct VariableState {
     stores: StoreCount,
     definition_blocks: ListInArena,
     is_narrowed: bool,
-    has_narrowings: bool,
     are_definitions_ordered: bool,
     place_among_modified: u32,
 }
@@ -213,7 +216,6 @@ impl SsaState {
             stores: StoreCount::Never,
             definition_blocks: ListInArena::default(),
             is_narrowed: false,
-            has_narrowings: false,
             are_definitions_ordered: false,
             place_among_modified: 0,
         });
@@ -415,13 +417,18 @@ impl SsaState {
 
     fn find_dominating_store(&self, variable: LocalVariable, block: BlockId) -> Option<ValueId> {
         let state = &self.variables[variable.0 as usize];
-        let StoreCount::Once(value, definition_block) = state.stores else {
+        let StoreCount::Once {
+            value,
+            block: definition_block,
+            has_narrowings,
+        } = state.stores
+        else {
             return None;
         };
         if !self.dominates(definition_block, block) {
             return None;
         }
-        if !state.has_narrowings {
+        if !has_narrowings {
             return Some(value);
         }
         let narrowed = self.find_narrowing(variable, block);
@@ -761,11 +768,21 @@ impl FunctionBuilder {
         self.ssa.record_definition_block(variable, block);
         let stores = &mut self.ssa.variables[variable.0 as usize].stores;
         *stores = match *stores {
-            StoreCount::Never => StoreCount::Once(value, block),
-            StoreCount::Once(_, definition_block) if definition_block == block && is_open => {
-                StoreCount::Once(value, definition_block)
-            }
-            StoreCount::Once(..) | StoreCount::Many => StoreCount::Many,
+            StoreCount::Never => StoreCount::Once {
+                value,
+                block,
+                has_narrowings: false,
+            },
+            StoreCount::Once {
+                block: definition_block,
+                has_narrowings,
+                ..
+            } if definition_block == block && is_open => StoreCount::Once {
+                value,
+                block,
+                has_narrowings,
+            },
+            StoreCount::Once { .. } | StoreCount::Many => StoreCount::Many,
         };
     }
 
@@ -777,7 +794,11 @@ impl FunctionBuilder {
         );
         let state = &mut self.ssa.variables[variable.0 as usize];
         debug_assert!(matches!(state.stores, StoreCount::Never));
-        state.stores = StoreCount::Once(value, place.block);
+        state.stores = StoreCount::Once {
+            value,
+            block: place.block,
+            has_narrowings: false,
+        };
         self.ssa.definitions.insert(place.block, variable, value);
         self.ssa.record_definition_block(variable, place.block);
     }
@@ -805,15 +826,16 @@ impl FunctionBuilder {
         value: ValueId,
     ) {
         let block = self.current_block;
-        let StoreCount::Once(..) = self.ssa.variables[variable.0 as usize].stores else {
+        let stores = &mut self.ssa.variables[variable.0 as usize].stores;
+        let StoreCount::Once { has_narrowings, .. } = stores else {
             return self.write_narrowed_variable(variable, narrowed, value);
         };
+        *has_narrowings = true;
         self.ssa.record_narrowed_name(narrowed, value, block);
         debug_assert!(
             self.is_open() && self.ssa.states[block.index()].dominator.is_some(),
             "the blocks below begin with what is narrowed here"
         );
-        self.ssa.variables[variable.0 as usize].has_narrowings = true;
         self.ssa.add_narrowing(variable, narrowed, block);
     }
 

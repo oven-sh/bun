@@ -20,9 +20,7 @@ pub(in crate::lower) struct LooseLoop {
     reads: SmallVec<[ExprId; 2]>,
     closing: Option<ClosingCalls>,
     passed: ExprId,
-    is_open: bool,
-    given: Option<ValueId>,
-    list: Option<ValueId>,
+    opening: LoopOpening,
     element: Option<ValueId>,
 }
 
@@ -31,6 +29,36 @@ struct ClosingCalls {
     start: ExprId,
     fail: ExprId,
     finish: ExprId,
+}
+
+#[derive(Copy, Clone, Debug)]
+enum LoopOpening {
+    Ahead,
+    Begun,
+    Given(ValueId),
+    Done(ValueId),
+}
+
+impl LoopOpening {
+    fn given(self) -> Option<ValueId> {
+        match self {
+            LoopOpening::Given(given) => Some(given),
+            LoopOpening::Ahead | LoopOpening::Begun | LoopOpening::Done(_) => None,
+        }
+    }
+
+    fn list(self) -> Option<ValueId> {
+        match self {
+            LoopOpening::Done(list) => Some(list),
+            LoopOpening::Ahead | LoopOpening::Begun | LoopOpening::Given(_) => None,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+struct TestOfLooseLoop {
+    target: ExprId,
+    stepping: ExprId,
 }
 
 type InitialValues = SmallVec<[(SymbolId, Option<bool>); 4]>;
@@ -42,13 +70,6 @@ enum LoopHelper {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    fn symbol_of_name(&self, name: ExprId) -> Option<SymbolId> {
-        match (self.hir[name].kind, self.bound.binding(name)) {
-            (ExprKind::Ident(_), Binding::Symbol(symbol)) => Some(symbol),
-            _ => None,
-        }
-    }
-
     fn read_method_call(
         &self,
         call: ExprId,
@@ -73,7 +94,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn is_name_of(&self, name: ExprId, symbol: SymbolId) -> bool {
-        self.symbol_of_name(name) == Some(symbol)
+        self.symbol_named_by(name) == Some(symbol)
     }
 
     fn only_statement(&self, statement: StmtId) -> StmtId {
@@ -119,7 +140,7 @@ impl FileLowering<'_, '_, '_, '_> {
         else {
             return None;
         };
-        Some((self.symbol_of_name(target)?, value))
+        Some((self.symbol_named_by(target)?, value))
     }
 
     fn is_true(&self, expression: ExprId) -> bool {
@@ -641,7 +662,7 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    fn read_test_of_loose_loop(&mut self, statement: StmtId) -> Option<(ExprId, ExprId)> {
+    fn read_test_of_loose_loop(&mut self, statement: StmtId) -> Option<TestOfLooseLoop> {
         let hir = self.file.hir;
         let StmtKind::For {
             test, update, body, ..
@@ -688,7 +709,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 .any(|it| self.file.is_statically_resolved(it))
             && self.find_local(target).is_some()
             && self.file.is_loose_iteration_intact();
-        is_plain.then_some((target, stepping))
+        is_plain.then_some(TestOfLooseLoop { target, stepping })
     }
 
     fn is_in_plain_function(&self, statement: StmtId) -> bool {
@@ -707,7 +728,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return None;
         };
         let site = hir[site];
-        let callee = self.file.symbol_of_name(site.callee)?;
+        let callee = self.file.symbol_named_by(site.callee)?;
         let mut arguments = hir.ids(site.args);
         let iterated = arguments.next()?;
         let has_one_list = !matches!(hir[iterated].kind, ExprKind::Spread(_))
@@ -743,7 +764,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let StmtKind::For { test, .. } = hir[statement].kind else {
             return None;
         };
-        let step = self.file.symbol_of_name(target)?;
+        let step = self.file.symbol_named_by(target)?;
         let range = hir[test].pos..hir[statement].loc.end;
         let mut reads = SmallVec::new();
         for &(_, reference) in self.file.queries.references_of_binding(step) {
@@ -764,12 +785,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     pub(super) fn find_loose_loop(&mut self, statement: StmtId) -> Option<LooseLoop> {
         let (hir, bound) = (self.file.hir, self.file.bound);
-        let (target, stepping) = self.read_test_of_loose_loop(statement)?;
+        let TestOfLooseLoop { target, stepping } = self.read_test_of_loose_loop(statement)?;
         let ExprKind::Call(site) = hir[stepping].kind else {
             return None;
         };
         let called = hir[site].callee;
-        let iterator = self.file.symbol_of_name(called)?;
+        let iterator = self.file.symbol_named_by(called)?;
         if self.find_local(called).is_none() || !self.is_in_plain_function(statement) {
             return None;
         }
@@ -799,9 +820,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             reads,
             closing: None,
             passed: ExprId::NONE,
-            is_open: false,
-            given: None,
-            list: None,
+            opening: LoopOpening::Ahead,
             element: None,
         })
     }
@@ -845,7 +864,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Binding::Symbol(iterator) = bound.initialized_binding(pattern) else {
             return None;
         };
-        let (target, stepping) = self.read_test_of_loose_loop(statement)?;
+        let TestOfLooseLoop { target, stepping } = self.read_test_of_loose_loop(statement)?;
         let StmtKind::For { init, .. } = hir[statement].kind else {
             return None;
         };
@@ -908,9 +927,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 finish,
             }),
             passed: ExprId::NONE,
-            is_open: false,
-            given: None,
-            list: None,
+            opening: LoopOpening::Ahead,
             element: None,
         })
     }
@@ -924,14 +941,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         })?;
         let innermost = &self.loose_loops[place];
         if innermost.iterated == expression {
-            return innermost.given;
+            return innermost.opening.given();
         }
         if innermost.call != expression {
             return self.read_value_of_loose_loop(place, expression);
         }
-        match innermost.is_open {
-            true => None,
-            false => Some(self.open_loose_loop(place)),
+        match innermost.opening {
+            LoopOpening::Ahead => Some(self.open_loose_loop(place)),
+            LoopOpening::Begun | LoopOpening::Given(_) | LoopOpening::Done(_) => None,
         }
     }
 
@@ -941,12 +958,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 .is_some_and(|it| [it.start, it.fail, it.finish].contains(&call))
         })?;
         let LooseLoop {
-            list,
+            opening,
             closing,
             passed,
             ..
         } = self.loose_loops[place];
-        let (list, closing) = (list?, closing?);
+        let (list, closing) = (opening.list()?, closing?);
         if passed == call {
             return None;
         }
@@ -973,7 +990,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn open_loose_loop(&mut self, place: usize) -> ValueId {
         let LooseLoop { call, iterated, .. } = self.loose_loops[place];
-        self.loose_loops[place].is_open = true;
+        self.loose_loops[place].opening = LoopOpening::Begun;
         let iterated = self.lower_expression(iterated);
         self.set_position(self.file.hir[call].pos);
         let uses_helper = self.create_block();
@@ -994,22 +1011,24 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.jump_with(opened, &[split.taken_value, no_iterator]);
 
         self.continue_in(uses_helper);
-        self.loose_loops[place].given = Some(iterated);
+        self.loose_loops[place].opening = LoopOpening::Given(iterated);
         let made = self.lower_expression(call);
-        self.loose_loops[place].given = None;
+        self.loose_loops[place].opening = LoopOpening::Begun;
         let no_list = self.builder.undefined();
         self.jump_with(opened, &[no_list, made]);
 
         self.continue_in(opened);
-        self.loose_loops[place].list = Some(list);
+        self.loose_loops[place].opening = LoopOpening::Done(list);
         self.file.known_helpers_lowered.calls += 1;
         iterator
     }
 
     fn read_value_of_loose_loop(&mut self, place: usize, read: ExprId) -> Option<ValueId> {
         let hir = self.file.hir;
-        let LooseLoop { list, element, .. } = self.loose_loops[place];
-        let (list, element) = (list?, element?);
+        let LooseLoop {
+            opening, element, ..
+        } = self.loose_loops[place];
+        let (list, element) = (opening.list()?, element?);
         let ExprKind::Dot { obj, .. } = hir[read].kind else {
             unreachable!("a step is read by name");
         };
@@ -1040,7 +1059,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         else {
             return false;
         };
-        let Some(list) = self.loose_loops[place].list else {
+        let Some(list) = self.loose_loops[place].opening.list() else {
             return false;
         };
         let body_block = self.create_block();

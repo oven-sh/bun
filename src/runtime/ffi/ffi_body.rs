@@ -1521,8 +1521,7 @@ impl FFI {
     }
 }
 
-/// An `ERR_DLOPEN_FAILED` error for a loader call (`dlopen`, `dlsym`) that
-/// failed. Appends the loader's own text from `dlerror()` / `GetLastError()`.
+/// `ERR_DLOPEN_FAILED` for a failed loader call, with the `dlerror()` text appended.
 fn dlopen_failed(
     global: &JSGlobalObject,
     syscall: &'static [u8],

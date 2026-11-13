@@ -118,7 +118,7 @@ function windowProperties(
   for (let i = 0; i < names.length; i++) {
     const key = names[i];
     if (properties.$has(key)) continue;
-    // As in vitest, globalThis keeps a name that it has. A name that a test file left there is not one of `namesOfGlobal`.
+    // As in vitest, globalThis keeps a name that it has. A name that a test file left there is not in `namesOfGlobal`.
     const isOfGlobal = key in globalThis && (!namesOfGlobal || namesOfGlobal.$has(key));
     // Bun has `onerror` and `onmessage` globals but Node doesn't, so vitest ends up with the window's.
     // With --isolate=modules, a name can be on globalThis only because the last file's window put it there.
@@ -399,9 +399,7 @@ const kept = new $Map<string, Environment>();
 // require() of a module with top-level await throws only the first time, so rethrow that error for every file.
 const failedToLoad = new $Map<string, unknown>();
 
-// Without --isolate, the test files of every environment share globalThis. A name that one of them left there does not
-// keep a window that opens later from giving globalThis its own: leave() puts the file's back. What does keep it are
-// the names that globalThis had before the first test file, Bun's and the preloads', and what a preload has stubbed.
+// What globalThis had before the first test file, and what a preload has stubbed. A test file's leftover is neither.
 const listNamesBeforeTestFiles: () => [before: string[], stubbed: string[]] | undefined = $newCppFunction(
   "TestEnvironment.cpp",
   "jsFunctionTestEnvironmentNamesBeforeTestFiles",

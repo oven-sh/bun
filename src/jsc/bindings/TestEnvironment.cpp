@@ -72,8 +72,7 @@ static RefPtr<JSC::PropertyNameArray> namesOf(JSC::JSGlobalObject* global)
     return names.releaseData();
 }
 
-// For environment.ts, two lists: the names that the test files' global had before the first of them ran, and the names
-// that a preload has stubbed. Undefined while no test file has run: the global still has just those names.
+// Undefined until a test file loads. Then the names that the global had before that, and the names that a preload has stubbed.
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionTestEnvironmentNamesBeforeTestFiles, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -205,8 +204,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionDeleteOwnProperty, __attribut
 
 } // namespace Bun
 
-// `bun test` without --isolate: the preloads are done and a test file loads next. The first call keeps the names of the
-// global. `hasNamesOfItsOwn` is false if nothing has run on it: a new global then has the same names, and none are kept.
+// The first call keeps the names of the global if `hasNamesOfItsOwn`. If nothing has run on it, a new global has the same names.
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__TestEnvironment__willLoadTestFile(Zig::GlobalObject* globalObject, bool hasNamesOfItsOwn)
 {
     auto& vm = JSC::getVM(globalObject);

@@ -215,9 +215,7 @@ pub(crate) fn is_in_preload() -> bool {
     VirtualMachine::get().is_in_preload
 }
 
-/// The preloads are done and a test file loads next. Without `--isolate`, the first call records the names on
-/// `globalThis`: a name that a test file leaves there later does not hide a window's name (`listNamesBeforeTestFiles`
-/// in environment.ts). `has_names_of_its_own` is false if nothing has run on the global.
+/// Without `--isolate`, the first call records the names on `globalThis`, which environment.ts reads for a new window.
 pub(crate) fn will_load_test_file(vm: &VirtualMachine, has_names_of_its_own: bool) {
     if !vm.test_isolation_enabled && Jest::runner().is_some() {
         bun_jsc::cpp::Bun__TestEnvironment__willLoadTestFile(vm.global(), has_names_of_its_own);

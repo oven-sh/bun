@@ -49,6 +49,8 @@ const decoratorExpressions = "ES Decorators > decorator expressions";
 const checkerSpeaksFirst = "the program is refused, in the words of the type checker and not of the parser";
 const untypedParameters = "TS7006: the parameters of the decorator have no types";
 const blockFunctions = "block-level function declarations in CommonJS > known differences from node";
+const argumentsStaysALet =
+  "`bun run` keeps a block function named `arguments` in its block, also where the name is a var";
 
 // path -> test name as `bun test` prints it -> why it fails.
 // A type error stops the build.
@@ -81,6 +83,8 @@ const expectedFailures: Record<string, Record<string, string>> = {
   },
   "test/bundler/transpiler/preserve-use-strict-cjs.test.ts": {
     [`${blockFunctions} > twoOfANameWithEval`]: "`bun run` drops the first of two functions of one name in a block",
+    [`${blockFunctions} > argumentsInArrow`]: argumentsStaysALet,
+    [`${blockFunctions} > argumentsBesideFunction`]: argumentsStaysALet,
   },
   "test/bundler/bundler_jsx.test.ts": {
     "bundler > jsx/AutomaticFragmentNamedImportDev": untypedJsxRuntime,

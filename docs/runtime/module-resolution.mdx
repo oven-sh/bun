@@ -409,6 +409,8 @@ import.meta.resolve("zod"); // => "file:///path/to/project/node_modules/zod/inde
 import.meta.glob("./pages/*.tsx"); // => { "./pages/home.tsx": () => import("./pages/home.tsx"), ... }
 ```
 
+`import.meta.resolve` retains its originating module when called as a detached function, such as `const { resolve } = import.meta`.
+
 | Property               | Description                                                                                                                                                                                                                                                                                                                   |
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `import.meta.dir`      | Absolute path to the directory containing the current file, e.g. `/path/to/project`. Equivalent to `__dirname` in CommonJS modules (and Node.js)                                                                                                                                                                              |

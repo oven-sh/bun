@@ -226,6 +226,15 @@ export default b.declarations(
     uses: { object: [b.runs("OwnKeys"), b.readsContents()], filter: converted },
     implementation: b.hostCall,
   }),
+  // It looks at the class of the operand and of each object above it, and at whether an error among them has formatted its stack. It stops at a proxy and asks it nothing.
+  b.static(cpp("FormatStackTraceForJS.cpp", "jsFunctionHasUnformattedStack"), {
+    args: { value: b.any.optional },
+    returns: b.bool,
+    capability: "none",
+    uses: { value: b.inspected },
+    reads: ["PrototypeLinks", ...externalState],
+    implementation: b.hostCall,
+  }),
   // It lists the own keys of the holder and asks first `except` and then the holder for the property under each: no getter of either runs. Of each function that the holder has for a value it reads `length`, and those without parameters it calls on the receiver. Of an object that such a call answers it asks whether it has @@iterator.
   // The list holds keys of the holder and, behind each, the function that the holder has under it: no function but those.
   b.static(cpp("BunCompiledModules.cpp", "jsFunctionCallOwnFunctionsWithoutParameters"), {

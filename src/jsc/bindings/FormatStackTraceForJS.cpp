@@ -811,6 +811,21 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace, (JSGlobalObjec
     return JSC::JSValue::encode(result);
 }
 
+// Such an Error formats its stack to answer `"stack" in value`. This answers without that.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionHasUnformattedStack, (JSGlobalObject*, CallFrame* callFrame))
+{
+    for (JSValue value = callFrame->argument(0); value.isObject();) {
+        JSObject* object = asObject(value);
+        if (auto* error = dynamicDowncast<ErrorInstance>(object); error && !error->hasMaterializedErrorInfo())
+            return JSValue::encode(jsBoolean(true));
+        // A Proxy answers for what is above it with a trap.
+        if (object->structure()->typeInfo().overridesGetPrototype())
+            break;
+        value = object->getPrototypeDirect();
+    }
+    return JSValue::encode(jsBoolean(false));
+}
+
 JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     auto& vm = JSC::getVM(globalObject);

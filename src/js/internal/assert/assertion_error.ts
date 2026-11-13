@@ -7,10 +7,13 @@ const { validateObject } = require("internal/validators");
 const { printMyersDiff, printSimpleMyersDiff } = require("internal/assert/myers_diff") as typeof Internal;
 
 const ErrorCaptureStackTrace = Error.captureStackTrace;
+const ErrorIsError = Error.isError;
 const ObjectAssign = Object.assign;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectKeys = Object.keys;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ObjectPrototypePropertyIsEnumerable = Object.prototype.propertyIsEnumerable;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePop = Array.prototype.pop;
 const ArrayPrototypeSlice = Array.prototype.slice;
@@ -46,8 +49,45 @@ const kMaxLongStringLength = 512;
 
 const kMethodsWithCustomMessageDiff = new SafeSet(["deepStrictEqual", "strictEqual", "partialDeepStrictEqual"]);
 
+// V8 formats the stack of an Error when `stack` is read, and only then. JavaScriptCore also formats it, and so calls
+// Error.prepareStackTrace, to answer `"stack" in error` and to list every own key of the error for Object.assign().
+// These two ask an Error the same and format nothing.
+
+// Whether `value`, or an object above it, is an Error whose stack is not formatted yet.
+const hasUnformattedStack: (value: object) => boolean = $newCppFunction(
+  "FormatStackTraceForJS.cpp",
+  "jsFunctionHasUnformattedStack",
+  1,
+);
+const getOwnNonIndexProperties: (value: object, filter: number) => (string | symbol)[] = $newCppFunction(
+  "UtilInspect.cpp",
+  "jsFunctionGetOwnNonIndexProperties",
+  2,
+);
+// PropertyFilter of node's internalBinding("util").
+const ONLY_ENUMERABLE = 2;
+const SKIP_STRINGS = 8;
+
+// What Object.assign(target, source) does with `keys`, the enumerable own keys of `source`.
+function assignProperties(target, source, keys: readonly (string | symbol)[]) {
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    // A getter of an earlier key can remove this one.
+    if (ObjectPrototypePropertyIsEnumerable.$call(source, key)) target[key] = source[key];
+  }
+}
+
 function copyError(source) {
-  const target = ObjectAssign({ __proto__: ObjectGetPrototypeOf(source) }, source);
+  const target = { __proto__: ObjectGetPrototypeOf(source) };
+  if (ErrorIsError(source)) {
+    // What formatting the stack adds (stack, line, column, sourceURL) is not enumerable: Object.assign() skips it.
+    const keys = ObjectKeys(source);
+    const symbols = getOwnNonIndexProperties(source, ONLY_ENUMERABLE | SKIP_STRINGS);
+    assignProperties(target, source, keys);
+    assignProperties(target, source, symbols);
+  } else {
+    ObjectAssign(target, source);
+  }
   ObjectDefineProperty(target, "message", {
     __proto__: null,
     value: source.message,
@@ -55,7 +95,7 @@ function copyError(source) {
   if (ObjectPrototypeHasOwnProperty.$call(source, "cause")) {
     let { cause } = source;
 
-    if (Error.isError(cause)) {
+    if (ErrorIsError(cause)) {
       cause = copyError(cause);
     }
 
@@ -274,102 +314,110 @@ class AssertionError extends Error {
     } = options;
     let { actual, expected } = options;
 
-    // NOTE: stack trace is always writable.
+    // The program can make Error.stackTraceLimit read-only, for example with Object.freeze(Error): then the writes
+    // throw. node asks isErrorStackTraceLimitWritable() before each, which costs a property descriptor:
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/assert/assertion_error.js#L266-L267
     const limit = Error.stackTraceLimit;
-    Error.stackTraceLimit = 0;
-
-    if (message != null) {
-      if (kMethodsWithCustomMessageDiff.has(operator)) {
-        super(createErrDiff(actual, expected, operator, message, diff));
+    try {
+      Error.stackTraceLimit = 0;
+    } catch {}
+    // node restores the limit with no `finally` (#L353): there an operand whose getter throws leaves it at 0.
+    try {
+      if (message != null) {
+        if (kMethodsWithCustomMessageDiff.has(operator)) {
+          super(createErrDiff(actual, expected, operator, message, diff));
+        } else {
+          super(String(message));
+        }
       } else {
-        super(String(message));
-      }
-    } else {
-      // Reset colors on each call to make sure we handle dynamically set environment
-      // variables correct.
-      colors.refresh();
-      // Prevent the error stack from being visible by duplicating the error
-      // in a very close way to the original in case both sides are actually
-      // instances of Error.
-      if (
-        typeof actual === "object" &&
-        actual !== null &&
-        typeof expected === "object" &&
-        expected !== null &&
-        "stack" in actual &&
-        actual instanceof Error &&
-        "stack" in expected &&
-        expected instanceof Error
-      ) {
-        actual = copyError(actual);
-        expected = copyError(expected);
-      }
-
-      if (kMethodsWithCustomMessageDiff.has(operator)) {
-        super(createErrDiff(actual, expected, operator, message, diff));
-      } else if (operator === "notDeepStrictEqual" || operator === "notStrictEqual") {
-        // In case the objects are equal but the operator requires unequal, show
-        // the first object and say A equals B
-        let base = kReadableOperator[operator];
-        const res = StringPrototypeSplit.$call(inspectValue(actual), "\n");
-
-        // In case "actual" is an object or a function, it should not be
-        // reference equal.
+        // Reset colors on each call to make sure we handle dynamically set environment
+        // variables correct.
+        colors.refresh();
+        // Prevent the error stack from being visible by duplicating the error
+        // in a very close way to the original in case both sides are actually
+        // instances of Error.
         if (
-          operator === "notStrictEqual" &&
-          ((typeof actual === "object" && actual !== null) || typeof actual === "function")
+          typeof actual === "object" &&
+          actual !== null &&
+          typeof expected === "object" &&
+          expected !== null &&
+          (hasUnformattedStack(actual) || "stack" in actual) &&
+          actual instanceof Error &&
+          (hasUnformattedStack(expected) || "stack" in expected) &&
+          expected instanceof Error
         ) {
-          base = kReadableOperator.notStrictEqualObject;
+          actual = copyError(actual);
+          expected = copyError(expected);
         }
 
-        // Only remove lines in case it makes sense to collapse those.
-        const resLength = res.length;
-        if (resLength > 50 && diff !== "full") {
-          res[46] = `${colors.blue}...${colors.white}`;
-          while (res.length > 47) {
-            ArrayPrototypePop.$call(res);
-          }
-        }
+        if (kMethodsWithCustomMessageDiff.has(operator)) {
+          super(createErrDiff(actual, expected, operator, message, diff));
+        } else if (operator === "notDeepStrictEqual" || operator === "notStrictEqual") {
+          // In case the objects are equal but the operator requires unequal, show
+          // the first object and say A equals B
+          let base = kReadableOperator[operator];
+          const res = StringPrototypeSplit.$call(inspectValue(actual), "\n");
 
-        // Only print a single input.
-        if (res.length === 1) {
-          super(`${base}${res[0].length > 5 ? "\n\n" : " "}${res[0]}`);
-        } else {
-          super(`${base}\n\n${ArrayPrototypeJoin.$call(res, "\n")}\n`);
-        }
-      } else {
-        let res = inspectValue(actual);
-        let other = inspectValue(expected);
-        const knownOperator = kReadableOperator[operator];
-        if (operator === "notDeepEqual" && res === other) {
-          res = `${knownOperator}\n\n${res}`;
-          if (res.length > 1024 && diff !== "full") {
-            res = `${StringPrototypeSlice.$call(res, 0, 1021)}...`;
+          // In case "actual" is an object or a function, it should not be
+          // reference equal.
+          if (
+            operator === "notStrictEqual" &&
+            ((typeof actual === "object" && actual !== null) || typeof actual === "function")
+          ) {
+            base = kReadableOperator.notStrictEqualObject;
           }
-          super(res);
-        } else {
-          if (res.length > kMaxLongStringLength && diff !== "full") {
-            res = `${StringPrototypeSlice.$call(res, 0, 509)}...`;
-          }
-          if (other.length > kMaxLongStringLength && diff !== "full") {
-            other = `${StringPrototypeSlice.$call(other, 0, 509)}...`;
-          }
-          if (operator === "deepEqual") {
-            res = `${knownOperator}\n\n${res}\n\nshould loosely deep-equal\n\n`;
-          } else {
-            const newOp = kReadableOperator[`${operator}Unequal`];
-            if (newOp) {
-              res = `${newOp}\n\n${res}\n\nshould not loosely deep-equal\n\n`;
-            } else {
-              other = ` ${operator} ${other}`;
+
+          // Only remove lines in case it makes sense to collapse those.
+          const resLength = res.length;
+          if (resLength > 50 && diff !== "full") {
+            res[46] = `${colors.blue}...${colors.white}`;
+            while (res.length > 47) {
+              ArrayPrototypePop.$call(res);
             }
           }
-          super(`${res}${other}`);
+
+          // Only print a single input.
+          if (res.length === 1) {
+            super(`${base}${res[0].length > 5 ? "\n\n" : " "}${res[0]}`);
+          } else {
+            super(`${base}\n\n${ArrayPrototypeJoin.$call(res, "\n")}\n`);
+          }
+        } else {
+          let res = inspectValue(actual);
+          let other = inspectValue(expected);
+          const knownOperator = kReadableOperator[operator];
+          if (operator === "notDeepEqual" && res === other) {
+            res = `${knownOperator}\n\n${res}`;
+            if (res.length > 1024 && diff !== "full") {
+              res = `${StringPrototypeSlice.$call(res, 0, 1021)}...`;
+            }
+            super(res);
+          } else {
+            if (res.length > kMaxLongStringLength && diff !== "full") {
+              res = `${StringPrototypeSlice.$call(res, 0, 509)}...`;
+            }
+            if (other.length > kMaxLongStringLength && diff !== "full") {
+              other = `${StringPrototypeSlice.$call(other, 0, 509)}...`;
+            }
+            if (operator === "deepEqual") {
+              res = `${knownOperator}\n\n${res}\n\nshould loosely deep-equal\n\n`;
+            } else {
+              const newOp = kReadableOperator[`${operator}Unequal`];
+              if (newOp) {
+                res = `${newOp}\n\n${res}\n\nshould not loosely deep-equal\n\n`;
+              } else {
+                other = ` ${operator} ${other}`;
+              }
+            }
+            super(`${res}${other}`);
+          }
         }
       }
+    } finally {
+      try {
+        Error.stackTraceLimit = limit;
+      } catch {}
     }
-
-    Error.stackTraceLimit = limit;
 
     this.generatedMessage = !message;
     ObjectDefineProperty(this, "name", {
@@ -394,16 +442,6 @@ class AssertionError extends Error {
       this.operator = operator;
     }
     ErrorCaptureStackTrace(this, stackStartFn || stackStartFunction);
-    // When all stack frames are above the stackStartFn (e.g. in async
-    // contexts), captureStackTrace produces a stack with just the error
-    // message and no frame lines. Retry with AssertionError as the filter
-    // so we get at least the frames below the constructor.
-    {
-      const s = this.stack;
-      if ($isUndefinedOrNull(s) || (typeof s === "string" && s.indexOf("\n    at ") === -1)) {
-        ErrorCaptureStackTrace(this, AssertionError);
-      }
-    }
     // Create error message including the error code in the name.
     this.stack; // oxlint-disable-line bun/no-unused-expressions
     // Reset the name.

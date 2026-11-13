@@ -20,6 +20,7 @@ export default b.declarations(
   extendAll(
     ["NodeAssert"],
     ...nativeBindings("Bindgen", "node_assert_binding.bind.ts", "myersDiff", "printMyersDiff", "printSimpleMyersDiff"),
+    ...nativeBindings("NewCppFunction", "FormatStackTraceForJS.cpp", "jsFunctionHasUnformattedStack"),
   ),
 
   extendAll(

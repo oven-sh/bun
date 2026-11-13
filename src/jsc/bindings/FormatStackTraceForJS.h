@@ -74,6 +74,8 @@ WTF::String formatStackTrace(
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace);
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace);
+// (value): whether `value`, or an object above it, is an Error whose stack is not formatted yet.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionHasUnformattedStack);
 
 // JSC Custom Accessors - error.stack getter/setter
 JSC_DECLARE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter);

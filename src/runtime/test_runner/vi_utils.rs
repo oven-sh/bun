@@ -2,7 +2,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
 use bun_options_types::context::RESETS_BEFORE_EACH_TEST;
 
-use super::jest::Jest;
+use super::jest::{Jest, TestRunner};
 use crate::generated_bindgen::vi_utils as generated;
 
 unsafe extern "C" {
@@ -66,14 +66,12 @@ extern "C" fn ViUtils__isLoadingPreload(global: &JSGlobalObject) -> bool {
     global.bun_vm().is_in_preload
 }
 
-/// If `next_load_shares_global` is false, `global` is thrown away and the preloads run again, so there's nothing to undo.
+pub(crate) fn restore_config_of_preload(runner: &mut TestRunner<'_>) {
+    runner.vi_config = runner.bun_test_root.vi_config_of_preload;
+}
+
+/// If `next_load_shares_global` is false, `global` is thrown away, so there's nothing to undo.
 pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global: bool) {
-    if let Some(runner) = Jest::runner() {
-        if !next_load_shares_global {
-            runner.vi_config_of_preload = Config::default();
-        }
-        runner.vi_config = runner.vi_config_of_preload;
-    }
     if !next_load_shares_global {
         return;
     }
@@ -108,12 +106,12 @@ fn number_option(
     }))
 }
 
-/// Config set by a preload applies to every test file, like config set by a Vitest setup file.
+/// A preload's config lasts as long as its hooks: for every test file, or under test isolation for one.
 fn commit(global: &JSGlobalObject, config: Config) {
     if let Some(runner) = Jest::runner() {
         runner.vi_config = config;
         if global.bun_vm().is_in_preload {
-            runner.vi_config_of_preload = config;
+            runner.bun_test_root.vi_config_of_preload = config;
         }
     }
 }

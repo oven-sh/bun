@@ -720,6 +720,269 @@ describe.concurrent("vi.setConfig", () => {
     },
   );
 
+  // With --parallel=2 one worker takes every file, so the worker's own swap runs between them.
+  const oneWorker = { BUN_TEST_PARALLEL_SCALE_MS: "60000" };
+
+  describe("what is set after the tests of a file have ended doesn't reach the next file", () => {
+    async function seenWith(flags: string, fileThatSetsItLate: string) {
+      const { stdout, stderr, exitCode } = await run(
+        ["test", ...flags.split(" ")],
+        {
+          "a.test.ts": fileThatSetsItLate,
+          "b.test.ts": `
+            import { test } from "vitest";
+            test("b", ({ task }) => console.log("testTimeout of b:", task.timeout));
+          `,
+        },
+        oneWorker,
+      );
+      return {
+        seen: (stdout + stderr).split("\n").filter(line => /^(set after the tests of a|testTimeout of b:)/.test(line)),
+        failed: results(stderr).filter(line => !line.startsWith("(pass)")),
+        exitCode,
+      };
+    }
+
+    test.each(["--isolate", "--parallel=2"])("by a socket's close handler: bun test %s", async flags => {
+      const leavesSocketOpen = `
+        import { test, vi } from "bun:test";
+        // Left open and reachable, so that only the runner closes them: after this file.
+        let server, client;
+        test("a", async () => {
+          server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+          client = await Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            socket: {
+              data() {},
+              close() {
+                console.log("set after the tests of a");
+                vi.setConfig({ testTimeout: 54321 });
+              },
+            },
+          });
+        });
+      `;
+      expect(await seenWith(flags, leavesSocketOpen)).toEqual({
+        seen: ["set after the tests of a", "testTimeout of b: 5000"],
+        failed: [],
+        exitCode: 0,
+      });
+    });
+
+    test.each(["--no-isolate", "--rerun-each=2"])(
+      "by a Proxy trap when the runner restores a spy: bun test %s",
+      async flags => {
+        const spiesOnProxy = `
+          import { test, vi } from "bun:test";
+          let ended = false;
+          function trap(name) {
+            return (...args) => {
+              if (ended) {
+                ended = false;
+                console.log("set after the tests of a");
+                vi.setConfig({ testTimeout: 54321 });
+              }
+              return Reflect[name](...args);
+            };
+          }
+          const proxy = new Proxy({ method() {} }, { defineProperty: trap("defineProperty"), set: trap("set") });
+          test("a", () => {
+            vi.spyOn(proxy, "method");
+            ended = true;
+          });
+        `;
+        const runs = flags.includes("--rerun-each=2") ? 2 : 1;
+        expect(await seenWith(flags, spiesOnProxy)).toEqual({
+          seen: [...Array(runs).fill("set after the tests of a"), ...Array(runs).fill("testTimeout of b: 5000")],
+          failed: [],
+          exitCode: 0,
+        });
+      },
+    );
+  });
+
+  test("a hook registered between two test files doesn't get the hookTimeout of the file before it", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      ["test", "--parallel=2", "--no-isolate"],
+      {
+        "a.test.ts": `
+          import { beforeEach, describe, test, vi } from "bun:test";
+          vi.setConfig({ hookTimeout: 10 });
+          test("a", () => {
+            // Polls until no test file is active. The worker exits after its last file, so the poll ends with the run.
+            const poll = () => {
+              try {
+                describe.skip("probe", () => {});
+              } catch (error) {
+                if (String(error).includes("outside of a test file")) {
+                  beforeEach(async () => {
+                    await Bun.sleep(40);
+                    console.log("the hook ran");
+                  });
+                  console.log("registered between two files");
+                  return;
+                }
+              }
+              setImmediate(poll);
+            };
+            setImmediate(poll);
+          });
+        `,
+        "b.test.ts": `import { test } from "bun:test"; test("b", () => console.log("b runs"));`,
+      },
+      oneWorker,
+    );
+    expect({
+      seen: (stdout + stderr)
+        .split("\n")
+        .filter(line => /^(registered between two files|the hook ran|b runs)$/.test(line)),
+      results: results(stderr),
+      exitCode,
+    }).toEqual({
+      seen: ["registered between two files", "the hook ran", "b runs"],
+      results: ["(pass) a", "(pass) b"],
+      exitCode: 0,
+    });
+  });
+
+  describe("a preload's config lasts as long as the preload's hooks", () => {
+    // Prints what the file's tests get, then sets what no later file may get.
+    const observes = `
+      import { describe, test, vi } from "vitest";
+      import { basename } from "node:path";
+      const seen = {};
+      const fn = vi.fn(() => "original");
+      const object = { method: () => "original" };
+      test("first", ({ task }) => {
+        seen.testTimeout = task.timeout;
+        fn();
+        fn.mockReturnValue("changed");
+        vi.spyOn(object, "method").mockReturnValue("spied");
+        vi.stubEnv("VI_UTILS_STUBBED", "1");
+        vi.stubGlobal("viUtilsStubbed", 1);
+      });
+      test("second", () => {
+        seen.calls = fn.mock.calls.length;
+        seen.returns = fn();
+        seen.method = object.method();
+        seen.env = process.env.VI_UTILS_STUBBED ?? null;
+        seen.global = typeof viUtilsStubbed;
+      });
+      describe.concurrent("concurrent", () => {
+        let started = 0;
+        for (let i = 0; i < 2; i++) {
+          test("test " + i, async () => {
+            started++;
+            await new Promise(resolve => setImmediate(resolve));
+            if (i === 0) seen.startedTogether = started;
+          });
+        }
+      });
+      test("last", () => {
+        console.log(basename(Bun.main) + ":", JSON.stringify(seen));
+        vi.resetConfig();
+        vi.setConfig({ testTimeout: 55, maxConcurrency: 55 });
+      });
+    `;
+    const files = {
+      "preload.ts": `
+        import { afterAll, vi } from "bun:test";
+        import { basename } from "node:path";
+        const file = basename(Bun.main);
+        console.log("preload for", file);
+        // Registered before the preload sets a hookTimeout, and takes longer than the one it sets for a.test.ts.
+        afterAll(() => Bun.sleep(40));
+        if (file === "a.test.ts") vi.setConfig({ testTimeout: 54321, hookTimeout: 10, maxConcurrency: 1, clearMocks: false, mockReset: true, restoreMocks: true, unstubEnvs: true, unstubGlobals: true });
+      `,
+      "a.test.ts": observes,
+      "b.test.ts": observes,
+    };
+    const defaults = {
+      testTimeout: 5000,
+      calls: 0,
+      returns: "changed",
+      method: "spied",
+      env: "1",
+      global: "number",
+      startedTogether: 2,
+    };
+    // mockReset clears the calls that clearMocks: false keeps.
+    const ofPreload = {
+      testTimeout: 54321,
+      calls: 0,
+      returns: "original",
+      method: "original",
+      env: null,
+      global: "undefined",
+      startedTogether: 1,
+    };
+
+    async function seenWith(flags: string, fixture: Record<string, string> = files) {
+      const { stdout, stderr, exitCode } = await run(
+        ["test", "--preload=./preload.ts", ...flags.split(" ")],
+        fixture,
+        oneWorker,
+      );
+      const lines = (stdout + stderr).split("\n");
+      return {
+        preloadedFor: lines.filter(line => line.startsWith("preload for ")).map(line => line.slice(12)),
+        seen: lines.filter(line => /^[ab]\.test\.ts: \{/.test(line)).map(line => [line[0], JSON.parse(line.slice(11))]),
+        errors: lines.filter(line => line.startsWith("error: ")),
+        failed: results(stderr).filter(line => !line.startsWith("(pass)")),
+        exitCode,
+      };
+    }
+
+    async function isGoneInTheNextFile(flags: string) {
+      expect(await seenWith(flags)).toEqual({
+        preloadedFor: ["a.test.ts", "b.test.ts"],
+        seen: [
+          ["a", ofPreload],
+          ["b", defaults],
+        ],
+        errors: [],
+        failed: [],
+        exitCode: 0,
+      });
+    }
+
+    // A debug build takes seconds to start with --isolate=modules, so these run one at a time.
+    test.serial.each(["--isolate=modules", "--parallel=2 --isolate=modules"])(
+      "until the next file: bun test %s",
+      isGoneInTheNextFile,
+    );
+    test.each(["--isolate", "--parallel=2"])("until the next file: bun test %s", isGoneInTheNextFile);
+
+    test.each(["--rerun-each=2", "--parallel=2 --no-isolate"])("for every file: bun test %s", async flags => {
+      const runs = flags.includes("--rerun-each=2") ? 2 : 1;
+      expect(await seenWith(flags)).toEqual({
+        preloadedFor: ["a.test.ts"],
+        seen: ["a", "b"].flatMap(file => Array(runs).fill([file, ofPreload])),
+        errors: [],
+        failed: [],
+        exitCode: 0,
+      });
+    });
+
+    test.each(["--isolate --rerun-each=2", "--parallel=2 --rerun-each=2"])(
+      "until the next file, also when the file fails to load: bun test %s",
+      async flags => {
+        const seen = await seenWith(flags, { ...files, "a.test.ts": `throw new Error("does not load");` });
+        expect(seen).toEqual({
+          preloadedFor: ["a.test.ts", "b.test.ts"],
+          seen: [
+            ["b", defaults],
+            ["b", defaults],
+          ],
+          errors: ["error: does not load"],
+          failed: [],
+          exitCode: 1,
+        });
+      },
+    );
+  });
+
   test("rejects a config that is not an object and a testTimeout that is not a number", () => {
     // @ts-expect-error
     expect(() => vi.setConfig()).toThrow('The "config" argument must be of type object. Received undefined');

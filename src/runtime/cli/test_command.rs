@@ -2797,7 +2797,6 @@ impl TestCommand {
                 index: jest::FileMap::default(),
                 default_timeout_override: u32::MAX,
                 vi_config: Default::default(),
-                vi_config_of_preload: Default::default(),
                 // SAFETY: lifetime-erase to `'static`; `ctx` is the
                 // process-lifetime CLI context and `exec()` never returns.
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
@@ -4038,6 +4037,8 @@ impl TestCommand {
                 reporter.jest.snapshots.reset_counts();
             }
 
+            // Test isolation drops the preloads' config after a file is left, and runs that file's handlers.
+            crate::test_runner::vi_utils::restore_config_of_preload(&mut reporter.jest);
             let bun_test_root = &mut jest::Jest::runner().unwrap().bun_test_root;
             // Determine if this file should run tests concurrently based on glob pattern
             let should_run_concurrent = reporter.jest.should_file_run_concurrently(file_id);
@@ -4319,6 +4320,10 @@ impl Drop for EnteredFile<'_> {
         // A mock.module() patch still pending must not hold up the next file.
         bun_jsc::cpp::JSMock__forgetPendingModulePatches(self.global);
         bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(self.global, self.next_load_shares_global);
+        // A hook registered between two test files belongs to the preloads.
+        if let Some(runner) = jest::Jest::runner() {
+            crate::test_runner::vi_utils::restore_config_of_preload(runner);
+        }
     }
 }
 

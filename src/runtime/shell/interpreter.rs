@@ -1239,7 +1239,7 @@ impl Interpreter {
                     // finishes. If the output buffers could not be built
                     // (allocation failure), the promise is rejected with that
                     // instead; a terminating VM settles nothing.
-                    let event_loop = global_this.bun_vm().event_loop_mut();
+                    let event_loop = global_this.bun_vm().event_loop();
                     match buffers {
                         Ok((buffered_stdout, buffered_stderr)) => event_loop.run_callback(
                             self.task_context(),
@@ -1312,7 +1312,7 @@ impl Interpreter {
             .global_this_ref()
             .expect("take_failure returned a rejection on the Js path");
         let _entered = self.event_loop.entered();
-        global_this.bun_vm().event_loop_mut().run_callback(
+        global_this.bun_vm().event_loop().run_callback(
             self.task_context(),
             reject,
             global_this,
@@ -2870,7 +2870,7 @@ pub(crate) fn create_shell_interpreter<'a>(
 
     // bun_vm() returns the live thread-local VM for a Bun-owned global; that
     // pointer is the live `jsc::EventLoop` `EventLoopHandle::init` expects.
-    let event_loop = EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
+    let event_loop = EventLoopHandle::init(global.bun_vm().event_loop_ptr());
     let mut interpreter = match Interpreter::init(
         // command_ctx — unused on the JS event-loop path.
         core::ptr::null_mut(),

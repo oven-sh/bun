@@ -672,7 +672,7 @@ pub(crate) trait CompressionStreamImpl:
         // The pending close handling below still runs either way.
         if let Some(callback) = Self::error_callback_get_cached(this_value) {
             let vm = global_this.bun_vm();
-            vm.event_loop_ref().run_callback(
+            vm.event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,
                 global_this,
@@ -773,7 +773,7 @@ pub(crate) fn run_from_js_thread<T: CompressionStreamImpl>(this: RefPtr<T>) {
     // `init()` caches the JS write callback; a handle whose `init()` was
     // never called has none, so there is nothing to notify.
     if let Some(write_callback) = T::write_callback_get_cached(this_value) {
-        vm.event_loop_ref().run_callback(
+        vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             write_callback,
             global,

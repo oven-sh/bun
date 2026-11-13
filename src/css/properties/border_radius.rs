@@ -44,7 +44,7 @@ impl BorderRadius {
             && Size2D::eql(&self.bottom_left, &other.bottom_left)
     }
 
-    pub fn parse(input: &mut css::Parser) -> css::Result<BorderRadius> {
+    pub fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, BorderRadius> {
         let widths =
             Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse_non_negative)?;
         let heights = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
@@ -140,15 +140,15 @@ impl BorderRadius {
 }
 
 #[derive(Default)]
-pub struct BorderRadiusHandler {
+pub struct BorderRadiusHandler<'bump> {
     pub(crate) top_left: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
     pub(crate) top_right: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
     pub(crate) bottom_right: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
     pub(crate) bottom_left: Option<(Size2D<LengthPercentage>, VendorPrefix)>,
-    pub(crate) start_start: Option<Property>,
-    pub(crate) start_end: Option<Property>,
-    pub(crate) end_end: Option<Property>,
-    pub(crate) end_start: Option<Property>,
+    pub(crate) start_start: Option<Property<'bump>>,
+    pub(crate) start_end: Option<Property<'bump>>,
+    pub(crate) end_end: Option<Property<'bump>>,
+    pub(crate) end_start: Option<Property<'bump>>,
     // derive(Default) is sound here because
     // PropertyCategory::default() == Physical (see src/css/logical.rs).
     pub(crate) category: PropertyCategory,
@@ -273,12 +273,12 @@ macro_rules! logical_property {
     }};
 }
 
-impl BorderRadiusHandler {
+impl<'bump> BorderRadiusHandler<'bump> {
     pub(crate) fn handle_property(
         &mut self,
-        property: &Property,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
+        property: &Property<'bump>,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext<'_, 'bump>,
     ) -> bool {
         let bump = dest.bump();
         // `Property::deep_clone` is still gated; reconstruct the
@@ -426,13 +426,17 @@ impl BorderRadiusHandler {
 
     pub(crate) fn finalize(
         &mut self,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext<'_, 'bump>,
     ) {
         self.flush(dest, context);
     }
 
-    fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
+    fn flush(
+        &mut self,
+        dest: &mut DeclarationList<'bump>,
+        context: &mut PropertyHandlerContext<'_, 'bump>,
+    ) {
         if !self.has_any {
             return;
         }

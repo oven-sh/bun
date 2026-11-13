@@ -135,10 +135,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
         };
     });
 
-    // A special global object is used to allow registering virtual modules
-    // that bypass Bun's normal module resolver and plugin system.
-    vm.regular_event_loop.global = NonNull::new(vm.global);
-    vm.event_loop_ref().ensure_waker();
+    vm.event_loop().ensure_waker();
     {
         let b = &mut vm.transpiler;
         // preload/argv are `Vec<Box<[u8]>>`; clone because the VM owns its
@@ -174,7 +171,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
         // not carry them (the resolver never reads them).
         b.options.env.behavior = bundler_options::EnvBehavior::LoadAllWithoutInlining;
     }
-    vm.event_loop_ref().ensure_waker();
+    vm.event_loop().ensure_waker();
     match &ctx.debug.macros {
         MacroOptions::Disable => {
             vm.transpiler.options.no_macros = true;
@@ -616,7 +613,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         // Construct the `AnyEventLoop` enum
         // value (NOT a pointer-cast: the bundler matches on its discriminant).
         // Lives in this block's stack frame, outliving the bundle call.
-        let mut any_loop = bun_event_loop::AnyEventLoop::js(vm.event_loop().cast());
+        let mut any_loop = bun_event_loop::AnyEventLoop::js(vm.event_loop_ptr());
 
         // Propagate via `?`. Do NOT
         // catch-and-exit here: the bake path expects this call to succeed for

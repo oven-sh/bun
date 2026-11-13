@@ -173,7 +173,7 @@ pub(crate) fn run_as_coordinator(
     });
     let mut coord = Coordinator {
         vm,
-        event_loop_handle: bun_jsc::EventLoopHandle::init(vm.event_loop().cast::<()>()),
+        event_loop_handle: bun_jsc::EventLoopHandle::init(vm.event_loop_ptr()),
         reporter,
         files: sorted,
         costs,
@@ -242,8 +242,7 @@ pub(crate) fn run_as_coordinator(
         }
     }
 
-    // SAFETY: event_loop pointer is valid while vm lives.
-    unsafe { (*vm.event_loop()).ensure_waker() };
+    vm.event_loop().ensure_waker();
     crate::cli::run_compiled::log_step_of_test_run(format_args!("the coordinator is set up"));
     vm.run_with_api_lock(|| coord.drive());
     coord.end_group();
@@ -717,11 +716,11 @@ impl<'a> WorkerLoop<'a> {
             let mut waits_for_command = bun_io::KeepAlive::init();
             waits_for_command.ref_(bun_io::js_vm_ctx());
             while self.cmds.pending_idx.is_none() && !self.cmds.done {
-                vm.event_loop_ref().tick();
+                vm.event_loop().tick();
                 if self.cmds.pending_idx.is_some() || self.cmds.done {
                     break;
                 }
-                vm.event_loop_ref().auto_tick();
+                vm.event_loop().auto_tick();
             }
             waits_for_command.unref(bun_io::js_vm_ctx());
             let Some(idx) = self.cmds.pending_idx.take() else {
@@ -903,8 +902,7 @@ pub(crate) fn run_as_worker(
     // reader was dropped from the GC path (see web_worker.rs, which wires its
     // own arena the same way and notes the dropped read).
     let mut arena = bun_alloc::MimallocArena::new();
-    // SAFETY: event_loop pointer is valid while vm lives.
-    unsafe { (*vm.event_loop()).ensure_waker() };
+    vm.event_loop().ensure_waker();
     vm.arena = Some(NonNull::from(&mut arena));
     // vm.allocator = arena.arena(); — allocator params dropped in Rust
 
@@ -991,13 +989,11 @@ fn worker_flush_aggregates(
     // sees repeat_bufs / coverage_file.
     vm.run_with_api_lock(|| {
         while cmds.channel.has_pending_writes() && !cmds.channel.done.get() {
-            // SAFETY: event_loop pointer is valid while vm lives.
-            unsafe { (*vm.event_loop()).tick() };
+            vm.event_loop().tick();
             if !cmds.channel.has_pending_writes() || cmds.channel.done.get() {
                 break;
             }
-            // SAFETY: event_loop pointer is valid while vm lives.
-            unsafe { (*vm.event_loop()).auto_tick() };
+            vm.event_loop().auto_tick();
         }
     });
 }

@@ -16,7 +16,7 @@ import os from "node:os";
 import { dirname, isAbsolute, join, sep } from "path";
 import { locksEnvironment } from "./aot/hardened";
 import { ownTemporaryFolder } from "./aot/harness/temporary-folders";
-import "./aot/harness/without-installing-packages";
+import { temporaryFolderThatInstalls } from "./aot/harness/without-installing-packages";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -775,6 +775,16 @@ export function tempDir(
   return new DisposableString(base) as string & DisposableString & AsyncDisposable;
 }
 
+/** `tempDir`, but with no node_modules folder above it. Auto-install is off in the other temporary folders. */
+export function autoInstallTempDir(
+  basename: string,
+  filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
+): string & DisposableString & AsyncDisposable {
+  const base = ownTemporaryFolder(fs.mkdtempSync(join(temporaryFolderThatInstalls(), basename + "_")));
+  makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
+  return new DisposableString(base) as string & DisposableString & AsyncDisposable;
+}
+
 export function tempDirWithBunTypes(
   basename: string,
   filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
@@ -841,7 +851,7 @@ export function unprivilegedSpawnOptions(dir: string): { uid?: number; gid?: num
     for (const entry of fs.readdirSync(dir, { recursive: true, encoding: "utf8" })) {
       fs.lchownSync(join(dir, entry), NOBODY, NOBODY);
     }
-    const tmp = fs.realpathSync(os.tmpdir());
+    const tmp = fs.realpathSync(temporaryFolderThatInstalls());
     for (let parent = dirname(fs.realpathSync(dir)); parent !== dirname(parent); parent = dirname(parent)) {
       const mode = fs.statSync(parent).mode & 0o7777;
       if (mode & 0o001) continue;

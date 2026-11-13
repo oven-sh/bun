@@ -13,7 +13,6 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression,
     StringJsc as _,
 };
-use crate::timer::ElTimespec;
 
 pub(crate) use super::bun_test;
 use crate::generated_bindgen::expect::{js_Expect, js_ExpectTypeOf};
@@ -184,34 +183,24 @@ impl<'a> TestRunner<'a> {
                 }
             }
         }
-        if active_file.timer.state != TimerState::ACTIVE
-            || active_file.timer.next == ElTimespec::EPOCH
+        if active_file.timer.state.get() != TimerState::ACTIVE
+            || active_file.timer.next.get() == bun_core::Timespec::EPOCH
         {
             return bun_core::Timespec::EPOCH;
         }
-        // bun_event_loop carries a local Timespec stub with the
-        // same `{sec, nsec}` shape as bun_core::Timespec; convert by field
-        // until the lower tier unifies on bun_core::Timespec (see
-        // src/runtime/timer/mod.rs ElTimespec alias).
-        bun_core::Timespec { sec: active_file.timer.next.sec, nsec: active_file.timer.next.nsec }
+        active_file.timer.next.get()
     }
 
-    pub(crate) fn remove_active_timeout(&mut self, vm: &mut VirtualMachine) {
-        let Some(active_file) = self.bun_test_root.active_file.as_ref() else {
+    pub(crate) fn remove_active_timeout(&self) {
+        let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return;
         };
-        // SAFETY: single-threaded JS VM; only borrow of this BunTest for the
-        // duration of the timer-removal below. The const→mut projection is
-        // centralized in `buntest_as_mut` pending the BunTestPtr interior-mut
-        // reshape (see bun_test.rs).
-        let active_file = unsafe { bun_test::buntest_as_mut(active_file) };
-        if active_file.timer.state != TimerState::ACTIVE
-            || active_file.timer.next == ElTimespec::EPOCH
+        if active_file.timer.state.get() != TimerState::ACTIVE
+            || active_file.timer.next.get() == bun_core::Timespec::EPOCH
         {
             return;
         }
-        let _ = vm;
-        bun_test::vm_timer().remove(&raw mut active_file.timer);
+        crate::jsc_hooks::timer_all().remove(&active_file.timer);
     }
 
 

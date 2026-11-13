@@ -432,16 +432,7 @@ impl BlobExt for Blob {
             let promise_value = handler.promise.value();
             promise_value.ensure_still_alive();
 
-            read_file::ReadFileUV::start::<Handler<F>>(
-                // `bun_vm()` returns the live VM for this global; the event
-                // loop outlives any in-flight async fs request.
-                cx.vm().event_loop(),
-                cx.context(),
-                self.store().expect("infallible: store present").clone(),
-                self.offset.get(),
-                self.size.get(),
-                handler,
-            );
+            read_file::ReadFileUV::start(self, read_file::ReadFileCompletionFns::of(handler), cx);
             return promise_value;
         }
 
@@ -604,15 +595,7 @@ impl BlobExt for Blob {
     ) {
         #[cfg(windows)]
         {
-            return read_file::ReadFileUV::start_with_ctx(
-                // SAFETY: `bun_vm()` returns the live VM for this global.
-                cx.vm().event_loop(),
-                cx.context(),
-                self.store().expect("infallible: store present").clone(),
-                self.offset.get(),
-                self.size.get(),
-                read_file::ReadFileCompletionFns::of(ctx),
-            );
+            read_file::ReadFileUV::start(self, read_file::ReadFileCompletionFns::of(ctx), cx);
         }
         #[cfg(not(windows))]
         {
@@ -1352,8 +1335,7 @@ impl BlobExt for Blob {
                         self.global_this()
                             .expect("Blob.global_this set at construction")
                             .bun_vm()
-                            .as_mut()
-                            .event_loop() as *mut (),
+                            .event_loop_ptr(),
                     ),
                 );
                 sink.writer
@@ -1384,9 +1366,7 @@ impl BlobExt for Blob {
                         self.global_this()
                             .expect("Blob.global_this set at construction")
                             .bun_vm()
-                            .as_mut()
-                            .event_loop()
-                            .cast::<()>(),
+                            .event_loop_ptr(),
                     ),
                 );
 
@@ -1560,8 +1540,7 @@ impl BlobExt for Blob {
                     self.global_this()
                         .expect("Blob.global_this set at construction")
                         .bun_vm()
-                        .as_mut()
-                        .event_loop() as *mut (),
+                        .event_loop_ptr(),
                 ),
             );
             // `to_js` gives init's ref to the wrapper; an early return drops it.
@@ -1593,9 +1572,7 @@ impl BlobExt for Blob {
                     self.global_this()
                         .expect("Blob.global_this set at construction")
                         .bun_vm()
-                        .as_mut()
-                        .event_loop()
-                        .cast::<()>(),
+                        .event_loop_ptr(),
                 ),
             );
             // `to_js` gives init's ref to the wrapper; an early return drops it.
@@ -4090,7 +4067,7 @@ pub(crate) fn write_file_with_source_destination(
             let mut promise = jsc::JSPromiseStrong::default();
             promise.set(cx.global(), promise_value);
             match write_file::WriteFileWindows::create(
-                cx.vm().event_loop(),
+                cx.global().bun_vm().event_loop(),
                 cx.context(),
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
@@ -4128,7 +4105,7 @@ pub(crate) fn write_file_with_source_destination(
             return Ok(copy_file::CopyFileWindows::init(
                 destination_store,
                 source_store,
-                cx.vm().event_loop_shared(),
+                cx.global().bun_vm().event_loop(),
                 cx.context(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 destination_blob.size.get(),

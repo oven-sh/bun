@@ -3,18 +3,16 @@ use crate::css_values::ident::CustomIdent;
 use crate::{DeclarationBlock, PrintErr, Printer};
 
 /// A [@counter-style](https://drafts.csswg.org/css-counter-styles/#the-counter-style-rule) rule.
-pub struct CounterStyleRule {
+pub struct CounterStyleRule<'bump> {
     /// The name of the counter style to declare.
-    pub name: CustomIdent,
+    pub name: CustomIdent<'bump>,
     /// Declarations in the `@counter-style` rule.
-    // `DeclarationBlock<'bump>` borrows the parser arena; lifetime erased to
-    // `'static` here per the rules/mod.rs `CssRule<R>` lifetime-erasure note.
-    pub(crate) declarations: DeclarationBlock<'static>,
+    pub(crate) declarations: DeclarationBlock<'bump>,
     /// The location of the rule in the source file.
     pub(crate) loc: Location,
 }
 
-impl CounterStyleRule {
+impl CounterStyleRule<'_> {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
@@ -26,11 +24,11 @@ impl CounterStyleRule {
     }
 }
 
-impl CounterStyleRule {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+impl<'bump> CounterStyleRule<'bump> {
+    pub(crate) fn deep_clone(&self, bump: &'bump bun_alloc::Arena) -> Self {
         Self {
             name: self.name.deep_clone(bump),
-            declarations: super::dc::decl_block_static(&self.declarations, bump),
+            declarations: super::dc::decl_block(&self.declarations, bump),
             loc: self.loc,
         }
     }

@@ -2218,8 +2218,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let _cell = handlers.keep_cell_alive();
         log_event("onClose", &handlers);
         // Like Node, an http2 session reports a failed read, not a send that the kernel rejected.
-        let err = if SSL
-            && matches!(this.native_callback.get(), NativeCallbacks::H2(_))
+        let err = if matches!(this.native_callback.get(), NativeCallbacks::H2(_))
             && socket.rejected_send_error() != 0
         {
             0
@@ -2612,14 +2611,14 @@ impl<const SSL: bool> NewSocket<SSL> {
             .inspect(|sent| self.count_written(*sent))
     }
 
-    /// The http2 parser's write. Returns -1 if the socket takes no writes, and less if the send failed for good.
+    /// The http2 parser's write. Returns -1 if the socket takes no writes, and `-1 - errno` if the send failed for good.
     pub(crate) fn write_maybe_corked(&self, buffer: &[u8]) -> i32 {
         if !self.takes_writes() {
             return -1;
         }
         match self.send_unbuffered(buffer) {
             Ok(sent) => i32::try_from(sent).expect("int cast"),
-            Err(_) => i32::MIN,
+            Err(errno) => -1 - errno,
         }
     }
 

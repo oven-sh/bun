@@ -502,6 +502,10 @@ pub(crate) struct SocketConfig {
     pub(crate) fd: Option<Fd>,
     /// node:net sets the private `$fdIsWriteOnly`: `fd` is a pipe, a terminal or a socket that is only written to, in its own blocking mode.
     pub(crate) fd_is_write_only: bool,
+    /// node:net sets the private `$fdIsReadablePipe`: `fd` is a pipe or FIFO that is read from, so `do_connect` gives it to a `PosixPipe` instead of uSockets.
+    pub(crate) fd_is_readable_pipe: bool,
+    /// `fdIsRawSocket`: the caller knows `fd` is a socket, so `do_connect` skips its `fstat` classification.
+    pub(crate) fd_is_raw_socket: bool,
     pub(crate) local_binding: Option<(Box<[u8]>, u16)>,
     pub(crate) ssl: Option<SSLConfig>,
     pub(crate) handlers: Rc<Handlers>,
@@ -577,6 +581,8 @@ impl SocketConfig {
                     Fd::from_uv(v)
                 }),
                 fd_is_write_only: false,
+                fd_is_readable_pipe: false,
+                fd_is_raw_socket: generated.fd_is_raw_socket,
                 local_binding: generated.local_address.map(|address| {
                     let port = generated.local_port.unwrap_or(0.0).clamp(0.0, 65535.0) as u16;
                     (address.into_utf8().into_vec().into_boxed_slice(), port)
@@ -656,6 +662,9 @@ impl SocketConfig {
             .is_none_or(|value| value.to_boolean());
         config.fd_is_write_only = opts
             .fast_get(global_object, bun_jsc::BuiltinName::fdIsWriteOnly)?
+            .is_some_and(|value| value.to_boolean());
+        config.fd_is_readable_pipe = opts
+            .fast_get(global_object, bun_jsc::BuiltinName::fdIsReadablePipe)?
             .is_some_and(|value| value.to_boolean());
         Ok(config)
     }

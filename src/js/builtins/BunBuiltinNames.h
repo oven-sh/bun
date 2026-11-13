@@ -89,6 +89,7 @@ using namespace JSC;
     macro(fastPath) \
     macro(fatal) \
     macro(fd) \
+    macro(fdIsReadablePipe) \
     macro(fdIsWriteOnly) \
     macro(filename) \
     macro(flush) \

@@ -3590,6 +3590,10 @@ bitflags::bitflags! {
         const WRITE_ONLY_FD        = 1 << 18;
         /// C++ points at this socket for a node:http connection, or for the `ws` WebSocket made of it, until `Bun__NodeHTTPSocket__onClose`. The ext of the `us_socket_t` is uWS's.
         const HELD_BY_SERVER       = 1 << 19;
+        /// node:net's `fdIsReadablePipe`: `do_connect` gives the descriptor to a `PosixPipe`, not to uSockets.
+        const READABLE_PIPE_FD     = 1 << 20;
+        /// `fdIsRawSocket`: the caller knows the descriptor is a socket, so `do_connect` does not `fstat` it.
+        const RAW_SOCKET_FD        = 1 << 21;
         /// TCP_NODELAY is known to be on, so asking for it again costs no syscall. node:net asks for each connection of an http.Server, and the accept has set it.
         const NO_DELAY = 1 << 30;
         /// The `ws` package's WebSocket on this connection has closed, and the kernel had taken everything it queued.

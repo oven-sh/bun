@@ -907,6 +907,8 @@ pub enum BuiltinName {
     defaultTimeout,
     /// Private name (`$fdIsWriteOnly` in builtins); user code cannot set it.
     fdIsWriteOnly,
+    /// Private name (`$fdIsReadablePipe` in builtins); user code cannot set it.
+    fdIsReadablePipe,
 }
 
 #[allow(non_upper_case_globals)]

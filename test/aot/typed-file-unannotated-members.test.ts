@@ -26,7 +26,10 @@ async function checkedIn(root: string) {
   const checked = await bun(root, "check");
   const errors: Record<string, string[]> = {};
   const types: Record<string, string[]> = {};
-  for (const [, file, at, code, said] of checked.stdout.matchAll(/^(.+?)(\(\d+,\d+\)): error (TS\d+): (.*)$/gm)) {
+  const shown = [...checked.stdout.matchAll(/^(.+?)(\(\d+,\d+\)): error (TS\d+): (.*)$/gm)];
+  // A run with no error at a place has no error: it prints none, and it does not fail.
+  if (shown.length === 0) expect(checked).toEqual({ stdout: "", stderr: expect.any(String), exitCode: 0 });
+  for (const [, file, at, code, said] of shown) {
     const path = file.replaceAll("\\", "/");
     const type = /^Type '(.*)' is not assignable to type 'never'\.$/.exec(said)?.[1];
     if (!path.startsWith("types/")) (errors[path] ??= []).push(`${at}: ${code}`);
@@ -887,11 +890,9 @@ new Box().item = make();
     const build = await bun(String(dir), "build", "./src/index.ts", "./src/other.ts", ...flags);
     expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).toContain("class Box {\n  item;\n");
+    // `item;` has no type, and the typed file is a source of this project: TS7008. Neither caller has an error.
     const { errors } = await checkedIn(String(dir));
-    expect({
-      sources: errors["callers/of-the-sources.ts"] ?? [],
-      typedFile: errors["callers/of-the-typed-file.ts"] ?? [],
-    }).toEqual({ sources: [], typedFile: [] });
+    expect(errors).toEqual({ "out/index.aot.ts": [expect.stringContaining("TS7008")] });
   });
 
   // No annotation and no cast of the bundle names `Hidden`. The typed file declares it for the stated type.

@@ -445,10 +445,7 @@ export class OfDerived extends OfPlain { y = 2; }
         of_main(&[("main.ts", main)], |types| {
             let names = types.classes_of_bases_without_parameters.iter().map(|&at| {
                 let header = &types.text[..at as usize];
-                let class = header
-                    .windows(6)
-                    .rposition(|word| word == b"class ")
-                    .unwrap();
+                let class = bun_core::strings::last_index_of(header, b"class ").unwrap();
                 word_at(&types.text, class + 6)
             });
             names.collect::<Vec<String>>()

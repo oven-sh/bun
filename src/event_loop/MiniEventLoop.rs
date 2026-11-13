@@ -25,27 +25,12 @@ use core::ptr::NonNull;
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
 use bun_io::file_poll::Store as FilePollStore;
-use bun_sys::{Fd, Mode};
 use bun_threading::UnboundedQueue;
 use bun_uws::Loop as UwsLoop;
 
 use crate::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New};
 // MOVE-IN: EventLoopHandle relocated from bun_jsc — see AnyEventLoop.rs.
 use crate::EventLoopHandle;
-
-// ─── Upward link-time externs (LAYERING) ────────────────────────────────────
-// The bodies live in `bun_runtime` (which owns `webcore::Blob`) as
-// `#[no_mangle]` Rust-ABI fns; the linker resolves them. No `AtomicPtr`, no
-// init-order hazard.
-unsafe extern "Rust" {
-    /// Constructs a `webcore::blob::Store` for stdout/stderr/stdin.
-    /// Return value is an erased
-    /// `*mut blob::Store` with intrusive refcount = 2; re-exported for
-    /// `bun_jsc::rare_data`. Defined in `bun_runtime::webcore::blob`.
-    /// No caller-side preconditions (by-value args, allocates fresh).
-    pub safe fn __bun_stdio_blob_store_new(fd: Fd, is_atty: bool, mode: Mode) -> *mut ();
-}
-// ────────────────────────────────────────────────────────────────────────────
 
 /// Intrusive MPSC queue over `AnyTaskWithExtraContext` linked via its `.next` field.
 type ConcurrentTaskQueue = UnboundedQueue<AnyTaskWithExtraContext>;

@@ -2050,7 +2050,7 @@ pub(crate) type HTTPResponseSink = HTTPServerWritable<false>;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct NetworkSink {
-    /// The sink's ref on the upload, released in `detach_writable`.
+    /// The sink's ref on the upload.
     pub task: Option<RefPtr<bun_s3::MultiPartUpload>>,
     pub(crate) source: SourceHandle,
     // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
@@ -2160,8 +2160,8 @@ impl NetworkSink {
         }
         self.ended = true;
         self.done = true;
-        if let Some(task) = self.task_ref() {
-            task.fail_writer_collected();
+        if let Some(task) = self.task.take() {
+            bun_s3::MultiPartUpload::fail_writer_collected(task);
         }
     }
 
@@ -2256,8 +2256,9 @@ impl NetworkSink {
         // the pump paths consume `Backpressure`/`Done`.
         let has_source = !matches!(self.source, SourceHandle::None);
 
-        let result = match self.task_ref() {
-            Some(task) => task.write_bytes(bytes, false),
+        // Our own ref: the write can finish the upload.
+        let result = match self.task.clone() {
+            Some(task) => bun_s3::MultiPartUpload::write_bytes(&task, bytes, false),
             None => return Writable::Owned(len),
         };
         match result {
@@ -2279,8 +2280,9 @@ impl NetworkSink {
         let len = bytes.len() as BlobSizeType;
         let has_source = !matches!(self.source, SourceHandle::None);
 
-        let result = match self.task_ref() {
-            Some(task) => task.write_latin1(bytes, false),
+        // Our own ref: the write can finish the upload.
+        let result = match self.task.clone() {
+            Some(task) => bun_s3::MultiPartUpload::write_latin1(&task, bytes, false),
             None => return Writable::Owned(len),
         };
         match result {
@@ -2301,8 +2303,9 @@ impl NetworkSink {
         let has_source = !matches!(self.source, SourceHandle::None);
         // we must always buffer UTF-16
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
-        let result = match self.task_ref() {
-            Some(task) => task.write_utf16(text, false),
+        // Our own ref: the write can finish the upload.
+        let result = match self.task.clone() {
+            Some(task) => bun_s3::MultiPartUpload::write_utf16(&task, text, false),
             None => return Writable::Owned(len),
         };
         match result {
@@ -2325,8 +2328,8 @@ impl NetworkSink {
         self.pending.result = Writable::Done;
         self.pending.run();
         // flush everything and send EOF
-        if let Some(task) = self.task_ref() {
-            let _ = task.write_bytes(b"", true);
+        if let Some(task) = self.task.clone() {
+            let _ = bun_s3::MultiPartUpload::write_bytes(&task, b"", true);
             // bun.handleOom → Rust aborts on OOM
         }
 
@@ -2426,7 +2429,7 @@ impl NetworkSink {
                 message: b"ReadableStream ended with an error",
             });
         } else {
-            let _ = task.write_bytes(b"", true);
+            let _ = bun_s3::MultiPartUpload::write_bytes(&task, b"", true);
         }
         // SAFETY: `wrapper` live with rc ≥ 1; this may free `*this`.
         unsafe { crate::webcore::s3::client::S3UploadStreamWrapper::deref(wrapper) };

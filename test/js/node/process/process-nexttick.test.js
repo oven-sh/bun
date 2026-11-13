@@ -138,7 +138,7 @@ it.concurrent.each([
 
 // The job that reads process.nextTick first belongs to the own microtask queue of a node:vm context, and an immediate
 // runs the script. The tick waits for the jobs of that queue and runs when the immediate ends, before its microtasks.
-it("the first tick of a job of a node:vm context with its own microtask queue waits for that queue", async () => {
+it.concurrent("the first tick of a job of a node:vm context's own microtask queue waits for that queue", async () => {
   const result = await runScript(`
     const vm = require("node:vm");
     const round = () =>
@@ -228,7 +228,7 @@ it.concurrent.each([
 
 // The body of an entry point runs inside a microtask, and node runs a CommonJS entry point outside the microtask queue.
 // So the tick queue that the body makes still runs behind that microtask, before the promise jobs of the body.
-it("the first tick of a CommonJS entry point runs before the promise jobs of its body", async () => {
+it.concurrent("the first tick of a CommonJS entry point runs before the promise jobs of its body", async () => {
   const result = await runScript(`
     require("node:os");
     const order = [];

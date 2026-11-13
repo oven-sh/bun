@@ -5046,14 +5046,9 @@ fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoopCtx {
             unsafe { (*event_loop).event_loop_ctx() }
         }
         bun_io::AllocatorType::Mini => {
-            // SAFETY: `GLOBAL` is set by `MiniEventLoop::init_global` before
-            // any caller asks for `AllocatorType::Mini` (the global mini loop
-            // is the only one and is init-once); `mini` is live
-            // for the process and `as_event_loop_ctx` only stores it as a tagged
-            // backref.
             let mini = bun_event_loop::MiniEventLoop::GLOBAL.with(|g| g.get());
-            // SAFETY: `mini` is the live process-global `MiniEventLoop` (see above).
-            bun_event_loop::MiniEventLoop::MiniEventLoop::as_event_loop_ctx(unsafe { &mut *mini })
+            // SAFETY: set before anything on this thread polls on a mini loop.
+            unsafe { mini.unwrap_unchecked() }.as_event_loop_ctx()
         }
     }
 }

@@ -63,7 +63,6 @@ bun_dispatch::link_interface! {
         fn enqueue_task_after_yield(task: Task);
         fn js_poster() -> any_event_loop::JsPoster;
         fn env() -> *mut bun_dotenv::Loader;
-        fn top_level_dir() -> *const [u8];
         fn create_null_delimited_env_map() -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError>;
     }
 }

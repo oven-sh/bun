@@ -35,7 +35,7 @@ fn build_argv(parts: &[&[u8]]) -> Vec<Box<[u8]>> {
 fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
     crate::api::bun::process::WindowsOptions {
         loop_: bun_event_loop::EventLoopHandle::init_mini(
-            bun_event_loop::MiniEventLoop::init_global(None, None),
+            bun_event_loop::MiniEventLoop::init_global(None),
         ),
         ..Default::default()
     }

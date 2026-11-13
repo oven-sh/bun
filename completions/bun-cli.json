@@ -4633,6 +4633,14 @@
           "multiple": false
         },
         {
+          "name": "macos-info-plist",
+          "description": "When using --compile targeting macOS, embed an Info.plist file in the executable",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "windows-hide-console",
           "description": "When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable",
           "hasValue": false,

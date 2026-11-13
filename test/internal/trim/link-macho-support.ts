@@ -240,6 +240,7 @@ const baseLinkFlags = (machine: Machine, map: string) => [
   "-nostdlib",
   ...(machine.canRun ? ["-lSystem"] : []),
   "-Wl,-e,_main",
+  "-Wl,-headerpad,0x2000",
   "-dead_strip",
   "-Wl,--icf=safe",
   `-Wl,-map,${map}`,

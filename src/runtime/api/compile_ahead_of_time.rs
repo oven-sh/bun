@@ -254,6 +254,7 @@ impl JSBundleCompletionTask {
                 root_dir: destination.root_dir.fd,
                 env: &raw mut *self.env,
                 windows: &destination.windows,
+                info_plist: compile.macos_info_plist.as_deref(),
                 exec_argv: &compile.exec_argv.list,
                 flags: destination.flags,
                 runtime_options: RuntimeOptions {

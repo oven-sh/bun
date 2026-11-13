@@ -22,7 +22,6 @@ import type { Partition } from "./partition.ts";
 const trimTableSection = "__bun_trim";
 const orderFlag = "-Wl,-order_file,";
 const compiledFolderFlag = "-Wl,-object_path_lto,";
-const headerPadFlag = "-Wl,-headerpad,0x2000";
 const exportedSymbolsFlag = "-exported_symbols_list";
 
 const roomSource = (room: number) =>
@@ -172,8 +171,8 @@ export function machO(linker: Linker): LinkerFormat {
       .map(name => join(compiled, name));
   const createLinkArguments = (compiledFolder: string): LinkArguments => {
     const flag = compiledFolderFlag + compiledFolder;
-    if (compiledFolderAt >= 0) return { last: [headerPadFlag], replaced: new Map([[compiledFolderAt, flag]]) };
-    return { last: [headerPadFlag, flag], replaced: new Map() };
+    if (compiledFolderAt >= 0) return { last: [], replaced: new Map([[compiledFolderAt, flag]]) };
+    return { last: [flag], replaced: new Map() };
   };
   return {
     firstInputs: linker.inputs.filter(path => hasMachOSection(path, "__bun_builtins")),

@@ -608,7 +608,7 @@ mod tests {
 
         let signature: linkedit_data_command = read_at(&signed, SIGNATURE_COMMAND);
         let signature_offset = signature.dataoff as usize;
-        let signature_size = MachoSigner::compute_signature_size(signature_offset as u64);
+        let signature_size = MachoSigner::compute_signature_size(signature_offset as u64, 0);
         let super_blob: SuperBlob = read_at(&signed, signature_offset);
         let linkedit: segment_command_64 = read_at(&signed, LINKEDIT_COMMAND);
         assert_eq!(signature.datasize as usize, signature_size);

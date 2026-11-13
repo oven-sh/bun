@@ -10,6 +10,7 @@ use crate::image::{
 };
 use crate::macho::{MachoSigner, SEG_LINKEDIT};
 use crate::macho_fixups::{SegmentPiece, rebuild_chained_fixups};
+use crate::macho_info_plist;
 use crate::macho_types::{
     CPU_TYPE_ARM64, CPU_TYPE_X86_64, CommandKind, LC, LoadCommandIterator, MH_EXECUTE, MH_MAGIC_64,
     N_SECT, N_STAB, N_TYPE, S_4BYTE_LITERALS, S_8BYTE_LITERALS, S_16BYTE_LITERALS,
@@ -20,31 +21,31 @@ use crate::macho_types::{
 use crate::{align_up, read_struct, write_struct};
 
 pub(crate) const CUT_ALIGNMENT: u64 = 0x4000;
-const HEADER_SIZE: usize = size_of::<mach_header_64>();
-const SEGMENT_COMMAND_SIZE: usize = size_of::<segment_command_64>();
-const SECTION_SIZE: usize = size_of::<section_64>();
-const SYMBOL_SIZE: usize = size_of::<nlist_64>();
+pub(crate) const HEADER_SIZE: usize = size_of::<mach_header_64>();
+pub(crate) const SEGMENT_COMMAND_SIZE: usize = size_of::<segment_command_64>();
+pub(crate) const SECTION_SIZE: usize = size_of::<section_64>();
+pub(crate) const SYMBOL_SIZE: usize = size_of::<nlist_64>();
 const BYTES_PER_CUT: usize = SEGMENT_COMMAND_SIZE + SECTION_SIZE;
-const MAX_SECTIONS: usize = u8::MAX as usize;
+pub(crate) const MAX_SECTIONS: usize = u8::MAX as usize;
 const FIXUPS_GROWTH_ALIGNMENT: u64 = 16;
 const SEGMENT_NAME_OFFSET: usize = size_of::<load_command>();
 const SEGMENT_NAME_SIZE: usize = 16;
 
 type Result<T, E = ImageError> = core::result::Result<T, E>;
 
-struct Segment {
-    command: segment_command_64,
-    sections: Vec<section_64>,
-    first_ordinal: usize,
+pub(crate) struct Segment {
+    pub(crate) command: segment_command_64,
+    pub(crate) sections: Vec<section_64>,
+    pub(crate) first_ordinal: usize,
 }
 
-struct Parsed {
-    header: mach_header_64,
-    commands: Vec<(CommandKind, Range<usize>)>,
-    segments: Vec<Segment>,
+pub(crate) struct Parsed {
+    pub(crate) header: mach_header_64,
+    pub(crate) commands: Vec<(CommandKind, Range<usize>)>,
+    pub(crate) segments: Vec<Segment>,
     header_room_end: usize,
     image_base: u64,
-    linkedit: usize,
+    pub(crate) linkedit: usize,
 }
 
 struct NewSegment {
@@ -120,7 +121,8 @@ pub(crate) fn remove_ranges(
 
 fn compute_capacity(macho: &[u8], parsed: &Parsed) -> Result<CutCapacity> {
     plan_removal(macho, parsed, &[])?;
-    let header_room = parsed.header_room_end - HEADER_SIZE - parsed.header.sizeofcmds as usize;
+    let header_room = (parsed.header_room_end - HEADER_SIZE - parsed.header.sizeofcmds as usize)
+        .saturating_sub(room_for_signature_command(macho, parsed)?);
     let section_count = parsed.segments[parsed.linkedit].first_ordinal - 1;
     let free_ordinals = MAX_SECTIONS.saturating_sub(section_count);
     let free_slots = free_ordinals.min(header_room / BYTES_PER_CUT);
@@ -167,7 +169,7 @@ fn read_header(macho: &[u8]) -> Result<mach_header_64> {
     Ok(header)
 }
 
-fn parse(macho: &[u8]) -> Result<Parsed> {
+pub(crate) fn parse(macho: &[u8]) -> Result<Parsed> {
     let header = read_header(macho)?;
     let commands_end = HEADER_SIZE + header.sizeofcmds as usize;
     let mut commands = Vec::new();
@@ -187,12 +189,7 @@ fn parse(macho: &[u8]) -> Result<Parsed> {
         .find(|segment| segment.command.fileoff == 0 && segment.command.filesize > 0)
         .ok_or(ImageError::MalformedHeaders)?;
     let image_base = header_segment.command.vmaddr;
-    let header_room_end = header_segment
-        .sections
-        .iter()
-        .filter(|section| section.size > 0 && !is_zero_fill(section))
-        .map(|section| u64::from(section.offset))
-        .fold(header_segment.command.filesize, u64::min) as usize;
+    let header_room_end = find_contents_start(header_segment, |_| true) as usize;
     let is_linkedit = |segment: &Segment| segment.command.seg_name() == SEG_LINKEDIT;
     let linkedit = segments.len() - 1;
     if commands.len() != header.ncmds as usize
@@ -209,6 +206,28 @@ fn parse(macho: &[u8]) -> Result<Parsed> {
         header_room_end,
         image_base,
         linkedit,
+    })
+}
+
+/// The lowest file offset that a section of `segment` for which `is_counted` holds has bytes at.
+pub(crate) fn find_contents_start(
+    segment: &Segment,
+    is_counted: impl Fn(&section_64) -> bool,
+) -> u64 {
+    segment
+        .sections
+        .iter()
+        .filter(|section| section.size > 0 && !is_zero_fill(section) && is_counted(section))
+        .map(|section| u64::from(section.offset))
+        .fold(segment.command.filesize, u64::min)
+}
+
+/// What stays free behind the load commands: `codesign` adds an `LC_CODE_SIGNATURE` to an executable that has none.
+pub(crate) fn room_for_signature_command(macho: &[u8], parsed: &Parsed) -> Result<usize> {
+    let command = find_command::<linkedit_data_command>(macho, parsed, LC::CODE_SIGNATURE)?;
+    Ok(match command {
+        Some(_) => 0,
+        None => size_of::<linkedit_data_command>(),
     })
 }
 
@@ -283,7 +302,7 @@ fn section_addresses(section: &section_64) -> AddressRange {
     }
 }
 
-fn is_zero_fill(section: &section_64) -> bool {
+pub(crate) fn is_zero_fill(section: &section_64) -> bool {
     matches!(
         section.flags & SECTION_TYPE,
         S_ZEROFILL | S_GB_ZEROFILL | S_THREAD_LOCAL_ZEROFILL
@@ -291,10 +310,15 @@ fn is_zero_fill(section: &section_64) -> bool {
 }
 
 fn can_split(section: &section_64) -> bool {
-    matches!(
-        section.flags & SECTION_TYPE,
-        S_REGULAR | S_CSTRING_LITERALS | S_4BYTE_LITERALS | S_8BYTE_LITERALS | S_16BYTE_LITERALS
-    )
+    !macho_info_plist::is_info_plist(section)
+        && matches!(
+            section.flags & SECTION_TYPE,
+            S_REGULAR
+                | S_CSTRING_LITERALS
+                | S_4BYTE_LITERALS
+                | S_8BYTE_LITERALS
+                | S_16BYTE_LITERALS
+        )
 }
 
 fn to_u32(value: u64) -> Result<u32> {
@@ -334,14 +358,7 @@ fn plan_removal(macho: &[u8], parsed: &Parsed, cuts: &[AddressRange]) -> Result<
     };
     let old_fixups = find_blob(LC::DYLD_CHAINED_FIXUPS)?;
     let old_signature = find_blob(LC::CODE_SIGNATURE)?;
-    let old_symbols = match find_command::<symtab_command>(macho, parsed, LC::SYMTAB)? {
-        Some(table) if table.nsyms > 0 => find_linkedit_blob(
-            &old_linkedit,
-            table.symoff,
-            SYMBOL_SIZE * table.nsyms as usize,
-        )?,
-        _ => 0..0,
-    };
+    let old_symbols = find_symbols(macho, parsed)?;
     let fixups = match &old_fixups {
         Some(old_fixups) => rebuild_fixups(&macho[old_fixups.clone()], parsed, &pieces)?,
         None => Vec::new(),
@@ -353,7 +370,7 @@ fn plan_removal(macho: &[u8], parsed: &Parsed, cuts: &[AddressRange]) -> Result<
         old_fixups_end: old_fixups.end as u64,
         growth: (fixups.len() - old_fixups.len()) as u64,
     };
-    let signature = plan_signature(&map, old_signature)?;
+    let signature = plan_signature(&map, old_signature, MachoSigner::count_special_slots(macho))?;
     let linkedit = &mut pieces[parsed.linkedit][0].command;
     linkedit.filesize = signature.end as u64 - linkedit.fileoff;
     linkedit.vmsize = align_up(linkedit.filesize, CUT_ALIGNMENT);
@@ -368,6 +385,16 @@ fn plan_removal(macho: &[u8], parsed: &Parsed, cuts: &[AddressRange]) -> Result<
     })
 }
 
+pub(crate) fn find_symbols(macho: &[u8], parsed: &Parsed) -> Result<Range<usize>> {
+    let linkedit = parsed.segments[parsed.linkedit].command.fileoff..macho.len() as u64;
+    match find_command::<symtab_command>(macho, parsed, LC::SYMTAB)? {
+        Some(table) if table.nsyms > 0 => {
+            find_linkedit_blob(&linkedit, table.symoff, SYMBOL_SIZE * table.nsyms as usize)
+        }
+        _ => Ok(0..0),
+    }
+}
+
 fn find_linkedit_blob(linkedit: &Range<u64>, offset: u32, size: usize) -> Result<Range<usize>> {
     let end = u64::from(offset) + size as u64;
     if u64::from(offset) < linkedit.start || end > linkedit.end {
@@ -379,6 +406,7 @@ fn find_linkedit_blob(linkedit: &Range<u64>, offset: u32, size: usize) -> Result
 fn plan_signature(
     map: &FileOffsetMap,
     old_signature: Option<Range<usize>>,
+    special_slots: usize,
 ) -> Result<Range<usize>> {
     let old_file_size = map.old_linkedit.end;
     let Some(old_signature) = old_signature else {
@@ -389,7 +417,7 @@ fn plan_signature(
         return Err(ImageError::MalformedHeaders);
     }
     let start = map.move_linkedit_offset(old_signature.start as u64)?;
-    let size = MachoSigner::compute_signature_size(start);
+    let size = MachoSigner::compute_signature_size(start, special_slots);
     Ok(start as usize..start as usize + size)
 }
 

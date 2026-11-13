@@ -1396,7 +1396,7 @@ console.log("survived", require("./late.js"));`,
       using dir = tempDir("require-resolve-paths-shape", {
         "main.cjs": `
           const path = require("node:path");
-          const { createRequire } = require("node:module");
+          const { createRequire, globalPaths } = require("node:module");
           const where = list => list.map(folder => path.relative(__dirname, folder).split(path.sep).join("/") || ".");
           const fresh = name => createRequire(path.join(__dirname, name, "x.js"));
           const describeOwn = resolve => {
@@ -1426,13 +1426,15 @@ console.log("survived", require("./late.js"));`,
           Object.freeze(frozen.resolve);
           out.frozen = [where(frozen.resolve.paths("./x")), Object.isFrozen(frozen.resolve)];
           try {
-            (function () {
-              "use strict";
-              frozen.resolve.paths = 1;
+            // A class body is strict code.
+            new (class {
+              constructor() {
+                frozen.resolve.paths = 1;
+              }
             })();
-            out.frozenRefusesAStore = false;
+            out.frozenRefusesAStrictStore = false;
           } catch (error) {
-            out.frozenRefusesAStore = error instanceof TypeError;
+            out.frozenRefusesAStrictStore = error instanceof TypeError;
           }
 
           // Reflect.get() names a receiver that the read does not go through.
@@ -1469,7 +1471,12 @@ console.log("survived", require("./late.js"));`,
 
           const nameless = new (require("node:module"))("nameless");
           nameless._compile("module.exports = require;", "nameless.js");
-          out.withoutFileName = [nameless.filename, nameless.exports.resolve.paths("./x")];
+          out.withoutFileName = [
+            nameless.filename,
+            nameless.exports.resolve.paths("./x"),
+            // Node.js lists its global folders for a bare request.
+            nameless.exports.resolve.paths("pkg").filter(folder => !globalPaths.includes(folder)),
+          ];
 
           console.log(JSON.stringify(out));
         `,
@@ -1493,7 +1500,7 @@ console.log("survived", require("./late.js"));`,
         stored: ["stored", ownData],
         defined: "defined",
         frozen: [["frozen"], true],
-        frozenRefusesAStore: true,
+        frozenRefusesAStrictStore: true,
         namedReceiverIsUntouched: ["kept", false],
         boundResolveHasNone: "undefined",
         aboveResolveHasNone: "undefined",
@@ -1507,13 +1514,13 @@ console.log("survived", require("./late.js"));`,
         ],
         beforeRename: ["."],
         afterRename: ["renamed"],
-        withoutFileName: [null, ["."]],
+        withoutFileName: [null, ["."], []],
       });
       expect(exitCode).toBe(0);
     });
 
-    // The getter makes the function, and the FTL hands a getter the global object of the code it has inlined.
-    test("is a function of the module's realm when a function from a vm context reads it", async () => {
+    // The DFG and the FTL hand a getter the global object of the code they have inlined: oven-sh/WebKit#762, #44518.
+    test("is a function of the module's realm, whatever realm the reader or the receiver is of", async () => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -1524,7 +1531,14 @@ console.log("survived", require("./late.js"));`,
            const resolve = Object.freeze(require("node:module").createRequire(__filename).resolve);
            let paths;
            for (let i = 0; i < 5_000; i++) paths = read(resolve);
-           console.log(JSON.stringify([typeof paths, paths("./x").length, Object.getPrototypeOf(paths) === Function.prototype]));`,
+           // A function of the context that is bound to the module is a receiver that the getter answers.
+           const bound = vm.runInNewContext("(function () {}).bind(m)", { m: module });
+           const ofBound = Reflect.get(require.resolve, "paths", bound);
+           const list = ofBound("./x");
+           console.log(JSON.stringify({
+             read: [typeof paths, paths("./x").length, Object.getPrototypeOf(paths) === Function.prototype],
+             receiver: [Object.getPrototypeOf(ofBound) === Function.prototype, list instanceof Array, list.length],
+           }));`,
         ],
         // The FTL compiles the loop on the main thread after about a thousand turns.
         env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0", BUN_JSC_jitPolicyScale: "0.01" },
@@ -1532,7 +1546,7 @@ console.log("survived", require("./late.js"));`,
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual(["function", 1, true]);
+      expect(JSON.parse(stdout)).toEqual({ read: ["function", 1, true], receiver: [true, true, 1] });
       expect(exitCode).toBe(0);
     });
 
@@ -1572,6 +1586,68 @@ console.log("survived", require("./late.js"));`,
       // `require` and `require.resolve`, and `paths` for the modules that read it.
       expect(JSON.parse(stdout)).toEqual({ plain: 2, reads: 3 });
       expect(exitCode).toBe(0);
+    });
+
+    // In Node.js `paths` is an own property of each require.resolve from the start. Here the first read makes it one.
+    // Each row holds what Node.js does and fails until then. A row that starts to pass becomes a plain test.
+    describe("as in Node.js, before its first read", () => {
+      const fresh = name => createRequire(path.join(import.meta.dir, name, "x.js")).resolve;
+      const folderOf = name => [path.join(import.meta.dir, name)];
+
+      test.failing("is an own data property", () => {
+        expect(Object.getOwnPropertyDescriptor(fresh("own"), "paths")).toEqual({
+          value: expect.any(Function),
+          writable: true,
+          enumerable: true,
+          configurable: true,
+        });
+      });
+
+      // mock.method() of node:test, vi.spyOn() of vitest and stub() of sinon look for a function in this way.
+      test.failing("a spy library finds a function in the first descriptor of it, on the object or above", () => {
+        let holder = fresh("spied");
+        while (!Object.hasOwn(holder, "paths")) holder = Object.getPrototypeOf(holder);
+        expect(Object.getOwnPropertyDescriptor(holder, "paths").value).toBeFunction();
+      });
+
+      test.failing("an object that inherits from the require.resolve reads it", () => {
+        expect(Object.create(fresh("heir")).paths("./x")).toEqual(folderOf("heir"));
+      });
+
+      test.failing("a Proxy of the require.resolve reads it", () => {
+        expect(new Proxy(fresh("proxy"), {}).paths("./x")).toEqual(folderOf("proxy"));
+      });
+
+      test.failing("a Proxy that binds what it reads to its target reads it", () => {
+        const proxy = new Proxy(fresh("binding-proxy"), {
+          get(target, key, receiver) {
+            const value = Reflect.get(target, key, receiver);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        expect(proxy.paths("./x")).toEqual(folderOf("binding-proxy"));
+      });
+
+      test.failing("Reflect.get() answers for the require.resolve that it reads, whatever the receiver", () => {
+        expect(Reflect.get(fresh("read"), "paths", fresh("receiver"))("./x")).toEqual(folderOf("read"));
+      });
+
+      test.failing("a frozen require.resolve has one function", () => {
+        const resolve = Object.freeze(fresh("frozen"));
+        expect(resolve.paths).toBe(resolve.paths);
+      });
+
+      test.failing("a sloppy store on a frozen require.resolve is ignored, and Reflect.set() answers false", () => {
+        const resolve = Object.freeze(fresh("frozen-store"));
+        new Function("resolve", "resolve.paths = 1;")(resolve);
+        expect(Reflect.set(resolve, "paths", 1)).toBe(false);
+      });
+
+      test.failing("a store on a require.resolve that is not extensible replaces it", () => {
+        const resolve = Object.preventExtensions(fresh("not-extensible"));
+        resolve.paths = 1;
+        expect(resolve.paths).toBe(1);
+      });
     });
   });
 

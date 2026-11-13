@@ -507,12 +507,12 @@ JSC_DEFINE_HOST_FUNCTION(requireResolvePathsFunction, (JSGlobalObject * globalOb
     }
 
     auto* module = uncheckedDowncast<JSCommonJSModule>(uncheckedDowncast<JSFunctionWithFields>(callframe->jsCallee())->getField(moduleOfPathsFunction));
-    // Without a file name a relative request is looked up in ".", as in Node.js.
+    // Without a file name a relative request is looked up in ".": https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/modules/cjs/loader.js#L976-L984
     Bun::PathResolveModule parent = { .paths = nullptr, .filename = dynamicDowncast<JSString>(module->filename()), .pathsArrayLazy = true };
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::resolveLookupPaths(globalObject, requestStr, parent)));
 }
 
-// `paths` of a `require.resolve` is made when it is first read: a module that never reads it has no function for it.
+// The first read of `paths` makes it, so a module that never reads it has no function for it. Node.js defines it with each `require`: https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/modules/helpers.js#L228-L233
 JSC_DEFINE_CUSTOM_GETTER(jsRequireResolvePathsGetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
 {
     JSValue receiver = JSValue::decode(thisValue);
@@ -523,8 +523,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsRequireResolvePathsGetter, (JSC::JSGlobalObject * glo
     auto& vm = JSC::getVM(globalObject);
     JSObject* resolve = asObject(receiver);
     NativeExecutable* executable = vm.getHostFunction(requireResolvePathsFunction, ImplementationVisibility::Public, callHostFunctionAsConstructor, 1, WebCore::builtinNames(vm).pathsPublicName().string());
-    // `globalObject` can be a node:vm context. See jsRequireCacheGetter.
-    auto* paths = JSFunctionWithFields::create(vm, resolve->globalObject(), executable);
+    // Made in the realm of the module: `globalObject` can be a node:vm context (oven-sh/WebKit#762), and so can the realm of a receiver that is not a `require.resolve`.
+    auto* paths = JSFunctionWithFields::create(vm, requirer->globalObject(), executable);
     paths->setField(vm, moduleOfPathsFunction, requirer);
     // Reflect.get() can name a receiver whose `paths` is not this accessor: `require`, or a `require.resolve` with a `paths` of its own.
     bool inheritsThisAccessor = !resolve->getDirect(vm, propertyName) && dynamicDowncast<RequireResolveFunctionPrototype>(resolve->getPrototypeDirect());

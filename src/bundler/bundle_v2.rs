@@ -29,8 +29,7 @@ pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, Impor
 // `bundle_v2::Foo` rather than naming the implementation submodule.
 use self::bake_types as bake;
 pub use bv2_impl::{
-    BuildResult, BundleV2Result, CompletionStruct, DependenciesScanner, DependenciesScannerResult,
-    OnDependenciesAnalyze, singleton,
+    BuildResult, DependenciesScanner, DependenciesScannerResult, OnDependenciesAnalyze,
 };
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
@@ -47,9 +46,6 @@ pub use crate::ParseTask;
 
 /// `jsc::api::JSBundler::Plugin` — re-exported from the canonical def below.
 pub use api::JSBundler::Plugin as JSBundlerPlugin;
-
-/// `BundleV2.JSBundleCompletionTask` — re-exported from the canonical def below.
-pub use bv2_impl::JSBundleCompletionTask;
 
 /// `jsc::api::JSBundler::FileMap` — re-exported from the canonical def below.
 pub use api::JSBundler::FileMap;
@@ -77,7 +73,7 @@ pub struct BundleV2<'a> {
     // boxed `Watcher`; bundler only ever calls `Watcher::add_file` on it.
     pub bun_watcher: Option<NonNull<bun_watcher::Watcher>>,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
-    pub completion: Option<dispatch::CompletionHandle>,
+    pub completion: Option<dispatch::CompletionHandle<'a>>,
     /// When this bundle's owning loop is a JS event loop (bake / dev server):
     /// how parse worker threads deliver work back to it.
     pub js_poster: Option<bun_event_loop::JsPoster>,
@@ -1532,7 +1528,6 @@ pub mod bv2_impl {
             ) -> Option<Box<[u8]>>;
 
             safe fn __bun_jsc_encoder_string_table_new() -> core::ptr::NonNull<EncoderStringTable>;
-            pub(crate) safe fn __bun_jsc_destroy_bytecode_cache_vm();
             safe fn __bun_jsc_encoder_string_table_take(
                 table: core::ptr::NonNull<EncoderStringTable>,
                 hot_strings: &[u64],
@@ -1798,52 +1793,16 @@ pub mod bv2_impl {
             )
         }
 
-        /// CYCLEBREAK GENUINE: `JSBundleCompletionTask` — the
-        /// concrete struct lives in `bun_runtime` (its fields name `Config`/
-        /// `Plugin`/`HTMLBundle::Route`). The bundler reads exactly two things
-        /// from it (whether the result is an error, and the concurrent-task
-        /// enqueue), so the high tier hands the bundler an erased owner +
-        /// `&'static` vtable pair (same shape as [`DevServerHandle`]).
-        pub struct CompletionDispatch {
-            /// Whether the VM that owns the plugins is shutting down: stop
-            /// waiting for their answers and fail the build (any thread).
-            pub is_cancelled: unsafe fn(core::ptr::NonNull<super::JSBundleCompletionTask>) -> bool,
-            /// Folds the event-loop field access + enqueue so the bundler
-            /// needn't name the JSC event-loop type.
-            pub enqueue_task_concurrent: unsafe fn(
-                core::ptr::NonNull<super::JSBundleCompletionTask>,
-                Box<bun_event_loop::ConcurrentTask::ConcurrentTask>,
-            ),
-        }
+        /// How a `Bun.build` reaches the VM that called it, which owns the plugins.
         #[derive(Copy, Clone)]
-        pub struct CompletionHandle {
-            pub owner: core::ptr::NonNull<super::JSBundleCompletionTask>,
-            pub vtable: &'static CompletionDispatch,
+        pub struct CompletionHandle<'a> {
+            /// That VM is shutting down: stop waiting for the plugins' answers and fail the build.
+            pub cancelled: &'a core::sync::atomic::AtomicBool,
+            pub poster: &'a dyn bun_event_loop::PostToJs,
         }
-        // SAFETY: erased `*mut JSBundleCompletionTask` backref — set by the JS
-        // thread, read by the bundle thread; `enqueue_task_concurrent` is the only
-        // cross-thread call and it goes through `jsc::EventLoop`'s lock-free queue.
-        unsafe impl Send for CompletionHandle {}
-        // Intentionally not `Sync`: the opaque owner (`JSBundleCompletionTask`)
-        // is modeled as `!Sync`, and this wrapper exposes `is_cancelled(&self)`
-        // in addition to the lock-free enqueue path, so blanket `&CompletionHandle`
-        // sharing across threads is not justified. The handle only needs to *move*
-        // to the bundle thread (`Send`), not be shared. If a cross-thread `&` ever
-        // becomes necessary, split out an enqueue-only wrapper and make only that
-        // type `Sync`.
-        impl CompletionHandle {
-            #[inline]
+        impl CompletionHandle<'_> {
             pub(crate) fn is_cancelled(&self) -> bool {
-                // SAFETY: vtable contract.
-                unsafe { (self.vtable.is_cancelled)(self.owner) }
-            }
-            #[inline]
-            pub(crate) fn enqueue_task_concurrent(
-                &self,
-                task: Box<bun_event_loop::ConcurrentTask::ConcurrentTask>,
-            ) {
-                // SAFETY: vtable contract.
-                unsafe { (self.vtable.enqueue_task_concurrent)(self.owner, task) }
+                self.cancelled.load(core::sync::atomic::Ordering::SeqCst)
             }
         }
     }
@@ -1851,15 +1810,6 @@ pub mod bv2_impl {
     /// `bun.jsc.AnyEventLoop` — re-export the linker's alias
     /// (`Option<NonNull<bun_event_loop::AnyEventLoop>>`).
     pub use crate::linker_context_mod::EventLoop;
-
-    // `JSBundleCompletionTask` — typed-ptr marker for
-    // `BundleV2.completion`. The concrete struct lives in `bun_runtime` (its
-    // fields name `Config`/`Plugin`/`HTMLBundle::Route`); the bundler only ever
-    // holds a `NonNull<JSBundleCompletionTask>` inside [`dispatch::CompletionHandle`]
-    // and never dereferences it. Nomicon opaque-FFI pattern: ZST with
-    // `PhantomData<(*mut u8, PhantomPinned)>` so it is `!Send + !Sync + !Unpin`
-    // and has no usable size/layout in this crate.
-    bun_opaque::opaque_ffi! { pub struct JSBundleCompletionTask; }
 
     /// Logs resolver errors that `resolve()` returns without writing to any
     /// log so `has_errors()` actually fires. Returns `true` when `err` is one
@@ -1901,25 +1851,17 @@ pub mod bv2_impl {
     pub use super::{BakeOptions, BundleV2, PendingImport};
 
     impl<'a> BundleV2<'a> {
-        /// Folds the JS-loop lookup + enqueue so the bundler never dereferences
-        /// `JSBundleCompletionTask` (its layout lives in `bun_runtime`); the
-        /// `completion` handle carries the `&'static` vtable.
         pub(crate) fn enqueue_on_js_loop_for_plugins(
             &mut self,
             task: Box<bun_event_loop::ConcurrentTask::ConcurrentTask>,
         ) {
             debug_assert!(self.plugins.is_some());
-            if let Some(completion) = self.completion {
-                // From Bun.build — the completion posts it to its VM (through its ticket, via the vtable).
-                completion.enqueue_task_concurrent(task);
-                return;
-            }
-            // From bake where the loop running the bundle is also the loop running
-            // the plugins.
-            let poster = self
-                .js_poster
-                .as_ref()
-                .expect("No JavaScript event loop for transpiler plugins to run on");
+            let poster = match self.completion {
+                Some(completion) => completion.poster,
+                // From bake, where the loop running the bundle also runs the plugins.
+                None => (self.js_poster.as_deref())
+                    .expect("No JavaScript event loop for transpiler plugins to run on"),
+            };
             // Refused: the VM was torn down mid-bundle, the hop never runs.
             let _ = poster.post(task);
         }
@@ -7855,13 +7797,12 @@ pub mod bv2_impl {
         key
     }
 
-    // LAYERING: `BuildResult` / `BundleV2Result` are defined once in
-    // `BundleThread.rs` (the trait that consumes them lives there). The previous
-    // duplicate here meant `CompletionStruct::set_result` and `BundleV2::
-    // run_from_js_in_new_thread` named two distinct types with identical fields.
-    // Re-export the canonical defs so `bundle_v2::` and `BundleThread::` paths
-    // resolve to the same nominal type.
-    pub use crate::BundleThread::{BuildResult, BundleV2Result, CompletionStruct, singleton};
+    /// Result of a `Bun.build` invocation handed back to the JS thread.
+    pub struct BuildResult {
+        pub output_files: Vec<crate::options::OutputFile>,
+        pub metafile: Option<Box<[u8]>>,
+        pub metafile_markdown: Option<Box<[u8]>>,
+    }
 
     // re-exports
     pub use bun_ast::Loc;

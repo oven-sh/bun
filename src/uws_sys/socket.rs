@@ -355,6 +355,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    #[cfg(not(windows))]
+    pub fn read_now(&self) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).read_now();
+        }
+    }
+
     /// Closes with a FIN before it returns; TLS sends close_notify but does not wait for the peer's, which `CloseCode::Normal` does.
     pub fn close_now(&self) {
         match self.socket {

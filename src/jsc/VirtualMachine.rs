@@ -3028,18 +3028,16 @@ pub struct RuntimeHooks {
     /// [`VirtualMachine::run_error_handler`].
     pub print_exception:
         fn(vm: &mut VirtualMachine, value: JSValue, exception_list: Option<&mut ExceptionList>),
-    /// `vm.timer.insert(&mut event_loop_timer)` — `Timer::All` lives in
+    /// `vm.timer.insert(&event_loop_timer)` — `Timer::All` lives in
     /// `bun_runtime::RuntimeState` (b2-cycle); low-tier callers
     /// (`AbortSignal::Timeout`) reach it through this slot.
     pub timer_insert: unsafe fn(
-        vm: *mut VirtualMachine,
-        timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
+        vm: &VirtualMachine,
+        timer: *const bun_event_loop::EventLoopTimer::EventLoopTimer,
     ),
-    /// `vm.timer.remove(&mut event_loop_timer)` — see `timer_insert`.
-    pub timer_remove: unsafe fn(
-        vm: *mut VirtualMachine,
-        timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
-    ),
+    /// `vm.timer.remove(&event_loop_timer)` — see `timer_insert`.
+    pub timer_remove:
+        fn(vm: &VirtualMachine, timer: &bun_event_loop::EventLoopTimer::EventLoopTimer),
     /// `FakeTimers::min_delay_ms()` of the calling thread's VM. A slot for the same reason as `timer_insert`.
     pub timer_min_delay_ms: fn() -> u32,
     /// `FakeTimers::abort_signal_timeout_clock()` of the calling thread's VM.
@@ -3273,29 +3271,24 @@ impl VirtualMachine {
     /// # Safety
     /// `timer` must point at a live `EventLoopTimer` not currently linked into
     /// the heap; caller must be on the JS thread.
+    /// While linked it stays in the container `tag` names; only the heap writes links and states.
     #[inline]
     pub unsafe fn timer_insert(
-        vm: *mut Self,
-        timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
+        &self,
+        timer: *const bun_event_loop::EventLoopTimer::EventLoopTimer,
     ) {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-        // SAFETY: per fn contract; `vm` is the live per-thread VM.
-        unsafe { (hooks.timer_insert)(vm, timer) }
+        // SAFETY: per fn contract.
+        unsafe { (hooks.timer_insert)(self, timer) }
     }
 
-    /// `vm.timer.remove(timer)` — see [`Self::timer_insert`].
-    ///
-    /// # Safety
-    /// `timer` must point at a live `EventLoopTimer` currently linked into the
-    /// heap (state == ACTIVE); caller must be on the JS thread.
+    /// `vm.timer.remove(timer)` if `timer` is armed — see [`Self::timer_insert`].
     #[inline]
-    pub unsafe fn timer_remove(
-        vm: *mut Self,
-        timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
-    ) {
-        let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-        // SAFETY: per fn contract; `vm` is the live per-thread VM.
-        unsafe { (hooks.timer_remove)(vm, timer) }
+    pub fn timer_remove(&self, timer: &bun_event_loop::EventLoopTimer::EventLoopTimer) {
+        if timer.state.get() == bun_event_loop::EventLoopTimer::State::ACTIVE {
+            let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+            (hooks.timer_remove)(self, timer)
+        }
     }
 
     /// The shortest delay, in milliseconds, a timer armed now can have: 1 while `jest.useFakeTimers()` runs a timer's callback.

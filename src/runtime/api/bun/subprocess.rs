@@ -128,11 +128,8 @@ pub struct Subprocess<'a> {
     pub(crate) context: bun_jsc::ContextId,
 
     pub(crate) event_loop_timer_refd: Cell<bool>,
-    /// Intrusive timer node. `JsCell` so `&self` can hand `*mut EventLoopTimer`
-    /// to the timer heap; `JsCell` is `#[repr(transparent)]` so
-    /// `from_field_ptr!(Subprocess, event_loop_timer, t)` in
-    /// `dispatch.rs` still recovers the correct container address.
-    pub(crate) event_loop_timer: JsCell<EventLoopTimer>,
+    /// Intrusive timer node; `dispatch.rs` recovers the container from it.
+    pub(crate) event_loop_timer: EventLoopTimer,
     pub(crate) kill_signal: SignalCode,
 
     pub(crate) stdout_maxbuf: Cell<Option<NonNull<MaxBuf::MaxBuf>>>,
@@ -569,26 +566,21 @@ impl Subprocess<'_> {
         self.event_loop_timer_refd.set(refd);
         let uws_loop = self.global_this().bun_vm().uws_loop_ref();
         let delta: i32 = if refd { 1 } else { -1 };
-        Self::timer_all().increment_timer_ref(delta, uws_loop);
-    }
-
-    #[inline]
-    fn timer_all() -> &'static mut crate::timer::All {
-        crate::jsc_hooks::timer_all_mut()
+        crate::jsc_hooks::timer_all().increment_timer_ref(delta, uws_loop);
     }
 
     pub(crate) fn timeout_callback(&self) {
         self.set_event_loop_timer_refd(false);
-        if self.event_loop_timer.get().state == EventLoopTimerState::CANCELLED {
+        if self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED {
             return;
         }
         if self.has_exited() {
             self.event_loop_timer
-                .with_mut(|t| t.state = EventLoopTimerState::CANCELLED);
+                .state
+                .set(EventLoopTimerState::CANCELLED);
             return;
         }
-        self.event_loop_timer
-            .with_mut(|t| t.state = EventLoopTimerState::FIRED);
+        self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
         let _ = self.try_kill(self.kill_signal);
     }
 
@@ -871,8 +863,8 @@ impl Subprocess<'_> {
         // R-2: now that both take `&self`, scopeguard would no longer alias —
         // kept explicit at the tail for now (no early returns in this body).
 
-        if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            Self::timer_all().remove(self.event_loop_timer.as_ptr());
+        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
+            crate::jsc_hooks::timer_all().remove(&self.event_loop_timer);
         }
         self.set_event_loop_timer_refd(false);
 
@@ -969,7 +961,7 @@ impl Subprocess<'_> {
         // When Bun itself killed the child (timeout/maxBuffer/AbortSignal) stop
         // waiting on pipe EOF after the drain above: a grandchild may still
         // hold the write end and the caller already opted into a bounded wait.
-        if self.event_loop_timer.get().state == EventLoopTimerState::FIRED
+        if self.event_loop_timer.state.get() == EventLoopTimerState::FIRED
             || self.exited_due_to_maxbuf.get().is_some()
             || self.flags.get().contains(Flags::ABORT_SIGNAL_KILLED)
         {
@@ -1249,8 +1241,8 @@ impl Subprocess<'_> {
         if exit_handler_pending {
             self.deref();
         }
-        if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            Self::timer_all().remove(self.event_loop_timer.as_ptr());
+        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
+            crate::jsc_hooks::timer_all().remove(&self.event_loop_timer);
         }
         self.set_event_loop_timer_refd(false);
 

@@ -880,6 +880,8 @@ pub(super) struct ScannedCalls {
     pub(super) paths_of_changed_files: Vec<ChangedPath>,
     pub(super) module_relative_reads: Vec<(ExprId, Atom)>,
     pub(super) module_relative_patterns: Vec<(ExprId, Atom, Atom)>,
+    pub(super) reads_ruled_out: Vec<(ExprId, Atom)>,
+    pub(super) patterns_ruled_out: Vec<(ExprId, Atom, Atom)>,
     pub(super) caller_relative_reads: Vec<CallerRelativeRead>,
     pub(super) unknown_path_reads: Vec<ExprId>,
     pub(super) path_listings: Vec<ExprId>,
@@ -923,6 +925,8 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut paths_of_changed_files = Vec::new();
     let mut module_relative_reads = Vec::new();
     let mut module_relative_patterns = Vec::new();
+    let mut reads_ruled_out = Vec::new();
+    let mut patterns_ruled_out = Vec::new();
     let mut caller_relative_reads: Vec<CallerRelativeRead> = Vec::new();
     let mut unknown_path_reads = Vec::new();
     let mut path_listings = Vec::new();
@@ -933,6 +937,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut reads: Vec<(ExprId, bool)> = Vec::new();
     let mut file_object_paths = Vec::new();
     let mut changed_operands = Vec::new();
+    let mut operands_that_may_change = Vec::new();
     let mut walked_lists = Vec::new();
     let mut known_load_names = Vec::new();
     let mut followed_loads = Vec::new();
@@ -1022,7 +1027,11 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
                 if matches!(hir[statement].kind, StmtKind::Expr(_)));
             let made = named.made.filter(|_| !is_discarded);
             file_object_paths.extend(made.map(|path| (path, call)));
-            changed_operands.extend(named.changed.iter().map(|it| it.0.operand));
+            let changed = named.changed.iter().map(|it| it.0.operand);
+            match named.may_call_another_function {
+                true => operands_that_may_change.extend(changed),
+                false => changed_operands.extend(changed),
+            }
             created_operands.extend(named.created);
             known_operands.extend(named.created);
             if let Some(operand) = named.listed {
@@ -1161,7 +1170,8 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     };
     file_object_paths.retain(|it| !is_used(&it.0) && !is_written_alone(it.1));
     reads.extend(file_object_paths.into_iter().map(|it| (it.0, false)));
-    for &operand in changed_operands.iter().chain(&created_operands) {
+    let written = changed_operands.iter().chain(&operands_that_may_change);
+    for &operand in written.chain(&created_operands) {
         let texts = texts_of_file.get_or_insert_with(create_texts);
         find_paths_created(inputs, texts, operand, &mut paths_created);
     }
@@ -1191,10 +1201,14 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     for (operand, is_query, mut found) in found_reads {
         let texts = texts_of_file.get_or_insert_with(create_texts);
         if let Some(paths) = executed.get(&operand) {
-            let text = |atom: Atom| inputs.atoms.bytes(atom);
-            found.paths.extend(paths.iter().copied());
-            (found.paths).shared_sort_unstable_by_key(|it| text(*it));
-            found.paths.dedup();
+            if entered_operands.contains(&operand) {
+                folders_entered.extend(found.paths.iter().map(|&path| (operand, path)));
+            }
+            found.paths.retain(|it| !paths.contains(it));
+            let ruled_out = std::mem::replace(&mut found.paths, paths.clone()).into_iter();
+            reads_ruled_out.extend(ruled_out.map(|path| (operand, path)));
+            let ruled_out = std::mem::take(&mut found.patterns).into_iter();
+            patterns_ruled_out.extend(ruled_out.map(|(prefix, suffix)| (operand, prefix, suffix)));
         }
         if entered_operands.contains(&operand) {
             folders_entered.extend(found.paths.iter().map(|&path| (operand, path)));
@@ -1274,6 +1288,8 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         paths_of_changed_files,
         module_relative_reads,
         module_relative_patterns,
+        reads_ruled_out,
+        patterns_ruled_out,
         caller_relative_reads,
         unknown_path_reads,
         path_queries,

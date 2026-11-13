@@ -3643,3 +3643,121 @@ it.each(Object.entries({ setDefaultAutoSelectFamily, setDefaultAutoSelectFamilyA
     expect(thrown).toEqual(thrownBy(() => set(undefined)));
   },
 );
+
+// https://github.com/oven-sh/bun/issues/47834
+it("write after peer FIN emits 'error' and closes with hadError true", async () => {
+  let destroyPeer: (() => void) | null = null;
+  let resolvePeerReady!: () => void;
+  const peerReady = new Promise<void>(resolve => {
+    resolvePeerReady = resolve;
+  });
+  const server = createServer(peer => {
+    peer.on("error", () => {});
+    resolvePeerReady();
+    destroyPeer = () => {
+      peer.end();
+    };
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
+
+  try {
+    const port = (server.address() as AddressInfo).port;
+    const socket = connect(port, "127.0.0.1");
+    await once(socket, "connect");
+
+    let errorEvent: any = null;
+    let closeHadError: boolean | null = null;
+
+    socket.on("error", err => {
+      errorEvent = err;
+    });
+    socket.on("close", hadError => {
+      closeHadError = hadError;
+    });
+
+    const errorPromise = once(socket, "error");
+    const closePromise = new Promise<boolean>(resolve => {
+      socket.once("close", hadError => resolve(hadError));
+    });
+    const drainPromise = once(socket, "drain");
+
+    await peerReady;
+    destroyPeer!();
+    await once(socket, "end");
+
+    let callbackError: any = null;
+    const callbackPromise = new Promise<void>(resolve => {
+      const wrote = socket.write(new Uint8Array(64), err => {
+        callbackError = err;
+        resolve();
+      });
+      expect(wrote).toBe(false);
+    });
+
+    await callbackPromise;
+    expect(callbackError?.code).toBe("EPIPE");
+
+    await expect(drainPromise).rejects.toThrow();
+    await errorPromise;
+    const closedHadError = await closePromise;
+
+    expect(errorEvent).not.toBeNull();
+    expect(errorEvent.code).toBe("EPIPE");
+    expect(closedHadError).toBe(true);
+
+    socket.destroy();
+  } finally {
+    server.close();
+  }
+});
+
+it("Socket._write on closed handle emits 'error' and resets _hadError on reuse", async () => {
+  const server = createServer(peer => {
+    peer.on("error", () => {});
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
+
+  try {
+    const port = (server.address() as AddressInfo).port;
+    const socket = connect(port, "127.0.0.1");
+    await once(socket, "connect");
+
+    // Force closed handle (readyState < 0) to exercise the native write failure path in _write directly
+    (socket as any)._handle.close();
+
+    let errorEvent: any = null;
+    socket.on("error", err => {
+      errorEvent = err;
+    });
+
+    const errorPromise = once(socket, "error");
+    const closePromise = new Promise<boolean>(resolve => {
+      socket.once("close", hadError => resolve(hadError));
+    });
+
+    let callbackError: any = null;
+    const callbackPromise = new Promise<void>(resolve => {
+      const wrote = socket.write(new Uint8Array(64), err => {
+        callbackError = err;
+        resolve();
+      });
+      expect(wrote).toBe(false);
+    });
+
+    await callbackPromise;
+    expect(callbackError).not.toBeNull();
+
+    await errorPromise;
+    const closedHadError = await closePromise;
+
+    expect(errorEvent).not.toBeNull();
+    expect(closedHadError).toBe(true);
+    expect((socket as any)._hadError).toBe(true);
+
+    // Verify _hadError is reset when reusing or undestroying the socket
+    socket._undestroy();
+    expect((socket as any)._hadError).toBe(false);
+  } finally {
+    server.close();
+  }
+});

@@ -2479,6 +2479,11 @@ Socket.prototype.end = function end(data, encoding, callback) {
   return Duplex.prototype.end.$call(this, data, encoding, callback);
 };
 
+Socket.prototype._undestroy = function _undestroy() {
+  Duplex.prototype._undestroy.$call(this);
+  this._hadError = false;
+};
+
 Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
@@ -3086,6 +3091,10 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     // the socket on the next tick.
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L158-L159
     callback(er);
+    if (!this.destroyed && !this._hadError) {
+      this._hadError = true;
+      process.nextTick(destroyNT, this, er);
+    }
     return false;
   }
   const res = socket.$write(chunk, encoding);
@@ -3093,7 +3102,14 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   if (res < 0) {
     // The kernel rejected the send outright (peer reset): $write returned the
     // negative errno; deliver it like the EBADF/EPIPE branch above.
-    if (!holdRejectedWrite(this, socket, res, callback)) callback(writeErrnoException(res));
+    if (!holdRejectedWrite(this, socket, res, callback)) {
+      const er = writeErrnoException(res);
+      callback(er);
+      if (!this.destroyed && !this._hadError) {
+        this._hadError = true;
+        process.nextTick(destroyNT, this, er);
+      }
+    }
     return false;
   }
   if (res) {
@@ -4507,6 +4523,7 @@ function initSocketHandle(self) {
   self._sockname = null;
   self[kclosed] = false;
   self[kended] = false;
+  self._hadError = false;
 
   // Handle creation may be deferred to bind() or connect() time.
   const handle = self._handle;

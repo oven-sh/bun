@@ -3,7 +3,8 @@
 // SharedArrayBuffer lines the two threads up per port, and a clock-based delay (argv[4], in
 // nanoseconds) moves the close across the attach.
 // The worker prints one JSON line when it ends: `bad` counts the ports that did not get their K
-// messages and then exactly one 'close'. Nothing calls terminate() or process.exit().
+// messages and then exactly one 'close'. Nothing calls terminate() or process.exit(): the worker
+// ends once every port has its 'close'.
 const { Worker, MessageChannel, receiveMessageOnPort, isMainThread, workerData } = require("node:worker_threads");
 const fs = require("node:fs");
 
@@ -45,6 +46,10 @@ if (isMainThread) {
   const closes = new Array(N).fill(0);
   let misordered = 0;
   let afterClose = 0;
+  // A port that listens for 'close' alone does not keep the thread alive, and the main thread
+  // may close the last one late. This does, until each port has its 'close'.
+  let open = N;
+  const alive = setInterval(() => {}, 1 << 30);
   process.on("exit", () => {
     let bad = 0;
     for (let i = 0; i < N; i++) if (got[i] !== messagesFor(i, K) || closes[i] !== 1) bad++;
@@ -61,7 +66,9 @@ if (isMainThread) {
     Atomics.store(flag, 2, i + 1);
     Atomics.notify(flag, 2);
     for (let n = 0; Atomics.load(flag, 0) < i + 2;) if (++n > SPIN) Atomics.wait(flag, 0, i + 1, 1);
-    const onClose = () => closes[i]++;
+    const onClose = () => {
+      if (closes[i]++ === 0 && --open === 0) clearInterval(alive);
+    };
     switch (i & 3) {
       case 0: {
         port.on("close", onClose);

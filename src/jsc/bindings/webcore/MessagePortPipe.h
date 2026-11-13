@@ -13,7 +13,8 @@
 // `Side::draining` a small batch per lock acquisition and dispatches them one
 // at a time, draining microtasks between each (matching Node's MakeCallback /
 // InternalCallbackScope behavior), up to a fixed 1024 per task before
-// continuing on the loop's next iteration. A port transferred mid-loop carries
+// continuing on the loop's next iteration (a closed peer's backlog is finite and
+// is delivered whole). A port transferred mid-loop carries
 // the whole remaining queue to the new owner: detach() puts `draining` back in
 // front of the inbox, in order.
 //
@@ -74,8 +75,8 @@ public:
     std::optional<MessageWithMessagePorts> takeOne(uint8_t side);
 
     // Attach this side to a context + port. Schedules a drain if messages are
-    // already queued (e.g. after transfer). Passing a null port is allowed and
-    // means "just buffer, don't dispatch" (used before start()).
+    // already queued (e.g. after transfer) or the peer's close is pending. Passing a
+    // null port is allowed and means "just buffer, don't dispatch" (used before start()).
     void attach(uint8_t side, ScriptExecutionContext&, ThreadSafeWeakPtr<MessagePort>);
     // Like attach() but only records ctxId/port so the peer's close can be handed to a
     // port that never started (no 'message' listener). The drain it enables dispatches
@@ -85,8 +86,9 @@ public:
     // Explicit == a real, permanent close: close(), context teardown, or an orphaned
     // transferred endpoint. Collected == the owning MessagePort's wrapper was garbage
     // collected while still entangled. Only Explicit sets PeerClosedByRequest on the other
-    // side, so jsRef() can tell a real close from a collection (node never collects an
-    // entangled port, so reading PeerClosed alone made .ref() GC-dependent). Both set PeerClosed.
+    // side, so until the port is told jsRef() can tell a real close from a collection (node
+    // never collects an entangled port, so reading PeerClosed alone made .ref() GC-dependent).
+    // Both set PeerClosed.
     enum class CloseKind : uint8_t { Explicit,
         Collected };
     void close(uint8_t side, CloseKind = CloseKind::Collected);

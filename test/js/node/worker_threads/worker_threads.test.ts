@@ -1390,7 +1390,7 @@ test.each([
 
 // The peer's close is queued behind what the peer sent, as in node: a port is told of it
 // only once those messages were consumed, whenever and however they are read. Until then
-// the port is open, so a 'message' listener added late still keeps its thread alive.
+// the port is open: a 'message' listener added late refs the loop like any other.
 describe("the peer's close comes after the messages it sent", () => {
   const turns = async (n = 4) => {
     for (let i = 0; i < n; i++) await new Promise<void>(resolve => setImmediate(resolve));
@@ -1495,7 +1495,8 @@ describe("the peer's close comes after the messages it sent", () => {
     const { port, seen, closed } = sentThenClosed("a", "b");
     await turns();
     expect(seen).toEqual([]);
-    // The port is active until it has read what the peer sent.
+    // The port is active until it has read what the peer sent. (bun's reading of `active`:
+    // node prints true here, and still inside 'close'.)
     const active = () => /active: (\w+)/.exec(inspect(port))![1];
     const activeUnread = active();
     seen.push(receiveMessageOnPort(port)!.message, receiveMessageOnPort(port)!.message);
@@ -1505,6 +1506,19 @@ describe("the peer's close comes after the messages it sent", () => {
     await closed;
     await turns();
     expect(seen).toEqual(["a", "b", "close"]);
+  });
+
+  // The port has no listener of any kind when it is read, so nothing can be told yet. The
+  // read must leave the close for the listener that comes.
+  test("for receiveMessageOnPort() on a port that gets its first listener after the reads", async () => {
+    const { port1, port2 } = new MessageChannel();
+    port1.postMessage("a");
+    port1.close();
+    expect(receiveMessageOnPort(port2)).toEqual({ message: "a" });
+    expect(receiveMessageOnPort(port2)).toBeUndefined();
+    const { seen, closed } = record(port2);
+    await closed;
+    expect(seen).toEqual(["close"]);
   });
 
   test("and a listener added before it refs the port until then, as ref() does", async () => {
@@ -1561,44 +1575,6 @@ describe("the peer's close comes after the messages it sent", () => {
     });
     expect(await result.promise).toEqual(["a", "b", "close"]);
     await worker.terminate();
-  });
-
-  // Between two messages the worker has no 'message' listener. The one it adds back must
-  // keep the thread alive for the next message: the port is not closed yet.
-  test("in a worker that takes one message at a time, which loses none", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const { Worker, MessageChannel } = require("node:worker_threads");
-         const { port1, port2 } = new MessageChannel();
-         new Worker(
-           \`const { workerData: { port } } = require("node:worker_threads");
-             const seen = [];
-             port.on("close", () => seen.push("close"));
-             const take = message => {
-               seen.push(message);
-               port.off("message", take);
-               setImmediate(() => port.on("message", take));
-             };
-             port.on("message", take);
-             process.on("exit", () => require("node:fs").writeSync(1, seen.join(" ") + "\\\\n"));\`,
-           { eval: true, workerData: { port: port2 }, transferList: [port2] },
-         );
-         port1.postMessage("a");
-         port1.postMessage("b");
-         port1.close();`,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({
-      stdout: "a b close\n",
-      exitCode: 0,
-      signalCode: null,
-    });
   });
 
   test("when the sender is a worker that ends without a close()", async () => {
@@ -1662,6 +1638,121 @@ describe("the peer's close comes after the messages it sent", () => {
     port.close();
   });
 
+  // The other side of the releases above: none of these ports was told of a close, so each
+  // still holds its ref after a few loop turns and a GC, as in node.
+  test.each<[string, () => any]>([
+    [
+      "ref() alone",
+      () => {
+        const { port1, port2 } = new MessageChannel();
+        port2.ref();
+        return { port: port2, peer: port1 };
+      },
+    ],
+    [
+      "ref() alone, and a peer that nothing else holds",
+      () => {
+        const { port2 } = new MessageChannel();
+        port2.ref();
+        return { port: port2 };
+      },
+    ],
+    [
+      "ref() and an unread message of an open peer",
+      () => {
+        const { port1, port2 } = new MessageChannel();
+        port2.ref();
+        port1.postMessage("unread");
+        return { port: port2, peer: port1 };
+      },
+    ],
+    [
+      "a 'message' listener",
+      () => {
+        const { port1, port2 } = new MessageChannel();
+        port2.on("message", () => {});
+        return { port: port2, peer: port1 };
+      },
+    ],
+  ])("and a port with %s keeps its ref", async (_name, make) => {
+    const held = make();
+    for (let i = 0; i < 4; i++) {
+      await turns(1);
+      Bun.gc(true);
+    }
+    expect(held.port.hasRef()).toBe(true);
+    held.port.close();
+    held.peer?.close();
+  });
+
+  // node hands the messages of a port that is receiving to no listener, and then closes it.
+  // There a port is receiving after start(), after removeAllListeners("message") and after a
+  // first `onmessage = null`. bun keeps the messages of such a port, so its 'close' stays
+  // behind them until they are read. 1.4.x fired that 'close' ahead of them.
+  test.todo.each<[string, (port: any) => void]>([
+    ["start()", port => port.start()],
+    [
+      "removeAllListeners('message')",
+      port => {
+        port.on("message", () => {});
+        port.removeAllListeners("message");
+      },
+    ],
+    ["a first onmessage = null", port => (port.onmessage = null)],
+  ])("node: a port with no listener gets 'close' after %s, without its unread message", async (_name, prepare) => {
+    const { port1, port2 } = new MessageChannel();
+    const { seen } = record(port2);
+    prepare(port2);
+    port1.postMessage("unread");
+    port1.close();
+    await turns();
+    expect(seen).toEqual(["close"]);
+    expect(receiveMessageOnPort(port2)).toBeUndefined();
+  });
+
+  // The tests from here on each run a script that has to exit by itself. They are not
+  // test.concurrent: for a test that times out, the runner kills the processes it left only
+  // when no other test runs beside it (kill_dangling_processes_on_timeout() in Execution.rs).
+
+  // Between two messages the port has no 'message' listener. What is still queued then has
+  // to stay queued for the listener that comes back. 1.4.x handed it to no listener, from the
+  // task of the peer's close (on one thread too: the once() test above).
+  test("in a worker that takes one message at a time, which loses none", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker, MessageChannel } = require("node:worker_threads");
+         const { port1, port2 } = new MessageChannel();
+         new Worker(
+           \`const { workerData: { port } } = require("node:worker_threads");
+             const seen = [];
+             port.on("close", () => seen.push("close"));
+             const take = message => {
+               seen.push(message);
+               port.off("message", take);
+               setImmediate(() => port.on("message", take));
+             };
+             port.on("message", take);
+             process.on("exit", () => require("node:fs").writeSync(1, seen.join(" ") + "\\\\n"));\`,
+           { eval: true, workerData: { port: port2 }, transferList: [port2] },
+         );
+         port1.postMessage("a");
+         port1.postMessage("b");
+         port1.close();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "a b close\n",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
   // node never closes a port that has unread messages and does not read them, and a ref()
   // on one keeps the process alive forever. Here it gets no 'close' either, and no ref().
   test("so a port that never reads them gets no 'close', and does not keep the process alive", async () => {
@@ -1705,34 +1796,43 @@ describe("the peer's close comes after the messages it sent", () => {
     });
   });
 
-  // node hands the messages of a port that is receiving to no listener, and then closes it.
-  // There a port is receiving after start(), after removeAllListeners("message") and after a
-  // first `onmessage = null`. bun keeps the messages of such a port, so its 'close' stays
-  // behind them until they are read. 1.4.x fired that 'close' ahead of them.
-  test.todo.each<[string, (port: any) => void]>([
-    ["start()", port => port.start()],
-    [
-      "removeAllListeners('message')",
-      port => {
-        port.on("message", () => {});
-        port.removeAllListeners("message");
-      },
-    ],
-    ["a first onmessage = null", port => (port.onmessage = null)],
-  ])("node: a port with no listener gets 'close' after %s, without its unread message", async (_name, prepare) => {
-    const { port1, port2 } = new MessageChannel();
-    const { seen } = record(port2);
-    prepare(port2);
-    port1.postMessage("unread");
-    port1.close();
-    await turns();
-    expect(seen).toEqual(["close"]);
-    expect(receiveMessageOnPort(port2)).toBeUndefined();
+  // The ref() is all that keeps this process alive until the timer reads. The peer's close
+  // must not take it away: the port has no listener, so it was never told.
+  test("and a port held by ref() alone is still read after the peer's close", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { MessageChannel, receiveMessageOnPort } = require("node:worker_threads");
+         const { port1, port2 } = new MessageChannel();
+         port2.ref();
+         port1.postMessage("a");
+         port1.postMessage("b");
+         port1.close();
+         const got = [];
+         setTimeout(() => {
+           for (let entry; (entry = receiveMessageOnPort(port2)); ) got.push(entry.message);
+           port2.close();
+         }, 1).unref();
+         process.on("exit", () => console.log(got.join(" ")));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "a b\n",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 
   // A 'message' handler that blocks in a nested turn of the event loop gets nothing from its
   // own port until it returns: not the next message (#37189), and so not the peer's close
   // behind it. 1.4.x delivered both from the peer-close task, inside the blocked handler.
+  // The nested turn is what goes away (#33261): once Bun.build() returns before a pending
+  // setup() settles, this row passes as it is.
   test.todo(
     "a handler blocked in Bun.build()'s async plugin setup() gets the reply of a peer that then closes",
     async () => {
@@ -1774,7 +1874,8 @@ describe("the peer's close comes after the messages it sent", () => {
 
   // The listening port is unreachable and its peer has closed. Until it is told, it must
   // survive a GC: its listener holds the loop, and only the close releases that. The second
-  // script calls no GC: 1.3 exits there, and 1.4.0 to 1.4.4 do not.
+  // script calls no GC: 1.3 exits there, and 1.4.0 to 1.4.4 do not. In the last two the peer
+  // closed first, so the listener's own registration is what has to pin the port.
   test.each([
     [
       "a forced GC",
@@ -1788,6 +1889,7 @@ describe("the peer's close comes after the messages it sent", () => {
        Bun.gc(true);
        Bun.gc(true);
        process.on("exit", () => console.log("exit"));`,
+      "exit\n",
     ],
     [
       "an awaited timer",
@@ -1801,8 +1903,35 @@ describe("the peer's close comes after the messages it sent", () => {
        await new Promise(resolve => setTimeout(resolve, 10));
        sender.close();
        process.on("exit", () => console.log("exit"));`,
+      "exit\n",
     ],
-  ])("and %s before the close is delivered does not strand a listening port", async (_name, script) => {
+    [
+      "a forced GC (the 'message' listener came after the peer's close)",
+      `const { MessageChannel } = require("node:worker_threads");
+       (() => {
+         const { port1, port2 } = new MessageChannel();
+         port1.close();
+         port2.on("message", () => {});
+       })();
+       Bun.gc(true);
+       Bun.gc(true);
+       process.on("exit", () => console.log("exit"));`,
+      "exit\n",
+    ],
+    [
+      "a forced GC (a 'close' listener alone, which came after the peer's close)",
+      `const { MessageChannel } = require("node:worker_threads");
+       (() => {
+         const { port1, port2 } = new MessageChannel();
+         port1.close();
+         port2.on("close", () => console.log("close"));
+       })();
+       Bun.gc(true);
+       Bun.gc(true);
+       process.on("exit", () => console.log("exit"));`,
+      "close\nexit\n",
+    ],
+  ])("and %s before the close is delivered does not strand a listening port", async (_name, script, expected) => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
       env: bunEnv,
@@ -1811,7 +1940,7 @@ describe("the peer's close comes after the messages it sent", () => {
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({
-      stdout: "exit\n",
+      stdout: expected,
       exitCode: 0,
       signalCode: null,
     });

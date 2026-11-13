@@ -477,6 +477,40 @@ test("a port transferred after it was told of its peer's close tells its next ow
   carrier.port1.close();
 });
 
+// The hand-over of the close can move the port: a 'close' listener transfers it, and the next
+// owner registers for the close before that listener returns. What the pipe clears after the
+// listener must not be the next owner's pending task, which is all that keeps its port alive.
+test("a 'close' listener that transfers its own port does not unpin the next owner", async () => {
+  const { receiveMessageOnPort } = require("worker_threads");
+  const carrier = new MessageChannel();
+  const told: string[] = [];
+  const nextTold = Promise.withResolvers<void>();
+  (() => {
+    const { port1, port2 } = new MessageChannel();
+    port2.addEventListener("close", function (this: MessagePort) {
+      told.push("first owner");
+      carrier.port1.postMessage(this, [this]);
+      (() => {
+        const next: MessagePort = receiveMessageOnPort(carrier.port2)!.message;
+        next.addEventListener("close", () => {
+          told.push("next owner");
+          nextTold.resolve();
+        });
+      })();
+      // After this listener has returned to the pipe, and before the next owner's task.
+      queueMicrotask(() => {
+        Bun.gc(true);
+        Bun.gc(true);
+      });
+    });
+    port1.close();
+  })();
+  await nextTold.promise;
+  expect(told).toEqual(["first owner", "next owner"]);
+  carrier.port1.close();
+  carrier.port2.close();
+});
+
 // The drain task that hands over the peer's close is what keeps a close-only port alive
 // between that close and its event.
 test("a close event from the peer survives a GC that runs before it is delivered", async () => {

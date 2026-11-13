@@ -149,20 +149,30 @@ describe("MessagePort pipe", () => {
   });
 
   // A closed peer sends nothing more, so the drain delivers what it left in one pass, as Node
-  // does. A receiver that closes its own end a loop turn later has then read all of it.
+  // does: another port's message, queued before that close, waits for all of it. A receiver
+  // that closes its own end a loop turn later has then read all of it.
   test("a closed peer's backlog is delivered whole, then 'close'", async () => {
     const { port1, port2 } = new MessageChannel();
+    const other = new MessageChannel();
     let received = 0;
+    const atOtherMessage = Promise.withResolvers<number>();
     const atFirstImmediate = Promise.withResolvers<number>();
     const atClose = Promise.withResolvers<number>();
+    other.port2.onmessage = () => atOtherMessage.resolve(received);
     port2.addEventListener("close", () => atClose.resolve(received));
     port2.onmessage = () => {
       if (received++ === 0) setImmediate(() => atFirstImmediate.resolve(received));
     };
     for (let i = 0; i < 3000; i++) port1.postMessage(i);
+    other.port1.postMessage("x");
     port1.close();
-    expect(await atFirstImmediate.promise).toBe(3000);
-    expect(await atClose.promise).toBe(3000);
+    expect({
+      atOtherMessage: await atOtherMessage.promise,
+      atFirstImmediate: await atFirstImmediate.promise,
+      atClose: await atClose.promise,
+    }).toEqual({ atOtherMessage: 3000, atFirstImmediate: 3000, atClose: 3000 });
+    other.port1.close();
+    other.port2.close();
   });
 
   // 'close' takes a turn of its own, posted once the close was seen with nothing ahead of it.
@@ -281,9 +291,12 @@ describe("MessagePort pipe", () => {
       closed.resolve();
     });
     b.port2.onmessage = e => order.push("B:" + e.data);
+    // The drain that the close posts finds "m" unread and leaves the close behind it. That
+    // gives this ref back. The close then comes from a task that the second read posts.
+    (a.port2 as any).ref();
     a.port1.postMessage("m");
     a.port1.close();
-    for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+    while ((a.port2 as any).hasRef()) await new Promise(r => setImmediate(r));
     b.port1.postMessage("x");
     order.push("A:read:" + receiveMessageOnPort(a.port2 as any)?.message);
     order.push("A:read:" + receiveMessageOnPort(a.port2 as any)?.message);

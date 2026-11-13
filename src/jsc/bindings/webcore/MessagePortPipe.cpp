@@ -59,10 +59,12 @@ void MessagePortPipe::scheduleDrain(uint8_t side, ScriptExecutionContextIdentifi
         pipe->drainAndDispatch(side, ctxId, closeTurn);
     });
     if (!posted) {
-        // Context already torn down. Drop DrainScheduled so a future
-        // attach() to a new context can reschedule.
-        Locker locker { m_sides[side].lock };
-        m_sides[side].state.fetch_and(~uint64_t(DrainScheduled), std::memory_order_acq_rel);
+        // Context already torn down. Drop DrainScheduled, unless the side has moved on:
+        // detach() dropped the bit then, and by now it can be the next owner's.
+        auto& s = m_sides[side];
+        Locker locker { s.lock };
+        if (s.ctxId == ctxId)
+            s.state.fetch_and(~uint64_t(DrainScheduled), std::memory_order_acq_rel);
     }
 }
 
@@ -74,7 +76,8 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
     // messages one at a time, but without a separate posted task per
     // message. The per-invocation limit is a fixed count (not "whatever was
     // queued when the drain began", which a sender on another thread can make
-    // arbitrarily large); the rest continues after the loop has polled.
+    // arbitrarily large); the rest continues after the loop has polled. A closed
+    // peer cannot add to its backlog, so that one is delivered whole.
     //
     // Messages move inbox -> `draining` a small batch per lock acquisition and are
     // popped from `draining` one at a time (still under the lock, but without a
@@ -388,8 +391,8 @@ void MessagePortPipe::close(uint8_t side, CloseKind kind)
         // Always, even for a collected wrapper. Node never collects an entangled
         // port so it never faces this; bun does, and a peer that is never told is
         // stranded -- its loop ref is never released and the process hangs. A 'close'
-        // fired at GC timing is the lesser evil. (jsRef() still ignores a collected
-        // peer: it keys on PeerClosedByRequest, not on PeerClosed.)
+        // fired at GC timing is the lesser evil. (Until the port is told, jsRef() still
+        // ignores a collected peer: it keys on PeerClosedByRequest, not on PeerClosed.)
         pipe->markPeerClosed(1 - sd, sdKind);
     }
 }

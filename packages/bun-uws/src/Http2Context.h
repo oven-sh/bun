@@ -785,12 +785,14 @@ struct Http2Context {
     }
 
     /* GOAWAY every connection and close it. Streams still in flight get
-     * onAborted, as TemplatedApp::close() does for HTTP/1 sockets. */
+     * onAborted, as TemplatedApp::close() does for HTTP/1 sockets. Closed
+     * when this returns: free() deinits the group next, and a graceful TLS
+     * close waits for the peer's close_notify, however often it is asked. */
     void closeAll() {
         forEachConnection([](Http2Connection *conn) {
             if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
             conn->flush();
-            us_socket_close(conn->s, 0, nullptr);
+            us_socket_close_now(conn->s);
         });
     }
 
@@ -805,8 +807,9 @@ struct Http2Context {
             if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
             conn->flush();
             if (conn->streams.empty()) {
+                /* Asked again, a TLS close that waits for the peer's close_notify keeps waiting: this call does not close that connection. */
+                if (!us_socket_is_shut_down(conn->s)) closedNow++;
                 us_socket_close(conn->s, 0, nullptr);
-                closedNow++;
             }
         });
         return closedNow;
@@ -1030,6 +1033,8 @@ inline void Http2Connection::writeSettings() {
 }
 
 inline void Http2Connection::touch() {
+    /* A TLS close waits for the peer's close_notify, and the timeout is then the deadline of that wait. */
+    if (goawaySent && us_socket_is_shut_down(s)) return;
     us_socket_timeout(s, idleTimeoutS);
 }
 

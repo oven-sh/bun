@@ -787,6 +787,111 @@ describe("Bun.serve http2 over a unix socket", () => {
   });
 });
 
+// A graceful close of a TLS connection sends close_notify and reads on for the client's, up to a deadline of 10 s.
+// Asked again, it keeps waiting. With allowHalfOpen these clients read the close_notify and never answer it.
+describe.concurrent("Bun.serve http2 over TLS, an idle connection whose client never answers the close_notify", () => {
+  async function idleConnection(port: number) {
+    const raw = await RawH2.connect(port, true);
+    raw.socket.allowHalfOpen = true;
+    raw.headers(1, baseHeaders("/"));
+    expect((await raw.body(1)).toString()).toBe("ok");
+    return raw;
+  }
+  // The same server over HTTP/1.1. It has no GOAWAY to wait behind: its sweep sends the FIN with the close_notify.
+  async function idleHttp1Connection(port: number) {
+    const options = { port, host: "127.0.0.1", rejectUnauthorized: false, allowHalfOpen: true };
+    const client = tls.connect(options as tls.ConnectionOptions);
+    client.on("error", () => {});
+    const ended = new Promise<void>(resolve => client.once("end", resolve));
+    let response = "";
+    await new Promise<void>(resolve => {
+      client.on("data", chunk => void ((response += chunk).endsWith("ok") && resolve()));
+      client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    });
+    return { client, ended };
+  }
+
+  test("closeIdleConnections() counts a connection once, over HTTP/2 and over HTTP/1.1", async () => {
+    await using server = Bun.serve({ port: 0, tls: tlsCert, http2: true, fetch: () => new Response("ok") });
+    const raw = await idleConnection(server.port!);
+    const http1 = await idleHttp1Connection(server.port!);
+    try {
+      const closed = [server.closeIdleConnections(), server.closeIdleConnections()];
+      await Promise.all([raw.goaway(), http1.ended]);
+      expect(closed).toEqual([2, 0]);
+    } finally {
+      raw.close();
+      http1.client.destroy();
+    }
+  });
+
+  test("stop() closes an HTTP/1.1 connection in the call", async () => {
+    await using server = Bun.serve({ port: 0, tls: tlsCert, http2: true, fetch: () => new Response("ok") });
+    const http1 = await idleHttp1Connection(server.port!);
+    try {
+      let settled = 0;
+      const stopped = server.stop().then(() => void settled++);
+      // A task of the loop settles the promise, so read it one turn after the call.
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(settled).toBe(1);
+      await Promise.all([stopped, http1.ended]);
+    } finally {
+      http1.client.destroy();
+    }
+  });
+
+  test("stop(true) after stop() closes an HTTP/2 connection in the call", async () => {
+    await using server = Bun.serve({ port: 0, tls: tlsCert, http2: true, fetch: () => new Response("ok") });
+    const raw = await idleConnection(server.port!);
+    try {
+      const graceful = server.stop();
+      await raw.goaway();
+      let settled = 0;
+      const stopped = server.stop(true).then(() => void settled++);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(settled).toBe(1);
+      await Promise.all([stopped, graceful]);
+    } finally {
+      raw.close();
+    }
+  });
+
+  // The connection sets its idle timeout again at the end of each of its events, and "never" is one such timeout.
+  // The close that an abort listener asks for inside such an event keeps its own deadline: on a 4 s tick, 8 to 12 s.
+  test("closeIdleConnections() in an abort listener, with no idle timeout, closes by the deadline", async () => {
+    const inHandler = Promise.withResolvers<void>();
+    const aborted = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      tls: tlsCert,
+      http2: true,
+      idleTimeout: 0,
+      fetch(req) {
+        req.signal.addEventListener("abort", () => {
+          server.closeIdleConnections();
+          aborted.resolve();
+        });
+        inHandler.resolve();
+        return new Promise<Response>(() => {});
+      },
+    });
+    const raw = await RawH2.connect(server.port!, true);
+    raw.socket.allowHalfOpen = true;
+    try {
+      raw.headers(1, baseHeaders("/", "POST"), F.END_HEADERS);
+      await inHandler.promise;
+      // The PING is one more frame of the event that carries the reset.
+      const reset = frame(T.RST_STREAM, 0, 1, Buffer.from([0, 0, 0, 8]));
+      raw.write(Buffer.concat([reset, frame(T.PING, 0, 0, Buffer.alloc(8))]));
+      await aborted.promise;
+      // Resolves once the connection has closed.
+      await server.stop();
+    } finally {
+      raw.close();
+    }
+  }, 30_000);
+});
+
 describe("Bun.serve http2 in-process", () => {
   test("routes + fetch, reload, stop", async () => {
     await using server = Bun.serve({

@@ -179,6 +179,17 @@ pub struct Printer<'a> {
     pub(crate) local_names: Option<&'a css::LocalsResultsMap>,
     /// NOTE This should be the same mimalloc heap arena arena
     pub(crate) arena: &'a Bump,
+    /// Set by `StyleSheet::to_css_exact`, which reads it after the print.
+    pub(crate) seams: Option<Box<TokenSeams>>,
+}
+
+/// What `TokenList::to_css_recording` notes about the token lists of a print.
+#[derive(Default)]
+pub(crate) struct TokenSeams {
+    /// Ascending offsets in the output where two items are written with nothing between them.
+    pub(crate) offsets: Vec<usize>,
+    /// Those of `offsets` where the second item is a number that is written from its value.
+    pub(crate) numbers: Vec<usize>,
 }
 
 impl<'a> Printer<'a> {
@@ -309,6 +320,7 @@ impl<'a> Printer<'a> {
             in_scope_rule: false,
             prefix_expansion_bytes: 0,
             error_kind: None,
+            seams: None,
         }
     }
 

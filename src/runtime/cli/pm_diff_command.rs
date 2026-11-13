@@ -1391,6 +1391,14 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                 }
             }
         }
+        // A re-print that can stand for another file too proves nothing. The file is diffed as `--raw` diffs it.
+        let exact = |side: &Option<normalize::Normalized>| side.as_ref().is_none_or(|n| n.exact);
+        let (norm_old, norm_new) = if exact(&norm_old) && exact(&norm_new) {
+            (norm_old, norm_new)
+        } else {
+            change.not_normalized.get_or_insert("shown as written");
+            (None, None)
+        };
         // Equal re-prints prove the code is the same; comments and TypeScript types are not in the re-print, so
         // those are checked separately before anything is called "formatting only".
         let reprint_equal =

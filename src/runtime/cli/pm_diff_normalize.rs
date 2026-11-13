@@ -20,6 +20,8 @@ pub(crate) struct Normalized {
     pub imports: Vec<Vec<u8>>,
     /// The original had so few newlines relative to its size that original line numbers are meaningless.
     pub was_minified: bool,
+    /// False if `text` can stand for another file too: it is then neither compared nor shown.
+    pub exact: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -463,6 +465,7 @@ fn print_js<'a>(
         map,
         imports,
         was_minified: false,
+        exact: true,
     })
 }
 
@@ -921,8 +924,8 @@ fn normalize_css(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
     )
     .ok()?;
     let symbols = bun_ast::symbol::Map::init_list(Default::default());
-    let result = sheet
-        .to_css(
+    let (result, exact) = sheet
+        .to_css_exact(
             alloc,
             &bun_css::PrinterOptions {
                 minify: false,
@@ -944,6 +947,7 @@ fn normalize_css(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
         map: Vec::new(),
         imports,
         was_minified: false,
+        exact,
     })
 }
 
@@ -970,6 +974,7 @@ fn normalize_json(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
         map: Vec::new(),
         imports: Vec::new(),
         was_minified: false,
+        exact: true,
     })
 }
 

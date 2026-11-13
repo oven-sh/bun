@@ -217,9 +217,43 @@ impl TokenList {
         if !dest.minify && self.v.len() == 1 && self.v[0].is_whitespace() {
             return Ok(());
         }
+        if dest.seams.is_some() {
+            return self.to_css_exact(dest, is_custom_property);
+        }
+        self.items_to_css(0, &self.v, dest, is_custom_property)
+    }
 
+    /// `to_css` for `StyleSheet::to_css_exact`.
+    #[cold]
+    fn to_css_exact(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+        self.to_css_recording(dest, |dest, i| match &self.v[i] {
+            // `CSSNumberFns::to_css` writes negative zero as `0`, and `1 / -0` is not `1 / 0`.
+            TokenOrValue::Token(Token::Number(number))
+                if number.value == 0.0 && number.value.is_sign_negative() =>
+            {
+                dest.write_str("-0")
+            }
+            TokenOrValue::Time(Time::Seconds(time) | Time::Milliseconds(time))
+                if *time == 0.0 && time.is_sign_negative() =>
+            {
+                dest.write_str("-0s")
+            }
+            item => self.items_to_css(i, core::slice::from_ref(item), dest, is_custom_property),
+        })
+    }
+
+    /// Writes `items`, which start at index `first` of the list. Inlined, so that `to_css` does
+    /// not pay for the one item at a time of `to_css_exact`.
+    #[inline(always)]
+    fn items_to_css(
+        &self,
+        first: usize,
+        items: &[TokenOrValue],
+        dest: &mut Printer,
+        is_custom_property: bool,
+    ) -> PrintResult<()> {
         // A blank can mean something (`.a .b`, `type(<number>)`): only the stored ones print.
-        for (i, token_or_value) in self.v.iter().enumerate() {
+        for (i, token_or_value) in (first..).zip(items) {
             match token_or_value {
                 TokenOrValue::Color(color) => color.to_css(dest)?,
                 TokenOrValue::UnresolvedColor(color) => color.to_css(dest, is_custom_property)?,
@@ -309,11 +343,55 @@ impl TokenList {
     }
 
     pub(crate) fn to_css_raw(&self, dest: &mut Printer) -> PrintResult<()> {
-        for token_or_value in self.v.iter() {
+        if dest.seams.is_some() {
+            return self.to_css_raw_exact(dest);
+        }
+        Self::raw_items_to_css(&self.v, dest)
+    }
+
+    /// `to_css_raw` for `StyleSheet::to_css_exact`.
+    #[cold]
+    fn to_css_raw_exact(&self, dest: &mut Printer) -> PrintResult<()> {
+        self.to_css_recording(dest, |dest, i| Self::raw_items_to_css(&self.v[i..=i], dest))
+    }
+
+    #[inline(always)]
+    fn raw_items_to_css(items: &[TokenOrValue], dest: &mut Printer) -> PrintResult<()> {
+        for token_or_value in items {
             match token_or_value {
                 TokenOrValue::Token(token) => token.to_css(dest)?,
                 TokenOrValue::RawNumber(number) => number.to_css(dest)?,
                 _ => return Err(dest.add_fmt_error()),
+            }
+        }
+        Ok(())
+    }
+
+    /// Writes each item with `write_item`, and notes each place where two items touch in the
+    /// output, for the test that they read back as two tokens.
+    #[cold]
+    fn to_css_recording(
+        &self,
+        dest: &mut Printer,
+        write_item: impl Fn(&mut Printer, usize) -> PrintResult<()>,
+    ) -> PrintResult<()> {
+        // The last item that wrote something: the next one touches it.
+        let mut before: Option<&TokenOrValue> = None;
+        for (i, item) in self.v.iter().enumerate() {
+            let start = dest.bytes_written();
+            // No token runs on from a blank. One can run on into a blank: `\` and ` ` are an escape.
+            if let Some(before) = before
+                && !before.is_whitespace()
+                && let Some(seams) = &mut dest.seams
+            {
+                seams.offsets.push(start);
+                if matches!(item, TokenOrValue::Token(Token::Number(_))) {
+                    seams.numbers.push(start);
+                }
+            }
+            write_item(dest, i)?;
+            if dest.bytes_written() != start {
+                before = Some(item);
             }
         }
         Ok(())

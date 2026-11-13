@@ -2197,6 +2197,128 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(exitCode).toBe(0);
   });
 
+  // One text from the CSS printer can stand for two style sheets: it writes `rgb(0 0 0)5`, a colour and a
+  // number, as `#0005`, which is one colour.
+  const joined = {
+    "a/colour.css": ".a{--x:rgb(0 0 0)5}",
+    "b/colour.css": ".a{--x:#0005}",
+    "a/name.css": ".a{--x:solid#f00}",
+    "b/name.css": ".a{--x:solidred}",
+    // `:unknown()` keeps its arguments as tokens and drops the comment between them.
+    "a/comment.css": "a:unknown(1/**/5){color:red}",
+    "b/comment.css": "a:unknown(15){color:red}",
+    // The number `.1000` after a name prints from its value, as `.1`.
+    "a/path.css": ".a{margin:theme(colors.green.1000)}",
+    "b/path.css": ".a{margin:theme(colors.green.100)}",
+    // The edit in line 1 shows on the canonical print. The edits in lines 2 and 3 do not.
+    "a/mixed.css": ".a{color:red}\n.b{--x:rgb(0 0 0)5}\n.c{--y:solid#f00}\n",
+    "b/mixed.css": ".a{color:blue}\n.b{--x:#0005}\n.c{--y:solidred}\n",
+  };
+
+  test("CSS: a print that can stand for another style sheet is not compared, and the file is shown as written", async () => {
+    const { text, exitCode } = await pretty(joined);
+    expect(text).not.toContain("formatting only");
+    expect(text).not.toContain("normalized");
+    expect(text.split("\n").filter(line => line.includes("─"))).toEqual([
+      expect.stringMatching(/^colour\.css ─+ shown as written \+1 -1$/),
+      expect.stringMatching(/^comment\.css ─+ shown as written \+1 -1$/),
+      expect.stringMatching(/^mixed\.css ─+ shown as written \+3 -3$/),
+      expect.stringMatching(/^name\.css ─+ shown as written \+1 -1$/),
+      expect.stringMatching(/^path\.css ─+ shown as written \+1 -1$/),
+    ]);
+    expect(changed(text)).toEqual([
+      "- .a{--x:rgb(0 0 0)5}",
+      "+ .a{--x:#0005}",
+      "- a:unknown(1/**/5){color:red}",
+      "+ a:unknown(15){color:red}",
+      "- .a{color:red}",
+      "- .b{--x:rgb(0 0 0)5}",
+      "- .c{--y:solid#f00}",
+      "+ .a{color:blue}",
+      "+ .b{--x:#0005}",
+      "+ .c{--y:solidred}",
+      "- .a{--x:solid#f00}",
+      "+ .a{--x:solidred}",
+      "- .a{margin:theme(colors.green.1000)}",
+      "+ .a{margin:theme(colors.green.100)}",
+    ]);
+    expect(text).toContain("\n5 files  +7 -7\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("CSS: --json and --stat do not call such a file formatting only", async () => {
+    const [json, stat] = await Promise.all([pretty(joined, ["--json"]), pretty(joined, ["--stat"])]);
+    const { files, totals } = JSON.parse(json.raw);
+    expect(files.map((file: any) => [file.path, file.formattingOnly])).toEqual([
+      ["colour.css", false],
+      ["comment.css", false],
+      ["mixed.css", false],
+      ["name.css", false],
+      ["path.css", false],
+    ]);
+    expect(totals.formattingOnly).toBe(0);
+    expect(stat.text).not.toContain("formatting only");
+    expect(stat.text).toContain("\n5 files  +7 -7\n");
+    expect(json.exitCode).toBe(0);
+    expect(stat.exitCode).toBe(0);
+  });
+
+  test("CSS: the canonical print still folds what a minifier rewrites, and keeps the sign of a zero", async () => {
+    const { text, exitCode } = await pretty({
+      "a/fold.css":
+        ".a{color:#ff0000;--n:0.50;--c:#FF0000;--t:300ms;--e:cubic-bezier(0.4,0,0.2,1);--v:1.2.3;margin:0 auto}",
+      "b/fold.css":
+        ".a {\n  color: red;\n  --n: .5;\n  --c: red;\n  --t: .3s;\n  --e: cubic-bezier(.4, 0, .2, 1);\n  --v: 1.2.3;\n  margin: 0 auto;\n}\n",
+      // `calc(1 / -0)` is negative infinity, and `calc(1 / 0)` is positive infinity.
+      "a/zero.css": ".a{--x:-0;z-index:calc(1 / -0);--t:-0s}",
+      "b/zero.css": ".a{--x:0;z-index:calc(1 / 0);--t:0s}",
+      // The old side is shown as written. The summary still names the URL that the new side adds.
+      "a/url.css": ".a{--x:solid#f00}",
+      "b/url.css": ".a{--x:solidred;background:url(https://example.com/x.png)}",
+    });
+    expect(text.split("\n").filter(line => line.includes("─"))).toEqual([
+      expect.stringMatching(/^fold\.css ─+ formatting only$/),
+      expect.stringMatching(/^url\.css ─+ shown as written \+1 -1$/),
+      expect.stringMatching(/^zero\.css ─+ normalized \+3 -3$/),
+    ]);
+    expect(changed(text)).toEqual([
+      "- .a{--x:solid#f00}",
+      "+ .a{--x:solidred;background:url(https://example.com/x.png)}",
+      "-   --x: -0;",
+      "-   z-index: calc(1 / -0);",
+      "-   --t: -0s;",
+      "+   --x: 0;",
+      "+   z-index: calc(1 / 0);",
+      "+   --t: 0s;",
+    ]);
+    expect(text).toContain("new module imports: https://example.com/x.png");
+    expect(exitCode).toBe(0);
+  });
+
+  test("CSS: a minified file whose print can stand for another style sheet is shown as written", async () => {
+    // Long lines make a file read as minified. Its re-print is then shown in its place, if it stands for it.
+    const pad = "/*" + Buffer.alloc(300, "x").toString() + "*/";
+    const { text, exitCode } = await pretty({
+      "a/both.min.css": pad + ".a{--x:rgb(0 0 0)5}",
+      "b/both.min.css": pad + ".a{--x:#0005}",
+      "b/added.min.css": pad + ".a{--x:solid#f00}",
+      "b/exact.min.css": pad + ".a{--x:solid #f00}",
+    });
+    expect(text.split("\n").filter(line => line.includes("─"))).toEqual([
+      expect.stringMatching(/^added\.min\.css ─+ shown as written new \+1$/),
+      expect.stringMatching(/^both\.min\.css ─+ shown as written \+1 -1$/),
+      expect.stringMatching(/^exact\.min\.css ─+ unminified new \+\d+$/),
+    ]);
+    // The view cuts the start of a long changed line that is the same on both sides.
+    expect(changed(text).filter(line => line.includes("--x"))).toEqual([
+      `+ ${pad}.a{--x:solid#f00}`,
+      expect.stringMatching(/^- …x+\*\/\.a\{--x:rgb\(0 0 0\)5\}$/),
+      expect.stringMatching(/^\+ …x+\*\/\.a\{--x:#0005\}$/),
+      "+   --x: solid red;",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   // A debug build byte-scans the 64 MB line slowly (~30 s); release is well under a second.
   test.skipIf(isDebug)(
     "a file over the normalization size limit is diffed as text and says so",

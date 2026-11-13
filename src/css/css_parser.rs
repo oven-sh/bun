@@ -2402,6 +2402,29 @@ fn check_input_len(code: &[u8]) -> Maybe<(), Err<ParserError>> {
 mod stylesheet_impl {
     use super::*;
 
+    /// Whether no token of `code` runs across one of `seams`, which are ascending offsets in it.
+    fn reads_back_apart(code: &[u8], seams: &[usize]) -> bool {
+        if seams.is_empty() {
+            return true;
+        }
+        let arena = Bump::new();
+        let mut tokenizer = Tokenizer::init_with_arena(code, &arena);
+        let mut seams = seams.iter().peekable();
+        while seams.peek().is_some() {
+            let start = tokenizer.position;
+            if tokenizer.next().is_err() {
+                break;
+            }
+            let end = tokenizer.position;
+            while let Some(&seam) = seams.next_if(|seam| **seam < end) {
+                if seam > start {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
     impl<AtRule> StyleSheet<AtRule> {
         /// Minify and transform the style sheet for the provided browser targets.
         ///
@@ -2584,6 +2607,55 @@ mod stylesheet_impl {
             let mut dest: Vec<u8> = Vec::with_capacity(1);
             self.to_css_with_writer(arena, &mut dest, options, import_info, local_names, symbols)?;
             return Ok(ToCssResult { code: dest });
+        }
+
+        /// `to_css` for a caller that takes two style sheets with the same text for the same
+        /// style sheet, as `bun pm diff` does. Here a negative zero in a value that is kept as
+        /// tokens keeps its sign.
+        ///
+        /// The second value is false if the text can stand for another style sheet too. Two items
+        /// of a token list that are written with nothing between them can read back as one token:
+        /// `rgb(0 0 0)5` prints as `#0005`. A number that touches a name or a number prints from
+        /// its value: `beta.10` prints as `beta.1`.
+        pub fn to_css_exact<'a>(
+            &'a self,
+            arena: &'a Bump,
+            options: &PrinterOptions<'a>,
+            import_info: Option<ImportInfo<'a>>,
+            local_names: Option<&'a LocalsResultsMap>,
+            symbols: &'a bun_ast::symbol::Map,
+        ) -> PrintResult<(ToCssResult, bool)> {
+            let mut dest: Vec<u8> = Vec::new();
+            let mut printer = Printer::new(
+                arena,
+                bun_alloc::ArenaVec::new_in(arena),
+                &mut dest,
+                options,
+                import_info,
+                local_names,
+                symbols,
+            );
+            printer.seams = Some(Default::default());
+            if self
+                .to_css_with_writer_impl(&mut printer, options.project_root)
+                .is_err()
+            {
+                debug_assert!(printer.error_kind.is_some());
+                return Err(printer.error_kind.unwrap());
+            }
+            let seams = printer.seams.take();
+            drop(printer);
+            let exact = seams.is_some_and(|seams| {
+                // `colors.green.1000` is a name and the number `.1000`, which prints as `.1`.
+                let after_a_name = |at: &usize| {
+                    let before = at.checked_sub(1).and_then(|before| dest.get(before));
+                    before.is_some_and(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(*byte, b'-' | b'_' | 0x80..)
+                    })
+                };
+                !seams.numbers.iter().any(after_a_name) && reads_back_apart(&dest, &seams.offsets)
+            });
+            Ok((ToCssResult { code: dest }, exact))
         }
 
         pub fn parse(

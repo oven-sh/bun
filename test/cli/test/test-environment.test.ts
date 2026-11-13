@@ -911,13 +911,10 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(0);
     });
 
-    describe.each([
-      ["sets to undefined", `afterAll(() => void (globalThis.document = undefined));`, "undefined"],
-      ["leaves as a stub", "", "object"],
-    ])("a document that a test file %s is no DOM", (_, cleanup, left) => {
+    describe("a document that a test file sets to undefined is no DOM", () => {
       const leavesDocument = `
         import { afterAll, test } from "bun:test";
-        ${cleanup}
+        afterAll(() => void (globalThis.document = undefined));
         test("stubs the document", () => void (globalThis.document = { title: "a stub" }));`;
       const logGlobals = (file: string) => `
         import { test } from "bun:test";
@@ -942,7 +939,7 @@ describe.concurrent("test environment", () => {
         expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
           ...Object.keys(ahead).map(file => `${file} happy-dom#1 http://localhost:3000`),
           "2.test.js happy-dom#1 http://localhost:3000",
-          `3.test.js ${left} undefined`,
+          "3.test.js undefined undefined",
           "4.test.js jsdom#1 http://localhost:3000",
           "5.test.js happy-dom#1 http://localhost:3000",
         ]);
@@ -961,24 +958,6 @@ describe.concurrent("test environment", () => {
           "2.test.js": logEnvironment,
         });
         const { stdout, stderr, exitCode } = await bunTest(String(dir), ...flags);
-        expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
-          "2.test.js happy-dom#1 http://localhost:3000",
-        ]);
-        expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
-        expect(exitCode).toBe(0);
-      });
-
-      test.each([
-        ["an environment comment", `// ${VITEST} happy-dom\n`, []],
-        ["the environment of the project", "", ["--environment=happy-dom"]],
-      ])("for %s, with a preload that registers no DOM", async (_, comment, flags) => {
-        using dir = tempDir("test-environment", {
-          ...fakePackages,
-          "preload.js": `globalThis.preloaded = true;`,
-          "1.test.js": `// ${VITEST} node\n${leavesDocument}`,
-          "2.test.js": comment + logEnvironment,
-        });
-        const { stdout, stderr, exitCode } = await bunTest(String(dir), "--preload=./preload.js", ...flags);
         expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
           "2.test.js happy-dom#1 http://localhost:3000",
         ]);
@@ -1015,7 +994,7 @@ describe.concurrent("test environment", () => {
         });
         const { stdout, stderr, exitCode } = await bunTest(String(dir));
         expect(warnings(stderr)).toEqual(cannotFindPackage("happy-dom", join(String(dir), "2.test.js")));
-        expect(stdout).toEqual([`2.test.js ${left} undefined`]);
+        expect(stdout).toEqual(["2.test.js undefined undefined"]);
         expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
         expect(exitCode).toBe(0);
       });
@@ -1034,77 +1013,62 @@ describe.concurrent("test environment", () => {
       });
     });
 
-    describe("a document that a test file defines as non-configurable", () => {
-      const definesDocument = `
-        import { test } from "bun:test";
-        process.nativeRequest = Request;
-        test("defines the document", () => void Object.defineProperty(globalThis, "document", { value: {} }));`;
-      const cannotDefine = (file: string) =>
-        `${cannotSetUp("happy-dom", file)}: cannot define "document" on globalThis: the property is not configurable`;
-
-      test("makes a later environment comment warn", async () => {
+    // Any other `document` is for the next file a DOM that Bun did not open, whoever left it.
+    describe.each([
+      ["leaves as a stub", `globalThis.document = { title: "a stub" }`, "object"],
+      // No window can define its own `document` over one that can't be redefined.
+      [
+        "defines as undefined and non-configurable",
+        `Object.defineProperty(globalThis, "document", { value: undefined })`,
+        "undefined",
+      ],
+      [
+        "makes globalThis inherit",
+        `Object.setPrototypeOf(globalThis, { __proto__: Object.getPrototypeOf(globalThis), document: { title: "a stub" } })`,
+        "object",
+      ],
+    ])("a document that a test file %s keeps the window from", (_, leave, left) => {
+      test.each([
+        ["a file with an environment comment", `// ${VITEST} happy-dom`, []],
+        ["a file of the project's environment", "", ["--environment=happy-dom"]],
+      ])("%s", async (_, comment, flags) => {
         using dir = tempDir("test-environment", {
           ...fakePackages,
-          "1.test.js": definesDocument,
-          // No name of the window is on globalThis: NamedNodeMap and Request come before its document, environment and location after.
-          "2.test.js": `// ${VITEST} happy-dom
+          "1.test.js": `// ${VITEST} node
             import { test } from "bun:test";
-            test("no DOM", () => {
-              const isUntouched = !("NamedNodeMap" in globalThis) && Request === process.nativeRequest;
-              console.log("2.test.js", typeof document, isUntouched, typeof environment, typeof location);
-            });`,
+            test("leaves the document", () => void (${leave}));`,
+          "2.test.js": `${comment}
+            import { test } from "bun:test";
+            test("no DOM", () => console.log("2.test.js", typeof document, typeof environment));`,
         });
-        const { stdout, stderr, exitCode } = await bunTest(String(dir));
-        expect(warnings(stderr)).toEqual([`warn: ${cannotDefine(join(String(dir), "2.test.js"))}`]);
-        expect(stdout.filter(line => !line.startsWith("open "))).toEqual(["2.test.js object true undefined undefined"]);
+        const { stdout, stderr, exitCode } = await bunTest(String(dir), ...flags);
+        expect(warnings(stderr)).toEqual([]);
+        expect(stdout).toEqual([`2.test.js ${left} undefined`]);
         expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
         expect(exitCode).toBe(0);
       });
-
-      test("fails a later file of the project's environment", async () => {
-        using dir = tempDir("test-environment", {
-          ...fakePackages,
-          "1.test.js": `// ${VITEST} node\n${definesDocument}`,
-          "2.test.js": logEnvironment,
-        });
-        const { stdout, stderr, exitCode } = await bunTest(String(dir), "--environment=happy-dom");
-        expect(stderr).toContain(errorBetweenTests(`error: ${cannotDefine(join(String(dir), "2.test.js"))}`));
-        expect(stdout.filter(line => !line.startsWith("open "))).toEqual([]);
-        expect(summary(stderr)).toEqual(["1 pass", "1 fail", "1 error"]);
-        expect(exitCode).toBe(1);
-      });
     });
 
-    // One row for each part of the check that keeps a DOM Bun did not open. The file after the leftover asks for happy-dom.
+    // The file after the leftover asks for happy-dom.
     describe("a document that a test file left", () => {
-      // Only the runner's work between the two files sees the patch of Object.prototype, as in "leaves builtins patched".
       test.each([
-        ["a document node with no window", `globalThis.document = { nodeType: 9 };`, ""],
-        ["a document node whose window is null", `globalThis.document = { nodeType: 9, defaultView: null };`, ""],
+        ["null", `globalThis.document = null;`],
         [
-          "an object whose nodeType throws",
-          `globalThis.document = { get nodeType() { throw new Error("no nodeType"); }, defaultView: globalThis };`,
-          "",
-        ],
-        ["an element with a window", `globalThis.document = { nodeType: 1, defaultView: globalThis };`, ""],
-        [
-          "a getter that throws",
-          `Object.defineProperty(globalThis, "document", { get() { throw new Error("no document"); }, configurable: true });`,
-          "",
+          "undefined, beside classes named Node and Document",
+          `globalThis.document = undefined; globalThis.Node = class {}; globalThis.Document = class extends Node {};`,
         ],
         [
-          "undefined, while descriptors inherit a getter",
-          `globalThis.document = undefined; Object.prototype.get = () => ({ nodeType: 9, defaultView: globalThis });`,
-          `delete Object.prototype.get;`,
+          "undefined, beside a Node whose prototype is no object",
+          `globalThis.document = undefined; globalThis.Node = Object.assign(function () {}, { prototype: 1 });`,
         ],
-      ])("is no DOM when it is %s", async (_, leave, undo) => {
+      ])("is no DOM when it is %s", async (_, leave) => {
         using dir = tempDir("test-environment", {
           ...fakePackages,
           "1.test.js": `
             import { afterAll, test } from "bun:test";
             afterAll(() => { ${leave} });
             test("leaves a document", () => {});`,
-          "2.test.js": `// ${VITEST} happy-dom\n${undo}\n${logEnvironment}`,
+          "2.test.js": `// ${VITEST} happy-dom\n${logEnvironment}`,
         });
         const { stdout, stderr, exitCode } = await bunTest(String(dir));
         expect(stderr).not.toContain("error:");
@@ -1116,46 +1080,97 @@ describe.concurrent("test environment", () => {
         expect(exitCode).toBe(0);
       });
 
-      test.each([
-        ["a property", `globalThis.document = registered;`],
-        ["a getter", `Object.defineProperty(globalThis, "document", { get: () => registered, configurable: true });`],
-        ["a property, with a window of its own", `registered.defaultView = {}; globalThis.document = registered;`],
-      ])("is kept when it is a document with a window, as %s", async (_, register) => {
+      test("is kept and not read when it is a getter", async () => {
         using dir = tempDir("test-environment", {
           ...fakePackages,
           "1.test.js": `
             import { test } from "bun:test";
-            const registered = { nodeType: 9, defaultView: globalThis, title: "registered by 1.test.js" };
-            test("registers a DOM", () => { ${register} });`,
+            process.readsOfDocument = 0;
+            test("registers a DOM", () => {
+              Object.defineProperty(globalThis, "document", {
+                get() {
+                  process.readsOfDocument++;
+                  return { title: "registered by 1.test.js" };
+                },
+                configurable: true,
+              });
+            });`,
           "2.test.js": `// ${VITEST} happy-dom
             import { test } from "bun:test";
-            test("happy-dom", () => console.log("2.test.js", document.title, typeof environment));`,
-          "3.test.js": `/** ${JEST} jsdom */
-            import { test } from "bun:test";
-            test("jsdom", () => console.log("3.test.js", document.title, typeof environment));`,
+            const reads = process.readsOfDocument;
+            test("happy-dom", () => console.log("2.test.js", reads, document.title, typeof environment));`,
         });
         const { stdout, stderr, exitCode } = await bunTest(String(dir));
         expect(warnings(stderr)).toEqual([]);
-        expect(stdout).toEqual([
-          "2.test.js registered by 1.test.js undefined",
-          "3.test.js registered by 1.test.js undefined",
-        ]);
-        expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
+        expect(stdout).toEqual(["2.test.js 0 registered by 1.test.js undefined"]);
+        expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
         expect(exitCode).toBe(0);
       });
 
-      test("is no DOM of its own when it is the document of a window that Bun keeps", async () => {
+      test("is no DOM when it is undefined beside a getter named Node, which is not read", async () => {
         using dir = tempDir("test-environment", {
           ...fakePackages,
-          // As in the real package, the document is a document node.
-          "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
-            const { Window } = exports;
-            exports.Window = class extends Window {
-              constructor(...args) {
-                super(...args);
-                this.document.nodeType = 9;
-              }
-            };`,
+          "1.test.js": `
+            import { afterAll, test } from "bun:test";
+            process.readsOfNode = 0;
+            afterAll(() => {
+              globalThis.document = undefined;
+              Object.defineProperty(globalThis, "Node", {
+                get() {
+                  process.readsOfNode++;
+                  return class {
+                    get nodeType() {
+                      return 1;
+                    }
+                  };
+                },
+                configurable: true,
+              });
+            });
+            test("leaves a document", () => {});`,
+          "2.test.js": `// ${VITEST} happy-dom
+            import { test } from "bun:test";
+            const reads = process.readsOfNode;
+            test("happy-dom", () => console.log("2.test.js", reads, environment));`,
+        });
+        const { stdout, stderr, exitCode } = await bunTest(String(dir));
+        expect(warnings(stderr)).toEqual([]);
+        expect(stdout.filter(line => !line.startsWith("open "))).toEqual(["2.test.js 0 happy-dom#1"]);
+        expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+        expect(exitCode).toBe(0);
+      });
+
+      // The rest of a DOM that was registered by hand is still there, and the next file keeps using it.
+      test.each(["Node", "Element", "HTMLElement", "Document"])(
+        "is kept when only the document of a DOM was reset and its %s is still there",
+        async name => {
+          using dir = tempDir("test-environment", {
+            ...fakePackages,
+            "1.test.js": `
+              import { afterAll, test } from "bun:test";
+              globalThis.${name} = class {
+                get nodeType() {
+                  return 1;
+                }
+              };
+              globalThis.document = new ${name}();
+              afterAll(() => void (globalThis.document = undefined));
+              test("registers a DOM", () => {});`,
+            "2.test.js": `// ${VITEST} happy-dom
+              import { test } from "bun:test";
+              test("happy-dom", () => console.log("2.test.js", typeof document, typeof ${name}, typeof environment));`,
+          });
+          const { stdout, stderr, exitCode } = await bunTest(String(dir));
+          expect(warnings(stderr)).toEqual([]);
+          expect(stdout).toEqual(["2.test.js undefined function undefined"]);
+          expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+          expect(exitCode).toBe(0);
+        },
+      );
+
+      test("is no other DOM when it is the document of a window that Bun keeps", async () => {
+        using dir = tempDir("test-environment", {
+          ...fakePackages,
           "1.test.js": `// ${VITEST} happy-dom
             import { test } from "bun:test";
             process.documentOfWindow = document;
@@ -1171,25 +1186,6 @@ describe.concurrent("test environment", () => {
           "3.test.js happy-dom#1 http://localhost:3000",
         ]);
         expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
-        expect(exitCode).toBe(0);
-      });
-
-      test("is kept for a file of the project's environment when it is a document with a window", async () => {
-        using dir = tempDir("test-environment", {
-          ...fakePackages,
-          "1.test.js": `// ${VITEST} node
-            import { test } from "bun:test";
-            test("registers a DOM", () => {
-              globalThis.document = { nodeType: 9, defaultView: globalThis, title: "registered by 1.test.js" };
-            });`,
-          "2.test.js": `
-            import { test } from "bun:test";
-            test("project", () => console.log("2.test.js", document.title, typeof environment));`,
-        });
-        const { stdout, stderr, exitCode } = await bunTest(String(dir), "--environment=happy-dom");
-        expect(stderr).not.toContain("error:");
-        expect(stdout).toEqual(["2.test.js registered by 1.test.js undefined"]);
-        expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
         expect(exitCode).toBe(0);
       });
     });
@@ -1583,54 +1579,22 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(0);
     });
 
-    const registersDOM = `globalThis.document = { body: {} }; globalThis.environment = "preloaded";`;
-
-    test("that registers its own DOM wins over the environment comment of the first file", async () => {
-      using dir = tempDir("test-environment", {
-        "preload.js": registersDOM,
-        "1.test.js": `// ${VITEST} happy-dom\n${logEnvironment}`,
-        "2.test.js": `/** ${JEST} jsdom */\n${logEnvironment}`,
-      });
-      const { stdout, stderr, exitCode } = await bunTest(String(dir), "--preload=./preload.js");
-      expect(warnings(stderr)).toEqual([]);
-      expect(stdout).toEqual(["1.test.js preloaded ", "2.test.js preloaded "]);
-      expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
-      expect(exitCode).toBe(0);
-    });
-
-    test("that registers its own DOM wins while a document is there, whatever a test file makes of it", async () => {
+    test("that leaves document undefined registers no DOM", async () => {
       using dir = tempDir("test-environment", {
         ...fakePackages,
-        "preload.js": registersDOM,
-        "1.test.js": `
-          import { afterAll, test } from "bun:test";
-          afterAll(() => void (globalThis.document = undefined));
-          test("has the DOM of the preload", () => console.log("1.test.js", typeof document.body));`,
-        "2.test.js": `// ${VITEST} happy-dom
+        "preload.js": `globalThis.document = undefined;`,
+        "1.test.js": `// ${VITEST} happy-dom\n${logEnvironment}`,
+        "2.test.js": `
           import { test } from "bun:test";
-          test("after the assignment", () => console.log("2.test.js", typeof document, environment));`,
-        "3.test.js": `
-          import { afterAll, test } from "bun:test";
-          afterAll(() => void delete globalThis.document);
-          test("removes the document", () => {});`,
-        "4.test.js": `// ${VITEST} happy-dom\n${logEnvironment}`,
-        // The window of 4.test.js is left on globalThis, and its document is not one that the preload left.
-        "5.test.js": `// ${VITEST} happy-dom\n${logEnvironment}`,
-        "6.test.js": `
-          import { test } from "bun:test";
-          test("node", () => console.log("6.test.js", typeof document, typeof location));`,
+          test("node", () => console.log("2.test.js", typeof document, "document" in globalThis));`,
       });
       const { stdout, stderr, exitCode } = await bunTest(String(dir), "--preload=./preload.js");
       expect(warnings(stderr)).toEqual([]);
-      // The preload's `environment` stays on globalThis, and a window gives only the names that are not there.
       expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
-        "1.test.js object",
-        "2.test.js undefined preloaded",
-        "4.test.js preloaded http://localhost:3000",
-        "5.test.js preloaded http://localhost:3000",
-        "6.test.js undefined undefined",
+        "1.test.js happy-dom#1 http://localhost:3000",
+        "2.test.js undefined true",
       ]);
-      expect(summary(stderr)).toEqual(["6 pass", "0 fail"]);
+      expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
       expect(exitCode).toBe(0);
     });
   });
@@ -2383,6 +2347,31 @@ describe.concurrent("test environment with the real", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("happy-dom that a test file registered is kept after a file replaced only its document", async () => {
+      using dir = project({
+        "1.test.js": `
+          import { GlobalRegistrator } from "@happy-dom/global-registrator";
+          import { afterAll, test, expect } from "bun:test";
+          GlobalRegistrator.register();
+          afterAll(() => void (globalThis.document = undefined));
+          test("registers", () => expect(document.nodeType).toBe(9));`,
+        "2.test.js": `// ${VITEST} happy-dom
+          import { test, expect } from "bun:test";
+          test("has the classes of one DOM", () => {
+            expect([
+              typeof document,
+              new PointerEvent("pointerdown") instanceof MouseEvent,
+              new KeyboardEvent("keydown") instanceof UIEvent,
+            ]).toEqual(["undefined", true, true]);
+          });`,
+      });
+      const { stderr, exitCode } = await bunTest(String(dir));
+      expect(stderr).not.toContain("error:");
+      expect(warnings(stderr)).toEqual([]);
+      expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
+
     test("happy-dom that a hook of a preload registered is kept for a later file with a comment", async () => {
       using dir = project({
         "preload.js": `
@@ -2404,30 +2393,69 @@ describe.concurrent("test environment with the real", () => {
       expect(exitCode).toBe(0);
     });
 
-    test.each(["jsdom", "happy-dom"])("%s opens for a file after a file that set document to undefined", async name => {
+    test("jsdom that a test file registered by hand is kept after the file reset only its document", async () => {
       using dir = project({
         "1.test.js": `
-          import { afterAll, test } from "bun:test";
+          import { JSDOM } from "jsdom";
+          import { afterAll, test, expect } from "bun:test";
+          const { window } = new JSDOM("<!doctype html><html><body></body></html>");
+          Object.assign(globalThis, {
+            window,
+            document: window.document,
+            HTMLElement: window.HTMLElement,
+            customElements: window.customElements,
+          });
           afterAll(() => void (globalThis.document = undefined));
-          test("stubs the document", () => void (globalThis.document = { title: "a stub" }));`,
-        "2.test.js": `// ${VITEST} ${name}
+          test("registers", () => expect(document.nodeType).toBe(9));`,
+        "2.test.js": `// ${VITEST} jsdom
           import { test, expect } from "bun:test";
-          test("uses the DOM", () => {
-            document.body.innerHTML = "<p>text</p>";
-            const paragraph = document.querySelector("p");
-            expect([paragraph instanceof HTMLElement, paragraph.textContent]).toEqual([true, "text"]);
-          });`,
-        "3.test.js": `
-          import { test, expect } from "bun:test";
-          test("node", () => {
-            expect([typeof document, "document" in globalThis, typeof HTMLElement]).toEqual(["undefined", true, "undefined"]);
+          test("has the classes of one DOM", () => {
+            class Upgraded extends HTMLElement {}
+            customElements.define("x-upgraded", Upgraded);
+            expect([typeof document, new Upgraded() instanceof HTMLElement]).toEqual(["undefined", true]);
           });`,
       });
       const { stderr, exitCode } = await bunTest(String(dir));
       expect(stderr).not.toContain("error:");
-      expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
+      expect(warnings(stderr)).toEqual([]);
+      expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
       expect(exitCode).toBe(0);
     });
+
+    test.each(["jsdom", "happy-dom"])(
+      "%s opens after a file set document to undefined, and again after a file put its document back",
+      async name => {
+        using dir = project({
+          "1.test.js": `
+            import { afterAll, test } from "bun:test";
+            afterAll(() => void (globalThis.document = undefined));
+            test("stubs the document", () => void (globalThis.document = { title: "a stub" }));`,
+          "2.test.js": `// ${VITEST} ${name}
+            import { test, expect } from "bun:test";
+            process.documentOfWindow = document;
+            test("uses the DOM", () => {
+              document.body.innerHTML = "<p>text</p>";
+              const paragraph = document.querySelector("p");
+              expect([paragraph instanceof HTMLElement, paragraph.textContent]).toEqual([true, "text"]);
+            });`,
+          "3.test.js": `
+            import { afterAll, test, expect } from "bun:test";
+            afterAll(() => void (globalThis.document = process.documentOfWindow));
+            test("node", () => {
+              expect([typeof document, "document" in globalThis, typeof HTMLElement]).toEqual(["undefined", true, "undefined"]);
+            });`,
+          "4.test.js": `// ${VITEST} ${name}
+            import { test, expect } from "bun:test";
+            test("uses the same DOM", () => {
+              expect([document === process.documentOfWindow, document.createElement("p") instanceof HTMLElement]).toEqual([true, true]);
+            });`,
+        });
+        const { stderr, exitCode } = await bunTest(String(dir));
+        expect(stderr).not.toContain("error:");
+        expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
+        expect(exitCode).toBe(0);
+      },
+    );
   });
 
   // Builtin modules must keep using Bun's own classes and accept typed arrays from jsdom's realm.

@@ -2805,7 +2805,6 @@ impl TestCommand {
                 summary: Summary::default(),
                 node_test_used: false,
                 environment_is_left: false,
-                preloads_left_document: false,
             },
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),

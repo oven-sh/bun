@@ -7,7 +7,7 @@ use bun_core::strings;
 use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::{VirtualMachine, runtime_hooks};
 use bun_jsc::{
-    JSGlobalObject, JSInternalPromise, JSPromise, JSValue, JsError, JsResult,
+    JSInternalPromise, JSPromise, JSValue, JsError, JsResult,
     StringJsc as _, Strong, bun_string_jsc, js_promise,
 };
 use bun_options_types::context::TestEnvironment;
@@ -215,25 +215,6 @@ pub(crate) fn is_in_preload() -> bool {
     VirtualMachine::get().is_in_preload
 }
 
-/// Taken once, when the preloads' top level has finished: an own `document` then counts as their DOM (docs/test/dom.mdx), and later a test file's key looks the same.
-#[inline(never)] // --trim cuts the test runner at the call.
-pub(crate) fn record_document_of_preloads(global: &JSGlobalObject) -> JsResult<()> {
-    let Some(runner) = Jest::runner() else {
-        return Ok(());
-    };
-    // The preloads ran in the window of the project's environment, and its `document` is not theirs.
-    if runner
-        .test_options
-        .environment
-        .is_some_and(|kind| kind != TestEnvironment::Node)
-    {
-        return Ok(());
-    }
-    let name = bun_core::String::static_("document").to_js(global)?;
-    runner.preloads_left_document = global.to_js_value().has_own_property_value(global, name)?;
-    Ok(())
-}
-
 fn rejected(vm: &VirtualMachine, err: JsError) -> crate::Result<*mut JSInternalPromise> {
     let promise = JSPromise::rejected_promise_with_caught_exception(vm.global(), err)?;
     promise.set_handled();
@@ -255,12 +236,8 @@ fn setup(
     path: &[u8],
     is_from_comment: bool,
 ) -> JsResult<Option<Strong>> {
-    let (is_left, preloads_left_document) = Jest::runner().map_or((false, false), |runner| {
-        (
-            core::mem::take(&mut runner.environment_is_left),
-            runner.preloads_left_document,
-        )
-    });
+    let is_left =
+        Jest::runner().is_some_and(|runner| core::mem::take(&mut runner.environment_is_left));
     if kind == TestEnvironment::Node && !is_left && !vm.test_isolation_state.shares_global {
         return Ok(None);
     }
@@ -278,7 +255,6 @@ fn setup(
             JSValue::from(!vm.test_isolation_enabled),
             JSValue::from(is_from_comment),
             JSValue::from(vm.test_isolation_state.shares_global),
-            JSValue::from(preloads_left_document),
         ],
     )?;
     if teardown.is_string() {

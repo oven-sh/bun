@@ -62,7 +62,7 @@ describe("assert.partialDeepStrictEqual", () => {
     assert.partialDeepStrictEqual(oa, ob);
   });
 
-  test("a circular actual still fails against a non-circular expected", () => {
+  test("a value that differs still fails when only one side is circular", () => {
     const circularArr = [];
     circularArr.push(circularArr);
     expect(() => assert.partialDeepStrictEqual(circularArr, [[1]])).toThrow(assert.AssertionError);

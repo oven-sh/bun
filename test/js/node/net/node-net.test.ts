@@ -2295,7 +2295,6 @@ describe("Socket fd adoption", () => {
         exitCode: 0,
       });
     },
-    30_000,
   );
 
   // Loop liveness of an adopted pipe fd follows libuv's stream rules: the
@@ -2357,7 +2356,6 @@ describe("Socket fd adoption", () => {
         exitCode: 0,
       });
     },
-    30_000,
   );
 
   // A write the kernel took right away leaves nothing pending: an unref()'d
@@ -2401,7 +2399,6 @@ describe("Socket fd adoption", () => {
         exitCode: 0,
       });
     },
-    30_000,
   );
 
   // `destroy()` drops what the kernel has not taken (libuv cancels the queued
@@ -2441,7 +2438,6 @@ describe("Socket fd adoption", () => {
         exitCode: 0,
       });
     },
-    30_000,
   );
 
   // Runs in a child so the count starts from zero.
@@ -2532,7 +2528,6 @@ describe("Socket fd adoption", () => {
         exitCode: 0,
       });
     },
-    30_000,
   );
 
   // The adopted fd is owned, not borrowed (node: uv_pipe_open + uv_close):

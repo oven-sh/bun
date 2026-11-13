@@ -289,6 +289,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // Used for forcing CommonJS
     pub(crate) has_with_scope: bool,
 
+    /// The file has syntax that strict code rejects and no `import`, `export` or top-level `await`, so it cannot be an ES module.
+    pub(crate) has_sloppy_only_syntax: bool,
+
     /// A module-scope `var` has the name of a top-level function, which module code rejects.
     pub(crate) has_top_level_function_merged_with_var: bool,
 
@@ -4913,6 +4916,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn is_strict_mode(&self) -> bool {
         self.current_scope().strict_mode != js_ast::StrictModeKind::SloppyMode
+    }
+
+    /// `import`, `export` and top-level `await` make the module scope strict before the visit pass. With them the file stays an ES module.
+    #[inline]
+    pub(crate) fn mark_sloppy_only_syntax(&mut self) {
+        if self.options.features.commonjs_at_runtime
+            && self.module_scope().strict_mode == js_ast::StrictModeKind::SloppyMode
+        {
+            self.has_sloppy_only_syntax = true;
+        }
+    }
+
+    /// In sloppy CommonJS the engine declares a function behind a label in the statement list around the label, so it needs no block.
+    #[inline]
+    pub(crate) fn keeps_labelled_function_bare(&self) -> bool {
+        self.has_sloppy_only_syntax
+            && !self.is_strict_mode()
+            && self.options.module_type != options::ModuleType::Esm
     }
 
     #[inline]
@@ -9777,6 +9798,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
             sloppy_mode_block_fn_without_var: Default::default(),
             has_with_scope: false,
+            has_sloppy_only_syntax: false,
             has_top_level_function_merged_with_var: false,
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,

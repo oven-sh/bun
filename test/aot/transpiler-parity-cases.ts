@@ -49,7 +49,6 @@ const decoratorExpressions = "ES Decorators > decorator expressions";
 const checkerSpeaksFirst = "the program is refused, in the words of the type checker and not of the parser";
 const untypedParameters = "TS7006: the parameters of the decorator have no types";
 const blockFunctions = "block-level function declarations in CommonJS > known differences from node";
-const labelledFunction = "`bun run` prints a labelled function inside a block, so it is stored when the label runs";
 const argumentsStaysALet =
   "`bun run` keeps a block function named `arguments` in its block, also where the name is a var";
 
@@ -83,9 +82,6 @@ const expectedFailures: Record<string, Record<string, string>> = {
       "TS1477: a property access follows an instantiation expression",
   },
   "test/bundler/transpiler/preserve-use-strict-cjs.test.ts": {
-    [`${blockFunctions} > labelThenPlain`]: labelledFunction,
-    [`${blockFunctions} > labelAfterVar`]: labelledFunction,
-    [`${blockFunctions} > labelAfterAssignment`]: labelledFunction,
     [`${blockFunctions} > twoOfANameWithEval`]: "`bun run` drops the first of two functions of one name in a block",
     [`${blockFunctions} > argumentsInArrow`]: argumentsStaysALet,
     [`${blockFunctions} > argumentsBesideFunction`]: argumentsStaysALet,

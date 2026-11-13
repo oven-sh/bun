@@ -59,6 +59,25 @@ out.tryBlock = attempt(() => tryBlock());
 label: function labelled() { return 6; }
 out.labelled = attempt(() => labelled());
 
+// A function behind a label is a declaration of the statement list around the label.
+out.labelThenPlain = attempt(function () {
+  lf: function f() { return "labelled"; }
+  return f();
+  function f() { return "plain"; }
+});
+
+out.labelAfterVar = attempt(function () {
+  var f = "V";
+  lf: function f() { return "labelled"; }
+  return typeof f === "function" ? f() : f;
+});
+
+out.labelAfterAssignment = attempt(function () {
+  f = "A";
+  lf: function f() { return "labelled"; }
+  return typeof f === "function" ? "function" : f;
+});
+
 if (typeof featureTest !== "function") { function featureTest() { return "own"; } }
 out.featureTest = typeof featureTest === "function" ? featureTest() : "fallback";
 
@@ -238,6 +257,9 @@ module.exports = out;
       ifBody: "function",
       tryBlock: 5,
       labelled: 6,
+      labelThenPlain: "plain",
+      labelAfterVar: "V",
+      labelAfterAssignment: "A",
       featureTest: "own",
       shadow: ["outer", "block", "block"],
       inFunction: "in",
@@ -609,9 +631,6 @@ module.exports = (function () {${body}
   describe("known differences from node", () => {
     const node = {
       // Right on main.
-      labelThenPlain: "plain",
-      labelAfterVar: "V",
-      labelAfterAssignment: "A",
       twoOfANameWithEval: "2",
       // Wrong on main too: the name `arguments` keeps the `let` of main.
       argumentsAfterBlock: "[object Function]",
@@ -631,25 +650,6 @@ const attempt = fn => {
   }
 };
 const out = {};
-
-// The printer puts a labelled function in a block, so it is assigned when the label runs.
-out.labelThenPlain = attempt(function () {
-  lf: function f() { return "labelled"; }
-  return f();
-  function f() { return "plain"; }
-});
-
-out.labelAfterVar = attempt(function () {
-  var f = "V";
-  lf: function f() { return "labelled"; }
-  return typeof f === "function" ? f() : f;
-});
-
-out.labelAfterAssignment = attempt(function () {
-  f = "A";
-  lf: function f() { return "labelled"; }
-  return typeof f === "function" ? "function" : f;
-});
 
 // The parser drops the first of two functions with one name. The second one never runs here.
 out.twoOfANameWithEval = attempt(function () {

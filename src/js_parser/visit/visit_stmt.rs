@@ -36,6 +36,15 @@ fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
     StmtNodeList::from_bump(list)
 }
 
+/// A function declaration, behind any number of labels.
+fn is_labelled_function(stmt: &Stmt) -> bool {
+    match stmt.data {
+        StmtData::SFunction(_) => true,
+        StmtData::SLabel(label) => is_labelled_function(&label.stmt),
+        _ => false,
+    }
+}
+
 // a direct `impl P` block. The 30+ per-variant `s_*` helpers are private; only
 // `visit_and_append_stmt` is surfaced. Full draft body preserved under  mod _draft below.
 
@@ -1429,6 +1438,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let ref_ = p.new_symbol(js_ast::symbol::Kind::Label, name);
         data.name.ref_ = ref_;
         p.cur_scope().label_ref = ref_;
+        let is_function = is_labelled_function(&data.stmt);
         match data.stmt.data {
             StmtData::SFor(_)
             | StmtData::SForIn(_)
@@ -1437,10 +1447,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             | StmtData::SDoWhile(_) => {
                 p.cur_scope().label_stmt_is_loop = true;
             }
+            StmtData::SFunction(_) => p.mark_sloppy_only_syntax(),
             _ => {}
         }
 
         data.stmt = p.visit_single_stmt(data.stmt, StmtsKind::None);
+        if is_function
+            && p.keeps_labelled_function_bare()
+            && let StmtData::SBlock(block) = data.stmt.data
+            && let [function] = block.stmts.slice()
+            && is_labelled_function(function)
+        {
+            data.stmt = *function;
+        }
         p.pop_scope();
 
         stmts.push(*stmt);

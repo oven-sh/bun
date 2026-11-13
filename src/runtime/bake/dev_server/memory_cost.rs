@@ -232,13 +232,14 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // .current_bundle
     if let Some(bundle) = &dev.current_bundle {
         // `SinglyLinkedList::len()` is an O(N) walk; only the node count matters.
-        other_bytes += bundle.requests.len() * size_of::<deferred_request::Node>();
+        other_bytes += bundle.requests.iter().count() * size_of::<deferred_request::Node>();
         other_bytes += memory_cost_array_list(&bundle.script_requests);
         other_bytes += bundle.script_requests.len() * size_of::<DeferredScriptRequest>();
     }
     // .next_bundle
     {
-        other_bytes += dev.next_bundle.requests.len() * size_of::<deferred_request::Node>();
+        other_bytes +=
+            dev.next_bundle.requests.iter().count() * size_of::<deferred_request::Node>();
         other_bytes += memory_cost_array_hash_map(&dev.next_bundle.route_queue);
     }
     // .graphs.route_lookup

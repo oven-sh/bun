@@ -815,7 +815,7 @@ impl NodeHTTPResponse {
         if flags.contains(Flags::SOCKET_CLOSED) {
             return true;
         }
-        // The connection outlives the socket of a done request: do not read it.
+        // A done or upgraded response reads as closed only when its socket closed, not while uWS still owes the close.
         if flags.is_done() || flags.contains(Flags::UPGRADED) {
             return false;
         }
@@ -1443,10 +1443,7 @@ impl NodeHTTPResponse {
                 // synchronous `set_closed()` from `JSNodeHTTPServerSocket::
                 // onClose` has already flipped SOCKET_CLOSED, so
                 // `should_request_be_pending()` is now false; let the gate
-                // re-evaluate. Release the connection first so the
-                // `clear_on_data_callback` reached from `mark_request_as_done`
-                // can't touch the dead socket.
-                self.connection.release();
+                // re-evaluate.
                 self.mark_request_as_done_if_necessary();
             }
             return;
@@ -1491,10 +1488,6 @@ impl NodeHTTPResponse {
             self.on_data_or_aborted(b"", true, AbortEvent::Abort, js_this);
         }
 
-        // The connection is released before the guard's release because
-        // `mark_request_as_done_if_necessary()` + that release can drop the
-        // last ref when the JS wrapper has already finalized; nothing between
-        // them reads the connection, so releasing first avoids a post-destroy write.
         if EVENT == AbortEvent::Abort {
             if self.flags.get().contains(Flags::ENDED) {
                 // An ended response that was still draining is over now: `finished` reads true, as after a drain.
@@ -1502,13 +1495,16 @@ impl NodeHTTPResponse {
             } else {
                 self.mark_request_as_done_if_necessary();
             }
-            self.connection.release();
         }
     }
 
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_onClose")]
     pub(crate) fn on_abort(&self, js_value: JSValue) {
         scoped_log!(NodeHTTPResponse, "onAbort");
+        debug_assert!(
+            self.reader().is_none(),
+            "set_closed() releases the connection before on_abort()"
+        );
         self.handle_abort_or_timeout::<{ AbortEvent::Abort }>(js_value);
     }
 
@@ -1542,8 +1538,11 @@ impl NodeHTTPResponse {
         )
     }
 
+    /// The socket closed. On an HTTP close, uWS destructs the response state once this notification returns.
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_setClosed", no_catch)]
     pub(crate) fn set_closed(&self) {
+        // Not in `mark_socket_closed()`: `abort()` calls that while the socket is open, then writes to it.
+        self.connection.release();
         self.mark_socket_closed();
     }
 
@@ -1662,6 +1661,11 @@ impl NodeHTTPResponse {
 
         self.mark_request_as_done_if_necessary();
     }
+}
+
+/// `nodeHTTPMessageHasConnection(message)` of `bun:internal-for-testing`.
+pub(crate) fn has_connection_for_testing(response: &NodeHTTPResponse) -> bool {
+    response.reader().is_some()
 }
 
 pub(crate) fn on_resolve(

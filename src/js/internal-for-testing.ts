@@ -759,6 +759,18 @@ export function storedOutgoingHeaders(message: any): Record<string, [string, unk
   return message[require("internal/http").kOutHeaders];
 }
 
+const nodeHTTPResponseHasConnection: (handle: unknown) => boolean = $bindgen(
+  "NodeHTTPResponse.bind.ts",
+  "hasConnectionForTesting",
+);
+/**
+ * Whether the native handle of a `node:http` server request or response still has the uWS response of its socket.
+ * The handle lets go of it when the socket closes, and when the socket gives the connection to another response.
+ */
+export function nodeHTTPMessageHasConnection(message: any): boolean {
+  return nodeHTTPResponseHasConnection(message[require("internal/http").kHandle]);
+}
+
 /**
  * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure
  * paths are otherwise unreachable without injection ("ssl_loop_buffer",

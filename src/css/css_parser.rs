@@ -1291,12 +1291,12 @@ mod rule_parsers {
                     let mut import_rule = ImportRule {
                         url,
                         conditions: ImportConditions {
-                            layer: layer.map(|v| css_rules::import::Layer { v, anonymous_id: 0 }),
+                            layer: layer.map(|v| css_rules::import::Layer { v }),
                             supports,
                             media,
                         },
+                        import_record_idx: u32::MAX,
                         loc,
-                        ..Default::default()
                     };
                     AtRuleParserT::on_import_rule(
                         this.at_rule_parser,
@@ -2163,9 +2163,6 @@ pub struct MinifyOptions {
 pub type BundlerStyleSheet<'bump> = StyleSheet<'bump, BundlerAtRule>;
 pub type BundlerCssRuleList<'bump> = CssRuleList<'bump, BundlerAtRule>;
 pub type BundlerCssRule<'bump> = CssRule<'bump, BundlerAtRule>;
-pub type BundlerLayerBlockRule<'bump> = css_rules::layer::LayerBlockRule<'bump, BundlerAtRule>;
-pub type BundlerSupportsRule<'bump> = css_rules::supports::SupportsRule<'bump, BundlerAtRule>;
-pub type BundlerMediaRule<'bump> = css_rules::media::MediaRule<'bump, BundlerAtRule>;
 
 /// Additional data we don't want stored on the stylesheet
 #[derive(Default)]
@@ -2310,13 +2307,13 @@ pub(crate) fn fill_property_bit_set<'bump>(
 pub struct StyleSheet<'bump, AtRule> {
     /// A list of top-level rules within the style sheet.
     pub rules: CssRuleList<'bump, AtRule>,
-    pub sources: Vec<Box<[u8]>>,
+    pub(crate) sources: Vec<Box<[u8]>>,
     pub source_map_urls: Vec<Option<Box<[u8]>>>,
-    pub license_comments: Vec<&'bump [u8]>,
+    pub(crate) license_comments: Vec<&'bump [u8]>,
     /// [`ParserOptions::css_modules`] of the parse.
-    pub css_modules: Option<css_modules::Config>,
+    pub(crate) css_modules: Option<css_modules::Config>,
     /// [`ParserOptions::flags`] of the parse.
-    pub flags: ParserFlags,
+    pub(crate) flags: ParserFlags,
     pub layer_names: Vec<LayerName<'bump>>,
     /// The `@layer` statements ahead of the first `@import`. These names are not in `layer_names`.
     pub layers_pre_import: Vec<LayerName<'bump>>,
@@ -2442,37 +2439,8 @@ mod stylesheet_impl {
             Ok(())
         }
 
-        pub fn to_css_with_writer<'a>(
-            &'a self,
-            arena: &'a Bump,
-            writer: &'a mut dyn bun_io::Write,
-            options: &PrinterOptions<'a>,
-            import_info: Option<ImportInfo<'a>>,
-            local_names: Option<&'a LocalsResultsMap>,
-            symbols: &'a bun_ast::symbol::Map,
-        ) -> PrintResult<()> {
-            // Note: PrinterOptions has `&mut SourceMap` and so isn't Copy; capture
-            // the lone field we re-read after moving `options` into Printer::new.
-            let project_root = options.project_root;
-            let mut printer = Printer::new(
-                arena,
-                bun_alloc::ArenaVec::new_in(arena),
-                writer,
-                options,
-                import_info,
-                local_names,
-                symbols,
-            );
-            match self.to_css_with_writer_impl(&mut printer, project_root) {
-                Ok(result) => Ok(result),
-                Err(_) => {
-                    debug_assert!(printer.error_kind.is_some());
-                    Err(printer.error_kind.unwrap())
-                }
-            }
-        }
-
-        pub(crate) fn to_css_with_writer_impl<'a>(
+        /// Prints what precedes the rules, and sets `printer` up for them.
+        pub fn header_to_css<'a>(
             &'a self,
             printer: &mut Printer<'a>,
             project_root: Option<&[u8]>,
@@ -2495,8 +2463,7 @@ mod stylesheet_impl {
                 ));
             }
 
-            self.rules.to_css(printer, None)?;
-            printer.newline()
+            Ok(())
         }
 
         pub fn to_css<'a>(
@@ -2511,7 +2478,19 @@ mod stylesheet_impl {
             // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
             // PERF: this always heap-allocates — profile if hot.
             let mut dest: Vec<u8> = Vec::with_capacity(1);
-            self.to_css_with_writer(arena, &mut dest, options, import_info, local_names, symbols)?;
+            let mut printer = Printer::new(
+                arena,
+                bun_alloc::ArenaVec::new_in(arena),
+                &mut dest,
+                options,
+                import_info,
+                local_names,
+                symbols,
+            );
+            let printed = self
+                .header_to_css(&mut printer, options.project_root)
+                .and_then(|()| self.rules.to_css(&mut printer, None));
+            printer.finish(printed)?;
             return Ok(ToCssResult { code: dest });
         }
 

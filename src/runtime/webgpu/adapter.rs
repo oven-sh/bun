@@ -43,7 +43,7 @@ impl GPU {
         // A driver that runs on the CPU turns shaders into machine code, and crashes where that cannot run.
         let adapter = adapter.filter(|dawn| {
             !is_write_execute_memory_denied()
-                || !GPUAdapterInfo::read(|info| dawn.get_info(info)).is_fallback_adapter
+                || !GPUAdapterInfo::read(&|info| dawn.get_info(info)).is_fallback_adapter
         });
         let adapter = adapter.map(|dawn| GPUAdapter {
             dawn,
@@ -169,7 +169,7 @@ impl GPUAdapter {
     }
 
     pub(crate) fn get_info<'a>(&self, heap: &JsHeap<'a>) -> JsWrapper<'a, GPUAdapterInfo> {
-        GPUAdapterInfo::read(|info| self.dawn.get_info(info)).into_js(heap)
+        GPUAdapterInfo::read(&|info| self.dawn.get_info(info)).into_js(heap)
     }
 }
 
@@ -300,7 +300,7 @@ fn normalized_identifier(text: &[u8]) -> String {
 }
 
 impl GPUAdapterInfo {
-    pub(super) fn read(get_info: impl FnOnce(&mut dawn::AdapterInfo) -> dawn::Status) -> Self {
+    pub(super) fn read(get_info: &dyn Fn(&mut dawn::AdapterInfo) -> dawn::Status) -> Self {
         let mut info = dawn::AdapterInfo::default();
         let status = get_info(&mut info);
         debug_assert!(status == dawn::Status::Success);

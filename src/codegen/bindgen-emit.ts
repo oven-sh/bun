@@ -62,6 +62,8 @@ import {
 import { parseDeclaredAlternative, typeScriptOf } from "./declared-type-checks.ts";
 import { cap, low } from "./helpers.ts";
 import {
+  beginGuardedBody,
+  endGuardedBody,
   guardedCall,
   hostFunctionDefinitionRecord,
   recordedPointer,
@@ -1171,6 +1173,19 @@ function cppSourceForCell(type: ClassType, guards: Guards): string {
   const guard = guardOfClass(type, guards);
   const finalize = classSymbolName(type, "finalize");
   const finalized = `static_cast<${cpp}*>(cell)->${payload}`;
+  const call = `${finalize}(${finalized});`;
+  // All of it is guarded: the linker drops a call to a `finalize` that has nothing to do.
+  const destroy = webCoreBase
+    ? [
+        ...(guard ? [beginGuardedBody(removableFeatures(), guard.feature, "Abort", "void")] : []),
+        call,
+        `static_cast<${cpp}*>(cell)->~JS${name}();`,
+        ...(guard ? [endGuardedBody] : []),
+      ]
+    : [
+        `STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(${cpp});`,
+        guard ? `${guardedCall(removableFeatures(), guard.feature, "Abort", finalize, [finalized])};` : call,
+      ];
   const create = `
 const JSC::ClassInfo ${cpp}::s_info = { ${asciiLiteral(name)}, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${cpp}) };
 static_assert(sizeof(${cpp}) == ${offsetOfPayload(type) + (refCounted ? 8 : 0)});
@@ -1204,8 +1219,8 @@ void ${cpp}::finishCreation(JSC::VM& vm)
   }
 void ${cpp}::destroy(JSC::JSCell* cell)
 {
-${webCoreBase ? "" : `    STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(${cpp});\n`}    ${guard ? guardedCall(removableFeatures(), guard.feature, "Abort", finalize, [finalized]) : `${finalize}(${finalized})`};
-${webCoreBase ? `    static_cast<${cpp}*>(cell)->~JS${name}();\n` : ""}}
+    ${destroy.join("\n    ")}
+}
 ${
   cppExtraMemorySize(type, "heapSnapshot")
     ? `

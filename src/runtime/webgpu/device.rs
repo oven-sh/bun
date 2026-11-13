@@ -387,7 +387,7 @@ impl GPUDevice {
     }
 
     pub(crate) fn get_adapter_info<'a>(&self, heap: &JsHeap<'a>) -> JsWrapper<'a, GPUAdapterInfo> {
-        GPUAdapterInfo::read(|info| self.handle.get_adapter_info(info)).into_js(heap)
+        GPUAdapterInfo::read(&|info| self.handle.get_adapter_info(info)).into_js(heap)
     }
 
     pub(crate) fn get_queue<'a>(

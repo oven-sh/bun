@@ -31,7 +31,8 @@ export function dawnCxxFlags(cfg: Config): string[] {
     "-w",
     ...(cfg.windows
       ? ["/std:c++20", "-D_HAS_EXCEPTIONS=0", "-DNOMINMAX", "-DWIN32_LEAN_AND_MEAN", "-D_CRT_SECURE_NO_WARNINGS"]
-      : ["-std=c++20"]),
+      : // Forced vtables instantiate destructors where Dawn's headers have only declared what they destroy.
+        ["-std=c++20", "-fno-force-emit-vtables"]),
     ...(cfg.release
       ? [
           cfg.windows ? "/clang:-Os" : "-Os",

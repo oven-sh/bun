@@ -48,15 +48,15 @@ const helpers = `
   }`;
 const imports = `import { compile, keepBusy, requestDevice, slowModule, startEverything } from "./helpers.js";\n`;
 
-async function run(files: Record<string, string>, ...args: string[]) {
+async function run(files: Record<string, string>, args = ["index.js"], env = bunEnv) {
   using dir = tempDir("webgpu", {
     ...Object.fromEntries(Object.entries(files).map(([name, source]) => [name, imports + source])),
     "helpers.js": helpers,
   });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), ...(args.length > 0 ? args : ["index.js"])],
+    cmd: [bunExe(), ...args],
     cwd: String(dir),
-    env: bunEnv,
+    env,
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -295,7 +295,9 @@ describe.skipIf(!hasAdapter).concurrent("a worker", () => {
 });
 
 describe.skipIf(!hasAdapter).concurrent("what can compile a shader", () => {
-  // On the main thread, JavaScript cannot get near the end of the stack.
+  // Up to the end of the stack, whose size does not depend on the system in a worker.
+  const env = { ...bunEnv, BUN_JSC_maxPerThreadStackUsage: String(64 << 20) };
+
   test.each([
     ["requestAdapter()", "navigator.gpu.requestAdapter()"],
     ["requestDevice()", "adapter.requestDevice()"],
@@ -355,7 +357,7 @@ describe.skipIf(!hasAdapter).concurrent("what can compile a shader", () => {
         await Promise.allSettled(results);
         console.log(attempts > 64);`,
     };
-    expect(await run(files)).toEqual(printed("true"));
+    expect(await run(files, undefined, env)).toEqual(printed("true"));
   });
 });
 
@@ -396,7 +398,7 @@ describe.skipIf(!hasAdapter).concurrent("other contexts", () => {
         const device = await requestDevice();
         for (const promise of [device.lost, ...startEverything(device).slice(0, 4)]) promise.finally(() => console.log("settled"));
       });`;
-    const { stdout, stderr, exitCode } = await run({ "a.test.js": file, "b.test.js": file }, "test", "--isolate");
+    const { stdout, stderr, exitCode } = await run({ "a.test.js": file, "b.test.js": file }, ["test", "--isolate"]);
     expect(stdout).not.toContain("settled");
     expect(stderr).toContain(" 2 pass");
     expect(exitCode).toBe(0);

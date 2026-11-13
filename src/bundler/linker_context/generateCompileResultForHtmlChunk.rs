@@ -2,7 +2,6 @@ use crate::mal_prelude::*;
 
 use bstr::BStr;
 
-use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
 use bun_core::strings;
 use bun_threading::thread_pool::Task as ThreadPoolLibTask;
@@ -36,7 +35,7 @@ use crate::{Chunk, CompileResult};
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // HTML `PendingPartRange` (exactly one per HTML chunk). Writes:
 // `chunk.compile_results_for_chunk[0]` (per-chunk disjoint). Reads
-// `c.parse_graph.input_files` / `c.graph` / `ctx.chunks` shared. Never forms
+// `c.parse_graph().input_files` / `c.graph` / `ctx.chunks` shared. Never forms
 // `&mut LinkerContext`. See `generate_compile_result_for_js_chunk` for the
 // `PendingPartRange: Send` justification.
 //
@@ -55,10 +54,10 @@ pub(crate) unsafe fn generate_compile_result_for_html_chunk(task: *mut ThreadPoo
     let i = part_range.i as usize;
     let ctx: &GenerateChunkCtx = part_range.ctx;
 
-    // `ctx.c` is a `ParentRef` and `ctx.chunk` / `ctx.chunks` are `BackRef`s;
+    // `ctx.chunk` / `ctx.chunks` are `BackRef`s;
     // all yield safe shared borrows via `.get()`. `chunk` is this task's
     // exclusively-owned HTML chunk for the duration of the compile step.
-    let c_ref: &LinkerContext = ctx.c.get();
+    let c_ref: &LinkerContext = ctx.c;
     let chunk_ref: &Chunk = ctx.chunk.get();
     let chunks: &[Chunk] = ctx.chunks.get();
     let result = generate_compile_result_for_html_chunk_impl(c_ref, chunk_ref, chunks);
@@ -75,7 +74,7 @@ struct EndTagIndices {
 }
 
 struct HTMLLoader<'a> {
-    linker: &'a LinkerContext<'a>,
+    linker: &'a LinkerContext<'a, 'a>,
     import_records: &'a [ImportRecord<'a>],
     current_import_record_index: u32,
     /// This task's HTML chunk, an element of `chunks`.
@@ -362,7 +361,7 @@ impl<'a> HTMLLoader<'a> {
 }
 
 fn generate_compile_result_for_html_chunk_impl<'a>(
-    c: &'a LinkerContext<'a>,
+    c: &'a LinkerContext<'_, 'a>,
     chunk: &'a Chunk<'a>,
     chunks: &'a [Chunk<'a>],
 ) -> CompileResult {
@@ -377,17 +376,11 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
     // `CompileResult::Html`, so it lives as long as whoever holds the
     // `CompileResult` — no arena-lifetime distinction needed.
 
-    // `c.log` is now `*mut Log` (raw backref); copy directly. The HTMLLoader.log
-    // field is currently dead_code, so no write actually occurs through this
-    // pointer today.
-    let log: *mut Log = c.log;
-    let minify_whitespace = c.options.minify_whitespace;
     let compile_to_standalone_html = c.options.compile_mode.is_standalone_html();
     let has_dev_server = c.dev_server.is_some();
     let contents: &[u8] = &sources[source_index as usize].contents;
     let records = import_records[source_index as usize].as_slice();
 
-    let _ = (source_index, log, minify_whitespace);
     let mut html_loader = HTMLLoader {
         linker: c,
         import_records: records,

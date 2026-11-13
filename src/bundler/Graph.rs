@@ -71,18 +71,16 @@ pub struct Graph<'a> {
     pub server_component_boundaries: server_component_boundary::List,
 
     /// Track HTML imports from server-side code
-    /// Each entry represents a server file importing an HTML file that needs a client build
+    /// Each entry is the source index of the generated module that stands for an imported HTML file
     ///
     /// OutputPiece.Kind.HTMLManifest corresponds to indices into the array.
-    pub(crate) html_imports: HtmlImports,
+    pub(crate) html_imports: Vec<IndexInt>,
 
     pub(crate) estimated_file_loader_count: usize,
 
     /// For Bake, a count of the CSS asts is used to make precise
     /// pre-allocations without re-iterating the file listing.
     pub(crate) css_file_count: usize,
-
-    pub(crate) additional_output_files: Vec<options::OutputFile>,
 
     pub(crate) kit_referenced_server_data: bool,
     pub(crate) kit_referenced_client_data: bool,
@@ -91,14 +89,6 @@ pub struct Graph<'a> {
     ///
     /// Helps skip a loop.
     pub(crate) has_any_secondary_paths: bool,
-}
-
-#[derive(Default)]
-pub struct HtmlImports {
-    /// Source index of the server file doing the import
-    pub(crate) server_source_indices: Vec<IndexInt>,
-    /// Source index of the HTML file being imported
-    pub(crate) html_source_indices: Vec<IndexInt>,
 }
 
 pub struct InputFile<'a> {
@@ -172,10 +162,9 @@ impl<'a> Graph<'a> {
             cancelled: false,
             build_graphs: EnumMap::default(),
             server_component_boundaries: server_component_boundary::List::default(),
-            html_imports: HtmlImports::default(),
+            html_imports: Vec::new(),
             estimated_file_loader_count: 0,
             css_file_count: 0,
-            additional_output_files: Vec::new(),
             kit_referenced_server_data: false,
             kit_referenced_client_data: false,
             has_any_secondary_paths: false,

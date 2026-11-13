@@ -54,7 +54,16 @@ pub(crate) struct PosixPipeContext {
 bun_jsc::impl_abort_handle_owner!(PosixPipeContext, abort_handle, |this, _cause| {
     // SAFETY: trait contract — `this` is live; `close` re-enters `on_close`,
     // which may free `this`.
-    unsafe { (*ptr::addr_of_mut!((*this).pipe)).close() }
+    unsafe {
+        // Refcount is already zero (failed `open`, or `on_close` ran) and only
+        // the queued `Deinit` hop disarms this handle: closing a never-opened
+        // pipe here would reach `on_close` → `deref` on zero. Twin of the
+        // Windows `!PIPE_ADOPTED` early-out.
+        if (*this).task_event == EventState::Deinit {
+            return;
+        }
+        (*ptr::addr_of_mut!((*this).pipe)).close()
+    }
 });
 
 /// Reached from `on_close` → `Self::deref` while `PosixPipe::on_close` still

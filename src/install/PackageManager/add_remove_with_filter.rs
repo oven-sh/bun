@@ -109,7 +109,7 @@ pub(crate) fn load_workspace_members(manager: &mut PackageManager) -> WorkspaceM
         MissingWorkspace::Error,
     ) {
         if log.has_errors() {
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print(Output::error_writer());
         } else {
             Output::err_generic(
                 "failed to load workspaces from package.json \"{}\": {}",

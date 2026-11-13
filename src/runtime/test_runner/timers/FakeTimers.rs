@@ -14,6 +14,7 @@ use bun_jsc::{
     JSFunction, JSGlobalObject, JSHostFn, JSPromiseStrong, JSValue, JsError, JsResult, Strong,
     StrongOptional,
 };
+use bun_ptr::RefPtr;
 
 // JSMock C++ bindings (fake timers are only used by bun:test, so these stay local).
 unsafe extern "C" {
@@ -479,6 +480,8 @@ pub(crate) struct FakeTimers {
     from_preload: bool,
     /// Bumped by `activate` and `forget_installation`. If it changes mid-run, that run's clock is gone.
     installs: u32,
+    /// Bumped by `clear`. See [`Popped`].
+    clears: u32,
     firing: u32,
     /// The sorted fake timers. TimerHeap is not optimal here because we need these operations:
     /// - peek/takeFirst (provided by TimerHeap)
@@ -499,6 +502,8 @@ pub(crate) struct FakeTimers {
     /// Armed in the real heap while `tick_mode` is `Interval`.
     tick_timer: EventLoopTimer,
     auto_step_posted: bool,
+    /// The `Bun.cron()` ticks that `fire` started. A job is in no heap while its tick runs or is pending, so `clear` finds it here.
+    cron_ticks: Vec<CronTick>,
 }
 
 impl Default for FakeTimers {
@@ -509,6 +514,7 @@ impl Default for FakeTimers {
             fakes_abort_signal_timeout: false,
             from_preload: false,
             installs: 0,
+            clears: 0,
             firing: 0,
             timers: TimerHeap::default(),
             now: Timespec::EPOCH,
@@ -523,6 +529,7 @@ impl Default for FakeTimers {
             tick_mode: TickMode::Manual,
             tick_timer: EventLoopTimer::init_paused(EventLoopTimerTag::FakeTimersTick),
             auto_step_posted: false,
+            cron_ticks: Vec::new(),
         }
     }
 }
@@ -570,6 +577,28 @@ extern "C" fn Bun__FakeTimers__replacedPerformanceNow() -> f64 {
     this.now.ns() as f64 / 1_000_000.0
 }
 
+/// Read by [`FakeTimers::fire`] for the timer it fires, which [`FakeTimers::clear`] can't see. Its owner asks [`FakeTimers::dropped_since`] before it arms that timer again.
+#[derive(Copy, Clone)]
+pub(crate) struct Popped {
+    installs: u32,
+    clears: u32,
+}
+
+struct CronTick {
+    job: RefPtr<CronJob>,
+    /// The deadline that the job had. It has a later one when it is armed again.
+    at: Timespec,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Dropped {
+    No,
+    /// By `clearAllTimers()`. The timer's clock is still the current one.
+    Cleared,
+    /// By `useRealTimers()` or `useFakeTimers()`.
+    WithItsClock,
+}
+
 /// Owners of the nodes [`FakeTimers::clear`] popped, still to be told their
 /// timer is gone. Released only once the `FakeTimers` borrow has ended: these
 /// paths re-enter `timer::All` (`TimerObjectInternals::cancel` → `All::remove`,
@@ -588,7 +617,7 @@ struct ClearedTimers {
     /// signal's `cancelTimer()` clears it (and frees the box).
     signal_timeouts: Vec<*mut AbortSignalTimeout>,
     /// A `Bun.cron()` job keeps the event loop alive until it is stopped.
-    cron_jobs: Vec<*mut CronJob>,
+    cron_jobs: Vec<RefPtr<CronJob>>,
 }
 
 impl ClearedTimers {
@@ -603,11 +632,7 @@ impl ClearedTimers {
             unsafe { AbortSignalTimeout::discard(t) };
         }
         for job in self.cron_jobs {
-            // SAFETY: `clear` popped `job`'s node from the fake heap, so the
-            // job was scheduled and its JS wrapper (strong while scheduled)
-            // keeps it alive; no JS has run since; the `FakeTimers` borrow
-            // ended before this call.
-            CronJob::stop_dropped_from_fake_heap(unsafe { bun_ptr::ThisPtr::new(job) });
+            CronJob::stop_dropped_from_fake_heap(job.this_ptr());
         }
     }
 }
@@ -663,8 +688,14 @@ impl FakeTimers {
         if self.active { clock } else { Clock::Real }
     }
 
-    pub(crate) fn installs(&self) -> u32 {
-        self.installs
+    pub(crate) fn dropped_since(&self, popped: Popped) -> Dropped {
+        if self.installs != popped.installs {
+            Dropped::WithItsClock
+        } else if self.clears != popped.clears {
+            Dropped::Cleared
+        } else {
+            Dropped::No
+        }
     }
 
     pub(crate) fn now(&self) -> Timespec {
@@ -769,15 +800,24 @@ impl FakeTimers {
         self.originals.deinit();
         self.ticks.clear();
         self.drives.clear();
+        self.cron_ticks.clear();
         self.auto_step_posted = false;
     }
 
     /// Pop every fake timer. Popping only unlinks the nodes; the owners that
     /// need to hear about it are returned for the caller to release.
+    /// A timer whose callback is running is not in the heap: see [`Popped`].
     #[optimize(size)]
     fn clear(&mut self) -> ClearedTimers {
+        self.clears = self.clears.wrapping_add(1);
         self.ticks.clear();
         let mut cleared = ClearedTimers::default();
+        // The job of a tick that is over is in the heap, where the loop below finds it, or stopped.
+        for tick in core::mem::take(&mut self.cron_ticks) {
+            if tick.job.is_mid_tick(&tick.at) {
+                cleared.cron_jobs.push(tick.job);
+            }
+        }
         while let Some(timer) = self.timers.delete_min() {
             // SAFETY: `delete_min` returned a live node; the owner it belongs
             // to stays live until the caller's release pass.
@@ -803,7 +843,9 @@ impl FakeTimers {
                             .push(AbortSignalTimeout::from_timer_ptr(timer));
                     }
                     EventLoopTimerTag::CronJob => {
-                        cleared.cron_jobs.push(CronJob::from_timer_ptr(timer));
+                        cleared
+                            .cron_jobs
+                            .push(RefPtr::init_ref(CronJob::from_timer_ptr(timer)));
                     }
                     tag => debug_assert!(
                         false,
@@ -815,6 +857,19 @@ impl FakeTimers {
         }
 
         cleared
+    }
+
+    /// Lists a `Bun.cron()` tick that `fire` starts. Not inlined: `fire` runs for each fake timer.
+    #[inline(never)]
+    fn start_cron_tick(&mut self, tick: CronTick) {
+        let ticks = &mut self.cron_ticks;
+        // Forgets the ticks that are over. Only a full list is searched, so that the cost of a tick does not grow with the list.
+        if ticks.len() == ticks.capacity() {
+            ticks.retain(|tick| tick.job.is_mid_tick(&tick.at));
+            // The list is not full again before `len + 1` more ticks.
+            ticks.reserve(ticks.len() + 1);
+        }
+        ticks.push(tick);
     }
 
     fn count(&self) -> usize {
@@ -1017,6 +1072,18 @@ impl FakeTimers {
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         unsafe { (*timer_all()).fake_timers.advance_clock_to(global, at) };
         let _firing = Firing::begin();
+        // SAFETY: as above. `timer` is live and its tag names its owner.
+        let popped = unsafe {
+            let this = &mut (*timer_all()).fake_timers;
+            if tag == EventLoopTimerTag::CronJob {
+                let job = RefPtr::init_ref(CronJob::from_timer_ptr(timer));
+                this.start_cron_tick(CronTick { job, at });
+            }
+            Popped {
+                installs: this.installs,
+                clears: this.clears,
+            }
+        };
         let vm = VirtualMachine::get_mut_ptr();
         let mut thrown = JSValue::ZERO;
         // SAFETY: `timer` is live and its tag names its owner; the callees take raw pointers (noalias re-entrancy).
@@ -1026,11 +1093,13 @@ impl FakeTimers {
                     core::ptr::addr_of_mut!((*TimeoutObject::from_timer_ptr(timer)).internals),
                     vm,
                     &raw mut thrown,
+                    popped,
                 ),
                 EventLoopTimerTag::ImmediateObject => TimerObjectInternals::fire_catching(
                     core::ptr::addr_of_mut!((*ImmediateObject::from_timer_ptr(timer)).internals),
                     vm,
                     &raw mut thrown,
+                    popped,
                 ),
                 // An abort listener or cron job that throws is reported as uncaught, same as in the real drain.
                 _ => {

@@ -1462,6 +1462,12 @@ impl CronJob {
         Self::self_stop(this, VirtualMachine::get());
     }
 
+    /// Whether the tick that was due at `at` is not over: it runs, or its promise is pending. No heap holds the job then, and its timer still has that deadline.
+    pub(crate) fn is_mid_tick(&self, at: &bun_core::Timespec) -> bool {
+        let timer = self.event_loop_timer.get();
+        !self.stopped.get() && timer.state != EventLoopTimerState::ACTIVE && timer.next == *at
+    }
+
     /// The context of the script that scheduled the job stopped. A tick's promise that is pending
     /// may still settle (the host, or another graph, may hold it): its reactions' cell keeps the
     /// job until then, or until the promise is collected. Nothing else of the job is kept. With

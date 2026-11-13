@@ -13,6 +13,7 @@ use bun_core::{Timespec, TimespecMockMode};
 use crate::generated_bindgen::timer::{js_Immediate as JSImmediate, js_Timeout as JSTimeout};
 use crate::jsc::JsCell;
 use crate::jsc::{Debugger, JSGlobalObject, JSValue, JsRef, JsResult, ScriptExecutionStatus};
+use crate::test_runner::timers::fake_timers;
 use core::cell::Cell;
 // Note: `bun_jsc::VirtualMachine` is a *module* alias; the struct lives at
 // `virtual_machine::VirtualMachine`.
@@ -507,10 +508,13 @@ impl TimerObjectInternals {
     /// `this` points at a live `TimerObjectInternals` embedded in its
     /// `TimeoutObject`/`ImmediateObject` parent (FIRE_TIMER hook contract);
     /// `vm` is the live per-thread VM; `thrown` is null or a live stack slot.
-    pub(crate) unsafe fn fire_catching(
+    // Inlined, so that `fire` (the real heap's entry, `popped` is `None`) reads no fake timer state.
+    #[inline(always)]
+    unsafe fn fire_impl(
         this: *mut Self,
         vm: *mut VirtualMachine,
         thrown: *mut JSValue,
+        popped: Option<fake_timers::Popped>,
     ) {
         // SAFETY: per fn contract — `this` live. `&Self` (NOT `&mut`) — fields
         // are `Cell`/`JsCell` so re-entrant JS touching this object via another
@@ -592,8 +596,6 @@ impl TimerObjectInternals {
 
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
-        // SAFETY: `state` is the boxed per-thread `RuntimeState`; field read only.
-        let fake_clock = unsafe { (*state).timer.fake_timers.installs() };
 
         // SAFETY: `vm` is live; `event_loop()` returns `*mut` to the embedded
         // EventLoop. Re-entrancy is permitted by the raw-ptr contract above.
@@ -619,13 +621,6 @@ impl TimerObjectInternals {
                 )
             };
 
-            // SAFETY: `state` is the boxed per-thread `RuntimeState`; field read only.
-            let fake_clock_after = unsafe { (*state).timer.fake_timers.installs() };
-            // The callback tore down this timer's fake clock. `FakeTimers::clear` can't see a firing timer, so cancel it here.
-            if s.flags.get().fake() && fake_clock_after != fake_clock {
-                s.cancel(vm);
-            }
-
             match kind {
                 KindBig::SetTimeout | KindBig::SetInterval => {
                     idle_timeout = JSTimeout::idle_timeout_get_cached(this_object)
@@ -634,6 +629,23 @@ impl TimerObjectInternals {
                         .expect("TimeoutObject repeat slot");
                 }
                 KindBig::SetImmediate => {}
+            }
+
+            // `FakeTimers::clear` can't see a timer whose callback is running, so what it dropped meanwhile is cancelled here.
+            let dropped = match popped {
+                // SAFETY: `state` is the boxed per-thread `RuntimeState`; field read only.
+                Some(popped) => unsafe { (*state).timer.fake_timers.dropped_since(popped) },
+                None => fake_timers::Dropped::No,
+            };
+            // `clearAllTimers()` drops what would be armed again below. What the callback armed again after it is a new timer.
+            let repeats =
+                kind == KindBig::SetInterval || (kind == KindBig::SetTimeout && !repeat.is_null());
+            if dropped == fake_timers::Dropped::WithItsClock
+                || (dropped == fake_timers::Dropped::Cleared
+                    && repeats
+                    && s.event_loop_timer_state() == EventLoopTimerState::FIRED)
+            {
+                s.cancel(vm);
             }
 
             // Every `s.flags.get()` below is a fresh `Cell` read — re-entrant
@@ -683,7 +695,11 @@ impl TimerObjectInternals {
                         }
                     }
                 } else {
-                    if kind == KindBig::SetTimeout && !repeat.is_null() {
+                    if kind == KindBig::SetTimeout
+                        && !repeat.is_null()
+                        && (dropped == fake_timers::Dropped::No
+                            || s.event_loop_timer_state() == EventLoopTimerState::ACTIVE)
+                    {
                         if let Some(num) = idle_timeout.get_number() {
                             if num != -1.0 {
                                 // reschedule() inside convertToInterval will see state == .FIRED
@@ -735,10 +751,21 @@ impl TimerObjectInternals {
     }
 
     /// # Safety
-    /// Same as `fire_catching`.
+    /// Same as `fire_impl`.
     pub(crate) unsafe fn fire(this: *mut Self, _now: &ElTimespec, vm: *mut VirtualMachine) {
         // SAFETY: fn contract.
-        unsafe { Self::fire_catching(this, vm, core::ptr::null_mut()) }
+        unsafe { Self::fire_impl(this, vm, core::ptr::null_mut(), None) }
+    }
+
+    /// `FakeTimers::fire`'s entry. SAFETY: same as `fire_impl`.
+    pub(crate) unsafe fn fire_catching(
+        this: *mut Self,
+        vm: *mut VirtualMachine,
+        thrown: *mut JSValue,
+        popped: fake_timers::Popped,
+    ) {
+        // SAFETY: fn contract.
+        unsafe { Self::fire_impl(this, vm, thrown, Some(popped)) }
     }
 
     pub(crate) fn call_catching(
